@@ -22,21 +22,21 @@ python = "dimos.navigation.nav_3d.mls_planner.mls_planner_native:MLSPlannerNativ
 threads = 2
 
 [package.metadata.dimos.module.mls_planner.inputs]
-global_map = "sensor_msgs.PointCloud2"
-local_map = "sensor_msgs.PointCloud2"
-region_bounds = "geometry_msgs.PoseStamped"
-goal = "geometry_msgs.PointStamped"
-tf = "tf2_msgs.TFMessage"
+global_map = "sensor_msgs/msg/PointCloud2"
+local_map = "sensor_msgs/msg/PointCloud2"
+region_bounds = "geometry_msgs/msg/PoseStamped"
+goal = "geometry_msgs/msg/PointStamped"
+tf = "tf2_msgs/msg/TFMessage"
 
 [package.metadata.dimos.module.mls_planner.outputs]
-surface_map = "sensor_msgs.PointCloud2"
-nodes = "sensor_msgs.PointCloud2"
-node_edges = "nav_msgs.LineSegments3D"
-path = "nav_msgs.Path"
+surface_map = "sensor_msgs/msg/PointCloud2"
+nodes = "sensor_msgs/msg/PointCloud2"
+node_edges = "dimos_msgs/msg/LineSegments3D"
+path = "nav_msgs/msg/Path"
 
 [dependencies]
 dimos-module = { path = "../../../../../native/rust/dimos-module" }
-lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
+dimos-generated-messages = { path = "../../../../message_codegen" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
 serde = { version = "1", features = ["derive"] }
 ahash = "0.8"

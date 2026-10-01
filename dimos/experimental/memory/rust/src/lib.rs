@@ -35,8 +35,9 @@ mod decoding;
 mod encoding;
 pub mod store;
 
-const TF_PAYLOAD_TYPE: &str = "dimos.msgs.tf2_msgs.TFMessage.TFMessage";
-const IMAGE_PAYLOAD_TYPE: &str = "dimos.msgs.sensor_msgs.Image.Image";
+const TF_PAYLOAD_TYPE: &str = "tf2_msgs/msg/TFMessage";
+#[cfg(test)]
+const IMAGE_PAYLOAD_TYPE: &str = "sensor_msgs/msg/Image";
 const QUEUE_CAPACITY: usize = 256;
 const WRITE_BATCH_SIZE: usize = 128;
 const FLUSH_INTERVAL: Duration = Duration::from_millis(100);
@@ -44,20 +45,9 @@ const FLUSH_INTERVAL: Duration = Duration::from_millis(100);
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum Codec {
-    Lcm,
-    Jpeg,
-    #[serde(rename = "lz4+lcm")]
-    Lz4Lcm,
-}
-
-impl Codec {
-    pub(crate) fn id(self) -> &'static str {
-        match self {
-            Self::Lcm => "lcm",
-            Self::Jpeg => "jpeg",
-            Self::Lz4Lcm => "lz4+lcm",
-        }
-    }
+    Cdr,
+    #[serde(rename = "lz4+cdr")]
+    Lz4Cdr,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -66,12 +56,14 @@ pub struct StreamConfig {
     pub port: String,
     pub name: String,
     pub payload_type: String,
+    pub schema_name: String,
+    pub schema_definition: String,
     pub codec: Codec,
 }
 
 impl StreamConfig {
     pub fn is_tf(&self) -> bool {
-        self.payload_type == TF_PAYLOAD_TYPE
+        self.schema_name == TF_PAYLOAD_TYPE
     }
 }
 
@@ -217,7 +209,7 @@ impl RecorderEngine {
 struct EncodedBatch {
     sequence: u64,
     stream: Arc<StreamConfig>,
-    reception_ts: f64,
+    reception_ts: i64,
     observations: Result<Vec<StoredObservation>, String>,
 }
 
@@ -231,7 +223,7 @@ pub struct WriterStats {
 fn process(
     stream: &StreamConfig,
     data: &[u8],
-    reception_ts: f64,
+    reception_ts: i64,
 ) -> Result<Vec<StoredObservation>> {
     decoding::decode(stream, data, reception_ts)?
         .into_iter()
@@ -239,11 +231,13 @@ fn process(
         .collect()
 }
 
-fn wall_time() -> f64 {
+fn wall_time() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
-        .as_secs_f64()
+        .as_nanos()
+        .try_into()
+        .expect("wall time exceeds signed nanosecond range")
 }
 
 struct RecorderInput {
@@ -443,9 +437,11 @@ fn write_ready(
 mod tests {
     use std::io::Read;
 
-    use lcm_msgs::sensor_msgs::{Image, Imu};
-    use lcm_msgs::std_msgs::{Header, Time};
-    use lcm_msgs::tf2_msgs::TFMessage;
+    use dimos_generated_messages::builtin_interfaces::msg::Time;
+    use dimos_generated_messages::codec::Message;
+    use dimos_generated_messages::sensor_msgs::msg::{CompressedImage, Image, Imu};
+    use dimos_generated_messages::std_msgs::msg::Header;
+    use dimos_generated_messages::tf2_msgs::msg::TFMessage;
     use lz4_flex::frame::FrameDecoder;
     use rusqlite::Connection;
     use tempfile::NamedTempFile;
@@ -462,6 +458,18 @@ mod tests {
                 "test.Raw".to_string()
             },
             codec,
+            schema_name: if is_tf {
+                TFMessage::NAME
+            } else {
+                "test_msgs/msg/Raw"
+            }
+            .to_string(),
+            schema_definition: if is_tf {
+                TFMessage::SCHEMA
+            } else {
+                "uint8[] data\n"
+            }
+            .to_string(),
         })
     }
 
@@ -470,6 +478,14 @@ mod tests {
             port: name.to_string(),
             name: name.to_string(),
             payload_type: payload_type.to_string(),
+            schema_name: payload_type.to_string(),
+            schema_definition: match payload_type {
+                Image::NAME => Image::SCHEMA,
+                Imu::NAME => Imu::SCHEMA,
+                CompressedImage::NAME => CompressedImage::SCHEMA,
+                _ => "uint8[] data\n",
+            }
+            .to_string(),
             codec,
         })
     }
@@ -485,11 +501,13 @@ mod tests {
     }
 
     #[test]
-    fn jpeg_codec_preserves_the_lcm_envelope() {
+    fn raw_images_keep_their_declared_encoding_and_pixels() {
         let image = Image {
             header: Header {
-                seq: 9,
-                stamp: Time { sec: 12, nsec: 34 },
+                stamp: Time {
+                    sec: 12,
+                    nanosec: 34,
+                },
                 frame_id: "camera".to_string(),
             },
             height: 2,
@@ -500,36 +518,40 @@ mod tests {
             data: vec![255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255],
         };
 
-        let stream = typed_stream("camera", IMAGE_PAYLOAD_TYPE, Codec::Jpeg);
-        let observations = process(&stream, &image.encode(), 100.0).unwrap();
+        let stream = typed_stream("camera", IMAGE_PAYLOAD_TYPE, Codec::Cdr);
+        let observations = process(&stream, &image.encode().unwrap(), 100_000_000_000).unwrap();
         let decoded = Image::decode(&observations[0].data).unwrap();
 
-        assert_eq!(observations[0].ts, 12.000_000_034);
+        assert_eq!(observations[0].ts, 12_000_000_034);
         assert_eq!(decoded.header, image.header);
-        assert_eq!(decoded.encoding, "jpeg");
-        assert_eq!(decoded.step, 0);
-        assert_eq!(&decoded.data[..2], &[0xff, 0xd8]);
+        assert_eq!(decoded, image);
     }
 
     #[test]
     fn tf_batches_become_individually_timestamped_observations() {
-        let mut first = lcm_msgs::geometry_msgs::TransformStamped::default();
-        first.header.stamp = Time { sec: 10, nsec: 5 };
+        let mut first = dimos_generated_messages::geometry_msgs::msg::TransformStamped::default();
+        first.header.stamp = Time {
+            sec: 10,
+            nanosec: 5,
+        };
         first.child_frame_id = "first".to_string();
-        let mut second = lcm_msgs::geometry_msgs::TransformStamped::default();
-        second.header.stamp = Time { sec: 20, nsec: 7 };
+        let mut second = dimos_generated_messages::geometry_msgs::msg::TransformStamped::default();
+        second.header.stamp = Time {
+            sec: 20,
+            nanosec: 7,
+        };
         second.child_frame_id = "second".to_string();
         let message = TFMessage {
             transforms: vec![first, second],
         };
-        let stream = stream("tf", Codec::Lcm, true);
-        let data = message.encode();
+        let stream = stream("tf", Codec::Cdr, true);
+        let data = message.encode().unwrap();
 
-        let observations = process(&stream, &data, 100.0).unwrap();
+        let observations = process(&stream, &data, 100_000_000_000).unwrap();
 
         assert_eq!(observations.len(), 2);
-        assert_eq!(observations[0].ts, 10.000_000_005);
-        assert_eq!(observations[1].ts, 20.000_000_007);
+        assert_eq!(observations[0].ts, 10_000_000_005);
+        assert_eq!(observations[1].ts, 20_000_000_007);
         let decoded: Vec<TFMessage> = observations
             .iter()
             .map(|observation| TFMessage::decode(&observation.data).unwrap())
@@ -543,23 +565,32 @@ mod tests {
     #[test]
     fn stamped_sensor_messages_preserve_their_source_timestamp() {
         let mut message = Imu::default();
-        message.header.stamp = Time { sec: 42, nsec: 25 };
+        message.header.stamp = Time {
+            sec: 42,
+            nanosec: 25,
+        };
         let stream = Arc::new(StreamConfig {
             port: "imu".to_string(),
             name: "imu".to_string(),
-            payload_type: "dimos.msgs.sensor_msgs.Imu.Imu".to_string(),
-            codec: Codec::Lcm,
+            payload_type: "dimos_generated.sensor_msgs.msg.Imu".to_string(),
+            schema_name: Imu::NAME.to_string(),
+            schema_definition: Imu::SCHEMA.to_string(),
+            codec: Codec::Cdr,
         });
 
-        let observations = decoding::decode(&stream, &message.encode(), 100.0).unwrap();
-        assert_eq!(observations[0].ts, 42.000_000_025);
+        let observations =
+            decoding::decode(&stream, &message.encode().unwrap(), 100_000_000_000).unwrap();
+        assert_eq!(observations[0].ts, 42_000_000_025);
     }
 
     #[test]
-    fn lcm_storage_encoding_consumes_the_decoded_image() {
+    fn cdr_storage_preserves_image_bytes() {
         let image = Image {
             header: Header {
-                stamp: Time { sec: 42, nsec: 25 },
+                stamp: Time {
+                    sec: 42,
+                    nanosec: 25,
+                },
                 ..Header::default()
             },
             height: 1,
@@ -569,12 +600,12 @@ mod tests {
             data: vec![1, 2, 3],
             ..Image::default()
         };
-        let stream = typed_stream("camera", IMAGE_PAYLOAD_TYPE, Codec::Lcm);
+        let stream = typed_stream("camera", IMAGE_PAYLOAD_TYPE, Codec::Cdr);
 
-        let observations = process(&stream, &image.encode(), 100.0).unwrap();
+        let observations = process(&stream, &image.encode().unwrap(), 100_000_000_000).unwrap();
 
         assert_eq!(observations.len(), 1);
-        assert_eq!(observations[0].ts, 42.000_000_025);
+        assert_eq!(observations[0].ts, 42_000_000_025);
         assert_eq!(Image::decode(&observations[0].data).unwrap(), image);
     }
 
@@ -586,7 +617,7 @@ mod tests {
                 path: file.path().to_string_lossy().into_owned(),
             },
             encoding_threads: 2,
-            streams: vec![(*stream("samples", Codec::Lcm, false)).clone()],
+            streams: vec![(*stream("samples", Codec::Cdr, false)).clone()],
         };
         let (sender, receiver) = bounded(8);
         let (permit_sender, permit_receiver) = bounded(8);
@@ -597,10 +628,10 @@ mod tests {
             sender
                 .send(EncodedBatch {
                     sequence,
-                    stream: stream("samples", Codec::Lcm, false),
-                    reception_ts: sequence as f64,
+                    stream: stream("samples", Codec::Cdr, false),
+                    reception_ts: sequence as i64 * 1_000_000_000,
                     observations: Ok(vec![StoredObservation {
-                        ts: sequence as f64,
+                        ts: sequence as i64 * 1_000_000_000,
                         data: vec![sequence as u8],
                     }]),
                 })
@@ -649,7 +680,7 @@ mod tests {
     fn tf_observations_use_empty_jsonb_tags_without_a_reception_index() {
         let file = NamedTempFile::new().unwrap();
         let connection = Connection::open(file.path()).unwrap();
-        let tf = stream("tf", Codec::Lcm, true);
+        let tf = stream("tf", Codec::Cdr, true);
         drop(connection);
         let mut recording_store = store::open(
             &store::RecordingStoreConfig::Sqlite {
@@ -662,8 +693,8 @@ mod tests {
         recording_store
             .write_batch(&[Observation {
                 stream: Arc::clone(&tf),
-                source_ts: 1.0,
-                reception_ts: 100.0,
+                source_ts: 1_000_000_000,
+                reception_ts: 100_000_000_000,
                 data: vec![1, 2, 3],
             }])
             .unwrap();
@@ -691,7 +722,7 @@ mod tests {
     #[test]
     fn mcap_store_writes_indexed_storage_encoded_messages() {
         let file = NamedTempFile::new().unwrap();
-        let samples = stream("samples", Codec::Lz4Lcm, false);
+        let samples = stream("samples", Codec::Cdr, false);
         let mut recording_store = store::open(
             &store::RecordingStoreConfig::Mcap {
                 path: file.path().to_string_lossy().into_owned(),
@@ -700,12 +731,12 @@ mod tests {
             1,
         )
         .unwrap();
-        let encoded = encoding::lz4_frame(&[1, 2, 3]).unwrap();
+        let encoded = vec![0, 1, 0, 0, 3, 0, 0, 0, 1, 2, 3];
         recording_store
             .write_batch(&[Observation {
                 stream: Arc::clone(&samples),
-                source_ts: 12.5,
-                reception_ts: 13.0,
+                source_ts: 1_700_000_000_123_456_789,
+                reception_ts: 1_700_000_000_987_654_321,
                 data: encoded.clone(),
             }])
             .unwrap();
@@ -728,17 +759,21 @@ mod tests {
         assert_eq!(messages.len(), 1);
         let message = &messages[0];
         assert_eq!(message.channel.topic, "samples");
-        assert_eq!(message.channel.message_encoding, "lz4+lcm");
+        assert_eq!(message.channel.message_encoding, "cdr");
+        let schema = message.channel.schema.as_ref().unwrap();
+        assert_eq!(schema.name, "test_msgs/msg/Raw");
+        assert_eq!(schema.encoding, "ros2msg");
+        assert_eq!(schema.data.as_ref(), b"uint8[] data\n");
         assert_eq!(message.channel.metadata["dimos.payload_type"], "test.Raw");
-        assert_eq!(message.log_time, 13_000_000_000);
-        assert_eq!(message.publish_time, 12_500_000_000);
+        assert_eq!(message.log_time, 1_700_000_000_987_654_321);
+        assert_eq!(message.publish_time, 1_700_000_000_123_456_789);
         assert_eq!(message.data.as_ref(), encoded);
     }
 
     #[test]
     fn engine_uses_the_configured_worker_count_and_flushes_on_shutdown() {
         let file = NamedTempFile::new().unwrap();
-        let raw = stream("raw", Codec::Lcm, false);
+        let raw = stream("raw", Codec::Cdr, false);
         let config = RecorderConfig {
             store: store::RecordingStoreConfig::Sqlite {
                 path: file.path().to_string_lossy().into_owned(),
@@ -761,7 +796,7 @@ mod tests {
     #[test]
     fn encoding_failure_fails_the_recording_with_stream_and_sequence() {
         let file = NamedTempFile::new().unwrap();
-        let image = typed_stream("camera", IMAGE_PAYLOAD_TYPE, Codec::Jpeg);
+        let image = typed_stream("camera", IMAGE_PAYLOAD_TYPE, Codec::Cdr);
         let config = RecorderConfig {
             store: store::RecordingStoreConfig::Sqlite {
                 path: file.path().to_string_lossy().into_owned(),
@@ -770,14 +805,14 @@ mod tests {
             streams: vec![(*image).clone()],
         };
         let engine = RecorderEngine::start(config).unwrap();
-        engine.handle().record(image, b"not an lcm image");
+        engine.handle().record(image, b"not a CDR image");
 
         let error = engine.shutdown().unwrap_err();
 
         let message = format!("{error:#}");
         assert!(message.contains("camera"));
         assert!(message.contains("sequence 0"));
-        assert!(message.contains("invalid LCM Image"));
+        assert!(message.contains("invalid CDR sensor_msgs/msg/Image"));
     }
 
     #[test]
@@ -791,5 +826,75 @@ mod tests {
         };
 
         assert!(validator::Validate::validate(&config).is_err());
+    }
+    #[test]
+    fn stamped_cdr_preserves_zero_negative_and_exact_epoch_nanoseconds_in_both_endians() {
+        let stream = typed_stream("imu", Imu::NAME, Codec::Cdr);
+        for (sec, nanosec, expected) in [
+            (0, 0, 0),
+            (-1, 500_000_000, -500_000_000),
+            (1_700_000_000, 123_456_789, 1_700_000_000_123_456_789),
+        ] {
+            let mut message = Imu::default();
+            message.header.stamp = Time { sec, nanosec };
+            for little_endian in [false, true] {
+                let bytes = message.encode_endian(little_endian).unwrap();
+                let observations = process(&stream, &bytes, 99).unwrap();
+                assert_eq!(observations[0].ts, expected);
+                assert_eq!(observations[0].data, bytes);
+            }
+        }
+    }
+
+    #[test]
+    fn compressed_image_keeps_its_standard_schema_and_payload() {
+        let message = CompressedImage {
+            header: Header {
+                stamp: Time { sec: 2, nanosec: 3 },
+                ..Default::default()
+            },
+            format: "rgb8; jpeg compressed bgr8".into(),
+            data: vec![0xff, 0xd8, 0xff, 0xd9],
+        };
+        let stream = typed_stream("camera", CompressedImage::NAME, Codec::Cdr);
+        let observations = process(&stream, &message.encode().unwrap(), 99).unwrap();
+        assert_eq!(observations[0].ts, 2_000_000_003);
+        assert_eq!(
+            CompressedImage::decode(&observations[0].data).unwrap(),
+            message
+        );
+    }
+
+    #[test]
+    fn unknown_custom_type_is_opaque_and_uses_reception_nanoseconds() {
+        let stream = stream("custom", Codec::Cdr, false);
+        let bytes = vec![0, 1, 0, 0, 3, 0, 0, 0, 1, 2, 3];
+        let observations = process(&stream, &bytes, 1_700_000_000_987_654_321).unwrap();
+        assert_eq!(observations[0].ts, 1_700_000_000_987_654_321);
+        assert_eq!(observations[0].data, bytes);
+    }
+
+    #[test]
+    fn invalid_ros_nanoseconds_are_rejected() {
+        let mut message = Imu::default();
+        message.header.stamp.nanosec = 1_000_000_000;
+        let stream = typed_stream("imu", Imu::NAME, Codec::Cdr);
+        assert!(process(&stream, &message.encode().unwrap(), 99).is_err());
+    }
+
+    #[test]
+    fn mcap_rejects_payload_wrappers_before_touching_the_artifact() {
+        let file = NamedTempFile::new().unwrap();
+        std::fs::write(file.path(), b"existing").unwrap();
+        let stream = stream("custom", Codec::Lz4Cdr, false);
+        let result = store::open(
+            &store::RecordingStoreConfig::Mcap {
+                path: file.path().to_string_lossy().into_owned(),
+            },
+            &[(*stream).clone()],
+            1,
+        );
+        assert!(result.is_err());
+        assert_eq!(std::fs::read(file.path()).unwrap(), b"existing");
     }
 }

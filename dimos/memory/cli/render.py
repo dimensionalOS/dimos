@@ -15,8 +15,8 @@
 """Render any memory store into rerun.
 
 Generic: walks the store's streams and logs every observation whose payload
-implements ``to_rerun()`` (the :class:`RerunConvertible` convention). Streams
-whose payload has no ``to_rerun`` are skipped. Each stream becomes an entity
+has a generated-message viewer helper or an explicit application ``to_rerun()``
+adapter. Unsupported payloads are skipped. Each stream becomes an entity
 path; observations share one ``time`` timeline (relative to the store's earliest
 observation, so streams stay aligned). CameraInfo streams are the exception:
 logged once as a Pinhole on their matching image entity (see
@@ -25,16 +25,56 @@ logged once as a Pinhole on their matching image entity (see
 
 from __future__ import annotations
 
+from copy import deepcopy
 from pathlib import Path
 import shutil
 import subprocess
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from dimos_generated.sensor_msgs.msg import CameraInfo
+
     from dimos.memory.store.base import Store
     from dimos.memory.stream import Stream
     from dimos.memory.type.observation import Observation
-    from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+
+
+def _render_message(data: Any) -> Any:
+    """Render generated standard messages, or an application's explicit adapter."""
+    from dimos_generated.geometry_msgs.msg import PointStamped, PoseStamped
+    from dimos_generated.nav_msgs.msg import OccupancyGrid, Odometry, Path
+    from dimos_generated.sensor_msgs.msg import CameraInfo, CompressedImage, Image, PointCloud2
+    from dimos_generated.tf2_msgs.msg import TFMessage
+    from dimos_generated.vision_msgs.msg import Detection3DArray
+
+    from dimos.visualization.rerun.message_helpers import (
+        camera_pinhole,
+        cloud_archetype,
+        detection_boxes,
+        image_archetype,
+        navigation_archetype,
+        occupancy_mesh,
+        tf_archetypes,
+    )
+
+    if isinstance(data, CameraInfo):
+        return camera_pinhole(data)
+    if isinstance(data, (Image, CompressedImage)):
+        return image_archetype(data)
+    if isinstance(data, PointCloud2):
+        return cloud_archetype(data)
+    if isinstance(data, TFMessage):
+        return tf_archetypes(data)
+    if isinstance(data, (PointStamped, PoseStamped, Odometry, Path)):
+        return navigation_archetype(data)
+    if isinstance(data, OccupancyGrid):
+        return occupancy_mesh(data)
+    if isinstance(data, Detection3DArray):
+        return detection_boxes(data)
+    adapter = getattr(data, "to_rerun", None)
+    if callable(adapter):
+        return adapter()
+    raise TypeError(f"no viewer adapter for {type(data).__name__}")
 
 
 def _pair_camera_infos(
@@ -46,27 +86,30 @@ def _pair_camera_infos(
     has one of each; the image's frame_id wins as the pinhole's parent frame.
     Returns (image stream -> (CameraInfo, parent frame), paired stream names).
     """
-    from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-    from dimos.msgs.sensor_msgs.Image import Image
+    from dimos_generated.sensor_msgs.msg import CameraInfo, CompressedImage, Image
 
     infos = [(n, f.data) for n, _, f in renderable if isinstance(f.data, CameraInfo)]
-    images = [(n, f.data) for n, _, f in renderable if isinstance(f.data, Image)]
+    images = [(n, f.data) for n, _, f in renderable if isinstance(f.data, (Image, CompressedImage))]
 
     pinholes: dict[str, tuple[CameraInfo, str]] = {}
     paired: set[str] = set()
     for info_name, info in infos:
-        targets = [(n, img) for n, img in images if img.frame_id and img.frame_id == info.frame_id]
+        targets = [
+            (n, img)
+            for n, img in images
+            if img.header.frame_id and img.header.frame_id == info.header.frame_id
+        ]
         if not targets and len(infos) == 1 and len(images) == 1:
             targets = [images[0]]
             print(
-                f"  {info_name}: frame_id {info.frame_id!r} matches no image stream, "
+                f"  {info_name}: frame_id {info.header.frame_id!r} matches no image stream, "
                 f"pairing with {targets[0][0]!r} as the only image stream"
             )
         if not targets:
-            print(f"  {info_name}: no image stream matches frame_id {info.frame_id!r}")
+            print(f"  {info_name}: no image stream matches frame_id {info.header.frame_id!r}")
             continue
         for target, img in targets:
-            pinholes[target] = (info, img.frame_id or info.frame_id)
+            pinholes[target] = (info, img.header.frame_id or info.header.frame_id)
         paired.add(info_name)
     return pinholes, paired
 
@@ -81,7 +124,7 @@ def _frame_first_seen(
     first tf message overall (which may be an unrelated or static edge).
     Scans each tf stream only until every frame is found.
     """
-    from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+    from dimos_generated.tf2_msgs.msg import TFMessage
 
     seen: dict[str, float] = {}
     for _, stream, first in renderable:
@@ -124,11 +167,12 @@ def render_store(
     (``<root>/<name>``) — except a stream whose name matches ``root``'s last
     segment, which stays at ``<root>`` itself. Returns the ``.rrd`` path.
     """
+    from dimos_generated.tf2_msgs.msg import TFMessage
     import rerun as rr
 
     from dimos.memory.utils.progress import progress
-    from dimos.msgs.tf2_msgs.TFMessage import TFMessage
     from dimos.visualization.rerun.init import rerun_init
+    from dimos.visualization.rerun.message_helpers import camera_pinhole
 
     if out is None:
         src = getattr(store.config, "path", None) or "store"
@@ -151,13 +195,10 @@ def render_store(
         except LookupError:
             continue
         data = first.data
-        if not hasattr(data, "to_rerun"):
-            print(f"  skip {name}: {type(data).__name__} has no to_rerun()")
-            continue
         try:
-            data.to_rerun()
+            _render_message(data)
         except Exception as e:
-            print(f"  skip {name}: to_rerun() failed ({e})")
+            print(f"  skip {name}: viewer conversion failed ({e})")
             continue
         renderable.append((name, stream, first))
 
@@ -180,7 +221,9 @@ def render_store(
     rr.save(out)
 
     for image_name, (info, frame) in pinholes.items():
-        pinhole = info.to_rerun_pinhole(optical_frame=frame)
+        calibration = deepcopy(info)
+        calibration.header.frame_id = frame
+        pinhole = camera_pinhole(calibration)
         at = frame_at.get(frame)
         if not has_tf:
             rr.log(entity(image_name), pinhole, static=True)
@@ -205,7 +248,7 @@ def render_store(
                     report(obs)
                     continue
                 rr.set_time("time", duration=obs.ts - t0)
-                data = obs.data.to_rerun()
+                data = _render_message(obs.data)
                 path = entity(name)
                 if isinstance(data, list):  # RerunMulti: [(subpath, archetype), ...]
                     for sub, arch in data:

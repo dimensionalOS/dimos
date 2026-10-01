@@ -27,14 +27,17 @@ import socket
 import subprocess
 import time
 
+from dimos_generated.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
+from dimos_generated.sensor_msgs.msg import PointCloud2
+from dimos_generated.std_msgs.msg import Header
+from dimos_generated.tf2_msgs.msg import TFMessage
 import numpy as np
 import pytest
 
 from dimos.core.global_config import global_config
 from dimos.core.transport_factory import make_transport
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.pointcloud import pointcloud_from_xyz
+from dimos.msgs.time import time_from_nanoseconds
 
 pytestmark = pytest.mark.bake_e2e
 
@@ -110,14 +113,16 @@ def await_listener(proc: subprocess.Popen[bytes], port: int, timeout: float = 20
     raise AssertionError(f"the host never listened on {port}")
 
 
-def ground_patch(ts: float) -> PointCloud2:
+def ground_patch(stamp_ns: int) -> PointCloud2:
     """A flat floor patch below the sensor, enough for the planner to surface."""
     grid = np.arange(-10, 11) * 0.1
     xs, ys = np.meshgrid(grid, grid)
     points = np.stack([xs.ravel(), ys.ravel(), np.full(xs.size, -SENSOR_Z)], axis=1).astype(
         np.float32
     )
-    return PointCloud2.from_numpy(points, frame_id="lidar", timestamp=ts)
+    return pointcloud_from_xyz(
+        points, header=Header(stamp=time_from_nanoseconds(stamp_ns), frame_id="lidar")
+    )
 
 
 @pytest.fixture
@@ -155,7 +160,7 @@ def test_the_host_publishes_its_outputs_and_hides_the_suppressed_hop(baked, zeno
             transports.append(transport)
 
         lidar = make_transport("lidar", PointCloud2)
-        tf = make_transport("tf", Transform)
+        tf = make_transport("tf", TFMessage)
         transports += [lidar, tf]
         lidar.start()
         tf.start()
@@ -163,18 +168,23 @@ def test_the_host_publishes_its_outputs_and_hides_the_suppressed_hop(baked, zeno
         deadline = time.monotonic() + 60
         while time.monotonic() < deadline and "surface_map" not in seen:
             # Same stamp on both: the mapper drops a cloud it has no transform for.
-            ts = time.time()
+            stamp_ns = time.time_ns()
             tf.broadcast(
                 None,
-                Transform(
-                    translation=Vector3(0.0, 0.0, SENSOR_Z),
-                    frame_id="odom",
-                    child_frame_id="lidar",
-                    ts=ts,
+                TFMessage(
+                    transforms=[
+                        TransformStamped(
+                            header=Header(stamp=time_from_nanoseconds(stamp_ns), frame_id="odom"),
+                            child_frame_id="lidar",
+                            transform=Transform(
+                                translation=Vector3(z=SENSOR_Z), rotation=Quaternion(w=1.0)
+                            ),
+                        )
+                    ]
                 ),
             )
             time.sleep(0.05)
-            lidar.broadcast(None, ground_patch(ts))
+            lidar.broadcast(None, ground_patch(stamp_ns))
             time.sleep(0.25)
 
         assert proc.poll() is None, "the host exited before publishing anything"

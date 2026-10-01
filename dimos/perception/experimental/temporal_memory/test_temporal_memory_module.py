@@ -23,6 +23,9 @@ import time
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, create_autospec, patch
 
+from dimos_generated.dimos_msgs.msg import EntityMarker, EntityMarkers
+from dimos_generated.geometry_msgs.msg import Point
+from dimos_generated.sensor_msgs.msg import Image
 import numpy as np
 import pytest
 from reactivex import operators as ops
@@ -33,7 +36,8 @@ from dimos.core.module import Module
 from dimos.core.stream import Out
 from dimos.core.transport import LCMTransport
 from dimos.models.vl.base import VlModel
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.image import image_from_array
+from dimos.msgs.time import time_from_seconds
 from dimos.perception.experimental.temporal_memory.entity_graph_db import EntityGraphDB
 from dimos.perception.experimental.temporal_memory.frame_window_accumulator import (
     Frame,
@@ -47,6 +51,7 @@ from dimos.perception.experimental.temporal_memory.temporal_utils.graph_utils im
     extract_time_window,
 )
 from dimos.utils.logging_config import setup_logger
+from dimos.visualization.rerun.message_helpers import entity_points
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -60,7 +65,7 @@ logger = setup_logger()
 
 def _make_image(value: int = 128, shape: tuple[int, ...] = (64, 64, 3)) -> Image:
     data = np.full(shape, value, dtype=np.uint8)
-    return Image.from_numpy(data)
+    return image_from_array(data, encoding="rgb8")
 
 
 class TestFrameWindowAccumulator:
@@ -69,7 +74,7 @@ class TestFrameWindowAccumulator:
         acc.set_start_time(0.0)
         for i in range(10):
             img = _make_image(i * 25)
-            img.ts = float(i)
+            img.header.stamp = time_from_seconds(float(i))
             acc.add_frame(img, float(i))
         assert acc.buffer_size == 5
         assert acc.frame_count == 10
@@ -82,7 +87,7 @@ class TestFrameWindowAccumulator:
         # Add 3 frames
         for i in range(3):
             img = _make_image()
-            img.ts = float(i)
+            img.header.stamp = time_from_seconds(float(i))
             acc.add_frame(img, float(i))
         frames = acc.try_extract_window()
         assert frames is not None
@@ -93,7 +98,7 @@ class TestFrameWindowAccumulator:
         acc.set_start_time(0.0)
         for i in range(3):
             img = _make_image()
-            img.ts = float(i)
+            img.header.stamp = time_from_seconds(float(i))
             acc.add_frame(img, float(i))
         # First extraction should succeed
         frames = acc.try_extract_window()
@@ -112,7 +117,7 @@ class TestFrameWindowAccumulator:
         acc = FrameWindowAccumulator(max_buffer_frames=50, window_s=1.0, stride_s=1.0, fps=1.0)
         acc.set_start_time(0.0)
         img = _make_image()
-        img.ts = 0.0
+        img.header.stamp = time_from_seconds(0.0)
         acc.add_frame(img, 0.0)
         assert acc.buffer_size == 1
         acc.clear()
@@ -426,20 +431,28 @@ class TestEntityMarkers:
         ids = {m.entity_id for m in msg.markers}
         assert ids == {"E1", "E2"}
         e1 = next(m for m in msg.markers if m.entity_id == "E1")
-        assert e1.x == 1.0
-        assert e1.y == 2.0
+        assert e1.position.x == 1.0
+        assert e1.position.y == 2.0
         tm.stop()
 
     def test_markers_to_rerun(self) -> None:
-        from dimos.msgs.visualization_msgs.EntityMarkers import EntityMarkers, Marker
-
         markers = EntityMarkers(
             markers=[
-                Marker("E1", "person walking", "person", 1.0, 2.0, 0.3),
-                Marker("E2", "wooden table", "object", 3.0, 4.0, 0.3),
+                EntityMarker(
+                    entity_id="E1",
+                    label="person walking",
+                    entity_type="person",
+                    position=Point(x=1.0, y=2.0, z=0.3),
+                ),
+                EntityMarker(
+                    entity_id="E2",
+                    label="wooden table",
+                    entity_type="object",
+                    position=Point(x=3.0, y=4.0, z=0.3),
+                ),
             ]
         )
-        archetype = markers.to_rerun()
+        archetype = entity_points(EntityMarkers.decode(markers.encode()))
         # Should return rr.Points3D
         import rerun as rr
 
@@ -463,7 +476,7 @@ class TestWindowAnalyzer:
 
         analyzer = WindowAnalyzer(mock_vlm)
         img = _make_image()
-        img.ts = 0.0
+        img.header.stamp = time_from_seconds(0.0)
         frame = Frame(frame_index=0, timestamp_s=0.0, image=img)
         state_dict = {"entity_roster": [], "rolling_summary": ""}
 
@@ -481,7 +494,7 @@ class TestWindowAnalyzer:
 
         analyzer = WindowAnalyzer(mock_vlm)
         img = _make_image()
-        img.ts = 0.0
+        img.header.stamp = time_from_seconds(0.0)
         frame = Frame(frame_index=0, timestamp_s=0.0, image=img)
 
         result = analyzer.analyze_window([frame], {}, 0.0, 2.0)
@@ -530,7 +543,7 @@ class VideoReplayModule(Module):
         def emit_frames(observer, scheduler):
             for i in range(self.num_frames):
                 img = _make_image(value=min(50 + i * 30, 255))  # Varying brightness
-                img.ts = time.time()
+                img.header.stamp = time_from_seconds(time.time())
                 observer.on_next(img)
                 time.sleep(0.5)
             observer.on_completed()
@@ -642,3 +655,17 @@ class TestTemporalMemoryIntegration:
 
         video_module.stop()
         temporal_memory_module.stop()
+
+
+def test_scene_staleness_compares_pixels_not_padding():
+    from dimos.perception.experimental.temporal_memory.frame_window_accumulator import Frame
+    from dimos.perception.experimental.temporal_memory.temporal_utils.helpers import is_scene_stale
+
+    first = Image(
+        width=2, height=2, encoding="rgb8", step=8, data=[10] * 6 + [0, 0] + [10] * 6 + [0, 0]
+    )
+    last = Image.decode(first.encode())
+    last.data = [10] * 6 + [255, 255] + [10] * 6 + [255, 255]
+    assert is_scene_stale([Frame(0, 0, first), Frame(1, 1, last)], stale_threshold=1)
+    last.data = [30] * 6 + [255, 255] + [30] * 6 + [255, 255]
+    assert not is_scene_stale([Frame(0, 0, first), Frame(1, 1, last)], stale_threshold=1)

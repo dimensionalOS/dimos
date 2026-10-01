@@ -23,7 +23,7 @@ from typing import Any, Literal
 import zenoh
 
 from dimos.msgs.helpers import resolve_msg_type
-from dimos.protocol.pubsub.encoders import LCMEncoderMixin, PickleEncoderMixin
+from dimos.protocol.pubsub.encoders import CDREncoderMixin, PickleEncoderMixin
 from dimos.protocol.pubsub.impl.lcmpubsub import Topic as LCMTopic
 from dimos.protocol.pubsub.spec import AllPubSub
 from dimos.protocol.service.zenohservice import ZenohService
@@ -85,14 +85,14 @@ class Topic(LCMTopic):
 
     @property
     def key_expr(self) -> str:
-        """The Zenoh key expression for this topic, embedding lcm_type after a '/'.
+        """The Zenoh key expression for this topic, embedding msg_type after a '/'.
 
         Examples:
-            Topic("dimos/cmd_vel", Twist) -> "dimos/cmd_vel/geometry_msgs.Twist"
+            Topic("dimos/cmd_vel", Twist) -> "dimos/cmd_vel/geometry_msgs/msg/Twist"
             Topic("dimos/data")           -> "dimos/data"
         """
-        if self.lcm_type is not None:
-            return f"{self.pattern}/{self.lcm_type.msg_name}"
+        if self.msg_type is not None:
+            return f"{self.pattern}/{self.msg_type.msg_name}"
         return self.pattern
 
 
@@ -100,32 +100,22 @@ def _topic_to_key_expr(topic: LCMTopic) -> str:
     """Convert any LCM-compatible Topic to a Zenoh key expression."""
     if isinstance(topic, Topic):
         return topic.key_expr
-    return Topic(topic=topic.topic, lcm_type=topic.lcm_type).key_expr
+    return Topic(topic=topic.topic, msg_type=topic.msg_type).key_expr
 
 
 @lru_cache(maxsize=1024)
-def _key_expr_to_topic(key_expr: str, default_lcm_type: type | None = None) -> Topic:
-    """Reconstruct a Topic from a Zenoh key expression.
+def _key_expr_to_topic(key_expr: str, default_msg_type: type | None = None) -> Topic:
+    """Resolve a qualified package/msg/Type suffix; never guess from payload bytes.
 
-    Parses the last '/' segment and attempts to resolve it as a DimosMsg
-    type via resolve_msg_type(). If resolution succeeds, the segment is
-    treated as the type suffix and the remainder as the base topic.
-
-    Results are cached; callers must treat the returned Topic as immutable.
-
-    Examples:
-        "dimos/cmd_vel/geometry_msgs.Twist" -> Topic("dimos/cmd_vel", Twist)
-        "dimos/data"                        -> Topic("dimos/data", default_lcm_type)
-        "dimos/data/unknown.Foo"            -> Topic("dimos/data/unknown.Foo", default_lcm_type)
+    Untyped keys retain their complete path. An explicit but unknown type suffix
+    cannot fall back to the subscriber's type.
     """
-    # Try to resolve the last segment as a message type
-    parts = key_expr.rsplit("/", 1)
-    if len(parts) == 2:
-        base, maybe_type = parts
-        lcm_type = resolve_msg_type(maybe_type)
-        if lcm_type is not None:
-            return Topic(topic=base, lcm_type=lcm_type)
-    return Topic(topic=key_expr, lcm_type=default_lcm_type)
+    parts = key_expr.rsplit("/", 3)
+    if len(parts) == 4 and parts[2] == "msg":
+        base, package, _, name = parts
+        msg_type = resolve_msg_type(f"{package}/msg/{name}")
+        return Topic(topic=base, msg_type=msg_type)
+    return Topic(topic=key_expr, msg_type=default_msg_type)
 
 
 class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
@@ -211,7 +201,7 @@ class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
             if sample_key == key_expr:
                 recv_topic = topic
             else:
-                recv_topic = _key_expr_to_topic(sample_key, topic.lcm_type)
+                recv_topic = _key_expr_to_topic(sample_key, topic.msg_type)
             callback(data, recv_topic)
 
         sub = self.session.declare_subscriber(key_expr, on_sample)
@@ -306,10 +296,10 @@ class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
 
 
 class Zenoh(  # type: ignore[misc]
-    LCMEncoderMixin,
+    CDREncoderMixin,
     ZenohPubSubBase,
 ):
-    """Zenoh pub/sub with LCM encoding for typed DimosMsg."""
+    """Zenoh pub/sub with CDR encoding for typed DimosMsg."""
 
     ...
 

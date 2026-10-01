@@ -22,11 +22,9 @@ import re
 import time
 from typing import Any, Generic, TypeVar
 
+from dimos_generated.geometry_msgs.msg import Point, Pose, Quaternion, Vector3
 import pytest
 
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM, LCMPubSubBase, Topic
 from dimos.protocol.pubsub.patterns import Glob
 from dimos.protocol.pubsub.spec import AllPubSub, PubSub
@@ -83,9 +81,12 @@ testcases: list[Case[Any, Any]] = [
         name="lcm_typed",
         pubsub_context=lcm_typed_context,
         topic_values=[
-            (Topic("/sensor/position", Vector3), Vector3(1, 2, 3)),
-            (Topic("/sensor/orientation", Quaternion), Quaternion(0, 0, 0, 1)),
-            (Topic("/robot/arm", Pose), Pose(Vector3(4, 5, 6), Quaternion(0, 0, 0, 1))),
+            (Topic("/sensor/position", Vector3), Vector3(x=1, y=2, z=3)),
+            (Topic("/sensor/orientation", Quaternion), Quaternion(w=1)),
+            (
+                Topic("/robot/arm", Pose),
+                Pose(position=Point(x=4, y=5, z=6), orientation=Quaternion(w=1)),
+            ),
         ],
         tags={"all", "glob", "regex"},
         glob_patterns=[

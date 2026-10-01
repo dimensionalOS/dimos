@@ -18,19 +18,18 @@ from __future__ import annotations
 
 import math
 
+from dimos_generated.dimos_msgs.msg import GraspCandidate, GraspCandidateArray
+from dimos_generated.geometry_msgs.msg import Point, Pose
+from dimos_generated.sensor_msgs.msg import PointCloud2
 import numpy as np
 from numpy.typing import NDArray
 
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.manipulation_msgs.GraspCandidate import GraspCandidate
-from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.std_msgs.Header import Header
+from dimos.msgs.geometry import quaternion_from_euler
+from dimos.msgs.pointcloud import pointcloud_xyz
+from dimos.msgs.time import to_nanoseconds
 
 
 class HeuristicGraspModule(Module, GraspGenSpec):
@@ -41,11 +40,10 @@ class HeuristicGraspModule(Module, GraspGenSpec):
 
     @rpc
     def propose_grasps(self, object_pointcloud: PointCloud2) -> GraspCandidateArray:
-        if object_pointcloud.ts is None or not math.isfinite(float(object_pointcloud.ts)):
-            raise ValueError("object pointcloud must have a finite timestamp")
-        if not object_pointcloud.frame_id:
+        to_nanoseconds(object_pointcloud.header.stamp)
+        if not object_pointcloud.header.frame_id:
             raise ValueError("object pointcloud frame_id must not be empty")
-        points = object_pointcloud.points_f32()
+        points = pointcloud_xyz(object_pointcloud).astype(np.float32)
         if points.ndim != 2 or points.shape[1] != 3 or len(points) < 3:
             raise ValueError("object pointcloud must contain at least three XYZ points")
         if not np.all(np.isfinite(points)):
@@ -55,12 +53,14 @@ class HeuristicGraspModule(Module, GraspGenSpec):
         center_xy = np.median(xy, axis=0)
         low_z, high_z = np.quantile(points[:, 2], [0.05, 0.95])
         pose = Pose(
-            Vector3(float(center_xy[0]), float(center_xy[1]), float((low_z + high_z) / 2.0)),
-            Quaternion.from_euler(Vector3(-math.pi, 0.0, self._narrow_axis_yaw(xy))),
+            position=Point(
+                x=float(center_xy[0]), y=float(center_xy[1]), z=float((low_z + high_z) / 2.0)
+            ),
+            orientation=quaternion_from_euler(-math.pi, 0.0, self._narrow_axis_yaw(xy)),
         )
         return GraspCandidateArray(
-            Header(float(object_pointcloud.ts), object_pointcloud.frame_id),
-            [GraspCandidate(pose, score=1.0)],
+            header=object_pointcloud.header,
+            candidates=[GraspCandidate(pose=pose, score=1.0)],
         )
 
     @staticmethod

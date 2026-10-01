@@ -17,6 +17,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from dimos_generated.nav_msgs.msg import OccupancyGrid
+from dimos_generated.std_msgs.msg import Header
+import numpy as np
 import typer
 
 from dimos.mapping.occupancy.gradient import gradient
@@ -27,8 +30,8 @@ from dimos.mapping.pointclouds.util import (
     read_pointcloud,
     visualize,
 )
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.image import image_to_bgr
+from dimos.msgs.pointcloud import pointcloud_from_xyz
 from dimos.utils.data import get_data
 
 if TYPE_CHECKING:
@@ -46,7 +49,7 @@ def _get_occupancy_grid() -> OccupancyGrid:
     min_height = 0.15
     max_height = 0.6
     occupancygrid = simple_occupancy(
-        PointCloud2(_get_sum_map()),
+        pointcloud_from_xyz(np.asarray(_get_sum_map().points), header=Header(frame_id="world")),
         resolution=resolution,
         min_height=min_height,
         max_height=max_height,
@@ -57,15 +60,15 @@ def _get_occupancy_grid() -> OccupancyGrid:
 def _show_occupancy_grid(og: OccupancyGrid) -> None:
     import cv2
 
-    cost_map = visualize_occupancy_grid(og, "turbo").to_opencv()
-    cost_map = cv2.flip(cost_map, 0)
+    cost_map = image_to_bgr(visualize_occupancy_grid(og, "turbo"))
+    flipped = cv2.flip(cost_map, 0)
 
     # Resize to make the image larger (scale by 4x)
-    height, width = cost_map.shape[:2]
-    cost_map = cv2.resize(cost_map, (width * 4, height * 4), interpolation=cv2.INTER_NEAREST)
+    height, width = flipped.shape[:2]
+    resized = cv2.resize(flipped, (width * 4, height * 4), interpolation=cv2.INTER_NEAREST)
 
     cv2.namedWindow("Occupancy Grid", cv2.WINDOW_NORMAL)
-    cv2.imshow("Occupancy Grid", cost_map)
+    cv2.imshow("Occupancy Grid", resized)
     cv2.waitKey(0)
     cv2.destroyAllWindows()
 

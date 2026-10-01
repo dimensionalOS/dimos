@@ -12,12 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import replace
+
+import numpy as np
 from PIL import Image as PILImage, ImageDraw
 
 from dimos.mapping.models import LatLon
 from dimos.mapping.osm.osm import MapImage, get_osm_map
 from dimos.mapping.osm.query import query_for_one_position, query_for_one_position_and_context
 from dimos.models.vl.base import VlModel
+from dimos.msgs.image import image_from_array, image_to_rgb
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -70,11 +74,9 @@ class CurrentLocationMap:
         self._map_image = get_osm_map(self._position, self._zoom_level, self._n_tiles)  # type: ignore[arg-type]
 
         # Add position marker
-        import numpy as np
-
         assert self._map_image is not None
         assert self._position is not None
-        pil_image = PILImage.fromarray(self._map_image.image.data)
+        pil_image = PILImage.fromarray(image_to_rgb(self._map_image.image))
         draw = ImageDraw.Draw(pil_image)
         x, y = self._map_image.latlon_to_pixel(self._position)
         radius = 20
@@ -85,7 +87,12 @@ class CurrentLocationMap:
             width=3,
         )
 
-        self._map_image.image.data[:] = np.array(pil_image)
+        self._map_image = replace(
+            self._map_image,
+            image=image_from_array(
+                np.asarray(pil_image), encoding="rgb8", header=self._map_image.image.header
+            ),
+        )
 
     def _position_is_too_far_off_center(self) -> bool:
         x, y = self._map_image.latlon_to_pixel(self._position)  # type: ignore[arg-type, union-attr]
@@ -108,6 +115,6 @@ class CurrentLocationMap:
             self._get_current_map()  # type: ignore[no-untyped-call]
 
         if self._map_image is not None:
-            self._map_image.image.save(filepath)
+            PILImage.fromarray(image_to_rgb(self._map_image.image)).save(filepath)
         logger.info(f"Saved OSM map image to {filepath}")
         return filepath

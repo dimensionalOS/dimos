@@ -13,14 +13,16 @@
 # limitations under the License.
 
 from collections.abc import Callable, Generator
+import os
 import time
 
+from dimos_generated.sensor_msgs.msg import PointCloud2
 import numpy as np
 import pytest
 
 from dimos.core.transport import LCMTransport
 from dimos.mapping.voxels.grid import VoxelGrid
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.pointcloud import pointcloud_xyz
 from dimos.utils.testing.moment import OutputMoment
 from dimos.utils.testing.test_moment import Go2Moment
 
@@ -44,7 +46,7 @@ def moment() -> Generator[MomentFactory, None, None]:
     instances: list[Go2MapperMoment] = []
 
     def get_moment(ts: float, publish: bool = True) -> Go2MapperMoment:
-        m = Go2MapperMoment()
+        m = Go2MapperMoment(os.environ["DIMOS_CDR_REPLAY"])
         m.seek(ts)
         if publish:
             m.publish()
@@ -87,8 +89,8 @@ def test_carving(grid: VoxelGrid, moment1: Go2MapperMoment, moment2: Go2MapperMo
     count_carving = grid.size()
 
     voxel_size = grid._voxel_size
-    pts1 = np.asarray(lidar_frame1.pointcloud.points)
-    pts2 = np.asarray(lidar_frame2.pointcloud.points)
+    pts1 = pointcloud_xyz(lidar_frame1)
+    pts2 = pointcloud_xyz(lidar_frame2)
     combined_vox = np.floor(np.vstack([pts1, pts2]) / voxel_size).astype(np.int64)
     count_additive = np.unique(combined_vox, axis=0).shape[0]
 

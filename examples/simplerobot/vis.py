@@ -16,6 +16,9 @@
 
 import math
 import threading
+from typing import Any
+
+from dimos.msgs.geometry import yaw
 
 
 def run_visualization(robot, window_size=(800, 800), meters_per_pixel=0.02):
@@ -57,25 +60,25 @@ def run_visualization(robot, window_size=(800, 800), meters_per_pixel=0.02):
             pygame.draw.line(screen, GRID, (0, y), (w, y))
 
         # Robot position in screen coords
-        rx = cx + int(pose.x / meters_per_pixel)
-        ry = cy - int(pose.y / meters_per_pixel)
+        rx = cx + int(pose.position.x / meters_per_pixel)
+        ry = cy - int(pose.position.y / meters_per_pixel)
 
         # Robot body
         pygame.draw.circle(screen, ROBOT, (rx, ry), 20)
 
         # Direction arrow
-        ax = rx + int(45 * math.cos(pose.yaw))
-        ay = ry - int(45 * math.sin(pose.yaw))
+        ax = rx + int(45 * math.cos(yaw(pose.orientation)))
+        ay = ry - int(45 * math.sin(yaw(pose.orientation)))
         pygame.draw.line(screen, ARROW, (rx, ry), (ax, ay), 3)
         for sign in [-1, 1]:
-            hx = ax - int(10 * math.cos(pose.yaw + sign * 0.5))
-            hy = ay + int(10 * math.sin(pose.yaw + sign * 0.5))
+            hx = ax - int(10 * math.cos(yaw(pose.orientation) + sign * 0.5))
+            hy = ay + int(10 * math.sin(yaw(pose.orientation) + sign * 0.5))
             pygame.draw.line(screen, ARROW, (ax, ay), (hx, hy), 3)
 
         # Info text
         info = [
-            f"Position: ({pose.x:.2f}, {pose.y:.2f}) m",
-            f"Heading: {math.degrees(pose.yaw):.1f}°",
+            f"Position: ({pose.position.x:.2f}, {pose.position.y:.2f}) m",
+            f"Heading: {math.degrees(yaw(pose.orientation)):.1f}°",
             f"Velocity: {vel.linear.x:.2f} m/s",
             f"Angular: {math.degrees(vel.angular.z):.1f}°/s",
         ]
@@ -88,7 +91,7 @@ def run_visualization(robot, window_size=(800, 800), meters_per_pixel=0.02):
     pygame.quit()
 
 
-def start_visualization(robot, **kwargs):
+def start_visualization(robot: Any, **kwargs: Any) -> threading.Thread:
     """Start visualization in a background thread."""
     thread = threading.Thread(target=run_visualization, args=(robot,), kwargs=kwargs, daemon=True)
     thread.start()

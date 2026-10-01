@@ -15,25 +15,26 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Generator, Iterator
+from pathlib import Path
 import subprocess
 import sys
 import threading
 import time
 from typing import TYPE_CHECKING, Any
 
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped
+from dimos_generated.std_msgs.msg import Bool, Header
 import pytest
 
 from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
 from dimos.core.global_config import global_config
 from dimos.core.transport_factory import make_transport
+from dimos.e2e_tests.cdr_replay_fixture import write_go2_cdr_replay
 from dimos.e2e_tests.conf_types import StartPersonTrack
 from dimos.e2e_tests.dim_sim_client import DimSimClient
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall
 from dimos.e2e_tests.lcm_spy import LcmSpy
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import make_vector3
-from dimos.msgs.std_msgs.Bool import Bool
+from dimos.msgs.geometry import quaternion_from_euler
 from dimos.simulation.mujoco.direct_cmd_vel_explorer import DirectCmdVelExplorer
 from dimos.simulation.mujoco.person_on_track import PersonTrackPublisher
 
@@ -143,9 +144,8 @@ def serve_channel() -> Iterator[Callable[..., str]]:
 
 def _pose(x: float, y: float, theta: float) -> PoseStamped:
     return PoseStamped(
-        position=make_vector3(x, y, 0),
-        orientation=Quaternion.from_euler(make_vector3(0, 0, theta)),
-        frame_id="map",
+        header=Header(frame_id="map"),
+        pose=Pose(position=Point(x=x, y=y), orientation=quaternion_from_euler(0, 0, theta)),
     )
 
 
@@ -160,11 +160,11 @@ def lcm_spy() -> Iterator[LcmSpy]:
 @pytest.fixture
 def follow_points(lcm_spy: LcmSpy):
     def fun(*, points: list[tuple[float, float, float]], fail_message: str) -> None:
-        topic = "/goal_reached#std_msgs.Bool"
+        topic = "/goal_reached#std_msgs/msg/Bool"
         lcm_spy.save_topic(topic)
 
         for x, y, theta in points:
-            lcm_spy.publish("/goal_request#geometry_msgs.PoseStamped", _pose(x, y, theta))
+            lcm_spy.publish("/goal_request#geometry_msgs/msg/PoseStamped", _pose(x, y, theta))
             lcm_spy.wait_for_message_result(
                 topic,
                 Bool,
@@ -296,7 +296,7 @@ def dim_sim():
 @pytest.fixture
 def spawn_wall_on_pose(lcm_spy: LcmSpy, dim_sim: DimSimClient):
     """Spawn a dim_sim wall when the robot's /odom comes within `threshold` metres of `point`."""
-    odom_topic = "/odom#geometry_msgs.PoseStamped"
+    odom_topic = "/odom#geometry_msgs/msg/PoseStamped"
     stop_event = threading.Event()
     workers: list[threading.Thread] = []
     errors: list[BaseException] = []
@@ -309,9 +309,9 @@ def spawn_wall_on_pose(lcm_spy: LcmSpy, dim_sim: DimSimClient):
         def on_odom(data):
             if triggered.is_set():
                 return
-            pose = PoseStamped.lcm_decode(data)
-            dx = pose.x - px
-            dy = pose.y - py
+            pose = PoseStamped.decode(data)
+            dx = pose.pose.position.x - px
+            dy = pose.pose.position.y - py
             if dx * dx + dy * dy < threshold_sq:
                 triggered.set()
 
@@ -373,3 +373,11 @@ def explore_house(
         direct_cmd_vel_explorer.follow_points(points)
 
     return explore
+
+
+@pytest.fixture(scope="session")
+def cdr_go2_replay_db(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Current generated-message replay, independent of retired LFS codecs."""
+    path = tmp_path_factory.mktemp("go2-cdr") / "replay.db"
+    write_go2_cdr_replay(path)
+    return path

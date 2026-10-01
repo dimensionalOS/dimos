@@ -18,12 +18,13 @@ import pytest
 
 pytest.importorskip("roboplan.core")
 
+from dimos_generated.sensor_msgs.msg import JointState
+
 from dimos.manipulation.planning.planners import roboplan_planner as roboplan_planner_module
 from dimos.manipulation.planning.planners.roboplan_config import RoboPlanPlannerConfig
 from dimos.manipulation.planning.spec.enums import PlanningStatus
 from dimos.manipulation.planning.spec.validation import prepare_robot_model
 from dimos.manipulation.planning.world import roboplan_world as roboplan_world_module
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.unitree.g1.manip_config import (
     G1_LEFT_ARM_JOINTS,
     G1_RIGHT_ARM_JOINTS,

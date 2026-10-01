@@ -80,8 +80,8 @@ def _press(monitor: EpisodeMonitorModule, alias: str) -> None:
     released = Buttons()
     pressed = Buttons()
     pressed.set_attribute(attr, True)
-    monitor._on_buttons(released)
-    monitor._on_buttons(pressed)
+    monitor._on_buttons(released.to_message())
+    monitor._on_buttons(pressed.to_message())
 
 
 def test_toggle_starts_then_saves(make_monitor: Callable[..., EpisodeMonitorModule]) -> None:
@@ -130,8 +130,8 @@ def test_no_event_without_rising_edge(
     m = make_monitor()
     pressed = Buttons()
     pressed.right_secondary = True  # B held
-    m._on_buttons(pressed)
-    m._on_buttons(pressed)  # still held — no new edge
+    m._on_buttons(pressed.to_message())
+    m._on_buttons(pressed.to_message())  # still held — no new edge
     assert [e.last_event for e in _events(m)] == ["start"]
 
 

@@ -49,6 +49,11 @@ import math
 from pathlib import Path
 from typing import Any, cast
 
+from dimos_generated.dimos_msgs.msg import MotorCommandArray
+from dimos_generated.geometry_msgs.msg import Twist
+from dimos_generated.nav_msgs.msg import Odometry, Path as NavPath
+from dimos_generated.sensor_msgs.msg import Imu, JointState
+
 from dimos.control.components import HardwareComponent, HardwareType
 from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import (
@@ -69,11 +74,7 @@ from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.mapping.costmapper import CostMapper
 from dimos.mapping.pointclouds.occupancy import HeightCostConfig
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.nav_msgs.Path import Path as NavPath
-from dimos.msgs.sensor_msgs.Imu import Imu
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
+from dimos.msgs.geometry import pose_matrix, quaternion_from_matrix
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.robot.unitree.g1.config import G1
@@ -87,6 +88,7 @@ from dimos.robot.unitree.g1.manip_config import G1_TELEOP_ARM_MODEL
 from dimos.robot.unitree.g1.teleop_ik import G1PinkPoseTargetSolver
 from dimos.simulation.scene_assets.spec import ScenePackage
 from dimos.utils.data import LfsPath
+from dimos.visualization.rerun.message_helpers import navigation_archetype
 from dimos.visualization.rerun.scene_package import scene_package_static_entities
 from dimos.visualization.vis_module import vis_module
 
@@ -375,7 +377,7 @@ def _g1_groot_rerun_blueprint() -> Any:
 
 
 def _g1_nav_path(path: NavPath) -> Any:
-    return path.to_rerun(z_offset=0.3)
+    return navigation_archetype(path, z_offset=0.3)
 
 
 # Mesh root: sim roots under the /odom transform; real hw under the LIO's
@@ -415,20 +417,17 @@ def _g1_pelvis_to_mid360() -> Any:
     return _g1_pelvis_mid360_cache[0]
 
 
-def _g1_real_odometry_root(odom: Any) -> Any:
+def _g1_real_odometry_root(odom: Odometry) -> Any:
     """Robot-mesh root: pelvis pose from the LIO's mid360 odometry (rest offset)."""
     import numpy as np
     import rerun as rr
 
-    from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-
-    t_world_mid360 = np.eye(4)
+    t_world_mid360 = pose_matrix(odom.pose.pose)
     # The MID-360 is mounted upside down (the URDF doesn't carry the flip):
     # un-roll by Rx(pi) == diag(1, -1, -1).
-    t_world_mid360[:3, :3] = odom.orientation.to_rotation_matrix() @ np.diag([1.0, -1.0, -1.0])
-    t_world_mid360[:3, 3] = (odom.x, odom.y, odom.z)
+    t_world_mid360[:3, :3] = t_world_mid360[:3, :3] @ np.diag([1.0, -1.0, -1.0])
     t_world_pelvis = t_world_mid360 @ np.linalg.inv(_g1_pelvis_to_mid360())
-    q = Quaternion.from_rotation_matrix(t_world_pelvis[:3, :3])
+    q = quaternion_from_matrix(t_world_pelvis[:3, :3])
     return rr.Transform3D(
         translation=t_world_pelvis[:3, 3].tolist(),
         rotation=rr.Quaternion(xyzw=[q.x, q.y, q.z, q.w]),

@@ -16,11 +16,11 @@ from abc import ABC, abstractmethod
 from threading import RLock
 import time
 
+from dimos_generated.geometry_msgs.msg import PoseStamped
+from dimos_generated.nav_msgs.msg import OccupancyGrid
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.navigation.patrolling.routers.visitation_history import VisitationHistory
 
 
@@ -62,7 +62,7 @@ class BasePatrolRouter(ABC):
             self._pose = msg
             if self._occupancy_grid is None:
                 return
-            self._visitation.handle_odom(msg.position.x, msg.position.y)
+            self._visitation.handle_odom(msg.pose.position.x, msg.pose.position.y)
 
     def get_saturation(self) -> float:
         with self._lock:

@@ -10,6 +10,3 @@ include = ["Cargo.toml", "build.rs", "src/**", "build_rust.py", "definitions.py"
 serde = { version = "1.0", features = ["derive"] }
 serde-big-array = "=0.5.1"
 re_cdr = "=0.1.0"
-
-# Standalone until the native runtime joins the generated message package.
-[workspace]

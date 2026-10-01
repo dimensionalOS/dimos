@@ -22,15 +22,17 @@ if sys.version_info >= (3, 11):
 else:
     from typing_extensions import Self
 
-from dimos_lcm.vision_msgs import Detection2DArray
+from dimos_generated.vision_msgs.msg import Detection2DArray
 
-from dimos.msgs.std_msgs.Header import Header
+from dimos.msgs.image import image_from_array, image_to_bgr
+from dimos.msgs.time import to_seconds
 from dimos.perception.detection.type.utils import TableStr
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
-    from dimos.msgs.sensor_msgs.Image import Image
+    from dimos_generated.sensor_msgs.msg import Image
+
     from dimos.perception.detection.type.detection2d.base import Detection2D
 
     T = TypeVar("T", bound=Detection2D)
@@ -46,14 +48,14 @@ class ImageDetections(Generic[T], TableStr):
 
     @property
     def ts(self) -> float:
-        return self.image.ts
+        return to_seconds(self.image.header.stamp)
 
     def __init__(self, image: Image, detections: list[T] | None = None) -> None:
         self.image = image
         self.detections = detections or []
         for det in self.detections:
             if not det.ts:
-                det.ts = image.ts
+                det.ts = to_seconds(image.header.stamp)
 
     def __len__(self) -> int:
         return len(self.detections)
@@ -80,18 +82,15 @@ class ImageDetections(Generic[T], TableStr):
 
     def to_ros_detection2d_array(self) -> Detection2DArray:
         return Detection2DArray(
-            detections_length=len(self.detections),
-            header=Header(self.image.ts, "camera_optical"),
+            header=self.image.header,
             detections=[det.to_ros_detection2d() for det in self.detections],
         )
 
     def annotated_image(self, scale: float = 1.0) -> Image:
         """Return the image with all detection bboxes and labels drawn on it."""
-        img = self.image.to_opencv().copy()
+        img = image_to_bgr(self.image)
         for det in self.detections:
             if hasattr(det, "draw_on"):
                 det.draw_on(img, scale=scale)
 
-        from dimos.msgs.sensor_msgs.Image import Image as ImageMsg
-
-        return ImageMsg.from_opencv(img, ts=self.image.ts)
+        return image_from_array(img, encoding="bgr8", header=self.image.header)

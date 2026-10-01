@@ -12,46 +12,69 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""E2E test: import legacy pickle replays into memory SqliteStore."""
+"""E2E test: copy a deterministic CDR recording into a fresh SQLite store."""
 
 from __future__ import annotations
 
 import bisect
 from typing import TYPE_CHECKING, Any
 
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped
+from dimos_generated.sensor_msgs.msg import Image, PointCloud2
+from dimos_generated.std_msgs.msg import Header
+import numpy as np
 import pytest
 
 from dimos.memory.embed import EmbedImages
 from dimos.memory.store.sqlite import SqliteStore
+from dimos.memory.stream import Stream
 from dimos.memory.transform import QualityWindow
 from dimos.models.embedding.clip import CLIPModel
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.robot.unitree.type.odometry import Odometry
-from dimos.utils.data import get_data_dir
-from dimos.utils.testing.legacy_pickle import LegacyPickleStore
+from dimos.msgs.image import image_brightness, image_from_array, image_sharpness
+from dimos.msgs.pointcloud import pointcloud_from_xyz
+from dimos.msgs.time import time_from_nanoseconds
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-DB_PATH = get_data_dir() / "go2_short.db"
+
+@pytest.fixture(scope="module")
+def source(tmp_path_factory: pytest.TempPathFactory) -> Iterator[SqliteStore]:
+    path = tmp_path_factory.mktemp("cdr-source") / "recording.db"
+    with SqliteStore(path=str(path)) as store:
+        video = store.stream("color_image", Image)
+        lidar = store.stream("lidar", PointCloud2)
+        odom = store.stream("odom", PoseStamped)
+        for index in range(1024):
+            ns = 1_700_000_000_123_456_789 + index * 25_000_000
+            header = Header(stamp=time_from_nanoseconds(ns), frame_id="world")
+            pose = PoseStamped(header=header, pose=Pose(position=Point(x=index / 100)))
+            pixels = np.full((8, 8, 3), 64 + index % 128, dtype=np.uint8)
+            pixels[:, index % 8] = (255, 0, 127)
+            video.append(image_from_array(pixels, encoding="rgb8", header=header), ts=ns / 1e9)
+            lidar.append(
+                pointcloud_from_xyz(np.array([[1, 0, 0], [1, 1, 0], [2, 0, 0]]), header=header),
+                ts=ns / 1e9,
+            )
+            odom.append(pose, ts=ns / 1e9)
+        yield store
 
 
 @pytest.fixture(scope="module")
-def session() -> Iterator[SqliteStore]:
-    store = SqliteStore(path=str(DB_PATH))
-    with store:
+def session(tmp_path_factory: pytest.TempPathFactory) -> Iterator[SqliteStore]:
+    path = tmp_path_factory.mktemp("cdr-output") / "recording.db"
+    with SqliteStore(path=str(path)) as store:
         yield store
-    store.stop()
 
 
 class PoseIndex:
     """Preloaded odom data with O(log n) closest-timestamp lookup."""
 
-    def __init__(self, replay: LegacyPickleStore[Any]) -> None:
+    def __init__(self, replay: Stream[Any]) -> None:
         self._timestamps: list[float] = []
         self._data: list[Any] = []
-        for ts, data in replay.iterate_ts():
+        for obs in replay:
+            ts, data = obs.ts, obs.data
             self._timestamps.append(ts)
             self._data.append(data)
 
@@ -73,22 +96,22 @@ class PoseIndex:
 
 
 @pytest.fixture(scope="module")
-def video_replay() -> LegacyPickleStore[Image]:
-    return LegacyPickleStore("go2_short/video")
+def video_replay(source: SqliteStore) -> Stream[Image]:
+    return source.stream("color_image", Image)
 
 
 @pytest.fixture(scope="module")
-def odom_index() -> PoseIndex:
-    return PoseIndex(LegacyPickleStore("go2_short/odom"))
+def odom_index(source: SqliteStore) -> PoseIndex:
+    return PoseIndex(source.stream("odom", PoseStamped))
 
 
 @pytest.fixture(scope="module")
-def lidar_replay() -> LegacyPickleStore[PointCloud2]:
-    return LegacyPickleStore("go2_short/lidar")
+def lidar_replay(source: SqliteStore) -> Stream[PointCloud2]:
+    return source.stream("lidar", PointCloud2)
 
 
 class TestImportReplay:
-    """Import legacy pickle replay data into a memory SqliteStore.
+    """Copy generated CDR streams into a fresh memory SqliteStore.
 
     Lidar/odom are trimmed to start at video's first ts. The MemoryReplayAdapter
     scheduler anchors each stream to its own first_ts on subscribe, so aligning
@@ -99,10 +122,10 @@ class TestImportReplay:
         self,
         session: SqliteStore,
         odom_index: PoseIndex,
-        video_replay: LegacyPickleStore[Any],
+        video_replay: Stream[Any],
     ) -> None:
-        threshold = video_replay.first_timestamp()
-        with session.stream("odom", Odometry) as odom:
+        threshold = video_replay.first().ts
+        with session.stream("odom", PoseStamped) as odom:
             count = 0
             skipped = 0
             for ts, data in odom_index:
@@ -119,12 +142,13 @@ class TestImportReplay:
     def test_import_video(
         self,
         session: SqliteStore,
-        video_replay: LegacyPickleStore[Any],
+        video_replay: Stream[Any],
         odom_index: PoseIndex,
     ) -> None:
         with session.stream("color_image", Image) as video:
             count = 0
-            for ts, frame in video_replay.iterate_ts():
+            for obs in video_replay:
+                ts, frame = obs.ts, obs.data
                 pose = odom_index.find_closest(ts)
                 video.append(frame, ts=ts, pose=pose)
                 count += 1
@@ -137,16 +161,17 @@ class TestImportReplay:
     def test_import_lidar(
         self,
         session: SqliteStore,
-        lidar_replay: LegacyPickleStore[Any],
+        lidar_replay: Stream[Any],
         odom_index: PoseIndex,
-        video_replay: LegacyPickleStore[Any],
+        video_replay: Stream[Any],
     ) -> None:
-        threshold = video_replay.first_timestamp()
-        lidar = session.stream("lidar", PointCloud2, codec="lz4+lcm")
+        threshold = video_replay.first().ts
+        lidar = session.stream("lidar", PointCloud2, codec="lz4+cdr")
 
         count = 0
         skipped = 0
-        for ts, frame in lidar_replay.iterate_ts():
+        for obs in lidar_replay:
+            ts, frame = obs.ts, obs.data
             if ts < threshold:
                 skipped += 1
                 continue
@@ -173,9 +198,9 @@ class TestEmbed:
 
         # Downsample to 2Hz, then embed
         pipeline = (
-            video.filter(lambda obs: obs.data.brightness > 0.1)
+            video.filter(lambda obs: image_brightness(obs.data) > 0.1)
             .tap(print)
-            .transform(QualityWindow(lambda img: img.sharpness, window=0.5))
+            .transform(QualityWindow(image_sharpness, window=0.5))
             .transform(EmbedImages(clip))
             .save(embedded)
         )
@@ -209,7 +234,7 @@ class TestEmbed:
 
 
 class TestE2EQuery:
-    """Query operations against real robot replay data."""
+    """Query operations against a deterministic generated CDR recording."""
 
     def test_list_streams(self, session: SqliteStore) -> None:
         streams = session.list_streams()

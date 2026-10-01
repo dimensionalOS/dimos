@@ -25,28 +25,27 @@ Subscribes to Twist commands and publishes PoseStamped.
 import math
 import time
 
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Twist, Vector3
+from dimos_generated.std_msgs.msg import Header
 import reactivex as rx
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.geometry import quaternion_from_euler, yaw
+from dimos.msgs.time import time_from_seconds
 
 
 def apply_twist(pose: Pose, twist: Twist, dt: float) -> Pose:
     """Apply a velocity command to a pose (unicycle model)."""
-    yaw = pose.yaw + twist.angular.z * dt
+    heading = yaw(pose.orientation) + twist.angular.z * dt
     return Pose(
-        position=(
-            pose.x + twist.linear.x * math.cos(yaw) * dt,
-            pose.y + twist.linear.x * math.sin(yaw) * dt,
-            pose.z,
+        position=Point(
+            x=pose.position.x + twist.linear.x * math.cos(heading) * dt,
+            y=pose.position.y + twist.linear.x * math.sin(heading) * dt,
+            z=pose.position.z,
         ),
-        orientation=Quaternion.from_euler(Vector3(0, 0, yaw)),
+        orientation=quaternion_from_euler(0, 0, heading),
     )
 
 
@@ -91,10 +90,8 @@ class SimpleRobot(Module):
 
         self.pose.publish(
             PoseStamped(
-                ts=now,
-                frame_id=self.config.frame_id,
-                position=self._pose.position,
-                orientation=self._pose.orientation,
+                header=Header(stamp=time_from_seconds(now), frame_id=self.config.frame_id),
+                pose=self._pose,
             )
         )
 
@@ -123,7 +120,7 @@ if __name__ == "__main__":
     print("  Publishing: /odom (PoseStamped)")
     print("  Subscribing: /cmd_vel (Twist)")
     print("  Run 'lcmspy' in another terminal to see LCM messages")
-    print("  Check /examples/language-interop for sending commands from LUA, C++, TS etc.")
+    print("  Check /examples/language-interop for generated CDR interoperability examples.")
     print("  Ctrl+C to exit")
 
     try:
@@ -131,11 +128,11 @@ if __name__ == "__main__":
             time.sleep(1)
             print("Forward...")
             for _ in range(8):
-                robot._on_twist(Twist(linear=(1.0, 0, 0)))
+                robot._on_twist(Twist(linear=Vector3(x=1.0)))
                 time.sleep(0.25)
             print("Turn...")
             for _ in range(12):
-                robot._on_twist(Twist(linear=(0.5, 0, 0), angular=(0, 0, 0.5)))
+                robot._on_twist(Twist(linear=Vector3(x=0.5), angular=Vector3(z=0.5)))
                 time.sleep(0.25)
             print("Stop")
             robot._on_twist(Twist())

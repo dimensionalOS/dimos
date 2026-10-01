@@ -20,11 +20,18 @@ from threading import Event, Thread
 from typing import Any
 from unittest.mock import ANY, MagicMock, call
 
+from dimos_generated.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
+from dimos_generated.sensor_msgs.msg import Image
+from dimos_generated.std_msgs.msg import Header
+from dimos_generated.vision_msgs.msg import Detection3DArray
 import numpy as np
 import pytest
 
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
-from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
+from dimos.msgs.camera_info import camera_info_from_intrinsics
+from dimos.msgs.image import image_from_array
+from dimos.msgs.pointcloud import pointcloud_xyz
+from dimos.msgs.time import time_from_seconds
+from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
 from dimos.perception.experimental.objectDB import ObjectDB
@@ -44,18 +51,19 @@ class _FakeTF:
 
 
 def _image(timestamp: float) -> Image:
-    return Image(
-        data=np.ones((2, 2), dtype=np.float32),
-        format=ImageFormat.DEPTH,
-        frame_id="camera",
-        ts=timestamp,
+    return image_from_array(
+        np.ones((2, 2), dtype=np.float32),
+        encoding="32FC1",
+        header=Header(frame_id="camera", stamp=time_from_seconds(timestamp)),
     )
 
 
 @pytest.fixture
 def module() -> Iterator[ObjectSceneRegistrationModule]:
     module = ObjectSceneRegistrationModule(target_frame="map")
-    module._camera_info = MagicMock(K=[1.0, 0.0, 0.0, 0.0, 1.0, 0.0])
+    module._camera_info = camera_info_from_intrinsics(
+        1, 1, 0, 0, 2, 2, header=Header(frame_id="camera")
+    )
     module._latest_scene_snapshot = None
     yield module
     module.stop()
@@ -78,11 +86,10 @@ def test_transform_is_captured_before_slow_detector(
     module._detector = MagicMock()
     module._text_prompts = ["cup"]
     module.detections_2d = MagicMock()
-    color = Image(
-        data=np.zeros((2, 2, 3), dtype=np.uint8),
-        format=ImageFormat.BGR,
-        frame_id="camera",
-        ts=12.5,
+    color = image_from_array(
+        np.zeros((2, 2, 3), dtype=np.uint8),
+        encoding="bgr8",
+        header=Header(frame_id="camera", stamp=time_from_seconds(12.5)),
     )
     detections = ImageDetections2D(color, [])
 
@@ -138,35 +145,30 @@ def test_full_scene_pointcloud_uses_one_coherent_scene_snapshot(
     monkeypatch: Any, module: ObjectSceneRegistrationModule
 ) -> None:
     depth = _image(3.0)
-    transform = MagicMock(name="transform")
+    transform = TransformStamped(
+        header=Header(frame_id="map"),
+        child_frame_id="camera",
+        transform=Transform(translation=Vector3(x=1), rotation=Quaternion(w=1)),
+    )
     module._tf = _FakeTF(transform)  # type: ignore[assignment]
     module._latest_scene_snapshot = (depth, transform)
 
     class _PointCloud:
-        points = list(range(100))
+        points = np.zeros((100, 3), dtype=np.float64)
 
         def voxel_down_sample(self, voxel_size: float) -> _PointCloud:
             return self
 
-    pointcloud = _PointCloud()
     fake_o3d = MagicMock()
-    fake_o3d.camera.PinholeCameraIntrinsic.return_value = MagicMock()
-    fake_o3d.geometry.Image.return_value = MagicMock()
-    fake_o3d.geometry.PointCloud.create_from_depth_image.return_value = pointcloud
-    # open3d is imported inside the method under test, so swap the module itself
+    fake_o3d.geometry.PointCloud.create_from_depth_image.return_value = _PointCloud()
+    # Only the native depth projection is mocked; generated output and transformation are real.
     monkeypatch.setitem(sys.modules, "open3d", fake_o3d)
-
-    result = MagicMock()
-    result.transform.side_effect = lambda used_transform: (
-        result if used_transform is transform else pytest.fail("mixed scene snapshot")
-    )
-    monkeypatch.setattr(
-        "dimos.perception.experimental.object_scene_registration.PointCloud2",
-        lambda *_args, **_kwargs: result,
-    )
-
-    module.get_full_scene_pointcloud()
-    result.transform.assert_called_once_with(transform)
+    result = module.get_full_scene_pointcloud()
+    assert result is not None
+    assert result.header.frame_id == "map"
+    assert result.header.stamp == depth.header.stamp
+    np.testing.assert_array_equal(pointcloud_xyz(result), np.tile([1, 0, 0], (100, 1)))
+    assert module._tf.calls == []  # The cached coherent snapshot supplied the transform.
 
 
 def test_owlv2_queries_configured_prompts(monkeypatch: Any) -> None:
@@ -177,11 +179,10 @@ def test_owlv2_queries_configured_prompts(monkeypatch: Any) -> None:
     module._detector = MagicMock()
     module._text_prompts = ["mug"]
     module.detections_2d = MagicMock()
-    color = Image(
-        data=np.zeros((2, 2, 3), dtype=np.uint8),
-        format=ImageFormat.BGR,
-        frame_id="camera",
-        ts=4.0,
+    color = image_from_array(
+        np.zeros((2, 2, 3), dtype=np.uint8),
+        encoding="bgr8",
+        header=Header(frame_id="camera", stamp=time_from_seconds(4.0)),
     )
     detections = ImageDetections2D(color, [])
     module._detector.query_detections.return_value = detections
@@ -219,27 +220,30 @@ def test_owlv2_yolo_constructs_box_prompt_segmenter(mocker: Any) -> None:
 def test_moondream_queries_each_configured_prompt(monkeypatch: Any) -> None:
     module = ObjectSceneRegistrationModule(target_frame="camera", detector_backend="moondream")
     module._camera_info = MagicMock()
-    module._detector = MagicMock()
+    detector = MagicMock()
+    module._detector = detector
     module._text_prompts = ["cup", "bottle"]
     module.detections_2d = MagicMock()
-    color = Image(
-        data=np.zeros((2, 2, 3), dtype=np.uint8),
-        format=ImageFormat.BGR,
-        frame_id="camera",
-        ts=4.0,
+    color = image_from_array(
+        np.zeros((2, 2, 3), dtype=np.uint8),
+        encoding="bgr8",
+        header=Header(frame_id="camera", stamp=time_from_seconds(4.0)),
     )
-    cup = MagicMock(track_id=0, class_id=-1)
-    bottle = MagicMock(track_id=0, class_id=-1)
-    module._detector.query_detections.side_effect = [
+    cup = Detection2DBBox((0, 0, 1, 1), 0, -1, 0.9, "cup", 4.0, color)
+    bottle = Detection2DBBox((1, 1, 2, 2), 0, -1, 0.8, "bottle", 4.0, color)
+    detector.query_detections.side_effect = [
         ImageDetections2D(color, [cup]),
         ImageDetections2D(color, [bottle]),
     ]
     process_3d = MagicMock()
     monkeypatch.setattr(module, "_process_3d_detections", process_3d)
 
-    module._process_images(color, _image(4.0))
+    try:
+        module._process_images(color, _image(4.0))
+    finally:
+        module.stop()
 
-    assert module._detector.query_detections.call_args_list == [
+    assert detector.query_detections.call_args_list == [
         call(color, "cup"),
         call(color, "bottle"),
     ]
@@ -247,17 +251,15 @@ def test_moondream_queries_each_configured_prompt(monkeypatch: Any) -> None:
     assert combined.detections == [cup, bottle]
     assert (cup.track_id, cup.class_id) == (-1, 0)
     assert (bottle.track_id, bottle.class_id) == (-1, 1)
-    module.stop()
 
 
 def test_edgetam_refines_detector_output(monkeypatch: Any) -> None:
     module = ObjectSceneRegistrationModule(target_frame="camera", segmentation_backend="edgetam")
     module._camera_info = MagicMock()
-    color = Image(
-        data=np.zeros((2, 2, 3), dtype=np.uint8),
-        format=ImageFormat.BGR,
-        frame_id="camera",
-        ts=4.0,
+    color = image_from_array(
+        np.zeros((2, 2, 3), dtype=np.uint8),
+        encoding="bgr8",
+        header=Header(frame_id="camera", stamp=time_from_seconds(4.0)),
     )
     raw_detections = ImageDetections2D(color, [])
     segmented_detections = ImageDetections2D(color, [])
@@ -281,11 +283,10 @@ def test_request_driven_scan_processes_latest_aligned_frame(monkeypatch: Any) ->
         target_frame="camera", detector_backend="owlv2", detect_on_request=True
     )
     module._object_db = MagicMock()
-    color = Image(
-        data=np.zeros((2, 2, 3), dtype=np.uint8),
-        format=ImageFormat.BGR,
-        frame_id="camera",
-        ts=4.0,
+    color = image_from_array(
+        np.zeros((2, 2, 3), dtype=np.uint8),
+        encoding="bgr8",
+        header=Header(frame_id="camera", stamp=time_from_seconds(4.0)),
     )
     depth = _image(4.0)
     module._on_aligned_frames((color, depth))
@@ -378,11 +379,10 @@ def test_concurrent_request_scans_do_not_overlap(monkeypatch: Any) -> None:
         target_frame="camera", detector_backend="owlv2", detect_on_request=True
     )
     module._object_db = MagicMock()
-    color = Image(
-        data=np.zeros((2, 2, 3), dtype=np.uint8),
-        format=ImageFormat.BGR,
-        frame_id="camera",
-        ts=4.0,
+    color = image_from_array(
+        np.zeros((2, 2, 3), dtype=np.uint8),
+        encoding="bgr8",
+        header=Header(frame_id="camera", stamp=time_from_seconds(4.0)),
     )
     module._on_aligned_frames((color, _image(4.0)))
     first_started = Event()
@@ -454,10 +454,9 @@ def test_object_db_counts_each_source_frame_once(monkeypatch: Any) -> None:
         last_seen_ts=None,
         detections_count=1,
     )
-    first.center = MagicMock()
+    first.center = Vector3()
     duplicate = MagicMock(object_id="duplicate-id", track_id=-1, ts=4.0)
-    duplicate.center = MagicMock()
-    duplicate.center.distance.return_value = 0.0
+    duplicate.center = Vector3()
 
     observed = object_db.add_objects([first, duplicate])
 
@@ -466,8 +465,7 @@ def test_object_db_counts_each_source_frame_once(monkeypatch: Any) -> None:
     assert first.last_seen_ts == 1000.0
 
     newer = MagicMock(object_id="newer-id", track_id=-1, ts=5.0)
-    newer.center = MagicMock()
-    newer.center.distance.return_value = 0.0
+    newer.center = Vector3()
     first.update_object.side_effect = lambda _: setattr(first, "detections_count", 2)
     now[0] = 1001.0
 

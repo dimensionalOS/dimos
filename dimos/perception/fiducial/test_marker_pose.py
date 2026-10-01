@@ -13,10 +13,11 @@
 # limitations under the License.
 
 import cv2
+from dimos_generated.sensor_msgs.msg import CameraInfo
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.image import image_from_array
 from dimos.perception.fiducial.marker_pose import (
     camera_optical_frame_id,
     estimate_marker_pose,
@@ -26,25 +27,14 @@ from dimos.perception.fiducial.marker_pose import (
 
 
 def test_camera_optical_frame_id_resolution() -> None:
-    ts = 1.0
-    fx, fy, cx, cy = 600.0, 600.0, 320.0, 240.0
-    info_named = CameraInfo.from_intrinsics(fx, fy, cx, cy, 640, 480, frame_id="cam_info_optical")
-    info_named.ts = ts
-    info_empty = CameraInfo.from_intrinsics(fx, fy, cx, cy, 640, 480)
-    info_empty.ts = ts
-    img_custom = Image(
-        data=np.zeros((480, 640, 3), dtype=np.uint8),
-        format=ImageFormat.BGR,
-        ts=ts,
-        frame_id="custom_optical",
+    info_named = CameraInfo(header=Header(frame_id="cam_info_optical"))
+    info_empty = CameraInfo()
+    pixels = np.zeros((480, 640, 3), dtype=np.uint8)
+    img_custom = image_from_array(pixels, encoding="bgr8", header=Header(frame_id="custom_optical"))
+    img_whitespace = image_from_array(
+        pixels, encoding="bgr8", header=Header(frame_id="  custom_optical  ")
     )
-    img_whitespace = Image(
-        data=np.zeros((480, 640, 3), dtype=np.uint8),
-        format=ImageFormat.BGR,
-        ts=ts,
-        frame_id="  custom_optical  ",
-    )
-    img_empty = Image(data=np.zeros((480, 640, 3), dtype=np.uint8), format=ImageFormat.BGR, ts=ts)
+    img_empty = image_from_array(pixels, encoding="bgr8")
 
     assert camera_optical_frame_id(img_custom, info_named) == "custom_optical"
     assert camera_optical_frame_id(img_whitespace, info_named) == "custom_optical"

@@ -17,6 +17,10 @@ import os
 import time
 from typing import Any
 
+from dimos_generated.geometry_msgs.msg import PoseStamped
+from dimos_generated.sensor_msgs.msg import Image
+from dimos_generated.std_msgs.msg import Header
+from dimos_generated.tf2_msgs.msg import TFMessage
 import pytest
 from reactivex import operators as ops
 
@@ -25,11 +29,10 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.core.transport_factory import make_transport
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.msgs.geometry import transform_from_pose
+from dimos.msgs.image import image_from_array
 from dimos.perception.experimental.spatial_perception import SpatialMemory
-from dimos.robot.unitree.type.odometry import Odometry
+from dimos.robot.unitree.type.odometry import pose_from_webrtc_odometry
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.testing.legacy_pickle import LegacyPickleStore
@@ -53,7 +56,10 @@ class VideoReplayModule(Module):
     def start(self) -> None:
         """Start replaying video data."""
         # Use LegacyPickleStore to replay video frames
-        video_replay = LegacyPickleStore(self.config.video_path, autocast=Image.from_numpy)
+        video_replay = LegacyPickleStore(
+            self.config.video_path,
+            autocast=lambda pixels: image_from_array(pixels, encoding="bgr8", header=Header()),
+        )
 
         # Subscribe to the replay stream and publish to LCM
         self._subscription = (
@@ -86,15 +92,17 @@ class OdometryReplayModule(Module):
         self.odom_path = odom_path
         self._subscription = None
 
-    def _publish_tf(self, odom: Odometry) -> None:
+    def _publish_tf(self, odom: PoseStamped) -> None:
         """Convert odometry to TF transforms and publish."""
-        self.tf.publish(TFMessage(Transform.from_pose("base_link", odom)))
+        self.tf.publish(
+            TFMessage(transforms=[transform_from_pose(odom, child_frame_id="base_link")])
+        )
 
     @rpc
     def start(self) -> None:
         """Start replaying odometry data."""
         # Use LegacyPickleStore to replay odometry
-        odom_replay = LegacyPickleStore(self.odom_path, autocast=Odometry.from_msg)
+        odom_replay = LegacyPickleStore(self.odom_path, autocast=pose_from_webrtc_odometry)
 
         # Subscribe to the replay stream and publish to tf
         self._subscription = (

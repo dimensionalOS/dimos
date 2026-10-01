@@ -65,35 +65,30 @@ In a robot:
 
 Each sensor, joint, and reference point has its own frame.
 
-## The Transform Class
+## Generated Transform Values
 
-The `Transform` class at [`geometry_msgs/Transform.py`](/dimos/msgs/geometry_msgs/Transform.py#L21) represents a spatial transformation with:
+A generated `Transform` contains translation and rotation. `TransformStamped` adds the parent frame, child frame and source timestamp. External [geometry helpers](/dimos/msgs/geometry.py) perform composition, inversion and matrix conversion:
 
-- `frame_id` - The parent frame name
+- `header.frame_id` - The parent frame name
 - `child_frame_id` - The child frame name
-- `translation` - A `Vector3` (x, y, z) offset
-- `rotation` - A `Quaternion` (x, y, z, w) orientation
-- `ts` - Timestamp for temporal lookups
+- `transform.translation` - A `Vector3` (x, y, z) offset
+- `transform.rotation` - A `Quaternion` (x, y, z, w) orientation
+- `header.stamp` - Integer `sec` and `nanosec` for temporal lookups
 
 ```python
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-
-# Camera 0.5m forward and 0.3m up from base, no rotation
-camera_transform = Transform(
-    translation=Vector3(0.5, 0.0, 0.3),
-    rotation=Quaternion(0.0, 0.0, 0.0, 1.0),  # Identity rotation
-    frame_id="base_link",
-    child_frame_id="camera_link",
-)
+from dimos_generated.geometry_msgs.msg import TransformStamped
+from dimos_generated.std_msgs.msg import Header
+from dimos.msgs.geometry import compose_transforms, inverse_transform, transform_matrix
+from dimos.msgs.time import time_from_seconds
+from dimos_generated.geometry_msgs.msg import Quaternion
+from dimos_generated.geometry_msgs.msg import Transform
+from dimos_generated.geometry_msgs.msg import Vector3
+camera_transform = TransformStamped(header=Header(frame_id='base_link'), child_frame_id='camera_link', transform=Transform(translation=Vector3(x=0.5, y=0.0, z=0.3), rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)))
 print(camera_transform)
 ```
 
 ```results
-base_link -> camera_link
-  Translation: → Vector Vector([0.5 0.  0.3])
-  Rotation: Quaternion(0.000000, 0.000000, 0.000000, 1.000000)
+<dimos_generated.geometry_msgs.msg.TransformStamped object at 0x7f36722d71d0>
 ```
 
 ### Transform Operations
@@ -101,32 +96,20 @@ base_link -> camera_link
 Transforms can be composed and inverted:
 
 ```python
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-
-# Create two transforms
-t1 = Transform(
-    translation=Vector3(1.0, 0.0, 0.0),
-    rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-    frame_id="base_link",
-    child_frame_id="camera_link",
-)
-t2 = Transform(
-    translation=Vector3(0.0, 0.5, 0.0),
-    rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-    frame_id="camera_link",
-    child_frame_id="end_effector",
-)
-
-# Compose: base_link -> camera -> end_effector
-t3 = t1 + t2
-print(f"Composed: {t3.frame_id} -> {t3.child_frame_id}")
-print(f"Translation: ({t3.translation.x}, {t3.translation.y}, {t3.translation.z})")
-
-# Inverse: if t goes A -> B, -t goes B -> A
-t_inverse = -t1
-print(f"Inverse: {t_inverse.frame_id} -> {t_inverse.child_frame_id}")
+from dimos_generated.geometry_msgs.msg import TransformStamped
+from dimos_generated.std_msgs.msg import Header
+from dimos.msgs.geometry import compose_transforms, inverse_transform, transform_matrix
+from dimos.msgs.time import time_from_seconds
+from dimos_generated.geometry_msgs.msg import Quaternion
+from dimos_generated.geometry_msgs.msg import Transform
+from dimos_generated.geometry_msgs.msg import Vector3
+t1 = TransformStamped(header=Header(frame_id='base_link'), child_frame_id='camera_link', transform=Transform(translation=Vector3(x=1.0, y=0.0, z=0.0), rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)))
+t2 = TransformStamped(header=Header(frame_id='camera_link'), child_frame_id='end_effector', transform=Transform(translation=Vector3(x=0.0, y=0.5, z=0.0), rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)))
+t3 = compose_transforms(t1, t2)
+print(f'Composed: {t3.header.frame_id} -> {t3.child_frame_id}')
+print(f'Translation: ({t3.transform.translation.x}, {t3.transform.translation.y}, {t3.transform.translation.z})')
+t_inverse = inverse_transform(t1)
+print(f'Inverse: {t_inverse.header.frame_id} -> {t_inverse.child_frame_id}')
 ```
 
 ```results
@@ -140,16 +123,16 @@ Inverse: camera_link -> base_link
 For integration with libraries like NumPy or OpenCV:
 
 ```python
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-
-t = Transform(
-    translation=Vector3(1.0, 2.0, 3.0),
-    rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-)
-matrix = t.to_matrix()
-print("4x4 transformation matrix:")
+from dimos_generated.geometry_msgs.msg import TransformStamped
+from dimos_generated.std_msgs.msg import Header
+from dimos.msgs.geometry import compose_transforms, inverse_transform, transform_matrix
+from dimos.msgs.time import time_from_seconds
+from dimos_generated.geometry_msgs.msg import Quaternion
+from dimos_generated.geometry_msgs.msg import Transform
+from dimos_generated.geometry_msgs.msg import Vector3
+t = Transform(translation=Vector3(x=1.0, y=2.0, z=3.0), rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0))
+matrix = transform_matrix(t)
+print('4x4 transformation matrix:')
 print(matrix)
 ```
 
@@ -188,14 +171,18 @@ print(f"With prefix: {sensor2.frame_id}")
 ```
 
 ```results
-00:33:00.665 [inf][otocol/service/zenohservice.py] Zenoh session opened connect=[] gossip=True listen=['tcp/127.0.0.1:0'] mode=peer multicast_interface=lo
+2026-09-30T20:07:50.481506Z  INFO ThreadId(01) zenoh::net::runtime: Using ZID: 690930ce279005bc5b48266acca01f49
+2026-09-30T20:07:50.481921Z  INFO ThreadId(01) zenoh::net::runtime::orchestrator: Zenoh can be reached at: tcp/127.0.0.1:40035
+2026-09-30T20:07:50.482081Z  INFO ThreadId(01) zenoh::net::runtime::orchestrator: Listening scout messages on 224.0.0.224:7446
+20:07:50.983 [inf][otocol/service/zenohservice.py] Zenoh session opened connect=[] gossip=True listen=['tcp/127.0.0.1:0'] mode=peer multicast_interface=lo
 Default frame_id: sensor_link
 With prefix: robot1/sensor_link
+2026-09-30T20:07:50.989961Z  INFO ThreadId(01) zenoh::api::session: close session zid=690930ce279005bc5b48266acca01f49
 ```
 
 ## The tf Topic
 
-Transforms travel on an ordinary stream named `tf` carrying [`TFMessage`](/dimos/msgs/tf2_msgs/TFMessage.py)s. A module declares the port like any other stream, choosing the direction it actually uses:
+Transforms travel on an ordinary stream named `tf` carrying [`TFMessage`](/dimos/message_codegen/schemas/tf2_msgs/msg/TFMessage.msg)s. A module declares the port like any other stream, choosing the direction it actually uses:
 
 - `tf: Out[TFMessage]`: publishes transforms
 - `tf: In[TFMessage]`: consumes transforms
@@ -214,6 +201,10 @@ This example demonstrates how multiple modules publish and receive transforms. T
 3. **PerceptionModule** - Looks up transforms between any frames
 
 ```python skip ansi=false
+from dimos_generated.geometry_msgs.msg import TransformStamped
+from dimos_generated.std_msgs.msg import Header
+from dimos.msgs.geometry import compose_transforms, inverse_transform, transform_matrix
+from dimos.msgs.time import time_from_seconds
 import time
 import reactivex as rx
 from dimos.core.core import rpc
@@ -221,14 +212,13 @@ from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos_generated.geometry_msgs.msg import Quaternion
+from dimos_generated.geometry_msgs.msg import Transform
+from dimos_generated.geometry_msgs.msg import Vector3
+from dimos_generated.tf2_msgs.msg import TFMessage
 
 class RobotBaseModule(Module):
     """Publishes the robot's position in the world frame at 10Hz."""
-
     tf: Out[TFMessage]
 
     @rpc
@@ -236,22 +226,12 @@ class RobotBaseModule(Module):
         super().start()
 
         def publish_pose(_):
-            robot_pose = Transform(
-                translation=Vector3(2.5, 3.0, 0.0),
-                rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-                frame_id="world",
-                child_frame_id="base_link",
-                ts=time.time(),
-            )
-            self.tf.publish(TFMessage(robot_pose))
-
-        self.register_disposable(
-            rx.interval(0.1).subscribe(publish_pose)
-        )
+            robot_pose = TransformStamped(header=Header(frame_id='world', stamp=time_from_seconds(time.time())), child_frame_id='base_link', transform=Transform(translation=Vector3(x=2.5, y=3.0, z=0.0), rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)))
+            self.tf.publish(TFMessage(transforms=[robot_pose]))
+        self.register_disposable(rx.interval(0.1).subscribe(publish_pose))
 
 class CameraModule(Module):
     """Publishes camera transforms at 10Hz."""
-
     tf: Out[TFMessage]
 
     @rpc
@@ -259,65 +239,31 @@ class CameraModule(Module):
         super().start()
 
         def publish_transforms(_):
-            camera_mount = Transform(
-                translation=Vector3(1.0, 0.0, 0.3),
-                rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-                frame_id="base_link",
-                child_frame_id="camera_link",
-                ts=time.time(),
-            )
-            optical_frame = Transform(
-                translation=Vector3(0.0, 0.0, 0.0),
-                rotation=Quaternion(-0.5, 0.5, -0.5, 0.5),
-                frame_id="camera_link",
-                child_frame_id="camera_optical",
-                ts=time.time(),
-            )
-            self.tf.publish(TFMessage(camera_mount, optical_frame))
-
-        self.register_disposable(
-            rx.interval(0.1).subscribe(publish_transforms)
-        )
+            camera_mount = TransformStamped(header=Header(frame_id='base_link', stamp=time_from_seconds(time.time())), child_frame_id='camera_link', transform=Transform(translation=Vector3(x=1.0, y=0.0, z=0.3), rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)))
+            optical_frame = TransformStamped(header=Header(frame_id='camera_link', stamp=time_from_seconds(time.time())), child_frame_id='camera_optical', transform=Transform(translation=Vector3(x=0.0, y=0.0, z=0.0), rotation=Quaternion(x=-0.5, y=0.5, z=-0.5, w=0.5)))
+            self.tf.publish(TFMessage(transforms=[camera_mount, optical_frame]))
+        self.register_disposable(rx.interval(0.1).subscribe(publish_transforms))
 
 class PerceptionModule(Module):
     """Receives transforms and performs lookups."""
-
     tf: In[TFMessage]
 
     @rpc
     def lookup(self) -> None:
-
-        # Will pretty-print information on transforms in the buffer
         print(self.tfbuffer)
-
-        direct = self.tfbuffer.get("world", "base_link")
-        print(f"Direct: robot is at ({direct.translation.x}, {direct.translation.y})m in world\n")
-
-        # Chained lookup - automatically composes world -> base -> camera -> optical
-        chained = self.tfbuffer.get("world", "camera_optical")
-        print(f"Chained: {chained}\n")
-
-        # Inverse lookup - automatically inverts direction
-        inverse = self.tfbuffer.get("camera_optical", "world")
-        print(f"Inverse: {inverse}\n")
-
-        print("Transform tree:")
+        direct = self.tfbuffer.get('world', 'base_link')
+        print(f'Direct: robot is at ({direct.transform.translation.x}, {direct.transform.translation.y})m in world\n')
+        chained = self.tfbuffer.get('world', 'camera_optical')
+        print(f'Chained: {chained}\n')
+        inverse = self.tfbuffer.get('camera_optical', 'world')
+        print(f'Inverse: {inverse}\n')
+        print('Transform tree:')
         print(self.tfbuffer.graph())
-
-if __name__ == "__main__":
-    dimos = ModuleCoordinator.build(autoconnect(
-        RobotBaseModule.blueprint(),
-        CameraModule.blueprint(),
-        PerceptionModule.blueprint(),
-    ))
-
-    # Give worker TF publishers a moment to populate the buffer before querying.
+if __name__ == '__main__':
+    dimos = ModuleCoordinator.build(autoconnect(RobotBaseModule.blueprint(), CameraModule.blueprint(), PerceptionModule.blueprint()))
     time.sleep(2.5)
-
     dimos.get_instance(PerceptionModule).lookup()
-
     dimos.stop()
-
 ```
 
 ```results
@@ -419,27 +365,30 @@ text "CameraModule" italic at ((CL.x + CO.x)/2, CL.s.y - 0.25in)
 ```python
 import time
 
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos_generated.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
+from dimos_generated.std_msgs.msg import Header
+from dimos.msgs.time import time_from_nanoseconds
 from dimos.protocol.tf.tf import MultiTBuffer
 
 tf = MultiTBuffer()
 
 # Simulate transforms at different times
 for i in range(5):
-    t = Transform(
-        translation=Vector3(float(i), 0.0, 0.0),
-        rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-        frame_id="base_link",
+    t = TransformStamped(
+        header=Header(
+            stamp=time_from_nanoseconds(time.time_ns() + i * 100_000_000),
+            frame_id="base_link",
+        ),
         child_frame_id="camera_link",
-        ts=time.time() + i * 0.1,
+        transform=Transform(
+            translation=Vector3(x=float(i)), rotation=Quaternion(w=1.0)
+        ),
     )
     tf.receive_transform(t)
 
 # Query the latest transform
 result = tf.get("base_link", "camera_link")
-print(f"Latest transform: x={result.translation.x}")
+print(f"Latest transform: x={result.transform.translation.x}")
 print(f"Buffer has {len(tf.buffers)} transform pair(s)")
 print(tf)
 ```
@@ -448,7 +397,7 @@ print(tf)
 Latest transform: x=4.0
 Buffer has 1 transform pair(s)
 MultiTBuffer(1 buffers):
-  TBuffer(base_link -> camera_link, 5 msgs, 0.40s [2026-08-24 15:36:04 - 2026-08-24 15:36:04])
+  TBuffer(base_link -> camera_link, 5 msgs, 0.40s [2026-09-30 13:07:51 - 2026-09-30 13:07:51])
 ```
 
 This is essential for sensor fusion where you need to know where the camera was when an image was captured, not where it is now.

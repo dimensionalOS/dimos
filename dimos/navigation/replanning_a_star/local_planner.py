@@ -13,20 +13,20 @@
 # limitations under the License.
 
 import os
-from threading import Event, RLock, Thread
+from threading import Event, RLock, Thread, current_thread
 import time
 import traceback
 from typing import Literal, TypeAlias
 
+from dimos_generated.geometry_msgs.msg import PoseStamped, Twist
+from dimos_generated.nav_msgs.msg import OccupancyGrid, Path
 import numpy as np
 from reactivex import Subject
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.global_config import GlobalConfig
 from dimos.core.resource import Resource
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
-from dimos.msgs.nav_msgs.Path import Path
+from dimos.msgs.geometry import point_distance, quaternion_euler
 from dimos.navigation.base import NavigationState
 from dimos.navigation.replanning_a_star.controllers import Controller, PController
 from dimos.navigation.replanning_a_star.navigation_map import NavigationMap
@@ -120,13 +120,17 @@ class LocalPlanner(Resource):
             self._thread.start()
 
     def stop_planning(self) -> None:
-        self.cmd_vel.on_next(Twist())
         self._stop_planning_event.set()
-
+        with self._lock:
+            thread = self._thread
+        if thread is not None and thread is not current_thread():
+            thread.join(DEFAULT_THREAD_JOIN_TIMEOUT)
+            if thread.is_alive():
+                raise RuntimeError("LocalPlanner thread did not stop in time")
         with self._lock:
             self._thread = None
-
         self._reset_state()
+        self.cmd_vel.on_next(Twist())
 
     def get_state(self) -> NavigationState:
         with self._lock:
@@ -176,14 +180,15 @@ class LocalPlanner(Resource):
         # Determine initial state: skip initial_rotation if already aligned.
         new_state: PlannerState = "initial_rotation"
         if current_odom is not None and len(path.poses) > 0:
-            first_yaw = path.poses[0].orientation.euler[2]
-            robot_yaw = current_odom.orientation.euler[2]
+            first_yaw = quaternion_euler(path.poses[0].pose.orientation)[2]
+            robot_yaw = quaternion_euler(current_odom.pose.orientation)[2]
             initial_yaw_error = angle_diff(first_yaw, robot_yaw)
             self._controller.reset_yaw_error(initial_yaw_error)
             angle_in_tolerance = abs(initial_yaw_error) < self._orientation_tolerance
             if angle_in_tolerance:
                 position_in_tolerance = (
-                    path.poses[0].position.distance(current_odom.position) < 0.01
+                    point_distance(path.poses[-1].pose.position, current_odom.pose.position)
+                    < self._goal_tolerance
                 )
                 if position_in_tolerance:
                     new_state = "final_rotation"
@@ -241,8 +246,8 @@ class LocalPlanner(Resource):
         assert current_odom is not None
 
         first_pose = path.poses[0]
-        first_yaw = first_pose.orientation.euler[2]
-        robot_yaw = current_odom.orientation.euler[2]
+        first_yaw = quaternion_euler(first_pose.pose.orientation)[2]
+        robot_yaw = quaternion_euler(current_odom.pose.orientation)[2]
         yaw_error = angle_diff(first_yaw, robot_yaw)
 
         if abs(yaw_error) < self._orientation_tolerance:
@@ -260,7 +265,7 @@ class LocalPlanner(Resource):
         if path_distancer is None or current_odom is None:
             return None
 
-        current_pos = np.array([current_odom.position.x, current_odom.position.y])
+        current_pos = np.array([current_odom.pose.position.x, current_odom.pose.position.y])
 
         return path_distancer.get_distance_to_path(current_pos)
 
@@ -272,7 +277,7 @@ class LocalPlanner(Resource):
         assert path_distancer is not None
         assert current_odom is not None
 
-        current_pos = np.array([current_odom.position.x, current_odom.position.y])
+        current_pos = np.array([current_odom.pose.position.x, current_odom.pose.position.y])
 
         if path_distancer.distance_to_goal(current_pos) < self._goal_tolerance:
             logger.info("Reached goal position, starting final rotation")
@@ -297,8 +302,8 @@ class LocalPlanner(Resource):
         assert path is not None
         assert current_odom is not None
 
-        goal_yaw = path.poses[-1].orientation.euler[2]
-        robot_yaw = current_odom.orientation.euler[2]
+        goal_yaw = quaternion_euler(path.poses[-1].pose.orientation)[2]
+        robot_yaw = quaternion_euler(current_odom.pose.orientation)[2]
         yaw_error = angle_diff(goal_yaw, robot_yaw)
 
         if abs(yaw_error) < self._orientation_tolerance:

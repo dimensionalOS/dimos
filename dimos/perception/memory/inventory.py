@@ -39,6 +39,8 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from dimos.memory.tf import StreamTF
+from dimos.msgs.geometry import transform_matrix
+from dimos.msgs.pointcloud import concatenate_clouds, pointcloud_xyz, select_points
 from dimos.perception.detection.type.detection3d.imageDetections3DPC import ImageDetections3DPC
 from dimos.perception.memory import gates
 from dimos.perception.memory.gates import (
@@ -58,7 +60,8 @@ from dimos.perception.memory.types import (
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from dimos_lcm.sensor_msgs import CameraInfo
+    from dimos_generated.geometry_msgs.msg import TransformStamped
+    from dimos_generated.sensor_msgs.msg import CameraInfo
 
     from dimos.models.segmentation.edge_tam import EdgeTAMImageSegmenter
     from dimos.perception.detection.detectors.owlv2 import Owlv2Detector
@@ -132,7 +135,7 @@ class _Track:
     def add(self, obs: SupportObservation, frame_key: float) -> None:
         self.members.append(obs)
         self.frame_ts.add(frame_key)
-        points = np.asarray(obs.cloud.pointcloud.points)
+        points = pointcloud_xyz(obs.cloud)
         self.support_pts = np.vstack([self.support_pts, points[:: max(1, len(points) // 400)]])
 
     @property
@@ -189,7 +192,7 @@ SPLIT_EPS_M = 0.03
 def _split_oversized(
     points: np.ndarray, plane: SupportPlane | None, policy: InventoryPolicy
 ) -> list[np.ndarray]:
-    """Re-segment a mask-bled cloud by 3D connectivity.
+    """Return source-point masks for a mask-bled cloud split by 3D connectivity.
 
     Automatic masks occasionally bleed across an object onto the table and
     its neighbors; the lifted cloud then violates single-object bounds. The
@@ -199,40 +202,45 @@ def _split_oversized(
     """
     extent = points.max(axis=0) - points.min(axis=0)
     if float(extent.max()) <= SPLIT_EXTENT_M and float(extent[2]) <= SPLIT_HEIGHT_M:
-        return [points]
+        return [np.ones(len(points), dtype=np.bool_)]
     if plane is None:
-        return [points]
+        return [np.ones(len(points), dtype=np.bool_)]
     heights = plane.height_above(points)
     if float((np.abs(heights) <= 0.003).mean()) < 0.15:
         # No appreciable support-surface content: this is one oversized body,
         # not a mask that bled across the table. Leave it to the extent cap.
-        return [points]
+        return [np.ones(len(points), dtype=np.bool_)]
 
     above = heights > 0.002
-    body = points[above] if above.sum() >= policy.min_depth_points else points
+    body_mask = (
+        above if above.sum() >= policy.min_depth_points else np.ones(len(points), dtype=np.bool_)
+    )
+    body = points[body_mask]
 
     import open3d as o3d
 
     cloud = o3d.geometry.PointCloud()
     cloud.points = o3d.utility.Vector3dVector(body)
     labels = np.asarray(cloud.cluster_dbscan(eps=SPLIT_EPS_M, min_points=20))
-    clusters = [
-        body[labels == label]
-        for label in range(labels.max() + 1)
-        if (labels == label).sum() >= policy.min_depth_points
-    ]
-    return clusters if clusters else [body]
+    clusters = []
+    for label in range(labels.max() + 1):
+        chosen = labels == label
+        if chosen.sum() >= policy.min_depth_points:
+            mask = np.zeros(len(points), dtype=np.bool_)
+            mask[body_mask] = chosen
+            clusters.append(mask)
+    return clusters if clusters else [body_mask]
 
 
 def _pixel_bbox(
-    points: np.ndarray, camera_info: CameraInfo, transform: Any
+    points: np.ndarray, camera_info: CameraInfo, transform: TransformStamped
 ) -> tuple[float, float, float, float]:
     """Project world points back into the frame for a sub-observation's bbox."""
-    matrix = transform.to_matrix()
+    matrix = transform_matrix(transform.transform)
     optical = (matrix[:3, :3] @ points.T).T + matrix[:3, 3]
     z = np.maximum(optical[:, 2], 1e-6)
-    fx, fy = camera_info.K[0], camera_info.K[4]
-    cx, cy = camera_info.K[2], camera_info.K[5]
+    fx, fy = camera_info.k[0], camera_info.k[4]
+    cx, cy = camera_info.k[2], camera_info.k[5]
     u = fx * optical[:, 0] / z + cx
     v = fy * optical[:, 1] / z + cy
     return (float(u.min()), float(v.min()), float(u.max()), float(v.max()))
@@ -252,8 +260,6 @@ def _lift_frame(
     plane: SupportPlane | None = None,
 ) -> tuple[list[SupportObservation], list[Detection2DSeg]]:
     """Depth-lift accepted proposals of one frame; returns (grounded, ungrounded)."""
-    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-
     depth = gates.depth_at(store, obs_ts)
     transform = tf.get(optical_frame, world_frame, obs_ts, tf_tolerance)
     if depth is None or transform is None:
@@ -266,12 +272,16 @@ def _lift_frame(
     lifted_by_track = {det3d.track_id: det3d for det3d in lifted}
     for det2d in detections_2d:
         det3d = lifted_by_track.get(det2d.track_id)
-        if det3d is None or len(det3d.pointcloud) < policy.min_depth_points:
+        if (
+            det3d is None
+            or det3d.pointcloud.width * det3d.pointcloud.height < policy.min_depth_points
+        ):
             ungrounded.append(det2d)
             continue
-        points = np.asarray(det3d.pointcloud.pointcloud.points)
+        points = pointcloud_xyz(det3d.pointcloud)
         mask_area = int((det2d.mask > 0).sum())
-        for piece in _split_oversized(points, plane, policy):
+        for mask in _split_oversized(points, plane, policy):
+            piece = points[mask]
             aabb_min, aabb_max = piece.min(axis=0), piece.max(axis=0)
             extent = aabb_max - aabb_min
             if float(extent.max()) > policy.max_object_extent_m:
@@ -283,9 +293,7 @@ def _lift_frame(
             grounded.append(
                 SupportObservation(
                     ts=obs_ts,
-                    cloud=det3d.pointcloud
-                    if whole
-                    else PointCloud2.from_numpy(piece, frame_id="world", timestamp=obs_ts),
+                    cloud=det3d.pointcloud if whole else select_points(det3d.pointcloud, mask),
                     centroid=piece.mean(axis=0),
                     aabb_min=aabb_min,
                     aabb_max=aabb_max,
@@ -301,11 +309,11 @@ def _lift_frame(
 def _in_scope(obs: SupportObservation, plane: SupportPlane | None, policy: InventoryPolicy) -> bool:
     """Support-plane scope: in a band above the plane, footprint on the workspace."""
     if policy.in_scope is not None:
-        points = np.asarray(obs.cloud.pointcloud.points)
+        points = pointcloud_xyz(obs.cloud)
         return bool(policy.in_scope(points))
     if plane is None:
         return True
-    points = np.asarray(obs.cloud.pointcloud.points)
+    points = pointcloud_xyz(obs.cloud)
     heights = plane.height_above(points)
     low, high = float(np.quantile(heights, 0.05)), float(np.quantile(heights, 0.95))
     band_lo, band_hi = policy.band_above_plane_m
@@ -337,8 +345,8 @@ def _cloud_gap(a: SupportObservation, b: SupportObservation) -> float:
         return np.inf
     from scipy.spatial import cKDTree
 
-    pa = np.asarray(a.cloud.pointcloud.points)
-    pb = np.asarray(b.cloud.pointcloud.points)
+    pa = pointcloud_xyz(a.cloud)
+    pb = pointcloud_xyz(b.cloud)
     pa = pa[:: max(1, len(pa) // 800)]
     pb = pb[:: max(1, len(pb) // 800)]
     distances, _ = cKDTree(pa).query(pb, k=1)
@@ -358,8 +366,8 @@ def _support_explained(points: np.ndarray, support: np.ndarray, pad: float) -> f
 def _absorb_into(target: SupportObservation, obs: SupportObservation) -> None:
     target.aabb_min = np.minimum(target.aabb_min, obs.aabb_min)
     target.aabb_max = np.maximum(target.aabb_max, obs.aabb_max)
-    target.cloud = target.cloud + obs.cloud
-    points = np.asarray(target.cloud.pointcloud.points)
+    target.cloud = concatenate_clouds(target.cloud, obs.cloud)
+    points = pointcloud_xyz(target.cloud)
     target.centroid = points.mean(axis=0)
     target.n_points = len(points)
     target.mask_area_px = max(target.mask_area_px, obs.mask_area_px)
@@ -423,7 +431,7 @@ def _associate(
 
         cost = np.full((len(observations), len(tracks)), forbidden)
         for i, obs in enumerate(observations):
-            obs_points = np.asarray(obs.cloud.pointcloud.points)
+            obs_points = pointcloud_xyz(obs.cloud)
             for j, track in enumerate(tracks):
                 distance = float(np.linalg.norm(obs.centroid - track.centroid))
                 if distance > policy.search_radius_m:
@@ -862,7 +870,9 @@ def inventory(
                     f"skip=no_pose  {perf_counter() - t_frame:.1f}s"
                 )
             continue
-        camera_position = np.array([pose.position.x, pose.position.y, pose.position.z])
+        camera_position = np.array(
+            [pose.pose.position.x, pose.pose.position.y, pose.pose.position.z]
+        )
 
         for j, det in enumerate(accepted):
             det.track_id = j

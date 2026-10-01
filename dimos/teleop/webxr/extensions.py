@@ -25,16 +25,15 @@ Available subclasses:
 import asyncio
 from typing import Any
 
+from dimos_generated.geometry_msgs.msg import PoseStamped, Twist, TwistStamped, Vector3
+from dimos_generated.sensor_msgs.msg import Image
+from dimos_generated.std_msgs.msg import Float32
 from fastapi import WebSocket
 
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.std_msgs.Float32 import Float32
+from dimos.msgs.geometry import quaternion_euler
+from dimos.msgs.image import image_to_jpeg
 from dimos.teleop.webxr.controller_types import Buttons, Hand, WebXRControllerState
 from dimos.teleop.webxr.module import WebXRTeleopConfig, WebXRTeleopModule
 from dimos.utils.logging_config import setup_logger
@@ -68,7 +67,7 @@ def _push_jpeg(module: WebXRTeleopModule, msg: Image, quality: int) -> None:
         return
 
     try:
-        jpeg = msg.to_jpeg_bytes(quality=quality)
+        jpeg = image_to_jpeg(msg, quality=quality)
     except Exception:
         logger.exception("Failed to encode camera frame")
         return
@@ -113,11 +112,22 @@ class TwistTeleopModule(WebXRTeleopModule):
 
     def _publish_msg(self, hand: Hand, output_msg: PoseStamped) -> None:
         """Convert PoseStamped to TwistStamped, apply scaling, and publish."""
+        position = output_msg.pose.position
+        roll, pitch, yaw = quaternion_euler(output_msg.pose.orientation)
         twist = TwistStamped(
-            ts=output_msg.ts,
-            frame_id=output_msg.frame_id,
-            linear=output_msg.position * self.config.linear_scale,
-            angular=output_msg.orientation.to_euler() * self.config.angular_scale,
+            header=output_msg.header,
+            twist=Twist(
+                linear=Vector3(
+                    x=position.x * self.config.linear_scale,
+                    y=position.y * self.config.linear_scale,
+                    z=position.z * self.config.linear_scale,
+                ),
+                angular=Vector3(
+                    x=roll * self.config.angular_scale,
+                    y=pitch * self.config.angular_scale,
+                    z=yaw * self.config.angular_scale,
+                ),
+            ),
         )
         if hand == Hand.LEFT:
             self.left_twist.publish(twist)
@@ -309,7 +319,7 @@ class Go2TeleopModule(WebXRTeleopModule):
     cmd_vel: Out[Twist]
 
     def _publish_safe_command(self) -> None:
-        self.cmd_vel.publish(Twist.zero())
+        self.cmd_vel.publish(Twist())
 
     def _deadzone(self, v: float) -> float:
         return 0.0 if abs(v) < self.config.deadzone else v
@@ -327,8 +337,8 @@ class Go2TeleopModule(WebXRTeleopModule):
             left = self._controllers.get(Hand.LEFT)
             right = self._controllers.get(Hand.RIGHT)
         twist = Twist()
-        twist.linear = Vector3(0.0, 0.0, 0.0)
-        twist.angular = Vector3(0.0, 0.0, 0.0)
+        twist.linear = Vector3()
+        twist.angular = Vector3()
         if left is not None:
             twist.linear.x = -self._deadzone(left.thumbstick.y) * self.config.linear_speed
             twist.linear.y = -self._deadzone(left.thumbstick.x) * self.config.linear_speed

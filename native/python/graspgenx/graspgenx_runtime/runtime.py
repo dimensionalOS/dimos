@@ -18,6 +18,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from dimos_generated.dimos_msgs.msg import GraspCandidate, GraspCandidateArray
+from dimos_generated.geometry_msgs.msg import Pose
+from dimos_generated.sensor_msgs.msg import PointCloud2
 import numpy as np
 
 from dimos.core.core import rpc
@@ -26,13 +29,9 @@ from dimos.manipulation.grasping.grasp_gen_x.module import (
     GraspGenXError,
     GraspGenXModule,
 )
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.manipulation_msgs.GraspCandidate import GraspCandidate
-from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.std_msgs.Header import Header
+from dimos.msgs.geometry import pose_from_matrix
+from dimos.msgs.pointcloud import pointcloud_xyz
+from dimos.msgs.time import to_nanoseconds
 
 if TYPE_CHECKING:
     from .backend import GraspGenXRuntime
@@ -71,12 +70,11 @@ class GraspGenXRuntimeModule(GraspGenXModule):
     def propose_grasps(self, object_pointcloud: PointCloud2) -> GraspCandidateArray:
         if self._runtime is None:
             raise GraspGenXError("GraspGenX module has not been started")
-        if object_pointcloud.ts is None:
-            raise ValueError("object pointcloud must have a timestamp")
-        if not object_pointcloud.frame_id:
+        to_nanoseconds(object_pointcloud.header.stamp)
+        if not object_pointcloud.header.frame_id:
             raise ValueError("object pointcloud frame_id must not be empty")
 
-        points = object_pointcloud.points_f32()
+        points = pointcloud_xyz(object_pointcloud).astype(np.float32)
         if points.ndim != 2 or points.shape[1] != 3 or len(points) == 0:
             raise ValueError("object pointcloud must contain at least one XYZ point")
         if not np.all(np.isfinite(points)):
@@ -90,8 +88,8 @@ class GraspGenXRuntimeModule(GraspGenXModule):
 
         if poses.size == 0 and scores.size == 0:
             return GraspCandidateArray(
-                Header(float(object_pointcloud.ts), object_pointcloud.frame_id),
-                [],
+                header=object_pointcloud.header,
+                candidates=[],
             )
         if poses.shape != (len(scores), 4, 4):
             raise ValueError("backend poses must have shape (N, 4, 4)")
@@ -108,19 +106,16 @@ class GraspGenXRuntimeModule(GraspGenXModule):
         tcp_poses = poses @ np.asarray(self.config.grasp_frame_to_tcp)
         order = np.argsort(-scores, kind="stable")[: self.config.max_candidates]
         candidates = [
-            GraspCandidate(self._pose_from_matrix(tcp_poses[index]), float(scores[index]))
+            GraspCandidate(
+                pose=self._pose_from_matrix(tcp_poses[index]), score=float(scores[index])
+            )
             for index in order
         ]
         return GraspCandidateArray(
-            Header(float(object_pointcloud.ts), object_pointcloud.frame_id),
-            candidates,
+            header=object_pointcloud.header,
+            candidates=candidates,
         )
 
     @staticmethod
     def _pose_from_matrix(matrix: np.ndarray) -> Pose:
-        return Pose(
-            {
-                "position": Vector3(matrix[:3, 3]),
-                "orientation": Quaternion.from_rotation_matrix(matrix[:3, :3]),
-            }
-        )
+        return pose_from_matrix(matrix)

@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Protocol, cast
 from unittest.mock import DEFAULT, MagicMock
 
+from dimos_generated.dimos_msgs.msg import TrajectoryStatus
 import pytest
 from pytest_mock import MockerFixture
 
@@ -32,7 +33,8 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState, TrajectoryStatus
+from dimos.msgs.time import header_now
+from dimos.msgs.trajectory import TrajectoryState
 from dimos.robot.assets.model import RobotModel
 
 
@@ -55,7 +57,9 @@ def _mock_control_coordinator() -> MagicMock:
             return TrajectoryCancellationResult(TrajectoryCancellationStatus.ALREADY_STOPPED)
         return DEFAULT
 
-    coordinator.task_invoke.return_value = TrajectoryStatus(state=TrajectoryState.IDLE)
+    coordinator.task_invoke.return_value = TrajectoryStatus(
+        header=header_now(), state=TrajectoryState.IDLE
+    )
     coordinator.task_invoke.side_effect = invoke
     return coordinator
 

@@ -67,7 +67,7 @@ import tempfile
 import pytest
 
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos_generated.sensor_msgs.msg import Image
 
 
 @pytest.fixture(scope="module")

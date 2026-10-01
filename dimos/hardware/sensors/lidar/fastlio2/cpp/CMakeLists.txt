@@ -39,13 +39,7 @@ if(NOT FASTLIO_DIR)
   set(FASTLIO_DIR ${CMAKE_CURRENT_SOURCE_DIR}/fast-lio-non-ros)
 endif()
 
-# dimos-lcm C++ message headers
-FetchContent_Declare(dimos_lcm
-  GIT_REPOSITORY https://github.com/dimensionalOS/dimos-lcm.git
-  GIT_TAG main
-  GIT_SHALLOW TRUE
-)
-FetchContent_MakeAvailable(dimos_lcm)
+
 
 # The header-only dimos native C++ SDK. Overridable so nix can point at the
 # flake input instead of the in-repo relative path.
@@ -87,7 +81,6 @@ endif()
 target_include_directories(fastlio2_native PRIVATE
   ${FASTLIO_DIR}/include
   ${FASTLIO_DIR}/src
-  ${dimos_lcm_SOURCE_DIR}/generated/cpp_lcm_msgs
   ${LCM_INCLUDE_DIRS}
   ${EIGEN3_INCLUDE_DIR}
   ${PCL_INCLUDE_DIRS}

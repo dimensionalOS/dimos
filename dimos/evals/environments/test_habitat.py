@@ -16,14 +16,17 @@ import time
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseWithCovariance
+from dimos_generated.nav_msgs.msg import Odometry
+from dimos_generated.sensor_msgs.msg import Image
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 import pytest
 
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall
 from dimos.evals.environments.habitat import HabitatEnvironment
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.nav_msgs.Odometry import Odometry
+from dimos.msgs.image import image_from_array
+from dimos.msgs.time import time_from_seconds
 
 
 def environment(**kwargs):
@@ -140,7 +143,6 @@ def test_readiness_failure_releases_resources(tmp_path, mocker):
 
 def test_readiness_and_pose_normalization():
     from dimos.memory.store.memory import MemoryStore
-    from dimos.msgs.sensor_msgs.Image import Image
 
     env = environment()
     with MemoryStore() as store:
@@ -148,14 +150,21 @@ def test_readiness_and_pose_normalization():
             env.latest_pose(store)
         with pytest.raises(TimeoutError):
             env.wait_ready(store, deadline=time.monotonic())
-        odom = Odometry(frame_id="world", pose=Pose(position=Vector3(1, 2, 3)))
+        odom = Odometry(
+            header=Header(frame_id="world", stamp=time_from_seconds(time.time())),
+            pose=PoseWithCovariance(pose=Pose(position=Point(x=1, y=2, z=3))),
+        )
         store.stream("odometry", Odometry).append(odom)
-        store.stream("color_image", Image).append(Image(np.zeros((2, 2, 3), dtype=np.uint8)))
+        store.stream("color_image", Image).append(
+            image_from_array(
+                np.zeros((2, 2, 3), dtype=np.uint8), encoding="rgb8", header=odom.header
+            )
+        )
         env.wait_ready(store, deadline=time.monotonic() + 1)
         pose = env.latest_pose(store)
-        assert pose.ts == odom.ts
-        assert pose.frame_id == "world"
-        assert tuple(pose.position) == (1, 2, 3)
+        assert pose.header.stamp == odom.header.stamp
+        assert pose.header.frame_id == "world"
+        assert (pose.pose.position.x, pose.pose.position.y, pose.pose.position.z) == (1, 2, 3)
         assert env.episode_metadata()["initial_observed_position_ros"] == [1, 2, 3]
 
 

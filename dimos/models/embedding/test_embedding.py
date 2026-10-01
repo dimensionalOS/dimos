@@ -15,13 +15,15 @@
 import time
 from typing import Any
 
+import numpy as np
+from PIL import Image as PILImage
 import pytest
 import torch
 
 from dimos.models.embedding.clip import CLIPModel
 from dimos.models.embedding.mobileclip import MobileCLIPModel
 from dimos.models.embedding.treid import TorchReIDModel
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.image import image_from_array
 from dimos.utils.data import get_data
 
 
@@ -38,7 +40,9 @@ from dimos.utils.data import get_data
 @pytest.mark.skipif_in_ci
 def test_embedding_model(model_class: type, model_name: str, supports_text: bool) -> None:
     """Test embedding functionality across different model types."""
-    image = Image.from_file(get_data("cafe.jpg")).to_rgb()
+    image = image_from_array(
+        np.asarray(PILImage.open(get_data("cafe.jpg")).convert("RGB")), encoding="rgb8"
+    )
 
     print(f"\nTesting {model_name} embedding model")
 
@@ -113,7 +117,9 @@ def test_embedding_model(model_class: type, model_name: str, supports_text: bool
 @pytest.mark.skipif_in_ci
 def test_text_image_retrieval(model_class: type, model_name: str) -> None:
     """Test text-to-image retrieval using embedding similarity."""
-    image = Image.from_file(get_data("cafe.jpg")).to_rgb()
+    image = image_from_array(
+        np.asarray(PILImage.open(get_data("cafe.jpg")).convert("RGB")), encoding="rgb8"
+    )
 
     print(f"\nTesting {model_name} text-image retrieval")
 
@@ -146,7 +152,9 @@ def test_text_image_retrieval(model_class: type, model_name: str) -> None:
 @pytest.mark.skipif_in_ci
 def test_embedding_device_transfer() -> None:
     """Test embedding device transfer operations."""
-    image = Image.from_file(get_data("cafe.jpg")).to_rgb()
+    image = image_from_array(
+        np.asarray(PILImage.open(get_data("cafe.jpg")).convert("RGB")), encoding="rgb8"
+    )
 
     model = CLIPModel()
     embedding = model.embed(image)

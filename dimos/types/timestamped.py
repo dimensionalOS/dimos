@@ -13,13 +13,11 @@
 # limitations under the License.
 from collections import defaultdict
 from datetime import datetime, timezone
-from typing import Generic, TypeVar, Union
+from typing import Any, Generic, TypeVar, Union, overload
 
-from dimos_lcm.builtin_interfaces import Time as ROSTime
+from dimos_generated.builtin_interfaces.msg import Time as ROSTime
 from reactivex import create
 from reactivex.disposable import CompositeDisposable
-
-# from dimos_lcm.std_msgs import Time as ROSTime
 from reactivex.observable import Observable
 
 from dimos.types.weaklist import WeakList
@@ -49,13 +47,8 @@ def to_timestamp(ts: TimeLike) -> float:
         return float(ts)
     if isinstance(ts, dict) and "sec" in ts and "nanosec" in ts:
         return ts["sec"] + ts["nanosec"] / 1e9  # type: ignore[no-any-return]
-    # Check for ROS Time-like objects by attributes
-    if hasattr(ts, "sec") and (hasattr(ts, "nanosec") or hasattr(ts, "nsec")):
-        # Handle both std_msgs.Time (nsec) and builtin_interfaces.Time (nanosec)
-        if hasattr(ts, "nanosec"):
-            return ts.sec + ts.nanosec / 1e9  # type: ignore[no-any-return]
-        else:  # has nsec
-            return ts.sec + ts.nsec / 1e9  # type: ignore[no-any-return]
+    if isinstance(ts, ROSTime):
+        return ts.sec + ts.nanosec / 1e9
     raise TypeError("unsupported timestamp type")
 
 
@@ -116,6 +109,17 @@ class Timestamped:
 T = TypeVar("T", bound=Timestamped)
 
 
+VALUE = TypeVar("VALUE")
+
+
+class TimestampedData(Timestamped, Generic[VALUE]):
+    """Local time-series adapter; keep timestamp metadata outside generated wire values."""
+
+    def __init__(self, value: VALUE, ts: float) -> None:
+        super().__init__(ts)
+        self.value = value
+
+
 PRIMARY = TypeVar("PRIMARY", bound=Timestamped)
 SECONDARY = TypeVar("SECONDARY", bound=Timestamped)
 
@@ -166,12 +170,32 @@ class MatchContainer(Timestamped, Generic[PRIMARY, SECONDARY]):
         return (self.primary, *self.matches)  # type: ignore[arg-type]
 
 
+@overload
+def align_timestamped(
+    primary_observable: Observable[PRIMARY],
+    secondary_observable: Observable[SECONDARY],
+    /,
+    *,
+    buffer_size: float = 1.0,
+    match_tolerance: float = 0.1,
+) -> Observable[tuple[PRIMARY, SECONDARY]]: ...
+
+
+@overload
+def align_timestamped(
+    primary_observable: Observable[PRIMARY],
+    *secondary_observables: Observable[SECONDARY],
+    buffer_size: float = 1.0,
+    match_tolerance: float = 0.1,
+) -> Observable[tuple[PRIMARY | SECONDARY, ...]]: ...
+
+
 def align_timestamped(
     primary_observable: Observable[PRIMARY],
     *secondary_observables: Observable[SECONDARY],
     buffer_size: float = 1.0,  # seconds
     match_tolerance: float = 0.1,  # seconds
-) -> Observable[tuple[PRIMARY, ...]]:
+) -> Observable[tuple[Any, ...]]:
     """Align a primary observable with one or more secondary observables.
 
     Args:

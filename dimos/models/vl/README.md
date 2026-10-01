@@ -13,14 +13,14 @@ returns absolute pixel coordinates, which rules out the `qwen3-vl-*` models.
 
 ```python
 from dimos.models.vl.qwen import QwenVlModel
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.image import image_from_file, image_view
 
 # Initialize the model (requires ALIBABA_API_KEY environment variable)
 model = QwenVlModel()
 
-image = Image.from_file("path/to/your/image.jpg")
+image = image_from_file("path/to/your/image.jpg")
 
-response = model.query(image.data, "What do you see in this image?")
+response = model.query(image_view(image), "What do you see in this image?")
 print(response)
 ```
 
@@ -48,10 +48,10 @@ The model supports four modes of operation:
 
 ```python
 from dimos.models.vl.moondream_hosted import MoondreamHostedVlModel
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.image import image_from_file, image_view
 
 model = MoondreamHostedVlModel()
-image = Image.from_file("path/to/image.jpg")
+image = image_from_file("path/to/image.jpg")
 
 # 1. Caption
 print(f"Caption: {model.caption(image)}")

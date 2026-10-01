@@ -29,10 +29,12 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
+from dimos_generated.geometry_msgs.msg import PoseStamped, Twist, TwistStamped, Vector3
+from dimos_generated.std_msgs.msg import Header
 import pytest
 
 from dimos.core.module import Module
-from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
+from dimos.msgs.time import time_from_nanoseconds, time_from_seconds, to_nanoseconds
 from dimos.teleop.hosted.go2_command import ALLOWED_SPORT_CMDS, Go2CommandModule
 from dimos.utils.testing.waiting import wait_until
 
@@ -62,8 +64,7 @@ def module(monkeypatch: pytest.MonkeyPatch) -> Iterator[Go2CommandModule]:
 
 def _twist(ts: float, *, vx: float = 0.3) -> TwistStamped:
     """A drive frame at time ``ts`` (vx=0.3 moving, vx=0 idle-joystick)."""
-    t = TwistStamped(ts=ts, linear=[0.0, 0.0, 0.0], angular=[0.0, 0.0, 0.0])
-    t.linear.x = vx
+    t = TwistStamped(header=Header(stamp=time_from_seconds(ts)), twist=Twist(linear=Vector3(x=vx)))
     return t
 
 
@@ -124,25 +125,25 @@ def test_drive_drops_stale(module: Go2CommandModule) -> None:
 def test_drive_drops_future(module: Go2CommandModule) -> None:
     module._on_cmd_vel_in(_twist(time.time() + 5.0))
     module.tele_cmd_vel.publish.assert_not_called()
-    assert module._last_cmd_ts == 0.0  # future stamp must not poison the guard
+    assert module._last_cmd_ns == 0.0  # future stamp must not poison the guard
 
 
 def test_drive_drops_in_window_future_without_poisoning_guard(module: Go2CommandModule) -> None:
     # A future stamp SMALLER than cmd_stale_after_sec (clock skew) must still be
-    # rejected and must NOT advance _last_cmd_ts — otherwise every subsequent
+    # rejected and must NOT advance _last_cmd_ns — otherwise every subsequent
     # in-order frame would be dropped as out-of-order until wall-clock catches
     # up, stalling drive. Regression guard for the in-window future case.
     module._on_cmd_vel_in(_twist(time.time() + 0.2))  # +0.2s < 0.5s stale window
     module.tele_cmd_vel.publish.assert_not_called()
-    assert module._last_cmd_ts == 0.0
+    assert module._last_cmd_ns == 0.0
     # a normal fresh frame right after must still be forwarded
     module._on_cmd_vel_in(_twist(time.time()))
     module.tele_cmd_vel.publish.assert_called_once()
 
 
 def test_drive_drops_out_of_order(module: Go2CommandModule) -> None:
-    module._last_cmd_ts = time.time()
-    module._on_cmd_vel_in(_twist(module._last_cmd_ts - 0.1))
+    module._last_cmd_ns = time.time_ns()
+    module._on_cmd_vel_in(_twist(module._last_cmd_ns / 1e9 - 0.1))
     module.tele_cmd_vel.publish.assert_not_called()
 
 
@@ -150,7 +151,7 @@ def test_drive_forwards_fresh(module: Go2CommandModule) -> None:
     ts = time.time()
     module._on_cmd_vel_in(_twist(ts))
     module.tele_cmd_vel.publish.assert_called_once()
-    assert module._last_cmd_ts == ts
+    assert module._last_cmd_ns == to_nanoseconds(time_from_seconds(ts))
 
 
 def test_drive_suppresses_idle_zero_stream(module: Go2CommandModule) -> None:
@@ -179,17 +180,28 @@ def test_estopped_drive_is_dropped(module: Go2CommandModule) -> None:
     module.tele_cmd_vel.publish.assert_not_called()
 
 
-def test_drive_drops_nan_timestamp(module: Go2CommandModule) -> None:
-    # A NaN ts passes every comparison and would poison _last_cmd_ts (ts <= NaN
-    # is False forever → reorder guard permanently disabled). Must be rejected.
-    module._on_cmd_vel_in(_twist(float("nan")))
+def test_drive_drops_invalid_nanoseconds(module: Go2CommandModule) -> None:
+    message = _twist(time.time())
+    message.header.stamp.nanosec = 1_000_000_000
+    module._on_cmd_vel_in(message)
     module.tele_cmd_vel.publish.assert_not_called()
-    assert module._last_cmd_ts == 0.0  # guard not poisoned
+    assert module._last_cmd_ns == 0
+
+
+def test_drive_orders_frames_one_nanosecond_apart(module: Go2CommandModule) -> None:
+    first = _twist(time.time() - 0.1)
+    stamp_ns = to_nanoseconds(first.header.stamp)
+    second = TwistStamped.decode(first.encode())
+    second.header.stamp = time_from_nanoseconds(stamp_ns + 1)
+    module._on_cmd_vel_in(TwistStamped.decode(first.encode()))
+    module._on_cmd_vel_in(second)
+    assert module.tele_cmd_vel.publish.call_count == 2
+    assert module._last_cmd_ns == stamp_ns + 1
 
 
 def test_drive_drops_non_finite_velocity(module: Go2CommandModule) -> None:
     t = _twist(time.time())
-    t.linear.x = float("inf")
+    t.twist.linear.x = float("inf")
     module._on_cmd_vel_in(t)
     module.tele_cmd_vel.publish.assert_not_called()
 
@@ -197,8 +209,8 @@ def test_drive_drops_non_finite_velocity(module: Go2CommandModule) -> None:
 def test_drive_clamps_excessive_velocity(module: Go2CommandModule) -> None:
     # An untrusted operator sending huge velocities is clamped to the envelope.
     t = _twist(time.time())
-    t.linear.x = 99.0  # way over max_linear_mps=1.5
-    t.angular.z = -50.0  # way under -max_angular_rps=2.0
+    t.twist.linear.x = 99.0  # way over max_linear_mps=1.5
+    t.twist.angular.z = -50.0  # way under -max_angular_rps=2.0
     module._on_cmd_vel_in(t)
     published = module.tele_cmd_vel.publish.call_args[0][0]
     assert published.linear.x == 1.5
@@ -377,7 +389,8 @@ def test_nav_goal_publishes_and_acks(
     module._handle_nav_goal({"x": 2.5, "y": -1.0, "nonce": 11})
 
     (pose,) = module.goal_request.publish.call_args.args
-    assert pose.position.x == pytest.approx(2.5)
+    assert pose.pose.position.x == pytest.approx(2.5)
+    assert PoseStamped.decode(pose.encode()).header.frame_id == "world"
     assert acks == [(11, True)]
 
 

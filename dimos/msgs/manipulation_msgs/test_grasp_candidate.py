@@ -12,16 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import pytest
+from dimos_generated.dimos_msgs.msg import GraspCandidate, GraspCandidateArray
+from dimos_generated.geometry_msgs.msg import Point, Pose
+from dimos_generated.std_msgs.msg import Header
 
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.manipulation_msgs.GraspCandidate import GraspCandidate
-from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
-from dimos.msgs.std_msgs.Header import Header
+from dimos.msgs.time import time_from_seconds
 
 
 def test_grasp_candidate_round_trip_preserves_pose_and_score() -> None:
-    candidate = GraspCandidate(Pose(0.4, -0.2, 0.3), 0.75)
+    candidate = GraspCandidate(pose=Pose(position=Point(x=0.4, y=-0.2, z=0.3)), score=0.75)
 
     decoded = GraspCandidate.decode(candidate.encode())
 
@@ -31,21 +30,18 @@ def test_grasp_candidate_round_trip_preserves_pose_and_score() -> None:
     assert decoded.score == 0.75
 
 
-def test_grasp_candidate_rejects_non_finite_score() -> None:
-    with pytest.raises(ValueError, match="score must be finite"):
-        GraspCandidate(score=float("nan"))
-
-
 def test_grasp_candidate_array_round_trip_preserves_header_and_order() -> None:
     candidates = [
-        GraspCandidate(Pose(0.1, 0.0, 0.2), 0.9),
-        GraspCandidate(Pose(0.2, 0.0, 0.2), 0.7),
+        GraspCandidate(pose=Pose(position=Point(x=0.1, z=0.2)), score=0.9),
+        GraspCandidate(pose=Pose(position=Point(x=0.2, z=0.2)), score=0.7),
     ]
-    proposals = GraspCandidateArray(Header(123.0, "world"), candidates)
+    proposals = GraspCandidateArray(
+        header=Header(stamp=time_from_seconds(123.0), frame_id="world"), candidates=candidates
+    )
 
     decoded = GraspCandidateArray.decode(proposals.encode())
 
-    assert decoded.header.timestamp == 123.0
+    assert decoded.header.stamp == time_from_seconds(123.0)
     assert decoded.header.frame_id == "world"
-    assert [candidate.score for candidate in decoded] == [0.9, 0.7]
-    assert [candidate.pose.position.x for candidate in decoded] == [0.1, 0.2]
+    assert [candidate.score for candidate in decoded.candidates] == [0.9, 0.7]
+    assert [candidate.pose.position.x for candidate in decoded.candidates] == [0.1, 0.2]

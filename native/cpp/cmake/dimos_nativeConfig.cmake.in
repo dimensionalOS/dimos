@@ -1,0 +1,28 @@
+@PACKAGE_INIT@
+set(_dimos_native_prefix "${PACKAGE_PREFIX_DIR}")
+include(CMakeFindDependencyMacro)
+find_dependency(Threads)
+find_dependency(dimos_generated CONFIG)
+find_dependency(PkgConfig)
+pkg_check_modules(LCM REQUIRED IMPORTED_TARGET lcm)
+pkg_check_modules(ZENOHC QUIET IMPORTED_TARGET zenohc>=1.9.0)
+if(ZENOHC_FOUND AND NOT TARGET zenohc::lib)
+  add_library(zenohc::lib ALIAS PkgConfig::ZENOHC)
+elseif(NOT ZENOHC_FOUND)
+  find_dependency(zenohc 1.9.0)
+endif()
+find_dependency(zenohcxx 1.9.0)
+# System JSON installations remain normal dependencies; fetched pinned headers
+# are included in the SDK archive instead.
+if(NOT EXISTS "${_dimos_native_prefix}/include/nlohmann/json.hpp")
+  find_dependency(nlohmann_json)
+  set(_dimos_json_target nlohmann_json::nlohmann_json)
+endif()
+if(NOT TARGET dimos_native::dimos_native)
+  add_library(dimos_native::dimos_native INTERFACE IMPORTED)
+  set_target_properties(dimos_native::dimos_native PROPERTIES
+    INTERFACE_COMPILE_FEATURES cxx_std_20
+    INTERFACE_INCLUDE_DIRECTORIES "${_dimos_native_prefix}/include"
+    INTERFACE_LINK_LIBRARIES "Threads::Threads;dimos_generated::messages;zenohcxx::zenohc;PkgConfig::LCM;${_dimos_json_target}")
+endif()
+check_required_components(dimos_native)

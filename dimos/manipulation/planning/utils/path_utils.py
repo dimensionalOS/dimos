@@ -30,9 +30,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from dimos_generated.sensor_msgs.msg import JointState
 import numpy as np
-
-from dimos.msgs.sensor_msgs.JointState import JointState
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray

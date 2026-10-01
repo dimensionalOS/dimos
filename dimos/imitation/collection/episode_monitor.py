@@ -27,6 +27,7 @@ import threading
 import time
 from typing import Any, Literal, TypeAlias
 
+from dimos_generated.std_msgs.msg import UInt32
 from pydantic import BaseModel, Field, field_validator
 from reactivex.abc import DisposableBase
 from reactivex.disposable import Disposable
@@ -94,7 +95,7 @@ class EpisodeMonitorModuleConfig(ModuleConfig):
 class EpisodeMonitorModule(Module):
     config: EpisodeMonitorModuleConfig
 
-    teleop_buttons: In[Buttons]
+    teleop_buttons: In[UInt32]
     # TODO: no KeyPress producer exists yet — add a pygame keyboard module that
     # publishes KeyPress so this port is actually fed (today only buttons drive it).
     keyboard: In[KeyPress]
@@ -161,8 +162,9 @@ class EpisodeMonitorModule(Module):
 
     # ── port handlers ────────────────────────────────────────────────────────
 
-    def _on_buttons(self, msg: Buttons) -> None:
+    def _on_buttons(self, msg: UInt32) -> None:
         """Rising-edge detect against `config.button_map`; advance state machine."""
+        buttons = Buttons(data=msg.data)
         ts = time.time()
         # Edge-detect under the lock (it shares `_prev_bits` with reset_counters),
         # then fire transitions outside it — `_transition` takes the same lock.
@@ -173,7 +175,7 @@ class EpisodeMonitorModule(Module):
             for event_name, alias_or_attr in self.config.button_map.items():
                 attr = BUTTON_ALIASES.get(alias_or_attr, alias_or_attr)
                 try:
-                    pressed = bool(getattr(msg, attr))
+                    pressed = bool(getattr(buttons, attr))
                 except AttributeError:
                     continue
                 prev = self._prev_bits.get(attr, False)

@@ -16,15 +16,18 @@
 
 from unittest.mock import MagicMock
 
+from dimos_generated.geometry_msgs.msg import Pose
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 import pytest
 
 pytest.importorskip("viser", reason="Viser optional dependency is not installed")
 
+from dimos_generated.geometry_msgs.msg import PoseStamped
+
 from dimos.manipulation.planning.spec.enums import ObstacleType
 from dimos.manipulation.planning.spec.models import Obstacle
 from dimos.manipulation.visualization.viser.scene import ViserManipulationScene
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 
 def _scene() -> ViserManipulationScene:
@@ -35,7 +38,7 @@ def _octree(points: np.ndarray, resolution: float = 0.025) -> Obstacle:
     return Obstacle(
         name="mapping/voxel-map",
         obstacle_type=ObstacleType.OCTREE,
-        pose=PoseStamped(frame_id="world"),
+        pose=PoseStamped(header=Header(frame_id="world"), pose=Pose()),
         points=points,
         octree_resolution=resolution,
     )

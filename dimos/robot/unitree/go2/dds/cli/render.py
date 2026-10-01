@@ -34,26 +34,42 @@ import shutil
 import subprocess
 from typing import TYPE_CHECKING, Any, cast
 
+from dimos_generated.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseStamped,
+    Quaternion,
+    TransformStamped,
+    Twist,
+    TwistStamped,
+    Vector3,
+)
+from dimos_generated.nav_msgs.msg import Path
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
+from scipy.spatial.transform import Rotation
 import typer
 
 from dimos.memory.transform import throttle
 from dimos.memory.utils.progress import progress
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.nav_msgs.Path import Path
+from dimos.msgs.geometry import compose_transforms, transform_from_matrix
+from dimos.msgs.pointcloud import transform_cloud
+from dimos.msgs.time import time_from_seconds
 from dimos.robot.unitree.go2.dds.extrinsics import LIDAR_TO_BASE
 from dimos.robot.unitree.go2.dds.msgs.SportModeState import SportModeState
 from dimos.robot.unitree.go2.dds.store import Go2McapStore
+from dimos.visualization.rerun.message_helpers import (
+    cloud_archetype,
+    image_archetype,
+    navigation_archetype,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
+    from dimos_generated.sensor_msgs.msg import Image, PointCloud2
+
     from dimos.memory.type.observation import Observation
-    from dimos.msgs.sensor_msgs.Image import Image
-    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 WORLD = "world"
 
@@ -61,8 +77,8 @@ WORLD = "world"
 def world_accel(obs: Observation[Any]) -> np.ndarray:
     """IMU linear acceleration rotated into the world frame (includes gravity)."""
     la = obs.data.linear_acceleration
-    a = obs.data.orientation.rotate_vector(Vector3(la.x, la.y, la.z))
-    return np.array([float(a.x), float(a.y), float(a.z)])
+    q = obs.data.orientation
+    return np.asarray(Rotation.from_quat([q.x, q.y, q.z, q.w]).apply([la.x, la.y, la.z]))
 
 
 def gravity_bias(
@@ -109,10 +125,11 @@ def sportmode_pose(obs: Observation[SportModeState]) -> PoseStamped:
     sm = obs.data
     w, x, y, z = (float(v) for v in sm.imu_state.quaternion)  # Unitree order: wxyz
     return PoseStamped(
-        ts=obs.ts,
-        frame_id=WORLD,
-        position=[float(v) for v in sm.position],
-        orientation=[x, y, z, w],
+        header=Header(frame_id=WORLD, stamp=time_from_seconds(obs.ts)),
+        pose=Pose(
+            position=Point(x=sm.position[0], y=sm.position[1], z=sm.position[2]),
+            orientation=Quaternion(x=x, y=y, z=z, w=w),
+        ),
     )
 
 
@@ -127,7 +144,8 @@ def integrate_velocity(
         if prev is not None:
             vel = vel + a_world * (obs.ts - prev)
         twist = TwistStamped(
-            ts=obs.ts, frame_id=WORLD, linear=vel.tolist(), angular=[0.0, 0.0, 0.0]
+            header=Header(frame_id=WORLD, stamp=time_from_seconds(obs.ts)),
+            twist=Twist(linear=Vector3(x=vel[0], y=vel[1], z=vel[2])),
         )
         return (vel, obs.ts), twist
 
@@ -137,20 +155,21 @@ def integrate_velocity(
 def integrate_position(state: Any, obs: Observation[Any]) -> tuple[Any, PoseStamped]:
     """scan_data: TwistStamped -> PoseStamped (velocity integrated to position)."""
     pos, prev = state
-    v = obs.data.linear
+    v = obs.data.twist.linear
     if prev is not None:
         pos = pos + np.array([v.x, v.y, v.z]) * (obs.ts - prev)
     pose = PoseStamped(
-        ts=obs.ts, frame_id=WORLD, position=pos.tolist(), orientation=[0.0, 0.0, 0.0, 1.0]
+        header=Header(frame_id=WORLD, stamp=time_from_seconds(obs.ts)),
+        pose=Pose(position=Point(x=pos[0], y=pos[1], z=pos[2]), orientation=Quaternion(w=1)),
     )
     return (pos, obs.ts), pose
 
 
 def accumulate_path(upstream: Iterator[Observation[PoseStamped]]) -> Iterator[Observation[Path]]:
     """transform: yield the growing nav_msgs/Path as each pose streams in."""
-    path = Path(frame_id=WORLD)
+    path = Path(header=Header(frame_id=WORLD))
     for obs in upstream:
-        path = path.push(obs.data)
+        path = Path(header=obs.data.header, poses=[*path.poses, obs.data])
         yield obs.derive(data=path)
 
 
@@ -160,11 +179,13 @@ def leg_odom(store: Go2McapStore, seconds: float | None) -> None:
 
     def log_pose(obs: Observation[PoseStamped]) -> None:
         rr.set_time("time", timestamp=obs.ts)
-        rr.log("world/leg_odom", obs.data.to_rerun(), rr.TransformAxes3D(axis_length=0.2))
+        rr.log(
+            "world/leg_odom", navigation_archetype(obs.data), rr.TransformAxes3D(axis_length=0.2)
+        )
 
     def log_path(obs: Observation[Path]) -> None:
         rr.set_time("time", timestamp=obs.ts)
-        rr.log("world/leg_odom_path", obs.data.to_rerun())
+        rr.log("world/leg_odom_path", navigation_archetype(obs.data))
 
     src = store.streams.sportmodestate.to_time(seconds)
     with progress(src.count(), "leg_odom") as bar:
@@ -185,7 +206,7 @@ def imu_odom(store: Go2McapStore, seconds: float | None) -> None:
 
     def log_path(obs: Observation[Path]) -> None:
         rr.set_time("time", timestamp=obs.ts)
-        rr.log("world/imu_odom_path", obs.data.to_rerun(color=(220, 90, 90)))
+        rr.log("world/imu_odom_path", navigation_archetype(obs.data, color=(220, 90, 90)))
 
     gravity = gravity_bias(store)  # calibrate gravity+bias on the stationary start
     src = store.streams.imu.to_time(seconds)
@@ -207,10 +228,17 @@ def lidar(store: Go2McapStore, seconds: float | None) -> None:
 
     def log_lidar(obs: Observation[PointCloud2]) -> None:
         rr.set_time("time", timestamp=obs.ts)
-        rr.log("world/leg_odom/lidar", obs.data.to_rerun())
+        rr.log("world/leg_odom/lidar", cloud_archetype(obs.data))
 
     src = store.streams.lidar.to_time(seconds)
-    rr.log("world/leg_odom/lidar", LIDAR_TO_BASE.to_rerun(frameless=True), static=True)
+    t, q = LIDAR_TO_BASE.transform.translation, LIDAR_TO_BASE.transform.rotation
+    rr.log(
+        "world/leg_odom/lidar",
+        rr.Transform3D(
+            translation=[t.x, t.y, t.z], quaternion=rr.Quaternion(xyzw=[q.x, q.y, q.z, q.w])
+        ),
+        static=True,
+    )
     with progress(src.count(), "lidar") as bar:
         src.tap(bar).tap(log_lidar).drain()
 
@@ -248,15 +276,19 @@ def world_lidar(store: Go2McapStore, seconds: float | None) -> None:
 
     def to_world(obs: Observation[PointCloud2]) -> PointCloud2:
         p, q = _interp_pose(tt, pos, quat, obs.ts)
-        b2w = Transform.from_pose(
-            WORLD,
-            PoseStamped(ts=obs.ts, frame_id=WORLD, position=p.tolist(), orientation=q.tolist()),
+        matrix = np.eye(4)
+        matrix[:3, :3] = Rotation.from_quat(q).as_matrix()
+        matrix[:3, 3] = p
+        b2w = TransformStamped(
+            header=Header(frame_id=WORLD, stamp=obs.data.header.stamp),
+            child_frame_id=ext.header.frame_id,
+            transform=transform_from_matrix(matrix),
         )
-        return obs.data.transform(b2w.apply(ext))  # lidar -> base -> world
+        return transform_cloud(obs.data, compose_transforms(b2w, ext))
 
     def log_voxels(obs: Observation[PointCloud2]) -> None:
         rr.set_time("time", timestamp=obs.ts)
-        rr.log("world/world_lidar", obs.data.to_rerun())
+        rr.log("world/world_lidar", cloud_archetype(obs.data))
 
     src = store.streams.lidar.to_time(seconds)
     with progress(src.count(), "world_lidar") as bar:
@@ -281,7 +313,7 @@ def camera(store: Go2McapStore, seconds: float | None, hz: float) -> None:
         if obs.data is None:  # truncated/corrupt frame
             return
         rr.set_time("time", timestamp=obs.ts)
-        rr.log("world/camera", obs.data.to_rerun())
+        rr.log("world/camera", image_archetype(obs.data))
 
     src = store.streams.color_image.to_time(seconds)
     with progress(src.count(), "camera") as bar:

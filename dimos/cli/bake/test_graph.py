@@ -22,8 +22,8 @@ from dimos.cli.bake.discovery import RegisteredModule
 from dimos.cli.bake.errors import BakeError
 from dimos.cli.bake.graph import Connection, Graph, build_graph, parse_remap, render
 
-PC2 = "sensor_msgs.PointCloud2"
-POSE = "geometry_msgs.PoseStamped"
+PC2 = "sensor_msgs/msg/PointCloud2"
+POSE = "geometry_msgs/msg/PoseStamped"
 
 
 def module(
@@ -155,20 +155,20 @@ def test_rendered_graph_is_grouped_by_direction() -> None:
         "Host `host`: mapper, planner",
         "",
         "Internal connections:",
-        "  dimos/local_map/sensor_msgs.PointCloud2  sensor_msgs.PointCloud2  [SUPPRESSED]",
+        "  dimos/local_map/sensor_msgs/msg/PointCloud2  sensor_msgs/msg/PointCloud2  [SUPPRESSED]",
         "      out  mapper.local_map",
         "      in   planner.local_map",
         "",
         "External inputs (subscribed):",
-        "  dimos/goal/geometry_msgs.PoseStamped  geometry_msgs.PoseStamped",
+        "  dimos/goal/geometry_msgs/msg/PoseStamped  geometry_msgs/msg/PoseStamped",
         "      in   planner.goal",
-        "  dimos/lidar/sensor_msgs.PointCloud2  sensor_msgs.PointCloud2",
+        "  dimos/lidar/sensor_msgs/msg/PointCloud2  sensor_msgs/msg/PointCloud2",
         "      in   mapper.lidar",
         "",
         "External outputs (published):",
-        "  dimos/path/geometry_msgs.PoseStamped  geometry_msgs.PoseStamped",
+        "  dimos/path/geometry_msgs/msg/PoseStamped  geometry_msgs/msg/PoseStamped",
         "      out  planner.path",
-        "  dimos/region_bounds/geometry_msgs.PoseStamped  geometry_msgs.PoseStamped",
+        "  dimos/region_bounds/geometry_msgs/msg/PoseStamped  geometry_msgs/msg/PoseStamped",
         "      out  mapper.region_bounds",
     ]
 

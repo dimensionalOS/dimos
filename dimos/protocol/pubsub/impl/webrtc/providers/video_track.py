@@ -25,15 +25,16 @@ import time
 
 from aiortc.mediastreams import VIDEO_CLOCK_RATE, VIDEO_TIME_BASE, VideoStreamTrack
 import av
+from dimos_generated.sensor_msgs.msg import Image
 
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.image import image_view
 
 _AV_FORMAT_MAP = {
-    ImageFormat.BGR: "bgr24",
-    ImageFormat.RGB: "rgb24",
-    ImageFormat.BGRA: "bgra",
-    ImageFormat.RGBA: "rgba",
-    ImageFormat.GRAY: "gray",
+    "bgr8": "bgr24",
+    "rgb8": "rgb24",
+    "bgra8": "bgra",
+    "rgba8": "rgba",
+    "mono8": "gray",
 }
 
 
@@ -99,7 +100,9 @@ class CameraVideoTrack(VideoStreamTrack):
             self._first_mono = now
         pts = int((now - self._first_mono) * VIDEO_CLOCK_RATE)
 
-        frame = av.VideoFrame.from_ndarray(img.data, format=_AV_FORMAT_MAP.get(img.format, "bgr24"))
+        if img.encoding not in _AV_FORMAT_MAP:
+            raise ValueError(f"unsupported WebRTC video encoding {img.encoding!r}")
+        frame = av.VideoFrame.from_ndarray(image_view(img), format=_AV_FORMAT_MAP[img.encoding])
         frame.pts = pts
         frame.time_base = VIDEO_TIME_BASE
         return frame

@@ -1,0 +1,18 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "dimos",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/../build/cpp",
+      "toolchainFile": "${sourceDir}/../build/dimos/toolchain.cmake"
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "dimos",
+      "configurePreset": "dimos",
+      "jobs": 2
+    }
+  ]
+}

@@ -23,15 +23,15 @@ import subprocess
 import sys
 from typing import Any
 
+from dimos_generated.dimos_msgs.msg import GraspCandidate, GraspCandidateArray
+from dimos_generated.geometry_msgs.msg import Point, Pose
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 import pytest
 
 from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec, LegacyGraspGenSpec
 from dimos.manipulation.grasping.grasp_gen_x.module import GraspGenXConfig
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.manipulation_msgs.GraspCandidate import GraspCandidate
-from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
-from dimos.msgs.std_msgs.Header import Header
+from dimos.msgs.time import time_from_seconds
 
 
 def config(**overrides: Any) -> GraspGenXConfig:
@@ -68,15 +68,20 @@ def test_public_adapter_import_does_not_load_optional_runtime() -> None:
 
 
 def test_messages_round_trip_empty_and_score() -> None:
-    value = GraspCandidateArray(Header(3.0, "camera"), [GraspCandidate(Pose(1, 2, 3), 0.25)])
+    value = GraspCandidateArray(
+        header=Header(stamp=time_from_seconds(3.0), frame_id="camera"),
+        candidates=[GraspCandidate(pose=Pose(position=Point(x=1, y=2)), score=0.25)],
+    )
     decoded = GraspCandidateArray.decode(value.encode())
 
     assert decoded.header.frame_id == "camera"
-    assert decoded.header.timestamp == pytest.approx(3.0)
+    assert decoded.header.stamp == time_from_seconds(3.0)
     assert decoded.candidates[0].score == pytest.approx(0.25)
     assert (
         GraspCandidateArray.decode(
-            GraspCandidateArray(Header(3.0, "camera"), []).encode()
+            GraspCandidateArray(
+                header=Header(stamp=time_from_seconds(3.0), frame_id="camera"), candidates=[]
+            ).encode()
         ).candidates
         == []
     )

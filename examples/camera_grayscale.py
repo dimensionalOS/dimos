@@ -12,13 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import cv2
+from dimos_generated.sensor_msgs.msg import Image
+
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.hardware.sensors.camera.module import CameraModule
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.image import image_from_array, image_to_rgb
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 
 
@@ -27,11 +30,17 @@ class Grayscale(Module):
     gray_image: Out[Image]
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         self.color_image.subscribe(self._publish_grayscale)
 
-    def _publish_grayscale(self, image: Image):
-        self.gray_image.publish(image.to_grayscale())
+    def _publish_grayscale(self, image: Image) -> None:
+        self.gray_image.publish(
+            image_from_array(
+                cv2.cvtColor(image_to_rgb(image), cv2.COLOR_RGB2GRAY),
+                encoding="mono8",
+                header=image.header,
+            )
+        )
 
 
 if __name__ == "__main__":

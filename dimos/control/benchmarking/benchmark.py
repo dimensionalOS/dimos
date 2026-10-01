@@ -51,6 +51,9 @@ import threading
 import time
 from typing import Any, Literal
 
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Twist
+from dimos_generated.nav_msgs.msg import Path as NavPath
+from dimos_generated.std_msgs.msg import Float32, Header, Int8
 import numpy as np
 from reactivex.disposable import Disposable
 
@@ -68,13 +71,7 @@ from dimos.control.benchmarking.paths import (
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.nav_msgs.Path import Path as NavPath
-from dimos.msgs.std_msgs.Float32 import Float32
-from dimos.msgs.std_msgs.Int8 import Int8
+from dimos.msgs.geometry import quaternion_euler, quaternion_from_euler
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -119,18 +116,23 @@ def shift_path_to_start_at_pose(path: NavPath, start_pose: PoseStamped) -> NavPa
     at the robot's current pose, so the operator only has to roughly aim the
     robot. Scoring is then in the executed frame regardless of where the plant
     starts."""
-    px0, py0 = path.poses[0].position.x, path.poses[0].position.y
-    pyaw0 = path.poses[0].orientation.euler[2]
-    sx, sy = start_pose.position.x, start_pose.position.y
-    dyaw = start_pose.orientation.euler[2] - pyaw0
+    px0, py0 = path.poses[0].pose.position.x, path.poses[0].pose.position.y
+    pyaw0 = quaternion_euler(path.poses[0].pose.orientation)[2]
+    sx, sy = start_pose.pose.position.x, start_pose.pose.position.y
+    dyaw = quaternion_euler(start_pose.pose.orientation)[2] - pyaw0
     cd, sd = math.cos(dyaw), math.sin(dyaw)
     new = []
     for p in path.poses:
-        rx, ry = p.position.x - px0, p.position.y - py0
+        rx, ry = p.pose.position.x - px0, p.pose.position.y - py0
         new.append(
             PoseStamped(
-                position=Vector3(sx + rx * cd - ry * sd, sy + rx * sd + ry * cd, 0.0),
-                orientation=Quaternion.from_euler(Vector3(0.0, 0.0, p.orientation.euler[2] + dyaw)),
+                header=Header(frame_id=""),
+                pose=Pose(
+                    position=Point(x=sx + rx * cd - ry * sd, y=sy + rx * sd + ry * cd, z=0.0),
+                    orientation=quaternion_from_euler(
+                        0.0, 0.0, quaternion_euler(p.pose.orientation)[2] + dyaw
+                    ),
+                ),
             )
         )
     return NavPath(poses=new)
@@ -172,7 +174,10 @@ class RunRecording:
         velocity_threshold: float,
         timeout: float,
     ) -> RunRecording:
-        ref = [[p.position.x, p.position.y, p.orientation.euler[2]] for p in reference.poses]
+        ref = [
+            [p.pose.position.x, p.pose.position.y, quaternion_euler(p.pose.orientation)[2]]
+            for p in reference.poses
+        ]
         return cls(
             robot=robot,
             path=path_name,
@@ -197,8 +202,11 @@ class RunRecording:
         return NavPath(
             poses=[
                 PoseStamped(
-                    position=Vector3(x, y, 0.0),
-                    orientation=Quaternion.from_euler(Vector3(0.0, 0.0, yaw)),
+                    header=Header(frame_id=""),
+                    pose=Pose(
+                        position=Point(x=x, y=y, z=0.0),
+                        orientation=quaternion_from_euler(0.0, 0.0, yaw),
+                    ),
                 )
                 for x, y, yaw in self.reference
             ]
@@ -246,12 +254,12 @@ class OdomRecorder:
             else:
                 dt = now - self._prev_t
                 if dt > 0:
-                    dx = pose.position.x - self._prev_pose.position.x
-                    dy = pose.position.y - self._prev_pose.position.y
-                    y1 = pose.orientation.euler[2]
-                    dyaw = (y1 - self._prev_pose.orientation.euler[2] + math.pi) % (
-                        2 * math.pi
-                    ) - math.pi
+                    dx = pose.pose.position.x - self._prev_pose.pose.position.x
+                    dy = pose.pose.position.y - self._prev_pose.pose.position.y
+                    y1 = quaternion_euler(pose.pose.orientation)[2]
+                    dyaw = (
+                        y1 - quaternion_euler(self._prev_pose.pose.orientation)[2] + math.pi
+                    ) % (2 * math.pi) - math.pi
                     c, s = math.cos(y1), math.sin(y1)
                     bx = (dx / dt) * c + (dy / dt) * s
                     by = -(dx / dt) * s + (dy / dt) * c
@@ -263,9 +271,9 @@ class OdomRecorder:
             self._ticks.append(
                 [
                     t_rel,
-                    pose.position.x,
-                    pose.position.y,
-                    pose.orientation.euler[2],
+                    pose.pose.position.x,
+                    pose.pose.position.y,
+                    quaternion_euler(pose.pose.orientation)[2],
                     self._cmd_vx,
                     self._cmd_vy,
                     self._cmd_wz,
@@ -326,7 +334,9 @@ class CompletionMonitor:
         progress_frac: float = 0.7,
         window: int = 20,
     ) -> None:
-        self._xy = np.array([[p.position.x, p.position.y] for p in reference.poses], dtype=float)
+        self._xy = np.array(
+            [[p.pose.position.x, p.pose.position.y] for p in reference.poses], dtype=float
+        )
         self._goal = self._xy[-1]
         self._n = len(self._xy)
         self._goal_tol = goal_tolerance
@@ -544,7 +554,9 @@ class Benchmarker(Module):
             pose = self._recorder.latest_pose()
             if pose is not None:
                 lin, ang = self._recorder.body_speed()
-                if monitor.update(pose.position.x, pose.position.y, lin, ang, time.perf_counter()):
+                if monitor.update(
+                    pose.pose.position.x, pose.pose.position.y, lin, ang, time.perf_counter()
+                ):
                     return True, "goal+stop"
             time.sleep(0.05)
         return False, "timeout"

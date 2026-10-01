@@ -22,10 +22,11 @@ from pathlib import Path
 import time
 from typing import TYPE_CHECKING, Any
 
+from dimos_generated.geometry_msgs.msg import PoseStamped
 from pydantic import model_validator
 
 from dimos.evals.environments.sim import Sim, SimConfig
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.time import to_seconds
 
 if TYPE_CHECKING:
     from dimos.e2e_tests.dimos_cli_call import DimosCliCall
@@ -151,7 +152,10 @@ class HabitatEnvironment(Sim):
             try:
                 pose = self.latest_pose(recording)
                 image = recording.streams.color_image.last().data
-                if time.time() - min(pose.ts, image.ts) < 10.0:
+                if (
+                    time.time() - min(to_seconds(pose.header.stamp), to_seconds(image.header.stamp))
+                    < 10.0
+                ):
                     self._spawn = pose
                     return
             except (LookupError, AttributeError):
@@ -164,9 +168,7 @@ class HabitatEnvironment(Sim):
         if "odometry" not in recording.streams:
             raise LookupError("No Habitat odometry recorded")
         odom = recording.streams.odometry.last().data
-        return PoseStamped(
-            ts=odom.ts, frame_id=odom.frame_id, position=odom.position, orientation=odom.orientation
-        )
+        return PoseStamped(header=odom.header, pose=odom.pose.pose)
 
     def episode_metadata(self) -> dict[str, object]:
         """Record the launch overrides and initial observed pose.
@@ -183,5 +185,11 @@ class HabitatEnvironment(Sim):
             ),
             # Describes the scan generation method, not publication state.
             "point_cloud_source": "depth_unprojection",
-            "initial_observed_position_ros": list(self._spawn.position) if self._spawn else None,
+            "initial_observed_position_ros": [
+                self._spawn.pose.position.x,
+                self._spawn.pose.position.y,
+                self._spawn.pose.position.z,
+            ]
+            if self._spawn
+            else None,
         }

@@ -16,17 +16,16 @@ from copy import copy
 import time
 from typing import Any
 
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Vector3
+from dimos_generated.sensor_msgs.msg import Image, PointCloud2
+from dimos_generated.std_msgs.msg import Header
+from dimos_generated.vision_msgs.msg import Detection2DArray
+import numpy as np
 from reactivex.observable import Observable
 
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
+from dimos.msgs.pointcloud import concatenate_clouds
 from dimos.perception.detection.module3D import Detection3DModule
 from dimos.perception.detection.type.detection3d.imageDetections3DPC import ImageDetections3DPC
 from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC
@@ -45,7 +44,11 @@ class Object3D(Detection3DPC):
             center_str = "None"
         else:
             center_str = (
-                "[" + ", ".join(list(map(lambda n: f"{n:1f}", self.center.to_list()))) + "]"
+                "["
+                + ", ".join(
+                    list(map(lambda n: f"{n:1f}", [self.center.x, self.center.y, self.center.z]))
+                )
+                + "]"
             )
         return {
             "object_id": self.track_id,
@@ -82,9 +85,16 @@ class Object3D(Detection3DPC):
         new_object.class_id = self.class_id
         new_object.name = self.name
         new_object.transform = self.transform
-        new_object.pointcloud = self.pointcloud + detection.pointcloud
+        new_object.pointcloud = concatenate_clouds(self.pointcloud, detection.pointcloud)
         new_object.frame_id = self.frame_id
-        new_object.center = (self.center + detection.center) / 2
+        if self.center is None:
+            raise ValueError("Cannot merge an object without a center")
+        center = detection.center
+        new_object.center = Vector3(
+            x=(self.center.x + center.x) / 2,
+            y=(self.center.y + center.y) / 2,
+            z=(self.center.z + center.z) / 2,
+        )
         new_object.detections = self.detections + 1
 
         if detection.bbox_2d_volume() > self.bbox_2d_volume():
@@ -113,26 +123,14 @@ class Object3D(Detection3DPC):
         if self.best_detection is None or self.center is None:
             raise ValueError("Cannot compute pose without best_detection and center")
 
-        optical_inverse = Transform(
-            translation=Vector3(0.0, 0.0, 0.0),
-            rotation=Quaternion(-0.5, 0.5, -0.5, 0.5),
-            frame_id="camera_link",
-            child_frame_id="camera_optical",
-        ).inverse()
-
-        print("transform is", self.best_detection.transform)
-
-        global_transform = optical_inverse + self.best_detection.transform
-
-        print("inverse optical is", global_transform)
-
-        print("obj center is", self.center)
-        global_pose = global_transform.to_pose()
-        print("Global pose:", global_pose)
-        global_pose.frame_id = self.best_detection.frame_id
-        print("remap to", self.best_detection.frame_id)
         return PoseStamped(
-            position=self.center, orientation=Quaternion(), frame_id=self.best_detection.frame_id
+            header=Header(
+                frame_id=self.best_detection.frame_id, stamp=self.pointcloud.header.stamp
+            ),
+            pose=Pose(
+                position=Point(x=self.center.x, y=self.center.y, z=self.center.z),
+                orientation=Quaternion(w=1),
+            ),
         )
 
 
@@ -177,13 +175,26 @@ class ObjectDBModule(Detection3DModule, TableStr):
 
     def closest_object(self, detection: Detection3DPC) -> Object3D | None:
         # Filter objects to only those with matching names
-        matching_objects = [obj for obj in self.objects.values() if obj.name == detection.name]
+        matching_objects = [
+            obj
+            for obj in self.objects.values()
+            if obj.name == detection.name and obj.center is not None
+        ]
 
         if not matching_objects:
             return None
 
         # Sort by distance
-        distances = sorted(matching_objects, key=lambda obj: detection.center.distance(obj.center))
+        def distance(obj: Object3D) -> float:
+            assert obj.center is not None
+            center = detection.center
+            return float(
+                np.linalg.norm(
+                    [center.x - obj.center.x, center.y - obj.center.y, center.z - obj.center.z]
+                )
+            )
+
+        distances = sorted(matching_objects, key=distance)
 
         return distances[0]
 

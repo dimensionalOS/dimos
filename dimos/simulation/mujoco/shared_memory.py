@@ -15,13 +15,12 @@
 from dataclasses import dataclass
 from multiprocessing import resource_tracker
 from multiprocessing.shared_memory import SharedMemory
-import pickle
 from typing import Any
 
+from dimos_generated.sensor_msgs.msg import PointCloud2
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.simulation.mujoco.constants import VIDEO_HEIGHT, VIDEO_WIDTH
 from dimos.utils.logging_config import setup_logger
 
@@ -148,12 +147,15 @@ class ShmReader:
         self._increment_seq(2)
 
     def write_lidar(self, lidar_msg: PointCloud2) -> None:
-        data = pickle.dumps(lidar_msg)
+        data = lidar_msg.encode()
         data_len = len(data)
 
         if data_len > self.shm.lidar.size:
             logger.error(f"Lidar data too large: {data_len} > {self.shm.lidar.size}")
             return
+
+        # Odd sequence means a write is in progress; even commits the payload.
+        self._increment_seq(4)
 
         # Write length
         len_array: NDArray[Any] = np.ndarray((1,), dtype=np.uint32, buffer=self.shm.lidar_len.buf)
@@ -243,7 +245,7 @@ class ShmWriter:
 
     def read_lidar(self) -> tuple[PointCloud2 | None, int]:
         seq = self._get_seq(4)
-        if seq > 0:
+        if seq > 0 and seq % 2 == 0:
             # Read length
             len_array: NDArray[Any] = np.ndarray(
                 (1,), dtype=np.uint32, buffer=self.shm.lidar_len.buf
@@ -256,9 +258,11 @@ class ShmWriter:
                     (data_len,), dtype=np.uint8, buffer=self.shm.lidar.buf
                 )
                 data = bytes(lidar_array)
+                if self._get_seq(4) != seq:
+                    return None, 0
 
                 try:
-                    lidar_msg = pickle.loads(data)
+                    lidar_msg = PointCloud2.decode(data)
                     return lidar_msg, seq
                 except Exception as e:
                     logger.error(f"Failed to deserialize lidar message: {e}")

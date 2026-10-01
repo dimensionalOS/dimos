@@ -17,7 +17,9 @@
 from __future__ import annotations
 
 from functools import partial
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
+
+from dimos_generated.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 
 from dimos.agents.mcp.mcp_server import McpServer
 from dimos.constants import STATE_DIR
@@ -30,19 +32,19 @@ from dimos.experimental.world_belief.worldbelief_recorder import (
 )
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.manipulation.manipulation_module import ManipulationModule
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.robot.manipulators.common.blueprints import coordinator, trajectory_task
 from dimos.robot.manipulators.xarm.config import make_xarm6_model_config, xarm6_hardware
 from dimos.visualization.rerun.bridge import RerunBridgeModule
+from dimos.visualization.rerun.message_helpers import camera_pinhole
 
 if TYPE_CHECKING:
     import rerun.blueprint as rrb
 
-XARM6_WORLDBELIEF_CAMERA_TRANSFORM = Transform(
-    translation=Vector3(x=0.06693724, y=-0.0309563, z=0.00691482),
-    rotation=Quaternion(0.70513398, 0.00535696, 0.70897578, -0.01052180),
+XARM6_WORLDBELIEF_CAMERA_TRANSFORM = TransformStamped(
+    transform=Transform(
+        translation=Vector3(x=0.06693724, y=-0.0309563, z=0.00691482),
+        rotation=Quaternion(x=0.70513398, y=0.00535696, z=0.70897578, w=-0.01052180),
+    )
 )
 
 
@@ -59,10 +61,7 @@ def _topic_to_entity(topic: Any) -> str:
 
 
 def _camera_info_to_rerun(msg: Any, image_topic: str) -> list[tuple[str, Any]]:
-    return cast(
-        "list[tuple[str, Any]]",
-        msg.to_rerun(image_topic=image_topic, optical_frame=getattr(msg, "frame_id", None)),
-    )
+    return [(image_topic, camera_pinhole(msg))]
 
 
 def _rerun_blueprint() -> rrb.Blueprint:

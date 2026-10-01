@@ -18,6 +18,8 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from dimos.msgs.image import image_to_rgb
+
 if TYPE_CHECKING:
     from ..frame_window_accumulator import Frame
 
@@ -68,7 +70,9 @@ def is_scene_stale(frames: list["Frame"], stale_threshold: float = 5.0) -> bool:
     last_img = frames[-1].image
     if first_img is None or last_img is None:
         return False
-    if not hasattr(first_img, "data") or not hasattr(last_img, "data"):
+    first = image_to_rgb(first_img)
+    last = image_to_rgb(last_img)
+    if first.shape != last.shape:
         return False
-    diff = np.abs(first_img.data.astype(float) - last_img.data.astype(float))
+    diff = np.abs(first.astype(float) - last.astype(float))
     return bool(diff.mean() < stale_threshold)

@@ -20,7 +20,9 @@ import threading
 import time
 from typing import Any
 
-from dimos_lcm.std_msgs import String
+from dimos_generated.geometry_msgs.msg import Twist, Vector3
+from dimos_generated.sensor_msgs.msg import Image
+from dimos_generated.std_msgs.msg import Header, String
 import numpy as np
 from numpy.typing import NDArray
 
@@ -29,9 +31,8 @@ from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.models.qwen.video_query import get_bbox_from_qwen_frame
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.image import image_from_array, image_view
+from dimos.msgs.time import time_from_seconds
 from dimos.robot.drone.drone_visual_servoing_controller import (
     DroneVisualServoingController,
     PIDParams,
@@ -114,7 +115,7 @@ class DroneTrackingModule(Module):
             if self._latest_frame is None:
                 return None
             # Convert Image to numpy array
-            data: np.ndarray[Any, np.dtype[Any]] = self._latest_frame.data
+            data: np.ndarray[Any, np.dtype[Any]] = image_view(self._latest_frame)
             return data
 
     @rpc
@@ -270,8 +271,8 @@ class DroneTrackingModule(Module):
                 # Publish velocity command via LCM
                 if self.cmd_vel.transport:
                     twist = Twist()
-                    twist.linear = Vector3(vx, vy, 0)
-                    twist.angular = Vector3(0, 0, 0)  # No rotation for now
+                    twist.linear = Vector3(x=vx, y=vy)
+                    twist.angular = Vector3()  # No rotation for now
                     self.cmd_vel.publish(twist)
 
                 # Publish visualization if transport is set
@@ -279,7 +280,11 @@ class DroneTrackingModule(Module):
                     overlay = self._draw_tracking_overlay(
                         frame, (int(x), int(y), int(w), int(h)), (int(current_x), int(current_y))
                     )
-                    overlay_msg = Image.from_numpy(overlay, format=ImageFormat.BGR)
+                    overlay_msg = image_from_array(
+                        overlay,
+                        encoding="bgr8",
+                        header=Header(stamp=time_from_seconds(time.time())),
+                    )
                     self.tracking_overlay.publish(overlay_msg)
 
                 # Publish status
@@ -304,8 +309,8 @@ class DroneTrackingModule(Module):
             # Stop movement by publishing zero velocity
             if self.cmd_vel.transport:
                 stop_twist = Twist()
-                stop_twist.linear = Vector3(0, 0, 0)
-                stop_twist.angular = Vector3(0, 0, 0)
+                stop_twist.linear = Vector3()
+                stop_twist.angular = Vector3()
                 self.cmd_vel.publish(stop_twist)
             self._tracking_active = False
             logger.info(f"Visual servoing loop ended after {frame_count} frames")
@@ -366,7 +371,7 @@ class DroneTrackingModule(Module):
             status: Status dictionary
         """
         if self.tracking_status.transport:
-            status_msg = String(json.dumps(status))
+            status_msg = String(data=json.dumps(status))
             self.tracking_status.publish(status_msg)
 
     def _stop_tracking(self) -> None:
@@ -378,8 +383,8 @@ class DroneTrackingModule(Module):
         # Send stop command via LCM
         if self.cmd_vel.transport:
             stop_twist = Twist()
-            stop_twist.linear = Vector3(0, 0, 0)
-            stop_twist.angular = Vector3(0, 0, 0)
+            stop_twist.linear = Vector3()
+            stop_twist.angular = Vector3()
             self.cmd_vel.publish(stop_twist)
 
         self._publish_status({"status": "stopped", "object": self._current_object})

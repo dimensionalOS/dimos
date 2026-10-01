@@ -18,6 +18,7 @@
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
+from dimos_generated.std_msgs.msg import Header
 from etils import epath
 import mujoco
 from mujoco_playground._src import mjx_env
@@ -25,7 +26,7 @@ import numpy as np
 
 from dimos.core.global_config import GlobalConfig
 from dimos.mapping.occupancy.extrude_occupancy import generate_mujoco_scene
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.msgs.occupancy import occupancy_from_file
 from dimos.simulation.mujoco.input_controller import InputController
 from dimos.simulation.mujoco.policy import G1OnnxController, Go1OnnxController, OnnxController
 from dimos.utils.data import get_data
@@ -148,7 +149,7 @@ def _add_person_object(root: ET.Element) -> None:
 def load_scene_xml(config: GlobalConfig) -> str:
     if config.mujoco_room_from_occupancy:
         path = Path(config.mujoco_room_from_occupancy)
-        return generate_mujoco_scene(OccupancyGrid.from_path(path))
+        return generate_mujoco_scene(occupancy_from_file(path, header=Header(frame_id="world")))
 
     mujoco_room = config.mujoco_room or "office1"
     xml_file = (_get_data_dir() / f"scene_{mujoco_room}.xml").as_posix()

@@ -13,23 +13,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dimos_generated.sensor_msgs.msg import CameraInfo
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
+from rosbags.typesys import Stores, get_typestore
 
 from dimos.constants import DIMOS_PROJECT_ROOT
-from dimos.msgs.sensor_msgs.CameraInfo import CalibrationProvider, CameraInfo
+from dimos.msgs.camera_info import CalibrationProvider, camera_info_from_yaml, intrinsic_matrix
+from dimos.msgs.time import time_from_nanoseconds, to_nanoseconds
 
 
-def test_lcm_encode_decode() -> None:
-    """Test LCM encode/decode preserves CameraInfo data."""
-    print("Testing CameraInfo LCM encode/decode...")
+def test_encode_decode() -> None:
+    """Test CDR encode/decode preserves CameraInfo data."""
+    print("Testing CameraInfo CDR encode/decode...")
 
     # Create test camera info with sample calibration data
     original = CameraInfo(
         height=480,
         width=640,
         distortion_model="plumb_bob",
-        D=[-0.1, 0.05, 0.001, -0.002, 0.0],  # 5 distortion coefficients
-        K=[
+        d=[-0.1, 0.05, 0.001, -0.002, 0.0],  # 5 distortion coefficients
+        k=[
             500.0,
             0.0,
             320.0,  # fx, 0, cx
@@ -40,8 +44,8 @@ def test_lcm_encode_decode() -> None:
             0.0,
             1.0,
         ],  # 0, 0, 1
-        R=[1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
-        P=[
+        r=[1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+        p=[
             500.0,
             0.0,
             320.0,
@@ -57,20 +61,25 @@ def test_lcm_encode_decode() -> None:
         ],  # 0, 0, 1, 0
         binning_x=2,
         binning_y=2,
-        frame_id="camera_optical_frame",
-        ts=1234567890.123456,
+        header=Header(
+            frame_id="camera_optical_frame", stamp=time_from_nanoseconds(1234567890123456789)
+        ),
     )
 
     # Set ROI
-    original.roi_x_offset = 100
-    original.roi_y_offset = 50
-    original.roi_height = 200
-    original.roi_width = 300
-    original.roi_do_rectify = True
+    original.roi.x_offset = 100
+    original.roi.y_offset = 50
+    original.roi.height = 200
+    original.roi.width = 300
+    original.roi.do_rectify = True
 
     # Encode and decode
-    binary_msg = original.lcm_encode()
-    decoded = CameraInfo.lcm_decode(binary_msg)
+    binary_msg = original.encode()
+    decoded = CameraInfo.decode(binary_msg)
+    independent = get_typestore(Stores.ROS2_JAZZY).deserialize_cdr(binary_msg, CameraInfo.msg_name)
+    assert independent.header.stamp.nanosec == 123456789
+    assert independent.roi.x_offset == 100
+    np.testing.assert_array_equal(independent.k, original.k)
 
     # Check basic properties
     assert original.height == decoded.height, (
@@ -85,27 +94,27 @@ def test_lcm_encode_decode() -> None:
     print(f"✓ Distortion model preserved: '{decoded.distortion_model}'")
 
     # Check distortion coefficients
-    assert len(original.D) == len(decoded.D), (
-        f"D length mismatch: {len(original.D)} vs {len(decoded.D)}"
+    assert len(original.d) == len(decoded.d), (
+        f"D length mismatch: {len(original.d)} vs {len(decoded.d)}"
     )
     np.testing.assert_allclose(
-        original.D, decoded.D, rtol=1e-9, atol=1e-9, err_msg="Distortion coefficients don't match"
+        original.d, decoded.d, rtol=1e-9, atol=1e-9, err_msg="Distortion coefficients don't match"
     )
-    print(f"✓ Distortion coefficients preserved: {len(decoded.D)} coefficients")
+    print(f"✓ Distortion coefficients preserved: {len(decoded.d)} coefficients")
 
     # Check camera matrices
     np.testing.assert_allclose(
-        original.K, decoded.K, rtol=1e-9, atol=1e-9, err_msg="K matrix doesn't match"
+        original.k, decoded.k, rtol=1e-9, atol=1e-9, err_msg="K matrix doesn't match"
     )
     print("✓ Intrinsic matrix K preserved")
 
     np.testing.assert_allclose(
-        original.R, decoded.R, rtol=1e-9, atol=1e-9, err_msg="R matrix doesn't match"
+        original.r, decoded.r, rtol=1e-9, atol=1e-9, err_msg="R matrix doesn't match"
     )
     print("✓ Rectification matrix R preserved")
 
     np.testing.assert_allclose(
-        original.P, decoded.P, rtol=1e-9, atol=1e-9, err_msg="P matrix doesn't match"
+        original.p, decoded.p, rtol=1e-9, atol=1e-9, err_msg="P matrix doesn't match"
     )
     print("✓ Projection matrix P preserved")
 
@@ -119,25 +128,25 @@ def test_lcm_encode_decode() -> None:
     print(f"✓ Binning preserved: {decoded.binning_x}x{decoded.binning_y}")
 
     # Check ROI
-    assert original.roi_x_offset == decoded.roi_x_offset, "ROI x_offset mismatch"
-    assert original.roi_y_offset == decoded.roi_y_offset, "ROI y_offset mismatch"
-    assert original.roi_height == decoded.roi_height, "ROI height mismatch"
-    assert original.roi_width == decoded.roi_width, "ROI width mismatch"
-    assert original.roi_do_rectify == decoded.roi_do_rectify, "ROI do_rectify mismatch"
+    assert original.roi.x_offset == decoded.roi.x_offset, "ROI x_offset mismatch"
+    assert original.roi.y_offset == decoded.roi.y_offset, "ROI y_offset mismatch"
+    assert original.roi.height == decoded.roi.height, "ROI height mismatch"
+    assert original.roi.width == decoded.roi.width, "ROI width mismatch"
+    assert original.roi.do_rectify == decoded.roi.do_rectify, "ROI do_rectify mismatch"
     print("✓ ROI preserved")
 
     # Check metadata
-    assert original.frame_id == decoded.frame_id, (
-        f"Frame ID mismatch: '{original.frame_id}' vs '{decoded.frame_id}'"
+    assert original.header.frame_id == decoded.header.frame_id, (
+        f"Frame ID mismatch: '{original.header.frame_id}' vs '{decoded.header.frame_id}'"
     )
-    print(f"✓ Frame ID preserved: '{decoded.frame_id}'")
+    print(f"✓ Frame ID preserved: '{decoded.header.frame_id}'")
 
-    assert abs(original.ts - decoded.ts) < 1e-6, (
-        f"Timestamp mismatch: {original.ts} vs {decoded.ts}"
+    assert to_nanoseconds(original.header.stamp) == to_nanoseconds(decoded.header.stamp), (
+        f"Timestamp mismatch: {to_nanoseconds(original.header.stamp)} vs {to_nanoseconds(decoded.header.stamp)}"
     )
-    print(f"✓ Timestamp preserved: {decoded.ts}")
+    print(f"✓ Timestamp preserved: {to_nanoseconds(decoded.header.stamp)}")
 
-    print("✓ LCM encode/decode test passed - all properties preserved!")
+    print("✓ CDR encode/decode test passed - all properties preserved!")
 
 
 def test_numpy_matrix_operations() -> None:
@@ -148,29 +157,29 @@ def test_numpy_matrix_operations() -> None:
 
     # Test K matrix
     K = np.array([[525.0, 0.0, 319.5], [0.0, 525.0, 239.5], [0.0, 0.0, 1.0]])
-    camera_info.set_K_matrix(K)
-    K_retrieved = camera_info.get_K_matrix()
+    camera_info.k = K.ravel()
+    K_retrieved = intrinsic_matrix(camera_info)
     np.testing.assert_allclose(K, K_retrieved, rtol=1e-9, atol=1e-9)
     print("✓ K matrix setter/getter works")
 
     # Test P matrix
     P = np.array([[525.0, 0.0, 319.5, 0.0], [0.0, 525.0, 239.5, 0.0], [0.0, 0.0, 1.0, 0.0]])
-    camera_info.set_P_matrix(P)
-    P_retrieved = camera_info.get_P_matrix()
+    camera_info.p = P.ravel()
+    P_retrieved = np.asarray(camera_info.p).reshape(3, 4)
     np.testing.assert_allclose(P, P_retrieved, rtol=1e-9, atol=1e-9)
     print("✓ P matrix setter/getter works")
 
     # Test R matrix
     R = np.eye(3)
-    camera_info.set_R_matrix(R)
-    R_retrieved = camera_info.get_R_matrix()
+    camera_info.r = R.ravel()
+    R_retrieved = np.asarray(camera_info.r).reshape(3, 3)
     np.testing.assert_allclose(R, R_retrieved, rtol=1e-9, atol=1e-9)
     print("✓ R matrix setter/getter works")
 
     # Test D coefficients
     D = np.array([-0.2, 0.1, 0.001, -0.002, 0.05])
-    camera_info.set_D_coeffs(D)
-    D_retrieved = camera_info.get_D_coeffs()
+    camera_info.d = D
+    D_retrieved = np.asarray(camera_info.d)
     np.testing.assert_allclose(D, D_retrieved, rtol=1e-9, atol=1e-9)
     print("✓ D coefficients setter/getter works")
 
@@ -185,24 +194,24 @@ def test_equality() -> None:
         height=480,
         width=640,
         distortion_model="plumb_bob",
-        D=[-0.1, 0.05, 0.0, 0.0, 0.0],
-        frame_id="camera1",
+        d=[-0.1, 0.05, 0.0, 0.0, 0.0],
+        header=Header(frame_id="camera1"),
     )
 
     info2 = CameraInfo(
         height=480,
         width=640,
         distortion_model="plumb_bob",
-        D=[-0.1, 0.05, 0.0, 0.0, 0.0],
-        frame_id="camera1",
+        d=[-0.1, 0.05, 0.0, 0.0, 0.0],
+        header=Header(frame_id="camera1"),
     )
 
     info3 = CameraInfo(
         height=720,
         width=1280,  # Different resolution
         distortion_model="plumb_bob",
-        D=[-0.1, 0.05, 0.0, 0.0, 0.0],
-        frame_id="camera1",
+        d=[-0.1, 0.05, 0.0, 0.0, 0.0],
+        header=Header(frame_id="camera1"),
     )
 
     assert info1 == info2, "Identical CameraInfo objects should be equal"
@@ -227,16 +236,16 @@ def test_camera_info_from_yaml() -> None:
     )
 
     # Load CameraInfo from YAML
-    camera_info = CameraInfo.from_yaml(str(yaml_path))
+    camera_info = camera_info_from_yaml(yaml_path, header=Header(frame_id="camera_optical"))
 
     # Verify loaded values
     assert camera_info.width == 640
     assert camera_info.height == 376
     assert camera_info.distortion_model == "plumb_bob"
-    assert camera_info.frame_id == "camera_optical"
+    assert camera_info.header.frame_id == "camera_optical"
 
     # Check camera matrix K
-    K = camera_info.get_K_matrix()
+    K = intrinsic_matrix(camera_info)
     assert K.shape == (3, 3)
     assert np.isclose(K[0, 0], 379.45267)  # fx
     assert np.isclose(K[1, 1], 380.67871)  # fy
@@ -244,12 +253,12 @@ def test_camera_info_from_yaml() -> None:
     assert np.isclose(K[1, 2], 228.00954)  # cy
 
     # Check distortion coefficients
-    D = camera_info.get_D_coeffs()
+    D = np.asarray(camera_info.d)
     assert len(D) == 5
     assert np.isclose(D[0], -0.309435)
 
     # Check projection matrix P
-    P = camera_info.get_P_matrix()
+    P = np.asarray(camera_info.p).reshape(3, 4)
     assert P.shape == (3, 4)
     assert np.isclose(P[0, 0], 291.12888)
 

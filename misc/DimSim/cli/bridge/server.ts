@@ -429,7 +429,7 @@ export async function startBridgeServer(options: BridgeServerOptions) {
           try {
             const decoded = decodePacket(packet);
             if (decoded && decoded.type === "small") {
-              if (chState.serverPhysics && decoded.channel === "/odom#geometry_msgs.PoseStamped") {
+              if (chState.serverPhysics && decoded.channel === "/odom#geometry_msgs/msg/PoseStamped") {
                 return;
               }
 

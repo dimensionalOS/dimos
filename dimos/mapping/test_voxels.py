@@ -12,131 +12,76 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Callable, Generator
+"""Deterministic CDR replacement for the retired typed-pickle lidar fixture."""
 
+from collections.abc import Generator
+
+from dimos_generated.sensor_msgs.msg import PointCloud2
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 import pytest
 
-from dimos.core.transport import LCMTransport
 from dimos.mapping.voxels.grid import VoxelGrid
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.utils.data import get_data
-from dimos.utils.testing.legacy_pickle import LegacyPickleStore
-from dimos.utils.testing.moment import OutputMoment
-from dimos.utils.testing.test_moment import Go2Moment
-
-pytestmark = pytest.mark.self_hosted
+from dimos.msgs.pointcloud import pointcloud_from_xyz, pointcloud_xyz
 
 
 @pytest.fixture
 def grid() -> Generator[VoxelGrid, None, None]:
-    g = VoxelGrid()
-    yield g
-    g.dispose()
-
-
-class Go2MapperMoment(Go2Moment):
-    global_map: OutputMoment[PointCloud2] = OutputMoment(LCMTransport("/global_map", PointCloud2))
-
-
-MomentFactory = Callable[[float, bool], Go2MapperMoment]
+    value = VoxelGrid(device="CPU:0", show_startup_log=False)
+    try:
+        yield value
+    finally:
+        value.dispose()
 
 
 @pytest.fixture
-def moment() -> Generator[MomentFactory, None, None]:
-    instances: list[Go2MapperMoment] = []
-
-    def get_moment(ts: float, publish: bool = True) -> Go2MapperMoment:
-        m = Go2MapperMoment()
-        m.seek(ts)
-        if publish:
-            m.publish()
-        instances.append(m)
-        return m
-
-    yield get_moment
-    for m in instances:
-        m.stop()
-
-
-@pytest.fixture
-def moment1(moment: MomentFactory) -> Go2MapperMoment:
-    return moment(10, False)
-
-
-@pytest.fixture
-def moment2(moment: MomentFactory) -> Go2MapperMoment:
-    return moment(85, False)
+def lidar_frame() -> PointCloud2:
+    axis = np.arange(20) * 0.05 + 0.025
+    points = np.stack(np.meshgrid(axis, axis, axis, indexing="ij"), axis=-1).reshape(-1, 3)
+    message = pointcloud_from_xyz(points, header=Header(frame_id="world"))
+    return PointCloud2.decode(message.encode())
 
 
 def test_ingest_a_few(grid: VoxelGrid) -> None:
-    data_dir = get_data("unitree_go2_office_walk2")
-    lidar_store = LegacyPickleStore(f"{data_dir}/lidar")
+    for offset in (0.0, 1.0, 2.0):
+        points = np.array([[offset + 0.025, 0.025, 0.025], [offset + 0.075, 0.025, 0.025]])
+        frame = pointcloud_from_xyz(points, header=Header(frame_id="world"))
+        grid.add_frame(PointCloud2.decode(frame.encode()))
+    assert grid.get_global_pointcloud2().width == 6
+    np.testing.assert_allclose(
+        np.sort(pointcloud_xyz(grid.get_global_pointcloud2())[:, 0]),
+        [0.025, 0.075, 1.025, 1.075, 2.025, 2.075],
+        atol=1e-6,
+    )
 
-    for i in [1, 4, 8]:
-        frame = lidar_store.find_closest_seek(i)
-        assert frame is not None
-        print("add", frame)
-        grid.add_frame(frame)
 
-    assert len(grid.get_global_pointcloud2()) == 30136
+@pytest.mark.parametrize("voxel_size,expected_points", [(0.5, 8), (0.1, 1000), (0.05, 8000)])
+def test_roundtrip(lidar_frame: PointCloud2, voxel_size: float, expected_points: int) -> None:
+    grid = VoxelGrid(voxel_size=voxel_size, device="CPU:0", show_startup_log=False)
+    try:
+        grid.add_frame(lidar_frame)
+        first = grid.get_global_pointcloud2()
+        assert first.width == expected_points
+        if voxel_size == 0.05:
+            assert first.width == lidar_frame.width
+            np.testing.assert_allclose(
+                np.sort(pointcloud_xyz(first), axis=0),
+                np.sort(pointcloud_xyz(lidar_frame), axis=0),
+                atol=1e-6,
+            )
+        grid.add_frame(PointCloud2.decode(first.encode()))
+        assert grid.get_global_pointcloud2().width == expected_points
+        np.testing.assert_array_equal(
+            pointcloud_xyz(grid.get_global_pointcloud2()), pointcloud_xyz(first)
+        )
+    finally:
+        grid.dispose()
 
 
-@pytest.mark.parametrize(
-    "voxel_size, expected_points",
-    [
-        (0.5, 277),
-        (0.1, 7290),
-        (0.05, 28199),
-    ],
-)
-def test_roundtrip(moment1: Go2MapperMoment, voxel_size: float, expected_points: int) -> None:
-    lidar_frame = moment1.lidar.value
-    assert lidar_frame is not None
-
-    grid = VoxelGrid(voxel_size=voxel_size)
+def test_roundtrip_range_preserved(grid: VoxelGrid, lidar_frame: PointCloud2) -> None:
+    inputs = pointcloud_xyz(lidar_frame)
     grid.add_frame(lidar_frame)
-
-    global1 = grid.get_global_pointcloud2()
-    assert len(global1) == expected_points
-
-    # loseless roundtrip
-    if voxel_size == 0.05:
-        assert len(global1) == len(lidar_frame)
-        # TODO: we want __eq__ on PointCloud2 - should actually compare
-        # all points in both frames
-
-    grid.add_frame(global1)
-    # no new information, no global map change
-    assert len(grid.get_global_pointcloud2()) == len(global1)
-
-    moment1.publish()
-    grid.dispose()
-
-
-def test_roundtrip_range_preserved(grid: VoxelGrid) -> None:
-    """Test that input coordinate ranges are preserved in output."""
-    data_dir = get_data("unitree_go2_office_walk2")
-    lidar_store = LegacyPickleStore(f"{data_dir}/lidar")
-
-    frame = lidar_store.find_closest_seek(1.0)
-    assert frame is not None
-    input_pts = np.asarray(frame.pointcloud.points)
-
-    grid.add_frame(frame)
-
-    out_pcd = grid.get_global_pointcloud().to_legacy()
-    out_pts = np.asarray(out_pcd.points)
-
-    voxel_size = grid._voxel_size
-    tolerance = voxel_size  # Allow one voxel of difference at boundaries
-
-    # TODO: we want __eq__ on PointCloud2 - should actually compare
-    # all points in both frames
-
-    for axis, name in enumerate(["X", "Y", "Z"]):
-        in_min, in_max = input_pts[:, axis].min(), input_pts[:, axis].max()
-        out_min, out_max = out_pts[:, axis].min(), out_pts[:, axis].max()
-
-        assert abs(in_min - out_min) < tolerance, f"{name} min mismatch: in={in_min}, out={out_min}"
-        assert abs(in_max - out_max) < tolerance, f"{name} max mismatch: in={in_max}, out={out_max}"
+    outputs = np.asarray(grid.get_global_pointcloud().to_legacy().points)
+    for axis in range(3):
+        assert abs(inputs[:, axis].min() - outputs[:, axis].min()) < grid._voxel_size
+        assert abs(inputs[:, axis].max() - outputs[:, axis].max()) < grid._voxel_size

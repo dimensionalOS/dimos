@@ -23,6 +23,8 @@ import numpy as np
 from pydantic import BaseModel, ConfigDict, Field
 
 from dimos.evals.vqa.contracts import InsufficientEvidenceError, NonEmptyString
+from dimos.msgs.geometry import transform_matrix
+from dimos.msgs.pointcloud import pointcloud_xyz
 from dimos.perception.detection.type.detection2d.bbox import Bbox
 
 if TYPE_CHECKING:
@@ -41,13 +43,15 @@ class _FrameProjection:
     def from_frame(cls, frame: PointCloudFrame) -> _FrameProjection:
         """Transform and project valid points into image coordinates."""
         camera_info = frame.camera_info
-        intrinsics = np.asarray(camera_info.K, dtype=np.float64).reshape(3, 3)
+        intrinsics = np.asarray(camera_info.k, dtype=np.float64).reshape(3, 3)
 
-        raw_points, _ = frame.pointcloud.as_numpy()
+        raw_points = pointcloud_xyz(frame.pointcloud)
         points = np.asarray(raw_points, dtype=np.float64)
         points = points[np.all(np.isfinite(points), axis=1)]
 
-        transform = np.asarray(frame.pointcloud_to_camera.to_matrix(), dtype=np.float64)
+        transform = np.asarray(
+            transform_matrix(frame.pointcloud_to_camera.transform), dtype=np.float64
+        )
         homogeneous = np.column_stack((points, np.ones(len(points), dtype=np.float64)))
         camera_points = (transform @ homogeneous.T).T[:, :3]
         in_front = np.all(np.isfinite(camera_points), axis=1) & (camera_points[:, 2] > 0)

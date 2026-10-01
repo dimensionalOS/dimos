@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dimos_generated.sensor_msgs.msg import Image
 import pytest
 
 from dimos.core.transport import LCMTransport
-from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.detection.type.detection2d.base import Detection2D
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 
@@ -89,9 +89,8 @@ def test_detection_cropped_image(detections, test_image) -> None:
     assert cropped is not None
 
     # Cropped image should be smaller than original (usually)
-    if test_image.shape:
-        assert cropped.shape[0] <= test_image.shape[0]
-        assert cropped.shape[1] <= test_image.shape[1]
+    assert cropped.height <= test_image.height
+    assert cropped.width <= test_image.width
 
 
 def test_detection_ros_conversion(detections) -> None:

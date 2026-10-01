@@ -115,8 +115,10 @@ are reproducible measurements, not platform-independent performance guarantees.
 
 ## Current stage scope
 
-This stage provides standalone generation and codecs. DimOS runtime consumers
-still use the old types; their coordinated replacement follows in the stack.
+The early stages establish standalone generation and codecs. The runtime layer
+now migrates typed consumers to generated CDR; remaining external acceptance
+gates are reported separately. Built-in Python values are built by
+`packages/dimos-generated`, not the root runtime `setup.py`.
 
 ## Stage 2: an installed external application
 

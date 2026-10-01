@@ -14,15 +14,19 @@
 
 from __future__ import annotations
 
+import math
 import threading
 import time
 from typing import TYPE_CHECKING, Any
 
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+import numpy as np
+
+from dimos.msgs.pointcloud import pointcloud_from_xyz
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from dimos.msgs.geometry_msgs.Vector3 import Vector3
+    from dimos_generated.geometry_msgs.msg import Vector3
+
     from dimos.perception.experimental.object import Object
 
 logger = setup_logger()
@@ -176,20 +180,19 @@ class ObjectDB:
             if not candidates:
                 return None
 
-            return min(candidates, key=lambda obj: position.distance(obj.center))
+            return min(
+                candidates,
+                key=lambda obj: math.dist(
+                    (position.x, position.y, position.z), (obj.center.x, obj.center.y, obj.center.z)
+                ),
+            )
 
     def clear(self) -> None:
         """Clear all objects from the database."""
-        import open3d as o3d  # type: ignore[import-untyped]
-
         with self._lock:
-            # Drop Open3D pointcloud references before clearing to reduce shutdown warnings.
+            # Release large generated point buffers, retaining metadata on held objects.
             for obj in list(self._pending_objects.values()) + list(self._objects.values()):
-                obj.pointcloud = PointCloud2(
-                    pointcloud=o3d.geometry.PointCloud(),
-                    frame_id=obj.pointcloud.frame_id,
-                    ts=obj.pointcloud.ts,
-                )
+                obj.pointcloud = pointcloud_from_xyz(np.empty((0, 3)), header=obj.pointcloud.header)
             self._pending_objects.clear()
             self._objects.clear()
             self._track_id_map.clear()
@@ -283,13 +286,22 @@ class ObjectDB:
         candidates = [
             o
             for o in all_objects
-            if o.center is not None and obj.center.distance(o.center) < self._distance_threshold
+            if o.center is not None
+            and math.dist(
+                (obj.center.x, obj.center.y, obj.center.z), (o.center.x, o.center.y, o.center.z)
+            )
+            < self._distance_threshold
         ]
 
         if not candidates:
             return None
 
-        return min(candidates, key=lambda o: obj.center.distance(o.center))
+        return min(
+            candidates,
+            key=lambda o: math.dist(
+                (obj.center.x, obj.center.y, obj.center.z), (o.center.x, o.center.y, o.center.z)
+            ),
+        )
 
     def _prune_stale_pending(self, now: float) -> None:
         if self._pending_ttl_s <= 0:

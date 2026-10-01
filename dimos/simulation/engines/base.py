@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from dimos.msgs.sensor_msgs.JointState import JointState
+    from dimos_generated.sensor_msgs.msg import JointState
 
 
 class SimulationEngine(ABC):

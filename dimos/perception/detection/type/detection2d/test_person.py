@@ -18,14 +18,14 @@ import pytest
 def test_person_ros_confidence() -> None:
     """Test that Detection2DPerson preserves confidence when converting to ROS format."""
 
-    from dimos.msgs.sensor_msgs.Image import Image
+    from dimos.msgs.image import image_from_file
     from dimos.perception.detection.detectors.person.yolo import YoloPersonDetector
     from dimos.perception.detection.type.detection2d.person import Detection2DPerson
     from dimos.utils.data import get_data
 
     # Load test image
     image_path = get_data("cafe.jpg")
-    image = Image.from_file(image_path)
+    image = image_from_file(image_path)
 
     # Run pose detection
     detector = YoloPersonDetector(device="cpu")

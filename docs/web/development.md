@@ -9,7 +9,7 @@ The web code is one Deno workspace under `web/` with four packages, plus the Pyt
 | `web/sdk/` | `@dimos/sdk`: transport, session, stores, decoders and React hooks, plus `fixture/`, a Vite consumer |
 | `web/cockpit/` | the cockpit app (Vite, React, TypeScript), built on the SDK |
 | `web/examples/` | three zero-build SDK pages |
-| `dimos/web/cockpit.py`, `dimos/web/codecs.py`, `dimos/web/lcm_codec.py` | the Python authoring API and the codec registry |
+| `dimos/web/cockpit.py`, `dimos/web/codecs.py`, `dimos/web/cdr_codec.py` | the Python authoring API and the codec registry |
 | `dimos/web/relay_bridge/` | the bridge module, the Python mirrors of the protocol and the manifest, the WebTransport client, the local relay process, and the fixture generators |
 
 `dimos/web/` also holds two older web servers that have nothing to do with this stack: `websocket_vis/` (the socket.io visualizer on port 7779) and `dimos_interface/` with `robot_web_interface.py` (the FastAPI page on port 5555 used by `WebInput` and the phone and WebXR teleops).
@@ -64,7 +64,7 @@ Two overrides: `--no-web-build` skips the staleness check and the build, and `DI
 
 - `deno task test` in `web/` covers the relay and the shared protocol. The SDK and the cockpit have their own vitest suites (`deno task test` in each).
 - `uv run pytest dimos/web` covers the Python side: the authoring API, the codecs, the manifest and protocol mirrors against the golden fixtures, the bridge module with fakes, and relay tests that spawn a real relay.
-- The browser tests, `uv run pytest -m web_browser dimos/e2e_tests`, drive the whole stack against the Go2 replay dataset in Playwright Chromium and Firefox (their WebTransport stacks differ). [`test_cockpit_browser.py`](/dimos/e2e_tests/test_cockpit_browser.py) covers the cockpit (live data, a stable session, a kill and restart of dimos), [`test_sdk_browser.py`](/dimos/e2e_tests/test_sdk_browser.py#L24) the zero-build, cross-origin and `file:` SDK pages, and the other files custom channels, LCM channels, publishing, voice, stats, the robot picker, map clicks and auth. The pinned browsers install on first run. The default pytest suite excludes the marker.
+- The browser tests, `uv run pytest -m web_browser dimos/e2e_tests`, drive the whole stack against the Go2 replay dataset in Playwright Chromium and Firefox (their WebTransport stacks differ). [`test_cockpit_browser.py`](/dimos/e2e_tests/test_cockpit_browser.py) covers the cockpit (live data, a stable session, a kill and restart of dimos), [`test_sdk_browser.py`](/dimos/e2e_tests/test_sdk_browser.py#L24) the zero-build, cross-origin and `file:` SDK pages, and the other files custom channels, CDR channels, publishing, voice, stats, the robot picker, map clicks and auth. The pinned browsers install on first run. The default pytest suite excludes the marker.
 
 The CI `web` job runs deno fmt, lint, check and test, the SDK and cockpit vitest suites and builds, the browser tests, and a build of the relay Docker image.
 

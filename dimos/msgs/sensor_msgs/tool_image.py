@@ -12,20 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.msgs.sensor_msgs.Image import Image
+from typing import Any
+
+from dimos.msgs.image import image_from_array, image_sharpness
 from dimos.utils.data import get_data
 from dimos.utils.testing.legacy_pickle import LegacyPickleStore
 
 
 def test_sharpness_stream() -> None:
     get_data("unitree_office_walk")  # Preload data for testing
-    video_store = LegacyPickleStore(
-        "unitree_office_walk/video", autocast=lambda x: Image.from_numpy(x).to_rgb()
-    )
+    video_store: LegacyPickleStore[Any] = LegacyPickleStore("unitree_office_walk/video")
 
     cnt = 0
-    for image in video_store.iterate():
+    for pixels in video_store.iterate():
+        image = image_from_array(pixels, encoding="bgr8")
         cnt = cnt + 1
-        print(image.sharpness)
+        print(image_sharpness(image))
         if cnt > 30:
             return

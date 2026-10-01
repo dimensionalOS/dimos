@@ -1,22 +1,5 @@
 {
   "nodes": {
-    "dimos-lcm": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1782118008,
-        "narHash": "sha256-z88X38ZM3vr1eneG1CkJ4GAGWBW3JYWPEX/2x7aRVJI=",
-        "owner": "dimensionalOS",
-        "repo": "dimos-lcm",
-        "rev": "0a1c24710ce2f7a569e1673617102cc5254a75e2",
-        "type": "github"
-      },
-      "original": {
-        "owner": "dimensionalOS",
-        "ref": "main",
-        "repo": "dimos-lcm",
-        "type": "github"
-      }
-    },
     "flake-utils": {
       "inputs": {
         "systems": "systems"
@@ -127,7 +110,6 @@
     },
     "root": {
       "inputs": {
-        "dimos-lcm": "dimos-lcm",
         "flake-utils": "flake-utils",
         "lcm-extended": "lcm-extended",
         "nixpkgs": "nixpkgs",

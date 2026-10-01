@@ -24,6 +24,7 @@ keeps the state machine, holonomic tracking, and run-profile envelope.
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 import math
 from threading import Event, RLock, Thread, current_thread
@@ -31,7 +32,9 @@ import time
 import traceback
 from typing import Any, Literal, TypeAlias
 
-from dimos_lcm.std_msgs import Bool
+from dimos_generated.geometry_msgs.msg import PoseStamped, Twist, Vector3
+from dimos_generated.nav_msgs.msg import Path
+from dimos_generated.std_msgs.msg import Bool
 import numpy as np
 from reactivex import Subject
 from reactivex.disposable import Disposable
@@ -41,10 +44,8 @@ from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.nav_msgs.Path import Path
+from dimos.msgs.geometry import quaternion_euler
+from dimos.msgs.time import to_nanoseconds, to_seconds
 from dimos.navigation.base import NavigationState
 from dimos.navigation.dannav.geometry.path_distancer import PathDistancer
 from dimos.navigation.dannav.geometry.path_speed_profile import (
@@ -329,8 +330,8 @@ class _HolonomicPathFollower:
         if not self._align_heading_before_move or current_odom is None or len(path.poses) == 0:
             return "path_following"
 
-        first_yaw = path.poses[0].orientation.euler[2]
-        robot_yaw = current_odom.orientation.euler[2]
+        first_yaw = quaternion_euler(path.poses[0].pose.orientation)[2]
+        robot_yaw = quaternion_euler(current_odom.pose.orientation)[2]
         initial_yaw_error = angle_diff(first_yaw, robot_yaw)
         if abs(initial_yaw_error) < self._orientation_tolerance:
             return "path_following"
@@ -387,8 +388,8 @@ class _HolonomicPathFollower:
         assert current_odom is not None
 
         first_pose = path.poses[0]
-        first_yaw = first_pose.orientation.euler[2]
-        robot_yaw = current_odom.orientation.euler[2]
+        first_yaw = quaternion_euler(first_pose.pose.orientation)[2]
+        robot_yaw = quaternion_euler(current_odom.pose.orientation)[2]
         yaw_error = angle_diff(first_yaw, robot_yaw)
 
         if abs(yaw_error) < self._orientation_tolerance:
@@ -408,7 +409,7 @@ class _HolonomicPathFollower:
         assert path_distancer is not None
         assert current_odom is not None
 
-        current_pos = np.array([current_odom.position.x, current_odom.position.y])
+        current_pos = np.array([current_odom.pose.position.x, current_odom.pose.position.y])
 
         if path_distancer.distance_to_goal(current_pos) < self._goal_tolerance:
             if self._align_goal_yaw:
@@ -440,7 +441,7 @@ class _HolonomicPathFollower:
         self,
         path_distancer: PathDistancer,
         current_odom: PoseStamped,
-        current_pos: np.ndarray,
+        current_pos: np.ndarray[Any, np.dtype[np.float64]],
         path_speed: float,
     ) -> TrajectoryReferenceSample:
         projection = path_distancer.project(current_pos)
@@ -449,7 +450,7 @@ class _HolonomicPathFollower:
             path_distancer.path_length_m,
             s_start + path_distancer.lookahead_distance_m,
         )
-        now_s = float(current_odom.ts)
+        now_s = to_seconds(current_odom.header.stamp)
         if not math.isfinite(now_s):
             now_s = 0.0
         travel_s = max(0.0, s_end - s_start)
@@ -474,8 +475,8 @@ class _HolonomicPathFollower:
         # the reference while turning. No costmap yaw-lock in this stack.
         path_yaw = path_distancer.yaw_at_progress(progress_m)
         feedforward = Twist(
-            linear=Vector3(path_speed, 0.0, 0.0),
-            angular=Vector3(0.0, 0.0, 0.0),
+            linear=Vector3(x=path_speed, y=0.0, z=0.0),
+            angular=Vector3(x=0.0, y=0.0, z=0.0),
         )
         return TrajectoryReferenceSample(
             time_s=time_s,
@@ -486,7 +487,7 @@ class _HolonomicPathFollower:
     def _path_speed_at_position(
         self,
         path_distancer: PathDistancer,
-        current_pos: np.ndarray,
+        current_pos: np.ndarray[Any, np.dtype[np.float64]],
     ) -> float:
         envelope = self._active_envelope
         progress_m = float(path_distancer.project(current_pos).s_along_path_m)
@@ -535,8 +536,8 @@ class _HolonomicPathFollower:
         assert path is not None
         assert current_odom is not None
 
-        goal_yaw = path.poses[-1].orientation.euler[2]
-        robot_yaw = current_odom.orientation.euler[2]
+        goal_yaw = quaternion_euler(path.poses[-1].pose.orientation)[2]
+        robot_yaw = quaternion_euler(current_odom.pose.orientation)[2]
         yaw_error = angle_diff(goal_yaw, robot_yaw)
 
         if abs(yaw_error) < self._orientation_tolerance:
@@ -560,29 +561,31 @@ class _HolonomicPathFollower:
 
     def _estimate_measured_body_twist(self, current_odom: PoseStamped) -> Twist:
         previous = self._previous_odom_for_velocity
-        self._previous_odom_for_velocity = current_odom
+        self._previous_odom_for_velocity = deepcopy(current_odom)
         if previous is None:
             return Twist()
-        dt = float(current_odom.ts) - float(previous.ts)
+        dt = (
+            to_nanoseconds(current_odom.header.stamp) - to_nanoseconds(previous.header.stamp)
+        ) / 1e9
         if not math.isfinite(dt) or dt <= 0.0:
             return Twist()
-        vx_w = (float(current_odom.position.x) - float(previous.position.x)) / dt
-        vy_w = (float(current_odom.position.y) - float(previous.position.y)) / dt
-        yaw = float(current_odom.orientation.euler[2])
+        vx_w = (float(current_odom.pose.position.x) - float(previous.pose.position.x)) / dt
+        vy_w = (float(current_odom.pose.position.y) - float(previous.pose.position.y)) / dt
+        yaw = float(quaternion_euler(current_odom.pose.orientation)[2])
         c = math.cos(yaw)
         s = math.sin(yaw)
         vx_b = c * vx_w + s * vy_w
         vy_b = -s * vx_w + c * vy_w
         wz = (
             angle_diff(
-                float(current_odom.orientation.euler[2]),
-                float(previous.orientation.euler[2]),
+                float(quaternion_euler(current_odom.pose.orientation)[2]),
+                float(quaternion_euler(previous.pose.orientation)[2]),
             )
             / dt
         )
         return Twist(
-            linear=Vector3(vx_b, vy_b, 0.0),
-            angular=Vector3(0.0, 0.0, wz),
+            linear=Vector3(x=vx_b, y=vy_b, z=0.0),
+            angular=Vector3(x=0.0, y=0.0, z=wz),
         )
 
 
@@ -657,7 +660,7 @@ class DanHolonomicTC(Module):
 
     def _on_core_stopped(self, msg: StopMessage) -> None:
         if msg == "arrived":
-            self.goal_reached.publish(Bool(True))
+            self.goal_reached.publish(Bool(data=True))
             logger.info("Goal reached")
         # On "error" the core has already published a zero Twist and cleared the
         # route; there is no planner here to ask for a replan.

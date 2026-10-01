@@ -1,7 +1,7 @@
 FROM ros:jazzy-ros-base
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential cmake python3-colcon-common-extensions \
+    build-essential cmake python3-colcon-common-extensions python3-pytest python3-typing-extensions \
     ros-jazzy-common-interfaces ros-jazzy-rosidl-default-generators \
     && rm -rf /var/lib/apt/lists/*
 

@@ -13,43 +13,52 @@
 # limitations under the License.
 
 import pickle
-import time
 
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos_generated.std_msgs.msg import Header
+from rosbags.typesys import Stores, get_typestore
+
+from dimos.msgs.time import time_from_nanoseconds
 
 
-def test_lcm_encode_decode() -> None:
-    """Test encoding and decoding of Pose to/from binary LCM format."""
-
-    pose_source = PoseStamped(
-        ts=time.time(),
-        position=(1.0, 2.0, 3.0),
-        orientation=(0.1, 0.2, 0.3, 0.9),
+def test_cdr_encode_decode() -> None:
+    source = PoseStamped(
+        header=Header(stamp=time_from_nanoseconds(1234567890123456789)),
+        pose=Pose(
+            position=Point(x=1, y=2, z=3), orientation=Quaternion(x=0.1, y=0.2, z=0.3, w=0.9)
+        ),
     )
-    binary_msg = pose_source.lcm_encode()
-    pose_dest = PoseStamped.lcm_decode(binary_msg)
-
-    assert isinstance(pose_dest, PoseStamped)
-    assert pose_dest is not pose_source
-
-    print(pose_source.position)
-    print(pose_source.orientation)
-
-    print(pose_dest.position)
-    print(pose_dest.orientation)
-    assert pose_dest == pose_source
+    binary = source.encode()
+    decoded = PoseStamped.decode(binary)
+    assert isinstance(decoded, PoseStamped)
+    assert decoded is not source
+    assert decoded.encode() == binary
+    independent = get_typestore(Stores.ROS2_JAZZY).deserialize_cdr(binary, source.msg_name)
+    assert (independent.header.stamp.sec, independent.header.stamp.nanosec) == (
+        1234567890,
+        123456789,
+    )
+    assert (
+        independent.pose.position.x,
+        independent.pose.position.y,
+        independent.pose.position.z,
+    ) == (1, 2, 3)
+    assert (
+        independent.pose.orientation.x,
+        independent.pose.orientation.y,
+        independent.pose.orientation.z,
+        independent.pose.orientation.w,
+    ) == (0.1, 0.2, 0.3, 0.9)
 
 
 def test_pickle_encode_decode() -> None:
-    """Test encoding and decoding of PoseStamped to/from binary LCM format."""
-
-    pose_source = PoseStamped(
-        ts=time.time(),
-        position=(1.0, 2.0, 3.0),
-        orientation=(0.1, 0.2, 0.3, 0.9),
+    source = PoseStamped(
+        header=Header(stamp=time_from_nanoseconds(1234567890123456789)),
+        pose=Pose(
+            position=Point(x=1, y=2, z=3), orientation=Quaternion(x=0.1, y=0.2, z=0.3, w=0.9)
+        ),
     )
-    binary_msg = pickle.dumps(pose_source)
-    pose_dest = pickle.loads(binary_msg)
-    assert isinstance(pose_dest, PoseStamped)
-    assert pose_dest is not pose_source
-    assert pose_dest == pose_source
+    decoded = pickle.loads(pickle.dumps(source))
+    assert isinstance(decoded, PoseStamped)
+    assert decoded is not source
+    assert decoded.encode() == source.encode()

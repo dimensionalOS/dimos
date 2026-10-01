@@ -76,10 +76,10 @@ def _make_pshm(topic: str, msg_type: type | None) -> Any:
 
 
 def _make_shm(topic: str, msg_type: type | None) -> Any:
-    # raw-bytes shared memory: subscribers receive bytes; caller decodes.
+    # Explicit type selects CDR; an untyped channel carries raw bytes.
     from dimos.core.transport import SHMTransport
 
-    return SHMTransport(topic)
+    return SHMTransport(topic, msg_type)
 
 
 def _make_jpeg_shm(topic: str, msg_type: type | None) -> Any:

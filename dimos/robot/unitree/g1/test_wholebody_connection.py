@@ -17,13 +17,16 @@ from __future__ import annotations
 from collections.abc import Iterator
 from types import SimpleNamespace
 
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.dimos_msgs.msg import MotorCommandArray
+from dimos_generated.std_msgs.msg import Header
 from pydantic import ValidationError
 import pytest
 
-from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.robot.unitree.g1.wholebody_connection import (
     _NUM_MOTOR_SLOTS,
     _NUM_MOTORS,
+    G1LowStateSnapshot,
     G1WholeBodyConnection,
     G1WholeBodyConnectionConfig,
 )
@@ -130,3 +133,38 @@ def test_non_finite_soft_start_is_rejected(value):
     # and no way back to the commanded gains.
     with pytest.raises(ValidationError):
         G1WholeBodyConnectionConfig(soft_start_seconds=value)
+
+
+def test_generated_feedback_has_one_exact_header_and_ros_quaternion(connection, monkeypatch):
+    joints, imu = [], []
+    monkeypatch.setattr(connection.motor_states, "publish", joints.append)
+    monkeypatch.setattr(connection.imu, "publish", imu.append)
+    header = Header(stamp=Time(sec=1700000000, nanosec=123456789), frame_id="g1_pelvis")
+    sample = G1LowStateSnapshot(
+        positions=[0.1] * 29,
+        velocities=[0.2] * 29,
+        efforts=[0.3] * 29,
+        quaternion=(0.8, 0.0, 0.0, 0.6),
+        gyroscope=(1.0, 2.0, 3.0),
+        accelerometer=(4.0, 5.0, 6.0),
+    )
+    connection._publish_motor_state_and_imu(header=header, sample=sample)
+    assert joints[0].header == header == imu[0].header
+    assert list(joints[0].position) == [0.1] * 29
+    assert imu[0].orientation.w == 0.8
+    assert imu[0].orientation.z == 0.6
+    assert imu[0].angular_velocity.x == 1.0
+    assert imu[0].linear_acceleration.z == 6.0
+    for message in [joints[0], imu[0]]:
+        assert type(message).decode(message.encode()) == message
+    header.stamp.nanosec = 0
+    assert joints[0].header.stamp.nanosec == 123456789
+
+
+@pytest.mark.parametrize("field", ["dq", "kp", "kd", "tau"])
+def test_inconsistent_motor_array_is_dropped(connection, field):
+    publisher = _wire(connection, soft_start_seconds=0.0)
+    command = _command()
+    setattr(command, field, [0.0])
+    connection._on_motor_command(command)
+    assert publisher.frames == []

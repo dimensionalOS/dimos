@@ -31,6 +31,9 @@ import threading
 import time
 from typing import TYPE_CHECKING, NamedTuple
 
+from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.std_msgs.msg import Header
+
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.control.task import (
     ControlTask,
@@ -39,7 +42,7 @@ from dimos.control.task import (
     JointStateSnapshot,
     ResourceClaim,
 )
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.time import time_from_seconds
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -428,8 +431,7 @@ class TickLoop:
         """Publish aggregated JointState for external consumers."""
         names = list(snapshot.joint_positions.keys())
         msg = JointState(
-            ts=snapshot.timestamp,
-            frame_id=self._frame_id,
+            header=Header(stamp=time_from_seconds(snapshot.timestamp), frame_id=self._frame_id),
             name=names,
             position=[snapshot.joint_positions[n] for n in names],
             velocity=[snapshot.joint_velocities.get(n, 0.0) for n in names],
@@ -450,8 +452,7 @@ class TickLoop:
         for hw_id, state in per_hardware.items():
             names = list(state.keys())
             msg = JointState(
-                ts=timestamp,
-                frame_id=hw_id,
+                header=Header(stamp=time_from_seconds(timestamp), frame_id=hw_id),
                 name=names,
                 position=[state[n].position for n in names],
                 velocity=[state[n].velocity for n in names],

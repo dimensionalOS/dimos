@@ -171,6 +171,25 @@ def pytest_sessionstart(session):
     _arm_crash_dumps()
 
 
+@pytest.hookimpl(optionalhook=True)
+def pytest_testnodedown(node, error):
+    """Expose a crashed worker's dump before a later job timeout loses it."""
+    if error is None:
+        return
+    base = pathlib.Path(
+        os.environ.get("DIMOS_CRASH_DIR")
+        or os.path.join(os.environ.get("RUNNER_TEMP") or tempfile.gettempdir(), "pytest-crash")
+    )
+    for path in sorted(base.glob(f"crash-{node.gateway.id}-*.log")):
+        try:
+            dump = path.read_text(errors="replace")
+        except OSError as exc:
+            print(f"Cannot read worker crash diagnostic {path.name}: {exc}", flush=True)
+            continue
+        if dump:
+            print(f"\nWorker crash diagnostic {path.name}:\n{dump}", flush=True)
+
+
 def pytest_ignore_collect(collection_path: pathlib.Path) -> bool | None:
     # Nested Python projects own their dependencies and test invocation.
     if collection_path.is_dir() and (collection_path / "pyproject.toml").is_file():
@@ -195,10 +214,6 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers",
         "bake_e2e: dimos bake e2e (builds rust); runs in the CI rust job",
-    )
-    config.addinivalue_line(
-        "markers",
-        "native_e2e: native module e2e (builds rust); runs in the CI rust job",
     )
     config.addinivalue_line("markers", "skipif_in_ci: skip when CI env var is set")
     config.addinivalue_line("markers", "skipif_no_openai: skip when OPENAI_API_KEY is not set")

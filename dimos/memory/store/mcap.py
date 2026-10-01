@@ -14,8 +14,8 @@
 
 """Read-only memory store backed by an mcap file.
 
-Generic and robot-independent. JPEG channels decode automatically because their
-payload type is fixed. Other formats use a caller-supplied ``codecs`` map (wire
+Generic and robot-independent. CDR channels resolve installed message types by
+their ROS schema name. Other formats use a caller-supplied ``codecs`` map (wire
 topic -> codec), while ``streams`` may map friendly stream names to topics. See
 ``dimos.robot.unitree.go2.dds.store.Go2McapStore`` for the Go2 DDS wiring.
 
@@ -32,12 +32,13 @@ from typing import Any, Protocol, runtime_checkable
 
 from dimos.memory.backend import Backend
 from dimos.memory.codecs.base import codec_for
-from dimos.memory.codecs.jpeg import JpegCodec
+from dimos.memory.codecs.cdr import CdrCodec
 from dimos.memory.notifier.subject import SubjectNotifier
 from dimos.memory.observationstore.base import ObservationStore, ObservationStoreConfig
 from dimos.memory.store.base import Store, StoreConfig
 from dimos.memory.type.filter import StreamQuery
 from dimos.memory.type.observation import Observation
+from dimos.msgs.helpers import resolve_msg_type
 
 
 @runtime_checkable
@@ -187,14 +188,37 @@ class McapStore(Store):
         # _BYTES_CODEC — reachable but undecoded. _raw maps their stream name to the
         # source schema so summary() can flag them [raw bytes: <schema>].
         self._raw: dict[str, str | None] = {}  # raw stream name -> source schema
+        topic_signatures: dict[str, tuple[Any, ...]] = {}
         if summary is not None and summary.statistics is not None:
             for cid, ch in summary.channels.items():
                 count = summary.statistics.channel_message_counts.get(cid, 0)
                 name = name_of.get(ch.topic) or _slug(ch.topic)
-                if ch.topic not in self._codecs and ch.message_encoding == "jpeg":
-                    self._codecs[ch.topic] = JpegCodec()
+                schema = summary.schemas.get(ch.schema_id)
+                signature = (
+                    ch.message_encoding,
+                    (schema.name, schema.encoding, schema.data) if schema else None,
+                    ch.metadata.get("dimos.observation_time"),
+                )
+                if ch.topic in topic_signatures and topic_signatures[ch.topic] != signature:
+                    raise ValueError(
+                        f"Topic {ch.topic!r} has conflicting channel schemas or timing policies"
+                    )
+                if name in self._stream_topic and self._stream_topic[name] != ch.topic:
+                    raise ValueError(
+                        f"Topics {self._stream_topic[name]!r} and {ch.topic!r} map to stream {name!r}"
+                    )
+                topic_signatures[ch.topic] = signature
+                if (
+                    ch.topic not in self._codecs
+                    and ch.message_encoding == "cdr"
+                    and schema is not None
+                    and schema.encoding == "ros2msg"
+                ):
+                    message_type = resolve_msg_type(schema.name)
+                    if message_type is not None:
+                        self._codecs[ch.topic] = CdrCodec(message_type)
                 self._stream_topic[name] = ch.topic
-                self._available[name] = count
+                self._available[name] = self._available.get(name, 0) + count
                 self._observation_uses_publish_time[name] = (
                     ch.metadata.get("dimos.observation_time") == "publish_time"
                 )

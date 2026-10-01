@@ -31,13 +31,14 @@ import math
 from pathlib import Path
 from typing import Any
 
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Twist, Vector3
+from dimos_generated.std_msgs.msg import Header
+
 from dimos.control.benchmarking.benchmark import RunRecording
 from dimos.control.benchmarking.scoring import ExecutedTrajectory, TrajectoryTick, score_run
 from dimos.control.benchmarking.tuning import OperatingPoint, OperatingPointMap, invert_tolerance
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.geometry import quaternion_from_euler
+from dimos.msgs.time import time_from_seconds
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -50,11 +51,15 @@ def _executed_from_recording(rec: RunRecording) -> ExecutedTrajectory:
             TrajectoryTick(
                 t=t,
                 pose=PoseStamped(
-                    ts=t,
-                    position=Vector3(x, y, 0.0),
-                    orientation=Quaternion.from_euler(Vector3(0.0, 0.0, yaw)),
+                    header=Header(frame_id="", stamp=time_from_seconds(t)),
+                    pose=Pose(
+                        position=Point(x=x, y=y, z=0.0),
+                        orientation=quaternion_from_euler(0.0, 0.0, yaw),
+                    ),
                 ),
-                cmd_twist=Twist(linear=Vector3(cvx, cvy, 0.0), angular=Vector3(0.0, 0.0, cwz)),
+                cmd_twist=Twist(
+                    linear=Vector3(x=cvx, y=cvy, z=0.0), angular=Vector3(x=0.0, y=0.0, z=cwz)
+                ),
                 actual_twist=Twist(),
             )
         )

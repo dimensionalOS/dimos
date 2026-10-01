@@ -15,13 +15,14 @@
 from enum import Enum
 from functools import cached_property
 
+from dimos_generated.sensor_msgs.msg import Image
 from PIL import Image as PILImage
 import torch
 from transformers import AutoModelForCausalLM, AutoProcessor
 
 from dimos.models.base import HuggingFaceModel
 from dimos.models.vl.base import Captioner
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.image import image_to_rgb
 
 
 class CaptionDetail(Enum):
@@ -98,7 +99,7 @@ class Florence2Model(HuggingFaceModel, Captioner):
             task_prompt = CaptionDetail.from_str(detail).value
 
         # Convert to PIL
-        pil_image = PILImage.fromarray(image.to_rgb().data)
+        pil_image = PILImage.fromarray(image_to_rgb(image))
 
         # Process inputs
         inputs = self._processor(text=task_prompt, images=pil_image, return_tensors="pt")
@@ -137,7 +138,7 @@ class Florence2Model(HuggingFaceModel, Captioner):
         task_prompt = self._task_prompt
 
         # Convert all to PIL
-        pil_images = [PILImage.fromarray(img.to_rgb().data) for img in images]
+        pil_images = [PILImage.fromarray(image_to_rgb(img)) for img in images]
 
         # Process batch
         inputs = self._processor(

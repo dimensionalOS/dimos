@@ -16,9 +16,10 @@
 
 from typing import Any
 
+from dimos_generated.sensor_msgs.msg import Image
 import numpy as np
 
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.image import image_view
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -36,9 +37,7 @@ except ImportError as e:
 
 def _get_image_data(image: Image) -> np.ndarray[Any, Any]:
     """Extract numpy array from Image."""
-    if not hasattr(image, "data"):
-        raise AttributeError(f"Image missing .data attribute: {type(image)}")
-    return image.data
+    return image_view(image)
 
 
 if CLIP_AVAILABLE:

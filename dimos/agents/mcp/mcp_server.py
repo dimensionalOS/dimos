@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 from collections.abc import AsyncGenerator, Callable
 import concurrent.futures
 import json
@@ -22,6 +23,7 @@ import time
 from typing import TYPE_CHECKING, Any
 import uuid
 
+from dimos_generated.sensor_msgs.msg import Image
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -36,6 +38,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.rpc_client import RpcCall, RPCClient
 from dimos.core.transport_factory import make_transport
+from dimos.msgs.image import image_to_jpeg
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -212,6 +215,15 @@ async def _handle_tools_call(
 
     duration = f"{time.monotonic() - t0:.3f}s"
     response = str(result)[:200]
+
+    if isinstance(result, Image):
+        content = {
+            "type": "image",
+            "mimeType": "image/jpeg",
+            "data": base64.b64encode(image_to_jpeg(result)).decode("ascii"),
+        }
+        logger.info("MCP tool done", tool=name, duration=duration, response=response)
+        return _jsonrpc_result(req_id, {"content": [content]})
 
     if hasattr(result, "agent_encode"):
         logger.info("MCP tool done", tool=name, duration=duration, response=response)

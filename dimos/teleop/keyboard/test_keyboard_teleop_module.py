@@ -16,9 +16,9 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 
+from dimos_generated.geometry_msgs.msg import TwistStamped
 import pytest
 
-from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 import dimos.teleop.keyboard.keyboard_teleop_module as keyboard_mod
 from dimos.teleop.keyboard.keyboard_teleop_module import (
     KeyboardTeleopModule,
@@ -50,11 +50,11 @@ def test_publish_twist_emits_unaddressed_twist_stamped(
 
     module._publish_twist(linear=(0.1, 0.2, 0.3), angular=(0.4, 0.5, 0.6))
 
-    msg = publish.call_args.args[0]
+    msg = TwistStamped.decode(publish.call_args.args[0].encode())
     assert isinstance(msg, TwistStamped)
-    assert msg.frame_id == ""  # no task-name address in the payload
-    assert [msg.linear.x, msg.linear.y, msg.linear.z] == [0.1, 0.2, 0.3]
-    assert [msg.angular.x, msg.angular.y, msg.angular.z] == [0.4, 0.5, 0.6]
+    assert msg.header.frame_id == ""  # no task-name address in the payload
+    assert [msg.twist.linear.x, msg.twist.linear.y, msg.twist.linear.z] == [0.1, 0.2, 0.3]
+    assert [msg.twist.angular.x, msg.twist.angular.y, msg.twist.angular.z] == [0.4, 0.5, 0.6]
 
 
 def test_publish_twist_defaults_to_zero_twist(module: KeyboardTeleopModule, mocker) -> None:
@@ -62,9 +62,9 @@ def test_publish_twist_defaults_to_zero_twist(module: KeyboardTeleopModule, mock
 
     module._publish_twist()
 
-    msg = publish.call_args.args[0]
-    assert [msg.linear.x, msg.linear.y, msg.linear.z] == [0.0, 0.0, 0.0]
-    assert [msg.angular.x, msg.angular.y, msg.angular.z] == [0.0, 0.0, 0.0]
+    msg = TwistStamped.decode(publish.call_args.args[0].encode())
+    assert [msg.twist.linear.x, msg.twist.linear.y, msg.twist.linear.z] == [0.0, 0.0, 0.0]
+    assert [msg.twist.angular.x, msg.twist.angular.y, msg.twist.angular.z] == [0.0, 0.0, 0.0]
 
 
 def test_twist_from_keys_maps_translation_keys_to_eef_linear_twist() -> None:
@@ -98,9 +98,9 @@ def test_final_key_release_publishes_zero_velocity(module: KeyboardTeleopModule,
 
     assert held == set()
     assert publish.call_count == 1
-    msg = publish.call_args.args[0]
-    assert [msg.linear.x, msg.linear.y, msg.linear.z] == [0.0, 0.0, 0.0]
-    assert [msg.angular.x, msg.angular.y, msg.angular.z] == [0.0, 0.0, 0.0]
+    msg = TwistStamped.decode(publish.call_args.args[0].encode())
+    assert [msg.twist.linear.x, msg.twist.linear.y, msg.twist.linear.z] == [0.0, 0.0, 0.0]
+    assert [msg.twist.angular.x, msg.twist.angular.y, msg.twist.angular.z] == [0.0, 0.0, 0.0]
 
 
 def test_keyup_preserves_remaining_motion_key(module: KeyboardTeleopModule, mocker) -> None:
@@ -112,8 +112,8 @@ def test_keyup_preserves_remaining_motion_key(module: KeyboardTeleopModule, mock
 
     assert held == {keyboard_mod.pygame.K_a}
     assert publish.call_count == 1
-    msg = publish.call_args.args[0]
-    assert [msg.linear.x, msg.linear.y, msg.linear.z] == [0.0, 0.05, 0.0]
+    msg = TwistStamped.decode(publish.call_args.args[0].encode())
+    assert [msg.twist.linear.x, msg.twist.linear.y, msg.twist.linear.z] == [0.0, 0.05, 0.0]
 
 
 def test_keyup_publishes_directly_without_timeout_wait(

@@ -41,10 +41,10 @@ python = "dimos.demo.module:Demo"
 threads = 2
 
 [package.metadata.dimos.module.demo.inputs]
-lidar = "sensor_msgs.PointCloud2"
+lidar = "sensor_msgs/msg/PointCloud2"
 
 [package.metadata.dimos.module.demo.outputs]
-global_map = "sensor_msgs.PointCloud2"
+global_map = "sensor_msgs/msg/PointCloud2"
 """
 
 
@@ -62,8 +62,8 @@ def test_parses_a_registered_module(tmp_path: Path) -> None:
     assert info.rust_path == "demo::module::Demo"
     assert info.python_ref == "dimos.demo.module:Demo"
     assert info.threads == 2
-    assert info.inputs == {"lidar": "sensor_msgs.PointCloud2"}
-    assert info.outputs == {"global_map": "sensor_msgs.PointCloud2"}
+    assert info.inputs == {"lidar": "sensor_msgs/msg/PointCloud2"}
+    assert info.outputs == {"global_map": "sensor_msgs/msg/PointCloud2"}
 
 
 def test_a_crate_without_the_metadata_table_is_not_a_module(tmp_path: Path) -> None:
@@ -84,7 +84,7 @@ def test_a_missing_required_key_is_an_error(tmp_path: Path) -> None:
 
 
 def test_a_non_string_msg_type_is_an_error(tmp_path: Path) -> None:
-    manifest = MANIFEST.replace('lidar = "sensor_msgs.PointCloud2"', "lidar = 3")
+    manifest = MANIFEST.replace('lidar = "sensor_msgs/msg/PointCloud2"', "lidar = 3")
     with pytest.raises(BakeError, match="lidar"):
         parse_manifest(write_crate(tmp_path, "dimos/demo/rust", manifest))
 

@@ -15,16 +15,17 @@
 from pathlib import Path
 from types import SimpleNamespace
 
+from dimos_generated.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
+from dimos_generated.sensor_msgs.msg import CameraInfo, Image
+from dimos_generated.std_msgs.msg import Header
+from dimos_generated.tf2_msgs.msg import TFMessage
 import numpy as np
 
 from dimos.memory.cli.render import _frame_first_seen, _pair_camera_infos, render_store
 from dimos.memory.store.memory import MemoryStore
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.msgs.camera_info import camera_info_from_intrinsics
+from dimos.msgs.image import image_from_array
+from dimos.msgs.time import time_from_seconds
 
 
 def _entry(name: str, data: object) -> tuple:  # type: ignore[type-arg]
@@ -32,13 +33,21 @@ def _entry(name: str, data: object) -> tuple:  # type: ignore[type-arg]
 
 
 def _info(frame_id: str) -> CameraInfo:
-    return CameraInfo.from_intrinsics(
-        fx=500.0, fy=500.0, cx=320.0, cy=240.0, width=640, height=480, frame_id=frame_id
+    return camera_info_from_intrinsics(
+        fx=500.0,
+        fy=500.0,
+        cx=320.0,
+        cy=240.0,
+        width=640,
+        height=480,
+        header=Header(frame_id=frame_id),
     )
 
 
 def _image(frame_id: str) -> Image:
-    return Image(data=np.zeros((4, 4, 3), dtype=np.uint8), frame_id=frame_id)
+    return image_from_array(
+        np.zeros((4, 4, 3), dtype=np.uint8), encoding="bgr8", header=Header(frame_id=frame_id)
+    )
 
 
 def test_pairs_by_frame_id() -> None:
@@ -50,7 +59,7 @@ def test_pairs_by_frame_id() -> None:
     pinholes, paired = _pair_camera_infos(renderable)
     assert set(pinholes) == {"color_image"}
     info, frame = pinholes["color_image"]
-    assert info.frame_id == "camera_optical"
+    assert info.header.frame_id == "camera_optical"
     assert frame == "camera_optical"
     assert paired == {"camera_info"}
 
@@ -98,13 +107,13 @@ def test_no_infos() -> None:
 
 def _tf(child: str, ts: float) -> TFMessage:
     return TFMessage(
-        Transform(
-            translation=Vector3(1.0, 0.0, 0.0),
-            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-            frame_id="world",
-            child_frame_id=child,
-            ts=ts,
-        )
+        transforms=[
+            TransformStamped(
+                header=Header(frame_id="world", stamp=time_from_seconds(ts)),
+                child_frame_id=child,
+                transform=Transform(translation=Vector3(x=1), rotation=Quaternion(w=1)),
+            )
+        ]
     )
 
 

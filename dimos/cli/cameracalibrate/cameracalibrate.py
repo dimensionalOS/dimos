@@ -30,9 +30,12 @@ import warnings
 # Use setdefault so an explicit OPENCV_OPENCL_RUNTIME from the environment still wins.
 os.environ.setdefault("OPENCV_OPENCL_RUNTIME", "disabled")
 
+from dimos_generated.sensor_msgs.msg import Image
 import numpy as np
 import typer
 import yaml
+
+from dimos.msgs.image import image_to_bgr
 
 _IMAGE_EXTS = frozenset({".png", ".jpg", ".jpeg"})
 
@@ -102,7 +105,7 @@ def write_camera_info_yaml(
 ) -> None:
     """Write ROS-style CameraInfo YAML loadable by dimos CameraInfo helpers.
 
-    The emitted schema is accepted by ``CameraInfo.from_yaml``.
+    The emitted schema is accepted by ``dimos.msgs.camera_info.camera_info_from_yaml``.
     """
     k = np.asarray(K, dtype=np.float64).reshape(3, 3)
     d = np.asarray(D, dtype=np.float64).ravel()
@@ -544,11 +547,10 @@ def _capture_frames_from_topic(
 
     ``topic_uri`` follows the pubsub registry format ``"<proto>:<topic>"``, e.g.
     ``"jpeg_lcm:/color_image"`` or ``"pshm:color_image"``. The publisher must
-    emit ``sensor_msgs.Image`` messages; ``Image.to_opencv()`` normalizes the
+    emit ``sensor_msgs.Image`` messages; ``image_to_bgr()`` normalizes the
     payload to BGR before detection. Raises ``RuntimeError`` if no frames arrive
     within ``timeout_sec``.
     """
-    from dimos.msgs.sensor_msgs.Image import Image
     from dimos.protocol.pubsub.registry import subscribe_pubsub_uri
 
     if target_count < 1:
@@ -560,7 +562,7 @@ def _capture_frames_from_topic(
 
     def _on_image(msg: Any) -> None:
         try:
-            arr = msg.to_opencv()
+            arr = image_to_bgr(msg)
         except (AttributeError, ValueError):
             return
         with lock:

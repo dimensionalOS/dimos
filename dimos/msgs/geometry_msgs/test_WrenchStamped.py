@@ -12,129 +12,109 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Generated force/torque values and explicit external numeric operations."""
+
 import pickle
 import time
 
+from dimos_generated.geometry_msgs.msg import Vector3, Wrench, WrenchStamped
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 import pytest
+from rosbags.typesys import Stores, get_typestore
 
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.geometry_msgs.Wrench import Wrench
-from dimos.msgs.geometry_msgs.WrenchStamped import WrenchStamped
-
-
-def test_wrench_empty_is_zero():
-    w = Wrench()
-    assert w.force.to_tuple() == (0.0, 0.0, 0.0)
-    assert w.torque.to_tuple() == (0.0, 0.0, 0.0)
-    assert w.is_zero()
-    assert not w
+from dimos.msgs.geometry import wrench_array, wrench_from_array
+from dimos.msgs.time import header_now, time_from_seconds, to_nanoseconds
 
 
-def test_wrench_from_two_sequences():
-    w = Wrench([1, 2, 3], [4, 5, 6])
-    assert w.force.to_tuple() == (1.0, 2.0, 3.0)
-    assert w.torque.to_tuple() == (4.0, 5.0, 6.0)
+def test_wrench_empty_is_zero() -> None:
+    np.testing.assert_array_equal(wrench_array(Wrench()), np.zeros(6))
 
 
-def test_wrench_from_two_vector3():
-    w = Wrench(Vector3(1, 2, 3), Vector3(4, 5, 6))
-    assert w.force.to_tuple() == (1.0, 2.0, 3.0)
-    assert w.torque.to_tuple() == (4.0, 5.0, 6.0)
+def test_wrench_from_array_and_vectors() -> None:
+    source = wrench_from_array([1, 2, 3, 4, 5, 6])
+    explicit = Wrench(force=Vector3(x=1, y=2, z=3), torque=Vector3(x=4, y=5, z=6))
+    assert source == explicit
+    np.testing.assert_array_equal(wrench_array(source), [1, 2, 3, 4, 5, 6])
 
 
-def test_wrench_keywords():
-    assert Wrench(force=[1, 2, 3]).torque.to_tuple() == (0.0, 0.0, 0.0)
-    assert Wrench(torque=[4, 5, 6]).force.to_tuple() == (0.0, 0.0, 0.0)
-
-
-def test_wrench_copy_constructor():
-    src = Wrench([1, 2, 3], [4, 5, 6])
-    copy = Wrench(src)
-    assert copy == src
-    assert copy.force is not src.force
-
-
-def test_wrench_unknown_keyword_raises():
+def test_wrench_keywords() -> None:
+    assert Wrench(force=Vector3(x=1, y=2, z=3)).torque == Vector3()
+    assert Wrench(torque=Vector3(x=4, y=5, z=6)).force == Vector3()
     with pytest.raises(TypeError):
         Wrench(bogus=1)
 
 
-def test_wrench_array_roundtrip():
-    ft = [1.0, 2.0, 3.0, 0.1, 0.2, 0.3]
-    assert np.allclose(Wrench.from_array(ft).to_array(), ft)
+def test_wrench_copy_storage() -> None:
+    source = wrench_from_array([1, 2, 3, 4, 5, 6])
+    copied = Wrench.decode(source.encode())
+    assert copied == source
+    copied.force.x = 10
+    assert source.force.x == 1
+    array = wrench_array(source)
+    array[0] = 20
+    assert source.force.x == 1
 
 
-def test_wrench_from_array_wrong_length_raises():
+def test_wrench_array_roundtrip() -> None:
+    values = [1, 2, 3, 0.1, 0.2, 0.3]
+    np.testing.assert_allclose(wrench_array(wrench_from_array(values)), values)
+
+
+@pytest.mark.parametrize("values", [[1, 2, 3], [], [[1, 2, 3], [4, 5, 6]]])
+def test_wrench_from_array_wrong_shape_raises(values) -> None:
     with pytest.raises(ValueError, match="6 elements"):
-        Wrench.from_array([1.0, 2.0, 3.0])
+        wrench_from_array(values)
 
 
-def test_wrench_add_and_sub():
-    a = Wrench([1, 2, 3], [4, 5, 6])
-    b = Wrench([1, 1, 1], [1, 1, 1])
-    assert (a + b).force.to_tuple() == (2.0, 3.0, 4.0)
-    assert (a - b).torque.to_tuple() == (3.0, 4.0, 5.0)
+def test_wrench_add_and_sub() -> None:
+    a = wrench_from_array([1, 2, 3, 4, 5, 6])
+    b = wrench_from_array([1, 1, 1, 1, 1, 1])
+    added = wrench_from_array(wrench_array(a) + wrench_array(b))
+    subtracted = wrench_from_array(wrench_array(a) - wrench_array(b))
+    assert (added.force.x, added.force.y, added.force.z) == (2, 3, 4)
+    assert (subtracted.torque.x, subtracted.torque.y, subtracted.torque.z) == (3, 4, 5)
 
 
-def test_stamped_is_a_wrench():
-    assert isinstance(WrenchStamped(), Wrench)
-
-
-def test_stamped_inherits_wrench_positional_form():
-    ws = WrenchStamped([1, 2, 3], [4, 5, 6])
-    assert ws.force.to_tuple() == (1.0, 2.0, 3.0)
-    assert ws.torque.to_tuple() == (4.0, 5.0, 6.0)
-
-
-def test_stamped_keeps_explicit_ts_and_frame():
-    ws = WrenchStamped(ts=5.0, frame_id="ft_sensor", force=[1, 2, 3], torque=[4, 5, 6])
-    assert (ws.ts, ws.frame_id) == (5.0, "ft_sensor")
-    assert ws.force.to_tuple() == (1.0, 2.0, 3.0)
-
-
-def test_stamped_positional_ts_and_frame():
-    ws = WrenchStamped(5.0, "ft_sensor")
-    assert (ws.ts, ws.frame_id) == (5.0, "ft_sensor")
-
-
-def test_stamped_defaults_stamp_to_now():
-    before = time.time()
-    assert before <= WrenchStamped().ts <= time.time()
-
-
-def test_stamped_zero_ts_is_a_real_timestamp():
-    assert WrenchStamped(ts=0.0).ts == 0.0
-
-
-def test_stamped_from_array():
-    ws = WrenchStamped.from_array([1.0, 2.0, 3.0, 0.1, 0.2, 0.3], frame_id="tool0", ts=5.0)
-    assert (ws.ts, ws.frame_id) == (5.0, "tool0")
-    assert ws.force.to_tuple() == (1.0, 2.0, 3.0)
-    assert ws.torque.to_tuple() == (0.1, 0.2, 0.3)
-
-
-def test_lcm_encode_decode():
+def test_stamped_nested_wrench_and_explicit_header() -> None:
     source = WrenchStamped(
-        ts=5.25, frame_id="ft_sensor", force=(1.0, 2.0, 3.0), torque=(0.1, 0.2, 0.3)
+        header=Header(stamp=time_from_seconds(5), frame_id="tool0"),
+        wrench=wrench_from_array([1, 2, 3, 0.1, 0.2, 0.3]),
     )
-    dest = WrenchStamped.lcm_decode(source.lcm_encode())
-
-    assert isinstance(dest, WrenchStamped)
-    assert dest is not source
-    assert dest == source
-    assert dest.frame_id == "ft_sensor"
-    assert dest.ts == pytest.approx(5.25)
+    assert isinstance(source.wrench, Wrench)
+    assert to_nanoseconds(source.header.stamp) == 5000000000
+    assert source.header.frame_id == "tool0"
+    np.testing.assert_array_equal(wrench_array(source.wrench), [1, 2, 3, 0.1, 0.2, 0.3])
 
 
-def test_lcm_decode_of_an_unstamped_message_keeps_the_zero_stamp():
-    decoded = WrenchStamped.lcm_decode(WrenchStamped(ts=0.0, frame_id="f").lcm_encode())
-    assert decoded.ts == 0.0
+def test_explicit_current_time_and_zero_default() -> None:
+    before = time.time_ns()
+    source = WrenchStamped(header=header_now())
+    assert before <= to_nanoseconds(source.header.stamp) <= time.time_ns()
+    assert to_nanoseconds(WrenchStamped().header.stamp) == 0
 
 
-def test_pickle_encode_decode():
-    source = WrenchStamped(ts=time.time(), force=(1.0, 2.0, 3.0), torque=(0.1, 0.2, 0.3))
-    dest = pickle.loads(pickle.dumps(source))
-    assert isinstance(dest, WrenchStamped)
-    assert dest is not source
-    assert dest == source
+@pytest.mark.parametrize("stamp", [0, 5.25])
+def test_cdr_and_independent_decoding(stamp: float) -> None:
+    source = WrenchStamped(
+        header=Header(stamp=time_from_seconds(stamp), frame_id="ft_sensor"),
+        wrench=wrench_from_array([1, 2, 3, 0.1, 0.2, 0.3]),
+    )
+    decoded = WrenchStamped.decode(source.encode())
+    assert decoded is not source
+    assert decoded == source
+    independent = get_typestore(Stores.ROS2_JAZZY).deserialize_cdr(
+        source.encode(), WrenchStamped.msg_name
+    )
+    assert independent.header.frame_id == "ft_sensor"
+    assert independent.header.stamp.sec * 1000000000 + independent.header.stamp.nanosec == int(
+        stamp * 1000000000
+    )
+    np.testing.assert_array_equal(wrench_array(independent.wrench), [1, 2, 3, 0.1, 0.2, 0.3])
+
+
+def test_pickle_encode_decode() -> None:
+    source = WrenchStamped(header=header_now(), wrench=wrench_from_array([1, 2, 3, 0.1, 0.2, 0.3]))
+    decoded = pickle.loads(pickle.dumps(source))
+    assert decoded is not source
+    assert decoded == source

@@ -27,6 +27,7 @@ from __future__ import annotations
 import os
 import time
 
+from dimos_generated.geometry_msgs.msg import Twist, TwistStamped, Vector3
 import pytest
 
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
@@ -35,7 +36,6 @@ from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.core.transport import WebRTCTransport
-from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.protocol.pubsub.impl.webrtc.providers.cloudflare import CloudflareConfig
 from dimos.protocol.pubsub.impl.webrtc.providers.spec import WEBRTC_AVAILABLE
 
@@ -54,7 +54,7 @@ class TwistSource(Module):
 
     @rpc
     def send(self, x: float) -> None:
-        self.cmd_webrtc.publish(TwistStamped(linear=[x, 0, 0], angular=[0, 0, 0]))
+        self.cmd_webrtc.publish(TwistStamped(twist=Twist(linear=Vector3(x=x))))
 
 
 class TwistSink(Module):
@@ -64,7 +64,7 @@ class TwistSink(Module):
     def start(self) -> None:
         super().start()
         self._received: list[float] = []
-        self.cmd_webrtc.subscribe(lambda msg: self._received.append(msg.linear.x))
+        self.cmd_webrtc.subscribe(lambda msg: self._received.append(msg.twist.linear.x))
 
     @rpc
     def received(self) -> list[float]:

@@ -18,8 +18,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 import pickle
-import struct
 
+from dimos_generated.geometry_msgs.msg import Point, TwistStamped, Vector3
 from pydantic import ValidationError
 import pytest
 
@@ -28,7 +28,6 @@ from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParse
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.coordination.module_coordinator import _materialize_transports
 from dimos.core.transport import WebRTCTransport
-from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.protocol.pubsub.impl.webrtc.providers import spec
 from dimos.protocol.pubsub.impl.webrtc.providers.broker import BrokerConfig
 from dimos.protocol.pubsub.impl.webrtc.providers.spec import (
@@ -36,6 +35,7 @@ from dimos.protocol.pubsub.impl.webrtc.providers.spec import (
     ProviderConfig,
 )
 from dimos.protocol.pubsub.impl.webrtc.webrtcpubsub import WebRTCPubSub
+from dimos.web.relay_bridge.protocol import FrameHeader, decode_data_frame, encode_data_frame
 
 # ─── Mock provider ───────────────────────────────────────────────────
 
@@ -85,51 +85,6 @@ class MockTransport(WebRTCTransport):
     _config_cls = MockConfig
 
 
-# ─── Fake LCM messages ───────────────────────────────────────────────
-
-
-class FakeLCMMsg:
-    msg_name = "test.FakeLCMMsg"
-    _FINGERPRINT = b"\x01\x02\x03\x04\x05\x06\x07\x08"
-
-    def __init__(self, value: float = 0.0):
-        self.value = value
-
-    @classmethod
-    def _get_packed_fingerprint(cls) -> bytes:
-        return cls._FINGERPRINT
-
-    def lcm_encode(self) -> bytes:
-        return self._FINGERPRINT + struct.pack("<d", self.value)
-
-    @classmethod
-    def lcm_decode(cls, data: bytes) -> FakeLCMMsg:
-        if data[:8] != cls._FINGERPRINT:  # like real LCM generated code
-            raise ValueError("Decode error")
-        return cls(struct.unpack("<d", data[8:])[0])
-
-
-class OtherLCMMsg:
-    msg_name = "test.OtherLCMMsg"
-    _FINGERPRINT = b"\xaa\xbb\xcc\xdd\xee\xff\x00\x11"
-
-    def __init__(self, text: str = ""):
-        self.text = text
-
-    @classmethod
-    def _get_packed_fingerprint(cls) -> bytes:
-        return cls._FINGERPRINT
-
-    def lcm_encode(self) -> bytes:
-        return self._FINGERPRINT + self.text.encode()
-
-    @classmethod
-    def lcm_decode(cls, data: bytes) -> OtherLCMMsg:
-        if data[:8] != cls._FINGERPRINT:  # like real LCM generated code
-            raise ValueError("Decode error")
-        return cls(data[8:].decode())
-
-
 # ─── Transport modes ─────────────────────────────────────────────────
 
 
@@ -142,46 +97,71 @@ def test_raw_bytes_mode() -> None:
 
 
 def test_typed_encode_decode() -> None:
-    transport = MockTransport("cmd_unreliable", FakeLCMMsg, name="typed")
-    received: list[FakeLCMMsg] = []
+    transport = MockTransport("cmd_unreliable", Point, name="typed")
+    received: list[Point] = []
     transport.subscribe(lambda msg: received.append(msg))
-    transport.broadcast(None, FakeLCMMsg(3.14))
+    transport.broadcast(None, Point(x=3.14))
     assert len(received) == 1
-    assert abs(received[0].value - 3.14) < 1e-9
+    assert abs(received[0].x - 3.14) < 1e-9
 
 
 def test_multiple_types_multiplexed() -> None:
     """Typed transports sharing one channel each receive only their own type."""
-    t1 = MockTransport("cmd_unreliable", FakeLCMMsg, name="mux")
-    t2 = MockTransport("cmd_unreliable", OtherLCMMsg, name="mux")
-    r1: list[FakeLCMMsg] = []
-    r2: list[OtherLCMMsg] = []
+    t1 = MockTransport("cmd_unreliable", Point, name="mux")
+    t2 = MockTransport("cmd_unreliable", Vector3, name="mux")
+    r1: list[Point] = []
+    r2: list[Vector3] = []
     t1.subscribe(lambda msg: r1.append(msg))
     t2.subscribe(lambda msg: r2.append(msg))
 
-    t1.broadcast(None, FakeLCMMsg(1.0))
-    t2.broadcast(None, OtherLCMMsg("world"))
-    assert [m.value for m in r1] == [1.0]
-    assert [m.text for m in r2] == ["world"]
+    t1.broadcast(None, Point(x=1.0))
+    t2.broadcast(None, Vector3(x=2.0))
+    assert [m.x for m in r1] == [1.0]
+    assert [m.x for m in r2] == [2.0]
 
 
-def test_wire_fingerprint_matches_encoding() -> None:
-    """Demux must follow the wire format, not _get_packed_fingerprint().
+def test_generated_frames_declare_type_and_sequence() -> None:
+    publisher = MockTransport("data", Point, name="framed")
+    raw = MockTransport("data", name="framed")
+    received: list[bytes] = []
+    raw.subscribe(received.append)
+    publisher.broadcast(None, Point(x=1))
+    publisher.broadcast(None, Point(x=2))
+    frames = [decode_data_frame(data) for data in received]
+    assert [frame.header.seq for frame in frames] == [0, 1]
+    assert all(frame.header.ch == "data" for frame in frames)
+    assert all(frame.header.meta == {"type": Point.msg_name, "encoding": "cdr"} for frame in frames)
+    assert [Point.decode(frame.payload).x for frame in frames] == [1, 2]
 
-    TwistStamped inherits Twist's fingerprint but encodes as LCM TwistStamped —
-    any filter keyed on the class fingerprint would drop every real message.
-    The try-decode demux delegates the check to lcm_decode, which gets it right.
-    """
-    transport = MockTransport("cmd_unreliable", TwistStamped, name="wire")
-    received: list[TwistStamped] = []
-    transport.subscribe(lambda msg: received.append(msg))
 
-    wire = TwistStamped(linear=[0.5, 0, 0], angular=[0, 0, 0.1], frame_id="keyboard").lcm_encode()
-    assert wire[:8] != TwistStamped._get_packed_fingerprint()
+@pytest.mark.parametrize("bad", ["type", "topic", "encoding", "truncated", "trailing", "raw"])
+def test_invalid_frame_does_not_poison_subscription(bad: str) -> None:
+    transport = MockTransport("cmd_unreliable", Point, name=f"invalid-{bad}")
+    received: list[Point] = []
+    transport.subscribe(received.append)
+    header = FrameHeader(
+        ch="cmd_unreliable",
+        seq=1,
+        ts=0,
+        delivery="latest",
+        meta={"type": Point.msg_name, "encoding": "cdr"},
+    )
+    if bad == "topic":
+        header.ch = "other"
+    elif bad in ("type", "encoding"):
+        assert header.meta is not None
+        header.meta[bad] = "unknown"
+    wire = encode_data_frame(header, Point(x=1).encode())
+    if bad == "truncated":
+        wire = wire[:-1]
+    elif bad == "trailing":
+        wire += b"extra"
+    elif bad == "raw":
+        wire = Point(x=1).encode()
     transport._config.provider().publish("cmd_unreliable", wire)
-    assert len(received) == 1
-    assert abs(received[0].linear.x - 0.5) < 1e-9
-    assert received[0].frame_id == "keyboard"
+    assert received == []
+    transport.broadcast(None, Point(x=2))
+    assert received == [Point(x=2)]
 
 
 # ─── Pickling + provider sharing ─────────────────────────────────────
@@ -190,20 +170,20 @@ def test_wire_fingerprint_matches_encoding() -> None:
 def test_pickle_roundtrip_preserves_everything() -> None:
     """Transports are pickled into module worker processes; topic, type,
     and provider config must all survive."""
-    t1 = MockTransport("cmd_unreliable", FakeLCMMsg, name="pickled")
+    t1 = MockTransport("cmd_unreliable", Point, name="pickled")
     t2 = pickle.loads(pickle.dumps(t1))
 
     assert type(t2) is MockTransport
     assert t2.topic == t1.topic
-    assert t2._msg_type is FakeLCMMsg
+    assert t2._msg_type is Point
     assert t2._config == t1._config
 
     # Same config → same per-process provider, so the two halves interoperate.
-    received: list[FakeLCMMsg] = []
+    received: list[Point] = []
     t2.subscribe(lambda msg: received.append(msg))
-    t1.broadcast(None, FakeLCMMsg(42.0))
+    t1.broadcast(None, Point(x=42.0))
     assert len(received) == 1
-    assert abs(received[0].value - 42.0) < 1e-9
+    assert abs(received[0].x - 42.0) < 1e-9
 
 
 def test_provider_singleton_per_config() -> None:
@@ -261,7 +241,7 @@ def test_provider_config_is_frozen_and_hashable() -> None:
 
 def test_blueprint_config_exposes_transport_fields() -> None:
     """Each unique `_config_cls` becomes a `transports.<name>` config section."""
-    bp = Blueprint(blueprints=()).transports({("topic", FakeLCMMsg): MockTransport.spec("topic")})
+    bp = Blueprint(blueprints=()).transports({("topic", Point): MockTransport.spec("topic")})
     parser = BlueprintConfigParser(bp)
     parsed = parser.parse(environ={}, overrides={"transports": {"mock": {"name": "override"}}})
     assert parsed.transport_overrides() == {"mock": {"name": "override"}}
@@ -273,8 +253,8 @@ def test_blueprint_config_exposes_transport_fields() -> None:
     # Multiple transports sharing one `_config_cls` collapse to one section.
     bp_shared = Blueprint(blueprints=()).transports(
         {
-            ("a", FakeLCMMsg): MockTransport.spec("a"),
-            ("b", FakeLCMMsg): MockTransport.spec("b"),
+            ("a", Point): MockTransport.spec("a"),
+            ("b", Point): MockTransport.spec("b"),
         }
     )
     shared = BlueprintConfigParser(bp_shared).parse(
@@ -285,32 +265,32 @@ def test_blueprint_config_exposes_transport_fields() -> None:
 
 def test_transport_overrides_apply_and_survive_pickle() -> None:
     """Materialization builds each transport with its resolved config; pickle-safe."""
-    bp = Blueprint(blueprints=()).transports({("topic", FakeLCMMsg): MockTransport.spec("topic")})
+    bp = Blueprint(blueprints=()).transports({("topic", Point): MockTransport.spec("topic")})
 
-    transport = _materialize_transports(bp, {"mock": {"name": "overridden"}})[("topic", FakeLCMMsg)]
+    transport = _materialize_transports(bp, {"mock": {"name": "overridden"}})[("topic", Point)]
 
     assert transport._config.name == "overridden"
     assert pickle.loads(pickle.dumps(transport))._config.name == "overridden"
 
     # No override → config built from the spec's defaults.
-    default = _materialize_transports(bp, {})[("topic", FakeLCMMsg)]
+    default = _materialize_transports(bp, {})[("topic", Point)]
     assert default._config.name == "default"
 
 
 def test_materialize_uses_resolved_config() -> None:
     """The config reaching the transport is built straight from the overrides,
     not a default instance that is later mutated."""
-    bp = Blueprint(blueprints=()).transports({("topic", FakeLCMMsg): MockTransport.spec("topic")})
+    bp = Blueprint(blueprints=()).transports({("topic", Point): MockTransport.spec("topic")})
 
-    transport = _materialize_transports(bp, {"mock": {"name": "resolved"}})[("topic", FakeLCMMsg)]
+    transport = _materialize_transports(bp, {"mock": {"name": "resolved"}})[("topic", Point)]
 
     assert transport._config == MockConfig(name="resolved")
 
 
 def test_transport_overrides_coerce_string_values() -> None:
     """CLI/env overrides arrive as raw strings; non-str fields must coerce, not pass through."""
-    bp = Blueprint(blueprints=()).transports({("topic", FakeLCMMsg): MockTransport.spec("topic")})
-    transport = _materialize_transports(bp, {"mock": {"count": "5"}})[("topic", FakeLCMMsg)]
+    bp = Blueprint(blueprints=()).transports({("topic", Point): MockTransport.spec("topic")})
+    transport = _materialize_transports(bp, {"mock": {"count": "5"}})[("topic", Point)]
     assert transport._config.count == 5
 
 
@@ -323,11 +303,11 @@ def test_raw_transport_pins_still_work() -> None:
 
     # Pinned on the active backend: a plain LCM/Zenoh pin that does not match it
     # is deliberately rebuilt by the backend switch, which is a different path.
-    raw = make_transport("/raw_topic", FakeLCMMsg)
+    raw = make_transport("/raw_topic", Point)
     bp = Blueprint(blueprints=()).transports(
         {
-            ("raw", FakeLCMMsg): raw,
-            ("speced", FakeLCMMsg): MockTransport.spec("topic"),
+            ("raw", Point): raw,
+            ("speced", Point): MockTransport.spec("topic"),
         }
     )
     # Raw pins contribute no transports.* config sections; the spec still does.
@@ -337,8 +317,8 @@ def test_raw_transport_pins_still_work() -> None:
     assert parsed.transport_overrides() == {"mock": {"name": "x"}}
 
     materialized = _materialize_transports(bp, {})
-    assert materialized[("raw", FakeLCMMsg)] is raw
-    assert isinstance(materialized[("speced", FakeLCMMsg)], MockTransport)
+    assert materialized[("raw", Point)] is raw
+    assert isinstance(materialized[("speced", Point)], MockTransport)
 
 
 # ─── Broker credential validation ────────────────────────────────────

@@ -38,6 +38,7 @@ import numpy as np
 from dimos.memory.embed import EmbedImages
 from dimos.memory.tf import StreamTF
 from dimos.memory.transform import throttle
+from dimos.msgs.pointcloud import pointcloud_xyz
 from dimos.perception.detection.project import sees
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.detection.type.detection3d.imageDetections3DPC import ImageDetections3DPC
@@ -47,7 +48,7 @@ from dimos.perception.memory.types import Localization, LocalizePolicy, Support
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from dimos_lcm.sensor_msgs import CameraInfo
+    from dimos_generated.sensor_msgs.msg import CameraInfo
 
     from dimos.memory.stream import Stream
     from dimos.models.embedding.siglip import SigLIPModel
@@ -104,7 +105,7 @@ class _Cluster:
 
     @property
     def extent(self) -> np.ndarray:
-        points = np.concatenate([np.asarray(o.cloud.pointcloud.points) for o in self.observations])
+        points = np.concatenate([pointcloud_xyz(o.cloud) for o in self.observations])
         extent: np.ndarray = points.max(axis=0) - points.min(axis=0)
         return extent
 
@@ -208,12 +209,12 @@ def _lift(
     pose = gates.camera_pose(tf, detections.ts, optical_frame, world_frame, tf_tolerance)
     if pose is None:
         return []
-    camera = np.array([pose.position.x, pose.position.y, pose.position.z])
+    camera = np.array([pose.pose.position.x, pose.pose.position.y, pose.pose.position.z])
 
     lifted = ImageDetections3DPC.from_depth(detections, depth, camera_info, transform)
     valid: list[tuple[Detection3DPC, np.ndarray]] = []
     for det3d in lifted:
-        points = np.asarray(det3d.pointcloud.pointcloud.points)
+        points = pointcloud_xyz(det3d.pointcloud)
         if len(points) < policy.min_depth_points:
             continue
         extent = points.max(axis=0) - points.min(axis=0)
@@ -443,7 +444,7 @@ def _localize_one(
             observation = _ClusterObservation(
                 ts=det3d.ts,
                 score=det3d.confidence,
-                centroid=np.asarray(det3d.pointcloud.pointcloud.points).mean(axis=0),
+                centroid=pointcloud_xyz(det3d.pointcloud).mean(axis=0),
                 cloud=det3d.pointcloud,
                 camera_position=camera,
                 detection=det3d,
@@ -545,10 +546,14 @@ def _localize_one(
     reason = "ambiguous_between_coexisting_candidates" if margin < policy.refusal_margin else None
 
     latest = winner.latest
-    points = np.asarray(latest.cloud.pointcloud.points)
+    points = pointcloud_xyz(latest.cloud)
     aabb_min, aabb_max = points.min(axis=0), points.max(axis=0)
     try:
-        orientation = _quaternion_from_matrix(np.asarray(latest.cloud.oriented_bounding_box.R))
+        import open3d as o3d
+
+        native = o3d.geometry.PointCloud()
+        native.points = o3d.utility.Vector3dVector(points)
+        orientation = _quaternion_from_matrix(np.asarray(native.get_oriented_bounding_box().R))
     except Exception:
         orientation = (0.0, 0.0, 0.0, 1.0)
     center = (aabb_min + aabb_max) / 2

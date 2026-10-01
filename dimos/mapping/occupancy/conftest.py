@@ -12,17 +12,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dimos_generated.geometry_msgs.msg import Pose, Quaternion
+from dimos_generated.nav_msgs.msg import MapMetaData, OccupancyGrid
 import numpy as np
 import pytest
 
 from dimos.mapping.occupancy.gradient import gradient
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.utils.data import get_data
 
 
 @pytest.fixture
 def occupancy() -> OccupancyGrid:
-    return OccupancyGrid(np.load(get_data("occupancy_simple.npy")))
+    cells = np.load(get_data("occupancy_simple.npy"))
+    return OccupancyGrid(
+        info=MapMetaData(
+            width=cells.shape[1],
+            height=cells.shape[0],
+            resolution=0.05,
+            origin=Pose(orientation=Quaternion(w=1)),
+        ),
+        data=cells.astype(np.int8).ravel(),
+    )
 
 
 @pytest.fixture

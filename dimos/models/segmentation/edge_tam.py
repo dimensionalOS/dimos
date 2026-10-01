@@ -20,6 +20,7 @@ import shutil
 import tempfile
 from typing import TYPE_CHECKING, Any, Protocol, TypedDict
 
+from dimos_generated.sensor_msgs.msg import Image
 from hydra.utils import instantiate
 import numpy as np
 from numpy.typing import NDArray
@@ -28,7 +29,7 @@ from PIL import Image as PILImage
 import torch
 
 from dimos.models.base import default_torch_device
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.image import image_to_bgr, image_to_jpeg
 from dimos.perception.detection.detectors.base import Detector
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
@@ -167,7 +168,7 @@ class EdgeTAMImageSegmenter:
             )
             self._mask_generators[points_per_side] = generator
 
-        rgb = cv2.cvtColor(image.to_opencv(), cv2.COLOR_BGR2RGB)
+        rgb = cv2.cvtColor(image_to_bgr(image), cv2.COLOR_BGR2RGB)
         amp = (
             torch.autocast("cuda", dtype=torch.bfloat16)
             if self._predictor.device.type == "cuda"
@@ -198,7 +199,7 @@ class EdgeTAMImageSegmenter:
             return ImageDetections2D(detections.image, [])
 
         image = detections.image
-        rgb = cv2.cvtColor(image.to_opencv(), cv2.COLOR_BGR2RGB)
+        rgb = cv2.cvtColor(image_to_bgr(image), cv2.COLOR_BGR2RGB)
 
         # bfloat16 autocast is CUDA-only; MPS runs in float32
         amp = (
@@ -249,7 +250,7 @@ class EdgeTAMProcessor(Detector):
         """Prepare frame for SAM2 (resize, normalize, convert to tensor)."""
         import cv2
 
-        cv_image = image.to_opencv()
+        cv_image = image_to_bgr(image)
         rgb_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB)
         pil_image = PILImage.fromarray(rgb_image)
 
@@ -402,7 +403,7 @@ class EdgeTAMProcessor(Detector):
 def _temp_dir_context(image: Image) -> Generator[str, None, None]:
     path = tempfile.mkdtemp()
 
-    image.save(f"{path}/00000.jpg")
+    Path(path, "00000.jpg").write_bytes(image_to_jpeg(image))
 
     try:
         yield path

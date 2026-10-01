@@ -223,17 +223,18 @@ from pathlib import Path
 os.environ["DIMOS_LOG_LEVEL"] = "WARNING"  # keep doc output stable
 
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import make_vector3
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped
+from dimos_generated.std_msgs.msg import Header
+from dimos.msgs.time import time_from_seconds
+from dimos_generated.geometry_msgs.msg import Quaternion
 
 Path("/tmp/evals_intro.db").unlink(missing_ok=True)
 store = SqliteStore(path="/tmp/evals_intro.db")
 odom = store.stream("odom", PoseStamped)
 for i in range(20):
     odom.append(
-        PoseStamped(position=make_vector3(float(i), 2.5, 0.0),
-                    orientation=Quaternion(0, 0, 0, 1), frame_id="world"),
+        PoseStamped(header=Header(stamp=time_from_seconds(1000.0+i),frame_id="world"),
+                    pose=Pose(position=Point(x=float(i),y=2.5))),
         ts=1000.0 + i,
     )
 store.stop()
@@ -368,18 +369,19 @@ ends when the agent finishes or `timeout_s` hits, the environment stops, and
 from dimos.evals.environments.dimsim import DimSimEnvironment
 from dimos.evals.scorers import ramp
 from dimos.evals.types import EvalCase, recording
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos_generated.geometry_msgs.msg import Point
+from dimos.msgs.geometry import point_distance
 
-BED = Vector3(-3.567, -1.332, 0.0)
+BED = Point(x=-3.567,y=-1.332,z=0.0)
 
 
 def ended_near_bed(o):
     store = recording(o)
     try:
-        p = store.streams.odom.last().data.position
+        p = store.streams.odom.last().data.pose.position
     finally:
         store.stop()
-    return ramp((BED - p).length(), band=2.0)
+    return ramp(point_distance(BED,p), band=2.0)
 
 
 go_to_bed = EvalCase(

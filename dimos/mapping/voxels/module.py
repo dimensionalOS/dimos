@@ -16,6 +16,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from dimos_generated.sensor_msgs.msg import PointCloud2
+
 from dimos.core.core import rpc
 from dimos.core.module import ModuleConfig
 from dimos.core.stream import In, Out
@@ -23,7 +25,6 @@ from dimos.mapping.voxels.grid import VoxelGrid
 from dimos.memory.module import StreamModule
 from dimos.memory.stream import Stream
 from dimos.memory.transform import Transformer
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

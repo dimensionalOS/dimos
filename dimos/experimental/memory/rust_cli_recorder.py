@@ -33,7 +33,6 @@ from dimos.core.transport_factory import session_config
 from dimos.experimental.memory.rust_recorder import RustStreamSpec
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tap import matching, recording_dir
-from dimos.msgs.sensor_msgs.Image import Image
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -99,9 +98,11 @@ def make_plan(transports: dict[tuple[str, type], Any]) -> RustRecordingPlan:
     for index, ((name, payload_type), transport) in enumerate(transports.items()):
         if name not in selected:
             continue
-        if not hasattr(payload_type, "lcm_encode") or not hasattr(payload_type, "lcm_decode"):
+        if not all(
+            hasattr(payload_type, member) for member in ("encode", "decode", "msg_name", "schema")
+        ):
             logger.info(
-                "--record: stream is not a DimOS LCM message type; skipped",
+                "--record: stream is not a generated CDR message type; skipped",
                 stream=name,
                 payload_type=str(payload_type),
             )
@@ -117,11 +118,11 @@ def make_plan(transports: dict[tuple[str, type], Any]) -> RustRecordingPlan:
         backends.add(backend)
         port = f"stream_{index}"
         streams.append(
-            RustStreamSpec(
+            RustStreamSpec.from_type(
                 port=port,
                 name=name,
-                payload_type=f"{payload_type.__module__}.{payload_type.__qualname__}",
-                codec="jpeg" if issubclass(payload_type, Image) else "lcm",
+                payload_type=payload_type,
+                codec="cdr",
             )
         )
         topics[port] = transport.channel

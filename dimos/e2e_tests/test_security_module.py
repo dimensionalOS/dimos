@@ -15,7 +15,7 @@
 from collections.abc import Callable
 import time
 
-from dimos_lcm.std_msgs import String
+from dimos_generated.std_msgs.msg import String
 import pytest
 
 from dimos.e2e_tests.conf_types import StartPersonTrack
@@ -49,7 +49,7 @@ def test_security_module(
         "unitree-go2-security",
     )
 
-    lcm_spy.save_topic("/security_state#std_msgs.String")
+    lcm_spy.save_topic("/security_state#std_msgs/msg/String")
     wait_for_system_ready(timeout=120.0)
 
     time.sleep(2)
@@ -70,7 +70,7 @@ def test_security_module(
         return s.data == "FOLLOWING"
 
     lcm_spy.wait_for_message_result(
-        "/security_state#std_msgs.String",
+        "/security_state#std_msgs/msg/String",
         String,
         predicate,
         "Failed to transition to FOLLOWING.",

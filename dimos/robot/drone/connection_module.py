@@ -21,7 +21,17 @@ import threading
 import time
 from typing import Any
 
-from dimos_lcm.std_msgs import String
+from dimos_generated.geometry_msgs.msg import (
+    Pose,
+    PoseStamped,
+    Transform,
+    TransformStamped,
+    Twist,
+    Vector3,
+)
+from dimos_generated.sensor_msgs.msg import Image
+from dimos_generated.std_msgs.msg import Header, String
+from dimos_generated.tf2_msgs.msg import TFMessage
 from reactivex.disposable import Disposable
 
 from dimos.agents.annotation import skill
@@ -30,13 +40,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.mapping.models import LatLon
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.msgs.time import time_from_seconds
 from dimos.robot.drone.dji_video_stream import DJIDroneVideoStream
 from dimos.robot.drone.mavlink_connection import MavlinkConnection
 from dimos.utils.logging_config import setup_logger
@@ -141,7 +145,7 @@ class DroneConnectionModule(Module):
         )
 
         # Subscribe to movement commands
-        self.register_disposable(Disposable(self.movecmd.subscribe(self.move)))
+        self.register_disposable(Disposable(self.movecmd.subscribe(self._on_move_command)))
 
         # Subscribe to Twist movement commands
         if self.movecmd_twist.transport:
@@ -173,34 +177,32 @@ class DroneConnectionModule(Module):
         self.odom.publish(msg)
 
         # Publish base_link transform
-        base_link = Transform(
-            translation=msg.position,
-            rotation=msg.orientation,
-            frame_id="world",
+        position = msg.pose.position
+        base_link = TransformStamped(
+            header=msg.header,
             child_frame_id="base_link",
-            ts=msg.ts if hasattr(msg, "ts") else time.time(),
+            transform=Transform(
+                translation=Vector3(x=position.x, y=position.y, z=position.z),
+                rotation=msg.pose.orientation,
+            ),
         )
-
-        # Publish camera_link transform (camera mounted on front of drone, no gimbal factored in yet)
-        camera_link = Transform(
-            translation=Vector3(0.1, 0.0, -0.05),  # 10cm forward, 5cm down
-            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),  # No rotation relative to base
-            frame_id="base_link",
+        camera_link = TransformStamped(
+            header=Header(stamp=time_from_seconds(time.time()), frame_id="base_link"),
             child_frame_id="camera_link",
-            ts=time.time(),
+            transform=Transform(translation=Vector3(x=0.1, z=-0.05)),
         )
-        self.tf.publish(TFMessage(base_link, camera_link))
+        self.tf.publish(TFMessage(transforms=[base_link, camera_link]))
 
     def _publish_status(self, status: dict[str, Any]) -> None:
         """Publish drone status as JSON string."""
         self._status = status
 
-        status_str = String(json.dumps(status))
+        status_str = String(data=json.dumps(status))
         self.status.publish(status_str)
 
     def _publish_telemetry(self, telemetry: dict[str, Any]) -> None:
         """Publish full telemetry as JSON string."""
-        telemetry_str = String(json.dumps(telemetry))
+        telemetry_str = String(data=json.dumps(telemetry))
         self.telemetry.publish(telemetry_str)
         self._latest_telemetry = telemetry
 
@@ -222,10 +224,8 @@ class DroneConnectionModule(Module):
                     if self._odom is None:
                         # Publish default pose
                         default_pose = PoseStamped(
-                            position=Vector3(0, 0, 0),
-                            orientation=Quaternion(0, 0, 0, 1),
-                            frame_id="world",
-                            ts=time.time(),
+                            header=Header(stamp=time_from_seconds(time.time()), frame_id="world"),
+                            pose=Pose(),
                         )
                         self._publish_tf(default_pose)
                         logger.debug("Publishing default odometry")
@@ -265,7 +265,7 @@ class DroneConnectionModule(Module):
             duration: How long to move (0 = continuous)
         """
         if self.connection:
-            self.connection.move(Vector3(x, y, z), duration)
+            self.connection.move(Vector3(x=x, y=y, z=z), duration)
 
     @skill
     def takeoff(self, altitude: float = 3.0) -> bool:
@@ -385,7 +385,7 @@ class DroneConnectionModule(Module):
             duration (float, optional): How long to track for. Defaults to 120.0.
         """
         msg = {"object_description": object_description, "duration": duration}
-        self.follow_object_cmd.publish(String(json.dumps(msg)))
+        self.follow_object_cmd.publish(String(data=json.dumps(msg)))
 
         yield "Started trying to track. First, trying to find the object."
 
@@ -415,6 +415,10 @@ class DroneConnectionModule(Module):
                         break
         else:
             yield f"Stopped tracking '{object_description}'"
+
+    def _on_move_command(self, message: Vector3) -> None:
+        """Unpack generated movement vectors at the scalar skill boundary."""
+        self.move(message.x, message.y, message.z)
 
     def _on_move_twist(self, msg: Twist) -> None:
         """Handle Twist movement commands from tracking/navigation.

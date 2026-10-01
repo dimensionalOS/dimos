@@ -20,6 +20,7 @@ import threading
 import time
 from typing import Any
 
+from dimos_generated.geometry_msgs.msg import Twist, Vector3
 from reactivex.disposable import Disposable
 from unitree_sdk2py.comm.motion_switcher.motion_switcher_client import (  # type: ignore[import-not-found]
     MotionSwitcherClient,
@@ -37,8 +38,6 @@ from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.robot.unitree.g1.effectors.high_level.commands import (
     ARM_API_ID,
     ARM_COMMANDS,
@@ -297,7 +296,7 @@ class G1HighLevelDdsSdk(Module, HighLevelG1Spec):
         self, x: float, y: float = 0.0, yaw: float = 0.0, duration: float = 0.0
     ) -> str:
         """Move the robot at the given velocity for ``duration`` seconds."""
-        twist = Twist(linear=Vector3(x, y, 0), angular=Vector3(0, 0, yaw))
+        twist = Twist(linear=Vector3(x=x, y=y), angular=Vector3(z=yaw))
         self.move(twist, duration=duration)
         return f"Started moving with velocity=({x}, {y}, {yaw}) for {duration} seconds"
 

@@ -12,166 +12,131 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import annotations
-
-from pathlib import Path
-
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Vector3
+from dimos_generated.sensor_msgs.msg import CompressedImage, Imu
+from dimos_generated.std_msgs.msg import Header
+from mcap.writer import Writer
 import numpy as np
 import pytest
 
-from dimos.memory.codecs.jpeg import JpegCodec
-from dimos.memory.codecs.lcm import LcmCodec
-from dimos.memory.codecs.lz4 import Lz4Codec
+from dimos.memory.cli.dataset import open_store
+from dimos.memory.codecs.cdr import CdrCodec
 from dimos.memory.store.mcap import McapStore
-from dimos.memory.type.observation import Observation
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
-from dimos.msgs.sensor_msgs.Imu import Imu
-
-mcap_writer = pytest.importorskip("mcap.writer", reason="mcap not installed")
+from dimos.msgs.image import image_from_array, image_to_jpeg
+from dimos.protocol.cdr_mcap import CdrMcapWriter
 
 
-def test_lcm_channel_decodes_with_explicit_codec(tmp_path: Path) -> None:
+@pytest.mark.parametrize("explicit", [False, True])
+def test_cdr_channel_decodes_and_orders_by_declared_source_time(tmp_path, explicit):
     path = tmp_path / "recording.mcap"
     expected = Imu(
-        ts=12.5,
-        frame_id="imu_link",
-        angular_velocity=Vector3(1.0, 2.0, 3.0),
+        header=Header(stamp=Time(sec=12, nanosec=500000000), frame_id="imu_link"),
+        angular_velocity=Vector3(x=1, y=2, z=3),
     )
+    earlier = Imu(header=Header(stamp=Time(sec=11, nanosec=500000000), frame_id="earlier"))
     with path.open("wb") as output:
-        writer = mcap_writer.Writer(output)
-        writer.start(profile="dimos", library="test")
-        channel_id = writer.register_channel(
+        writer = Writer(output)
+        writer.start(profile="ros2", library="test")
+        schema = writer.register_schema(
+            name=Imu.msg_name, encoding="ros2msg", data=Imu.schema.encode()
+        )
+        channel = writer.register_channel(
             topic="imu",
-            message_encoding="lcm",
-            schema_id=0,
-            metadata={
-                "dimos.payload_type": "dimos.msgs.sensor_msgs.Imu.Imu",
-                "dimos.observation_time": "publish_time",
-            },
+            message_encoding="cdr",
+            schema_id=schema,
+            metadata={"dimos.observation_time": "publish_time"},
         )
-        writer.add_message(
-            channel_id=channel_id,
-            log_time=13_000_000_000,
-            publish_time=12_500_000_000,
-            data=expected.lcm_encode(),
-        )
-        writer.add_message(
-            channel_id=channel_id,
-            log_time=14_000_000_000,
-            publish_time=11_500_000_000,
-            data=Imu(ts=11.5, frame_id="earlier").lcm_encode(),
-        )
+        for index, (message, stamp) in enumerate([(expected, 12500000000), (earlier, 11500000000)]):
+            writer.add_message(
+                channel_id=channel,
+                log_time=13000000000 + index * 1000000000,
+                publish_time=stamp,
+                data=message.encode(),
+            )
         writer.finish()
-
-    with McapStore(path=str(path), codecs={"imu": LcmCodec(Imu)}) as store:
+    with McapStore(path=str(path), codecs={"imu": CdrCodec(Imu)} if explicit else None) as store:
         assert store.list_streams() == ["imu"]
-        observation: Observation[Imu] = store.stream("imu").order_by("ts").first()
-        assert observation.ts == 11.5
-        assert observation.data.frame_id == "earlier"
-
-        latest_observation: Observation[Imu] = store.stream("imu").order_by("ts", desc=True).first()
-        assert latest_observation.ts == 12.5
-        assert latest_observation.data.lcm_encode() == expected.lcm_encode()
+        observations = list(store.stream("imu").order_by("ts"))
+        assert [observation.ts for observation in observations] == [11.5, 12.5]
+        assert [observation.data for observation in observations] == [earlier, expected]
+        assert store.stream("imu").order_by("ts", desc=True).first().data == expected
 
 
-def test_wrapped_codec_decodes_with_explicit_codec(tmp_path: Path) -> None:
-    path = tmp_path / "recording.mcap"
-    expected = Imu(
-        ts=12.5,
-        frame_id="imu_link",
-        angular_velocity=Vector3(1.0, 2.0, 3.0),
+def test_standard_compressed_image_uses_cdr_and_generic_dataset_dispatch(tmp_path):
+    path = tmp_path / "camera.mcap"
+    image = image_from_array(
+        np.full((8, 8, 3), [20, 80, 140], dtype=np.uint8),
+        encoding="rgb8",
+        header=Header(frame_id="camera", stamp=Time(sec=12, nanosec=123456789)),
     )
-    codec = Lz4Codec(LcmCodec(Imu))
-    with path.open("wb") as output:
-        writer = mcap_writer.Writer(output)
-        writer.start(profile="dimos", library="test")
-        channel_id = writer.register_channel(
-            topic="imu",
-            message_encoding="lz4+lcm",
-            schema_id=0,
-            metadata={
-                "dimos.payload_type": "dimos.msgs.sensor_msgs.Imu.Imu",
-                "dimos.observation_time": "publish_time",
-            },
-        )
-        writer.add_message(
-            channel_id=channel_id,
-            log_time=13_000_000_000,
-            publish_time=12_500_000_000,
-            data=codec.encode(expected),
-        )
-        writer.finish()
-
-    with McapStore(path=str(path), codecs={"imu": codec}) as store:
-        observation: Observation[Imu] = store.stream("imu").first()
-        assert observation.ts == 12.5
-        assert observation.data.lcm_encode() == expected.lcm_encode()
-
-
-def test_self_describing_jpeg_channel_decodes_without_a_codec_registry(tmp_path: Path) -> None:
-    path = tmp_path / "recording.mcap"
-    expected = Image(
-        data=np.full((8, 8, 3), [20, 80, 140], dtype=np.uint8),
-        format=ImageFormat.RGB,
-        frame_id="camera",
-        ts=12.5,
+    expected = CompressedImage(
+        header=image.header, format="rgb8; jpeg compressed bgr8", data=image_to_jpeg(image)
     )
-    codec = JpegCodec()
-    with path.open("wb") as output:
-        writer = mcap_writer.Writer(output)
-        writer.start(profile="dimos", library="test")
-        channel_id = writer.register_channel(
-            topic="color_image",
-            message_encoding="jpeg",
-            schema_id=0,
-            metadata={
-                "dimos.payload_type": "dimos.msgs.sensor_msgs.Image.Image",
-                "dimos.observation_time": "publish_time",
-            },
+    with CdrMcapWriter(path) as writer:
+        writer.write(
+            "color_image",
+            expected.encode(),
+            schema_name=expected.msg_name,
+            schema=expected.schema,
+            log_time_ns=13000000000,
+            publish_time_ns=12123456789,
         )
-        writer.add_message(
-            channel_id=channel_id,
-            log_time=13_000_000_000,
-            publish_time=12_500_000_000,
-            data=codec.encode(expected),
-        )
-        writer.finish()
-
-    with McapStore(path=str(path)) as store:
-        observation: Observation[Image] = store.stream("color_image").first()
-        decoded = observation.data
-        assert observation.ts == 12.5
-        assert decoded.frame_id == "camera"
-        assert decoded.format is ImageFormat.RGB
-        assert decoded.data.shape == expected.data.shape
-        assert np.mean(np.abs(decoded.data.astype(float) - expected.data.astype(float))) < 5
+    with open_store(path) as store:
+        observation = store.stream("color_image").first()
+        assert observation.ts == 13.0
+        assert observation.data == expected
+        assert observation.data.header.stamp.nanosec == 123456789
+        assert observation.data.format == "rgb8; jpeg compressed bgr8"
 
 
-def test_lcm_metadata_does_not_import_payload_module(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_unknown_schema_metadata_never_imports_a_payload_module(tmp_path, monkeypatch):
     path = tmp_path / "untrusted.mcap"
     with path.open("wb") as output:
-        writer = mcap_writer.Writer(output)
-        writer.start(profile="dimos", library="test")
-        channel_id = writer.register_channel(
+        writer = Writer(output)
+        writer.start(profile="ros2", library="test")
+        schema = writer.register_schema(
+            name="untrusted/msg/Payload", encoding="ros2msg", data=b"uint8 value\n"
+        )
+        channel = writer.register_channel(
             topic="untrusted",
-            message_encoding="lcm",
-            schema_id=0,
+            message_encoding="cdr",
+            schema_id=schema,
             metadata={"dimos.payload_type": "untrusted_module.Payload"},
         )
-        writer.add_message(
-            channel_id=channel_id,
-            log_time=1,
-            publish_time=1,
-            data=b"raw payload",
-        )
+        writer.add_message(channel_id=channel, log_time=1, publish_time=1, data=b"raw payload")
         writer.finish()
 
-    def fail_import(name: str) -> None:
+    def fail_import(name):
         raise AssertionError(f"artifact metadata imported {name!r}")
 
-    monkeypatch.setattr("dimos.memory.codecs.base.importlib.import_module", fail_import)
+    monkeypatch.setattr("dimos.memory.codecs.base.resolve_payload_type", fail_import)
     with McapStore(path=str(path)) as store:
         assert store.stream("untrusted").first().data == b"raw payload"
+        assert "untrusted/msg/Payload" in store.summary()
+
+
+@pytest.mark.parametrize("second_type", [Imu, CompressedImage])
+def test_duplicate_topic_channels_count_together_or_reject_conflicting_schemas(
+    tmp_path, second_type
+):
+    path = tmp_path / "channels.mcap"
+    with path.open("wb") as output:
+        writer = Writer(output)
+        writer.start(profile="ros2")
+        for cls in [Imu, second_type]:
+            schema = writer.register_schema(
+                name=cls.msg_name, encoding="ros2msg", data=cls.schema.encode()
+            )
+            channel = writer.register_channel(
+                topic="sensor", message_encoding="cdr", schema_id=schema
+            )
+            writer.add_message(channel_id=channel, log_time=1, publish_time=1, data=cls().encode())
+        writer.finish()
+    if second_type is Imu:
+        with McapStore(path=str(path)) as store:
+            assert store.stream("sensor").count() == 2
+            assert [observation.data for observation in store.stream("sensor")] == [Imu(), Imu()]
+    else:
+        with pytest.raises(ValueError, match="conflicting channel schemas"):
+            McapStore(path=str(path))

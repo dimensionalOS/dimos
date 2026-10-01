@@ -21,6 +21,9 @@ import math
 import threading
 import time
 
+from dimos_generated.dimos_msgs.msg import TrajectoryStatus
+from dimos_generated.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.tasks.trajectory_task.trajectory_task import (
@@ -32,9 +35,7 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
 )
 from dimos.manipulation.manipulation_spec import ExecutionResult, ExecutionStatus
 from dimos.manipulation.planning.spec.models import GeneratedPlan
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
-from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState, TrajectoryStatus
+from dimos.msgs.trajectory import TrajectoryState
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -249,7 +250,7 @@ class PlanExecutionManager:
             ExecutionStatus.FAULT,
         }:
             return latest
-        if status.state is TrajectoryState.IDLE:
+        if status.state == TrajectoryState.IDLE:
             result = ExecutionResult(ExecutionStatus.NO_EXECUTION, cancellation.message)
             self._store(result, active=False)
             return result
@@ -306,7 +307,7 @@ class PlanExecutionManager:
                 other
                 for other, other_status in statuses.items()
                 if other != task
-                and other_status.state is TrajectoryState.EXECUTING
+                and other_status.state == TrajectoryState.EXECUTING
                 and not self._cancel_task(other)
             ]
             if failed:
@@ -317,7 +318,7 @@ class PlanExecutionManager:
                 )
             mapped = self._result_from_status(status).status
             return ExecutionResult(mapped, f"{task}: {status.error}", trajectory_status=primary)
-        if all(status.state is TrajectoryState.COMPLETED for status in statuses.values()):
+        if all(status.state == TrajectoryState.COMPLETED for status in statuses.values()):
             return ExecutionResult(ExecutionStatus.COMPLETED, trajectory_status=primary)
         return ExecutionResult(ExecutionStatus.EXECUTING, trajectory_status=primary)
 
@@ -409,7 +410,7 @@ class PlanExecutionManager:
             TrajectoryState.COMPLETED: ExecutionStatus.COMPLETED,
             TrajectoryState.ABORTED: ExecutionStatus.ABORTED,
             TrajectoryState.FAULT: ExecutionStatus.FAULT,
-        }[status.state]
+        }[TrajectoryState(status.state)]
         return ExecutionResult(mapped, status.error, trajectory_status=status)
 
     def _store(self, result: ExecutionResult, *, active: bool, run_id: int | None = None) -> None:
@@ -428,7 +429,7 @@ class PlanExecutionManager:
         if not plan.is_success():
             raise _PlanRejectedError("Generated plan status is not successful")
 
-        names = plan.trajectory.joint_names
+        names = list(plan.trajectory.joint_names)
         unknown = [name for name in names if name not in self._joint_names]
         if unknown:
             raise _PlanRejectedError(f"Generated trajectory has unknown joints: {unknown}")
@@ -476,12 +477,18 @@ def _columns(trajectory: JointTrajectory, columns: list[int]) -> JointTrajectory
     return JointTrajectory(
         joint_names=[trajectory.joint_names[index] for index in columns],
         points=[
-            TrajectoryPoint(
+            JointTrajectoryPoint(
                 time_from_start=point.time_from_start,
                 positions=[point.positions[index] for index in columns],
-                velocities=[point.velocities[index] for index in columns],
+                velocities=[point.velocities[index] for index in columns]
+                if point.velocities
+                else [],
+                accelerations=[point.accelerations[index] for index in columns]
+                if point.accelerations
+                else [],
+                effort=[point.effort[index] for index in columns] if point.effort else [],
             )
             for point in trajectory.points
         ],
-        timestamp=trajectory.timestamp,
+        header=trajectory.header,
     )

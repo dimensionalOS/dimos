@@ -14,11 +14,15 @@
 # limitations under the License.
 
 
+from copy import deepcopy
+
 import cv2
 import numpy as np
 
 from dimos.mapping.occupancy.operations import overlay_occupied, smooth_occupied
 from dimos.mapping.occupancy.visualizations import visualize_occupancy_grid
+from dimos.msgs.image import image_view
+from dimos.msgs.occupancy import occupancy_view
 from dimos.utils.data import get_data
 
 
@@ -27,14 +31,16 @@ def test_smooth_occupied(occupancy) -> None:
 
     result = visualize_occupancy_grid(smooth_occupied(occupancy), "rainbow")
 
-    np.testing.assert_array_equal(result.data, expected)
+    np.testing.assert_array_equal(image_view(result), expected)
 
 
 def test_overlay_occupied(occupancy) -> None:
     expected = cv2.imread(get_data("overlay_occupied.png"), cv2.IMREAD_COLOR)
-    overlay = occupancy.copy()
-    overlay.grid[50:100, 50:100] = 100
+    overlay = deepcopy(occupancy)
+    cells = occupancy_view(overlay).copy()
+    cells[50:100, 50:100] = 100
+    overlay.data = cells.ravel()
 
     result = visualize_occupancy_grid(overlay_occupied(occupancy, overlay), "rainbow")
 
-    np.testing.assert_array_equal(result.data, expected)
+    np.testing.assert_array_equal(image_view(result), expected)

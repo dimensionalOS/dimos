@@ -25,14 +25,14 @@ os.environ["SDL_VIDEODRIVER"] = "x11"
 
 import time
 
+from dimos_generated.geometry_msgs.msg import Twist, TwistStamped, Vector3
+from dimos_generated.std_msgs.msg import Header, Int32
+
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import Out
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.std_msgs.Int32 import Int32
+from dimos.msgs.time import time_from_seconds
 
 
 class JoystickModule(Module):
@@ -80,10 +80,8 @@ class JoystickModule(Module):
         # Send stop command
         stop_twist = Twist()
         stop_twist_stamped = TwistStamped(
-            ts=time.time(),
-            frame_id="base_link",
-            linear=stop_twist.linear,
-            angular=stop_twist.angular,
+            header=Header(stamp=time_from_seconds(time.time()), frame_id="base_link"),
+            twist=Twist(linear=stop_twist.linear, angular=stop_twist.angular),
         )
         self.twist_out.publish(stop_twist_stamped)
 
@@ -145,13 +143,13 @@ class JoystickModule(Module):
                         self.mode_out.publish(mode_msg)
                         # Also send zero twist
                         stop_twist = Twist()
-                        stop_twist.linear = Vector3(0, 0, 0)
-                        stop_twist.angular = Vector3(0, 0, 0)
+                        stop_twist.linear = Vector3(x=0, y=0, z=0)
+                        stop_twist.angular = Vector3(x=0, y=0, z=0)
                         stop_twist_stamped = TwistStamped(
-                            ts=time.time(),
-                            frame_id="base_link",
-                            linear=stop_twist.linear,
-                            angular=stop_twist.angular,
+                            header=Header(
+                                stamp=time_from_seconds(time.time()), frame_id="base_link"
+                            ),
+                            twist=Twist(linear=stop_twist.linear, angular=stop_twist.angular),
                         )
                         self.twist_out.publish(stop_twist_stamped)
                         print("EMERGENCY STOP!")
@@ -164,8 +162,8 @@ class JoystickModule(Module):
 
             # Generate Twist message from held keys
             twist = Twist()
-            twist.linear = Vector3(0, 0, 0)
-            twist.angular = Vector3(0, 0, 0)
+            twist.linear = Vector3(x=0, y=0, z=0)
+            twist.angular = Vector3(x=0, y=0, z=0)
 
             # Apply controls based on mode
             if self.current_mode == 2:  # WALK mode - movement control
@@ -213,7 +211,8 @@ class JoystickModule(Module):
                     twist.angular.y = -1.0  # Pitch backward
 
             twist_stamped = TwistStamped(
-                ts=time.time(), frame_id="base_link", linear=twist.linear, angular=twist.angular
+                header=Header(stamp=time_from_seconds(time.time()), frame_id="base_link"),
+                twist=Twist(linear=twist.linear, angular=twist.angular),
             )
             self.twist_out.publish(twist_stamped)
 

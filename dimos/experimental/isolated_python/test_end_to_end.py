@@ -16,6 +16,8 @@ from pathlib import Path
 import subprocess
 import sys
 
+from dimos_generated.std_msgs.msg import Int32
+
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
@@ -23,7 +25,6 @@ from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.experimental.isolated_python.example.contract import ExampleExternal
 from dimos.experimental.isolated_python.example.support import Offset
-from dimos.msgs.std_msgs.Int32 import Int32
 from dimos.utils.testing.waiting import wait_until
 
 
@@ -32,7 +33,7 @@ class Producer(Module):
 
     @rpc
     def publish(self, value: int) -> None:
-        self.value.publish(Int32(value))
+        self.value.publish(Int32(data=value))
 
 
 class Consumer(Module):

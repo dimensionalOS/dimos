@@ -80,7 +80,7 @@ Live column-carving has no loop closure. We trust Go2 odometry, which is stable 
 
 The [`CostMapper`](/dimos/mapping/costmapper.py) converts the 3D voxel map into a 2D occupancy grid. The default algorithm (`height_cost`) maps rate of change of Z, with some smoothing.
 
-Algorithm settings live in [`occupancy.py`](/dimos/mapping/pointclouds/occupancy.py) and can be configured per robot.
+Algorithm settings live in the [point-cloud occupancy mapper](/dimos/mapping/pointclouds/occupancy.py) and can be configured per robot.
 
 
 #### Configuration

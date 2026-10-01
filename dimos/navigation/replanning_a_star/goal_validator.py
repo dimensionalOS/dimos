@@ -14,21 +14,22 @@
 
 from collections import deque
 
+from dimos_generated.geometry_msgs.msg import Point
+from dimos_generated.nav_msgs.msg import OccupancyGrid
 import numpy as np
 
-from dimos.msgs.geometry_msgs.Vector3 import Vector3, VectorLike
-from dimos.msgs.nav_msgs.OccupancyGrid import CostValues, OccupancyGrid
+from dimos.msgs.occupancy import grid_to_world, occupancy_view, world_to_grid
 
 
 def find_safe_goal(
     costmap: OccupancyGrid,
-    goal: VectorLike,
+    goal: Point,
     algorithm: str = "bfs",
     cost_threshold: int = 50,
     min_clearance: float = 0.3,
     max_search_distance: float = 5.0,
     connectivity_check_radius: int = 3,
-) -> Vector3 | None:
+) -> Point | None:
     """
     Find a safe goal position when the original goal is in collision or too close to obstacles.
 
@@ -69,12 +70,12 @@ def find_safe_goal(
 
 def _find_safe_goal_bfs(
     costmap: OccupancyGrid,
-    goal: VectorLike,
+    goal: Point,
     cost_threshold: int,
     min_clearance: float,
     max_search_distance: float,
     connectivity_check_radius: int,
-) -> Vector3 | None:
+) -> Point | None:
     """
     BFS-based search for nearest safe goal position.
     This guarantees finding the closest valid position.
@@ -90,12 +91,12 @@ def _find_safe_goal_bfs(
     """
 
     # Convert goal to grid coordinates
-    goal_grid = costmap.world_to_grid(goal)
-    gx, gy = int(goal_grid.x), int(goal_grid.y)
+    goal_grid = world_to_grid(costmap, goal)
+    gx, gy = int(np.floor(round(goal_grid[0], 9))), int(np.floor(round(goal_grid[1], 9)))
 
     # Convert distances to grid cells
-    clearance_cells = int(np.ceil(min_clearance / costmap.resolution))
-    max_search_cells = int(np.ceil(max_search_distance / costmap.resolution))
+    clearance_cells = int(np.ceil(min_clearance / costmap.info.resolution))
+    max_search_cells = int(np.ceil(max_search_distance / costmap.info.resolution))
 
     # BFS queue and visited set
     queue = deque([(gx, gy, 0)])
@@ -116,14 +117,14 @@ def _find_safe_goal_bfs(
             costmap, x, y, cost_threshold, clearance_cells, connectivity_check_radius
         ):
             # Convert back to world coordinates
-            return costmap.grid_to_world((x, y))
+            return grid_to_world(costmap, (x, y))
 
         # Add neighbors to queue
         for dx, dy in neighbors:
             nx, ny = x + dx, y + dy
 
             # Check bounds
-            if 0 <= nx < costmap.width and 0 <= ny < costmap.height:
+            if 0 <= nx < costmap.info.width and 0 <= ny < costmap.info.height:
                 if (nx, ny) not in visited:
                     visited.add((nx, ny))
                     queue.append((nx, ny, dist + 1))
@@ -133,12 +134,12 @@ def _find_safe_goal_bfs(
 
 def _find_safe_goal_bfs_contiguous(
     costmap: OccupancyGrid,
-    goal: VectorLike,
+    goal: Point,
     cost_threshold: int,
     min_clearance: float,
     max_search_distance: float,
     connectivity_check_radius: int,
-) -> Vector3 | None:
+) -> Point | None:
     """
     BFS-based search for nearest safe goal position, only following passable cells.
     Unlike regular BFS, this only expands through cells with occupancy < 100,
@@ -154,13 +155,15 @@ def _find_safe_goal_bfs_contiguous(
     - Slightly slower than regular BFS due to additional checks
     """
 
+    grid = occupancy_view(costmap)
+
     # Convert goal to grid coordinates
-    goal_grid = costmap.world_to_grid(goal)
-    gx, gy = int(goal_grid.x), int(goal_grid.y)
+    goal_grid = world_to_grid(costmap, goal)
+    gx, gy = int(np.floor(round(goal_grid[0], 9))), int(np.floor(round(goal_grid[1], 9)))
 
     # Convert distances to grid cells
-    clearance_cells = int(np.ceil(min_clearance / costmap.resolution))
-    max_search_cells = int(np.ceil(max_search_distance / costmap.resolution))
+    clearance_cells = int(np.ceil(min_clearance / costmap.info.resolution))
+    max_search_cells = int(np.ceil(max_search_distance / costmap.info.resolution))
 
     # BFS queue and visited set
     queue = deque([(gx, gy, 0)])
@@ -181,17 +184,17 @@ def _find_safe_goal_bfs_contiguous(
             costmap, x, y, cost_threshold, clearance_cells, connectivity_check_radius
         ):
             # Convert back to world coordinates
-            return costmap.grid_to_world((x, y))
+            return grid_to_world(costmap, (x, y))
 
         # Add neighbors to queue
         for dx, dy in neighbors:
             nx, ny = x + dx, y + dy
 
             # Check bounds
-            if 0 <= nx < costmap.width and 0 <= ny < costmap.height:
+            if 0 <= nx < costmap.info.width and 0 <= ny < costmap.info.height:
                 if (nx, ny) not in visited:
                     # Only expand through passable cells (occupancy < 100)
-                    if costmap.grid[ny, nx] < 100:
+                    if grid[ny, nx] < 100:
                         visited.add((nx, ny))
                         queue.append((nx, ny, dist + 1))
 
@@ -220,22 +223,24 @@ def _is_position_safe(
         True if position is safe, False otherwise
     """
 
+    grid = occupancy_view(costmap)
+
     # Check bounds first
-    if not (0 <= x < costmap.width and 0 <= y < costmap.height):
+    if not (0 <= x < costmap.info.width and 0 <= y < costmap.info.height):
         return False
 
     # Check if position itself is free
-    if costmap.grid[y, x] >= cost_threshold or costmap.grid[y, x] == CostValues.UNKNOWN:
+    if grid[y, x] >= cost_threshold or grid[y, x] == -1:
         return False
 
     # Check clearance around position
     for dy in range(-clearance_cells, clearance_cells + 1):
         for dx in range(-clearance_cells, clearance_cells + 1):
             nx, ny = x + dx, y + dy
-            if 0 <= nx < costmap.width and 0 <= ny < costmap.height:
+            if 0 <= nx < costmap.info.width and 0 <= ny < costmap.info.height:
                 # Check if within circular clearance
                 if dx * dx + dy * dy <= clearance_cells * clearance_cells:
-                    if costmap.grid[ny, nx] >= cost_threshold:
+                    if grid[ny, nx] >= cost_threshold:
                         return False
 
     # Check connectivity (not surrounded by obstacles)
@@ -249,12 +254,9 @@ def _is_position_safe(
                 continue
 
             nx, ny = x + dx, y + dy
-            if 0 <= nx < costmap.width and 0 <= ny < costmap.height:
+            if 0 <= nx < costmap.info.width and 0 <= ny < costmap.info.height:
                 total_count += 1
-                if (
-                    costmap.grid[ny, nx] < cost_threshold
-                    and costmap.grid[ny, nx] != CostValues.UNKNOWN
-                ):
+                if grid[ny, nx] < cost_threshold and grid[ny, nx] != -1:
                     free_count += 1
 
     # Require at least 50% of neighbors to be free (not surrounded)

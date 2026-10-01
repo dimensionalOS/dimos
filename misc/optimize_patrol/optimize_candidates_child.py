@@ -23,13 +23,17 @@ import json
 import math
 import time
 
+from dimos_generated.geometry_msgs.msg import Point
+from dimos_generated.nav_msgs.msg import OccupancyGrid
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 
 from dimos.mapping.occupancy.gradient import gradient
 from dimos.mapping.occupancy.path_resampling import smooth_resample_path
 from dimos.mapping.pointclouds.occupancy import height_cost_occupancy
 from dimos.mapping.pointclouds.util import read_pointcloud
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.occupancy import occupancy_view, world_to_grid
+from dimos.msgs.pointcloud import pointcloud_from_xyz
 from dimos.navigation.patrolling.create_patrol_router import create_patrol_router
 from dimos.navigation.patrolling.routers.coverage_patrol_router import CoveragePatrolRouter
 from dimos.navigation.patrolling.utilities import point_to_pose_stamped
@@ -43,14 +47,19 @@ MAX_DISTANCE = 50_000.0  # Safety cap to avoid infinite loops.
 
 def _circular_disk(radius_cells: int) -> np.ndarray:
     y, x = np.ogrid[-radius_cells : radius_cells + 1, -radius_cells : radius_cells + 1]
-    return (x * x + y * y) <= radius_cells * radius_cells
+    return np.asarray((x * x + y * y) <= radius_cells * radius_cells)
 
 
 def _stamp_scoring_map(
-    visited: np.ndarray, x: float, y: float, occupancy_grid, radius_cells: int, disk: np.ndarray
+    visited: np.ndarray,
+    x: float,
+    y: float,
+    occupancy_grid: OccupancyGrid,
+    radius_cells: int,
+    disk: np.ndarray,
 ) -> None:
-    grid_pos = occupancy_grid.world_to_grid((x, y))
-    col, row = int(grid_pos.x), int(grid_pos.y)
+    grid_pos = world_to_grid(occupancy_grid, Point(x=x, y=y))
+    col, row = int(grid_pos[0]), int(grid_pos[1])
     h, w = visited.shape
     r = radius_cells
     if row + r < 0 or row - r >= h or col + r < 0 or col - r >= w:
@@ -69,8 +78,8 @@ def _stamp_scoring_map(
 def run_iteration(
     candidates_to_consider: int,
     target_coverage: float,
-    occupancy_grid,
-    costmap,
+    occupancy_grid: OccupancyGrid,
+    costmap: OccupancyGrid,
     scoring_radius_cells: int,
     scoring_disk: np.ndarray,
 ) -> tuple[float, float]:
@@ -81,11 +90,11 @@ def run_iteration(
     assert isinstance(router, CoveragePatrolRouter)
     router._candidates_to_consider = candidates_to_consider
     router.handle_occupancy_grid(occupancy_grid)
-    router.handle_odom(point_to_pose_stamped(start))
+    router.handle_odom(point_to_pose_stamped(Point(x=start[0], y=start[1]), occupancy_grid.header))
 
-    h, w = occupancy_grid.height, occupancy_grid.width
+    h, w = occupancy_grid.info.height, occupancy_grid.info.width
     scoring_visited = np.zeros((h, w), dtype=bool)
-    free_mask = occupancy_grid.grid == 0
+    free_mask = occupancy_view(occupancy_grid) == 0
     total_free = int(np.count_nonzero(free_mask))
     if total_free == 0:
         return 0.0, 0.0
@@ -104,22 +113,28 @@ def run_iteration(
 
         if goal is None:
             break
-        path = min_cost_astar(costmap, goal.position, start, unknown_penalty=1.0, use_cpp=True)
+        path = min_cost_astar(
+            costmap,
+            goal.pose.position,
+            Point(x=start[0], y=start[1]),
+            unknown_penalty=1.0,
+            use_cpp=True,
+        )
         if path is None:
             continue
-        path = smooth_resample_path(path, goal, 0.1)
+        path = smooth_resample_path(path, goal.pose, 0.1)
 
         for pose in path.poses:
-            dx = pose.position.x - start[0]
-            dy = pose.position.y - start[1]
+            dx = pose.pose.position.x - start[0]
+            dy = pose.pose.position.y - start[1]
             distance_walked += math.sqrt(dx * dx + dy * dy)
-            start = (pose.position.x, pose.position.y)
+            start = (pose.pose.position.x, pose.pose.position.y)
 
             router.handle_odom(pose)
             _stamp_scoring_map(
                 scoring_visited,
-                pose.position.x,
-                pose.position.y,
+                pose.pose.position.x,
+                pose.pose.position.y,
                 occupancy_grid,
                 scoring_radius_cells,
                 scoring_disk,
@@ -141,11 +156,11 @@ def main() -> None:
     args = parser.parse_args()
 
     data = read_pointcloud(get_data("big_office.ply"))
-    cloud = PointCloud2.from_numpy(np.asarray(data.points), frame_id="")
+    cloud = pointcloud_from_xyz(np.asarray(data.points), header=Header())
     occupancy_grid = height_cost_occupancy(cloud)
     costmap = gradient(occupancy_grid, max_distance=1.5)
 
-    scoring_radius_cells = int(np.ceil(SCORING_STAMP_RADIUS_M / occupancy_grid.resolution))
+    scoring_radius_cells = int(np.ceil(SCORING_STAMP_RADIUS_M / occupancy_grid.info.resolution))
     scoring_disk = _circular_disk(scoring_radius_cells)
 
     avg_times = []

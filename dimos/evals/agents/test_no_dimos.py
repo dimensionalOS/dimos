@@ -18,6 +18,8 @@ import json
 import os
 from pathlib import Path
 
+from dimos_generated.sensor_msgs.msg import Image, PointCloud2
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 from PIL import Image as PILImage
 import pytest
@@ -30,8 +32,9 @@ from dimos.evals.agents.question_answer import QuestionAnswer
 from dimos.evals.constants import NO_DIMOS_KEYWORDS
 from dimos.evals.types import RunningEnvironment
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.image import image_from_array, image_to_rgb
+from dimos.msgs.pointcloud import pointcloud_from_xyz
+from dimos.msgs.time import time_from_seconds
 
 
 def test_no_dimos_defaults_the_excluded_keywords_but_keeps_explicit_ones() -> None:
@@ -81,12 +84,19 @@ def test_recorded_observations_are_exported_as_plain_files(tmp_path: Path) -> No
     points = np.array([[1.125, -2.5, 3.0], [4.0, 5.0, 6.0]])
     with SqliteStore(path=tmp_path / "source.db") as store:
         lidar = store.stream("lidar", PointCloud2)
-        lidar.append(PointCloud2.from_numpy(points, frame_id="world", timestamp=1.0), ts=1.0)
-        lidar.append(PointCloud2.from_numpy(points * 2, timestamp=2.0), ts=2.0)
+        lidar.append(
+            pointcloud_from_xyz(
+                points, header=Header(frame_id="world", stamp=time_from_seconds(1.0))
+            ),
+            ts=1.0,
+        )
+        lidar.append(
+            pointcloud_from_xyz(points * 2, header=Header(stamp=time_from_seconds(2.0))), ts=2.0
+        )
         images = store.stream("camera", Image)
-        images.append(Image.from_numpy(pixels, format=ImageFormat.RGB), ts=3.0)
+        images.append(image_from_array(pixels, encoding="rgb8"), ts=3.0)
         store.stream("secret", str).append("grader-only")
-        stored_pixels = images.first().data.to_rgb().data
+        stored_pixels = image_to_rgb(images.first().data)
         manifest = plain_recording((lidar.limit(1), images), tmp_path / "input")
     records = json.loads(manifest.read_text())["observations"]
     assert [record["stream"] for record in records] == ["lidar", "camera"]

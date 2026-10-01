@@ -13,15 +13,23 @@
 # limitations under the License.
 
 
+from typing import overload
+
+from dimos_generated.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseStamped,
+    Quaternion,
+    TransformStamped,
+    Twist,
+    Vector3,
+)
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 from numpy.typing import NDArray
 from scipy.spatial.transform import Rotation as R
 
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.geometry import transform_matrix
 
 
 def normalize_angle(angle: float) -> float:
@@ -88,44 +96,48 @@ def matrix_to_pose(T: np.ndarray) -> Pose:
         Pose object with position and orientation (quaternion)
     """
     # Extract position
-    pos = Vector3(T[0, 3], T[1, 3], T[2, 3])
+    pos = Point(x=T[0, 3], y=T[1, 3], z=T[2, 3])
 
     # Extract rotation matrix and convert to quaternion
     Rot = T[:3, :3]
     rotation = R.from_matrix(Rot)
     quat = rotation.as_quat()  # Returns [x, y, z, w]
 
-    orientation = Quaternion(quat[0], quat[1], quat[2], quat[3])
+    orientation = Quaternion(x=quat[0], y=quat[1], z=quat[2], w=quat[3])
 
-    return Pose(pos, orientation)
+    return Pose(position=pos, orientation=orientation)
 
 
-def apply_transform(pose: Pose, transform: np.ndarray | Transform) -> Pose:
+@overload
+def apply_transform(pose: Pose, transform: np.ndarray) -> Pose: ...
+
+
+@overload
+def apply_transform(pose: PoseStamped, transform: TransformStamped) -> PoseStamped: ...
+
+
+def apply_transform(
+    pose: Pose | PoseStamped, transform: np.ndarray | TransformStamped
+) -> Pose | PoseStamped:
+    """Apply an array to an unstamped pose or a frame-checked stamped TF edge.
+
+    Stamped transforms preserve the pose's source stamp and advertise the
+    destination frame. Mixing stamped and unstamped values is an error.
     """
-    Apply a transformation matrix to a pose.
-
-    Args:
-        pose: Input pose
-        transform_matrix: 4x4 transformation matrix to apply
-
-    Returns:
-        Transformed pose
-    """
-    if isinstance(transform, Transform):
-        if transform.child_frame_id != pose.frame_id:
+    if isinstance(transform, TransformStamped):
+        if not isinstance(pose, PoseStamped):
+            raise TypeError("A stamped transform requires a stamped pose")
+        if transform.child_frame_id != pose.header.frame_id:
             raise ValueError(
-                f"Transform frame_id {transform.frame_id} does not match pose frame_id {pose.frame_id}"
+                f"Transform child frame {transform.child_frame_id} does not match pose frame {pose.header.frame_id}"
             )
-        transform = pose_to_matrix(transform.to_pose())
-
-    # Convert pose to matrix
-    T_pose = pose_to_matrix(pose)
-
-    # Apply transform
-    T_result = transform @ T_pose
-
-    # Convert back to pose
-    return matrix_to_pose(T_result)
+        result = matrix_to_pose(transform_matrix(transform.transform) @ pose_to_matrix(pose.pose))
+        return PoseStamped(
+            header=Header(stamp=pose.header.stamp, frame_id=transform.header.frame_id), pose=result
+        )
+    if isinstance(pose, PoseStamped):
+        raise TypeError("A stamped pose requires a stamped transform")
+    return matrix_to_pose(transform @ pose_to_matrix(pose))
 
 
 def optical_to_robot_frame(pose: Pose) -> Pose:
@@ -175,8 +187,8 @@ def optical_to_robot_frame(pose: Pose) -> Pose:
     quat_robot = R.from_matrix(R_robot).as_quat()  # [x, y, z, w]
 
     return Pose(
-        Vector3(robot_x, robot_y, robot_z),
-        Quaternion(quat_robot[0], quat_robot[1], quat_robot[2], quat_robot[3]),
+        position=Point(x=robot_x, y=robot_y, z=robot_z),
+        orientation=Quaternion(x=quat_robot[0], y=quat_robot[1], z=quat_robot[2], w=quat_robot[3]),
     )
 
 
@@ -217,12 +229,16 @@ def robot_to_optical_frame(pose: Pose) -> Pose:
     quat_optical = R.from_matrix(R_optical).as_quat()  # [x, y, z, w]
 
     return Pose(
-        Vector3(optical_x, optical_y, optical_z),
-        Quaternion(quat_optical[0], quat_optical[1], quat_optical[2], quat_optical[3]),
+        position=Point(x=optical_x, y=optical_y, z=optical_z),
+        orientation=Quaternion(
+            x=quat_optical[0], y=quat_optical[1], z=quat_optical[2], w=quat_optical[3]
+        ),
     )
 
 
-def yaw_towards_point(position: Vector3, target_point: Vector3 = None) -> float:  # type: ignore[assignment]
+def yaw_towards_point(
+    position: Point | Vector3, target_point: Point | Vector3 | None = None
+) -> float:
     """
     Calculate yaw angle from target point to position (away from target).
     This is commonly used for object orientation in grasping applications.
@@ -236,7 +252,7 @@ def yaw_towards_point(position: Vector3, target_point: Vector3 = None) -> float:
         Yaw angle in radians pointing from target_point to position
     """
     if target_point is None:
-        target_point = Vector3(0.0, 0.0, 0.0)
+        target_point = Vector3(x=0.0, y=0.0, z=0.0)
     direction_x = position.x - target_point.x
     direction_y = position.y - target_point.y
     return np.arctan2(direction_y, direction_x)  # type: ignore[no-any-return]
@@ -321,7 +337,7 @@ def euler_to_quaternion(euler_angles: Vector3, degrees: bool = False) -> Quatern
         "xyz", [euler_angles.x, euler_angles.y, euler_angles.z], degrees=degrees
     )
     quat = rotation.as_quat()  # Returns [x, y, z, w]
-    return Quaternion(quat[0], quat[1], quat[2], quat[3])
+    return Quaternion(x=quat[0], y=quat[1], z=quat[2], w=quat[3])
 
 
 def quaternion_to_euler(quaternion: Quaternion, degrees: bool = False) -> Vector3:
@@ -339,10 +355,10 @@ def quaternion_to_euler(quaternion: Quaternion, degrees: bool = False) -> Vector
     euler = rotation.as_euler("xyz", degrees=degrees)  # Returns [roll, pitch, yaw]
     if not degrees:
         return Vector3(
-            normalize_angle(euler[0]), normalize_angle(euler[1]), normalize_angle(euler[2])
+            x=normalize_angle(euler[0]), y=normalize_angle(euler[1]), z=normalize_angle(euler[2])
         )
     else:
-        return Vector3(euler[0], euler[1], euler[2])
+        return Vector3(x=euler[0], y=euler[1], z=euler[2])
 
 
 def get_distance(pose1: Pose | Vector3, pose2: Pose | Vector3) -> float:
@@ -356,20 +372,18 @@ def get_distance(pose1: Pose | Vector3, pose2: Pose | Vector3) -> float:
     Returns:
         Euclidean distance between the two poses in meters
     """
-    if hasattr(pose1, "position"):
-        pose1 = pose1.position
-    if hasattr(pose2, "position"):
-        pose2 = pose2.position
+    position1 = pose1.position if isinstance(pose1, Pose) else pose1
+    position2 = pose2.position if isinstance(pose2, Pose) else pose2
 
-    dx = pose1.x - pose2.x
-    dy = pose1.y - pose2.y
-    dz = pose1.z - pose2.z
+    dx = position1.x - position2.x
+    dy = position1.y - position2.y
+    dz = position1.z - position2.z
 
     return np.linalg.norm(np.array([dx, dy, dz]))  # type: ignore[return-value]
 
 
 def offset_distance(
-    target_pose: Pose, distance: float, approach_vector: Vector3 = Vector3(0, 0, -1)
+    target_pose: Pose, distance: float, approach_vector: Vector3 = Vector3(x=0, y=0, z=-1)
 ) -> Pose:
     """
     Apply distance offset to target pose along its approach direction.
@@ -397,10 +411,10 @@ def offset_distance(
     approach_vector_world = rotation_matrix @ approach_vector_local
 
     # Apply offset along the approach direction
-    offset_position = Vector3(
-        target_pose.position.x + distance * approach_vector_world[0],
-        target_pose.position.y + distance * approach_vector_world[1],
-        target_pose.position.z + distance * approach_vector_world[2],
+    offset_position = Point(
+        x=target_pose.position.x + distance * approach_vector_world[0],
+        y=target_pose.position.y + distance * approach_vector_world[1],
+        z=target_pose.position.z + distance * approach_vector_world[2],
     )
 
     return Pose(position=offset_position, orientation=target_pose.orientation)

@@ -15,6 +15,9 @@
 from types import SimpleNamespace
 from typing import get_type_hints
 
+from dimos_generated.geometry_msgs.msg import TransformStamped
+from dimos_generated.std_msgs.msg import Header
+from dimos_generated.vision_msgs.msg import Detection3DArray
 import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation
@@ -22,9 +25,8 @@ from scipy.spatial.transform import Rotation
 from dimos.core.stream import In
 from dimos.mapping.relocalization.lidar.module import LidarWindowRelocalization
 from dimos.mapping.relocalization.module import RelocalizationModule
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
+from dimos.msgs.geometry import inverse_transform, transform_from_matrix, transform_matrix
+from dimos.msgs.pointcloud import pointcloud_from_xyz, pointcloud_xyz
 
 
 @pytest.fixture
@@ -53,19 +55,33 @@ def test_submit_publishes_and_checks_frames(module):
     """submit does not second-guess the fix; the implementation already decided."""
     m = module()
     got = fixes(m)
-    tf = Transform.from_matrix(np.eye(4), frame_id="world", child_frame_id="map")
+    tf = TransformStamped(
+        header=Header(frame_id="world"),
+        child_frame_id="map",
+        transform=transform_from_matrix(np.eye(4)),
+    )
     m.submit(tf, "x")
     m.submit(tf, "x")
     assert got == [tf, tf]
     # A strategy handing over the placement instead of the frame transform is
     # caught here rather than publishing a backwards TF.
     with pytest.raises(AssertionError):
-        m.submit(Transform.from_matrix(np.eye(4), frame_id="map", child_frame_id="world"))
+        m.submit(
+            TransformStamped(
+                header=Header(frame_id="map"),
+                child_frame_id="world",
+                transform=transform_from_matrix(np.eye(4)),
+            )
+        )
 
 
 def test_relocalize_once_stops_after_the_first_fix(module):
     """What the flag does, either way. Which one is the default is a policy call."""
-    tf = Transform.from_matrix(np.eye(4), frame_id="world", child_frame_id="map")
+    tf = TransformStamped(
+        header=Header(frame_id="world"),
+        child_frame_id="map",
+        transform=transform_from_matrix(np.eye(4)),
+    )
 
     once = module(relocalize_once=True)
     assert once.keep_relocalizing() and not once.placed
@@ -86,7 +102,11 @@ def test_the_fix_goes_out_the_moment_it_is_accepted(interval):
 
     fixes, sent = Subject(), []
     disposable = fix_stream(fixes, interval=interval).subscribe(sent.append)
-    tf = Transform.from_matrix(np.eye(4), frame_id="world", child_frame_id="map")
+    tf = TransformStamped(
+        header=Header(frame_id="world"),
+        child_frame_id="map",
+        transform=transform_from_matrix(np.eye(4)),
+    )
     fixes.on_next(tf)
     assert sent == [tf]
     disposable.dispose()
@@ -94,9 +114,9 @@ def test_the_fix_goes_out_the_moment_it_is_accepted(interval):
 
 def test_premap_defines_the_map_frame_and_waits_for_a_fix(module, tmp_path):
     """Loading is the base's: every strategy reads a premap and publishes it, once placed."""
-    path = tmp_path / "somewhere.pc2.lcm"
+    path = tmp_path / "somewhere.pc2.cdr"
     path.write_bytes(
-        PointCloud2.from_numpy(np.zeros((5, 3), dtype=np.float32), timestamp=0.0).lcm_encode()
+        pointcloud_from_xyz(np.zeros((5, 3), dtype=np.float32), header=Header()).encode()
     )
     m = module()
     published, disposables = [], []
@@ -106,11 +126,17 @@ def test_premap_defines_the_map_frame_and_waits_for_a_fix(module, tmp_path):
     m.register_disposable = disposables.append
 
     m._load_premap(str(path))
-    assert m.premap is not None and len(m.premap) == 5
-    assert m.premap.frame_id == "map"
+    assert m.premap is not None and m.premap.width * m.premap.height == 5
+    assert m.premap.header.frame_id == "map"
     assert len(disposables) == 1  # the gated publish
     assert published == []  # ... which stays silent until a fix lands
-    m.submit(Transform.from_matrix(np.eye(4), frame_id="world", child_frame_id="map"))
+    m.submit(
+        TransformStamped(
+            header=Header(frame_id="world"),
+            child_frame_id="map",
+            transform=transform_from_matrix(np.eye(4)),
+        )
+    )
     assert published == [m.premap]  # republish_loaded_map=0: once, on that fix
     disposables[0].dispose()
 
@@ -135,8 +161,8 @@ def test_relocalizer_refuses_below_its_own_threshold(monkeypatch):
     # Accepted: open3d places the live cloud in the map, the TF tree wants the
     # other direction, and relocalize() is what turns one into the other.
     tf = relocalizer(0.3).relocalize(None, "world", "map")
-    assert (tf.frame_id, tf.child_frame_id) == ("world", "map")
-    np.testing.assert_allclose(tf.to_matrix(), np.linalg.inv(placement), atol=1e-9)
+    assert (tf.header.frame_id, tf.child_frame_id) == ("world", "map")
+    np.testing.assert_allclose(transform_matrix(tf.transform), np.linalg.inv(placement), atol=1e-9)
 
 
 def test_no_config_without_naming_a_rig():
@@ -166,22 +192,28 @@ def test_the_match_runs_on_a_window_of_the_last_scans():
     window(scans, cfg, interval=0.001).subscribe(matched.append)
 
     for i in range(5):
-        scans.on_next(PointCloud2.from_numpy(np.full((4, 3), i, dtype=np.float32), timestamp=0.0))
+        scans.on_next(pointcloud_from_xyz(np.full((4, 3), i, dtype=np.float32), header=Header()))
         time.sleep(0.01)  # clear the throttle, so every scan gets its attempt
 
     # The first scan is below min_frames; from then on the window is full.
-    assert [len(c) for c in matched] == [8, 12, 12, 12]
+    assert [c.width * c.height for c in matched] == [8, 12, 12, 12]
     # ... and holds the *last* three scans, not the first.
-    assert set(matched[-1].points_f32()[:, 0]) == {2.0, 3.0, 4.0}
+    assert set(pointcloud_xyz(matched[-1])[:, 0]) == {2.0, 3.0, 4.0}
 
 
 def test_from_matrix_inverse_matches_linalg_inv():
     T = np.eye(4)
     T[:3, :3] = Rotation.from_euler("xyz", [0.1, -0.2, 1.3]).as_matrix()
     T[:3, 3] = [1.5, -2.0, 0.3]
-    tf = Transform.from_matrix(T, frame_id="map", child_frame_id="world").inverse()
-    assert (tf.frame_id, tf.child_frame_id) == ("world", "map")
-    np.testing.assert_allclose(tf.to_matrix(), np.linalg.inv(T), atol=1e-9)
+    tf = inverse_transform(
+        TransformStamped(
+            header=Header(frame_id="map"),
+            child_frame_id="world",
+            transform=transform_from_matrix(T),
+        )
+    )
+    assert (tf.header.frame_id, tf.child_frame_id) == ("world", "map")
+    np.testing.assert_allclose(transform_matrix(tf.transform), np.linalg.inv(T), atol=1e-9)
 
 
 def test_dual_strategy_merges_ports():

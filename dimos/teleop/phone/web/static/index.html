@@ -165,7 +165,27 @@
     <button id="teleop-btn">HOLD TO TELEOP</button>
 
     <script type="module">
-        import { geometry_msgs, std_msgs } from "https://esm.sh/jsr/@dimos/msgs@0.1.4";
+        import rosmsg from "https://esm.sh/@foxglove/rosmsg@5.0.5";
+        const { parse } = rosmsg;
+        import { MessageWriter } from "https://esm.sh/@foxglove/rosmsg2-serialization@3.1.2";
+        const schemas = await (await fetch("/teleop/schema")).json();
+        const writers = Object.fromEntries(Object.entries(schemas).map(([channel, schema]) =>
+            [channel, new MessageWriter(parse(schema.definition, { ros2: true }))]));
+        let sequence = 0;
+        function sendCommand(channel, message) {
+            const payload = writers[channel].writeMessage(message);
+            const header = new TextEncoder().encode(JSON.stringify({
+                ch: channel, seq: sequence++, ts: Date.now() / 1000, delivery: "latest",
+                meta: { type: schemas[channel].type, encoding: "cdr" }
+            }));
+            const frame = new Uint8Array(8 + header.length + payload.length);
+            const lengths = new DataView(frame.buffer);
+            lengths.setUint32(0, header.length, true);
+            lengths.setUint32(4, payload.length, true);
+            frame.set(header, 8);
+            frame.set(payload, 8 + header.length);
+            ws.send(frame);
+        }
 
         // ============================================
         // State
@@ -269,7 +289,7 @@
         }
 
         // ============================================
-        // WebSocket + LCM Encoding
+        // WebSocket + schema-driven CDR encoding
         // ============================================
         function connectWS() {
             if (wsConnected) { disconnectWS(); return; }
@@ -316,37 +336,16 @@
             if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
             const nowMs = Date.now();
-            const header = new std_msgs.Header({
-                stamp: new std_msgs.Time({
-                    sec: Math.floor(nowMs / 1000),
-                    nsec: (nowMs % 1000) * 1_000_000
-                }),
+            const header = {
+                stamp: { sec: Math.floor(nowMs / 1000), nanosec: (nowMs % 1000) * 1_000_000 },
                 frame_id: "phone"
-            });
-
-            // --- Send raw sensors as TwistStamped ---
-            // linear = orientation (roll, pitch, yaw) in degrees
-            // angular = gyro rates (pitch, roll, yaw) in deg/s
-            const twistStamped = new geometry_msgs.TwistStamped({
-                header: header,
-                twist: new geometry_msgs.Twist({
-                    linear: new geometry_msgs.Vector3({
-                        x: orientation.roll,
-                        y: orientation.pitch,
-                        z: orientation.yaw
-                    }),
-                    angular: new geometry_msgs.Vector3({
-                        x: gyro.x,
-                        y: gyro.y,
-                        z: gyro.z
-                    })
-                })
-            });
-            ws.send(twistStamped.encode());
-
-            // --- Send teleop button as Bool ---
-            const boolMsg = new std_msgs.Bool({ data: teleopActive ? 1 : 0 });
-            ws.send(boolMsg.encode());
+            };
+            // Raw orientation (degrees) and gyro rates (degrees/second).
+            sendCommand("sensors", { header, twist: {
+                linear: { x: orientation.roll, y: orientation.pitch, z: orientation.yaw },
+                angular: { x: gyro.x, y: gyro.y, z: gyro.z }
+            }});
+            sendCommand("button", { data: teleopActive });
 
             updateDisplay();
         }

@@ -14,12 +14,12 @@
 
 """Objective tests for Dual OpenYAM WebXR teleoperation."""
 
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped
+from dimos_generated.sensor_msgs.msg import JointState
 import numpy as np
 import pytest
 
 from dimos.control.tasks.pose_target_ik import PoseTargetIKTaskConfig
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.dual_openyam.blueprints.teleop import (
     _dual_openyam_webxr_task,
 )
@@ -76,9 +76,13 @@ def test_webxr_solver_matches_a1z_target_tracking_speed() -> None:
     initial = solver.frame_poses(state, _TARGET_FRAMES)
     targets = {
         frame_name: PoseStamped(
-            frame_id=pose.frame_id,
-            position=[pose.position.x, pose.position.y, pose.position.z + 0.1],
-            orientation=pose.orientation,
+            header=pose.header,
+            pose=Pose(
+                position=Point(
+                    x=pose.pose.position.x, y=pose.pose.position.y, z=pose.pose.position.z + 0.1
+                ),
+                orientation=pose.pose.orientation,
+            ),
         )
         for frame_name, pose in initial.items()
     }
@@ -91,7 +95,7 @@ def test_webxr_solver_matches_a1z_target_tracking_speed() -> None:
     current = solver.frame_poses(state, _TARGET_FRAMES)
     progress = np.mean(
         [
-            current[frame_name].position.z - initial[frame_name].position.z
+            current[frame_name].pose.position.z - initial[frame_name].pose.position.z
             for frame_name in _TARGET_FRAMES
         ]
     )

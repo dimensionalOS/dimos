@@ -31,10 +31,12 @@ Locally:
 from collections.abc import Callable
 import struct
 
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos_generated.nav_msgs.msg import Path
+from dimos_generated.std_msgs.msg import Header
 import pytest
 
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.nav_msgs.Path import Path
+from dimos.msgs.time import time_from_seconds
 from dimos.web.cockpit import Channel, cockpit
 from dimos.web.codecs import EncodedPayload, web_encoder
 from dimos.web.relay_bridge.locate import find_web_dir
@@ -48,12 +50,20 @@ pytestmark = pytest.mark.web_browser
 TOPIC = "/custom_path_e2e/nav_path"
 
 PATH_MSG = Path(
-    ts=42.5,
-    frame_id="world",
+    header=Header(stamp=time_from_seconds(42.5), frame_id="world"),
     poses=[
-        PoseStamped(ts=42.5, position=[1.5, -2.5, 0.0], orientation=[0.0, 0.0, 0.0, 1.0]),
-        PoseStamped(ts=42.5, position=[2.0, 0.25, 0.0], orientation=[0.0, 0.0, 0.0, 1.0]),
-        PoseStamped(ts=42.5, position=[3.5, 4.0, 0.0], orientation=[0.0, 0.0, 0.0, 1.0]),
+        PoseStamped(
+            header=Header(stamp=time_from_seconds(42.5)),
+            pose=Pose(position=Point(x=1.5, y=-2.5), orientation=Quaternion(w=1)),
+        ),
+        PoseStamped(
+            header=Header(stamp=time_from_seconds(42.5)),
+            pose=Pose(position=Point(x=2.0, y=0.25), orientation=Quaternion(w=1)),
+        ),
+        PoseStamped(
+            header=Header(stamp=time_from_seconds(42.5)),
+            pose=Pose(position=Point(x=3.5, y=4.0), orientation=Quaternion(w=1)),
+        ),
     ],
 )
 
@@ -62,7 +72,7 @@ PATH_MSG = Path(
 # pairs, meta.n = point count; web/examples/custom-path decodes it.
 @web_encoder("path.points.v1")
 def encode_path_points(msg: Path) -> EncodedPayload:
-    payload = b"".join(struct.pack("<ff", p.position.x, p.position.y) for p in msg.poses)
+    payload = b"".join(struct.pack("<ff", p.pose.position.x, p.pose.position.y) for p in msg.poses)
     return EncodedPayload(payload, {"n": len(msg.poses)})
 
 

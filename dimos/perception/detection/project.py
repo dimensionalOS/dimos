@@ -18,20 +18,25 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from dimos_generated.geometry_msgs.msg import TransformStamped
 import numpy as np
 
 from dimos.memory.transform import Transformer
-from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry import (
+    compose_transforms,
+    inverse_transform,
+    transform_from_pose,
+    transform_matrix,
+)
+from dimos.msgs.image import image_view
 from dimos.perception.detection.type.detection3d.imageDetections3DPC import ImageDetections3DPC
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
-    from dimos_lcm.sensor_msgs import CameraInfo
+    from dimos_generated.sensor_msgs.msg import CameraInfo, Image, PointCloud2
 
     from dimos.memory.type.observation import Observation
-    from dimos.msgs.sensor_msgs.Image import Image
-    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
     from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
     from dimos.perception.detection.type.detection3d.pointcloud_filters import PointCloudFilter
     from dimos.protocol.tf.tf import TFLookup
@@ -41,17 +46,20 @@ def _world_to_optical(
     obs: Observation[Any],
     world_frame: str,
     tf: TFLookup | None,
-    base_to_optical: Transform | None,
+    base_to_optical: TransformStamped | None,
     optical_frame: str,
     time_tolerance: float,
-) -> Transform | None:
+) -> TransformStamped | None:
     """Resolve the world→optical transform for an observation."""
     if tf is not None:
         return tf.get(optical_frame, world_frame, obs.ts, time_tolerance)
     pose = obs.pose_stamped
     if base_to_optical is None or pose is None:
         return None
-    return -(Transform.from_pose("base_link", pose) + base_to_optical)
+    pose.header.frame_id = world_frame
+    return inverse_transform(
+        compose_transforms(transform_from_pose(pose, child_frame_id="base_link"), base_to_optical)
+    )
 
 
 class ProjectDepthTo3D(Transformer["ImageDetections2D", ImageDetections3DPC]):
@@ -67,7 +75,7 @@ class ProjectDepthTo3D(Transformer["ImageDetections2D", ImageDetections3DPC]):
         depth: Callable[[Observation[ImageDetections2D]], Image | None],
         camera_info: CameraInfo,
         tf: TFLookup | None = None,
-        base_to_optical: Transform | None = None,
+        base_to_optical: TransformStamped | None = None,
         world_frame: str = "world",
         optical_frame: str = "camera_optical",
         time_tolerance: float = 5.0,
@@ -116,7 +124,7 @@ def sees(
     point: Any,
     camera_info: CameraInfo,
     tf: TFLookup | None = None,
-    base_to_optical: Transform | None = None,
+    base_to_optical: TransformStamped | None = None,
     world_frame: str = "world",
     optical_frame: str = "camera_optical",
     time_tolerance: float = 5.0,
@@ -151,8 +159,8 @@ def sees(
         raise ValueError("sees needs either tf or base_to_optical")
 
     target = np.array([point.x, point.y, point.z]) if hasattr(point, "x") else np.asarray(point)
-    fx, fy = camera_info.K[0], camera_info.K[4]
-    cx, cy = camera_info.K[2], camera_info.K[5]
+    fx, fy = camera_info.k[0], camera_info.k[4]
+    cx, cy = camera_info.k[2], camera_info.k[5]
     width, height = float(camera_info.width), float(camera_info.height)
 
     if extent is not None:
@@ -174,7 +182,7 @@ def sees(
         )
         if transform is None:
             return False
-        matrix = transform.to_matrix()
+        matrix = transform_matrix(transform.transform)
         pts = (matrix @ np.column_stack([samples, np.ones(len(samples))]).T).T[:, :3]
         in_front = pts[:, 2] > 0
         if not in_front.any():
@@ -192,8 +200,9 @@ def sees(
         if depth is not None and visible.any():
             depth_frame = depth(obs)
             if depth_frame is not None:
-                depth_m = np.asarray(depth_frame.data, dtype=np.float32)
-                if depth_frame.data.dtype == np.uint16:
+                pixels = image_view(depth_frame)
+                depth_m = np.asarray(pixels, dtype=np.float32)
+                if pixels.dtype.kind == "u" and pixels.dtype.itemsize == 2:
                     depth_m = depth_m * 0.001
                 rows = np.clip(v[visible].astype(int), 0, depth_m.shape[0] - 1)
                 cols = np.clip(u[visible].astype(int), 0, depth_m.shape[1] - 1)
@@ -225,7 +234,7 @@ class ProjectTo3D(Transformer["ImageDetections2D", ImageDetections3DPC]):
         pointcloud: PointCloud2 | Callable[[Observation[ImageDetections2D]], PointCloud2 | None],
         camera_info: CameraInfo,
         tf: TFLookup | None = None,
-        base_to_optical: Transform | None = None,
+        base_to_optical: TransformStamped | None = None,
         optical_frame: str = "camera_optical",
         time_tolerance: float = 5.0,
         filters: list[PointCloudFilter] | None = None,
@@ -249,7 +258,7 @@ class ProjectTo3D(Transformer["ImageDetections2D", ImageDetections3DPC]):
                 continue
             transform = _world_to_optical(
                 obs,
-                pointcloud.frame_id,
+                pointcloud.header.frame_id,
                 self.tf,
                 self.base_to_optical,
                 self.optical_frame,

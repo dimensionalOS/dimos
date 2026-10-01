@@ -24,10 +24,13 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
+from dimos_generated.sensor_msgs.msg import Image
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 import pytest
 
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.image import image_from_array, image_view
+from dimos.msgs.time import time_from_nanoseconds, to_nanoseconds
 from dimos.teleop.hosted.camera_mux import CameraMuxModule
 
 
@@ -55,7 +58,7 @@ def _make(cameras: list[str], **cfg: object) -> _Mux:
 
 
 def _img(w: int, h: int) -> Image:
-    return Image(data=np.zeros((h, w, 3), dtype=np.uint8), format=ImageFormat.BGR)
+    return image_from_array(np.zeros((h, w, 3), dtype=np.uint8), encoding="bgr8")
 
 
 def _feed(mux: _Mux, cam: str, img: Image) -> None:
@@ -64,7 +67,7 @@ def _feed(mux: _Mux, cam: str, img: Image) -> None:
 
 
 def _is_even(img: Image) -> bool:
-    h, w = img.data.shape[:2]
+    h, w = image_view(img).shape[:2]
     return h % 2 == 0 and w % 2 == 0
 
 
@@ -73,8 +76,8 @@ def _is_even(img: Image) -> bool:
 
 def test_even_dims_crops_odd_width_and_height() -> None:
     out = CameraMuxModule._even_dims(_img(641, 481))
-    assert out.data.shape[:2] == (480, 640)
-    assert out.data.flags["C_CONTIGUOUS"]  # from_ndarray needs contiguous
+    assert image_view(out).shape[:2] == (480, 640)
+    assert image_view(out).flags["C_CONTIGUOUS"]  # from_ndarray needs contiguous
 
 
 def test_even_dims_passes_even_through_unchanged() -> None:
@@ -126,8 +129,8 @@ def test_composite_returns_none_on_error_does_not_raise() -> None:
     mux = _make(["cam1", "cam2"])
     with mux._cam_lock:
         mux._cam_selected = ["cam1", "cam2"]
-    _feed(mux, "cam1", Image(data=np.zeros((480, 640, 3), np.uint8), format=ImageFormat.BGR))
-    _feed(mux, "cam2", Image(data=np.zeros((480, 640, 4), np.uint8), format=ImageFormat.BGRA))
+    _feed(mux, "cam1", image_from_array(np.zeros((480, 640, 3), np.uint8), encoding="bgr8"))
+    _feed(mux, "cam2", image_from_array(np.zeros((480, 640, 4), np.uint8), encoding="bgra8"))
     assert mux._composite() is None
 
 
@@ -185,7 +188,7 @@ def test_latency_stamp_fits_640_width() -> None:
     mux = _make(["cam1"], latency_stamp=True)
     _feed(mux, "cam1", _img(640, 480))
     out = mux._composite()
-    assert out is not None and out.data.shape[:2] == (480 + 16, 640)
+    assert out is not None and image_view(out).shape[:2] == (480 + 16, 640)
 
 
 def test_fps_cap_drops_frames_within_window() -> None:
@@ -199,9 +202,39 @@ def test_fps_cap_window_released_on_failed_composite() -> None:
     mux = _make(["cam1", "cam2"], video_max_fps=30.0)
     with mux._cam_lock:
         mux._cam_selected = ["cam1", "cam2"]
-    _feed(mux, "cam2", Image(data=np.zeros((480, 640, 4), np.uint8), format=ImageFormat.BGRA))
+    _feed(mux, "cam2", image_from_array(np.zeros((480, 640, 4), np.uint8), encoding="bgra8"))
     mux._on_cam("cam1", _img(640, 480))  # BGR + BGRA hstack fails → None
     assert mux.published == []
     _feed(mux, "cam2", _img(640, 480))
     mux._on_cam("cam1", _img(640, 480))  # still inside the window — must publish
     assert len(mux.published) == 1
+
+
+def test_generated_crop_scale_stamp_preserve_zero_source_header() -> None:
+    mux = _make(["cam1"], video_max_width=641, latency_stamp=True)
+    source = image_from_array(
+        np.zeros((721, 1280, 3), np.uint8),
+        encoding="bgr8",
+        header=Header(frame_id="camera_optical"),
+    )
+    mux._on_cam("cam1", Image.decode(source.encode()))
+    output = Image.decode(mux.published[0].encode())
+    assert output.width % 2 == 0 and output.height % 2 == 0
+    assert output.header.frame_id == "camera_optical"
+    assert to_nanoseconds(output.header.stamp) == 0
+    assert image_view(output).shape[1] == 640
+
+
+def test_composite_preserves_latest_exact_stamp_without_aliasing() -> None:
+    mux = _make(["cam1", "cam2"])
+    mux._cam_selected = ["cam1", "cam2"]
+    first, second = _img(320, 240), _img(320, 240)
+    first.header.stamp = time_from_nanoseconds(1700000000123456788)
+    second.header.stamp = time_from_nanoseconds(1700000000123456789)
+    _feed(mux, "cam1", first)
+    _feed(mux, "cam2", second)
+    output = mux._composite()
+    assert output is not None and output.header.frame_id == "camera_mux"
+    assert to_nanoseconds(output.header.stamp) == 1700000000123456789
+    output.header.stamp.nanosec = 0
+    assert second.header.stamp.nanosec == 123456789

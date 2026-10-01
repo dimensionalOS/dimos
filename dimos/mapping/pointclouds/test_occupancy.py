@@ -13,21 +13,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from pathlib import Path
+
 import cv2
+from dimos_generated.nav_msgs.msg import OccupancyGrid
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 from open3d.geometry import PointCloud
 import pytest
 
 from dimos.core.transport import LCMTransport
+from dimos.e2e_tests.cdr_replay_fixture import write_go2_cdr_replay
 from dimos.mapping.occupancy.visualizations import visualize_occupancy_grid
 from dimos.mapping.pointclouds.occupancy import (
     height_cost_occupancy,
     simple_occupancy,
 )
 from dimos.mapping.pointclouds.util import read_pointcloud
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.image import image_from_file, image_view
+from dimos.msgs.occupancy import occupancy_view
+from dimos.msgs.pointcloud import pointcloud_from_xyz
 from dimos.utils.data import get_data
 from dimos.utils.testing.moment import OutputMoment
 from dimos.utils.testing.test_moment import Go2Moment
@@ -53,12 +58,12 @@ def big_office() -> PointCloud:
 )
 def test_occupancy(apartment: PointCloud, occupancy_fn, output_name: str) -> None:
     expected_image = cv2.imread(str(get_data(output_name)), cv2.IMREAD_GRAYSCALE)
-    cloud = PointCloud2.from_numpy(np.asarray(apartment.points), frame_id="map")
+    cloud = pointcloud_from_xyz(np.asarray(apartment.points), header=Header(frame_id="map"))
 
     occupancy_grid = occupancy_fn(cloud)
 
     # Convert grid from -1..100 to 0..101 for PNG
-    computed_image = (occupancy_grid.grid + 1).astype(np.uint8)
+    computed_image = (occupancy_view(occupancy_grid) + 1).astype(np.uint8)
 
     np.testing.assert_array_equal(computed_image, expected_image)
 
@@ -71,14 +76,13 @@ def test_occupancy(apartment: PointCloud, occupancy_fn, output_name: str) -> Non
     ],
 )
 def test_occupancy2(big_office, occupancy_fn, output_name):
-    expected_image = Image.from_file(get_data(output_name))
-    cloud = PointCloud2.from_numpy(np.asarray(big_office.points), frame_id="")
+    expected_image = image_from_file(get_data(output_name))
+    cloud = pointcloud_from_xyz(np.asarray(big_office.points), header=Header())
 
     occupancy_grid = occupancy_fn(cloud)
 
     actual = visualize_occupancy_grid(occupancy_grid, "rainbow")
-    actual.ts = expected_image.ts
-    np.testing.assert_array_equal(actual, expected_image)
+    np.testing.assert_array_equal(image_view(actual), image_view(expected_image))
 
 
 class HeightCostMoment(Go2Moment):
@@ -86,8 +90,10 @@ class HeightCostMoment(Go2Moment):
 
 
 @pytest.fixture
-def height_cost_moment():
-    moment = HeightCostMoment()
+def height_cost_moment(tmp_path: Path):
+    recording = tmp_path / "go2-cdr.db"
+    write_go2_cdr_replay(recording, duration_s=3)
+    moment = HeightCostMoment(recording)
 
     def get_moment(ts: float, publish: bool = True) -> HeightCostMoment:
         moment.seek(ts)
@@ -103,28 +109,29 @@ def height_cost_moment():
             moment.publish()
         return moment
 
-    yield get_moment
-
-    moment.stop()
+    try:
+        yield get_moment
+    finally:
+        moment.stop()
 
 
 def test_height_cost_occupancy_from_lidar(height_cost_moment) -> None:
-    """Test height_cost_occupancy with real lidar data."""
+    """Test height_cost_occupancy with a deterministic CDR lidar recording."""
     moment = height_cost_moment(1.0)
 
     costmap = moment.costmap.value
     assert costmap is not None
 
     # Basic sanity checks
-    assert costmap.grid is not None
-    assert costmap.width > 0
-    assert costmap.height > 0
+    assert occupancy_view(costmap) is not None
+    assert costmap.info.width > 0
+    assert costmap.info.height > 0
 
     # Costs should be in range -1 to 100 (-1 = unknown)
-    assert costmap.grid.min() >= -1
-    assert costmap.grid.max() <= 100
+    assert occupancy_view(costmap).min() >= -1
+    assert occupancy_view(costmap).max() <= 100
 
     # Check we have some unknown, some known
-    known_mask = costmap.grid >= 0
+    known_mask = occupancy_view(costmap) >= 0
     assert known_mask.sum() > 0, "Expected some known cells"
     assert (~known_mask).sum() > 0, "Expected some unknown cells"

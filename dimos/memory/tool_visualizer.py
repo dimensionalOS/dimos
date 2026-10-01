@@ -19,6 +19,7 @@ from __future__ import annotations
 import pickle
 from typing import TYPE_CHECKING
 
+from dimos_generated.sensor_msgs.msg import Image
 import pytest
 
 from dimos.memory.store.sqlite import SqliteStore
@@ -26,8 +27,9 @@ from dimos.memory.transform import Batch, QualityWindow
 from dimos.models.embedding.clip import CLIPModel
 from dimos.models.vl.florence import Florence2Model
 from dimos.models.vl.moondream import MoondreamVlModel
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.geometry import inverse_transform, transform_from_pose
+from dimos.msgs.image import image_sharpness
+from dimos.msgs.time import to_seconds
 from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC
 from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.utils.data import get_data, get_data_dir
@@ -113,11 +115,10 @@ class TestVisualizer:
         embedded = store.streams.color_image_embedded
         lidar = store.streams.lidar
 
-        for obs in embedded.search(clip.embed_text("bottle"), k=1).map(
-            lambda obs: obs.derive(data=vlm.query_detections(obs.data, "bottle"))
-        ):
+        for obs in embedded.search(clip.embed_text("bottle"), k=1):
+            detections = vlm.query_detections(obs.data, "bottle")
             print(f"ts={obs.ts:.2f} sim={obs.similarity:.3f} pose={obs.pose}")
-            for det in obs.data.detections:
+            for det in detections.detections:
                 print(det)
                 print(
                     lidar.at(obs.ts).first().data
@@ -140,7 +141,7 @@ class TestVisualizer:
             pipeline = (
                 store.streams.color_image.limit(200)
                 .transform(
-                    QualityWindow(lambda img: img.sharpness, window=5.0)
+                    QualityWindow(image_sharpness, window=5.0)
                     # we are batch processing images here,
                     # so we can use the more efficient batch captioning API
                     # (instead of using .map() and calling caption() for each image,
@@ -167,19 +168,25 @@ class TestVisualizer:
 
         # find a location in the world with highest semantic similarity to a bottle
         bottle_pos = embedded.search(clip.embed_text("bottle"), k=1).first().pose_stamped
+        if bottle_pos is None:
+            raise ValueError("The semantic hotspot has no pose for spatial detection")
 
         for obs in (
             store.streams.color_image
             # find all frames within 60 seconds of the semantic hotspot
-            .at(bottle_pos.ts, tolerance=60.0)
+            .at(to_seconds(bottle_pos.header.stamp), tolerance=60.0)
             # filter the frames within 1m radius near the semantic hotspot
             .near(bottle_pos, radius=1.0)
             # select highest quality frames from these results (based on sharpness)
-            .transform(QualityWindow(lambda img: img.sharpness, window=1.0))
+            .transform(QualityWindow(image_sharpness, window=1.0))
             # run detection on these frames to find bottles
             .map(lambda obs: obs.derive(data=vlm.query_detections(obs.data, "bottle")))
         ):
             print(f"ts={obs.ts:.2f} pose={obs.pose_stamped}")
+
+            image_pose = obs.pose_stamped
+            if image_pose is None:
+                continue
 
             # find the lidar frame captured closest in time to an image
             lidar_frame = lidar.at(obs.ts).first().data
@@ -192,10 +199,11 @@ class TestVisualizer:
                     det,
                     lidar_frame,
                     camera_info=GO2Connection.camera_info_static,
-                    world_to_optical_transform=Transform(
-                        ts=obs.ts,
-                        translation=obs.pose_stamped.position,
-                        rotation=obs.pose_stamped.orientation,
-                    ).inverse(),
+                    world_to_optical_transform=inverse_transform(
+                        transform_from_pose(
+                            image_pose,
+                            child_frame_id=GO2Connection.camera_info_static.header.frame_id,
+                        )
+                    ),
                 )
                 print(det3d)

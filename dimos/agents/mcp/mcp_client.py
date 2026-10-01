@@ -399,6 +399,11 @@ class McpClient(Module):
 def _append_image_to_history(
     mcp_client: McpClient, func_name: str, uuid_: str, result: Any
 ) -> None:
+    if isinstance(result, dict) and result.get("type") == "image":
+        result = {
+            "type": "image_url",
+            "image_url": {"url": f"data:{result['mimeType']};base64,{result['data']}"},
+        }
     mcp_client.add_message(
         HumanMessage(
             content=[

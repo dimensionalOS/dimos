@@ -15,7 +15,7 @@
 import numpy as np
 import pytest
 
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.image import image_from_file
 from dimos.perception.detection.reid.embedding_id_system import EmbeddingIDSystem
 from dimos.utils.data import get_data
 
@@ -43,7 +43,7 @@ def track_associator(mobileclip_model):
 @pytest.fixture(scope="session")
 def test_image():
     """Load test image."""
-    return Image.from_file(get_data("cafe.jpg")).to_rgb()
+    return image_from_file(get_data("cafe.jpg"))
 
 
 @pytest.mark.self_hosted

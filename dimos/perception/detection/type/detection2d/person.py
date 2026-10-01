@@ -17,9 +17,10 @@ from dataclasses import dataclass
 # Import for type checking only to avoid circular imports
 from typing import TYPE_CHECKING
 
+from dimos_generated.sensor_msgs.msg import Image
 import numpy as np
 
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.time import to_seconds
 from dimos.perception.detection.type.detection2d.bbox import Bbox, Detection2DBBox
 from dimos.utils.decorators.decorators import simple_mcache
 
@@ -152,7 +153,7 @@ class Detection2DPerson(Detection2DBBox):
             class_id=class_id,
             confidence=confidence,
             name=name,
-            ts=image.ts,
+            ts=to_seconds(image.header.stamp),
             image=image,
             # Person specific fields
             keypoints=keypoints,

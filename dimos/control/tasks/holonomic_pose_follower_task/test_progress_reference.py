@@ -19,21 +19,23 @@ from __future__ import annotations
 
 import math
 
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped
+from dimos_generated.nav_msgs.msg import Path
+from dimos_generated.std_msgs.msg import Header
 import pytest
 
 from dimos.control.tasks.holonomic_pose_follower_task.progress_reference import (
     ProgressPathReference,
 )
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.nav_msgs.Path import Path
+from dimos.msgs.geometry import quaternion_from_euler
 
 
 def _pose(x, y, yaw):
     return PoseStamped(
-        position=Vector3(x, y, 0.0),
-        orientation=Quaternion.from_euler(Vector3(0.0, 0.0, yaw)),
+        header=Header(frame_id=""),
+        pose=Pose(
+            position=Point(x=x, y=y, z=0.0), orientation=quaternion_from_euler(0.0, 0.0, yaw)
+        ),
     )
 
 

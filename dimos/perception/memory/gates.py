@@ -38,10 +38,14 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from dimos.msgs.geometry import inverse_transform, point_distance, pose_from_transform
+from dimos.msgs.image import image_to_bgr
+
 if TYPE_CHECKING:
+    from dimos_generated.geometry_msgs.msg import PoseStamped
+    from dimos_generated.sensor_msgs.msg import Image
+
     from dimos.memory.type.observation import Observation
-    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-    from dimos.msgs.sensor_msgs.Image import Image
     from dimos.protocol.tf.tf import TFLookup
 
 OPTICAL_FRAME = "camera_color_optical_frame"
@@ -69,7 +73,7 @@ def camera_pose(
 ) -> PoseStamped | None:
     """World pose of the camera optical frame at ts - it rides the wrist."""
     transform = tf.get(optical_frame, world_frame, ts, tolerance)
-    return (-transform).to_pose() if transform is not None else None
+    return pose_from_transform(inverse_transform(transform)) if transform is not None else None
 
 
 def camera_speed(
@@ -85,7 +89,7 @@ def camera_speed(
     b = camera_pose(tf, ts + dt, optical_frame, world_frame, tolerance)
     if a is None or b is None:
         return None
-    return float((b.position - a.position).magnitude() / (2 * dt))
+    return point_distance(b.pose.position, a.pose.position) / (2 * dt)
 
 
 def camera_still(
@@ -160,7 +164,7 @@ def _gray_small(store: Any, ts: float, gray: dict[float, np.ndarray | None]) -> 
     except LookupError:
         frame = None
     if frame is not None:
-        img = frame.to_opencv()
+        img = image_to_bgr(frame)
         h = int(img.shape[0] * DIFF_WIDTH / img.shape[1])
         small = cv2.resize(img, (DIFF_WIDTH, h), interpolation=cv2.INTER_AREA)
         small_gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)

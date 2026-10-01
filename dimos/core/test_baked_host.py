@@ -20,13 +20,13 @@ import pathlib
 import pickle
 from typing import get_args, get_origin, get_type_hints
 
+from dimos_generated.geometry_msgs.msg import PoseStamped
+from dimos_generated.sensor_msgs.msg import PointCloud2
 import pytest
 
 from dimos.core.baked_host import BakedHost, baked_host
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import IO, In, Out
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 
 class MapperConfig(NativeModuleConfig):

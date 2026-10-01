@@ -23,12 +23,13 @@ import time
 import unittest
 from unittest.mock import MagicMock, patch
 
+from dimos_generated.geometry_msgs.msg import PoseStamped, Vector3
+from dimos_generated.sensor_msgs.msg import Image
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 import pytest
 
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.image import image_from_array, image_view
 from dimos.robot.drone.connection_module import DroneConnectionModule
 from dimos.robot.drone.dji_video_stream import FakeDJIVideoStream
 
@@ -85,7 +86,7 @@ class TestMavlinkProcessing(unittest.TestCase):
         # Verify NED to ROS conversion happened
         # ROS uses different conventions: positive pitch = nose down, positive yaw = counter-clockwise
         # So we expect sign flips in the quaternion conversion
-        self.assertIsNotNone(pose.orientation)
+        self.assertIsNotNone(pose.pose.orientation)
 
     def test_position_integration(self) -> None:
         """Test velocity integration for indoor flight positioning."""
@@ -221,7 +222,10 @@ class TestReplayMode(unittest.TestCase):
 
     def test_fake_video_stream_no_throttling(self) -> None:
         """Test FakeDJIVideoStream returns replay stream with format fix."""
-        with patch("dimos.utils.testing.legacy_pickle.LegacyPickleStore") as mock_replay:
+        with (
+            patch("dimos.utils.data.get_data") as mock_get_data,
+            patch("dimos.utils.testing.legacy_pickle.LegacyPickleStore") as mock_replay,
+        ):
             mock_stream = MagicMock()
             mock_replay.return_value.stream.return_value = mock_stream
 
@@ -229,6 +233,7 @@ class TestReplayMode(unittest.TestCase):
             stream.get_stream()
 
             # Verify replay store was created and stream was piped (for BGR→RGB fix)
+            mock_get_data.assert_called_once_with("drone")
             mock_replay.assert_called_once_with("drone/video")
             mock_replay.return_value.stream.assert_called_once()
             mock_stream.pipe.assert_called_once()
@@ -357,16 +362,14 @@ class TestReplayMode(unittest.TestCase):
                 publish=lambda x: (
                     published_odom.append(x),
                     print(
-                        f"[TEST] Published odom: position=({x.position.x:.2f}, {x.position.y:.2f}, {x.position.z:.2f})"
+                        f"[TEST] Published odom: position=({x.pose.position.x:.2f}, {x.pose.position.y:.2f}, {x.pose.position.z:.2f})"
                     ),
                 )
             )
             module.video = MagicMock(
                 publish=lambda x: (
                     published_video.append(x),
-                    print(
-                        f"[TEST] Published video frame with shape: {x.data.shape if hasattr(x, 'data') else 'unknown'}"
-                    ),
+                    print(f"[TEST] Published video frame with shape: {image_view(x).shape}"),
                 )
             )
             module.status = MagicMock(
@@ -505,7 +508,7 @@ class TestDronePerception(unittest.TestCase):
 
         def subscribe_side_effect(callback) -> None:
             for frame in video_frames:
-                img = Image(data=frame, format=ImageFormat.BGR)
+                img = image_from_array(frame, encoding="bgr8", header=Header())
                 callback(img)
                 received_frames.append(img)
 
@@ -517,7 +520,7 @@ class TestDronePerception(unittest.TestCase):
 
         def piped_subscribe(callback):
             for frame in video_frames:
-                img = Image(data=frame, format=ImageFormat.RGB)  # After format fix
+                img = image_from_array(frame, encoding="rgb8", header=Header())  # After format fix
                 callback(img)
                 piped_captured.append(img)
 
@@ -537,8 +540,8 @@ class TestDronePerception(unittest.TestCase):
         self.assertEqual(len(piped_captured), 2)
         for _i, frame in enumerate(piped_captured):
             self.assertIsInstance(frame, Image)
-            self.assertEqual(frame.data.shape, (360, 640, 3))
-            self.assertEqual(frame.format, ImageFormat.RGB)  # Format should be corrected
+            self.assertEqual(image_view(frame).shape, (360, 640, 3))
+            self.assertEqual(frame.encoding, "rgb8")  # Format should be corrected
 
 
 class TestDroneMovementAndOdometry(unittest.TestCase):
@@ -556,7 +559,7 @@ class TestDroneMovementAndOdometry(unittest.TestCase):
 
         # Test movement in ROS frame
         # ROS: X=forward, Y=left, Z=up
-        velocity_ros = Vector3(2.0, -1.0, 0.5)  # Forward 2m/s, right 1m/s, up 0.5m/s
+        velocity_ros = Vector3(x=2.0, y=-1.0, z=0.5)  # Forward 2m/s, right 1m/s, up 0.5m/s
 
         result = conn.move(velocity_ros, duration=1.0)
         self.assertTrue(result)
@@ -608,8 +611,8 @@ class TestDroneMovementAndOdometry(unittest.TestCase):
         # Check odometry message
         odom = published_odom[0]
         self.assertIsInstance(odom, PoseStamped)
-        self.assertIsNotNone(odom.orientation)
-        self.assertEqual(odom.frame_id, "world")
+        self.assertIsNotNone(odom.pose.orientation)
+        self.assertEqual(odom.header.frame_id, "world")
 
     @patch("dimos.utils.testing.legacy_pickle.LegacyPickleStore")
     @patch("dimos.utils.data.get_data")

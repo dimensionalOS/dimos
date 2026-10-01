@@ -20,9 +20,10 @@ import re
 import threading
 from typing import Any
 
+from dimos_generated.geometry_msgs.msg import PoseStamped
+
 from dimos.core.global_config import global_config
 from dimos.core.transport_factory import transport_topic
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.protocol import DimosMsg
 from dimos.protocol.pubsub.impl.lcmpubsub import LCMPubSubBase, Topic
 from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic, ZenohPubSubBase
@@ -35,13 +36,13 @@ def _wire_topic(channel: str) -> ZenohTopic:
     ZenohTopic is an LCM Topic plus zenoh's key expression, so both buses take it.
     """
     parsed = Topic.from_channel_str(transport_topic(channel))
-    return ZenohTopic(parsed.topic, parsed.lcm_type)
+    return ZenohTopic(parsed.topic, parsed.msg_type)
 
 
 class LcmSpy:
     """Sniffs every message on the active transport's bus.
 
-    Topics are named the LCM way (`/odom#geometry_msgs.PoseStamped`);
+    Topics are named the LCM way (`/odom#geometry_msgs/msg/PoseStamped`);
     `transport_topic` maps them to the running backend's wire name.
     """
 
@@ -90,7 +91,7 @@ class LcmSpy:
                     listener(data)
 
     def publish(self, topic: str, msg: Any) -> None:
-        self._bus.publish(_wire_topic(topic), msg.lcm_encode())
+        self._bus.publish(_wire_topic(topic), msg.encode())
 
     def save_topic(self, topic: str) -> None:
         with self._saved_topics_lock:
@@ -168,7 +169,7 @@ class LcmSpy:
         event = threading.Event()
 
         def listener(msg: bytes) -> None:
-            data = type.lcm_decode(msg)
+            data = type.decode(msg)
             if predicate(data):
                 event.set()
 
@@ -183,12 +184,12 @@ class LcmSpy:
         self, x: float, y: float, threshold: float = 1, timeout: float = 60
     ) -> None:
         def predicate(msg: PoseStamped) -> bool:
-            pos = msg.position
+            pos = msg.pose.position
             distance = math.sqrt((pos.x - x) ** 2 + (pos.y - y) ** 2)
             return distance < threshold
 
         self.wait_for_message_result(
-            "/odom#geometry_msgs.PoseStamped",
+            "/odom#geometry_msgs/msg/PoseStamped",
             PoseStamped,
             predicate,
             f"Failed to get to position x={x}, y={y}",

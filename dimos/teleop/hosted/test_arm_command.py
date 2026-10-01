@@ -30,14 +30,16 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+from dimos_generated.geometry_msgs.msg import PoseStamped, Twist, TwistStamped, Vector3
+from dimos_generated.std_msgs.msg import Header
 import pytest
 
 from dimos.core.module import Module
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
+from dimos.msgs.time import time_from_seconds
 from dimos.teleop.hosted.arm_command import ArmCommandModule
 from dimos.teleop.webxr.controller_types import Hand, WebXRControllerState
 from dimos.utils.testing.waiting import wait_until
+from dimos.web.relay_bridge.protocol import FrameHeader, encode_data_frame
 
 
 @pytest.fixture
@@ -72,16 +74,40 @@ def module(monkeypatch: pytest.MonkeyPatch) -> Iterator[ArmCommandModule]:
     module._cmd.stop()
 
 
+def _frame(channel, message):
+    return encode_data_frame(
+        FrameHeader(
+            ch=channel,
+            seq=0,
+            ts=time.time(),
+            delivery="latest",
+            meta={"encoding": "cdr", "type": message.msg_name},
+        ),
+        message.encode(),
+    )
+
+
 def _pose_bytes(frame_id: str, ts: float | None = None) -> bytes:
-    return PoseStamped(ts=time.time() if ts is None else ts, frame_id=frame_id).lcm_encode()
+    return _frame(
+        "pose",
+        PoseStamped(
+            header=Header(
+                stamp=time_from_seconds(time.time() if ts is None else ts), frame_id=frame_id
+            )
+        ),
+    )
 
 
 def _twist_bytes(x: float = 0.1, angular_x: float = 0.0, ts: float | None = None) -> bytes:
-    # ts=None keeps TwistStamped's default stamp (now) — a fresh command.
-    kwargs = {} if ts is None else {"ts": ts}
-    return TwistStamped(
-        frame_id="eef_twist_arm", linear=[x, 0.0, 0.0], angular=[angular_x, 0.0, 0.0], **kwargs
-    ).lcm_encode()
+    return _frame(
+        "twist",
+        TwistStamped(
+            header=Header(
+                stamp=time_from_seconds(time.time() if ts is None else ts), frame_id="eef_twist_arm"
+            ),
+            twist=Twist(linear=Vector3(x=x), angular=Vector3(x=angular_x)),
+        ),
+    )
 
 
 def _tick(module: ArmCommandModule) -> None:
@@ -161,8 +187,8 @@ def test_twist_republished_without_task_address(module: ArmCommandModule) -> Non
     module._on_cmd_raw(_twist_bytes(0.2))
     module.ee_twist_command.publish.assert_called_once()
     out = module.ee_twist_command.publish.call_args.args[0]
-    assert out.frame_id == ""  # addressing is the port wiring, not the payload
-    assert out.linear.x == pytest.approx(0.2)
+    assert out.header.frame_id == ""  # addressing is the port wiring, not the payload
+    assert out.twist.linear.x == pytest.approx(0.2)
 
 
 def test_ui_scale_disabled_is_rejected(module: ArmCommandModule) -> None:
@@ -180,8 +206,8 @@ def test_ui_scale_updates_pose_and_keyboard_twist(module: ArmCommandModule) -> N
     assert _sent_acks(module) == [{"type": "cmd_ack", "nonce": 4, "ok": True}]
     assert module._translation_scale == 0.5
     out = module.ee_twist_command.publish.call_args.args[0]
-    assert out.linear.x == pytest.approx(0.1)
-    assert out.angular.x == pytest.approx(0.3)
+    assert out.twist.linear.x == pytest.approx(0.1)
+    assert out.twist.angular.x == pytest.approx(0.3)
 
 
 def test_twist_dropped_while_estopped(module: ArmCommandModule) -> None:
@@ -243,7 +269,7 @@ def test_controller_pose_publishes_on_hand_port(module: ArmCommandModule) -> Non
     assert not module._is_engaged[Hand.RIGHT]
     module.right_controller_output.publish.assert_called()
     out = module.right_controller_output.publish.call_args.args[0]
-    assert out.frame_id == "right"  # handedness preserved; no task-name overwrite
+    assert out.header.frame_id == "right"  # handedness preserved; no task-name overwrite
     module.left_controller_output.publish.assert_not_called()
 
 

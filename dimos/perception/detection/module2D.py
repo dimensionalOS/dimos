@@ -14,6 +14,11 @@
 from collections.abc import Callable, Sequence
 from typing import Annotated, Any
 
+from dimos_generated.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
+from dimos_generated.sensor_msgs.msg import CameraInfo, Image
+from dimos_generated.std_msgs.msg import Header
+from dimos_generated.tf2_msgs.msg import TFMessage
+from dimos_generated.vision_msgs.msg import Detection2DArray
 from pydantic.experimental.pipeline import validate_as
 from reactivex import operators as ops
 from reactivex.observable import Observable
@@ -22,18 +27,14 @@ from reactivex.subject import Subject
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import IO, In, Out
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image, sharpness_barrier
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
+from dimos.msgs.image import image_sharpness
+from dimos.msgs.time import to_seconds
 from dimos.perception.detection.detectors.base import Detector
 from dimos.perception.detection.detectors.yolo import Yolo2DDetector
 from dimos.perception.detection.type.detection2d.base import Filter2D
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.utils.decorators.decorators import simple_mcache
-from dimos.utils.reactive import backpressure
+from dimos.utils.reactive import backpressure, quality_barrier
 
 
 class Config(ModuleConfig):
@@ -80,7 +81,7 @@ class Detection2DModule(Module):
     def sharp_image_stream(self) -> Observable[Image]:
         return backpressure(
             self.color_image.pure_observable().pipe(
-                sharpness_barrier(self.config.max_freq),
+                quality_barrier(image_sharpness, self.config.max_freq),
             )
         )
 
@@ -89,7 +90,9 @@ class Detection2DModule(Module):
         return backpressure(self.sharp_image_stream().pipe(ops.map(self.process_image_frame)))
 
     def track(self, detections: ImageDetections2D) -> None:
-        sensor_frame = self.tfbuffer.get("sensor", "camera_optical", detections.image.ts, 5.0)
+        sensor_frame = self.tfbuffer.get(
+            "sensor", "camera_optical", to_seconds(detections.image.header.stamp), 5.0
+        )
 
         if not sensor_frame:
             return
@@ -110,19 +113,19 @@ class Detection2DModule(Module):
                 detection = detections.detections[index]
                 position_3d = self.pixel_to_3d(  # type: ignore[attr-defined]
                     detection.center_bbox,
-                    self.config.camera_info,
                     assumed_depth=1.0,
                 )
             else:
                 # No detection at this index - publish zero transform
-                position_3d = Vector3(0.0, 0.0, 0.0)
+                position_3d = Vector3()
 
             transforms.append(
-                Transform(
-                    frame_id=sensor_frame.child_frame_id,
+                TransformStamped(
+                    header=Header(
+                        frame_id=sensor_frame.child_frame_id, stamp=detections.image.header.stamp
+                    ),
                     child_frame_id=f"det_{index}",
-                    ts=detections.image.ts,
-                    translation=position_3d,
+                    transform=Transform(translation=position_3d, rotation=Quaternion(w=1)),
                 )
             )
 

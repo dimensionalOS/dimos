@@ -14,11 +14,17 @@
 
 from typing import Any
 
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import (
+    PoseStamped,
+    Quaternion,
+    Transform,
+    TransformStamped,
+    Vector3,
+)
+from dimos_generated.std_msgs.msg import Header
+from dimos_generated.tf2_msgs.msg import TFMessage
+
 from dimos.navigation.nav_3d.mls_planner.start_relay import StartRelay
 from dimos.protocol.tf.tf import MultiTBuffer
 
@@ -40,7 +46,7 @@ class FakeTF(MultiTBuffer):
         time_tolerance: float | None = None,
         *,
         forward_tolerance: float = 0.0,
-    ) -> Transform | None:
+    ) -> TransformStamped | None:
         self.gets += 1
         return super().get(
             parent_frame,
@@ -54,23 +60,19 @@ class FakeTF(MultiTBuffer):
         pass
 
 
-def _mount() -> Transform:
-    return Transform(
-        translation=Vector3(0.0, 0.0, MOUNT_Z),
-        rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-        frame_id="base_link",
+def _mount() -> TransformStamped:
+    return TransformStamped(
+        header=Header(frame_id="base_link", stamp=Time(sec=1)),
         child_frame_id="mid360_link",
-        ts=1.0,
+        transform=Transform(translation=Vector3(z=MOUNT_Z), rotation=Quaternion(w=1.0)),
     )
 
 
-def _odom_edge() -> Transform:
-    return Transform(
-        translation=Vector3(1.0, 2.0, 3.0),
-        rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-        frame_id="odom",
+def _odom_edge() -> TransformStamped:
+    return TransformStamped(
+        header=Header(frame_id="odom", stamp=Time(sec=2)),
         child_frame_id="mid360_link",
-        ts=2.0,
+        transform=Transform(translation=Vector3(x=1.0, y=2.0, z=3.0), rotation=Quaternion(w=1.0)),
     )
 
 
@@ -78,7 +80,7 @@ def _relay(tf: FakeTF, **config: Any) -> tuple[StartRelay, list[PoseStamped]]:
     module = StartRelay(**config)
     module._tf = tf
     captured: list[PoseStamped] = []
-    module.start_pose.subscribe(captured.append)
+    module.start_pose.subscribe(lambda pose: captured.append(PoseStamped.decode(pose.encode())))
     return module, captured
 
 
@@ -91,9 +93,9 @@ def test_start_pose_is_the_tf_base_pose() -> None:
         module._on_tf(TFMessage())
         # The base sits MOUNT_Z below the sensor along the mount leg.
         assert len(captured) == 1
-        assert abs(captured[0].position.x - 1.0) < 1e-9
-        assert abs(captured[0].position.y - 2.0) < 1e-9
-        assert abs(captured[0].position.z - (3.0 - MOUNT_Z)) < 1e-9
+        assert abs(captured[0].pose.position.x - 1.0) < 1e-9
+        assert abs(captured[0].pose.position.y - 2.0) < 1e-9
+        assert abs(captured[0].pose.position.z - (3.0 - MOUNT_Z)) < 1e-9
     finally:
         module.stop()
 

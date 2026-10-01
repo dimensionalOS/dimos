@@ -18,15 +18,23 @@ from dataclasses import dataclass, field
 import functools
 from typing import Any
 
-from dimos_lcm.vision_msgs import BoundingBox3D, ObjectHypothesis, ObjectHypothesisWithPose
+from dimos_generated.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseStamped,
+    Quaternion,
+    TransformStamped,
+    Vector3,
+)
+from dimos_generated.std_msgs.msg import Header
+from dimos_generated.vision_msgs.msg import (
+    BoundingBox3D,
+    Detection3D,
+    ObjectHypothesis,
+    ObjectHypothesisWithPose,
+)
 
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.std_msgs.Header import Header
-from dimos.msgs.vision_msgs.Detection3D import Detection3D
+from dimos.msgs.geometry import point_distance
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 
 
@@ -39,9 +47,9 @@ class Detection3DBBox(Detection2DBBox):
 
     center: Vector3  # Center point in world frame
     size: Vector3  # Width, height, depth
-    transform: Transform | None = None  # Camera to world transform
+    transform: TransformStamped | None = None  # Camera to world transform
     frame_id: str = ""  # Frame ID (e.g., "world", "map")
-    orientation: Quaternion = field(default_factory=lambda: Quaternion(0.0, 0.0, 0.0, 1.0))
+    orientation: Quaternion = field(default_factory=lambda: Quaternion(w=1))
 
     @functools.cached_property
     def pose(self) -> PoseStamped:
@@ -50,16 +58,17 @@ class Detection3DBBox(Detection2DBBox):
         Returns pose in world frame with the detection's orientation.
         """
         return PoseStamped(
-            ts=self.ts,
-            frame_id=self.frame_id,
-            position=self.center,
-            orientation=self.orientation,
+            header=Header(stamp=self.image.header.stamp, frame_id=self.frame_id),
+            pose=Pose(
+                position=Point(x=self.center.x, y=self.center.y, z=self.center.z),
+                orientation=self.orientation,
+            ),
         )
 
     def to_detection3d_msg(self) -> Detection3D:
         """Convert to ROS Detection3D message."""
         msg = Detection3D()
-        msg.header = Header(self.ts, self.frame_id)
+        msg.header = Header(stamp=self.image.header.stamp, frame_id=self.frame_id)
 
         # Results
         msg.results = [
@@ -70,13 +79,10 @@ class Detection3DBBox(Detection2DBBox):
                 )
             )
         ]
-        msg.results_length = len(msg.results)
 
-        # The generated LCM constructor reuses a shared default bbox object.
-        # Assign a new BoundingBox3D so this message does not share bbox state with others.
         msg.bbox = BoundingBox3D(
             center=Pose(
-                position=self.center,
+                position=Point(x=self.center.x, y=self.center.y, z=self.center.z),
                 orientation=self.orientation,
             ),
             size=self.size,
@@ -88,8 +94,11 @@ class Detection3DBBox(Detection2DBBox):
         # Calculate distance from camera
         if self.transform is None:
             return super().to_repr_dict()
-        camera_pos = self.transform.translation
-        distance = (self.center - camera_pos).magnitude()
+        camera_pos = self.transform.transform.translation
+        distance = point_distance(
+            Point(x=self.center.x, y=self.center.y, z=self.center.z),
+            Point(x=camera_pos.x, y=camera_pos.y, z=camera_pos.z),
+        )
 
         parent_dict = super().to_repr_dict()
         # Remove bbox key if present

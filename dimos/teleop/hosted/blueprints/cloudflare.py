@@ -26,6 +26,9 @@ producer) → GO2Connection. ``state_reliable`` fans to stats AND command module
 
 from __future__ import annotations
 
+from dimos_generated.geometry_msgs.msg import Twist, TwistStamped
+from dimos_generated.sensor_msgs.msg import Image
+
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.transport import (
     CloudflareAudioTransport,
@@ -36,9 +39,6 @@ from dimos.core.transport import (
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.mapping.costmapper import CostMapper
 from dimos.mapping.voxels.module import VoxelGridMapper
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
-from dimos.msgs.sensor_msgs.Image import Image
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.robot.manipulators.xarm.blueprints.teleop import (

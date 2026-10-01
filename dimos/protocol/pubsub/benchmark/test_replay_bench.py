@@ -20,16 +20,16 @@ import threading
 import time
 from types import SimpleNamespace
 
+from dimos_generated.sensor_msgs.msg import CompressedImage, Image
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 import pytest
 
 from dimos.core.transport import LCMTransport, ZenohTransport
-from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.image import image_from_array, image_to_jpeg, image_view
+from dimos.msgs.time import time_from_seconds
 from dimos.protocol.pubsub.benchmark.tool_replay_bench import CompressedCodec
 from dimos.protocol.service.zenohservice import ZenohSessionPool
-
-pytestmark = pytest.mark.skipif_no_turbojpeg
 
 
 def make_image(width: int = 1280, height: int = 720) -> Image:
@@ -38,7 +38,9 @@ def make_image(width: int = 1280, height: int = 720) -> Image:
     gradient = np.broadcast_to(np.linspace(0, 255, width, dtype=np.uint8), (height, width))
     noise = rng.randint(0, 60, (height, width), dtype=np.uint8)
     data = np.stack([gradient, np.minimum(gradient, 128) + noise // 2, noise], axis=-1)
-    return Image(data=data, format=ImageFormat.RGB, frame_id="cam", ts=42.125)
+    return image_from_array(
+        data, encoding="rgb8", header=Header(frame_id="cam", stamp=time_from_seconds(42.125))
+    )
 
 
 @pytest.fixture()
@@ -60,30 +62,38 @@ def session_pool():
     pool.close_all()
 
 
-def test_roundtrip_over_lcm(retry_until, collector) -> None:
-    t = CompressedCodec(LCMTransport("dimos/test/codec_lcm", CompressedImage))
+@pytest.fixture
+def codec_transports():
+    transports = []
+    yield transports
+    for transport in transports:
+        transport.stop()
+
+
+def test_roundtrip_over_lcm(retry_until, collector, codec_transports, lcm_url) -> None:
+    t = CompressedCodec(LCMTransport("dimos/test/codec_lcm", CompressedImage, url=lcm_url))
+    codec_transports.append(t)
     t.subscribe(collector.callback)
     src = make_image(320, 240)
     retry_until(collector.event, lambda: t.broadcast(None, src))
     img = collector.received[0]
     assert isinstance(img, Image)
-    assert img.frame_id == "cam"
-    assert abs(img.ts - src.ts) < 1e-6
-    assert img.shape == src.shape
-    t.stop()
+    assert img.header.frame_id == "cam"
+    assert img.header.stamp == src.header.stamp
+    assert image_view(img).shape == image_view(src).shape
 
 
-def test_roundtrip_over_zenoh(retry_until, collector, session_pool) -> None:
+def test_roundtrip_over_zenoh(retry_until, collector, session_pool, codec_transports) -> None:
     t = CompressedCodec(
         ZenohTransport("dimos/test/codec_zenoh", CompressedImage, session_pool=session_pool)
     )
+    codec_transports.append(t)
     t.subscribe(collector.callback)
     src = make_image(320, 240)
     retry_until(collector.event, lambda: t.broadcast(None, src))
     img = collector.received[0]
     assert isinstance(img, Image)
-    assert abs(img.ts - src.ts) < 1e-6
-    t.stop()
+    assert img.header.stamp == src.header.stamp
 
 
 def test_pickle_roundtrip() -> None:
@@ -184,8 +194,10 @@ def test_benchmark_image_vs_compressed(proto, session_pool, bench_results, lcm_u
             return LCMTransport(topic, typ, url=f"{lcm_url}&recv_buf_size={2 * 1024 * 1024}")
         return ZenohTransport(topic, typ, session_pool=session_pool)
 
-    raw_wire = len(frame.lcm_encode())
-    jpeg_wire = len(CompressedImage.from_image(frame).lcm_encode())
+    raw_wire = len(frame.encode())
+    jpeg_wire = len(
+        CompressedImage(header=frame.header, format="jpeg", data=image_to_jpeg(frame)).encode()
+    )
 
     raw = _bench(inner(f"dimos/bench/{proto}_raw", Image), frame, n, raw_wire)
     codec = _bench(

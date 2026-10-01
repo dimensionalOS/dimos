@@ -19,8 +19,13 @@ import threading
 import time
 from typing import Any, Literal
 
+from dimos_generated.geometry_msgs.msg import TransformStamped
+from dimos_generated.sensor_msgs.msg import CameraInfo, Image, PointCloud2
+from dimos_generated.tf2_msgs.msg import TFMessage
+from dimos_generated.vision_msgs.msg import Detection2DArray, Detection3DArray
 import numpy as np
 from numpy.typing import NDArray
+from reactivex import operators as ops
 
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
@@ -28,14 +33,9 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.models.segmentation.edge_tam import BoxPromptImageSegmenter
 from dimos.models.segmentation.yoloe import YoloeBoxSegmenter
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.std_msgs.Header import Header
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
-from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
+from dimos.msgs.image import image_from_array, image_view
+from dimos.msgs.pointcloud import pointcloud_from_xyz, transform_cloud
+from dimos.msgs.time import to_seconds
 from dimos.perception.detection.detectors.yoloe import Yoloe2DDetector, YoloePromptMode
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.experimental.object import (
@@ -45,11 +45,21 @@ from dimos.perception.experimental.object import (
     to_detection3d_array,
 )
 from dimos.perception.experimental.objectDB import ObjectDB
-from dimos.types.timestamped import align_timestamped
+from dimos.types.timestamped import TimestampedData, align_timestamped
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.reactive import backpressure
 
 logger = setup_logger()
+
+
+def _timed_image(image: Image) -> TimestampedData[Image]:
+    return TimestampedData(image, to_seconds(image.header.stamp))
+
+
+def _aligned_images(
+    pair: tuple[TimestampedData[Image], TimestampedData[Image]],
+) -> tuple[Image, Image]:
+    return pair[0].value, pair[1].value
 
 
 class ObjectSceneRegistrationConfig(ModuleConfig):
@@ -89,7 +99,7 @@ class ObjectSceneRegistrationModule(Module):
     _processing_lock: threading.RLock
     # A tuple assignment/read is atomic, so depth and its transform cannot be
     # observed from different frames by get_full_scene_pointcloud().
-    _latest_scene_snapshot: tuple[Image, Transform | None] | None = None
+    _latest_scene_snapshot: tuple[Image, TransformStamped | None] | None = None
 
     config: ObjectSceneRegistrationConfig
 
@@ -155,11 +165,11 @@ class ObjectSceneRegistrationModule(Module):
         self.camera_info.subscribe(lambda msg: setattr(self, "_camera_info", msg))
 
         aligned_frames = align_timestamped(
-            self.color_image.observable(),
-            self.depth_image.observable(),
+            self.color_image.observable().pipe(ops.map(_timed_image)),
+            self.depth_image.observable().pipe(ops.map(_timed_image)),
             buffer_size=2.0,
             match_tolerance=0.1,
-        )
+        ).pipe(ops.map(_aligned_images))
         backpressure(aligned_frames).subscribe(self._on_aligned_frames)
 
     def _create_segmenter(self) -> BoxPromptImageSegmenter | None:
@@ -232,7 +242,7 @@ class ObjectSceneRegistrationModule(Module):
             return to_detection3d_array(
                 objects,
                 frame_id=self._target_frame,
-                ts=frames[0].ts,
+                ts=to_seconds(frames[0].header.stamp),
             )
 
     def _scan_scene_objects(self, frames: tuple[Image, Image] | None = None) -> list[DetObject]:
@@ -275,7 +285,7 @@ class ObjectSceneRegistrationModule(Module):
             logger.warning(f"No object found with object_id='{object_id}'")
             return None
         pc = obj.pointcloud
-        num_points = len(pc.pointcloud.points) if pc else 0
+        num_points = pc.width * pc.height
         logger.info(f"Found object '{object_id}' ({obj.name}) with {num_points} points")
         return pc
 
@@ -313,7 +323,7 @@ class ObjectSceneRegistrationModule(Module):
             return None
 
         depth_image, camera_transform = scene_snapshot
-        depth_cv = depth_image.to_opencv()
+        depth_cv = image_view(depth_image)
         h, w = depth_cv.shape[:2]
 
         # Zero out excluded object's depth
@@ -324,8 +334,8 @@ class ObjectSceneRegistrationModule(Module):
                 depth_cv[exclude_mask > 0] = 0
 
         # Build pointcloud from depth
-        fx, fy = self._camera_info.K[0], self._camera_info.K[4]
-        cx, cy = self._camera_info.K[2], self._camera_info.K[5]
+        fx, fy = self._camera_info.k[0], self._camera_info.k[4]
+        cx, cy = self._camera_info.k[2], self._camera_info.k[5]
         intrinsic = o3d.camera.PinholeCameraIntrinsic(w, h, fx, fy, cx, cy)
 
         depth_o3d = o3d.geometry.Image(depth_cv.astype(np.float32))
@@ -338,14 +348,9 @@ class ObjectSceneRegistrationModule(Module):
 
         pcd = pcd.voxel_down_sample(voxel_size)
 
-        pc = PointCloud2(
-            pcd,
-            frame_id=depth_image.frame_id,
-            ts=depth_image.ts,
-        )
-
+        pc = pointcloud_from_xyz(np.asarray(pcd.points), header=depth_image.header)
         if camera_transform is not None:
-            pc = pc.transform(camera_transform)
+            pc = transform_cloud(pc, camera_transform)
 
         return pc
 
@@ -412,21 +417,19 @@ class ObjectSceneRegistrationModule(Module):
 
         color_image = color_msg
         # Convert depth to meters (float32)
-        depth_cv = depth_msg.to_opencv()
-        if depth_msg.format == ImageFormat.DEPTH16:
+        depth_cv = image_view(depth_msg)
+        if depth_msg.encoding == "16UC1":
             depth_cv = depth_cv.astype(np.float32) / 1000.0
         elif depth_cv.dtype != np.float32:
             depth_cv = depth_cv.astype(np.float32)
-        depth_image = Image(
-            data=depth_cv, format=ImageFormat.DEPTH, frame_id=depth_msg.frame_id, ts=depth_msg.ts
-        )
+        depth_image = image_from_array(depth_cv, encoding="32FC1", header=depth_msg.header)
 
         camera_transform = None
-        if self._target_frame != color_image.frame_id:
+        if self._target_frame != color_image.header.frame_id:
             camera_transform = self.tfbuffer.get(
                 self._target_frame,
-                color_image.frame_id,
-                color_image.ts,
+                color_image.header.frame_id,
+                to_seconds(color_image.header.stamp),
                 0.1,
                 forward_tolerance=0.2,
             )
@@ -457,8 +460,7 @@ class ObjectSceneRegistrationModule(Module):
             detections_2d = self._segmenter.segment(detections_2d)
 
         detections_2d_msg = Detection2DArray(
-            detections_length=len(detections_2d.detections),
-            header=Header(color_image.ts, color_image.frame_id or ""),
+            header=color_image.header,
             detections=[det.to_ros_detection2d() for det in detections_2d.detections],
         )
         self.detections_2d.publish(detections_2d_msg)
@@ -473,13 +475,13 @@ class ObjectSceneRegistrationModule(Module):
         detections_2d: ImageDetections2D[Any],
         color_image: Image,
         depth_image: Image,
-        camera_transform: Transform | None,
+        camera_transform: TransformStamped | None,
     ) -> list[DetObject]:
         """Convert 2D detections to 3D and publish."""
         if self._camera_info is None:
             return []
 
-        if self._target_frame != color_image.frame_id and camera_transform is None:
+        if self._target_frame != color_image.header.frame_id and camera_transform is None:
             logger.warning("Failed to lookup transform from camera frame to target frame")
             return []
 

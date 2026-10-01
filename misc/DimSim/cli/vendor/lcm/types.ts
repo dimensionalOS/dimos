@@ -7,12 +7,10 @@ export interface LCMMessage<T = Uint8Array> {
   timestamp: number;
 }
 
-/** Interface for LCM message classes (generated types) */
+/** Decoder contract for typed payloads carried over raw LCM */
 export interface MessageClass<T> {
-  readonly _HASH: bigint;
   readonly _NAME: string;
   decode(data: Uint8Array): T;
-  new (init?: Partial<T>): T & { encode(): Uint8Array };
 }
 
 /** Subscription handler function */

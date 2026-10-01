@@ -1,3 +1,10 @@
+# Plotting CDR recordings
+
+The numerical examples below use a local synthetic CDR recording. Semantic
+search loads CLIP and indexes those images; its scores illustrate query and
+plot APIs rather than confirming plants in a real recording. Historical LCM
+recordings require their original compatible checkout (see [the recording
+cutover](/docs/development/messages.md)).
 
 ## color cycle
 
@@ -56,13 +63,18 @@ you can assign different axes to different time series, label them etc
 
 ```python session=robotdata output=none
 from dimos.memory.store.sqlite import SqliteStore
+from dimos.msgs.image import image_sharpness
 from dimos.memory.transform import smooth, speed, throttle
 from dimos.memory.vis import color
 from dimos.memory.vis.plot.elements import Series
 from dimos.memory.vis.plot.plot import Plot
-from dimos.utils.data import get_data
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from dimos.memory.demo_data import write_demo_recording
+from dimos.msgs.image import image_brightness
 
-store = SqliteStore(path=get_data("go2_bigoffice.db"))
+demo_directory = TemporaryDirectory()
+store = write_demo_recording(Path(demo_directory.name) / "recording.db")
 images = store.streams.color_image
 
 plot = Plot()
@@ -73,7 +85,7 @@ plot.add(
 )
 
 plot.add(
-    images.transform(throttle(0.5)).map_data(lambda obs: obs.data.brightness).transform(smooth(10)),
+    images.transform(throttle(0.5)).map_data(lambda obs: image_brightness(obs.data)).transform(smooth(10)),
     label="brightness",
     color=color.blue,
 )
@@ -100,7 +112,11 @@ from dimos.memory.vis import color
 from dimos.memory.transform import normalize, smooth_time
 
 from dimos.models.embedding.clip import CLIPModel
-clip = CLIPModel()
+clip = CLIPModel(device="cpu")
+from dimos.memory.embed import EmbedImages
+from dimos_generated.sensor_msgs.msg import Image
+embedded = store.stream("color_image_embedded", Image, codec="lz4+cdr")
+list(images.transform(throttle(2.0)).transform(EmbedImages(clip)).save(embedded))
 search_vector = clip.embed_text("plant")
 
 # we will cache this into memory since it takes a second,
@@ -138,12 +154,14 @@ plot.to_svg("assets/plot_plantness.svg")
 ```results
 Stream("color_image_embedded") | vector_search() | order_by(ts)
 Stream("materialize")
-Stream("materialize"): 267 items, 2025-12-26 11:09:12 to 2025-12-26 11:14:00 (288.4s, 0.92 Hz)
+Stream("materialize"): 90 items, 2023-11-14 22:13:20 to 2023-11-14 22:16:18 (178.0s, 0.50 Hz)
 ```
 
 ![output](assets/plot_plantness.svg)
 
-We can be pretty sure the robot saw some plants by peaks at beginning and end of data, but this graph doesn't look great, why?
+The sample images contain colored patterns, so these scores are not evidence
+that a robot saw plants. The following steps demonstrate plotting and smoothing
+query scores.
 
 Embeddings are calculated according to some minimum picture brightness. Completely dark images are both useless and also semantically close to everything.
 
@@ -159,7 +177,7 @@ plot.add(plantness_similarity,
 )
 
 plot.add(
-    images.transform(throttle(0.5)).map_data(lambda obs: obs.data.brightness),
+    images.transform(throttle(0.5)).map_data(lambda obs: image_brightness(obs.data)),
     label="brightness",
     axis="brightness"
 )
@@ -194,7 +212,7 @@ plot.to_svg("assets/plot_plantness_gap_fill.svg")
 
 ![output](assets/plot_plantness_gap_fill.svg)
 
-Looks better, these are some very obvious peaks, I'm curious let's see what was captured then.
+Peak inspection can be applied to a real new-format recording as well.
 
 Let's auto-detect the peaks, extract images from those moments, and run a 2D detector
 
@@ -320,8 +338,8 @@ meaningful_peak = meaningful_peaks.first()
 
 # load all images captured in the readius around the semantic peak
 near_images = images.near(meaningful_peak.pose_stamped, radius=2.5) \
-    .filter(lambda obs: obs.data.brightness > 0.1) \
-    .transform(QualityWindow(lambda img: img.sharpness, window=0.5))
+    .filter(lambda obs: image_brightness(obs.data) > 0.1) \
+    .transform(QualityWindow(image_sharpness, window=0.5))
 
 # load all lidar frames captured in the readius around the semantic peak
 # feed them into a global mapper to get a single pointcloud around our area of interest
@@ -362,14 +380,15 @@ from dimos.robot.unitree.go2.connection import (
     BASE_TO_OPTICAL,
 )
 from dimos.memory.vis.space.elements import Box3D
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos_generated.geometry_msgs.msg import Point, Pose
+from dimos.msgs.geometry import compose_transforms, inverse_transform, transform_from_pose
+from dimos_generated.geometry_msgs.msg import Transform
+from dimos_generated.geometry_msgs.msg import Vector3
 
 # TODO We need a nicer way to get optical transform for image streams
 # depending on the source
 def world_to_optical(base_pose):
-    return -(Transform.from_pose("base_link", base_pose) + BASE_TO_OPTICAL)
+    return inverse_transform(compose_transforms(transform_from_pose(base_pose,child_frame_id="base_link"), BASE_TO_OPTICAL))
 
 drawing = Space()
 
@@ -394,8 +413,8 @@ for obs in detections3d:
         aabb = d3d.get_bounding_box()
         c, e = aabb.get_center(), aabb.get_extent()
         drawing.add(Box3D(
-            center=Pose(float(c[0]), float(c[1]), float(c[2])),
-            size=Vector3(float(e[0]), float(e[1]), float(e[2])),
+            center=Pose(position=Point(x=float(c[0]),y=float(c[1]),z=float(c[2]))),
+            size=Vector3(x=float(e[0]),y=float(e[1]),z=float(e[2])),
             color=color.green, label="plant",
         ))
 

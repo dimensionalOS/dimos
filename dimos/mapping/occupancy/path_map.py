@@ -12,11 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dimos_generated.nav_msgs.msg import OccupancyGrid
+
 from dimos.mapping.occupancy.gradient import GradientStrategy, gradient, voronoi_gradient
 from dimos.mapping.occupancy.inflation import simple_inflate
 from dimos.mapping.occupancy.operations import overlay_occupied, smooth_occupied
 from dimos.mapping.occupancy.types import NavigationStrategy
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 
 
 def make_navigation_map(

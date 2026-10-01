@@ -32,6 +32,18 @@ import threading
 import time
 from typing import Any
 
+from dimos_generated.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseStamped,
+    Quaternion,
+    Transform,
+    TransformStamped,
+    Vector3,
+)
+from dimos_generated.sensor_msgs.msg import CameraInfo, Image, Imu, JointState, PointCloud2
+from dimos_generated.std_msgs.msg import Header
+from dimos_generated.tf2_msgs.msg import TFMessage
 import mujoco
 import numpy as np
 from numpy.typing import NDArray
@@ -43,16 +55,11 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.hardware.sensors.camera.spec import DepthCameraConfig, DepthCameraHardware
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
-from dimos.msgs.sensor_msgs.Imu import Imu
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.msgs.camera_info import camera_info_from_intrinsics, camera_info_with_stamp
+from dimos.msgs.geometry import quaternion_from_matrix
+from dimos.msgs.image import image_from_array
+from dimos.msgs.pointcloud import pointcloud_from_rgbd, pointcloud_from_xyz, voxel_downsample_cloud
+from dimos.msgs.time import time_from_seconds
 from dimos.simulation.engines.mujoco_engine import (
     CameraConfig,
     CameraFrame,
@@ -96,25 +103,21 @@ def _pose_matrix(
 
 def _transform_from_matrix(
     matrix: NDArray[np.float64], *, frame_id: str, child_frame_id: str, ts: float
-) -> Transform:
-    return Transform(
-        translation=Vector3(
-            float(matrix[0, 3]),
-            float(matrix[1, 3]),
-            float(matrix[2, 3]),
-        ),
-        rotation=Quaternion.from_rotation_matrix(matrix[:3, :3]),
-        frame_id=frame_id,
+) -> TransformStamped:
+    return TransformStamped(
+        header=Header(stamp=time_from_seconds(ts), frame_id=frame_id),
         child_frame_id=child_frame_id,
-        ts=ts,
+        transform=Transform(
+            translation=Vector3(
+                x=float(matrix[0, 3]), y=float(matrix[1, 3]), z=float(matrix[2, 3])
+            ),
+            rotation=quaternion_from_matrix(matrix[:3, :3]),
+        ),
     )
 
 
-def _default_identity_transform() -> Transform:
-    return Transform(
-        translation=Vector3(0.0, 0.0, 0.0),
-        rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-    )
+def _default_identity_transform() -> TransformStamped:
+    return TransformStamped(transform=Transform(rotation=Quaternion(w=1.0)))
 
 
 def _imu_from_mujoco_wxyz(
@@ -127,11 +130,10 @@ def _imu_from_mujoco_wxyz(
 ) -> Imu:
     w, x, y, z = quaternion
     return Imu(
-        orientation=Quaternion(x, y, z, w),
-        angular_velocity=Vector3(*gyroscope),
-        linear_acceleration=Vector3(*accelerometer),
-        frame_id=frame_id,
-        ts=ts,
+        header=Header(stamp=time_from_seconds(ts), frame_id=frame_id),
+        orientation=Quaternion(x=x, y=y, z=z, w=w),
+        angular_velocity=Vector3(x=gyroscope[0], y=gyroscope[1], z=gyroscope[2]),
+        linear_acceleration=Vector3(x=accelerometer[0], y=accelerometer[1], z=accelerometer[2]),
     )
 
 
@@ -260,7 +262,7 @@ class MujocoSimModuleConfig(ModuleConfig, DepthCameraConfig):
     height: int = 480
     fps: int = 15
     base_frame_id: str = "link7"
-    base_transform: Transform | None = Field(default_factory=_default_identity_transform)
+    base_transform: TransformStamped | None = Field(default_factory=_default_identity_transform)
     align_depth_to_color: bool = True
     enable_color: bool = True
     enable_depth: bool = True
@@ -392,7 +394,7 @@ class MujocoSimModule(
             base = self._camera_info_base
         if base is None:
             return None
-        return base.with_ts(self._camera_info_ts())
+        return camera_info_with_stamp(base, time_from_seconds(self._camera_info_ts()))
 
     @rpc
     def get_depth_camera_info(self) -> CameraInfo | None:
@@ -400,7 +402,7 @@ class MujocoSimModule(
             base = self._camera_info_base
         if base is None:
             return None
-        return base.with_ts(self._camera_info_ts())
+        return camera_info_with_stamp(base, time_from_seconds(self._camera_info_ts()))
 
     @rpc
     def get_depth_scale(self) -> float:
@@ -794,15 +796,18 @@ class MujocoSimModule(
             ]  # (w, x, y, z) per MuJoCo convention
             self.odom.publish(
                 PoseStamped(
-                    ts=time.time(),
-                    frame_id="world",
-                    position=Vector3(float(base_pos[0]), float(base_pos[1]), float(base_pos[2])),
-                    orientation=Quaternion(
-                        float(base_quat[1]),
-                        float(base_quat[2]),
-                        float(base_quat[3]),
-                        float(base_quat[0]),
-                    ),  # PoseStamped uses x,y,z,w
+                    header=Header(stamp=time_from_seconds(time.time()), frame_id="world"),
+                    pose=Pose(
+                        position=Point(
+                            x=float(base_pos[0]), y=float(base_pos[1]), z=float(base_pos[2])
+                        ),
+                        orientation=Quaternion(
+                            x=float(base_quat[1]),
+                            y=float(base_quat[2]),
+                            z=float(base_quat[3]),
+                            w=float(base_quat[0]),
+                        ),
+                    ),
                 )
             )
 
@@ -859,14 +864,14 @@ class MujocoSimModule(
         fovy_rad = math.radians(fovy_deg)
         fy = h / (2.0 * math.tan(fovy_rad / 2.0))
         fx = fy  # square pixels
-        camera_info = CameraInfo.from_intrinsics(
+        camera_info = camera_info_from_intrinsics(
             fx=fx,
             fy=fy,
             cx=w / 2.0,
             cy=h / 2.0,
             width=w,
             height=h,
-            frame_id=self._color_optical_frame,
+            header=Header(frame_id=self._color_optical_frame),
         )
         with self._state_lock:
             self._camera_info_base = camera_info
@@ -914,20 +919,18 @@ class MujocoSimModule(
                 self._latest_frame_ts = ts
 
             if self.config.enable_color:
-                color_img = Image(
-                    data=frame.rgb,
-                    format=ImageFormat.RGB,
-                    frame_id=self._color_optical_frame,
-                    ts=ts,
+                color_img = image_from_array(
+                    frame.rgb,
+                    encoding="rgb8",
+                    header=Header(frame_id=self._color_optical_frame, stamp=time_from_seconds(ts)),
                 )
                 self.color_image.publish(color_img)
 
             if self.config.enable_depth:
-                depth_img = Image(
-                    data=frame.depth,
-                    format=ImageFormat.DEPTH,
-                    frame_id=self._color_optical_frame,
-                    ts=ts,
+                depth_img = image_from_array(
+                    frame.depth,
+                    encoding="32FC1",
+                    header=Header(frame_id=self._color_optical_frame, stamp=time_from_seconds(ts)),
                 )
                 self.depth_image.publish(depth_img)
 
@@ -952,16 +955,7 @@ class MujocoSimModule(
         if base is None:
             return
         ts = self._camera_info_ts()
-        info = CameraInfo(
-            height=base.height,
-            width=base.width,
-            distortion_model=base.distortion_model,
-            D=base.D,
-            K=base.K,
-            P=base.P,
-            frame_id=base.frame_id,
-            ts=ts,
-        )
+        info = camera_info_with_stamp(base, time_from_seconds(ts))
         self.camera_info.publish(info)
         self.depth_camera_info.publish(info)
 
@@ -982,24 +976,26 @@ class MujocoSimModule(
 
         self.tf.publish(
             TFMessage(
-                _transform_from_matrix(
-                    optical_transform,
-                    frame_id=parent_frame,
-                    child_frame_id=self._color_optical_frame,
-                    ts=ts,
-                ),
-                _transform_from_matrix(
-                    optical_transform,
-                    frame_id=parent_frame,
-                    child_frame_id=self._depth_optical_frame,
-                    ts=ts,
-                ),
-                _transform_from_matrix(
-                    camera_transform,
-                    frame_id=parent_frame,
-                    child_frame_id=self._camera_link,
-                    ts=ts,
-                ),
+                transforms=[
+                    _transform_from_matrix(
+                        optical_transform,
+                        frame_id=parent_frame,
+                        child_frame_id=self._color_optical_frame,
+                        ts=ts,
+                    ),
+                    _transform_from_matrix(
+                        optical_transform,
+                        frame_id=parent_frame,
+                        child_frame_id=self._depth_optical_frame,
+                        ts=ts,
+                    ),
+                    _transform_from_matrix(
+                        camera_transform,
+                        frame_id=parent_frame,
+                        child_frame_id=self._camera_link,
+                        ts=ts,
+                    ),
+                ]
             )
         )
 
@@ -1018,25 +1014,27 @@ class MujocoSimModule(
         if frame is None:
             return
         try:
-            color_img = Image(
-                data=frame.rgb,
-                format=ImageFormat.RGB,
-                frame_id=self._color_optical_frame,
-                ts=frame.timestamp,
+            color_img = image_from_array(
+                frame.rgb,
+                encoding="rgb8",
+                header=Header(
+                    frame_id=self._color_optical_frame, stamp=time_from_seconds(frame.timestamp)
+                ),
             )
-            depth_img = Image(
-                data=frame.depth,
-                format=ImageFormat.DEPTH,
-                frame_id=self._color_optical_frame,
-                ts=frame.timestamp,
+            depth_img = image_from_array(
+                frame.depth,
+                encoding="32FC1",
+                header=Header(
+                    frame_id=self._color_optical_frame, stamp=time_from_seconds(frame.timestamp)
+                ),
             )
-            pcd = PointCloud2.from_rgbd(
-                color_image=color_img,
-                depth_image=depth_img,
-                camera_info=camera_info,
+            pcd = pointcloud_from_rgbd(
+                color=color_img,
+                depth=depth_img,
+                calibration=camera_info,
                 depth_scale=1.0,
             )
-            pcd = pcd.voxel_downsample(0.005)
+            pcd = voxel_downsample_cloud(pcd, 0.005)
             self.pointcloud.publish(pcd)
         except Exception as exc:
             logger.error("Pointcloud generation error", error=str(exc))
@@ -1064,12 +1062,11 @@ class MujocoSimModule(
             return
 
         try:
-            pcd = PointCloud2.from_numpy(
+            pcd = pointcloud_from_xyz(
                 np.vstack(all_points),
-                frame_id="world",
-                timestamp=latest_ts or time.time(),
+                header=Header(frame_id="world", stamp=time_from_seconds(latest_ts or time.time())),
             )
-            pcd = pcd.voxel_downsample(self.config.mujoco_lidar_voxel_size)
+            pcd = voxel_downsample_cloud(pcd, self.config.mujoco_lidar_voxel_size)
             self.pointcloud.publish(pcd)
         except Exception as exc:
             logger.error("MuJoCo lidar pointcloud generation error", error=str(exc))

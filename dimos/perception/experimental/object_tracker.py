@@ -16,37 +16,49 @@ import threading
 import time
 from typing import Any
 
-# Import LCM messages
-from dimos_lcm.vision_msgs import (
+from dimos_generated.geometry_msgs.msg import (
+    Point,
+    Pose,
+    Quaternion,
+    Transform,
+    TransformStamped,
+    Vector3,
+)
+from dimos_generated.sensor_msgs.msg import CameraInfo, Image
+from dimos_generated.std_msgs.msg import Header
+from dimos_generated.tf2_msgs.msg import TFMessage
+
+# Generated detection values
+from dimos_generated.vision_msgs.msg import (
     Detection2D,
+    Detection2DArray,
     Detection3D,
+    Detection3DArray,
     ObjectHypothesisWithPose,
 )
 import numpy as np
 from numpy.typing import NDArray
+from reactivex import operators as ops
 from reactivex.disposable import Disposable
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
-from dimos.msgs.std_msgs.Header import Header
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
-from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
-from dimos.types.timestamped import align_timestamped
+from dimos.msgs.image import image_from_array, image_to_rgb, image_view
+from dimos.msgs.time import time_from_seconds, to_seconds
+from dimos.types.timestamped import TimestampedData, align_timestamped
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import (
     euler_to_quaternion,
     optical_to_robot_frame,
     yaw_towards_point,
 )
+
+
+def _timed_image(image: Image) -> TimestampedData[Image]:
+    return TimestampedData(image, to_seconds(image.header.stamp))
+
 
 logger = setup_logger()
 
@@ -128,20 +140,20 @@ class ObjectTracking(Module):
 
         # Subscribe to aligned rgb and depth streams
         def on_aligned_frames(frames_tuple) -> None:  # type: ignore[no-untyped-def]
-            rgb_msg, depth_msg = frames_tuple
+            rgb_msg, depth_msg = (item.value for item in frames_tuple)
             with self._frame_lock:
-                self._latest_rgb_frame = rgb_msg.data
+                self._latest_rgb_frame = image_to_rgb(rgb_msg)
 
-                depth_data = depth_msg.data
+                depth_data = image_view(depth_msg)
                 # Convert from millimeters to meters if depth is DEPTH16 format
-                if depth_msg.format == ImageFormat.DEPTH16:
+                if depth_msg.encoding in ("16UC1", "mono16"):
                     depth_data = depth_data.astype(np.float32) / 1000.0
                 self._latest_depth_frame = depth_data
 
         # Create aligned observable for RGB and depth
         aligned_frames = align_timestamped(
-            self.color_image.observable(),
-            self.depth.observable(),
+            self.color_image.pure_observable().pipe(ops.map(_timed_image)),
+            self.depth.pure_observable().pipe(ops.map(_timed_image)),
             buffer_size=2.0,  # 2 second buffer
             match_tolerance=0.5,  # 500ms tolerance
         )
@@ -154,10 +166,10 @@ class ObjectTracking(Module):
             # Extract intrinsics from camera info K matrix
             # K is a 3x3 matrix in row-major order: [fx, 0, cx, 0, fy, cy, 0, 0, 1]
             self.camera_intrinsics = [  # type: ignore[assignment]
-                camera_info_msg.K[0],
-                camera_info_msg.K[4],
-                camera_info_msg.K[2],
-                camera_info_msg.K[5],
+                camera_info_msg.k[0],
+                camera_info_msg.k[4],
+                camera_info_msg.k[2],
+                camera_info_msg.k[5],
             ]
 
         unsub = self.camera_info.subscribe(on_camera_info)  # type: ignore[assignment]
@@ -309,8 +321,8 @@ class ObjectTracking(Module):
         self.tracking_frame_count = 0  # Reset frame counter
 
         # Publish empty detections to clear any visualizations
-        empty_2d = Detection2DArray(detections_length=0, header=Header(), detections=[])
-        empty_3d = Detection3DArray(detections_length=0, header=Header(), detections=[])
+        empty_2d = Detection2DArray(header=Header(), detections=[])
+        empty_3d = Detection3DArray(header=Header(), detections=[])
         self._latest_detection2d = empty_2d
         self._latest_detection3d = empty_3d
         self._detection_event.clear()
@@ -409,9 +421,9 @@ class ObjectTracking(Module):
             return
 
         # Create detections if tracking succeeded
-        header = Header(self.frame_id)
-        detection2darray = Detection2DArray(detections_length=0, header=header, detections=[])
-        detection3darray = Detection3DArray(detections_length=0, header=header, detections=[])
+        header = Header(stamp=time_from_seconds(time.time()), frame_id=self.config.frame_id)
+        detection2darray = Detection2DArray(header=header, detections=[])
+        detection3darray = Detection3DArray(header=header, detections=[])
 
         if final_success and current_bbox_x1y1x2y2 is not None:
             x1, y1, x2, y2 = current_bbox_x1y1x2y2
@@ -423,7 +435,6 @@ class ObjectTracking(Module):
             # Create Detection2D
             detection_2d = Detection2D()
             detection_2d.id = "0"
-            detection_2d.results_length = 1
             detection_2d.header = header
 
             # Create hypothesis
@@ -440,7 +451,6 @@ class ObjectTracking(Module):
             detection_2d.bbox.size_y = height
 
             detection2darray = Detection2DArray()
-            detection2darray.detections_length = 1
             detection2darray.header = header
             detection2darray.detections = [detection_2d]
 
@@ -462,15 +472,15 @@ class ObjectTracking(Module):
 
                     # Create pose in optical frame
                     optical_pose = Pose()
-                    optical_pose.position = Vector3(x_optical, y_optical, z_optical)
-                    optical_pose.orientation = Quaternion(0.0, 0.0, 0.0, 1.0)  # Identity for now
+                    optical_pose.position = Point(x=x_optical, y=y_optical, z=z_optical)
+                    optical_pose.orientation = Quaternion(w=1.0)  # Identity for now
 
                     # Convert to robot frame
                     robot_pose = optical_to_robot_frame(optical_pose)
 
                     # Calculate orientation: object facing towards camera (origin)
                     yaw = yaw_towards_point(robot_pose.position)
-                    euler = Vector3(0.0, 0.0, yaw)  # Only yaw, no roll/pitch
+                    euler = Vector3(z=yaw)  # Only yaw, no roll/pitch
                     robot_pose.orientation = euler_to_quaternion(euler)
 
                     # Estimate object size in meters
@@ -481,7 +491,6 @@ class ObjectTracking(Module):
                     # Create Detection3D
                     detection_3d = Detection3D()
                     detection_3d.id = "0"
-                    detection_3d.results_length = 1
                     detection_3d.header = header
 
                     # Reuse hypothesis from 2D
@@ -491,30 +500,34 @@ class ObjectTracking(Module):
                     detection_3d.bbox.center = Pose()
                     detection_3d.bbox.center.position = robot_pose.position
                     detection_3d.bbox.center.orientation = robot_pose.orientation
-                    detection_3d.bbox.size = Vector3(size_x, size_y, size_z)
+                    detection_3d.bbox.size = Vector3(x=size_x, y=size_y, z=size_z)
 
                     detection3darray = Detection3DArray()
-                    detection3darray.detections_length = 1
                     detection3darray.header = header
                     detection3darray.detections = [detection_3d]
 
                     # Publish transform for tracked object
                     # The optical pose is in camera optical frame, so publish it relative to the camera frame
-                    tracked_object_tf = Transform(
-                        translation=robot_pose.position,
-                        rotation=robot_pose.orientation,
-                        frame_id=self.frame_id,  # Use configured camera frame
+                    tracked_object_tf = TransformStamped(
+                        header=header,
                         child_frame_id="tracked_object",
-                        ts=header.ts,
+                        transform=Transform(
+                            translation=Vector3(
+                                x=robot_pose.position.x,
+                                y=robot_pose.position.y,
+                                z=robot_pose.position.z,
+                            ),
+                            rotation=robot_pose.orientation,
+                        ),
                     )
-                    self.tf.publish(TFMessage(tracked_object_tf))
+                    self.tf.publish(TFMessage(transforms=[tracked_object_tf]))
 
         # Store latest detections for RPC access
         self._latest_detection2d = detection2darray
         self._latest_detection3d = detection3darray
 
         # Signal that new detections are available
-        if detection2darray.detections_length > 0 or detection3darray.detections_length > 0:
+        if bool(detection2darray.detections) or bool(detection3darray.detections):
             self._detection_event.set()
 
         # Publish detections
@@ -524,12 +537,8 @@ class ObjectTracking(Module):
         # Create and publish visualization if tracking is active
         if self.tracking_initialized:
             # Convert single detection to list for visualization
-            detections_3d = (
-                detection3darray.detections if detection3darray.detections_length > 0 else []
-            )
-            detections_2d = (
-                detection2darray.detections if detection2darray.detections_length > 0 else []
-            )
+            detections_3d = detection3darray.detections if bool(detection3darray.detections) else []
+            detections_2d = detection2darray.detections if bool(detection2darray.detections) else []
 
             if detections_3d and detections_2d:
                 # Extract 2D bbox for visualization
@@ -555,7 +564,9 @@ class ObjectTracking(Module):
                     viz_image = self._draw_reid_matches(viz_image)
 
                 # Convert to Image message and publish
-                viz_msg = Image.from_numpy(viz_image)
+                viz_msg = image_from_array(
+                    viz_image, encoding="rgb8", header=self._latest_detection2d.header
+                )
                 self.tracked_overlay.publish(viz_msg)
 
     def _draw_reid_matches(self, image: NDArray[np.uint8]) -> NDArray[np.uint8]:

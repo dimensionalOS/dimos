@@ -14,13 +14,13 @@
 
 from typing import Any
 
+from dimos_generated.geometry_msgs.msg import Point, Pose, Quaternion
 import mujoco
 import numpy as np
 from numpy.typing import NDArray
 
 from dimos.core.transport import PubSubTransport
 from dimos.core.transport_factory import make_transport
-from dimos.msgs.geometry_msgs.Pose import Pose
 
 
 class PersonPositionController:
@@ -152,8 +152,8 @@ class PersonTrackPublisher:
     def _publish_pose(self, pos: NDArray[np.floating[Any]], heading: float) -> None:
         c, s = np.cos(heading / 2), np.sin(heading / 2)
         pose = Pose(
-            position=[pos[0], pos[1], 0.0],
-            orientation=[0.0, 0.0, s, c],  # x, y, z, w
+            position=Point(x=float(pos[0]), y=float(pos[1]), z=0.0),
+            orientation=Quaternion(x=0.0, y=0.0, z=float(s), w=float(c)),  # x, y, z, w
         )
         self._transport.broadcast(None, pose)
 

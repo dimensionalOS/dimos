@@ -14,6 +14,8 @@
 
 import time
 
+from dimos_generated.geometry_msgs.msg import PoseStamped, Vector3
+from dimos_generated.sensor_msgs.msg import PointCloud2
 import pytest
 from reactivex.disposable import Disposable
 
@@ -22,16 +24,14 @@ from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.core.testing import MockRobotClient
 from dimos.core.transport import LCMTransport, pLCMTransport
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.robot.unitree.type.odometry import Odometry
+from dimos.types.timestamped import TimestampedData
 
 
 class Navigation(Module):
     mov: Out[Vector3]
     lidar: In[PointCloud2]
     target_position: In[Vector3]
-    odometry: In[Odometry]
+    odometry: In[TimestampedData[PoseStamped]]
 
     odom_msg_count = 0
     lidar_msg_count = 0
@@ -43,8 +43,9 @@ class Navigation(Module):
     def start(self) -> None:
         def _odom(msg) -> None:
             self.odom_msg_count += 1
-            print("RCV:", (time.perf_counter() - msg.pubtime) * 1000, msg)
-            self.mov.publish(msg.position)
+            print("RCV:", (time.perf_counter() - msg.ts) * 1000, msg)
+            position = msg.value.pose.position
+            self.mov.publish(Vector3(x=position.x, y=position.y, z=position.z))
 
         unsub = self.odometry.subscribe(_odom)
         self.register_disposable(Disposable(unsub))
@@ -106,11 +107,11 @@ def test_basic_deployment(dimos) -> None:
     robot.lidar.transport = LCMTransport("/lidar", PointCloud2)
 
     # odometry & mov using just a pickle over LCM
-    robot.odometry.transport = pLCMTransport("/odom")
+    robot.timed_odometry.transport = pLCMTransport("/odom")
     nav.mov.transport = pLCMTransport("/mov")
 
     nav.lidar.connect(robot.lidar)
-    nav.odometry.connect(robot.odometry)
+    nav.odometry.connect(robot.timed_odometry)
     robot.mov.connect(nav.mov)
 
     robot.start()

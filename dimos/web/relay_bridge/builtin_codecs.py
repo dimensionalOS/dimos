@@ -26,14 +26,16 @@ import json
 from typing import Any
 import zlib
 
-from dimos_lcm.std_msgs import Bool
+from dimos_generated.geometry_msgs.msg import Point, PointStamped, PoseStamped
+from dimos_generated.nav_msgs.msg import OccupancyGrid, Path
+from dimos_generated.sensor_msgs.msg import Image
+from dimos_generated.std_msgs.msg import Bool
 import numpy as np
 
-from dimos.msgs.geometry_msgs.PointStamped import PointStamped
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid, block_max_reduce
-from dimos.msgs.nav_msgs.Path import Path
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.geometry import yaw
+from dimos.msgs.image import image_to_jpeg
+from dimos.msgs.occupancy import block_max_reduce, occupancy_view
+from dimos.msgs.time import header_now, to_seconds
 from dimos.utils.generic import finite_number
 from dimos.web.codecs import EncodedPayload, web_decoder, web_encoder
 
@@ -53,9 +55,9 @@ def _check_jpeg_params(params: Mapping[str, Any]) -> None:
 
 @web_encoder("jpeg.v1", check_params=_check_jpeg_params)
 def encode_jpeg(msg: Image, params: Mapping[str, Any]) -> EncodedPayload:
-    # TurboJPEG via the message's own encoder (handles BGR/RGB/gray inputs).
+    # OpenCV via the image conversion helper (handles BGR/RGB/gray inputs).
     return EncodedPayload(
-        msg.to_jpeg_bytes(quality=params.get("quality", _DEFAULT_JPEG_QUALITY)),
+        image_to_jpeg(msg, quality=params.get("quality", _DEFAULT_JPEG_QUALITY)),
         {"w": msg.width, "h": msg.height},
     )
 
@@ -72,11 +74,11 @@ def decode_text(msg: str) -> str:
 @web_encoder("pose.json.v1")
 def encode_pose(msg: PoseStamped) -> bytes:
     pose = {
-        "x": msg.position.x,
-        "y": msg.position.y,
-        "z": msg.position.z,
-        "yaw": msg.yaw,
-        "ts": msg.ts,
+        "x": msg.pose.position.x,
+        "y": msg.pose.position.y,
+        "z": msg.pose.position.z,
+        "yaw": yaw(msg.pose.orientation),
+        "ts": to_seconds(msg.header.stamp),
     }
     return json.dumps(pose, separators=(",", ":")).encode()
 
@@ -84,7 +86,7 @@ def encode_pose(msg: PoseStamped) -> bytes:
 @web_encoder("path.json.v1")
 def encode_path(msg: Path) -> bytes:
     # Empty paths must reach the viewer to clear the overlay.
-    points = [[round(p.x, 3), round(p.y, 3)] for p in msg.poses]
+    points = [[round(p.pose.position.x, 3), round(p.pose.position.y, 3)] for p in msg.poses]
     return json.dumps(points, separators=(",", ":"), allow_nan=False).encode()
 
 
@@ -93,7 +95,8 @@ def decode_point(msg: dict[str, Any]) -> PointStamped:
     if not isinstance(msg, dict):
         raise ValueError(f"point.json.v1 wants an object, got {type(msg).__name__}")
     return PointStamped(
-        finite_number(msg.get("x"), "x"), finite_number(msg.get("y"), "y"), frame_id="world"
+        header=header_now("world"),
+        point=Point(x=finite_number(msg.get("x"), "x"), y=finite_number(msg.get("y"), "y")),
     )
 
 
@@ -117,10 +120,10 @@ _COSTMAP_MAX_SIDE = 2048
 
 @web_encoder("costmap.zlib.v1")
 def encode_costmap(msg: OccupancyGrid) -> EncodedPayload | None:
-    grid = msg.grid
+    grid = occupancy_view(msg)
     if grid.size == 0:
         return None  # mapper still warming up; nothing to draw
-    res = msg.resolution
+    res = msg.info.resolution
     side = max(grid.shape)
     if side > _COSTMAP_MAX_SIDE:
         factor = -(-side // _COSTMAP_MAX_SIDE)
@@ -131,12 +134,12 @@ def encode_costmap(msg: OccupancyGrid) -> EncodedPayload | None:
     # int8 -1 is byte 0xff and 0..100 are byte-identical, so the raw buffer
     # already is the wire payload - no mask/astype/tobytes copies.
     cells = np.ascontiguousarray(grid)
-    origin = msg.origin
+    origin = msg.info.origin
     meta = {
         "w": w,
         "h": h,
         "res": res,
-        "origin": [origin.position.x, origin.position.y, origin.yaw],
+        "origin": [origin.position.x, origin.position.y, yaw(origin.orientation)],
     }
     return EncodedPayload(zlib.compress(cells, _COSTMAP_ZLIB_LEVEL), meta)
 

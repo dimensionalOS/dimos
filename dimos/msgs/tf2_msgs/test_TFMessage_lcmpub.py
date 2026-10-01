@@ -15,12 +15,12 @@
 from collections.abc import Iterator
 import time
 
+from dimos_generated.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
+from dimos_generated.std_msgs.msg import Header
+from dimos_generated.tf2_msgs.msg import TFMessage
 import pytest
 
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.msgs.time import time_from_seconds
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM, Topic
 from dimos.utils.testing.collector import CallbackCollector
 
@@ -38,7 +38,7 @@ def lcm(lcm_url: str) -> Iterator[LCM]:
 # Publishes a series of transforms representing a robot kinematic chain
 # to actual LCM messages, rerun running in parallel should render this
 def test_publish_transforms(lcm: LCM) -> None:
-    topic = Topic(topic="/tf", lcm_type=TFMessage)
+    topic = Topic(topic="/tf", msg_type=TFMessage)
     collector = CallbackCollector(2)
     lcm.subscribe(topic, collector)
 
@@ -46,42 +46,45 @@ def test_publish_transforms(lcm: LCM) -> None:
     current_time = time.time()
 
     # 1. World to base_link transform (robot at position)
-    world_to_base = Transform(
-        translation=Vector3(4.0, 3.0, 0.0),
-        rotation=Quaternion(0.0, 0.0, 0.382683, 0.923880),  # 45 degrees around Z
-        frame_id="world",
+    world_to_base = TransformStamped(
+        transform=Transform(
+            translation=Vector3(x=4.0, y=3.0, z=0.0),
+            rotation=Quaternion(z=0.382683, w=0.923880),  # 45 degrees around Z
+        ),
+        header=Header(frame_id="world", stamp=time_from_seconds(current_time)),
         child_frame_id="base_link",
-        ts=current_time,
     )
 
     # 2. Base to arm transform (arm lifted up)
-    base_to_arm = Transform(
-        translation=Vector3(0.2, 0.0, 1.5),
-        rotation=Quaternion(0.0, 0.258819, 0.0, 0.965926),  # 30 degrees around Y
-        frame_id="base_link",
+    base_to_arm = TransformStamped(
+        transform=Transform(
+            translation=Vector3(x=0.2, y=0.0, z=1.5),
+            rotation=Quaternion(y=0.258819, w=0.965926),  # 30 degrees around Y
+        ),
+        header=Header(frame_id="base_link", stamp=time_from_seconds(current_time)),
         child_frame_id="arm_link",
-        ts=current_time,
     )
 
     # 3. Arm to gripper transform (gripper extended)
-    arm_to_gripper = Transform(
-        translation=Vector3(0.5, 0.0, 0.0),
-        rotation=Quaternion(0.0, 0.0, 0.0, 1.0),  # No rotation
-        frame_id="arm_link",
+    arm_to_gripper = TransformStamped(
+        transform=Transform(
+            translation=Vector3(x=0.5, y=0.0, z=0.0),
+            rotation=Quaternion(w=1.0),  # No rotation
+        ),
+        header=Header(frame_id="arm_link", stamp=time_from_seconds(current_time)),
         child_frame_id="gripper_link",
-        ts=current_time,
     )
 
-    lcm.publish(topic, TFMessage(world_to_base, base_to_arm))
-    lcm.publish(topic, TFMessage(world_to_base, arm_to_gripper))
+    lcm.publish(topic, TFMessage(transforms=[world_to_base, base_to_arm]))
+    lcm.publish(topic, TFMessage(transforms=[world_to_base, arm_to_gripper]))
     collector.wait()
 
     assert len(collector.results) == 2
 
     first, _ = collector.results[0]
     assert isinstance(first, TFMessage)
-    assert [t.child_frame_id for t in first] == ["base_link", "arm_link"]
+    assert [t.child_frame_id for t in first.transforms] == ["base_link", "arm_link"]
 
     second, _ = collector.results[1]
     assert isinstance(second, TFMessage)
-    assert [t.child_frame_id for t in second] == ["base_link", "gripper_link"]
+    assert [t.child_frame_id for t in second.transforms] == ["base_link", "gripper_link"]

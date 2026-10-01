@@ -15,49 +15,40 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-import importlib
-import pkgutil
 import re
 import time
+from types import SimpleNamespace
+from typing import cast
 
 import typer
 
 from dimos.core.global_config import global_config
 from dimos.core.transport import PubSubTransport
 from dimos.core.transport_factory import make_transport, transport_topic
+from dimos.message_codegen.registry import message_types
+from dimos.msgs.helpers import resolve_msg_type
 from dimos.protocol.pubsub.impl.lcmpubsub import LCMPubSubBase, Topic
 from dimos.protocol.pubsub.impl.zenohpubsub import Zenoh
 
-_modules_to_try = [
-    "dimos.msgs.geometry_msgs",
-    "dimos.msgs.nav_msgs",
-    "dimos.msgs.sensor_msgs",
-    "dimos.msgs.std_msgs",
-    "dimos.msgs.vision_msgs",
-    "dimos.msgs.tf2_msgs",
-]
-
 
 def _resolve_type(type_name: str) -> type:
-    for module_name in _modules_to_try:
-        try:
-            module = importlib.import_module(f"{module_name}.{type_name}")
-        except ImportError:
-            continue
-        if hasattr(module, type_name):
-            return getattr(module, type_name)  # type: ignore[no-any-return]
-
-    raise ValueError(f"Could not find type '{type_name}' in any known message modules")
+    types = message_types()
+    if type_name in types:
+        return cast("type", types[type_name])
+    matches = [value for name, value in types.items() if name.rsplit("/", 1)[-1] == type_name]
+    if len(matches) == 1:
+        return cast("type", matches[0])
+    if matches:
+        raise ValueError(f"Ambiguous message type {type_name!r}; use package/msg/Type")
+    raise ValueError(f"Unknown installed message type {type_name!r}")
 
 
 def _decode_typed_lcm_message(channel: str, data: bytes) -> object:
-    from dimos.msgs.helpers import resolve_msg_type
-
-    _, msg_name = channel.split("#", 1)  # e.g. "nav_msgs.Odometry"
+    _, msg_name = channel.split("#", 1)  # e.g. "nav_msgs/msg/Odometry"
     cls = resolve_msg_type(msg_name)
     if cls is None:
         raise ValueError(f"Could not resolve message type from channel: {channel}")
-    return cls.lcm_decode(data)
+    return cls.decode(data)
 
 
 def _listen_forever(listening_msg: str, on_stop: Callable[[], None] = lambda: None) -> None:
@@ -72,7 +63,7 @@ def _listen_forever(listening_msg: str, on_stop: Callable[[], None] = lambda: No
 
 
 def topic_echo(topic: str, type_name: str | None) -> None:
-    # Explicit mode (legacy): backend chosen by make_transport from global_config.
+    # Explicit message type: backend chosen by make_transport from global_config.
     if type_name is not None:
         msg_type = _resolve_type(type_name)
         transport: PubSubTransport[object] = make_transport(topic, msg_type)
@@ -94,7 +85,7 @@ def _topic_echo_inferred_lcm(topic: str) -> None:
 
     autoconf(check_only=True)
 
-    # Listen on /topic#pkg.Msg and decode from the msg_name suffix.
+    # Listen on /topic#pkg/msg/Type and decode from the msg_name suffix.
     bus = LCMPubSubBase()
     bus.start()  # starts threaded handle loop
 
@@ -107,7 +98,7 @@ def _topic_echo_inferred_lcm(topic: str) -> None:
     bus.l.subscribe(typed_pattern, on_msg)
 
     _listen_forever(
-        f"Listening on {topic} (inferring from typed LCM channels like '{topic}#pkg.Msg')... "
+        f"Listening on {topic} (inferring from typed LCM channels like '{topic}#pkg/msg/Type')... "
         "(Ctrl+C to stop)",
         bus.stop,
     )
@@ -118,37 +109,32 @@ def _topic_echo_inferred_zenoh(topic: str) -> None:
     bus = Zenoh()
     bus.start()
 
-    # Typed Zenoh keys embed the type as a trailing segment ("dimos/topic/pkg.Msg");
+    # Typed Zenoh keys embed the type as trailing segments ("dimos/topic/pkg/msg/Type");
     # a wildcard subscription decodes each message from that suffix. Untyped keys
     # don't resolve to a type and are skipped by the encoder. The ignore reflects the
     # pattern Topic vs the encoder's concrete-topic protocol (see lcmpubsub.py).
     bus.subscribe(Topic(f"{key}/**"), lambda msg, _topic: print(msg))  # type: ignore[arg-type]
 
     _listen_forever(
-        f"Listening on {topic} (inferring from typed Zenoh keys like '{key}/pkg.Msg')... "
+        f"Listening on {topic} (inferring from typed Zenoh keys like '{key}/pkg/msg/Type')... "
         "(Ctrl+C to stop)",
         bus.stop,
     )
 
 
 def _build_eval_context() -> dict[str, object]:
-    # The msgs packages are namespace packages (no __init__.py), so walk their
-    # submodules; each message file defines a class of the same name.
-    eval_context: dict[str, object] = {}
-    for package_name in _modules_to_try:
-        package = importlib.import_module(package_name)
-        for module_info in pkgutil.iter_modules(package.__path__):
-            name = module_info.name
-            if name.startswith("test_"):
-                continue
-            try:
-                submodule = importlib.import_module(f"{package_name}.{name}")
-            except ImportError:
-                continue
-            obj = getattr(submodule, name, None)
-            if obj is not None:
-                eval_context[name] = obj
-    return eval_context
+    types = message_types()
+    context: dict[str, object] = {}
+    packages: dict[str, SimpleNamespace] = {}
+    short_names: dict[str, list[type]] = {}
+    for name, cls in types.items():
+        package, _, short = name.split("/")
+        namespace = packages.setdefault(package, SimpleNamespace(msg=SimpleNamespace()))
+        setattr(namespace.msg, short, cls)
+        short_names.setdefault(short, []).append(cls)
+    context.update(packages)
+    context.update({name: classes[0] for name, classes in short_names.items() if len(classes) == 1})
+    return context
 
 
 def topic_send(topic: str, message_expr: str) -> None:

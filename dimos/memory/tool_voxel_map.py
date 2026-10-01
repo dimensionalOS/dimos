@@ -17,11 +17,11 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING
 
+from dimos_generated.sensor_msgs.msg import PointCloud2
 import pytest
 
 from dimos.mapping.voxels.module import VoxelMapTransformer
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.utils.data import get_data
 
 if TYPE_CHECKING:
@@ -51,11 +51,11 @@ def test_build_global_map(store: SqliteStore) -> None:
     frame_count = result.tags["frame_count"]
 
     assert frame_count == n_frames
-    assert len(global_map) > 0
+    assert global_map.width * global_map.height > 0
 
     print(
         lidar.summary(),
-        f"\n{frame_count} frames -> {len(global_map)} voxels"
+        f"\n{frame_count} frames -> {global_map.width * global_map.height} voxels"
         f"\n  transform: {t_transform:.2f}s ({t_transform / frame_count * 1000:.1f}ms/frame)"
         f"\n  total wall: {t_total:.2f}s",
     )

@@ -32,6 +32,8 @@ import threading
 import time
 from typing import Any
 
+from dimos_generated.geometry_msgs.msg import PoseStamped, Twist, Vector3
+from dimos_generated.sensor_msgs.msg import CameraInfo, Image, PointCloud2
 import numpy as np
 from PIL import Image as PILImage
 import zenoh
@@ -48,11 +50,9 @@ from dimos.evals.constants import (
     RAW_MAX_LINEAR_MPS,
     RAW_TOPIC_PREFIX,
 )
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.image import image_to_rgb
+from dimos.msgs.pointcloud import pointcloud_xyz
+from dimos.msgs.time import to_seconds
 
 
 def zenoh_config(endpoint: str, *, listen: bool) -> zenoh.Config:
@@ -104,19 +104,28 @@ class RawTopics:
 
 def jpeg_bytes(image: Image, quality: int = 90) -> bytes:
     buf = io.BytesIO()
-    PILImage.fromarray(image.to_rgb().as_numpy()).save(buf, format="JPEG", quality=quality)
+    PILImage.fromarray(image_to_rgb(image)).save(buf, format="JPEG", quality=quality)
     return buf.getvalue()
 
 
 def xyz_f32(cloud: PointCloud2) -> bytes:
-    points, _ = cloud.as_numpy()
+    points = pointcloud_xyz(cloud)
     return np.ascontiguousarray(points, dtype="<f4").tobytes()
 
 
 def odom_json(pose: PoseStamped) -> str:
-    p, q = pose.position, pose.orientation
+    p, q = pose.pose.position, pose.pose.orientation
     return json.dumps(
-        {"t": pose.ts, "x": p.x, "y": p.y, "z": p.z, "qx": q.x, "qy": q.y, "qz": q.z, "qw": q.w}
+        {
+            "t": to_seconds(pose.header.stamp),
+            "x": p.x,
+            "y": p.y,
+            "z": p.z,
+            "qx": q.x,
+            "qy": q.y,
+            "qz": q.z,
+            "qw": q.w,
+        }
     )
 
 
@@ -190,13 +199,17 @@ class RawRobotBridge(Module):
         self._stop = threading.Event()
         self._topics = RawTopics(self.config.endpoint, self.config.prefix, listen=True)
         q = self.config.jpeg_quality
-        self.color_image.subscribe(lambda img: self._put("camera/jpeg", jpeg_bytes(img, q), img.ts))
-        self.lidar.subscribe(lambda cloud: self._put("lidar/xyz_f32", xyz_f32(cloud), cloud.ts))
+        self.color_image.subscribe(
+            lambda img: self._put("camera/jpeg", jpeg_bytes(img, q), to_seconds(img.header.stamp))
+        )
+        self.lidar.subscribe(
+            lambda cloud: self._put("lidar/xyz_f32", xyz_f32(cloud), to_seconds(cloud.header.stamp))
+        )
         self.odom.subscribe(lambda pose: self._put("odom/json", odom_json(pose)))
         self.camera_info.subscribe(
             lambda info: self._put(
                 "camera_info/json",
-                json.dumps({"width": info.width, "height": info.height, "K": info.K}),
+                json.dumps({"width": info.width, "height": info.height, "K": list(info.k)}),
             )
         )
         self._cmd_sub = self._topics.subscribe("cmd_vel/json", self._on_command)
@@ -227,7 +240,7 @@ class RawRobotBridge(Module):
         while not self._stop.wait(1.0 / self.config.drive_hz):
             vx, vy, wz = self._deadman.current()
             if (vx, vy, wz) != (0.0, 0.0, 0.0):
-                self.cmd_vel.publish(Twist(linear=(vx, vy, 0.0), angular=(0.0, 0.0, wz)))
+                self.cmd_vel.publish(Twist(linear=Vector3(x=vx, y=vy), angular=Vector3(z=wz)))
                 active = True
             elif active:
                 self.cmd_vel.publish(Twist())

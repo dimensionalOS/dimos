@@ -15,22 +15,40 @@
 
 from typing import Any
 
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Vector3
+from dimos_generated.sensor_msgs.msg import CameraInfo, Image
+from dimos_generated.std_msgs.msg import Header
+from dimos_generated.tf2_msgs.msg import TFMessage
+from dimos_generated.vision_msgs.msg import Detection2DArray
 from reactivex import operators as ops
 from reactivex.observable import Observable
 
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
+from dimos.msgs.geometry import compose_transforms, pose_from_transform, transform_from_pose
+from dimos.msgs.time import to_seconds
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
-from dimos.types.timestamped import align_timestamped
+from dimos.types.timestamped import TimestampedData, align_timestamped
 from dimos.utils.reactive import backpressure
+
+
+def _timed_image(message: Image) -> TimestampedData[Image]:
+    return TimestampedData(message, to_seconds(message.header.stamp))
+
+
+def _timed_detections(message: Detection2DArray) -> TimestampedData[Detection2DArray]:
+    return TimestampedData(message, to_seconds(message.header.stamp))
+
+
+def _has_detections(message: Detection2DArray) -> bool:
+    return len(message.detections) > 0
+
+
+def _paired_detections(
+    pair: tuple[TimestampedData[Image], TimestampedData[Detection2DArray]],
+) -> ImageDetections2D:
+    return ImageDetections2D.from_ros_detection2d_array(pair[0].value, pair[1].value)
 
 
 class PersonTracker(Module):
@@ -61,8 +79,8 @@ class PersonTracker(Module):
             Vector3 position in camera_link frame coordinates (Z up, X forward)
         """
         # Extract camera intrinsics
-        fx, fy = camera_info.K[0], camera_info.K[4]
-        cx, cy = camera_info.K[2], camera_info.K[5]
+        fx, fy = camera_info.k[0], camera_info.k[4]
+        cx, cy = camera_info.k[2], camera_info.k[5]
 
         # Unproject pixel to normalized camera coordinates
         x_norm = (pixel[0] - cx) / fx
@@ -78,22 +96,18 @@ class PersonTracker(Module):
         # Optical: X right, Y down, Z forward
         # Link: X forward, Y left, Z up
         # Transformation: x_link = z_optical, y_link = -x_optical, z_link = -y_optical
-        return Vector3(z_optical, -x_optical, -y_optical)
+        return Vector3(x=z_optical, y=-x_optical, z=-y_optical)
 
     def detections_stream(self) -> Observable[ImageDetections2D]:
         return backpressure(
             align_timestamped(
-                self.color_image.pure_observable(),
+                self.color_image.pure_observable().pipe(ops.map(_timed_image)),
                 self.detections.pure_observable().pipe(
-                    ops.filter(lambda d: d.detections_length > 0)  # type: ignore[attr-defined]
+                    ops.filter(_has_detections), ops.map(_timed_detections)
                 ),
                 match_tolerance=0.0,
                 buffer_size=2.0,
-            ).pipe(
-                ops.map(
-                    lambda pair: ImageDetections2D.from_ros_detection2d_array(*pair)  # type: ignore[arg-type, misc]
-                )
-            )
+            ).pipe(ops.map(_paired_detections))
         )
 
     @rpc
@@ -112,17 +126,18 @@ class PersonTracker(Module):
         vector = self.center_to_3d(target.center_bbox, self.camera_info, 2.0)
 
         pose_in_camera = PoseStamped(
-            ts=detections2D.ts,
-            position=vector,
-            frame_id="camera_link",
+            header=Header(frame_id="camera_link", stamp=detections2D.image.header.stamp),
+            pose=Pose(
+                position=Point(x=vector.x, y=vector.y, z=vector.z), orientation=Quaternion(w=1)
+            ),
         )
 
         tf_world_to_camera = self.tfbuffer.get("world", "camera_link", detections2D.ts, 5.0)
         if not tf_world_to_camera:
             return
 
-        tf_camera_to_target = Transform.from_pose("target", pose_in_camera)
-        tf_world_to_target = tf_world_to_camera + tf_camera_to_target
-        pose_in_world = tf_world_to_target.to_pose(ts=detections2D.ts)
+        tf_camera_to_target = transform_from_pose(pose_in_camera, child_frame_id="target")
+        tf_world_to_target = compose_transforms(tf_world_to_camera, tf_camera_to_target)
+        pose_in_world = pose_from_transform(tf_world_to_target)
 
         self.target.publish(pose_in_world)

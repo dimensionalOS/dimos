@@ -143,11 +143,13 @@ To pick, hand `pick_object` an `object_id` from that scan. Choose the target by
 where its point cloud actually is rather than by name:
 
 ```python skip
+from dimos.msgs.pointcloud import pointcloud_xyz
+
 scene = app.ObjectSceneRegistrationModule
 
 for obj in scan.metadata["objects"]:
     cloud = scene.get_object_pointcloud_by_object_id(obj["object_id"])
-    print(obj, cloud.points_f32().mean(axis=0) if cloud else None)
+    print(obj, pointcloud_xyz(cloud).mean(axis=0) if cloud is not None else None)
 
 # the bottle sits at roughly (0.58, 0.19); pick whichever id landed there
 pick = app.PickAndPlaceModule.pick_object("<object_id>")

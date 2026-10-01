@@ -23,17 +23,15 @@ import threading
 import time
 from typing import Any
 
+from dimos_generated.geometry_msgs.msg import PoseStamped, TwistStamped
+from dimos_generated.nav_msgs.msg import Odometry
+from dimos_generated.std_msgs.msg import Int32
+from dimos_generated.tf2_msgs.msg import TFMessage
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
-from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.msgs.std_msgs.Int32 import Int32
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.logging_config import setup_logger
 
 from .b1_command import B1Command
@@ -191,7 +189,7 @@ class B1ConnectionModule(Module):
         This is called automatically when messages arrive on cmd_vel input.
         """
         # Extract Twist from TwistStamped
-        twist = Twist(linear=twist_stamped.linear, angular=twist_stamped.angular)
+        twist = twist_stamped.twist
 
         logger.debug(
             f"Received cmd_vel: linear=({twist.linear.x:.3f}, {twist.linear.y:.3f}, {twist.linear.z:.3f}), angular=({twist.angular.x:.3f}, {twist.angular.y:.3f}, {twist.angular.z:.3f})"
@@ -309,10 +307,8 @@ class B1ConnectionModule(Module):
         """
         if self.odom_pose:
             pose_stamped = PoseStamped(
-                ts=msg.ts,
-                frame_id=msg.frame_id,
-                position=msg.pose.pose.position,
-                orientation=msg.pose.pose.orientation,
+                header=msg.header,
+                pose=msg.pose.pose,
             )
             self.odom_pose.publish(pose_stamped)
 

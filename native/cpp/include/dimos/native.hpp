@@ -8,7 +8,7 @@
 #include <cstdlib>
 
 #include "dimos/native/config.hpp"
-#include "dimos/native/lcm_codec.hpp"
+#include "dimos/native/cdr_codec.hpp"
 #include "dimos/native/lcm_transport.hpp"
 #include "dimos/native/log.hpp"
 #include "dimos/native/module.hpp"

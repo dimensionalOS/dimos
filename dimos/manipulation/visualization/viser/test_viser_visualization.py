@@ -19,7 +19,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from dimos.msgs.time import duration_from_seconds, header_now
+
 pytest.importorskip("viser", reason="Viser optional dependency is not installed")
+
+from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
@@ -34,9 +39,6 @@ from dimos.manipulation.visualization.viser.animation import (
     scaled_frame_delays,
 )
 from dimos.manipulation.visualization.viser.visualizer import ViserManipulationVisualizer
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.robot.assets.model import RobotModel
 
 
@@ -69,8 +71,9 @@ def test_visualizer_builds_full_model_preview_from_selected_canonical_joints() -
     visualizer._model_config = _model()
     visualizer._current_state = JointState(name=["left/j1", "right/j1"], position=[0.1, 0.2])
     trajectory = JointTrajectory(
+        header=header_now(),
         joint_names=["right/j1"],
-        points=[TrajectoryPoint(positions=[0.8], time_from_start=1.0)],
+        points=[JointTrajectoryPoint(positions=[0.8], time_from_start=duration_from_seconds(1.0))],
     )
     preview = visualizer._raw_preview_animation(trajectory)
     assert preview == PreviewAnimation(("left/j1", "right/j1"), (PreviewFrame(1.0, (0.1, 0.8)),))
@@ -82,8 +85,13 @@ def test_visualizer_rejects_unknown_or_duplicate_trajectory_joints() -> None:
     visualizer._current_state = JointState(name=["left/j1", "right/j1"], position=[0.1, 0.2])
     for names in (["unknown"], ["left/j1", "left/j1"]):
         trajectory = JointTrajectory(
+            header=header_now(),
             joint_names=names,
-            points=[TrajectoryPoint(positions=[0.0] * len(names), time_from_start=1.0)],
+            points=[
+                JointTrajectoryPoint(
+                    positions=[0.0] * len(names), time_from_start=duration_from_seconds(1.0)
+                )
+            ],
         )
         assert visualizer._raw_preview_animation(trajectory) is None
 

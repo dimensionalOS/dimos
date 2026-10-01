@@ -19,13 +19,15 @@ warnings.filterwarnings("ignore", message="Cython evaluation.*unavailable", cate
 
 from functools import cached_property
 
+from dimos_generated.sensor_msgs.msg import Image
 import torch
 import torch.nn.functional as functional
 from torchreid import utils as torchreid_utils
 
 from dimos.models.base import LocalModel
 from dimos.models.embedding.base import Embedding, EmbeddingModel, EmbeddingModelConfig
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.image import image_to_bgr
+from dimos.msgs.time import to_seconds
 from dimos.utils.data import get_data
 
 
@@ -60,7 +62,7 @@ class TorchReIDModel(EmbeddingModel, LocalModel):
         Returns embeddings as torch.Tensor on device for efficient GPU comparisons.
         """
         # Convert to numpy arrays - torchreid expects numpy arrays or file paths
-        np_images = [img.to_opencv() for img in images]
+        np_images = [image_to_bgr(img) for img in images]
 
         # Extract features
         with torch.inference_mode():
@@ -78,7 +80,7 @@ class TorchReIDModel(EmbeddingModel, LocalModel):
         # Create embeddings (keep as torch.Tensor on device)
         embeddings = []
         for i, feat in enumerate(features_tensor):
-            timestamp = images[i].ts
+            timestamp = to_seconds(images[i].header.stamp)
             embeddings.append(Embedding(vector=feat, timestamp=timestamp))
 
         return embeddings[0] if len(images) == 1 else embeddings

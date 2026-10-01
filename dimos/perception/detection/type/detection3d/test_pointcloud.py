@@ -15,6 +15,8 @@
 import numpy as np
 import pytest
 
+from dimos.msgs.pointcloud import pointcloud_xyz
+
 pytestmark = pytest.mark.self_hosted
 
 
@@ -60,10 +62,10 @@ def test_detection3dpc(detection3dpc) -> None:
 
     # def test_point_cloud_properties(detection3dpc):
     """Test point cloud data and boundaries."""
-    points, _ = detection3dpc.pointcloud.as_numpy()
+    points = pointcloud_xyz(detection3dpc.pointcloud)
     assert len(points) > 60
-    assert detection3dpc.pointcloud.frame_id == "world", (
-        f"Expected frame_id 'world', got '{detection3dpc.pointcloud.frame_id}'"
+    assert detection3dpc.pointcloud.header.frame_id == "world", (
+        f"Expected frame_id 'world', got '{detection3dpc.pointcloud.header.frame_id}'"
     )
 
     min_pt = np.min(points, axis=0)
@@ -85,9 +87,9 @@ def test_detection3dpc(detection3dpc) -> None:
 
     # def test_detection_pose(detection3dpc):
     """Test detection pose and frame information."""
-    assert detection3dpc.pose.x == pytest.approx(-3.327, abs=0.1)
-    assert detection3dpc.pose.y == pytest.approx(-0.202, abs=0.1)
-    assert detection3dpc.pose.z == pytest.approx(0.160, abs=0.1)
-    assert detection3dpc.pose.frame_id == "world", (
-        f"Expected frame_id 'world', got '{detection3dpc.pose.frame_id}'"
+    assert detection3dpc.pose.pose.position.x == pytest.approx(-3.327, abs=0.1)
+    assert detection3dpc.pose.pose.position.y == pytest.approx(-0.202, abs=0.1)
+    assert detection3dpc.pose.pose.position.z == pytest.approx(0.160, abs=0.1)
+    assert detection3dpc.pose.header.frame_id == "world", (
+        f"Expected frame_id 'world', got '{detection3dpc.pose.header.frame_id}'"
     )

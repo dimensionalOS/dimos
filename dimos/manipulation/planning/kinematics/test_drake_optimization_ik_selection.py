@@ -17,6 +17,9 @@ from __future__ import annotations
 from contextlib import contextmanager
 from pathlib import Path
 
+from dimos_generated.geometry_msgs.msg import Pose, PoseStamped
+from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 
 from dimos.manipulation.planning.groups.models import PlanningGroup
@@ -31,8 +34,6 @@ from dimos.manipulation.planning.spec.joint_space import (
 )
 from dimos.manipulation.planning.spec.models import IKResult
 from dimos.manipulation.planning.spec.validation import PreparedRobotModel
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import LoadedRobotModel, RobotModel
 
 
@@ -43,10 +44,8 @@ class FakeWorld:
             joint_names=["arm/base", "arm/shoulder", "arm/elbow", "arm/wrist"],
         )
         self.current_state = JointState(
-            {
-                "name": ["arm/base", "arm/shoulder", "arm/elbow", "arm/wrist"],
-                "position": [1.0, 2.0, 3.0, 4.0],
-            }
+            name=["arm/base", "arm/shoulder", "arm/elbow", "arm/wrist"],
+            position=[1.0, 2.0, 3.0, 4.0],
         )
         self.collision_checked_state: JointState | None = None
         self.prepared = PreparedRobotModel(
@@ -96,10 +95,8 @@ def test_solve_pose_targets_uses_group_tip_locks_seed_fallback_and_filters(monke
         return IKResult(
             status=IKStatus.SUCCESS,
             joint_state=JointState(
-                {
-                    "name": ["arm/base", "arm/shoulder", "arm/elbow", "arm/wrist"],
-                    "position": [10.0, 20.0, 30.0, 40.0],
-                }
+                name=["arm/base", "arm/shoulder", "arm/elbow", "arm/wrist"],
+                position=[10.0, 20.0, 30.0, 40.0],
             ),
             position_error=0.0,
             orientation_error=0.0,
@@ -110,8 +107,8 @@ def test_solve_pose_targets_uses_group_tip_locks_seed_fallback_and_filters(monke
 
     result = DrakeOptimizationIK().solve_pose_targets(
         world=world,  # type: ignore[arg-type]
-        pose_targets={group: PoseStamped()},
-        seed=JointState({"name": ["arm/shoulder"], "position": [22.0]}),
+        pose_targets={group: PoseStamped(header=Header(frame_id=""), pose=Pose())},
+        seed=JointState(name=["arm/shoulder"], position=[22.0]),
         check_collision=False,
         max_attempts=1,
     )

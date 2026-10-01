@@ -35,17 +35,17 @@ const IMAGE: ChannelSpec = {
   requiredScope: null,
 };
 
-// A *.lcm.v1 channel decodes from the schema in its params; one without a
+// A *.cdr.v1 channel decodes from the schema in its params; one without a
 // usable schema has no decoder at all.
-const LCM_POSE: ChannelSpec = {
+const CDR_POSE: ChannelSpec = {
   ...ODOM,
-  ch: "lcm_pose",
-  encoding: "geometry_msgs.PoseStamped.lcm.v1",
+  ch: "cdr_pose",
+  encoding: "t/msg/P.cdr.v1",
   params: {
-    lcm: { type: "t.P", fp: "0011223344556677", structs: { "t.P": [["x", "double", null]] } },
+    cdr: { type: "t/msg/P", definition: "float64 x" },
   },
 };
-const LCM_BROKEN: ChannelSpec = { ...ODOM, ch: "lcm_bad", encoding: "t.Q.lcm.v1" };
+const CDR_BROKEN: ChannelSpec = { ...ODOM, ch: "cdr_bad", encoding: "t/msg/Q.cdr.v1" };
 
 function mf(channels: ChannelSpec[], panels: PanelSpec[] = []): Manifest {
   return { version: 1, channels, panels, layout: null, pages: [] };
@@ -107,13 +107,13 @@ describe("App session states", () => {
   const switchButton = () => container.querySelector<HTMLElement>('[data-testid="switch-robot"]');
   const panel = () => container.querySelector('[data-testid="panel-cam"]');
 
-  it("shows *.lcm.v1 rows from their manifest schema, not a registered decoder", () => {
+  it("shows *.cdr.v1 rows from their manifest schema, not a registered decoder", () => {
     act(() => {
       status.update({ watchedRobot: ROBOT, robots: [ROBOT] });
-      status.update({ manifest: mf([LCM_POSE, LCM_BROKEN]) });
+      status.update({ manifest: mf([CDR_POSE, CDR_BROKEN]) });
       channels.ingest(
-        "lcm_pose",
-        { ch: "lcm_pose", seq: 3, ts: 0.3, delivery: "reliable" },
+        "cdr_pose",
+        { ch: "cdr_pose", seq: 3, ts: 0.3, delivery: "reliable" },
         { x: 1.5 },
         true,
         "{x: 1.5}",
@@ -121,12 +121,12 @@ describe("App session states", () => {
       channels.publishUi();
     });
     view("channels");
-    expect(container.querySelector('[data-testid="ch-lcm_pose-seq"]')!.textContent).toBe("3");
-    expect(container.querySelector('[data-testid="ch-lcm_pose-value"]')!.textContent).toContain(
+    expect(container.querySelector('[data-testid="ch-cdr_pose-seq"]')!.textContent).toBe("3");
+    expect(container.querySelector('[data-testid="ch-cdr_pose-value"]')!.textContent).toContain(
       "{x: 1.5}",
     );
-    expect(container.querySelector('[data-testid="ch-lcm_bad-value"]')!.textContent).toContain(
-      "no decoder for t.Q.lcm.v1",
+    expect(container.querySelector('[data-testid="ch-cdr_bad-value"]')!.textContent).toContain(
+      "no decoder for t/msg/Q.cdr.v1",
     );
   });
 

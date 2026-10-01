@@ -25,9 +25,11 @@ stdin JSON.
 from __future__ import annotations
 
 import os
-import time
 from typing import TYPE_CHECKING
 
+from dimos_generated.nav_msgs.msg import Odometry
+from dimos_generated.sensor_msgs.msg import PointCloud2
+from dimos_generated.tf2_msgs.msg import TFMessage
 from pydantic import Field
 from reactivex.disposable import Disposable
 
@@ -47,12 +49,7 @@ from dimos.hardware.sensors.lidar.livox.ports import (
     SDK_POINT_DATA_PORT,
     SDK_PUSH_MSG_PORT,
 )
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.msgs.geometry import transform_from_odometry
 from dimos.spec import perception
 
 
@@ -141,17 +138,7 @@ class FastLio2(NativeModule, perception.Lidar, perception.Odometry):
         )
 
     def _on_odom_for_tf(self, msg: Odometry) -> None:
-        self.tf.publish(
-            TFMessage(
-                Transform(
-                    frame_id=self.frame_id,
-                    child_frame_id=self.config.sensor_frame_id,
-                    translation=Vector3(msg.pose.position),
-                    rotation=Quaternion(msg.pose.orientation),
-                    ts=msg.ts or time.time(),
-                )
-            )
-        )
+        self.tf.publish(TFMessage(transforms=[transform_from_odometry(msg)]))
 
     @rpc
     def stop(self) -> None:

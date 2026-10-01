@@ -41,8 +41,8 @@ impl RecordingStoreConfig {
 /// One ordered observation ready for durable storage.
 pub struct Observation {
     pub stream: Arc<StreamConfig>,
-    pub source_ts: f64,
-    pub reception_ts: f64,
+    pub source_ts: i64,
+    pub reception_ts: i64,
     pub data: Vec<u8>,
 }
 

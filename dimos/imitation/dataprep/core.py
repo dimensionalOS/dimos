@@ -31,11 +31,13 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
+from dimos_generated.sensor_msgs.msg import CompressedImage, Image
 import numpy as np
 from numpy.typing import NDArray
 from pydantic import BaseModel, ConfigDict, Field
 
 from dimos.constants import STATE_DIR
+from dimos.msgs.image import image_from_compressed, image_view
 from dimos.protocol.service.spec import BaseConfig
 
 if TYPE_CHECKING:
@@ -144,7 +146,8 @@ def resolve_field(msg: Any, ref: StreamField) -> NDArray[Any]:
     Single source of truth for obs/action construction across train and
     live inference. Behavior:
       - `ref.field is None`: best-effort coerce the whole message
-        (Image → `.data`, ndarray pass-through, list/tuple → asarray).
+        (generated Image → pixel view, CompressedImage → decoded pixels,
+        ndarray pass-through, list/tuple → asarray).
       - `ref.field` set: `getattr(msg, ref.field)` (or `msg[ref.field]`
         for dict payloads) then coerce.
     """
@@ -155,10 +158,14 @@ def resolve_field(msg: Any, ref: StreamField) -> NDArray[Any]:
     else:
         value = getattr(msg, ref.field)
 
+    if isinstance(value, Image):
+        return image_view(value)
+    if isinstance(value, CompressedImage):
+        return image_view(image_from_compressed(value))
     if isinstance(value, np.ndarray):
         return value
     if hasattr(value, "data") and isinstance(value.data, np.ndarray):
-        # e.g. Image → use its underlying ndarray
+        # Application payloads may expose an underlying ndarray.
         return value.data
     return np.asarray(value)
 

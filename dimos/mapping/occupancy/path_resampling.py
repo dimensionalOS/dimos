@@ -15,16 +15,13 @@
 
 import math
 
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos_generated.nav_msgs.msg import Path
 import numpy as np
 from scipy.ndimage import uniform_filter1d
 
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.nav_msgs.Path import Path
+from dimos.msgs.geometry import quaternion_from_euler
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.transform_utils import euler_to_quaternion
 
 logger = setup_logger()
 
@@ -48,27 +45,30 @@ def _add_orientations_to_path(path: Path, goal_orientation: Quaternion) -> None:
         next_pose = path.poses[i + 1]
 
         # Calculate direction to next point
-        dx = next_pose.position.x - current_pose.position.x
-        dy = next_pose.position.y - current_pose.position.y
+        dx = next_pose.pose.position.x - current_pose.pose.position.x
+        dy = next_pose.pose.position.y - current_pose.pose.position.y
 
         # Calculate yaw angle
         yaw = math.atan2(dy, dx)
 
         # Convert to quaternion (roll=0, pitch=0, yaw)
-        orientation = euler_to_quaternion(Vector3(0, 0, yaw))
-        current_pose.orientation = orientation
+        orientation = quaternion_from_euler(0, 0, yaw)
+        current_pose.pose.orientation = orientation
+        path.poses[i] = current_pose
 
     # Set last pose orientation
-    identity_quat = Quaternion(0, 0, 0, 1)
+    identity_quat = Quaternion(w=1)
+    last_pose = path.poses[-1]
     if goal_orientation != identity_quat:
         # Use the provided goal orientation if it's not the identity
-        path.poses[-1].orientation = goal_orientation
+        last_pose.pose.orientation = goal_orientation
     elif len(path.poses) > 1:
         # Use the previous pose's orientation
-        path.poses[-1].orientation = path.poses[-2].orientation
+        last_pose.pose.orientation = path.poses[-2].pose.orientation
     else:
         # Single pose with identity goal orientation
-        path.poses[-1].orientation = identity_quat
+        last_pose.pose.orientation = identity_quat
+    path.poses[-1] = last_pose
 
 
 # TODO: replace goal_pose with just goal_orientation
@@ -82,7 +82,7 @@ def simple_resample_path(path: Path, goal_pose: Pose, spacing: float) -> Path:
     Returns:
         A new Path with resampled poses
     """
-    if len(path) < 2 or spacing <= 0:
+    if len(path.poses) < 2 or spacing <= 0:
         return path
 
     resampled = []
@@ -95,8 +95,8 @@ def simple_resample_path(path: Path, goal_pose: Pose, spacing: float) -> Path:
         prev = path.poses[i - 1]
 
         # Calculate segment distance
-        dx = current.x - prev.x
-        dy = current.y - prev.y
+        dx = current.pose.position.x - prev.pose.position.x
+        dy = current.pose.position.y - prev.pose.position.y
         segment_length = (dx**2 + dy**2) ** 0.5
 
         if segment_length < 1e-10:
@@ -114,12 +114,11 @@ def simple_resample_path(path: Path, goal_pose: Pose, spacing: float) -> Path:
                 break
 
             # Create new pose
-            new_x = prev.x + dir_x * dist_along
-            new_y = prev.y + dir_y * dist_along
+            new_x = prev.pose.position.x + dir_x * dist_along
+            new_y = prev.pose.position.y + dir_y * dist_along
             new_pose = PoseStamped(
-                frame_id=path.frame_id,
-                position=[new_x, new_y, 0.0],
-                orientation=prev.orientation,  # Keep same orientation
+                header=path.header,
+                pose=Pose(position=Point(x=new_x, y=new_y), orientation=prev.pose.orientation),
             )
             resampled.append(new_pose)
 
@@ -133,10 +132,18 @@ def simple_resample_path(path: Path, goal_pose: Pose, spacing: float) -> Path:
     # Add last pose if not already there
     if len(path.poses) > 1:
         last = path.poses[-1]
-        if not resampled or (resampled[-1].x != last.x or resampled[-1].y != last.y):
+        if (
+            math.hypot(
+                resampled[-1].pose.position.x - last.pose.position.x,
+                resampled[-1].pose.position.y - last.pose.position.y,
+            )
+            <= 1e-10
+        ):
+            resampled[-1] = last
+        else:
             resampled.append(last)
 
-    ret = Path(frame_id=path.frame_id, poses=resampled)
+    ret = Path(header=path.header, poses=resampled)
 
     _add_orientations_to_path(ret, goal_pose.orientation)
 
@@ -165,21 +172,20 @@ def smooth_resample_path(
     """
 
     if len(path.poses) == 1:
-        p = path.poses[0].position
+        p = path.poses[0].pose.position
         o = goal_pose.orientation
         new_pose = PoseStamped(
-            frame_id=path.frame_id,
-            position=[p.x, p.y, p.z],
-            orientation=[o.x, o.y, o.z, o.w],
+            header=path.header,
+            pose=Pose(position=p, orientation=o),
         )
-        return Path(frame_id=path.frame_id, poses=[new_pose])
+        return Path(header=path.header, poses=[new_pose])
 
-    if len(path) < 2 or spacing <= 0:
+    if len(path.poses) < 2 or spacing <= 0:
         return path
 
     # Extract x, y coordinates from path
-    xs = np.array([p.x for p in path.poses])
-    ys = np.array([p.y for p in path.poses])
+    xs = np.array([p.pose.position.x for p in path.poses])
+    ys = np.array([p.pose.position.y for p in path.poses])
 
     # Remove duplicate consecutive points
     diffs = np.sqrt(np.diff(xs) ** 2 + np.diff(ys) ** 2)
@@ -246,13 +252,15 @@ def smooth_resample_path(
     resampled = []
     for i in range(len(sampled_x)):
         new_pose = PoseStamped(
-            frame_id=path.frame_id,
-            position=[float(sampled_x[i]), float(sampled_y[i]), 0.0],
-            orientation=Quaternion(0, 0, 0, 1),
+            header=path.header,
+            pose=Pose(
+                position=Point(x=float(sampled_x[i]), y=float(sampled_y[i])),
+                orientation=Quaternion(w=1),
+            ),
         )
         resampled.append(new_pose)
 
-    ret = Path(frame_id=path.frame_id, poses=resampled)
+    ret = Path(header=path.header, poses=resampled)
 
     _add_orientations_to_path(ret, goal_pose.orientation)
 

@@ -22,10 +22,10 @@ import pytest
 
 pytest.importorskip("zenoh")
 
+from dimos_generated.geometry_msgs.msg import Twist
+from dimos_generated.sensor_msgs.msg import Image
 import zenoh
 
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.sensor_msgs.Image import Image
 from dimos.protocol.pubsub.impl.lcmpubsub import Topic as LCMTopic
 from dimos.protocol.pubsub.impl.zenohpubsub import (
     Topic,
@@ -152,7 +152,7 @@ class TestZenohPubSubBase:
     def test_concrete_subscription_passes_topic_through(self, pubsub, retry_until) -> None:
         received: list[Topic] = []
         event = threading.Event()
-        topic = Topic("dimos/test/passthrough", lcm_type=Twist)
+        topic = Topic("dimos/test/passthrough", msg_type=Twist)
 
         def callback(msg: bytes, t: Topic) -> None:
             received.append(t)
@@ -167,7 +167,7 @@ class TestZenohPubSubBase:
         # must not re-parse it into base+type on receive.
         received: list[Topic] = []
         event = threading.Event()
-        topic = Topic("dimos/test/geometry_msgs.Twist")
+        topic = Topic("dimos/test/geometry_msgs/msg/Twist")
 
         def callback(msg: bytes, t: Topic) -> None:
             received.append(t)
@@ -270,9 +270,9 @@ class TestTopicKeyExprConversion:
     """Tests for _topic_to_key_expr and _key_expr_to_topic round-trip."""
 
     def test_typed_topic_to_key_expr(self) -> None:
-        topic = Topic("dimos/cmd_vel", lcm_type=Twist)
+        topic = Topic("dimos/cmd_vel", msg_type=Twist)
         key = _topic_to_key_expr(topic)
-        assert key == "dimos/cmd_vel/geometry_msgs.Twist"
+        assert key == "dimos/cmd_vel/geometry_msgs/msg/Twist"
 
     def test_untyped_topic_to_key_expr(self) -> None:
         topic = Topic("dimos/data")
@@ -280,36 +280,36 @@ class TestTopicKeyExprConversion:
         assert key == "dimos/data"
 
     def test_key_expr_to_topic_with_known_type(self) -> None:
-        topic = _key_expr_to_topic("dimos/cmd_vel/geometry_msgs.Twist")
+        topic = _key_expr_to_topic("dimos/cmd_vel/geometry_msgs/msg/Twist")
         assert topic.topic == "dimos/cmd_vel"
-        assert topic.lcm_type is Twist
+        assert topic.msg_type is Twist
 
     def test_key_expr_to_topic_with_unknown_type(self) -> None:
-        topic = _key_expr_to_topic("dimos/data/unknown.FooBar")
-        # Last segment doesn't resolve — entire string becomes the topic
-        assert topic.topic == "dimos/data/unknown.FooBar"
-        assert topic.lcm_type is None
+        topic = _key_expr_to_topic("dimos/data/unknown/msg/FooBar", default_msg_type=Twist)
+        # Unknown declared types cannot fall back to a subscriber codec
+        assert topic.topic == "dimos/data"
+        assert topic.msg_type is None
 
     def test_key_expr_to_topic_with_no_slash(self) -> None:
         topic = _key_expr_to_topic("simple_topic")
         assert topic.topic == "simple_topic"
-        assert topic.lcm_type is None
+        assert topic.msg_type is None
 
     def test_key_expr_to_topic_uses_default_type(self) -> None:
-        topic = _key_expr_to_topic("dimos/data", default_lcm_type=Twist)
+        topic = _key_expr_to_topic("dimos/data", default_msg_type=Twist)
         assert topic.topic == "dimos/data"
-        assert topic.lcm_type is Twist
+        assert topic.msg_type is Twist
 
     def test_round_trip_typed(self) -> None:
-        original = Topic("dimos/color_image", lcm_type=Image)
+        original = Topic("dimos/color_image", msg_type=Image)
         key = _topic_to_key_expr(original)
         reconstructed = _key_expr_to_topic(key)
         assert reconstructed.topic == original.topic
-        assert reconstructed.lcm_type is original.lcm_type
+        assert reconstructed.msg_type is original.msg_type
 
     def test_round_trip_untyped(self) -> None:
         original = Topic("dimos/gps_location")
         key = _topic_to_key_expr(original)
         reconstructed = _key_expr_to_topic(key)
         assert reconstructed.topic == original.topic
-        assert reconstructed.lcm_type is None
+        assert reconstructed.msg_type is None

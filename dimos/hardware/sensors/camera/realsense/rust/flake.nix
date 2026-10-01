@@ -11,7 +11,7 @@
       # Also works when NativeModule builds from a regular Python environment.
       # Use the Nix compiler/linker so libc matches the camera libraries.
       devShells = forAll (pkgs: {
-        default = pkgs.mkShell { packages = [ pkgs.cargo pkgs.rustc pkgs.clippy pkgs.librealsense pkgs.pkg-config ]; };
+        default = pkgs.mkShell { packages = [ pkgs.python3 pkgs.cargo pkgs.rustc pkgs.clippy pkgs.librealsense pkgs.pkg-config ]; };
       });
     };
 }

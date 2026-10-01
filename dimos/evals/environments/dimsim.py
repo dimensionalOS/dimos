@@ -23,9 +23,10 @@ from dimos.e2e_tests.dim_sim_client import DimSimClient
 from dimos.evals.environments.sim import Sim, SimConfig
 
 if TYPE_CHECKING:
+    from dimos_generated.geometry_msgs.msg import PoseStamped
+
     from dimos.e2e_tests.dimos_cli_call import DimosCliCall
     from dimos.memory.store.base import Store
-    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 
 class DimSimEnvironmentConfig(SimConfig):

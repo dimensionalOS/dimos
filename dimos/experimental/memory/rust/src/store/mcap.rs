@@ -15,14 +15,13 @@
 use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
 use std::io::BufWriter;
-use std::time::Duration;
 
 use anyhow::{Context, Result};
 use mcap::records::MessageHeader;
 use mcap::{Compression, WriteOptions, Writer};
 
 use super::{Observation, RecordingStore};
-use crate::StreamConfig;
+use crate::{Codec, StreamConfig};
 
 pub struct McapRecordingStore {
     writer: Writer<BufWriter<File>>,
@@ -32,9 +31,19 @@ pub struct McapRecordingStore {
 
 impl McapRecordingStore {
     pub fn open(path: &str, streams: &[StreamConfig], compression_threads: usize) -> Result<Self> {
+        for stream in streams {
+            anyhow::ensure!(
+                stream.codec == Codec::Cdr,
+                "MCAP requires cdr channels; use chunk compression instead of a payload wrapper"
+            );
+            anyhow::ensure!(
+                !stream.schema_name.is_empty() && !stream.schema_definition.is_empty(),
+                "MCAP requires a complete message schema"
+            );
+        }
         let file = File::create(path).with_context(|| format!("failed to create {path}"))?;
         let options = WriteOptions::new()
-            .profile("dimos")
+            .profile("ros2")
             .library("dimos-memory-recorder")
             .compression(Some(Compression::Zstd))
             .compression_threads(compression_threads.try_into().unwrap_or(u32::MAX));
@@ -53,7 +62,12 @@ impl McapRecordingStore {
                     "publish_time".to_string(),
                 ),
             ]);
-            let channel = writer.add_channel(0, &stream.name, stream.codec.id(), &metadata)?;
+            let schema = writer.add_schema(
+                &stream.schema_name,
+                "ros2msg",
+                stream.schema_definition.as_bytes(),
+            )?;
+            let channel = writer.add_channel(schema, &stream.name, "cdr", &metadata)?;
             channels.insert(stream.name.clone(), channel);
         }
         Ok(Self {
@@ -76,8 +90,10 @@ impl RecordingStore for McapRecordingStore {
                 &MessageHeader {
                     channel_id,
                     sequence: *sequence,
-                    log_time: timestamp_ns(observation.reception_ts),
-                    publish_time: timestamp_ns(observation.source_ts),
+                    log_time: u64::try_from(observation.reception_ts)
+                        .context("MCAP reception time precedes Unix epoch")?,
+                    publish_time: u64::try_from(observation.source_ts)
+                        .context("MCAP source time precedes Unix epoch")?,
                 },
                 &observation.data,
             )?;
@@ -90,14 +106,4 @@ impl RecordingStore for McapRecordingStore {
         self.writer.finish()?;
         Ok(())
     }
-}
-
-fn timestamp_ns(timestamp: f64) -> u64 {
-    if !timestamp.is_finite() || timestamp <= 0.0 {
-        return 0;
-    }
-    Duration::from_secs_f64(timestamp)
-        .as_nanos()
-        .try_into()
-        .unwrap_or(u64::MAX)
 }

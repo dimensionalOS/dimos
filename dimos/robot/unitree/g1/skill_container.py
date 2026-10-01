@@ -19,11 +19,11 @@ Dynamically generates skills for G1 humanoid robot including arm controls and mo
 
 import difflib
 
+from dimos_generated.geometry_msgs.msg import Twist, Vector3
+
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.core.module import Module
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.robot.unitree.g1.connection_spec import G1ConnectionSpec
 from dimos.utils.logging_config import setup_logger
 
@@ -89,7 +89,7 @@ class UnitreeG1SkillContainer(Module):
             duration: How long to move (seconds)
         """
 
-        twist = Twist(linear=Vector3(x, y, 0), angular=Vector3(0, 0, yaw))
+        twist = Twist(linear=Vector3(x=x, y=y), angular=Vector3(z=yaw))
         self._connection.move(twist, duration=duration)
         return f"Started moving with velocity=({x}, {y}, {yaw}) for {duration} seconds"
 

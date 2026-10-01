@@ -26,6 +26,7 @@ import threading
 import time
 from typing import Any
 
+from dimos_generated.geometry_msgs.msg import Vector3
 import pytest
 
 from dimos.cli.spy.core import (
@@ -39,13 +40,12 @@ from dimos.cli.spy.core import (
     default_sources,
     split_type_suffix,
 )
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.protocol.pubsub.impl.lcmpubsub import LCMPubSubBase, Topic
 from dimos.protocol.pubsub.impl.zenohpubsub import ZenohPubSubBase
 from dimos.protocol.service.zenohservice import ZenohSessionPool
 
-VEC = Vector3(1.0, 2.0, 3.0)
-VEC_BYTES = VEC.lcm_encode()
+VEC = Vector3(x=1.0, y=2.0, z=3.0)
+VEC_BYTES = VEC.encode()
 
 
 # TopicStats: pure, deterministic (injected timestamps, no sleeps)
@@ -106,10 +106,13 @@ def test_topic_stats_history_eviction_keeps_totals():
 
 
 def test_split_type_suffix():
-    assert split_type_suffix("/cmd_vel#geometry_msgs.Twist") == ("/cmd_vel", "geometry_msgs.Twist")
-    assert split_type_suffix("dimos/cmd_vel#geometry_msgs.Twist") == (
+    assert split_type_suffix("/cmd_vel#geometry_msgs/msg/Twist") == (
+        "/cmd_vel",
+        "geometry_msgs/msg/Twist",
+    )
+    assert split_type_suffix("dimos/cmd_vel#geometry_msgs/msg/Twist") == (
         "dimos/cmd_vel",
-        "geometry_msgs.Twist",
+        "geometry_msgs/msg/Twist",
     )
     assert split_type_suffix("/plain") == ("/plain", None)
 
@@ -198,7 +201,7 @@ def _assert_no_decode(monkeypatch):
     def boom(*a, **k):
         raise AssertionError("spy decoded a payload on the hot path")
 
-    monkeypatch.setattr(Vector3, "lcm_decode", staticmethod(boom))
+    monkeypatch.setattr(Vector3, "decode", staticmethod(boom))
 
 
 @pytest.fixture
@@ -324,15 +327,15 @@ def test_transport_spy_merges_sources_and_totals():
     spy.start()
     assert a.started and b.started
 
-    a.emit("/t#geometry_msgs.Twist", 10)
-    a.emit("/t#geometry_msgs.Twist", 10)
-    b.emit("dimos/t#geometry_msgs.Twist", 20)
+    a.emit("/t#geometry_msgs/msg/Twist", 10)
+    a.emit("/t#geometry_msgs/msg/Twist", 10)
+    b.emit("dimos/t#geometry_msgs/msg/Twist", 20)
     a.emit("/u", 5)
 
     snap = spy.snapshot()
-    assert snap[SpyKey("lcm", "/t#geometry_msgs.Twist")].total_msgs == 2
-    assert snap[SpyKey("lcm", "/t#geometry_msgs.Twist")].total_bytes == 20
-    assert snap[SpyKey("zenoh", "dimos/t#geometry_msgs.Twist")].total_msgs == 1
+    assert snap[SpyKey("lcm", "/t#geometry_msgs/msg/Twist")].total_msgs == 2
+    assert snap[SpyKey("lcm", "/t#geometry_msgs/msg/Twist")].total_bytes == 20
+    assert snap[SpyKey("zenoh", "dimos/t#geometry_msgs/msg/Twist")].total_msgs == 1
     assert snap[SpyKey("lcm", "/u")].total_bytes == 5
     assert spy.totals.total_msgs == 4
     assert spy.totals.total_bytes == 45
@@ -448,4 +451,4 @@ def test_fake_source_satisfies_protocol():
 def test_subscribe_decoded_is_not_implemented_in_v1():
     src = LCMSpySource()
     with pytest.raises(NotImplementedError):
-        src.subscribe_decoded("/x#geometry_msgs.Vector3", lambda m: None)
+        src.subscribe_decoded("/x#geometry_msgs/msg/Vector3", lambda m: None)

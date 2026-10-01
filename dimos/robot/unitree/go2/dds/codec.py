@@ -31,12 +31,11 @@ from dataclasses import dataclass, fields
 import json
 from typing import Any, Protocol, runtime_checkable
 
-from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.Imu import Imu
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos_generated.foxglove_msgs.msg import CompressedVideo
+from dimos_generated.nav_msgs.msg import Odometry
+from dimos_generated.sensor_msgs.msg import CompressedImage, Imu, PointCloud2
+
 from dimos.robot.unitree.go2.dds import cdr, ros
-from dimos.robot.unitree.go2.dds.msgs.CompressedVideo import CompressedVideo
 from dimos.robot.unitree.go2.dds.msgs.ControlEvent import ControlEvent
 from dimos.robot.unitree.go2.dds.msgs.HeightMap import HeightMap
 from dimos.robot.unitree.go2.dds.msgs.LowCmd import LowCmd
@@ -114,7 +113,7 @@ GO2_CODECS: dict[str, DdsCodec] = {
     "rt/utlidar/height_map_array": FnCodec(HeightMap, ros.decode_height_map),
     "rt/utlidar/imu": FnCodec(Imu, ros.decode_imu),
     "rt/utlidar/robot_odom": FnCodec(Odometry, ros.decode_odometry),
-    "rt/frontvideo": FnCodec(Image, ros.decode_compressed_image),
+    "rt/frontvideo": FnCodec(CompressedImage, ros.decode_compressed_image),
     "rt/frontvideo/h264": FnCodec(CompressedVideo, ros.decode_compressed_video),
     "rt/lowstate": CdrStructCodec(LowState),
     "rt/lowcmd": CdrStructCodec(LowCmd),

@@ -14,9 +14,10 @@
 
 from typing import Protocol
 
-from dimos.msgs.geometry_msgs.PoseArray import PoseArray
-from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos_generated.dimos_msgs.msg import GraspCandidateArray
+from dimos_generated.geometry_msgs.msg import PoseArray
+from dimos_generated.sensor_msgs.msg import PointCloud2
+
 from dimos.spec.utils import Spec
 
 

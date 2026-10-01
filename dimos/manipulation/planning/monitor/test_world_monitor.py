@@ -15,9 +15,14 @@
 from __future__ import annotations
 
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Vector3
+from dimos_generated.sensor_msgs.msg import Image, JointState
+from dimos_generated.std_msgs.msg import Header
+from dimos_generated.trajectory_msgs.msg import JointTrajectory
+from dimos_generated.vision_msgs.msg import BoundingBox3D, Detection3D
 import numpy as np
 import pytest
 from pytest_mock import MockerFixture
@@ -37,13 +42,9 @@ from dimos.manipulation.planning.spec.models import (
 )
 from dimos.manipulation.planning.spec.protocols import VisualizationSpec
 from dimos.manipulation.planning.utils import mesh_utils
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+from dimos.msgs.geometry import quaternion_from_matrix
+from dimos.msgs.pointcloud import pointcloud_from_xyz, pointcloud_to_open3d
+from dimos.msgs.time import header_now
 from dimos.perception.experimental.object import Object
 from dimos.robot.assets.model import RobotModel
 
@@ -134,7 +135,13 @@ class FakeWorld:
 
     def get_group_ee_pose(self, ctx, group_id):
         self.calls.append(("get_group_ee_pose", ctx, group_id))
-        return PoseStamped(position=Vector3(1, 2, 3), orientation=Quaternion([0, 0, 0, 1]))
+        return PoseStamped(
+            header=Header(frame_id=""),
+            pose=Pose(
+                position=Point(x=1, y=2, z=3),
+                orientation=Quaternion(x=0, y=0, z=0, w=1),
+            ),
+        )
 
     def get_link_pose(self, ctx, link_name):
         return []
@@ -224,7 +231,13 @@ def _robot_config() -> RobotModelConfig:
     )
     return RobotModelConfig(
         model=RobotModel.from_file(model_path),
-        base_pose=PoseStamped(position=Vector3(), orientation=Quaternion([0, 0, 0, 1])),
+        base_pose=PoseStamped(
+            header=Header(frame_id=""),
+            pose=Pose(
+                position=Point(),
+                orientation=Quaternion(x=0, y=0, z=0, w=1),
+            ),
+        ),
         joint_names=["j1", "j2"],
         base_link="base",
         planning_groups=[
@@ -292,7 +305,7 @@ def test_world_monitor_syncs_planning_scene_to_visualization() -> None:
 def test_world_monitor_forwards_raw_trajectory_preview_protocol() -> None:
     fake_viz = FakeViz()
     monitor = world_monitor_module.WorldMonitor(world=FakeWorld(), visualization=fake_viz)  # type: ignore[arg-type]
-    trajectory = JointTrajectory(joint_names=["j1"], points=[])
+    trajectory = JointTrajectory(header=header_now(), joint_names=["j1"], points=[])
 
     assert isinstance(fake_viz, VisualizationSpec)
     monitor.cancel_preview_animation()
@@ -327,7 +340,13 @@ def test_obstacle_monitor_routes_mutations_through_parent_world_monitor(
     obstacle_monitor = parent.obstacle_monitor
     assert obstacle_monitor is not None
 
-    pose = PoseStamped(position=Vector3(1, 2, 3), orientation=Quaternion([0, 0, 0, 1]))
+    pose = PoseStamped(
+        header=Header(frame_id=""),
+        pose=Pose(
+            position=Point(x=1, y=2, z=3),
+            orientation=Quaternion(x=0, y=0, z=0, w=1),
+        ),
+    )
     obstacle_monitor.on_collision_object(
         CollisionObjectMessage(
             id="source-id",
@@ -473,7 +492,7 @@ def test_group_ee_pose_uses_current_state_when_no_joint_state_is_provided() -> N
     set_calls = [call for call in fake_world.calls if call[0] == "set_joint_state"]
     assert set_calls[0][2].name == ["j1", "j2", "j3"]
     assert set_calls[0][2].position == [0.1, 0.2, 0.3]
-    assert pose.position.x == 1
+    assert pose.pose.position.x == 1
 
 
 def test_group_ee_pose_without_joint_state_rejects_stale_state(mocker) -> None:
@@ -501,7 +520,7 @@ def test_group_kinematics_with_full_state_does_not_require_current_state() -> No
     set_calls = [call for call in fake_world.calls if call[0] == "set_joint_state"]
     assert set_calls[0][2].name == ["j1", "j2", "j3"]
     assert set_calls[0][2].position == [0.1, 0.2, 0.3]
-    assert pose.position.x == 1
+    assert pose.pose.position.x == 1
 
 
 def test_group_kinematics_route_full_state_to_backend() -> None:
@@ -523,7 +542,7 @@ def test_group_kinematics_route_full_state_to_backend() -> None:
     assert set_calls[0][2].position == [0.9, 0.8, 0.3]
     assert set_calls[1][2].name == ["j1", "j2", "j3"]
     assert set_calls[1][2].position == [0.4, 0.3, 0.3]
-    assert pose.position.x == 1
+    assert pose.pose.position.x == 1
     assert jacobian.shape == (6, 2)
     assert ("get_group_ee_pose", "scratch", "manipulator") in fake_world.calls
     assert ("get_group_jacobian", "scratch", "manipulator") in fake_world.calls
@@ -587,7 +606,13 @@ def test_world_monitor_updates_obstacle_pose_with_backend_result(mocker: MockerF
     world = FakeWorld()
     viz = FakeViz()
     monitor = world_monitor_module.WorldMonitor(world=world, visualization=viz)  # type: ignore[arg-type]
-    pose = PoseStamped(position=Vector3(1, 2, 3), orientation=Quaternion([0, 0, 0, 1]))
+    pose = PoseStamped(
+        header=Header(frame_id=""),
+        pose=Pose(
+            position=Point(x=1, y=2, z=3),
+            orientation=Quaternion(x=0, y=0, z=0, w=1),
+        ),
+    )
     update = mocker.patch.object(world, "update_obstacle_pose", side_effect=[True, False])
 
     assert monitor.update_obstacle_pose("obstacle-id", pose) is True
@@ -608,7 +633,7 @@ def test_world_monitor_forwards_only_successful_complete_updates(
     obstacle = Obstacle(
         name="box",
         obstacle_type=ObstacleType.BOX,
-        pose=PoseStamped(),
+        pose=PoseStamped(header=Header(frame_id=""), pose=Pose()),
         dimensions=(1.0, 1.0, 1.0),
     )
     update = mocker.patch.object(world, "update_obstacle", side_effect=[True, False])
@@ -629,7 +654,13 @@ def test_obstacle_monitor_routes_complete_and_rejects_incomplete_updates(
     parent.start_obstacle_monitor()
     monitor = parent.obstacle_monitor
     assert monitor is not None
-    pose = PoseStamped(position=Vector3(1, 2, 3), orientation=Quaternion([0, 0, 0, 1]))
+    pose = PoseStamped(
+        header=Header(frame_id=""),
+        pose=Pose(
+            position=Point(x=1, y=2, z=3),
+            orientation=Quaternion(x=0, y=0, z=0, w=1),
+        ),
+    )
 
     monitor.on_collision_object(
         CollisionObjectMessage(
@@ -678,7 +709,13 @@ def test_obstacle_monitor_adds_complete_unknown_update_and_stops_on_failed_updat
     parent.start_obstacle_monitor()
     monitor = parent.obstacle_monitor
     assert monitor is not None
-    pose = PoseStamped(position=Vector3(1, 2, 3), orientation=Quaternion([0, 0, 0, 1]))
+    pose = PoseStamped(
+        header=Header(frame_id=""),
+        pose=Pose(
+            position=Point(x=1, y=2, z=3),
+            orientation=Quaternion(x=0, y=0, z=0, w=1),
+        ),
+    )
 
     monitor.on_collision_object(
         CollisionObjectMessage(
@@ -717,7 +754,13 @@ def test_world_monitor_clear_updates_world_tracking_and_survives_visualization_e
     monitor.start_obstacle_monitor()
     obstacle_monitor = monitor.obstacle_monitor
     assert obstacle_monitor is not None
-    pose = PoseStamped(position=Vector3(1, 2, 3), orientation=Quaternion([0, 0, 0, 1]))
+    pose = PoseStamped(
+        header=Header(frame_id=""),
+        pose=Pose(
+            position=Point(x=1, y=2, z=3),
+            orientation=Quaternion(x=0, y=0, z=0, w=1),
+        ),
+    )
     obstacle_monitor.on_collision_object(
         CollisionObjectMessage(
             id="source",
@@ -727,11 +770,14 @@ def test_world_monitor_clear_updates_world_tracking_and_survives_visualization_e
             dimensions=(1.0, 2.0, 3.0),
         )
     )
-    detection = SimpleNamespace(
+    detection = Detection3D(
         id="detection",
-        bbox=SimpleNamespace(
-            center=SimpleNamespace(position=Vector3(4, 5, 6), orientation=Quaternion([0, 0, 0, 1])),
-            size=Vector3(1, 1, 1),
+        bbox=BoundingBox3D(
+            center=Pose(
+                position=Point(x=4, y=5, z=6),
+                orientation=Quaternion(x=0, y=0, z=0, w=1),
+            ),
+            size=Vector3(x=1, y=1, z=1),
         ),
     )
     obstacle_monitor.on_detections([detection])  # type: ignore[arg-type]
@@ -794,7 +840,13 @@ def test_world_obstacle_monitor_rejects_invalid_add_and_handles_update_and_callb
     remove = mocker.patch.object(parent, "remove_obstacle", return_value=True)
     callback = mocker.Mock(side_effect=RuntimeError("callback failed"))
     obstacle_monitor.add_obstacle_callback(callback)
-    pose = PoseStamped(position=Vector3(1, 2, 3), orientation=Quaternion([0, 0, 0, 1]))
+    pose = PoseStamped(
+        header=Header(frame_id=""),
+        pose=Pose(
+            position=Point(x=1, y=2, z=3),
+            orientation=Quaternion(x=0, y=0, z=0, w=1),
+        ),
+    )
 
     obstacle_monitor.on_collision_object(CollisionObjectMessage(id="bad", operation="add"))
     assert obstacle_monitor.get_obstacle_count() == 0
@@ -829,17 +881,19 @@ def test_world_obstacle_monitor_detection_add_update_and_stale_cleanup(
     add = mocker.patch.object(parent, "add_obstacle", return_value="first-id")
     update = mocker.patch.object(parent, "update_obstacle_pose")
     remove = mocker.patch.object(parent, "remove_obstacle", return_value=False)
-    timestamps = iter([1.0, 1.0, 1.0, 1.0, 1.0, 10.0])
-    monkeypatch.setattr(
-        "dimos.manipulation.planning.monitor.world_obstacle_monitor.time.time",
-        lambda: next(timestamps, 10.0),
+    clock = mocker.patch(
+        "dimos.manipulation.planning.monitor.world_obstacle_monitor.time.time", return_value=1.0
     )
-    center = SimpleNamespace(position=Vector3(1, 2, 3), orientation=Quaternion([0, 0, 0, 1]))
-    bbox = SimpleNamespace(center=center, size=Vector3(1, 2, 3))
-    detection = SimpleNamespace(id="det-1", bbox=bbox)
+    center = Pose(
+        position=Point(x=1, y=2, z=3),
+        orientation=Quaternion(x=0, y=0, z=0, w=1),
+    )
+    bbox = BoundingBox3D(center=center, size=Vector3(x=1, y=2, z=3))
+    detection = Detection3D(id="det-1", bbox=bbox)
 
     obstacle_monitor.on_detections([detection])  # type: ignore[arg-type]
-    obstacle_monitor.on_detections([detection])  # type: ignore[arg-type]
+    obstacle_monitor.on_detections([detection])
+    clock.return_value = 10.0
     obstacle_monitor.on_detections([])
 
     assert add.call_count == 1
@@ -878,19 +932,21 @@ def test_mesh_obstacle_is_placed_at_the_hull_centroid_without_the_bbox_rotation(
     add_obstacle = mocker.patch.object(parent, "add_obstacle", return_value="parent-id")
 
     points = _tilted_box_cloud()
-    cloud = PointCloud2.from_numpy(points, frame_id="world")
+    cloud = pointcloud_from_xyz(points, header=Header(frame_id="world"))
     # Mirrors Object.from_detections with use_aabb=False: pose carries the
     # oriented-box center and rotation.
-    obb = cloud.pointcloud.get_oriented_bounding_box()
+    obb = pointcloud_to_open3d(cloud).get_oriented_bounding_box()
     obj = Object(
         object_id="tilted-box",
         name="box",
-        center=Vector3(obb.center),
-        size=Vector3(obb.extent),
+        center=Vector3(x=obb.center[0], y=obb.center[1], z=obb.center[2]),
+        size=Vector3(x=obb.extent[0], y=obb.extent[1], z=obb.extent[2]),
         pose=PoseStamped(
-            frame_id="world",
-            position=Vector3(obb.center),
-            orientation=Quaternion.from_rotation_matrix(np.asarray(obb.R)),
+            header=Header(frame_id="world"),
+            pose=Pose(
+                position=Point(x=obb.center[0], y=obb.center[1], z=obb.center[2]),
+                orientation=quaternion_from_matrix(np.asarray(obb.R)),
+            ),
         ),
         pointcloud=cloud,
         bbox=(0.0, 0.0, 1.0, 1.0),
@@ -910,23 +966,67 @@ def test_mesh_obstacle_is_placed_at_the_hull_centroid_without_the_bbox_rotation(
     centroid = points.mean(axis=0)
     assert obstacle.obstacle_type == ObstacleType.MESH
     np.testing.assert_allclose(
-        [obstacle.pose.position.x, obstacle.pose.position.y, obstacle.pose.position.z],
+        [
+            obstacle.pose.pose.position.x,
+            obstacle.pose.pose.position.y,
+            obstacle.pose.pose.position.z,
+        ],
         centroid,
         atol=1e-3,
     )
     np.testing.assert_allclose(
         [
-            obstacle.pose.orientation.x,
-            obstacle.pose.orientation.y,
-            obstacle.pose.orientation.z,
-            obstacle.pose.orientation.w,
+            obstacle.pose.pose.orientation.x,
+            obstacle.pose.pose.orientation.y,
+            obstacle.pose.pose.orientation.z,
+            obstacle.pose.pose.orientation.w,
         ],
         [0.0, 0.0, 0.0, 1.0],
         atol=1e-9,
     )
-    assert obstacle.pose.frame_id == "world"
+    assert obstacle.pose.header.frame_id == "world"
 
     # Teeth: the pose the old code used is a genuinely different placement, so
     # this cannot pass on the bug.
     assert np.linalg.norm(np.asarray(obb.center) - centroid) > 3e-3
-    assert abs(Quaternion.from_rotation_matrix(np.asarray(obb.R)).w) < 0.999
+    assert abs(quaternion_from_matrix(np.asarray(obb.R)).w) < 0.999
+
+
+@pytest.mark.parametrize("use_current_state", [False, True])
+def test_group_pose_preserves_joint_sample_stamp_and_backend_frame(use_current_state):
+    world = FakeWorld()
+    monitor = world_monitor_module.WorldMonitor(world=world)
+    monitor.load_model(_three_joint_reordered_group_config())
+    state = JointState(
+        header=Header(frame_id="encoder", stamp=Time(sec=1700000000, nanosec=123456789)),
+        name=["j1", "j2", "j3"],
+        position=[0.1, 0.2, 0.3],
+    )
+    if use_current_state:
+        monitor.start_state_monitor()
+        monitor.on_joint_state(state)
+    pose = monitor.get_group_ee_pose("manipulator", None if use_current_state else state)
+    assert pose.header.stamp == state.header.stamp
+    assert pose.header.frame_id == ""
+    pose.header.stamp.nanosec = 0
+    assert state.header.stamp.nanosec == 123456789
+
+
+def test_link_pose_preserves_joint_sample_stamp(mocker):
+    world = FakeWorld()
+    monitor = world_monitor_module.WorldMonitor(world=world)
+    monitor.load_model(_three_joint_reordered_group_config())
+    matrix = np.eye(4)
+    matrix[:3, 3] = [1, 2, 3]
+    mocker.patch.object(world, "get_link_pose", return_value=matrix)
+    state = JointState(
+        header=Header(stamp=Time(sec=-1, nanosec=987654321)),
+        name=["j1", "j2", "j3"],
+        position=[0.1, 0.2, 0.3],
+    )
+    pose = monitor.get_link_pose("ee", state)
+    assert pose is not None
+    assert pose.header == Header(frame_id="world", stamp=state.header.stamp)
+    assert pose.pose.position == Point(x=1, y=2, z=3)
+    pose.header.stamp.nanosec = 0
+    assert state.header.stamp.nanosec == 987654321

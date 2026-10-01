@@ -19,6 +19,9 @@ from __future__ import annotations
 from contextlib import nullcontext
 from pathlib import Path
 
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 
 from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupDefinition
@@ -31,15 +34,16 @@ from dimos.manipulation.planning.spec.joint_space import (
     JointSpace,
 )
 from dimos.manipulation.planning.spec.validation import PreparedRobotModel
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import LoadedRobotModel, RobotModel
 
 
 def _pose(x: float = 0.0) -> PoseStamped:
-    return PoseStamped(position=Vector3(x, 0.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0))
+    return PoseStamped(
+        header=Header(frame_id=""),
+        pose=Pose(
+            position=Point(x=x, y=0.0, z=0.0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+        ),
+    )
 
 
 def _group(tip_link: str | None = "tool") -> PlanningGroup:
@@ -93,7 +97,7 @@ class _World:
 
     def get_joint_state(self, ctx: object) -> JointState:
         return JointState(
-            {"name": ["arm/joint_a", "arm/joint_b", "arm/gripper"], "position": [0.0, 0.0, 0.9]}
+            name=["arm/joint_a", "arm/joint_b", "arm/gripper"], position=[0.0, 0.0, 0.9]
         )
 
     def set_joint_state(self, ctx: object, joint_state: JointState) -> None:
@@ -117,7 +121,7 @@ def test_solve_pose_targets_filters_to_group_and_uses_group_world_methods() -> N
         world=world,
         pose_targets={_group(): _pose()},
         seed=JointState(
-            {"name": ["arm/joint_a", "arm/joint_b", "arm/gripper"], "position": [0.0, 0.0, 0.9]}
+            name=["arm/joint_a", "arm/joint_b", "arm/gripper"], position=[0.0, 0.0, 0.9]
         ),
         max_attempts=1,
     )

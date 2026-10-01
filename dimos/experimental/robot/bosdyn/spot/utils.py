@@ -20,13 +20,15 @@ import math
 from pathlib import Path
 from typing import Any
 
+from dimos_generated.geometry_msgs.msg import Transform, TransformStamped, Vector3
+from dimos_generated.sensor_msgs.msg import CameraInfo, Image
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.camera_info import camera_info_from_intrinsics
+from dimos.msgs.geometry import compose_transforms, quaternion_from_euler
+from dimos.msgs.image import image_from_array, image_view
+from dimos.msgs.time import time_from_seconds
 from dimos.robot.assets.model import JointDescription, RobotModel
 from dimos.utils.logging_config import setup_logger
 
@@ -56,8 +58,12 @@ def decode_image(response: Any, frame_id: str, time_converter: Any) -> Image | N
         if decoded is None:
             logger.error(f"Failed to decode JPEG image from {frame_id}")
             return None
-        image_format = ImageFormat.GRAY if decoded.ndim == 2 else ImageFormat.BGR
-        return Image.from_numpy(decoded, format=image_format, frame_id=frame_id, ts=ts)
+        image_format = "mono8" if decoded.ndim == 2 else "bgr8"
+        return image_from_array(
+            decoded,
+            encoding=image_format,
+            header=Header(frame_id=frame_id, stamp=time_from_seconds(ts)),
+        )
 
     if shot.format != image_pb2.Image.FORMAT_RAW:
         logger.error(f"Unsupported Spot image encoding {shot.format} from {frame_id}")
@@ -74,21 +80,27 @@ def decode_image(response: Any, frame_id: str, time_converter: Any) -> Image | N
         if channels == 1
         else array.reshape(shot.rows, shot.cols, channels)
     )
-    return Image.from_numpy(array, format=image_format, frame_id=frame_id, ts=ts)
+    return image_from_array(
+        array, encoding=image_format, header=Header(frame_id=frame_id, stamp=time_from_seconds(ts))
+    )
 
 
-def joint_to_transform(joint: JointDescription) -> Transform:
-    return Transform(
-        translation=Vector3(*joint.origin_xyz),
-        rotation=Quaternion.from_euler(Vector3(*joint.origin_rpy)),
-        frame_id=joint.parent_link,
+def joint_to_transform(joint: JointDescription) -> TransformStamped:
+    return TransformStamped(
+        header=Header(frame_id=joint.parent_link),
         child_frame_id=joint.child_link,
+        transform=Transform(
+            translation=Vector3(
+                x=joint.origin_xyz[0], y=joint.origin_xyz[1], z=joint.origin_xyz[2]
+            ),
+            rotation=quaternion_from_euler(*joint.origin_rpy),
+        ),
     )
 
 
 def camera_mount_transforms(
     urdf_path: str | Path, base_frame_id: str, optical_frames: list[str]
-) -> list[Transform]:
+) -> list[TransformStamped]:
     """Compose each base_frame_id -> optical_frame extrinsic from the URDF's fixed joints.
 
     Walks the fixed-joint chain (base_link -> body -> {pos}_camera -> optical) up
@@ -98,7 +110,7 @@ def camera_mount_transforms(
     model = RobotModel.from_file(urdf_path).load()
     urdf_root = model.root_link
     joint_by_child = {joint.child_link: joint for joint in model.joints}
-    transforms: list[Transform] = []
+    transforms: list[TransformStamped] = []
     for optical_frame in optical_frames:
         chain: list[JointDescription] = []
         current = optical_frame
@@ -112,13 +124,13 @@ def camera_mount_transforms(
         edges = [joint_to_transform(joint) for joint in reversed(chain)]
         composed = edges[0]
         for edge in edges[1:]:
-            composed = composed + edge
-        composed.frame_id = base_frame_id
+            composed = compose_transforms(composed, edge)
+        composed.header.frame_id = base_frame_id
         transforms.append(composed)
     return transforms
 
 
-def roll_optical_frame(transform: Transform, quarter_turns: int) -> Transform:
+def roll_optical_frame(transform: TransformStamped, quarter_turns: int) -> TransformStamped:
     """Roll a camera's optical frame `quarter_turns` * 90° about its viewing (z) axis.
 
     Pairs with `rotate_image_quarter_turns`: rotating the image alone leaves the 3D
@@ -127,20 +139,18 @@ def roll_optical_frame(transform: Transform, quarter_turns: int) -> Transform:
     """
     if not quarter_turns:
         return transform
-    roll = Quaternion.from_euler(Vector3(0.0, 0.0, quarter_turns * math.pi / 2))
-    return Transform(
-        translation=transform.translation,
-        rotation=transform.rotation * roll,
-        frame_id=transform.frame_id,
+    roll = TransformStamped(
+        header=Header(frame_id=transform.child_frame_id),
         child_frame_id=transform.child_frame_id,
-        ts=transform.ts,
+        transform=Transform(rotation=quaternion_from_euler(0, 0, quarter_turns * math.pi / 2)),
     )
+    return compose_transforms(transform, roll)
 
 
 def rotate_image_quarter_turns(image: Image, quarter_turns: int) -> Image:
     """Rotate an Image by `quarter_turns` * 90° CCW (negative for CW)."""
-    rotated = np.rot90(image.data, k=quarter_turns)
-    return Image.from_numpy(rotated, format=image.format, frame_id=image.frame_id, ts=image.ts)
+    rotated = np.rot90(image_view(image), k=quarter_turns)
+    return image_from_array(rotated, encoding=image.encoding, header=image.header)
 
 
 def rotate_camera_info_quarter_turns(info: CameraInfo, quarter_turns: int) -> CameraInfo:
@@ -149,15 +159,15 @@ def rotate_camera_info_quarter_turns(info: CameraInfo, quarter_turns: int) -> Ca
     Each CCW quarter turn swaps the focal lengths and remaps the principal point so
     the intrinsics stay consistent with the rotated pixel grid (width/height swap).
     """
-    fx, fy, cx, cy = info.K[0], info.K[4], info.K[2], info.K[5]
+    fx, fy, cx, cy = info.k[0], info.k[4], info.k[2], info.k[5]
     width, height = info.width, info.height
     for _ in range(quarter_turns % 4):
         fx, fy = fy, fx
         cx, cy = cy, (width - 1) - cx
         width, height = height, width
-    return CameraInfo.from_intrinsics(
-        fx=fx, fy=fy, cx=cx, cy=cy, width=width, height=height, frame_id=info.frame_id
-    ).with_ts(info.ts)
+    return camera_info_from_intrinsics(
+        fx=fx, fy=fy, cx=cx, cy=cy, width=width, height=height, header=info.header
+    )
 
 
 def camera_info_from_response(response: Any, source_name: str, ts: float) -> CameraInfo | None:
@@ -166,30 +176,30 @@ def camera_info_from_response(response: Any, source_name: str, ts: float) -> Cam
     if not source.HasField("pinhole"):
         return None
     intrinsics = source.pinhole.intrinsics
-    info = CameraInfo.from_intrinsics(
+    info = camera_info_from_intrinsics(
         fx=intrinsics.focal_length.x,
         fy=intrinsics.focal_length.y,
         cx=intrinsics.principal_point.x,
         cy=intrinsics.principal_point.y,
         width=source.cols,
         height=source.rows,
-        frame_id=source_name,
+        header=Header(frame_id=source_name, stamp=time_from_seconds(ts)),
     )
-    return info.with_ts(ts)
+    return info
 
 
 def clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
 
 
-def raw_layout(pixel_format: int) -> tuple[Any, int, ImageFormat]:
+def raw_layout(pixel_format: int) -> tuple[Any, int, str]:
     from bosdyn.api import image_pb2  # type: ignore[import-not-found]
 
-    layouts: dict[int, tuple[Any, int, ImageFormat]] = {
-        image_pb2.Image.PIXEL_FORMAT_GREYSCALE_U8: (np.uint8, 1, ImageFormat.GRAY),
-        image_pb2.Image.PIXEL_FORMAT_GREYSCALE_U16: (np.uint16, 1, ImageFormat.GRAY16),
-        image_pb2.Image.PIXEL_FORMAT_DEPTH_U16: (np.uint16, 1, ImageFormat.DEPTH16),
-        image_pb2.Image.PIXEL_FORMAT_RGB_U8: (np.uint8, 3, ImageFormat.RGB),
-        image_pb2.Image.PIXEL_FORMAT_RGBA_U8: (np.uint8, 4, ImageFormat.RGBA),
+    layouts: dict[int, tuple[Any, int, str]] = {
+        image_pb2.Image.PIXEL_FORMAT_GREYSCALE_U8: (np.uint8, 1, "mono8"),
+        image_pb2.Image.PIXEL_FORMAT_GREYSCALE_U16: (np.uint16, 1, "mono16"),
+        image_pb2.Image.PIXEL_FORMAT_DEPTH_U16: (np.uint16, 1, "16UC1"),
+        image_pb2.Image.PIXEL_FORMAT_RGB_U8: (np.uint8, 3, "rgb8"),
+        image_pb2.Image.PIXEL_FORMAT_RGBA_U8: (np.uint8, 4, "rgba8"),
     }
-    return layouts.get(pixel_format, (None, 0, ImageFormat.GRAY))
+    return layouts.get(pixel_format, (None, 0, "mono8"))

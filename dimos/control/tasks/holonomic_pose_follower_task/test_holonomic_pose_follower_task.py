@@ -21,6 +21,9 @@ from __future__ import annotations
 import math
 from types import SimpleNamespace
 
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Twist, Vector3
+from dimos_generated.nav_msgs.msg import Path
+from dimos_generated.std_msgs.msg import Float32, Header
 import pytest
 
 from dimos.control.benchmarking.paths import (
@@ -42,12 +45,7 @@ from dimos.control.tasks.holonomic_pose_follower_task.holonomic_pose_follower_ta
     DEFAULT_ARTIFACT_PATH,
     create_task,
 )
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.nav_msgs.Path import Path
-from dimos.msgs.std_msgs.Float32 import Float32
+from dimos.msgs.geometry import quaternion_euler, quaternion_from_euler
 from dimos.utils.trigonometry import angle_diff
 
 _JOINTS = ["go2/vx", "go2/vy", "go2/wz"]
@@ -56,8 +54,10 @@ _DT = 0.1
 
 def _pose(x=0.0, y=0.0, yaw=0.0):
     return PoseStamped(
-        position=Vector3(x, y, 0.0),
-        orientation=Quaternion.from_euler(Vector3(0.0, 0.0, yaw)),
+        header=Header(frame_id=""),
+        pose=Pose(
+            position=Point(x=x, y=y, z=0.0), orientation=quaternion_from_euler(0.0, 0.0, yaw)
+        ),
     )
 
 
@@ -106,7 +106,9 @@ def _run_closed_loop(task, path, max_ticks=2400, on_tick=None):
             TrajectoryTick(
                 t=k * _DT,
                 pose=_pose(plant.x, plant.y, plant.yaw),
-                cmd_twist=Twist(linear=Vector3(vx, vy, 0.0), angular=Vector3(0.0, 0.0, wz)),
+                cmd_twist=Twist(
+                    linear=Vector3(x=vx, y=vy, z=0.0), angular=Vector3(x=0.0, y=0.0, z=wz)
+                ),
                 actual_twist=Twist(),
             )
         )
@@ -206,7 +208,7 @@ def test_strafes_holding_commanded_yaw():
     task = _task()
     plant, executed = _run_closed_loop(task, strafe_line(length=2.0))
     assert executed.arrived
-    max_yaw = max(abs(t.pose.orientation.euler[2]) for t in executed.ticks)
+    max_yaw = max(abs(quaternion_euler(t.pose.pose.orientation)[2]) for t in executed.ticks)
     assert max_yaw < 0.1, "robot rotated instead of strafing"
     assert plant.y == pytest.approx(2.0, abs=0.25)
     # The motion was carried by the lateral channel.
@@ -221,7 +223,7 @@ def test_crab_walks_square_holding_heading():
     task = _task()
     plant, executed = _run_closed_loop(task, path)
     assert executed.arrived
-    max_yaw = max(abs(t.pose.orientation.euler[2]) for t in executed.ticks)
+    max_yaw = max(abs(quaternion_euler(t.pose.pose.orientation)[2]) for t in executed.ticks)
     assert max_yaw < 0.1, "robot turned instead of crab-walking the square"
     score = score_run(path, executed)
     assert score.cte_rms < 0.15
@@ -284,7 +286,7 @@ def test_stops_inside_the_goal_when_the_plant_runs_hot():
             break
         hot.step(vx, vy, wz, _DT)
     assert task.get_state() == "arrived"
-    goal = path.poses[-1].position
+    goal = path.poses[-1].pose.position
     rest_err = math.hypot(hot.x - goal.x, hot.y - goal.y)
     assert rest_err < task._config.goal_tolerance, f"rested {rest_err:.3f} m from goal"
     # Came to rest, not still coasting through.

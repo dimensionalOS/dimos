@@ -41,7 +41,9 @@ def test_desk_marker_tf_blueprint_declares_static_tf_module() -> None:
     assert desk_marker_tf.blueprints[2].module is MarkerDetectionStreamModule
     assert desk_marker_tf.blueprints[2].kwargs["marker_length_m"] == DESK_MARKER_LENGTH_M
     assert desk_marker_tf.blueprints[2].kwargs["aruco_dictionary"] == DESK_MARKER_ARUCO_DICTIONARY
-    assert desk_marker_tf.blueprints[2].kwargs["camera_info"].frame_id == DESK_CAMERA_FRAME_ID
+    assert (
+        desk_marker_tf.blueprints[2].kwargs["camera_info"].header.frame_id == DESK_CAMERA_FRAME_ID
+    )
     assert desk_marker_tf.blueprints[3].module is MarkerTfModule
     assert (
         desk_marker_tf.blueprints[3].kwargs["marker_namespace_prefix"]
@@ -87,10 +89,10 @@ projection_matrix:
     assert camera.config.width == 1920
     assert camera.config.height == 1080
     assert camera.config.fps == 7.5
-    assert camera.config.camera_info.frame_id == DESK_CAMERA_FRAME_ID
+    assert camera.config.camera_info.header.frame_id == DESK_CAMERA_FRAME_ID
 
     camera_info = create_desk_camera_info(camera_info_yaml)
-    assert camera_info.frame_id == DESK_CAMERA_FRAME_ID
+    assert camera_info.header.frame_id == DESK_CAMERA_FRAME_ID
     assert camera_info.width == 1920
 
 
@@ -106,10 +108,11 @@ def test_desk_static_tf_module_publishes_world_to_camera_optical_chain() -> None
 
         world_camera = view.get("world", "camera_optical", mod._last_publish_ts, 1.0)
         assert world_camera is not None
-        assert world_camera.frame_id == "world"
+        assert world_camera.header.frame_id == "world"
         assert world_camera.child_frame_id == "camera_optical"
-        assert world_camera.translation.x == 0.3
-        assert world_camera.translation.y == 0.0
-        assert world_camera.translation.z == 0.2
+        assert world_camera.transform.translation.x == 0.3
+        assert world_camera.transform.translation.y == 0.0
+        assert world_camera.transform.translation.z == 0.2
     finally:
+        view.dispose()
         mod.stop()

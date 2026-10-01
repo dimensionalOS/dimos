@@ -27,6 +27,9 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import Mock, patch
 
+from dimos_generated.geometry_msgs.msg import Twist
+from dimos_generated.sensor_msgs.msg import Imu, PointCloud2
+from dimos_generated.tf2_msgs.msg import TFMessage
 from pydantic import ValidationError
 import pytest
 
@@ -40,10 +43,6 @@ from dimos.core.native_module import LogFormat, NativeModule, NativeModuleConfig
 from dimos.core.stream import IO, In, Out
 from dimos.core.transport import LCMTransport, ZenohTransport
 from dimos.core.transport_factory import make_transport, rpc_backend, transport_topic
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.sensor_msgs.Imu import Imu
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.pubsub.impl.zenohpubsub import QOS_NEVER_DROP, Topic as ZenohTopic
 from dimos.protocol.service import zenohservice
 from dimos.protocol.service.zenohservice import ZenohConfig
@@ -172,8 +171,8 @@ def test_manual(dimos_cluster: ModuleCoordinator, args_file: str) -> None:
     native_module.stop()
 
     assert read_json_file(args_file) == {
-        "cmd_vel": "/cmd_vel#geometry_msgs.Twist",
-        "pointcloud": "/my/custom/lidar#sensor_msgs.PointCloud2",
+        "cmd_vel": "/cmd_vel#geometry_msgs/msg/Twist",
+        "pointcloud": "/my/custom/lidar#sensor_msgs/msg/PointCloud2",
         "output_file": args_file,
         "some_param": "2.5",
     }
@@ -188,8 +187,8 @@ def test_io_port_topic_reaches_the_native_process() -> None:
         module.set_transport("tf", transports[1])
 
         assert module._collect_topics() == {
-            "cmd_vel": "/cmd_vel#geometry_msgs.Twist",
-            "tf": "/tf#tf2_msgs.TFMessage",
+            "cmd_vel": "/cmd_vel#geometry_msgs/msg/Twist",
+            "tf": "/tf#tf2_msgs/msg/TFMessage",
         }
     finally:
         module.stop()
@@ -205,7 +204,7 @@ def test_tf_topic_comes_from_the_declared_port_only() -> None:
     try:
         module.set_transport("cmd_vel", transport)
 
-        assert module._collect_topics() == {"cmd_vel": "/cmd_vel#geometry_msgs.Twist"}
+        assert module._collect_topics() == {"cmd_vel": "/cmd_vel#geometry_msgs/msg/Twist"}
     finally:
         module.stop()
         with contextlib.suppress(Exception):

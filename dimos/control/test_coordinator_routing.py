@@ -28,6 +28,9 @@ from collections.abc import Callable, Iterator
 import threading
 from typing import Any
 
+from dimos_generated.geometry_msgs.msg import Pose, PoseStamped, Twist, TwistStamped, Vector3
+from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.std_msgs.msg import Header
 import pytest
 
 from dimos.control._control_test_helpers import RecordingTask
@@ -47,10 +50,6 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.stream import In
 from dimos.hardware.drive_trains.registry import twist_base_adapter_registry
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.teleop.webxr.controller_types import Buttons
 
 ARM_JOINTS = ["arm/joint1", "arm/joint2"]
@@ -255,14 +254,14 @@ class TestPerInstanceCommandRouting:
         )
         coordinator.start()
 
-        taps["left_cartesian"].emit(PoseStamped())
+        taps["left_cartesian"].emit(PoseStamped(header=Header(frame_id=""), pose=Pose()))
 
         left = coordinator.get_task("cartesian_left")
         right = coordinator.get_task("cartesian_right")
         assert len(left.cartesian_calls) == 1
         assert right.cartesian_calls == []
 
-        taps["right_cartesian"].emit(PoseStamped())
+        taps["right_cartesian"].emit(PoseStamped(header=Header(frame_id=""), pose=Pose()))
 
         assert len(left.cartesian_calls) == 1
         assert len(right.cartesian_calls) == 1
@@ -275,7 +274,7 @@ class TestPerInstanceCommandRouting:
         )
         coordinator.start()
 
-        taps["cartesian_command"].emit(PoseStamped())
+        taps["cartesian_command"].emit(PoseStamped(header=Header(frame_id=""), pose=Pose()))
 
         calls = coordinator.get_task("cart").cartesian_calls
         assert len(calls) == 1
@@ -293,12 +292,14 @@ class TestPerInstanceCommandRouting:
         coordinator.start()
         warn = mocker.patch.object(coord_mod.logger, "warning")
 
-        taps["cartesian_command"].emit(PoseStamped(frame_id="some_other_task"))
-        taps["cartesian_command"].emit(PoseStamped(frame_id=""))
+        taps["cartesian_command"].emit(
+            PoseStamped(header=Header(frame_id="some_other_task"), pose=Pose())
+        )
+        taps["cartesian_command"].emit(PoseStamped(header=Header(frame_id=""), pose=Pose()))
 
         calls = coordinator.get_task("cart").cartesian_calls
         assert len(calls) == 2
-        assert calls[0][0].frame_id == "some_other_task"
+        assert calls[0][0].header.frame_id == "some_other_task"
         assert not warn.called
 
 
@@ -311,7 +312,7 @@ class TestButtonsRouting:
         )
         coordinator.start()
 
-        taps["teleop_buttons"].emit(Buttons())
+        taps["teleop_buttons"].emit(Buttons().to_message())
 
         assert len(coordinator.get_task("teleop1").buttons_calls) == 1
 
@@ -341,7 +342,9 @@ class TestTwistRouting:
         )
         coordinator.start()
 
-        taps["twist_command"].emit(Twist(linear=[1.0, 2.0, 0.0], angular=[0.0, 0.0, 3.0]))
+        taps["twist_command"].emit(
+            Twist(linear=Vector3(x=1.0, y=2.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=3.0))
+        )
 
         assert coordinator.get_task("basevel")._velocities == [1.0, 2.0, 3.0]
 
@@ -360,7 +363,9 @@ class TestTwistRouting:
         coordinator.add_task(capable, task_type="g1_groot_wbc")
         coordinator.start()
 
-        taps["twist_command"].emit(Twist(linear=[1.0, 2.0, 0.0], angular=[0.0, 0.0, 3.0]))
+        taps["twist_command"].emit(
+            Twist(linear=Vector3(x=1.0, y=2.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=3.0))
+        )
 
         assert coordinator.get_task("basevel")._velocities == [1.0, 2.0, 3.0]
         assert len(capable.velocity_commands) == 1
@@ -400,7 +405,9 @@ class TestTwistRouting:
         )
         coordinator.start()
 
-        taps["twist_command"].emit(Twist(linear=[1.0, 2.0, 0.0], angular=[0.0, 0.0, 3.0]))
+        taps["twist_command"].emit(
+            Twist(linear=Vector3(x=1.0, y=2.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=3.0))
+        )
 
         assert coordinator.get_task("basevel")._velocities == [1.0, 3.0]
 
@@ -420,7 +427,9 @@ class TestTwistRouting:
         )
         coordinator.start()
 
-        taps["twist_command"].emit(Twist(linear=[1.0, 2.0, 3.0], angular=[4.0, 5.0, 6.0]))
+        taps["twist_command"].emit(
+            Twist(linear=Vector3(x=1.0, y=2.0, z=3.0), angular=Vector3(x=4.0, y=5.0, z=6.0))
+        )
 
         assert coordinator.get_task("basevel")._velocities == [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
 
@@ -447,7 +456,9 @@ class TestTwistRouting:
         )
         coordinator.start()
 
-        taps["twist_command"].emit(Twist(linear=[1.0, 2.0, 0.0], angular=[0.0, 0.0, 3.0]))
+        taps["twist_command"].emit(
+            Twist(linear=Vector3(x=1.0, y=2.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=3.0))
+        )
 
         assert coordinator.get_task("basevel")._velocities == [1.0, 2.0, 3.0]
         assert coordinator.get_task("armvel")._velocities is None
@@ -459,7 +470,9 @@ class TestTwistRouting:
         coordinator.start()
 
         assert taps["twist_command"].subscribed
-        taps["twist_command"].emit(Twist(linear=[1.0, 2.0, 0.0], angular=[0.0, 0.0, 3.0]))
+        taps["twist_command"].emit(
+            Twist(linear=Vector3(x=1.0, y=2.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=3.0))
+        )
 
         assert len(task.velocity_commands) == 1
         vx, vy, wz, t_now = task.velocity_commands[0]
@@ -476,7 +489,7 @@ class TestTwistCardContract:
         coordinator.add_task(task, task_type="g1_groot_wbc")
         coordinator.start()
 
-        msg = Twist(linear=[1.0, 2.0, 0.0], angular=[0.0, 0.0, 3.0])
+        msg = Twist(linear=Vector3(x=1.0, y=2.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=3.0))
         taps["twist_command"].emit(msg)
 
         assert len(task.twist_msgs) == 1
@@ -490,7 +503,9 @@ class TestTwistCardContract:
         coordinator.start()
         assert taps["twist_command"].subscribed  # the base keeps the stream alive
 
-        taps["twist_command"].emit(Twist(linear=[1.0, 2.0, 0.0], angular=[0.0, 0.0, 3.0]))
+        taps["twist_command"].emit(
+            Twist(linear=Vector3(x=1.0, y=2.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=3.0))
+        )
 
         assert bare.velocity_commands == []
 
@@ -515,7 +530,7 @@ class TestTwistCardContract:
         coordinator.start()
         assert taps["twist_command"].subscribed
 
-        msg = Twist(linear=[1.0, 0.0, 0.0], angular=[0.0, 0.0, 0.5])
+        msg = Twist(linear=Vector3(x=1.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.5))
         stop = threading.Event()
 
         def pump() -> None:
@@ -653,7 +668,7 @@ class TestCardRoutingContract:
         coordinator.add_task(cardless)
         coordinator.start()
 
-        taps["teleop_buttons"].emit(Buttons())
+        taps["teleop_buttons"].emit(Buttons().to_message())
 
         assert len(coordinator.get_task("teleop1").buttons_calls) == 1
         assert cardless.buttons_calls == []

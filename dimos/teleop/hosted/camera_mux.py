@@ -28,13 +28,16 @@ import threading
 import time
 from typing import Any
 
+from dimos_generated.sensor_msgs.msg import Image
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.image import image_from_array, image_view
+from dimos.msgs.time import to_nanoseconds
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -128,6 +131,8 @@ class CameraMuxModule(Module):
     def _composite(self) -> Image | None:
         """Selected frames → one even-sized Image; None on any error (a raise
         would kill the RxPY camera subscription)."""
+        import cv2
+
         with self._cam_lock:
             order = [c for c in self._cam_order if c in self._cam_selected]
             imgs = [self._cam_frames[c] for c in order if c in self._cam_frames]
@@ -136,21 +141,27 @@ class CameraMuxModule(Module):
         try:
             if len(imgs) == 1:
                 return self._even_dims(self._stamp(self._downscale(imgs[0])))
-            import cv2
-
-            target_h = min(im.data.shape[0] for im in imgs)
+            if len({im.encoding for im in imgs}) != 1:
+                raise ValueError("Selected camera encodings must match")
+            target_h = min(im.height for im in imgs)
             tiles = []
             for im in imgs:
-                h, w = im.data.shape[:2]
+                data = image_view(im)
+                h, w = data.shape[:2]
                 tiles.append(
-                    cv2.resize(im.data, (max(1, int(w * target_h / h)), target_h))
+                    cv2.resize(data, (max(1, int(w * target_h / h)), target_h))
                     if h != target_h
-                    else im.data
+                    else data
                 )
+            latest = max(imgs, key=lambda im: to_nanoseconds(im.header.stamp))
             return self._even_dims(
                 self._stamp(
                     self._downscale(
-                        Image(data=np.hstack(tiles), format=imgs[0].format, frame_id="camera_mux")
+                        image_from_array(
+                            np.hstack(tiles),
+                            encoding=imgs[0].encoding,
+                            header=Header(stamp=latest.header.stamp, frame_id="camera_mux"),
+                        )
                     )
                 )
             )
@@ -162,28 +173,30 @@ class CameraMuxModule(Module):
     def _even_dims(img: Image) -> Image:
         """Crop to even width/height — an odd composite crashes libx264's
         avcodec_open2 when a camera switch reopens the encoder."""
-        data = img.data
+        data = image_view(img)
         if data.ndim < 2:
             return img
         h, w = data.shape[:2]
         if h % 2 == 0 and w % 2 == 0:
             return img
         data = data[: h - (h % 2), : w - (w % 2)]
-        return Image(data=np.ascontiguousarray(data), format=img.format, frame_id=img.frame_id)
+        return image_from_array(
+            np.ascontiguousarray(data), encoding=img.encoding, header=img.header
+        )
 
     def _downscale(self, img: Image) -> Image:
         """Cap publish width at config.video_max_width (0 = off). Runs before
         _stamp so the strip's 16px cells stay decodable at the sent size."""
-        max_w = self.config.video_max_width
-        if max_w <= 0 or img.data.ndim < 2:
-            return img
-        h, w = img.data.shape[:2]
-        if w <= max_w:
-            return img
         import cv2
 
-        out = cv2.resize(img.data, (max_w, max(1, int(h * max_w / w))))
-        return Image(data=out, format=img.format, frame_id=img.frame_id)
+        max_w = self.config.video_max_width
+        if max_w <= 0 or image_view(img).ndim < 2:
+            return img
+        h, w = image_view(img).shape[:2]
+        if w <= max_w:
+            return img
+        out = cv2.resize(image_view(img), (max_w, max(1, int(h * max_w / w))))
+        return image_from_array(out, encoding=img.encoding, header=img.header)
 
     def _stamp(self, img: Image) -> Image:
         """Append (not overwrite) a bottom strip encoding capture time as B/W
@@ -197,7 +210,7 @@ class CameraMuxModule(Module):
         ]
 
         s = _STAMP_CELL_PX
-        data = img.data
+        data = image_view(img)
         if data.ndim < 2 or data.shape[1] < _STAMP_CELLS * s:
             if not self._stamp_warned:
                 self._stamp_warned = True
@@ -215,7 +228,7 @@ class CameraMuxModule(Module):
             if bit:
                 strip[:, i * s : (i + 1) * s] = 255
         out = np.vstack([data, strip])
-        return Image(data=out, format=img.format, frame_id=img.frame_id)
+        return image_from_array(out, encoding=img.encoding, header=img.header)
 
     def _set_cam_selection(self, data: bytes) -> None:
         """camera_select kind → filter to known cams, republish immediately so

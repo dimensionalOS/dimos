@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from dimos_generated.sensor_msgs.msg import JointState
 import pytest
 
 from dimos.core.coordination.blueprints import Blueprint
@@ -23,7 +24,6 @@ from dimos.imitation.collection.blueprint import (
 )
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
 from dimos.imitation.collection.recorder import CollectionRecorder
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.teleop.webxr.extensions import ArmTeleopModule
 
 AGGREGATE = "coordinator_joint_state"

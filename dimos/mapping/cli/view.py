@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""`dimos map view`: open a `.pc2.lcm` cloud - `dimos map global --export` - in rerun."""
+"""`dimos map view`: open a `.pc2.cdr` cloud - `dimos map global --export` - in rerun."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ import typer
 
 
 def main(
-    path: Path = typer.Argument(..., help="Point cloud to view (.pc2.lcm)"),
+    path: Path = typer.Argument(..., help="Point cloud to view (.pc2.cdr)"),
     voxel: float = typer.Option(0.05, "--voxel", help="Rendered point size (m)"),
     bottom_cutoff: float | None = typer.Option(
         None,
@@ -33,14 +33,15 @@ def main(
         None, "--out", help="Write a .rrd instead of opening the viewer"
     ),
 ) -> None:
-    """Load an LCM-encoded PointCloud2 and display it in rerun."""
+    """Load a CDR-encoded PointCloud2 and display it in rerun."""
+    from dimos_generated.sensor_msgs.msg import PointCloud2
     import rerun as rr
 
-    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
     from dimos.visualization.rerun.init import rerun_init
+    from dimos.visualization.rerun.message_helpers import cloud_archetype
 
-    cloud = PointCloud2.lcm_decode(path.read_bytes())
-    print(f"{path}: {len(cloud.pointcloud.points)} points in {cloud.frame_id!r}")
+    cloud = PointCloud2.decode(path.read_bytes())
+    print(f"{path}: {cloud.width * cloud.height} points in {cloud.header.frame_id!r}")
 
     rerun_init("dimos map view")
     if out is not None:
@@ -49,7 +50,7 @@ def main(
         rr.spawn()
     rr.log(
         f"world/{path.name.split('.')[0]}/pointcloud",
-        cloud.to_rerun(voxel_size=voxel / 2, bottom_cutoff=bottom_cutoff),
+        cloud_archetype(cloud, ui_radius=voxel / 2, bottom_cutoff=bottom_cutoff),
         static=True,
     )
     if out is not None:

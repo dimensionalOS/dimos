@@ -170,7 +170,7 @@ Use `arm.rpc` for explicit planning, preview, nonblocking execution, and
 cancellation. Use `app.find_module_by_spec(ManipulationSpec)` for direct typed discovery.
 
 ```python skip
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos_generated.sensor_msgs.msg import JointState
 
 motion = arm.rpc
 planned = motion.plan_to_joints({

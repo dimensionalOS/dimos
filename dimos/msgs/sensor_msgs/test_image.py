@@ -12,85 +12,90 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from unittest.mock import MagicMock
+"""File, color, CDR and reactive selection checks on generated images."""
 
+from pathlib import Path
+
+from dimos_generated.sensor_msgs.msg import Image
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
+from PIL import Image as PILImage
 import pytest
 from reactivex.testing import ReactiveTest, TestScheduler
 
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat, sharpness_barrier
-from dimos.utils.data import get_data
+from dimos.msgs.image import (
+    image_from_array,
+    image_from_file,
+    image_sharpness,
+    image_to_bgr,
+    image_to_rgb,
+    image_view,
+)
+from dimos.msgs.time import time_from_nanoseconds, to_nanoseconds
+from dimos.utils.reactive import quality_barrier
 
 
 @pytest.fixture
-def img():
-    image_file_path = get_data("cafe.jpg")
-    return Image.from_file(str(image_file_path))
+def img(tmp_path: Path) -> Image:
+    pixels = np.zeros((771, 1024, 3), dtype=np.uint8)
+    pixels[..., 0] = 201
+    pixels[..., 1] = 37
+    path = tmp_path / "camera.png"
+    PILImage.fromarray(pixels).save(path)
+    return image_from_file(path, header=Header(stamp=time_from_nanoseconds(1234567890123456789)))
 
 
 def test_file_load(img: Image) -> None:
-    assert isinstance(img.data, np.ndarray)
-    assert img.width == 1024
-    assert img.height == 771
-    assert img.channels == 3
-    assert img.shape == (771, 1024, 3)
-    assert img.data.dtype == np.uint8
-    assert img.format == ImageFormat.BGR
-    assert img.frame_id == ""
-    assert isinstance(img.ts, float)
-    assert img.ts > 0
-    assert img.data.flags["C_CONTIGUOUS"]
+    pixels = image_view(img)
+    assert isinstance(pixels, np.ndarray)
+    assert (img.width, img.height) == (1024, 771)
+    assert pixels.shape == (771, 1024, 3)
+    assert pixels.dtype == np.uint8
+    assert img.encoding == "rgb8"
+    assert img.header.frame_id == ""
+    assert to_nanoseconds(img.header.stamp) == 1234567890123456789
+    assert pixels.flags["C_CONTIGUOUS"]
+    np.testing.assert_array_equal(pixels[0, 0], [201, 37, 0])
 
 
-def test_lcm_encode_decode(img: Image) -> None:
-    binary_msg = img.lcm_encode()
-    decoded_img = Image.lcm_decode(binary_msg)
-
-    assert isinstance(decoded_img, Image)
-    assert decoded_img is not img
-    assert decoded_img == img
+def test_cdr_encode_decode(img: Image) -> None:
+    decoded = Image.decode(img.encode())
+    assert decoded is not img
+    assert decoded == img
 
 
 def test_rgb_bgr_conversion(img: Image) -> None:
-    rgb = img.to_rgb()
-    assert not rgb == img
-    assert rgb.to_bgr() == img
+    bgr = image_from_array(image_to_bgr(img), encoding="bgr8", header=img.header)
+    assert bgr != img
+    restored = image_from_array(image_to_rgb(bgr), encoding="rgb8", header=img.header)
+    assert restored == img
 
 
 def test_opencv_conversion(img: Image) -> None:
-    ocv = img.to_opencv()
-    decoded_img = Image.from_opencv(ocv)
-
-    # artificially patch timestamp
-    decoded_img.ts = img.ts
-    assert decoded_img == img
+    pixels = image_to_bgr(img)
+    generated = image_from_array(pixels, encoding="bgr8", header=img.header)
+    np.testing.assert_array_equal(image_to_rgb(generated), image_view(img))
+    assert generated.header == img.header
 
 
 def test_sharpness_barrier() -> None:
-    # Mock images with known sharpness values, avoiding real data from disk
-    sharpness_values = [0.3711, 0.3241, 0.3067, 0.2583, 0.3665]
-    mock_images = []
-    for sharp in sharpness_values:
-        img = MagicMock()
-        img.sharpness = sharp
-        mock_images.append(img)
-
-    # sharpness_barrier(20) -> 0.05s windows in virtual time. Subscription is at
-    # t=200, so windows close at 200.05, 200.10, ... Items 1-4 land in the first
-    # window, item 5 in the second.
+    # Real generated images: the first and fifth win the same two virtual windows.
+    pattern = (np.indices((8, 8)).sum(axis=0) % 2).astype(np.uint8)
+    images = [
+        image_from_array(pattern * level, encoding="mono8") for level in (255, 200, 150, 50, 230)
+    ]
+    assert image_sharpness(images[0]) > max(image_sharpness(value) for value in images[1:4])
     scheduler = TestScheduler()
     source = scheduler.create_hot_observable(
-        ReactiveTest.on_next(200.01, mock_images[0]),
-        ReactiveTest.on_next(200.02, mock_images[1]),
-        ReactiveTest.on_next(200.03, mock_images[2]),
-        ReactiveTest.on_next(200.04, mock_images[3]),
-        ReactiveTest.on_next(200.06, mock_images[4]),
+        ReactiveTest.on_next(200.01, images[0]),
+        ReactiveTest.on_next(200.02, images[1]),
+        ReactiveTest.on_next(200.03, images[2]),
+        ReactiveTest.on_next(200.04, images[3]),
+        ReactiveTest.on_next(200.06, images[4]),
         ReactiveTest.on_completed(200.08),
     )
-
-    results = scheduler.start(lambda: source.pipe(sharpness_barrier(20, scheduler=scheduler)))
-
-    emitted = [m.value.value for m in results.messages if m.value.kind == "N"]
-    assert len(emitted) == 2, f"Expected one emission per window, got {len(emitted)}"
-    assert emitted[0].sharpness == 0.3711  # Sharpest of the 4 in the first window
-    assert emitted[1].sharpness == 0.3665  # Only item in the second window
+    results = scheduler.start(lambda: source.pipe(quality_barrier(image_sharpness, 20, scheduler)))
+    emitted = [message.value.value for message in results.messages if message.value.kind == "N"]
+    assert len(emitted) == 2
+    assert emitted[0] is images[0]
+    assert emitted[1] is images[4]

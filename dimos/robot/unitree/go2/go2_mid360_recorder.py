@@ -23,12 +23,11 @@ frames published on tf.
 
 from __future__ import annotations
 
+from dimos_generated.geometry_msgs.msg import PoseStamped
+from dimos_generated.sensor_msgs.msg import CameraInfo, Image, PointCloud2
+
 from dimos.core.stream import In
 from dimos.hardware.sensors.lidar.pointlio.recorder import PointlioRecorder
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 
 class Go2Mid360Recorder(PointlioRecorder):

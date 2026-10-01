@@ -19,7 +19,7 @@ from dataclasses import dataclass, field, fields
 from itertools import islice
 from typing import TYPE_CHECKING, Any
 
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos_generated.geometry_msgs.msg import Vector3
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -84,8 +84,13 @@ class NearFilter(Filter):
         p = obs.pose_tuple
         if p is None:
             return False
-        delta = self.position - Vector3(p[0], p[1], p[2])
-        return delta.length_squared() <= self.radius * self.radius
+        distance_squared = sum(
+            (value - center) ** 2
+            for value, center in zip(
+                p[:3], (self.position.x, self.position.y, self.position.z), strict=True
+            )
+        )
+        return distance_squared <= self.radius * self.radius
 
 
 @dataclass(frozen=True)

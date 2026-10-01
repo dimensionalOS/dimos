@@ -12,27 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""LCM-by-default browser e2e.
+"""Generated CDR over LCM browser E2E.
 
-Starts a cockpit(channels=[Channel("lcm_pose", PoseStamped)]) bridge with no
-encoding named, so the channel compiles to geometry_msgs.PoseStamped.lcm.v1
-and the manifest carries the message's LCM schema, serving the cockpit from
-its own local relay. The cockpit's channel table must decode frames from the
-manifest alone, and a bare SDK page must read the decoded fields: Python
-lcm_encode() -> relay -> schema-driven browser decoder, end to end.
-
-Marked web_browser: excluded from the default suite (needs the
-`browser-tests` dependency group, Playwright browsers, and built web dists).
-Locally:
-`uv run --group browser-tests pytest -m web_browser dimos/e2e_tests/test_lcm_channel_browser.py`.
+A typed channel advertises its complete ROS2 schema. The browser decodes the
+Python CDR payload from the manifest alone; LCM remains the raw transport.
+Requires the browser-tests group, installed browsers and built web dists.
 """
 
 from collections.abc import Callable
 from pathlib import Path
 
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos_generated.std_msgs.msg import Header
 import pytest
 
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.time import time_from_seconds
 from dimos.web.cockpit import Channel, cockpit
 
 pytest.importorskip("playwright")
@@ -44,10 +38,11 @@ pytestmark = pytest.mark.web_browser
 TOPIC = "/lcm_channel_e2e/lcm_pose"
 
 POSE = PoseStamped(
-    ts=42.5, frame_id="map", position=[1.5, -2.5, 0.25], orientation=[0.0, 0.0, 0.0, 1.0]
+    header=Header(stamp=time_from_seconds(42.5), frame_id="map"),
+    pose=Pose(position=Point(x=1.5, y=-2.5, z=0.25), orientation=Quaternion(w=1)),
 )
 
-# A page whose SDK and relay live on another origin, reading the decoded LCM
+# A page whose SDK and relay live on another origin, reading the decoded CDR
 # value's fields straight off the store snapshot.
 SDK_PAGE = """<!DOCTYPE html>
 <html>
@@ -60,7 +55,7 @@ SDK_PAGE = """<!DOCTYPE html>
         const v = snapshot.slot?.value;
         if (v === undefined || v === null) return;
         document.querySelector("#pose").textContent =
-          `x=${v.pose.position.x} frame=${v.header.frame_id} nsec=${v.header.stamp.nsec}`;
+          `x=${v.pose.position.x} frame=${v.header.frame_id} nanosec=${v.header.stamp.nanosec}`;
       });
     </script>
   </body>
@@ -83,11 +78,11 @@ def test_cockpit_channel_table_decodes_the_lcm_channel(
     chromium_page.get_by_test_id("view-channels").click()
     expect(chromium_page.get_by_test_id("ch-lcm_pose-seq")).not_to_have_text("-", timeout=120_000)
     value = chromium_page.get_by_test_id("ch-lcm_pose-value")
-    # The preview is the schema-driven decoder's: LCM field names, wire order.
+    # The preview is the schema-driven decoder's: generated ROS2 fields, decoded from the advertised schema.
     expect(value).to_contain_text("position: {x: 1.5, y: -2.5, z: 0.25}")
     expect(value).to_contain_text('frame_id: "map"')
     expect(chromium_page.get_by_test_id("ch-lcm_pose-decode-error")).to_have_count(0)
-    expect(chromium_page.get_by_text("geometry_msgs.PoseStamped.lcm.v1")).to_be_visible()
+    expect(chromium_page.get_by_text("geometry_msgs/msg/PoseStamped.cdr.v1")).to_be_visible()
 
 
 def test_sdk_page_reads_the_decoded_lcm_fields(
@@ -97,5 +92,5 @@ def test_sdk_page_reads_the_decoded_lcm_fields(
     page.write_text(SDK_PAGE % {"url": cockpit_url})
     chromium_page.goto(page.as_uri())
     expect(chromium_page.locator("#pose")).to_have_text(
-        "x=1.5 frame=map nsec=500000000", timeout=120_000
+        "x=1.5 frame=map nanosec=500000000", timeout=120_000
     )

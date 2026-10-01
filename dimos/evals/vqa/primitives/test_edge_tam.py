@@ -14,38 +14,46 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from collections import Counter
 
+from dimos_generated.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
+from dimos_generated.sensor_msgs.msg import Image, PointCloud2
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 import pytest
 
 from dimos.evals.vqa.contracts import InsufficientEvidenceError
 from dimos.evals.vqa.pointcloud_frame import PointCloudFrame
+from dimos.evals.vqa.primitives import range as range_primitives
 from dimos.evals.vqa.primitives.edge_tam import EdgeTAMObjectMaskPipeline
 from dimos.evals.vqa.primitives.range import LidarRangeEstimator
 from dimos.models.vl.base import VlModel
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.camera_info import camera_info_from_intrinsics
+from dimos.msgs.image import image_from_array
+from dimos.msgs.pointcloud import pointcloud_from_xyz
+from dimos.msgs.time import time_from_seconds, to_seconds
 from dimos.perception.detection.type.detection2d.bbox import Bbox, Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.detection.type.detection2d.seg import Detection2DSeg
 
-if TYPE_CHECKING:
-    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+
+def _cloud(points: np.ndarray) -> PointCloud2:
+    return pointcloud_from_xyz(
+        points, header=Header(frame_id="lidar", stamp=time_from_seconds(9.98))
+    )
 
 
-class _PointCloud:
-    def __init__(self, points: np.ndarray) -> None:
-        self._points = points
-        self.read_count = 0
-        self.frame_id = "lidar"
-        self.ts = 9.98
+@pytest.fixture
+def cloud_reads(monkeypatch: pytest.MonkeyPatch) -> Counter[int]:
+    reads: Counter[int] = Counter()
+    original = range_primitives.pointcloud_xyz
 
-    def as_numpy(self) -> tuple[np.ndarray, None]:
-        self.read_count += 1
-        return self._points, None
+    def counted(cloud: PointCloud2) -> np.ndarray:
+        reads[id(cloud)] += 1
+        return original(cloud)
+
+    monkeypatch.setattr(range_primitives, "pointcloud_xyz", counted)
+    return reads
 
 
 class _TestVlModel(VlModel):
@@ -73,7 +81,7 @@ class _Detector(_TestVlModel):
                 class_id=0,
                 confidence=1.0,
                 name=query,
-                ts=image.ts,
+                ts=to_seconds(image.header.stamp),
                 image=image,
             )
             for index, box in enumerate(self._boxes)
@@ -98,7 +106,7 @@ class _NamedDetector(_TestVlModel):
                     class_id=0,
                     confidence=1.0,
                     name=query,
-                    ts=image.ts,
+                    ts=to_seconds(image.header.stamp),
                     image=image,
                 )
             ],
@@ -138,7 +146,7 @@ class _Segmenter:
 
 
 def _frame(
-    pointcloud: _PointCloud,
+    pointcloud: PointCloud2,
     *,
     index: int = 0,
     transform: Transform | None = None,
@@ -147,13 +155,21 @@ def _frame(
     cx: float = 5.0,
     cy: float = 5.0,
 ) -> PointCloudFrame:
-    image = Image(data=np.zeros((10, 10, 3), dtype=np.uint8), ts=10.0)
+    image = image_from_array(
+        np.zeros((10, 10, 3), dtype=np.uint8),
+        encoding="rgb8",
+        header=Header(stamp=time_from_seconds(10)),
+    )
     return PointCloudFrame(
         index=index,
         image=image,
-        pointcloud=cast("PointCloud2", pointcloud),
-        camera_info=CameraInfo.from_intrinsics(fx, fy, cx, cy, 10, 10),
-        pointcloud_to_camera=transform or Transform.identity(),
+        pointcloud=pointcloud,
+        camera_info=camera_info_from_intrinsics(fx, fy, cx, cy, 10, 10, header=Header()),
+        pointcloud_to_camera=TransformStamped(
+            header=Header(frame_id="optical"),
+            child_frame_id="lidar",
+            transform=transform or Transform(rotation=Quaternion(w=1)),
+        ),
         image_observation_timestamp=10.0,
         pointcloud_observation_timestamp=9.98,
         calibration_source="synthetic-calibration",
@@ -176,7 +192,11 @@ def _range_estimator(
 
 
 def test_mask_estimator_batches_and_caches_without_pointcloud() -> None:
-    image = Image(data=np.zeros((10, 10, 3), dtype=np.uint8), ts=10.0)
+    image = image_from_array(
+        np.zeros((10, 10, 3), dtype=np.uint8),
+        encoding="rgb8",
+        header=Header(stamp=time_from_seconds(10)),
+    )
     left_mask = np.zeros((10, 10), dtype=np.uint8)
     right_mask = np.zeros((10, 10), dtype=np.uint8)
     left_mask[:, :4] = 1
@@ -200,14 +220,18 @@ def test_mask_estimator_batches_and_caches_without_pointcloud() -> None:
     assert cached is left
     assert segmenter.call_count == 1
 
-    next_image = Image(data=np.zeros((10, 10, 3), dtype=np.uint8), ts=11.0)
+    next_image = image_from_array(
+        np.zeros((10, 10, 3), dtype=np.uint8),
+        encoding="rgb8",
+        header=Header(stamp=time_from_seconds(11)),
+    )
     estimator.estimate(next_image, "left person")
 
     assert segmenter.call_count == 2
 
 
 def test_projects_transformed_points_and_rejects_invalid_projections() -> None:
-    pointcloud = _PointCloud(
+    pointcloud = _cloud(
         np.array(
             [
                 [0.0, 0.0, 1.0],
@@ -218,7 +242,7 @@ def test_projects_transformed_points_and_rejects_invalid_projections() -> None:
     )
     frame = _frame(
         pointcloud,
-        transform=Transform(translation=Vector3(1.0, 0.0, 0.0)),
+        transform=Transform(translation=Vector3(x=1.0)),
         cx=0.0,
         cy=0.0,
     )
@@ -234,7 +258,7 @@ def test_projects_transformed_points_and_rejects_invalid_projections() -> None:
 
 
 def test_mask_selection_uses_nearest_camera_z_point_per_pixel() -> None:
-    pointcloud = _PointCloud(
+    pointcloud = _cloud(
         np.array(
             [
                 [0.0, 0.0, 1.0],
@@ -256,18 +280,18 @@ def test_mask_selection_uses_nearest_camera_z_point_per_pixel() -> None:
 
 
 @pytest.mark.parametrize("boxes", [[], [(0.0, 0.0, 4.0, 4.0), (5.0, 5.0, 9.0, 9.0)]])
-def test_requires_exactly_one_valid_detection(boxes: list[Bbox]) -> None:
-    cloud = _PointCloud(np.array([[0.0, 0.0, 1.0]]))
+def test_requires_exactly_one_valid_detection(boxes: list[Bbox], cloud_reads: Counter[int]) -> None:
+    cloud = _cloud(np.array([[0.0, 0.0, 1.0]]))
     estimator = _range_estimator(_Detector(boxes), _Segmenter(_full_mask()))
 
     with pytest.raises(InsufficientEvidenceError, match="exactly one valid detected"):
         estimator.estimate(_frame(cloud), "cup")
 
-    assert cloud.read_count == 0
+    assert cloud_reads[id(cloud)] == 0
 
 
 def test_rejects_too_few_mask_supporting_points() -> None:
-    pointcloud = _PointCloud(
+    pointcloud = _cloud(
         np.array([[-2.0, 0.0, 1.0], [-1.5, 0.0, 1.0], [-1.0, 0.0, 1.0], [-0.5, 0.0, 1.0]])
     )
     estimator = _range_estimator(_Detector([(0.0, 0.0, 10.0, 10.0)]), _Segmenter(_full_mask()))
@@ -284,13 +308,13 @@ def test_rejects_segmentation_mask_with_wrong_dimensions() -> None:
     )
 
     with pytest.raises(InsufficientEvidenceError, match="one valid segmentation mask"):
-        estimator.estimate(_frame(_PointCloud(np.array([[0.0, 0.0, 1.0]]))), "bottle")
+        estimator.estimate(_frame(_cloud(np.array([[0.0, 0.0, 1.0]]))), "bottle")
 
 
 def test_returns_median_euclidean_range_and_auditable_quartiles() -> None:
     points = np.array([[u * z, 0.0, z] for u, z in zip(range(1, 6), [1, 2, 3, 4, 20], strict=True)])
     expected_ranges = np.linalg.norm(points, axis=1)
-    frame = _frame(_PointCloud(points), fx=1.0, fy=1.0, cx=0.0, cy=0.0)
+    frame = _frame(_cloud(points), fx=1.0, fy=1.0, cx=0.0, cy=0.0)
 
     evidence = _range_estimator(
         _Detector([(0.0, 0.0, 9.0, 9.0)]), _Segmenter(_full_mask())
@@ -306,10 +330,12 @@ def test_returns_median_euclidean_range_and_auditable_quartiles() -> None:
     assert evidence.model_dump(mode="json")["mask_bbox_xyxy"] == [0.0, 0.0, 9.0, 9.0]
 
 
-def test_projection_cache_reuses_across_objects_only_for_the_same_explicit_frame() -> None:
+def test_projection_cache_reuses_across_objects_only_for_the_same_explicit_frame(
+    cloud_reads: Counter[int],
+) -> None:
     points = np.array([[float(2 * x), 0.0, 2.0] for x in range(5)])
-    first_cloud = _PointCloud(points)
-    second_cloud = _PointCloud(points)
+    first_cloud = _cloud(points)
+    second_cloud = _cloud(points)
     first_frame = _frame(first_cloud, index=3, fx=1.0, fy=1.0, cx=0.0, cy=0.0)
     second_frame = _frame(second_cloud, index=3, fx=1.0, fy=1.0, cx=0.0, cy=0.0)
     estimator = _range_estimator(_Detector([(0.0, 0.0, 9.0, 9.0)]), _Segmenter(_full_mask()))
@@ -318,12 +344,12 @@ def test_projection_cache_reuses_across_objects_only_for_the_same_explicit_frame
     estimator.estimate(first_frame, "crate")
     estimator.estimate(second_frame, "box")
 
-    assert first_cloud.read_count == 1
-    assert second_cloud.read_count == 1
+    assert cloud_reads[id(first_cloud)] == 1
+    assert cloud_reads[id(second_cloud)] == 1
 
 
-def test_estimate_many_batches_masks_and_reuses_one_projection() -> None:
-    cloud = _PointCloud(np.array([[-1.5, 0.0, 1.0], [3.0, 0.0, 3.0]]))
+def test_estimate_many_batches_masks_and_reuses_one_projection(cloud_reads: Counter[int]) -> None:
+    cloud = _cloud(np.array([[-1.5, 0.0, 1.0], [3.0, 0.0, 3.0]]))
     left_mask = np.zeros((10, 10), dtype=np.uint8)
     right_mask = np.zeros((10, 10), dtype=np.uint8)
     left_mask[5, 2] = 1
@@ -346,4 +372,4 @@ def test_estimate_many_batches_masks_and_reuses_one_projection() -> None:
     assert right.object_name == "table"
     assert left.camera_range_m < right.camera_range_m
     assert segmenter.call_count == 1
-    assert cloud.read_count == 1
+    assert cloud_reads[id(cloud)] == 1

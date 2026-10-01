@@ -25,7 +25,9 @@ from enum import IntFlag
 import threading
 from typing import Any
 
-from dimos_lcm.std_msgs import Bool
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Vector3
+from dimos_generated.nav_msgs.msg import OccupancyGrid
+from dimos_generated.std_msgs.msg import Bool
 import numpy as np
 from reactivex.disposable import Disposable
 
@@ -36,11 +38,9 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.mapping.occupancy.inflation import simple_inflate
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.nav_msgs.OccupancyGrid import CostValues, OccupancyGrid
+from dimos.msgs.geometry import point_distance
+from dimos.msgs.occupancy import grid_to_world, occupancy_view, world_to_grid
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.transform_utils import get_distance
 
 logger = setup_logger()
 
@@ -110,7 +110,7 @@ class WavefrontFrontierExplorer(Module):
 
     config: WavefrontConfig
 
-    # LCM inputs
+    # Typed inputs
     global_costmap: In[OccupancyGrid]
     odom: In[PoseStamped]
     goal_reached: In[Bool]
@@ -135,7 +135,7 @@ class WavefrontFrontierExplorer(Module):
         super().__init__(**kwargs)
         self._cache = FrontierCache()
         self.explored_goals = []  # type: ignore[var-annotated]  # list of explored goals
-        self.exploration_direction = Vector3(0.0, 0.0, 0.0)  # current exploration direction
+        self.exploration_direction = Vector3(x=0.0, y=0.0, z=0.0)  # current exploration direction
         self.last_costmap = None  # store last costmap for information comparison
         self.no_gain_counter = 0  # track consecutive no-gain attempts
 
@@ -223,8 +223,8 @@ class WavefrontFrontierExplorer(Module):
         Returns:
             Number of cells that are free space or obstacles (not unknown)
         """
-        free_count = np.sum(costmap.grid == CostValues.FREE)
-        obstacle_count = np.sum(costmap.grid >= self.config.occupancy_threshold)
+        free_count = np.sum(occupancy_view(costmap) == 0)
+        obstacle_count = np.sum(occupancy_view(costmap) >= self.config.occupancy_threshold)
         return int(free_count + obstacle_count)
 
     def _get_neighbors(self, point: GridPoint, costmap: OccupancyGrid) -> list[GridPoint]:
@@ -240,7 +240,7 @@ class WavefrontFrontierExplorer(Module):
                 nx, ny = point.x + dx, point.y + dy
 
                 # Check bounds
-                if 0 <= nx < costmap.width and 0 <= ny < costmap.height:
+                if 0 <= nx < costmap.info.width and 0 <= ny < costmap.info.height:
                     neighbors.append(self._cache.get_point(nx, ny))
 
         return neighbors
@@ -252,21 +252,21 @@ class WavefrontFrontierExplorer(Module):
         and not adjacent to any occupied cells.
         """
         # Point must be unknown
-        cost = costmap.grid[point.y, point.x]
-        if cost != CostValues.UNKNOWN:
+        cost = occupancy_view(costmap)[point.y, point.x]
+        if cost != -1:
             return False
 
         has_free = False
 
         for neighbor in self._get_neighbors(point, costmap):
-            neighbor_cost = costmap.grid[neighbor.y, neighbor.x]
+            neighbor_cost = occupancy_view(costmap)[neighbor.y, neighbor.x]
 
             # If adjacent to occupied space, not a frontier
             if neighbor_cost > self.config.occupancy_threshold:
                 return False
 
             # Check if adjacent to free space
-            if neighbor_cost == CostValues.FREE:
+            if neighbor_cost == 0:
                 has_free = True
 
         return has_free
@@ -288,7 +288,7 @@ class WavefrontFrontierExplorer(Module):
             visited.add((point.x, point.y))
 
             # Check if this point is free space
-            if costmap.grid[point.y, point.x] == CostValues.FREE:
+            if occupancy_view(costmap)[point.y, point.x] == 0:
                 return (point.x, point.y)
 
             # Add neighbors to search
@@ -299,18 +299,18 @@ class WavefrontFrontierExplorer(Module):
         # If no free space found, return original position
         return (start_x, start_y)
 
-    def _compute_centroid(self, frontier_points: list[Vector3]) -> Vector3:
+    def _compute_centroid(self, frontier_points: list[Point]) -> Point:
         """Compute the centroid of a list of frontier points."""
         if not frontier_points:
-            return Vector3(0.0, 0.0, 0.0)
+            return Point(x=0.0, y=0.0, z=0.0)
 
         # Vectorized approach using numpy
-        points_array = np.array([[point.x, point.y] for point in frontier_points])
+        points_array = np.array([[point.x, point.y, point.z] for point in frontier_points])
         centroid = np.mean(points_array, axis=0)
 
-        return Vector3(centroid[0], centroid[1], 0.0)
+        return Point(x=centroid[0], y=centroid[1], z=centroid[2])
 
-    def detect_frontiers(self, robot_pose: Vector3, costmap: OccupancyGrid) -> list[Vector3]:
+    def detect_frontiers(self, robot_pose: Point, costmap: OccupancyGrid) -> list[Point]:
         """
         Main frontier detection algorithm using wavefront exploration.
 
@@ -324,8 +324,8 @@ class WavefrontFrontierExplorer(Module):
         self._cache.clear()
 
         # Convert robot pose to grid coordinates
-        grid_pos = costmap.world_to_grid(robot_pose)
-        grid_x, grid_y = int(grid_pos.x), int(grid_pos.y)
+        grid_pos = world_to_grid(costmap, robot_pose)
+        grid_x, grid_y = int(np.floor(round(grid_pos[0], 9))), int(np.floor(round(grid_pos[1], 9)))
 
         # Find nearest free space to start exploration
         free_x, free_y = self._find_free_space(grid_x, grid_y, costmap)
@@ -386,13 +386,13 @@ class WavefrontFrontierExplorer(Module):
 
                 # Check if we found a large enough frontier
                 # Convert minimum perimeter to minimum number of cells based on resolution
-                min_cells = int(self.config.min_frontier_perimeter / costmap.resolution)
+                min_cells = max(
+                    1, int(self.config.min_frontier_perimeter / costmap.info.resolution)
+                )
                 if len(new_frontier) >= min_cells:
                     world_points = []
                     for point in new_frontier:
-                        world_pos = costmap.grid_to_world(
-                            Vector3(float(point.x), float(point.y), 0.0)
-                        )
+                        world_pos = grid_to_world(costmap, (float(point.x), float(point.y)))
                         world_points.append(world_pos)
 
                     # Compute centroid in world coordinates (already correctly scaled)
@@ -407,10 +407,10 @@ class WavefrontFrontierExplorer(Module):
                     & (PointClassification.MapOpen | PointClassification.MapClosed)
                 ):
                     # Check if neighbor is free space or unknown (explorable)
-                    neighbor_cost = costmap.grid[neighbor.y, neighbor.x]
+                    neighbor_cost = occupancy_view(costmap)[neighbor.y, neighbor.x]
 
                     # Add free space and unknown space to exploration queue
-                    if neighbor_cost == CostValues.FREE or neighbor_cost == CostValues.UNKNOWN:
+                    if neighbor_cost == 0 or neighbor_cost == -1:
                         neighbor.classification |= PointClassification.MapOpen
                         map_queue.append(neighbor)
 
@@ -428,25 +428,27 @@ class WavefrontFrontierExplorer(Module):
         return ranked_frontiers
 
     def _update_exploration_direction(
-        self, robot_pose: Vector3, goal_pose: Vector3 | None = None
+        self, robot_pose: Point, goal_pose: Point | None = None
     ) -> None:
         """Update the current exploration direction based on robot movement or selected goal."""
         if goal_pose is not None:
             # Calculate direction from robot to goal
-            direction = Vector3(goal_pose.x - robot_pose.x, goal_pose.y - robot_pose.y, 0.0)
+            direction = Vector3(x=goal_pose.x - robot_pose.x, y=goal_pose.y - robot_pose.y, z=0.0)
             magnitude = np.sqrt(direction.x**2 + direction.y**2)
             if magnitude > 0.1:  # Avoid division by zero for very close goals
                 self.exploration_direction = Vector3(
-                    direction.x / magnitude, direction.y / magnitude, 0.0
+                    x=direction.x / magnitude, y=direction.y / magnitude, z=0.0
                 )
 
-    def _compute_direction_momentum_score(self, frontier: Vector3, robot_pose: Vector3) -> float:
+    def _compute_direction_momentum_score(self, frontier: Point, robot_pose: Point) -> float:
         """Compute direction momentum score for a frontier."""
         if self.exploration_direction.x == 0 and self.exploration_direction.y == 0:
             return 0.0  # No momentum if no previous direction
 
         # Calculate direction from robot to frontier
-        frontier_direction = Vector3(frontier.x - robot_pose.x, frontier.y - robot_pose.y, 0.0)
+        frontier_direction = Vector3(
+            x=frontier.x - robot_pose.x, y=frontier.y - robot_pose.y, z=0.0
+        )
         magnitude = np.sqrt(frontier_direction.x**2 + frontier_direction.y**2)
 
         if magnitude < 0.1:
@@ -454,7 +456,7 @@ class WavefrontFrontierExplorer(Module):
 
         # Normalize frontier direction
         frontier_direction = Vector3(
-            frontier_direction.x / magnitude, frontier_direction.y / magnitude, 0.0
+            x=frontier_direction.x / magnitude, y=frontier_direction.y / magnitude, z=0.0
         )
 
         # Calculate dot product for directional alignment
@@ -466,7 +468,7 @@ class WavefrontFrontierExplorer(Module):
         # Return momentum score (higher for same direction, lower for opposite)
         return max(0.0, dot_product)  # Only positive momentum, no penalty for different directions
 
-    def _compute_distance_to_explored_goals(self, frontier: Vector3) -> float:
+    def _compute_distance_to_explored_goals(self, frontier: Point) -> float:
         """Compute distance from frontier to the nearest explored goal."""
         if not self.explored_goals:
             return 5.0  # Default consistent value when no explored goals
@@ -478,7 +480,7 @@ class WavefrontFrontierExplorer(Module):
 
         return min_distance
 
-    def _compute_distance_to_obstacles(self, frontier: Vector3, costmap: OccupancyGrid) -> float:
+    def _compute_distance_to_obstacles(self, frontier: Point, costmap: OccupancyGrid) -> float:
         """
         Compute the minimum distance from a frontier point to the nearest obstacle.
 
@@ -490,16 +492,21 @@ class WavefrontFrontierExplorer(Module):
             Minimum distance to nearest obstacle in meters
         """
         # Convert frontier to grid coordinates
-        grid_pos = costmap.world_to_grid(frontier)
-        grid_x, grid_y = int(grid_pos.x), int(grid_pos.y)
+        grid_pos = world_to_grid(costmap, frontier)
+        grid_x, grid_y = int(np.floor(round(grid_pos[0], 9))), int(np.floor(round(grid_pos[1], 9)))
 
         # Check if frontier is within costmap bounds
-        if grid_x < 0 or grid_x >= costmap.width or grid_y < 0 or grid_y >= costmap.height:
+        if (
+            grid_x < 0
+            or grid_x >= costmap.info.width
+            or grid_y < 0
+            or grid_y >= costmap.info.height
+        ):
             return 0.0  # Consider out-of-bounds as obstacle
 
         min_distance = float("inf")
         search_radius = (
-            int(self.config.safe_distance / costmap.resolution) + 5
+            int(self.config.safe_distance / costmap.info.resolution) + 5
         )  # Search a bit beyond minimum
 
         # Search in a square around the frontier point
@@ -511,16 +518,16 @@ class WavefrontFrontierExplorer(Module):
                 # Skip if out of bounds
                 if (
                     check_x < 0
-                    or check_x >= costmap.width
+                    or check_x >= costmap.info.width
                     or check_y < 0
-                    or check_y >= costmap.height
+                    or check_y >= costmap.info.height
                 ):
                     continue
 
                 # Check if this cell is an obstacle
-                if costmap.grid[check_y, check_x] >= self.config.occupancy_threshold:
+                if occupancy_view(costmap)[check_y, check_x] >= self.config.occupancy_threshold:
                     # Calculate distance in meters
-                    distance = np.sqrt(dx**2 + dy**2) * costmap.resolution
+                    distance = np.sqrt(dx**2 + dy**2) * costmap.info.resolution
                     min_distance = min(min_distance, distance)
 
         # If no obstacles found within search radius, return the safe distance
@@ -528,12 +535,12 @@ class WavefrontFrontierExplorer(Module):
         return min_distance if min_distance != float("inf") else self.config.safe_distance
 
     def _compute_comprehensive_frontier_score(
-        self, frontier: Vector3, frontier_size: int, robot_pose: Vector3, costmap: OccupancyGrid
+        self, frontier: Point, frontier_size: int, robot_pose: Point, costmap: OccupancyGrid
     ) -> float:
         """Compute comprehensive score considering multiple criteria."""
 
         # 1. Distance from robot (preference for moderate distances)
-        robot_distance = get_distance(frontier, robot_pose)
+        robot_distance = point_distance(frontier, robot_pose)
 
         # Distance score: prefer moderate distances (not too close, not too far)
         # Normalized to 0-1 range
@@ -541,7 +548,9 @@ class WavefrontFrontierExplorer(Module):
 
         # 2. Information gain (frontier size)
         # Normalize by a reasonable max frontier size
-        max_expected_frontier_size = self.config.min_frontier_perimeter / costmap.resolution * 10
+        max_expected_frontier_size = (
+            self.config.min_frontier_perimeter / costmap.info.resolution * 10
+        )
         info_gain_score = min(frontier_size / max_expected_frontier_size, 1.0)
 
         # 3. Distance to explored goals (bonus for being far from explored areas)
@@ -577,11 +586,11 @@ class WavefrontFrontierExplorer(Module):
 
     def _rank_frontiers(
         self,
-        frontier_centroids: list[Vector3],
+        frontier_centroids: list[Point],
         frontier_sizes: list[int],
-        robot_pose: Vector3,
+        robot_pose: Point,
         costmap: OccupancyGrid,
-    ) -> list[Vector3]:
+    ) -> list[Point]:
         """
         Find the single best frontier using comprehensive scoring and filtering.
 
@@ -619,7 +628,7 @@ class WavefrontFrontierExplorer(Module):
         # Extract just the frontiers (remove scores) and return as list
         return [frontier for frontier, _ in valid_frontiers]
 
-    def get_exploration_goal(self, robot_pose: Vector3, costmap: OccupancyGrid) -> Vector3 | None:
+    def get_exploration_goal(self, robot_pose: Point, costmap: OccupancyGrid) -> Point | None:
         """
         Get the single best exploration goal using comprehensive frontier scoring.
 
@@ -683,7 +692,7 @@ class WavefrontFrontierExplorer(Module):
         self.last_costmap = costmap  # type: ignore[assignment]
         return None
 
-    def mark_explored_goal(self, goal: Vector3) -> None:
+    def mark_explored_goal(self, goal: Point) -> None:
         """Mark a goal as explored."""
         self.explored_goals.append(goal)
 
@@ -695,7 +704,7 @@ class WavefrontFrontierExplorer(Module):
         needs to forget its previous exploration history.
         """
         self.explored_goals.clear()  # Clear all previously explored goals
-        self.exploration_direction = Vector3(0.0, 0.0, 0.0)  # Reset exploration direction
+        self.exploration_direction = Vector3(x=0.0, y=0.0, z=0.0)  # Reset exploration direction
         self.last_costmap = None  # Clear last costmap comparison
         self.no_gain_counter = 0  # Reset no-gain attempt counter
         self._cache.clear()  # Clear frontier point cache
@@ -749,12 +758,7 @@ class WavefrontFrontierExplorer(Module):
 
         # Publish current location as goal to stop the robot.
         if self.latest_odometry is not None:
-            goal = PoseStamped(
-                position=self.latest_odometry.position,
-                orientation=self.latest_odometry.orientation,
-                frame_id="world",
-                ts=self.latest_odometry.ts,
-            )
+            goal = PoseStamped(header=self.latest_odometry.header, pose=self.latest_odometry.pose)
             self.goal_request.publish(goal)
 
         logger.info("Stopped autonomous frontier exploration")
@@ -791,8 +795,10 @@ class WavefrontFrontierExplorer(Module):
                 continue
 
             # Get robot pose from odometry
-            robot_pose = Vector3(
-                self.latest_odometry.position.x, self.latest_odometry.position.y, 0.0
+            robot_pose = Point(
+                x=self.latest_odometry.pose.position.x,
+                y=self.latest_odometry.pose.position.y,
+                z=0.0,
             )
 
             # Get exploration goal
@@ -801,13 +807,10 @@ class WavefrontFrontierExplorer(Module):
 
             if goal:
                 # Publish goal to navigator
-                goal_msg = PoseStamped()
-                goal_msg.position.x = goal.x
-                goal_msg.position.y = goal.y
-                goal_msg.position.z = 0.0
-                goal_msg.orientation.w = 1.0  # No rotation
-                goal_msg.frame_id = "world"
-                goal_msg.ts = self.latest_costmap.ts
+                goal_msg = PoseStamped(
+                    header=self.latest_costmap.header,
+                    pose=Pose(position=goal, orientation=Quaternion(w=1)),
+                )
 
                 self.goal_request.publish(goal_msg)
                 logger.info(f"Published frontier goal: ({goal.x:.2f}, {goal.y:.2f})")

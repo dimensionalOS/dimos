@@ -21,9 +21,9 @@ import threading
 import time
 from typing import Any
 
+from dimos_generated.geometry_msgs.msg import Vector3
 import pytest
 
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM, Topic
 from dimos.protocol.pubsub.impl.memory import Memory
 from dimos.protocol.pubsub.impl.zenohpubsub import PickleZenoh, Zenoh
@@ -122,8 +122,12 @@ def lcm_context() -> Generator[LCM, None, None]:
 testdata.append(
     (
         lcm_context,
-        Topic(topic="/test_topic", lcm_type=Vector3),
-        [Vector3(1, 2, 3), Vector3(4, 5, 6), Vector3(7, 8, 9)],  # Using Vector3 as mock data,
+        Topic(topic="/test_topic", msg_type=Vector3),
+        [
+            Vector3(x=1, y=2, z=3),
+            Vector3(x=4, y=5, z=6),
+            Vector3(x=7, y=8, z=9),
+        ],  # Using Vector3 as mock data,
     )
 )
 
@@ -183,8 +187,8 @@ def zenoh_lcm_context() -> Generator[Zenoh, None, None]:
 testdata.append(
     (
         zenoh_lcm_context,
-        Topic(topic="dimos/test/spec", lcm_type=Vector3),
-        [Vector3(1, 2, 3), Vector3(4, 5, 6), Vector3(7, 8, 9)],
+        Topic(topic="dimos/test/spec", msg_type=Vector3),
+        [Vector3(x=1, y=2, z=3), Vector3(x=4, y=5, z=6), Vector3(x=7, y=8, z=9)],
     )
 )
 

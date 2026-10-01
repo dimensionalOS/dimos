@@ -31,6 +31,8 @@ from __future__ import annotations
 import time
 from typing import Any
 
+from dimos_generated.sensor_msgs.msg import Image
+import numpy as np
 import typer
 
 from dimos.mapping.loop_closure.pgo import PGO
@@ -38,10 +40,10 @@ from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.stream import Stream
 from dimos.memory.transform import QualityWindow, SpeedLimit
 from dimos.memory.type.observation import Observation
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.geometry import transform_matrix
+from dimos.msgs.image import image_sharpness
 from dimos.perception.fiducial.marker_transformer import DetectMarkers
-from dimos.robot.unitree.go2.connection import _camera_info_static
+from dimos.robot.unitree.go2.camera_calibration import front_camera_calibration
 from dimos.utils.data import get_data
 
 DEFAULT_DATASETS = [f"hk_village{i}" for i in range(1, 7)]
@@ -68,7 +70,7 @@ def _eval_recording(
 ) -> tuple[float, float]:
     """Returns (pgo_time_s, spread_m) for one recording."""
     db_path = get_data(f"{name}.db")
-    cam_info = _camera_info_static()
+    cam_info = front_camera_calibration()
 
     store = SqliteStore(path=str(db_path))
     with store:
@@ -86,7 +88,7 @@ def _eval_recording(
             smoothing_window=marker_smoothing,
         )
         pipeline: Stream[Image] = color_image.transform(
-            QualityWindow(lambda img: img.sharpness, window=marker_quality_window)
+            QualityWindow(image_sharpness, window=marker_quality_window)
         )
         if marker_max_speed > 0:
             pipeline = pipeline.transform(
@@ -106,16 +108,13 @@ def _eval_recording(
         # PGO-correct each track's pose; group by marker_id.
         by_marker: dict[int, list[tuple[float, float, float]]] = {}
         for d in tracks:
-            raw_tf = Transform(
-                translation=d.data.center,
-                rotation=d.data.orientation,
-                frame_id="world",
-                child_frame_id=f"marker_{d.data.marker_id}",
-                ts=d.ts,
+            center = d.data.center
+            corrected = transform_matrix(graph.correction_at(d.ts).transform) @ np.array(
+                [center.x, center.y, center.z, 1.0]
             )
-            corrected = graph.correct(raw_tf)
-            t = corrected.translation
-            by_marker.setdefault(d.data.marker_id, []).append((t.x, t.y, t.z))
+            by_marker.setdefault(d.data.marker_id, []).append(
+                (float(corrected[0]), float(corrected[1]), float(corrected[2]))
+            )
 
         spread = sum(_pairwise_sum(v) for v in by_marker.values())
         return pgo_time, spread

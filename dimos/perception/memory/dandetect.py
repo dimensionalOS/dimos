@@ -122,7 +122,7 @@ class DanDetector(Resource):
                 tf_tolerance=tf_tolerance,
             )
 
-        from dimos.msgs.sensor_msgs.Image import Image
+        from dimos_generated.sensor_msgs.msg import Image
 
         tf = StreamTF.from_store(store)
         if tf is None:

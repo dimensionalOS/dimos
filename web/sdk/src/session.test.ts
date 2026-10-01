@@ -17,13 +17,13 @@ import {
   type Session,
 } from "./session.ts";
 import { PublishError } from "./errors.ts";
-import lcmFrames from "../../shared/fixtures/lcm_frames.json";
+import cdrFrames from "../../shared/fixtures/cdr_frames.json";
 
 // The pose_stamped golden vector (Python-generated): the schema a robot puts
-// in params.lcm plus the exact frame bytes.
-const POSE_LCM = (lcmFrames as { vectors: { schema: unknown; payload_b64: string }[] })
+// in params.cdr plus the exact frame bytes.
+const POSE_CDR = (cdrFrames as { vectors: { schema: unknown; payload_b64: string }[] })
   .vectors[0];
-const poseLcmPayload = () => Uint8Array.from(atob(POSE_LCM.payload_b64), (c) => c.charCodeAt(0));
+const poseCdrPayload = () => Uint8Array.from(atob(POSE_CDR.payload_b64), (c) => c.charCodeAt(0));
 import {
   FakeRelayEnd,
   INFO,
@@ -761,51 +761,51 @@ describe("Session over a fake WebTransport", () => {
     expect(slot.preview).toBe("2 points");
   });
 
-  it("decodes a *.lcm.v1 channel with the schema from the manifest", async () => {
+  it("decodes a *.cdr.v1 channel with the schema from the manifest", async () => {
     const { relay, handle } = start();
     await goLive(relay, handle, ROBOT_A, [
       spec({
-        ch: "lcm_pose",
-        encoding: "geometry_msgs.PoseStamped.lcm.v1",
-        params: { lcm: POSE_LCM.schema },
+        ch: "cdr_pose",
+        encoding: "geometry_msgs/msg/PoseStamped.cdr.v1",
+        params: { cdr: POSE_CDR.schema },
       }),
     ]);
-    handle.subscribe("lcm_pose", () => {});
-    await until(() => relay.subs().includes("lcm_pose"), "sub");
-    relay.pushRaw(1, poseLcmPayload(), "lcm_pose");
-    await until(() => handle.store.get("lcm_pose") !== null, "frame");
-    const slot = handle.store.get("lcm_pose")!;
+    handle.subscribe("cdr_pose", () => {});
+    await until(() => relay.subs().includes("cdr_pose"), "sub");
+    relay.pushRaw(1, poseCdrPayload(), "cdr_pose");
+    await until(() => handle.store.get("cdr_pose") !== null, "frame");
+    const slot = handle.store.get("cdr_pose")!;
     const value = slot.value as { pose: { position: { x: number } }; header: { frame_id: string } };
     expect(value.pose.position.x).toBe(1.5);
     expect(value.header.frame_id).toBe("map");
     expect(slot.preview).toContain("position: {x: 1.5, y: -2.5, z: 0.25}");
 
-    // Another fingerprint is a decode error; the last good value stays.
-    const foreign = poseLcmPayload();
+    // An invalid encapsulation header is a decode error; the last good value stays.
+    const foreign = poseCdrPayload();
     foreign[0] ^= 0xff;
-    relay.pushRaw(2, foreign, "lcm_pose");
+    relay.pushRaw(2, foreign, "cdr_pose");
     await until(() => {
       handle.store.publishUi();
-      return handle.store.getUiSnapshot("lcm_pose").stats.frames === 2;
+      return handle.store.getUiSnapshot("cdr_pose").stats.frames === 2;
     }, "bad frame counted");
-    expect(handle.store.get("lcm_pose")!.seq).toBe(1);
-    expect(handle.store.getUiSnapshot("lcm_pose").stats.decodeErrors).toBe(1);
+    expect(handle.store.get("cdr_pose")!.seq).toBe(1);
+    expect(handle.store.getUiSnapshot("cdr_pose").stats.decodeErrors).toBe(1);
   });
 
-  it("counts frames of an lcm channel without a usable schema, storing no value", async () => {
+  it("counts frames of an cdr channel without a usable schema, storing no value", async () => {
     const { relay, handle } = start();
     await goLive(relay, handle, ROBOT_A, [
-      spec({ ch: "lcm_pose", encoding: "geometry_msgs.PoseStamped.lcm.v1", params: {} }),
+      spec({ ch: "cdr_pose", encoding: "geometry_msgs/msg/PoseStamped.cdr.v1", params: {} }),
     ]);
-    handle.subscribe("lcm_pose", () => {});
-    await until(() => relay.subs().includes("lcm_pose"), "sub");
-    relay.pushRaw(1, poseLcmPayload(), "lcm_pose");
+    handle.subscribe("cdr_pose", () => {});
+    await until(() => relay.subs().includes("cdr_pose"), "sub");
+    relay.pushRaw(1, poseCdrPayload(), "cdr_pose");
     await until(() => {
       handle.store.publishUi();
-      return handle.store.getUiSnapshot("lcm_pose").stats.frames === 1;
+      return handle.store.getUiSnapshot("cdr_pose").stats.frames === 1;
     }, "frame counted");
-    expect(handle.store.get("lcm_pose")?.value).toBeUndefined();
-    expect(handle.store.getUiSnapshot("lcm_pose").stats.decodeErrors).toBe(0);
+    expect(handle.store.get("cdr_pose")?.value).toBeUndefined();
+    expect(handle.store.getUiSnapshot("cdr_pose").stats.decodeErrors).toBe(0);
   });
 
   it("retries the watch when the robot reappears after unknown_robot", async () => {

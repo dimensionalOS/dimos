@@ -39,6 +39,9 @@
           mkdir -p $out/native/rust
           cp -r ${dimos-repo}/native/rust/dimos-module $out/native/rust/dimos-module
           cp -r ${dimos-repo}/native/rust/dimos-module-macros $out/native/rust/dimos-module-macros
+          cp -r ${dimos-repo}/native/rust/dimos-lcm-transport $out/native/rust/dimos-lcm-transport
+          mkdir -p $out/dimos/message_codegen
+          cp -r ${dimos-repo}/dimos/message_codegen/. $out/dimos/message_codegen/
         '';
 
         generatedCargoNix = crate2nix.tools.${system}.generatedCargoNix {
@@ -52,6 +55,7 @@
             inherit pkgs;
             buildRustCrateForPkgs = cratePkgs: cratePkgs.buildRustCrate.override {
               defaultCrateOverrides = cratePkgs.defaultCrateOverrides // {
+                dimos-generated-messages = _: { nativeBuildInputs = [cratePkgs.python3]; };
                 # cu_vslam_rs's build.rs compiles its shim against this SDK.
                 cu_vslam_rs = _: { CUVSLAM_SDK_DIR = sdkPackage; };
                 # buildRustCrate names DEP_ vars after the crate, cargo after the

@@ -13,15 +13,16 @@
 # limitations under the License.
 from typing import Literal, TypedDict
 
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.robot.unitree.type.timeseries import (
-    Timestamped,
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseStamped as GeneratedPoseStamped,
+    Quaternion as GeneratedQuaternion,
 )
-from dimos.types.timestamped import to_timestamp
+from dimos_generated.std_msgs.msg import Header as GeneratedHeader
 
-raw_odometry_msg_sample = {
+raw_odometry_msg_sample: "RawOdometryMessage" = {
     "type": "msg",
     "topic": "rt/utlidar/robot_pose",
     "data": {
@@ -73,32 +74,21 @@ class RawOdometryMessage(TypedDict):
     data: OdometryData
 
 
-class Odometry(PoseStamped, Timestamped):  # type: ignore[misc]
-    name = "geometry_msgs.PoseStamped"
-
-    def __init__(self, frame_id: str = "base_link", *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
-        super().__init__(frame_id=frame_id, *args, **kwargs)  # type: ignore[misc]
-
-    @classmethod
-    def from_msg(cls, msg: RawOdometryMessage) -> "Odometry":
-        pose = msg["data"]["pose"]
-
-        # Extract position
-        pos = Vector3(
-            pose["position"].get("x"),
-            pose["position"].get("y"),
-            pose["position"].get("z"),
-        )
-
-        rot = Quaternion(
-            pose["orientation"].get("x"),
-            pose["orientation"].get("y"),
-            pose["orientation"].get("z"),
-            pose["orientation"].get("w"),
-        )
-
-        ts = to_timestamp(msg["data"]["header"]["stamp"])
-        return Odometry(position=pos, orientation=rot, ts=ts, frame_id="world")
-
-    def __repr__(self) -> str:
-        return f"Odom pos({self.position}), rot({self.orientation})"
+def pose_from_webrtc_odometry(
+    message: RawOdometryMessage, *, header: GeneratedHeader | None = None
+) -> GeneratedPoseStamped:
+    """Copy the device's ROS-shaped pose, preserving its header unless explicitly replaced."""
+    data = message["data"]
+    source_header = data["header"]
+    pose = data["pose"]
+    return GeneratedPoseStamped(
+        header=header
+        if header is not None
+        else GeneratedHeader(
+            stamp=Time(**source_header["stamp"]), frame_id=source_header["frame_id"]
+        ),
+        pose=Pose(
+            position=Point(**pose["position"]),
+            orientation=GeneratedQuaternion(**pose["orientation"]),
+        ),
+    )

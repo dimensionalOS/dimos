@@ -16,22 +16,21 @@
 
 import math
 
-from dimos_lcm.std_msgs import Bool
+from dimos_generated.geometry_msgs.msg import Point, PointStamped, Pose, PoseStamped
+from dimos_generated.nav_msgs.msg import Path
+from dimos_generated.std_msgs.msg import Bool
 import pytest
 
-from dimos.msgs.geometry_msgs.PointStamped import PointStamped
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.nav_msgs.Path import Path
 from dimos.web.codecs import resolve_decoder, resolve_encoder
 from dimos.web.relay_bridge.builtin_codecs import decode_bool, decode_point, encode_path
 
 
 def _pose(x: float, y: float) -> PoseStamped:
-    return PoseStamped(ts=1.0, position=[x, y, 0.0], orientation=[0.0, 0.0, 0.0, 1.0])
+    return PoseStamped(pose=Pose(position=Point(x=x, y=y)))
 
 
 def test_path_encodes_a_rounded_xy_polyline() -> None:
-    path = Path(ts=1.0, frame_id="world", poses=[_pose(1.23456, -2.0), _pose(0.0004, 3.5)])
+    path = Path(poses=[_pose(1.23456, -2.0), _pose(0.0004, 3.5)])
     assert encode_path(path) == b"[[1.235,-2.0],[0.0,3.5]]"
     assert resolve_encoder("path.json.v1", Path).encode is encode_path
 
@@ -44,7 +43,12 @@ def test_empty_path_encodes_as_a_clear() -> None:
 def test_point_decodes_a_click() -> None:
     point = decode_point({"x": 1.5, "y": -2})
     assert isinstance(point, PointStamped)
-    assert (point.x, point.y, point.z, point.frame_id) == (1.5, -2.0, 0.0, "world")
+    assert (point.point.x, point.point.y, point.point.z, point.header.frame_id) == (
+        1.5,
+        -2.0,
+        0.0,
+        "world",
+    )
     assert resolve_decoder("point.json.v1", PointStamped).decode is decode_point
 
 

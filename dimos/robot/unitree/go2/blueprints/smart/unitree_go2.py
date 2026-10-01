@@ -15,6 +15,10 @@
 
 from pathlib import Path
 
+from dimos_generated.geometry_msgs.msg import Pose, PoseStamped
+from dimos_generated.sensor_msgs.msg import CameraInfo, Image, PointCloud2
+from dimos_generated.vision_msgs.msg import Detection3DArray
+
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.stream import In
 from dimos.core.transport import LCMTransport
@@ -22,12 +26,6 @@ from dimos.mapping.costmapper import CostMapper
 from dimos.mapping.relocalization.go2.module import Go2Relocalization
 from dimos.mapping.voxels.module import VoxelGridMapper
 from dimos.memory.module import Recorder, RecorderConfig, pose_setter_for
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.navigation.frontier_exploration.wavefront_frontier_goal_selector import (
     WavefrontFrontierExplorer,
 )
@@ -65,7 +63,7 @@ class Go2Memory(Recorder):
 
     @pose_setter_for("odom")
     async def _odom_pose(self, msg: PoseStamped) -> Pose | None:
-        self._last_odom_pose = msg
+        self._last_odom_pose = msg.pose
         return self._last_odom_pose
 
     @pose_setter_for("lidar")

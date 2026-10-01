@@ -14,14 +14,15 @@
 
 from typing import Any
 
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos_generated.sensor_msgs.msg import CompressedImage, Image
+
+from dimos.msgs.image import compressed_image_from_image, image_from_compressed
 from dimos.protocol.pubsub.encoders import PubSubEncoderMixin
 from dimos.protocol.pubsub.impl.shmpubsub import SharedMemoryPubSubBase
-from dimos.utils.turbojpeg import get_turbojpeg
 
 
 class JpegSharedMemoryEncoderMixin(PubSubEncoderMixin[str, Image, bytes]):
-    def __init__(self, quality: int = 75, **kwargs) -> None:  # type: ignore[no-untyped-def]
+    def __init__(self, quality: int = 75, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.quality = quality
 
@@ -29,12 +30,10 @@ class JpegSharedMemoryEncoderMixin(PubSubEncoderMixin[str, Image, bytes]):
         if not isinstance(msg, Image):
             raise ValueError("Can only encode images.")
 
-        bgr_image = msg.to_bgr().to_opencv()
-        return get_turbojpeg().encode(bgr_image, quality=self.quality)  # type: ignore[no-any-return]
+        return compressed_image_from_image(msg, quality=self.quality).encode()
 
     def decode(self, msg: bytes, _topic: str) -> Image:
-        bgr_array = get_turbojpeg().decode(msg)
-        return Image(data=bgr_array, format=ImageFormat.BGR)
+        return image_from_compressed(CompressedImage.decode(msg))
 
 
 class JpegSharedMemory(JpegSharedMemoryEncoderMixin, SharedMemoryPubSubBase):  # type: ignore[misc]

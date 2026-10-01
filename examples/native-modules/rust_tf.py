@@ -28,6 +28,10 @@ import math
 from pathlib import Path
 import time
 
+from dimos_generated.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
+from dimos_generated.std_msgs.msg import Header
+from dimos_generated.tf2_msgs.msg import TFMessage
+
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
@@ -35,9 +39,11 @@ from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import IO
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.msgs.time import time_from_nanoseconds
+from dimos.protocol.tf.static_tf_publisher import StaticTfPublisher, frames_to_edge_transforms
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 _RUST_DIR = Path(__file__).parent / "rust"
 # The crate is a workspace member, so cargo builds into the repo-root target dir.
@@ -46,7 +52,7 @@ _BUILD = "cargo build --release"
 
 
 class TfProducer(Module):
-    """Publishes a time-varying a -> b -> c transform chain onto /tf."""
+    """Publishes the time-varying a -> b edge onto /tf."""
 
     tf: IO[TFMessage]
 
@@ -62,27 +68,43 @@ class TfProducer(Module):
         start = time.time()
         while self._running:
             t = time.time() - start
-            now = time.time()
-            self.tfbuffer.publish(
-                Transform(
-                    translation=Vector3(0.0, math.cos(t), math.sin(t)),
-                    frame_id="a",
-                    child_frame_id="b",
-                    ts=now,
-                ),
-                Transform(
-                    translation=Vector3(1.0, 0.0, 0.0),
-                    frame_id="b",
-                    child_frame_id="c",
-                    ts=now,
-                ),
+            stamp = time_from_nanoseconds(time.time_ns())
+            self.tf.publish(
+                TFMessage(
+                    transforms=[
+                        TransformStamped(
+                            header=Header(frame_id="a", stamp=stamp),
+                            child_frame_id="b",
+                            transform=Transform(
+                                translation=Vector3(y=math.cos(t), z=math.sin(t)),
+                                rotation=Quaternion(w=1),
+                            ),
+                        ),
+                    ]
+                )
             )
+            composed = self.tfbuffer.get("a", "d", warn=False)
+            if composed is not None:
+                position = composed.transform.translation
+                logger.info(
+                    "Python TF lookup",
+                    x=position.x,
+                    y=position.y,
+                    z=position.z,
+                )
             await asyncio.sleep(0.1)
 
     @rpc
     def stop(self) -> None:
         self._running = False
         super().stop()
+
+
+class StaticMount(StaticTfPublisher):
+    """Exercise the production periodic publisher for the fixed b -> c mount."""
+
+    def transforms(self) -> list[TransformStamped]:
+        return frames_to_edge_transforms([("c", "b", (1.0, 0.0, 0.0), (0.0, 0.0, 0.0))])
 
 
 class TfListenerConfig(NativeModuleConfig):
@@ -118,6 +140,9 @@ class TfBroadcasterModule(NativeModule):
 
 if __name__ == "__main__":
     bp = autoconnect(
-        TfProducer.blueprint(), TfBroadcasterModule.blueprint(), TfListenerModule.blueprint()
+        TfProducer.blueprint(),
+        StaticMount.blueprint(),
+        TfBroadcasterModule.blueprint(),
+        TfListenerModule.blueprint(),
     ).global_config(viewer="none")
     ModuleCoordinator.build(bp).loop()

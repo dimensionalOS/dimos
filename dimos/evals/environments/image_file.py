@@ -20,8 +20,15 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from dimos_generated.sensor_msgs.msg import Image
+import numpy as np
+from PIL import Image as PILImage
+
 from dimos.evals.environments.base import Environment
 from dimos.evals.types import RunningEnvironment
+from dimos.memory.store.memory import MemoryStore
+from dimos.msgs.image import image_from_array
+from dimos.msgs.time import header_now, to_seconds
 from dimos.protocol.service.spec import BaseConfig
 
 if TYPE_CHECKING:
@@ -50,14 +57,13 @@ class ImageFile(Environment):
             raise FileNotFoundError(f"image does not exist: {self.config.path}")
 
     def start(self, modules: Sequence[str]) -> RunningEnvironment:
-        from dimos.memory.store.memory import MemoryStore
-        from dimos.msgs.sensor_msgs.Image import Image
-
-        image = Image.from_file(self.config.path)
+        with PILImage.open(self.config.path) as source:
+            pixels = np.asarray(source.convert("RGB"))
+        image = image_from_array(pixels, encoding="rgb8", header=header_now())
         recording = MemoryStore()
         self._resources.callback(recording.stop)
         stream = recording.stream("image", Image)
-        stream.append(image, ts=image.ts)
+        stream.append(image, ts=to_seconds(image.header.stamp))
         return RunningEnvironment(
             mcp_url="", streams=(stream,), artifacts={"image": self.config.path}
         )

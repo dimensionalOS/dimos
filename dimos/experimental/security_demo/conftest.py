@@ -14,11 +14,13 @@
 
 from __future__ import annotations
 
+from dimos_generated.sensor_msgs.msg import CameraInfo
+import numpy as np
+from PIL import Image as PILImage
 import pytest
 
 from dimos.experimental.security_demo.security_module import SecurityModule
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.image import image_from_array
 from dimos.perception.detection.detectors.yolo import Yolo2DDetector
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.utils.data import get_data
@@ -33,12 +35,18 @@ def yolo_detector():
 
 @pytest.fixture(scope="session")
 def person_image():
-    return Image.from_file(get_data("security_detection.png"))
+    return image_from_array(
+        np.asarray(PILImage.open(get_data("security_detection.png")).convert("RGB")),
+        encoding="rgb8",
+    )
 
 
 @pytest.fixture(scope="session")
 def empty_image():
-    return Image.from_file(get_data("security_no_detection.png"))
+    return image_from_array(
+        np.asarray(PILImage.open(get_data("security_no_detection.png")).convert("RGB")),
+        encoding="rgb8",
+    )
 
 
 @pytest.fixture()

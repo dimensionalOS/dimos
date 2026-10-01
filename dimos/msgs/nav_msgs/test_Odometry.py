@@ -14,50 +14,60 @@
 
 import time
 
+from dimos_generated.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseWithCovariance,
+    Quaternion,
+    Twist,
+    TwistWithCovariance,
+    Vector3,
+)
+from dimos_generated.nav_msgs.msg import Odometry
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
+from rosbags.typesys import Stores, get_typestore
 
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.PoseWithCovariance import PoseWithCovariance
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.TwistWithCovariance import TwistWithCovariance
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.nav_msgs.Odometry import Odometry
+from dimos.msgs.geometry import quaternion_euler
+from dimos.msgs.time import header_now, time_from_seconds, to_seconds
 
 
 def test_odometry_default_init() -> None:
     odom = Odometry()
-
-    assert odom.ts > 0
-    assert odom.frame_id == ""
+    assert to_seconds(odom.header.stamp) == 0
+    assert odom.header.frame_id == ""
     assert odom.child_frame_id == ""
-
-    assert odom.pose.position.x == 0.0
-    assert odom.pose.position.y == 0.0
-    assert odom.pose.position.z == 0.0
-    assert odom.pose.orientation.w == 1.0
-
-    assert odom.twist.linear.x == 0.0
-    assert odom.twist.angular.x == 0.0
-
-    assert np.all(odom.pose.covariance == 0.0)
-    assert np.all(odom.twist.covariance == 0.0)
+    assert odom.pose.pose.position.x == 0.0
+    assert odom.pose.pose.position.y == 0.0
+    assert odom.pose.pose.position.z == 0.0
+    assert odom.pose.pose.orientation.w == 1.0
+    assert odom.twist.twist.linear.x == 0.0
+    assert odom.twist.twist.angular.x == 0.0
+    assert np.all(np.asarray(odom.pose.covariance) == 0.0)
+    assert np.all(np.asarray(odom.twist.covariance) == 0.0)
 
 
 def test_odometry_with_frames() -> None:
     ts = 1234567890.123456
-    odom = Odometry(ts=ts, frame_id="odom", child_frame_id="base_link")
-
-    assert odom.ts == ts
-    assert odom.frame_id == "odom"
+    odom = Odometry(
+        child_frame_id="base_link", header=Header(stamp=time_from_seconds(ts), frame_id="odom")
+    )
+    assert to_seconds(odom.header.stamp) == ts
+    assert odom.header.frame_id == "odom"
     assert odom.child_frame_id == "base_link"
 
 
 def test_odometry_with_pose_and_twist() -> None:
-    pose = Pose(1.0, 2.0, 3.0, 0.1, 0.2, 0.3, 0.9)
-    twist = Twist(Vector3(0.5, 0.0, 0.0), Vector3(0.0, 0.0, 0.1))
-
-    odom = Odometry(ts=1000.0, frame_id="odom", child_frame_id="base_link", pose=pose, twist=twist)
-
+    pose = Pose(
+        position=Point(x=1.0, y=2.0, z=3.0), orientation=Quaternion(x=0.1, y=0.2, z=0.3, w=0.9)
+    )
+    twist = Twist(linear=Vector3(x=0.5, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.1))
+    odom = Odometry(
+        child_frame_id="base_link",
+        pose=PoseWithCovariance(pose=pose),
+        twist=TwistWithCovariance(twist=twist),
+        header=Header(stamp=time_from_seconds(1000.0), frame_id="odom"),
+    )
     assert odom.pose.pose.position.x == 1.0
     assert odom.pose.pose.position.y == 2.0
     assert odom.pose.pose.position.z == 3.0
@@ -66,145 +76,149 @@ def test_odometry_with_pose_and_twist() -> None:
 
 
 def test_odometry_with_covariances() -> None:
-    pose = Pose(1.0, 2.0, 3.0)
+    pose = Pose(position=Point(x=1.0, y=2.0, z=3.0))
     pose_cov = np.arange(36, dtype=float)
-    pose_with_cov = PoseWithCovariance(pose, pose_cov)
-
-    twist = Twist(Vector3(0.5, 0.0, 0.0), Vector3(0.0, 0.0, 0.1))
+    pose_with_cov = PoseWithCovariance(pose=pose, covariance=pose_cov)
+    twist = Twist(linear=Vector3(x=0.5, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.1))
     twist_cov = np.arange(36, 72, dtype=float)
-    twist_with_cov = TwistWithCovariance(twist, twist_cov)
-
+    twist_with_cov = TwistWithCovariance(twist=twist, covariance=twist_cov)
     odom = Odometry(
-        ts=1000.0,
-        frame_id="odom",
         child_frame_id="base_link",
         pose=pose_with_cov,
         twist=twist_with_cov,
+        header=Header(stamp=time_from_seconds(1000.0), frame_id="odom"),
     )
-
-    assert odom.pose.position.x == 1.0
+    assert odom.pose.pose.position.x == 1.0
     assert np.array_equal(odom.pose.covariance, pose_cov)
-    assert odom.twist.linear.x == 0.5
+    assert odom.twist.twist.linear.x == 0.5
     assert np.array_equal(odom.twist.covariance, twist_cov)
 
 
 def test_odometry_properties() -> None:
-    pose = Pose(1.0, 2.0, 3.0, 0.1, 0.2, 0.3, 0.9)
-    twist = Twist(Vector3(0.5, 0.6, 0.7), Vector3(0.1, 0.2, 0.3))
-
-    odom = Odometry(ts=1000.0, frame_id="odom", child_frame_id="base_link", pose=pose, twist=twist)
-
-    assert odom.x == 1.0
-    assert odom.y == 2.0
-    assert odom.z == 3.0
-    assert odom.position.x == 1.0
-
-    assert odom.orientation.x == 0.1
-
-    assert odom.vx == 0.5
-    assert odom.vy == 0.6
-    assert odom.vz == 0.7
-    assert odom.linear_velocity.x == 0.5
-
-    assert odom.wx == 0.1
-    assert odom.wy == 0.2
-    assert odom.wz == 0.3
-    assert odom.angular_velocity.x == 0.1
-
-    assert odom.roll == pose.roll
-    assert odom.pitch == pose.pitch
-    assert odom.yaw == pose.yaw
-
-
-def test_odometry_str_repr() -> None:
-    odom = Odometry(
-        ts=1234567890.123456,
-        frame_id="odom",
-        child_frame_id="base_link",
-        pose=Pose(1.234, 2.567, 3.891),
-        twist=Twist(Vector3(0.5, 0.0, 0.0), Vector3(0.0, 0.0, 0.1)),
+    pose = Pose(
+        position=Point(x=1.0, y=2.0, z=3.0), orientation=Quaternion(x=0.1, y=0.2, z=0.3, w=0.9)
     )
+    twist = Twist(linear=Vector3(x=0.5, y=0.6, z=0.7), angular=Vector3(x=0.1, y=0.2, z=0.3))
+    odom = Odometry(
+        child_frame_id="base_link",
+        pose=PoseWithCovariance(pose=pose),
+        twist=TwistWithCovariance(twist=twist),
+        header=Header(stamp=time_from_seconds(1000.0), frame_id="odom"),
+    )
+    assert odom.pose.pose.position.x == 1.0
+    assert odom.pose.pose.position.y == 2.0
+    assert odom.pose.pose.position.z == 3.0
+    assert odom.pose.pose.position.x == 1.0
+    assert odom.pose.pose.orientation.x == 0.1
+    assert odom.twist.twist.linear.x == 0.5
+    assert odom.twist.twist.linear.y == 0.6
+    assert odom.twist.twist.linear.z == 0.7
+    assert odom.twist.twist.linear.x == 0.5
+    assert odom.twist.twist.angular.x == 0.1
+    assert odom.twist.twist.angular.y == 0.2
+    assert odom.twist.twist.angular.z == 0.3
+    assert odom.twist.twist.angular.x == 0.1
+    assert quaternion_euler(odom.pose.pose.orientation)[0] == quaternion_euler(pose.orientation)[0]
+    assert quaternion_euler(odom.pose.pose.orientation)[1] == quaternion_euler(pose.orientation)[1]
+    assert quaternion_euler(odom.pose.pose.orientation)[2] == quaternion_euler(pose.orientation)[2]
 
-    assert "Odometry" in repr(odom)
-    assert "1234567890.123456" in repr(odom)
 
-    s = str(odom)
-    assert "odom -> base_link" in s
-    assert "1.234" in s
+def test_independent_ros_decoding() -> None:
+    source = Odometry(
+        header=Header(stamp=time_from_seconds(1000), frame_id="odom"),
+        child_frame_id="base_link",
+        pose=PoseWithCovariance(pose=Pose(position=Point(x=1.234, y=2.567, z=3.891))),
+        twist=TwistWithCovariance(twist=Twist(linear=Vector3(x=0.5), angular=Vector3(z=0.1))),
+    )
+    decoded = get_typestore(Stores.ROS2_JAZZY).deserialize_cdr(source.encode(), Odometry.msg_name)
+    assert decoded.header.frame_id == "odom"
+    assert decoded.child_frame_id == "base_link"
+    assert (
+        decoded.pose.pose.position.x,
+        decoded.pose.pose.position.y,
+        decoded.pose.pose.position.z,
+    ) == (1.234, 2.567, 3.891)
+    assert decoded.twist.twist.linear.x == 0.5
+    assert decoded.twist.twist.angular.z == 0.1
 
 
 def test_odometry_equality() -> None:
     kwargs = dict(
-        ts=1000.0,
-        frame_id="odom",
         child_frame_id="base_link",
-        pose=Pose(1.0, 2.0, 3.0),
-        twist=Twist(Vector3(0.5, 0.0, 0.0), Vector3(0.0, 0.0, 0.1)),
+        pose=PoseWithCovariance(pose=Pose(position=Point(x=1.0, y=2.0, z=3.0))),
+        twist=TwistWithCovariance(
+            twist=Twist(linear=Vector3(x=0.5, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.1))
+        ),
+        header=Header(stamp=time_from_seconds(1000.0), frame_id="odom"),
     )
-
     assert Odometry(**kwargs) == Odometry(**kwargs)
-    assert Odometry(**kwargs) != Odometry(**{**kwargs, "pose": Pose(1.1, 2.0, 3.0)})
+    assert Odometry(**kwargs) != Odometry(
+        **{**kwargs, "pose": PoseWithCovariance(pose=Pose(position=Point(x=1.1, y=2.0, z=3.0)))}
+    )
     assert Odometry(**kwargs) != "not an odometry"
 
 
-def test_odometry_lcm_roundtrip() -> None:
-    pose = Pose(1.0, 2.0, 3.0, 0.1, 0.2, 0.3, 0.9)
-    pose_cov = np.arange(36, dtype=float)
-    twist = Twist(Vector3(0.5, 0.6, 0.7), Vector3(0.1, 0.2, 0.3))
-    twist_cov = np.arange(36, 72, dtype=float)
-
-    source = Odometry(
-        ts=1234567890.123456,
-        frame_id="odom",
-        child_frame_id="base_link",
-        pose=PoseWithCovariance(pose, pose_cov),
-        twist=TwistWithCovariance(twist, twist_cov),
+def test_odometry_cdr_roundtrip() -> None:
+    pose = Pose(
+        position=Point(x=1.0, y=2.0, z=3.0), orientation=Quaternion(x=0.1, y=0.2, z=0.3, w=0.9)
     )
-
-    decoded = Odometry.lcm_decode(source.lcm_encode())
-
-    assert abs(decoded.ts - source.ts) < 1e-6
-    assert decoded.frame_id == source.frame_id
+    pose_cov = np.arange(36, dtype=float)
+    twist = Twist(linear=Vector3(x=0.5, y=0.6, z=0.7), angular=Vector3(x=0.1, y=0.2, z=0.3))
+    twist_cov = np.arange(36, 72, dtype=float)
+    source = Odometry(
+        child_frame_id="base_link",
+        pose=PoseWithCovariance(pose=pose, covariance=pose_cov),
+        twist=TwistWithCovariance(twist=twist, covariance=twist_cov),
+        header=Header(stamp=time_from_seconds(1234567890.123456), frame_id="odom"),
+    )
+    decoded = Odometry.decode(source.encode())
+    assert abs(to_seconds(decoded.header.stamp) - to_seconds(source.header.stamp)) < 1e-06
+    assert decoded.header.frame_id == source.header.frame_id
     assert decoded.child_frame_id == source.child_frame_id
     assert decoded.pose == source.pose
     assert decoded.twist == source.twist
 
 
 def test_odometry_zero_timestamp() -> None:
-    """An explicit zero timestamp is kept; an omitted one stamps now."""
-    assert Odometry(ts=0.0).ts == 0.0
-
+    assert to_seconds(Odometry().header.stamp) == 0
     before = time.time()
-    assert before <= Odometry().ts <= time.time()
+    assert before <= to_seconds(Odometry(header=header_now()).header.stamp) <= time.time()
 
 
 def test_odometry_with_just_pose() -> None:
-    odom = Odometry(pose=Pose(1.0, 2.0, 3.0))
-
-    assert odom.pose.position.x == 1.0
-    assert np.all(odom.pose.covariance == 0.0)
-    assert np.all(odom.twist.covariance == 0.0)
+    odom = Odometry(pose=PoseWithCovariance(pose=Pose(position=Point(x=1.0, y=2.0, z=3.0))))
+    assert odom.pose.pose.position.x == 1.0
+    assert np.all(np.asarray(odom.pose.covariance) == 0.0)
+    assert np.all(np.asarray(odom.twist.covariance) == 0.0)
 
 
 def test_odometry_with_just_twist() -> None:
-    odom = Odometry(twist=Twist(Vector3(0.5, 0.0, 0.0), Vector3(0.0, 0.0, 0.1)))
-
-    assert odom.twist.linear.x == 0.5
-    assert odom.twist.angular.z == 0.1
-    assert np.all(odom.twist.covariance == 0.0)
+    odom = Odometry(
+        twist=TwistWithCovariance(
+            twist=Twist(linear=Vector3(x=0.5, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.1))
+        )
+    )
+    assert odom.twist.twist.linear.x == 0.5
+    assert odom.twist.twist.angular.z == 0.1
+    assert np.all(np.asarray(odom.twist.covariance) == 0.0)
 
 
 def test_odometry_typical_robot_scenario() -> None:
     odom = Odometry(
-        ts=1000.0,
-        frame_id="odom",
         child_frame_id="base_footprint",
-        pose=Pose(10.0, 5.0, 0.0, 0.0, 0.0, np.sin(0.1), np.cos(0.1)),
-        twist=Twist(Vector3(0.5, 0.0, 0.0), Vector3(0.0, 0.0, 0.05)),
+        pose=PoseWithCovariance(
+            pose=Pose(
+                position=Point(x=10.0, y=5.0, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=np.sin(0.1), w=np.cos(0.1)),
+            )
+        ),
+        twist=TwistWithCovariance(
+            twist=Twist(linear=Vector3(x=0.5, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.05))
+        ),
+        header=Header(stamp=time_from_seconds(1000.0), frame_id="odom"),
     )
-
-    assert odom.x == 10.0
-    assert odom.y == 5.0
-    assert abs(odom.yaw - 0.2) < 0.01
-    assert odom.vx == 0.5
-    assert odom.wz == 0.05
+    assert odom.pose.pose.position.x == 10.0
+    assert odom.pose.pose.position.y == 5.0
+    assert abs(quaternion_euler(odom.pose.pose.orientation)[2] - 0.2) < 0.01
+    assert odom.twist.twist.linear.x == 0.5
+    assert odom.twist.twist.angular.z == 0.05

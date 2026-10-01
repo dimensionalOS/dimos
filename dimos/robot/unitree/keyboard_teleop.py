@@ -18,6 +18,8 @@ import sys
 import threading
 from typing import Any
 
+from dimos_generated.geometry_msgs.msg import Twist, Vector3
+from dimos_generated.std_msgs.msg import Float32, Int8
 import pygame
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
@@ -30,10 +32,6 @@ from dimos.control.benchmarking.gate import GATE_ADVANCE, GATE_QUIT, GATE_SKIP
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import Out
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.std_msgs.Float32 import Float32
-from dimos.msgs.std_msgs.Int8 import Int8
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -129,8 +127,8 @@ class KeyboardTeleop(Module):
     @rpc
     def stop(self) -> None:
         stop_twist = Twist()
-        stop_twist.linear = Vector3(0, 0, 0)
-        stop_twist.angular = Vector3(0, 0, 0)
+        stop_twist.linear = Vector3()
+        stop_twist.angular = Vector3()
         self.cmd_vel.publish(stop_twist)
 
         self._stop_event.set()
@@ -162,19 +160,19 @@ class KeyboardTeleop(Module):
                         # Emergency stop - clear all keys and send zero twist
                         self._keys_held.clear()
                         stop_twist = Twist()
-                        stop_twist.linear = Vector3(0, 0, 0)
-                        stop_twist.angular = Vector3(0, 0, 0)
+                        stop_twist.linear = Vector3()
+                        stop_twist.angular = Vector3()
                         self.cmd_vel.publish(stop_twist)
                         logger.warning("EMERGENCY STOP!")
                     elif event.key == pygame.K_ESCAPE:
                         # ESC quits
                         self._stop_event.set()
                     elif event.key == pygame.K_RETURN:
-                        self.operator_command.publish(Int8(GATE_ADVANCE))
+                        self.operator_command.publish(Int8(data=GATE_ADVANCE))
                     elif event.key == pygame.K_k:
-                        self.operator_command.publish(Int8(GATE_SKIP))
+                        self.operator_command.publish(Int8(data=GATE_SKIP))
                     elif event.key == pygame.K_BACKSPACE:
-                        self.operator_command.publish(Int8(GATE_QUIT))
+                        self.operator_command.publish(Int8(data=GATE_QUIT))
                     elif pygame.K_0 <= event.key <= pygame.K_9:
                         # 0 → 0.0 m, 1 → 0.1 m, …, 9 → 0.9 m corridor half-width.
                         self.e_max.publish(Float32(data=(event.key - pygame.K_0) * 0.1))
@@ -184,8 +182,8 @@ class KeyboardTeleop(Module):
 
             # Generate Twist message from held keys
             twist = Twist()
-            twist.linear = Vector3(0, 0, 0)
-            twist.angular = Vector3(0, 0, 0)
+            twist.linear = Vector3()
+            twist.angular = Vector3()
 
             # Movement keys (WASD/QE) — guarded by disable_movement so the
             # window can run as a pure e_max slider (0-9 keys stay live in

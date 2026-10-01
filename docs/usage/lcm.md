@@ -1,177 +1,132 @@
-# LCM Messages
+# LCM transport and CDR messages
 
-dimOS uses [LCM (Lightweight Communications and Marshalling)](https://github.com/lcm-proj/lcm) for inter-process communication on a local machine (similar to how ROS uses DDS). LCM is a simple [UDP multicast](https://lcm-proj.github.io/lcm/content/udp-multicast-protocol.html#lcm-udp-multicast-protocol-description) pubsub protocol with a straightforward [message definition language](https://lcm-proj.github.io/lcm/content/lcm-type-ref.html#lcm-type-specification-language).
+dimOS uses [LCM](https://github.com/lcm-proj/lcm) as a raw UDP multicast
+transport for local inter-process communication. Typed streams carry generated
+CDR messages. LCM and Zenoh use the same message bytes; choosing a transport
+does not change a message's schema or codec.
 
-The LCM project provides pubsub clients and code generators for many languages. For us the power of LCM is its message definition format, multi-language classes that encode themselves to a compact binary format. This means LCM messages can be sent over any transport (WebSocket, SSH, shared memory, etc.) between differnt programming languages.
+Message definitions are ROS2 `.msg` files. The standalone generator produces
+Python, C++ and Rust value types without requiring ROS. Python bindings share
+the C++ Fast CDR implementation; native Rust types use `re_cdr`.
+See [add and use a message](/docs/development/messages.md) for the complete
+local-message user story and the three language examples.
 
-Our messages are ported from ROS (they are structurally compatible in order to facilitate easy communication to ROS if needed)
-Repo that hosts our message definitions and autogenerators is at [dimos-lcm](https://github.com/dimensionalOS/dimos-lcm/)
+## Encode a generated value
 
-our LCM implementation significantly [outperforms ROS for local communication](/docs/usage/transports/index.md#benchmarks)
+```python session=cdr_transport_demo ansi=false
+from dimos_generated.geometry_msgs.msg import Vector3
 
-## Supported languages
-
-Apart from python, we have examples of LCM integrations for:
-- [**C++**](/examples/language-interop/cpp/README.md)
-- [**TypeScript**](/examples/language-interop/ts/README.md)
-- [**Lua**](/examples/language-interop/lua/README.md)
-
-In our [/examples/language-interop/](/examples/language-interop/) dir
-
-Types generated (but no examples yet) for:
-[**C#**](https://github.com/dimensionalOS/dimos-lcm/tree/main/generated/cs_lcm_msgs) and [**Java**](https://github.com/dimensionalOS/dimos-lcm/tree/main/generated/java_lcm_msgs)
-
-### Native Modules
-
-Given LCM is so portable, we can easily run dimos [Modules](/docs/usage/modules.md) written in [third party languages](/docs/usage/native_modules.md)
-
-## dimos-lcm Package
-
-The `dimos-lcm` package provides base message types that mirror [ROS message definitions](https://docs.ros.org/en/melodic/api/sensor_msgs/html/index.html):
-
-```python session=lcm_demo ansi=false
-from dimos_lcm.geometry_msgs import Vector3 as LCMVector3
-from dimos_lcm.sensor_msgs.PointCloud2 import PointCloud2 as LCMPointCloud2
-
-# LCM messages can encode to binary
-msg = LCMVector3()
-msg.x, msg.y, msg.z = 1.0, 2.0, 3.0
-
-binary = msg.lcm_encode()
-print(f"Encoded to {len(binary)} bytes: {binary.hex()}")
-
-# And decode back
-decoded = LCMVector3.lcm_decode(binary)
+message = Vector3(x=1.0, y=2.0, z=3.0)
+payload = message.encode()
+decoded = Vector3.decode(payload)
+assert (decoded.x, decoded.y, decoded.z) == (1.0, 2.0, 3.0)
+print(message.msg_name)
 print(f"Decoded: x={decoded.x}, y={decoded.y}, z={decoded.z}")
 ```
 
 ```results
-Encoded to 32 bytes: ae7e5fba5eeca11e3ff000000000000040000000000000004008000000000000
+geometry_msgs/msg/Vector3
 Decoded: x=1.0, y=2.0, z=3.0
 ```
 
-## Dimos Message Overlays
+Generated values expose ROS-shaped fields and codec/schema metadata. They do
+not provide rich vector operators, implicit NumPy constructors or viewer
+methods. Geometry, timestamps, arrays and visualization use explicit external
+helpers. For example, add vectors with NumPy and explicitly construct the
+resulting wire value:
 
-Dimos subclasses the base LCM types to add Python-friendly features while preserving binary compatibility. For example, `dimos.msgs.geometry_msgs.Vector3` extends the LCM base with:
-
-- Multiple constructor overloads (from tuples, numpy arrays, etc.)
-- Math operations (`+`, `-`, `*`, `/`, dot product, cross product)
-- Conversions to numpy, quaternions, etc.
-
-```python session=lcm_demo ansi=false
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-
-# Rich constructors
-v1 = Vector3(1, 2, 3)
-v2 = Vector3([4, 5, 6])
-v3 = Vector3(v1)  # copy
-
-# Math operations
-print(f"v1 + v2 = {(v1 + v2).to_tuple()}")
-print(f"v1 dot v2 = {v1.dot(v2)}")
-print(f"v1 x v2 = {v1.cross(v2).to_tuple()}")
-print(f"|v1| = {v1.length():.3f}")
-
-# Still encodes to LCM binary
-binary = v1.lcm_encode()
-print(f"LCM encoded: {len(binary)} bytes")
-```
-
-```results
-v1 + v2 = (5.0, 7.0, 9.0)
-v1 dot v2 = 32.0
-v1 x v2 = (-3.0, 6.0, -3.0)
-|v1| = 3.742
-LCM encoded: 32 bytes
-```
-
-## PointCloud2 with Open3D
-
-A more complex example is `PointCloud2`, which wraps Open3D point clouds while maintaining LCM binary compatibility:
-
-```python session=lcm_demo ansi=false
-import time
-
+```python session=cdr_transport_demo ansi=false
 import numpy as np
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
-# Create from numpy
-points = np.random.rand(100, 3).astype(np.float32)
-pc = PointCloud2.from_numpy(points, frame_id="camera", timestamp=time.time())
-
-print(f"PointCloud: {len(pc)} points, frame={pc.frame_id}")
-print(f"Center: {pc.center}")
-
-# Access as Open3D (for visualization, processing)
-o3d_cloud = pc.pointcloud
-print(f"Open3D type: {type(o3d_cloud).__name__}")
-
-# Encode to LCM binary (for transport)
-binary = pc.lcm_encode()
-print(f"LCM encoded: {len(binary)} bytes")
-
-# Decode back
-pc2 = PointCloud2.lcm_decode(binary)
-print(f"Decoded: {len(pc2)} points")
+first = np.array([message.x, message.y, message.z])
+second = np.array([4.0, 5.0, 6.0])
+summed = first + second
+result = Vector3(x=summed[0], y=summed[1], z=summed[2])
+assert (result.x, result.y, result.z) == (5.0, 7.0, 9.0)
+print(f"dot={float(first @ second)}")
 ```
 
 ```results
-PointCloud: 100 points, frame=camera
-Center: ↘ Vector Vector([0.53349355 0.53453599 0.50321151])
-Open3D type: PointCloud
-LCM encoded: 1725 bytes
-Decoded: 100 points
+dot=32.0
 ```
 
-## Transport Independence
+## Point clouds and explicit array helpers
 
-Since LCM messages encode to bytes, you can use them over any transport:
+```python session=cdr_transport_demo ansi=false
+from dimos_generated.sensor_msgs.msg import PointCloud2
+from dimos_generated.std_msgs.msg import Header
+from dimos.msgs.pointcloud import pointcloud_from_xyz, pointcloud_xyz
 
-```python session=lcm_demo ansi=false
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+points = np.array([[1, 2, 3], [4, 5, 6]], dtype=np.float32)
+cloud = pointcloud_from_xyz(points, header=Header(frame_id="camera"))
+roundtrip = PointCloud2.decode(cloud.encode())
+np.testing.assert_array_equal(pointcloud_xyz(roundtrip), points)
+print(f"PointCloud: {roundtrip.width * roundtrip.height} points")
+print(f"Frame: {roundtrip.header.frame_id}")
+```
+
+```results
+PointCloud: 2 points
+Frame: camera
+```
+
+The generated `PointCloud2` preserves fields, offsets, row/point strides and
+endianness. [Point-cloud helpers](/dimos/msgs/pointcloud.py) provide explicit
+array/Open3D conversion and geometry operations. Borrowed numeric buffers are
+read-only; request a copy before mutable processing.
+
+## Typed routing and transport independence
+
+A typed LCM channel has a qualified type suffix such as
+`/velocity#geometry_msgs/msg/Vector3`. The type selects the CDR decoder; the
+payload contains no LCM fingerprint. Prefer `LCMTransport` or the configured
+transport factory for [module streams](/docs/usage/modules.md), so publication
+and subscription use the same routing convention. Raw-byte LCM remains available
+when an application owns its payload contract.
+
+Python objects can still be passed in-process without a wire codec:
+
+```python session=cdr_transport_demo ansi=false
 from dimos.protocol.pubsub.impl.memory import Memory
 
-# Same message works with any transport
-msg = Vector3(1, 2, 3)
-
-# In-memory (same process)
 memory = Memory()
 received = []
-memory.subscribe("velocity", lambda m, t: received.append(m))
-memory.publish("velocity", msg)
-print(f"Memory transport: received {received[0]}")
-
-# The LCM binary can also be sent raw over any byte-oriented channel
-binary = msg.lcm_encode()
-# send over WebSocket, Redis, TCP, file, etc.
-decoded = Vector3.lcm_decode(binary)
-print(f"Raw binary transport: decoded {decoded}")
+unsubscribe = memory.subscribe("velocity", lambda value, topic: received.append(value))
+try:
+    memory.publish("velocity", message)
+    assert received[0] is message
+    print(f"In-process value: {received[0].x}, {received[0].y}, {received[0].z}")
+finally:
+    unsubscribe()
 ```
 
 ```results
-Memory transport: received ↘ Vector Vector([1. 2. 3.])
-Raw binary transport: decoded ↘ Vector Vector([1. 2. 3.])
+In-process value: 1.0, 2.0, 3.0
 ```
 
-## Available Message Types
+For inter-process exchange, encode with `message.encode()` and decode using the
+known generated type. Separate Python-object serialization paths retain their
+own contracts; CDR is the typed-message representation.
 
-Dimos provides overlays for common message types:
+## Available types and custom packages
 
-| Package | Messages |
-|---------|----------|
-| `geometry_msgs` | `Vector3`, `Quaternion`, `Pose`, `Twist`, `Transform` |
-| `sensor_msgs` | `Image`, `PointCloud2`, `CameraInfo`, `LaserScan` |
+| Generated package | Examples |
+| --- | --- |
+| `geometry_msgs` | `Vector3`, `Quaternion`, `Pose`, `PoseStamped`, `Twist`, `TransformStamped` |
+| `sensor_msgs` | `Image`, `CompressedImage`, `PointCloud2`, `CameraInfo`, `LaserScan` |
 | `nav_msgs` | `Odometry`, `Path`, `OccupancyGrid` |
 | `vision_msgs` | `Detection2D`, `Detection3D`, `BoundingBox2D` |
+| `dimos_msgs` | dimOS-owned custom message definitions |
 
-Base LCM types (without Dimos extensions) are available in `dimos_lcm.*`.
+Import built-in values from `dimos_generated.<package>.msg`. Application-local
+`.msg` files can generate their own Python package, CMake target and Cargo crate.
+Installed Python packages expose schemas through the `dimos.messages` entry
+point, without editing a handwritten type registry. Follow the
+[message authoring guide](/docs/development/messages.md) and
+[native module guide](/docs/usage/native_modules.md).
 
-## Creating Custom Message Types
-
-To create a new message type:
-
-1. Define the LCM message in `.lcm` format (or use existing `dimos_lcm` base)
-2. Create a Python overlay that subclasses the LCM type
-3. Add `lcm_encode()` and `lcm_decode()` methods if custom serialization is needed
-
-See [`PointCloud2.py`](/dimos/msgs/sensor_msgs/PointCloud2.py) and [`Vector3.py`](/dimos/msgs/geometry_msgs/Vector3.py) for examples.
+The CDR cutover deliberately breaks the previous message API and wire format.
+Old LCM-generated payloads and historical typed recordings are not accepted by
+the new codec. Preserve old data and use the original compatible checkout to
+inspect it, or create a new recording with generated messages. New MCAP files
+carry `cdr` channels and complete `ros2msg` schemas for viewer inspection.

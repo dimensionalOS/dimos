@@ -711,7 +711,7 @@ def _coerce_transport_to_backend(transport: Transport[Any]) -> Transport[Any]:
     if is_pickled:
         raw, msg_type = transport.topic, None
     else:
-        raw, msg_type = transport.topic.topic, transport.topic.lcm_type
+        raw, msg_type = transport.topic.topic, transport.topic.msg_type
     # Strip the Zenoh 'dimos/' namespace (if present) back to the logical name.
     # The factory re-applies the right prefix for the target backend.
     logical = raw[len("dimos/") :] if raw.startswith("dimos/") else raw

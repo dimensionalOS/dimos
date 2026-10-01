@@ -12,211 +12,118 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Nested generated Pose covariance with explicit stamps and array conversion.
+
+Legacy inheritance, custom repr, and implicit wall-clock defaults are retired;
+field values, covariance matrices, and time conversion remain checked explicitly.
+"""
+
+import pickle
 import time
 
+from dimos_generated.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseWithCovariance,
+    PoseWithCovarianceStamped,
+    Quaternion,
+)
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
+import pytest
+from rosbags.typesys import Stores, get_typestore
 
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.PoseWithCovariance import PoseWithCovariance
-from dimos.msgs.geometry_msgs.PoseWithCovarianceStamped import PoseWithCovarianceStamped
-
-
-def test_pose_with_covariance_stamped_default_init() -> None:
-    """Test default initialization."""
-    pose_cov_stamped = PoseWithCovarianceStamped()
-
-    # Should have current timestamp
-    assert pose_cov_stamped.ts > 0
-    assert pose_cov_stamped.frame_id == ""
-
-    # Pose should be at origin with identity orientation
-    assert pose_cov_stamped.pose.position.x == 0.0
-    assert pose_cov_stamped.pose.position.y == 0.0
-    assert pose_cov_stamped.pose.position.z == 0.0
-    assert pose_cov_stamped.pose.orientation.w == 1.0
-
-    # Covariance should be all zeros
-    assert np.all(pose_cov_stamped.covariance == 0.0)
+from dimos.msgs.time import header_now, time_from_nanoseconds, time_from_seconds, to_nanoseconds
 
 
-def test_pose_with_covariance_stamped_with_timestamp() -> None:
-    """Test initialization with specific timestamp."""
-    ts = 1234567890.123456
-    frame_id = "base_link"
-    pose_cov_stamped = PoseWithCovarianceStamped(ts=ts, frame_id=frame_id)
-
-    assert pose_cov_stamped.ts == ts
-    assert pose_cov_stamped.frame_id == frame_id
-
-
-def test_pose_with_covariance_stamped_with_pose() -> None:
-    """Test initialization with pose."""
-    ts = 1234567890.123456
-    frame_id = "map"
-    pose = Pose(1.0, 2.0, 3.0, 0.1, 0.2, 0.3, 0.9)
-    covariance = np.arange(36, dtype=float)
-
-    pose_cov_stamped = PoseWithCovarianceStamped(
-        ts=ts, frame_id=frame_id, pose=pose, covariance=covariance
+def test_generated_defaults() -> None:
+    source = PoseWithCovarianceStamped()
+    assert source.header.frame_id == ""
+    assert to_nanoseconds(source.header.stamp) == 0
+    assert isinstance(source.pose, PoseWithCovariance)
+    assert isinstance(source.pose.pose, Pose)
+    np.testing.assert_array_equal(source.pose.covariance, np.zeros(36))
+    value = source.pose.pose
+    np.testing.assert_array_equal(
+        [
+            value.position.x,
+            value.position.y,
+            value.position.z,
+            value.orientation.x,
+            value.orientation.y,
+            value.orientation.z,
+            value.orientation.w,
+        ],
+        [0, 0, 0, 0, 0, 0, 1],
     )
 
-    assert pose_cov_stamped.ts == ts
-    assert pose_cov_stamped.frame_id == frame_id
-    assert pose_cov_stamped.pose.position.x == 1.0
-    assert pose_cov_stamped.pose.position.y == 2.0
-    assert pose_cov_stamped.pose.position.z == 3.0
-    assert np.array_equal(pose_cov_stamped.covariance, covariance)
 
-
-def test_pose_with_covariance_stamped_properties() -> None:
-    """Test convenience properties."""
-    pose = Pose(1.0, 2.0, 3.0, 0.1, 0.2, 0.3, 0.9)
-    covariance = np.eye(6).flatten()
-    pose_cov_stamped = PoseWithCovarianceStamped(
-        ts=1234567890.0, frame_id="odom", pose=pose, covariance=covariance
+@pytest.mark.parametrize("stamp", [0, 1234567890123456789])
+@pytest.mark.parametrize(
+    "covariance",
+    [np.zeros(36), np.eye(6).ravel(), np.arange(36, dtype=float), np.diag(np.arange(1, 7)).ravel()],
+)
+def test_fields_covariance_and_independent_cdr(stamp: int, covariance: np.ndarray) -> None:
+    source = PoseWithCovarianceStamped(
+        header=Header(stamp=time_from_nanoseconds(stamp), frame_id="camera_link"),
+        pose=PoseWithCovariance(
+            pose=Pose(
+                position=Point(x=1, y=2, z=3), orientation=Quaternion(x=0.1, y=0.2, z=0.3, w=0.9)
+            ),
+            covariance=covariance,
+        ),
     )
-
-    # Position properties
-    assert pose_cov_stamped.x == 1.0
-    assert pose_cov_stamped.y == 2.0
-    assert pose_cov_stamped.z == 3.0
-
-    # Orientation properties
-    assert pose_cov_stamped.orientation.x == 0.1
-    assert pose_cov_stamped.orientation.y == 0.2
-    assert pose_cov_stamped.orientation.z == 0.3
-    assert pose_cov_stamped.orientation.w == 0.9
-
-    # Euler angles
-    assert pose_cov_stamped.roll == pose.roll
-    assert pose_cov_stamped.pitch == pose.pitch
-    assert pose_cov_stamped.yaw == pose.yaw
-
-    # Covariance matrix
-    cov_matrix = pose_cov_stamped.covariance_matrix
-    assert cov_matrix.shape == (6, 6)
-    assert np.trace(cov_matrix) == 6.0
-
-
-def test_pose_with_covariance_stamped_str() -> None:
-    """Test string representation."""
-    pose = Pose(1.234, 2.567, 3.891)
-    covariance = np.eye(6).flatten() * 2.0
-    pose_cov_stamped = PoseWithCovarianceStamped(
-        ts=1234567890.0, frame_id="world", pose=pose, covariance=covariance
+    decoded = PoseWithCovarianceStamped.decode(source.encode())
+    independent = get_typestore(Stores.ROS2_JAZZY).deserialize_cdr(
+        source.encode(), PoseWithCovarianceStamped.msg_name
     )
-
-    str_repr = str(pose_cov_stamped)
-    assert "PoseWithCovarianceStamped" in str_repr
-    assert "1.234" in str_repr
-    assert "2.567" in str_repr
-    assert "3.891" in str_repr
-    assert "cov_trace" in str_repr
-    assert "12.000" in str_repr  # Trace of 2*identity is 12
-
-
-def test_pose_with_covariance_stamped_lcm_encode_decode() -> None:
-    """Test LCM encoding and decoding."""
-    ts = 1234567890.123456
-    frame_id = "camera_link"
-    pose = Pose(1.0, 2.0, 3.0, 0.1, 0.2, 0.3, 0.9)
-    covariance = np.arange(36, dtype=float)
-
-    source = PoseWithCovarianceStamped(ts=ts, frame_id=frame_id, pose=pose, covariance=covariance)
-
-    # Encode and decode
-    binary_msg = source.lcm_encode()
-    decoded = PoseWithCovarianceStamped.lcm_decode(binary_msg)
-
-    # Check timestamp (may lose some precision)
-    assert abs(decoded.ts - ts) < 1e-6
-    assert decoded.frame_id == frame_id
-
-    # Check pose
-    assert decoded.pose.position.x == 1.0
-    assert decoded.pose.position.y == 2.0
-    assert decoded.pose.position.z == 3.0
-    assert decoded.pose.orientation.x == 0.1
-    assert decoded.pose.orientation.y == 0.2
-    assert decoded.pose.orientation.z == 0.3
-    assert decoded.pose.orientation.w == 0.9
-
-    # Check covariance
-    assert np.array_equal(decoded.covariance, covariance)
+    for result in (decoded, independent):
+        assert result.header.frame_id == "camera_link"
+        assert result.header.stamp.sec * 1000000000 + result.header.stamp.nanosec == stamp
+        value = result.pose.pose
+        np.testing.assert_array_equal(
+            [
+                value.position.x,
+                value.position.y,
+                value.position.z,
+                value.orientation.x,
+                value.orientation.y,
+                value.orientation.z,
+                value.orientation.w,
+            ],
+            [1, 2, 3, 0.1, 0.2, 0.3, 0.9],
+        )
+        np.testing.assert_array_equal(result.pose.covariance, covariance)
+        matrix = np.asarray(result.pose.covariance).reshape(6, 6)
+        assert matrix.shape == (6, 6)
+        assert np.trace(matrix) == np.trace(covariance.reshape(6, 6))
+    copied = pickle.loads(pickle.dumps(source))
+    assert copied.encode() == source.encode()
+    copied.pose.covariance[0] = 999
+    assert source.pose.covariance[0] == covariance[0]
 
 
-def test_pose_with_covariance_stamped_zero_timestamp() -> None:
-    """Test that an explicit zero timestamp is kept, and an omitted one stamps now."""
-    assert PoseWithCovarianceStamped(ts=0.0).ts == 0.0
-
-    before = time.time()
-    assert before <= PoseWithCovarianceStamped().ts <= time.time()
-
-
-def test_pose_with_covariance_stamped_inheritance() -> None:
-    """Test that it properly inherits from PoseWithCovariance and Timestamped."""
-    pose = Pose(1.0, 2.0, 3.0)
-    covariance = np.eye(6).flatten()
-    pose_cov_stamped = PoseWithCovarianceStamped(
-        ts=1234567890.0, frame_id="test", pose=pose, covariance=covariance
-    )
-
-    # Should be instance of parent classes
-    assert isinstance(pose_cov_stamped, PoseWithCovariance)
-
-    # Should have Timestamped attributes
-    assert hasattr(pose_cov_stamped, "ts")
-    assert hasattr(pose_cov_stamped, "frame_id")
-
-    # Should have PoseWithCovariance attributes
-    assert hasattr(pose_cov_stamped, "pose")
-    assert hasattr(pose_cov_stamped, "covariance")
+def test_explicit_current_header() -> None:
+    before = time.time_ns()
+    source = PoseWithCovarianceStamped(header=header_now("test"))
+    assert before <= to_nanoseconds(source.header.stamp) <= time.time_ns()
+    assert source.header.frame_id == "test"
 
 
-def test_pose_with_covariance_stamped_sec_nsec() -> None:
-    """Test the sec_nsec helper function."""
-    from dimos.msgs.geometry_msgs.PoseWithCovarianceStamped import sec_nsec
-
-    # Test integer seconds
-    s, ns = sec_nsec(1234567890.0)
-    assert s == 1234567890
-    assert ns == 0
-
-    # Test fractional seconds
-    s, ns = sec_nsec(1234567890.123456789)
-    assert s == 1234567890
-    assert abs(ns - 123456789) < 100  # Allow small rounding error
-
-    # Test small fractional seconds
-    s, ns = sec_nsec(0.000000001)
-    assert s == 0
-    assert ns == 1
-
-    # Test large timestamp
-    s, ns = sec_nsec(9999999999.999999999)
-    # Due to floating point precision, this might round to 10000000000
-    assert s in [9999999999, 10000000000]
-    if s == 9999999999:
-        assert abs(ns - 999999999) < 10
-    else:
-        assert ns == 0
+@pytest.mark.parametrize(
+    "seconds,sec,nanosec",
+    [
+        (1234567890.0, 1234567890, 0),
+        (1234567890.123456789, 1234567890, 123456789),
+        (0.000000001, 0, 1),
+    ],
+)
+def test_explicit_seconds_conversion(seconds: float, sec: int, nanosec: int) -> None:
+    stamp = time_from_seconds(seconds)
+    assert stamp.sec == sec
+    assert abs(stamp.nanosec - nanosec) < 100
 
 
-def test_pose_with_covariance_stamped_different_covariances() -> None:
-    """Test with different covariance patterns."""
-    pose = Pose(1.0, 2.0, 3.0)
-
-    # Zero covariance
-    zero_cov = np.zeros(36)
-    pose_cov1 = PoseWithCovarianceStamped(pose=pose, covariance=zero_cov)
-    assert np.all(pose_cov1.covariance == 0.0)
-
-    # Identity covariance
-    identity_cov = np.eye(6).flatten()
-    pose_cov2 = PoseWithCovarianceStamped(pose=pose, covariance=identity_cov)
-    assert np.trace(pose_cov2.covariance_matrix) == 6.0
-
-    # Full covariance
-    full_cov = np.random.rand(36)
-    pose_cov3 = PoseWithCovarianceStamped(pose=pose, covariance=full_cov)
-    assert np.array_equal(pose_cov3.covariance, full_cov)
+def test_seconds_outside_ros_int32_range_rejected() -> None:
+    with pytest.raises((TypeError, ValueError, OverflowError)):
+        time_from_seconds(9999999999.999999999)

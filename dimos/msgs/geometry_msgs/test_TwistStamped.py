@@ -13,42 +13,47 @@
 # limitations under the License.
 
 import pickle
-import time
 
-from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
+from dimos_generated.geometry_msgs.msg import Twist, TwistStamped, Vector3
+from dimos_generated.std_msgs.msg import Header
+from rosbags.typesys import Stores, get_typestore
+
+from dimos.msgs.time import time_from_nanoseconds
 
 
-def test_lcm_encode_decode() -> None:
-    """Test encoding and decoding of TwistStamped to/from binary LCM format."""
-    twist_source = TwistStamped(
-        ts=time.time(),
-        linear=(1.0, 2.0, 3.0),
-        angular=(0.1, 0.2, 0.3),
+def test_cdr_encode_decode() -> None:
+    source = TwistStamped(
+        header=Header(stamp=time_from_nanoseconds(1234567890123456789)),
+        twist=Twist(linear=Vector3(x=1, y=2, z=3), angular=Vector3(x=0.1, y=0.2, z=0.3)),
     )
-    binary_msg = twist_source.lcm_encode()
-    twist_dest = TwistStamped.lcm_decode(binary_msg)
-
-    assert isinstance(twist_dest, TwistStamped)
-    assert twist_dest is not twist_source
-
-    print(twist_source.linear)
-    print(twist_source.angular)
-
-    print(twist_dest.linear)
-    print(twist_dest.angular)
-    assert twist_dest == twist_source
+    binary = source.encode()
+    decoded = TwistStamped.decode(binary)
+    assert isinstance(decoded, TwistStamped)
+    assert decoded is not source
+    assert decoded.encode() == binary
+    independent = get_typestore(Stores.ROS2_JAZZY).deserialize_cdr(binary, source.msg_name)
+    assert (independent.header.stamp.sec, independent.header.stamp.nanosec) == (
+        1234567890,
+        123456789,
+    )
+    assert (independent.twist.linear.x, independent.twist.linear.y, independent.twist.linear.z) == (
+        1,
+        2,
+        3,
+    )
+    assert (
+        independent.twist.angular.x,
+        independent.twist.angular.y,
+        independent.twist.angular.z,
+    ) == (0.1, 0.2, 0.3)
 
 
 def test_pickle_encode_decode() -> None:
-    """Test encoding and decoding of TwistStamped to/from binary pickle format."""
-
-    twist_source = TwistStamped(
-        ts=time.time(),
-        linear=(1.0, 2.0, 3.0),
-        angular=(0.1, 0.2, 0.3),
+    source = TwistStamped(
+        header=Header(stamp=time_from_nanoseconds(1234567890123456789)),
+        twist=Twist(linear=Vector3(x=1, y=2, z=3), angular=Vector3(x=0.1, y=0.2, z=0.3)),
     )
-    binary_msg = pickle.dumps(twist_source)
-    twist_dest = pickle.loads(binary_msg)
-    assert isinstance(twist_dest, TwistStamped)
-    assert twist_dest is not twist_source
-    assert twist_dest == twist_source
+    decoded = pickle.loads(pickle.dumps(source))
+    assert isinstance(decoded, TwistStamped)
+    assert decoded is not source
+    assert decoded.encode() == source.encode()

@@ -22,6 +22,8 @@ from pathlib import Path
 from typing import Any
 
 import cv2
+from dimos_generated.sensor_msgs.msg import Image, JointState
+from dimos_generated.std_msgs.msg import Header
 import h5py
 import numpy as np
 import pyarrow.parquet as pq
@@ -44,14 +46,13 @@ from dimos.imitation.dataprep.core import (
     extract_episodes,
 )
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.image import image_from_array, image_view
+from dimos.msgs.time import time_from_seconds
 from dimos.utils.testing.waiting import wait_until
 
 pytestmark = [
     pytest.mark.skipif_macos,
     pytest.mark.skipif_aarch64,
-    pytest.mark.skipif_no_turbojpeg,
 ]
 
 
@@ -162,18 +163,16 @@ def _record_session(db_path: Path) -> None:
                 pixel = int(base + frame) * 4
                 publish(
                     "color_image",
-                    Image(
-                        data=np.full((16, 16, 3), pixel, dtype=np.uint8),
-                        format=ImageFormat.RGB,
-                        frame_id="camera",
-                        ts=ts,
+                    image_from_array(
+                        np.full((16, 16, 3), pixel, dtype=np.uint8),
+                        encoding="rgb8",
+                        header=Header(frame_id="camera", stamp=time_from_seconds(ts)),
                     ),
                 )
                 publish(
                     "coordinator_joint_state",
                     JointState(
-                        ts=ts,
-                        frame_id="arm",
+                        header=Header(frame_id="arm", stamp=time_from_seconds(ts)),
                         name=["joint_0", "joint_1"],
                         position=[base + frame, base + 100.0 + frame],
                         velocity=[0.0, 0.0],
@@ -238,7 +237,7 @@ def recorded_session(
             (108.0, 110.0, True, "place"),
         ]
         recorded_images: dict[float, np.ndarray[Any, Any]] = {
-            observation.ts: observation.data.data
+            observation.ts: image_view(observation.data)
             for observation in store.stream("color_image", Image).to_list()
         }
 

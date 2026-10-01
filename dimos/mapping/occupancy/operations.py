@@ -12,10 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dimos_generated.nav_msgs.msg import OccupancyGrid
 import numpy as np
 from scipy import ndimage
 
-from dimos.msgs.nav_msgs.OccupancyGrid import CostValues, OccupancyGrid
+from dimos.msgs.occupancy import occupancy_view
 
 
 def smooth_occupied(
@@ -33,8 +34,8 @@ def smooth_occupied(
     Returns:
         New OccupancyGrid with smoothed occupied zones
     """
-    grid_array = occupancy_grid.grid
-    occupied_mask = grid_array >= CostValues.OCCUPIED
+    grid_array = occupancy_view(occupancy_grid)
+    occupied_mask = grid_array >= 100
 
     # Count occupied neighbors for each cell (8-connectivity).
     kernel = np.array([[1, 1, 1], [1, 0, 1], [1, 1, 1]], dtype=np.uint8)
@@ -47,14 +48,10 @@ def smooth_occupied(
     unsupported = occupied_mask & (neighbor_count < min_neighbors)
 
     result_grid = grid_array.copy()
-    result_grid[unsupported] = CostValues.FREE
+    result_grid[unsupported] = 0
 
     return OccupancyGrid(
-        grid=result_grid,
-        resolution=occupancy_grid.resolution,
-        origin=occupancy_grid.origin,
-        frame_id=occupancy_grid.frame_id,
-        ts=occupancy_grid.ts,
+        header=occupancy_grid.header, info=occupancy_grid.info, data=result_grid.ravel()
     )
 
 
@@ -70,19 +67,13 @@ def overlay_occupied(base: OccupancyGrid, overlay: OccupancyGrid) -> OccupancyGr
     Returns:
         New OccupancyGrid with combined occupied zones
     """
-    if base.grid.shape != overlay.grid.shape:
+    if occupancy_view(base).shape != occupancy_view(overlay).shape:
         raise ValueError(
-            f"Grid shapes must match: base {base.grid.shape} vs overlay {overlay.grid.shape}"
+            f"Grid shapes must match: base {occupancy_view(base).shape} vs overlay {occupancy_view(overlay).shape}"
         )
 
-    result_grid = base.grid.copy()
-    overlay_occupied_mask = overlay.grid >= CostValues.OCCUPIED
-    result_grid[overlay_occupied_mask] = CostValues.OCCUPIED
+    result_grid = occupancy_view(base).copy()
+    overlay_occupied_mask = occupancy_view(overlay) >= 100
+    result_grid[overlay_occupied_mask] = 100
 
-    return OccupancyGrid(
-        grid=result_grid,
-        resolution=base.resolution,
-        origin=base.origin,
-        frame_id=base.frame_id,
-        ts=base.ts,
-    )
+    return OccupancyGrid(header=base.header, info=base.info, data=result_grid.ravel())

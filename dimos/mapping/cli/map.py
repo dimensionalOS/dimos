@@ -23,12 +23,12 @@ from typing import TYPE_CHECKING, Any
 import typer
 
 if TYPE_CHECKING:
+    from dimos_generated.geometry_msgs.msg import TransformStamped
+    from dimos_generated.sensor_msgs.msg import Image, PointCloud2
+
     from dimos.mapping.loop_closure.pgo import PoseGraph
     from dimos.memory.stream import Stream
     from dimos.memory.type.observation import Observation
-    from dimos.msgs.geometry_msgs.Transform import Transform
-    from dimos.msgs.sensor_msgs.Image import Image
-    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 PATH_THICKNESS = 0.01
 # Pin pattern (from dimos/memory/vis/space/rerun.py): thin vertical line
@@ -109,7 +109,7 @@ def _accumulate(
     block_count: int,
     device: str,
     graph: PoseGraph | None = None,
-    register: Callable[[Observation[Any]], Transform | None] | None = None,
+    register: Callable[[Observation[Any]], TransformStamped | None] | None = None,
     carve_columns: bool = False,
     progress_cb: Callable[[Observation[Any]], None] | None = None,
 ) -> PointCloud2 | None:
@@ -122,18 +122,24 @@ def _accumulate(
     Returns the final ``PointCloud2`` (or ``None`` if the input was empty).
     Disposal of the underlying ``VoxelGrid`` is handled by ``VoxelMapTransformer``.
     """
+    from dimos_generated.geometry_msgs.msg import TransformStamped
+    from dimos_generated.std_msgs.msg import Header
+    import numpy as np
+
     from dimos.mapping.voxels.module import VoxelMapTransformer
+    from dimos.msgs.geometry import transform_from_matrix, transform_matrix
+    from dimos.msgs.pointcloud import transform_cloud
 
     def prepared() -> Iterable[Observation[PointCloud2]]:
         for obs in obs_iter:
             if progress_cb is not None:
                 progress_cb(obs)
-            if len(obs.data) == 0:
+            if obs.data.width * obs.data.height == 0:
                 continue
             # sensor->world via `register`, unless the clouds are already
             # world-registered. graph adds the PGO correction on top
             # (correction ∘ tf), applied after the registration.
-            tf: Transform | None = None
+            tf: TransformStamped | None = None
             if register is not None:
                 tf = register(obs)
                 if tf is None:
@@ -141,9 +147,14 @@ def _accumulate(
             if graph is not None:
                 if obs.pose_tuple is None:
                     continue
-                correction = graph.correction_at(obs.ts)
-                tf = correction if tf is None else correction + tf
-            yield obs if tf is None else obs.derive(data=obs.data.transform(tf))
+                correction = transform_matrix(graph.correction_at(obs.ts).transform)
+                matrix = np.eye(4) if tf is None else transform_matrix(tf.transform)
+                tf = TransformStamped(
+                    header=Header(stamp=obs.data.header.stamp, frame_id="world_corrected"),
+                    child_frame_id=obs.data.header.frame_id,
+                    transform=transform_from_matrix(correction @ matrix),
+                )
+            yield obs if tf is None else obs.derive(data=transform_cloud(obs.data, tf))
 
     vmt = VoxelMapTransformer(
         emit_every=0,  # batch mode: emit once on exhaustion
@@ -158,12 +169,26 @@ def _accumulate(
 
 def _denoise(cloud: PointCloud2 | None) -> PointCloud2 | None:
     """Statistical outlier removal via o3d; drops sparse floaters, keeps colors."""
-    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-
-    if cloud is None or len(cloud.pointcloud.points) < 20:
+    if cloud is None or cloud.width * cloud.height < 20:
         return cloud
-    clean, _ = cloud.pointcloud_tensor.remove_statistical_outliers(nb_neighbors=20, std_ratio=2.0)
-    return PointCloud2(pointcloud=clean, frame_id=cloud.frame_id, ts=cloud.ts)
+    import numpy as np
+    import open3d as o3d
+
+    from dimos.msgs.pointcloud import (
+        pointcloud_from_xyz,
+        pointcloud_from_xyz_rgb,
+        pointcloud_to_open3d,
+    )
+
+    if {field.name for field in cloud.fields} - {"x", "y", "z", "rgb"}:
+        raise ValueError("map denoising supports only XYZ/RGB point fields")
+    tensor = o3d.t.geometry.PointCloud.from_legacy(pointcloud_to_open3d(cloud))
+    clean, _ = tensor.remove_statistical_outliers(nb_neighbors=20, std_ratio=2.0)
+    points = clean.point.positions.numpy()
+    if "colors" in clean.point:
+        colors = (np.clip(clean.point.colors.numpy(), 0.0, 1.0) * 255).astype(np.uint8)
+        return pointcloud_from_xyz_rgb(points, colors, header=cloud.header)
+    return pointcloud_from_xyz(points, header=cloud.header)
 
 
 def _log_reconstruction(
@@ -180,17 +205,19 @@ def _log_reconstruction(
     bottom_cutoff: float | None = None,
 ) -> None:
     """Log maps, paths, the PGO graph, and markers to the active rerun recording."""
+    from dimos_generated.geometry_msgs.msg import Point, Pose
     import rerun as rr
     import rerun.blueprint as rrb
 
     from dimos.memory.vis.color import Color
-    from dimos.msgs.geometry_msgs.Transform import Transform
+    from dimos.msgs.geometry import pose_from_matrix, pose_matrix, transform_matrix
+    from dimos.visualization.rerun.message_helpers import cloud_archetype
 
     rr.send_blueprint(rrb.Blueprint(rrb.Spatial3DView(origin="world")))
     if global_map is not None:
         rr.log(
             "world/raw_map/pointcloud",
-            global_map.to_rerun(voxel_size=voxel / 2, bottom_cutoff=bottom_cutoff),
+            cloud_archetype(global_map, ui_radius=voxel / 2, bottom_cutoff=bottom_cutoff),
             static=True,
         )
     if path:
@@ -202,13 +229,13 @@ def _log_reconstruction(
     if pgo_map is not None:
         rr.log(
             "world/pgo_map/pointcloud",
-            pgo_map.to_rerun(voxel_size=voxel / 2, bottom_cutoff=bottom_cutoff),
+            cloud_archetype(pgo_map, ui_radius=voxel / 2, bottom_cutoff=bottom_cutoff),
             static=True,
         )
     if full_pgo_map is not None:
         rr.log(
             "world/full_pgo_map/pointcloud",
-            full_pgo_map.to_rerun(voxel_size=voxel / 2, bottom_cutoff=bottom_cutoff),
+            cloud_archetype(full_pgo_map, ui_radius=voxel / 2, bottom_cutoff=bottom_cutoff),
             static=True,
         )
     if pgo_path:
@@ -225,8 +252,16 @@ def _log_reconstruction(
     if graph is not None and graph.loops:
         loop_strips = [
             [
-                (lc.source.translation.x, lc.source.translation.y, lc.source.translation.z),
-                (lc.target.translation.x, lc.target.translation.y, lc.target.translation.z),
+                (
+                    lc.source.transform.translation.x,
+                    lc.source.transform.translation.y,
+                    lc.source.transform.translation.z,
+                ),
+                (
+                    lc.target.transform.translation.x,
+                    lc.target.transform.translation.y,
+                    lc.target.transform.translation.z,
+                ),
             ]
             for lc in graph.loops
         ]
@@ -269,23 +304,23 @@ def _log_reconstruction(
             pgo_centers: list[tuple[float, float, float]] = []
             pgo_quats: list[tuple[float, float, float, float]] = []
             for d in marker_dets:
-                raw_tf = Transform(
-                    translation=d.data.center,
-                    rotation=d.data.orientation,
-                    frame_id="world",
-                    child_frame_id=f"marker_{d.data.marker_id}",
-                    ts=d.ts,
+                center = d.data.center
+                raw_pose = Pose(
+                    position=Point(x=center.x, y=center.y, z=center.z),
+                    orientation=d.data.orientation,
                 )
-                corrected = graph.correct(raw_tf)
+                corrected = pose_from_matrix(
+                    transform_matrix(graph.correction_at(d.ts).transform) @ pose_matrix(raw_pose)
+                )
                 pgo_centers.append(
-                    (corrected.translation.x, corrected.translation.y, corrected.translation.z)
+                    (corrected.position.x, corrected.position.y, corrected.position.z)
                 )
                 pgo_quats.append(
                     (
-                        corrected.rotation.x,
-                        corrected.rotation.y,
-                        corrected.rotation.z,
-                        corrected.rotation.w,
+                        corrected.orientation.x,
+                        corrected.orientation.y,
+                        corrected.orientation.z,
+                        corrected.orientation.w,
                     )
                 )
             _log_markers(
@@ -328,7 +363,7 @@ def main(
     export: bool = typer.Option(
         False,
         "--export",
-        help="Export PGO map to ./<dataset>.pc2.lcm in cwd (implies --pgo)",
+        help="Export PGO map to ./<dataset>.pc2.cdr in cwd (implies --pgo)",
     ),
     full_pgo: bool = typer.Option(
         False,
@@ -418,17 +453,19 @@ def main(
     ),
 ) -> None:
     """Rebuild a voxel map from a recorded SQLite dataset, write a .rrd, and open it in rerun."""
+    from dimos_generated.sensor_msgs.msg import Image, PointCloud2
+    from dimos_generated.std_msgs.msg import Header
     import rerun as rr
 
     from dimos.mapping.loop_closure.pgo import PGO
     from dimos.memory.cli.dataset import open_store, resolve_dataset
     from dimos.memory.transform import QualityWindow, SpeedLimit
     from dimos.memory.utils.progress import progress
-    from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-    from dimos.msgs.sensor_msgs.Image import Image
-    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+    from dimos.msgs.camera_info import camera_info_from_yaml
+    from dimos.msgs.image import image_sharpness
     from dimos.perception.fiducial.marker_transformer import DetectMarkers
-    from dimos.robot.unitree.go2.connection import BASE_TO_OPTICAL, _camera_info_static
+    from dimos.robot.unitree.go2.camera_calibration import front_camera_calibration
+    from dimos.robot.unitree.go2.connection import BASE_TO_OPTICAL
     from dimos.visualization.rerun.init import rerun_init
 
     db_path = resolve_dataset(dataset)
@@ -454,7 +491,7 @@ def main(
     tf_buf = StreamTF.from_store(store)
     # Streams are homogeneous: read the cloud frame from the first observation.
     first_obs = next(iter(lidar), None)
-    cloud_frame: str | None = first_obs.data.frame_id if first_obs is not None else None
+    cloud_frame: str | None = first_obs.data.header.frame_id if first_obs is not None else None
 
     world = frame
     if world is None and first_obs is not None and cloud_frame is not None:
@@ -473,7 +510,7 @@ def main(
     # Registration: sensor-frame clouds get a per-frame tf lookup lifting them
     # into the world frame (frames with no tf answer are dropped); clouds
     # already stamped with the world frame accumulate verbatim (register=None).
-    register: Callable[[Observation[Any]], Transform | None] | None = None
+    register: Callable[[Observation[Any]], TransformStamped | None] | None = None
     if first_obs is not None and cloud_frame is not None and cloud_frame != world:
         # Fail fast when registration is impossible: probe the first cloud's
         # timestamp (unbounded tolerance — "possible at all", not "in range").
@@ -490,8 +527,10 @@ def main(
         print(f"registering clouds {world!r} ← {cloud_frame!r} via tf")
         buf = tf_buf
 
-        def _register(obs: Observation[Any]) -> Transform | None:
-            return buf.get(world, obs.data.frame_id, time_point=obs.ts, time_tolerance=tf_tolerance)
+        def _register(obs: Observation[Any]) -> TransformStamped | None:
+            return buf.get(
+                world, obs.data.header.frame_id, time_point=obs.ts, time_tolerance=tf_tolerance
+            )
 
         register = _register
     elif cloud_frame is not None:
@@ -504,11 +543,21 @@ def main(
             tf = register(obs)
             if tf is None:
                 return None
-            return (tf.translation.x, tf.translation.y, tf.translation.z)
+            return (
+                tf.transform.translation.x,
+                tf.transform.translation.y,
+                tf.transform.translation.z,
+            )
         pose = obs.pose
         # Reject placeholder poses: zero translation OR uninitialized rotation.
         # Same condition as pgo_keyframes so dedup and PGO see the same frames.
-        if pose is not None and not (pose.position.is_zero() or pose.orientation.is_zero()):
+        if (
+            pose is not None
+            and any((pose.position.x, pose.position.y, pose.position.z))
+            and any(
+                (pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w)
+            )
+        ):
             return (pose.position.x, pose.position.y, pose.position.z)
         return None
 
@@ -553,7 +602,11 @@ def main(
             graph = lidar.tap(bar).transform(PGO()).last().data
 
         pgo_path = [
-            (kf.optimized.translation.x, kf.optimized.translation.y, kf.optimized.translation.z)
+            (
+                kf.optimized.transform.translation.x,
+                kf.optimized.transform.translation.y,
+                kf.optimized.transform.translation.z,
+            )
             for kf in graph.keyframes
         ]
 
@@ -619,7 +672,11 @@ def main(
             )
             print(f"re-posing color_image from {image_pose!r} + camera optical mount")
             color_image = pose_fill(color_image, src_pose, tolerance=0.1, mount=BASE_TO_OPTICAL)
-        cam_info = CameraInfo.from_yaml(str(camera_info)) if camera_info else _camera_info_static()
+        cam_info = (
+            camera_info_from_yaml(camera_info, header=Header(frame_id="camera_optical"))
+            if camera_info
+            else front_camera_calibration()
+        )
         xf = DetectMarkers(
             camera_info=cam_info,
             marker_length_m=marker_size,
@@ -631,7 +688,7 @@ def main(
         # than the limits. Defaults match replay_marker.py so positions agree.
         with progress(n_images, "detecting markers") as bar:
             pipeline: Stream[Image] = color_image.tap(bar).transform(
-                QualityWindow(lambda img: img.sharpness, window=marker_quality_window)
+                QualityWindow(image_sharpness, window=marker_quality_window)
             )
             if marker_max_speed > 0:
                 pipeline = pipeline.transform(
@@ -677,14 +734,14 @@ def main(
         subprocess.Popen(["rerun", str(out)])
 
     if export and pgo_map is not None:
-        out_path = Path.cwd() / f"{db_path.stem}.pc2.lcm"
+        out_path = Path.cwd() / f"{db_path.stem}.pc2.cdr"
         print(f"exporting PGO twopass map to {out_path}...")
-        out_path.write_bytes(pgo_map.lcm_encode())
+        out_path.write_bytes(pgo_map.encode())
         print(f"wrote {out_path}")
         print()
         print("load back with:")
-        print("    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2")
-        print(f'    pcd = PointCloud2.lcm_decode(open("{out_path.name}", "rb").read())')
+        print("    from dimos_generated.sensor_msgs.msg import PointCloud2")
+        print(f'    pcd = PointCloud2.decode(open("{out_path.name}", "rb").read())')
 
 
 if __name__ == "__main__":

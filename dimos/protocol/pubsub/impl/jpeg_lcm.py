@@ -21,25 +21,29 @@ cv2 / rerun dependencies).
 
 from __future__ import annotations
 
-from typing import cast
+from dimos_generated.sensor_msgs.msg import CompressedImage, Image
 
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.protocol.pubsub.encoders import DecodingError, LCMTopicProto, PubSubEncoderMixin
+from dimos.msgs.image import compressed_image_from_image, image_from_compressed
+from dimos.protocol.pubsub.encoders import DecodingError, PubSubEncoderMixin, TypedTopicProto
 from dimos.protocol.pubsub.impl.lcmpubsub import LCMPubSubBase
 
 
-class JpegEncoderMixin(PubSubEncoderMixin[LCMTopicProto, Image, bytes]):
-    """Encoder mixin for DimosMsg using JPEG encoding (for images)."""
+class JpegEncoderMixin(PubSubEncoderMixin[TypedTopicProto, Image, bytes]):
+    """Transcode generated Image values using CompressedImage CDR on the wire."""
 
-    def encode(self, msg: Image, _: LCMTopicProto) -> bytes:
-        return msg.lcm_jpeg_encode()
+    def encode(self, msg: Image, topic: TypedTopicProto) -> bytes:
+        if topic.msg_type is not CompressedImage:
+            raise ValueError("JPEG wire topics must declare generated CompressedImage")
+        return compressed_image_from_image(msg).encode()
 
-    def decode(self, msg: bytes, topic: LCMTopicProto) -> Image:
+    def decode(self, msg: bytes, topic: TypedTopicProto) -> Image:
         if topic.topic == "LCM_SELF_TEST":
             raise DecodingError("Ignoring LCM_SELF_TEST topic")
-        if topic.lcm_type is None:
-            raise DecodingError(f"Cannot decode: topic {topic.topic!r} has no lcm_type")
-        return cast("type[Image]", topic.lcm_type).lcm_jpeg_decode(msg)
+        if topic.msg_type is None:
+            raise DecodingError(f"Cannot decode: topic {topic.topic!r} has no msg_type")
+        if topic.msg_type is not CompressedImage:
+            raise DecodingError("JPEG wire topics must declare generated CompressedImage")
+        return image_from_compressed(CompressedImage.decode(msg))
 
 
 class JpegLCM(  # type: ignore[misc]

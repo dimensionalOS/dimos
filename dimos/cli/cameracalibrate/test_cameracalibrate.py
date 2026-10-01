@@ -17,6 +17,8 @@ import re
 from unittest.mock import MagicMock
 
 import cv2
+from dimos_generated.sensor_msgs.msg import Image
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 import pytest
 from typer.testing import CliRunner
@@ -31,7 +33,8 @@ from dimos.cli.cameracalibrate.cameracalibrate import (
     load_frames_from_folder,
     write_camera_info_yaml,
 )
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo as DimosCameraInfo
+from dimos.msgs.camera_info import camera_info_from_yaml, intrinsic_matrix
+from dimos.msgs.image import image_from_array
 
 
 def _synthetic_chessboard_gray(
@@ -157,15 +160,15 @@ def test_cli_folder_with_synthetic_images_writes_yaml_preview_and_camera_info(
     assert preview_image is not None
     assert preview_image.shape == (480, 640, 3)
 
-    dimos_info = DimosCameraInfo.from_yaml(str(out))
+    dimos_info = camera_info_from_yaml(out, header=Header(frame_id="camera_optical"))
     assert dimos_info.width == 640
     assert dimos_info.height == 480
     assert dimos_info.distortion_model == "plumb_bob"
-    assert dimos_info.frame_id == "camera_optical"
-    assert dimos_info.get_K_matrix().shape == (3, 3)
-    assert dimos_info.get_D_coeffs().shape == (5,)
-    assert dimos_info.get_R_matrix().shape == (3, 3)
-    assert dimos_info.get_P_matrix().shape == (3, 4)
+    assert dimos_info.header.frame_id == "camera_optical"
+    assert intrinsic_matrix(dimos_info).shape == (3, 3)
+    assert np.asarray(dimos_info.d).shape == (5,)
+    assert np.asarray(dimos_info.r).reshape(3, 3).shape == (3, 3)
+    assert np.asarray(dimos_info.p).reshape(3, 4).shape == (3, 4)
 
 
 def test_cli_help_lists_cameracalibrate_flags() -> None:
@@ -227,7 +230,7 @@ def test_cli_folder_writes_only_explicit_yaml_and_prints_rms(tmp_path: Path) -> 
     assert out.exists()
     preview = tmp_path / "camera_info.preview.png"
     assert not preview.exists()
-    dimos_info = DimosCameraInfo.from_yaml(str(out))
+    dimos_info = camera_info_from_yaml(out, header=Header(frame_id="camera_optical"))
     assert dimos_info.width == 640
     assert dimos_info.height == 480
     assert dimos_info.distortion_model == "plumb_bob"
@@ -458,12 +461,11 @@ def test_capture_frames_from_topic_mocked_space_fills_target(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """SPACE accepts frames delivered over a fake pubsub subscription."""
-    from dimos.msgs.sensor_msgs.Image import Image
 
     cols, rows = 9, 6
     gray = _synthetic_chessboard_gray(640, 480, cols, rows, square_px=40)
     bgr = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
-    image_msg = Image.from_opencv(bgr)
+    image_msg = image_from_array(bgr, encoding="bgr8")
 
     record: dict[str, object] = {}
     monkeypatch.setattr(
@@ -521,12 +523,11 @@ def test_cli_topic_source_uri_passes_through(
     tmp_path: Path,
 ) -> None:
     """``--source topic --topic <uri>`` forwards the URI verbatim to the registry."""
-    from dimos.msgs.sensor_msgs.Image import Image
 
     cols, rows = 9, 6
     gray = _synthetic_chessboard_gray(640, 480, cols, rows, square_px=40)
     bgr = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
-    image_msg = Image.from_opencv(bgr)
+    image_msg = image_from_array(bgr, encoding="bgr8")
 
     record: dict[str, object] = {}
     monkeypatch.setattr(
@@ -802,16 +803,16 @@ def test_write_camera_info_yaml_round_trip_matches_k_d_size_and_model(tmp_path: 
         D=D,
         distortion_model="plumb_bob",
     )
-    dimos_info = DimosCameraInfo.from_yaml(path)
+    dimos_info = camera_info_from_yaml(path, header=Header(frame_id="camera_optical"))
     assert dimos_info.width == 640
     assert dimos_info.height == 480
     assert dimos_info.distortion_model == "plumb_bob"
-    assert np.allclose(dimos_info.get_K_matrix(), K)
-    assert np.allclose(dimos_info.get_D_coeffs(), D)
+    assert np.allclose(intrinsic_matrix(dimos_info), K)
+    assert np.allclose(np.asarray(dimos_info.d), D)
 
 
 def test_write_camera_info_yaml_round_trip(tmp_path: Path) -> None:
-    """YAML written by ``write_camera_info_yaml`` round-trips through ``CameraInfo.from_yaml``."""
+    """YAML written by ``write_camera_info_yaml`` round-trips through ``camera_info_from_yaml``."""
     K = np.array([[600.0, 0.5, 400.0], [0.0, 605.0, 300.5], [0.0, 0.0, 1.0]], dtype=np.float64)
     D = np.array([-0.12, 0.08, 0.002, -0.001, 0.0], dtype=np.float64)
     R = np.array([[0.999, -0.01, 0.0], [0.01, 0.999, 0.0], [0.0, 0.0, 1.0]], dtype=np.float64)
@@ -831,15 +832,15 @@ def test_write_camera_info_yaml_round_trip(tmp_path: Path) -> None:
         P=P,
         distortion_model="plumb_bob",
     )
-    dimos_info = DimosCameraInfo.from_yaml(path)
+    dimos_info = camera_info_from_yaml(path, header=Header(frame_id="camera_optical"))
     assert dimos_info.width == 800
     assert dimos_info.height == 600
     assert dimos_info.distortion_model == "plumb_bob"
-    assert dimos_info.frame_id == "camera_optical"
-    assert np.allclose(dimos_info.get_K_matrix(), K)
-    assert np.allclose(dimos_info.get_D_coeffs(), D)
-    assert np.allclose(dimos_info.get_R_matrix(), R)
-    assert np.allclose(dimos_info.get_P_matrix(), P)
+    assert dimos_info.header.frame_id == "camera_optical"
+    assert np.allclose(intrinsic_matrix(dimos_info), K)
+    assert np.allclose(np.asarray(dimos_info.d), D)
+    assert np.allclose(np.asarray(dimos_info.r).reshape(3, 3), R)
+    assert np.allclose(np.asarray(dimos_info.p).reshape(3, 4), P)
 
 
 def test_write_camera_info_yaml_custom_r_p_and_distortion_model(tmp_path: Path) -> None:
@@ -859,11 +860,11 @@ def test_write_camera_info_yaml_custom_r_p_and_distortion_model(tmp_path: Path) 
         P=P,
         distortion_model="rational_polynomial",
     )
-    dimos_info = DimosCameraInfo.from_yaml(path)
+    dimos_info = camera_info_from_yaml(path, header=Header(frame_id="camera_optical"))
     assert dimos_info.width == 320
     assert dimos_info.height == 240
     assert dimos_info.distortion_model == "rational_polynomial"
-    assert np.allclose(dimos_info.get_K_matrix(), K)
-    assert np.allclose(dimos_info.get_D_coeffs(), D)
-    assert np.allclose(dimos_info.get_R_matrix(), R)
-    assert np.allclose(dimos_info.get_P_matrix(), P)
+    assert np.allclose(intrinsic_matrix(dimos_info), K)
+    assert np.allclose(np.asarray(dimos_info.d), D)
+    assert np.allclose(np.asarray(dimos_info.r).reshape(3, 3), R)
+    assert np.allclose(np.asarray(dimos_info.p).reshape(3, 4), P)

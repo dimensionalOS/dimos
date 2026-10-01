@@ -12,14 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from copy import deepcopy
+
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Twist, Vector3
 import numpy as np
 
 from dimos.core.global_config import GlobalConfig
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.geometry import quaternion_euler, quaternion_from_euler
 from dimos.navigation.dannav.holonomic_tc.command_limits import (
     HolonomicCommandLimits,
     clamp_holonomic_cmd_vel,
@@ -37,13 +36,13 @@ from dimos.utils.transform_utils import normalize_angle
 
 def _pose_from_xy_yaw(x: float, y: float, yaw: float) -> Pose:
     return Pose(
-        position=Vector3(x, y, 0.0),
-        orientation=Quaternion.from_euler(Vector3(0.0, 0.0, float(yaw))),
+        position=Point(x=x, y=y),
+        orientation=quaternion_from_euler(0.0, 0.0, float(yaw)),
     )
 
 
 def _pose_from_pose_stamped(odom: PoseStamped) -> Pose:
-    return Pose(odom.position, odom.orientation)
+    return deepcopy(odom.pose)
 
 
 class HolonomicPathController:
@@ -122,16 +121,16 @@ class HolonomicPathController:
             if wz != 0.0 and abs(wz) < 0.2:
                 wz = 0.2 * (1.0 if wz > 0 else -1.0)
             t = Twist(
-                linear=Vector3(0.0, 0.0, 0.0),
-                angular=Vector3(0.0, 0.0, wz),
+                linear=Vector3(x=0.0, y=0.0, z=0.0),
+                angular=Vector3(x=0.0, y=0.0, z=wz),
             )
             return self._limit_output(self._apply_sim_angular(t))
 
-        robot_yaw = float(current_odom.orientation.euler[2])
+        robot_yaw = float(quaternion_euler(current_odom.pose.orientation)[2])
         target_yaw = float(normalize_angle(robot_yaw + yaw_error))
         p = _pose_from_xy_yaw(
-            float(current_odom.position.x),
-            float(current_odom.position.y),
+            float(current_odom.pose.position.x),
+            float(current_odom.pose.position.y),
             target_yaw,
         )
         ref = TrajectoryReferenceSample(0.0, p, Twist())
@@ -149,8 +148,8 @@ class HolonomicPathController:
         if self._global_config.simulation and 1e-9 < abs(wz) < 0.8:
             wz = 0.8 * (1.0 if wz > 0 else -1.0)
         return Twist(
-            linear=Vector3(float(t.linear.x), float(t.linear.y), float(t.linear.z)),
-            angular=Vector3(0.0, 0.0, wz),
+            linear=Vector3(x=float(t.linear.x), y=float(t.linear.y), z=float(t.linear.z)),
+            angular=Vector3(x=0.0, y=0.0, z=wz),
         )
 
     def _limit_output(self, raw: Twist) -> Twist:
@@ -160,5 +159,5 @@ class HolonomicPathController:
             self._limits,
             1.0 / self._control_frequency,
         )
-        self._previous_cmd = Twist(out)
+        self._previous_cmd = deepcopy(out)
         return out

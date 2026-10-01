@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from dimos_generated.sensor_msgs.msg import JointState
 import numpy as np
 from numpy.typing import NDArray
 
@@ -25,7 +26,6 @@ from dimos.manipulation.planning.groups.models import PlanningGroupSelection
 from dimos.manipulation.planning.spec.joint_space import JointSpace
 from dimos.manipulation.planning.spec.models import JointPath
 from dimos.manipulation.planning.spec.protocols import WorldSpec
-from dimos.msgs.sensor_msgs.JointState import JointState
 
 
 @dataclass(frozen=True)

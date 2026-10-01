@@ -14,24 +14,25 @@
 
 from __future__ import annotations
 
+from dimos_generated.geometry_msgs.msg import Quaternion, Vector3
+from dimos_generated.sensor_msgs.msg import Image
+from dimos_generated.std_msgs.msg import Header
+from dimos_generated.vision_msgs.msg import Detection3DArray
 import numpy as np
 import pytest
 
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
-from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
+from dimos.msgs.image import image_from_array, image_view
+from dimos.msgs.time import time_from_seconds, to_seconds
 from dimos.perception.detection.type.detection3d.bbox import Detection3DBBox
 from dimos.perception.detection.type.detection3d.imageDetections3D import ImageDetections3D
 from dimos.perception.detection.type.detection3d.marker import Detection3DMarker
 
 
 def _image(ts: float = 123.456) -> Image:
-    return Image(
-        data=np.zeros((80, 100, 3), dtype=np.uint8),
-        format=ImageFormat.BGR,
-        frame_id="camera_optical",
-        ts=ts,
+    return image_from_array(
+        np.zeros((80, 100, 3), dtype=np.uint8),
+        encoding="bgr8",
+        header=Header(frame_id="camera_optical", stamp=time_from_seconds(ts)),
     )
 
 
@@ -52,12 +53,12 @@ def _marker(
         class_id=marker_id,
         confidence=confidence,
         name="",
-        ts=image.ts,
+        ts=to_seconds(image.header.stamp),
         image=image,
-        center=Vector3(float(marker_id), 2.0, 3.0),
-        size=Vector3(0.16, 0.16, 0.0),
+        center=Vector3(x=float(marker_id), y=2.0, z=3.0),
+        size=Vector3(x=0.16, y=0.16, z=0.0),
         frame_id=frame_id,
-        orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
+        orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
         marker_id=marker_id,
         corners_px=np.array(
             [[x1, y1], [x2, y1], [x2, y2], [x1, y2]],
@@ -76,22 +77,22 @@ def test_to_ros_detection3d_array_serializes_plain_bbox_results() -> None:
         class_id=9,
         confidence=0.75,
         name="box",
-        ts=image.ts,
+        ts=to_seconds(image.header.stamp),
         image=image,
-        center=Vector3(1.0, 2.0, 3.0),
-        size=Vector3(0.4, 0.5, 0.6),
+        center=Vector3(x=1.0, y=2.0, z=3.0),
+        size=Vector3(x=0.4, y=0.5, z=0.6),
         frame_id="world",
-        orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
+        orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
     )
 
     msg = ImageDetections3D(image, [det]).to_ros_detection3d_array()
 
-    assert msg.detections_length == 1
-    assert msg.detections[0].results_length == 1
+    assert len(msg.detections) == 1
+    assert len(msg.detections[0].results) == 1
 
-    decoded = Detection3DArray.lcm_decode(msg.lcm_encode())
+    decoded = Detection3DArray.decode(msg.encode())
     decoded_det = decoded.detections[0]
-    assert decoded_det.results_length == 1
+    assert len(decoded_det.results) == 1
     assert decoded_det.results[0].hypothesis.class_id == "9"
     assert decoded_det.results[0].hypothesis.score == pytest.approx(0.75)
     assert decoded_det.bbox.center.position.x == pytest.approx(1.0)
@@ -111,23 +112,23 @@ def test_to_ros_detection3d_array_preserves_marker_wire_identity() -> None:
     msg = detections.to_ros_detection3d_array()
 
     assert msg.header.frame_id == "world"
-    assert msg.ts == pytest.approx(image.ts)
-    assert msg.detections_length == 2
+    assert to_seconds(msg.header.stamp) == pytest.approx(to_seconds(image.header.stamp))
+    assert len(msg.detections) == 2
     assert len(msg.detections) == 2
 
     first = msg.detections[0]
     assert first.header.frame_id == "world"
     assert first.id == "7"
-    assert first.results_length == 1
+    assert len(first.results) == 1
     assert first.results[0].hypothesis.class_id == "DICT_APRILTAG_36h11:7"
     assert first.results[0].hypothesis.score == pytest.approx(1.0)
     assert first.bbox.center.position.x == pytest.approx(7.0)
     assert first.bbox.size.x == pytest.approx(0.16)
     assert first.bbox.size.z == pytest.approx(0.0)
 
-    decoded = Detection3DArray.lcm_decode(msg.lcm_encode())
+    decoded = Detection3DArray.decode(msg.encode())
     assert decoded.header.frame_id == "world"
-    assert decoded.detections_length == 2
+    assert len(decoded.detections) == 2
     assert decoded.detections[1].id == "42"
     assert decoded.detections[1].results[0].hypothesis.class_id == "DICT_APRILTAG_36h11:42"
 
@@ -140,15 +141,15 @@ def test_to_ros_detection3d_array_uses_override_and_handles_empty_frames() -> No
     )
 
     assert msg.header.frame_id == "map"
-    assert msg.ts == pytest.approx(image.ts)
-    assert msg.detections_length == 1
+    assert to_seconds(msg.header.stamp) == pytest.approx(to_seconds(image.header.stamp))
+    assert len(msg.detections) == 1
 
     empty = ImageDetections3D(image, []).to_ros_detection3d_array(frame_id="world")
 
     assert empty.header.frame_id == "world"
-    assert empty.ts == pytest.approx(image.ts)
-    assert empty.detections_length == 0
-    assert empty.detections == []
+    assert to_seconds(empty.header.stamp) == pytest.approx(to_seconds(image.header.stamp))
+    assert len(empty.detections) == 0
+    assert len(empty.detections) == 0
 
 
 def test_filter_and_annotated_image_work_for_3d_marker_detections() -> None:
@@ -162,10 +163,28 @@ def test_filter_and_annotated_image_work_for_3d_marker_detections() -> None:
     assert isinstance(filtered, ImageDetections3D)
     assert filtered.detections == [keep]
     ros_msg = filtered.to_ros_detection3d_array()
-    assert ros_msg.detections_length == 1
+    assert len(ros_msg.detections) == 1
     assert ros_msg.detections[0].id == "5"
 
     annotated = filtered.annotated_image()
-    assert annotated.ts == pytest.approx(image.ts)
-    assert np.count_nonzero(annotated.data) > 0
-    assert np.count_nonzero(image.data) == 0
+    assert to_seconds(annotated.header.stamp) == pytest.approx(to_seconds(image.header.stamp))
+    assert np.count_nonzero(image_view(annotated)) > 0
+    assert np.count_nonzero(image_view(image)) == 0
+
+
+def test_marker_pose_and_array_keep_exact_source_stamp() -> None:
+    image = _image()
+    image.header.stamp.sec = 1700000000
+    image.header.stamp.nanosec = 123456789
+    marker = _marker(image, marker_id=42)
+    pose = marker.pose
+    message = marker.to_detection3d_msg()
+    array = ImageDetections3D(image, [marker]).to_ros_detection3d_array()
+    decoded = Detection3DArray.decode(array.encode())
+    assert pose.header.stamp == image.header.stamp
+    assert message.header.stamp == image.header.stamp
+    assert decoded.header.stamp == image.header.stamp
+    assert decoded.detections[0].header.stamp == image.header.stamp
+    marker.center.x = 999
+    assert pose.pose.position.x == 42
+    assert decoded.detections[0].bbox.center.position.x == 42

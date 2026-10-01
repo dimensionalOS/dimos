@@ -63,6 +63,7 @@ jobs:
           .venv/bin/python -m pytest -o addopts="" --noconftest -q \
             dimos/message_codegen/test_project.py \
             dimos/message_codegen/test_repository_tutorial.py \
+            dimos/message_codegen/test_documented_project.py \
             dimos/message_codegen/test_ownership.py \
             dimos/message_codegen/test_ownership_native.py \
             dimos/message_codegen/test_project_install.py
@@ -142,6 +143,18 @@ jobs:
               source install/setup.bash
               python3 /source/examples/message-codegen/demo_ros_reference.py --build /demo
             ' | tee build/message-codegen/demo/evidence/jazzy-reference.txt
+      - name: Verify generated messages through the optional ROS bridge
+        run: |
+          docker run --rm -v "$PWD:/source:ro" dimos-cdr-jazzy-reference '
+            set -e
+            source /opt/ros/jazzy/setup.bash
+            export PYTHONPATH=/source:/source/build/message-codegen/demo/cpp/build:$PYTHONPATH
+            cd /source
+            python3 -m pytest -o addopts="" --noconftest --import-mode=importlib -p no:cacheprovider \
+              dimos/protocol/pubsub/impl/test_rospubsub_conversion.py \
+              dimos/protocol/pubsub/impl/test_rospubsub.py -q
+            python3 examples/message-codegen/demo_ros_bridge.py
+          ' | tee build/message-codegen/demo/evidence/ros-bridge.txt
       - uses: actions/upload-artifact@v7
         with:
           name: message-codegen-jazzy-reference

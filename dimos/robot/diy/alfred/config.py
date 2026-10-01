@@ -18,9 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos_generated.geometry_msgs.msg import Point, Pose
 
 DEFAULT_ADDRESS = "172.6.2.20:11323"
 ALFRED_URDF = Path(__file__).resolve().parent / "alfred.urdf"
@@ -52,6 +50,6 @@ ALFRED = AlfredConfig(
     d455_serial="260922302422",
     internal_odom_offsets={
         # Mid-360 lidar: a bit forward, and a bit to the right of base center, above ground.
-        "mid360_link": Pose(0.20, -0.20, 0.30, *Quaternion.from_euler(Vector3(0, 0, 0))),
+        "mid360_link": Pose(position=Point(x=0.20, y=-0.20, z=0.30)),
     },
 )

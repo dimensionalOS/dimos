@@ -14,10 +14,11 @@
 
 from typing import Any
 
+from dimos_generated.std_msgs.msg import Int32
+
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.experimental.isolated_python.example.contract import ExampleExternal
-from dimos.msgs.std_msgs.Int32 import Int32
 
 
 class ExampleExternalRuntime(ExampleExternal):
@@ -33,7 +34,7 @@ class ExampleExternalRuntime(ExampleExternal):
         self.value.subscribe(self._publish_doubled)
 
     def _publish_doubled(self, message: Int32) -> None:
-        self.doubled.publish(Int32(message.data * self._multiplier))
+        self.doubled.publish(Int32(data=message.data * self._multiplier))
 
     @rpc
     def get_multiplier(self) -> int:

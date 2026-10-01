@@ -46,12 +46,12 @@ if sys.version_info >= (3, 11):
 else:
     from typing_extensions import Self
 
-from dimos_lcm.std_msgs import Bool
+from dimos_generated.geometry_msgs.msg import PointStamped
+from dimos_generated.nav_msgs.msg import Path
+from dimos_generated.std_msgs.msg import Bool
 
-from dimos.msgs.geometry_msgs.PointStamped import PointStamped
-from dimos.msgs.nav_msgs.Path import Path
-from dimos.web.codecs import is_generic_lcm_encoding
-from dimos.web.lcm_codec import default_encoding, export_schema, schema_class_for
+from dimos.web.cdr_codec import default_encoding, export_schema
+from dimos.web.codecs import is_generic_cdr_encoding
 from dimos.web.relay_bridge.manifest import (
     MANIFEST_VERSION,
     MAX_MANIFEST_ID_LEN,
@@ -165,9 +165,9 @@ class Channel:
     `encoding` names a codec: a registered @web_encoder (dimos.web.codecs)
     whose message type must match `message_type`, the generic "json.v1" for
     JSON-shaped types and dataclasses (rx) / JSON scalars, lists and dicts
-    (tx decode), or `<msg_name>.lcm.v1` for rx DimOS messages with a
-    dimos_lcm schema (the frame is `lcm_encode()`, the schema rides
-    params["lcm"]). None picks the default: `<msg_name>.lcm.v1` for rx
+    (tx decode), or `<msg_name>.cdr.v1` for rx DimOS messages with a
+    generated schema (the frame is `encode()`, the schema rides
+    params["cdr"]). None picks the default: `<msg_name>.cdr.v1` for rx
     DimOS messages, "json.v1" otherwise.
 
     A dir="tx" channel is a generic browser publish input: it must declare
@@ -277,10 +277,10 @@ def _request_of(channel: Channel) -> ChannelRequest:
     # Deep plain copy: the manifest and specs must not alias the (frozen)
     # authoring record's nested values.
     params = _thaw_params(channel.params or {})
-    if is_generic_lcm_encoding(channel.encoding):
-        if "lcm" in params:
-            raise ValueError("params key 'lcm' is reserved for the LCM schema")
-        params["lcm"] = export_schema(schema_class_for(channel.message_type))
+    if is_generic_cdr_encoding(channel.encoding):
+        if "cdr" in params:
+            raise ValueError("params key 'cdr' is reserved for the CDR schema")
+        params["cdr"] = export_schema(channel.message_type)
     return ChannelRequest(
         channel.stream,
         channel.dir,

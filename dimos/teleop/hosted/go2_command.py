@@ -27,16 +27,22 @@ import math
 import time
 from typing import Any
 
-from dimos_lcm.std_msgs import Bool
+from dimos_generated.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseStamped,
+    Quaternion,
+    Twist,
+    TwistStamped,
+)
+from dimos_generated.std_msgs.msg import Bool
 from reactivex.disposable import Disposable
 from unitree_webrtc_connect.constants import SPORT_CMD
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
+from dimos.msgs.time import header_now, to_nanoseconds
 from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.teleop.hosted.command_executor import SerializedCommandExecutor
 from dimos.utils.generic import finite_number
@@ -100,7 +106,7 @@ class Go2CommandModule(Module):
         self._obstacle_avoidance = True
         self._light = 0.0
         self._posture = "StandReady"
-        self._last_cmd_ts = 0.0
+        self._last_cmd_ns = 0
         self._last_cmd_nonzero = False
 
     @rpc
@@ -358,7 +364,8 @@ class Go2CommandModule(Module):
             self._send_ack(nonce, False)
             return
         pose = PoseStamped(
-            ts=time.time(), frame_id="world", position=[x, y, 0.0], orientation=[0, 0, 0, 1]
+            header=header_now("world"),
+            pose=Pose(position=Point(x=x, y=y), orientation=Quaternion(w=1)),
         )
         try:
             self.goal_request.publish(pose)
@@ -388,36 +395,48 @@ class Go2CommandModule(Module):
         """Guard raw operator drive, republish on tele_cmd_vel for MovementManager."""
         if self._estopped:
             return
-        ts = float(twist.ts)
-        if not math.isfinite(ts):
-            # NaN ts passes every comparison below and would poison _last_cmd_ts.
+        try:
+            stamp_ns = to_nanoseconds(twist.header.stamp)
+        except ValueError:
+            logger.warning("dropping cmd_vel with invalid nanoseconds")
             return
-        age = time.time() - ts
-        if age > self.config.cmd_stale_after_sec:
+        age_ns = time.time_ns() - stamp_ns
+        if age_ns > self.config.cmd_stale_after_sec * 1_000_000_000:
             return
-        if age < 0:  # future-stamped: don't advance _last_cmd_ts (would stall drive)
+        if age_ns < 0:  # future-stamped: do not stall subsequent drive frames
             return
-        if ts <= self._last_cmd_ts:  # out-of-order
+        if stamp_ns <= self._last_cmd_ns:
             return
-        self._last_cmd_ts = ts
-
-        if not _all_finite(twist):
+        command = twist.twist
+        if not _all_finite(command):
             logger.warning("dropping non-finite cmd_vel")
             return
+        self._last_cmd_ns = stamp_ns
+
         lin_max = self.config.max_linear_mps
         ang_max = self.config.max_angular_rps
-        twist.linear.x = _clamp(twist.linear.x, -lin_max, lin_max)
-        twist.linear.y = _clamp(twist.linear.y, -lin_max, lin_max)
-        twist.angular.z = _clamp(twist.angular.z, -ang_max, ang_max)
+        command.linear.x = _clamp(command.linear.x, -lin_max, lin_max)
+        command.linear.y = _clamp(command.linear.y, -lin_max, lin_max)
+        command.angular.z = _clamp(command.angular.z, -ang_max, ang_max)
 
         # Idle zeros would make MovementManager cancel the nav plan, so forward a
         # zero only as the release edge (prev frame moving), then stay silent.
-        moving = not twist.is_zero()
+        moving = any(
+            abs(value) > 1e-8
+            for value in (
+                command.linear.x,
+                command.linear.y,
+                command.linear.z,
+                command.angular.x,
+                command.angular.y,
+                command.angular.z,
+            )
+        )
         if not moving and not self._last_cmd_nonzero:
             return
         self._last_cmd_nonzero = moving
 
-        self.tele_cmd_vel.publish(Twist(linear=twist.linear, angular=twist.angular))
+        self.tele_cmd_vel.publish(command)
 
     # ─── robot-authoritative state → stats module ─────────────────────
 

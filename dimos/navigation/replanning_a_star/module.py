@@ -15,18 +15,14 @@
 import os
 from typing import Any
 
-from dimos_lcm.std_msgs import Bool, String
+from dimos_generated.geometry_msgs.msg import PointStamped, Pose, PoseStamped, Quaternion, Twist
+from dimos_generated.nav_msgs.msg import OccupancyGrid, Odometry, Path
+from dimos_generated.std_msgs.msg import Bool, String
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.PointStamped import PointStamped
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
-from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.msgs.nav_msgs.Path import Path
 from dimos.navigation.base import NavigationInterface, NavigationState
 from dimos.navigation.replanning_a_star.global_planner import GlobalPlanner
 from dimos.utils.logging_config import setup_logger
@@ -81,7 +77,9 @@ class ReplanningAStarPlanner(Module, NavigationInterface):
         self.register_disposable(
             Disposable(
                 self.odometry.subscribe(
-                    lambda msg: self._planner.handle_odom(msg.to_pose_stamped())
+                    lambda msg: self._planner.handle_odom(
+                        PoseStamped(header=msg.header, pose=msg.pose.pose)
+                    )
                 )
             )
         )
@@ -98,7 +96,12 @@ class ReplanningAStarPlanner(Module, NavigationInterface):
         self.register_disposable(
             Disposable(
                 self.clicked_point.subscribe(
-                    lambda pt: self._planner.handle_goal_request(pt.to_pose_stamped())
+                    lambda pt: self._planner.handle_goal_request(
+                        PoseStamped(
+                            header=pt.header,
+                            pose=Pose(position=pt.point, orientation=Quaternion(w=1)),
+                        )
+                    )
                 )
             )
         )

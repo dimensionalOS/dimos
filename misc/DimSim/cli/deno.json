@@ -11,10 +11,11 @@
     "eval": "deno run --allow-all cli.ts eval"
   },
   "imports": {
-    "@dimos/msgs": "jsr:@dimos/msgs@^0.1.4",
     "@std/path": "jsr:@std/path@^1",
     "@std/http": "jsr:@std/http@^1",
     "playwright": "npm:playwright@^1.58",
-    "@dimforge/rapier3d-compat": "npm:@dimforge/rapier3d-compat@^0.14.0"
+    "@dimforge/rapier3d-compat": "npm:@dimforge/rapier3d-compat@^0.14.0",
+    "@foxglove/rosmsg": "npm:@foxglove/rosmsg@5.0.5",
+    "@foxglove/rosmsg2-serialization": "npm:@foxglove/rosmsg2-serialization@3.1.2"
   }
 }

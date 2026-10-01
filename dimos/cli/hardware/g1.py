@@ -19,10 +19,10 @@ from __future__ import annotations
 import time
 from typing import Any, NoReturn, Protocol, TypeGuard
 
+from dimos_generated.sensor_msgs.msg import JointState
 import typer
 
 from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.porcelain.dimos import Dimos
 from dimos.porcelain.module_handle import ModuleHandle
 from dimos.robot.unitree.g1.ready_pose import G1_READY_JOINTS, G1_READY_SPEED_SCALE

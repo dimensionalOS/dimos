@@ -21,19 +21,19 @@ python = "dimos.mapping.ray_tracing.module:RayTracingVoxelMap"
 threads = 2
 
 [package.metadata.dimos.module.ray_tracing.inputs]
-lidar = "sensor_msgs.PointCloud2"
-voxel_clear_mask = "sensor_msgs.PointCloud2"
-tf = "tf2_msgs.TFMessage"
+lidar = "sensor_msgs/msg/PointCloud2"
+voxel_clear_mask = "sensor_msgs/msg/PointCloud2"
+tf = "tf2_msgs/msg/TFMessage"
 
 [package.metadata.dimos.module.ray_tracing.outputs]
-global_map = "sensor_msgs.PointCloud2"
-local_map = "sensor_msgs.PointCloud2"
-local_map_fine = "sensor_msgs.PointCloud2"
-region_bounds = "geometry_msgs.PoseStamped"
+global_map = "sensor_msgs/msg/PointCloud2"
+local_map = "sensor_msgs/msg/PointCloud2"
+local_map_fine = "sensor_msgs/msg/PointCloud2"
+region_bounds = "geometry_msgs/msg/PoseStamped"
 
 [dependencies]
 dimos-module = { path = "../../../../native/rust/dimos-module" }
-lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
+dimos-generated-messages = { path = "../../../message_codegen" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
 serde = { version = "1", features = ["derive"] }
 ahash = "0.8"

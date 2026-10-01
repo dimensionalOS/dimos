@@ -20,6 +20,9 @@ from __future__ import annotations
 
 import math
 
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped
+from dimos_generated.std_msgs.msg import Header
+
 from dimos.control.benchmarking.paths import circle, straight_line
 from dimos.control.benchmarking.velocity_profile import VelocityProfileConfig
 from dimos.control.task import CoordinatorState, JointStateSnapshot
@@ -29,9 +32,7 @@ from dimos.control.tasks.path_follower_task.path_follower_task import (
     PathFollowerTaskConfig,
 )
 from dimos.core.global_config import global_config as _gc
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.geometry import quaternion_euler, quaternion_from_euler
 
 _JOINTS = ["go2/vx", "go2/vy", "go2/wz"]
 
@@ -54,8 +55,13 @@ def _task(**overrides) -> PathFollowerTask:
 
 def _start_aligned(task: PathFollowerTask, path) -> None:
     odom = PoseStamped(
-        position=Vector3(path.poses[0].position.x, path.poses[0].position.y, 0.0),
-        orientation=Quaternion.from_euler(Vector3(0.0, 0.0, path.poses[0].orientation.euler[2])),
+        header=Header(frame_id=""),
+        pose=Pose(
+            position=Point(x=path.poses[0].pose.position.x, y=path.poses[0].pose.position.y, z=0.0),
+            orientation=quaternion_from_euler(
+                0.0, 0.0, quaternion_euler(path.poses[0].pose.orientation)[2]
+            ),
+        ),
     )
     assert task.start_path(path, odom)
 

@@ -18,10 +18,11 @@ from dataclasses import dataclass
 import os
 from typing import TYPE_CHECKING, Any
 
+from dimos_generated.sensor_msgs.msg import Image
 import numpy as np
 import pytest
 
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.image import image_from_array
 from dimos.protocol.pubsub.benchmark.type import Case
 from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic, Zenoh
 from dimos.protocol.pubsub.spec import PubSub
@@ -38,7 +39,7 @@ from dimos.protocol.pubsub.impl.lcmpubsub import LCM, LCMPubSubBase, Topic as LC
 from dimos.protocol.pubsub.impl.memory import Memory
 from dimos.protocol.pubsub.impl.shmpubsub import (
     BytesSharedMemory,
-    LCMSharedMemory,
+    CDRSharedMemory,
     PickleSharedMemory,
 )
 
@@ -59,7 +60,7 @@ def make_data_image(size: int) -> Image:
     height = max(1, int(pixels**0.5))
     width = pixels // height
     data = padded_data[: height * width * 3].reshape(height, width, 3)
-    return Image(data=data, format=ImageFormat.RGB)
+    return image_from_array(data, encoding="rgb8")
 
 
 testcases: list[Case[Any, Any]] = []
@@ -74,7 +75,7 @@ def lcm_pubsub_channel() -> Generator[LCM, None, None]:
 
 
 def lcm_msggen(size: int) -> tuple[LCMTopic, Image]:
-    topic = LCMTopic(topic="benchmark/lcm", lcm_type=Image)
+    topic = LCMTopic(topic="benchmark/lcm", msg_type=Image)
     return (topic, make_data_image(size))
 
 
@@ -172,9 +173,9 @@ testcases.append(
 
 
 @contextmanager
-def shm_lcm_pubsub_channel() -> Generator[LCMSharedMemory, None, None]:
-    """SharedMemory with LCM binary encoding - no pickle overhead."""
-    shm_pubsub = LCMSharedMemory(prefer="cpu", default_capacity=12 * 1024 * 1024)
+def shm_lcm_pubsub_channel() -> Generator[CDRSharedMemory, None, None]:
+    """SharedMemory with CDR encoding - no pickle overhead."""
+    shm_pubsub = CDRSharedMemory(prefer="cpu", default_capacity=12 * 1024 * 1024)
     shm_pubsub.start()
     yield shm_pubsub
     shm_pubsub.stop()

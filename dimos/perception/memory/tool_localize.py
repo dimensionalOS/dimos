@@ -55,8 +55,15 @@ def render(
     import rerun as rr
     import rerun.blueprint as rrb
 
-    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+    from dimos.msgs.geometry import inverse_transform
+    from dimos.msgs.pointcloud import pointcloud_from_rgbd, transform_cloud, voxel_downsample_cloud
     from dimos.visualization.rerun.init import rerun_init
+    from dimos.visualization.rerun.message_helpers import (
+        camera_pinhole,
+        cloud_archetype,
+        image_archetype,
+        navigation_archetype,
+    )
 
     tf = cast("StreamTF", StreamTF.from_store(store))
     camera_info = store.streams.camera_info.first().data
@@ -91,19 +98,20 @@ def render(
                 gates.OPTICAL_FRAME, gates.WORLD_FRAME, backdrop_ts, gates.TF_TOLERANCE
             )
             if depth is not None and transform is not None:
-                backdrop = PointCloud2.from_rgbd(
-                    color, depth, camera_info, depth_scale=0.001
-                ).transform(-transform)
+                backdrop = transform_cloud(
+                    pointcloud_from_rgbd(color, depth, camera_info, depth_scale=0.001),
+                    inverse_transform(transform),
+                )
                 rr.log(
                     "map",
-                    backdrop.voxel_downsample(0.01).to_rerun(voxel_size=POINT_SIZE),
+                    cloud_archetype(voxel_downsample_cloud(backdrop, 0.01), voxel_size=POINT_SIZE),
                     static=True,
                 )
         except LookupError:
             pass
 
     # live camera feed + frustum tracking the wrist along the timeline
-    rr.log("camera", camera_info.to_rerun(), static=True)
+    rr.log("camera/image", camera_pinhole(camera_info), static=True)
     feed_throttle = 0.1 if (t1 - t0) <= 160 else 0.4
     feed = store.streams.color_image.after(t0).before(t1).transform(throttle(feed_throttle))
     for obs in feed:
@@ -111,8 +119,8 @@ def render(
         if pose is None:
             continue
         at(obs.ts)
-        rr.log("camera/image", obs.data.to_rerun())
-        rr.log("camera", pose.to_rerun())
+        rr.log("camera/image", image_archetype(obs.data))
+        rr.log("camera", navigation_archetype(pose))
 
     for query, trace in traces:
         root = f"detections/{query.replace(' ', '_')}"
@@ -124,11 +132,11 @@ def render(
                 continue
             at(obs.ts)
             annotated = obs.data.annotated_image()
-            rr.log("camera/image", annotated.to_rerun())
+            rr.log("camera/image", image_archetype(annotated))
             frame = f"{root}/frames/{i}"
-            rr.log(frame, pose.to_rerun())
-            rr.log(frame, camera_info.to_rerun())
-            rr.log(f"{frame}/image", annotated.to_rerun())
+            rr.log(frame, navigation_archetype(pose))
+            rr.log(f"{frame}/image", camera_pinhole(camera_info))
+            rr.log(f"{frame}/image", image_archetype(annotated))
 
         # 3d detections: green = matched candidates, red = cross-view re-detections
         for tag, entries, rgb in [
@@ -139,7 +147,7 @@ def render(
                 at(ts)
                 rr.log(
                     f"{root}/{tag}/{i}_{det.name.replace(' ', '_')}",
-                    det.pointcloud.to_rerun(voxel_size=POINT_SIZE, colors=rgb),
+                    cloud_archetype(det.pointcloud, voxel_size=POINT_SIZE, colors=rgb),
                 )
 
         # the answer: always blue, whatever the query
@@ -147,7 +155,7 @@ def render(
             at(trace.answer.ts)
             rr.log(
                 f"{root}/answer",
-                trace.answer.pointcloud.to_rerun(voxel_size=POINT_SIZE, colors=BLUE),
+                cloud_archetype(trace.answer.pointcloud, voxel_size=POINT_SIZE, colors=BLUE),
             )
 
 
@@ -164,7 +172,9 @@ def report(query: str, hit: Localization | None, lo: float) -> bool:
         )
         return True
     x, y, z = hit.position_world_xyz
-    cloud_points = len(hit.point_cloud) if hit.point_cloud is not None else 0
+    cloud_points = (
+        hit.point_cloud.width * hit.point_cloud.height if hit.point_cloud is not None else 0
+    )
     print(
         f"hit {query!r}: position=({x:.3f}, {y:.3f}, {z:.3f}) frame={hit.frame_id} "
         f"ts_offset={offset:.1f}s points={cloud_points} views={hit.n_views} "
@@ -232,6 +242,7 @@ def main() -> int:
                 require_pose=not args.allow_no_pose,
                 trace=qtraces,
             )
+            assert isinstance(results, list)
             for query, qtrace, hit in zip(queries, qtraces, results, strict=True):
                 if report(query, hit, lo):
                     hits += 1
@@ -239,14 +250,15 @@ def main() -> int:
         else:
             for query in queries:
                 trace = LocalizeTrace()
-                hit = dan.localize(
+                single_hit = dan.localize(
                     store,
                     query,
                     index=index,
                     require_pose=not args.allow_no_pose,
                     trace=trace,
                 )
-                if report(query, hit, lo):
+                assert not isinstance(single_hit, list)
+                if report(query, single_hit, lo):
                     hits += 1
                     traces.append((query, trace))
 

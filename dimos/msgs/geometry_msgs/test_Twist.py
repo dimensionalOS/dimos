@@ -12,16 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos_lcm.geometry_msgs import Twist as LCMTwist
-import numpy as np
+from copy import deepcopy
 
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos_generated.geometry_msgs.msg import Quaternion, Twist, Vector3
+import numpy as np
+from rosbags.typesys import Stores, get_typestore
+
+from dimos.msgs.geometry import quaternion_euler, vector_array, vector_from_array
 
 
 def test_twist_initialization() -> None:
-    # Test default initialization (zero twist)
     tw = Twist()
     assert tw.linear.x == 0.0
     assert tw.linear.y == 0.0
@@ -29,173 +29,129 @@ def test_twist_initialization() -> None:
     assert tw.angular.x == 0.0
     assert tw.angular.y == 0.0
     assert tw.angular.z == 0.0
-
-    # Test initialization with Vector3 linear and angular
-    lin = Vector3(1.0, 2.0, 3.0)
-    ang = Vector3(0.1, 0.2, 0.3)
-    tw2 = Twist(lin, ang)
+    lin = Vector3(x=1.0, y=2.0, z=3.0)
+    ang = Vector3(x=0.1, y=0.2, z=0.3)
+    tw2 = Twist(linear=lin, angular=ang)
     assert tw2.linear == lin
     assert tw2.angular == ang
-
-    # Test copy constructor
-    tw3 = Twist(tw2)
+    tw3 = deepcopy(tw2)
     assert tw3.linear == tw2.linear
     assert tw3.angular == tw2.angular
     assert tw3 == tw2
-    # Ensure it's a deep copy
     tw3.linear.x = 10.0
     assert tw2.linear.x == 1.0
-
-    # Test initialization from LCM Twist
-    lcm_tw = LCMTwist()
-    lcm_tw.linear = Vector3(4.0, 5.0, 6.0)
-    lcm_tw.angular = Vector3(0.4, 0.5, 0.6)
-    tw4 = Twist(lcm_tw)
+    source = Twist()
+    source.linear = Vector3(x=4.0, y=5.0, z=6.0)
+    source.angular = Vector3(x=0.4, y=0.5, z=0.6)
+    tw4 = Twist.decode(source.encode())
     assert tw4.linear.x == 4.0
     assert tw4.linear.y == 5.0
     assert tw4.linear.z == 6.0
     assert tw4.angular.x == 0.4
     assert tw4.angular.y == 0.5
     assert tw4.angular.z == 0.6
-
-    # Test initialization with linear and angular as quaternion
-    quat = Quaternion(0, 0, 0.707107, 0.707107)  # 90 degrees around Z
-    tw5 = Twist(Vector3(1.0, 2.0, 3.0), quat)
-    assert tw5.linear == Vector3(1.0, 2.0, 3.0)
-    # Quaternion should be converted to euler angles
-    euler = quat.to_euler()
+    quat = Quaternion(x=0, y=0, z=0.707107, w=0.707107)
+    tw5 = Twist(
+        linear=Vector3(x=1.0, y=2.0, z=3.0), angular=vector_from_array(quaternion_euler(quat))
+    )
+    assert tw5.linear == Vector3(x=1.0, y=2.0, z=3.0)
+    euler = vector_from_array(quaternion_euler(quat))
     assert np.allclose(tw5.angular.x, euler.x)
     assert np.allclose(tw5.angular.y, euler.y)
     assert np.allclose(tw5.angular.z, euler.z)
-
-    # Test keyword argument initialization
-    tw7 = Twist(linear=Vector3(1, 2, 3), angular=Vector3(0.1, 0.2, 0.3))
-    assert tw7.linear == Vector3(1, 2, 3)
-    assert tw7.angular == Vector3(0.1, 0.2, 0.3)
-
-    # Test keyword with only linear
-    tw8 = Twist(linear=Vector3(4, 5, 6))
-    assert tw8.linear == Vector3(4, 5, 6)
-    assert tw8.angular.is_zero()
-
-    # Test keyword with only angular
-    tw9 = Twist(angular=Vector3(0.4, 0.5, 0.6))
-    assert tw9.linear.is_zero()
-    assert tw9.angular == Vector3(0.4, 0.5, 0.6)
-
-    # Test keyword with angular as quaternion
-    tw10 = Twist(angular=Quaternion(0, 0, 0.707107, 0.707107))
-    assert tw10.linear.is_zero()
-    euler = Quaternion(0, 0, 0.707107, 0.707107).to_euler()
+    tw7 = Twist(linear=Vector3(x=1, y=2, z=3), angular=Vector3(x=0.1, y=0.2, z=0.3))
+    assert tw7.linear == Vector3(x=1, y=2, z=3)
+    assert tw7.angular == Vector3(x=0.1, y=0.2, z=0.3)
+    tw8 = Twist(linear=Vector3(x=4, y=5, z=6))
+    assert tw8.linear == Vector3(x=4, y=5, z=6)
+    assert np.allclose(vector_array(tw8.angular), 0)
+    tw9 = Twist(angular=Vector3(x=0.4, y=0.5, z=0.6))
+    assert np.allclose(vector_array(tw9.linear), 0)
+    assert tw9.angular == Vector3(x=0.4, y=0.5, z=0.6)
+    tw10 = Twist(
+        angular=vector_from_array(quaternion_euler(Quaternion(x=0, y=0, z=0.707107, w=0.707107)))
+    )
+    assert np.allclose(vector_array(tw10.linear), 0)
+    euler = vector_from_array(quaternion_euler(Quaternion(x=0, y=0, z=0.707107, w=0.707107)))
     assert np.allclose(tw10.angular.x, euler.x)
     assert np.allclose(tw10.angular.y, euler.y)
     assert np.allclose(tw10.angular.z, euler.z)
-
-    # Test keyword with linear and angular as quaternion
-    tw11 = Twist(linear=Vector3(1, 0, 0), angular=Quaternion(0, 0, 0, 1))
-    assert tw11.linear == Vector3(1, 0, 0)
-    assert tw11.angular.is_zero()  # Identity quaternion -> zero euler angles
+    tw11 = Twist(
+        linear=Vector3(x=1, y=0, z=0),
+        angular=vector_from_array(quaternion_euler(Quaternion(x=0, y=0, z=0, w=1))),
+    )
+    assert tw11.linear == Vector3(x=1, y=0, z=0)
+    assert np.allclose(vector_array(tw11.angular), 0)
 
 
 def test_twist_zero() -> None:
-    # Test zero class method
-    tw = Twist.zero()
-    assert tw.linear.is_zero()
-    assert tw.angular.is_zero()
-    assert tw.is_zero()
-
-    # Zero should equal default constructor
+    tw = Twist()
+    assert np.allclose(vector_array(tw.linear), 0)
+    assert np.allclose(vector_array(tw.angular), 0)
+    assert np.allclose(np.concatenate((vector_array(tw.linear), vector_array(tw.angular))), 0)
     assert tw == Twist()
 
 
 def test_twist_equality() -> None:
-    tw1 = Twist(Vector3(1, 2, 3), Vector3(0.1, 0.2, 0.3))
-    tw2 = Twist(Vector3(1, 2, 3), Vector3(0.1, 0.2, 0.3))
-    tw3 = Twist(Vector3(1, 2, 4), Vector3(0.1, 0.2, 0.3))  # Different linear z
-    tw4 = Twist(Vector3(1, 2, 3), Vector3(0.1, 0.2, 0.4))  # Different angular z
-
+    tw1 = Twist(linear=Vector3(x=1, y=2, z=3), angular=Vector3(x=0.1, y=0.2, z=0.3))
+    tw2 = Twist(linear=Vector3(x=1, y=2, z=3), angular=Vector3(x=0.1, y=0.2, z=0.3))
+    tw3 = Twist(linear=Vector3(x=1, y=2, z=4), angular=Vector3(x=0.1, y=0.2, z=0.3))
+    tw4 = Twist(linear=Vector3(x=1, y=2, z=3), angular=Vector3(x=0.1, y=0.2, z=0.4))
     assert tw1 == tw2
     assert tw1 != tw3
     assert tw1 != tw4
     assert tw1 != "not a twist"
 
 
-def test_twist_string_representations() -> None:
-    tw = Twist(Vector3(1.5, -2.0, 3.14), Vector3(0.1, -0.2, 0.3))
-
-    # Test repr
-    repr_str = repr(tw)
-    assert "Twist" in repr_str
-    assert "linear=" in repr_str
-    assert "angular=" in repr_str
-    assert "1.5" in repr_str
-    assert "0.1" in repr_str
-
-    # Test str
-    str_str = str(tw)
-    assert "Twist:" in str_str
-    assert "Linear:" in str_str
-    assert "Angular:" in str_str
+def test_twist_independent_cdr_fields() -> None:
+    tw = Twist(linear=Vector3(x=1.5, y=-2.0, z=3.14), angular=Vector3(x=0.1, y=-0.2, z=0.3))
+    decoded = get_typestore(Stores.ROS2_JAZZY).deserialize_cdr(
+        tw.encode(), "geometry_msgs/msg/Twist"
+    )
+    assert [decoded.linear.x, decoded.linear.y, decoded.linear.z] == [1.5, -2.0, 3.14]
+    assert [decoded.angular.x, decoded.angular.y, decoded.angular.z] == [0.1, -0.2, 0.3]
 
 
 def test_twist_is_zero() -> None:
-    # Test zero twist
     tw1 = Twist()
-    assert tw1.is_zero()
-
-    # Test non-zero linear
-    tw2 = Twist(linear=Vector3(0.1, 0, 0))
-    assert not tw2.is_zero()
-
-    # Test non-zero angular
-    tw3 = Twist(angular=Vector3(0, 0, 0.1))
-    assert not tw3.is_zero()
-
-    # Test both non-zero
-    tw4 = Twist(Vector3(1, 2, 3), Vector3(0.1, 0.2, 0.3))
-    assert not tw4.is_zero()
+    assert np.allclose(np.concatenate((vector_array(tw1.linear), vector_array(tw1.angular))), 0)
+    tw2 = Twist(linear=Vector3(x=0.1, y=0, z=0))
+    assert not np.allclose(np.concatenate((vector_array(tw2.linear), vector_array(tw2.angular))), 0)
+    tw3 = Twist(angular=Vector3(x=0, y=0, z=0.1))
+    assert not np.allclose(np.concatenate((vector_array(tw3.linear), vector_array(tw3.angular))), 0)
+    tw4 = Twist(linear=Vector3(x=1, y=2, z=3), angular=Vector3(x=0.1, y=0.2, z=0.3))
+    assert not np.allclose(np.concatenate((vector_array(tw4.linear), vector_array(tw4.angular))), 0)
 
 
-def test_twist_bool() -> None:
-    # Test zero twist is False
+def test_twist_explicit_nonzero_predicate() -> None:
     tw1 = Twist()
-    assert not tw1
-
-    # Test non-zero twist is True
-    tw2 = Twist(linear=Vector3(1, 0, 0))
-    assert tw2
-
-    tw3 = Twist(angular=Vector3(0, 0, 0.1))
-    assert tw3
-
-    tw4 = Twist(Vector3(1, 2, 3), Vector3(0.1, 0.2, 0.3))
-    assert tw4
+    assert not (np.any(vector_array(tw1.linear)) or np.any(vector_array(tw1.angular)))
+    tw2 = Twist(linear=Vector3(x=1, y=0, z=0))
+    assert np.any(vector_array(tw2.linear)) or np.any(vector_array(tw2.angular))
+    tw3 = Twist(angular=Vector3(x=0, y=0, z=0.1))
+    assert np.any(vector_array(tw3.linear)) or np.any(vector_array(tw3.angular))
+    tw4 = Twist(linear=Vector3(x=1, y=2, z=3), angular=Vector3(x=0.1, y=0.2, z=0.3))
+    assert np.any(vector_array(tw4.linear)) or np.any(vector_array(tw4.angular))
 
 
-def test_twist_lcm_encoding() -> None:
-    # Test encoding and decoding
-    tw = Twist(Vector3(1.5, 2.5, 3.5), Vector3(0.1, 0.2, 0.3))
-
-    # Encode
-    encoded = tw.lcm_encode()
+def test_twist_cdr_encoding() -> None:
+    tw = Twist(linear=Vector3(x=1.5, y=2.5, z=3.5), angular=Vector3(x=0.1, y=0.2, z=0.3))
+    encoded = tw.encode()
     assert isinstance(encoded, bytes)
-
-    # Decode
-    decoded = Twist.lcm_decode(encoded)
+    decoded = Twist.decode(encoded)
     assert decoded.linear == tw.linear
     assert decoded.angular == tw.angular
-
     assert isinstance(decoded.linear, Vector3)
     assert decoded == tw
 
 
 def test_twist_with_lists() -> None:
-    # Test initialization with lists instead of Vector3
-    tw1 = Twist(linear=[1, 2, 3], angular=[0.1, 0.2, 0.3])
-    assert tw1.linear == Vector3(1, 2, 3)
-    assert tw1.angular == Vector3(0.1, 0.2, 0.3)
-
-    # Test with numpy arrays
-    tw2 = Twist(linear=np.array([4, 5, 6]), angular=np.array([0.4, 0.5, 0.6]))
-    assert tw2.linear == Vector3(4, 5, 6)
-    assert tw2.angular == Vector3(0.4, 0.5, 0.6)
+    tw1 = Twist(linear=vector_from_array([1, 2, 3]), angular=vector_from_array([0.1, 0.2, 0.3]))
+    assert tw1.linear == Vector3(x=1, y=2, z=3)
+    assert tw1.angular == Vector3(x=0.1, y=0.2, z=0.3)
+    tw2 = Twist(
+        linear=vector_from_array(np.array([4, 5, 6])),
+        angular=vector_from_array(np.array([0.4, 0.5, 0.6])),
+    )
+    assert tw2.linear == Vector3(x=4, y=5, z=6)
+    assert tw2.angular == Vector3(x=0.4, y=0.5, z=0.6)

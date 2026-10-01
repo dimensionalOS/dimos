@@ -24,11 +24,12 @@ the trajectory. Validated against the official "default imu reading"
 [yaw -57.9, pitch -8.1, roll -167.3] (agrees to a few degrees).
 """
 
+from dimos_generated.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
+from scipy.spatial.transform import Rotation
 
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.geometry import quaternion_from_matrix
 
 # base_link <- lidar rotation (lidar points -> base frame: p_base = EXT_R @ p_lidar + EXT_T)
 EXT_R = np.array(
@@ -46,16 +47,21 @@ EXT_T = np.array([0.28216, 0.0, -0.02467], dtype=np.float64)
 CAM_T = np.array([0.30, 0.0, 0.0], dtype=np.float64)
 CAM_Q = np.array([-0.5, 0.5, -0.5, 0.5], dtype=np.float64)  # xyzw
 
-# Same mounts as standard Transform msgs (typed; carry frame ids; have to_rerun).
-LIDAR_TO_BASE = Transform(
-    translation=Vector3(EXT_T),
-    rotation=Quaternion.from_rotation_matrix(EXT_R),
-    frame_id="base_link",
+# Normalize the measured six-decimal rotation with the same SciPy conversion
+# as the previous numeric helper, then publish generated frame-labelled values.
+LIDAR_TO_BASE = TransformStamped(
+    header=Header(frame_id="base_link"),
     child_frame_id="lidar",
+    transform=Transform(
+        translation=Vector3(x=EXT_T[0], y=EXT_T[1], z=EXT_T[2]),
+        rotation=quaternion_from_matrix(Rotation.from_matrix(EXT_R).as_matrix()),
+    ),
 )
-BASE_TO_CAMERA = Transform(
-    translation=Vector3(CAM_T),
-    rotation=Quaternion(CAM_Q),
-    frame_id="base_link",
+BASE_TO_CAMERA = TransformStamped(
+    header=Header(frame_id="base_link"),
     child_frame_id="camera_optical",
+    transform=Transform(
+        translation=Vector3(x=CAM_T[0], y=CAM_T[1], z=CAM_T[2]),
+        rotation=Quaternion(x=CAM_Q[0], y=CAM_Q[1], z=CAM_Q[2], w=CAM_Q[3]),
+    ),
 )

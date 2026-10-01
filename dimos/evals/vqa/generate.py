@@ -24,6 +24,8 @@ import re
 import tempfile
 from typing import TYPE_CHECKING
 
+from dimos_generated.sensor_msgs.msg import Image
+from PIL import Image as PILImage
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from dimos.constants import STATE_DIR
@@ -49,7 +51,8 @@ from dimos.evals.vqa.pointcloud_frame import (
 )
 from dimos.evals.vqa.primitives.edge_tam import EdgeTAMObjectMaskPipeline
 from dimos.evals.vqa.primitives.range import LidarRangeEstimator
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.image import image_to_rgb
+from dimos.msgs.time import to_seconds
 
 if TYPE_CHECKING:
     from dimos.models.vl.base import VlModel
@@ -395,8 +398,7 @@ def _write_frame(output: Path, frame: _GeneratedFrame) -> None:
 
     image_name = f"assets/frame-{frame.index:06d}.png"
     image_path = output / image_name
-    if not frame.image.save(str(image_path)):
-        raise RuntimeError(f"failed to write VQA image: {image_path}")
+    PILImage.fromarray(image_to_rgb(frame.image)).save(image_path)
 
     case_rows = [case.model_dump(mode="json") for case in frame.cases]
     label_rows = [label.model_dump(mode="json") for label in frame.labels]
@@ -408,7 +410,7 @@ def _write_frame(output: Path, frame: _GeneratedFrame) -> None:
         {
             "frame_index": frame.index,
             "image": image_name,
-            "timestamp": frame.image.ts,
+            "timestamp": to_seconds(frame.image.header.stamp),
             "question_count": len(frame.cases),
             "rejected_question_count": sum(
                 row.get("status") == "rejected" for row in frame.audit_rows

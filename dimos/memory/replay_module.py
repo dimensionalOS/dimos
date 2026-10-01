@@ -73,21 +73,12 @@ def dataset_path(name: str, *, explicit: bool = True) -> str:
         return ""
 
 
-def _wire_type(t: type) -> type:
-    """The class that owns *t*'s ``msg_name``: the type a port must declare so a consumer
-    of the base message shares its topic (unitree ``Odometry`` -> ``PoseStamped``)."""
-    for cls in t.__mro__:
-        if "msg_name" in vars(cls):
-            return cls
-    return t
-
-
 def stream_types_of(dataset: str) -> dict[str, type]:
     """Stream name -> port type for every stream in *dataset*."""
     store = open_dataset(dataset)
     store.start()
     try:
-        return {n: _wire_type(t) for n, t in stream_payload_types(store).items()}
+        return stream_payload_types(store)
     finally:
         store.stop()
 
@@ -232,9 +223,8 @@ def recorded_rerun_config(dataset: str) -> dict[str, Any]:
 
 def rerun_layout(stream_types: dict[str, type]) -> Any:
     """A Rerun blueprint showing every recorded stream: one 3D world view, one 2D view per image."""
+    from dimos_generated.sensor_msgs.msg import Image
     import rerun.blueprint as rrb
-
-    from dimos.msgs.sensor_msgs.Image import Image
 
     images = [
         rrb.Spatial2DView(origin=f"world/{n}", name=n)

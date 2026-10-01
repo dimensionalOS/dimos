@@ -8,8 +8,8 @@ Two crates:
 ## Writing a module
 
 ```rust
-use dimos_module::{native_config, run_with_transport, Input, Module, Output};
-use lcm_msgs::geometry_msgs::Twist;
+use dimos_module::{cdr, native_config, run_with_transport, Input, Io, Module, Output};
+use dimos_generated_messages::geometry_msgs::msg::Twist;
 
 #[native_config]
 struct MyConfig {
@@ -20,13 +20,13 @@ struct MyConfig {
 #[derive(Module)]
 #[module(setup = on_start, teardown = on_stop)]
 struct MyModule {
-    #[input(decode = Twist::decode)]
+    #[input(decode = cdr::decode)]
     cmd: Input<Twist>,
 
-    #[output(encode = Twist::encode)]
+    #[output(encode = cdr::encode)]
     out: Output<Twist>,
 
-    #[io(decode = Twist::decode, encode = Twist::encode)]
+    #[io(decode = cdr::decode, encode = cdr::encode)]
     shared: Io<Twist>,
 
     #[config]
@@ -175,8 +175,8 @@ impl ::dimos_module::Module for MyModule {
 
     fn build(builder: &mut ::dimos_module::Builder, config: Self::Config) -> Self {
         Self {
-            cmd: builder.input("cmd", Twist::decode),
-            out: builder.output("out", Twist::encode),
+            cmd: builder.input("cmd", cdr::decode),
+            out: builder.output("out", cdr::encode),
             config,
         }
     }

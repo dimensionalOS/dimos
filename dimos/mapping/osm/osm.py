@@ -17,12 +17,13 @@ from dataclasses import dataclass
 import io
 import math
 
+from dimos_generated.sensor_msgs.msg import Image
 import numpy as np
 from PIL import Image as PILImage
 import requests
 
 from dimos.mapping.models import ImageCoord, LatLon
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.image import image_from_array
 
 
 @dataclass(frozen=True)
@@ -176,7 +177,7 @@ def get_osm_map(position: LatLon, zoom_level: int = 18, n_tiles: int = 4) -> Map
         raise ValueError("Failed to download all tiles for the requested map.")
 
     return MapImage(
-        image=Image.from_numpy(np.array(output_img), format=ImageFormat.RGB),
+        image=image_from_array(np.array(output_img), encoding="rgb8"),
         position=position,
         zoom_level=zoom_level,
         n_tiles=n_tiles,

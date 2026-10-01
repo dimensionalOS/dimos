@@ -16,17 +16,18 @@ import asyncio
 from collections.abc import Awaitable, Callable, Iterator
 import json
 import logging
-from types import SimpleNamespace
 from typing import Any, cast
 
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped
+from dimos_generated.sensor_msgs.msg import Joy
+from dimos_generated.std_msgs.msg import Header, UInt32
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 import pytest
 import pytest_mock
 
 from dimos.imitation.collection.episode_monitor import EpisodeStatus
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.Joy import Joy
+from dimos.msgs.time import time_from_seconds
 from dimos.teleop.webxr.body_tracking import BodyTrackingSnapshot
 from dimos.teleop.webxr.controller_types import (
     Buttons,
@@ -36,6 +37,27 @@ from dimos.teleop.webxr.controller_types import (
 )
 from dimos.teleop.webxr.extensions import ArmTeleopModule, Go2TeleopModule, HandTeleopModule
 from dimos.teleop.webxr.module import WebXRTeleopModule, _ws_send_text
+from dimos.web.relay_bridge.protocol import FrameHeader, encode_data_frame
+
+
+def _pose(*, ts=0.0, frame_id="", position=(0.0, 0.0, 0.0)):
+    return PoseStamped(
+        header=Header(stamp=time_from_seconds(ts), frame_id=frame_id),
+        pose=Pose(position=Point(x=position[0], y=position[1], z=position[2])),
+    )
+
+
+def _command_frame(channel, message):
+    return encode_data_frame(
+        FrameHeader(
+            ch=channel,
+            seq=0,
+            ts=0.0,
+            delivery="latest",
+            meta={"encoding": "cdr", "type": message.msg_name},
+        ),
+        message.encode(),
+    )
 
 
 @pytest.mark.parametrize("state", ["unavailable", "empty", "tracking"])
@@ -184,8 +206,8 @@ def test_unknown_joy_controller_identity_is_rejected(
     module: WebXRTeleopModule, mocker: pytest_mock.MockerFixture
 ) -> None:
     mocker.patch(
-        "dimos.teleop.webxr.module.Joy.lcm_decode",
-        return_value=SimpleNamespace(frame_id="unknown"),
+        "dimos.teleop.webxr.module.Joy.decode",
+        return_value=Joy(header=Header(frame_id="unknown")),
     )
 
     with pytest.raises(ValueError, match="Unexpected frame_id"):
@@ -269,7 +291,7 @@ def test_control_client_disconnect_clears_state(
     module: WebXRTeleopModule, mocker: pytest_mock.MockerFixture
 ) -> None:
     first = mocker.MagicMock()
-    published: list[Buttons] = []
+    published: list[UInt32] = []
     module.teleop_buttons.subscribe(published.append)
     pose = mocker.MagicMock(spec=PoseStamped)
     assert module._client_connected(first) is True
@@ -384,7 +406,7 @@ def test_stale_controller_input_disengages_hand(
 def test_stop_publishes_safe_button_state(
     module: WebXRTeleopModule, mocker: pytest_mock.MockerFixture
 ) -> None:
-    published: list[Buttons] = []
+    published: list[UInt32] = []
     module.teleop_buttons.subscribe(published.append)
     module._controllers[Hand.RIGHT] = WebXRControllerState(primary=True)
     module._is_engaged[Hand.RIGHT] = True
@@ -417,9 +439,9 @@ def test_button_edges_are_debounced_and_not_repeated_while_held(
     module._publish_buttons(Buttons())
 
     pressed.assert_called_once()
-    assert pressed.call_args.args[0].right_primary
+    assert Buttons(data=pressed.call_args.args[0].data).right_primary
     released.assert_called_once()
-    assert released.call_args.args[0].right_primary
+    assert Buttons(data=released.call_args.args[0].data).right_primary
 
 
 def test_button_edges_can_contain_simultaneous_digital_buttons(
@@ -438,7 +460,7 @@ def test_button_edges_can_contain_simultaneous_digital_buttons(
     module._publish_buttons(buttons)
 
     publish.assert_called_once()
-    edge = publish.call_args.args[0]
+    edge = Buttons(data=publish.call_args.args[0].data)
     assert edge.left_secondary
     assert edge.right_primary
 
@@ -467,7 +489,7 @@ def test_disconnect_releases_debounced_buttons_immediately(
     module._release_all_buttons()
 
     publish.assert_called_once()
-    assert publish.call_args.args[0].right_primary
+    assert Buttons(data=publish.call_args.args[0].data).right_primary
     assert module._debounced_buttons == 0
 
 
@@ -560,13 +582,12 @@ def test_go2_accepts_pico_six_button_joystick(
     module = Go2TeleopModule()
     publish = mocker.patch.object(module.cmd_vel, "publish")
     joy = Joy(
-        ts=1.0,
-        frame_id="left",
+        header=Header(stamp=time_from_seconds(1.0), frame_id="left"),
         axes=[0.25, -0.75, 0.0, 0.0],
         buttons=[0, 0, 0, 0, 0, 0],
     )
     try:
-        assert module._on_joy_bytes(joy.lcm_encode()) is True
+        assert module._on_joy_bytes(joy.encode()) is True
 
         twist = publish.call_args.args[0]
         assert twist.linear.x == pytest.approx(0.75 * module.config.linear_speed)
@@ -582,14 +603,13 @@ def test_go2_rejects_short_controller_packet_safely(
     module = Go2TeleopModule()
     publish = mocker.patch.object(module.cmd_vel, "publish")
     joy = Joy(
-        ts=1.0,
-        frame_id="left",
+        header=Header(stamp=time_from_seconds(1.0), frame_id="left"),
         axes=[0.25, -0.75, 0.0, 0.0],
         buttons=[0, 0, 0, 0, 0],
     )
     module._controllers[Hand.LEFT] = WebXRControllerState(thumbstick=ThumbstickState(y=-1.0))
     try:
-        assert module._on_joy_bytes(joy.lcm_encode()) is False
+        assert module._on_joy_bytes(joy.encode()) is False
 
         assert module._controllers[Hand.LEFT] is None
         publish.assert_called_once()
@@ -607,8 +627,8 @@ def test_go2_malformed_joy_clears_stale_state_and_publishes_zero_velocity(
     module = Go2TeleopModule()
     publish = mocker.patch.object(module.cmd_vel, "publish")
     mocker.patch(
-        "dimos.teleop.webxr.module.Joy.lcm_decode",
-        return_value=SimpleNamespace(frame_id="left", axes=[], buttons=[]),
+        "dimos.teleop.webxr.module.Joy.decode",
+        return_value=Joy(header=Header(frame_id="left")),
     )
     module._controllers[Hand.LEFT] = WebXRControllerState(thumbstick=ThumbstickState(y=-1.0))
     try:
@@ -647,8 +667,8 @@ def test_go2_unknown_controller_identity_publishes_zero_velocity(
     module = Go2TeleopModule()
     publish = mocker.patch.object(module.cmd_vel, "publish")
     mocker.patch(
-        "dimos.teleop.webxr.module.Joy.lcm_decode",
-        return_value=SimpleNamespace(frame_id="unknown"),
+        "dimos.teleop.webxr.module.Joy.decode",
+        return_value=Joy(header=Header(frame_id="unknown")),
     )
     module._controllers[Hand.LEFT] = WebXRControllerState(thumbstick=ThumbstickState(y=-1.0))
     try:
@@ -710,9 +730,9 @@ def test_binary_pose_dispatch_remains_on_existing_decoder(
     mocker: pytest_mock.MockerFixture,
 ) -> None:
     body_publish = mocker.patch.object(module.body_tracking, "publish")
-    pose = PoseStamped(ts=1.0, frame_id="left", position=[1.0, 2.0, 3.0])
+    pose = _pose(ts=1.0, frame_id="left", position=[1.0, 2.0, 3.0])
 
-    accepted = module._dispatch_binary_message(pose.lcm_encode())
+    accepted = module._dispatch_binary_message(_command_frame("pose", pose))
 
     assert accepted
     assert module._current_poses[Hand.LEFT] is not None
@@ -728,23 +748,20 @@ def test_unknown_binary_message_is_dropped(
     accepted = module._dispatch_binary_message(b"unknown-message")
 
     assert not accepted
-    warning.assert_called_once_with(
-        "Unknown WebXR message fingerprint",
-        fingerprint=b"unknown-".hex(),
-    )
+    warning.assert_called_once_with("Dropping malformed WebXR command frame")
 
 
 def test_translation_scale_changes_pose_delta(module: WebXRTeleopModule) -> None:
-    module._initial_poses[Hand.RIGHT] = PoseStamped(position=[1.0, 2.0, 3.0])
-    module._current_poses[Hand.RIGHT] = PoseStamped(position=[1.2, 1.5, 4.0])
+    module._initial_poses[Hand.RIGHT] = _pose(position=[1.0, 2.0, 3.0])
+    module._current_poses[Hand.RIGHT] = _pose(position=[1.2, 1.5, 4.0])
 
     module._set_translation_scale(2.0)
 
     output = module._get_output_pose(Hand.RIGHT)
     assert output is not None
-    assert output.position.x == pytest.approx(0.4)
-    assert output.position.y == pytest.approx(-1.0)
-    assert output.position.z == pytest.approx(2.0)
+    assert output.pose.position.x == pytest.approx(0.4)
+    assert output.pose.position.y == pytest.approx(-1.0)
+    assert output.pose.position.z == pytest.approx(2.0)
 
 
 @pytest.mark.parametrize("translation_scale", [0.0, -1.0, float("inf")])
@@ -760,9 +777,9 @@ def test_translation_scale_must_be_positive_and_finite(
 def test_arm_teleop_publishes_absolute_controller_pose() -> None:
     module = ArmTeleopModule()
     try:
-        pose = PoseStamped(frame_id="left", position=[1.0, 2.0, 3.0])
+        pose = _pose(frame_id="left", position=[1.0, 2.0, 3.0])
         module._current_poses[Hand.LEFT] = pose
-        module._initial_poses[Hand.LEFT] = PoseStamped(position=[0.5, 0.5, 0.5])
+        module._initial_poses[Hand.LEFT] = _pose(position=[0.5, 0.5, 0.5])
 
         assert module._get_output_pose(Hand.LEFT) is pose
     finally:
@@ -773,7 +790,7 @@ def test_arm_teleop_publishes_pose_without_face_button_engagement() -> None:
     module = ArmTeleopModule()
     try:
         module._controllers[Hand.RIGHT] = WebXRControllerState(is_left=False)
-        module._current_poses[Hand.RIGHT] = PoseStamped(frame_id="right")
+        module._current_poses[Hand.RIGHT] = _pose(frame_id="right")
 
         module._handle_engage()
 
@@ -834,8 +851,10 @@ def test_hand_teleop_pinch_toggles_engagement(mocker: pytest_mock.MockerFixture)
 
         assert module._is_engaged[Hand.RIGHT]
         module._publish_button_state(None, module._controllers[Hand.RIGHT])
-        assert publish.call_args.args[0].right_grip
-        assert publish.call_args.args[0].right_trigger_analog == pytest.approx(1.0)
+        assert Buttons(data=publish.call_args.args[0].data).right_grip
+        assert Buttons(data=publish.call_args.args[0].data).right_trigger_analog == pytest.approx(
+            1.0
+        )
 
         module._handle_engage()
 
@@ -844,12 +863,46 @@ def test_hand_teleop_pinch_toggles_engagement(mocker: pytest_mock.MockerFixture)
         module._controllers[Hand.RIGHT] = WebXRControllerState(is_left=False, primary=False)
         module._handle_engage()
         module._publish_button_state(None, module._controllers[Hand.RIGHT])
-        assert publish.call_args.args[0].right_grip
+        assert Buttons(data=publish.call_args.args[0].data).right_grip
         module._controllers[Hand.RIGHT] = WebXRControllerState(is_left=False, primary=True)
         module._handle_engage()
 
         assert not module._is_engaged[Hand.RIGHT]
         module._publish_button_state(None, module._controllers[Hand.RIGHT])
-        assert not publish.call_args.args[0].right_grip
+        assert not Buttons(data=publish.call_args.args[0].data).right_grip
     finally:
         module.stop()
+
+
+def test_command_schema_route_matches_generated_wire_types(module, mocker):
+    app = _setup_test_app(module, mocker)
+    with TestClient(app) as client:
+        response = client.get("/teleop/schema")
+    assert response.status_code == 200
+    assert response.json() == {
+        "pose": {"type": PoseStamped.msg_name, "definition": PoseStamped.schema},
+        "joy": {"type": Joy.msg_name, "definition": Joy.schema},
+    }
+
+
+@pytest.mark.parametrize(
+    "invalid", ["wrong_type", "wrong_encoding", "unknown_channel", "trailing", "truncated"]
+)
+def test_command_dispatch_rejects_invalid_frame_before_control_handler(module, mocker, invalid):
+    handler = mocker.Mock(return_value=True)
+    module._decoders["pose"] = handler
+    channel = "unknown" if invalid == "unknown_channel" else "pose"
+    metadata = {
+        "encoding": "pickle" if invalid == "wrong_encoding" else "cdr",
+        "type": Joy.msg_name if invalid == "wrong_type" else PoseStamped.msg_name,
+    }
+    frame = encode_data_frame(
+        FrameHeader(ch=channel, seq=0, ts=0.0, delivery="latest", meta=metadata),
+        _pose().encode(),
+    )
+    if invalid == "trailing":
+        frame += b"extra"
+    elif invalid == "truncated":
+        frame = frame[:-1]
+    assert module._dispatch_binary_message(frame) is False
+    handler.assert_not_called()

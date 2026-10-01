@@ -13,25 +13,34 @@
 # limitations under the License.
 
 
+from dimos_generated.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseStamped,
+    Quaternion,
+    TransformStamped,
+    Vector3,
+)
+from dimos_generated.sensor_msgs.msg import Image, PointCloud2
+from dimos_generated.std_msgs.msg import Header
+from dimos_generated.vision_msgs.msg import Detection2DArray
 from reactivex import operators as ops
 from reactivex.observable import Observable
 
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
+from dimos.msgs.time import to_seconds
 from dimos.perception.detection.module2D import Detection2DModule
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.detection.type.detection3d.imageDetections3DPC import ImageDetections3DPC
 from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC
-from dimos.types.timestamped import align_timestamped
+from dimos.types.timestamped import TimestampedData, align_timestamped
 from dimos.utils.reactive import backpressure
+
+
+def _timed_cloud(cloud: PointCloud2) -> TimestampedData[PointCloud2]:
+    return TimestampedData(cloud, to_seconds(cloud.header.stamp))
 
 
 class Detection3DModule(Detection2DModule):
@@ -56,7 +65,7 @@ class Detection3DModule(Detection2DModule):
         self,
         detections: ImageDetections2D,
         pointcloud: PointCloud2,
-        transform: Transform | None,
+        transform: TransformStamped | None,
     ) -> ImageDetections3DPC:
         if not transform:
             return ImageDetections3DPC(detections.image, [])
@@ -89,8 +98,8 @@ class Detection3DModule(Detection2DModule):
             Vector3 position in camera optical frame coordinates
         """
         # Extract camera intrinsics
-        fx, fy = self.config.camera_info.K[0], self.config.camera_info.K[4]
-        cx, cy = self.config.camera_info.K[2], self.config.camera_info.K[5]
+        fx, fy = self.config.camera_info.k[0], self.config.camera_info.k[4]
+        cx, cy = self.config.camera_info.k[2], self.config.camera_info.k[5]
 
         # Unproject pixel to normalized camera coordinates
         x_norm = (pixel[0] - cx) / fx
@@ -98,7 +107,7 @@ class Detection3DModule(Detection2DModule):
 
         # Create 3D point at assumed depth in camera optical frame
         # Camera optical frame: X right, Y down, Z forward
-        return Vector3(x_norm * assumed_depth, y_norm * assumed_depth, assumed_depth)
+        return Vector3(x=x_norm * assumed_depth, y=y_norm * assumed_depth, z=assumed_depth)
 
     @skill
     def ask_vlm(self, question: str) -> str:
@@ -113,7 +122,7 @@ class Detection3DModule(Detection2DModule):
 
     # @skill
     @rpc
-    def nav_vlm(self, question: str) -> str:
+    def nav_vlm(self, question: str) -> PoseStamped | None:
         """
         query visual model about the view in front of the camera
         you can ask to mark objects like:
@@ -131,17 +140,19 @@ class Detection3DModule(Detection2DModule):
         print("VLM result:", result, "for", image, "and question", question)
 
         if isinstance(result, str) or not result or not len(result):
-            return None  # type: ignore[return-value]
+            return None
 
         detections: ImageDetections2D = result
 
         print(detections)
         if not len(detections):
             print("No 2d detections")
-            return None  # type: ignore[return-value]
+            return None
 
         pc = self.pointcloud.get_next()
-        transform = self.tfbuffer.get("camera_optical", pc.frame_id, detections.image.ts, 5.0)
+        transform = self.tfbuffer.get(
+            "camera_optical", pc.header.frame_id, to_seconds(detections.image.header.stamp), 5.0
+        )
 
         detections3d = self.process_frame(detections, pc, transform)
 
@@ -150,11 +161,13 @@ class Detection3DModule(Detection2DModule):
         print("No 3d detections, projecting 2d")
 
         center = detections[0].get_bbox_center()
+        position = self.pixel_to_3d(center, assumed_depth=1.5)
         return PoseStamped(
-            ts=detections.image.ts,
-            frame_id="world",
-            position=self.pixel_to_3d(center, assumed_depth=1.5),
-            orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
+            header=Header(stamp=detections.image.header.stamp, frame_id="world"),
+            pose=Pose(
+                position=Point(x=position.x, y=position.y, z=position.z),
+                orientation=Quaternion(w=1),
+            ),
         )
 
     @rpc
@@ -162,13 +175,16 @@ class Detection3DModule(Detection2DModule):
         super().start()
 
         def detection2d_to_3d(args):  # type: ignore[no-untyped-def]
-            detections, pc = args
-            transform = self.tfbuffer.get("camera_optical", pc.frame_id, detections.image.ts, 5.0)
+            detections, timed_pc = args
+            pc = timed_pc.value
+            transform = self.tfbuffer.get(
+                "camera_optical", pc.header.frame_id, to_seconds(detections.image.header.stamp), 5.0
+            )
             return self.process_frame(detections, pc, transform)
 
         self.detection_stream_3d = align_timestamped(  # type: ignore[type-var]
             backpressure(self.detection_stream_2d()),
-            self.pointcloud.observable(),
+            self.pointcloud.observable().pipe(ops.map(_timed_cloud)),
             match_tolerance=0.25,
             buffer_size=20.0,
         ).pipe(ops.map(detection2d_to_3d))

@@ -20,6 +20,9 @@ import os
 from pathlib import Path
 from typing import Any
 
+from dimos_generated.geometry_msgs.msg import PoseStamped
+from dimos_generated.sensor_msgs.msg import PointCloud2
+
 from dimos.constants import RECORDINGS_DIR
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
@@ -29,8 +32,6 @@ from dimos.hardware.sensors.lidar.pointlio.recorder import PointlioRecorder
 from dimos.hardware.sensors.lidar.virtual_mid360.recorder import Mid360PcapRecorder
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.memory.module import pose_setter_for
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.navigation.basic_path_follower.module import BasicPathFollower
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.nav_3d.mls_planner.mls_planner_native import MLSPlannerNative

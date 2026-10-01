@@ -14,16 +14,14 @@
 
 import logging
 
-from dimos_lcm.sensor_msgs import CameraInfo
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos_generated.sensor_msgs.msg import CameraInfo
+from dimos_generated.vision_msgs.msg import Detection2DArray
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger(level=logging.DEBUG)
@@ -46,7 +44,7 @@ class BBoxNavigationModule(Module):
     @rpc
     def start(self) -> None:
         unsub = self.camera_info.subscribe(
-            lambda msg: setattr(self, "camera_intrinsics", [msg.K[0], msg.K[4], msg.K[2], msg.K[5]])
+            lambda msg: setattr(self, "camera_intrinsics", [msg.k[0], msg.k[4], msg.k[2], msg.k[5]])
         )
         self.register_disposable(Disposable(unsub))
 
@@ -58,7 +56,7 @@ class BBoxNavigationModule(Module):
         super().stop()
 
     def _on_detection(self, det: Detection2DArray) -> None:
-        if det.detections_length == 0 or not self.camera_intrinsics:
+        if not det.detections or not self.camera_intrinsics:
             return
         fx, fy, cx, cy = self.camera_intrinsics
         center_x, center_y = (
@@ -71,9 +69,8 @@ class BBoxNavigationModule(Module):
             self.config.goal_distance,
         )
         goal = PoseStamped(
-            position=Vector3(z, -x, -y),
-            orientation=Quaternion(0, 0, 0, 1),
-            frame_id=det.header.frame_id,
+            header=det.header,
+            pose=Pose(position=Point(x=z, y=-x, z=-y), orientation=Quaternion(w=1)),
         )
         logger.debug(
             f"BBox center: ({center_x:.1f}, {center_y:.1f}) → "

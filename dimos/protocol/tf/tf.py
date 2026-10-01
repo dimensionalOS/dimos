@@ -15,17 +15,23 @@
 # limitations under the License.
 
 from collections import deque
+from copy import copy
 from functools import reduce
+import math
+import subprocess
 import threading
 import time
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos_generated.geometry_msgs.msg import PoseStamped, TransformStamped
+from dimos_generated.std_msgs.msg import Header
+from dimos_generated.tf2_msgs.msg import TFMessage
+from sortedcontainers import SortedDict  # type: ignore[import-untyped]
+
+from dimos.msgs.geometry import compose_transforms, inverse_transform, pose_from_transform
+from dimos.msgs.time import time_from_seconds, to_nanoseconds, to_seconds
 from dimos.types.timestamped import to_human_readable
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.timeseries.inmemory import InMemoryStore
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -48,45 +54,68 @@ class TFLookup(Protocol):
         child_frame: str,
         time_point: float | None = None,
         time_tolerance: float | None = None,
-    ) -> Transform | None: ...
+    ) -> TransformStamped | None: ...
 
 
-class TBuffer(InMemoryStore[Transform]):
+class TBuffer:
+    """A bounded time index of generated transforms, keyed by integer nanoseconds."""
+
     def __init__(self, buffer_size: float = 10.0) -> None:
-        super().__init__()
+        if math.isnan(buffer_size) or buffer_size <= 0:
+            raise ValueError("buffer_size must be positive")
         self.buffer_size = buffer_size
+        self._entries: SortedDict = SortedDict()
 
-    def add(self, transform: Transform) -> None:
-        self.save(transform)
-        self.prune_old(transform.ts - self.buffer_size)
+    def __len__(self) -> int:
+        return len(self._entries)
 
-    def get(self, time_point: float | None = None, time_tolerance: float = 1.0) -> Transform | None:
-        """Get transform at specified time or latest if no time given."""
+    def add(self, transform: TransformStamped) -> None:
+        stamp = to_nanoseconds(transform.header.stamp)
+        self._entries[stamp] = TransformStamped(
+            header=transform.header,
+            child_frame_id=transform.child_frame_id,
+            transform=transform.transform,
+        )
+        if math.isfinite(self.buffer_size):
+            oldest = self._entries.peekitem(-1)[0] - round(self.buffer_size * 1_000_000_000)
+            while self._entries and self._entries.peekitem(0)[0] < oldest:
+                self._entries.popitem(0)
+
+    def first(self) -> TransformStamped | None:
+        return copy(self._entries.peekitem(0)[1]) if self._entries else None
+
+    def last(self) -> TransformStamped | None:
+        return copy(self._entries.peekitem(-1)[1]) if self._entries else None
+
+    def get(
+        self, time_point: float | None = None, time_tolerance: float = 1.0
+    ) -> TransformStamped | None:
         if time_point is None:
             return self.last()
-        return self.find_closest(time_point, time_tolerance)
+        stamp = to_nanoseconds(time_from_seconds(time_point))
+        if math.isnan(time_tolerance) or time_tolerance < 0:
+            raise ValueError("time_tolerance must be nonnegative")
+        index = self._entries.bisect_left(stamp)
+        candidates = [
+            self._entries.peekitem(i) for i in (index - 1, index) if 0 <= i < len(self._entries)
+        ]
+        if not candidates:
+            return None
+        nearest, result = min(candidates, key=lambda item: (abs(item[0] - stamp), -item[0]))
+        if abs(nearest - stamp) / 1_000_000_000 > time_tolerance:
+            return None
+        return copy(cast("TransformStamped", result))
 
     def __str__(self) -> str:
-        if len(self) == 0:
+        first, last = self.first(), self.last()
+        if first is None or last is None:
             return "TBuffer(empty)"
-
-        first_item = self.first()
-        time_range = self.time_range()
-        if time_range and first_item:
-            start_time = to_human_readable(time_range[0])
-            end_time = to_human_readable(time_range[1])
-            duration = time_range[1] - time_range[0]
-
-            frame_str = f"{first_item.frame_id} -> {first_item.child_frame_id}"
-
-            return (
-                f"TBuffer("
-                f"{frame_str}, "
-                f"{len(self)} msgs, "
-                f"{duration:.2f}s [{start_time} - {end_time}])"
-            )
-
-        return f"TBuffer({len(self)} msgs)"
+        start, end = to_seconds(first.header.stamp), to_seconds(last.header.stamp)
+        return (
+            f"TBuffer({first.header.frame_id} -> {first.child_frame_id}, "
+            f"{len(self)} msgs, {end - start:.2f}s "
+            f"[{to_human_readable(start)} - {to_human_readable(end)}])"
+        )
 
 
 # stores multiple transform buffers
@@ -97,10 +126,10 @@ class MultiTBuffer:
         self.buffer_size = buffer_size
         self._cv = threading.Condition()
 
-    def receive_transform(self, *args: Transform) -> None:
+    def receive_transform(self, *args: TransformStamped) -> None:
         with self._cv:
             for transform in args:
-                key = (transform.frame_id, transform.child_frame_id)
+                key = (transform.header.frame_id, transform.child_frame_id)
                 if key not in self.buffers:
                     self.buffers[key] = TBuffer(self.buffer_size)
                 self.buffers[key].add(transform)
@@ -134,12 +163,14 @@ class MultiTBuffer:
         child_frame: str,
         time_point: float | None = None,
         time_tolerance: float | None = None,
-    ) -> Transform | None:
+    ) -> TransformStamped | None:
         if parent_frame == child_frame:
-            return Transform(
-                frame_id=parent_frame,
+            return TransformStamped(
+                header=Header(
+                    frame_id=parent_frame,
+                    stamp=time_from_seconds(time_point if time_point is not None else time.time()),
+                ),
                 child_frame_id=child_frame,
-                ts=time_point if time_point is not None else time.time(),
             )
 
         # No explicit tolerance means "anything still buffered" — the buffer
@@ -156,7 +187,7 @@ class MultiTBuffer:
             reverse_key = (child_frame, parent_frame)
             if reverse_key in self.buffers:
                 transform = self.buffers[reverse_key].get(time_point, tolerance)
-                return transform.inverse() if transform else None
+                return inverse_transform(transform) if transform else None
 
             return None
 
@@ -166,7 +197,7 @@ class MultiTBuffer:
         child_frame: str,
         time_point: float | None = None,
         time_tolerance: float | None = None,
-    ) -> Transform | None:
+    ) -> TransformStamped | None:
         with self._cv:
             simple = self.get_transform(parent_frame, child_frame, time_point, time_tolerance)
 
@@ -180,7 +211,7 @@ class MultiTBuffer:
             if complex is None:
                 return None
 
-            return reduce(lambda t1, t2: t1 + t2, complex)
+            return reduce(compose_transforms, complex)
 
     def _wait_get(
         self,
@@ -189,7 +220,7 @@ class MultiTBuffer:
         time_point: float | None,
         time_tolerance: float | None,
         forward_tolerance: float,
-    ) -> Transform | None:
+    ) -> TransformStamped | None:
         deadline = time.monotonic() + forward_tolerance
         with self._cv:
             while True:
@@ -210,7 +241,7 @@ class MultiTBuffer:
         *,
         forward_tolerance: float = 0.0,
         warn: bool = True,
-    ) -> Transform | None:
+    ) -> TransformStamped | None:
         result = self._get(parent_frame, child_frame, time_point, time_tolerance)
         if result is None and forward_tolerance > 0:
             result = self._wait_get(
@@ -240,7 +271,7 @@ class MultiTBuffer:
         )
         if not tf:
             return None
-        return tf.to_pose()
+        return pose_from_transform(tf)
 
     def get_transform_search(
         self,
@@ -248,7 +279,7 @@ class MultiTBuffer:
         child_frame: str,
         time_point: float | None = None,
         time_tolerance: float | None = None,
-    ) -> list[Transform] | None:
+    ) -> list[TransformStamped] | None:
         """Search for shortest transform chain between parent and child frames using BFS."""
         with self._cv:
             # Check if direct transform exists (already checked in get_transform, but for clarity)
@@ -257,7 +288,7 @@ class MultiTBuffer:
                 return [direct]
 
             # BFS to find shortest path
-            queue: deque[tuple[str, list[Transform]]] = deque([(parent_frame, [])])
+            queue: deque[tuple[str, list[TransformStamped]]] = deque([(parent_frame, [])])
             visited = {parent_frame}
 
             while queue:
@@ -283,8 +314,6 @@ class MultiTBuffer:
             return None
 
     def graph(self) -> str:
-        import subprocess
-
         def connection_str(connection: tuple[str, str]) -> str:
             (frame_from, frame_to) = connection
             return f"{frame_from} -> {frame_to}"
@@ -335,10 +364,10 @@ class TF(MultiTBuffer):
         if stream is not None:
             self._unsubscribe = stream.subscribe(self.receive_tfmessage)
 
-    def publish(self, *transforms: Transform) -> None:
+    def publish(self, *transforms: TransformStamped) -> None:
         self.receive_transform(*transforms)
         if self._stream is not None:
-            self._stream.publish(TFMessage(*transforms))
+            self._stream.publish(TFMessage(transforms=list(transforms)))
 
     def dispose(self) -> None:
         if self._unsubscribe is not None:

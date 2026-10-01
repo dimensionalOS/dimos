@@ -19,8 +19,8 @@ from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import ClassVar
 
-from dimos.msgs.sensor_msgs.Joy import Joy
-from dimos.msgs.std_msgs.UInt32 import UInt32
+from dimos_generated.sensor_msgs.msg import Joy
+from dimos_generated.std_msgs.msg import UInt32
 
 
 class Hand(IntEnum):
@@ -76,8 +76,8 @@ class WebXRControllerState:
         Raises:
             ValueError: If Joy message doesn't have expected WebXR controller format.
         """
-        buttons = joy.buttons or []
-        axes = joy.axes or []
+        buttons: list[int] = list(joy.buttons)
+        axes: list[float] = list(joy.axes)
 
         if len(axes) < cls.EXPECTED_AXES:
             raise ValueError(f"Expected {cls.EXPECTED_AXES} axes, got {len(axes)}")
@@ -97,7 +97,8 @@ class WebXRControllerState:
         )
 
 
-class Buttons(UInt32):
+@dataclass
+class Buttons:
     """Packed button states for both controllers in a single UInt32.
 
     Digital buttons are collapsed to bools. Analog trigger values are packed
@@ -109,11 +110,17 @@ class Buttons(UInt32):
         Bit 7, 15:          reserved
         Bits 16-22:         left trigger analog (7-bit, 0=0.0 … 127=1.0)
         Bits 23-29:         right trigger analog (7-bit, 0=0.0 … 127=1.0)
-        Bits 30-31:         unused (kept clear so LCM signed int32 never overflows)
+        Bits 30-31:         unused (reserved)
     """
 
+    data: int = 0
+
+    def to_message(self) -> UInt32:
+        """Copy packed state into the generated wire value."""
+        return UInt32(data=self.data)
+
     # Bit positions for digital buttons
-    BITS = {
+    BITS: ClassVar[dict[str, int]] = {
         "left_trigger": 0,
         "left_grip": 1,
         "left_touchpad": 2,
@@ -132,10 +139,10 @@ class Buttons(UInt32):
     DIGITAL_MASK: ClassVar[int] = sum(1 << bit for bit in BITS.values())
 
     # Analog trigger packing constants
-    _LEFT_TRIGGER_SHIFT: int = 16
-    _RIGHT_TRIGGER_SHIFT: int = 23
-    _ANALOG_MASK: int = 0x7F
-    _ANALOG_MAX: int = 127
+    _LEFT_TRIGGER_SHIFT: ClassVar[int] = 16
+    _RIGHT_TRIGGER_SHIFT: ClassVar[int] = 23
+    _ANALOG_MASK: ClassVar[int] = 0x7F
+    _ANALOG_MAX: ClassVar[int] = 127
 
     @property
     def left_trigger_analog(self) -> float:
@@ -169,9 +176,9 @@ class Buttons(UInt32):
         else:
             self.data &= ~(1 << Buttons.BITS[name])
 
-    def __setattr__(self, name: str, value: bool) -> None:
+    def __setattr__(self, name: str, value: bool | int) -> None:
         if name in Buttons.BITS:
-            self._set_bit(name, value)
+            self._set_bit(name, bool(value))
         else:
             super().__setattr__(name, value)
 
@@ -192,7 +199,7 @@ class Buttons(UInt32):
         right: "WebXRControllerState | None",
     ) -> "Buttons":
         """Create Buttons from two WebXRControllerState instances."""
-        # Safe: cls() calls UInt32.__init__ which sets self.data = 0 before bit ops.
+        # Start with an empty local button state.
         buttons = cls()
 
         if left:

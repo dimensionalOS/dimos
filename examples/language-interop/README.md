@@ -1,20 +1,13 @@
-# Language Interop Examples
+# Language interoperability with CDR
 
-Demonstrates controlling a dimos robot from non-Python languages.
+Generated `.msg` value types use encapsulated CDR over raw LCM or Zenoh.
 
-## Usage
+- [Python, C++ and Rust relay, recording and replay](/examples/message-codegen/README.md)
+- [Add and use a message from each language](/docs/development/messages.md)
+- [C++ raw-LCM virtual robot controller](cpp/README.md)
+- [Browser CDR messages](ts/README.md)
+- [Lua support status](lua/README.md)
 
-1. Start the robot (in another terminal):
-   ```bash
-   cd ../simplerobot
-   python simplerobot.py
-   ```
-
-2. Run any language example:
-   - [TypeScript](ts/) - CLI and browser-based web UI
-   - [C++](cpp/)
-   - [Lua](lua/)
-
-3. (Optional) Monitor traffic with `lcmspy`
-
-![lcmspy](assets/lcmspy.png)
+The previous generated LCM-message examples are retired. This proposal changes
+the typed wire format and API; it does not remove either transport or promise
+compatibility with historical typed recordings.

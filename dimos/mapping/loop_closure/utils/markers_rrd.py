@@ -30,17 +30,21 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from dimos_generated.sensor_msgs.msg import Image, PointCloud2
 import typer
 
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.stream import Stream
 from dimos.memory.transform import QualityWindow, SpeedLimit
 from dimos.memory.vis.color import Color
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.image import image_sharpness
 from dimos.perception.fiducial.marker_transformer import DetectMarkers
-from dimos.robot.unitree.go2.connection import _camera_info_static
+from dimos.robot.unitree.go2.camera_calibration import front_camera_calibration
 from dimos.utils.data import resolve_named_path
+from dimos.visualization.rerun.message_helpers import (
+    camera_pinhole,
+    image_archetype,
+)
 
 TIMELINE = "ts"
 
@@ -65,14 +69,14 @@ def main(
     import rerun as rr
 
     db_path = resolve_named_path(dataset, ".db")
-    cam_info = _camera_info_static()
+    cam_info = front_camera_calibration()
 
     rr.init("dimos markers", recording_id=db_path.stem)
     rr.save(str(out))
 
     # Static pinhole on the camera entity; per-frame Transform3D goes on the
     # same entity. Image is the child so it projects through the pinhole.
-    pinhole = cam_info.to_rerun()
+    pinhole = camera_pinhole(cam_info)
     assert not isinstance(pinhole, list)
     rr.log("world/camera", pinhole, static=True)
 
@@ -106,7 +110,7 @@ def main(
                         translation=[x, y, z], quaternion=rr.Quaternion(xyzw=[qx, qy, qz, qw])
                     ),
                 )
-            rr.log("world/camera/image", img_obs.data.to_rerun())
+            rr.log("world/camera/image", image_archetype(img_obs.data))
             # Clear any prior detection box at this ts; pass 3 will overwrite
             # this with the actual detection iff one fires for this frame.
             rr.log(
@@ -119,7 +123,7 @@ def main(
         # Pass 3: marker detections, filtered the same way as `dimos map`.
         xf = DetectMarkers(camera_info=cam_info, marker_length_m=marker_size)
         pipeline: Stream[Image] = color_image.transform(
-            QualityWindow(lambda img: img.sharpness, window=quality_window)
+            QualityWindow(image_sharpness, window=quality_window)
         )
         if marker_max_speed > 0:
             pipeline = pipeline.transform(
@@ -185,7 +189,7 @@ def main(
                 smoothing_window=smoothing_window,
             )
             pipeline_tracked: Stream[Image] = color_image.transform(
-                QualityWindow(lambda img: img.sharpness, window=quality_window)
+                QualityWindow(image_sharpness, window=quality_window)
             )
             if marker_max_speed > 0:
                 pipeline_tracked = pipeline_tracked.transform(

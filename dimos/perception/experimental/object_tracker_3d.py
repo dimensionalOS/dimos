@@ -13,33 +13,44 @@
 # limitations under the License.
 
 
-# Import LCM messages
-from dimos_lcm.sensor_msgs import CameraInfo
-from dimos_lcm.vision_msgs import (
+# Generated detection values
+from dimos_generated.geometry_msgs.msg import (
+    Point,
+    Pose,
+    Quaternion,
+    Transform,
+    TransformStamped,
+    Vector3,
+)
+from dimos_generated.sensor_msgs.msg import CameraInfo, Image
+from dimos_generated.std_msgs.msg import Header
+from dimos_generated.tf2_msgs.msg import TFMessage
+from dimos_generated.vision_msgs.msg import (
+    Detection2DArray,
     Detection3D,
+    Detection3DArray,
     ObjectHypothesisWithPose,
 )
 import numpy as np
+from reactivex import operators as ops
 
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
-from dimos.msgs.std_msgs.Header import Header
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
-from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
+from dimos.msgs.image import image_from_array, image_to_rgb, image_view
+from dimos.msgs.time import to_seconds
 from dimos.perception.experimental.object_tracker_2d import ObjectTracker2D
-from dimos.types.timestamped import align_timestamped
+from dimos.types.timestamped import TimestampedData, align_timestamped
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import (
     euler_to_quaternion,
     optical_to_robot_frame,
     yaw_towards_point,
 )
+
+
+def _timed_image(image: Image) -> TimestampedData[Image]:
+    return TimestampedData(image, to_seconds(image.header.stamp))
+
 
 logger = setup_logger()
 
@@ -78,20 +89,20 @@ class ObjectTracker3D(ObjectTracker2D):
 
         # Subscribe to aligned RGB and depth streams
         def on_aligned_frames(frames_tuple) -> None:  # type: ignore[no-untyped-def]
-            rgb_msg, depth_msg = frames_tuple
+            rgb_msg, depth_msg = (item.value for item in frames_tuple)
             with self._frame_lock:
-                self._latest_rgb_frame = rgb_msg.data
+                self._latest_rgb_frame = image_to_rgb(rgb_msg)
 
-                depth_data = depth_msg.data
+                depth_data = image_view(depth_msg)
                 # Convert from millimeters to meters if depth is DEPTH16 format
-                if depth_msg.format == ImageFormat.DEPTH16:
+                if depth_msg.encoding in ("16UC1", "mono16"):
                     depth_data = depth_data.astype(np.float32) / 1000.0
                 self._latest_depth_frame = depth_data
 
         # Create aligned observable for RGB and depth
         aligned_frames = align_timestamped(
-            self.color_image.observable(),
-            self.depth.observable(),
+            self.color_image.pure_observable().pipe(ops.map(_timed_image)),
+            self.depth.pure_observable().pipe(ops.map(_timed_image)),
             buffer_size=2.0,  # 2 second buffer
             match_tolerance=0.5,  # 500ms tolerance
         )
@@ -103,10 +114,10 @@ class ObjectTracker3D(ObjectTracker2D):
             self._latest_camera_info = camera_info_msg
             # Extract intrinsics: K is [fx, 0, cx, 0, fy, cy, 0, 0, 1]
             self.camera_intrinsics = [  # type: ignore[assignment]
-                camera_info_msg.K[0],
-                camera_info_msg.K[4],
-                camera_info_msg.K[2],
-                camera_info_msg.K[5],
+                camera_info_msg.k[0],
+                camera_info_msg.k[4],
+                camera_info_msg.k[2],
+                camera_info_msg.k[5],
             ]
 
         self.camera_info.subscribe(on_camera_info)
@@ -127,7 +138,7 @@ class ObjectTracker3D(ObjectTracker2D):
         # Enhance with 3D if we have depth and a valid 2D detection
         if (
             self._latest_detection2d
-            and self._latest_detection2d.detections_length > 0
+            and bool(self._latest_detection2d.detections)
             and self._latest_depth_frame is not None
             and self.camera_intrinsics is not None
         ):
@@ -161,12 +172,14 @@ class ObjectTracker3D(ObjectTracker2D):
                 if self.last_good_matches and self.last_roi_kps and self.last_roi_bbox:
                     viz_image = self._draw_reid_overlay(viz_image)
 
-                viz_msg = Image.from_numpy(viz_image)
+                viz_msg = image_from_array(
+                    viz_image, encoding="rgb8", header=self._latest_detection2d.header
+                )
                 self.tracked_overlay.publish(viz_msg)
 
     def _create_detection3d_from_2d(self, detection2d: Detection2DArray) -> Detection3DArray | None:
         """Create 3D detection from 2D detection using depth."""
-        if detection2d.detections_length == 0:
+        if not detection2d.detections:
             return None
 
         det_2d = detection2d.detections[0]
@@ -198,15 +211,15 @@ class ObjectTracker3D(ObjectTracker2D):
 
         # Create pose in optical frame
         optical_pose = Pose()
-        optical_pose.position = Vector3(x_optical, y_optical, z_optical)
-        optical_pose.orientation = Quaternion(0.0, 0.0, 0.0, 1.0)
+        optical_pose.position = Point(x=x_optical, y=y_optical, z=z_optical)
+        optical_pose.orientation = Quaternion(w=1.0)
 
         # Convert to robot frame
         robot_pose = optical_to_robot_frame(optical_pose)
 
         # Calculate orientation: object facing towards camera
         yaw = yaw_towards_point(robot_pose.position)
-        euler = Vector3(0.0, 0.0, yaw)
+        euler = Vector3(z=yaw)
         robot_pose.orientation = euler_to_quaternion(euler)
 
         # Estimate object size in meters
@@ -215,10 +228,9 @@ class ObjectTracker3D(ObjectTracker2D):
         size_z = 0.1  # Default depth size
 
         # Create Detection3D
-        header = Header(self.frame_id)
+        header = Header(stamp=detection2d.header.stamp, frame_id=self.config.frame_id)
         detection_3d = Detection3D()
         detection_3d.id = "0"
-        detection_3d.results_length = 1
         detection_3d.header = header
 
         # Create hypothesis
@@ -231,22 +243,24 @@ class ObjectTracker3D(ObjectTracker2D):
         detection_3d.bbox.center = Pose()
         detection_3d.bbox.center.position = robot_pose.position
         detection_3d.bbox.center.orientation = robot_pose.orientation
-        detection_3d.bbox.size = Vector3(size_x, size_y, size_z)
+        detection_3d.bbox.size = Vector3(x=size_x, y=size_y, z=size_z)
 
         detection3darray = Detection3DArray()
-        detection3darray.detections_length = 1
         detection3darray.header = header
         detection3darray.detections = [detection_3d]
 
         # Publish TF for tracked object
-        tracked_object_tf = Transform(
-            translation=robot_pose.position,
-            rotation=robot_pose.orientation,
-            frame_id=self.frame_id,
+        tracked_object_tf = TransformStamped(
+            header=header,
             child_frame_id="tracked_object",
-            ts=header.ts,
+            transform=Transform(
+                translation=Vector3(
+                    x=robot_pose.position.x, y=robot_pose.position.y, z=robot_pose.position.z
+                ),
+                rotation=robot_pose.orientation,
+            ),
         )
-        self.tf.publish(TFMessage(tracked_object_tf))
+        self.tf.publish(TFMessage(transforms=[tracked_object_tf]))
 
         return detection3darray
 

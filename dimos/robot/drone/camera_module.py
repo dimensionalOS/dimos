@@ -21,16 +21,18 @@ import threading
 import time
 from typing import Any
 
-from dimos_lcm.sensor_msgs import CameraInfo
+from dimos_generated.geometry_msgs.msg import PoseStamped
+from dimos_generated.sensor_msgs.msg import CameraInfo, Image
+from dimos_generated.std_msgs.msg import Header
+from dimos_generated.tf2_msgs.msg import TFMessage
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.std_msgs.Header import Header
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.msgs.geometry import pose_from_transform
+from dimos.msgs.image import image_view
+from dimos.msgs.time import to_seconds
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -140,10 +142,10 @@ class DroneCameraModule(Module):
                     self._latest_frame = None
 
                     # Get numpy array from Image
-                    img_array = frame.data
+                    img_array = image_view(frame)
 
                     # Create header
-                    header = Header(self.camera_frame_id)
+                    header = Header(stamp=frame.header.stamp, frame_id=self.camera_frame_id)
 
                     # Publish camera info
                     self._publish_camera_info(header, img_array.shape)
@@ -177,15 +179,14 @@ class DroneCameraModule(Module):
             P = [fx, 0, cx, 0, 0, fy, cy, 0, 0, 0, 1, 0]
 
             msg = CameraInfo(
-                D_length=len(D),
                 header=header,
                 height=height,
                 width=width,
                 distortion_model="plumb_bob",
-                D=D,
-                K=K,
-                R=R,
-                P=P,
+                d=D,
+                k=K,
+                r=R,
+                p=P,
                 binning_x=0,
                 binning_y=0,
             )
@@ -201,17 +202,13 @@ class DroneCameraModule(Module):
             transform = self.tfbuffer.get(
                 parent_frame=self.world_frame_id,
                 child_frame=self.camera_frame_id,
-                time_point=header.ts,
+                time_point=to_seconds(header.stamp),
                 time_tolerance=1.0,
             )
 
             if transform:
-                pose_msg = PoseStamped(
-                    ts=header.ts,
-                    frame_id=self.camera_frame_id,
-                    position=transform.translation,
-                    orientation=transform.rotation,
-                )
+                pose_msg = pose_from_transform(transform)
+                pose_msg.header.stamp = header.stamp
                 self.camera_pose.publish(pose_msg)
 
         except Exception as e:

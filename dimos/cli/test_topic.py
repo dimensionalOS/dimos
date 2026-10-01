@@ -12,15 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dimos_generated.geometry_msgs.msg import Twist, Vector3
+from dimos_generated.sensor_msgs.msg import CameraInfo
+from dimos_generated.std_msgs.msg import Header
 import pytest
 
 from dimos.cli.topic import _build_eval_context, _decode_typed_lcm_message, topic_send
 from dimos.core.global_config import global_config
 from dimos.core.transport import PubSubTransport
 from dimos.core.transport_factory import make_transport
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM, Topic
 from dimos.utils.testing.collector import CallbackCollector
 
@@ -30,18 +30,18 @@ def test_decode_typed_lcm_message_resolves_message_submodule() -> None:
         width=1920,
         height=1080,
         distortion_model="plumb_bob",
-        frame_id="camera_optical",
+        header=Header(frame_id="camera_optical"),
     )
 
     decoded = _decode_typed_lcm_message(
-        "/camera_info#sensor_msgs.CameraInfo",
-        msg.lcm_encode(),
+        "/camera_info#sensor_msgs/msg/CameraInfo",
+        msg.encode(),
     )
 
     assert isinstance(decoded, CameraInfo)
     assert decoded.width == 1920
     assert decoded.height == 1080
-    assert decoded.frame_id == "camera_optical"
+    assert decoded.header.frame_id == "camera_optical"
     assert decoded.distortion_model == "plumb_bob"
 
 
@@ -71,14 +71,14 @@ def test_topic_send_delivers_over_lcm(monkeypatch: pytest.MonkeyPatch, lcm_url: 
     bus = LCM(url=lcm_url)
     bus.start()
     collector = CallbackCollector(1)
-    bus.subscribe(Topic(topic="/test_topic_send", lcm_type=Twist), collector)
+    bus.subscribe(Topic(topic="/test_topic_send", msg_type=Twist), collector)
 
     try:
-        topic_send("/test_topic_send", "Twist(Vector3(0.5, 0, 0), Vector3(0, 0, 0))")
+        topic_send("/test_topic_send", "Twist(linear=Vector3(x=0.5), angular=Vector3())")
         collector.wait()
     finally:
         for transport in transports:
             transport.stop()
         bus.stop()
 
-    assert collector.results[0][0] == Twist(Vector3(0.5, 0, 0), Vector3(0, 0, 0))
+    assert collector.results[0][0] == Twist(linear=Vector3(x=0.5), angular=Vector3())

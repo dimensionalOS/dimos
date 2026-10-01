@@ -15,11 +15,12 @@
 
 """WebXR velocity teleoperation and headset video for Go2."""
 
+from dimos_generated.geometry_msgs.msg import Twist
+from dimos_generated.sensor_msgs.msg import Image
+
 from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.transport import LCMTransport, pSHMTransport
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.sensor_msgs.Image import Image
 from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.teleop.webxr.extensions import Go2TeleopModule
 

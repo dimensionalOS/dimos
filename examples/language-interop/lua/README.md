@@ -1,38 +1,9 @@
-# Lua Robot Control Example
+# Lua message support
 
-Subscribes to robot odometry and publishes twist commands using LCM.
+The previous Lua example depended on generated LCM message codecs and has been
+retired with the deliberate CDR wire/API break. This proposal does not provide
+a Lua message generator. Raw LCM remains a supported transport.
 
-## Prerequisites
-
-- Lua 5.4
-- LuaSocket (`sudo luarocks install luasocket`)
-- System dependencies: `glib`, `cmake`
-
-## Setup
-
-```bash
-./setup.sh
-```
-
-This will:
-1. Clone and build official [LCM](https://github.com/lcm-proj/lcm) Lua bindings
-2. Clone [dimos-lcm](https://github.com/dimensionalOS/dimos-lcm) message definitions
-
-## Run
-
-```bash
-lua main.lua
-```
-
-## Output
-
-```
-Robot control started
-Subscribing to /odom, publishing to /cmd_vel
-Press Ctrl+C to stop.
-
-[pose] x=15.29 y=9.62 z=0.00 | qw=0.57
-[twist] linear=0.50 angular=0.00
-[pose] x=15.28 y=9.63 z=0.00 | qw=0.57
-...
-```
+Use the tested [Python, C++ and Rust examples](/examples/message-codegen/README.md)
+for generated CDR values, schemas and recording. Lua CDR generation is deferred;
+there is no fallback decoding of the old example's typed messages.

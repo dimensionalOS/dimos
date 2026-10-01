@@ -16,7 +16,7 @@ dim_slam = { git = "https://github.com/dimensionalOS/dimSLAM", tag = "v0.4.1" }
 # and build.rs needs it for the rpath.
 cu_vslam_rs = "0.2.0"
 dimos-module = { path = "../../../../native/rust/dimos-module" }
-lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
+dimos-generated-messages = { path = "../../../message_codegen" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 tracing = "0.1"
 # native_config expands to ::serde and ::validator derives, so both must be direct deps.

@@ -24,11 +24,13 @@ map global`` can register it.
 
 from __future__ import annotations
 
+from dimos_generated.geometry_msgs.msg import Pose
+from dimos_generated.nav_msgs.msg import Odometry
+from dimos_generated.sensor_msgs.msg import PointCloud2
+
 from dimos.core.stream import In
-from dimos.memory.module import OnExisting, Recorder, RecorderConfig, pose_setter_for
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.memory.module import Recorder, RecorderConfig, pose_setter_for
+from dimos.memory.recording_policy import OnExisting
 
 
 class FastLio2RecorderConfig(RecorderConfig):

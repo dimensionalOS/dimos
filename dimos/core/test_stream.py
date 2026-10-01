@@ -17,6 +17,8 @@ import threading
 import time
 from typing import Any
 
+from dimos_generated.geometry_msgs.msg import PoseStamped
+from dimos_generated.sensor_msgs.msg import PointCloud2
 import pytest
 
 from dimos.core.core import rpc
@@ -24,13 +26,11 @@ from dimos.core.module import Module
 from dimos.core.stream import In
 from dimos.core.testing import MockRobotClient
 from dimos.core.transport import LCMTransport, pLCMTransport
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.robot.unitree.type.odometry import Odometry
 
 
 class SubscriberBase(Module):
-    sub1_msgs: list[Odometry]
-    sub2_msgs: list[Odometry]
+    sub1_msgs: list[PoseStamped]
+    sub2_msgs: list[PoseStamped]
 
     def __init__(self, **kwargs: Any) -> None:
         self.sub1_msgs = []
@@ -75,7 +75,7 @@ class SubscriberBase(Module):
 
 
 class ClassicSubscriber(SubscriberBase):
-    odom: In[Odometry]
+    odom: In[PoseStamped]
     unsub: Callable[[], None] | None = None
     unsub2: Callable[[], None] | None = None
 
@@ -98,7 +98,7 @@ class ClassicSubscriber(SubscriberBase):
 
 
 class RXPYSubscriber(SubscriberBase):
-    odom: In[Odometry]
+    odom: In[PoseStamped]
     unsub: Callable[[], None] | None = None
     unsub2: Callable[[], None] | None = None
 
@@ -142,7 +142,7 @@ class SpyLCMTransport(LCMTransport):
     active_subscribers: int = 0
 
     def __reduce__(self):
-        return (SpyLCMTransport, (self.topic.topic, self.topic.lcm_type))
+        return (SpyLCMTransport, (self.topic.topic, self.topic.msg_type))
 
     def __init__(self, topic: str, type: type, **kwargs) -> None:
         super().__init__(topic, type, **kwargs)
@@ -175,7 +175,7 @@ def test_subscription(dimos, subscriber_class) -> None:
     robot = dimos.deploy(MockRobotClient)
 
     robot.lidar.transport = SpyLCMTransport("/lidar", PointCloud2)
-    robot.odometry.transport = SpyLCMTransport("/odom", Odometry)
+    robot.odometry.transport = SpyLCMTransport("/odom", PoseStamped)
     robot.mov.transport = pLCMTransport("/mov")
 
     subscriber = dimos.deploy(subscriber_class)
@@ -217,7 +217,7 @@ def test_get_next(dimos) -> None:
     robot = dimos.deploy(MockRobotClient)
 
     robot.lidar.transport = SpyLCMTransport("/lidar", PointCloud2)
-    robot.odometry.transport = SpyLCMTransport("/odom", Odometry)
+    robot.odometry.transport = SpyLCMTransport("/odom", PoseStamped)
     robot.mov.transport = pLCMTransport("/mov")
 
     subscriber = dimos.deploy(RXPYSubscriber)
@@ -228,14 +228,14 @@ def test_get_next(dimos) -> None:
 
     odom = subscriber.get_next()
 
-    assert isinstance(odom, Odometry)
+    assert isinstance(odom, PoseStamped)
     assert subscriber.active_subscribers() == 0
 
     time.sleep(0.2)
 
     next_odom = subscriber.get_next()
 
-    assert isinstance(next_odom, Odometry)
+    assert isinstance(next_odom, PoseStamped)
     assert subscriber.active_subscribers() == 0
 
     assert next_odom != odom
@@ -250,7 +250,7 @@ def test_hot_getter(dimos) -> None:
     robot = dimos.deploy(MockRobotClient)
 
     robot.lidar.transport = SpyLCMTransport("/lidar", PointCloud2)
-    robot.odometry.transport = SpyLCMTransport("/odom", Odometry)
+    robot.odometry.transport = SpyLCMTransport("/odom", PoseStamped)
     robot.mov.transport = pLCMTransport("/mov")
 
     subscriber = dimos.deploy(RXPYSubscriber)
@@ -264,7 +264,7 @@ def test_hot_getter(dimos) -> None:
     odom = subscriber.get_hot()
     subscriber.stop_hot_getter()
 
-    assert isinstance(odom, Odometry)
+    assert isinstance(odom, PoseStamped)
     time.sleep(0.3)
 
     # there are no subs
@@ -275,7 +275,7 @@ def test_hot_getter(dimos) -> None:
     time.sleep(0.3)
 
     next_odom = subscriber.get_hot()
-    assert isinstance(next_odom, Odometry)
+    assert isinstance(next_odom, PoseStamped)
     assert next_odom != odom
     subscriber.stop_hot_getter()
 

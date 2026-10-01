@@ -18,11 +18,12 @@ from abc import abstractmethod
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos_generated.geometry_msgs.msg import Quaternion, Transform, TransformStamped
+
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 
 if TYPE_CHECKING:
-    from dimos_lcm.sensor_msgs import CameraInfo
+    from dimos_generated.sensor_msgs.msg import CameraInfo
 
 
 @dataclass
@@ -30,7 +31,9 @@ class Detection3D(Detection2DBBox):
     """Abstract base class for 3D detections."""
 
     frame_id: str = ""
-    transform: Transform = field(default_factory=Transform.identity)
+    transform: TransformStamped = field(
+        default_factory=lambda: TransformStamped(transform=Transform(rotation=Quaternion(w=1)))
+    )
 
     @classmethod
     @abstractmethod
@@ -39,7 +42,7 @@ class Detection3D(Detection2DBBox):
         det: Detection2DBBox,
         distance: float,
         camera_info: CameraInfo,
-        world_to_optical_transform: Transform,
+        world_to_optical_transform: TransformStamped,
     ) -> Detection3D | None:
         """Create a 3D detection from a 2D detection."""
         ...

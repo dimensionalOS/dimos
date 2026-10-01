@@ -18,6 +18,10 @@ from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import MagicMock
 
+from dimos_generated.geometry_msgs.msg import TransformStamped
+from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.std_msgs.msg import Header
+from dimos_generated.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 import pytest
 from pytest_mock import MockerFixture
 
@@ -36,10 +40,7 @@ from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import PlanningStatus
 from dimos.manipulation.planning.spec.models import GeneratedPlan
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
+from dimos.msgs.time import duration_from_seconds, header_now
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.manipulators.openyam.config import make_openyam_model_config
 
@@ -69,10 +70,11 @@ def _plan() -> GeneratedPlan:
         group_ids=("tool",),
         status=PlanningStatus.SUCCESS,
         trajectory=JointTrajectory(
+            header=header_now(),
             joint_names=names,
             points=[
-                TrajectoryPoint(positions=[0.0], time_from_start=0.0),
-                TrajectoryPoint(positions=[0.1], time_from_start=1.0),
+                JointTrajectoryPoint(positions=[0.0], time_from_start=duration_from_seconds(0.0)),
+                JointTrajectoryPoint(positions=[0.1], time_from_start=duration_from_seconds(1.0)),
             ],
         ),
     )
@@ -103,10 +105,10 @@ def test_move_linear_uses_world_relative_target_and_default_speed(
     assert result.succeeded
     targets, config = generate.call_args.args
     start, relative = targets["tool"]
-    assert start == Transform.identity()
-    assert relative.translation.x == pytest.approx(0.02)
-    assert relative.translation.y == pytest.approx(0.0)
-    assert relative.translation.z == pytest.approx(-0.01)
+    assert start == TransformStamped(header=Header(frame_id="world"), child_frame_id="")
+    assert relative.transform.translation.x == pytest.approx(0.02)
+    assert relative.transform.translation.y == pytest.approx(0.0)
+    assert relative.transform.translation.z == pytest.approx(-0.01)
     assert generate.call_args.kwargs["check_collision"] is False
     assert generate.call_args.kwargs["speed_scale"] == pytest.approx(0.5)
     execute.assert_called_once_with(blocking=False, timeout=None, plan_id=generated.plan_id)

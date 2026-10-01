@@ -14,8 +14,8 @@
 
 from collections.abc import Iterator
 import threading
-import time
 
+from dimos_generated.sensor_msgs.msg import Image
 import numpy as np
 import pytest
 from reactivex.scheduler import ThreadPoolScheduler
@@ -23,7 +23,7 @@ from reactivex.scheduler import ThreadPoolScheduler
 from dimos.agents.skill_result import SkillResult
 from dimos.agents.skills.observe_skill import ObserveSkill
 from dimos.core.transport import LCMTransport
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.image import image_from_array, image_view
 
 
 @pytest.fixture
@@ -35,20 +35,22 @@ def module(monkeypatch: pytest.MonkeyPatch) -> Iterator[ObserveSkill]:
     monkeypatch.setattr("dimos.utils.reactive.get_scheduler", lambda: scheduler)
     m = ObserveSkill()
     m.color_image.transport = LCMTransport("/test_observe/color_image", Image)
-    yield m
-    m.stop()
-    scheduler.executor.shutdown(wait=True)
+    try:
+        yield m
+    finally:
+        m.stop()
+        scheduler.executor.shutdown(wait=True)
 
 
 def test_observe_returns_published_frame(module: ObserveSkill) -> None:
-    frame = Image.from_numpy(np.zeros((8, 8, 3), dtype=np.uint8), format=ImageFormat.RGB, ts=1.0)
+    frame = image_from_array(np.zeros((8, 8, 3), dtype=np.uint8), encoding="rgb8")
     stop = threading.Event()
 
     # get_next subscribes lazily, so keep publishing until observe picks a frame up.
     def pump() -> None:
         while not stop.is_set():
             module.color_image.transport.publish(frame)
-            time.sleep(0.05)
+            stop.wait(0.05)
 
     thread = threading.Thread(target=pump, daemon=True)
     thread.start()
@@ -59,7 +61,7 @@ def test_observe_returns_published_frame(module: ObserveSkill) -> None:
         thread.join()
 
     assert isinstance(result, Image)
-    assert result.data.shape[:2] == (8, 8)
+    assert image_view(result).shape[:2] == (8, 8)
 
 
 def test_observe_without_frames_fails(

@@ -25,11 +25,12 @@ lookahead car-style law (no Pure Pursuit).
 
 from __future__ import annotations
 
+from copy import deepcopy
 import math
 
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos_generated.geometry_msgs.msg import Pose, Twist, Vector3
+
+from dimos.msgs.geometry import quaternion_euler
 from dimos.navigation.dannav.holonomic_tc.command_limits import HolonomicCommandLimits
 from dimos.navigation.dannav.holonomic_tc.types import (
     TrajectoryMeasuredSample,
@@ -39,24 +40,24 @@ from dimos.utils.trigonometry import angle_diff
 
 
 def _planar_yaw_rad(pose_plan: Pose) -> float:
-    return float(pose_plan.orientation.euler.z)
+    return float(quaternion_euler(pose_plan.orientation)[2])
 
 
 def _scale_planar_twist(cmd: Twist, max_planar_speed_m_s: float) -> Twist:
     sp = math.hypot(float(cmd.linear.x), float(cmd.linear.y))
     if sp <= max_planar_speed_m_s or sp < 1e-15:
-        return Twist(cmd)
+        return deepcopy(cmd)
     f = max_planar_speed_m_s / sp
     return Twist(
         linear=Vector3(
-            float(cmd.linear.x) * f,
-            float(cmd.linear.y) * f,
-            float(cmd.linear.z),
+            x=float(cmd.linear.x) * f,
+            y=float(cmd.linear.y) * f,
+            z=float(cmd.linear.z),
         ),
         angular=Vector3(
-            float(cmd.angular.x),
-            float(cmd.angular.y),
-            float(cmd.angular.z),
+            x=float(cmd.angular.x),
+            y=float(cmd.angular.y),
+            z=float(cmd.angular.z),
         ),
     )
 
@@ -66,14 +67,14 @@ def _clamp_yaw_rate(cmd: Twist, max_abs_wz: float) -> Twist:
     wz = max(-max_abs_wz, min(max_abs_wz, wz))
     return Twist(
         linear=Vector3(
-            float(cmd.linear.x),
-            float(cmd.linear.y),
-            float(cmd.linear.z),
+            x=float(cmd.linear.x),
+            y=float(cmd.linear.y),
+            z=float(cmd.linear.z),
         ),
         angular=Vector3(
-            float(cmd.angular.x),
-            float(cmd.angular.y),
-            wz,
+            x=float(cmd.angular.x),
+            y=float(cmd.angular.y),
+            z=wz,
         ),
     )
 
@@ -153,11 +154,11 @@ class HolonomicTrackingController:
         wz = wz_ff - self._ky * e_psi - self._kw * wz_err
 
         raw = Twist(
-            linear=Vector3(vx, vy, float(ref.linear.z)),
+            linear=Vector3(x=vx, y=vy, z=float(ref.linear.z)),
             angular=Vector3(
-                float(ref.angular.x),
-                float(ref.angular.y),
-                wz,
+                x=float(ref.angular.x),
+                y=float(ref.angular.y),
+                z=wz,
             ),
         )
         lim = self._limits

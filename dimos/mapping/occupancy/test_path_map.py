@@ -20,6 +20,7 @@ import pytest
 
 from dimos.mapping.occupancy.path_map import make_navigation_map
 from dimos.mapping.occupancy.visualizations import visualize_occupancy_grid
+from dimos.msgs.image import image_view
 from dimos.utils.data import get_data
 
 
@@ -31,4 +32,4 @@ def test_make_navigation_map(occupancy, strategy) -> None:
     og = make_navigation_map(occupancy, robot_width, strategy=strategy, gradient_strategy="voronoi")
 
     result = visualize_occupancy_grid(og, "rainbow")
-    np.testing.assert_array_equal(result.data, expected)
+    np.testing.assert_array_equal(image_view(result), expected)

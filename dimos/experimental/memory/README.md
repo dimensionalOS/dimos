@@ -1,14 +1,14 @@
 # Experimental Native Memory Recorder
 
 The Rust recorder is an experimental high-throughput alternative to the Python
-Memory2 recorder. It remains compatible with the existing Python readers while
-its API and operational behavior are evaluated. Experimental imports may change
-without compatibility aliases.
+Memory recorder. Python supplies each stream's generated type name and complete
+ROS message definition. The native process records custom messages without a
+message-specific decoder or rebuild.
 
 ## Build and runtime packaging
 
-The recorder is built as a locked Nix package. Nix supplies Rust, CMake, NASM,
-SQLite, and the native libraries used by TurboJPEG, so none of those tools or
+The recorder is built as a locked Nix package. Nix supplies Rust, Python for build-time message generation,
+CMake, and SQLite, so none of those tools or
 development packages need to be installed on the host.
 
 The Python module builds the package automatically on first use. To build it
@@ -39,8 +39,7 @@ from dimos.experimental.memory.rust_recorder import (
     RustRecorder,
     RustSqliteStoreConfig,
 )
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos_generated.sensor_msgs.msg import Image, PointCloud2
 
 
 class SensorRecorder(RustRecorder):
@@ -51,19 +50,19 @@ class SensorRecorder(RustRecorder):
 sensor_recorder = SensorRecorder.blueprint(
     store=RustSqliteStoreConfig(path="session.db"),
     encoding_threads=4,
-    stream_codecs={"lidar": "lz4+lcm"},
+    stream_codecs={"lidar": "lz4+cdr"},
 )
 ```
 
-SQLite supports LCM-backed messages and the `lcm`, `jpeg`, and `lz4+lcm`
-storage codecs. Images default to JPEG quality 50. Configure depth or other
-lossless streams explicitly with `lz4+lcm`. The resulting artifact opens and
-replays through the stable Python `SqliteStore` API.
+SQLite stores generated CDR bytes by default. `lz4+cdr` adds lossless blob
+compression. Raw images retain their encoding and pixels, including depth data.
+For lossy compression, publish an explicit generated CompressedImage value.
+The resulting artifact opens and replays through Python's SqliteStore.
 
 ## MCAP
 
-Select MCAP to write the same Memory2 storage encodings into an indexed,
-portable container:
+Select MCAP for ROS2-profile recordings with CDR channels and embedded, complete
+`ros2msg` schemas:
 
 ```python
 from dimos.experimental.memory.rust_recorder import RustMcapStoreConfig
@@ -71,30 +70,29 @@ from dimos.experimental.memory.rust_recorder import RustMcapStoreConfig
 mcap_recorder = SensorRecorder.blueprint(
     store=RustMcapStoreConfig(path="session.mcap"),
     encoding_threads=4,
-    stream_codecs={"lidar": "lz4+lcm"},
 )
 ```
 
-MCAP stores each stream's selected `lcm`, `jpeg`, or `lz4+lcm` representation
-in indexed Zstd chunks. Source time is the MCAP publish time and recorder
-reception time is the log time. JPEG channels decode automatically. Supply
-trusted codecs explicitly for LCM channels instead of trusting artifact
-metadata:
+The Python reader now expects standard ROS2-profile CDR channels with embedded
+`ros2msg` schemas. Installed generated message packages supply the decoders:
 
 ```python
-from dimos.memory.codecs.lcm import LcmCodec
-from dimos.memory.codecs.lz4 import Lz4Codec
 from dimos.memory.store.mcap import McapStore
-from dimos.msgs.sensor_msgs.Imu import Imu
 
-store = McapStore(
-    path="session.mcap",
-    codecs={"imu": Lz4Codec(LcmCodec(Imu))},
-)
+store = McapStore(path="session.mcap")
 ```
+
+MCAP applies Zstd chunk compression. It rejects per-payload wrappers such as
+`lz4+cdr`. Standard compressed-image messages use their own declared schema.
+See `examples/message-codegen/demo_native_recording.py` for a hardware-free
+external-message recording demo on both LCM and Zenoh.
 
 Append mode remains unsupported for MCAP.
 
-Both backends preserve source timestamps for common stamped messages. Arbitrary
+Both backends preserve source timestamps for supported stamped messages. MCAP
+keeps source and reception time as integer nanoseconds; SQLite exposes floating
+seconds for its existing query API while message payload stamps remain exact.
+Unknown timestamp layouts use reception time. Negative source times work in
+SQLite; MCAP rejects them because its time fields are unsigned. Arbitrary
 pickle payloads, Python `pose_setter_for` hooks, and spatial pose attachment
 remain Python-recorder features; unsupported combinations fail during startup.

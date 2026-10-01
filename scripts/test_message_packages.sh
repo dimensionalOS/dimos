@@ -49,3 +49,12 @@ cargo build --offline --manifest-path "$package_demo/rust-consumer/Cargo.toml"
 env -u PYTHONPATH "$package_demo/venv/bin/python" -I \
   examples/message-codegen/external-app/demo_installed.py --build "$package_demo" \
   | tee "$package_demo/evidence/installed-relay.txt"
+cat > "$package_demo/typed_consumer.py" <<'PY'
+from external_telemetry.demo_msgs.msg import Telemetry
+
+value = Telemetry(application_note="typed")
+result: str = value.application_note
+PY
+.venv/bin/python -m mypy --strict --config-file=/dev/null \
+  --python-executable "$package_demo/venv/bin/python" "$package_demo/typed_consumer.py" \
+  | tee "$package_demo/evidence/installed-typing.txt"

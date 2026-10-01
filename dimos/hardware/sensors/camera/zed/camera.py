@@ -18,6 +18,10 @@ import atexit
 import threading
 import time
 
+from dimos_generated.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
+from dimos_generated.sensor_msgs.msg import CameraInfo, Image, PointCloud2
+from dimos_generated.std_msgs.msg import Header
+from dimos_generated.tf2_msgs.msg import TFMessage
 from pydantic import Field
 import pyzed.sl as sl
 import reactivex as rx
@@ -33,13 +37,11 @@ from dimos.hardware.sensors.camera.spec import (
     DepthCameraConfig,
     DepthCameraHardware,
 )
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.msgs.camera_info import camera_info_with_stamp
+from dimos.msgs.geometry import compose_transforms, inverse_transform
+from dimos.msgs.image import image_from_array
+from dimos.msgs.pointcloud import pointcloud_from_rgbd, voxel_downsample_cloud
+from dimos.msgs.time import time_from_seconds
 from dimos.spec import perception
 from dimos.utils.reactive import backpressure
 
@@ -47,8 +49,8 @@ from dimos.utils.reactive import backpressure
 def default_base_transform() -> Transform:
     """Default identity transform for camera mounting."""
     return Transform(
-        translation=Vector3(0.0, 0.0, 0.0),
-        rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+        translation=Vector3(),
+        rotation=Quaternion(w=1.0),
     )
 
 
@@ -131,11 +133,13 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
     def _publish_camera_info(self) -> None:
         ts = time.time()
         if self._color_camera_info:
-            self._color_camera_info.ts = ts
-            self.camera_info.publish(self._color_camera_info)
+            self.camera_info.publish(
+                camera_info_with_stamp(self._color_camera_info, time_from_seconds(ts))
+            )
         if self._depth_camera_info:
-            self._depth_camera_info.ts = ts
-            self.depth_camera_info.publish(self._depth_camera_info)
+            self.depth_camera_info.publish(
+                camera_info_with_stamp(self._depth_camera_info, time_from_seconds(ts))
+            )
 
     @rpc
     def start(self) -> None:
@@ -232,10 +236,11 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
             height=self._stream_height,
             width=self._stream_width,
             distortion_model="plumb_bob",
-            D=D,
-            K=K,
-            P=P,
-            frame_id=frame_id,
+            d=D,
+            k=K,
+            r=[1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+            p=P,
+            header=Header(frame_id=frame_id),
         )
 
     def _get_extrinsics(self) -> None:
@@ -251,15 +256,16 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
         frame_id: str,
         child_frame_id: str,
         ts: float,
-    ) -> Transform:
+    ) -> TransformStamped:
         translation = extrinsics.get_translation().get()
-        quat = extrinsics.get_orientation().get()  # [x, y, z, w]
-        return Transform(
-            translation=Vector3(*translation),
-            rotation=Quaternion(quat[0], quat[1], quat[2], quat[3]),
-            frame_id=frame_id,
+        quat = extrinsics.get_orientation().get()
+        return TransformStamped(
+            header=Header(frame_id=frame_id, stamp=time_from_seconds(ts)),
             child_frame_id=child_frame_id,
-            ts=ts,
+            transform=Transform(
+                translation=Vector3(x=translation[0], y=translation[1], z=translation[2]),
+                rotation=Quaternion(x=quat[0], y=quat[1], z=quat[2], w=quat[3]),
+            ),
         )
 
     def _enable_tracking(self) -> None:
@@ -301,11 +307,10 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
                 if color_data.ndim == 3 and color_data.shape[2] == 4:
                     color_data = color_data[:, :, :3]
                 color_data = cv2.cvtColor(color_data, cv2.COLOR_BGR2RGB)
-                color_img = Image(
-                    data=color_data,
-                    format=ImageFormat.RGB,
-                    frame_id=self._color_optical_frame,
-                    ts=ts,
+                color_img = image_from_array(
+                    color_data,
+                    encoding="rgb8",
+                    header=Header(frame_id=self._color_optical_frame, stamp=time_from_seconds(ts)),
                 )
                 self.color_image.publish(color_img)
 
@@ -320,11 +325,10 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
                     if self.config.align_depth_to_color
                     else self._depth_optical_frame
                 )
-                depth_img = Image(
-                    data=depth_data,
-                    format=ImageFormat.DEPTH,
-                    frame_id=depth_frame_id,
-                    ts=ts,
+                depth_img = image_from_array(
+                    depth_data,
+                    encoding="32FC1",
+                    header=Header(frame_id=depth_frame_id, stamp=time_from_seconds(ts)),
                 )
                 self.depth_image.publish(depth_img)
 
@@ -335,97 +339,62 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
 
             self._publish_tf(ts)
 
-    def _tracking_transform(self, ts: float) -> Transform | None:
+    def _tracking_transform(self, ts: float) -> TransformStamped | None:
         if not self._tracking_enabled or self._zed is None or self._pose is None:
             return None
         state = self._zed.get_position(self._pose, sl.REFERENCE_FRAME.WORLD)
         if state != sl.POSITIONAL_TRACKING_STATE.OK:
             return None
 
-        translation = self._pose.get_translation().get().tolist()
-        rotation = self._pose.get_orientation().get().tolist()
-        world_to_camera = Transform(
-            translation=Vector3(*translation),
-            rotation=Quaternion(*rotation),
-            frame_id=self.config.world_frame,
-            child_frame_id=self._camera_link,
-            ts=ts,
+        world_to_camera = self._extrinsics_to_transform(
+            self._pose, self.config.world_frame, self._camera_link, ts
         )
         if self.config.base_transform is None:
             return world_to_camera
-
-        base_to_camera = Transform(
-            translation=self.config.base_transform.translation,
-            rotation=self.config.base_transform.rotation,
-            frame_id=self.config.base_frame_id,
+        base_to_camera = TransformStamped(
+            header=Header(frame_id=self.config.base_frame_id, stamp=time_from_seconds(ts)),
             child_frame_id=self._camera_link,
-            ts=ts,
+            transform=self.config.base_transform,
         )
-        camera_to_base = base_to_camera.inverse()
-        world_to_base = world_to_camera + camera_to_base
-        world_to_base.frame_id = self.config.world_frame
-        world_to_base.child_frame_id = self.config.base_frame_id
-        world_to_base.ts = ts
-        return world_to_base
+        return compose_transforms(world_to_camera, inverse_transform(base_to_camera))
 
     def _publish_tf(self, ts: float) -> None:
-        transforms = []
-
+        transforms: list[TransformStamped] = []
+        stamp = time_from_seconds(ts)
         if self.config.base_transform is not None:
-            base_to_camera = Transform(
-                translation=self.config.base_transform.translation,
-                rotation=self.config.base_transform.rotation,
-                frame_id=self.config.base_frame_id,
-                child_frame_id=self._camera_link,
-                ts=ts,
+            transforms.append(
+                TransformStamped(
+                    header=Header(frame_id=self.config.base_frame_id, stamp=stamp),
+                    child_frame_id=self._camera_link,
+                    transform=self.config.base_transform,
+                )
             )
-            transforms.append(base_to_camera)
 
-        # camera_imu_transform is IMU -> left_camera (coordinate transform),
-        # we need to invert to get the pose of left camera in camera_link frame
-        camera_link_to_depth = self._extrinsics_to_transform(
-            self._camera_link_to_color_extrinsics,
-            self._camera_link,
-            self._depth_frame,
-            ts,
-        ).inverse()
-        camera_link_to_depth.frame_id = self._camera_link
-        camera_link_to_depth.child_frame_id = self._depth_frame
-        transforms.append(camera_link_to_depth)
-
-        depth_to_depth_optical = Transform(
-            translation=Vector3(0.0, 0.0, 0.0),
-            rotation=OPTICAL_ROTATION,
-            frame_id=self._depth_frame,
-            child_frame_id=self._depth_optical_frame,
-            ts=ts,
-        )
-        transforms.append(depth_to_depth_optical)
-
-        color_tf = self._extrinsics_to_transform(
-            self._camera_link_to_color_extrinsics,
-            self._camera_link,
-            self._color_frame,
-            ts,
-        ).inverse()
-        color_tf.frame_id = self._camera_link
-        color_tf.child_frame_id = self._color_frame
-        transforms.append(color_tf)
-
-        color_to_color_optical = Transform(
-            translation=Vector3(0.0, 0.0, 0.0),
-            rotation=OPTICAL_ROTATION,
-            frame_id=self._color_frame,
-            child_frame_id=self._color_optical_frame,
-            ts=ts,
-        )
-        transforms.append(color_to_color_optical)
-
+        # SDK extrinsics are the IMU-to-left-camera coordinate transform;
+        # retain the inverse used by the existing camera-link pose convention.
+        for frame, optical_frame in (
+            (self._depth_frame, self._depth_optical_frame),
+            (self._color_frame, self._color_optical_frame),
+        ):
+            extrinsics = inverse_transform(
+                self._extrinsics_to_transform(
+                    self._camera_link_to_color_extrinsics, self._camera_link, frame, ts
+                )
+            )
+            extrinsics.header.frame_id = self._camera_link
+            extrinsics.child_frame_id = frame
+            transforms.append(extrinsics)
+            transforms.append(
+                TransformStamped(
+                    header=Header(frame_id=frame, stamp=stamp),
+                    child_frame_id=optical_frame,
+                    transform=Transform(rotation=OPTICAL_ROTATION),
+                )
+            )
         tracking_tf = self._tracking_transform(ts)
         if tracking_tf is not None:
             transforms.append(tracking_tf)
-
-        self.tf.publish(TFMessage(*transforms))
+        self.tf.publish(TFMessage(transforms=transforms))
 
     def _generate_pointcloud(self) -> None:
         with self._pointcloud_lock:
@@ -436,13 +405,13 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
             return
 
         try:
-            pcd = PointCloud2.from_rgbd(
-                color_image=color_img,
-                depth_image=depth_img,
-                camera_info=self._color_camera_info,
+            pcd = pointcloud_from_rgbd(
+                color=color_img,
+                depth=depth_img,
+                calibration=self._color_camera_info,
                 depth_scale=self._depth_scale,
             )
-            pcd = pcd.voxel_downsample(0.005)
+            pcd = voxel_downsample_cloud(pcd, 0.005)
             self.pointcloud.publish(pcd)
         except Exception as e:
             print(f"Pointcloud generation error: {e}")

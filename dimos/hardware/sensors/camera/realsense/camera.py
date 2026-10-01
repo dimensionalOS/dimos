@@ -19,17 +19,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from dimos_generated.dimos_msgs.msg import ImuInfo
+from dimos_generated.sensor_msgs.msg import CameraInfo, Image, Imu, PointCloud2
+from dimos_generated.tf2_msgs.msg import TFMessage
 from pydantic import Field
 
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import Out
 from dimos.hardware.sensors.camera.spec import DepthCameraConfig
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.Imu import Imu
-from dimos.msgs.sensor_msgs.ImuInfo import ImuInfo
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.spec import perception
 
 

@@ -2,14 +2,11 @@
  * Server-side LiDAR raycasting using Rapier physics world snapshot.
  *
  * Runs 20K Fibonacci-sphere raycasts at 5 Hz on the Deno bridge server,
- * encodes PointCloud2 via @dimos/msgs, and publishes directly to LCM —
+ * encodes PointCloud2 as ROS 2 CDR, and publishes directly to LCM —
  * no WebSocket hop needed.
  */
 
-import {
-  sensor_msgs,
-  std_msgs,
-} from "@dimos/msgs";
+import { encodeCdr, headerNow } from "./cdr.ts";
 import type { LCM } from "../vendor/lcm/lcm.ts";
 
 // -- Lidar constants (must match engine.js) -----------------------------------
@@ -25,7 +22,7 @@ const V_MAX_RAD = (15 * Math.PI) / 180;
 // drops frames and effective rate sits below the target on slow/CPU-render boxes.
 const RATE_MS = 200; // 5 Hz default
 
-const CH_LIDAR = "/lidar#sensor_msgs.PointCloud2";
+const CH_LIDAR = "/lidar#sensor_msgs/msg/PointCloud2";
 
 // Agent capsule geometry → lidar mount offset (must match engine.js)
 const DEFAULT_HALF_HEIGHT = 0.25;
@@ -277,35 +274,29 @@ export class ServerLidar {
         view.setFloat32(off + 12, intensity[i], true);
       }
 
-      const now = Date.now();
-      const header = new std_msgs.Header({
-        stamp: new std_msgs.Time({ sec: Math.floor(now / 1000), nsec: (now % 1000) * 1_000_000 }),
-        frame_id: "world",
-      });
+      const header = headerNow("world");
 
-      const msg = new sensor_msgs.PointCloud2({
+      const msg = {
         header,
         height: 1,
         width: n,
-        fields_length: 4,
         fields: [
-          new sensor_msgs.PointField({ name: "x", offset: 0, datatype: 7, count: 1 }),
-          new sensor_msgs.PointField({ name: "y", offset: 4, datatype: 7, count: 1 }),
-          new sensor_msgs.PointField({ name: "z", offset: 8, datatype: 7, count: 1 }),
-          new sensor_msgs.PointField({ name: "intensity", offset: 12, datatype: 7, count: 1 }),
+          { name: "x", offset: 0, datatype: 7, count: 1 },
+          { name: "y", offset: 4, datatype: 7, count: 1 },
+          { name: "z", offset: 8, datatype: 7, count: 1 },
+          { name: "intensity", offset: 12, datatype: 7, count: 1 },
         ],
         is_bigendian: false,
         point_step: pointStep,
         row_step: n * pointStep,
-        data_length: n * pointStep,
         data: new Uint8Array(buf),
         is_dense: true,
-      });
+      };
 
       // Mark seq for echo filtering (prevent server re-forwarding to browser WS)
       this.sentSeqs.add(this.lcm.getNextSeq());
       // Publish directly to LCM — no WS hop (await so buffer pressure is felt)
-      await this.lcm.publish(CH_LIDAR, msg);
+      await this.lcm.publishRaw(CH_LIDAR, encodeCdr("sensor_msgs/msg/PointCloud2", msg));
 
       if (profile) {
         const total = performance.now() - scanStart;

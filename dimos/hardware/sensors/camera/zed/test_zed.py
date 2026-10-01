@@ -13,13 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import pytest
+from dimos_generated.sensor_msgs.msg import CameraInfo
 
 from dimos.hardware.sensors.camera.zed import compat as zed
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 
 
-@pytest.mark.skipif(not zed.HAS_ZED_SDK, reason="ZED SDK not installed")
 def test_zed_import_and_calibration_access() -> None:
     """Test that zed module can be imported and calibrations accessed."""
     # Test that CameraInfo is accessible
@@ -42,3 +40,11 @@ def test_zed_import_and_calibration_access() -> None:
     assert camera_info_snake is camera_info_pascal
 
     print("✓ ZED import and calibration access test passed!")
+
+
+def test_calibration_is_generated_cdr_with_default_optical_frame():
+    value = zed.CameraInfo.SingleWebcam
+    assert type(value) is CameraInfo
+    assert value.header.frame_id == "camera_optical"
+    assert value.k[0] == 379.45267
+    assert CameraInfo.decode(value.encode()) == value

@@ -22,11 +22,11 @@ import math
 import signal
 import time
 
+from dimos_generated.geometry_msgs.msg import PoseStamped
 import matplotlib.pyplot as plt
 import numpy as np
 
 from dimos.core.transport import LCMTransport
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 MIN_DIST = 0.05  # minimum distance (m) between recorded points
 STUCK_RADIUS = 0.6  # if robot stays within this radius (m) ...
@@ -49,7 +49,7 @@ def main() -> None:
 
     def on_msg(msg: PoseStamped) -> None:
         nonlocal stop
-        x, y = msg.position.x, msg.position.y
+        x, y = msg.pose.position.x, msg.pose.position.y
 
         # Record start time on first message.
         if not t_start:

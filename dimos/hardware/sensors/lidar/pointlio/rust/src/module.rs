@@ -19,11 +19,15 @@ use dimos_module::{native_config, Input, Module, Output, Tf, Transform};
 
 /// The driver publishes linear acceleration in m/s^2; Point-LIO wants it in g.
 const GRAVITY_MS2: f64 = 9.80665;
-use lcm_msgs::geometry_msgs::{Point, Pose, PoseWithCovariance, Twist, TwistWithCovariance};
-use lcm_msgs::geometry_msgs::{Quaternion as QuatMsg, Vector3};
-use lcm_msgs::nav_msgs::Odometry;
-use lcm_msgs::sensor_msgs::{Imu, PointCloud2, PointField};
-use lcm_msgs::std_msgs::{Header, Time};
+use dimos_generated_messages::builtin_interfaces::msg::Time;
+use dimos_generated_messages::geometry_msgs::msg::{
+    Point, Pose, PoseWithCovariance, Twist, TwistWithCovariance,
+};
+use dimos_generated_messages::geometry_msgs::msg::{Quaternion as QuatMsg, Vector3};
+use dimos_generated_messages::nav_msgs::msg::Odometry;
+use dimos_generated_messages::sensor_msgs::msg::{Imu, PointCloud2, PointField};
+use dimos_generated_messages::std_msgs::msg::Header;
+use dimos_module::cdr;
 use pointlio_core::{LivoxPoint, PointLio, PointXYZI};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -117,16 +121,16 @@ fn core_config_parses(cfg: &Config) -> Result<(), ValidationError> {
 #[derive(Module)]
 #[module(name = "pointlio", setup = start)]
 pub struct PointLioModule {
-    #[input(decode = PointCloud2::decode)]
+    #[input(decode = cdr::decode)]
     lidar_raw: Input<PointCloud2>,
 
-    #[input(decode = Imu::decode)]
+    #[input(decode = cdr::decode)]
     imu: Input<Imu>,
 
-    #[output(encode = PointCloud2::encode)]
+    #[output(encode = cdr::encode)]
     lidar: Output<PointCloud2>,
 
-    #[output(encode = Odometry::encode)]
+    #[output(encode = cdr::encode)]
     odometry: Output<Odometry>,
 
     #[tf]
@@ -239,20 +243,19 @@ fn due(last: &mut Option<f64>, ts: f64, hz: f64) -> bool {
 }
 
 fn stamp_secs(t: &Time) -> f64 {
-    f64::from(t.sec) + f64::from(t.nsec) * 1e-9
+    f64::from(t.sec) + f64::from(t.nanosec) * 1e-9
 }
 
 fn stamp_ns(t: &Time) -> u64 {
-    t.sec as u64 * 1_000_000_000 + t.nsec as u64
+    t.sec as u64 * 1_000_000_000 + t.nanosec as u64
 }
 
 fn header(frame_id: &str, ts: f64) -> Header {
     let sec = ts.floor();
     Header {
-        seq: 0,
         stamp: Time {
             sec: sec as i32,
-            nsec: (((ts - sec) * 1e9).round() as i32).min(999_999_999),
+            nanosec: (((ts - sec) * 1e9).round() as u32).min(999_999_999),
         },
         frame_id: frame_id.to_string(),
     }
@@ -270,11 +273,15 @@ struct Layout {
 
 fn layout(cloud: &PointCloud2) -> Result<Layout, String> {
     let step = cloud.point_step as usize;
-    let find = |name: &str, datatype: i8| -> Result<Option<usize>, String> {
-        let Some(f) = cloud.fields.iter().find(|f| f.name == name) else {
+    let find = |name: &str, datatype: u8| -> Result<Option<usize>, String> {
+        let mut matches = cloud.fields.iter().filter(|field| field.name == name);
+        let Some(f) = matches.next() else {
             return Ok(None);
         };
-        if f.datatype != datatype as u8 {
+        if matches.next().is_some() || f.count != 1 {
+            return Err(format!("field {name} must be unique and scalar"));
+        }
+        if f.datatype != datatype {
             return Err(format!(
                 "field {name} has datatype {}, want {datatype}",
                 f.datatype
@@ -291,12 +298,9 @@ fn layout(cloud: &PointCloud2) -> Result<Layout, String> {
         }
         Ok(Some(offset))
     };
-    let need = |name: &str, datatype: i8| {
+    let need = |name: &str, datatype: u8| {
         find(name, datatype)?.ok_or_else(|| format!("cloud has no {name} field"))
     };
-    if cloud.is_bigendian {
-        return Err("big-endian clouds are not supported".into());
-    }
     Ok(Layout {
         x: need("x", PointField::FLOAT32)?,
         y: need("y", PointField::FLOAT32)?,
@@ -311,19 +315,40 @@ fn layout(cloud: &PointCloud2) -> Result<Layout, String> {
 fn livox_points(cloud: &PointCloud2) -> Result<Vec<LivoxPoint>, String> {
     let l = layout(cloud)?;
     let step = cloud.point_step as usize;
-    let n = cloud.width as usize * cloud.height as usize;
-    if step == 0 || cloud.data.len() < n * step {
-        return Err(format!(
-            "data has {} bytes for {n} points of {step}",
-            cloud.data.len()
-        ));
+    let width = cloud.width as usize;
+    let row_step = cloud.row_step as usize;
+    let row_bytes = width
+        .checked_mul(step)
+        .ok_or("point cloud row size overflow")?;
+    let total = row_step
+        .checked_mul(cloud.height as usize)
+        .ok_or("point cloud data size overflow")?;
+    if step == 0 || row_step < row_bytes || cloud.data.len() != total {
+        return Err("point cloud dimensions/strides do not match data".into());
     }
-    let f32_at = |p: &[u8], off: usize| f32::from_le_bytes(p[off..off + 4].try_into().unwrap());
-    let u32_at = |p: &[u8], off: usize| u32::from_le_bytes(p[off..off + 4].try_into().unwrap());
+    if width == 0 || cloud.height == 0 {
+        return Ok(Vec::new());
+    }
+    let f32_at = |p: &[u8], off: usize| {
+        let bytes = p[off..off + 4].try_into().unwrap();
+        if cloud.is_bigendian {
+            f32::from_be_bytes(bytes)
+        } else {
+            f32::from_le_bytes(bytes)
+        }
+    };
+    let u32_at = |p: &[u8], off: usize| {
+        let bytes = p[off..off + 4].try_into().unwrap();
+        if cloud.is_bigendian {
+            u32::from_be_bytes(bytes)
+        } else {
+            u32::from_le_bytes(bytes)
+        }
+    };
     Ok(cloud
         .data
-        .chunks_exact(step)
-        .take(n)
+        .chunks_exact(row_step)
+        .flat_map(|row| row[..row_bytes].chunks_exact(step))
         .map(|p| LivoxPoint {
             x: f32_at(p, l.x),
             y: f32_at(p, l.y),
@@ -403,20 +428,20 @@ fn cloud_message(frame_id: &str, ts: f64, cloud: &[PointXYZI]) -> PointCloud2 {
         .enumerate()
         .map(|(i, name)| PointField {
             name: (*name).into(),
-            offset: (i * 4) as i32,
-            datatype: PointField::FLOAT32 as u8,
+            offset: (i * 4) as u32,
+            datatype: PointField::FLOAT32,
             count: 1,
         })
         .collect();
-    let n = cloud.len() as i32;
+    let n = cloud.len() as u32;
     PointCloud2 {
         header: header(frame_id, ts),
         height: 1,
         width: n,
         fields,
         is_bigendian: false,
-        point_step: STEP as i32,
-        row_step: STEP as i32 * n,
+        point_step: STEP as u32,
+        row_step: STEP as u32 * n,
         data,
         is_dense: true,
     }
@@ -426,11 +451,11 @@ fn cloud_message(frame_id: &str, ts: f64, cloud: &[PointXYZI]) -> PointCloud2 {
 mod tests {
     use super::*;
 
-    fn field(name: &str, offset: usize, datatype: i8) -> PointField {
+    fn field(name: &str, offset: usize, datatype: u8) -> PointField {
         PointField {
             name: name.into(),
-            offset: offset as i32,
-            datatype: datatype as u8,
+            offset: offset as u32,
+            datatype,
             count: 1,
         }
     }
@@ -439,13 +464,57 @@ mod tests {
         PointCloud2 {
             header: header("lidar_link", 1.5),
             height: 1,
-            width: (data.len() / step) as i32,
+            width: (data.len() / step) as u32,
             fields,
             is_bigendian: false,
-            point_step: step as i32,
-            row_step: data.len() as i32,
+            point_step: step as u32,
+            row_step: data.len() as u32,
             data,
             is_dense: true,
+        }
+    }
+
+    #[test]
+    fn padded_rows_and_big_endian_preserve_deskew_offsets() {
+        for big in [false, true] {
+            let mut data = vec![0; 48];
+            for row in 0..2 {
+                for (axis, value) in [1f32 + row as f32, 2., 3.].into_iter().enumerate() {
+                    let bytes = if big {
+                        value.to_be_bytes()
+                    } else {
+                        value.to_le_bytes()
+                    };
+                    data[row * 24 + axis * 4..row * 24 + axis * 4 + 4].copy_from_slice(&bytes);
+                }
+                let offset = 42u32 + row as u32;
+                let bytes = if big {
+                    offset.to_be_bytes()
+                } else {
+                    offset.to_le_bytes()
+                };
+                data[row * 24 + 12..row * 24 + 16].copy_from_slice(&bytes);
+            }
+            let mut message = cloud(
+                vec![
+                    field("x", 0, PointField::FLOAT32),
+                    field("y", 4, PointField::FLOAT32),
+                    field("z", 8, PointField::FLOAT32),
+                    field("offset_time", 12, PointField::UINT32),
+                ],
+                16,
+                data,
+            );
+            message.width = 1;
+            message.height = 2;
+            message.row_step = 24;
+            message.is_bigendian = big;
+            let points = livox_points(&message).unwrap();
+            assert_eq!(points.len(), 2);
+            assert_eq!((points[0].x, points[1].x), (1., 2.));
+            assert_eq!((points[0].offset_time, points[1].offset_time), (42, 43));
+            message.row_step = 15;
+            assert!(livox_points(&message).is_err());
         }
     }
 

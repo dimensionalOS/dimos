@@ -104,3 +104,6 @@ site/
 
 # Optuna study store, written by the relocalization eval (see lidar/eval.md)
 optuna.db
+
+# Generated typing interfaces from editable native builds.
+/dimos_generated-stubs/

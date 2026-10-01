@@ -18,13 +18,13 @@ import math
 from pathlib import Path
 from typing import Any
 
+from dimos_generated.sensor_msgs.msg import JointState
 import numpy as np
 import pytest
 
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.joint_space import CoordinateTopology, JointCoordinate
 from dimos.manipulation.planning.spec.validation import prepare_robot_model
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import RobotModel
 
 

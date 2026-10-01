@@ -37,7 +37,7 @@ curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/in
 
 | Extra | What it adds | Key packages | GPU? |
 |-------|-------------|--------------|------|
-| *(core)* | Transport, streams, CLI, blueprints, occupancy maps | dimos-lcm, numpy, scipy, opencv, open3d, numba, Pinocchio, typer, textual | No |
+| *(core)* | Transport, streams, CLI, blueprints, occupancy maps | generated CDR messages, raw LCM, numpy, scipy, opencv, open3d, numba, Pinocchio, typer, textual | No |
 | `agents` | LLM agent, speech, tool use | langchain, openai, ollama, faster-whisper | No |
 | `perception` | Object detection, VLMs, tracking | ultralytics, transformers, moondream | **Yes** |
 | `visualization` | Rerun viewer + bridge | rerun-sdk, dimos-viewer | No |

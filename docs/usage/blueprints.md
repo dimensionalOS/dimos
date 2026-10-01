@@ -153,7 +153,7 @@ from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import Out, In
-from dimos.msgs.sensor_msgs import Image
+from dimos_generated.sensor_msgs.msg import Image
 
 class ModuleA(Module):
     image: Out[Image]
@@ -216,7 +216,7 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import Out, In
-from dimos.msgs.sensor_msgs import Image
+from dimos_generated.sensor_msgs.msg import Image
 
 class ConnectionModule(Module):
     color_image: Out[Image]  # Outputs on 'color_image'

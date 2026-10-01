@@ -17,7 +17,16 @@
 
 from typing import Any
 
-from dimos_lcm.sensor_msgs import CameraInfo
+from dimos_generated.geometry_msgs.msg import (
+    PoseStamped,
+    Transform,
+    TransformStamped,
+    Twist,
+    Vector3,
+)
+from dimos_generated.nav_msgs.msg import Odometry, Path
+from dimos_generated.sensor_msgs.msg import CameraInfo, Image, PointCloud2
+from dimos_generated.std_msgs.msg import Bool, Header
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
@@ -27,28 +36,17 @@ from dimos.hardware.sensors.camera.webcam import Webcam
 from dimos.hardware.sensors.camera.zed import compat as zed
 from dimos.mapping.costmapper import CostMapper
 from dimos.mapping.voxels.module import VoxelGridMapper
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.msgs.nav_msgs.Path import Path
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.std_msgs.Bool import Bool
+from dimos.msgs.geometry import quaternion_from_euler
 from dimos.navigation.frontier_exploration.wavefront_frontier_goal_selector import (
     WavefrontFrontierExplorer,
 )
 from dimos.robot.unitree.g1.g1_rerun import g1_costmap
+from dimos.visualization.rerun.message_helpers import camera_pinhole
 from dimos.visualization.vis_module import vis_module
 
 
-def _convert_camera_info(camera_info: Any) -> Any:
-    return camera_info.to_rerun(
-        image_topic="/world/color_image",
-        optical_frame="camera_optical",
-    )
+def _convert_camera_info(camera_info: CameraInfo) -> Any:
+    return camera_pinhole(camera_info)
 
 
 def _static_base_link(rr: Any) -> list[Any]:
@@ -109,11 +107,13 @@ def _create_webcam() -> Webcam:
 _camera = (
     autoconnect(
         CameraModule.blueprint(
-            transform=Transform(
-                translation=Vector3(0.05, 0.0, 0.6),  # height of camera on G1 robot
-                rotation=Quaternion.from_euler(Vector3(0.0, 0.2, 0.0)),
-                frame_id="sensor",
+            transform=TransformStamped(
+                header=Header(frame_id="sensor"),
                 child_frame_id="camera_link",
+                transform=Transform(
+                    translation=Vector3(x=0.05, z=0.6),
+                    rotation=quaternion_from_euler(0.0, 0.2, 0.0),
+                ),
             ),
             hardware=_create_webcam,
         ),

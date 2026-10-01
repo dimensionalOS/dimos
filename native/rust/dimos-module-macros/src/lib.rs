@@ -428,7 +428,7 @@ struct PortDecl {
 }
 
 /// The last `::`-separated segment of the single generic argument of
-/// `Input<T>`/`Output<T>`, e.g. `Input<lcm_msgs::sensor_msgs::PointCloud2>` -> `PointCloud2`.
+/// `Input<T>`/`Output<T>`, e.g. `Input<dimos_generated_messages::sensor_msgs::msg::PointCloud2>` -> `PointCloud2`.
 fn port_payload_type(ty: &Type) -> Option<String> {
     let Type::Path(p) = ty else { return None };
     let segment = p.path.segments.last()?;
@@ -537,7 +537,7 @@ fn check_port_table(entry: &toml::Value, kind: &str, declared: &[PortDecl]) -> R
         let msg = msg
             .as_str()
             .ok_or_else(|| format!("`{kind}.{}` must be a string", port.name))?;
-        let want = msg.rsplit('.').next().unwrap_or(msg);
+        let want = msg.rsplit(['/', '.']).next().unwrap_or(msg);
         if want != port.ty {
             return Err(format!(
                 "port `{}` is declared `{msg}` in `{kind}` but the struct field carries `{}`",
@@ -791,6 +791,18 @@ mod tests {
     }
 
     #[test]
+    fn accepts_canonical_ros_message_names() {
+        let manifest = MANIFEST.replace("sensor_msgs.PointCloud2", "sensor_msgs/msg/PointCloud2");
+        check_manifest_ports(
+            &manifest,
+            "demo",
+            &[port("lidar", "PointCloud2")],
+            &[port("global_map", "PointCloud2")],
+        )
+        .expect("canonical generated message contracts should pass");
+    }
+
+    #[test]
     fn rejects_missing_metadata_section() {
         let err = check_manifest_ports(MANIFEST, "other", &[], &[])
             .expect_err("an unregistered module id must fail");
@@ -868,7 +880,8 @@ mod tests {
 
     #[test]
     fn payload_type_is_the_last_generic_segment() {
-        let ty: syn::Type = parse_str("Input<lcm_msgs::sensor_msgs::PointCloud2>").unwrap();
+        let ty: syn::Type =
+            parse_str("Input<dimos_generated_messages::sensor_msgs::msg::PointCloud2>").unwrap();
         assert_eq!(port_payload_type(&ty).as_deref(), Some("PointCloud2"));
         let ty: syn::Type = parse_str("Output<Path>").unwrap();
         assert_eq!(port_payload_type(&ty).as_deref(), Some("Path"));

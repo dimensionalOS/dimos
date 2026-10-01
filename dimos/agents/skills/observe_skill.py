@@ -12,11 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dimos_generated.sensor_msgs.msg import Image
+
 from dimos.agents.annotation import skill
 from dimos.agents.skill_result import SkillResult
 from dimos.core.module import Module
 from dimos.core.stream import In
-from dimos.msgs.sensor_msgs.Image import Image
 
 
 class ObserveSkill(Module):

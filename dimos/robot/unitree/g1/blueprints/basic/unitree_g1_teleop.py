@@ -49,6 +49,9 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from dimos_generated.geometry_msgs.msg import PoseStamped
+from dimos_generated.sensor_msgs.msg import Image
+
 from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE, STATE_DIR
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import global_config
@@ -58,8 +61,6 @@ from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
 from dimos.imitation.collection.recorder import CollectionRecorder
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.Image import Image
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_groot_wbc import (
     _G1GrootCoordinator,
     _unitree_g1_groot_wbc_core,

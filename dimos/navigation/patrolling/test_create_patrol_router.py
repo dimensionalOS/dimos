@@ -16,6 +16,9 @@
 import os
 
 import cv2
+from dimos_generated.geometry_msgs.msg import Point
+from dimos_generated.nav_msgs.msg import OccupancyGrid
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 import pytest
 
@@ -24,8 +27,9 @@ from dimos.mapping.occupancy.path_resampling import smooth_resample_path
 from dimos.mapping.occupancy.visualizations import visualize_occupancy_grid
 from dimos.mapping.pointclouds.occupancy import height_cost_occupancy
 from dimos.mapping.pointclouds.util import read_pointcloud
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.image import image_view
+from dimos.msgs.occupancy import world_to_grid
+from dimos.msgs.pointcloud import pointcloud_from_xyz
 from dimos.navigation.patrolling.create_patrol_router import create_patrol_router
 from dimos.navigation.patrolling.utilities import point_to_pose_stamped
 from dimos.navigation.replanning_a_star.min_cost_astar import min_cost_astar
@@ -35,7 +39,7 @@ from dimos.utils.data import get_data
 @pytest.fixture
 def big_office() -> OccupancyGrid:
     data = read_pointcloud(get_data("big_office.ply"))
-    cloud = PointCloud2.from_numpy(np.asarray(data.points), frame_id="")
+    cloud = pointcloud_from_xyz(np.asarray(data.points), header=Header(frame_id="map"))
     return height_cost_occupancy(cloud)
 
 
@@ -44,13 +48,13 @@ def big_office() -> OccupancyGrid:
     "router_name, saturation", [("random", 0.20), ("coverage", 0.30), ("frontier", 0.20)]
 )
 def test_patrolling_coverage(router_name, saturation, big_office) -> None:
-    start = (-1.03, -13.48)
+    start = Point(x=-1.03, y=-13.48)
     robot_width = 0.4
     multiplier = 1.5
     big_office_gradient = gradient(big_office, max_distance=1.5)
     router = create_patrol_router(router_name, robot_width * multiplier)
     router.handle_occupancy_grid(big_office)
-    router.handle_odom(point_to_pose_stamped(start))
+    router.handle_odom(point_to_pose_stamped(start, big_office.header))
 
     all_poses: list = []
     for _ in range(15):
@@ -58,15 +62,15 @@ def test_patrolling_coverage(router_name, saturation, big_office) -> None:
         if goal is None:
             continue
         path = min_cost_astar(
-            big_office_gradient, goal.position, start, unknown_penalty=1.0, use_cpp=True
+            big_office_gradient, goal.pose.position, start, unknown_penalty=1.0, use_cpp=True
         )
         if path is None:
             continue
-        path = smooth_resample_path(path, goal, 0.1)
+        path = smooth_resample_path(path, goal.pose, 0.1)
         for pose in path.poses:
             router.handle_odom(pose)
             all_poses.append(pose)
-        start = (path.poses[-1].position.x, path.poses[-1].position.y)
+        start = path.poses[-1].pose.position
 
     assert router.get_saturation() > saturation
 
@@ -76,14 +80,15 @@ def test_patrolling_coverage(router_name, saturation, big_office) -> None:
 
 def _save_coverage_image(router_name, router, all_poses, big_office, big_office_gradient) -> None:
     image = visualize_occupancy_grid(big_office_gradient, "rainbow")
-    h, w = image.data.shape[:2]
+    pixels = image_view(image)
+    h, w = pixels.shape[:2]
     visit_counts = np.zeros((h, w), dtype=np.float32)
-    radius = int(np.ceil(router._clearance_radius_m / big_office.resolution))
+    radius = int(np.ceil(router._clearance_radius_m / big_office.info.resolution))
     stamp = np.zeros((h, w), dtype=np.uint8)
 
     for pose in all_poses:
-        grid = big_office.world_to_grid((pose.position.x, pose.position.y))
-        gx, gy = int(grid.x), int(grid.y)
+        grid = world_to_grid(big_office, pose.pose.position)
+        gx, gy = int(grid[0]), int(grid[1])
         if 0 <= gy < h and 0 <= gx < w:
             stamp[:] = 0
             cv2.circle(stamp, (gx, gy), radius, 1, -1)
@@ -93,9 +98,8 @@ def _save_coverage_image(router_name, router, all_poses, big_office, big_office_
     mask = visit_counts > 0
     blend = 1.0 - (1.0 - alpha) ** visit_counts
 
-    overlay = image.data.astype(np.float32) * 0.24
+    overlay = pixels.astype(np.float32) * 0.24
     for c in range(3):
         overlay[:, :, c][mask] = overlay[:, :, c][mask] * (1.0 - blend[mask]) + 255.0 * blend[mask]
 
-    image.data = overlay.astype(np.uint8)
-    image.save(f"patrolling_coverage_{router_name}.png")
+    cv2.imwrite(f"patrolling_coverage_{router_name}.png", overlay.astype(np.uint8))

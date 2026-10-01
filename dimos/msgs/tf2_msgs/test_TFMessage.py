@@ -12,131 +12,102 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos_lcm.tf2_msgs import TFMessage as LCMTFMessage
+from dimos_generated.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
+from dimos_generated.std_msgs.msg import Header
+from dimos_generated.tf2_msgs.msg import TFMessage
+from rosbags.typesys import Stores, get_typestore
 
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.msgs.time import time_from_seconds
 
 
 def test_tfmessage_initialization() -> None:
-    """Test TFMessage initialization with Transform objects."""
-    # Create some transforms
-    tf1 = Transform(
-        translation=Vector3(1, 2, 3), rotation=Quaternion(0, 0, 0, 1), frame_id="world", ts=100.0
+    first = TransformStamped(
+        header=Header(stamp=time_from_seconds(100), frame_id="world"),
+        transform=Transform(translation=Vector3(x=1, y=2, z=3), rotation=Quaternion(w=1)),
     )
-    tf2 = Transform(
-        translation=Vector3(4, 5, 6),
-        rotation=Quaternion(0, 0, 0.707, 0.707),
-        frame_id="map",
-        ts=101.0,
+    second = TransformStamped(
+        header=Header(stamp=time_from_seconds(101), frame_id="map"),
+        transform=Transform(
+            translation=Vector3(x=4, y=5, z=6), rotation=Quaternion(z=0.707, w=0.707)
+        ),
     )
-
-    # Create TFMessage with transforms
-    msg = TFMessage(tf1, tf2)
-
-    assert len(msg) == 2
-    assert msg[0] == tf1
-    assert msg[1] == tf2
-
-    # Test iteration
-    transforms = list(msg)
-    assert transforms == [tf1, tf2]
+    message = TFMessage(transforms=[first, second])
+    assert len(message.transforms) == 2
+    assert [item.encode() for item in message.transforms] == [first.encode(), second.encode()]
 
 
 def test_tfmessage_empty() -> None:
-    """Test empty TFMessage."""
-    msg = TFMessage()
-    assert len(msg) == 0
-    assert list(msg) == []
+    message = TFMessage()
+    assert len(message.transforms) == 0
+    assert list(message.transforms) == []
 
 
 def test_tfmessage_add_transform() -> None:
-    """Test adding transforms to TFMessage."""
-    msg = TFMessage()
-
-    tf = Transform(translation=Vector3(1, 2, 3), frame_id="base", ts=200.0)
-
-    msg.add_transform(tf)
-    assert len(msg) == 1
-    assert msg[0] == tf
+    message = TFMessage()
+    transform = TransformStamped(
+        header=Header(stamp=time_from_seconds(200), frame_id="base"),
+        transform=Transform(translation=Vector3(x=1, y=2, z=3)),
+    )
+    message.transforms.append(transform)
+    assert len(message.transforms) == 1
+    assert message.transforms[0].encode() == transform.encode()
 
 
 def test_tfmessage_tree() -> None:
-    """Test adding transforms to TFMessage."""
-    msg = TFMessage()
-
-    msg.add_transform(
-        Transform(
-            translation=Vector3(1, 2, 0.5), frame_id="world", child_frame_id="robot", ts=200.0
+    message = TFMessage()
+    edges = [
+        ("world", "robot", (1, 2, 0.5)),
+        ("robot", "camera", (0.1, 0, 1)),
+        ("robot", "lidar", (0.2, 0, 0.2)),
+        ("lidar", "lidar_scanner", (0.05, 0, 0)),
+    ]
+    for parent, child, (x, y, z) in edges:
+        message.transforms.append(
+            TransformStamped(
+                header=Header(stamp=time_from_seconds(200), frame_id=parent),
+                child_frame_id=child,
+                transform=Transform(translation=Vector3(x=x, y=y, z=z)),
+            )
         )
-    )
-    msg.add_transform(
-        Transform(
-            translation=Vector3(0.1, 0, 1.0), frame_id="robot", child_frame_id="camera", ts=200.0
+    assert len(message.transforms) == 4
+    assert [
+        (
+            t.header.frame_id,
+            t.child_frame_id,
+            (t.transform.translation.x, t.transform.translation.y, t.transform.translation.z),
         )
-    )
-    msg.add_transform(
-        Transform(
-            translation=Vector3(0.2, 0, 0.2), frame_id="robot", child_frame_id="lidar", ts=200.0
-        )
-    )
-    msg.add_transform(
-        Transform(
-            translation=Vector3(0.05, 0, 0.0),
-            frame_id="lidar",
-            child_frame_id="lidar_scanner",
-            ts=200.0,
-        )
-    )
-
-    assert len(msg) == 4
-    print(msg)
+        for t in TFMessage.decode(message.encode()).transforms
+    ] == edges
 
 
-def test_tfmessage_lcm_encode_decode() -> None:
-    """Test encoding TFMessage to LCM bytes."""
-    # Create transforms
-    tf1 = Transform(
-        translation=Vector3(1.0, 2.0, 3.0),
-        rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+def test_tfmessage_cdr_encode_decode() -> None:
+    first = TransformStamped(
+        header=Header(stamp=time_from_seconds(123.456), frame_id="world"),
         child_frame_id="robot",
-        frame_id="world",
-        ts=123.456,
+        transform=Transform(translation=Vector3(x=1, y=2, z=3), rotation=Quaternion(w=1)),
     )
-    tf2 = Transform(
-        translation=Vector3(4.0, 5.0, 6.0),
-        rotation=Quaternion(0.0, 0.0, 0.707, 0.707),
-        frame_id="robot",
+    second = TransformStamped(
+        header=Header(stamp=time_from_seconds(124.567), frame_id="robot"),
         child_frame_id="target",
-        ts=124.567,
+        transform=Transform(
+            translation=Vector3(x=4, y=5, z=6), rotation=Quaternion(z=0.707, w=0.707)
+        ),
     )
-
-    # Create TFMessage
-    msg = TFMessage(tf1, tf2)
-
-    # Encode with custom child_frame_ids
-    encoded = msg.lcm_encode()
-
-    # Decode using LCM to verify
-    lcm_msg = LCMTFMessage.lcm_decode(encoded)
-
-    assert lcm_msg.transforms_length == 2
-
-    # Check first transform
-    ts1 = lcm_msg.transforms[0]
-    assert ts1.header.frame_id == "world"
-    assert ts1.child_frame_id == "robot"
-    assert ts1.header.stamp.sec == 123
-    assert ts1.header.stamp.nsec == 456000000
-    assert ts1.transform.translation.x == 1.0
-    assert ts1.transform.translation.y == 2.0
-    assert ts1.transform.translation.z == 3.0
-
-    # Check second transform
-    ts2 = lcm_msg.transforms[1]
-    assert ts2.header.frame_id == "robot"
-    assert ts2.child_frame_id == "target"
-    assert ts2.transform.rotation.z == 0.707
-    assert ts2.transform.rotation.w == 0.707
+    message = TFMessage(transforms=[first, second])
+    decoded = get_typestore(Stores.ROS2_JAZZY).deserialize_cdr(message.encode(), TFMessage.msg_name)
+    assert len(decoded.transforms) == 2
+    first_result, second_result = decoded.transforms
+    assert first_result.header.frame_id == "world"
+    assert first_result.child_frame_id == "robot"
+    assert (first_result.header.stamp.sec, first_result.header.stamp.nanosec) == (123, 456000000)
+    assert (
+        first_result.transform.translation.x,
+        first_result.transform.translation.y,
+        first_result.transform.translation.z,
+    ) == (1, 2, 3)
+    assert second_result.header.frame_id == "robot"
+    assert second_result.child_frame_id == "target"
+    assert (second_result.transform.rotation.z, second_result.transform.rotation.w) == (
+        0.707,
+        0.707,
+    )

@@ -15,6 +15,10 @@
 import atexit
 from dataclasses import replace
 
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.std_msgs.msg import Header
+from dimos_generated.trajectory_msgs.msg import JointTrajectory
 from IPython.core.completer import provisionalcompleter
 from IPython.core.interactiveshell import InteractiveShell
 import numpy as np
@@ -38,9 +42,7 @@ from dimos.manipulation.manipulation_spec import (
 )
 from dimos.manipulation.planning.spec.models import GeneratedPlan
 from dimos.manipulation.sdk import Arm, MotionError
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+from dimos.msgs.time import header_now
 from dimos.porcelain.dimos import Dimos
 
 
@@ -60,7 +62,11 @@ def rpc(mocker):
             "arm": PlanningGroupState(
                 joints=JointState(name=["j0", "j1"], position=[0.1, 0.2]),
                 end_effector_pose=PoseStamped(
-                    frame_id="world", position=[0.4, 0.0, 0.3], orientation=[0.0, 1.0, 0.0, 0.0]
+                    header=Header(frame_id="world"),
+                    pose=Pose(
+                        position=Point(x=0.4, y=0.0, z=0.3),
+                        orientation=Quaternion(x=0.0, y=1.0, z=0.0, w=0.0),
+                    ),
                 ),
                 gripper_position=0.5,
                 joint_presets={
@@ -71,10 +77,22 @@ def rpc(mocker):
         },
     )
     proxy.plan_to_joints.return_value = PlanResult(
-        PlanStatus.SUCCEEDED, plan=GeneratedPlan(("arm",), JointTrajectory())
+        PlanStatus.SUCCEEDED,
+        plan=GeneratedPlan(
+            ("arm",),
+            JointTrajectory(
+                header=header_now(),
+            ),
+        ),
     )
     proxy.plan_to_poses.return_value = PlanResult(
-        PlanStatus.SUCCEEDED, plan=GeneratedPlan(("arm",), JointTrajectory())
+        PlanStatus.SUCCEEDED,
+        plan=GeneratedPlan(
+            ("arm",),
+            JointTrajectory(
+                header=header_now(),
+            ),
+        ),
     )
     proxy.execute.return_value = ExecutionResult(ExecutionStatus.COMPLETED)
     proxy.move_linear.return_value = MoveResult(
@@ -173,7 +191,7 @@ def test_explicit_group_and_module_selection(app, rpc):
 
 def test_joints_are_fresh_arrays_in_declared_order(arm, rpc):
     state = rpc.get_state.return_value.groups["arm"]
-    state.joints.name[:] = ["j1", "j0"]
+    state.joints.name = ["j1", "j0"]
 
     positions = arm.joints()
     np.testing.assert_array_equal(positions, [0.2, 0.1])
@@ -226,9 +244,16 @@ def test_pose_preserves_current_orientation(arm, rpc):
     arm.move_pose([0.5, 0.1, 0.4], speed_scale=0.3, timeout=20.0)
 
     target = rpc.plan_to_poses.call_args.args[0]["arm"]
-    assert target.frame_id == "world"
-    np.testing.assert_array_equal(target.position.to_numpy(), [0.5, 0.1, 0.4])
-    assert target.orientation.to_tuple() == (0.0, 1.0, 0.0, 0.0)
+    assert target.header.frame_id == "world"
+    np.testing.assert_array_equal(
+        [target.pose.position.x, target.pose.position.y, target.pose.position.z], [0.5, 0.1, 0.4]
+    )
+    assert (
+        target.pose.orientation.x,
+        target.pose.orientation.y,
+        target.pose.orientation.z,
+        target.pose.orientation.w,
+    ) == (0.0, 1.0, 0.0, 0.0)
     assert rpc.plan_to_poses.call_args.kwargs == {"speed_scale": 0.3}
     rpc.execute.assert_called_once_with(
         blocking=True, timeout=20.0, plan_id=rpc.plan_to_poses.return_value.plan.plan_id
@@ -239,7 +264,12 @@ def test_explicit_orientation_needs_no_state_read(arm, rpc):
     arm.move_pose([0.4, 0.0, 0.3], orientation=(0.0, 0.0, 0.0, 1.0))
 
     target = rpc.plan_to_poses.call_args.args[0]["arm"]
-    assert target.orientation.to_tuple() == (0.0, 0.0, 0.0, 1.0)
+    assert (
+        target.pose.orientation.x,
+        target.pose.orientation.y,
+        target.pose.orientation.z,
+        target.pose.orientation.w,
+    ) == (0.0, 0.0, 0.0, 1.0)
     rpc.get_state.assert_not_called()
 
 

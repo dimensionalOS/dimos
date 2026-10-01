@@ -6,14 +6,14 @@
 #include <thread>
 
 #include "dimos/native.hpp"
-#include "geometry_msgs/Twist.hpp"
+#include <dimos_generated/messages.hpp>
 
 using dimos::native::Builder;
 using dimos::native::Config;
 using dimos::native::Module;
 using dimos::native::Output;
 namespace logging = dimos::native::log;
-using geometry_msgs::Twist;
+using geometry_msgs::msg::Twist;
 
 constexpr std::chrono::milliseconds PUBLISH_PERIOD{200};
 

@@ -12,55 +12,56 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Roundtrip + browser-payload tests for VideoStats."""
+"""CDR video telemetry carries declared fields, not a positional Joy payload."""
 
-from dimos_lcm.sensor_msgs import Joy as LCMJoy
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.dimos_msgs.msg import VideoStats
+from dimos_generated.std_msgs.msg import Header
+import pytest
 
-from dimos.teleop.utils.video_stats import VideoStats
+from dimos.memory.store.sqlite import SqliteStore
+from dimos.teleop.utils.video_stats import video_stats_from_dict
 
 
-def _sample() -> VideoStats:
-    return VideoStats(
-        ts=1700_000_000.5,
-        frame_id="video",
+def test_cdr_and_sqlite_preserve_exact_counters_and_source_header(tmp_path) -> None:
+    expected = VideoStats(
+        header=Header(stamp=Time(sec=1700000000, nanosec=123456789), frame_id="video"),
         fps=28.0,
         kbps=2100.5,
         width=1280,
         height=720,
         loss_pct=2.1,
-        jitter_buffer_ms=28.0,
-        decode_ms=6.0,
-        frames_dropped=2,
-        freezes=14,
-        e2e_latency_ms=87.5,
+        frames_dropped=2**32 + 1,
+        freezes=2**32 + 2,
     )
+    assert VideoStats.decode(expected.encode()) == expected
+    assert VideoStats.msg_name == "dimos_msgs/msg/VideoStats"
+    assert "uint64 frames_dropped" in VideoStats.schema
+    path = tmp_path / "video.db"
+    with SqliteStore(path=str(path)) as store:
+        stream = store.stream("video_stats", VideoStats, codec="cdr")
+        stream.append(expected, ts=1700000000.0)
+    with SqliteStore(path=str(path)) as store:
+        assert store.stream("video_stats").first().data == expected
 
 
-def test_lcm_roundtrip_preserves_all_fields() -> None:
-    original = _sample()
-    decoded = VideoStats.lcm_decode(original.lcm_encode())
-    assert decoded == original
-    # ts is float; round-trips through LCM int sec + int nsec, so allow small slack.
-    assert abs(decoded.ts - original.ts) < 1e-6
-
-
-def test_from_dict_matches_browser_payload_shape() -> None:
-    """Browser ships exactly this JSON shape over state_reliable."""
-    payload = {
-        "type": "video_stats",  # extra key ignored
-        "fps": 28.0,
-        "kbps": 2100.5,
-        "width": 1280,
-        "height": 720,
-        "loss_pct": 2.1,
-        "jitter_ms": 5.5,  # extra unused key in current payload
-        "frames_dropped": 2,
-        "freezes": 14,
-        "jitter_buffer_ms": 28.0,
-        "decode_ms": 6.0,
-        "e2e_latency_ms": 87.5,
-    }
-    stats = VideoStats.from_dict(payload)
+def test_browser_json_maps_named_fields_and_preserves_zero_timestamp() -> None:
+    stats = video_stats_from_dict(
+        {
+            "type": "video_stats",
+            "ts": 0,
+            "fps": 28.0,
+            "kbps": 2100.5,
+            "width": 1280,
+            "height": 720,
+            "frames_dropped": 2,
+            "freezes": 14,
+            "e2e_latency_ms": 87.5,
+        }
+    )
+    assert stats.header.stamp.sec == 0
+    assert stats.header.stamp.nanosec == 0
+    assert stats.header.frame_id == "video"
     assert stats.fps == 28.0
     assert stats.kbps == 2100.5
     assert stats.width == 1280
@@ -70,33 +71,20 @@ def test_from_dict_matches_browser_payload_shape() -> None:
     assert stats.e2e_latency_ms == 87.5
 
 
-def test_decode_pads_short_axes_for_forward_compat() -> None:
-    """An older recording with fewer metrics should still decode (zero-fill)."""
-    short = LCMJoy()
-    short.header.frame_id = "video"
-    short.header.stamp.sec = 100
-    short.header.stamp.nsec = 0
-    short.axes_length = 3
-    short.axes = [25.0, 1500.0, 640.0]  # only fps, kbps, width
-    short.buttons_length = 0
-    short.buttons = []
-
-    decoded = VideoStats.lcm_decode(short.lcm_encode())
-    assert decoded.fps == 25.0
-    assert decoded.kbps == 1500.0
-    assert decoded.width == 640
-    # Missing fields zero-filled.
-    assert decoded.height == 0
-    assert decoded.freezes == 0
+def test_null_metrics_use_defaults_and_missing_timestamp_gets_receipt_time() -> None:
+    stats = video_stats_from_dict({"fps": None, "width": None})
+    assert stats.fps == 0
+    assert stats.width == 0
+    assert stats.header.stamp.sec > 0
 
 
-def test_carrier_is_lcm_joy() -> None:
-    """Encoded bytes are a valid LCMJoy — proves we ride on the existing type."""
-    blob = _sample().lcm_encode()
-    j = LCMJoy.lcm_decode(blob)
-    expected = [28.0, 2100.5, 1280.0, 720.0, 2.1, 28.0, 6.0, 2.0, 14.0, 87.5]
-    # Joy.axes is float32[], so compare with tolerance.
-    assert len(j.axes) == len(expected)
-    for got, want in zip(j.axes, expected, strict=True):
-        assert abs(got - want) < 1e-5, f"axis mismatch: {got} vs {want}"
-    assert j.header.frame_id == "video"
+@pytest.mark.parametrize("field", ["width", "height", "frames_dropped", "freezes"])
+def test_negative_unsigned_metrics_are_rejected(field: str) -> None:
+    with pytest.raises(ValueError, match=field):
+        video_stats_from_dict({field: -1})
+
+
+@pytest.mark.parametrize("field,bits", [("width", 32), ("frames_dropped", 64)])
+def test_oversized_unsigned_metrics_are_rejected(field: str, bits: int) -> None:
+    with pytest.raises(ValueError, match=field):
+        video_stats_from_dict({field: 1 << bits})

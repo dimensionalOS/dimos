@@ -16,12 +16,13 @@
 
 from typing import Any
 
+from dimos_generated.foxglove_msgs.msg import CompressedVideo
+from dimos_generated.sensor_msgs.msg import CameraInfo
+
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.transport import ZenohTransport
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
-from dimos.msgs.foxglove_msgs.CompressedVideo import CompressedVideo
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.navigation.dannav.holonomic_tc.module import DanHolonomicTC
 from dimos.navigation.dannav.local_planner.module import DanLocalPlanner
 from dimos.navigation.movement_manager.movement_manager import MovementManager
@@ -37,6 +38,7 @@ from dimos.robot.deeprobotics.m20.constants import (
     PLANNING_HEIGHT_M,
     ROTATION_DIAMETER_M,
 )
+from dimos.visualization.rerun.message_helpers import camera_pinhole, video_archetype
 from dimos.visualization.vis_module import vis_module
 
 VOXEL_SIZE_M = 0.1
@@ -50,23 +52,15 @@ def _render_path(msg: Any) -> Any:
 
 
 def _render_h265(msg: CompressedVideo) -> Any:
-    import rerun as rr
-
-    return rr.VideoStream(codec=rr.VideoCodec.H265, sample=msg.data.tobytes())
+    return video_archetype(msg)
 
 
 def _render_front_camera_info(msg: CameraInfo) -> Any:
-    return msg.to_rerun(
-        image_topic="world/front_camera",
-        optical_frame="front_camera_optical",
-    )
+    return [("world/front_camera", camera_pinhole(msg))]
 
 
 def _render_rear_camera_info(msg: CameraInfo) -> Any:
-    return msg.to_rerun(
-        image_topic="world/rear_camera",
-        optical_frame="rear_camera_optical",
-    )
+    return [("world/rear_camera", camera_pinhole(msg))]
 
 
 def _static_robot_body(rr: Any) -> list[Any]:

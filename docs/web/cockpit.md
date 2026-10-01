@@ -150,7 +150,7 @@ Which names a panel can use depends on the stream:
 A second camera, for example:
 
 ```python
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos_generated.sensor_msgs.msg import Image
 from dimos.web.cockpit import Channel, Row, Video, cockpit
 
 blueprint = cockpit(
@@ -275,7 +275,7 @@ The mechanism on the bridge side (generation numbers, clamps, why zeros are sent
 
 The page subscribes to every channel it can use as soon as it loads, whatever tab or panel is visible, and keeps those subscriptions until the manifest changes. The bridge encodes a channel only while at least one viewer is subscribed, so an open page keeps the robot encoding its cheap channels.
 
-Cheap means channels with a JSON encoding, and LCM encodings whose message has no variable-length array. They are read for the channels tab whether or not a panel shows them. Video frames, costmaps and LCM messages with variable-length arrays (point clouds, scans, paths) are read only when a panel binds them or a [web SDK](/docs/web/web_sdk.md) page subscribes. A channel whose encoding the cockpit cannot decode is listed with `no decoder` and left alone.
+Cheap means channels with a JSON encoding, and CDR encodings whose message has no variable-length array. They are read for the channels tab whether or not a panel shows them. Video frames, costmaps and CDR messages with variable-length arrays (point clouds, scans, paths) are read only when a panel binds them or a [web SDK](/docs/web/web_sdk.md) page subscribes. A channel whose encoding the cockpit cannot decode is listed with `no decoder` and left alone.
 
 The reason to have this distinction (cheap/expensive) is because you normally want everything present even if you're not focused on it. But some messages are espensive, so only those are excluded.
 

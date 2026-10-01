@@ -19,24 +19,24 @@ path = "dimos_realsense::RealSense"
 python = "dimos.hardware.sensors.camera.realsense.camera:RealSenseCamera"
 
 [package.metadata.dimos.module.realsense.inputs]
-tf = "tf2_msgs.TFMessage"
+tf = "tf2_msgs/msg/TFMessage"
 
 [package.metadata.dimos.module.realsense.outputs]
-color_image = "sensor_msgs.Image"
-depth_image = "sensor_msgs.Image"
-infrared_left = "sensor_msgs.Image"
-infrared_right = "sensor_msgs.Image"
-imu = "sensor_msgs.Imu"
-imu_info = "sensor_msgs.ImuInfo"
-pointcloud = "sensor_msgs.PointCloud2"
-camera_info = "sensor_msgs.CameraInfo"
-depth_camera_info = "sensor_msgs.CameraInfo"
-infrared_left_camera_info = "sensor_msgs.CameraInfo"
-infrared_right_camera_info = "sensor_msgs.CameraInfo"
+color_image = "sensor_msgs/msg/Image"
+depth_image = "sensor_msgs/msg/Image"
+infrared_left = "sensor_msgs/msg/Image"
+infrared_right = "sensor_msgs/msg/Image"
+imu = "sensor_msgs/msg/Imu"
+imu_info = "dimos_msgs/msg/ImuInfo"
+pointcloud = "sensor_msgs/msg/PointCloud2"
+camera_info = "sensor_msgs/msg/CameraInfo"
+depth_camera_info = "sensor_msgs/msg/CameraInfo"
+infrared_left_camera_info = "sensor_msgs/msg/CameraInfo"
+infrared_right_camera_info = "sensor_msgs/msg/CameraInfo"
 
 [dependencies]
 dimos-module = { path = "../../../../../../native/rust/dimos-module" }
-lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
+dimos-generated-messages = { path = "../../../../../message_codegen" }
 realsense-rust = "1.3"
 realsense-sys = "2.56"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }

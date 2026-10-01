@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { FrameHeader } from "@dimos/shared";
 import costmapFrames from "../../../shared/fixtures/costmap_frames.json";
-import lcmFrames from "../../../shared/fixtures/lcm_frames.json";
+import cdrFrames from "../../../shared/fixtures/cdr_frames.json";
 import { spec } from "../testing/fakeRelay.ts";
 import {
   type CostmapValue,
@@ -23,14 +23,14 @@ function b64ToBytes(b64: string): Uint8Array {
   return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
 }
 
-// The pose_stamped golden vector (Python-generated, see lcm.test.ts).
-const POSE = (lcmFrames as { vectors: { name: string; schema: unknown; payload_b64: string }[] })
+// The pose_stamped golden vector (Python-generated, see cdr.test.ts).
+const POSE = (cdrFrames as { vectors: { name: string; schema: unknown; payload_b64: string }[] })
   .vectors[0];
 const poseSpec = () =>
   spec({
-    ch: "lcm_pose",
-    encoding: "geometry_msgs.PoseStamped.lcm.v1",
-    params: { lcm: POSE.schema },
+    ch: "cdr_pose",
+    encoding: "geometry_msgs/msg/PoseStamped.cdr.v1",
+    params: { cdr: POSE.schema },
   });
 
 /** Minimal scannable JPEG: SOI + SOF0 declaring w x h (no scan data). */
@@ -59,7 +59,7 @@ describe("decoder registry", () => {
     expect(registry.get(undefined)).toBeUndefined();
   });
 
-  it("resolve() compiles *.lcm.v1 from params.lcm and caches per manifest record", () => {
+  it("resolve() compiles *.cdr.v1 from params.cdr and caches per manifest record", () => {
     expect(POSE.name).toBe("pose_stamped");
     const s = poseSpec();
     const decode = registry.resolve(s);
@@ -78,10 +78,10 @@ describe("decoder registry", () => {
     expect(registry.get(s.encoding)).toBeUndefined();
   });
 
-  it("resolve() lets an exact registration beat the lcm family rule", () => {
+  it("resolve() lets an exact registration beat the cdr family rule", () => {
     const own = createDecoderRegistry();
     const mine: Decoder = () => ({ value: "mine" });
-    own.register("geometry_msgs.PoseStamped.lcm.v1", mine);
+    own.register("geometry_msgs/msg/PoseStamped.cdr.v1", mine);
     expect(own.resolve(poseSpec())).toBe(mine);
   });
 
@@ -89,12 +89,12 @@ describe("decoder registry", () => {
     for (
       const params of [
         {},
-        { lcm: null },
-        { lcm: { type: "t.P", fp: "zz", structs: {} } },
-        { lcm: { type: "t.P", fp: "0011223344556677", structs: {} } },
+        { cdr: null },
+        { cdr: { type: "t.P", fp: "zz", structs: {} } },
+        { cdr: { type: "t.P", fp: "0011223344556677", structs: {} } },
       ]
     ) {
-      const s = spec({ ch: "x", encoding: "t.P.lcm.v1", params });
+      const s = spec({ ch: "x", encoding: "t/msg/P.cdr.v1", params });
       expect(registry.resolve(s)).toBeUndefined();
       expect(registry.resolve(s)).toBeUndefined();
     }

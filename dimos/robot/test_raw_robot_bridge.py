@@ -17,13 +17,15 @@ import io
 import json
 import time
 
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 from PIL import Image as PILImage
 import pytest
 
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.image import image_from_array
+from dimos.msgs.pointcloud import pointcloud_from_xyz
+from dimos.msgs.time import time_from_seconds
 from dimos.robot.raw_robot_bridge import Deadman, RawTopics, jpeg_bytes, odom_json, xyz_f32
 
 ENDPOINT = "tcp/127.0.0.1:17448"
@@ -58,7 +60,10 @@ def test_client_receives_sensor_topics_and_robot_receives_commands(
     robot.subscribe("cmd_vel/json", lambda b, _ts: commands.append(b))
     time.sleep(0.5)  # subscriptions propagate over the link
 
-    pose = PoseStamped(position=(1.0, 2.0, 0.5), orientation=(0.0, 0.0, 0.0, 1.0), ts=3.5)
+    pose = PoseStamped(
+        header=Header(stamp=time_from_seconds(3.5)),
+        pose=Pose(position=Point(x=1, y=2, z=0.5), orientation=Quaternion(w=1)),
+    )
     robot.put("odom/json", odom_json(pose))
     robot.put("camera/jpeg", b"\xff\xd8jpeg", ts=4.25)
     client.put("cmd_vel/json", json.dumps({"vx": 0.3, "vy": 0.0, "wz": 0.1, "t": 1.0}))
@@ -73,15 +78,27 @@ def test_client_receives_sensor_topics_and_robot_receives_commands(
 def test_encoders_are_plain_formats() -> None:
     frame = np.zeros((6, 8, 3), dtype=np.uint8)
     frame[:, :, 0] = 200
-    decoded = PILImage.open(io.BytesIO(jpeg_bytes(Image.from_numpy(frame, ts=1.0))))
+    decoded = PILImage.open(
+        io.BytesIO(
+            jpeg_bytes(
+                image_from_array(
+                    frame, encoding="rgb8", header=Header(stamp=time_from_seconds(1.0))
+                )
+            )
+        )
+    )
     assert decoded.format == "JPEG" and decoded.size == (8, 6)
 
     points = np.arange(12, dtype=np.float32).reshape(4, 3)
-    raw = xyz_f32(PointCloud2.from_numpy(points, timestamp=2.0))
+    raw = xyz_f32(pointcloud_from_xyz(points, header=Header(stamp=time_from_seconds(2.0))))
     assert np.frombuffer(raw, dtype="<f4").reshape(-1, 3).tolist() == points.tolist()
 
     fields = json.loads(
-        odom_json(PoseStamped(position=(0, 0, 0), orientation=(0, 0, 0, 1), ts=9.0))
+        odom_json(
+            PoseStamped(
+                header=Header(stamp=time_from_seconds(9.0)), pose=Pose(orientation=Quaternion(w=1))
+            )
+        )
     )
     assert list(fields) == ["t", "x", "y", "z", "qx", "qy", "qz", "qw"]
 

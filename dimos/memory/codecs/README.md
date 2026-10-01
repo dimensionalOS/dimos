@@ -1,57 +1,35 @@
-# codecs
+# Storage codecs
 
-Encode/decode payloads for persistent storage. Codecs convert typed Python objects to `bytes` and back, used by backends that store observation data as blobs.
+Codecs convert Python values to bytes for blob-backed stores such as SQLite.
+Generated messages use the same CDR bytes as typed transports. Raw images retain
+their pixels and encoding; lossy compression is an explicit conversion to a
+`sensor_msgs/msg/CompressedImage` value before storage.
 
-## Protocol
-
-```python
-class Codec(Protocol[T]):
-    def encode(self, value: T) -> bytes: ...
-    def decode(self, data: bytes) -> T: ...
-```
-
-## Built-in codecs
-
-| Codec | Type | Notes |
-|-------|------|-------|
-| `PickleCodec` | Any Python object | Fallback. Uses `HIGHEST_PROTOCOL`. |
-| `JpegCodec` | `Image` | Lossy compression via TurboJPEG. ~10-20x smaller. Preserves `frame_id` in header. |
-| `LcmCodec` | `DimosMsg` subclasses | Uses `lcm_encode()`/`lcm_decode()`. Zero-copy for LCM message types. |
-
-## Auto-selection
-
-`codec_for(payload_type)` picks the right codec:
+| Codec | Values | Stored representation |
+|-------|--------|-----------------------|
+| `CdrCodec` | Generated messages | Encapsulated CDR, with no private wrapper |
+| `Lz4Codec` | Values accepted by its inner codec | LZ4 frame around the inner bytes |
+| `PickleCodec` | Python objects | Python pickle; separate from typed message storage |
 
 ```python
-from dimos.memory.codecs import codec_for
+from dimos_generated.sensor_msgs.msg import Image, CompressedImage
+from dimos.memory.codecs.base import codec_for
 
-codec_for(Image)        # → JpegCodec(quality=50)
-codec_for(SomeLcmMsg)   # → LcmCodec(SomeLcmMsg)   (if has lcm_encode/lcm_decode)
-codec_for(dict)         # → PickleCodec()            (fallback)
-codec_for(None)         # → PickleCodec()
+codec_for(Image)            # CdrCodec(Image), lossless
+codec_for(CompressedImage)  # CdrCodec(CompressedImage)
+codec_for(dict)             # PickleCodec()
 ```
 
-## Writing a new codec
+SQLite persists the codec ID and Python payload type so reopening a stream uses
+the same codec. Use `codec="lz4+cdr"` for lossless blob compression. Old `lcm`,
+`lz4+lcm`, and `jpeg` storage codec IDs are rejected; no legacy decoder is retained.
 
-1. Create `dimos/memory/codecs/mycodec.py`:
+MCAP uses `cdr` channels with embedded `ros2msg` definitions and chunk compression.
+The reader resolves installed message types by qualified schema name. Unknown
+schemas remain inspectable as raw bytes; payload-module metadata never triggers
+an arbitrary import. Compressed images remain CompressedImage values when read.
+Multiple channels on one topic must agree on schema and timestamp policy.
 
-```python
-class MyCodec:
-    def encode(self, value: MyType) -> bytes:
-        ...
-
-    def decode(self, data: bytes) -> MyType:
-        ...
-```
-
-2. Add a branch in `codec_for()` in `base.py` to auto-select it for the relevant type.
-
-3. Add a test case to `test_codecs.py` — the grid fixture makes this easy:
-
-```python
-@pytest.fixture(params=[..., ("mycodec", MyCodec(), sample_value)])
-def codec_case(request):
-    ...
-```
-
-No base class needed — `Codec` is a protocol. Just implement `encode` and `decode`.
+A custom codec only needs `encode(value) -> bytes` and `decode(bytes) -> value`.
+Implement the `Codec` protocol and supply the instance explicitly to a stream.
+Adding a generated message does not require a new storage codec.

@@ -14,13 +14,13 @@
 import asyncio
 from collections.abc import Callable
 
+from dimos_generated.sensor_msgs.msg import PointCloud2
 import pytest
 
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.transport import LCMTransport
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.unitree.type.map import Map as Mapper
 
 

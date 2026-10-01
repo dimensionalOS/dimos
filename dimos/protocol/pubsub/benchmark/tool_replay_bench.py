@@ -35,21 +35,23 @@ import os
 from pathlib import Path
 import threading
 import time
-from typing import Any, TypeVar
+from typing import Any
+
+from dimos_generated.sensor_msgs.msg import CompressedImage, Image
+import numpy as np
 
 from dimos.core.core import rpc
 from dimos.core.module import Module
-from dimos.core.stream import In, Out, Stream
+from dimos.core.stream import In, Stream
 from dimos.core.transport import PubSubTransport
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.image import image_from_array, image_to_jpeg, image_view
+from dimos.msgs.time import to_seconds
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-T = TypeVar("T")
 
-
-class CompressedCodec(PubSubTransport[T]):
+class CompressedCodec(PubSubTransport[Image]):
     """Image→CompressedImage jpeg codec over any inner transport.
 
     Bench-only utility: rejected as public API in #2831 (transports shouldn't
@@ -58,7 +60,7 @@ class CompressedCodec(PubSubTransport[T]):
     Subscribers always receive a decoded Image.
     """
 
-    def __init__(self, inner: PubSubTransport[Any], quality: int = 75) -> None:
+    def __init__(self, inner: PubSubTransport[CompressedImage], quality: int = 75) -> None:
         super().__init__(inner.topic)
         self.inner = inner
         self.quality = quality
@@ -66,21 +68,30 @@ class CompressedCodec(PubSubTransport[T]):
     def __reduce__(self):  # type: ignore[no-untyped-def]
         return (CompressedCodec, (self.inner, self.quality))
 
-    def broadcast(self, stream: Out[T] | None, msg: T) -> None:
-        from dimos.msgs.sensor_msgs.CompressedImage import (
-            CompressedImage,
-        )  # deferred to avoid pulling in cv2/rerun
-
-        if not isinstance(msg, CompressedImage):
-            msg = CompressedImage.from_image(msg, quality=self.quality)  # type: ignore[assignment, arg-type]
-        self.inner.broadcast(stream, msg)
+    def broadcast(self, stream: Stream[Image] | None, msg: Image | CompressedImage) -> None:
+        compressed = (
+            msg
+            if isinstance(msg, CompressedImage)
+            else CompressedImage(
+                header=msg.header, format="jpeg", data=image_to_jpeg(msg, quality=self.quality)
+            )
+        )
+        self.inner.broadcast(None, compressed)
 
     def subscribe(
-        self, callback: Callable[[T], Any], selfstream: Stream[T] | None = None
+        self, callback: Callable[[Image], Any], selfstream: Stream[Image] | None = None
     ) -> Callable[[], None]:
-        return self.inner.subscribe(  # type: ignore[no-any-return]
-            lambda m: callback(m.decode()), selfstream
-        )
+        def decoded(message: CompressedImage) -> Any:
+            import cv2
+
+            pixels = cv2.imdecode(
+                np.frombuffer(message.data.view(), dtype=np.uint8), cv2.IMREAD_COLOR
+            )
+            if pixels is None:
+                raise ValueError("JPEG benchmark received an invalid compressed image")
+            return callback(image_from_array(pixels, encoding="bgr8", header=message.header))
+
+        return self.inner.subscribe(decoded)
 
     def start(self) -> None:
         self.inner.start()
@@ -116,13 +127,14 @@ class BenchSink(Module):
     def _on_image(self, msg: Image) -> None:
         now = time.time()
         self._count += 1
-        rec = {"t": now, "ts": msg.ts, "age": now - msg.ts, "i": self._count}
+        ts = to_seconds(msg.header.stamp)
+        rec = {"t": now, "ts": ts, "age": now - ts, "i": self._count}
         if self._work_ms > 0:
             import cv2
 
             deadline = time.perf_counter() + self._work_ms / 1000
             while time.perf_counter() < deadline:
-                cv2.GaussianBlur(msg.data, (31, 31), 5)
+                cv2.GaussianBlur(image_view(msg), (31, 31), 5)
         rec["done_t"] = time.time()
         with self._lock:
             self._buf.append(json.dumps(rec))
@@ -202,7 +214,6 @@ def main() -> None:
     from dimos.core.coordination.blueprints import autoconnect
     from dimos.core.coordination.module_coordinator import ModuleCoordinator
     from dimos.core.transport import LCMTransport
-    from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
     from dimos.robot.get_all_blueprints import get_blueprint_by_name
 
     bp = get_blueprint_by_name(args.blueprint)
@@ -220,7 +231,7 @@ def main() -> None:
             }
         )
 
-    coordinator = ModuleCoordinator.build(bp, {"g": {"replay": True, "viewer": "none"}})
+    coordinator = ModuleCoordinator.build(bp.global_config(replay=True, viewer="none"))
     logger.info("benchmark run started", mode=args.mode, blueprint=args.blueprint)
 
     stop = threading.Event()

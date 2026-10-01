@@ -19,9 +19,12 @@ Spatial Memory module for creating a semantic map of the environment.
 from datetime import datetime
 import os
 import time
-from typing import TYPE_CHECKING, Any
+from typing import Any
 import uuid
 
+from dimos_generated.geometry_msgs.msg import Point
+from dimos_generated.sensor_msgs.msg import Image
+from dimos_generated.tf2_msgs.msg import TFMessage
 import numpy as np
 from reactivex import Observable, interval, operators as ops
 from reactivex.disposable import Disposable
@@ -30,16 +33,13 @@ from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.msgs.geometry import pose_from_transform, quaternion_euler
+from dimos.msgs.image import image_to_bgr
 from dimos.perception.experimental.image_embedding import ImageEmbeddingProvider
 from dimos.perception.experimental.spatial_vector_db import SpatialVectorDB
 from dimos.perception.experimental.visual_memory import VisualMemory
 from dimos.types.robot_location import RobotLocation
 from dimos.utils.logging_config import setup_logger
-
-if TYPE_CHECKING:
-    from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 _OUTPUT_DIR = DIMOS_PROJECT_ROOT / "assets" / "output"
 _MEMORY_DIR = _OUTPUT_DIR / "memory"
@@ -162,7 +162,7 @@ class SpatialMemory(Module):
             embedding_provider=self.embedding_provider,
         )
 
-        self.last_position: Vector3 | None = None
+        self.last_position: Point | None = None
         self.last_record_time: float | None = None
 
         self.frame_count: int = 0
@@ -177,19 +177,11 @@ class SpatialMemory(Module):
 
     @rpc
     def start(self) -> None:
-        import cv2
-
         super().start()
 
         # Subscribe to LCM streams
         def set_video(image_msg: Image) -> None:
-            # Convert Image message to numpy array
-            if hasattr(image_msg, "data"):
-                frame = image_msg.data
-                frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-                self._latest_video_frame = frame
-            else:
-                logger.warning("Received image message without data attribute")
+            self._latest_video_frame = image_to_bgr(image_msg)
 
         self.register_disposable(Disposable(self.color_image.subscribe(set_video)))
 
@@ -219,7 +211,7 @@ class SpatialMemory(Module):
             return
 
         # Create Pose object with position and orientation
-        current_pose = tf.to_pose()
+        current_pose = pose_from_transform(tf).pose
 
         # Process the frame directly
         try:
@@ -250,16 +242,16 @@ class SpatialMemory(Module):
 
             frame_id = f"frame_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
             # Get euler angles from quaternion orientation for metadata
-            euler = tf.rotation.to_euler()
+            roll, pitch, yaw = quaternion_euler(tf.transform.rotation)
 
             # Create metadata dictionary with primitive types only
             metadata = {
                 "pos_x": float(current_pose.position.x),
                 "pos_y": float(current_pose.position.y),
                 "pos_z": float(current_pose.position.z),
-                "rot_x": float(euler.x),
-                "rot_y": float(euler.y),
-                "rot_z": float(euler.z),
+                "rot_x": roll,
+                "rot_y": pitch,
+                "rot_z": yaw,
                 "timestamp": current_time,
                 "frame_id": frame_id,
             }
@@ -279,7 +271,7 @@ class SpatialMemory(Module):
 
             logger.info(
                 f"Stored frame at position ({current_pose.position.x:.2f}, {current_pose.position.y:.2f}, {current_pose.position.z:.2f}), "
-                f"rotation ({euler.x:.2f}, {euler.y:.2f}, {euler.z:.2f}) "
+                f"rotation ({roll:.2f}, {pitch:.2f}, {yaw:.2f}) "
                 f"stored {self.stored_frame_count}/{self.frame_count} frames"
             )
 
@@ -378,7 +370,7 @@ class SpatialMemory(Module):
                 vector_id=frame_id, image=frame, embedding=frame_embedding, metadata=metadata
             )
 
-            self.last_position = position_v3
+            self.last_position = Point(x=position_v3.x, y=position_v3.y, z=position_v3.z)
             self.last_record_time = current_time
             self.stored_frame_count += 1
 
@@ -481,11 +473,12 @@ class SpatialMemory(Module):
             return False
 
         # Create RobotLocation object
-        location = RobotLocation(  # type: ignore[call-arg]
+        translation = tf.transform.translation
+        location = RobotLocation(
             name=name,
-            position=tf.translation,
-            rotation=tf.rotation.to_euler(),
-            description=description or f"Location: {name}",
+            position=(translation.x, translation.y, translation.z),
+            rotation=quaternion_euler(tf.transform.rotation),
+            metadata={"description": description or f"Location: {name}"},
             timestamp=time.time(),
         )
 

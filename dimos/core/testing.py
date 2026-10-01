@@ -16,19 +16,33 @@ from threading import Event, Thread
 import time
 from typing import Any
 
+from dimos_generated.geometry_msgs.msg import PoseStamped, Vector3
+from dimos_generated.sensor_msgs.msg import PointCloud2
+
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.robot.unitree.type.lidar import pointcloud2_from_webrtc_lidar
-from dimos.robot.unitree.type.odometry import Odometry
+from dimos.msgs.time import to_seconds
+from dimos.robot.unitree.type.lidar import RawLidarMsg, pointcloud2_from_webrtc_lidar
+from dimos.robot.unitree.type.odometry import RawOdometryMessage, pose_from_webrtc_odometry
+from dimos.types.timestamped import TimestampedData
 from dimos.utils.testing.replay import SensorReplay
 
 
+def _replay_lidar(raw: RawLidarMsg) -> TimestampedData[PointCloud2]:
+    cloud = pointcloud2_from_webrtc_lidar(raw)
+    return TimestampedData(cloud, to_seconds(cloud.header.stamp))
+
+
+def _replay_odometry(raw: RawOdometryMessage) -> TimestampedData[PoseStamped]:
+    pose = pose_from_webrtc_odometry(raw)
+    return TimestampedData(pose, to_seconds(pose.header.stamp))
+
+
 class MockRobotClient(Module):
-    odometry: Out[Odometry]
+    odometry: Out[PoseStamped]
+    timed_odometry: Out[TimestampedData[PoseStamped]]
     lidar: Out[PointCloud2]
     mov: In[Vector3]
 
@@ -59,8 +73,8 @@ class MockRobotClient(Module):
         super().stop()
 
     def odomloop(self) -> None:
-        odomdata = SensorReplay("raw_odometry_rotate_walk", autocast=Odometry.from_msg)
-        lidardata = SensorReplay("office_lidar", autocast=pointcloud2_from_webrtc_lidar)
+        odomdata = SensorReplay("raw_odometry_rotate_walk", autocast=_replay_odometry)
+        lidardata = SensorReplay("office_lidar", autocast=_replay_lidar)
 
         lidariter = lidardata.iterate()
         self._stop_event.clear()
@@ -69,9 +83,11 @@ class MockRobotClient(Module):
                 if self._stop_event.is_set():
                     return
                 print(odom)
-                odom.pubtime = time.perf_counter()
-                self.odometry.publish(odom)
+                # Benchmark publication time belongs to the Python-object stream,
+                # keeping the generated pose's exact source header untouched.
+                self.timed_odometry.publish(TimestampedData(odom.value, time.perf_counter()))
+                self.odometry.publish(odom.value)
 
                 lidarmsg = next(lidariter)
-                self.lidar.publish(lidarmsg)
+                self.lidar.publish(lidarmsg.value)
                 time.sleep(0.1)

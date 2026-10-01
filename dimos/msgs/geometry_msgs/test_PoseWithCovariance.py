@@ -12,311 +12,111 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos_lcm.geometry_msgs import PoseWithCovariance as LCMPoseWithCovariance
+"""Generated covariance values, with explicit NumPy matrix operations.
+
+Legacy polymorphic positional constructors and presentation methods are retired.
+"""
+
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseWithCovariance, Quaternion
 import numpy as np
 import pytest
-
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.PoseWithCovariance import PoseWithCovariance
-
-
-def test_pose_with_covariance_default_init() -> None:
-    """Test that default initialization creates a pose at origin with zero covariance."""
-    pose_cov = PoseWithCovariance()
-
-    # Pose should be at origin with identity orientation
-    assert pose_cov.pose.position.x == 0.0
-    assert pose_cov.pose.position.y == 0.0
-    assert pose_cov.pose.position.z == 0.0
-    assert pose_cov.pose.orientation.x == 0.0
-    assert pose_cov.pose.orientation.y == 0.0
-    assert pose_cov.pose.orientation.z == 0.0
-    assert pose_cov.pose.orientation.w == 1.0
-
-    # Covariance should be all zeros
-    assert np.all(pose_cov.covariance == 0.0)
-    assert pose_cov.covariance.shape == (36,)
-
-
-def test_pose_with_covariance_pose_init() -> None:
-    """Test initialization with a Pose object."""
-    pose = Pose(1.0, 2.0, 3.0, 0.1, 0.2, 0.3, 0.9)
-    pose_cov = PoseWithCovariance(pose)
-
-    # Pose should match
-    assert pose_cov.pose.position.x == 1.0
-    assert pose_cov.pose.position.y == 2.0
-    assert pose_cov.pose.position.z == 3.0
-    assert pose_cov.pose.orientation.x == 0.1
-    assert pose_cov.pose.orientation.y == 0.2
-    assert pose_cov.pose.orientation.z == 0.3
-    assert pose_cov.pose.orientation.w == 0.9
-
-    # Covariance should be zeros by default
-    assert np.all(pose_cov.covariance == 0.0)
-
-
-def test_pose_with_covariance_pose_and_covariance_init() -> None:
-    """Test initialization with pose and covariance."""
-    pose = Pose(1.0, 2.0, 3.0)
-    covariance = np.arange(36, dtype=float)
-    pose_cov = PoseWithCovariance(pose, covariance)
-
-    # Pose should match
-    assert pose_cov.pose.position.x == 1.0
-    assert pose_cov.pose.position.y == 2.0
-    assert pose_cov.pose.position.z == 3.0
-
-    # Covariance should match
-    assert np.array_equal(pose_cov.covariance, covariance)
-
-
-def test_pose_with_covariance_list_covariance() -> None:
-    """Test initialization with covariance as a list."""
-    pose = Pose(1.0, 2.0, 3.0)
-    covariance_list = list(range(36))
-    pose_cov = PoseWithCovariance(pose, covariance_list)
-
-    # Covariance should be converted to numpy array
-    assert isinstance(pose_cov.covariance, np.ndarray)
-    assert np.array_equal(pose_cov.covariance, np.array(covariance_list))
-
-
-def test_pose_with_covariance_copy_init() -> None:
-    """Test copy constructor."""
-    pose = Pose(1.0, 2.0, 3.0, 0.1, 0.2, 0.3, 0.9)
-    covariance = np.arange(36, dtype=float)
-    original = PoseWithCovariance(pose, covariance)
-    copy = PoseWithCovariance(original)
-
-    # Should be equal but not the same object
-    assert copy == original
-    assert copy is not original
-    assert copy.pose is not original.pose
-    assert copy.covariance is not original.covariance
-
-    # Modify original to ensure they're independent
-    original.covariance[0] = 999.0
-    assert copy.covariance[0] != 999.0
-
-
-def test_pose_with_covariance_lcm_init() -> None:
-    """Test initialization from LCM message."""
-    lcm_msg = LCMPoseWithCovariance()
-    lcm_msg.pose.position.x = 1.0
-    lcm_msg.pose.position.y = 2.0
-    lcm_msg.pose.position.z = 3.0
-    lcm_msg.pose.orientation.x = 0.1
-    lcm_msg.pose.orientation.y = 0.2
-    lcm_msg.pose.orientation.z = 0.3
-    lcm_msg.pose.orientation.w = 0.9
-    lcm_msg.covariance = list(range(36))
-
-    pose_cov = PoseWithCovariance(lcm_msg)
-
-    # Pose should match
-    assert pose_cov.pose.position.x == 1.0
-    assert pose_cov.pose.position.y == 2.0
-    assert pose_cov.pose.position.z == 3.0
-    assert pose_cov.pose.orientation.x == 0.1
-    assert pose_cov.pose.orientation.y == 0.2
-    assert pose_cov.pose.orientation.z == 0.3
-    assert pose_cov.pose.orientation.w == 0.9
-
-    # Covariance should match
-    assert np.array_equal(pose_cov.covariance, np.arange(36))
-
-
-def test_pose_with_covariance_dict_init() -> None:
-    """Test initialization from dictionary."""
-    pose_dict = {"pose": Pose(1.0, 2.0, 3.0), "covariance": list(range(36))}
-    pose_cov = PoseWithCovariance(pose_dict)
-
-    assert pose_cov.pose.position.x == 1.0
-    assert pose_cov.pose.position.y == 2.0
-    assert pose_cov.pose.position.z == 3.0
-    assert np.array_equal(pose_cov.covariance, np.arange(36))
-
-
-def test_pose_with_covariance_dict_init_no_covariance() -> None:
-    """Test initialization from dictionary without covariance."""
-    pose_dict = {"pose": Pose(1.0, 2.0, 3.0)}
-    pose_cov = PoseWithCovariance(pose_dict)
-
-    assert pose_cov.pose.position.x == 1.0
-    assert np.all(pose_cov.covariance == 0.0)
-
-
-def test_pose_with_covariance_tuple_init() -> None:
-    """Test initialization from tuple."""
-    pose = Pose(1.0, 2.0, 3.0)
-    covariance = np.arange(36, dtype=float)
-    pose_tuple = (pose, covariance)
-    pose_cov = PoseWithCovariance(pose_tuple)
-
-    assert pose_cov.pose.position.x == 1.0
-    assert pose_cov.pose.position.y == 2.0
-    assert pose_cov.pose.position.z == 3.0
-    assert np.array_equal(pose_cov.covariance, covariance)
-
-
-def test_pose_with_covariance_properties() -> None:
-    """Test convenience properties."""
-    pose = Pose(1.0, 2.0, 3.0, 0.1, 0.2, 0.3, 0.9)
-    pose_cov = PoseWithCovariance(pose)
-
-    # Position properties
-    assert pose_cov.x == 1.0
-    assert pose_cov.y == 2.0
-    assert pose_cov.z == 3.0
-    assert pose_cov.position.x == 1.0
-    assert pose_cov.position.y == 2.0
-    assert pose_cov.position.z == 3.0
-
-    # Orientation properties
-    assert pose_cov.orientation.x == 0.1
-    assert pose_cov.orientation.y == 0.2
-    assert pose_cov.orientation.z == 0.3
-    assert pose_cov.orientation.w == 0.9
-
-    # Euler angle properties
-    assert pose_cov.roll == pose.roll
-    assert pose_cov.pitch == pose.pitch
-    assert pose_cov.yaw == pose.yaw
-
-
-def test_pose_with_covariance_matrix_property() -> None:
-    """Test covariance matrix property."""
-    pose = Pose()
-    covariance_array = np.arange(36, dtype=float)
-    pose_cov = PoseWithCovariance(pose, covariance_array)
-
-    # Get as matrix
-    cov_matrix = pose_cov.covariance_matrix
-    assert cov_matrix.shape == (6, 6)
-    assert cov_matrix[0, 0] == 0.0
-    assert cov_matrix[5, 5] == 35.0
-
-    # Set from matrix
-    new_matrix = np.eye(6) * 2.0
-    pose_cov.covariance_matrix = new_matrix
-    assert np.array_equal(pose_cov.covariance[:6], [2.0, 0.0, 0.0, 0.0, 0.0, 0.0])
-
-
-def test_pose_with_covariance_repr() -> None:
-    """Test string representation."""
-    pose = Pose(1.234, 2.567, 3.891)
-    pose_cov = PoseWithCovariance(pose)
-
-    repr_str = repr(pose_cov)
-    assert "PoseWithCovariance" in repr_str
-    assert "pose=" in repr_str
-    assert "covariance=" in repr_str
-    assert "36 elements" in repr_str
-
-
-def test_pose_with_covariance_str() -> None:
-    """Test string formatting."""
-    pose = Pose(1.234, 2.567, 3.891)
-    covariance = np.eye(6).flatten()
-    pose_cov = PoseWithCovariance(pose, covariance)
-
-    str_repr = str(pose_cov)
-    assert "PoseWithCovariance" in str_repr
-    assert "1.234" in str_repr
-    assert "2.567" in str_repr
-    assert "3.891" in str_repr
-    assert "cov_trace" in str_repr
-    assert "6.000" in str_repr  # Trace of identity matrix is 6
-
-
-def test_pose_with_covariance_equality() -> None:
-    """Test equality comparison."""
-    pose1 = Pose(1.0, 2.0, 3.0)
-    cov1 = np.arange(36, dtype=float)
-    pose_cov1 = PoseWithCovariance(pose1, cov1)
-
-    pose2 = Pose(1.0, 2.0, 3.0)
-    cov2 = np.arange(36, dtype=float)
-    pose_cov2 = PoseWithCovariance(pose2, cov2)
-
-    # Equal
-    assert pose_cov1 == pose_cov2
-
-    # Different pose
-    pose3 = Pose(1.1, 2.0, 3.0)
-    pose_cov3 = PoseWithCovariance(pose3, cov1)
-    assert pose_cov1 != pose_cov3
-
-    # Different covariance
-    cov3 = np.arange(36, dtype=float) + 1
-    pose_cov4 = PoseWithCovariance(pose1, cov3)
-    assert pose_cov1 != pose_cov4
-
-    # Different type
-    assert pose_cov1 != "not a pose"
-    assert pose_cov1 is not None
-
-
-def test_pose_with_covariance_lcm_encode_decode() -> None:
-    """Test LCM encoding and decoding."""
-    pose = Pose(1.0, 2.0, 3.0, 0.1, 0.2, 0.3, 0.9)
-    covariance = np.arange(36, dtype=float)
-    source = PoseWithCovariance(pose, covariance)
-
-    # Encode and decode
-    binary_msg = source.lcm_encode()
-    decoded = PoseWithCovariance.lcm_decode(binary_msg)
-
-    # Should be equal
-    assert decoded == source
-    assert isinstance(decoded, PoseWithCovariance)
-    assert isinstance(decoded.pose, Pose)
-    assert isinstance(decoded.covariance, np.ndarray)
-
-
-def test_pose_with_covariance_zero_covariance() -> None:
-    """Test with zero covariance matrix."""
-    pose = Pose(1.0, 2.0, 3.0)
-    pose_cov = PoseWithCovariance(pose)
-
-    assert np.all(pose_cov.covariance == 0.0)
-    assert np.trace(pose_cov.covariance_matrix) == 0.0
-
-
-def test_pose_with_covariance_diagonal_covariance() -> None:
-    """Test with diagonal covariance matrix."""
-    pose = Pose()
-    covariance = np.zeros(36)
-    # Set diagonal elements
-    for i in range(6):
-        covariance[i * 6 + i] = i + 1
-
-    pose_cov = PoseWithCovariance(pose, covariance)
-
-    cov_matrix = pose_cov.covariance_matrix
-    assert np.trace(cov_matrix) == sum(range(1, 7))  # 1+2+3+4+5+6 = 21
-
-    # Check diagonal elements
-    for i in range(6):
-        assert cov_matrix[i, i] == i + 1
-
-    # Check off-diagonal elements are zero
-    for i in range(6):
-        for j in range(6):
-            if i != j:
-                assert cov_matrix[i, j] == 0.0
-
-
+from rosbags.typesys import Stores, get_typestore
+
+
+def test_default_fields_and_covariance() -> None:
+    source = PoseWithCovariance()
+    value = source.pose
+    np.testing.assert_array_equal(
+        [
+            value.position.x,
+            value.position.y,
+            value.position.z,
+            value.orientation.x,
+            value.orientation.y,
+            value.orientation.z,
+            value.orientation.w,
+        ],
+        [0, 0, 0, 0, 0, 0, 1],
+    )
+    assert np.asarray(source.covariance).shape == (36,)
+    np.testing.assert_array_equal(source.covariance, np.zeros(36))
+
+
+@pytest.mark.parametrize("as_list", [False, True])
 @pytest.mark.parametrize(
-    "x,y,z",
-    [(0.0, 0.0, 0.0), (1.0, 2.0, 3.0), (-1.0, -2.0, -3.0), (100.0, -100.0, 0.0)],
+    "covariance",
+    [np.zeros(36), np.arange(36, dtype=float), np.eye(6).ravel(), np.diag(np.arange(1, 7)).ravel()],
 )
-def test_pose_with_covariance_parametrized_positions(x, y, z) -> None:
-    """Parametrized test for various position values."""
-    pose = Pose(x, y, z)
-    pose_cov = PoseWithCovariance(pose)
+def test_explicit_construction_and_independent_cdr(as_list: bool, covariance: np.ndarray) -> None:
+    source = PoseWithCovariance(
+        pose=Pose(
+            position=Point(x=1, y=2, z=3), orientation=Quaternion(x=0.1, y=0.2, z=0.3, w=0.9)
+        ),
+        covariance=covariance.tolist() if as_list else covariance,
+    )
+    decoded = PoseWithCovariance.decode(source.encode())
+    independent = get_typestore(Stores.ROS2_JAZZY).deserialize_cdr(
+        source.encode(), PoseWithCovariance.msg_name
+    )
+    for result in (source, decoded, independent):
+        value = result.pose
+        np.testing.assert_array_equal(
+            [
+                value.position.x,
+                value.position.y,
+                value.position.z,
+                value.orientation.x,
+                value.orientation.y,
+                value.orientation.z,
+                value.orientation.w,
+            ],
+            [1, 2, 3, 0.1, 0.2, 0.3, 0.9],
+        )
+        np.testing.assert_array_equal(result.covariance, covariance)
+        matrix = np.asarray(result.covariance).reshape(6, 6)
+        for row in range(6):
+            for col in range(6):
+                assert matrix[row, col] == covariance[row * 6 + col]
+        assert np.trace(matrix) == np.trace(covariance.reshape(6, 6))
 
-    assert pose_cov.x == x
-    assert pose_cov.y == y
-    assert pose_cov.z == z
+
+def test_copy_equality_and_independent_storage() -> None:
+    original = PoseWithCovariance(
+        pose=Pose(
+            position=Point(x=1, y=2, z=3), orientation=Quaternion(x=0.1, y=0.2, z=0.3, w=0.9)
+        ),
+        covariance=np.arange(36, dtype=float),
+    )
+    copied = PoseWithCovariance.decode(original.encode())
+    assert copied == original
+    assert copied is not original
+    assert copied.pose is not original.pose
+    assert copied.covariance is not original.covariance
+    original.covariance[0] = 999
+    assert copied.covariance[0] == 0
+    assert copied != original
+    assert copied != "not a message"
+    assert copied is not None
+
+
+def test_matrix_assignment() -> None:
+    source = PoseWithCovariance(covariance=np.arange(36, dtype=float))
+    matrix = np.asarray(source.covariance).reshape(6, 6)
+    assert matrix[0, 0] == 0
+    assert matrix[5, 5] == 35
+    source.covariance = (np.eye(6) * 2).ravel()
+    np.testing.assert_array_equal(list(source.covariance)[:6], [2, 0, 0, 0, 0, 0])
+    assert np.trace(np.asarray(source.covariance).reshape(6, 6)) == 12
+
+
+@pytest.mark.parametrize("size", [0, 35, 37])
+def test_fixed_covariance_rejects_invalid_length(size: int) -> None:
+    with pytest.raises((ValueError, TypeError, RuntimeError)):
+        PoseWithCovariance(covariance=np.zeros(size))
+
+
+@pytest.mark.parametrize("xyz", [(0, 0, 0), (1, 2, 3), (-1, -2, -3), (100, -100, 0)])
+def test_parameterized_values(xyz: tuple[float, float, float]) -> None:
+    source = PoseWithCovariance(pose=Pose(position=Point(x=xyz[0], y=xyz[1], z=xyz[2])))
+    position = source.pose.position
+    assert (position.x, position.y, position.z) == xyz

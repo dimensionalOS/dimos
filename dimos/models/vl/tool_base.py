@@ -12,12 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dimos_generated.sensor_msgs.msg import Image
 import pytest
 
 from dimos.core.transport import LCMTransport
 from dimos.models.vl.moondream import MoondreamVlModel
 from dimos.models.vl.qwen import QwenVlModel
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.image import image_from_file
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.utils.data import get_data
 
@@ -26,7 +27,7 @@ from dimos.utils.data import get_data
 def test_query_detections_real() -> None:
     """Test query_detections with real API calls (requires API key)."""
     # Load test image
-    image = Image.from_file(get_data("cafe.jpg"))
+    image = image_from_file(get_data("cafe.jpg"))
 
     # Initialize the model (will use real API)
     model = QwenVlModel()
@@ -55,7 +56,7 @@ def test_query_detections_real() -> None:
 def test_query_points() -> None:
     """Test query_points with real API calls (requires API key)."""
     # Load test image
-    image = Image.from_file(get_data("cafe.jpg"), format=ImageFormat.RGB).to_rgb()
+    image = image_from_file(get_data("cafe.jpg"))
 
     # Initialize the model (will use real API)
     model = MoondreamVlModel()

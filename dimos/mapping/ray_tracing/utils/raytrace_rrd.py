@@ -26,6 +26,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from dimos_generated.sensor_msgs.msg import PointCloud2
 import numpy as np
 from numpy.typing import NDArray
 import typer
@@ -35,7 +36,7 @@ from dimos.mapping.ray_tracing.voxel_map import VoxelRayMapper
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tf import StreamTF
 from dimos.memory.vis.utils import DEFAULT_RENDER_VOXEL, default_render_voxel
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.pointcloud import pointcloud_xyz
 from dimos.utils.data import resolve_named_path
 
 TIMELINE = "ts"
@@ -204,17 +205,26 @@ def main(
         for obs in lidar:
             t = tf.get(
                 world_frame,
-                obs.data.frame_id,
+                obs.data.header.frame_id,
                 time_point=obs.ts,
                 time_tolerance=TF_MATCH_TOLERANCE_S,
             )
             if t is None:
                 dropped += 1
                 continue
-            x, y, z = float(t.translation.x), float(t.translation.y), float(t.translation.z)
-            qx, qy, qz, qw = t.rotation.x, t.rotation.y, t.rotation.z, t.rotation.w
+            x, y, z = (
+                float(t.transform.translation.x),
+                float(t.transform.translation.y),
+                float(t.transform.translation.z),
+            )
+            qx, qy, qz, qw = (
+                t.transform.rotation.x,
+                t.transform.rotation.y,
+                t.transform.rotation.z,
+                t.transform.rotation.w,
+            )
             # Sensor-frame cloud: the mapper registers it by the tf pose.
-            raw = obs.data.points_f32()
+            raw = pointcloud_xyz(obs.data).astype(np.float32)
             for mapper in mappers.values():
                 mapper.add_frame(raw, (x, y, z), (qx, qy, qz, qw))
             count += 1
@@ -254,7 +264,7 @@ def main(
                 flip = np.sum(vectors * (robot - origins), axis=1) < 0
                 vectors = np.where(flip[:, None], -vectors, vectors)
                 if min_eigs is None:
-                    lengths = np.full(len(origins), normal_scale, np.float32)
+                    lengths: NDArray[np.float32] = np.full(len(origins), normal_scale, np.float32)
                 else:
                     lengths = normal_scale * _planarity_scale(min_eigs[keep])
                 rr.log(

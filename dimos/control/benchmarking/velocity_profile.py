@@ -40,10 +40,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
+from dimos_generated.nav_msgs.msg import Path
 import numpy as np
 
 from dimos.control.tasks.velocity_profiler import VelocityProfiler
-from dimos.msgs.nav_msgs.Path import Path
 
 # Go2 Rung-1 saturation envelope (mirrors runner.VX_MAX / WZ_MAX).
 GO2_VX_MAX = 1.0  # m/s
@@ -108,7 +108,9 @@ class PathSpeedCap:
     def for_path(self, path: Path) -> None:
         """(Re)compute the speed profile for ``path``. Call on path start."""
         self._profile = np.asarray(self._profiler.compute_profile(path), dtype=float)
-        self._pts = np.array([[p.position.x, p.position.y] for p in path.poses], dtype=float)
+        self._pts = np.array(
+            [[p.pose.position.x, p.pose.position.y] for p in path.poses], dtype=float
+        )
 
     def speed_limit_at(self, x: float, y: float) -> float:
         """Profile speed at the nearest path index, min over the lookahead

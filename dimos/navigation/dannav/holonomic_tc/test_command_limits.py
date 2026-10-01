@@ -23,10 +23,9 @@ from __future__ import annotations
 
 import math
 
+from dimos_generated.geometry_msgs.msg import Twist, Vector3
 import pytest
 
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.navigation.dannav.holonomic_tc.command_limits import (
     HolonomicCommandLimits,
     clamp_holonomic_cmd_vel,
@@ -40,7 +39,7 @@ def test_clamp_planar_speed_accel_and_slew() -> None:
 
     speed_out = clamp_holonomic_cmd_vel(
         Twist(),
-        Twist(linear=Vector3(3.0, 4.0, 0.0)),
+        Twist(linear=Vector3(x=3.0, y=4.0, z=0.0)),
         HolonomicCommandLimits(v_max_m_s, 10.0, 10.0, 10.0),
         1.0,
     )
@@ -50,25 +49,25 @@ def test_clamp_planar_speed_accel_and_slew() -> None:
     accel_limits = HolonomicCommandLimits(10.0, 10.0, a_max_m_s2, 10.0)
     from_rest = clamp_holonomic_cmd_vel(
         Twist(),
-        Twist(linear=Vector3(5.0, 0.0, 0.0)),
+        Twist(linear=Vector3(x=5.0, y=0.0, z=0.0)),
         accel_limits,
         dt_s,
     )
     assert from_rest.linear.x == pytest.approx(a_max_m_s2 * dt_s)
 
-    prev = Twist(linear=Vector3(0.8, 0.0, 0.0))
+    prev = Twist(linear=Vector3(x=0.8, y=0.0, z=0.0))
     slew = clamp_holonomic_cmd_vel(
         prev,
-        Twist(linear=Vector3(5.0, 0.0, 0.0)),
+        Twist(linear=Vector3(x=5.0, y=0.0, z=0.0)),
         HolonomicCommandLimits(10.0, 10.0, 1.0, 10.0),
         dt_s,
     )
     assert slew.linear.x == pytest.approx(0.8 + 1.0 * dt_s)
 
-    prev_moving = Twist(linear=Vector3(0.6, 0.8, 0.0))
+    prev_moving = Twist(linear=Vector3(x=0.6, y=0.8, z=0.0))
     reversal = clamp_holonomic_cmd_vel(
         prev_moving,
-        Twist(linear=Vector3(-0.6, -0.8, 0.0)),
+        Twist(linear=Vector3(x=-0.6, y=-0.8, z=0.0)),
         accel_limits,
         dt_s,
     )
@@ -86,7 +85,7 @@ def test_clamp_yaw_rate_and_accel() -> None:
     w_max_rad_s = 0.5
     rate_capped = clamp_holonomic_cmd_vel(
         Twist(),
-        Twist(angular=Vector3(0.0, 0.0, 1.0)),
+        Twist(angular=Vector3(x=0.0, y=0.0, z=1.0)),
         HolonomicCommandLimits(1.0, w_max_rad_s, 1.0, 5.0),
         1.0,
     )
@@ -96,7 +95,7 @@ def test_clamp_yaw_rate_and_accel() -> None:
     w_accel_rad_s2 = 2.0
     accel_capped = clamp_holonomic_cmd_vel(
         Twist(),
-        Twist(angular=Vector3(0.0, 0.0, 1.0)),
+        Twist(angular=Vector3(x=0.0, y=0.0, z=1.0)),
         HolonomicCommandLimits(1.0, 10.0, 1.0, w_accel_rad_s2),
         dt_s,
     )

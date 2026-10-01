@@ -1,5 +1,10 @@
 # Spatial Memory
 
+This walkthrough creates a small synthetic CDR recording locally. Its image,
+pose and cloud examples need no recording download. Semantic search additionally
+loads the CLIP model and builds embeddings from these sample images; the results
+demonstrate the API, not evidence from a real office.
+
 <details>
 <summary>Python</summary>
 
@@ -11,7 +16,10 @@ from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.vis.color import Color
 from dimos.memory.transform import downsample, throttle, speed, smooth
 from dimos.memory.vis.space.space import Space
-from dimos.utils.data import get_data
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from dimos.memory.demo_data import write_demo_recording
+from dimos.msgs.image import image_brightness, image_sharpness, image_view, image_to_rgb
 from dimos.memory.vis.space.elements import Point
 ```
 
@@ -20,23 +28,23 @@ from dimos.memory.vis.space.elements import Point
 we init our recording, investigate available streams
 
 ```python title="Python" session=mem
-store = SqliteStore(path=get_data("go2_bigoffice.db"))
+demo_directory = TemporaryDirectory()
+store = write_demo_recording(Path(demo_directory.name) / "recording.db")
 
 for name, stream in store.streams.items():
    print(stream.summary())
 ```
 
 ```results
-Stream("color_image"): 4164 items, 2025-12-26 11:09:08 to 2025-12-26 11:14:00 (292.5s, 14.23 Hz, 133.76 MiB)
-Stream("color_image_embedded"): 267 items, 2025-12-26 11:09:12 to 2025-12-26 11:14:00 (288.4s, 0.92 Hz, 12.14 MiB)
-Stream("lidar"): 2251 items, 2025-12-26 11:09:08 to 2025-12-26 11:14:00 (292.3s, 7.70 Hz, 320.76 MiB)
-Stream("odom"): 5465 items, 2025-12-26 11:09:08 to 2025-12-26 11:14:00 (292.5s, 18.68 Hz, 458.97 KiB)
+Stream("color_image"): 720 items, 2023-11-14 22:13:20 to 2023-11-14 22:16:19 (179.8s, 4.00 Hz, 94.22 KiB)
+Stream("lidar"): 720 items, 2023-11-14 22:13:20 to 2023-11-14 22:16:19 (179.8s, 4.00 Hz, 1.17 MiB)
+Stream("odom"): 720 items, 2023-11-14 22:13:20 to 2023-11-14 22:16:19 (179.8s, 4.00 Hz, 55.53 KiB)
 ```
 
 Any stream is drawable
 
 ```python title="Python" session=mem output=none
-global_map = pickle.loads(get_data("unitree_go2_bigoffice_map.pickle").read_bytes())
+global_map = store.streams.lidar.first().data
 
 drawing = Space()
 
@@ -82,18 +90,19 @@ drawing.add(
   # otherwise observations only hold positions and timestamps
   .transform(throttle(0.25)) \
   # we calculate brightness
-  .map(lambda obs: obs.derive(data=obs.data.brightness)))
+  .map(lambda obs: obs.derive(data=image_brightness(obs.data))))
 
 drawing.to_svg("assets/brightness.svg")
 ```
 
 ![output](assets/brightness.svg)
 
-So knowing above, we can create embeddings for the full stream,
+Embeddings require an explicit model. This optional larger indexing example
+is not executed as part of the walkthrough:
 
 ```python title="Python" session=mem skip
 from dimos.models.embedding.clip import CLIPModel
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos_generated.sensor_msgs.msg import Image
 from dimos.memory.transform import QualityWindow
 from dimos.memory.embed import EmbedImages
 
@@ -102,8 +111,8 @@ clip = CLIPModel()
 
 # Downsample to 2Hz, filter dark images, then embed
 pipeline = (
-    store.streams.color_image.filter(lambda obs: obs.data.brightness > 0.1)
-    .transform(QualityWindow(lambda img: img.sharpness, window=0.5))
+    store.streams.color_image.filter(lambda obs: image_brightness(obs.data) > 0.1)
+    .transform(QualityWindow(lambda img: image_sharpness(img), window=0.5))
     .transform(EmbedImages(clip))
     .save(embedded)
 )
@@ -127,7 +136,13 @@ from dimos.models.embedding.clip import CLIPModel
 drawing = Space()
 drawing.add(global_map)
 
-clip = CLIPModel()
+clip = CLIPModel(device="cpu")
+from dimos.memory.embed import EmbedImages
+from dimos_generated.sensor_msgs.msg import Image
+
+embedded = store.stream("color_image_embedded", Image, codec="lz4+cdr")
+# save() is lazy: iterate to populate the index before searching it.
+list(store.streams.color_image.transform(throttle(2.0)).transform(EmbedImages(clip)).save(embedded))
 search_vector = clip.embed_text("shop")
 drawing.add(store.streams.color_image_embedded.search(search_vector))
 
@@ -151,7 +166,7 @@ print(matches) # Stream("color_image_embedded") | vector_search(k=50)
 # here we execute it once, and feed it into a global mapper, then draw the map
 drawing.add(
    matches.map(lambda obs: store.streams.lidar.at(obs.ts).last()) \
-   .transform(VoxelMapTransformer()) \
+   .transform(VoxelMapTransformer(device="CPU:0")) \
    .last().data)
 
 # then we add matches to the map
@@ -162,7 +177,7 @@ drawing.to_svg("assets/embedding_focused.svg")
 
 ```results
 Stream("color_image_embedded") | vector_search(k=30)
-12:35:32.400 [inf][dimos/mapping/voxels/grid.py  ] VoxelGrid using device: CUDA:0
+16:24:39.279 [inf][dimos/mapping/voxels/grid.py  ] VoxelGrid using device: CPU:0 (packed-numpy)
 ```
 
 ![output](assets/embedding_focused.svg)
@@ -185,7 +200,7 @@ def plot_mosaic(frames, path, cols=5):
     fig.patch.set_facecolor("black")
     for i, ax in enumerate(axes.flat):
         if i < len(frames):
-            ax.imshow(frames[i].data)
+            ax.imshow(image_to_rgb(frames[i]))
             for spine in ax.spines.values():
                 spine.set_color("black")
                 spine.set_linewidth(0)

@@ -17,6 +17,8 @@
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
+from dimos_generated.geometry_msgs.msg import PoseStamped
+from dimos_generated.sensor_msgs.msg import JointState
 import numpy as np
 from numpy.typing import NDArray
 
@@ -25,8 +27,6 @@ from dimos.manipulation.planning.groups.utils import filter_joint_state_to_selec
 from dimos.manipulation.planning.spec.enums import IKStatus
 from dimos.manipulation.planning.spec.models import IKResult
 from dimos.manipulation.planning.spec.protocols import WorldSpec
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.JointState import JointState
 
 
 @dataclass(frozen=True)

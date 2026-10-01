@@ -18,6 +18,10 @@ import threading
 from types import MappingProxyType
 from typing import Any, Protocol
 
+from dimos_generated.geometry_msgs.msg import TransformStamped
+from dimos_generated.sensor_msgs.msg import Image
+from dimos_generated.std_msgs.msg import Header
+from dimos_generated.tf2_msgs.msg import TFMessage
 from pydantic import BaseModel
 import pytest
 
@@ -48,9 +52,6 @@ from dimos.core.module import Module
 from dimos.core.stream import IO, In, Out, Stream
 from dimos.core.transport import CloudflareTransport, PubSubTransport
 from dimos.core.transport_factory import transport_topic
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 import dimos.robot.get_all_blueprints as resolver
 from dimos.spec.utils import Spec
 
@@ -1122,7 +1123,11 @@ class IoTfPublisher(Module):
 
     @rpc
     def send(self, child: str) -> None:
-        self.tf.publish(TFMessage(Transform(frame_id="world", child_frame_id=child)))
+        self.tf.publish(
+            TFMessage(
+                transforms=[TransformStamped(header=Header(frame_id="world"), child_frame_id=child)]
+            )
+        )
 
 
 class IoTfEcho(Module):
@@ -1140,7 +1145,11 @@ class IoTfEcho(Module):
 
     @rpc
     def send(self, child: str) -> None:
-        self.tf.publish(TFMessage(Transform(frame_id="world", child_frame_id=child)))
+        self.tf.publish(
+            TFMessage(
+                transforms=[TransformStamped(header=Header(frame_id="world"), child_frame_id=child)]
+            )
+        )
 
     @rpc
     def seen(self) -> list[str]:

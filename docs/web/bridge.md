@@ -96,7 +96,7 @@ arrow from B.w - (0, 0.3in) to M.e - (0, 0.3in) "publishes" below
 | `encoding` | A codec id. `None` picks the default (see [Encodings](#encodings)). |
 | `delivery` | `reliable` or `latest`. |
 | `max_hz` | The rate cap. For a tx channel it is the publish rate the relay accepts, per viewer and per robot. |
-| `params` | Extra JSON for the encoder and the browser, shipped in the manifest. `params["lcm"]` is reserved for the LCM schema. |
+| `params` | Extra JSON for the encoder and the browser, shipped in the manifest. `params["cdr"]` is reserved for the ROS2 schema. |
 | `publish` | `none` (the default) or `shared`. A tx channel must say `shared`: any viewer may publish on it. `exclusive` is not implemented. |
 | `required_scope` | Carried in the manifest for a relay with scopes. Nothing checks it today. |
 | `paced` | rx only. Space sends instead of sampling. |
@@ -125,12 +125,12 @@ An encoding id names a codec pair: the encoder in the bridge and the decoder in 
 Two more need no registration:
 
 - `json.v1`: JSON scalars, lists, dicts and plain dataclasses on rx. On tx, scalars, lists and dicts only (a dataclass built from untrusted browser JSON needs an explicit decoder).
-- `<package>.<Message>.lcm.v1`, for example `geometry_msgs.PoseStamped.lcm.v1`: any dimOS message with an LCM schema, rx only. The frame is the message's `lcm_encode()` bytes and the manifest carries the schema, so the browser decodes it into a plain object with no registration. A bulk message costs its full size per frame (a `PointCloud2` is 16 bytes per point), so set `max_hz` accordingly or write an encoder that sends less.
+- `<package>/msg/<Message>.cdr.v1`, for example `geometry_msgs/msg/PoseStamped.cdr.v1`: any dimOS message with an ROS2 schema, rx only. The frame is the message's `encode()` bytes and the manifest carries the schema, so the browser decodes it into a plain object with no registration. A bulk message costs its full size per frame (a `PointCloud2` is 16 bytes per point), so set `max_hz` accordingly or write an encoder that sends less.
 
-When `encoding` is not given, an rx dimOS message gets its LCM encoding and everything else (every tx channel included) gets `json.v1`. `Image` has no default: use `jpeg.v1` or an encoder of your own. The built-in names keep their codecs: `Channel("odom", PoseStamped)` in `cockpit(channels=[...])` raises, because `odom` is `pose.json.v1`. Any other name takes the default:
+When `encoding` is not given, an rx dimOS message gets its CDR encoding and everything else (every tx channel included) gets `json.v1`. `Image` has no default: use `jpeg.v1` or an encoder of your own. The built-in names keep their codecs: `Channel("odom", PoseStamped)` in `cockpit(channels=[...])` raises, because `odom` is `pose.json.v1`. Any other name takes the default:
 
 ```python
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos_generated.geometry_msgs.msg import PoseStamped
 from dimos.web.cockpit import Channel
 
 print(Channel("pose", PoseStamped).encoding)
@@ -138,12 +138,12 @@ print(Channel("health", dict).encoding)
 ```
 
 ```results
-geometry_msgs.PoseStamped.lcm.v1
+geometry_msgs/msg/PoseStamped.cdr.v1
 json.v1
 ```
 
 ```python
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos_generated.sensor_msgs.msg import Image
 from dimos.web.cockpit import Channel
 
 try:
@@ -163,14 +163,14 @@ sensor_msgs.Image has no default web encoding (raw pixel buffers; use encoding='
 ```python skip
 import struct
 
-from dimos.msgs.nav_msgs.Path import Path
+from dimos_generated.nav_msgs.msg import Path
 from dimos.web.cockpit import Channel, cockpit
 from dimos.web.codecs import EncodedPayload, web_encoder
 
 
 @web_encoder("path.points.v1")
 def encode_path_points(msg: Path) -> EncodedPayload:
-    payload = b"".join(struct.pack("<ff", p.position.x, p.position.y) for p in msg.poses)
+    payload = b"".join(struct.pack("<ff", p.pose.position.x, p.pose.position.y) for p in msg.poses)
     return EncodedPayload(payload, {"n": len(msg.poses)})
 
 

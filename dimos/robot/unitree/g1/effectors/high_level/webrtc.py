@@ -14,6 +14,7 @@
 
 from typing import Any
 
+from dimos_generated.geometry_msgs.msg import Twist, Vector3
 from pydantic import Field
 from reactivex.disposable import Disposable
 
@@ -22,8 +23,6 @@ from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.robot.unitree.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree.g1.effectors.high_level.commands import (
     ARM_API_ID,
@@ -116,7 +115,7 @@ class G1HighLevelWebRtc(Module, HighLevelG1Spec):
             args = { "x": 0.5, "y": 0.0, "yaw": 0.0, "duration": 2.0 }
             move_velocity(**args)
         """
-        twist = Twist(linear=Vector3(x, y, 0), angular=Vector3(0, 0, yaw))
+        twist = Twist(linear=Vector3(x=x, y=y), angular=Vector3(z=yaw))
         self.move(twist, duration=duration)
         return f"Started moving with velocity=({x}, {y}, {yaw}) for {duration} seconds"
 

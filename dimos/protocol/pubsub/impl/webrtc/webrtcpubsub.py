@@ -38,7 +38,7 @@ class WebRTCPubSub(AllPubSub[str, bytes]):
     """AllPubSub[str, bytes] over a WebRTC DataChannel provider.
 
     WebRTC DataChannels are inherently "receive all" — messages arrive on a
-    shared multiplexed channel and are demuxed by topic/fingerprint. This
+    shared multiplexed channel and are demuxed by frame channel/type. This
     matches LCM multicast semantics, hence AllPubSub.
     """
 

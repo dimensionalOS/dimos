@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 import time
 from typing import TYPE_CHECKING
 
+from dimos_generated.sensor_msgs.msg import JointState
 import numpy as np
 
 from dimos.manipulation.planning.groups.models import PlanningGroupSelection
@@ -43,7 +44,6 @@ from dimos.manipulation.planning.spec.models import (
 )
 from dimos.manipulation.planning.spec.protocols import WorldSpec
 from dimos.manipulation.planning.utils.path_utils import compute_path_length
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -104,7 +104,7 @@ class RRTConnectPlanner:
         # Extract positions as numpy arrays for internal computation
         q_start = np.array(start.position, dtype=np.float64)
         q_goal = np.array(goal.position, dtype=np.float64)
-        joint_names = start.name  # Store for converting back to JointState
+        joint_names = list(start.name)  # Store for converting back to JointState
 
         error = self._validate_inputs(world, start, goal)
         if error is not None:
@@ -471,8 +471,8 @@ class RRTConnectPlanner:
             new_config = nearest.config + step_size * (diff / dist)
 
         # Check validity of edge using context-free method
-        start_state = JointState({"name": joint_names, "position": nearest.config.tolist()})
-        end_state = JointState({"name": joint_names, "position": new_config.tolist()})
+        start_state = JointState(name=joint_names, position=nearest.config.tolist())
+        end_state = JointState(name=joint_names, position=new_config.tolist())
         if world.check_edge_collision_free(start_state, end_state, self._collision_step_size):
             new_node = TreeNode(config=new_config, parent=nearest)
             nearest.children.append(new_node)
@@ -519,7 +519,7 @@ class RRTConnectPlanner:
         full_path_arrays = start_path + list(reversed(goal_path))
 
         # Convert to list of JointState
-        return [JointState({"name": joint_names, "position": q.tolist()}) for q in full_path_arrays]
+        return [JointState(name=joint_names, position=q.tolist()) for q in full_path_arrays]
 
     def _simplify_path(
         self,

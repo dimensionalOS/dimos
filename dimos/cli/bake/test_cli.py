@@ -113,7 +113,7 @@ def test_emit_config_is_a_complete_stdin_blob() -> None:
     for section in blob["modules"].values():
         assert isinstance(section["config"], dict) and section["config"]
     assert blob["modules"]["ray_tracing"]["topics"]["lidar"] == (
-        "dimos/lidar/sensor_msgs.PointCloud2"
+        "dimos/lidar/sensor_msgs/msg/PointCloud2"
     )
     assert blob["suppress"] == list(graph.suppressed_topics())
     assert blob["qos"] == graph.qos()

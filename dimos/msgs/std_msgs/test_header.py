@@ -12,87 +12,51 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from datetime import datetime
+"""ROS2 headers use explicit time conversion; no legacy sequence counter."""
+
+from datetime import datetime, timezone
 import time
 
-from dimos.msgs.std_msgs.Header import Header
+from dimos_generated.std_msgs.msg import Header
+from rosbags.typesys import Stores, get_typestore
+
+from dimos.msgs.time import header_now, time_from_nanoseconds, time_from_seconds, to_seconds
 
 
 def test_header_initialization_methods() -> None:
-    """Test various ways to initialize a Header."""
-
-    # Method 1: With timestamp and frame_id
-    header1 = Header(123.456, "world")
-    assert header1.seq == 1
-    assert header1.stamp.sec == 123
-    assert header1.stamp.nsec == 456000000
-    assert header1.frame_id == "world"
-
-    # Method 2: With just frame_id (uses current time)
-    header2 = Header("base_link")
-    assert header2.seq == 1
-    assert header2.frame_id == "base_link"
-    # Timestamp should be close to current time
-    assert abs(header2.timestamp - time.time()) < 0.1
-
-    # Method 3: Empty header (current time, empty frame_id)
-    header3 = Header()
-    assert header3.seq == 0
-    assert header3.frame_id == ""
-
-    # Method 4: With datetime object
-    dt = datetime(2025, 1, 18, 12, 30, 45, 500000)  # 500ms
-    header4 = Header(dt, "sensor")
-    assert header4.seq == 1
-    assert header4.frame_id == "sensor"
-    expected_timestamp = dt.timestamp()
-    assert abs(header4.timestamp - expected_timestamp) < 1e-6
-
-    # Method 5: With custom seq number
-    header5 = Header(999.123, "custom", seq=42)
-    assert header5.seq == 42
-    assert header5.stamp.sec == 999
-    assert header5.stamp.nsec == 123000000
-    assert header5.frame_id == "custom"
-
-    # Method 6: Using now() class method
-    header6 = Header.now("camera")
-    assert header6.seq == 1
-    assert header6.frame_id == "camera"
-    assert abs(header6.timestamp - time.time()) < 0.1
-
-    # Method 7: now() with custom seq
-    header7 = Header.now("lidar", seq=99)
-    assert header7.seq == 99
-    assert header7.frame_id == "lidar"
+    header = Header(stamp=time_from_seconds(123.456), frame_id="world")
+    assert header.stamp.sec == 123
+    assert header.stamp.nanosec == 456000000
+    assert header.frame_id == "world"
+    before = time.time_ns()
+    current = header_now("base_link")
+    after = time.time_ns()
+    assert before <= current.stamp.sec * 1000000000 + current.stamp.nanosec <= after
+    assert current.frame_id == "base_link"
+    empty = Header()
+    assert empty.stamp.sec == empty.stamp.nanosec == 0
+    assert empty.frame_id == ""
+    dt = datetime(2025, 1, 18, 12, 30, 45, 500000, tzinfo=timezone.utc)
+    dated = Header(stamp=time_from_seconds(dt.timestamp()), frame_id="sensor")
+    assert dated.frame_id == "sensor"
+    assert abs(to_seconds(dated.stamp) - dt.timestamp()) < 1e-6
+    custom = Header(stamp=time_from_seconds(999.123), frame_id="custom")
+    assert custom.stamp.sec == 999
+    assert custom.stamp.nanosec == 123000000
+    assert custom.frame_id == "custom"
 
 
-def test_header_properties() -> None:
-    """Test Header property accessors."""
-    header = Header(1234567890.123456789, "test")
-
-    # Test timestamp property
-    assert abs(header.timestamp - 1234567890.123456789) < 1e-6
-
-    # Test datetime property
-    dt = header.datetime
-    assert isinstance(dt, datetime)
+def test_header_datetime_conversion() -> None:
+    header = Header(stamp=time_from_nanoseconds(1234567890123456789), frame_id="test")
+    dt = datetime.fromtimestamp(to_seconds(header.stamp), tz=timezone.utc)
     assert abs(dt.timestamp() - 1234567890.123456789) < 1e-6
+    assert header.stamp.nanosec == 123456789
 
 
-def test_header_string_representation() -> None:
-    """Test Header string representations."""
-    header = Header(100.5, "map", seq=10)
-
-    # Test __str__
-    str_repr = str(header)
-    assert "seq=10" in str_repr
-    assert "time=100.5" in str_repr
-    assert "frame_id='map'" in str_repr
-
-    # Test __repr__
-    repr_str = repr(header)
-    assert "Header(" in repr_str
-    assert "seq=10" in repr_str
-    assert "Time(sec=100, nsec=500000000)" in repr_str
-    assert "frame_id='map'" in repr_str
+def test_header_independent_cdr_fields() -> None:
+    header = Header(stamp=time_from_seconds(100.5), frame_id="map")
+    decoded = get_typestore(Stores.ROS2_JAZZY).deserialize_cdr(header.encode(), Header.msg_name)
+    assert decoded.stamp.sec == 100
+    assert decoded.stamp.nanosec == 500000000
+    assert decoded.frame_id == "map"
+    assert "seq" not in Header.schema

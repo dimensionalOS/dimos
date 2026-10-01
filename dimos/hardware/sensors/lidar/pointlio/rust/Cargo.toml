@@ -21,19 +21,19 @@ path = "dimos_pointlio::module::PointLioModule"
 python = "dimos.hardware.sensors.lidar.pointlio.module:PointLioRust"
 
 [package.metadata.dimos.module.pointlio.inputs]
-lidar_raw = "sensor_msgs.PointCloud2"
-imu = "sensor_msgs.Imu"
-tf = "tf2_msgs.TFMessage"
+lidar_raw = "sensor_msgs/msg/PointCloud2"
+imu = "sensor_msgs/msg/Imu"
+tf = "tf2_msgs/msg/TFMessage"
 
 [package.metadata.dimos.module.pointlio.outputs]
-lidar = "sensor_msgs.PointCloud2"
-odometry = "nav_msgs.Odometry"
+lidar = "sensor_msgs/msg/PointCloud2"
+odometry = "nav_msgs/msg/Odometry"
 
 [dependencies]
 dimos-livox = { path = "../../livox/rust" }
 pointlio-core = { git = "https://github.com/dimensionalOS/dimos-module-pointlio.git", rev = "3c1dcf8b9dfe6402aaf141e116f4caef6c5c8088" }
 dimos-module = { path = "../../../../../../native/rust/dimos-module" }
-lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
+dimos-generated-messages = { path = "../../../../../message_codegen" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

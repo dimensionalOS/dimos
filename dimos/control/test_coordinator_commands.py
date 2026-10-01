@@ -31,6 +31,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from typing import Any
 
+from dimos_generated.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 import pytest
 
 import dimos.control.coordinator as coord_mod
@@ -41,8 +42,7 @@ from dimos.control.task import (
     JointCommandOutput,
     ResourceClaim,
 )
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
+from dimos.msgs.time import duration_from_seconds, header_now
 
 ARM_JOINTS = frozenset({"arm/joint1", "arm/joint2"})
 
@@ -126,10 +126,11 @@ class CommandRecordingTask(BaseControlTask):
 
 def _trajectory() -> JointTrajectory:
     return JointTrajectory(
+        header=header_now(),
         joint_names=["arm/joint1", "arm/joint2"],
         points=[
-            TrajectoryPoint(time_from_start=0.0, positions=[0.0, 0.0]),
-            TrajectoryPoint(time_from_start=1.0, positions=[0.1, 0.2]),
+            JointTrajectoryPoint(time_from_start=duration_from_seconds(0.0), positions=[0.0, 0.0]),
+            JointTrajectoryPoint(time_from_start=duration_from_seconds(1.0), positions=[0.1, 0.2]),
         ],
     )
 

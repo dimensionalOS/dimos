@@ -14,16 +14,15 @@
 
 import time
 
+from dimos_generated.geometry_msgs.msg import Vector3
 import lcm
-
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 
 def test_runpublish() -> None:
     for i in range(10):
-        msg = Vector3(-5 + i, -5 + i, i)
+        msg = Vector3(x=-5 + i, y=-5 + i, z=i)
         lc = lcm.LCM()
-        lc.publish("thing1_vector3#geometry_msgs.Vector3", msg.encode())
+        lc.publish("thing1_vector3#geometry_msgs/msg/Vector3", msg.encode())
         time.sleep(0.1)
         print(f"Published: {msg}")
 
@@ -31,11 +30,10 @@ def test_runpublish() -> None:
 def test_receive() -> None:
     lc = lcm.LCM()
 
-    def receive(bla, msg) -> None:
-        # print("receive", bla, msg)
+    def receive(channel: str, msg: bytes) -> None:
         print(Vector3.decode(msg))
 
-    lc.subscribe("thing1_vector3#geometry_msgs.Vector3", receive)
+    lc.subscribe("thing1_vector3#geometry_msgs/msg/Vector3", receive)
 
     def _loop() -> None:
         while True:

@@ -18,14 +18,14 @@ A lidar/odom stream comes in with poses that drift over time — the robot's
 estimate of where it is in the world slowly diverges from ground truth as
 small per-frame errors accumulate. PGO ("pose graph optimization") detects
 revisited places via loop closure and pulls the trajectory back into
-self-consistency. The result is a stream of *corrections*: a Transform per
+self-consistency. The result is a stream of *corrections*: a TransformStamped per
 keyframe that maps every drifted ("raw") pose to its corrected one.
 
 Pipeline:
 
     lidar: Stream[PointCloud2]                         # pose-stamped scans
         -> pgo_keyframes(...)             -> Stream[Keyframe]    # one per kf
-        -> keyframes_to_corrections(...)  -> Stream[Transform]   # world_corrected <- world_raw
+        -> keyframes_to_corrections(...)  -> Stream[TransformStamped]   # world_corrected <- world_raw
         -> apply_corrections(any_stream, corrections) -> Stream[T]  # obs.pose shuffled
 
 `pgo_keyframes` runs ISAM2 + ICP loop closure across the input, emitting
@@ -35,11 +35,11 @@ collect each accepted ICP loop edge as a `LoopClosure` (source+target
 optimized poses + ICP fitness) — useful for visualizing the pose graph.
 
 `keyframes_to_corrections` is pure arithmetic: per keyframe, the drift
-correction is `optimized @ local^-1` (Transform composition). The resulting
+correction is `optimized @ local^-1` (TransformStamped composition). The resulting
 stream has one entry per keyframe — sparse in time.
 
 `make_interpolator` materializes the sparse correction stream into a
-ts -> Transform function: SLERP for rotation, linear lerp for translation,
+ts -> TransformStamped function: SLERP for rotation, linear lerp for translation,
 clipping out-of-range queries to the endpoints.
 
 `apply_corrections` shuffles `obs.pose` on any stream using the interpolated
@@ -58,16 +58,30 @@ from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypedDict, TypeVar
 
+from dimos_generated.geometry_msgs.msg import Transform, TransformStamped, Vector3
+from dimos_generated.sensor_msgs.msg import PointCloud2
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 from scipy.spatial.transform import Rotation
 
 from dimos.memory.store.memory import MemoryStore
 from dimos.memory.stream import Stream
 from dimos.memory.type.observation import Observation
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.geometry import (
+    compose_transforms,
+    inverse_transform,
+    quaternion_from_matrix,
+    transform_from_pose,
+    transform_matrix,
+)
+from dimos.msgs.pointcloud import (
+    concatenate_clouds,
+    pointcloud_from_xyz,
+    pointcloud_to_open3d,
+    transform_cloud,
+    voxel_downsample_cloud,
+)
+from dimos.msgs.time import time_from_seconds, to_seconds
 from dimos.protocol.service.spec import BaseConfig
 from dimos.utils.logging_config import setup_logger
 
@@ -142,8 +156,8 @@ class Keyframe:
     """
 
     ts: float
-    local: Transform
-    optimized: Transform
+    local: TransformStamped
+    optimized: TransformStamped
 
 
 @dataclass(frozen=True)
@@ -156,8 +170,8 @@ class LoopClosure:
     tighter match.
     """
 
-    source: Transform
-    target: Transform
+    source: TransformStamped
+    target: TransformStamped
     score: float
 
 
@@ -199,27 +213,26 @@ def pgo_keyframes(
     return out
 
 
-def keyframes_to_corrections(keyframes: Stream[Keyframe]) -> Stream[Transform]:
-    """Per-keyframe drift correction as Transform(world_corrected <- world_raw)."""
+def keyframes_to_corrections(keyframes: Stream[Keyframe]) -> Stream[TransformStamped]:
+    """Per-keyframe drift correction as TransformStamped(world_corrected <- world_raw)."""
     mem = MemoryStore()
-    out: Stream[Transform] = mem.stream("corrections", Transform)
+    out: Stream[TransformStamped] = mem.stream("corrections", TransformStamped)
     for obs in keyframes:
         kf = obs.data
         # world_corrected <- body <- world_raw composes to world_corrected <- world_raw.
-        drift = kf.optimized + kf.local.inverse()
+        drift = compose_transforms(kf.optimized, inverse_transform(kf.local))
         out.append(drift, ts=kf.ts)
     return out
 
 
-def make_interpolator(corrections: Stream[Transform]) -> Callable[[float], Transform]:
-    """Materialize corrections once; return a fast ts -> Transform lookup."""
+def make_interpolator(corrections: Stream[TransformStamped]) -> Callable[[float], TransformStamped]:
+    """Materialize corrections once; return a fast ts -> TransformStamped lookup."""
     ts_list: list[float] = []
     R_list: list[np.ndarray] = []
     t_list: list[np.ndarray] = []
     for obs in corrections:
         R, t = _r_t_from_transform(obs.data)
-        # obs.ts is authoritative; obs.data.ts can be mutated by Transform's
-        # ts=0.0 -> time.time() fallback in its constructor.
+        # Observation time is the correction lookup key.
         ts_list.append(obs.ts)
         R_list.append(R)
         t_list.append(t)
@@ -238,7 +251,7 @@ def make_interpolator(corrections: Stream[Transform]) -> Callable[[float], Trans
     R_stack = np.stack(R_list)
     t_stack = np.stack(t_list)
 
-    def interp(ts: float) -> Transform:
+    def interp(ts: float) -> TransformStamped:
         ts_clip = float(np.clip(ts, ts_arr[0], ts_arr[-1]))
         idx = int(np.searchsorted(ts_arr, ts_clip))
         if idx == 0:
@@ -261,7 +274,7 @@ def make_interpolator(corrections: Stream[Transform]) -> Callable[[float], Trans
 
 def apply_corrections(
     stream: Stream[T],
-    corrections: Stream[Transform],
+    corrections: Stream[TransformStamped],
 ) -> Stream[T]:
     """Shuffle obs.pose on `stream` by the interpolated correction at each obs.ts.
 
@@ -275,10 +288,12 @@ def apply_corrections(
             if obs.pose is None:
                 yield obs
                 continue
-            raw_tf = Transform.from_pose(FRAME_BODY, obs.pose_stamped)
-            # Transform.__add__ composes: (T_corr + T_raw) applies T_corr after T_raw.
-            # Observation normalizes Transform back to 7-tuple via __post_init__.
-            corrected = interp(obs.ts) + raw_tf
+            pose = obs.pose_stamped
+            assert pose is not None
+            pose.header.frame_id = FRAME_WORLD_RAW
+            raw_tf = transform_from_pose(pose, child_frame_id=FRAME_BODY)
+            # Observation normalizes the generated transform to its storage pose tuple.
+            corrected = compose_transforms(interp(obs.ts), raw_tf)
             yield obs.derive(data=obs.data, pose=corrected)
 
     return stream.transform(xf)
@@ -297,19 +312,19 @@ class PoseGraph:
         self,
         keyframes: tuple[Keyframe, ...],
         loops: tuple[LoopClosure, ...],
-        correct: Callable[[float], Transform],
+        correct: Callable[[float], TransformStamped],
     ) -> None:
         self.keyframes = keyframes
         self.loops = loops
         self._correct = correct
 
-    def correction_at(self, ts: float) -> Transform:
+    def correction_at(self, ts: float) -> TransformStamped:
         """Drift correction (world_corrected <- world_raw) at `ts`."""
         return self._correct(ts)
 
-    def correct(self, pose: Transform) -> Transform:
+    def correct(self, pose: TransformStamped) -> TransformStamped:
         """Lift a world_raw pose into world_corrected."""
-        return self._correct(pose.ts) + pose
+        return compose_transforms(self._correct(to_seconds(pose.header.stamp)), pose)
 
 
 class PGO:
@@ -333,27 +348,28 @@ class PGO:
             last_ts = keyframes[-1].ts
         else:
             # No valid keyframes (e.g. pose-less input): correction is identity.
-            correct = lambda ts: Transform(  # noqa: E731
-                frame_id=FRAME_WORLD_CORRECTED, child_frame_id=FRAME_WORLD_RAW, ts=ts
-            )
+            correct = lambda ts: _transform_from_r_t(np.eye(3), np.zeros(3), ts=ts)  # noqa: E731
             last_ts = 0.0
         yield Observation(ts=last_ts, _data=PoseGraph(keyframes, tuple(loops), correct))
 
 
-def _r_t_from_transform(tf: Transform) -> tuple[np.ndarray, np.ndarray]:
-    q = tf.rotation
+def _r_t_from_transform(tf: TransformStamped) -> tuple[np.ndarray, np.ndarray]:
+    q = tf.transform.rotation
     R = Rotation.from_quat([q.x, q.y, q.z, q.w]).as_matrix()
-    t = np.array([tf.translation.x, tf.translation.y, tf.translation.z])
+    t = np.array(
+        [tf.transform.translation.x, tf.transform.translation.y, tf.transform.translation.z]
+    )
     return R, t
 
 
-def _transform_from_r_t(R: np.ndarray, t: np.ndarray, *, ts: float) -> Transform:
-    return Transform(
-        translation=Vector3(float(t[0]), float(t[1]), float(t[2])),
-        rotation=Quaternion.from_rotation_matrix(R),
-        frame_id=FRAME_WORLD_CORRECTED,
+def _transform_from_r_t(R: np.ndarray, t: np.ndarray, *, ts: float) -> TransformStamped:
+    return TransformStamped(
+        header=Header(frame_id=FRAME_WORLD_CORRECTED, stamp=time_from_seconds(ts)),
         child_frame_id=FRAME_WORLD_RAW,
-        ts=ts,
+        transform=Transform(
+            translation=Vector3(x=float(t[0]), y=float(t[1]), z=float(t[2])),
+            rotation=quaternion_from_matrix(R),
+        ),
     )
 
 
@@ -419,15 +435,24 @@ class _PGO:
         ts: float,
         world_cloud: PointCloud2,
     ) -> None:
-        if len(world_cloud) == 0:
+        if world_cloud.width * world_cloud.height == 0:
             return
         if not self._is_keyframe(local_pose):
             return
         # Unregister: lift world-frame scan back into body frame using its
         # odom pose, so PGO can re-project it via the optimized pose later.
-        body_cloud = world_cloud.transform(
-            _pose3_to_transform(local_pose.inverse(), ts=ts)
-        ).voxel_downsample(self._cfg.submap_resolution)
+        body_cloud = voxel_downsample_cloud(
+            transform_cloud(
+                world_cloud,
+                _pose3_to_transform(
+                    local_pose.inverse(),
+                    ts=ts,
+                    frame_id=FRAME_BODY,
+                    child_frame_id=world_cloud.header.frame_id,
+                ),
+            ),
+            self._cfg.submap_resolution,
+        )
         self._add_keyframe(local_pose, ts, body_cloud)
         self._search_for_loops()
         self._smooth_and_update()
@@ -558,16 +583,25 @@ class _PGO:
         lo = max(0, idx - half_range)
         hi = min(len(self._key_poses) - 1, idx + half_range)
         if lo > hi:
-            return PointCloud2()
-        cloud = self._key_poses[lo].body_cloud.transform(
-            _pose3_to_transform(self._key_poses[lo].optimized, ts=self._key_poses[lo].timestamp)
-        )
-        for i in range(lo + 1, hi + 1):
-            kp = self._key_poses[i]
-            cloud = cloud + kp.body_cloud.transform(
-                _pose3_to_transform(kp.optimized, ts=kp.timestamp)
+            return pointcloud_from_xyz(
+                np.empty((0, 3)), header=Header(frame_id=FRAME_WORLD_CORRECTED)
             )
-        return cloud.voxel_downsample(self._cfg.submap_resolution)
+
+        def registered(kp: _KeyPose) -> PointCloud2:
+            return transform_cloud(
+                kp.body_cloud,
+                _pose3_to_transform(
+                    kp.optimized,
+                    ts=kp.timestamp,
+                    frame_id=FRAME_WORLD_CORRECTED,
+                    child_frame_id=FRAME_BODY,
+                ),
+            )
+
+        cloud = registered(self._key_poses[lo])
+        for i in range(lo + 1, hi + 1):
+            cloud = concatenate_clouds(cloud, registered(self._key_poses[i]))
+        return voxel_downsample_cloud(cloud, self._cfg.submap_resolution)
 
     def _search_for_loops(
         self,
@@ -668,7 +702,7 @@ class _PGO:
         # already and extra loops add noise. Early-exit on a very tight
         # match to save redundant ICP runs in the common case.
         source = self._get_submap(cur_idx, source_half_range)
-        accepted: list[tuple[int, Transform, float]] = []
+        accepted: list[tuple[int, TransformStamped, float]] = []
         k = (
             candidates_per_iter
             if candidates_per_iter is not None
@@ -771,23 +805,24 @@ def _pose3_to_transform(
     ts: float,
     frame_id: str = "",
     child_frame_id: str = "",
-) -> Transform:
-    """PGO-internal: build a Transform from a Pose3."""
+) -> TransformStamped:
+    """PGO-internal: build a TransformStamped from a Pose3."""
     t = np.asarray(pose.translation())
-    return Transform(
-        translation=Vector3(float(t[0]), float(t[1]), float(t[2])),
-        rotation=Quaternion.from_rotation_matrix(pose.rotation().matrix()),
-        frame_id=frame_id,
+    return TransformStamped(
+        header=Header(frame_id=frame_id, stamp=time_from_seconds(ts)),
         child_frame_id=child_frame_id,
-        ts=ts,
+        transform=Transform(
+            translation=Vector3(x=float(t[0]), y=float(t[1]), z=float(t[2])),
+            rotation=quaternion_from_matrix(pose.rotation().matrix()),
+        ),
     )
 
 
-def _transform_to_pose3(tf: Transform) -> gtsam.Pose3:
-    """PGO-internal: build a Pose3 from a Transform."""
+def _transform_to_pose3(tf: TransformStamped) -> gtsam.Pose3:
+    """PGO-internal: build a Pose3 from a TransformStamped."""
     import gtsam  # type: ignore[import-not-found,import-untyped]
 
-    return gtsam.Pose3(tf.to_matrix())
+    return gtsam.Pose3(transform_matrix(tf.transform))
 
 
 def _icp(
@@ -797,8 +832,8 @@ def _icp(
     max_dist: float = 1.0,
     tol: float = 1e-6,
     min_inliers: int = 10,
-    init: Transform | None = None,
-) -> tuple[Transform, float]:
+    init: TransformStamped | None = None,
+) -> tuple[TransformStamped, float]:
     """Point-to-plane ICP using Open3D's tensor pipeline.
 
     Returns ``(tf, fitness)`` where ``fitness`` is mean squared inlier
@@ -809,11 +844,13 @@ def _icp(
     import open3d as o3d  # type: ignore[import-untyped]
     import open3d.core as o3c  # type: ignore[import-untyped]
 
-    if len(source) < min_inliers or len(target) < min_inliers:
-        return Transform.identity(), float("inf")
+    if source.width * source.height < min_inliers or target.width * target.height < min_inliers:
+        return _transform_from_r_t(
+            np.eye(3), np.zeros(3), ts=to_seconds(source.header.stamp)
+        ), float("inf")
 
-    src_pcd = source.pointcloud_tensor
-    tgt_pcd = target.pointcloud_tensor
+    src_pcd = o3d.t.geometry.PointCloud.from_legacy(pointcloud_to_open3d(source))
+    tgt_pcd = o3d.t.geometry.PointCloud.from_legacy(pointcloud_to_open3d(target))
 
     # Normals on the target enable point-to-plane ICP — converges tighter
     # than point-to-point on indoor scenes (walls give unambiguous normals
@@ -822,7 +859,7 @@ def _icp(
 
     device = src_pcd.device
     init_T = o3c.Tensor(
-        init.to_matrix() if init is not None else np.eye(4),
+        transform_matrix(init.transform) if init is not None else np.eye(4),
         dtype=o3c.float64,
         device=device,
     )
@@ -845,11 +882,17 @@ def _icp(
                 ),
             )
     except RuntimeError:
-        return Transform.identity(), float("inf")
+        return _transform_from_r_t(
+            np.eye(3), np.zeros(3), ts=to_seconds(source.header.stamp)
+        ), float("inf")
 
     if float(result.fitness) == 0.0:
-        return Transform.identity(), float("inf")
+        return _transform_from_r_t(
+            np.eye(3), np.zeros(3), ts=to_seconds(source.header.stamp)
+        ), float("inf")
 
     T_mat = result.transformation.numpy()
     rmse = float(result.inlier_rmse)
-    return _transform_from_r_t(T_mat[:3, :3], T_mat[:3, 3], ts=source.ts), rmse * rmse
+    return _transform_from_r_t(
+        T_mat[:3, :3], T_mat[:3, 3], ts=to_seconds(source.header.stamp)
+    ), rmse * rmse

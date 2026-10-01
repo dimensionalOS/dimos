@@ -27,6 +27,8 @@ from pytest_mock import MockerFixture
 
 pytest.importorskip("roboplan.toppra")
 
+from dimos_generated.sensor_msgs.msg import JointState
+
 from dimos.manipulation.planning.groups.models import (
     PlanningGroup,
     PlanningGroupDefinition,
@@ -53,7 +55,6 @@ from dimos.manipulation.planning.trajectory_generator.roboplan_toppra_parametriz
 )
 from dimos.manipulation.planning.world.roboplan_model import RoboPlanGroup, RoboPlanModel
 from dimos.manipulation.planning.world.roboplan_world import RoboPlanWorld
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import PlanarBaseDefinition, RobotModel
 
 pytestmark = pytest.mark.self_hosted
@@ -319,7 +320,7 @@ def test_roboplan_toppra_parametrizes_unbounded_planar_base(tmp_path: Path) -> N
         world, selection, result
     )
 
-    positions = [point.positions for point in plan.trajectory.points]
+    positions = [list(point.positions) for point in plan.trajectory.points]
     assert positions[0] == pytest.approx(start)
     assert positions[-1] == pytest.approx(goal)
     assert max(abs(current[2] - previous[2]) for previous, current in pairwise(positions)) < math.pi

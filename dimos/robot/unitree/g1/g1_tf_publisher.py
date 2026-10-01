@@ -26,16 +26,17 @@ import threading
 import time
 from typing import Any
 
+from dimos_generated.geometry_msgs.msg import Transform, TransformStamped, Vector3
+from dimos_generated.std_msgs.msg import Header
+from dimos_generated.tf2_msgs.msg import TFMessage
 from pydantic import Field
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.msgs.geometry import compose_transforms, inverse_transform, quaternion_from_euler
+from dimos.msgs.time import time_from_nanoseconds
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -51,25 +52,32 @@ _TORSO_D435_XYZ = (0.0576235, 0.01753, 0.42987)
 _WAIST_ROLL_ORIGIN = (-0.0039635, 0.0, 0.044)
 
 
-def torso_to_mid360() -> Transform:
-    """torso_link -> the Mid-360's own frame: URDF mount pitch plus the upside-down roll."""
-    return Transform(
-        translation=Vector3(*_TORSO_MID360_XYZ),
-        rotation=Quaternion.from_euler(Vector3(0.0, MID360_PITCH, 0.0))
-        * Quaternion.from_euler(Vector3(math.pi, 0.0, 0.0)),
-        frame_id="torso_link",
-        child_frame_id="mid360_link",
+def _mount(
+    parent: str,
+    child: str,
+    xyz: tuple[float, float, float] = (0.0, 0.0, 0.0),
+    roll: float = 0.0,
+    pitch: float = 0.0,
+    yaw: float = 0.0,
+) -> TransformStamped:
+    return TransformStamped(
+        header=Header(frame_id=parent),
+        child_frame_id=child,
+        transform=Transform(
+            translation=Vector3(x=xyz[0], y=xyz[1], z=xyz[2]),
+            rotation=quaternion_from_euler(roll, pitch, yaw),
+        ),
     )
 
 
-def torso_to_d435() -> Transform:
+def torso_to_mid360() -> TransformStamped:
+    """URDF mount pitch composed after the sensor's upside-down roll."""
+    return _mount("torso_link", "mid360_link", _TORSO_MID360_XYZ, roll=math.pi, pitch=MID360_PITCH)
+
+
+def torso_to_d435() -> TransformStamped:
     """torso_link -> d435_link, the URDF mount."""
-    return Transform(
-        translation=Vector3(*_TORSO_D435_XYZ),
-        rotation=Quaternion.from_euler(Vector3(0.0, D435_PITCH, 0.0)),
-        frame_id="torso_link",
-        child_frame_id="d435_link",
-    )
+    return _mount("torso_link", "d435_link", _TORSO_D435_XYZ, pitch=D435_PITCH)
 
 
 # rt/lowstate motor indices, ordering from make_humanoid_joints("g1").
@@ -78,34 +86,21 @@ _WAIST_ROLL_IDX = 13
 _WAIST_PITCH_IDX = 14
 
 
-def base_to_torso(waist_yaw: float, waist_roll: float, waist_pitch: float) -> Transform:
+def base_to_torso(waist_yaw: float, waist_roll: float, waist_pitch: float) -> TransformStamped:
     """base_link -> torso_link through the g1.urdf waist chain."""
-    yaw = Transform(
-        rotation=Quaternion.from_euler(Vector3(0.0, 0.0, waist_yaw)),
-        frame_id="base_link",
-        child_frame_id="waist_yaw_link",
-    )
-    roll = Transform(
-        translation=Vector3(*_WAIST_ROLL_ORIGIN),
-        rotation=Quaternion.from_euler(Vector3(waist_roll, 0.0, 0.0)),
-        frame_id="waist_yaw_link",
-        child_frame_id="waist_roll_link",
-    )
-    pitch = Transform(
-        rotation=Quaternion.from_euler(Vector3(0.0, waist_pitch, 0.0)),
-        frame_id="waist_roll_link",
-        child_frame_id="torso_link",
-    )
-    return yaw + roll + pitch
+    yaw = _mount("base_link", "waist_yaw_link", yaw=waist_yaw)
+    roll = _mount("waist_yaw_link", "waist_roll_link", _WAIST_ROLL_ORIGIN, roll=waist_roll)
+    pitch = _mount("waist_roll_link", "torso_link", pitch=waist_pitch)
+    return compose_transforms(compose_transforms(yaw, roll), pitch)
 
 
 def mount_transforms(
     waist_yaw: float = 0.0, waist_roll: float = 0.0, waist_pitch: float = 0.0
-) -> list[Transform]:
+) -> list[TransformStamped]:
     """The mount tree as published: rooted at mid360_link."""
     return [
-        -torso_to_mid360(),
-        -base_to_torso(waist_yaw, waist_roll, waist_pitch),
+        inverse_transform(torso_to_mid360()),
+        inverse_transform(base_to_torso(waist_yaw, waist_roll, waist_pitch)),
         torso_to_d435(),
     ]
 
@@ -212,8 +207,8 @@ class G1TfPublisher(Module):
             with self._waist_lock:
                 waist_yaw, waist_roll, waist_pitch = self._waist
             transforms = mount_transforms(waist_yaw, waist_roll, waist_pitch)
-            now = time.time()
+            now = time.time_ns()
             for transform in transforms:
-                transform.ts = now
-            self.tf.publish(TFMessage(*transforms))
+                transform.header.stamp = time_from_nanoseconds(now)
+            self.tf.publish(TFMessage(transforms=transforms))
             await asyncio.sleep(period)

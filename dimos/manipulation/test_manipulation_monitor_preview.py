@@ -19,6 +19,11 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.std_msgs.msg import Header
+from dimos_generated.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 import pytest
 
 from dimos.manipulation.manipulation_module import ManipulationModule
@@ -30,12 +35,7 @@ from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import PlanningStatus
 from dimos.manipulation.planning.spec.models import GeneratedPlan
 from dimos.manipulation.planning.spec.protocols import VisualizationSpec
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
+from dimos.msgs.time import duration_from_seconds, header_now
 from dimos.robot.assets.model import RobotModel
 
 
@@ -44,7 +44,9 @@ def canonical_model_config() -> RobotModelConfig:
     """Create a model whose joint names match coordinator-facing names."""
     return RobotModelConfig(
         model=RobotModel.from_file(Path("/path/to/robot.urdf")),
-        base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
+        base_pose=PoseStamped(
+            header=Header(frame_id=""), pose=Pose(position=Point(), orientation=Quaternion())
+        ),
         joint_names=["left/joint1", "left/joint2", "left/joint3"],
         base_link="link_base",
         planning_groups=[
@@ -61,7 +63,9 @@ def canonical_model_config() -> RobotModelConfig:
 def _one_joint_config(name: str = "arm") -> RobotModelConfig:
     return RobotModelConfig(
         model=RobotModel.from_file(Path("/path")),
-        base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
+        base_pose=PoseStamped(
+            header=Header(frame_id=""), pose=Pose(position=Point(), orientation=Quaternion())
+        ),
         joint_names=["j0"],
         base_link="base_link",
         planning_groups=[
@@ -86,10 +90,11 @@ def _install_generated_plan(
     )
     module._last_plan = GeneratedPlan(
         trajectory=JointTrajectory(
+            header=header_now(),
             joint_names=config.joint_names,
             points=[
-                TrajectoryPoint(
-                    time_from_start=float(index),
+                JointTrajectoryPoint(
+                    time_from_start=duration_from_seconds(float(index)),
                     positions=list(point),
                     velocities=[0.0 for _ in config.joint_names],
                 )
@@ -127,9 +132,12 @@ def _make_path(*points: list[float]) -> list[JointState]:
 def _make_trajectory(*points: tuple[float, list[float]]) -> JointTrajectory:
     joint_names = [f"j{i}" for i in range(len(points[0][1]))] if points else []
     return JointTrajectory(
+        header=header_now(),
         joint_names=joint_names,
         points=[
-            TrajectoryPoint(time_from_start=time_from_start, positions=positions)
+            JointTrajectoryPoint(
+                time_from_start=duration_from_seconds(time_from_start), positions=positions
+            )
             for time_from_start, positions in points
         ],
     )
@@ -187,6 +195,7 @@ class TestOnJointState:
         module.config.model = canonical_model_config
 
         msg = JointState(
+            header=Header(stamp=Time(sec=1700000000, nanosec=123456789), frame_id="robot"),
             name=["left/joint3", "unrelated", "left/joint1", "left/joint2"],
             position=[0.3, 9.0, 0.1, 0.2],
             velocity=[3.0, 9.0, 1.0, 2.0],
@@ -197,6 +206,9 @@ class TestOnJointState:
         assert state.name == canonical_model_config.joint_names
         assert state.position == [0.1, 0.2, 0.3]
         assert state.velocity == [1.0, 2.0, 3.0]
+        assert state.header == msg.header
+        msg.header.frame_id = "changed"
+        assert state.header.frame_id == "robot"
 
     def test_aliases_coordinator_names_onto_model_joints(
         self, canonical_model_config, module_factory
@@ -280,7 +292,9 @@ class TestWorldMonitorVisualization:
         monitor.cancel_preview_animation()
         path = _make_path([1.0], [2.0], [3.0])
         plan = GeneratedPlan(
-            trajectory=JointTrajectory(),
+            trajectory=JointTrajectory(
+                header=header_now(),
+            ),
             group_ids=("manipulator",),
             status=PlanningStatus.SUCCESS,
             path=path,
@@ -303,7 +317,12 @@ class TestWorldMonitorVisualization:
         assert monitor.get_visualization_url() is None
         monitor.update_visualization_state()
         monitor.cancel_preview_animation()
-        monitor.animate_trajectory(JointTrajectory(), 1.0)
+        monitor.animate_trajectory(
+            JointTrajectory(
+                header=header_now(),
+            ),
+            1.0,
+        )
         monitor.start_visualization_thread()
         assert monitor._viz_thread is None
 
@@ -320,7 +339,13 @@ class TestManipulationPreview:
 
     def test_clear_planned_path_invalidates_before_dismissing_preview(self, module_factory):
         module = module_factory()
-        plan = GeneratedPlan(trajectory=JointTrajectory(), group_ids=("manipulator",), path=[])
+        plan = GeneratedPlan(
+            trajectory=JointTrajectory(
+                header=header_now(),
+            ),
+            group_ids=("manipulator",),
+            path=[],
+        )
         module._last_plan = plan
         module._world_monitor = MagicMock()
         plan_during_dismissal: list[GeneratedPlan | None] = []
@@ -337,7 +362,11 @@ class TestManipulationPreview:
     def test_clear_planned_path_clears_without_a_world_monitor(self, module_factory):
         module = module_factory()
         module._last_plan = GeneratedPlan(
-            trajectory=JointTrajectory(), group_ids=("manipulator",), path=[]
+            trajectory=JointTrajectory(
+                header=header_now(),
+            ),
+            group_ids=("manipulator",),
+            path=[],
         )
 
         assert module.clear_planned_path().succeeded

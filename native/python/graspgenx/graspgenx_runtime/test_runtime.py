@@ -19,6 +19,9 @@ from __future__ import annotations
 import inspect
 from typing import Any
 
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.sensor_msgs.msg import PointCloud2
+from dimos_generated.std_msgs.msg import Header
 import graspgenx_runtime.runtime as runtime_module
 from graspgenx_runtime.runtime import GraspGenXRuntimeModule
 import numpy as np
@@ -31,7 +34,7 @@ from dimos.manipulation.grasping.grasp_gen_x.module import (
     GraspGenXError,
     GraspGenXModule,
 )
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.pointcloud import pointcloud_from_xyz
 
 
 def config(**overrides: Any) -> GraspGenXConfig:
@@ -54,7 +57,9 @@ def module_args(value: GraspGenXConfig | None = None) -> dict[str, Any]:
 
 def cloud(points: np.ndarray | None = None) -> PointCloud2:
     xyz = np.zeros((1, 3), dtype=np.float32) if points is None else points
-    return PointCloud2.from_numpy(xyz, frame_id="camera", timestamp=12.5)
+    return pointcloud_from_xyz(
+        xyz, header=Header(frame_id="camera", stamp=Time(sec=12, nanosec=500000000))
+    )
 
 
 @pytest.fixture
@@ -75,7 +80,7 @@ def test_start_is_synchronous_and_idempotent(runtime: Any) -> None:
         module.start()
 
         runtime.assert_called_once_with(module.config)
-        assert len(module.propose_grasps(cloud())) == 1
+        assert len(module.propose_grasps(cloud()).candidates) == 1
     finally:
         module.stop()
 
@@ -111,10 +116,12 @@ def test_adapter_sorts_stably_truncates_and_applies_tcp_transform(runtime: Any) 
         module.start()
         result = module.propose_grasps(cloud())
 
-        assert [candidate.score for candidate in result] == pytest.approx([0.9, 0.5])
-        assert [candidate.pose.position.x for candidate in result] == pytest.approx([13.0, 11.0])
+        assert [candidate.score for candidate in result.candidates] == pytest.approx([0.9, 0.5])
+        assert [candidate.pose.position.x for candidate in result.candidates] == pytest.approx(
+            [13.0, 11.0]
+        )
         assert result.header.frame_id == "camera"
-        assert result.header.timestamp == pytest.approx(12.5)
+        assert result.header.stamp == Time(sec=12, nanosec=500000000)
     finally:
         module.stop()
 
@@ -130,7 +137,7 @@ def test_empty_backend_result_preserves_input_header(runtime: Any) -> None:
         result = module.propose_grasps(cloud())
 
         assert result.header.frame_id == "camera"
-        assert result.header.timestamp == pytest.approx(12.5)
+        assert result.header.stamp == Time(sec=12, nanosec=500000000)
         assert result.candidates == []
     finally:
         module.stop()
@@ -190,16 +197,16 @@ def test_inference_failure_is_wrapped(runtime: Any) -> None:
 def test_not_started_and_missing_metadata_are_rejected(runtime: Any) -> None:
     module = GraspGenXRuntimeModule(_isolated_python_runtime=True, **module_args())
     missing_frame = cloud()
-    missing_frame.frame_id = ""
+    missing_frame.header.frame_id = ""
     missing_timestamp = cloud()
-    missing_timestamp.ts = None
+    missing_timestamp.header.stamp.nanosec = 1000000000
     try:
         with pytest.raises(GraspGenXError, match="not been started"):
             module.propose_grasps(cloud())
         module.start()
         with pytest.raises(ValueError, match="frame_id"):
             module.propose_grasps(missing_frame)
-        with pytest.raises(ValueError, match="timestamp"):
+        with pytest.raises(ValueError, match="nanosec"):
             module.propose_grasps(missing_timestamp)
     finally:
         module.stop()

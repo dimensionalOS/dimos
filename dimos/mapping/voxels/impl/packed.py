@@ -14,10 +14,12 @@
 
 from __future__ import annotations
 
+from dimos_generated.sensor_msgs.msg import PointCloud2
 import numpy as np
+from numpy.typing import NDArray
 
 from dimos.mapping.voxels.keys import FIELD_BITS as _BITS, FIELD_MASK as _MASK, KEY_OFFSET as _BIAS
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.pointcloud import pointcloud_xyz
 
 
 class PackedVoxels:
@@ -31,10 +33,11 @@ class PackedVoxels:
     def __init__(self, voxel_size: float, carve_columns: bool) -> None:
         self._voxel_size = voxel_size
         self._carve_columns = carve_columns
-        self._keys = np.empty(0, dtype=np.int64)
+        self._keys: NDArray[np.int64] = np.empty(0, dtype=np.int64)
 
     def add_frame(self, frame: PointCloud2) -> None:
-        pts = frame.points_f32()
+        pts = pointcloud_xyz(frame).astype(np.float32)
+        pts = pts[np.isfinite(pts).all(axis=1)]
         if not len(pts):
             return
         vox = np.floor(pts / np.float32(self._voxel_size)).astype(np.int64)
@@ -63,7 +66,7 @@ class PackedVoxels:
             pos, new = pos[fresh], new[fresh]
         self._keys = np.insert(keys, pos, new)
 
-    def points(self) -> np.ndarray:
+    def points(self) -> NDArray[np.float32]:
         """Voxel centers, (N, 3) float32."""
         k = self._keys
         vox = np.empty((len(k), 3), dtype=np.float32)

@@ -21,9 +21,11 @@ quality-gated images, optional motion gating, marker fan-out, then one
 
 from __future__ import annotations
 
-import time
 from typing import Any, cast
 
+from dimos_generated.sensor_msgs.msg import CameraInfo, Image
+from dimos_generated.tf2_msgs.msg import TFMessage
+from dimos_generated.vision_msgs.msg import Detection3DArray
 from pydantic import Field
 from reactivex.disposable import Disposable
 
@@ -34,10 +36,8 @@ from dimos.memory.module import StreamModule, stream_to_port
 from dimos.memory.store.null import NullStore
 from dimos.memory.stream import Stream
 from dimos.memory.transform import QualityWindow, SpeedLimit
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
+from dimos.msgs.image import image_sharpness
+from dimos.msgs.time import to_seconds
 from dimos.perception.detection.type.detection3d.marker import Detection3DMarker
 from dimos.perception.fiducial.marker_pose import camera_optical_frame_id, is_fisheye_model
 from dimos.perception.fiducial.marker_transformer import DetectMarkers, MarkersPerFrame
@@ -78,7 +78,7 @@ class MarkerDetectionStreamModule(StreamModule[Image, Detection3DArray]):
 
     def pipeline(self, stream: Stream[Image]) -> Stream[Detection3DArray]:
         result: Stream[Any] = stream.transform(
-            QualityWindow(lambda img: img.sharpness, window=self.config.quality_window_s)
+            QualityWindow(image_sharpness, window=self.config.quality_window_s)
         )
         if self.config.speed_limit_enabled:
             result = result.transform(
@@ -121,7 +121,7 @@ class MarkerDetectionStreamModule(StreamModule[Image, Detection3DArray]):
             logger.debug("MarkerDetectionStreamModule: no CameraInfo yet; skipping frame")
             return
 
-        ts = getattr(image, "ts", None) or time.time()
+        ts = to_seconds(image.header.stamp)
         optical = camera_optical_frame_id(image, info)
         t_world_optical = self.tfbuffer.get(
             self.config.world_frame,
@@ -142,13 +142,13 @@ class MarkerDetectionStreamModule(StreamModule[Image, Detection3DArray]):
             image,
             ts=ts,
             pose=(
-                t_world_optical.translation.x,
-                t_world_optical.translation.y,
-                t_world_optical.translation.z,
-                t_world_optical.rotation.x,
-                t_world_optical.rotation.y,
-                t_world_optical.rotation.z,
-                t_world_optical.rotation.w,
+                t_world_optical.transform.translation.x,
+                t_world_optical.transform.translation.y,
+                t_world_optical.transform.translation.z,
+                t_world_optical.transform.rotation.x,
+                t_world_optical.transform.rotation.y,
+                t_world_optical.transform.rotation.z,
+                t_world_optical.transform.rotation.w,
             ),
         )
 

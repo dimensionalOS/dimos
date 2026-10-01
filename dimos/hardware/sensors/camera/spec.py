@@ -14,14 +14,13 @@
 
 from abc import ABC, abstractmethod
 
+from dimos_generated.geometry_msgs.msg import Quaternion
+from dimos_generated.sensor_msgs.msg import CameraInfo, Image
 from reactivex.observable import Observable
 
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image
 from dimos.protocol.service.spec import BaseConfig, Configurable
 
-OPTICAL_ROTATION = Quaternion(-0.5, 0.5, -0.5, 0.5)
+OPTICAL_ROTATION = Quaternion(x=-0.5, y=0.5, z=-0.5, w=0.5)
 
 
 class CameraConfig(BaseConfig):

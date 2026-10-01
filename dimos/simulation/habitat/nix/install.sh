@@ -16,10 +16,24 @@ if [ ! -x ./env/bin/python ]; then
         python=3.9 habitat-sim headless withbullet
 fi
 
-# Pinned to uv.lock: the native must speak the same zenoh wire version as the
-# dimos peers, or SHM payloads arrive as unreadable handles. --no-deps skips
-# lcm-dimos-fork, the LCM runtime; only dimos_lcm's pure-python encoders are needed.
-./env/bin/pip install --no-input --no-deps "dimos-lcm==0.1.3"
+# Build standalone generated CDR messages for Habitat's Python 3.9 interpreter.
+# The DimOS checkout's environment generates the package; the native environment
+# builds its own extension and never imports or installs DimOS at runtime.
+if [ ! -x "$ROOT/.venv/bin/python" ]; then
+    echo "Set up the DimOS project virtualenv before building Habitat messages." >&2
+    exit 1
+fi
+if [ ! -f "$ROOT/build/message-codegen/install/lib/cmake/fastcdr/fastcdr-config.cmake" ]; then
+    bash "$ROOT/scripts/setup_message_codegen.sh"
+fi
+(cd "$ROOT" && .venv/bin/python -m dimos.message_codegen.generate --package \
+    --output "$OUT/messages" \
+    --type geometry_msgs/msg/Twist --type nav_msgs/msg/Odometry \
+    --type sensor_msgs/msg/CameraInfo --type sensor_msgs/msg/Image \
+    --type sensor_msgs/msg/PointCloud2 --type tf2_msgs/msg/TFMessage)
+CMAKE_PREFIX_PATH="$ROOT/build/message-codegen/install${CMAKE_PREFIX_PATH:+;$CMAKE_PREFIX_PATH}" \
+    ./env/bin/pip install --no-input "$OUT/messages/python"
+# Keep the native transport wire version pinned to uv.lock.
 ./env/bin/pip install --no-input "eclipse-zenoh==1.10.1" numpy
 
 # Annotated HM3D house, no credentials. --no-replace resumes a partial download

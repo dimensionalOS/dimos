@@ -16,7 +16,7 @@
 """Habitat-sim native: drives a scene from Twist, publishes dimos messages on zenoh.
 
 Runs under python 3.9 in its own env, so: no dimos imports, no 3.10+ syntax
-(``test_server.py`` enforces both). ``dimos_lcm`` provides the encoders.
+(``test_server.py`` enforces both). ``dimos_generated`` provides the standalone CDR encoders.
 
 Reads one JSON line on stdin: ``topics`` (port -> zenoh key), ``config``, ``session``.
 """
@@ -31,18 +31,17 @@ import sys
 import time
 from typing import Any
 
-from dimos_lcm.geometry_msgs.Quaternion import Quaternion
-from dimos_lcm.geometry_msgs.Transform import Transform
-from dimos_lcm.geometry_msgs.TransformStamped import TransformStamped
-from dimos_lcm.geometry_msgs.Twist import Twist as LCMTwist
-from dimos_lcm.geometry_msgs.Vector3 import Vector3
-from dimos_lcm.nav_msgs.Odometry import Odometry as LCMOdometry
-from dimos_lcm.sensor_msgs.CameraInfo import CameraInfo as LCMCameraInfo
-from dimos_lcm.sensor_msgs.Image import Image as LCMImage
-from dimos_lcm.sensor_msgs.PointCloud2 import PointCloud2 as LCMPointCloud2
-from dimos_lcm.sensor_msgs.PointField import PointField
-from dimos_lcm.std_msgs.Header import Header
-from dimos_lcm.tf2_msgs.TFMessage import TFMessage as LCMTFMessage
+from dimos_generated.geometry_msgs.msg import (
+    Quaternion,
+    Transform,
+    TransformStamped,
+    Twist,
+    Vector3,
+)
+from dimos_generated.nav_msgs.msg import Odometry
+from dimos_generated.sensor_msgs.msg import CameraInfo, Image, PointCloud2, PointField
+from dimos_generated.std_msgs.msg import Header
+from dimos_generated.tf2_msgs.msg import TFMessage
 import numpy as np
 import zenoh
 
@@ -67,13 +66,12 @@ def warn(msg: str) -> None:
 
 
 def _stamp(header: Header, ts: float) -> None:
-    header.seq = 0
     header.stamp.sec = int(ts)
-    header.stamp.nsec = int((ts - int(ts)) * 1e9)
+    header.stamp.nanosec = int((ts - int(ts)) * 1e9)
 
 
 def image_msg(array: np.ndarray, encoding: str, frame_id: str, ts: float) -> bytes:
-    m = LCMImage()
+    m = Image()
     m.header = Header()
     _stamp(m.header, ts)
     m.header.frame_id = frame_id
@@ -83,26 +81,24 @@ def image_msg(array: np.ndarray, encoding: str, frame_id: str, ts: float) -> byt
     channels = 1 if array.ndim == 2 else array.shape[2]
     m.step = m.width * array.dtype.itemsize * channels
     view = memoryview(np.ascontiguousarray(array)).cast("B")
-    m.data_length = len(view)
     m.data = view
-    return bytes(m.lcm_encode())
+    return bytes(m.encode())
 
 
 def camera_info_msg(k: dict[str, float], frame_id: str, ts: float) -> bytes:
-    m = LCMCameraInfo()
+    m = CameraInfo()
     m.header = Header()
     _stamp(m.header, ts)
     m.header.frame_id = frame_id
     m.width, m.height = int(k["width"]), int(k["height"])
     m.distortion_model = "plumb_bob"
-    m.D = [0.0] * 5
-    m.D_length = 5
+    m.d = [0.0] * 5
     fx, fy, cx, cy = k["fx"], k["fy"], k["cx"], k["cy"]
-    m.K = [fx, 0.0, cx, 0.0, fy, cy, 0.0, 0.0, 1.0]
-    m.R = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
-    m.P = [fx, 0.0, cx, 0.0, 0.0, fy, cy, 0.0, 0.0, 0.0, 1.0, 0.0]
+    m.k = [fx, 0.0, cx, 0.0, fy, cy, 0.0, 0.0, 1.0]
+    m.r = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+    m.p = [fx, 0.0, cx, 0.0, 0.0, fy, cy, 0.0, 0.0, 0.0, 1.0, 0.0]
     m.binning_x = m.binning_y = 0
-    return bytes(m.lcm_encode())
+    return bytes(m.encode())
 
 
 def _xyzrgb_fields() -> list[Any]:
@@ -119,12 +115,11 @@ def _xyzrgb_fields() -> list[Any]:
 
 def cloud_msg(points: np.ndarray, colors: np.ndarray, frame_id: str, ts: float) -> bytes:
     """xyz + packed-rgb PointCloud2, matching dimos PointCloud2.lcm_encode's layout."""
-    m = LCMPointCloud2()
+    m = PointCloud2()
     m.header = Header()
     _stamp(m.header, ts)
     m.header.frame_id = frame_id
     m.fields = _xyzrgb_fields()
-    m.fields_length = 4
     m.point_step = 16
     m.is_bigendian = False
     m.is_dense = True
@@ -133,9 +128,8 @@ def cloud_msg(points: np.ndarray, colors: np.ndarray, frame_id: str, ts: float) 
     if len(points) == 0:
         m.height = 0
         m.row_step = 0
-        m.data_length = 0
         m.data = b""
-        return bytes(m.lcm_encode())
+        return bytes(m.encode())
 
     # ROS convention: rgb is a float32 whose bytes are [padding, r, g, b].
     rgb_u32 = (
@@ -146,9 +140,8 @@ def cloud_msg(points: np.ndarray, colors: np.ndarray, frame_id: str, ts: float) 
     data = np.column_stack([points.astype(np.float32), rgb_u32.view(np.float32)]).astype(np.float32)
     view = memoryview(np.ascontiguousarray(data)).cast("B")
     m.row_step = m.point_step * m.width
-    m.data_length = len(view)
     m.data = view
-    return bytes(m.lcm_encode())
+    return bytes(m.encode())
 
 
 def odometry_msg(
@@ -159,7 +152,7 @@ def odometry_msg(
     child_frame_id: str,
     ts: float,
 ) -> bytes:
-    m = LCMOdometry()
+    m = Odometry()
     m.header = Header()
     _stamp(m.header, ts)
     m.header.frame_id = frame_id
@@ -173,16 +166,16 @@ def odometry_msg(
     m.twist.twist.linear.y = float(twist[1])
     m.twist.twist.angular.z = float(twist[2])
     m.twist.covariance = [0.0] * 36
-    return bytes(m.lcm_encode())
+    return bytes(m.encode())
 
 
 def tf_msg(links: list[tuple[str, str, Any, Any]], ts: float) -> bytes:
     """links: (parent, child, translation xyz, rotation xyzw)."""
-    m = LCMTFMessage()
+    m = TFMessage()
     out = []
     for parent, child, xyz, quat in links:
         t = TransformStamped()
-        # Fresh nested messages: the generated bindings share defaults across instances.
+        # Each edge owns independent generated nested values.
         t.header = Header()
         _stamp(t.header, ts)
         t.header.frame_id = parent
@@ -202,8 +195,7 @@ def tf_msg(links: list[tuple[str, str, Any, Any]], ts: float) -> bytes:
         t.transform = transform
         out.append(t)
     m.transforms = out
-    m.transforms_length = len(out)
-    return bytes(m.lcm_encode())
+    return bytes(m.encode())
 
 
 def unproject(
@@ -368,7 +360,7 @@ def main() -> None:
 
     def on_cmd_vel(sample: Any) -> None:
         try:
-            t = LCMTwist.lcm_decode(bytes(sample.payload.to_bytes()))
+            t = Twist.decode(bytes(sample.payload.to_bytes()))
             cmd["vx"], cmd["vy"], cmd["wz"] = t.linear.x, t.linear.y, t.angular.z
             cmd["ts"] = time.time()
         except Exception as exc:

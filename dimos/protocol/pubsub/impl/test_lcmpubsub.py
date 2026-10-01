@@ -13,14 +13,12 @@
 # limitations under the License.
 
 from collections.abc import Iterator
-import threading
 from typing import Any
 
+from dimos_generated.geometry_msgs.msg import Point, Pose, Quaternion, Vector3
+from dimos_generated.std_msgs.msg import String
 import pytest
 
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.protocol.pubsub.impl.lcmpubsub import (
     LCM,
     LCMPubSubBase,
@@ -54,34 +52,15 @@ def lcm(lcm_url: str) -> Iterator[LCM]:
     lcm.stop()
 
 
-class MockLCMMessage:
-    """Mock LCM message for testing"""
-
-    msg_name = "geometry_msgs.Mock"
-
-    def __init__(self, data: Any) -> None:
-        self.data = data
-
-    def lcm_encode(self) -> bytes:
-        return str(self.data).encode("utf-8")
-
-    @classmethod
-    def lcm_decode(cls, data: bytes) -> "MockLCMMessage":
-        return cls(data.decode("utf-8"))
-
-    def __eq__(self, other: object) -> bool:
-        return isinstance(other, MockLCMMessage) and self.data == other.data
-
-
 def test_LCMPubSubBase_pubsub(lcm_pub_sub_base: LCMPubSubBase) -> None:
     lcm = lcm_pub_sub_base
     collector = CallbackCollector(1)
 
-    topic = Topic(topic="/test_topic", lcm_type=MockLCMMessage)
-    test_message = MockLCMMessage("test_data")
+    topic = Topic(topic="/test_topic", msg_type=String)
+    test_message = String(data="test_data")
 
     lcm.subscribe(topic, collector)
-    lcm.publish(topic, test_message.lcm_encode())
+    lcm.publish(topic, test_message.encode())
     collector.wait()
 
     assert len(collector.results) == 1
@@ -90,31 +69,17 @@ def test_LCMPubSubBase_pubsub(lcm_pub_sub_base: LCMPubSubBase) -> None:
     received_topic = collector.results[0][1]
 
     assert isinstance(received_data, bytes)
-    assert received_data.decode() == "test_data"
+    assert String.decode(received_data).data == "test_data"
 
     assert isinstance(received_topic, Topic)
     assert received_topic == topic
 
 
-def test_subscribe_calls_lcm_warmup(lcm: LCM) -> None:
-    warmup_threads = []
-
-    class WarmupMessage(MockLCMMessage):
-        @classmethod
-        def lcm_warmup(cls) -> None:
-            warmup_threads.append(threading.current_thread())
-
-    lcm.subscribe(Topic(topic="/warmup", lcm_type=WarmupMessage), lambda msg, topic: None)
-
-    # Warmed synchronously on the subscriber's thread, not the LCM handler thread.
-    assert warmup_threads == [threading.current_thread()]
-
-
 def test_lcm_autodecoder_pubsub(lcm: LCM) -> None:
     collector = CallbackCollector(1)
 
-    topic = Topic(topic="/test_topic", lcm_type=MockLCMMessage)
-    test_message = MockLCMMessage("test_data")
+    topic = Topic(topic="/test_topic", msg_type=String)
+    test_message = String(data="test_data")
 
     lcm.subscribe(topic, collector)
     lcm.publish(topic, test_message)
@@ -125,17 +90,47 @@ def test_lcm_autodecoder_pubsub(lcm: LCM) -> None:
     received_data = collector.results[0][0]
     received_topic = collector.results[0][1]
 
-    assert isinstance(received_data, MockLCMMessage)
-    assert received_data == test_message
+    assert isinstance(received_data, String)
+    assert received_data.encode() == test_message.encode()
 
     assert isinstance(received_topic, Topic)
     assert received_topic == topic
 
 
+def test_invalid_cdr_does_not_stop_the_subscriber(lcm: LCM) -> None:
+    topic = Topic("/test_corrupt", String)
+    collector = CallbackCollector(1)
+    lcm.subscribe(topic, collector)
+
+    lcm.publish(topic, b"invalid CDR")
+    lcm.publish(topic, String(data="after malformed payload"))
+    collector.wait()
+
+    assert [message.data for message, _ in collector.results] == ["after malformed payload"]
+
+
+def test_different_message_types_cannot_be_published_on_a_typed_topic(lcm: LCM) -> None:
+    with pytest.raises(ValueError, match="does not match"):
+        lcm.publish(Topic("/point", Vector3), Quaternion(w=1))
+
+
+def test_explicit_unknown_type_does_not_use_default_decoder() -> None:
+    topic = Topic.from_channel_str("/point#unknown_msgs/msg/Point", Vector3)
+
+    assert topic.topic == "/point"
+    assert topic.msg_type is None
+
+
+@pytest.mark.parametrize("channel", ["x" * 64, "invalid\0channel", "é" * 32])
+def test_invalid_lcm_channel_fails_before_sending(lcm: LCM, channel: str) -> None:
+    with pytest.raises(ValueError, match="63 bytes"):
+        lcm.publish(Topic(channel), b"payload")
+
+
 test_msgs = [
-    (Vector3(1, 2, 3)),
-    (Quaternion(1, 2, 3, 4)),
-    (Pose(Vector3(1, 2, 3), Quaternion(0, 0, 0, 1))),
+    (Vector3(x=1, y=2, z=3)),
+    (Quaternion(x=1, y=2, z=3, w=4)),
+    (Pose(position=Point(x=1, y=2, z=3), orientation=Quaternion(w=1))),
 ]
 
 
@@ -144,7 +139,7 @@ test_msgs = [
 def test_lcm_geometry_msgs_pubsub(test_message: Any, lcm: LCM) -> None:
     collector = CallbackCollector(1)
 
-    topic = Topic(topic="/test_topic", lcm_type=test_message.__class__)
+    topic = Topic(topic="/test_topic", msg_type=test_message.__class__)
 
     lcm.subscribe(topic, collector)
     lcm.publish(topic, test_message)
@@ -156,7 +151,7 @@ def test_lcm_geometry_msgs_pubsub(test_message: Any, lcm: LCM) -> None:
     received_topic = collector.results[0][1]
 
     assert isinstance(received_data, test_message.__class__)
-    assert received_data == test_message
+    assert received_data.encode() == test_message.encode()
 
     assert isinstance(received_topic, Topic)
     assert received_topic == topic
@@ -180,7 +175,7 @@ def test_lcm_geometry_msgs_autopickle_pubsub(test_message: Any, pickle_lcm: Pick
     received_topic = collector.results[0][1]
 
     assert isinstance(received_data, test_message.__class__)
-    assert received_data == test_message
+    assert received_data.encode() == test_message.encode()
 
     assert isinstance(received_topic, Topic)
     assert received_topic == topic

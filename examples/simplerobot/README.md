@@ -34,13 +34,13 @@ From any language with LCM bindings, publish `Twist` messages to `/cmd_vel`:
 
 ```python
 from dimos.core.transport import LCMTransport
-from dimos.msgs.geometry_msgs import Twist
+from dimos_generated.geometry_msgs.msg import Twist, Vector3
 
 transport = LCMTransport("/cmd_vel", Twist)
-transport.publish(Twist(linear=(0.5, 0, 0), angular=(0, 0, 0.3)))
+transport.publish(Twist(linear=Vector3(x=0.5), angular=Vector3(z=0.3)))
 ```
 
-See `examples/language-interop/` for C++, TypeScript, and Lua examples.
+See `examples/language-interop/` for generated CDR examples and browser support.
 
 ## Physics
 

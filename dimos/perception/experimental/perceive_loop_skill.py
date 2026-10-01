@@ -14,11 +14,14 @@
 
 from __future__ import annotations
 
+import base64
 from datetime import datetime, timezone
 import json
 import os
 from threading import RLock
 from typing import TYPE_CHECKING, Any
+
+from dimos_generated.sensor_msgs.msg import Image
 
 from dimos.agents.agent_spec import AgentSpec
 from dimos.agents.annotation import skill
@@ -26,9 +29,9 @@ from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In
 from dimos.models.vl.create import create
-from dimos.msgs.sensor_msgs.Image import Image, sharpness_window
+from dimos.msgs.image import image_sharpness, image_to_bgr, image_to_jpeg
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.reactive import backpressure
+from dimos.utils.reactive import backpressure, quality_barrier
 
 if TYPE_CHECKING:
     from reactivex.abc import DisposableBase
@@ -109,7 +112,9 @@ class PerceiveLoopSkill(Module):
                 )
 
             sharpest = backpressure(
-                sharpness_window(1.0 / self._period, self.color_image.pure_observable())
+                self.color_image.pure_observable().pipe(
+                    quality_barrier(image_sharpness, 1.0 / self._period)
+                )
             )
             self._vl_model.start()
             self._model_started = True
@@ -176,7 +181,7 @@ class PerceiveLoopSkill(Module):
         continuation_context: dict[str, Any] = {
             "bbox": list(best.bbox),
             "label": best.name,
-            "image": image.to_base64(quality=70),
+            "image": base64.b64encode(image_to_jpeg(image, quality=70)).decode("ascii"),
         }
         logger.info(
             "Lookout matched, dispatching continuation",
@@ -203,7 +208,7 @@ def _write_debug_image(image: Image, detections: ImageDetections2D[Detection2DBB
     import cv2
 
     try:
-        debug_img = image.to_opencv().copy()
+        debug_img = image_to_bgr(image)
         for det in detections.detections:
             x1, y1, x2, y2 = (int(v) for v in det.bbox)
             cv2.rectangle(debug_img, (x1, y1), (x2, y2), (0, 255, 0), 2)

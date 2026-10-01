@@ -14,7 +14,8 @@
 
 from typing import Any, Protocol
 
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos_generated.sensor_msgs.msg import Image
+
 from dimos.spec.utils import Spec
 
 

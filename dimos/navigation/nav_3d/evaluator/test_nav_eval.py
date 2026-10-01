@@ -18,15 +18,23 @@ from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+from dimos_generated.geometry_msgs.msg import (
+    Point as MessagePoint,
+    Pose,
+    PoseWithCovariance,
+    Quaternion,
+)
+from dimos_generated.nav_msgs.msg import Odometry
+from dimos_generated.sensor_msgs.msg import PointCloud2
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 from numpy.typing import NDArray
 import pytest
 import typer
 
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.pointcloud import pointcloud_from_xyz
+from dimos.msgs.time import time_from_seconds
 from dimos.navigation.nav_3d.evaluator import metrics, runner
 from dimos.navigation.nav_3d.evaluator.cases import Case, Suite, load_suite, save_suite
 from dimos.navigation.nav_3d.evaluator.cli import _apply_overrides
@@ -444,10 +452,25 @@ def _write_recording(
     with SqliteStore(path=str(path)) as store:
         lidar = store.stream("lidar", PointCloud2)
         for ts, pts, frame_id in clouds:
-            lidar.append(PointCloud2.from_numpy(pts, frame_id=frame_id, timestamp=ts), ts=ts)
+            lidar.append(
+                pointcloud_from_xyz(
+                    pts, header=Header(frame_id=frame_id, stamp=time_from_seconds(ts))
+                ),
+                ts=ts,
+            )
         odom = store.stream("odom", Odometry)
         for ts, (x, y, z) in poses:
-            odom.append(Odometry(ts=ts, pose=Pose(x, y, z)), ts=ts)
+            odom.append(
+                Odometry(
+                    header=Header(stamp=time_from_seconds(ts), frame_id="world"),
+                    pose=PoseWithCovariance(
+                        pose=Pose(
+                            position=MessagePoint(x=x, y=y, z=z), orientation=Quaternion(w=1.0)
+                        )
+                    ),
+                ),
+                ts=ts,
+            )
 
 
 def test_recording_reads_frames_trajectory_and_rotation(tmp_path: Path) -> None:
@@ -481,10 +504,21 @@ def test_recording_reads_frames_trajectory_and_rotation(tmp_path: Path) -> None:
     quarter = np.sqrt(0.5)  # 90 degrees about +z: sensor +x points along world +y
     with SqliteStore(path=str(yaw_db)) as store:
         store.stream("lidar", PointCloud2).append(
-            PointCloud2.from_numpy(ahead, frame_id="lidar", timestamp=1.0), ts=1.0
+            pointcloud_from_xyz(
+                ahead, header=Header(frame_id="lidar", stamp=time_from_seconds(1.0))
+            ),
+            ts=1.0,
         )
         store.stream("odom", Odometry).append(
-            Odometry(ts=1.0, pose=Pose(5.0, 0.0, 0.0, 0.0, 0.0, quarter, quarter)), ts=1.0
+            Odometry(
+                header=Header(stamp=time_from_seconds(1.0), frame_id="world"),
+                pose=PoseWithCovariance(
+                    pose=Pose(
+                        position=MessagePoint(x=5.0), orientation=Quaternion(z=quarter, w=quarter)
+                    )
+                ),
+            ),
+            ts=1.0,
         )
     yawed = list(iter_world_frames(yaw_db, "lidar", "odom"))
     assert np.allclose(yawed[0].points, [[5.0, 1.0, 0.0]], atol=1e-5)

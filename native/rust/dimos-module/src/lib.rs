@@ -17,10 +17,12 @@
 #[cfg(test)]
 extern crate self as dimos_module;
 
+pub mod cdr;
 pub mod host;
 pub mod lcm;
 pub mod log;
 pub mod module;
+pub mod pointcloud;
 pub mod tf;
 pub mod transport;
 pub mod workers;
@@ -37,8 +39,8 @@ pub use zenoh::ZenohTransport;
 
 pub use nalgebra;
 
-// Re-export LcmOptions so callers don't need to depend on dimos-lcm directly.
-pub use dimos_lcm::LcmOptions;
+// Re-export LcmOptions so callers don't need to depend on the raw transport crate directly.
+pub use dimos_lcm_transport::LcmOptions;
 
 /// Run module `M` over the transport named by the `DIMOS_TRANSPORT` env var.
 ///

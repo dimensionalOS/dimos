@@ -21,6 +21,7 @@ import threading
 from typing import Any
 from unittest.mock import MagicMock
 
+from dimos_generated.sensor_msgs.msg import JointState
 import pytest
 
 from dimos.control.components import HardwareComponent, HardwareType, make_joints
@@ -31,7 +32,6 @@ from dimos.control.tick_loop import TickLoop
 from dimos.core.stream import In, Out
 from dimos.hardware.manipulators.registry import adapter_registry
 from dimos.hardware.manipulators.spec import ManipulatorAdapter
-from dimos.msgs.sensor_msgs.JointState import JointState
 
 LEFT_JOINTS = make_joints("left_arm", 2)
 RIGHT_JOINTS = make_joints("right_arm", 3)
@@ -188,12 +188,12 @@ class TestPerRobotPublishing:
 
         left_msg = left.latest()
         assert list(left_msg.name) == LEFT_JOINTS
-        assert left_msg.frame_id == "left_arm"
+        assert left_msg.header.frame_id == "left_arm"
         assert list(left_msg.position) == LEFT_POSITIONS
 
         right_msg = right.latest()
         assert list(right_msg.name) == RIGHT_JOINTS
-        assert right_msg.frame_id == "right_arm"
+        assert right_msg.header.frame_id == "right_arm"
         assert list(right_msg.position) == RIGHT_POSITIONS
 
         assert set(merged.latest().name) == {*LEFT_JOINTS, *RIGHT_JOINTS}
@@ -255,16 +255,16 @@ class TestTickLoopMessages:
         assert list(left_msg.position) == [0.1, 0.2]
         assert list(left_msg.velocity) == [1.1, 1.2]
         assert list(left_msg.effort) == [2.1, 2.2]
-        assert left_msg.frame_id == "left_arm"
+        assert left_msg.header.frame_id == "left_arm"
 
         right_msg = by_id["right_arm"]
         assert list(right_msg.position) == [0.3, 0.4, 0.5]
         assert list(right_msg.velocity) == [1.3, 1.4, 1.5]
         assert list(right_msg.effort) == [2.3, 2.4, 2.5]
-        assert right_msg.frame_id == "right_arm"
+        assert right_msg.header.frame_id == "right_arm"
 
-        assert left_msg.ts == merged[0].ts
-        assert right_msg.ts == merged[0].ts
+        assert left_msg.header.stamp == merged[0].header.stamp
+        assert right_msg.header.stamp == merged[0].header.stamp
 
     def test_hardware_is_read_once_per_tick(self):
         published: list[tuple[str, JointState]] = []

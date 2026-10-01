@@ -28,6 +28,7 @@ import websockets.asyncio.client as ws_client
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.global_config import global_config
+from dimos.msgs.time import to_seconds
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 
 
@@ -87,11 +88,11 @@ class TestViewerProtocolE2E:
 
         assert len(received) == 1
         point = received[0]
-        assert point.x == pytest.approx(10.0)
-        assert point.y == pytest.approx(20.0)
-        assert point.z == pytest.approx(0.5)
-        assert point.frame_id == "/world/robot"
-        assert point.ts == pytest.approx(42.0)
+        assert point.point.x == pytest.approx(10.0)
+        assert point.point.y == pytest.approx(20.0)
+        assert point.point.z == pytest.approx(0.5)
+        assert point.header.frame_id == "/world/robot"
+        assert to_seconds(point.header.stamp) == pytest.approx(42.0)
 
     def test_full_viewer_session_sequence(self, server: RerunWebSocketServer) -> None:
         """Realistic session: heartbeats, click, twist, stop — only the click produces a point."""
@@ -134,9 +135,9 @@ class TestViewerProtocolE2E:
             unsubscribe()
 
         assert len(received) == 1, f"Expected exactly 1 click, got {len(received)}"
-        assert received[0].x == pytest.approx(3.14)
-        assert received[0].y == pytest.approx(2.71)
-        assert received[0].z == pytest.approx(1.41)
+        assert received[0].point.x == pytest.approx(3.14)
+        assert received[0].point.y == pytest.approx(2.71)
+        assert received[0].point.z == pytest.approx(1.41)
 
     def test_reconnect_after_disconnect(self, server: RerunWebSocketServer) -> None:
         """Server keeps accepting new connections after a client disconnects."""
@@ -181,7 +182,7 @@ class TestViewerProtocolE2E:
         finally:
             unsubscribe()
 
-        xs = sorted(point.x for point in received)
+        xs = sorted(point.point.x for point in received)
         assert xs == [1.0, 2.0], f"Unexpected xs: {xs}"
 
 

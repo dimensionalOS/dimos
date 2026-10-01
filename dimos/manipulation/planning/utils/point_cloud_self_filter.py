@@ -22,6 +22,10 @@ from functools import partial
 from io import BytesIO
 from typing import Any
 
+from dimos_generated.geometry_msgs.msg import TransformStamped
+from dimos_generated.sensor_msgs.msg import PointCloud2
+from dimos_generated.std_msgs.msg import Header
+from dimos_generated.tf2_msgs.msg import TFMessage
 import numpy as np
 from pydantic import Field
 import trimesh
@@ -30,9 +34,9 @@ import yourdfpy  # type: ignore[import-untyped]
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.msgs.geometry import transform_matrix
+from dimos.msgs.pointcloud import pointcloud_from_xyz, pointcloud_xyz, select_points
+from dimos.msgs.time import to_seconds
 from dimos.protocol.tf.tf import TF
 from dimos.robot.assets.model import RobotModel
 from dimos.utils.logging_config import setup_logger
@@ -101,13 +105,17 @@ class PointCloudSelfFilter(Module):
     def filter_cloud(self, cloud: PointCloud2) -> tuple[PointCloud2, PointCloud2] | None:
         """Filter one capture and build the matching world-frame clear mask."""
         config = self.config
-        points = cloud.points_f32()
+        points = pointcloud_xyz(cloud)
         keep = np.ones(len(points), dtype=bool)
         current_clear_keys: set[tuple[int, int, int]] = set()
 
         for geometry in self._collision_geometry:
-            sensor_from_link = self._lookup(cloud.frame_id, geometry.link, cloud.ts)
-            world_from_link = self._lookup(config.world_frame, geometry.link, cloud.ts)
+            sensor_from_link = self._lookup(
+                cloud.header.frame_id, geometry.link, to_seconds(cloud.header.stamp)
+            )
+            world_from_link = self._lookup(
+                config.world_frame, geometry.link, to_seconds(cloud.header.stamp)
+            )
             if sensor_from_link is None or world_from_link is None:
                 logger.warning(
                     "Dropping cloud: capture-time TF unavailable for robot link %s", geometry.link
@@ -115,7 +123,9 @@ class PointCloudSelfFilter(Module):
                 return None
 
             if len(points):
-                sensor_from_geometry = sensor_from_link.to_matrix() @ geometry.link_from_geometry
+                sensor_from_geometry = (
+                    transform_matrix(sensor_from_link.transform) @ geometry.link_from_geometry
+                )
                 local = _transform_points(points, np.linalg.inv(sensor_from_geometry))
                 keep &= ~_points_inside(
                     local,
@@ -125,7 +135,9 @@ class PointCloudSelfFilter(Module):
                     config.padding_m,
                 )
 
-            world_from_geometry = world_from_link.to_matrix() @ geometry.link_from_geometry
+            world_from_geometry = (
+                transform_matrix(world_from_link.transform) @ geometry.link_from_geometry
+            )
             world_samples = _transform_points(geometry.clear_samples, world_from_geometry)
             keys = np.floor(world_samples / config.voxel_size).astype(np.int32)
             current_clear_keys.update(map(tuple, keys.tolist()))
@@ -137,25 +149,14 @@ class PointCloudSelfFilter(Module):
         clear_points = (
             np.asarray(sorted(clear_keys), dtype=np.float32).reshape((-1, 3)) + 0.5
         ) * config.voxel_size
-        clear_mask = PointCloud2.from_numpy(
+        clear_mask = pointcloud_from_xyz(
             clear_points,
-            frame_id=config.world_frame,
-            timestamp=cloud.ts,
+            header=Header(frame_id=config.world_frame, stamp=cloud.header.stamp),
         )
-
-        intensities = cloud.intensities_f32()
-        filtered = PointCloud2.from_numpy(
-            points[keep],
-            frame_id=cloud.frame_id,
-            timestamp=cloud.ts,
-            intensities=intensities[keep] if intensities is not None else None,
-        )
-        for name, values in cloud.pointcloud_tensor.point.items():
-            if name not in ("positions", "intensities"):
-                filtered.pointcloud_tensor.point[name] = values[keep]
+        filtered = select_points(cloud, keep)
         return filtered, clear_mask
 
-    def _lookup(self, parent_frame: str, child_frame: str, stamp: float) -> Transform | None:
+    def _lookup(self, parent_frame: str, child_frame: str, stamp: float) -> TransformStamped | None:
         config = self.config
         return self.tfbuffer.get(
             parent_frame,

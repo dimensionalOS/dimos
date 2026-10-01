@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 
 import numpy as np
-from dimos_lcm.std_msgs import String, Bool
+from dimos_generated.std_msgs.msg import String, Bool
 from reactivex.disposable import Disposable
 
 from dimos.agents.annotation import skill
@@ -32,17 +32,18 @@ from dimos.core.stream import In, Out
 from dimos.models.segmentation.edge_tam import EdgeTAMProcessor
 from dimos.perception.detection.detectors.person.yolo import YoloPersonDetector
 from dimos.perception.detection.type.detection2d.person import Detection2DPerson
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos_generated.geometry_msgs.msg import PoseStamped
+from dimos_generated.geometry_msgs.msg import Twist
+from dimos_generated.nav_msgs.msg import OccupancyGrid
+from dimos_generated.sensor_msgs.msg import CameraInfo
+from dimos_generated.sensor_msgs.msg import Image
 from dimos.navigation.patrolling.create_patrol_router import create_patrol_router
 from dimos.navigation.patrolling.routers.patrol_router import PatrolRouter
 from dimos.agents.skills.speak_skill_spec import SpeakSkillSpec
 from dimos.navigation.replanning_a_star.module_spec import ReplanningAStarPlannerSpec
 from dimos.navigation.visual_servoing.visual_servoing_2d import VisualServoing2D
 from dimos.utils.logging_config import setup_logger
+from dimos.msgs.image import image_to_bgr, image_from_array
 from dimos.navigation.patrolling.constants import EXTRA_CLEARANCE
 
 if TYPE_CHECKING:
@@ -253,7 +254,7 @@ class SecurityModule(Module):
                 case "FOLLOWING":
                     self._follow_step()
 
-        self.cmd_vel.publish(Twist.zero())
+        self.cmd_vel.publish(Twist())
         self._transition_to("IDLE")
 
     def _patrol_step(self) -> None:
@@ -298,11 +299,11 @@ class SecurityModule(Module):
             area=f"{best.bbox_2d_volume():.0f}px",
         )
 
-        annotated = image.data.copy()
+        annotated = image_to_bgr(image)
         best.draw_on(annotated)
         if isinstance(best, Detection2DPerson):
             _draw_skeleton(annotated, best)
-        self.detection.publish(Image.from_numpy(annotated, format=image.format))
+        self.detection.publish(image_from_array(annotated, encoding="bgr8", header=image.header))
 
         # Init EdgeTAM with YOLO bbox for continuous tracking
         box = np.array(list(best.bbox), dtype=np.float32)
@@ -327,7 +328,7 @@ class SecurityModule(Module):
         detections = self._tracker.process_image(latest_image)
 
         if len(detections) == 0:
-            self.cmd_vel.publish(Twist.zero())
+            self.cmd_vel.publish(Twist())
             self._speak_skill.speak("Lost sight of intruder, resuming patrol", blocking=False)
             self._router.reset()
             self._has_active_goal = False
@@ -338,7 +339,7 @@ class SecurityModule(Module):
         twist = self._visual_servo.compute_twist(best.bbox, latest_image.width)
         self.cmd_vel.publish(twist)
 
-        overlay = latest_image.data.copy()
+        overlay = image_to_bgr(latest_image)
         if hasattr(best, "mask") and best.mask is not None:
             mask_bool = best.mask > 0
             green = np.zeros_like(overlay)
@@ -356,7 +357,7 @@ class SecurityModule(Module):
             _draw_skeleton(overlay, person)
 
         self.tracking_image.publish(
-            Image.from_numpy(overlay, format=latest_image.format, ts=latest_image.ts)
+            image_from_array(overlay, encoding="bgr8", header=latest_image.header)
         )
 
         time.sleep(1.0 / self.config.follow_frequency)
@@ -382,7 +383,7 @@ class SecurityModule(Module):
             self._state = new_state
 
         logger.info("state transition", old=old, new=new_state)
-        self.security_state.publish(String(new_state))
+        self.security_state.publish(String(data=new_state))
 
     def _stop_security_patrol_internal(self) -> None:
         self._stop_event.set()

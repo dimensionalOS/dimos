@@ -22,15 +22,15 @@ from __future__ import annotations
 
 import os
 
+from dimos_generated.dimos_msgs.msg import MotorCommandArray
+from dimos_generated.sensor_msgs.msg import Imu, JointState
+
 from dimos.control.components import HardwareComponent, HardwareType, make_humanoid_joints
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.stream import Out
 from dimos.core.transport import LCMTransport
-from dimos.msgs.sensor_msgs.Imu import Imu
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.robot.unitree.g1.wholebody_connection import G1WholeBodyConnection
 
 _g1_joints = make_humanoid_joints("g1")

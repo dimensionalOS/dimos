@@ -384,7 +384,7 @@ jobs:
           sudo apt-get update
           # lcm.pc carries `Requires: glib-2.0`, so pkg-config cannot resolve
           # lcm at all without glib's own .pc file
-          sudo apt-get install -y liblcm-dev libglib2.0-dev nlohmann-json3-dev
+          sudo apt-get install -y liblcm-dev libglib2.0-dev nlohmann-json3-dev portaudio19-dev libturbojpeg
           base=https://github.com/eclipse-zenoh
           curl -fsSL -o /tmp/zenoh-c.zip \
             "$base/zenoh-c/releases/download/$ZENOH_VERSION/zenoh-c-$ZENOH_VERSION-x86_64-unknown-linux-gnu-standalone.zip"
@@ -400,12 +400,38 @@ jobs:
           sudo unzip -q /tmp/zenoh-c.zip -d /usr/local
           sudo unzip -q /tmp/zenoh-cpp.zip -d /usr/local
           sudo ldconfig
+      - name: Generate native CDR message package
+        run: |
+          bash scripts/setup_message_codegen.sh
+          bash scripts/install_native_messages.sh
+          echo "CMAKE_PREFIX_PATH=$PWD/build/message-codegen/install" >> "$GITHUB_ENV"
       - name: Configure
         run: cmake -S native/cpp -B build/native-cpp -DDIMOS_NATIVE_BUILD_TESTS=ON
       - name: Build
         run: cmake --build build/native-cpp -j
       - name: Test
         run: ctest --test-dir build/native-cpp --output-on-failure
+
+      - uses: astral-sh/setup-uv@v10.0.1
+      - name: Verify the documented external three-language project
+        run: |
+          uv sync --group tests --frozen
+          cmake --install build/native-cpp --prefix "$PWD/build/native-sdk"
+          uv run python scripts/package_native_sdk.py --output examples/message-project/sdk
+          export CMAKE_PREFIX_PATH="$PWD/build/native-sdk:$CMAKE_PREFIX_PATH"
+          uv run dimos build --project examples/message-project
+          uv pip install --no-deps examples/message-project/dist/story_messages-*.whl
+          (cd examples/message-project/cpp && cmake --preset dimos && cmake --build --preset dimos)
+          cargo build --locked --manifest-path examples/message-project/rust/Cargo.toml
+          uv run python examples/message-project/demo_blueprint.py --transport zenoh
+      - name: Retain custom message and native SDK review artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: external-message-project
+          path: |
+            examples/message-project/dist/
+            examples/message-project/sdk/
+            build/native-sdk/
 
       - name: Find C++ native modules
         id: find-modules
@@ -615,8 +641,6 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y portaudio19-dev libturbojpeg ffmpeg
-      - name: Fetch the go2_short replay dataset
-        run: git lfs pull --include="data/.lfs/go2_short.db.tar.gz" --exclude=""
       - name: Build standalone CDR dependency
         run: bash scripts/setup_message_codegen.sh
       - name: Install dependencies
@@ -644,7 +668,8 @@ jobs:
       contains(fromJSON('["success", "skipped"]'), needs.cachix-build-check.result) &&
       contains(fromJSON('["success", "skipped"]'), needs.cachix-build.result)
     needs: [cachix-build-check, cachix-build]
-    timeout-minutes: 20
+    # Cold native/Python setup can consume nine minutes before pytest starts.
+    timeout-minutes: 30
     strategy:
       matrix:
         pyver: ['3.10', '3.11', '3.12']
@@ -727,8 +752,17 @@ jobs:
         run: bash scripts/setup_message_codegen.sh
       - name: Install dependencies
         run: uv sync --group tests --frozen
+      - name: Install CDR conformance test dependencies
+        run: uv pip install mcap==1.4.0 rosbags==0.11.0 mypy==1.19.1 pybind11==3.0.1
+      - name: Install Rust for offline planner bindings
+        uses: dtolnay/rust-toolchain@stable
+      - name: Build offline planner Python bindings
+        run: |
+          source .venv/bin/activate
+          maturin develop -m dimos/mapping/ray_tracing/rust/py/Cargo.toml
+          maturin develop -m dimos/navigation/nav_3d/mls_planner/rust/py/Cargo.toml
       - name: Run tests
-        run: uv run pytest --numprocesses=logical --cov=dimos/ --junitxml=junit.xml -m 'not (self_hosted or mujoco or self_hosted_large or web_browser or bake_e2e or native_e2e)'
+        run: uv run pytest --numprocesses=logical --cov=dimos/ --junitxml=junit.xml -o faulthandler_timeout=120 -m 'not (self_hosted or mujoco or self_hosted_large or web_browser or bake_e2e or native_e2e)'
       - name: Re-run the failing tests with maximum verbosity
         if: failure()
         env:
@@ -1111,6 +1145,13 @@ jobs:
         run: bash scripts/setup_message_codegen.sh
       - name: Install dependencies
         run: uv sync --group tests-self-hosted --frozen
+      - name: Install Rust for offline planner bindings
+        uses: dtolnay/rust-toolchain@stable
+      - name: Build offline planner Python bindings
+        run: |
+          source .venv/bin/activate
+          maturin develop -m dimos/mapping/ray_tracing/rust/py/Cargo.toml
+          maturin develop -m dimos/navigation/nav_3d/mls_planner/rust/py/Cargo.toml
       - name: Build C++ extensions in-place
         run: uv run python setup.py build_ext --inplace
       - name: Run tests

@@ -96,8 +96,15 @@ def render(out: str, store: Any, instances: list[Instance], t0: float, t1: float
     import rerun.blueprint as rrb
 
     from dimos.memory.vis.color import Color
-    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+    from dimos.msgs.geometry import inverse_transform
+    from dimos.msgs.pointcloud import pointcloud_from_rgbd, transform_cloud, voxel_downsample_cloud
     from dimos.visualization.rerun.init import rerun_init
+    from dimos.visualization.rerun.message_helpers import (
+        camera_pinhole,
+        cloud_archetype,
+        image_archetype,
+        navigation_archetype,
+    )
 
     tf = StreamTF.from_store(store)
     assert tf is not None
@@ -143,13 +150,18 @@ def render(out: str, store: Any, instances: list[Instance], t0: float, t1: float
         depth = gates.depth_at(store, backdrop_ts)
         transform = tf.get(gates.OPTICAL_FRAME, gates.WORLD_FRAME, backdrop_ts, gates.TF_TOLERANCE)
         assert depth is not None and transform is not None
-        backdrop = PointCloud2.from_rgbd(color, depth, camera_info, depth_scale=0.001).transform(
-            -transform
+        backdrop = transform_cloud(
+            pointcloud_from_rgbd(color, depth, camera_info, depth_scale=0.001),
+            inverse_transform(transform),
         )
-        rr.log("map", backdrop.voxel_downsample(0.01).to_rerun(voxel_size=POINT_SIZE), static=True)
+        rr.log(
+            "map",
+            cloud_archetype(voxel_downsample_cloud(backdrop, 0.01), voxel_size=POINT_SIZE),
+            static=True,
+        )
 
     # live camera feed + frustum; the empty box clears the overlay off non-keyframes
-    rr.log("camera", camera_info.to_rerun(), static=True)
+    rr.log("camera/image", camera_pinhole(camera_info), static=True)
     feed_throttle = 0.1 if (t1 - t0) <= 160 else 0.4
     feed = store.streams.color_image.after(t0).before(t1).transform(throttle(feed_throttle))
     for obs in feed:
@@ -157,8 +169,8 @@ def render(out: str, store: Any, instances: list[Instance], t0: float, t1: float
         if pose is None:
             continue
         at(obs.ts)
-        rr.log("camera/image", obs.data.to_rerun())
-        rr.log("camera", pose.to_rerun())
+        rr.log("camera/image", image_archetype(obs.data))
+        rr.log("camera", navigation_archetype(pose))
         rr.log("camera/image/instances", rr.Boxes2D(array=[], array_format=rr.Box2DFormat.XYXY))
 
     # keyframes, logged after the feed so their boxes win the shared timestamps
@@ -166,8 +178,8 @@ def render(out: str, store: Any, instances: list[Instance], t0: float, t1: float
         at(ts)
         keyframe_pose = gates.camera_pose(tf, ts)
         assert keyframe_pose is not None
-        rr.log("camera/image", store.streams.color_image.at(ts, 0.05).first().data.to_rerun())
-        rr.log("camera", keyframe_pose.to_rerun())
+        rr.log("camera/image", image_archetype(store.streams.color_image.at(ts, 0.05).first().data))
+        rr.log("camera", navigation_archetype(keyframe_pose))
         rr.log(
             "camera/image/instances",
             rr.Boxes2D(
@@ -180,7 +192,7 @@ def render(out: str, store: Any, instances: list[Instance], t0: float, t1: float
             ),
         )
         for i, member in entries:
-            rr.log(paths[i], member.cloud.to_rerun(voxel_size=POINT_SIZE, colors=colors[i]))
+            rr.log(paths[i], cloud_archetype(member.cloud, voxel_size=POINT_SIZE, colors=colors[i]))
 
     # the reported instance: one labeled box, static so it holds over the whole timeline
     for i, instance in enumerate(grounded):

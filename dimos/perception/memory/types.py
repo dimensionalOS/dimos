@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Literal
 import numpy as np
 
 if TYPE_CHECKING:
-    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+    from dimos_generated.sensor_msgs.msg import PointCloud2
 
 
 @dataclass(frozen=True)

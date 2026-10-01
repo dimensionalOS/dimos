@@ -24,6 +24,7 @@ from typing import Any, Protocol
 import xml.etree.ElementTree as ET
 from xml.sax.saxutils import escape
 
+from dimos_generated.geometry_msgs.msg import PoseStamped
 import numpy as np
 
 from dimos.manipulation.planning.groups.models import PlanningGroup
@@ -32,8 +33,8 @@ from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.models import PlanningGroupID
 from dimos.manipulation.planning.spec.validation import PreparedRobotModel
 from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
+from dimos.msgs.geometry import pose_matrix
 from dimos.robot.assets.model import LoadedRobotModel
-from dimos.utils.transform_utils import pose_to_matrix
 
 ROBOPLAN_WORLD_FRAME = "dimos_world"
 
@@ -337,8 +338,8 @@ def _apply_collision_exclusions(scene: Any, srdf: str) -> None:
         scene.setCollisions(first, second, False)
 
 
-def _pose_attributes(pose: Any) -> dict[str, str]:
-    matrix = pose_to_matrix(pose)
+def _pose_attributes(pose: PoseStamped) -> dict[str, str]:
+    matrix = pose_matrix(pose.pose)
     sy = float(np.hypot(matrix[0, 0], matrix[1, 0]))
     if sy > 1e-9:
         rpy = (

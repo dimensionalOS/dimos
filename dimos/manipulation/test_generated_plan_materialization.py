@@ -17,6 +17,18 @@
 from pathlib import Path
 from unittest.mock import MagicMock
 
+from dimos_generated.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseStamped,
+    Quaternion,
+    Transform,
+    TransformStamped,
+    Vector3,
+)
+from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.std_msgs.msg import Header
+from dimos_generated.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 import pytest
 
 from dimos.manipulation.manipulation_module import ManipulationState
@@ -38,13 +50,7 @@ from dimos.manipulation.planning.trajectory_generator.config import (
 from dimos.manipulation.planning.trajectory_generator.simple_parametrizer import (
     SimpleTrapezoidParametrizer,
 )
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
+from dimos.msgs.time import duration_from_seconds, header_now, to_seconds
 from dimos.robot.assets.model import LoadedRobotModel, RobotModel
 
 
@@ -66,21 +72,24 @@ class RecordingGenerator:
     def generate(self, waypoints: list[list[float]]) -> JointTrajectory:
         RecordingGenerator.calls.append(waypoints)
         return JointTrajectory(
+            header=header_now(),
             points=[
-                TrajectoryPoint(
-                    time_from_start=float(index),
+                JointTrajectoryPoint(
+                    time_from_start=duration_from_seconds(float(index)),
                     positions=list(point),
                     velocities=[0.0] * self.num_joints,
                 )
                 for index, point in enumerate(waypoints)
-            ]
+            ],
         )
 
 
 def _model() -> RobotModelConfig:
     return RobotModelConfig(
         model=RobotModel.from_file(Path("/robot.urdf")),
-        base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
+        base_pose=PoseStamped(
+            header=Header(frame_id=""), pose=Pose(position=Point(), orientation=Quaternion())
+        ),
         joint_names=["left/a", "left/b", "right/c"],
         base_link="base",
         planning_groups=[
@@ -162,7 +171,7 @@ def test_materializes_once_with_reordered_groups_heterogeneous_limits_and_distin
     assert module._last_plan is not None
     assert module._last_plan.path is not module._last_plan.trajectory.points
     assert module._last_plan.trajectory.joint_names == names
-    assert module._last_plan.trajectory.points[-1].time_from_start == 1.0
+    assert to_seconds(module._last_plan.trajectory.points[-1].time_from_start) == 1.0
 
 
 def test_cartesian_plan_preserves_planner_timestamps_and_velocities(monkeypatch, module_factory):
@@ -184,8 +193,12 @@ def test_cartesian_plan_preserves_planner_timestamps_and_velocities(monkeypatch,
     plan = module.generate_cartesian_plan(
         {
             "left_arm": (
-                Transform.identity(),
-                Transform(translation=Vector3(0.01, 0.0, 0.0)),
+                TransformStamped(header=Header(frame_id="world"), child_frame_id=""),
+                TransformStamped(
+                    header=Header(frame_id="world"),
+                    transform=Transform(translation=Vector3(x=0.01, y=0.0, z=0.0)),
+                    child_frame_id="",
+                ),
             )
         },
         RoboPlanCartesianPathConfig(
@@ -196,7 +209,7 @@ def test_cartesian_plan_preserves_planner_timestamps_and_velocities(monkeypatch,
     )
 
     assert plan is not None
-    assert [point.time_from_start for point in plan.trajectory.points] == [0.0, 0.25]
+    assert [to_seconds(point.time_from_start) for point in plan.trajectory.points] == [0.0, 0.25]
     assert [point.velocities for point in plan.trajectory.points] == [
         [0.0, 0.0],
         [0.4, 0.2],

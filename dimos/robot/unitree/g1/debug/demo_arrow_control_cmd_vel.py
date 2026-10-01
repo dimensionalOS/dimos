@@ -20,18 +20,17 @@ import time
 import traceback
 from typing import Any
 
+from dimos_generated.geometry_msgs.msg import Twist, Vector3
 import lcm
 
 from dimos.core.transport import LCMTransport
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.robot.unitree.g1.effectors.high_level.dds_sdk import G1HighLevelDdsSdk
 
-CMD_VEL_CHANNEL = "/cmd_vel#geometry_msgs.Twist"
+CMD_VEL_CHANNEL = "/cmd_vel#geometry_msgs/msg/Twist"
 
 
 def publish_twist(lc: lcm.LCM, twist: Twist) -> None:
-    lc.publish(CMD_VEL_CHANNEL, twist.lcm_encode())
+    lc.publish(CMD_VEL_CHANNEL, twist.encode())
 
 
 def draw_ui(stdscr: Any, state_text: str = "Not connected") -> None:
@@ -116,25 +115,37 @@ def main(stdscr: Any) -> None:
             action = None
 
             if key == curses.KEY_UP or key_char == "w":
-                twist = Twist(linear=Vector3(linear_speed, 0, 0), angular=Vector3(0, 0, 0))
+                twist = Twist(
+                    linear=Vector3(x=linear_speed, y=0, z=0), angular=Vector3(x=0, y=0, z=0)
+                )
                 action = "Moving forward..."
             elif key == curses.KEY_DOWN or key_char == "s":
-                twist = Twist(linear=Vector3(-linear_speed, 0, 0), angular=Vector3(0, 0, 0))
+                twist = Twist(
+                    linear=Vector3(x=-linear_speed, y=0, z=0), angular=Vector3(x=0, y=0, z=0)
+                )
                 action = "Moving backward..."
             elif key == curses.KEY_LEFT or key_char == "a":
-                twist = Twist(linear=Vector3(0, 0, 0), angular=Vector3(0, 0, angular_speed))
+                twist = Twist(
+                    linear=Vector3(x=0, y=0, z=0), angular=Vector3(x=0, y=0, z=angular_speed)
+                )
                 action = "Rotating left..."
             elif key == curses.KEY_RIGHT or key_char == "d":
-                twist = Twist(linear=Vector3(0, 0, 0), angular=Vector3(0, 0, -angular_speed))
+                twist = Twist(
+                    linear=Vector3(x=0, y=0, z=0), angular=Vector3(x=0, y=0, z=-angular_speed)
+                )
                 action = "Rotating right..."
             elif key_char == "q":
-                twist = Twist(linear=Vector3(0, linear_speed, 0), angular=Vector3(0, 0, 0))
+                twist = Twist(
+                    linear=Vector3(x=0, y=linear_speed, z=0), angular=Vector3(x=0, y=0, z=0)
+                )
                 action = "Strafing left..."
             elif key_char == "e":
-                twist = Twist(linear=Vector3(0, -linear_speed, 0), angular=Vector3(0, 0, 0))
+                twist = Twist(
+                    linear=Vector3(x=0, y=-linear_speed, z=0), angular=Vector3(x=0, y=0, z=0)
+                )
                 action = "Strafing right..."
             elif key_char == " ":
-                stop = Twist(linear=Vector3(0, 0, 0), angular=Vector3(0, 0, 0))
+                stop = Twist(linear=Vector3(x=0, y=0, z=0), angular=Vector3(x=0, y=0, z=0))
                 publish_twist(lc, stop)
                 action = "Stopped"
                 last_cmd_time = current_time
@@ -160,7 +171,7 @@ def main(stdscr: Any) -> None:
         pass
     finally:
         draw_ui(stdscr, "Stopping...")
-        stop = Twist(linear=Vector3(0, 0, 0), angular=Vector3(0, 0, 0))
+        stop = Twist(linear=Vector3(x=0, y=0, z=0), angular=Vector3(x=0, y=0, z=0))
         publish_twist(lc, stop)
         time.sleep(0.5)
         conn.disconnect()

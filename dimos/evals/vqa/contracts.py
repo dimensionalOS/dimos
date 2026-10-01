@@ -29,10 +29,11 @@ from pydantic import (
 )
 
 if TYPE_CHECKING:
+    from dimos_generated.sensor_msgs.msg import Image
+
     from dimos.evals.vqa.pointcloud_frame import PointCloudFrame
     from dimos.evals.vqa.primitives.edge_tam import ObjectMaskEvidence
     from dimos.evals.vqa.primitives.range import ObjectRangeEvidence
-    from dimos.msgs.sensor_msgs.Image import Image
 
 NonEmptyString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 FamilyName = Literal[

@@ -5,8 +5,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 output="$PWD/build/message-codegen/viewers"
 mkdir -p "$output/evidence"
-export PYTHONPATH="$PWD:$PWD/build/message-codegen/demo/cpp/build${PYTHONPATH:+:$PYTHONPATH}"
-.venv/bin/pytest dimos/protocol/test_cdr_mcap.py --noconftest -o addopts='' -q \
+export PYTHONPATH="$PWD/build/message-codegen/demo/cpp/build:$PWD${PYTHONPATH:+:$PYTHONPATH}"
+.venv/bin/python -m pytest dimos/protocol/test_cdr_mcap.py --noconftest -o addopts='' -q \
   | tee "$output/evidence/pytest.txt"
 .venv/bin/python examples/message-codegen/demo_mcap.py --output "$output/demo.mcap" \
   | tee "$output/evidence/producer.txt"
@@ -17,7 +17,7 @@ node examples/message-codegen/viewer-checker/check.mjs "$output/demo.mcap" \
 unset PYTHONPATH
 export RERUN_ANALYTICS_ENABLED=false
 .venv/bin/rerun mcap convert "$output/demo.mcap" \
-  -d ros2msg -d ros2_reflection -o "$output/demo.rrd"
+  -d ros2msg -d ros2_reflection --disable-raw-fallback -o "$output/demo.rrd"
 .venv/bin/rerun rrd print "$output/demo.rrd" -v > "$output/evidence/rerun-summary.txt"
 .venv/bin/rerun rrd print "$output/demo.rrd" --entity /telemetry -vvv \
   > "$output/evidence/rerun-telemetry.txt"

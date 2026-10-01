@@ -8,19 +8,24 @@
 #include <atomic>
 #include <chrono>
 
-#include "geometry_msgs/PoseStamped.hpp"
-#include "geometry_msgs/Twist.hpp"
+#include <dimos_generated/messages.hpp>
 
 class RobotController {
 public:
     RobotController() : lcm_(), running_(true) {}
 
-    void onPose(const lcm::ReceiveBuffer*, const std::string&,
-                const geometry_msgs::PoseStamped* msg) {
+    void onPose(const lcm::ReceiveBuffer* buffer, const std::string&) {
+        try {
+        const auto decoded = dimos::cdr::decode<geometry_msgs::msg::PoseStamped>(
+            static_cast<const uint8_t*>(buffer->data), buffer->data_size);
+        const auto* msg = &decoded;
         const auto& pos = msg->pose.position;
         const auto& ori = msg->pose.orientation;
         printf("[pose] x=%.2f y=%.2f z=%.2f | qw=%.2f\n",
                pos.x, pos.y, pos.z, ori.w);
+        } catch (const std::exception& error) {
+            fprintf(stderr, "Invalid CDR pose: %s\n", error.what());
+        }
     }
 
     void run() {
@@ -34,7 +39,7 @@ public:
         std::thread pub_thread([this]() {
             double t = 0;
             while (running_) {
-                geometry_msgs::Twist twist;
+                geometry_msgs::msg::Twist twist;
                 twist.linear.x = 0.5;
                 twist.linear.y = 0;
                 twist.linear.z = 0;
@@ -42,7 +47,8 @@ public:
                 twist.angular.y = 0;
                 twist.angular.z = std::sin(t) * 0.3;
 
-                lcm_.publish("/cmd_vel#geometry_msgs.Twist", &twist);
+                const auto bytes = dimos::cdr::encode(twist);
+                lcm_.publish("/cmd_vel#geometry_msgs.Twist", bytes.data(), bytes.size());
                 printf("[twist] linear=%.2f angular=%.2f\n", twist.linear.x, twist.angular.z);
                 t += 0.1;
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));

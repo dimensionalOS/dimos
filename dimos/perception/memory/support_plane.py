@@ -27,15 +27,15 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.geometry import inverse_transform
+from dimos.msgs.pointcloud import pointcloud_from_rgbd, pointcloud_xyz, transform_cloud
 from dimos.perception.memory import gates
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from dimos_lcm.sensor_msgs import CameraInfo
+    from dimos_generated.sensor_msgs.msg import CameraInfo, Image
 
     from dimos.memory.type.observation import Observation
-    from dimos.msgs.sensor_msgs.Image import Image
     from dimos.protocol.tf.tf import TFLookup
 
 logger = setup_logger()
@@ -104,17 +104,21 @@ def fit_support_plane(
         transform = tf.get(optical_frame, world_frame, obs.ts, tf_tolerance)
         if depth is None or transform is None:
             continue
-        cloud = PointCloud2.from_rgbd(
-            obs.data, depth, camera_info, depth_scale=0.001, depth_trunc=BACKDROP_DEPTH_TRUNC
-        ).transform(-transform)
-        clouds.append(cloud.voxel_downsample(0.01))
+        cloud = transform_cloud(
+            pointcloud_from_rgbd(
+                obs.data, depth, camera_info, depth_scale=0.001, depth_trunc=BACKDROP_DEPTH_TRUNC
+            ),
+            inverse_transform(transform),
+        )
+        import open3d as o3d
+
+        native = o3d.geometry.PointCloud()
+        native.points = o3d.utility.Vector3dVector(pointcloud_xyz(cloud))
+        clouds.append(native.voxel_down_sample(0.01))
     if not clouds:
         return None
 
-    merged = clouds[0]
-    for cloud in clouds[1:]:
-        merged = merged + cloud
-    points = np.asarray(merged.pointcloud.points)
+    points = np.concatenate([np.asarray(cloud.points) for cloud in clouds])
     if len(points) < 500:
         return None
 

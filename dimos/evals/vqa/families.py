@@ -31,9 +31,10 @@ from dimos.evals.vqa.contracts import (
 )
 
 if TYPE_CHECKING:
+    from dimos_generated.sensor_msgs.msg import Image
+
     from dimos.evals.vqa.pointcloud_frame import PointCloudFrame
     from dimos.models.vl.base import VlModel
-    from dimos.msgs.sensor_msgs.Image import Image
 
 
 PRESENCE_FAMILY = FamilySpec(

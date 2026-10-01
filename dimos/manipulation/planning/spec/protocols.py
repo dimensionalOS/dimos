@@ -26,6 +26,10 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 if TYPE_CHECKING:
     from contextlib import AbstractContextManager
 
+    from dimos_generated.dimos_msgs.msg import GraspCandidateArray
+    from dimos_generated.geometry_msgs.msg import PoseStamped
+    from dimos_generated.sensor_msgs.msg import JointState
+    from dimos_generated.trajectory_msgs.msg import JointTrajectory
     import numpy as np
     from numpy.typing import NDArray
 
@@ -42,10 +46,6 @@ if TYPE_CHECKING:
         VisualizationStateFrame,
     )
     from dimos.manipulation.planning.spec.validation import PreparedRobotModel
-    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-    from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
-    from dimos.msgs.sensor_msgs.JointState import JointState
-    from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 
 
 @runtime_checkable

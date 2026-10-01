@@ -19,17 +19,18 @@ import time
 from typing import Any
 
 import av
+from dimos_generated.foxglove_msgs.msg import CompressedVideo
+from dimos_generated.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
+from dimos_generated.sensor_msgs.msg import CameraInfo
+from dimos_generated.std_msgs.msg import Header
+from dimos_generated.tf2_msgs.msg import TFMessage
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import Out
-from dimos.msgs.foxglove_msgs.CompressedVideo import CompressedVideo
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.msgs.camera_info import camera_info_from_intrinsics, camera_info_with_stamp
+from dimos.msgs.time import time_from_seconds
 from dimos.robot.deeprobotics.m20.constants import (
     FRONT_CAMERA_RTSP_URL,
     REAR_CAMERA_RTSP_URL,
@@ -44,27 +45,27 @@ logger = setup_logger()
 # factory calibration.
 _FRONT_CAMERA_XYZ = (0.37646, 0.0, 0.03738)
 _REAR_CAMERA_XYZ = (-0.37646, 0.0, 0.03738)
-_OPTICAL_ROT = Quaternion(-0.5, 0.5, -0.5, 0.5)
+_OPTICAL_ROT = Quaternion(x=-0.5, y=0.5, z=-0.5, w=0.5)
 _CAMERA_WIDTH = 800
 _CAMERA_HEIGHT = 600
 _CAMERA_FOCAL_LENGTH = 607.0 * _CAMERA_WIDTH / 1280.0
-_FRONT_CAMERA_INFO = CameraInfo.from_intrinsics(
+_FRONT_CAMERA_INFO = camera_info_from_intrinsics(
     fx=_CAMERA_FOCAL_LENGTH,
     fy=_CAMERA_FOCAL_LENGTH,
     cx=_CAMERA_WIDTH * 0.5,
     cy=_CAMERA_HEIGHT * 0.5,
     width=_CAMERA_WIDTH,
     height=_CAMERA_HEIGHT,
-    frame_id="front_camera_optical",
+    header=Header(frame_id="front_camera_optical"),
 )
-_REAR_CAMERA_INFO = CameraInfo.from_intrinsics(
+_REAR_CAMERA_INFO = camera_info_from_intrinsics(
     fx=_CAMERA_FOCAL_LENGTH,
     fy=_CAMERA_FOCAL_LENGTH,
     cx=_CAMERA_WIDTH * 0.5,
     cy=_CAMERA_HEIGHT * 0.5,
     width=_CAMERA_WIDTH,
     height=_CAMERA_HEIGHT,
-    frame_id="rear_camera_optical",
+    header=Header(frame_id="rear_camera_optical"),
 )
 
 
@@ -115,35 +116,54 @@ class M20CameraRelay(Module):
             now = time.time()
             self.tf.publish(
                 TFMessage(
-                    Transform(
-                        translation=Vector3(*_FRONT_CAMERA_XYZ),
-                        frame_id="base_link",
-                        child_frame_id="front_camera_link",
-                        ts=now,
-                    ),
-                    Transform(
-                        rotation=_OPTICAL_ROT,
-                        frame_id="front_camera_link",
-                        child_frame_id="front_camera_optical",
-                        ts=now,
-                    ),
-                    Transform(
-                        translation=Vector3(*_REAR_CAMERA_XYZ),
-                        rotation=Quaternion(0.0, 0.0, 1.0, 0.0),
-                        frame_id="base_link",
-                        child_frame_id="rear_camera_link",
-                        ts=now,
-                    ),
-                    Transform(
-                        rotation=_OPTICAL_ROT,
-                        frame_id="rear_camera_link",
-                        child_frame_id="rear_camera_optical",
-                        ts=now,
-                    ),
+                    transforms=[
+                        TransformStamped(
+                            header=Header(frame_id="base_link", stamp=time_from_seconds(now)),
+                            child_frame_id="front_camera_link",
+                            transform=Transform(
+                                translation=Vector3(
+                                    x=_FRONT_CAMERA_XYZ[0],
+                                    y=_FRONT_CAMERA_XYZ[1],
+                                    z=_FRONT_CAMERA_XYZ[2],
+                                ),
+                                rotation=Quaternion(w=1.0),
+                            ),
+                        ),
+                        TransformStamped(
+                            header=Header(
+                                frame_id="front_camera_link", stamp=time_from_seconds(now)
+                            ),
+                            child_frame_id="front_camera_optical",
+                            transform=Transform(rotation=_OPTICAL_ROT),
+                        ),
+                        TransformStamped(
+                            header=Header(frame_id="base_link", stamp=time_from_seconds(now)),
+                            child_frame_id="rear_camera_link",
+                            transform=Transform(
+                                translation=Vector3(
+                                    x=_REAR_CAMERA_XYZ[0],
+                                    y=_REAR_CAMERA_XYZ[1],
+                                    z=_REAR_CAMERA_XYZ[2],
+                                ),
+                                rotation=Quaternion(z=1.0),
+                            ),
+                        ),
+                        TransformStamped(
+                            header=Header(
+                                frame_id="rear_camera_link", stamp=time_from_seconds(now)
+                            ),
+                            child_frame_id="rear_camera_optical",
+                            transform=Transform(rotation=_OPTICAL_ROT),
+                        ),
+                    ]
                 )
             )
-            self.front_camera_info.publish(_FRONT_CAMERA_INFO.with_ts(now))
-            self.rear_camera_info.publish(_REAR_CAMERA_INFO.with_ts(now))
+            self.front_camera_info.publish(
+                camera_info_with_stamp(_FRONT_CAMERA_INFO, time_from_seconds(now))
+            )
+            self.rear_camera_info.publish(
+                camera_info_with_stamp(_REAR_CAMERA_INFO, time_from_seconds(now))
+            )
             self._stop_event.wait(1.0)
 
     def _relay(self, url: str, output: Out[CompressedVideo], camera_name: str) -> None:
@@ -168,10 +188,10 @@ class M20CameraRelay(Module):
                             continue
                         output.publish(
                             CompressedVideo(
-                                bytes(packet),
+                                data=bytes(packet),
                                 format="h265",
                                 frame_id="",
-                                ts=time.time(),
+                                timestamp=time_from_seconds(time.time()),
                             )
                         )
             except (av.FFmpegError, IndexError, ValueError) as exc:

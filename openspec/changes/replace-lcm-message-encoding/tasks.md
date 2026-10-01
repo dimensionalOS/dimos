@@ -36,7 +36,7 @@
 
 - [ ] 4.1 Generate the complete inventory of standard and DimOS custom messages; replace the message protocol and generated-type discovery with the transport-neutral codec and schema contract.
 - [ ] 4.2 Extract geometry, timestamp, NumPy/Open3D, and Rerun helpers; update callers to nested ROS2 fields, sec/nanosec timestamps, and distinct TransformStamped/TFMessage representations without compatibility wrappers.
-- [ ] 4.3 Update Python typed LCM/Zenoh pub/sub and typed SHM paths to CDR, preserving raw transport and separate Python-object serialization behavior.
+- [x] 4.3 Update Python typed LCM/Zenoh pub/sub and typed SHM paths to CDR, preserving raw transport and separate Python-object serialization behavior.
 - [ ] 4.4 Update C++ and Rust SDK codecs, native examples, and typed worker/module configuration to the generated types; integrate the proven Rust raw transport replacement with preserved provenance.
 - [ ] 4.5 Update image and point-cloud producers/consumers to generated fields, proper CompressedImage use, arbitrary PointCloud2 layouts, and explicit conversion helpers.
 - [ ] 4.6 Update remaining robot/perception/navigation/tool consumers and existing optional ROS bridge conversions; replace affected repository fixtures rather than retaining LCM fallback decoding.

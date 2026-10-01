@@ -32,9 +32,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 import math
 
+from dimos_generated.nav_msgs.msg import Path
 import numpy as np
 
-from dimos.msgs.nav_msgs.Path import Path
+from dimos.msgs.geometry import quaternion_euler
 
 _EPS = 1e-9
 
@@ -68,8 +69,8 @@ class ProgressPathReference:
         ys: list[float] = []
         yaws: list[float] = []
         for p in path.poses:
-            x, y = float(p.position.x), float(p.position.y)
-            yaw = float(p.orientation.euler[2])
+            x, y = float(p.pose.position.x), float(p.pose.position.y)
+            yaw = float(quaternion_euler(p.pose.orientation)[2])
             if xs and math.hypot(x - xs[-1], y - ys[-1]) < _EPS:
                 # Coincident waypoint: keep the position once but adopt the
                 # later pose's yaw (a stop-and-rotate hint survives as a yaw

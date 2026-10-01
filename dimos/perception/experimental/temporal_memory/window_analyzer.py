@@ -34,8 +34,9 @@ from .temporal_utils.prompts import (
 )
 
 if TYPE_CHECKING:
+    from dimos_generated.sensor_msgs.msg import Image
+
     from dimos.models.vl.base import VlModel
-    from dimos.msgs.sensor_msgs.Image import Image
 
     from .frame_window_accumulator import Frame
 

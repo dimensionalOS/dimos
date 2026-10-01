@@ -23,10 +23,13 @@ import threading
 import time
 from typing import Any
 
+from dimos_generated.sensor_msgs.msg import Image
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 from reactivex import Observable, Subject
 
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.image import image_from_array
+from dimos.msgs.time import time_from_seconds
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -137,7 +140,9 @@ class DJIDroneVideoStream:
                     frame = frame.reshape((self.height, self.width, channels))
 
                     # Create Image message (RGB format - matches GStreamer pipeline output)
-                    img_msg = Image.from_numpy(frame, format=ImageFormat.RGB)
+                    img_msg = image_from_array(
+                        frame, encoding="rgb8", header=Header(stamp=time_from_seconds(time.time()))
+                    )
 
                     # Publish
                     self._video_subject.on_next(img_msg)
@@ -217,8 +222,8 @@ class FakeDJIVideoStream(DJIDroneVideoStream):
         from dimos.utils.testing.legacy_pickle import LegacyPickleStore
 
         def _fix_format(img: Image) -> Image:
-            if img.format == ImageFormat.BGR:
-                img.format = ImageFormat.RGB
+            if img.encoding == "bgr8":
+                img.encoding = "rgb8"
             return img
 
         logger.info("Creating video replay stream")

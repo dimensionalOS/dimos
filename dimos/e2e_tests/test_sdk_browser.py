@@ -77,12 +77,19 @@ ABSOLUTE_URL_PAGE = f"""<!DOCTYPE html>
 
 
 @pytest.fixture(scope="module")
-def go2_replay_serve_dir() -> Iterator[DimosCliCall]:
+def go2_replay_serve_dir(cdr_go2_replay_db: Path) -> Iterator[DimosCliCall]:
     call = DimosCliCall()
     call.simulator = None
     # --viewer none: no rerun viewer spawn (headless CI); the replay
     # connection means no MuJoCo and no hardware.
-    call.global_args = ["--robot-ip", "fake", "--viewer", "none"]
+    call.global_args = [
+        "--robot-ip",
+        "fake",
+        "--viewer",
+        "none",
+        "--replay-db",
+        str(cdr_go2_replay_db),
+    ]
     call.extra_env = {"RELAYBRIDGEMODULE__OPEN_BROWSER": "false"}
     call.demo_args = [
         "run",

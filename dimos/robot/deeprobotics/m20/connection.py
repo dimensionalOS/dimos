@@ -23,18 +23,15 @@ import struct
 from threading import Condition, RLock
 from typing import Any, Literal
 
+from dimos_generated.geometry_msgs.msg import PoseStamped, Twist
+from dimos_generated.nav_msgs.msg import Odometry
+from dimos_generated.std_msgs.msg import Bool, Int32, UInt32
 from pydantic import Field
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.msgs.std_msgs.Bool import Bool
-from dimos.msgs.std_msgs.Int32 import Int32
-from dimos.msgs.std_msgs.UInt32 import UInt32
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.sequential_ids import SequentialIds
 
@@ -139,7 +136,7 @@ class M20Connection(Module):
     @rpc
     def stop_movement(self) -> None:
         """Publish an immediate zero velocity without disabling future commands."""
-        self.cmd_vel.publish(Twist.zero())
+        self.cmd_vel.publish(Twist())
 
     @rpc
     def standup(self) -> bool:
@@ -169,7 +166,7 @@ class M20Connection(Module):
     def liedown(self) -> bool:
         """Disable velocity output and command the M20 to its Sit/prone state."""
         self.stop_movement()
-        self.motion_state_cmd.publish(Int32(MOTION_SIT))
+        self.motion_state_cmd.publish(Int32(data=MOTION_SIT))
         return True
 
     @rpc
@@ -221,7 +218,7 @@ class M20Connection(Module):
             self._state_condition.notify_all()
 
     def _on_odometry(self, odometry: Odometry) -> None:
-        self.odom.publish(odometry.to_pose_stamped())
+        self.odom.publish(PoseStamped(header=odometry.header, pose=odometry.pose.pose))
 
     def _ensure_rl_control(self) -> bool:
         with self._lock:
@@ -229,18 +226,18 @@ class M20Connection(Module):
         if motion_state == MOTION_RL_CONTROL:
             return True
         if motion_state != MOTION_STAND:
-            self.motion_state_cmd.publish(Int32(MOTION_STAND))
+            self.motion_state_cmd.publish(Int32(data=MOTION_STAND))
             if not self._wait_for_motion_state(MOTION_STAND, self.config.stand_timeout_s):
                 logger.error("M20 did not confirm Stand before the transition timeout")
                 return False
-        self.motion_state_cmd.publish(Int32(MOTION_RL_CONTROL))
+        self.motion_state_cmd.publish(Int32(data=MOTION_RL_CONTROL))
         if not self._wait_for_motion_state(MOTION_RL_CONTROL, self.config.rl_control_timeout_s):
             logger.error("M20 did not confirm RL Control after standing")
             return False
         return True
 
     def _set_gait_and_wait(self, gait: int) -> bool:
-        self.gait_cmd.publish(UInt32(gait))
+        self.gait_cmd.publish(UInt32(data=gait))
         return self._wait_for_gait_state(gait, self.config.gait_timeout_s)
 
     def _enter_navigation_mode(self) -> bool:

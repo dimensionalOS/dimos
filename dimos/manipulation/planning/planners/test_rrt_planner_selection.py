@@ -20,6 +20,17 @@ from contextlib import nullcontext
 import math
 from pathlib import Path
 
+from dimos_generated.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseStamped,
+    Quaternion,
+    Transform,
+    TransformStamped,
+    Vector3,
+)
+from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 import pytest
 from pytest_mock import MockerFixture
@@ -40,16 +51,14 @@ from dimos.manipulation.planning.spec.joint_space import (
     JointSpace,
 )
 from dimos.manipulation.planning.spec.validation import PreparedRobotModel
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import LoadedRobotModel, PlanarBaseDefinition, RobotModel
 
 
 def _pose() -> PoseStamped:
-    return PoseStamped(position=Vector3(), orientation=Quaternion(0.0, 0.0, 0.0, 1.0))
+    return PoseStamped(
+        header=Header(frame_id=""),
+        pose=Pose(position=Point(), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)),
+    )
 
 
 def _group(name: str, joints: tuple[str, ...]) -> PlanningGroup:
@@ -103,9 +112,7 @@ class _World:
         return nullcontext(None)
 
     def get_joint_state(self, ctx: object) -> JointState:
-        return JointState(
-            {"name": ["arm/joint_a", "arm/joint_b", "arm/gripper"], "position": self.current}
-        )
+        return JointState(name=["arm/joint_a", "arm/joint_b", "arm/gripper"], position=self.current)
 
     def get_joint_limits(self) -> tuple[np.ndarray, np.ndarray]:
         return np.array([-1.0, -1.0, -1.0]), np.array([1.0, 1.0, 1.0])
@@ -197,14 +204,14 @@ class _WallPlanarWorld(_PlanarWorld):
     ("start", "goal", "expected_start", "expected_goal"),
     [
         (
-            JointState({"position": [0.1, 0.2]}),
-            JointState({"position": [0.3, 0.4]}),
+            JointState(position=[0.1, 0.2]),
+            JointState(position=[0.3, 0.4]),
             [0.1, 0.2],
             [0.3, 0.4],
         ),
         (
-            JointState({"name": ["arm/joint_b", "arm/joint_a"], "position": [0.2, 0.1]}),
-            JointState({"name": ["arm/joint_b", "arm/joint_a"], "position": [0.4, 0.3]}),
+            JointState(name=["arm/joint_b", "arm/joint_a"], position=[0.2, 0.1]),
+            JointState(name=["arm/joint_b", "arm/joint_a"], position=[0.4, 0.3]),
             [0.1, 0.2],
             [0.3, 0.4],
         ),
@@ -229,22 +236,20 @@ def test_plan_selected_joint_path_normalizes_target_forms(
     ("start", "goal", "status", "message"),
     [
         (
-            JointState({"name": ["arm/joint_a"], "position": [0.0]}),
-            JointState({"position": [0.0, 0.0]}),
+            JointState(name=["arm/joint_a"], position=[0.0]),
+            JointState(position=[0.0, 0.0]),
             PlanningStatus.INVALID_START,
             "missing",
         ),
         (
-            JointState({"position": [0.0, 0.0]}),
-            JointState(
-                {"name": ["arm/joint_a", "arm/joint_b", "arm/extra"], "position": [0.0, 0.0, 0.0]}
-            ),
+            JointState(position=[0.0, 0.0]),
+            JointState(name=["arm/joint_a", "arm/joint_b", "arm/extra"], position=[0.0, 0.0, 0.0]),
             PlanningStatus.INVALID_GOAL,
             "extra",
         ),
         (
-            JointState({"name": ["arm/joint_a", "joint_b"], "position": [0.0, 0.0]}),
-            JointState({"position": [0.0, 0.0]}),
+            JointState(name=["arm/joint_a", "joint_b"], position=[0.0, 0.0]),
+            JointState(position=[0.0, 0.0]),
             PlanningStatus.INVALID_START,
             "missing",
         ),
@@ -270,8 +275,8 @@ def test_plan_selected_joint_path_rejects_noncanonical_names() -> None:
     result = RRTConnectPlanner().plan_selected_joint_path(
         _World(),
         selection,
-        JointState({"name": ["joint_a", "gripper"], "position": [0.0, 0.0]}),
-        JointState({"position": [0.1, 0.2]}),
+        JointState(name=["joint_a", "gripper"], position=[0.0, 0.0]),
+        JointState(position=[0.1, 0.2]),
     )
 
     assert result.status == PlanningStatus.INVALID_START
@@ -285,8 +290,8 @@ def test_plan_selected_joint_path_direct_edge_projects_full_state_with_unselecte
     result = RRTConnectPlanner().plan_selected_joint_path(
         world,
         PlanningGroupSelection.from_groups((group,)),
-        JointState({"position": [0.1, 0.2]}),
-        JointState({"position": [0.3, 0.4]}),
+        JointState(position=[0.1, 0.2]),
+        JointState(position=[0.3, 0.4]),
     )
 
     assert result.status == PlanningStatus.SUCCESS
@@ -305,11 +310,15 @@ def test_plan_cartesian_path_is_explicitly_unsupported() -> None:
     result = RRTConnectPlanner().plan_cartesian_path(
         _World(),
         selection,
-        JointState({"position": [0.0, 0.0]}),
+        JointState(position=[0.0, 0.0]),
         {
             group.id: (
-                Transform.identity(),
-                Transform(translation=Vector3(0.1, 0.0, 0.0)),
+                TransformStamped(header=Header(frame_id="world"), child_frame_id=""),
+                TransformStamped(
+                    header=Header(frame_id="world"),
+                    transform=Transform(translation=Vector3(x=0.1, y=0.0, z=0.0)),
+                    child_frame_id="",
+                ),
             )
         },
         RoboPlanCartesianPathConfig(),

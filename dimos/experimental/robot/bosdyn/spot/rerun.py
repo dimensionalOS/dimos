@@ -18,15 +18,17 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from dimos.msgs.time import to_seconds
 from dimos.protocol.tf.tf import MultiTBuffer
+from dimos.visualization.rerun.message_helpers import image_archetype, tf_archetypes
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from dimos_generated.sensor_msgs.msg import CameraInfo, Image
+    from dimos_generated.tf2_msgs.msg import TFMessage
     import rerun.blueprint as rrb
 
-    from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-    from dimos.msgs.tf2_msgs.TFMessage import TFMessage
     from dimos.visualization.rerun.bridge import RerunData
 
 # Optical tf frame_id (SpotHighLevelConfig defaults) -> stream-name suffix.
@@ -88,11 +90,11 @@ def _camera_entity(origin: str) -> str:
 def _tf_to_rerun(tf_message: TFMessage) -> RerunData:
     """Log tf as usual, and keep a copy for the camera pose lookups."""
     _tf_buffer.receive_tfmessage(tf_message)
-    return tf_message.to_rerun()
+    return [(path, archetype) for path, archetype in tf_archetypes(tf_message)]
 
 
 def _camera_info_pinhole(camera_info: CameraInfo, origin: Callable[[str], str]) -> RerunData | None:
-    suffix = _OPTICAL_FRAME_TO_SUFFIX.get(camera_info.frame_id)
+    suffix = _OPTICAL_FRAME_TO_SUFFIX.get(camera_info.header.frame_id)
     if suffix is None:
         return None
     import rerun as rr
@@ -101,8 +103,8 @@ def _camera_info_pinhole(camera_info: CameraInfo, origin: Callable[[str], str]) 
         (
             _camera_entity(origin(suffix)),
             rr.Pinhole(
-                focal_length=[camera_info.K[0], camera_info.K[4]],
-                principal_point=[camera_info.K[2], camera_info.K[5]],
+                focal_length=[camera_info.k[0], camera_info.k[4]],
+                principal_point=[camera_info.k[2], camera_info.k[5]],
                 width=camera_info.width,
                 height=camera_info.height,
                 image_plane_distance=_FRUSTUM_PLANE_DISTANCE,
@@ -237,11 +239,11 @@ class _ImageBakedIntoAnchor:
     def __init__(self, origin: str) -> None:
         self.origin = origin
 
-    def __call__(self, image: Any) -> RerunData | None:
+    def __call__(self, image: Image) -> RerunData | None:
         anchor = _anchor_frame()
         if anchor is None:
             return None
-        pose = _tf_buffer.get(anchor, image.frame_id, image.ts)
+        pose = _tf_buffer.get(anchor, image.header.frame_id, to_seconds(image.header.stamp))
         if pose is None:
             return None
         import rerun as rr
@@ -250,10 +252,21 @@ class _ImageBakedIntoAnchor:
             (
                 self.origin,
                 rr.Transform3D(
-                    translation=[pose.translation.x, pose.translation.y, pose.translation.z],
-                    rotation=pose.rotation.to_rerun(),
+                    translation=[
+                        pose.transform.translation.x,
+                        pose.transform.translation.y,
+                        pose.transform.translation.z,
+                    ],
+                    quaternion=rr.Quaternion(
+                        xyzw=[
+                            pose.transform.rotation.x,
+                            pose.transform.rotation.y,
+                            pose.transform.rotation.z,
+                            pose.transform.rotation.w,
+                        ]
+                    ),
                     parent_frame=f"tf#/{anchor}",
                 ),
             ),
-            (_camera_entity(self.origin), image.to_rerun()),
+            (_camera_entity(self.origin), image_archetype(image)),
         ]

@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from dimos_generated.sensor_msgs.msg import Image
 import pytest
 
 from dimos.core.transport import (
@@ -24,7 +25,6 @@ from dimos.core.transport import (
     pLCMTransport,
     pSHMTransport,
 )
-from dimos.msgs.sensor_msgs.Image import Image
 from dimos.protocol.pubsub.registry import (
     make_pubsub_transport,
     parse_pubsub_uri,
@@ -50,8 +50,8 @@ def test_supported_protos_includes_known_set() -> None:
             ("lcm", "/odom", "nav_msgs.Odometry"),
         ),
         (
-            "jpeg_lcm:/color_image#sensor_msgs.Image",
-            ("jpeg_lcm", "/color_image", "sensor_msgs.Image"),
+            "jpeg_lcm:/color_image#sensor_msgs/msg/Image",
+            ("jpeg_lcm", "/color_image", "sensor_msgs/msg/Image"),
         ),
     ],
 )
@@ -127,7 +127,7 @@ def test_make_pubsub_transport_typed_proto_without_msg_type_raises() -> None:
 
 def test_make_pubsub_transport_uri_suffix_resolves_msg_type() -> None:
     """The '#' suffix is resolved via resolve_msg_type and used for typed protos."""
-    t = make_pubsub_transport("lcm:/color_image#sensor_msgs.Image")
+    t = make_pubsub_transport("lcm:/color_image#sensor_msgs/msg/Image")
     assert isinstance(t, LCMTransport)
 
 

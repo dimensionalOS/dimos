@@ -23,6 +23,8 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from dimos.msgs.geometry import transform_matrix
+
 try:
     import roboplan.cartesian_planning as roboplan_cartesian
     import roboplan.core as roboplan_core
@@ -32,6 +34,9 @@ except ImportError as exc:
         "RoboPlanPlanner requires the optional roboplan dependency. "
         "Install the manipulation extra before selecting the roboplan backend."
     ) from exc
+
+from dimos_generated.geometry_msgs.msg import PoseStamped, TransformStamped
+from dimos_generated.sensor_msgs.msg import JointState
 
 from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupSelection
 from dimos.manipulation.planning.planners.roboplan_config import (
@@ -55,11 +60,8 @@ from dimos.manipulation.planning.world.roboplan_world import (
     RoboPlanContext,
     RoboPlanWorld,
 )
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.geometry import pose_matrix
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.transform_utils import pose_to_matrix
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -374,8 +376,8 @@ class RoboPlanPlanner:
             waypoint_type = (
                 PoseStamped
                 if isinstance(target[0], PoseStamped)
-                else Transform
-                if isinstance(target[0], Transform)
+                else TransformStamped
+                if isinstance(target[0], TransformStamped)
                 else None
             )
             if waypoint_type is None or any(
@@ -385,10 +387,10 @@ class RoboPlanPlanner:
                     status=PlanningStatus.INVALID_GOAL,
                     message=(
                         f"Cartesian target for '{group_id}' must contain only PoseStamped "
-                        "waypoints or only Transform waypoints"
+                        "waypoints or only TransformStamped waypoints"
                     ),
                 )
-            if any(waypoint.frame_id != "world" for waypoint in target):
+            if any(waypoint.header.frame_id != "world" for waypoint in target):
                 return PlanningResult(
                     status=PlanningStatus.UNSUPPORTED,
                     message="Cartesian planning supports only world-frame waypoints",
@@ -420,7 +422,7 @@ class RoboPlanPlanner:
             if group.tip_link is None:
                 raise ValueError(f"Planning group '{group.id}' has no TCP tip link")
             start_pose = self._world.get_group_ee_pose(ctx, group.id)
-            start_matrix = np.asarray(pose_to_matrix(start_pose), dtype=np.float64)
+            start_matrix = np.asarray(pose_matrix(start_pose.pose), dtype=np.float64)
             target_matrices = [
                 self._resolve_cartesian_waypoint(start_matrix, waypoint) for waypoint in target
             ]
@@ -436,12 +438,12 @@ class RoboPlanPlanner:
     def _resolve_cartesian_waypoint(
         self,
         start_matrix: NDArray[np.float64],
-        waypoint: PoseStamped | Transform,
+        waypoint: PoseStamped | TransformStamped,
     ) -> NDArray[np.float64]:
         if isinstance(waypoint, PoseStamped):
-            return np.asarray(pose_to_matrix(waypoint), dtype=np.float64)
+            return np.asarray(pose_matrix(waypoint.pose), dtype=np.float64)
         target_matrix = start_matrix.copy()
-        delta_matrix = np.asarray(waypoint.to_matrix(), dtype=np.float64)
+        delta_matrix = np.asarray(transform_matrix(waypoint.transform), dtype=np.float64)
         target_matrix[:3, 3] += delta_matrix[:3, 3]
         target_matrix[:3, :3] = delta_matrix[:3, :3] @ start_matrix[:3, :3]
         return target_matrix
@@ -695,15 +697,15 @@ class RoboPlanPlanner:
         if not shortened_path:
             raise ValueError("RoboPlan path shortcutter returned an empty path")
         if not np.allclose(
-            shortened_path[0].position,
-            original_path[0].position,
+            np.asarray(shortened_path[0].position, dtype=np.float64),
+            np.asarray(original_path[0].position, dtype=np.float64),
             atol=1e-9,
             rtol=0.0,
         ):
             raise ValueError("RoboPlan path shortcutter changed the start configuration")
         if not np.allclose(
-            shortened_path[-1].position,
-            original_path[-1].position,
+            np.asarray(shortened_path[-1].position, dtype=np.float64),
+            np.asarray(original_path[-1].position, dtype=np.float64),
             atol=1e-9,
             rtol=0.0,
         ):

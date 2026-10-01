@@ -16,14 +16,13 @@ import difflib
 import math
 from typing import Any
 
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped
 from langchain_core.messages import HumanMessage
 import pytest
 
 from dimos.core.core import rpc
 from dimos.core.module import Module
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.geometry import quaternion_euler, quaternion_from_euler
 from dimos.navigation.base import NavigationState
 from dimos.robot.unitree.unitree_skill_container import (
     _UNITREE_COMMANDS,
@@ -82,23 +81,25 @@ def test_did_you_mean() -> None:
 
 def _pose(x: float, y: float, yaw_deg: float) -> PoseStamped:
     return PoseStamped(
-        position=Vector3(x, y, 0.3),
-        orientation=Quaternion.from_euler(Vector3(0, 0, math.radians(yaw_deg))),
+        pose=Pose(
+            position=Point(x=x, y=y, z=0.3),
+            orientation=quaternion_from_euler(0, 0, math.radians(yaw_deg)),
+        ),
     )
 
 
 def _xy(pose: PoseStamped) -> tuple[float, float]:
-    return pose.position.x, pose.position.y
+    return pose.pose.position.x, pose.pose.position.y
 
 
 def _yaw_deg(pose: PoseStamped) -> float:
-    return math.degrees(pose.orientation.to_euler().yaw)
+    return math.degrees(quaternion_euler(pose.pose.orientation)[2])
 
 
 def test_move_to_world_keeps_heading() -> None:
     goal = _goal_pose(_pose(1, 1, 90), 4, 1, None, relative=False)
     assert _xy(goal) == pytest.approx((4, 1))
-    assert goal.position.z == pytest.approx(0.3)
+    assert goal.pose.position.z == pytest.approx(0.3)
     assert _yaw_deg(goal) == pytest.approx(90)
 
 
