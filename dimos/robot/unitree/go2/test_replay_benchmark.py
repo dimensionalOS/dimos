@@ -198,7 +198,7 @@ def _perf_counts(path: Path, events: list[str]) -> tuple[dict[str, float], float
     missing = [e for e in events if event not in totals]
     if missing:
         raise RuntimeError(f"perf reported nothing for {missing} in {path}")
-    return {event: totals[e] for e in events}, counted
+    return {e: totals[e] for e in events}, counted
 
 
 @pytest.mark.self_hosted_large  # Needs 8+ GB memory
