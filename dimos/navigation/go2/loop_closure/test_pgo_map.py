@@ -20,9 +20,11 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.navigation.go2.loop_closure.pgo_map import PGOMap
-from dimos.navigation.go2.loop_closure.test_pgo import _graph_with_drift_at
 
+# TODO(PY311): drop. Skip before importing test_pgo, which skips mid-import without gtsam.
 pytest.importorskip("gtsam")
+
+from dimos.navigation.go2.loop_closure.test_pgo import _graph_with_drift_at
 
 VOXEL = 0.05
 
