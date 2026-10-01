@@ -24,26 +24,31 @@ import math
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
+import numpy as np
 import typer
 
 from dimos.mapping.ray_tracing.utils.loaded_map import LOADED_MAP_STREAM
-from dimos.mapping.ray_tracing.viz import PREMAP_POINT_RADIUS, log_loaded_map, voxel_map_points
 from dimos.mapping.relocalization.lidar.module import LidarConfig
 from dimos.mapping.relocalization.lidar.relocalize import PRESETS, LidarRelocalizer
 from dimos.mapping.relocalization.module import yaw_deg
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tf import StreamTF
+from dimos.memory.transform import FnTransformer
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2, register_colormap_annotation
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.unitree.go2 import nav_3d_config
 from dimos.utils.data import resolve_named_path
 
 if TYPE_CHECKING:
+    from dimos.memory.type.observation import Observation
     from dimos.msgs.geometry_msgs.Transform import Transform
 
 TIMELINE = "ts"
 MAP_FRAME = "map"
-RECORDED_MAP_COLOR = (255, 120, 120)
+# Screen-space dot radius for every cloud.
+POINT_RADIUS = 1.0
+# The live map is sparser than the premap, so it gets bigger dots to read against it.
+LOCAL_POINT_RADIUS = 2.5
 
 _FIELDS = LidarConfig.model_fields
 
@@ -101,6 +106,22 @@ def _init_recording(name: str, out: Path | None) -> None:
     rr.log("metrics/reloc/fitness", rr.SeriesLines(names=["fitness"]), static=True)
 
 
+def _log_scan(obs: Observation[PointCloud2]) -> Observation[PointCloud2]:
+    """Log the raw scan placed in the world: the map carves moving things, the scan keeps them."""
+    import rerun as rr
+    from scipy.spatial.transform import Rotation
+
+    if obs.pose_tuple is not None:
+        x, y, z, qx, qy, qz, qw = obs.pose_tuple
+        world = Rotation.from_quat([qx, qy, qz, qw]).apply(obs.data.points_f32()) + np.array(
+            [x, y, z]
+        )
+        rr.set_time(TIMELINE, timestamp=obs.ts)
+        scan = PointCloud2.from_numpy(world.astype(np.float32), timestamp=obs.ts)
+        rr.log("world/scan", scan.to_rerun(mode="points", ui_radius=LOCAL_POINT_RADIUS))
+    return obs
+
+
 def replay(
     store: SqliteStore,
     lidar_stream: str,
@@ -110,6 +131,8 @@ def replay(
     reloc_interval: float,
     min_local_points: int,
     voxel_size: float,
+    fine: bool,
+    scan: bool,
     after_s: float,
     from_time: float | None,
     to_time: float | None,
@@ -124,8 +147,11 @@ def replay(
     if tf is None:
         raise typer.BadParameter("the recording has no tf stream to register clouds from")
     lidar = store.stream(lidar_stream, PointCloud2).order_by("ts").range_time(from_time, to_time)
-    ray = RayTraceMap(voxel_size=voxel_size)
-    frames = lidar.transform(pose_from_tf(tf, world_frame)).transform(ray)
+    ray = RayTraceMap(voxel_size=voxel_size, fine=fine)
+    posed = lidar.transform(pose_from_tf(tf, world_frame))
+    if scan:
+        posed = posed.transform(FnTransformer(_log_scan))
+    frames = posed.transform(ray)
 
     relocalizer = LidarRelocalizer(premap.pointcloud, PRESETS[preset])
     recorded = _recorded_fix(store, world_frame, MAP_FRAME)
@@ -143,7 +169,7 @@ def replay(
         if obs.ts >= stop_at:
             break
         rr.set_time(TIMELINE, timestamp=obs.ts)
-        rr.log("world/local_map", voxel_map_points(obs.data.points_f32(), voxel_size))
+        rr.log("world/local_map", obs.data.to_rerun(mode="points", ui_radius=LOCAL_POINT_RADIUS))
         if fix is not None or obs.ts < next_attempt or len(obs.data) < min_local_points:
             continue
         next_attempt = obs.ts + reloc_interval
@@ -155,15 +181,14 @@ def replay(
             continue
         fix, fix_ts = fix_attempt.fix, obs.ts
         stop_at = obs.ts + after_s
-        log_loaded_map(premap.transform(fix).points_f32())
+        rr.log(
+            "world/loaded_map",
+            premap.transform(fix).to_rerun(mode="points", ui_radius=POINT_RADIUS),
+        )
         if recorded is not None:
             rr.log(
                 "world/recorded_map",
-                rr.Points3D(
-                    premap.transform(recorded).points_f32(),
-                    colors=[RECORDED_MAP_COLOR],
-                    radii=PREMAP_POINT_RADIUS,
-                ),
+                premap.transform(recorded).to_rerun(mode="points", ui_radius=POINT_RADIUS),
             )
     return Replay(attempts, fix, fix_ts, recorded)
 
@@ -216,6 +241,10 @@ def main(
     voxel_size: float = typer.Option(
         nav_3d_config.voxel_size, "--voxel-size", help="Live map voxel size (m)"
     ),
+    fine: bool = typer.Option(
+        True, "--fine/--no-fine", help="Log the raycaster's high-res fine cells as the local map"
+    ),
+    scan: bool = typer.Option(False, "--scan/--no-scan", help="Overlay each raw lidar scan"),
     after: float = typer.Option(
         10.0, "--after", help="Seconds of live map to keep logging after the fix, for the overlay"
     ),
@@ -244,6 +273,8 @@ def main(
             reloc_interval=reloc_interval,
             min_local_points=min_local_points,
             voxel_size=voxel_size,
+            fine=fine,
+            scan=scan,
             after_s=after,
             from_time=from_time,
             to_time=to_time,

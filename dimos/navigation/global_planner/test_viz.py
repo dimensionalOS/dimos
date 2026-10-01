@@ -46,12 +46,12 @@ def test_seed_regions_land_on_their_own_entities() -> None:
     far = PointCloud2.from_numpy(np.array([[5.0, 5.0, 0.0]], dtype=np.float32))
     empty = PointCloud2.from_numpy(np.zeros((0, 3), dtype=np.float32))
     (near_path, _), (far_path, _) = (
-        viz.render_seed_region(near, 0.1)[0],
-        viz.render_seed_region(far, 0.1)[0],
+        viz.render_seed_region(near)[0],
+        viz.render_seed_region(far)[0],
     )
     assert near_path.startswith("world/seed_map/") and far_path.startswith("world/seed_map/")
     assert near_path != far_path
-    assert viz.render_seed_region(empty, 0.1) is None
+    assert viz.render_seed_region(empty) is None
 
 
 def test_bridge_config_pickles_for_the_workers() -> None:

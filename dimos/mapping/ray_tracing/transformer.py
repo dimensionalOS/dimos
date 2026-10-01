@@ -56,11 +56,14 @@ class RayTraceMap(Transformer[PointCloud2, PointCloud2]):
         voxel_size: float = 0.08,
         max_range: float = 30.0,
         emit_every: int = 1,
+        fine: bool = False,
         **mapper_kwargs: Any,
     ) -> None:
         if emit_every < 0:
             raise ValueError(f"emit_every must be >= 0, got {emit_every}")
         self.emit_every = emit_every
+        # Emit fine cells (voxel_size / fine_divisor) instead of voxels.
+        self.fine = fine
         # emit_every=1 turns on frame batching. This transformer consumes it
         # with take_local_bounds on its own cadence.
         self.mapper = VoxelRayMapper(
@@ -81,7 +84,8 @@ class RayTraceMap(Transformer[PointCloud2, PointCloud2]):
 
         tags = {**last_obs.tags, "frame_count": count}
         cx, cy, radius, z_min, z_max = mapper.take_local_bounds()
-        positions = mapper.local_map((cx, cy, 0.0), radius, z_min, z_max)
+        local_map = mapper.local_map_fine if self.fine else mapper.local_map
+        positions = local_map((cx, cy, 0.0), radius, z_min, z_max)
         tags["region_bounds"] = (cx, cy, radius, z_min, z_max)
         pcd = o3d.t.geometry.PointCloud()
         pcd.point["positions"] = o3c.Tensor.from_numpy(positions)

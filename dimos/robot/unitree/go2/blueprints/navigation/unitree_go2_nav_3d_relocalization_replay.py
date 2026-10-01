@@ -18,6 +18,7 @@ dimos run unitree-go2-nav-3d-relocalization-replay --map-file=<premap stem>
 """
 
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.hardware.sensors.lidar.livox.module import Mid360
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.mapping.relocalization.blueprints import RecordingPlayer
 from dimos.navigation.trajectory_follower.basic.module import BasicPathFollower
@@ -31,7 +32,7 @@ from dimos.robot.unitree.go2.go2_mid360_static_transforms import Go2Mid360Static
 # write base_link a second time.
 unitree_go2_nav_3d_relocalization_replay = autoconnect(
     unitree_go2_nav_3d_relocalization.disabled_modules(
-        GO2Connection, PointLio, Go2Mid360StaticTf, BasicPathFollower
+        GO2Connection, Mid360, PointLio, Go2Mid360StaticTf, BasicPathFollower
     ),
     RecordingPlayer.blueprint(),
 ).global_config(n_workers=8)
