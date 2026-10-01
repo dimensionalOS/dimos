@@ -18,18 +18,32 @@ import re
 import subprocess
 import sys
 
-# Match known bot identities, not human names such as Claude Smith or Gemini Patel.
+# A personal name alone is not enough to identify an AI co-author.
+AI_NAME = (
+    r"Claude(?:[ \t]+(?:Code|Opus|Sonnet|Haiku)\b[^<>\r\n]*)?"
+    r"|(?:OpenAI[ \t]+)?Codex|(?:GitHub[ \t]+)?Copilot"
+    r"|Cursor(?:[ \t]+Agent)?|(?:Google[ \t]+)?Gemini|Windsurf|Devin|Aider"
+)
 AI_COAUTHOR = re.compile(
     r"^[ \t]*Co-authored-by[ \t]*:[ \t]*"
     r"(?:"
-    r"(?:Claude(?:[ \t]+(?:Code|Opus|Sonnet|Haiku)\b[^<>\r\n]*)?"
-    r"|(?:OpenAI[ \t]+)?Codex|(?:GitHub[ \t]+)?Copilot"
-    r"|Cursor(?:[ \t]+Agent)?|(?:Google[ \t]+)?Gemini|Windsurf|Devin|Aider)"
-    r"[ \t]*(?:<[^<>\r\n]+>|$)"
-    r"|[^<>\r\n]*<[^<>\r\n]*@(?:anthropic\.com|openai\.com|cursor\.com)>)",
+    r"[^<>\r\n]*<(?:noreply@(?:anthropic\.com|openai\.com|cursor\.com)|cursoragent@cursor\.com"
+    r"|(?:codex|copilot|devin-ai-integration)@users\.noreply\.github\.com)>"
+    rf"|(?:{AI_NAME})[ \t]*<(?:bot|noreply|no-reply)@[^<>\r\n]+>"
+    r"|(?:Claude[ \t]+Code|OpenAI[ \t]+Codex|GitHub[ \t]+Copilot"
+    r"|Cursor[ \t]+Agent|Google[ \t]+Gemini)[ \t]*<[^<>\r\n]+>"
+    r")",
     re.IGNORECASE | re.MULTILINE,
 )
-GENERATED_SIGNATURE = re.compile(r"Generated with", re.IGNORECASE)
+AI_SIGNATURE_NAME = (
+    r"Claude(?: Code)?|(?:OpenAI )?Codex|(?:GitHub )?Copilot|Cursor(?: Agent)?"
+    r"|(?:Google )?Gemini|Windsurf|Devin|Aider"
+)
+GENERATED_SIGNATURE = re.compile(
+    r"^[ \t]*(?:🤖[ \t]+)?Generated with[ \t]+"
+    rf"(?:\[(?:{AI_SIGNATURE_NAME})\]\(https?://[^)\s]+\)|(?:{AI_SIGNATURE_NAME}))[ \t]*$",
+    re.IGNORECASE,
+)
 
 
 def filter_text(text: str) -> tuple[str, str | None]:

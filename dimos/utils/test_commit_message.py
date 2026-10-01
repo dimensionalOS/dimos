@@ -53,6 +53,11 @@ def test_ci_and_local_filter_reject_same_bot_identities(identity, trailer):
     [
         "Co-authored-by: Alice Smith <alice@example.com>",
         "Co-authored-by: Claude Smith <claude@example.com>",
+        "Co-authored-by: Claude <claude@personal.example>",
+        "Co-authored-by: Devin <devin@personal.example>",
+        "Co-authored-by: Gemini <gemini@personal.example>",
+        "Co-authored-by: Alice <alice@openai.com>",
+        "Co-authored-by: Alice <alice@anthropic.com>",
         "Co-authored-by: Gemini Patel <gemini@example.com>",
         "Co-authored-by: Claudette <claudette@example.com>",
         "Co-authored-by: Alice <alice@google.com>",
@@ -67,9 +72,41 @@ def test_preserves_human_coauthors_and_prose(message):
     assert commit_message.filter_text(message) == (message, None)
 
 
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "This report was Generated with a local pipeline.",
+        "This report was generated with a local pipeline.",
+        "Generated with a local pipeline, these fixtures are deterministic.",
+        "Generated with Claude templates, then manually edited.",
+    ],
+)
+def test_rewrite_preserves_generated_with_prose(tmp_path, sentence):
+    message = f"Subject\n\n{sentence}\nKeep these details.\n"
+    path = tmp_path / "COMMIT_EDITMSG"
+    path.write_text(message)
+    assert commit_message.rewrite_file(path) == 0
+    assert path.read_text() == message
+
+
+@pytest.mark.parametrize(
+    "signature",
+    [
+        "Generated with Codex",
+        "Generated with [Claude Code](https://claude.ai/code)",
+        "🤖 Generated with [Claude Code](https://claude.ai/code)",
+    ],
+)
+def test_rewrite_removes_structured_ai_signature(tmp_path, signature):
+    path = tmp_path / "COMMIT_EDITMSG"
+    path.write_text(f"Subject\n\n{signature}\n")
+    assert commit_message.rewrite_file(path) == 0
+    assert path.read_text() == "Subject\n\n"
+
+
 def test_rewrite_removes_generated_signature_case_insensitively(tmp_path):
     path = tmp_path / "COMMIT_EDITMSG"
-    path.write_text("Subject\n\ngEnErAtEd WiTh tool\nfooter\n")
+    path.write_text("Subject\n\ngEnErAtEd WiTh Codex\nfooter\n")
     assert commit_message.rewrite_file(path) == 0
     assert path.read_text() == "Subject\n\n"
 
