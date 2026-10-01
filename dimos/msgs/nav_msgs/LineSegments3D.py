@@ -68,7 +68,16 @@ class LineSegments3D(Timestamped):
         )
 
     def lcm_encode(self) -> bytes:
-        raise NotImplementedError("Encoded on C++ side")
+        """Encode as the Path payload `lcm_decode` reads: a pose pair per segment, weight in qw."""
+        from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+        from dimos.msgs.nav_msgs.Path import Path
+
+        poses = [
+            PoseStamped(*point, 0.0, 0.0, 0.0, weight, ts=self.ts, frame_id=self.frame_id)
+            for segment, weight in zip(self.segments.tolist(), self.weights.tolist(), strict=True)
+            for point in segment
+        ]
+        return Path(ts=self.ts, frame_id=self.frame_id, poses=poses).lcm_encode()
 
     @classmethod
     def lcm_decode(cls, data: bytes | BinaryIO) -> LineSegments3D:

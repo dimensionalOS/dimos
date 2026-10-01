@@ -24,6 +24,7 @@ Reads one JSON line on stdin: ``topics`` (port -> zenoh key), ``config``, ``sess
 from __future__ import annotations
 
 from collections.abc import Sequence
+from enum import Enum
 import importlib.util
 import json
 import math
@@ -306,6 +307,22 @@ def objects_msg(objects: Sequence[VisibleObject], ts: float) -> bytes:
     return bytes(m.lcm_encode())
 
 
+class MotionType(str, Enum):
+    """habitat_sim.physics.MotionType by name; that enum only exists in the Habitat env."""
+
+    STATIC = "STATIC"
+    KINEMATIC = "KINEMATIC"
+
+
+class HabitatProp(NamedTuple):
+    glb_path: str
+    """Absolute path."""
+    position_ros: tuple[float, float, float]
+    """World position of the model's origin."""
+    motion_type: MotionType
+    """STATIC props are carved out of the navmesh; KINEMATIC ones are not."""
+
+
 class HabitatHost:
     """Owns the Simulator and applies twist commands against the navmesh."""
 
@@ -354,11 +371,37 @@ class HabitatHost:
             self._sim.close()
         self._sim = hs.Simulator(hs.Configuration(backend, [agent_cfg]))
         self._agent = self._sim.initialize_agent(0)
+        self._add_props([HabitatProp(*prop) for prop in self.cfg.get("props", [])])
         self.labels = [
             o.category.name() if o is not None and o.category is not None else ""
             for o in self._sim.semantic_scene.objects
         ]
         self.reset_pose()
+
+    def _add_props(self, props: list[HabitatProp]) -> None:
+        """Add props and rebuild the navmesh around the STATIC ones."""
+        templates = self._sim.get_object_template_manager()
+        objects = self._sim.get_rigid_object_manager()
+        for prop in props:
+            template = templates.create_new_template(prop.glb_path)
+            template.compute_COM_from_shape = False
+            obj = objects.add_object_by_template_id(templates.register_template(template))
+            if obj is None:
+                raise FileNotFoundError(f"Could not load prop: {prop.glb_path}")
+            # Static objects cannot be moved, so place first.
+            obj.translation = frames.position_to_habitat(prop.position_ros)
+            obj.motion_type = getattr(
+                self.hs.physics.MotionType, MotionType(prop.motion_type).value
+            )
+        # Scenes that ship without a navmesh get one either way.
+        static = [prop for prop in props if prop.motion_type == MotionType.STATIC]
+        if not static and self._sim.pathfinder.is_loaded:
+            return
+        settings = self.hs.NavMeshSettings()
+        settings.include_static_objects = True
+        settings.cell_height = settings.cell_size
+        if not self._sim.recompute_navmesh(self._sim.pathfinder, settings):
+            raise RuntimeError("Could not build a navmesh with the scene's props")
 
     def reset_pose(self) -> None:
         self._sim.pathfinder.seed(int(self.cfg.get("seed", 0)))
