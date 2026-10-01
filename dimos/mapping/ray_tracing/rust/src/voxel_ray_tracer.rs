@@ -109,6 +109,9 @@ pub struct Config {
     /// instead of working through a stale queue; 0 keeps every cloud.
     #[validate(range(min = 0.0))]
     pub max_cloud_age_s: f64,
+    /// How long to wait for a late transform before dropping a cloud (s).
+    #[validate(range(min = 0.0))]
+    pub tf_wait_timeout_s: f64,
     /// Worker threads for parallel map work.
     #[validate(range(min = 1))]
     pub worker_threads: u32,

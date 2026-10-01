@@ -103,7 +103,7 @@ pub struct RayTracingVoxelMap {
 }
 
 /// Whether transforms have already moved past a cloud's stamp, so the one it needs will never
-/// arrive: waiting on it would cap a backed-up queue's drain rate at 1/TF_WAIT_TIMEOUT.
+/// arrive: waiting on it would cap a backed-up queue's drain rate at 1/tf_wait_timeout_s.
 fn transform_is_past(stamp: f64, latest_tf: Option<f64>, tolerance: f64) -> bool {
     latest_tf.is_some_and(|latest| latest > stamp + tolerance)
 }
@@ -363,7 +363,9 @@ impl Worker {
         let found = if transform_is_past(stamp, latest, tolerance) {
             lookup.get()
         } else {
-            lookup.within(TF_WAIT_TIMEOUT).await
+            lookup
+                .within(Duration::from_secs_f64(self.config.tf_wait_timeout_s))
+                .await
         };
         let Some(tf_pose) = found else {
             warn!(
@@ -683,9 +685,6 @@ fn prepare_seed(
     Some(partition_seed(&points, voxel_size, origin, region_m))
 }
 
-/// How long to wait for a late transform before dropping a cloud.
-const TF_WAIT_TIMEOUT: Duration = Duration::from_millis(50);
-
 /// How long a loaded map waits for the transform that places it.
 const LOADED_MAP_TF_WAIT_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -830,6 +829,7 @@ mod tests {
             world_frame: "world".to_string(),
             tf_match_tolerance_s: 0.1,
             max_cloud_age_s: 0.0,
+            tf_wait_timeout_s: 0.05,
             worker_threads: 4,
             region_m: 4.0,
             viz_emit_every: 0,
