@@ -18,12 +18,12 @@
 Usage::
 
     from dimos.hardware.sensors.lidar.virtual_mid360.module import VirtualMid360
-    from dimos.hardware.sensors.lidar.pointlio.module import PointLio
+    from dimos.hardware.sensors.lidar.livox.module import Mid360
     from dimos.core.coordination.blueprints import autoconnect
 
     autoconnect(
         VirtualMid360.blueprint(pcap="/path/to/ruwik2.pcap"),
-        PointLio.blueprint(),
+        Mid360.blueprint(),
     )
 """
 

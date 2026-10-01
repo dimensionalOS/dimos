@@ -166,6 +166,7 @@ def test_explicit_spawn_uses_real_constructor(mocker, navigable):
     hs = Mock()
     mocker.patch.dict("sys.modules", {"habitat_sim": hs})
     sim = hs.Simulator.return_value
+    sim.semantic_scene.objects = [None]  # an empty annotation slot keeps its index
     sim.pathfinder.is_navigable.return_value = navigable
     config = dict(
         scene_id="example",
@@ -182,6 +183,7 @@ def test_explicit_spawn_uses_real_constructor(mocker, navigable):
             HabitatHost(config)
     else:
         host = HabitatHost(config)
+        assert host.labels == [""]
         state = sim.initialize_agent.return_value.set_state.call_args.args[0]
         np.testing.assert_allclose(state.position, [-2, 3, -1])
         sim.pathfinder.get_random_navigable_point.assert_not_called()

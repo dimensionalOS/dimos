@@ -13,13 +13,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""3d navigation on Go2 with ray tracing and MLS planning"""
+"""3d navigation on Go2 with ray tracing and MLS planning.
+
+The Mid-360 driver defaults to the factory lidar IP. Set ``MID360__LIDAR_IP`` when
+the sensor lives elsewhere.
+"""
 
 from typing import Any
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
+from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPlannerNative
 from dimos.navigation.global_planner.mls_planner.viz import planner_visual_override
@@ -86,6 +91,7 @@ _nav_rerun_config = {
         "world/camera_info": None,
         "world/color_image": None,
         "world/lidar": None,
+        "world/lidar_raw": None,
         **planner_visual_override(planner_viz_hz),
     },
 }
@@ -105,6 +111,7 @@ unitree_go2_nav_3d = autoconnect(
             (GO2Connection, "odom", "odom_go2"),
         ]
     ),
+    mid360_for_pointlio(),
     PointLio.blueprint(),
     Go2Mid360StaticTf.blueprint(),
     RayTracingVoxelMap.blueprint(
@@ -132,4 +139,4 @@ unitree_go2_nav_3d = autoconnect(
     ).remappings([(MLSPlannerNative, "global_map", "global_map_unused")]),
     BasicPathFollower.blueprint(speed=0.5, heading_gain=1.5, max_angular=1.5),
     MovementManager.blueprint(),
-).global_config(n_workers=10, robot_model="unitree_go2", obstacle_avoidance=False)
+).global_config(n_workers=11, robot_model="unitree_go2", obstacle_avoidance=False)
