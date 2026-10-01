@@ -37,6 +37,7 @@ from dimos.core.transport import ZenohTransport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Odometry import Odometry
+from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.Imu import Imu
@@ -239,6 +240,12 @@ def r1pro_control(
                     "/head_right_color", CompressedImage, latest_wins=True
                 ),
                 ("head_depth", Image): _zenoh_transport("/head_depth", Image, latest_wins=True),
+                ("head_left_info", CameraInfo): _zenoh_transport(
+                    "/head_left_info", CameraInfo, latest_wins=True
+                ),
+                ("head_right_info", CameraInfo): _zenoh_transport(
+                    "/head_right_info", CameraInfo, latest_wins=True
+                ),
                 ("lidar", PointCloud2): _zenoh_transport("/lidar", PointCloud2, latest_wins=True),
                 ("wrist_left_color", CompressedImage): _zenoh_transport(
                     "/wrist_left_color", CompressedImage, latest_wins=True
