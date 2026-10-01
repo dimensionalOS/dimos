@@ -38,6 +38,7 @@ from dimos.navigation.experimental.dannav.holonomic_tc.module import DanHolonomi
 from dimos.navigation.experimental.dannav.local_planner.module import DanLocalPlanner
 from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPlannerNative
 from dimos.navigation.global_planner.mls_planner.start_relay import StartRelay
+from dimos.navigation.global_planner.mls_planner.viz import planner_visual_override
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.robot.diy.alfred.config import ALFRED, ALFRED_URDF
 from dimos.visualization.rerun.urdf_robot import UrdfRobotStaticRerunFactory
@@ -198,9 +199,7 @@ def vis_nav(
                     "world/lidar": 1.0,
                     "world/global_map": 1.0,
                     "world/local_map": 1.0,
-                    "world/surface_map": 1.0,
                     "world/nodes": 1.0,
-                    "world/node_edges": 1.0,
                 },
                 # An image only renders if it shares an entity with its Pinhole.
                 "visual_override": {
@@ -214,6 +213,8 @@ def vis_nav(
                     ),
                     "world/image": _ir_image,
                     "world/camera_info": _ir_pinhole,
+                    # The planner publishes its surface and edges by cell.
+                    **planner_visual_override(2.0, VOXEL_SIZE_METERS, 0.2),
                 },
             },
         ),

@@ -126,7 +126,14 @@ def resolve_named_path(name: str | Path, suffix: str = "") -> Path:
         if (DIMOS_PROJECT_ROOT / p).exists():
             return DIMOS_PROJECT_ROOT / p
     p = Path(names[-1])
-    return p if p.is_absolute() else get_data(names[-1])
+    if p.is_absolute():
+        return p
+    try:
+        return get_data(names[-1])
+    except FileNotFoundError:
+        if p.name == names[-1]:
+            raise
+        return get_data(p.name)
 
 
 def backup_file(path: str | Path, keep_last: int = 3) -> Path | None:

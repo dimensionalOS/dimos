@@ -55,33 +55,54 @@ struct SeedRegion {
     bounds: PoseStamped,
 }
 
+/// How long half a seed region waits for its counterpart before it is dropped.
+const SEED_PAIR_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// Seed clouds and bounds waiting for their counterpart, keyed by the region
 /// number in their header seq. Every region of a seed shares one stamp and
 /// the two topics can interleave, so a newest-wins slot would mispair them.
 #[derive(Default)]
 struct SeedPairs {
-    clouds: HashMap<i32, PointCloud2>,
-    bounds: HashMap<i32, PoseStamped>,
+    clouds: HashMap<i32, (PointCloud2, Instant)>,
+    bounds: HashMap<i32, (PoseStamped, Instant)>,
 }
 
 impl SeedPairs {
-    fn cloud(&mut self, msg: PointCloud2) -> Option<SeedRegion> {
+    fn pair_cloud(&mut self, msg: PointCloud2) -> Option<SeedRegion> {
+        self.expire_before(Instant::now());
         match self.bounds.remove(&msg.header.seq) {
-            Some(bounds) => Some(SeedRegion { cloud: msg, bounds }),
+            Some((bounds, _)) => Some(SeedRegion { cloud: msg, bounds }),
             None => {
-                self.clouds.insert(msg.header.seq, msg);
+                self.clouds.insert(msg.header.seq, (msg, Instant::now()));
                 None
             }
         }
     }
 
-    fn bounds(&mut self, msg: PoseStamped) -> Option<SeedRegion> {
+    fn pair_bounds(&mut self, msg: PoseStamped) -> Option<SeedRegion> {
+        self.expire_before(Instant::now());
         match self.clouds.remove(&msg.header.seq) {
-            Some(cloud) => Some(SeedRegion { cloud, bounds: msg }),
+            Some((cloud, _)) => Some(SeedRegion { cloud, bounds: msg }),
             None => {
-                self.bounds.insert(msg.header.seq, msg);
+                self.bounds.insert(msg.header.seq, (msg, Instant::now()));
                 None
             }
+        }
+    }
+
+    /// Drop halves that waited longer than the timeout as of `now`. A half
+    /// without a counterpart means the other message was lost on the way.
+    fn expire_before(&mut self, now: Instant) {
+        let fresh = |at: &Instant| now.duration_since(*at) <= SEED_PAIR_TIMEOUT;
+        let before = self.clouds.len() + self.bounds.len();
+        self.clouds.retain(|_, (_, at)| fresh(at));
+        self.bounds.retain(|_, (_, at)| fresh(at));
+        let dropped = before - self.clouds.len() - self.bounds.len();
+        if dropped > 0 {
+            warn!(
+                dropped,
+                "Seed regions never paired, the other half was lost."
+            );
         }
     }
 }
@@ -183,13 +204,13 @@ impl MlsPlanner {
     }
 
     async fn on_seed_map(&mut self, msg: PointCloud2) {
-        if let Some(region) = self.pending_seeds.cloud(msg) {
+        if let Some(region) = self.pending_seeds.pair_cloud(msg) {
             self.queue_seed(region);
         }
     }
 
     async fn on_seed_bounds(&mut self, msg: PoseStamped) {
-        if let Some(region) = self.pending_seeds.bounds(msg) {
+        if let Some(region) = self.pending_seeds.pair_bounds(msg) {
             self.queue_seed(region);
         }
     }
@@ -321,59 +342,51 @@ impl Worker {
         viz: &mut RegionViz,
         last_viz_at: &mut Option<Instant>,
     ) {
-        let tick_at = Instant::now();
-        let due = self.config.viz_publish_hz > 0.0 && {
-            let viz_interval = Duration::from_secs_f32(1.0 / self.config.viz_publish_hz);
-            last_viz_at.is_none_or(|t| tick_at.duration_since(t) >= viz_interval)
-        };
-        if !due {
+        if self.config.viz_publish_hz <= 0.0 {
             return;
         }
-        let (due, node_cloud) = tokio::task::block_in_place(|| {
-            let due = viz.tick(
+        let tick_at = Instant::now();
+        let viz_interval = Duration::from_secs_f32(1.0 / self.config.viz_publish_hz);
+        if last_viz_at.is_some_and(|t| tick_at.duration_since(t) < viz_interval) {
+            return;
+        }
+        let (due_regions, node_cloud) = tokio::task::block_in_place(|| {
+            let due_regions = viz.tick(
                 planner.surface_clearance_iter(),
                 planner.edge_segment_iter(),
             );
             let node_points: Vec<Xyz> = planner.graph().nodes.iter().map(|n| n.pos).collect();
             (
-                due,
+                due_regions,
                 build_pc2_xyz(&node_points, &self.config.world_frame, now()),
             )
         });
         debug!(
-            regions = due.len(),
+            regions = due_regions.len(),
             tick_ms = tick_at.elapsed().as_secs_f64() * 1e3,
             "viz published"
         );
         *last_viz_at = Some(tick_at);
         let (voxel_size, frame) = (self.config.voxel_size, self.config.world_frame.as_str());
         let stamp = now();
-        for (cell, content) in due {
+        let (mut surface_bytes, mut edge_poses) = (0usize, 0usize);
+        for (cell, content) in due_regions {
             let (surface, edges) = tokio::task::block_in_place(|| {
                 region_messages(cell, content, voxel_size, frame, stamp.clone())
             });
+            surface_bytes += surface.data.len();
+            edge_poses += edges.poses.len();
             publish_cloud(&self.surface_map, &surface).await;
             publish_path(&self.node_edges, &edges).await;
         }
         publish_cloud(&self.nodes, &node_cloud).await;
+        debug!(surface_bytes, edge_poses, "viz bytes published");
     }
 
     /// Mutate the graph from a map update. False if the cloud was unusable.
     fn ingest(&self, planner: &mut Planner, update: MapUpdate, viz: &mut RegionViz) -> bool {
         match update {
             MapUpdate::Region { cloud, bounds } => {
-                let points = match extract_xyz(&cloud) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        warn_throttled!(
-                            Duration::from_secs(1),
-                            error = %e,
-                            "Failed to extract local map points, dropped a region update.",
-                        );
-                        return false;
-                    }
-                };
-                let z_max = bounds.pose.orientation.z as f32;
                 let Some((_, _, sensor_z)) = self.base_position() else {
                     warn!(
                         world_frame = %self.config.world_frame,
@@ -382,26 +395,8 @@ impl Worker {
                     );
                     return false;
                 };
-                let region = RegionBounds::capped(
-                    bounds.pose.position.x as f32,
-                    bounds.pose.position.y as f32,
-                    bounds.pose.orientation.x as f32,
-                    bounds.pose.orientation.y as f32,
-                    z_max,
-                    sensor_z,
-                    self.config.max_overhead_m,
-                );
-
-                let update_start = Instant::now();
-                if let Some(window) = planner.update_region(&points, &region, &self.config) {
-                    viz.mark_window(window);
-                }
-                debug!(
-                    update_ms = update_start.elapsed().as_secs_f64() * 1e3,
-                    local_points = points.len(),
-                    "local region processed"
-                );
-                true
+                let region = region_bounds(&bounds).capped_at(sensor_z, self.config.max_overhead_m);
+                self.apply_region(planner, &cloud, &region, viz, "local region processed")
             }
             MapUpdate::Global { cloud } => {
                 let points = match extract_xyz(&cloud) {
@@ -429,33 +424,40 @@ impl Worker {
     /// Apply one seed region through the region pipeline. Its bounds are the
     /// premap's own, so no sensor ceiling applies. False if unusable.
     fn ingest_seed(&self, planner: &mut Planner, seed: SeedRegion, viz: &mut RegionViz) -> bool {
-        let points = match extract_xyz(&seed.cloud) {
+        let region = region_bounds(&seed.bounds);
+        self.apply_region(planner, &seed.cloud, &region, viz, "seed region processed")
+    }
+
+    /// Replace the voxels in a region and repair the graph around them,
+    /// marking the rewritten window for the viz. False if the cloud was unusable.
+    fn apply_region(
+        &self,
+        planner: &mut Planner,
+        cloud: &PointCloud2,
+        region: &RegionBounds,
+        viz: &mut RegionViz,
+        what: &'static str,
+    ) -> bool {
+        let points = match extract_xyz(cloud) {
             Ok(p) => p,
             Err(e) => {
                 warn_throttled!(
                     Duration::from_secs(1),
                     error = %e,
-                    "Failed to extract seed region points, dropped a region.",
+                    what,
+                    "Failed to extract region points, dropped it.",
                 );
                 return false;
             }
         };
-        let b = &seed.bounds.pose;
-        let region = RegionBounds {
-            origin_x: b.position.x as f32,
-            origin_y: b.position.y as f32,
-            radius: b.orientation.x as f32,
-            z_min: b.orientation.y as f32,
-            z_max: b.orientation.z as f32,
-        };
         let update_start = Instant::now();
-        if let Some(window) = planner.update_region(&points, &region, &self.config) {
+        if let Some(window) = planner.update_region(&points, region, &self.config) {
             viz.mark_window(window);
         }
         debug!(
             update_ms = update_start.elapsed().as_secs_f64() * 1e3,
-            seed_points = points.len(),
-            "seed region processed"
+            points = points.len(),
+            what
         );
         true
     }
@@ -507,6 +509,18 @@ impl Worker {
             plan_ms, since_last_ms, "path planned"
         );
         publish_path(&self.path, &path_msg).await;
+    }
+}
+
+/// The region a bounds message describes: position is the center, orientation
+/// carries radius, z_min and z_max.
+fn region_bounds(msg: &PoseStamped) -> RegionBounds {
+    RegionBounds {
+        origin_x: msg.pose.position.x as f32,
+        origin_y: msg.pose.position.y as f32,
+        radius: msg.pose.orientation.x as f32,
+        z_min: msg.pose.orientation.y as f32,
+        z_max: msg.pose.orientation.z as f32,
     }
 }
 
@@ -820,13 +834,90 @@ mod tests {
         let mut c2 = cloud_at(stamp);
         c2.header.seq = 2;
 
-        assert!(pairs.bounds(b1).is_none());
-        assert!(pairs.bounds(b2).is_none());
-        let first = pairs.cloud(c1).expect("region 1 pairs with its own bounds");
+        assert!(pairs.pair_bounds(b1).is_none());
+        assert!(pairs.pair_bounds(b2).is_none());
+        let first = pairs
+            .pair_cloud(c1)
+            .expect("region 1 pairs with its own bounds");
         assert_eq!(first.bounds.header.seq, 1);
-        let second = pairs.cloud(c2).expect("region 2 pairs with its own bounds");
+        let second = pairs
+            .pair_cloud(c2)
+            .expect("region 2 pairs with its own bounds");
         assert_eq!(second.bounds.header.seq, 2);
         assert!(pairs.clouds.is_empty() && pairs.bounds.is_empty());
+    }
+
+    #[test]
+    fn seed_pairs_match_cloud_first_and_interleaved() {
+        let stamp = Time { sec: 2, nsec: 3 };
+        let mut pairs = SeedPairs::default();
+        let mut c1 = cloud_at(stamp.clone());
+        c1.header.seq = 1;
+        let mut b1 = bounds_at(stamp.clone());
+        b1.header.seq = 1;
+        assert!(pairs.pair_cloud(c1).is_none());
+        assert_eq!(
+            pairs
+                .pair_bounds(b1)
+                .expect("cloud first pairs")
+                .cloud
+                .header
+                .seq,
+            1
+        );
+
+        // Interleaved: cloud 2, bounds 3, bounds 2, cloud 3.
+        let mut c2 = cloud_at(stamp.clone());
+        c2.header.seq = 2;
+        let mut b3 = bounds_at(stamp.clone());
+        b3.header.seq = 3;
+        let mut b2 = bounds_at(stamp.clone());
+        b2.header.seq = 2;
+        let mut c3 = cloud_at(stamp);
+        c3.header.seq = 3;
+        assert!(pairs.pair_cloud(c2).is_none());
+        assert!(pairs.pair_bounds(b3).is_none());
+        assert_eq!(pairs.pair_bounds(b2).expect("region 2").cloud.header.seq, 2);
+        assert_eq!(pairs.pair_cloud(c3).expect("region 3").bounds.header.seq, 3);
+        assert!(pairs.clouds.is_empty() && pairs.bounds.is_empty());
+    }
+
+    #[test]
+    fn region_messages_carry_the_cell_in_both_headers_even_when_empty() {
+        let cell = (1, -2);
+        let content = RegionContent {
+            surface: vec![((1, 2, 0), 0.5)],
+            segments: vec![((1, 2, 0), (2, 2, 0), 1.5)],
+        };
+        let (surface, edges) = region_messages(cell, content, 0.1, "odom", Time::default());
+        assert_eq!(surface.header.seq, pack_cell(cell));
+        assert_eq!(edges.header.seq, pack_cell(cell));
+        assert_eq!((surface.width, edges.poses.len()), (1, 2));
+
+        let (surface, edges) =
+            region_messages(cell, RegionContent::default(), 0.1, "odom", Time::default());
+        assert_eq!(surface.header.seq, pack_cell(cell));
+        assert_eq!(edges.header.seq, pack_cell(cell));
+        assert_eq!((surface.width, edges.poses.len()), (0, 0));
+    }
+
+    #[test]
+    fn an_unpaired_seed_half_expires_after_the_timeout() {
+        let stamp = Time { sec: 2, nsec: 3 };
+        let mut pairs = SeedPairs::default();
+        let mut b1 = bounds_at(stamp.clone());
+        b1.header.seq = 1;
+        assert!(pairs.pair_bounds(b1).is_none());
+        pairs.expire_before(Instant::now() + SEED_PAIR_TIMEOUT / 2);
+        assert_eq!(pairs.bounds.len(), 1);
+        pairs.expire_before(Instant::now() + SEED_PAIR_TIMEOUT * 2);
+        assert!(pairs.bounds.is_empty());
+        let mut c1 = cloud_at(stamp);
+        c1.header.seq = 1;
+        assert!(
+            pairs.pair_cloud(c1).is_none(),
+            "the expired bounds no longer pair"
+        );
     }
 
     fn point(x: f64, y: f64, z: f64) -> Point {

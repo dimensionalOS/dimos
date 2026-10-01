@@ -13,44 +13,33 @@
 // limitations under the License.
 
 //! The map as viewer regions. Square cells of the region grid publish on their
-//! own when a chunk in them changed, plus a round robin slice, so a viewer
+//! own when a chunk in them changed, plus a fixed slice every tick, so a viewer
 //! takes the map in messages a lossy link can carry and heals what it lost.
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::voxel_ray_tracer::{ChunkKey, CHUNK_SIZE};
+use crate::voxel_ray_tracer::Cell;
 
-pub type Cell = (i32, i32);
-
-/// The region grid cell a chunk's center falls in. Cells never run smaller
-/// than a chunk, so a chunk lies in exactly one.
-pub fn region_of(chunk: ChunkKey, voxel_size: f32, region_m: f32) -> Cell {
-    let edge = CHUNK_SIZE as f32 * voxel_size;
-    let cell_m = region_m.max(edge);
-    (
-        (((chunk.0 as f32) + 0.5) * edge / cell_m).floor() as i32,
-        (((chunk.1 as f32) + 0.5) * edge / cell_m).floor() as i32,
-    )
-}
-
-/// A cell packed into a message seq so the viewer keys entities by it.
+/// A cell packed into a message seq so the viewer keys entities by it. The
+/// layout is owned by pack_cell in the planner crate's region_viz.rs.
 pub fn pack_cell((i, j): Cell) -> i32 {
     debug_assert!(i16::try_from(i).is_ok() && i16::try_from(j).is_ok());
     (i << 16) | (j & 0xffff)
 }
 
-/// Which cells a viewer has, so a tick can send the changed ones, an empty
+/// Which cells a viewer has, so a tick sends the changed ones, an empty
 /// message for the ones that vanished, and the next slice of the sweep.
 #[derive(Default)]
 pub struct RegionSweep {
-    known: BTreeSet<Cell>,
+    /// Cells a viewer holds, and whether the map still has them. A vanished
+    /// cell stays until the sweep has sent it empty once more.
+    known: BTreeMap<Cell, bool>,
     cursor: Option<Cell>,
 }
 
 impl RegionSweep {
-    /// The cells due this tick, changed ones first, then the ones that
-    /// vanished (due empty once, when a viewer had them), then the sweep
-    /// slice. A tick whose changes already outnumber the sweep skips it.
+    /// The cells due this tick: the changed ones first, then the ones that
+    /// just vanished, then exactly `sweep` others from the cursor, wrapping.
     pub fn tick<T>(
         &mut self,
         changed: impl IntoIterator<Item = Cell>,
@@ -62,32 +51,41 @@ impl RegionSweep {
             .filter(|cell| present.contains_key(cell))
             .collect();
         let mut due: Vec<Cell> = changed.iter().copied().collect();
-        due.extend(self.known.iter().filter(|c| !present.contains_key(c)));
-        if changed.len() <= sweep {
-            due.extend(
-                self.sweep_cells(present, sweep)
-                    .into_iter()
-                    .filter(|cell| !changed.contains(cell)),
-            );
+        for (cell, still) in self.known.iter_mut() {
+            if *still && !present.contains_key(cell) {
+                *still = false;
+                due.push(*cell);
+            }
         }
-        self.known = present.keys().copied().collect();
-        due
-    }
+        for cell in present.keys() {
+            self.known.insert(*cell, true);
+        }
 
-    fn sweep_cells<T>(&mut self, present: &BTreeMap<Cell, T>, sweep: usize) -> Vec<Cell> {
-        let keys: Vec<Cell> = present.keys().copied().collect();
-        if keys.is_empty() || sweep == 0 {
-            return Vec::new();
-        }
+        let busy: BTreeSet<Cell> = due.iter().copied().collect();
+        let keys: Vec<Cell> = self.known.keys().copied().collect();
         let start = match self.cursor {
             Some(cursor) => keys.partition_point(|k| *k <= cursor),
             None => 0,
         };
-        let swept: Vec<Cell> = (0..sweep.min(keys.len()))
-            .map(|n| keys[(start + n) % keys.len()])
-            .collect();
-        self.cursor = swept.last().copied();
-        swept
+        let mut swept: Vec<Cell> = Vec::new();
+        for n in 0..keys.len() {
+            if swept.len() == sweep {
+                break;
+            }
+            let cell = keys[(start + n) % keys.len()];
+            if busy.contains(&cell) {
+                continue;
+            }
+            swept.push(cell);
+            self.cursor = Some(cell);
+        }
+        for cell in &swept {
+            if self.known.get(cell) == Some(&false) {
+                self.known.remove(cell);
+            }
+        }
+        due.extend(swept);
+        due
     }
 }
 
@@ -100,18 +98,6 @@ mod tests {
     }
 
     #[test]
-    fn regions_group_chunks_by_center_and_never_split_a_chunk() {
-        // 16 voxels of 0.25 m make 4 m chunks, on a 4 m grid: one chunk per cell.
-        assert_eq!(region_of((0, 0, 3), 0.25, 4.0), (0, 0));
-        assert_eq!(region_of((-1, 2, 0), 0.25, 4.0), (-1, 2));
-        // 1.28 m chunks on a 4 m grid: chunk 3 is centered at 4.48 m, cell 1.
-        assert_eq!(region_of((2, 0, 0), 0.08, 4.0), (0, 0));
-        assert_eq!(region_of((3, 0, 0), 0.08, 4.0), (1, 0));
-        // A grid finer than a chunk widens to the chunk.
-        assert_eq!(region_of((5, -1, 0), 0.25, 1.0), (5, -1));
-    }
-
-    #[test]
     fn packed_cells_keep_sign_in_both_halves() {
         let seq = pack_cell((-3, 5));
         assert_eq!((seq >> 16, ((seq & 0xffff) ^ 0x8000) - 0x8000), (-3, 5));
@@ -120,7 +106,7 @@ mod tests {
     }
 
     #[test]
-    fn changed_cells_are_due_and_a_vanished_cell_is_due_once() {
+    fn changed_cells_are_due_and_a_vanished_cell_is_due_now_and_once_from_the_sweep() {
         let mut sweep = RegionSweep::default();
         let map = present(&[(0, 0), (1, 0), (0, 1)]);
         assert_eq!(sweep.tick([(1, 0), (9, 9)], &map, 0), vec![(1, 0)]);
@@ -128,24 +114,29 @@ mod tests {
         let smaller = present(&[(0, 0), (0, 1)]);
         assert_eq!(sweep.tick([], &smaller, 0), vec![(1, 0)]);
         assert!(sweep.tick([], &smaller, 0).is_empty());
+        // The sweep walks (0,0), (0,1), then the vanished (1,0) once more.
+        assert_eq!(sweep.tick([], &smaller, 1), vec![(0, 0)]);
+        assert_eq!(sweep.tick([], &smaller, 1), vec![(0, 1)]);
+        assert_eq!(sweep.tick([], &smaller, 1), vec![(1, 0)]);
+        assert_eq!(sweep.tick([], &smaller, 1), vec![(0, 0)]);
+        assert_eq!(sweep.tick([], &smaller, 1), vec![(0, 1)]);
     }
 
     #[test]
-    fn changed_cells_come_first_and_a_full_tick_skips_the_sweep() {
+    fn changed_cells_come_first_and_the_sweep_runs_on_a_busy_tick() {
         let mut sweep = RegionSweep::default();
         let map = present(&[(0, 0), (0, 1), (1, 0), (1, 1), (2, 0)]);
         sweep.tick([], &map, 0);
         let smaller = present(&[(0, 0), (0, 1), (1, 0), (1, 1)]);
-        // Changed (2 cells), then the vanished one, then the sweep slice
-        // minus the changed cell it overlaps.
+        // Changed, then the vanished one, then two swept cells skipping both.
         assert_eq!(
             sweep.tick([(1, 1), (0, 1)], &smaller, 2),
-            vec![(0, 1), (1, 1), (2, 0), (0, 0)]
+            vec![(0, 1), (1, 1), (2, 0), (0, 0), (1, 0)]
         );
-        // Three changes exceed a sweep of 2, so nothing is swept.
+        // Three changes still leave a full slice of two.
         assert_eq!(
             sweep.tick([(0, 0), (0, 1), (1, 0)], &smaller, 2),
-            vec![(0, 0), (0, 1), (1, 0)]
+            vec![(0, 0), (0, 1), (1, 0), (1, 1), (2, 0)]
         );
     }
 
@@ -153,6 +144,7 @@ mod tests {
     fn the_sweep_walks_every_cell_and_wraps() {
         let mut sweep = RegionSweep::default();
         let map = present(&[(0, 0), (0, 1), (1, 0), (1, 1), (2, 0)]);
+        sweep.tick([], &map, 0);
         let mut seen = Vec::new();
         for _ in 0..3 {
             seen.extend(sweep.tick([], &map, 2));

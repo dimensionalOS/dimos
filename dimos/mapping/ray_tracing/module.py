@@ -80,8 +80,9 @@ class RayTracingVoxelMapConfig(NativeModuleConfig):
     # planner can apply one between live updates, and the map viz publishes by.
     region_m: float = 4.0
     # Publish the regions whose chunks changed every Nth frame, plus this many
-    # unchanged ones round robin. Zero frames disables the viz.
-    viz_emit_every: int = 5
+    # unchanged ones round robin. Off by default, a blueprint with a viewer
+    # that renders map_regions by cell turns it on.
+    viz_emit_every: int = 0
     viz_sweep_regions: int = 2
 
 

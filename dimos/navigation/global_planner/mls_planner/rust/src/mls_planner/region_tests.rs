@@ -21,10 +21,15 @@ type SeedRegions = Vec<(RegionBounds, Vec<(f32, f32, f32)>)>;
 /// A world as the ray tracer hands a seeded map on: `s` meter squares,
 /// nearest `center` first, each region's cloud being every point of the map
 /// whose voxel center falls in the square's covering cylinder.
-fn seed_regions(points: &[(f32, f32, f32)], s: f32, center: (f32, f32), vs: f32) -> SeedRegions {
+fn seed_regions(
+    points: &[(f32, f32, f32)],
+    region_m: f32,
+    center: (f32, f32),
+    vs: f32,
+) -> SeedRegions {
     let mut cells: BTreeMap<(i32, i32), (f32, f32)> = BTreeMap::new();
     for &(x, y, z) in points {
-        let cell = ((x / s).floor() as i32, (y / s).floor() as i32);
+        let cell = ((x / region_m).floor() as i32, (y / region_m).floor() as i32);
         let band = cells.entry(cell).or_insert((z, z));
         band.0 = band.0.min(z);
         band.1 = band.1.max(z);
@@ -33,9 +38,9 @@ fn seed_regions(points: &[(f32, f32, f32)], s: f32, center: (f32, f32), vs: f32)
         .into_iter()
         .map(|((cx, cy), (z_lo, z_hi))| {
             let bounds = RegionBounds {
-                origin_x: (cx as f32 + 0.5) * s,
-                origin_y: (cy as f32 + 0.5) * s,
-                radius: s * std::f32::consts::FRAC_1_SQRT_2 + vs,
+                origin_x: (cx as f32 + 0.5) * region_m,
+                origin_y: (cy as f32 + 0.5) * region_m,
+                radius: region_m * std::f32::consts::FRAC_1_SQRT_2 + vs,
                 z_min: z_lo - vs,
                 z_max: z_hi + vs,
             };
@@ -158,11 +163,18 @@ fn a_clearance_change_at_the_edge_of_the_reach_is_due_and_one_beyond_is_not() {
 
 #[test]
 fn region_bounds_capped_clamps_ceiling_to_sensor_overhead() {
+    let region = |z_max: f32| RegionBounds {
+        origin_x: 0.0,
+        origin_y: 0.0,
+        radius: 1.0,
+        z_min: -1.0,
+        z_max,
+    };
     // A ceiling above sensor_z + max_overhead is pulled down to the cap.
-    let capped = RegionBounds::capped(0.0, 0.0, 1.0, -1.0, 5.0, 0.5, 2.0);
+    let capped = region(5.0).capped_at(0.5, 2.0);
     assert_eq!(capped.z_max, 2.5, "ceiling capped to sensor_z + overhead");
     // A ceiling already below the cap is left untouched.
-    let low = RegionBounds::capped(0.0, 0.0, 1.0, -1.0, 1.0, 0.5, 2.0);
+    let low = region(1.0).capped_at(0.5, 2.0);
     assert_eq!(low.z_max, 1.0, "cap never raises a lower ceiling");
     assert_eq!(low.z_min, -1.0);
     assert_eq!(low.radius, 1.0);

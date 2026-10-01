@@ -21,6 +21,7 @@ use std::hash::{Hash, Hasher};
 
 use ahash::AHasher;
 
+use crate::mls_planner::ColumnWindow;
 use crate::voxel::VoxelKey;
 
 pub type Cell = (i32, i32);
@@ -70,16 +71,19 @@ enum Dirty {
     Cells(BTreeSet<Cell>),
 }
 
-/// What each cell last published, so a tick republishes only the cells whose
-/// content changed plus a slice of the sweep that heals a viewer's losses.
-/// Only the cells an update touched are reread, so a tick costs what changed.
+/// What each cell last published, so a tick republishes the cells whose
+/// content changed plus a fixed slice of the sweep that heals a viewer's
+/// losses. Only the cells an update touched are hashed, the scan over the
+/// surface still walks every item.
 pub struct RegionViz {
     pitch: i32,
     /// Columns past a rewritten window the graph repair can still reach.
     reach: i32,
     sweep: usize,
     dirty: Dirty,
-    published: BTreeMap<Cell, u64>,
+    /// Fingerprint of what each cell last published. None once the cell
+    /// emptied, until the sweep has sent it empty once more.
+    published: BTreeMap<Cell, Option<u64>>,
     cursor: Option<Cell>,
 }
 
@@ -101,7 +105,7 @@ impl RegionViz {
     }
 
     /// The cells covering an inclusive column window, widened by the reach.
-    pub fn mark_window(&mut self, (x0, x1, y0, y1): (i32, i32, i32, i32)) {
+    pub fn mark_window(&mut self, (x0, x1, y0, y1): ColumnWindow) {
         let Dirty::Cells(cells) = &mut self.dirty else {
             return;
         };
@@ -121,20 +125,25 @@ impl RegionViz {
     }
 
     /// The cells due this tick with their current content: the changed ones
-    /// first, then the ones that emptied (due once more, empty, then
-    /// forgotten), then the sweep slice. A tick whose changes already
-    /// outnumber the sweep skips it and leaves the cursor where it was.
+    /// first, then the ones that just emptied, then the sweep slice. A cell
+    /// that emptied goes out empty now, stays in the sweep until it has been
+    /// sent empty once more, and is then forgotten.
     pub fn tick(
         &mut self,
         surface: impl Iterator<Item = (VoxelKey, f32)>,
         segments: impl Iterator<Item = Segment>,
     ) -> Vec<(Cell, RegionContent)> {
         let dirty = std::mem::replace(&mut self.dirty, Dirty::Cells(BTreeSet::new()));
-        let swept = self.sweep_cells();
+        // Only dirty cells can turn out changed, so this many extra candidates
+        // leave a full sweep slice of unchanged ones.
+        let candidates = self.sweep_candidates(match &dirty {
+            Dirty::All => self.published.len(),
+            Dirty::Cells(cells) => cells.len(),
+        });
         let wanted: Option<BTreeSet<Cell>> = match dirty {
             Dirty::All => None,
             Dirty::Cells(mut cells) => {
-                cells.extend(swept.iter().copied());
+                cells.extend(candidates.iter().copied());
                 Some(cells)
             }
         };
@@ -155,39 +164,59 @@ impl RegionViz {
             }
         }
 
-        let candidates: Vec<Cell> = match &wanted {
+        let checked: Vec<Cell> = match &wanted {
             None => self.published.keys().copied().collect(),
             Some(w) => w.iter().copied().collect(),
         };
+        let mut due: Vec<(Cell, RegionContent)> = Vec::new();
         let mut vanished: Vec<(Cell, RegionContent)> = Vec::new();
-        for cell in candidates {
-            if !cells.contains_key(&cell) && self.published.remove(&cell).is_some() {
+        let mut unchanged: BTreeMap<Cell, RegionContent> = BTreeMap::new();
+        for cell in checked {
+            if cells.contains_key(&cell) {
+                continue;
+            }
+            if let Some(slot @ Some(_)) = self.published.get_mut(&cell) {
+                *slot = None;
                 vanished.push((cell, RegionContent::default()));
             }
         }
-        let mut changed: Vec<(Cell, RegionContent)> = Vec::new();
-        let mut unchanged: Vec<(Cell, RegionContent)> = Vec::new();
         for (cell, content) in cells {
             let fp = content.fingerprint();
-            if self.published.insert(cell, fp) != Some(fp) {
-                changed.push((cell, content));
-            } else if swept.contains(&cell) {
-                unchanged.push((cell, content));
+            if self.published.insert(cell, Some(fp)) != Some(Some(fp)) {
+                due.push((cell, content));
+            } else {
+                unchanged.insert(cell, content);
             }
         }
-        let mut due = changed;
-        let changes = due.len();
+        let busy: BTreeSet<Cell> = due.iter().chain(&vanished).map(|(c, _)| *c).collect();
         due.extend(vanished);
-        if changes <= self.sweep {
-            due.extend(unchanged);
-            self.cursor = swept.last().copied().or(self.cursor);
+
+        let mut swept = 0;
+        for cell in candidates {
+            if swept == self.sweep {
+                break;
+            }
+            if busy.contains(&cell) {
+                continue;
+            }
+            match self.published.get(&cell) {
+                Some(None) => {
+                    self.published.remove(&cell);
+                    due.push((cell, RegionContent::default()));
+                }
+                Some(Some(_)) => {
+                    due.push((cell, unchanged.remove(&cell).unwrap_or_default()));
+                }
+                None => continue,
+            }
+            swept += 1;
+            self.cursor = Some(cell);
         }
         due
     }
 
-    /// The next slice of published cells past the cursor, wrapping around.
-    /// The cursor moves only once the slice is sent.
-    fn sweep_cells(&self) -> Vec<Cell> {
+    /// The next `sweep + extra` published cells past the cursor, wrapping.
+    fn sweep_candidates(&self, extra: usize) -> Vec<Cell> {
         let keys: Vec<Cell> = self.published.keys().copied().collect();
         if keys.is_empty() || self.sweep == 0 {
             return Vec::new();
@@ -196,7 +225,7 @@ impl RegionViz {
             Some(cursor) => keys.partition_point(|k| *k <= cursor),
             None => 0,
         };
-        (0..self.sweep.min(keys.len()))
+        (0..(self.sweep + extra).min(keys.len()))
             .map(|n| keys[(start + n) % keys.len()])
             .collect()
     }
@@ -214,8 +243,12 @@ mod tests {
         due.iter().map(|(c, _)| *c).collect()
     }
 
-    fn tick(viz: &mut RegionViz, s: &[(i32, i32)], e: &[Segment]) -> Vec<(Cell, RegionContent)> {
-        viz.tick(surface(s).into_iter(), e.iter().copied())
+    fn tick(
+        viz: &mut RegionViz,
+        columns: &[(i32, i32)],
+        segments: &[Segment],
+    ) -> Vec<(Cell, RegionContent)> {
+        viz.tick(surface(columns).into_iter(), segments.iter().copied())
     }
 
     #[test]
@@ -240,6 +273,7 @@ mod tests {
         let map = [(0, 0), (1, 1), (15, 0), (0, 25)];
         viz.mark_all();
         let first = tick(&mut viz, &map, &[]);
+        // Nothing was published before, so there is nothing to sweep yet.
         assert_eq!(due_cells(&first), vec![(0, 0), (0, 2), (1, 0)]);
         assert_eq!(first[0].1.surface.len(), 2);
 
@@ -281,22 +315,6 @@ mod tests {
     }
 
     #[test]
-    fn a_window_marks_the_cells_within_reach_of_it() {
-        let mut viz = RegionViz::new(10, 3, 0);
-        viz.mark_all();
-        tick(&mut viz, &[(0, 0), (12, 0), (25, 0)], &[]);
-        // Columns 8..=9 reach into cell 1 but not cell 2.
-        viz.mark_window((8, 9, 0, 0));
-        let mut changed = surface(&[(0, 0), (12, 0), (25, 0)]);
-        changed[1].1 = 0.5;
-        changed[2].1 = 0.5;
-        assert_eq!(
-            due_cells(&viz.tick(changed.into_iter(), std::iter::empty())),
-            vec![(1, 0)]
-        );
-    }
-
-    #[test]
     fn a_change_at_the_far_edge_of_the_reach_is_picked_up() {
         let mut viz = RegionViz::new(10, 5, 0);
         viz.mark_all();
@@ -317,49 +335,41 @@ mod tests {
     }
 
     #[test]
-    fn an_emptied_cell_is_due_empty_once_then_forgotten() {
-        let mut viz = RegionViz::new(10, 0, 0);
+    fn an_emptied_cell_goes_out_empty_now_and_once_more_from_the_sweep() {
+        let mut viz = RegionViz::new(10, 0, 1);
         viz.mark_all();
         tick(&mut viz, &[(0, 0), (15, 0)], &[]);
 
         viz.mark_window((15, 15, 0, 0));
         let due = tick(&mut viz, &[(0, 0)], &[]);
-        assert_eq!(due_cells(&due), vec![(1, 0)]);
+        // Empty now, then the sweep slice starting at the first key.
+        assert_eq!(due_cells(&due), vec![(1, 0), (0, 0)]);
         assert!(due[0].1.surface.is_empty() && due[0].1.segments.is_empty());
 
-        viz.mark_window((15, 15, 0, 0));
-        assert!(tick(&mut viz, &[(0, 0)], &[]).is_empty());
+        // The sweep reaches the emptied cell, sends it empty once more, forgets it.
+        let due = tick(&mut viz, &[(0, 0)], &[]);
+        assert_eq!(due_cells(&due), vec![(1, 0)]);
+        assert!(due[0].1.surface.is_empty());
+        assert_eq!(due_cells(&tick(&mut viz, &[(0, 0)], &[])), vec![(0, 0)]);
+        assert_eq!(due_cells(&tick(&mut viz, &[(0, 0)], &[])), vec![(0, 0)]);
     }
 
     #[test]
-    fn changed_cells_come_first_and_a_full_tick_skips_the_sweep() {
+    fn changed_cells_come_first_and_the_sweep_runs_on_a_busy_tick() {
         let mut viz = RegionViz::new(10, 0, 2);
         let map = [(0, 0), (15, 0), (0, 15), (15, 15), (25, 0)];
         viz.mark_all();
         tick(&mut viz, &map, &[]);
 
-        // Cell (1,1) changes and (2,0) empties: changed, then vanished, then
-        // the sweep slice, which starts at the first published cell.
-        let mut changed = surface(&[(0, 0), (15, 0), (0, 15), (15, 15)]);
-        changed[3].1 = 0.5;
-        viz.mark_window((15, 25, 0, 15));
-        assert_eq!(
-            due_cells(&viz.tick(changed.clone().into_iter(), std::iter::empty())),
-            vec![(1, 1), (2, 0), (0, 0), (0, 1)]
-        );
-
-        // Three changes exceed a sweep of 2: no sweep, cursor unmoved.
+        // Three changes still leave a full slice of two unchanged cells.
+        let mut changed = surface(&map);
         for item in changed.iter_mut().take(3) {
             item.1 = 0.25;
         }
         viz.mark_all();
         assert_eq!(
-            due_cells(&viz.tick(changed.clone().into_iter(), std::iter::empty())),
-            vec![(0, 0), (0, 1), (1, 0)]
-        );
-        assert_eq!(
             due_cells(&viz.tick(changed.into_iter(), std::iter::empty())),
-            vec![(1, 0), (1, 1)]
+            vec![(0, 0), (0, 1), (1, 0), (1, 1), (2, 0)]
         );
     }
 

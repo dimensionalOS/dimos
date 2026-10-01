@@ -24,12 +24,19 @@ import numpy as np
 
 from dimos.msgs.nav_msgs.LineSegments3D import LineSegments3D
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.visualization.rerun.bridge import RerunEntry, keyed_by_seq, region_entity
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
     from rerun._baseclasses import Archetype
 
     from dimos.visualization.rerun.bridge import RerunMulti, VisualOverride
+
+# rerun is imported inside the renderers: it is heavy and only viewers load it.
+
+SURFACE_MAP_ENTITY = "world/surface_map"
+NODES_ENTITY = "world/nodes"
+NODE_EDGES_ENTITY = "world/node_edges"
 
 GRAPH_Z_LIFT = 0.05
 
@@ -64,13 +71,7 @@ def surface_points(
     )
 
 
-def region_path(base: str, seq: int) -> str:
-    """The entity of the region cell the planner packed into a header seq."""
-    i = seq >> 16
-    j = ((seq & 0xFFFF) ^ 0x8000) - 0x8000
-    return f"{base}/{i}_{j}"
-
-
+@keyed_by_seq
 def render_surface_region(
     msg: PointCloud2,
     voxel_size: float,
@@ -87,7 +88,7 @@ def render_surface_region(
         cell = msg.to_rerun(voxel_size=voxel_size, colors=[40, 75, 130])
     else:
         cell = surface_points(pts, clearance, voxel_size, wall_clearance_m, clearance_clamp_m)
-    return [(region_path("world/surface_map", msg.seq), cell, True)]
+    return [RerunEntry(region_entity(SURFACE_MAP_ENTITY, msg.seq), cell, static=True)]
 
 
 def graph_nodes(pts: NDArray[np.float32]) -> Archetype:
@@ -117,9 +118,12 @@ def render_node_edges(msg: LineSegments3D) -> Archetype:
     return msg.to_rerun(z_offset=GRAPH_Z_LIFT, radii=0.01)
 
 
+@keyed_by_seq
 def render_edge_region(msg: LineSegments3D) -> RerunMulti:
     """One cell of the edge corridors on its own static entity."""
-    return [(region_path("world/node_edges", msg.seq), render_node_edges(msg), True)]
+    return [
+        RerunEntry(region_entity(NODE_EDGES_ENTITY, msg.seq), render_node_edges(msg), static=True)
+    ]
 
 
 def planner_visual_override(
@@ -140,7 +144,7 @@ def planner_visual_override(
         clearance_clamp_m=clearance_clamp_m,
     )
     return {
-        "world/surface_map": surface if on else None,
-        "world/nodes": render_nodes if on else None,
-        "world/node_edges": render_edge_region if on else None,
+        SURFACE_MAP_ENTITY: surface if on else None,
+        NODES_ENTITY: render_nodes if on else None,
+        NODE_EDGES_ENTITY: render_edge_region if on else None,
     }

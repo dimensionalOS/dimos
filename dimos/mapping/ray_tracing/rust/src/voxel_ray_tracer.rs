@@ -22,7 +22,6 @@ mod normals;
 #[cfg(test)]
 mod tests;
 
-use crate::region_viz::region_of;
 #[cfg(test)]
 use normals::fit_normal;
 use normals::{pooled_normal, refresh_voxels, should_spare, NORMAL_MIN_POINTS};
@@ -40,6 +39,20 @@ fn chunk_of(key: VoxelKey) -> ChunkKey {
         key.0.div_euclid(CHUNK_SIZE),
         key.1.div_euclid(CHUNK_SIZE),
         key.2.div_euclid(CHUNK_SIZE),
+    )
+}
+
+/// A cell of the region grid seeds load by and the map viz publishes by.
+pub type Cell = (i32, i32);
+
+/// The region grid cell a chunk's center falls in. Cells never run smaller
+/// than a chunk, so a chunk lies in exactly one.
+pub fn region_of(chunk: ChunkKey, voxel_size: f32, region_m: f32) -> Cell {
+    let edge = CHUNK_SIZE as f32 * voxel_size;
+    let cell_m = region_m.max(edge);
+    (
+        (((chunk.0 as f32) + 0.5) * edge / cell_m).floor() as i32,
+        (((chunk.1 as f32) + 0.5) * edge / cell_m).floor() as i32,
     )
 }
 
@@ -177,8 +190,8 @@ pub struct VoxelMap {
     healthy_chunks: AHashMap<ChunkKey, AHashSet<VoxelKey>>,
     /// Chunks whose emitted points changed since the viz last took them.
     changed_chunks: AHashSet<ChunkKey>,
-    /// The emit gate, so a support change marks a chunk only when it flips
-    /// a voxel across it.
+    /// The emit gate: occupied neighbors a healthy voxel needs to be emitted,
+    /// zero for none. Change marking and emission read the same value.
     support_min: i32,
 }
 
@@ -231,8 +244,8 @@ impl VoxelMap {
         if now_healthy == was_healthy {
             return;
         }
-        self.changed_chunks.insert(chunk_of(key));
         let chunk = chunk_of(key);
+        self.changed_chunks.insert(chunk);
         if now_healthy {
             self.healthy_chunks.entry(chunk).or_default().insert(key);
         } else if let Some(set) = self.healthy_chunks.get_mut(&chunk) {
@@ -250,6 +263,11 @@ impl VoxelMap {
 
     pub fn healthy_chunk_keys(&self) -> impl Iterator<Item = ChunkKey> + '_ {
         self.healthy_chunks.keys().copied()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_support_min(&mut self, support_min: i32) {
+        self.support_min = support_min;
     }
 
     /// Count of a key's 26 neighbors that currently exist and are healthy.
@@ -276,6 +294,7 @@ impl VoxelMap {
     /// `key`'s health crossed the healthy boundary. Absent neighbors pick up
     /// the right count from `count_healthy_neighbors` at creation.
     fn propagate_neighbor_support(&mut self, key: VoxelKey, delta: i32) {
+        let support_min = self.support_min;
         for dx in -1..=1 {
             for dy in -1..=1 {
                 for dz in -1..=1 {
@@ -283,7 +302,6 @@ impl VoxelMap {
                         continue;
                     }
                     let nk = (key.0 + dx, key.1 + dy, key.2 + dz);
-                    let support_min = self.support_min;
                     if let Some(c) = self.voxels.get_mut(&nk) {
                         let updated = c.support as i32 + delta;
                         debug_assert!(
@@ -785,12 +803,12 @@ fn voxel_supported(v: &Voxel, support_min: i32) -> bool {
     support_min <= 0 || v.support >= support_min as u32
 }
 
-fn is_supported(map: &VoxelMap, key: VoxelKey, support_min: i32) -> bool {
-    support_min <= 0
+fn is_supported(map: &VoxelMap, key: VoxelKey) -> bool {
+    map.support_min <= 0
         || map
             .voxels
             .get(&key)
-            .is_some_and(|v| voxel_supported(v, support_min))
+            .is_some_and(|v| voxel_supported(v, map.support_min))
 }
 
 /// Scan the healthy voxels of every chunk overlapping `bounds` (all chunks
@@ -842,20 +860,15 @@ where
 }
 
 /// Points of the given chunks, flat (x, y, z) triples: their healthy voxels
-/// with at least `support_min` occupied neighbors.
-pub fn chunk_points(
-    map: &VoxelMap,
-    voxel_size: f32,
-    chunks: &[ChunkKey],
-    support_min: i32,
-) -> Vec<f32> {
+/// that clear the map's support gate.
+pub fn chunk_points(map: &VoxelMap, voxel_size: f32, chunks: &[ChunkKey]) -> Vec<f32> {
     let parts: Vec<Vec<f32>> = chunks
         .par_iter()
         .filter_map(|chunk| map.healthy_chunks.get(chunk))
         .map(|keys| {
             let mut part = Vec::with_capacity(3 * keys.len());
             for &key in keys {
-                if is_supported(map, key, support_min) {
+                if is_supported(map, key) {
                     let (x, y, z) = voxel_center(key, voxel_size);
                     part.extend_from_slice(&[x, y, z]);
                 }
@@ -867,14 +880,29 @@ pub fn chunk_points(
 }
 
 /// Points for an emitted cloud, flat (x, y, z) triples: healthy surface voxels
-/// within `bounds` (all when `None`) with at least `support_min` occupied
-/// neighbors, plus this frame's not-yet-healthy `live` voxels within `bounds`.
+/// within `bounds` (all when `None`) that clear the map's support gate, plus
+/// this frame's not-yet-healthy `live` voxels within `bounds`.
 pub fn emit_points(
     map: &VoxelMap,
     voxel_size: f32,
     bounds: Option<&LocalBounds>,
-    support_min: i32,
     live: &AHashSet<VoxelKey>,
+) -> Vec<f32> {
+    emit_points_gated(map, voxel_size, bounds, live, true)
+}
+
+/// Every healthy voxel plus this frame's live voxels, with no support gate.
+/// The global map is unfiltered.
+pub fn emit_points_ungated(map: &VoxelMap, voxel_size: f32, live: &AHashSet<VoxelKey>) -> Vec<f32> {
+    emit_points_gated(map, voxel_size, None, live, false)
+}
+
+fn emit_points_gated(
+    map: &VoxelMap,
+    voxel_size: f32,
+    bounds: Option<&LocalBounds>,
+    live: &AHashSet<VoxelKey>,
+    gated: bool,
 ) -> Vec<f32> {
     let mut out = scan_chunks(
         map,
@@ -889,7 +917,7 @@ pub fn emit_points(
             if !(chunk_inside || bounds.is_none_or(|b| b.contains(x, y, z))) {
                 return;
             }
-            if is_supported(map, key, support_min) {
+            if !gated || is_supported(map, key) {
                 part.extend_from_slice(&[x, y, z]);
             }
         },
@@ -909,7 +937,7 @@ pub fn emit_points(
 }
 
 /// Points for a fine emitted cloud, flat (x, y, z) triples: observed fine
-/// cells inside healthy voxels clearing `support_min`, within `bounds` (all
+/// cells inside healthy voxels clearing the map's support gate, within `bounds` (all
 /// when `None`), plus this frame's `live_fine` cells whose voxel is not yet
 /// healthy.
 pub fn emit_points_fine(
@@ -917,7 +945,6 @@ pub fn emit_points_fine(
     voxel_size: f32,
     fine_divisor: u32,
     bounds: Option<&LocalBounds>,
-    support_min: i32,
     live_fine: &AHashSet<VoxelKey>,
 ) -> Vec<f32> {
     let divisor = fine_divisor as i32;
@@ -942,7 +969,7 @@ pub fn emit_points_fine(
             let Some(v) = map.voxels.get(&key) else {
                 return;
             };
-            if !voxel_supported(v, support_min) {
+            if !voxel_supported(v, map.support_min) {
                 return;
             }
             let mut bits = v.fine;

@@ -25,7 +25,7 @@ import pytest
 from dimos.msgs.nav_msgs.LineSegments3D import LineSegments3D
 
 
-def encode_edges(n_segments: int, frame_ids: list[str] | None = None) -> bytes:
+def encode_edges(n_segments: int, frame_ids: list[str] | None = None, seq: int = 0) -> bytes:
     """A Path of consecutive pose pairs with orientation.w carrying the weight."""
     poses = [
         PoseStamped(
@@ -37,7 +37,7 @@ def encode_edges(n_segments: int, frame_ids: list[str] | None = None) -> bytes:
         )
         for i in range(2 * n_segments)
     ]
-    header = Header(stamp=Time(12, 500_000_000), frame_id="odom")
+    header = Header(seq=seq, stamp=Time(12, 500_000_000), frame_id="odom")
     return Path(poses_length=len(poses), header=header, poses=poses).lcm_encode()
 
 
@@ -57,6 +57,14 @@ def test_decode_matches_the_wire_layout() -> None:
     assert len(empty) == 0
     assert empty.segments.shape == (0, 2, 3)
     assert empty.weights.shape == (0,)
+
+
+def test_seq_round_trips_including_the_empty_message() -> None:
+    seq = (3 << 16) | 5
+    assert LineSegments3D.lcm_decode(encode_edges(4, seq=seq)).seq == seq
+    assert LineSegments3D.lcm_decode(encode_edges(0, seq=seq)).seq == seq
+    assert LineSegments3D.lcm_decode(encode_edges(4)).seq == 0
+    assert LineSegments3D(seq=7).seq == 7
 
 
 def test_mixed_frame_id_lengths_are_rejected() -> None:

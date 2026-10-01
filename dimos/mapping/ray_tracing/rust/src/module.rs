@@ -16,9 +16,9 @@ use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 use crate::mapper::{register, Mapper, Pose};
-use crate::region_viz::{pack_cell, region_of, Cell, RegionSweep};
+use crate::region_viz::{pack_cell, RegionSweep};
 use crate::voxel_ray_tracer::{
-    partition_seed, ChunkKey, Config, Cylinder, SeedPartition, SeedRegion,
+    partition_seed, region_of, Cell, ChunkKey, Config, Cylinder, SeedPartition, SeedRegion,
 };
 use dimos_module::pointcloud::extract_xyz;
 use dimos_module::{error_throttled, warn_throttled, Input, Module, Output, Tf, Transform};
@@ -263,6 +263,10 @@ impl Worker {
                 }
             };
             if let Some(job) = job {
+                let backlog = self.jobs.len();
+                if backlog > 1 && matches!(job, Job::Lidar(_)) {
+                    debug!(backlog, "lidar frames waiting behind this one");
+                }
                 self.handle(&mut state, job).await;
             }
             self.seed_step(&mut state).await;
@@ -385,11 +389,14 @@ impl Worker {
                 tick_ms = tick_start.elapsed().as_secs_f64() * 1e3,
                 "map regions published"
             );
+            let mut bytes = 0usize;
             for (cell, points) in regions {
                 let mut cloud = points_to_cloud(&points, out_frame_id, stamp.clone());
                 cloud.header.seq = pack_cell(cell);
+                bytes += cloud.data.len();
                 publish_cloud(&self.map_regions, &cloud).await;
             }
+            debug!(bytes, "map region bytes published");
         }
     }
 
@@ -852,12 +859,12 @@ mod tests {
             z_max: 1.0,
         };
         let global = points_to_cloud(
-            &emit_points(&map, 1.0, None, 0, &live),
+            &emit_points(&map, 1.0, None, &live),
             "world",
             Time::default(),
         );
         let local = points_to_cloud(
-            &emit_points(&map, 1.0, Some(&cylinder), 0, &live),
+            &emit_points(&map, 1.0, Some(&cylinder), &live),
             "world",
             Time::default(),
         );
@@ -877,12 +884,12 @@ mod tests {
             z_max: 10.0,
         };
         let global = points_to_cloud(
-            &emit_points(&map, 1.0, None, 0, &live),
+            &emit_points(&map, 1.0, None, &live),
             "world",
             Time::default(),
         );
         let local = points_to_cloud(
-            &emit_points(&map, 1.0, Some(&cylinder), 0, &live),
+            &emit_points(&map, 1.0, Some(&cylinder), &live),
             "world",
             Time::default(),
         );
@@ -903,12 +910,12 @@ mod tests {
             z_max: 1.0,
         };
         let global = points_to_cloud(
-            &emit_points(&map, 1.0, None, 0, &live),
+            &emit_points(&map, 1.0, None, &live),
             "world",
             Time::default(),
         );
         let local = points_to_cloud(
-            &emit_points(&map, 1.0, Some(&cylinder), 0, &live),
+            &emit_points(&map, 1.0, Some(&cylinder), &live),
             "world",
             Time::default(),
         );
@@ -931,12 +938,12 @@ mod tests {
             z_max: 1.0,
         };
         let global = points_to_cloud(
-            &emit_points(&map, 1.0, None, 0, &live),
+            &emit_points(&map, 1.0, None, &live),
             "world",
             Time::default(),
         );
         let local = points_to_cloud(
-            &emit_points(&map, 1.0, Some(&cylinder), 0, &live),
+            &emit_points(&map, 1.0, Some(&cylinder), &live),
             "world",
             Time::default(),
         );
@@ -957,7 +964,7 @@ mod tests {
             }
         }
         keys.push((20, 0, 0));
-        let map = map_with_healthy(&keys);
+        let mut map = map_with_healthy(&keys);
         let mut live: AHashSet<VoxelKey> = AHashSet::new();
         live.insert((25, 0, 0));
         let cylinder = LocalBounds {
@@ -967,8 +974,9 @@ mod tests {
             z_min: -10.0,
             z_max: 10.0,
         };
+        map.set_support_min(3);
         let local = points_to_cloud(
-            &emit_points(&map, 1.0, Some(&cylinder), 3, &live),
+            &emit_points(&map, 1.0, Some(&cylinder), &live),
             "world",
             Time::default(),
         );

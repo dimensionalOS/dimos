@@ -25,8 +25,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from dimos.mapping.ray_tracing.viz import voxel_map_points
-from dimos.navigation.global_planner.mls_planner.viz import planner_visual_override, region_path
+from dimos.mapping.ray_tracing.viz import MAP_REGIONS_ENTITY, render_map_region, render_voxel_map
+from dimos.navigation.global_planner.mls_planner.viz import planner_visual_override
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -34,25 +34,18 @@ if TYPE_CHECKING:
 
     from dimos.msgs.geometry_msgs.PointStamped import PointStamped
     from dimos.msgs.nav_msgs.Path import Path
-    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-    from dimos.visualization.rerun.bridge import RerunMulti, VisualOverride
+    from dimos.visualization.rerun.bridge import VisualOverride
+
+# rerun is imported inside the renderers: it is heavy and only viewers load it.
 
 PATH_Z_LIFT = 0.05
+# Height band the voxel maps are colored over, the same in every cell.
+HEIGHT_RANGE = (-1.0, 3.0)
 
 PATH_COLOR = (0, 255, 0)
 GOAL_COLOR = (255, 0, 0)
 BODY_COLOR = (0, 255, 127)
 CLEARANCE_COLOR = (255, 120, 120, 80)
-
-
-def render_voxel_map(msg: PointCloud2, voxel_size: float) -> Archetype:
-    return voxel_map_points(msg.points_f32(), voxel_size)
-
-
-def render_map_region(msg: PointCloud2, voxel_size: float) -> RerunMulti:
-    """One region of the voxel map on its own static entity, empty when the region emptied."""
-    cell = voxel_map_points(msg.points_f32(), voxel_size)
-    return [(region_path("world/map_regions", msg.seq), cell, True)]
 
 
 def path_strip(
@@ -140,10 +133,12 @@ def nav_visual_override(
 
     Pass the same values given to ``MLSPlannerNative.blueprint(...)``.
     """
-    voxels = partial(render_voxel_map, voxel_size=voxel_size)
+    voxels = partial(render_voxel_map, voxel_size=voxel_size, height_range=HEIGHT_RANGE)
     return {
         "world/global_map": voxels,
-        "world/map_regions": partial(render_map_region, voxel_size=voxel_size),
+        MAP_REGIONS_ENTITY: partial(
+            render_map_region, voxel_size=voxel_size, height_range=HEIGHT_RANGE
+        ),
         # the seeded regions feed the planner, the map viz already shows them
         "world/seed_map": None,
         "world/seed_bounds": None,

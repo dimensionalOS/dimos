@@ -112,6 +112,24 @@ def test_resolve_named_path_keeps_a_nested_lfs_name(mocker: MockerFixture) -> No
     get_data.assert_called_once_with("maps/office.pc2.lcm")
 
 
+def test_resolve_named_path_falls_back_to_the_basename(mocker: MockerFixture) -> None:
+    pulled = Path("/lfs/not_pulled_yet.db")
+
+    def get_data(name: str) -> Path:
+        if name == "not_pulled_yet.db":
+            return pulled
+        raise FileNotFoundError(name)
+
+    spy = mocker.patch.object(data, "get_data", side_effect=get_data)
+    assert resolve_named_path("data/not_pulled_yet", ".db") == pulled
+    assert [c.args[0] for c in spy.call_args_list] == [
+        "data/not_pulled_yet.db",
+        "not_pulled_yet.db",
+    ]
+    with pytest.raises(FileNotFoundError):
+        resolve_named_path("missing", ".db")
+
+
 def test_backup_file_missing_is_noop(tmp_path: Path) -> None:
     assert backup_file(tmp_path / "nope.db") is None
     assert list(tmp_path.iterdir()) == []

@@ -20,8 +20,8 @@ use nalgebra::{Quaternion, UnitQuaternion, Vector3};
 
 use crate::voxel_ray_tracer::{
     batch_local_bounds, chunk_points, coarse_of_fine, emit_points, emit_points_fine,
-    global_normal_fits, metric_voxel_keys, seed_points, seed_tile, update_map, ChunkKey, Config,
-    Cylinder, FrameHits, LocalBounds, VoxelMap,
+    emit_points_ungated, global_normal_fits, metric_voxel_keys, seed_points, seed_tile, update_map,
+    ChunkKey, Config, Cylinder, FrameHits, LocalBounds, VoxelMap,
 };
 
 pub type Point = (f32, f32, f32);
@@ -157,14 +157,7 @@ impl Mapper {
     /// Support-gated centers of the given chunks' healthy voxels, flat triples.
     pub fn chunk_points(&self, chunks: &[ChunkKey]) -> Vec<f32> {
         let pool = Arc::clone(&self.pool);
-        pool.install(|| {
-            chunk_points(
-                &self.map,
-                self.config.voxel_size,
-                chunks,
-                self.config.support_min,
-            )
-        })
+        pool.install(|| chunk_points(&self.map, self.config.voxel_size, chunks))
     }
 
     /// Cylinder over the batched frames, consuming the batch. An empty batch
@@ -195,15 +188,8 @@ impl Mapper {
 
     /// All healthy voxel centers plus this frame's live voxels, flat triples.
     pub fn global_points(&self) -> Vec<f32> {
-        self.pool.install(|| {
-            emit_points(
-                &self.map,
-                self.config.voxel_size,
-                None,
-                0,
-                &self.live.coarse,
-            )
-        })
+        self.pool
+            .install(|| emit_points_ungated(&self.map, self.config.voxel_size, &self.live.coarse))
     }
 
     /// Support-gated healthy voxel centers within `bounds`, plus live voxels,
@@ -214,7 +200,6 @@ impl Mapper {
                 &self.map,
                 self.config.voxel_size,
                 Some(bounds),
-                self.config.support_min,
                 &self.live.coarse,
             )
         })
@@ -230,7 +215,6 @@ impl Mapper {
                 self.config.voxel_size,
                 divisor,
                 Some(bounds),
-                self.config.support_min,
                 &self.live.fine,
             )
         }))
@@ -467,7 +451,7 @@ mod tests {
         assert_eq!(mapper.seed_points(&[(5.5, 0.5, 0.5)]), 0);
     }
 
-    /// full_points applies the support gate. global_points stays unfiltered.
+    /// local_points applies the support gate. global_points stays unfiltered.
     #[test]
     fn local_points_apply_support_gate() {
         let cfg = Config {

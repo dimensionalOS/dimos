@@ -19,8 +19,6 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
-from dimos.mapping.relocalization.lidar.module import LocalMapRelocalization
-from dimos.mapping.relocalization.lidar.relocalize import GO2_NAV
 from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPlannerNative
 from dimos.navigation.global_planner.viz import nav_static, nav_visual_override
 from dimos.navigation.movement_manager.movement_manager import MovementManager
@@ -32,6 +30,7 @@ from dimos.robot.unitree.go2.go2_mid360_static_transforms import Go2Mid360Static
 from dimos.robot.unitree.go2.nav_3d_config import (
     mls_planner_config,
     ray_tracing_config,
+    relocalization,
     voxel_size,
     wall_clearance_m,
 )
@@ -92,12 +91,8 @@ unitree_go2_nav_3d = autoconnect(
     MovementManager.blueprint(),
 ).global_config(n_workers=10, robot_model="unitree_go2", obstacle_avoidance=False)
 
-# The republish covers a ray tracer that missed the one-shot loaded_map publish.
+# LCM can lose the one-shot loaded_map publish, so this stack republishes it.
 unitree_go2_nav_3d_relocalization = autoconnect(
     unitree_go2_nav_3d,
-    LocalMapRelocalization.blueprint(
-        world_frame="odom",
-        republish_loaded_map=30.0,
-        relocalize=GO2_NAV,
-    ),
+    relocalization(republish_loaded_map=30.0),
 ).global_config(n_workers=11)

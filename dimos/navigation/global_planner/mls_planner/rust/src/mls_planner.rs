@@ -148,6 +148,9 @@ impl Config {
     }
 }
 
+/// Inclusive column window, as x0, x1, y0, y1.
+pub type ColumnWindow = (i32, i32, i32, i32);
+
 /// Cylindrical region the planner re-derives from a local map slice.
 #[derive(Clone, Copy)]
 pub struct RegionBounds {
@@ -159,23 +162,11 @@ pub struct RegionBounds {
 }
 
 impl RegionBounds {
-    /// Region cylinder with its ceiling capped to `max_overhead_m` above the
-    /// sensor.
-    pub fn capped(
-        origin_x: f32,
-        origin_y: f32,
-        radius: f32,
-        z_min: f32,
-        z_max: f32,
-        sensor_z: f32,
-        max_overhead_m: f32,
-    ) -> Self {
+    /// This region with its ceiling capped to `max_overhead_m` above the sensor.
+    pub fn capped_at(self, sensor_z: f32, max_overhead_m: f32) -> Self {
         RegionBounds {
-            origin_x,
-            origin_y,
-            radius,
-            z_min,
-            z_max: z_max.min(sensor_z + max_overhead_m),
+            z_max: self.z_max.min(sensor_z + max_overhead_m),
+            ..self
         }
     }
 
@@ -261,7 +252,7 @@ impl Planner {
         local_points: &[(f32, f32, f32)],
         bounds: &RegionBounds,
         config: &Config,
-    ) -> Option<(i32, i32, i32, i32)> {
+    ) -> Option<ColumnWindow> {
         let pool = Arc::clone(&self.pool);
         pool.install(|| {
             let voxel_size = config.voxel_size;

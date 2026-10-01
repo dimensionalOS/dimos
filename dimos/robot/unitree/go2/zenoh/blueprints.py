@@ -45,8 +45,6 @@ from dimos.core.global_config import global_config
 from dimos.hardware.sensors.lidar.pointlio.module import PointLioRust
 from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
-from dimos.mapping.relocalization.lidar.module import LocalMapRelocalization
-from dimos.mapping.relocalization.lidar.relocalize import GO2_NAV
 from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPlannerNative
 from dimos.navigation.global_planner.viz import nav_static, nav_visual_override
 from dimos.navigation.local_planner.native import LocalPlannerNative
@@ -60,6 +58,7 @@ from dimos.robot.unitree.go2.dds.module import GO2DDS
 from dimos.robot.unitree.go2.nav_3d_config import (
     mls_planner_config,
     ray_tracing_config,
+    relocalization,
     voxel_size,
     wall_clearance_m,
 )
@@ -339,11 +338,7 @@ go2_dds_motion_pointlio_relocalization = autoconnect(
     go2_dds_motion_pointlio.disabled_modules(
         RerunBridgeModule, WebsocketVisModule, RerunWebSocketServer
     ),
-    LocalMapRelocalization.blueprint(
-        world_frame="odom",
-        republish_loaded_map=30.0,
-        relocalize=GO2_NAV,
-    ),
+    relocalization(republish_loaded_map=0.0),
 ).global_config(n_workers=9)
 
 

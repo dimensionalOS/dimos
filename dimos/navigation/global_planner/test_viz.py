@@ -17,6 +17,7 @@ import pickle
 import numpy as np
 import rerun as rr
 
+from dimos.mapping.ray_tracing.viz import render_map_region
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.Path import Path
@@ -44,15 +45,27 @@ def test_empty_path_keeps_the_last_one_drawn() -> None:
 def test_map_regions_land_static_on_their_own_cell_entities() -> None:
     region = PointCloud2.from_numpy(np.array([[1.0, 1.0, 0.0], [1.2, 1.0, 0.0]], dtype=np.float32))
     region.seq = (1 << 16) | (-2 & 0xFFFF)
-    (path, arch, static) = viz.render_map_region(region, 0.1)[0]
+    (path, arch, static) = render_map_region(region, 0.1, (-1.0, 3.0))[0]
     assert path == "world/map_regions/1_-2" and static
     assert len(arch.positions.as_arrow_array()) == 2
 
     emptied = PointCloud2.from_numpy(np.zeros((0, 3), dtype=np.float32))
     emptied.seq = region.seq
-    (path, arch, static) = viz.render_map_region(emptied, 0.1)[0]
+    (path, arch, static) = render_map_region(emptied, 0.1, (-1.0, 3.0))[0]
     assert path == "world/map_regions/1_-2" and static
     assert len(arch.positions.as_arrow_array()) == 0
+
+
+def test_keyed_renderers_keep_their_flag_through_the_pickle_round_trip() -> None:
+    from functools import partial
+
+    from dimos.visualization.rerun.bridge import is_keyed_by_seq
+
+    plain = pickle.loads(pickle.dumps(render_map_region))
+    bound = pickle.loads(pickle.dumps(partial(render_map_region, voxel_size=0.1)))
+    assert is_keyed_by_seq(plain) and is_keyed_by_seq(bound)
+    assert not is_keyed_by_seq(viz.render_path)
+    assert not is_keyed_by_seq(pickle.loads(pickle.dumps(partial(viz.render_path))))
 
 
 def test_bridge_config_pickles_for_the_workers() -> None:
