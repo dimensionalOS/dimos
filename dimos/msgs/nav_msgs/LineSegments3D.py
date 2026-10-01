@@ -46,7 +46,6 @@ class LineSegments3D(Timestamped):
     msg_name = "nav_msgs.LineSegments3D"
     ts: float
     frame_id: str
-    # The header seq, as sent on the wire.
     seq: int
     segments: NDArray[np.float64]
     weights: NDArray[np.float64]

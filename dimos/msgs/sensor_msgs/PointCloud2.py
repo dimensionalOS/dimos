@@ -76,7 +76,6 @@ def register_colormap_annotation(name: str = "turbo") -> None:
 # TODO: encode/decode need to be updated to work with full spectrum of pointcloud2 fields
 class PointCloud2(Timestamped):
     msg_name = "sensor_msgs.PointCloud2"
-    # The header seq, as sent on the wire.
     seq: int = 0
 
     def __init__(

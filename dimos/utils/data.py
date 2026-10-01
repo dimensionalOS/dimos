@@ -119,8 +119,8 @@ def resolve_named_path(name: str | Path, suffix: str = "") -> Path:
     """A path, a stem in the working directory or project root, or an LFS name to pull."""
     s = str(name)
     names = [s] if not suffix or s.endswith(suffix) else [s, s + suffix]
-    for n in names:
-        p = Path(n)
+    for candidate in names:
+        p = Path(candidate)
         if p.exists():
             return p
         if (DIMOS_PROJECT_ROOT / p).exists():

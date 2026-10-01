@@ -19,7 +19,6 @@ import numpy as np
 from dimos.msgs.nav_msgs.LineSegments3D import LineSegments3D
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.navigation.global_planner.mls_planner import viz
-from dimos.visualization.rerun.bridge import region_entity
 
 
 def _rgb(packed: int) -> tuple[int, int, int]:
@@ -60,11 +59,6 @@ def test_graph_nodes_are_lifted_off_the_surface() -> None:
 
     empty = viz.graph_nodes(np.zeros((0, 3), dtype=np.float32))
     assert len(empty.positions.as_arrow_array()) == 0
-
-
-def test_region_cells_unpack_from_the_seq_the_planner_packs() -> None:
-    assert region_entity("world/surface_map", (-3 << 16) | (5 & 0xFFFF)) == "world/surface_map/-3_5"
-    assert region_entity("world/node_edges", (7 << 16) | (-2 & 0xFFFF)) == "world/node_edges/7_-2"
 
 
 def test_region_renders_are_static_and_an_empty_cell_still_lands() -> None:

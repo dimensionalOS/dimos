@@ -98,7 +98,7 @@ class RerunEntry(NamedTuple):
     static: bool = False
 
 
-RerunMulti: TypeAlias = "list[tuple[str, Archetype] | RerunEntry]"
+RerunMulti: TypeAlias = "list[tuple[str, Archetype]] | list[tuple[str, Archetype] | RerunEntry]"
 RerunData: TypeAlias = "Archetype | RerunMulti"
 
 # A region cell packed into a header seq: i in the high half, j in the low half,
