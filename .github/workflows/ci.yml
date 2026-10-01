@@ -1279,57 +1279,37 @@ jobs:
           acked=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}" \
             --jq '[.labels[].name] | contains(["benchmark-ack"])')
           echo "acked=$acked" >> "$GITHUB_OUTPUT"
-      # The gate is the series that repeat to within a few percent; the rest
-      # are tracked for the trend analysis only.
-      - name: Split the gated series from the rest
-        run: |
-          ungated='["disk write"]'
-          jq --argjson u "$ungated" 'map(select(.name | IN($u[]) | not))' benchmark.json > gated.json
-          jq --argjson u "$ungated" 'map(select(.name | IN($u[])))' benchmark.json > ungated.json
-      - name: Track the ungated series
-        uses: benchmark-action/github-action-benchmark@v1
-        with:
-          name: go2 replay realtime (arm64) ungated
-          tool: customSmallerIsBetter
-          output-file-path: ungated.json
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          auto-push: ${{ github.event_name == 'push' }}
-          save-data-file: ${{ github.event_name == 'push' }}
-          # Nothing alerts on these; the threshold only keeps the summary quiet.
-          alert-threshold: 10000%
-          comment-on-alert: false
-          fail-on-alert: false
-          summary-always: true
-          max-items-in-chart: 200
       - name: Track results
-        id: track
         uses: benchmark-action/github-action-benchmark@v1
         with:
           # A new series: the arm runner's numbers don't continue the x86 ones.
           name: go2 replay realtime (arm64)
           tool: customSmallerIsBetter
-          output-file-path: gated.json
+          output-file-path: benchmark.json
           github-token: ${{ secrets.GITHUB_TOKEN }}
           # Append to the tracked series on main; PRs only compare against it.
           auto-push: ${{ github.event_name == 'push' }}
           save-data-file: ${{ github.event_name == 'push' }}
-          alert-threshold: 108%
+          # The gate below does the alerting, on the stable series only; this
+          # step tracks every series and posts the comparison table.
+          alert-threshold: 10000%
+          comment-on-alert: false
+          fail-on-alert: false
           # Fork PRs run with a read-only token that can't post comments;
           # there the numbers land in the job summary and the step log only.
-          comment-on-alert: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
           comment-always: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
           summary-always: true
           max-items-in-chart: 200
-          fail-on-alert: ${{ github.event_name == 'pull_request' && steps.ack.outputs.acked != 'true' }}
-      - name: "Regression: if expected, add the benchmark-ack label and re-run this job"
-        if: failure() && steps.track.outcome == 'failure'
+      # Fails the PR with the comparison and the way out in its own output.
+      - name: Gate on the stable series
+        if: github.event_name == 'pull_request'
+        env:
+          ACKED: ${{ steps.ack.outputs.acked }}
         run: |
-          {
-            echo 'If this regression is expected, a maintainer can add the `benchmark-ack`'
-            echo 'label to the PR and re-run this job in order to merge.'
-          } >> "$GITHUB_STEP_SUMMARY"
-          echo "::error title=Benchmark regression::If this regression is expected, a maintainer can add the 'benchmark-ack' label to the PR and re-run this job in order to merge."
-          exit 1
+          git fetch --depth=1 origin gh-pages
+          git show FETCH_HEAD:dev/bench/data.js > data.js
+          python3 bin/benchmark-analysis data.js --gate benchmark.json --threshold 1.08 \
+            $([ "$ACKED" = true ] && echo --acknowledged)
 
   benchmark-analysis:
     if: github.event_name == 'push'

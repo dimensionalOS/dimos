@@ -16,6 +16,9 @@ Usage (Otava comes from the .github/benchmark-analysis project; the script itsel
 needs only the stdlib):
   uv run --project .github/benchmark-analysis python bin/benchmark-analysis data.js
   ... --create-issues  # needs GITHUB_TOKEN + GITHUB_REPOSITORY
+
+The PR gate is the other mode and needs no Otava:
+  python3 bin/benchmark-analysis data.js --gate benchmark.json [--acknowledged]
 """
 
 import argparse
@@ -38,18 +41,12 @@ import urllib.error
 import urllib.request
 
 SERIES = "go2 replay realtime (arm64)"
-# The gated series and the tracked-only one (benchmark-track in ci.yml keeps
-# them apart so the noisy metrics never fail a PR); each metric lives in one.
-SUITES = (SERIES, f"{SERIES} ungated")
+# What the PR gate (--gate) compares: the series that repeat to within a few
+# percent. The noisier ones are tracked for the trend analysis only.
+GATED = ("instructions", "peak memory", "peak threads", "network (transport)")
 # Every series the benchmark emits; listed so a new one is a deliberate
 # addition here rather than an automatic source of issues.
-METRICS = (
-    "instructions",
-    "peak memory",
-    "peak threads",
-    "network (transport)",
-    "disk write",
-)
+METRICS = (*GATED, "disk write")
 LABEL = "benchmark-regression"
 MARKER = "<!-- benchmark-analysis: {sha} -->"
 
@@ -94,7 +91,7 @@ def load_series(path: Path) -> tuple[list[Point], dict[str, str]]:
     data = json.loads(text[text.index("{") : text.rindex("}") + 1])
     points = []
     units = {}
-    for entry in (e for suite in SUITES for e in data["entries"].get(suite, [])):
+    for entry in data["entries"].get(SERIES, []):
         commit = entry["commit"]
         benches = entry["benches"]
         cpu = re.match(r"cpu: ([^;]+)", benches[0].get("extra", "") if benches else "")
@@ -109,10 +106,69 @@ def load_series(path: Path) -> tuple[list[Point], dict[str, str]]:
                 values={b["name"]: float(b["value"]) for b in benches},
             )
         )
-    # A metric's points come from one suite; ordering the union by time keeps
-    # each metric's neighbours adjacent, which the alignment relies on.
-    points.sort(key=lambda p: p.time)
     return points, units
+
+
+def gate(
+    points: list[Point], units: dict[str, str], current: Path, threshold: float, acknowledged: bool
+) -> int:
+    """Compare a run's gated series with the last run on main; 1 on a regression.
+
+    The same comparison github-action-benchmark makes, done here so the failing
+    step's own output carries the table and the way out, and so the noisy
+    series can be tracked without being able to fail a PR.
+    """
+    benches = json.loads(current.read_text())
+    now = {b["name"]: float(b["value"]) for b in benches}
+    units = {**{b["name"]: b["unit"] for b in benches}, **units}
+    rows = []
+    regressions = []
+    previous: Point | None = None
+    for metric in GATED:
+        if metric not in now:
+            continue
+        unit = units[metric]
+        last = next((p for p in reversed(points) if metric in p.values), None)
+        if last is None:
+            rows.append(f"| {metric} | - | {now[metric]:.3f} {unit} | - |")
+            continue
+        previous = previous or last
+        ratio = now[metric] / last.values[metric] if last.values[metric] else math.inf
+        if ratio > threshold:
+            regressions.append(metric)
+        rows.append(
+            f"| {metric} | {last.values[metric]:.3f} {unit} | {now[metric]:.3f} {unit} "
+            f"| {ratio:.3f}{' **regression**' if ratio > threshold else ''} |"
+        )
+    lines = [
+        f"### {SERIES}: gate at {threshold:.0%} of the last run on main"
+        + (f" ({previous.sha[:10]})" if previous else ""),
+        "",
+        "| Series | Previous | Current | Ratio |",
+        "|---|---|---|---|",
+        *rows,
+    ]
+    if regressions and acknowledged:
+        lines += ["", "Acknowledged with the `benchmark-ack` label, so not failing."]
+    elif regressions:
+        lines += [
+            "",
+            "If this regression is expected, a maintainer can add the `benchmark-ack`",
+            "label to the PR and re-run this job in order to merge.",
+        ]
+    text = "\n".join(lines)
+    print(text)
+    if summary := os.environ.get("GITHUB_STEP_SUMMARY"):
+        with Path(summary).open("a") as f:
+            f.write(text + "\n")
+    if regressions and not acknowledged:
+        print(
+            f"::error title=Benchmark regression::{', '.join(regressions)} above {threshold:.0%} "
+            "of the last run on main. If expected, a maintainer can add the 'benchmark-ack' "
+            "label to the PR and re-run this job."
+        )
+        return 1
+    return 0
 
 
 def aligned(points: list[Point], metric: str) -> list[tuple[Point, float]]:
@@ -441,9 +497,19 @@ def main() -> None:
         help="runs a level must hold on both sides of a shift to count (default 5)",
     )
     parser.add_argument("--otava", default="otava", help="otava executable")
+    parser.add_argument(
+        "--gate",
+        type=Path,
+        metavar="BENCHMARK_JSON",
+        help="instead of the analysis: compare this run's gated series with the last run on main",
+    )
+    parser.add_argument("--threshold", type=float, default=1.08, help="--gate ratio (default 1.08)")
+    parser.add_argument("--acknowledged", action="store_true", help="--gate reports but passes")
     args = parser.parse_args()
 
     points, units = load_series(args.data)
+    if args.gate:
+        return gate(points, units, args.gate, args.threshold, args.acknowledged)
     with tempfile.TemporaryDirectory() as tmp:
         changes = detect(
             points, Path(tmp), args.otava, args.p_value, args.magnitude, args.min_segment
