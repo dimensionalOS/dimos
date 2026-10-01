@@ -19,7 +19,6 @@ this adapter reads from and writes to the same SHM buffers.
 from __future__ import annotations
 
 import math
-import time
 from typing import Any
 
 from dimos.hardware.manipulators.spec import (
@@ -73,50 +72,19 @@ class ShmMujocoAdapter:
         self._effort_mode_warned = False
 
     def connect(self) -> bool:
-        deadline = time.monotonic() + _ATTACH_RETRY_TIMEOUT_S
-        while True:
-            try:
-                candidate = ManipShmReader(self._shm_key)
-            except FileNotFoundError:
-                if time.monotonic() > deadline:
-                    logger.error(
-                        "SHM buffers not found",
-                        address=self._address,
-                        shm_key=self._shm_key,
-                        timeout_s=_ATTACH_RETRY_TIMEOUT_S,
-                    )
-                    return False
-                time.sleep(_ATTACH_RETRY_POLL_S)
-                continue
-
-            if candidate.owner_alive() and not candidate.should_stop():
-                self._shm = candidate
-                break
-            candidate.cleanup()
-            if time.monotonic() > deadline:
-                logger.error(
-                    "No live sim owns SHM buffers",
-                    address=self._address,
-                    shm_key=self._shm_key,
-                    timeout_s=_ATTACH_RETRY_TIMEOUT_S,
-                )
-                return False
-            time.sleep(_ATTACH_RETRY_POLL_S)
-
-        # Wait for sim module to signal ready.
-        deadline = time.monotonic() + _READY_WAIT_TIMEOUT_S
-        while not self._shm.is_ready():
-            if not self._shm.owner_alive() or self._shm.should_stop():
-                self._shm.cleanup()
-                self._shm = None
-                logger.error("Sim stopped before SHM became ready", shm_key=self._shm_key)
-                return False
-            if time.monotonic() > deadline:
-                logger.error("sim module not ready", timeout_s=_READY_WAIT_TIMEOUT_S)
-                self._shm.cleanup()
-                self._shm = None
-                return False
-            time.sleep(_READY_WAIT_POLL_S)
+        self._shm = ManipShmReader.wait_for_live(
+            self._shm_key,
+            attach_timeout_s=_ATTACH_RETRY_TIMEOUT_S,
+            ready_timeout_s=_READY_WAIT_TIMEOUT_S,
+            poll_s=min(_ATTACH_RETRY_POLL_S, _READY_WAIT_POLL_S),
+        )
+        if self._shm is None:
+            logger.error(
+                "No live MuJoCo SHM generation became ready",
+                address=self._address,
+                shm_key=self._shm_key,
+            )
+            return False
 
         if self._shm.num_joints() != self._dof:
             reported_dof = self._shm.num_joints()
@@ -150,7 +118,7 @@ class ShmMujocoAdapter:
             self._connected = False
 
     def is_connected(self) -> bool:
-        return self._connected and self._shm is not None
+        return self._live_shm() is not None
 
     def activate(self) -> bool:
         return self.write_enable(True)
@@ -191,23 +159,26 @@ class ShmMujocoAdapter:
 
     def read_joint_positions(self) -> list[float]:
         """Read arm positions, then the gripper, in the units commands use."""
-        if self._shm is None:
+        shm = self._live_shm()
+        if shm is None:
             return [0.0] * self._dof
-        positions = self._shm.read_positions(self._arm_dof)
+        positions = shm.read_positions(self._arm_dof)
         if self._gripper_dof:
-            positions.append(self._shm.read_gripper_position())
+            positions.append(shm.read_gripper_position())
         return positions
 
     def read_joint_velocities(self) -> list[float]:
         """Read arm velocities; the gripper reports 0.0."""
-        if self._shm is None:
+        shm = self._live_shm()
+        if shm is None:
             return [0.0] * self._dof
-        return self._shm.read_velocities(self._arm_dof) + [0.0] * self._gripper_dof
+        return shm.read_velocities(self._arm_dof) + [0.0] * self._gripper_dof
 
     def read_joint_efforts(self) -> list[float]:
-        if self._shm is None:
+        shm = self._live_shm()
+        if shm is None:
             return [0.0] * self._dof
-        return self._shm.read_efforts(self._arm_dof) + [0.0] * self._gripper_dof
+        return shm.read_efforts(self._arm_dof) + [0.0] * self._gripper_dof
 
     def read_state(self) -> dict[str, int]:
         velocities = self.read_joint_velocities()
@@ -220,25 +191,27 @@ class ShmMujocoAdapter:
 
     def write_joint_positions(self, positions: list[float], velocity: float = 1.0) -> bool:
         """Command all joints; the gripper entry is in the MJCF joint range."""
-        if not self._servos_enabled or self._shm is None:
+        shm = self._live_shm()
+        if not self._servos_enabled or shm is None:
             return False
         self._control_mode = ControlMode.POSITION
         if len(positions) != self._dof:
             return False
-        self._shm.write_position_command(positions[: self._arm_dof])
+        shm.write_position_command(positions[: self._arm_dof])
         if self._gripper_dof:
-            self._shm.write_gripper_command(positions[self._arm_dof])
+            shm.write_gripper_command(positions[self._arm_dof])
         return True
 
     def write_joint_velocities(self, velocities: list[float]) -> bool:
-        if not self._servos_enabled or self._shm is None:
+        shm = self._live_shm()
+        if not self._servos_enabled or shm is None:
             return False
         self._control_mode = ControlMode.VELOCITY
         if len(velocities) != self._dof:
             return False
         if any(value != 0.0 for value in velocities[self._arm_dof :]):
             return False
-        self._shm.write_velocity_command(velocities[: self._arm_dof])
+        shm.write_velocity_command(velocities[: self._arm_dof])
         return True
 
     def write_joint_efforts(self, efforts: list[float]) -> bool:
@@ -253,11 +226,25 @@ class ShmMujocoAdapter:
 
     def write_stop(self) -> bool:
         # Hold current position.
-        if self._shm is None:
+        shm = self._live_shm()
+        if shm is None:
             return False
-        positions = self._shm.read_positions(self._dof)
-        self._shm.write_position_command(positions)
+        positions = shm.read_positions(self._dof)
+        shm.write_position_command(positions)
         return True
+
+    def _live_shm(self) -> ManipShmReader | None:
+        shm = self._shm
+        if not self._connected or shm is None:
+            return None
+        if shm.is_live():
+            return shm
+        shm.cleanup()
+        self._shm = None
+        self._connected = False
+        self._servos_enabled = False
+        logger.error("MuJoCo SHM generation is no longer live", shm_key=self._shm_key)
+        return None
 
     def write_enable(self, enable: bool) -> bool:
         self._servos_enabled = enable
