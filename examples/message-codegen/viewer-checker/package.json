@@ -1,0 +1,10 @@
+{
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@foxglove/rosmsg": "5.0.5",
+    "@foxglove/rosmsg2-serialization": "3.1.2",
+    "@mcap/core": "2.2.2",
+    "@foxglove/wasm-zstd": "1.0.1"
+  }
+}

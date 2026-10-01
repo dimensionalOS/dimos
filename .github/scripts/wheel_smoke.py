@@ -49,7 +49,7 @@ def main() -> None:
     image_type = types["sensor_msgs/msg/Image"]
     value = image_type(height=1, width=2, step=2, encoding="mono8", data=[3, 7])
     assert list(image_type.decode(value.encode()).data) == [3, 7]
-    assert "MSG: std_msgs/msg/Header" in image_type.schema
+    assert "MSG: std_msgs/Header" in image_type.schema
     dist = Path(locate.__file__).resolve().parent / "_relay_dist"
     for rel in REQUIRED:
         if not (dist / rel).is_file():

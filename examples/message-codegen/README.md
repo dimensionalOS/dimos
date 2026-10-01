@@ -172,3 +172,54 @@ type discovery validates conflicting qualified definitions before loading types.
 Generation, installation from built artifacts, and runtime require no schema
 service or runtime download. Dependency setup can use the network; cached Cargo
 builds and local wheel installation are exercised offline by the demo.
+
+## Stage 3: one recording for Foxglove and Rerun
+
+After building the stage-1 demo, install the viewer-check dependencies and run:
+
+```bash
+uv pip install --python .venv/bin/python mcap==1.4.0 rerun-sdk==0.32.0 pillow
+bash scripts/test_message_mcap.sh
+```
+
+Node.js 22 and npm are required for the independent Foxglove decoder check. The
+script installs its locked packages with `npm ci`. It writes
+`build/message-codegen/viewers/demo.mcap`: 30 frames each of raw RGB Image, PNG
+CompressedImage, PoseStamped, TFMessage, and nested custom Telemetry. Source
+timestamps start at 2023-11-14 22:13:20 UTC and advance by 100 ms. Reception
+timestamps are 1 ms later. Each channel contains ordinary encapsulated CDR;
+the MCAP chunks use Zstandard compression.
+
+The checks read the embedded definitions using Foxglove's official libraries
+and the native Rerun 0.32.0 importer. Rerun must produce image, encoded-image,
+pose, and transform components plus a structured custom telemetry column. It
+must import all 30 rows per topic. This catches unresolved schema dependencies
+that can otherwise silently omit custom data. CI uploads the MCAP, converted
+RRD, and decoder evidence as `message-mcap-evidence`.
+
+To inspect the file in Rerun directly:
+
+```bash
+RERUN_ANALYTICS_ENABLED=false .venv/bin/rerun build/message-codegen/viewers/demo.mcap
+```
+
+For a browser-hosted viewer, add `--serve-web --bind 127.0.0.1 --port auto` and
+open the URL printed by Rerun. No ROS or `demo_msgs` installation is needed by
+the viewer. Raw and compressed images should show the same changing gradient.
+Select `/robot/pose` in Streams to inspect the map-frame position, and select
+`/telemetry` to inspect the nested message fields. The CLI conversion explicitly
+enables `ros2msg` and `ros2_reflection`; the saved `demo.rrd` is also available
+for examining these decoder results.
+
+In Foxglove, sign in, open the **same** local `demo.mcap`, add an Image panel for
+`/camera/image`, a 3D panel for `/robot/pose` with fixed frame `map`, and a Raw
+Messages panel for `/telemetry`. Scrub from first to last frame: sequence should
+change from 0 to 29 and `reading.temperature` from 20.0 to 22.9. The compressed
+image topic should display the same pixels. Foxglove's web app currently
+requires authentication; library decoding is automated, but application UI
+acceptance remains pending until an authenticated viewer is available.
+
+Stop the Rerun process with Ctrl-C and close its browser tab. The script starts
+no persistent services. Remove `build/message-codegen/viewers/` to clean up
+recordings and `examples/message-codegen/viewer-checker/node_modules/` to clean
+up the Node dependencies.
