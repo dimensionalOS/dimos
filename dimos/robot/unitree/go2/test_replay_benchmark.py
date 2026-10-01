@@ -21,7 +21,6 @@ import signal
 import subprocess
 import sys
 import threading
-import time
 
 import pytest
 
@@ -39,8 +38,12 @@ WATCHED = (("odom", PoseStamped), ("lidar", PointCloud2), ("color_image", Image)
 # near-lossless; lidar and color_image are large frames whose delivery relies
 # on the 64MB rmem tuning, so leave headroom for designed shedding.
 FLOOR_FRACTION = {"odom": 0.9, "lidar": 0.9, "color_image": 0.5}
-# When set, write the tracked series (wall/CPU/memory/threads/disk/network) to this path.
+# When set, write the tracked series (memory/threads/network/disk/instructions) to this path.
 METRICS_PATH = os.environ.get("DIMOS_BENCH_METRICS")
+# With DIMOS_BENCH_METRICS: perf events (e.g. "instructions:u,cycles:u") counted over
+# the CLI's whole process tree and added to the series. A core's clock and idle
+# state don't move them, unlike CPU time. Needs a PMU and perf_event_paranoid <= 2.
+PERF_EVENTS = os.environ.get("DIMOS_BENCH_PERF_EVENTS") if METRICS_PATH else None
 
 
 def _expected_counts(db_path: str) -> dict[str, int]:
@@ -84,25 +87,17 @@ def _cgroup_stat(name: str) -> dict[str, str]:
     return dict(line.split() for line in lines)
 
 
-def _cpu_mark() -> tuple[float, float, float]:
-    """(wall, user, system): monotonic seconds and this cgroup's CPU seconds.
+def _cgroup_anon_bytes() -> int:
+    """Anonymous memory currently charged to this cgroup, whole process tree.
 
     Cgroup accounting counts every process in the job's cgroup, live or
     exited — per-process rusage can't: the forkserver workers doing most of
     the work are never reaped by the test process, so RUSAGE_CHILDREN misses
-    them.
-    """
-    fields = _cgroup_stat("cpu.stat")
-    return time.monotonic(), int(fields["user_usec"]) / 1e6, int(fields["system_usec"]) / 1e6
-
-
-def _cgroup_anon_bytes() -> int:
-    """Anonymous memory currently charged to this cgroup, whole process tree.
-
-    Page cache is deliberately excluded (memory.current would include it): it
-    scales with file reads and global memory pressure, not with the pipeline.
-    memory.peak is no use either — it is cumulative since cgroup creation, so
-    on a CI runner it would report the job's setup steps, not the benchmark.
+    them. Page cache is deliberately excluded (memory.current would include
+    it): it scales with file reads and global memory pressure, not with the
+    pipeline. memory.peak is no use either — it is cumulative since cgroup
+    creation, so on a CI runner it would report the job's setup steps, not
+    the benchmark.
     """
     return int(_cgroup_stat("memory.stat")["anon"])
 
@@ -170,6 +165,42 @@ def _net_bytes() -> int:
     return loopback + int(ipext["InMcastOctets"])
 
 
+def _perf_counts(path: Path, events: list[str]) -> tuple[dict[str, float], float]:
+    """Per event, the count over the whole run, plus the lowest share of time
+    any count was actually on the hardware.
+
+    perf's -I mode writes one CSV row per event per interval (time, count,
+    unit, event, run time, counted %, ...). An interval in which nothing ran
+    reads "<not counted>", which is zero; anything else that isn't a number
+    means the runner couldn't count the event, and must not pass as zero
+    either. A counted share below 100% means the events were multiplexed onto
+    too few counters, and the counts are scaled estimates.
+
+    Deliberately not split into startup and steady state at the first frame:
+    it lands somewhere inside the parallel module starts, so a split there
+    moves startup work between the halves without changing the total (on the
+    arm runner the halves ranged 17-24% between identical runs, the total 0.1%).
+    """
+    totals: dict[str, float] = {}
+    counted = 100.0
+    for line in path.read_text().splitlines():
+        if not line or line.startswith("#"):
+            continue
+        _time, count, _unit, event, _run, share, *_ = line.split(",")
+        if count == "<not counted>":
+            continue
+        try:
+            value = float(count)
+        except ValueError:
+            raise RuntimeError(f"perf could not count {event}: {count!r}") from None
+        totals[event] = totals.get(event, 0.0) + value
+        counted = min(counted, float(share))
+    missing = [e for e in events if event not in totals]
+    if missing:
+        raise RuntimeError(f"perf reported nothing for {missing} in {path}")
+    return {event: totals[e] for e in events}, counted
+
+
 @pytest.mark.self_hosted_large  # Needs 8+ GB memory
 # macOS: coordinator->worker zenoh RPC times out (set_transport), and the
 # in-test LCM subscriptions would need lo0 route + maxdgram host tuning.
@@ -186,20 +217,16 @@ def test_go2_replay_realtime_load() -> None:
 
     counts = dict.fromkeys(FLOOR_FRACTION, 0)
     lock = threading.Lock()
-    cpu_marks: dict[str, tuple[float, float, float]] = {}
     io_marks: dict[str, int] = {}
     net_marks: dict[str, int] = {}
 
     def mark(name: str) -> None:
         if METRICS_PATH:
-            cpu_marks[name] = _cpu_mark()
             io_marks[name] = _cgroup_io_bytes()
             net_marks[name] = _net_bytes()
 
     def record(name: str) -> None:
         with lock:
-            if not any(counts.values()):
-                mark("first frame")
             counts[name] += 1
 
     # Same topics and backend the blueprint materializes for these
@@ -235,10 +262,22 @@ def test_go2_replay_realtime_load() -> None:
         "run",
         "unitree-go2",
     ]
+    if PERF_EVENTS:
+        # Children inherit the counters, so this covers the workers too. perf's
+        # interval mode doesn't pass on the workload's exit status; a shell
+        # around the CLI writes it to a file instead.
+        perf_csv = Path(METRICS_PATH).with_suffix(".perf.csv")
+        rc_path = Path(METRICS_PATH).with_suffix(".rc")
+        cmd = [
+            *("perf", "stat", "-e", PERF_EVENTS, "-x", ",", "-I", "100", "-o", str(perf_csv)),
+            *("--", "sh", "-c", '"$@"; echo $? >"$0"', str(rc_path)),
+            *cmd,
+        ]
     mark("start")
     if METRICS_PATH:
         sampler.start()
-    proc = subprocess.Popen(cmd)
+    # Its own process group, so a timeout can signal the CLI through perf.
+    proc = subprocess.Popen(cmd, start_new_session=True)
     try:
         try:
             returncode = proc.wait(timeout=RUN_TIMEOUT)
@@ -248,17 +287,19 @@ def test_go2_replay_realtime_load() -> None:
                 f"expected~{expected}"
             )
         mark("end")
+        if PERF_EVENTS and rc_path.exists():
+            returncode = int(rc_path.read_text())
     finally:
         stop_sampling.set()
         if sampler.is_alive():
             sampler.join(timeout=5)
         if proc.poll() is None:
             # SIGINT first: the CLI's ctrl-c path stops the modules cleanly.
-            proc.send_signal(signal.SIGINT)
+            os.killpg(proc.pid, signal.SIGINT)
             try:
                 proc.wait(timeout=60)
             except subprocess.TimeoutExpired:
-                proc.kill()
+                os.killpg(proc.pid, signal.SIGKILL)
                 proc.wait(timeout=30)
         for transport in transports:
             transport.stop()
@@ -268,25 +309,31 @@ def test_go2_replay_realtime_load() -> None:
     assert not low, f"floors not met (got, floor): {low}, expected~{expected}"
 
     if METRICS_PATH:
-        start, first, end = cpu_marks["start"], cpu_marks["first frame"], cpu_marks["end"]
-        entries = (
-            # Startup: process spawn until the first frame reaches the bus.
-            ("first frame wall", first[0] - start[0], "s"),
-            ("first frame cpu", (first[1] + first[2]) - (start[1] + start[2]), "s"),
-            # Steady-state cost of the realtime run — the headline.
-            ("run cpu", (end[1] + end[2]) - (first[1] + first[2]), "s"),
-            ("run cpu (user)", end[1] - first[1], "s"),
-            ("run cpu (system)", end[2] - first[2], "s"),
+        entries = [
             # Maxima sampled at 10Hz across the run, whole process tree.
             ("peak memory", peak_anon / 2**20, "MB"),
             ("peak threads", float(peak_tasks), "threads"),
-            # Block-device writeback across the run.
-            ("disk write", (io_marks["end"] - io_marks["start"]) / 2**20, "MB"),
             # Bytes between the workers: loopback for zenoh, looped multicast
             # for LCM.
             ("network (transport)", (net_marks["end"] - net_marks["start"]) / 2**20, "MB"),
-        )
-        extra = f"cpu: {_cpu_model()}"
+            # Block-device writeback across the run: the deployment's logs, once
+            # the job has warmed pytest's plugin caches (otherwise their
+            # ~8 MB of bytecode lands here). Tracked, not gated.
+            ("disk write", (io_marks["end"] - io_marks["start"]) / 2**20, "MB"),
+        ]
+        # Context for reading a point, not series: what was delivered (work
+        # that got shed under load shows here first) and whether perf had a
+        # counter for every event the whole time. `cpu:` stays first; the
+        # analysis reads it up to the next ";".
+        delivered = ", ".join(f"{name} {counts[name]}/{expected[name]}" for name in FLOOR_FRACTION)
+        extra = f"cpu: {_cpu_model()}; delivered: {delivered}"
+        if PERF_EVENTS:
+            # Whole run, spawn to exit. "instructions:u" -> "instructions".
+            counted, share = _perf_counts(perf_csv, PERF_EVENTS.split(","))
+            entries += [
+                (event.partition(":")[0], total / 1e9, "G") for event, total in counted.items()
+            ]
+            extra += f"; perf counted {share:.1f}%"
         Path(METRICS_PATH).write_text(
             json.dumps(
                 [

@@ -37,19 +37,18 @@ from typing import Any
 import urllib.error
 import urllib.request
 
-SERIES = "go2 replay realtime"
+SERIES = "go2 replay realtime (arm64)"
+# The gated series and the tracked-only one (benchmark-track in ci.yml keeps
+# them apart so the noisy metrics never fail a PR); each metric lives in one.
+SUITES = (SERIES, f"{SERIES} ungated")
 # Every series the benchmark emits; listed so a new one is a deliberate
 # addition here rather than an automatic source of issues.
 METRICS = (
-    "first frame wall",
-    "first frame cpu",
-    "run cpu",
-    "run cpu (user)",
-    "run cpu (system)",
+    "instructions",
     "peak memory",
     "peak threads",
-    "disk write",
     "network (transport)",
+    "disk write",
 )
 LABEL = "benchmark-regression"
 MARKER = "<!-- benchmark-analysis: {sha} -->"
@@ -95,10 +94,10 @@ def load_series(path: Path) -> tuple[list[Point], dict[str, str]]:
     data = json.loads(text[text.index("{") : text.rindex("}") + 1])
     points = []
     units = {}
-    for entry in data["entries"].get(SERIES, []):
+    for entry in (e for suite in SUITES for e in data["entries"].get(suite, [])):
         commit = entry["commit"]
         benches = entry["benches"]
-        cpu = re.match(r"cpu: (.+)", benches[0].get("extra", "") if benches else "")
+        cpu = re.match(r"cpu: ([^;]+)", benches[0].get("extra", "") if benches else "")
         units.update({b["name"]: b["unit"] for b in benches})
         points.append(
             Point(
@@ -110,6 +109,9 @@ def load_series(path: Path) -> tuple[list[Point], dict[str, str]]:
                 values={b["name"]: float(b["value"]) for b in benches},
             )
         )
+    # A metric's points come from one suite; ordering the union by time keeps
+    # each metric's neighbours adjacent, which the alignment relies on.
+    points.sort(key=lambda p: p.time)
     return points, units
 
 
