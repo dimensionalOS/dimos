@@ -38,6 +38,7 @@ _READY_WAIT_TIMEOUT_S = 60.0
 _READY_WAIT_POLL_S = 0.1
 _ATTACH_RETRY_TIMEOUT_S = 30.0
 _ATTACH_RETRY_POLL_S = 0.2
+_STATE_STALE_TIMEOUT_S = 5.0
 
 
 class ShmMujocoAdapter:
@@ -79,11 +80,7 @@ class ShmMujocoAdapter:
             poll_s=min(_ATTACH_RETRY_POLL_S, _READY_WAIT_POLL_S),
         )
         if self._shm is None:
-            logger.error(
-                "No live MuJoCo SHM generation became ready",
-                address=self._address,
-                shm_key=self._shm_key,
-            )
+            logger.error("No fresh MuJoCo joint state became ready", shm_key=self._shm_key)
             return False
 
         if self._shm.num_joints() != self._dof:
@@ -159,26 +156,23 @@ class ShmMujocoAdapter:
 
     def read_joint_positions(self) -> list[float]:
         """Read arm positions, then the gripper, in the units commands use."""
-        shm = self._live_shm()
-        if shm is None:
+        if self._shm is None:
             return [0.0] * self._dof
-        positions = shm.read_positions(self._arm_dof)
+        positions = self._shm.read_positions(self._arm_dof)
         if self._gripper_dof:
-            positions.append(shm.read_gripper_position())
+            positions.append(self._shm.read_gripper_position())
         return positions
 
     def read_joint_velocities(self) -> list[float]:
         """Read arm velocities; the gripper reports 0.0."""
-        shm = self._live_shm()
-        if shm is None:
+        if self._shm is None:
             return [0.0] * self._dof
-        return shm.read_velocities(self._arm_dof) + [0.0] * self._gripper_dof
+        return self._shm.read_velocities(self._arm_dof) + [0.0] * self._gripper_dof
 
     def read_joint_efforts(self) -> list[float]:
-        shm = self._live_shm()
-        if shm is None:
+        if self._shm is None:
             return [0.0] * self._dof
-        return shm.read_efforts(self._arm_dof) + [0.0] * self._gripper_dof
+        return self._shm.read_efforts(self._arm_dof) + [0.0] * self._gripper_dof
 
     def read_state(self) -> dict[str, int]:
         velocities = self.read_joint_velocities()
@@ -237,13 +231,13 @@ class ShmMujocoAdapter:
         shm = self._shm
         if not self._connected or shm is None:
             return None
-        if shm.is_live():
+        if shm.is_live(_STATE_STALE_TIMEOUT_S):
             return shm
         shm.cleanup()
         self._shm = None
         self._connected = False
         self._servos_enabled = False
-        logger.error("MuJoCo SHM generation is no longer live", shm_key=self._shm_key)
+        logger.error("MuJoCo joint state stopped updating", shm_key=self._shm_key)
         return None
 
     def write_enable(self, enable: bool) -> bool:

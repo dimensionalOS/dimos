@@ -49,6 +49,7 @@ _READY_WAIT_TIMEOUT_S = 180.0
 _READY_WAIT_POLL_S = 0.1
 _ATTACH_RETRY_TIMEOUT_S = 30.0
 _ATTACH_RETRY_POLL_S = 0.2
+_STATE_STALE_TIMEOUT_S = 5.0
 
 
 class SimMujocoG1WholeBodyAdapter:
@@ -90,8 +91,7 @@ class SimMujocoG1WholeBodyAdapter:
         )
         if self._shm is None:
             logger.error(
-                "SimMujocoG1WholeBodyAdapter: no live SHM generation became ready",
-                address=self._address,
+                "SimMujocoG1WholeBodyAdapter: no fresh joint state became ready",
                 shm_key=self._shm_key,
             )
             return False
@@ -118,12 +118,12 @@ class SimMujocoG1WholeBodyAdapter:
     # IO (WholeBodyAdapter protocol)
 
     def read_motor_states(self) -> list[MotorState]:
-        shm = self._live_shm()
-        if shm is None:
+        if not self.has_motor_states():
             return [MotorState()] * _NUM_MOTORS
-        positions = shm.read_positions(_NUM_MOTORS)
-        velocities = shm.read_velocities(_NUM_MOTORS)
-        efforts = shm.read_efforts(_NUM_MOTORS)
+        assert self._shm is not None
+        positions = self._shm.read_positions(_NUM_MOTORS)
+        velocities = self._shm.read_velocities(_NUM_MOTORS)
+        efforts = self._shm.read_efforts(_NUM_MOTORS)
         return [
             MotorState(q=positions[i], dq=velocities[i], tau=efforts[i]) for i in range(_NUM_MOTORS)
         ]
@@ -135,10 +135,10 @@ class SimMujocoG1WholeBodyAdapter:
         return self._live_shm() is not None
 
     def read_imu(self) -> IMUState:
-        shm = self._live_shm()
-        if shm is None:
+        if not self.has_motor_states():
             return IMUState()
-        quat, gyro, accel = shm.read_imu()
+        assert self._shm is not None
+        quat, gyro, accel = self._shm.read_imu()
         # rpy is left at its zero default to match the real G1 adapter
         # (TransportWholeBodyAdapter._on_imu). The WBC task's observation
         # uses only quaternion + gyroscope, so euler is never read downstream.
@@ -175,13 +175,13 @@ class SimMujocoG1WholeBodyAdapter:
         shm = self._shm
         if not self._connected or shm is None:
             return None
-        if shm.is_live():
+        if shm.is_live(_STATE_STALE_TIMEOUT_S):
             return shm
         shm.cleanup()
         self._shm = None
         self._connected = False
         logger.error(
-            "SimMujocoG1WholeBodyAdapter: SHM generation is no longer live",
+            "SimMujocoG1WholeBodyAdapter: joint state stopped updating",
             shm_key=self._shm_key,
         )
         return None

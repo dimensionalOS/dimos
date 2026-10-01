@@ -16,6 +16,8 @@
 
 from __future__ import annotations
 
+import threading
+import time
 from types import SimpleNamespace
 import uuid
 
@@ -24,8 +26,7 @@ import pytest
 import dimos.hardware.manipulators.sim.adapter as adapter_mod
 from dimos.hardware.manipulators.sim.adapter import ShmMujocoAdapter
 from dimos.hardware.manipulators.spec import ControlMode, ManipulatorAdapter
-import dimos.simulation.engines.mujoco_shm as shm_mod
-from dimos.simulation.engines.mujoco_shm import ManipShmReader, ManipShmSet, ManipShmWriter
+from dimos.simulation.engines.mujoco_shm import SEQ_POSITIONS, ManipShmWriter
 from dimos.simulation.engines.mujoco_sim_module import _WholeBodySimHooks
 
 ARM_DOF = 7
@@ -36,9 +37,16 @@ GRIPPER_CTRL_RANGE = (0.0, 255.0)
 GRIPPER_CLOSED, GRIPPER_OPEN = GRIPPER_RANGE
 
 
-def ready_writer(writer: ManipShmWriter, joints: int, *, arm_joints: int | None = None) -> None:
-    writer.write_joint_state([0.0] * joints, [0.0] * joints, [0.0] * joints)
-    writer.signal_ready(num_joints=joints, arm_joints=arm_joints)
+def start_heartbeat(writer: ManipShmWriter) -> tuple[threading.Event, threading.Thread]:
+    stop = threading.Event()
+
+    def publish() -> None:
+        while not stop.wait(0.01):
+            writer._increment_seq(SEQ_POSITIONS)
+
+    thread = threading.Thread(target=publish, daemon=True)
+    thread.start()
+    return stop, thread
 
 
 def sim_settles_at(command: float) -> float:
@@ -73,8 +81,11 @@ def writer(shm_key, monkeypatch):
     """
     monkeypatch.setattr(adapter_mod, "shm_key_from_path", lambda _: shm_key)
     w = ManipShmWriter(shm_key)
-    ready_writer(w, ARM_DOF)
+    w.signal_ready(num_joints=ARM_DOF)
+    stop, thread = start_heartbeat(w)
     yield w
+    stop.set()
+    thread.join()
     w.cleanup()
 
 
@@ -82,11 +93,14 @@ def writer(shm_key, monkeypatch):
 def writer_with_gripper(shm_key, monkeypatch):
     monkeypatch.setattr(adapter_mod, "shm_key_from_path", lambda _: shm_key)
     w = ManipShmWriter(shm_key)
-    ready_writer(w, ARM_DOF + 1, arm_joints=ARM_DOF)
+    w.signal_ready(num_joints=ARM_DOF + 1, arm_joints=ARM_DOF)
+    stop, thread = start_heartbeat(w)
     # The sim module publishes the gripper joint's MJCF range at startup so the
     # adapter can declare it through get_limits().
     w.write_gripper_range(0.0, 0.85)
     yield w
+    stop.set()
+    thread.join()
     w.cleanup()
 
 
@@ -271,23 +285,6 @@ class TestGripperRoundTrip:
 
 
 class TestConnect:
-    def test_partial_attachment_closes_opened_buffers(self, mocker, monkeypatch) -> None:
-        opened = mocker.MagicMock()
-        attempts = 0
-
-        def fail_second_buffer(name: str, *, timeout: float):
-            nonlocal attempts
-            attempts += 1
-            if attempts == 1:
-                return opened
-            raise FileNotFoundError(name)
-
-        monkeypatch.setattr(shm_mod, "attach_shm", fail_second_buffer)
-        with pytest.raises(FileNotFoundError):
-            ManipShmSet.attach("generation")
-
-        opened.close.assert_called_once_with()
-
     def test_connect_rejects_orphaned_shm(self, shm_key, monkeypatch):
         monkeypatch.setattr(adapter_mod, "shm_key_from_path", lambda _: shm_key)
         monkeypatch.setattr(adapter_mod, "_ATTACH_RETRY_TIMEOUT_S", 0.1)
@@ -296,56 +293,60 @@ class TestConnect:
         monkeypatch.setattr(adapter_mod, "_READY_WAIT_POLL_S", 0.01)
 
         writer = ManipShmWriter(shm_key)
-        ready_writer(writer, ARM_DOF)
-        writer._owner()[0] = 2_000_000_000
+        writer.write_joint_state([0.0] * ARM_DOF, [0.0] * ARM_DOF, [0.0] * ARM_DOF)
+        writer.signal_ready(num_joints=ARM_DOF)
         try:
             adapter = ShmMujocoAdapter(dof=ARM_DOF, address="/fake/scene.xml")
             assert adapter.connect() is False
         finally:
             writer.cleanup()
 
-    def test_connected_adapter_rejects_replacement_generation(self, shm_key, monkeypatch) -> None:
+    def test_connect_reattaches_when_fresh_sim_replaces_stale_buffers(
+        self, shm_key, monkeypatch
+    ) -> None:
         monkeypatch.setattr(adapter_mod, "shm_key_from_path", lambda _: shm_key)
-        first = ManipShmWriter(shm_key)
-        ready_writer(first, ARM_DOF)
+        monkeypatch.setattr(adapter_mod, "_ATTACH_RETRY_TIMEOUT_S", 0.2)
+        monkeypatch.setattr(adapter_mod, "_ATTACH_RETRY_POLL_S", 0.01)
+        monkeypatch.setattr(adapter_mod, "_READY_WAIT_TIMEOUT_S", 1.0)
+        monkeypatch.setattr(adapter_mod, "_READY_WAIT_POLL_S", 0.01)
+        stale = ManipShmWriter(shm_key)
+        stale.write_joint_state([0.0] * ARM_DOF, [0.0] * ARM_DOF, [0.0] * ARM_DOF)
+        stale.signal_ready(num_joints=ARM_DOF)
+        adapter = ShmMujocoAdapter(dof=ARM_DOF, address="/fake/scene.xml")
+        result: list[bool] = []
+        connect = threading.Thread(target=lambda: result.append(adapter.connect()))
+        connect.start()
+        time.sleep(0.05)
+        fresh = ManipShmWriter(shm_key)
+        fresh.signal_ready(num_joints=ARM_DOF)
+        stop, heartbeat = start_heartbeat(fresh)
+        try:
+            connect.join(timeout=2.0)
+            assert result == [True]
+        finally:
+            stop.set()
+            heartbeat.join()
+            adapter.disconnect()
+            fresh.cleanup()
+            stale.cleanup()
+
+    def test_connected_adapter_rejects_stale_state(self, shm_key, monkeypatch) -> None:
+        monkeypatch.setattr(adapter_mod, "shm_key_from_path", lambda _: shm_key)
+        monkeypatch.setattr(adapter_mod, "_STATE_STALE_TIMEOUT_S", 0.05)
+        writer = ManipShmWriter(shm_key)
+        writer.signal_ready(num_joints=ARM_DOF)
+        stop, heartbeat = start_heartbeat(writer)
         adapter = ShmMujocoAdapter(dof=ARM_DOF, address="/fake/scene.xml")
         assert adapter.connect() is True
-
-        replacement = ManipShmWriter(shm_key)
-        ready_writer(replacement, ARM_DOF)
+        stop.set()
+        heartbeat.join()
+        time.sleep(0.06)
         try:
             assert adapter.is_connected() is False
-            current = ShmMujocoAdapter(dof=ARM_DOF, address="/fake/scene.xml")
-            assert current.connect() is True
-            current.disconnect()
+            assert adapter.write_joint_positions([0.0] * ARM_DOF) is False
         finally:
             adapter.disconnect()
-            first.cleanup()
-            replacement.cleanup()
-
-    def test_connected_adapter_rejects_stale_heartbeat(self, writer, adapter) -> None:
-        writer._owner()[1] = 0
-
-        assert adapter.is_connected() is False
-
-    def test_reader_rejects_generation_change_during_attachment(self, shm_key, monkeypatch) -> None:
-        first = ManipShmWriter(shm_key)
-        replacement: list[ManipShmWriter] = []
-        original_attach = ManipShmSet.attach
-
-        def replace_during_attach(key: str) -> ManipShmSet:
-            attached = original_attach(key)
-            replacement.append(ManipShmWriter(shm_key))
-            return attached
-
-        monkeypatch.setattr(ManipShmSet, "attach", replace_during_attach)
-        try:
-            with pytest.raises(FileNotFoundError, match="generation changed"):
-                ManipShmReader(shm_key)
-        finally:
-            first.cleanup()
-            for writer in replacement:
-                writer.cleanup()
+            writer.cleanup()
 
     def test_connect_before_sim_ready_times_out(self, shm_key, monkeypatch):
         """If sim module never signals ready, connect() returns False after timeout."""
