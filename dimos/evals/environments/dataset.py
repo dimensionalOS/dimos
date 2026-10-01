@@ -37,7 +37,6 @@ class DatasetConfig(EnvironmentConfig):
     select: tuple[Callable[[Store], Stream[Any, Any]], ...] = ()
     mcp_url: str = ""
     launch_timeout_s: float = 300.0
-    agent_artifacts: tuple[str, ...] = ("recording",)
 
 
 class Dataset(Environment):

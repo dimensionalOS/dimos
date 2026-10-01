@@ -313,9 +313,11 @@ compare two tool sets on one task, run the suite twice with different
 **Files.** An environment produces artifacts, files by name such as `recording`.
 The grader gets all of them. The agent gets only the ones named in the
 environment's `agent_artifacts`: by default the `recording` for simulators and
-`Dataset`, and the `image` for `ImageFile`. A file that holds answers, like
-Habitat's episode metadata with its prop positions, stays with the grader.
-Pass `agent_artifacts=(...)` to the environment to change it.
+the `image` for `ImageFile`. A `Dataset` names none, since its `recording` is
+the whole dataset and the agent is given the `select`ed streams instead. A file
+that holds answers, like Habitat's episode metadata with its prop positions,
+stays with the grader. Pass `agent_artifacts=(...)` to the environment to
+change it.
 
 **Limits.** The case's `timeout_s` sets the time budget for the agent and
 subsequent motion settling. `McpClientAdapter` returns what it has when its
