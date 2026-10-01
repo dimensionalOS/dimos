@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use super::*;
+use crate::region_viz::{cell_of, RegionViz};
 use std::collections::{BTreeMap, BTreeSet};
 
 type SeedRegions = Vec<(RegionBounds, Vec<(f32, f32, f32)>)>;
@@ -80,6 +81,79 @@ fn test_config() -> Config {
         viz_sweep_regions: 0,
         worker_threads: 4,
     }
+}
+
+#[test]
+fn viz_reach_covers_the_node_window_and_a_relocated_node_edge() {
+    let cfg = test_config();
+    // 0.3 m of wall band at 0.1 m cells is 3 cells, plus 2 slack.
+    assert_eq!(cfg.node_window_cells(), 5);
+    // Plus a 1 m node spacing, 10 cells.
+    assert_eq!(cfg.viz_reach_cells(), 15);
+}
+
+#[test]
+fn a_clearance_change_at_the_edge_of_the_reach_is_due_and_one_beyond_is_not() {
+    let cfg = test_config();
+    let vs = cfg.voxel_size;
+    let half = vs * 0.5;
+    // An 8 m by 2 m floor, so cells well past the reach exist.
+    let floor: Vec<(f32, f32, f32)> = (0..80)
+        .flat_map(|ix| (0..20).map(move |iy| (ix as f32 * vs + half, iy as f32 * vs + half, half)))
+        .collect();
+    let mut p = Planner::new(cfg.worker_threads);
+    p.update_global_map(&floor, &cfg);
+
+    let pitch = 10;
+    let mut viz = RegionViz::new(pitch, cfg.viz_reach_cells(), 0);
+    viz.mark_all();
+    viz.tick(p.surface_clearance_iter(), p.edge_segment_iter());
+
+    // A junk column lands at x = 2 m, which rewrites a window around it.
+    let bounds = RegionBounds {
+        origin_x: 2.05,
+        origin_y: 1.05,
+        radius: 0.15,
+        z_min: -1.0,
+        z_max: 1.0,
+    };
+    let mut cloud = slice(&floor, &bounds, vs);
+    cloud.extend((3..8).map(|iz| (2.05, 1.05, iz as f32 * vs + half)));
+    let window = p
+        .update_region(&cloud, &bounds, &cfg)
+        .expect("the junk changes voxels");
+    viz.mark_window(window);
+
+    // Clearance changes at the far edge of the reach and one cell beyond it.
+    let far = window.1 + cfg.viz_reach_cells();
+    let beyond = far + pitch;
+    let fed: Vec<(VoxelKey, f32)> = p
+        .surface_clearance()
+        .into_iter()
+        .map(|(key, c)| {
+            (
+                key,
+                if key.0 == far || key.0 == beyond {
+                    0.123
+                } else {
+                    c
+                },
+            )
+        })
+        .collect();
+    let due: Vec<_> = viz
+        .tick(fed.into_iter(), p.edge_segment_iter())
+        .into_iter()
+        .map(|(cell, _)| cell)
+        .collect();
+    assert!(
+        due.contains(&cell_of((far, 0, 0), pitch)),
+        "far edge cell not due: {due:?}"
+    );
+    assert!(
+        !due.contains(&cell_of((beyond, 0, 0), pitch)),
+        "cell beyond reach due: {due:?}"
+    );
 }
 
 #[test]

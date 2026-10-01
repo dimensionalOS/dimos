@@ -48,22 +48,30 @@ pub struct RegionSweep {
 }
 
 impl RegionSweep {
-    /// The cells due this tick. A cell absent from `present` is due empty
-    /// once, when a viewer had it.
+    /// The cells due this tick, changed ones first, then the ones that
+    /// vanished (due empty once, when a viewer had them), then the sweep
+    /// slice. A tick whose changes already outnumber the sweep skips it.
     pub fn tick<T>(
         &mut self,
         changed: impl IntoIterator<Item = Cell>,
         present: &BTreeMap<Cell, T>,
         sweep: usize,
     ) -> Vec<Cell> {
-        let mut due: BTreeSet<Cell> = changed
+        let changed: BTreeSet<Cell> = changed
             .into_iter()
             .filter(|cell| present.contains_key(cell))
             .collect();
+        let mut due: Vec<Cell> = changed.iter().copied().collect();
         due.extend(self.known.iter().filter(|c| !present.contains_key(c)));
-        due.extend(self.sweep_cells(present, sweep));
+        if changed.len() <= sweep {
+            due.extend(
+                self.sweep_cells(present, sweep)
+                    .into_iter()
+                    .filter(|cell| !changed.contains(cell)),
+            );
+        }
         self.known = present.keys().copied().collect();
-        due.into_iter().collect()
+        due
     }
 
     fn sweep_cells<T>(&mut self, present: &BTreeMap<Cell, T>, sweep: usize) -> Vec<Cell> {
@@ -120,6 +128,25 @@ mod tests {
         let smaller = present(&[(0, 0), (0, 1)]);
         assert_eq!(sweep.tick([], &smaller, 0), vec![(1, 0)]);
         assert!(sweep.tick([], &smaller, 0).is_empty());
+    }
+
+    #[test]
+    fn changed_cells_come_first_and_a_full_tick_skips_the_sweep() {
+        let mut sweep = RegionSweep::default();
+        let map = present(&[(0, 0), (0, 1), (1, 0), (1, 1), (2, 0)]);
+        sweep.tick([], &map, 0);
+        let smaller = present(&[(0, 0), (0, 1), (1, 0), (1, 1)]);
+        // Changed (2 cells), then the vanished one, then the sweep slice
+        // minus the changed cell it overlaps.
+        assert_eq!(
+            sweep.tick([(1, 1), (0, 1)], &smaller, 2),
+            vec![(0, 1), (1, 1), (2, 0), (0, 0)]
+        );
+        // Three changes exceed a sweep of 2, so nothing is swept.
+        assert_eq!(
+            sweep.tick([(0, 0), (0, 1), (1, 0)], &smaller, 2),
+            vec![(0, 0), (0, 1), (1, 0)]
+        );
     }
 
     #[test]

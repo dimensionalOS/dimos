@@ -118,6 +118,21 @@ impl Config {
         (self.step_threshold_m / self.voxel_size).floor() as i32
     }
 
+    /// Cells a changed cell can touch through wall distances: the penalty
+    /// band plus slack, the radius of the node window's BFS ball.
+    pub fn node_window_cells(&self) -> i32 {
+        const SLACK_CELLS: i32 = 2;
+        let buffer_cells =
+            ((self.wall_clearance_m + self.wall_buffer_m) / self.voxel_size).ceil() as i32;
+        buffer_cells + SLACK_CELLS
+    }
+
+    /// Columns past a rewritten window the viz must reread: the node window,
+    /// plus one node spacing for the edges of a relocated node.
+    pub fn viz_reach_cells(&self) -> i32 {
+        self.node_window_cells() + (self.node_spacing_m / self.voxel_size).ceil() as i32
+    }
+
     /// Config-derived scalars for node placement.
     pub fn placement_params(&self) -> PlacementParams {
         PlacementParams {
@@ -239,25 +254,23 @@ impl Planner {
     }
 
     /// Update planner artifacts within a local region instead of rebuilding
-    /// from the whole map.
+    /// from the whole map. Returns the inclusive column window the surface
+    /// was rewritten in, or None when no voxel changed.
     pub fn update_region(
         &mut self,
         local_points: &[(f32, f32, f32)],
         bounds: &RegionBounds,
         config: &Config,
-    ) {
+    ) -> Option<(i32, i32, i32, i32)> {
         let pool = Arc::clone(&self.pool);
         pool.install(|| {
             let voxel_size = config.voxel_size;
             let clearance = config.headroom_cells();
             let pad = (2 * config.closing_passes()) as i32;
 
-            let changed = self.replace_region_voxels(local_points, bounds, voxel_size);
-
             // No voxel changed, so surfaces and the graph are untouched.
-            let Some((bx0, bx1, by0, by1)) = changed else {
-                return;
-            };
+            let (bx0, bx1, by0, by1) =
+                self.replace_region_voxels(local_points, bounds, voxel_size)?;
 
             // A changed column shifts surfaces only within pad of it.
             let write = (bx0 - pad, bx1 + pad, by0 - pad, by1 + pad);
@@ -266,7 +279,8 @@ impl Planner {
             let (added, removed) = self.replace_surface_region(write, &new_cells);
 
             self.rebuild_region_graph(added, removed, config);
-        });
+            Some(write)
+        })
     }
 
     /// Patch changed cells, then repair nodes and edges around the change.
@@ -474,11 +488,7 @@ impl Planner {
     fn node_window(&mut self, changed: &[VoxelKey], config: &Config) -> Vec<CellId> {
         // Wall distances only matter out to the penalty band, so the ball
         // covers the buffer reach of the changed cells plus slack.
-        const SLACK_CELLS: i32 = 2;
-        let voxel_size = config.voxel_size;
-        let buffer_cells =
-            ((config.wall_clearance_m + config.wall_buffer_m) / voxel_size).ceil() as i32;
-        let steps = buffer_cells + SLACK_CELLS;
+        let steps = config.node_window_cells();
         let step_dz = config.step_cells();
 
         let graph = &mut self.graph;
@@ -638,6 +648,15 @@ impl Planner {
             .install(|| edges_to_segments(&self.graph.node_edges))
     }
 
+    /// The same segments without materializing them.
+    pub fn edge_segment_iter(&self) -> impl Iterator<Item = (VoxelKey, VoxelKey, f32)> + '_ {
+        self.graph.node_edges.iter().flat_map(|edge| {
+            edge.chain
+                .windows(2)
+                .map(move |pair| (pair[0], pair[1], edge.cost))
+        })
+    }
+
     pub fn surface(&self) -> impl Iterator<Item = VoxelKey> + '_ {
         self.graph
             .surface_lookup
@@ -648,15 +667,15 @@ impl Planner {
     /// Surface cells paired with their wall clearance, the distance to the
     /// nearest untraversable edge. Unreached cells report +inf.
     pub fn surface_clearance(&self) -> Vec<(VoxelKey, f32)> {
+        self.surface_clearance_iter().collect()
+    }
+
+    pub fn surface_clearance_iter(&self) -> impl Iterator<Item = (VoxelKey, f32)> + '_ {
         let dist = &self.graph.wall_state.dist;
-        self.graph
-            .cells
-            .ids()
-            .map(|id| {
-                let d = dist.get(id as usize).copied().unwrap_or(f32::INFINITY);
-                (self.graph.cells.coord(id), d)
-            })
-            .collect()
+        self.graph.cells.ids().map(move |id| {
+            let d = dist.get(id as usize).copied().unwrap_or(f32::INFINITY);
+            (self.graph.cells.coord(id), d)
+        })
     }
 
     pub fn voxel_count(&self) -> usize {

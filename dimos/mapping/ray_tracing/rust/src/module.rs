@@ -378,8 +378,13 @@ impl Worker {
         }
 
         if state.mapper.viz_due() {
+            let tick_start = Instant::now();
             let regions = tokio::task::block_in_place(|| self.map_regions_due(state));
-            debug!(regions = regions.len(), "map regions published");
+            debug!(
+                regions = regions.len(),
+                tick_ms = tick_start.elapsed().as_secs_f64() * 1e3,
+                "map regions published"
+            );
             for (cell, points) in regions {
                 let mut cloud = points_to_cloud(&points, out_frame_id, stamp.clone());
                 cloud.header.seq = pack_cell(cell);

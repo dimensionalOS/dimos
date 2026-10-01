@@ -263,6 +263,7 @@ impl Worker {
         let mut last_viz_at: Option<Instant> = None;
         let mut viz = RegionViz::new(
             (self.config.viz_region_m / self.config.voxel_size).round() as i32,
+            self.config.viz_reach_cells(),
             self.config.viz_sweep_regions as usize,
         );
         loop {
@@ -287,7 +288,7 @@ impl Worker {
                 let Some(seed) = seed else {
                     break;
                 };
-                if tokio::task::block_in_place(|| self.ingest_seed(&mut planner, seed)) {
+                if tokio::task::block_in_place(|| self.ingest_seed(&mut planner, seed, &mut viz)) {
                     self.publish_viz_if_due(&planner, &mut viz, &mut last_viz_at)
                         .await;
                 }
@@ -304,7 +305,7 @@ impl Worker {
         viz: &mut RegionViz,
         last_viz_at: &mut Option<Instant>,
     ) -> bool {
-        let applied = tokio::task::block_in_place(|| self.ingest(planner, update));
+        let applied = tokio::task::block_in_place(|| self.ingest(planner, update, viz));
         if applied {
             self.publish_viz_if_due(planner, viz, last_viz_at).await;
         }
@@ -320,27 +321,45 @@ impl Worker {
         viz: &mut RegionViz,
         last_viz_at: &mut Option<Instant>,
     ) {
-        let now = Instant::now();
+        let tick_at = Instant::now();
         let due = self.config.viz_publish_hz > 0.0 && {
             let viz_interval = Duration::from_secs_f32(1.0 / self.config.viz_publish_hz);
-            last_viz_at.is_none_or(|t| now.duration_since(t) >= viz_interval)
+            last_viz_at.is_none_or(|t| tick_at.duration_since(t) >= viz_interval)
         };
         if !due {
             return;
         }
-        let (regions, node_cloud) =
-            tokio::task::block_in_place(|| self.build_graph_messages(planner, viz));
-        for (surface, edges) in &regions {
-            publish_cloud(&self.surface_map, surface).await;
-            publish_path(&self.node_edges, edges).await;
+        let (due, node_cloud) = tokio::task::block_in_place(|| {
+            let due = viz.tick(
+                planner.surface_clearance_iter(),
+                planner.edge_segment_iter(),
+            );
+            let node_points: Vec<Xyz> = planner.graph().nodes.iter().map(|n| n.pos).collect();
+            (
+                due,
+                build_pc2_xyz(&node_points, &self.config.world_frame, now()),
+            )
+        });
+        debug!(
+            regions = due.len(),
+            tick_ms = tick_at.elapsed().as_secs_f64() * 1e3,
+            "viz published"
+        );
+        *last_viz_at = Some(tick_at);
+        let (voxel_size, frame) = (self.config.voxel_size, self.config.world_frame.as_str());
+        let stamp = now();
+        for (cell, content) in due {
+            let (surface, edges) = tokio::task::block_in_place(|| {
+                region_messages(cell, content, voxel_size, frame, stamp.clone())
+            });
+            publish_cloud(&self.surface_map, &surface).await;
+            publish_path(&self.node_edges, &edges).await;
         }
         publish_cloud(&self.nodes, &node_cloud).await;
-        debug!(regions = regions.len(), "viz published");
-        *last_viz_at = Some(now);
     }
 
     /// Mutate the graph from a map update. False if the cloud was unusable.
-    fn ingest(&self, planner: &mut Planner, update: MapUpdate) -> bool {
+    fn ingest(&self, planner: &mut Planner, update: MapUpdate, viz: &mut RegionViz) -> bool {
         match update {
             MapUpdate::Region { cloud, bounds } => {
                 let points = match extract_xyz(&cloud) {
@@ -374,7 +393,9 @@ impl Worker {
                 );
 
                 let update_start = Instant::now();
-                planner.update_region(&points, &region, &self.config);
+                if let Some(window) = planner.update_region(&points, &region, &self.config) {
+                    viz.mark_window(window);
+                }
                 debug!(
                     update_ms = update_start.elapsed().as_secs_f64() * 1e3,
                     local_points = points.len(),
@@ -398,6 +419,7 @@ impl Worker {
                     return false;
                 }
                 planner.update_global_map(&points, &self.config);
+                viz.mark_all();
                 debug!(global_map_points = points.len(), "global_map processed");
                 true
             }
@@ -406,7 +428,7 @@ impl Worker {
 
     /// Apply one seed region through the region pipeline. Its bounds are the
     /// premap's own, so no sensor ceiling applies. False if unusable.
-    fn ingest_seed(&self, planner: &mut Planner, seed: SeedRegion) -> bool {
+    fn ingest_seed(&self, planner: &mut Planner, seed: SeedRegion, viz: &mut RegionViz) -> bool {
         let points = match extract_xyz(&seed.cloud) {
             Ok(p) => p,
             Err(e) => {
@@ -427,56 +449,15 @@ impl Worker {
             z_max: b.orientation.z as f32,
         };
         let update_start = Instant::now();
-        planner.update_region(&points, &region, &self.config);
+        if let Some(window) = planner.update_region(&points, &region, &self.config) {
+            viz.mark_window(window);
+        }
         debug!(
             update_ms = update_start.elapsed().as_secs_f64() * 1e3,
             seed_points = points.len(),
             "seed region processed"
         );
         true
-    }
-
-    /// The surface and edge messages of every cell due this tick, each with
-    /// its cell in the header seq, plus the whole node cloud.
-    fn build_graph_messages(
-        &self,
-        planner: &Planner,
-        viz: &mut RegionViz,
-    ) -> (Vec<(PointCloud2, Path)>, PointCloud2) {
-        let frame = &self.config.world_frame;
-        let stamp = now();
-        let due = viz.tick(planner.surface_clearance(), planner.edge_segments());
-        let regions = due
-            .into_iter()
-            .map(|(cell, content)| self.build_region_messages(cell, content, stamp.clone()))
-            .collect();
-
-        let node_points: Vec<Xyz> = planner.graph().nodes.iter().map(|n| n.pos).collect();
-        let node_cloud = build_pc2_xyz(&node_points, frame, stamp);
-        (regions, node_cloud)
-    }
-
-    fn build_region_messages(
-        &self,
-        cell: Cell,
-        content: RegionContent,
-        stamp: Time,
-    ) -> (PointCloud2, Path) {
-        let voxel_size = self.config.voxel_size;
-        let frame = &self.config.world_frame;
-        let surface_points: Vec<Xyzi> = content
-            .surface
-            .into_iter()
-            .map(|((ix, iy, iz), clearance)| {
-                let (x, y, z) = surface_point_xyz(ix, iy, iz, voxel_size);
-                (x, y, z, clearance)
-            })
-            .collect();
-        let mut surface = build_pc2_xyzi(&surface_points, frame, stamp.clone());
-        surface.header.seq = pack_cell(cell);
-        let mut edges = build_segments_path(content.segments, voxel_size, frame, stamp);
-        edges.header.seq = pack_cell(cell);
-        (surface, edges)
     }
 
     /// The base frame position in the world frame, from the latest tf.
@@ -527,6 +508,29 @@ impl Worker {
         );
         publish_path(&self.path, &path_msg).await;
     }
+}
+
+/// One cell's surface and edge messages, its cell in the header seq.
+fn region_messages(
+    cell: Cell,
+    content: RegionContent,
+    voxel_size: f32,
+    frame: &str,
+    stamp: Time,
+) -> (PointCloud2, Path) {
+    let surface_points: Vec<Xyzi> = content
+        .surface
+        .into_iter()
+        .map(|((ix, iy, iz), clearance)| {
+            let (x, y, z) = surface_point_xyz(ix, iy, iz, voxel_size);
+            (x, y, z, clearance)
+        })
+        .collect();
+    let mut surface = build_pc2_xyzi(&surface_points, frame, stamp.clone());
+    surface.header.seq = pack_cell(cell);
+    let mut edges = build_segments_path(content.segments, voxel_size, frame, stamp);
+    edges.header.seq = pack_cell(cell);
+    (surface, edges)
 }
 
 /// True if within tolerance of the goal on the ground plane.

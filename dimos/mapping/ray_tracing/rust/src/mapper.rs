@@ -54,8 +54,8 @@ impl Mapper {
     pub fn new(config: Config) -> Self {
         Self {
             pool: worker_pool(config.worker_threads),
+            map: VoxelMap::with_support_min(config.support_min),
             config,
-            map: VoxelMap::default(),
             live: FrameHits::default(),
             batch_points: Vec::new(),
             batch_origins: Vec::new(),

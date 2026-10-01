@@ -177,9 +177,19 @@ pub struct VoxelMap {
     healthy_chunks: AHashMap<ChunkKey, AHashSet<VoxelKey>>,
     /// Chunks whose emitted points changed since the viz last took them.
     changed_chunks: AHashSet<ChunkKey>,
+    /// The emit gate, so a support change marks a chunk only when it flips
+    /// a voxel across it.
+    support_min: i32,
 }
 
 impl VoxelMap {
+    pub fn with_support_min(support_min: i32) -> Self {
+        Self {
+            support_min,
+            ..Default::default()
+        }
+    }
+
     pub fn healthy_count(&self) -> usize {
         self.voxels.values().filter(|c| c.health > 0).count()
     }
@@ -221,7 +231,7 @@ impl VoxelMap {
         if now_healthy == was_healthy {
             return;
         }
-        self.mark_changed(key);
+        self.changed_chunks.insert(chunk_of(key));
         let chunk = chunk_of(key);
         if now_healthy {
             self.healthy_chunks.entry(chunk).or_default().insert(key);
@@ -229,20 +239,6 @@ impl VoxelMap {
             set.remove(&key);
             if set.is_empty() {
                 self.healthy_chunks.remove(&chunk);
-            }
-        }
-    }
-
-    /// Note that what the chunks around `key` emit changed: its own health,
-    /// and its neighbors' support across a chunk border. The corners cover
-    /// every chunk the 27 neighborhood touches.
-    fn mark_changed(&mut self, key: VoxelKey) {
-        for dx in [-1, 1] {
-            for dy in [-1, 1] {
-                for dz in [-1, 1] {
-                    self.changed_chunks
-                        .insert(chunk_of((key.0 + dx, key.1 + dy, key.2 + dz)));
-                }
             }
         }
     }
@@ -287,13 +283,18 @@ impl VoxelMap {
                         continue;
                     }
                     let nk = (key.0 + dx, key.1 + dy, key.2 + dz);
+                    let support_min = self.support_min;
                     if let Some(c) = self.voxels.get_mut(&nk) {
                         let updated = c.support as i32 + delta;
                         debug_assert!(
                             (0..=26).contains(&updated),
                             "support count out of range: {updated}"
                         );
+                        let was_emitted = c.health > 0 && voxel_supported(c, support_min);
                         c.support = updated as u32;
+                        if was_emitted != (c.health > 0 && voxel_supported(c, support_min)) {
+                            self.changed_chunks.insert(chunk_of(nk));
+                        }
                     }
                 }
             }
