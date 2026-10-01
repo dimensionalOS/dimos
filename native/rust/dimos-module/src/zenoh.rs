@@ -105,6 +105,11 @@ impl SessionSettings {
         if self.connect_timeout_ms > 0 {
             inserts.push(("connect/timeout_ms", json_text(&self.connect_timeout_ms)));
         }
+        // DIMOS_ZENOH_SHM=0 keeps native-to-native payloads off shared memory: a peer whose
+        // SHM watchdog cannot run at priority may receive nothing on that link.
+        if std::env::var("DIMOS_ZENOH_SHM").as_deref() == Ok("0") {
+            inserts.push(("transport/shared_memory/enabled", "false".to_string()));
+        }
         for (key, value) in inserts {
             config.insert_json5(key, &value).map_err(to_io)?;
         }

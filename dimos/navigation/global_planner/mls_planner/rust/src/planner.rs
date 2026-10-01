@@ -120,9 +120,15 @@ pub fn plan(
         );
         return None;
     }
-    let Some(goal_coord) =
-        snap_pose_to_cell(&plg.surface_lookup, goal_pose, voxel_size, z_tolerance_m)
-    else {
+    // A goal on an object (its centre, at floor height) must land on the floor beside
+    // it, not on its top: try one step of z first, the robot's height only after.
+    let Some(goal_coord) = snap_pose_to_cell(
+        &plg.surface_lookup,
+        goal_pose,
+        voxel_size,
+        config.step_threshold_m,
+    )
+    .or_else(|| snap_pose_to_cell(&plg.surface_lookup, goal_pose, voxel_size, z_tolerance_m)) else {
         tracing::debug!(
             ?goal_pose,
             "plan failed: goal does not snap to any surface cell"
@@ -943,6 +949,34 @@ mod tests {
             viz_publish_hz: 2.0,
             worker_threads: 4,
         }
+    }
+
+    #[test]
+    fn goal_on_a_low_object_snaps_to_the_floor_beside_it() {
+        // Floor strip with a gap under an object whose top is 6 cells (0.3 m) up.
+        let mut cells: Vec<VoxelKey> = strip(20)
+            .into_iter()
+            .filter(|c| !(10..=12).contains(&c.0))
+            .collect();
+        cells.extend((10..=12).map(|x| (x, 0, 6)));
+        let plg = surface_graph(&cells);
+        // The goal is the object's centre at floor height, as a "go to the stool" goal is.
+        let goal = surface_point_xyz(11, 0, 0, VOXEL);
+        let tight = snap_pose_to_cell(&plg.surface_lookup, goal, VOXEL, 0.16).unwrap();
+        assert_eq!(
+            tight.2, 0,
+            "one step of tolerance stays on the floor: {tight:?}"
+        );
+        assert!(
+            tight.0 == 9 || tight.0 == 13,
+            "beside the object: {tight:?}"
+        );
+        let loose = snap_pose_to_cell(&plg.surface_lookup, goal, VOXEL, Z_TOL).unwrap();
+        assert_eq!(
+            loose,
+            (11, 0, 6),
+            "the robot-height tolerance lands on the object's top"
+        );
     }
 
     #[test]

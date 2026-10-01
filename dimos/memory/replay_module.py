@@ -24,7 +24,6 @@ from __future__ import annotations
 
 from functools import partial
 from pathlib import Path
-import re
 import sys
 from typing import TYPE_CHECKING, Any
 
@@ -212,19 +211,21 @@ _VIS_KEYS = ("blueprint", "static", "visual_override", "max_hz", "tf_axes")
 def recorded_rerun_config(dataset: str) -> dict[str, Any]:
     """Viewer config of the blueprint that made *dataset*: layout, robot body, converters, rate caps.
 
-    Run dirs are ``<stamp>-<blueprint>`` (``generate_run_id``). Anything else, or a
+    Run dirs are ``<stamp>-<blueprint>-<token>`` (``generate_run_id``). Anything else, or a
     blueprint without a Rerun bridge, yields ``{}``.
     """
-    m = re.fullmatch(r"\d{8}-\d{6}-(.+)", Path(dataset).parent.name)
-    if not m:
+    from dimos.core.run_registry import run_blueprint
+
+    name = run_blueprint(Path(dataset).parent.name)
+    if name is None:
         return {}
     from dimos.robot.all_blueprints import all_blueprints
     from dimos.robot.get_all_blueprints import get_blueprint_by_name
     from dimos.visualization.rerun.bridge import RerunBridgeModule
 
-    if m.group(1) not in all_blueprints:
+    if name not in all_blueprints:
         return {}
-    for atom in get_blueprint_by_name(m.group(1)).blueprints:
+    for atom in get_blueprint_by_name(name).blueprints:
         if atom.module is RerunBridgeModule:
             return {k: atom.kwargs[k] for k in _VIS_KEYS if k in atom.kwargs}
     return {}

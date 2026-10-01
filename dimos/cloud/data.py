@@ -28,7 +28,6 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import re
 import shutil
 import sqlite3
 import sys
@@ -405,9 +404,10 @@ def _tag(row: dict[str, Any]) -> str:
 
 
 def _blueprint(path: Path) -> str | None:
-    """Run dirs are named <stamp>-<blueprint> (generate_run_id)."""
-    m = re.fullmatch(r"\d{8}-\d{6}-(.+)", path.parent.name)
-    return m.group(1) if m else None
+    """Run dirs are named <stamp>-<blueprint>-<token> (generate_run_id)."""
+    from dimos.core.run_registry import run_blueprint
+
+    return run_blueprint(path.parent.name)
 
 
 def _sha256(path: Path) -> str:

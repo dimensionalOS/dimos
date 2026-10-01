@@ -17,14 +17,33 @@ import io
 import json
 import time
 
+from dimos_lcm.vision_msgs import (
+    BoundingBox3D,
+    Detection3D,
+    ObjectHypothesis,
+    ObjectHypothesisWithPose,
+)
 import numpy as np
 from PIL import Image as PILImage
 import pytest
 
+from dimos.agents.typesafe.world_state import Memory
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.robot.raw_robot_bridge import Deadman, RawTopics, jpeg_bytes, odom_json, xyz_f32
+from dimos.msgs.std_msgs.Header import Header
+from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
+from dimos.robot.raw_robot_bridge import (
+    Deadman,
+    RawTopics,
+    drive_words,
+    jpeg_bytes,
+    odom_json,
+    world_state_json,
+    xyz_f32,
+)
 
 ENDPOINT = "tcp/127.0.0.1:17448"
 
@@ -122,3 +141,68 @@ def test_deadman_rejects_non_finite_and_clamps_speed() -> None:
 def test_deadman_rejects_non_positive_limits(kwargs: dict[str, float]) -> None:
     with pytest.raises(ValueError, match="finite positive limit"):
         Deadman(**kwargs)
+
+
+def _couch_at(x: float, y: float) -> Detection3DArray:
+    d = Detection3D()
+    d.header = Header(1.0, "world")
+    d.results = [ObjectHypothesisWithPose(hypothesis=ObjectHypothesis(class_id="couch", score=0.9))]
+    d.results_length = 1
+    d.bbox = BoundingBox3D(center=Pose(position=(x, y, 0.3)), size=Vector3(1.5, 0.8, 0.6))
+    return Detection3DArray(detections_length=1, header=Header(1.0, "world"), detections=[d])
+
+
+def test_world_state_is_the_typesafe_document() -> None:
+    pose = PoseStamped(position=(0.0, 0.0, 0.0), orientation=(0.0, 0.0, 0.0, 1.0), ts=1.0)
+    state = json.loads(
+        world_state_json(
+            "go to the couch at (3.00, 0.00)",
+            pose,
+            detections_3d=_couch_at(3.0, 0.0),
+            lidar=None,
+            cmd=(0.3, 0.0, 0.0),
+            memory=Memory(),
+            now=1.0,
+            lidar_band=(0.1, 0.8, 5.0),
+        )
+    )
+    assert set(state) >= {"task", "goal", "robot", "objects", "way_to_target", "free_space"}
+    assert state["objects"][0]["label"] == "couch" and state["objects"][0]["target"] is True
+    assert "position" not in state["objects"][0] and "(3.00" not in state["goal"]
+    assert state["robot"]["motion"] == "driving"
+    assert state["robot"]["last_drive"] == {"x": "forward", "y": "none", "yaw": "none"}
+    assert drive_words(0.0, -0.2, 0.5) == {"x": "none", "y": "right", "yaw": "turn_left"}
+
+
+def test_world_state_tick_reports_a_builder_fault_instead_of_dying() -> None:
+    from dimos.robot.raw_robot_bridge import world_state_tick
+
+    stats = {"ticks": 0, "errors": 0, "last_error": ""}
+
+    def bad() -> str:
+        raise IndexError("list index out of range")
+
+    payload = json.loads(world_state_tick(bad, stats))
+    assert payload["error"] == "world state unavailable" and "IndexError" in payload["detail"]
+    assert world_state_tick(lambda: '{"ok": 1}', stats) == '{"ok": 1}'
+    assert (stats["ticks"], stats["errors"]) == (1, 1)
+
+
+def test_dry_run_builds_the_first_tick_from_scene_objects() -> None:
+    from dimos.robot.raw_robot_bridge import dry_run_world_state
+
+    objects = [
+        (
+            "wall",
+            (0.0, 3.0, 1.0),
+            (10.0, 0.01, 2.5),
+        ),  # a 1 cm wall used to crash the doorway search
+        ("chair", (4.0, 1.0, 0.4), (0.6, 0.6, 0.8)),
+    ]
+    doc = json.loads(
+        dry_run_world_state("go to the chair at (4.00, 1.00)", (0.0, 0.0, 0.0), 0.0, objects)
+    )
+    assert doc["objects"][0]["label"] == "chair" and doc["way_to_target"]["state"] in (
+        "clear",
+        "blocked",
+    )

@@ -1,0 +1,209 @@
+{
+  "scene_id": "103997970_171031287",
+  "agent_radius_m": 0.3,
+  "navigable_m2": 34.5,
+  "rooms": 3,
+  "rooms_with_goal": 3,
+  "known_v2": false,
+  "scene_dataset_config": "target/habitat/data/hssd-opendoors/hssd-opendoors.scene_dataset_config.json",
+  "ground_truth": "misc/habitat/ground_truth/hssd/103997970_171031287.json",
+  "cases": [
+    {
+      "label": "plant",
+      "object_id": "46c98ef1342702022042ee1dc44bdde19624e265@50",
+      "spawn_xyz": [
+        2.19,
+        4.7,
+        0.178
+      ],
+      "spawn_yaw_deg": 0.0,
+      "end_xy": [
+        -3.99,
+        10.42
+      ],
+      "end_nav_xy": [
+        -3.01,
+        9.85
+      ],
+      "geodesic_m": 8.17,
+      "straight_m": 7.42,
+      "detour": 1.1,
+      "reference": "navmesh",
+      "reference_path": [
+        [
+          2.19,
+          4.7
+        ],
+        [
+          2.11,
+          4.92
+        ],
+        [
+          2.02,
+          5.14
+        ],
+        [
+          1.94,
+          5.35
+        ],
+        [
+          1.85,
+          5.57
+        ],
+        [
+          1.77,
+          5.79
+        ],
+        [
+          1.69,
+          6.01
+        ],
+        [
+          1.6,
+          6.23
+        ],
+        [
+          1.52,
+          6.44
+        ],
+        [
+          1.43,
+          6.66
+        ],
+        [
+          1.35,
+          6.88
+        ],
+        [
+          1.27,
+          7.1
+        ],
+        [
+          1.18,
+          7.32
+        ],
+        [
+          1.1,
+          7.54
+        ],
+        [
+          0.97,
+          7.66
+        ],
+        [
+          0.85,
+          7.79
+        ],
+        [
+          0.62,
+          7.84
+        ],
+        [
+          0.39,
+          7.89
+        ],
+        [
+          0.17,
+          7.95
+        ],
+        [
+          -0.06,
+          8.0
+        ],
+        [
+          -0.29,
+          8.06
+        ],
+        [
+          -0.52,
+          8.11
+        ],
+        [
+          -0.74,
+          8.17
+        ],
+        [
+          -0.97,
+          8.22
+        ],
+        [
+          -1.2,
+          8.28
+        ],
+        [
+          -1.43,
+          8.33
+        ],
+        [
+          -1.65,
+          8.39
+        ],
+        [
+          -1.83,
+          8.46
+        ],
+        [
+          -2.0,
+          8.54
+        ],
+        [
+          -2.18,
+          8.61
+        ],
+        [
+          -2.35,
+          8.69
+        ],
+        [
+          -2.48,
+          8.81
+        ],
+        [
+          -2.6,
+          8.94
+        ],
+        [
+          -2.7,
+          9.14
+        ],
+        [
+          -2.79,
+          9.37
+        ],
+        [
+          -2.88,
+          9.6
+        ],
+        [
+          -2.97,
+          9.83
+        ]
+      ],
+      "corridor": {
+        "0.6": true,
+        "0.9": false
+      },
+      "spawn_location": "indoor",
+      "spawn_room": 2,
+      "target_room": 1,
+      "rooms_crossed": 2,
+      "transitions": 3,
+      "turns": 2,
+      "pick": "winding",
+      "interest": 8.41,
+      "task_index": 0,
+      "end_nav_box_m": 0.58,
+      "ref_len_m": 8.05,
+      "ref_turning_rad": 3.0,
+      "ref_turns": 0,
+      "width_min_m": 0.95,
+      "width_p25_m": 1.26,
+      "narrow_m": 4.03,
+      "pinches": 2,
+      "obstacles_per_m": 1.24,
+      "difficulty_index": -0.559,
+      "difficulty": "easy"
+    }
+  ],
+  "dataset_note": "hssd-opendoors: HSSD scene instances with door objects removed; ground truth without door boxes"
+}

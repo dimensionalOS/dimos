@@ -1,0 +1,241 @@
+{
+  "scene_id": "108736884_177263634",
+  "agent_radius_m": 0.3,
+  "navigable_m2": 161.3,
+  "rooms": 5,
+  "rooms_with_goal": 5,
+  "known_v2": true,
+  "scene_dataset_config": "target/habitat/data/hssd-opendoors/hssd-opendoors.scene_dataset_config.json",
+  "ground_truth": "misc/habitat/ground_truth/hssd/108736884_177263634.json",
+  "cases": [
+    {
+      "label": "plant",
+      "object_id": "5f3fabe65fda413b4b09c50b88c61de544a956cb@37",
+      "spawn_xyz": [
+        1.65,
+        -8.99,
+        0.168
+      ],
+      "spawn_yaw_deg": 0.0,
+      "end_xy": [
+        5.37,
+        -3.68
+      ],
+      "end_nav_xy": [
+        6.04,
+        -3.0
+      ],
+      "geodesic_m": 10.36,
+      "straight_m": 7.29,
+      "detour": 1.42,
+      "reference": "navmesh",
+      "reference_path": [
+        [
+          1.65,
+          -8.99
+        ],
+        [
+          1.89,
+          -8.98
+        ],
+        [
+          2.13,
+          -8.96
+        ],
+        [
+          2.36,
+          -8.95
+        ],
+        [
+          2.6,
+          -8.94
+        ],
+        [
+          2.84,
+          -8.93
+        ],
+        [
+          3.08,
+          -8.91
+        ],
+        [
+          3.32,
+          -8.9
+        ],
+        [
+          3.56,
+          -8.89
+        ],
+        [
+          3.79,
+          -8.87
+        ],
+        [
+          4.03,
+          -8.86
+        ],
+        [
+          4.27,
+          -8.85
+        ],
+        [
+          4.51,
+          -8.84
+        ],
+        [
+          4.75,
+          -8.82
+        ],
+        [
+          4.99,
+          -8.81
+        ],
+        [
+          5.22,
+          -8.8
+        ],
+        [
+          5.46,
+          -8.78
+        ],
+        [
+          5.7,
+          -8.77
+        ],
+        [
+          5.94,
+          -8.76
+        ],
+        [
+          6.18,
+          -8.75
+        ],
+        [
+          6.31,
+          -8.61
+        ],
+        [
+          6.44,
+          -8.48
+        ],
+        [
+          6.58,
+          -8.35
+        ],
+        [
+          6.59,
+          -8.11
+        ],
+        [
+          6.61,
+          -7.88
+        ],
+        [
+          6.63,
+          -7.65
+        ],
+        [
+          6.62,
+          -7.41
+        ],
+        [
+          6.61,
+          -7.17
+        ],
+        [
+          6.61,
+          -6.93
+        ],
+        [
+          6.6,
+          -6.69
+        ],
+        [
+          6.59,
+          -6.45
+        ],
+        [
+          6.59,
+          -6.21
+        ],
+        [
+          6.58,
+          -5.97
+        ],
+        [
+          6.57,
+          -5.73
+        ],
+        [
+          6.56,
+          -5.49
+        ],
+        [
+          6.56,
+          -5.25
+        ],
+        [
+          6.55,
+          -5.01
+        ],
+        [
+          6.54,
+          -4.77
+        ],
+        [
+          6.54,
+          -4.54
+        ],
+        [
+          6.53,
+          -4.3
+        ],
+        [
+          6.51,
+          -4.05
+        ],
+        [
+          6.49,
+          -3.8
+        ],
+        [
+          6.47,
+          -3.56
+        ],
+        [
+          6.45,
+          -3.31
+        ],
+        [
+          6.43,
+          -3.06
+        ]
+      ],
+      "corridor": {
+        "0.6": true,
+        "0.9": false
+      },
+      "spawn_location": "indoor",
+      "spawn_room": 1,
+      "target_room": 3,
+      "rooms_crossed": 3,
+      "transitions": 2,
+      "turns": 1,
+      "pick": "winding",
+      "interest": 5.52,
+      "task_index": 0,
+      "end_nav_box_m": 0.32,
+      "ref_len_m": 10.4,
+      "ref_turning_rad": 2.61,
+      "ref_turns": 0,
+      "width_min_m": 0.9,
+      "width_p25_m": 1.76,
+      "narrow_m": 2.39,
+      "pinches": 2,
+      "obstacles_per_m": 0.58,
+      "difficulty_index": -0.771,
+      "difficulty": "easy"
+    }
+  ],
+  "dataset_note": "hssd-opendoors: HSSD scene instances with door objects removed; ground truth without door boxes"
+}

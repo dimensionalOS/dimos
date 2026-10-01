@@ -1,0 +1,237 @@
+{
+  "scene_id": "102344193",
+  "agent_radius_m": 0.3,
+  "navigable_m2": 44.5,
+  "rooms": 1,
+  "rooms_with_goal": 1,
+  "known_v2": false,
+  "scene_dataset_config": "target/habitat/data/hssd-opendoors/hssd-opendoors.scene_dataset_config.json",
+  "ground_truth": "misc/habitat/ground_truth/hssd/102344193.json",
+  "cases": [
+    {
+      "label": "chair",
+      "object_id": "690e8c1cacddc85ec161581ea595d10d9b496ca7@41",
+      "spawn_xyz": [
+        2.47,
+        5.12,
+        0.124
+      ],
+      "spawn_yaw_deg": 0.0,
+      "end_xy": [
+        2.5,
+        -2.77
+      ],
+      "end_nav_xy": [
+        3.05,
+        -2.22
+      ],
+      "geodesic_m": 9.07,
+      "straight_m": 7.33,
+      "detour": 1.24,
+      "reference": "navmesh",
+      "reference_path": [
+        [
+          2.47,
+          5.12
+        ],
+        [
+          2.69,
+          5.01
+        ],
+        [
+          2.9,
+          4.89
+        ],
+        [
+          3.12,
+          4.78
+        ],
+        [
+          3.33,
+          4.66
+        ],
+        [
+          3.55,
+          4.55
+        ],
+        [
+          3.72,
+          4.43
+        ],
+        [
+          3.88,
+          4.32
+        ],
+        [
+          4.05,
+          4.2
+        ],
+        [
+          4.11,
+          3.97
+        ],
+        [
+          4.17,
+          3.73
+        ],
+        [
+          4.22,
+          3.5
+        ],
+        [
+          4.28,
+          3.26
+        ],
+        [
+          4.34,
+          3.03
+        ],
+        [
+          4.4,
+          2.79
+        ],
+        [
+          4.45,
+          2.56
+        ],
+        [
+          4.51,
+          2.32
+        ],
+        [
+          4.57,
+          2.09
+        ],
+        [
+          4.63,
+          1.85
+        ],
+        [
+          4.68,
+          1.62
+        ],
+        [
+          4.74,
+          1.39
+        ],
+        [
+          4.8,
+          1.15
+        ],
+        [
+          4.83,
+          1.03
+        ],
+        [
+          4.85,
+          0.9
+        ],
+        [
+          4.81,
+          0.68
+        ],
+        [
+          4.77,
+          0.47
+        ],
+        [
+          4.73,
+          0.25
+        ],
+        [
+          4.68,
+          0.03
+        ],
+        [
+          4.64,
+          -0.18
+        ],
+        [
+          4.6,
+          -0.4
+        ],
+        [
+          4.45,
+          -0.6
+        ],
+        [
+          4.26,
+          -0.71
+        ],
+        [
+          4.08,
+          -0.82
+        ],
+        [
+          3.89,
+          -0.94
+        ],
+        [
+          3.7,
+          -1.05
+        ],
+        [
+          3.51,
+          -1.17
+        ],
+        [
+          3.32,
+          -1.29
+        ],
+        [
+          3.13,
+          -1.41
+        ],
+        [
+          2.94,
+          -1.53
+        ],
+        [
+          2.75,
+          -1.65
+        ],
+        [
+          2.56,
+          -1.71
+        ],
+        [
+          2.37,
+          -1.76
+        ],
+        [
+          2.18,
+          -1.82
+        ],
+        [
+          1.99,
+          -1.88
+        ]
+      ],
+      "corridor": {
+        "0.6": true,
+        "0.9": false
+      },
+      "spawn_location": "indoor",
+      "spawn_room": 0,
+      "target_room": 0,
+      "rooms_crossed": 1,
+      "transitions": 0,
+      "turns": 3,
+      "pick": "winding",
+      "interest": 3.45,
+      "task_index": 0,
+      "end_nav_box_m": 0.35,
+      "ref_len_m": 9.59,
+      "ref_turning_rad": 3.22,
+      "ref_turns": 1,
+      "width_min_m": 1.15,
+      "width_p25_m": 2.45,
+      "narrow_m": 1.1,
+      "pinches": 1,
+      "obstacles_per_m": 1.15,
+      "difficulty_index": -0.626,
+      "difficulty": "easy"
+    }
+  ],
+  "dataset_note": "hssd-opendoors: HSSD scene instances with door objects removed; ground truth without door boxes"
+}

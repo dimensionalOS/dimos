@@ -27,9 +27,15 @@ def choice(label: str, *options: str, p: float = 1.0) -> ChoiceAnswer:
 
 
 def answers(
-    x: str = "none", y: str = "none", yaw: str = "none", p: float = 1.0, stop: float = 0.0
+    x: str = "none",
+    y: str = "none",
+    yaw: str = "none",
+    p: float = 1.0,
+    stop: float = 0.0,
+    task: str = "continue",
 ) -> Answers:
     return {
+        "task": choice(task, "finished", "continue", p=p),
         "target": choice("chair", "chair", "none"),
         "drive.x": choice(x, "forward", "none", "backward", p=p),
         "drive.y": choice(y, "left", "none", "right", p=p),
@@ -39,11 +45,11 @@ def answers(
 
 
 def _decode(a: Answers):  # type: ignore[no-untyped-def]
-    return decode(a, min_probability=0.5, stop_threshold=0.7)
+    return decode(a, stop_threshold=0.7)
 
 
 def test_questions_shape() -> None:
-    assert set(questions(())) == {"drive.x", "drive.y", "drive.yaw", "stop"}
+    assert set(questions(())) == {"drive.x", "drive.y", "drive.yaw", "stop", "task"}
     q = questions(("chair", "person"))
     assert q["target"]["type"] == "choice" and set(q["target"]["criteria"]) == {
         "chair",
@@ -65,13 +71,21 @@ def test_axes_compose() -> None:
     )
 
 
-def test_low_probability_axis_is_zero() -> None:
-    d = _decode(answers(x="forward", p=0.4))
-    assert (d.x, d.labels[0]) == (0.0, "none")
+def test_low_probability_pick_still_counts() -> None:
+    d = _decode(answers(x="forward", p=0.3))
+    assert (d.x, d.labels[0], d.confidence) == (1.0, "forward", 0.3)
 
 
 def test_stop_overrides_axes() -> None:
-    assert _decode(answers(x="forward", yaw="turn_right", stop=0.9)).is_zero
+    d = _decode(answers(x="forward", yaw="turn_right", stop=0.9))
+    assert d.stop and d.is_zero
+
+
+def test_finished_stops_and_flags() -> None:
+    d = _decode(answers(x="forward", task="finished"))
+    assert d.finished and d.stop and d.is_zero
+    assert _decode(answers(x="forward", task="finished", p=0.1)).finished  # the pick counts
+    assert not _decode(answers(x="forward")).finished
 
 
 def test_target_none_dropped() -> None:
@@ -85,3 +99,9 @@ def test_undeclared_choice_reads_as_none() -> None:
     a["drive.x"] = choice("sideways", "sideways", "forward", "none", "backward")
     d = _decode(a)
     assert (d.x, d.labels[0]) == (0.0, "none")
+
+
+def test_min_probability_gates_an_axis_pick() -> None:
+    d = decode(answers(x="forward", p=0.4), stop_threshold=0.7, min_probability=0.5)
+    assert (d.x, d.labels[0]) == (0.0, "none")
+    assert _decode(answers(x="forward", p=0.4)).x == 1.0  # off by default: the pick counts

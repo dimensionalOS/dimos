@@ -15,6 +15,7 @@ from collections.abc import Iterator
 import threading
 import time
 
+from dimos_lcm.std_msgs import Bool
 import pytest
 from reactivex.scheduler import ThreadPoolScheduler
 
@@ -23,7 +24,6 @@ from dimos.agents.typesafe.test_drive import answers
 from dimos.agents.typesafe.test_world_state import det2d, det3d
 from dimos.agents.typesafe.types import Answers, Question
 from dimos.core.transport import LCMTransport, pLCMTransport
-from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -58,7 +58,7 @@ def rig(monkeypatch: pytest.MonkeyPatch) -> Iterator[Rig]:
     )
     a.odom.transport = LCMTransport("/test_typesafe/odom", PoseStamped)
     a.cmd_vel.transport = LCMTransport("/test_typesafe/cmd_vel", Twist)
-    a.goal.transport = LCMTransport("/test_typesafe/goal", PointStamped)
+    a.finished.transport = LCMTransport("/test_typesafe/finished", Bool)
     for name in (
         "odometry",
         "detections_3d",
@@ -188,27 +188,6 @@ def test_deadman_zeroes_when_inference_stalls(rig: Rig) -> None:
     fake.gate.set()
 
 
-def test_goal_point_published_and_used_when_target_leaves_view(rig: Rig) -> None:
-    a, fake, twists = rig
-    goals: list[PointStamped] = []
-    unsub = a.goal.transport.subscribe(goals.append)
-    fake.answers = answers(x="forward")
-    a.set_goal("go to the chair")
-    scene(a)
-    assert until(lambda: moving(twists) and bool(goals))
-    assert (goals[0].x, goals[0].y, goals[0].frame_id) == (3.0, 0.0, "world")
-    # detections go stale, odom keeps coming: the latched goal point keeps it driving
-    a.config.stale_s = 0.2
-    time.sleep(0.3)
-    calls = fake.calls
-    for _ in range(6):
-        odom(a, 0.5)
-        time.sleep(0.15)
-    assert fake.calls > calls
-    assert a.current_goal() == "go to the chair" and twists[-1].linear.x > 0.4
-    unsub()
-
-
 def test_goal_change_during_inference_drops_the_stale_answer(rig: Rig) -> None:
     """A reply for the old goal must not move the robot or leak its position into the new goal."""
     a, fake, twists = rig
@@ -221,7 +200,20 @@ def test_goal_change_during_inference_drops_the_stale_answer(rig: Rig) -> None:
     fake.gate.set()  # the chair reply lands after the goal changed
     time.sleep(0.3)
     assert not moving(twists)
-    assert a._goal_xy is None
+    assert a._robot == {"motion": "idle"}
+
+
+def test_finished_answer_publishes_and_clears(rig: Rig) -> None:
+    a, fake, _ = rig
+    done: list[Bool] = []
+    unsub = a.finished.transport.subscribe(done.append)
+    fake.answers = answers(x="forward", task="finished")
+    a.set_goal("briefing line\ngo to the chair")
+    assert a.current_goal() == "go to the chair"
+    scene(a, robot_x=2.8)
+    assert until(lambda: (odom(a, 2.8), a.current_goal() is None)[1])
+    assert until(lambda: bool(done)) and done[0].data is True
+    unsub()
 
 
 def test_lost_detections_give_up(rig: Rig) -> None:

@@ -52,18 +52,69 @@ RAW_MAX_LINEAR_MPS = 1.0
 RAW_MAX_ANGULAR_RPS = 1.5
 RAW_DRIVE_HZ = 10.0
 RAW_JPEG_QUALITY = 90
+RAW_WORLD_STATE_HZ = 2.0
+
+RAW_TOPICS: tuple[str, ...] = (
+    "camera",
+    "lidar",
+    "odom",
+    "camera_info",
+    "world_state",
+    "cmd_vel",
+    "finished",
+)
+RAW_TOPIC_DOCS: dict[str, str] = {
+    "camera": 'robot/camera/jpeg        JPEG bytes per frame; attachment is JSON {{"t": unix_seconds}}',
+    "lidar": 'robot/lidar/xyz_f32      float32 little-endian (N,3) x y z in metres, lidar frame; attachment {{"t": ...}}',
+    "odom": 'robot/odom/json          {{"t","x","y","z","qx","qy","qz","qw"}}: base_link pose in the odom frame',
+    "camera_info": 'robot/camera_info/json   {{"width","height","K"}}: intrinsics, republished periodically',
+    "world_state": (
+        "robot/world_state/json   JSON at 2 Hz, the document a reactive driver reads; everything is relative to the robot,\n"
+        '                         no world coordinates. "task" explains the fields; "goal" is the instruction; "robot" has motion,\n'
+        '                         last_drive and recent (moved_m, turned_deg, target_closer_m, pattern over 8 s); "objects" lists\n'
+        "                         the goal's object first (target true) then nearby floor-level obstacles, each with a bearing word,\n"
+        '                         bearing_deg (left positive), distance_m to its edge and width_m; "way_to_target" says whether the\n'
+        "                         straight line to the target is clear or blocked, by what and how far, and lists open_sides (left,\n"
+        "                         right: an open direction, a corner or a doorway, with bearing, detour_deg and clear_m or range_m,\n"
+        '                         width_m, target_beyond; been_there when already driven); "free_space" is the nearest obstacle in\n'
+        "                         eight directions (clear_m, state clear/tight/blocked, by). Text is the only sensor."
+    ),
+    "cmd_vel": (
+        'robot/cmd_vel/json       publish {{"vx": m/s, "vy": m/s, "wz": rad/s, "t": seconds}}; the robot holds\n'
+        "                         that velocity for t seconds (max {max_cmd_s:g}), then stops. Republish to keep moving.\n"
+        "                         Speeds are clamped to {max_linear:g} m/s and {max_angular:g} rad/s; non-finite values are ignored."
+    ),
+    "finished": 'robot/finished/json      publish {{"done": true}} once, when you consider the task complete',
+}
 
 RAW_README = """\
 Robot interface: a Zenoh peer at {endpoint}. Connect to it directly (multicast scouting is off);
 any Zenoh client works, e.g. `pip install eclipse-zenoh`.
 
-  robot/camera/jpeg        JPEG bytes per frame; attachment is JSON {{"t": unix_seconds}}
-  robot/lidar/xyz_f32      float32 little-endian (N,3) x y z in metres, lidar frame; attachment {{"t": ...}}
-  robot/odom/json          {{"t","x","y","z","qx","qy","qz","qw"}}: base_link pose in the odom frame
-  robot/camera_info/json   {{"width","height","K"}}: intrinsics, republished periodically
-  robot/cmd_vel/json       publish {{"vx": m/s, "vy": m/s, "wz": rad/s, "t": seconds}}; the robot holds
-                           that velocity for t seconds (max {max_cmd_s:g}), then stops. Republish to keep moving.
-                           Speeds are clamped to {max_linear:g} m/s and {max_angular:g} rad/s; non-finite values are ignored.
+{topics}
 
 There is no other interface to this robot.
 """
+
+# Navigation benchmark thresholds and the grade weights.
+NAV_SUCCESS_RADIUS_M = 1.0  # around the case's end point
+NAV_FACING_TOL_DEG = 45.0  # toward the target's centre
+NAV_MIN_CMD_MPS = 0.1  # a linear command below this is not an attempt to move
+NAV_BUMP_RATIO = 0.2  # achieved / commanded speed below this is contact
+NAV_BUMP_MIN_S = 0.5
+NAV_CMD_HOLD_S = 2.0  # how long a recorded command is assumed to act
+NAV_JITTER_M = 0.005
+NAV_TURN_HYSTERESIS_DEG = 5.0
+NAV_BUMPS_FOR_ZERO_CREDIT = 5
+NAV_WEIGHTS: dict[str, float] = {"reached": 0.5, "facing": 0.2, "straightness": 0.15, "bumps": 0.15}
+# v2 (2026-09-21): arrival needs line of sight to the object; the path terms are efficiency
+# (geodesic / driven, the SPL ratio) and smoothness (the reference route's turning per metre over
+# the run's, capped at 1). v1 stays as score_v1 for comparison with earlier runs.
+NAV_WEIGHTS_V2: dict[str, float] = {
+    "reached": 0.4,
+    "facing": 0.1,
+    "efficiency": 0.25,
+    "smoothness": 0.15,
+    "bumps": 0.1,
+}
+NAV_RESAMPLE_M = 0.25  # arc-length step for turning per metre

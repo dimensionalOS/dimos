@@ -23,6 +23,7 @@ from pathlib import Path
 
 import numpy as np
 
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
@@ -70,6 +71,14 @@ def test_empty_cloud_is_valid():
         server.cloud_msg(np.zeros((0, 3), np.float32), np.zeros((0, 3), np.uint8), "world", 1.0)
     )
     assert len(out) == 0
+
+
+def test_pose_round_trip():
+    quat = np.array([0.0, 0.0, 0.3826834, 0.9238795])
+    out = PoseStamped.lcm_decode(server.pose_msg(np.array([1.0, -2.0, 0.5]), quat, "world", 1.5))
+    assert out.frame_id == "world"
+    np.testing.assert_allclose(tuple(out.position), (1.0, -2.0, 0.5))
+    assert abs(out.yaw - np.pi / 4) < 1e-5
 
 
 def test_odometry_round_trip():

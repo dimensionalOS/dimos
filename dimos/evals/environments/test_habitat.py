@@ -96,7 +96,7 @@ def test_launch_and_cleanup(tmp_path, mocker):
         result = env.start(("speak-skill",))
         assert proc.simulator is None
         assert proc.global_args[0] == "--record-topics"
-        assert proc.global_args[-1] == "--record"
+        assert "--record" in proc.global_args
         from dimos.memory.tap import matching
 
         assert matching(

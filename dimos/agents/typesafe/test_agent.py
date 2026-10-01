@@ -14,6 +14,8 @@
 """The generic agent: a trigger stream, a state, questions, and typed answers out."""
 
 from collections.abc import Iterator
+import json
+from pathlib import Path
 import threading
 import time
 
@@ -82,3 +84,23 @@ def test_trigger_drives_inference_and_answers_publish_by_type(
         time.sleep(0.02)
     assert published[0]["urgent"]["noul"] == 0.9  # type: ignore[typeddict-item]
     assert a.seen[0][0] == {"text": "fix this ASAP"}  # type: ignore[attr-defined]
+
+
+def test_set_trace_dir_records_each_call(
+    agent: tuple[EchoAgent, list[Answers], threading.Event], tmp_path: Path
+) -> None:
+    a, _published, calls = agent
+    a.set_trace_dir(str(tmp_path))
+    a.text.transport.publish("hello")
+    assert calls.wait(3)
+    deadline = time.monotonic() + 3
+    while time.monotonic() < deadline:
+        try:
+            request = json.loads((tmp_path / "1-request.json").read_text())
+            response = json.loads((tmp_path / "1-response.json").read_text())
+            break
+        except (OSError, ValueError):  # not written yet, or written half-way
+            time.sleep(0.02)
+    assert request["body"]["state"] == {"text": "hello"} and "started_at" in request
+    assert response["body"]["answers"]["urgent"]["noul"] == 0.1 and "usage" in response["body"]
+    assert "latency_s" in response

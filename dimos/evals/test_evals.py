@@ -303,7 +303,7 @@ def test_sim_launches_base_blueprints_and_agent_modules_in_order(
             "--disable",
             "patrolling-module",
         ]
-        assert proc.global_args == ["--dimsim-scene", "empty", "--record"]
+        assert proc.global_args == ["--dimsim-scene", "empty", "--record", "--rerun-open", "none"]
         adapter.return_value.wait_for_ready.assert_called_once()
         ready_call = adapter.return_value.wait_for_ready.call_args
         assert 0 < ready_call.kwargs["timeout"] <= 1.0
@@ -710,6 +710,7 @@ def test_suites_and_agents_importable() -> None:
         "mcp_client_adapter",
         "pi",
         "dimcode",
+        "topic",
     }
     for module_name in agents:
         assert callable(load_agent(module_name).run), module_name

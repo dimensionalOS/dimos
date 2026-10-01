@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from collections.abc import Sequence
+import json
 import math
 from pathlib import Path
 import socket
@@ -28,11 +29,20 @@ from dimos.agents.mcp.mcp_adapter import McpAdapter
 from dimos.constants import RECORDINGS_DIR
 from dimos.core.run_registry import list_runs
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall
-from dimos.evals.constants import RAW_ENDPOINT
+from dimos.evals.constants import RAW_ENDPOINT, RAW_TOPICS
 from dimos.evals.environments.base import Environment
-from dimos.evals.environments.lib.launch import default_mcp_url, validate_blueprints
+from dimos.evals.environments.lib.launch import (
+    default_mcp_url,
+    rerun_url,
+    rrd_recorder,
+    screen_capture,
+    validate_blueprints,
+)
 from dimos.evals.types import RunningEnvironment
 from dimos.protocol.service.spec import BaseConfig
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 if TYPE_CHECKING:
     from dimos.evals.agents.base import Agent
@@ -46,6 +56,14 @@ class SimConfig(BaseConfig):
     disable: tuple[str, ...] = ()
     # Also expose the robot as plain Zenoh topics (raw-robot-bridge) for agents without dimOS.
     raw_bridge: bool = False
+    # Which of the bridge's topics to serve; text-only benchmarks keep world_state, cmd_vel, finished.
+    raw_topics: tuple[str, ...] = RAW_TOPICS
+    # Module configuration for the launch, as ``<MODULECLASS>__<FIELD>`` variables.
+    extra_env: dict[str, str] = {}
+    # Save everything the viewer receives as ``viewer.rrd`` next to the recording (large: full-rate images and clouds).
+    rrd: bool = False
+    # Also capture the viewer on a virtual display as ``viewer.mp4``.
+    video: bool = False
     attach: bool = False
     launch_timeout_s: float = 1200.0
     at_rest_m: float = 0.05
@@ -118,14 +136,16 @@ class Sim(Environment):
         if not self.config.attach:
             proc = DimosCliCall()
             self.configure_launch(proc)
-            proc.global_args.append("--record")
+            proc.extra_env.update(self.config.extra_env)
+            proc.global_args += ["--record", "--rerun-open", "none"]  # the bridge still serves gRPC
             disabled = [arg for name in self.config.disable for arg in ("--disable", name)]
             bridge = ["raw-robot-bridge"] if self.config.raw_bridge else []
             if self.config.raw_bridge:
                 self._raw_endpoint = f"tcp/127.0.0.1:{_free_port()}"  # one bridge per run
                 proc.extra_env["RAWROBOTBRIDGE__ENDPOINT"] = self._raw_endpoint
+                proc.extra_env["RAWROBOTBRIDGE__TOPICS"] = json.dumps(list(self.config.raw_topics))
             proc.demo_args = ["run", *self.config.blueprint, *modules, *bridge, *disabled]
-            self._resources.callback(proc.stop)
+            self._resources.callback(_stop_launch, proc)
             proc.start()
             assert proc.process is not None
             pid = proc.process.pid
@@ -152,12 +172,19 @@ class Sim(Environment):
         self._recording = SqliteStore(path=str(path), must_exist=True)
         self._resources.callback(self._recording.stop)
         artifacts = {"recording": path}
+        if proc is not None and self.config.rrd:
+            artifacts["viewer_rrd"] = path.parent / "viewer.rrd"
+            self._resources.enter_context(rrd_recorder(artifacts["viewer_rrd"], rerun_url()))
+        if proc is not None and self.config.video:
+            artifacts["video"] = path.parent / "viewer.mp4"
+            self._resources.enter_context(screen_capture(artifacts["video"], rerun_url()))
         artifacts.update(self.prepare_recording(self._recording, path, deadline))
         return RunningEnvironment(
             mcp_url=mcp_url,
             streams=(),
             artifacts=artifacts,
             raw_endpoint=self._raw_endpoint if self.config.raw_bridge else None,
+            raw_topics=self.config.raw_topics if self.config.raw_bridge else (),
         )
 
     def _wait_recording(self, deadline: float, pid: int | None) -> Path:
@@ -203,6 +230,14 @@ class Sim(Environment):
             super().stop()
         finally:
             self._recording = None
+
+
+def _stop_launch(proc: DimosCliCall) -> None:
+    """Stop the launched dimos; a slow shutdown is killed and logged, never a lost grade."""
+    try:
+        proc.stop()
+    except AssertionError as e:
+        logger.warning("simulator shutdown was forced", error=str(e))
 
 
 def _free_port() -> int:
