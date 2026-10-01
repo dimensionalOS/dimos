@@ -27,6 +27,7 @@ from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 
 
 class HabitatConnectionConfig(NativeModuleConfig):
@@ -71,6 +72,9 @@ class HabitatConnectionConfig(NativeModuleConfig):
     scan_stride: int = Field(default=2, ge=1)
     seed: int = 0
     publish_semantic: bool = False
+    # Visible annotated instances as world-frame boxes (semantic ids + depth).
+    publish_objects: bool = False
+    objects_hz: float = Field(default=1.0, gt=0.0)
     # Unprojection is the frame's main cost; off for teleop-only stacks.
     publish_scan: bool = True
     # "world" pre-registers the scan for VoxelGridMapper; "camera_optical" lets
@@ -92,3 +96,4 @@ class HabitatConnection(NativeModule):
     odometry: Out[Odometry]
     tf: Out[TFMessage]
     semantic_image: Out[Image]
+    objects: Out[Detection3DArray]

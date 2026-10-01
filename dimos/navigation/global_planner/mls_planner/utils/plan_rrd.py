@@ -585,6 +585,11 @@ def main(
 
     store = SqliteStore(path=str(db_path))
     with store:
+        if lidar_stream not in store.list_streams():
+            raise typer.BadParameter(
+                f"{db_path} has no {lidar_stream!r} stream. Available: {store.list_streams()}",
+                param_hint="--lidar-stream",
+            )
         lidar = store.stream(lidar_stream, PointCloud2).order_by("ts")
         if from_time is not None:
             lidar = lidar.from_time(from_time)

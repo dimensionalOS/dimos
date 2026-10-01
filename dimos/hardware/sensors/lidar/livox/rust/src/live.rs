@@ -19,7 +19,7 @@
 //! phase: the handshake commands `lidar_ip:cmd_port` directly with retries,
 //! the same information the SDK2 search step would produce.
 
-use crate::pipeline::PacketSource;
+use crate::pipeline::{unix_now_secs, PacketSource, Received};
 use crate::wire::{
     self, build_param_set_body, host_ip_config_value, AsyncControlAck, ControlFrame, KeyValue,
 };
@@ -85,7 +85,7 @@ impl Failure {
 
 /// Receives the point and IMU streams after driving the config handshake.
 pub struct LiveSource {
-    rx: mpsc::Receiver<Vec<u8>>,
+    rx: mpsc::Receiver<(f64, Vec<u8>)>,
     stop: Arc<AtomicBool>,
     failure: Failure,
     threads: Vec<std::thread::JoinHandle<()>>,
@@ -99,7 +99,7 @@ impl LiveSource {
             reason: Arc::new(OnceLock::new()),
             stop: stop.clone(),
         };
-        let (tx, rx) = mpsc::sync_channel::<Vec<u8>>(QUEUE_DEPTH);
+        let (tx, rx) = mpsc::sync_channel::<(f64, Vec<u8>)>(QUEUE_DEPTH);
         let mut threads = Vec::new();
 
         // bind sockets before spawning threads
@@ -139,16 +139,16 @@ impl LiveSource {
 }
 
 impl PacketSource for LiveSource {
-    fn recv(&mut self, buf: &mut [u8]) -> Option<usize> {
+    fn recv(&mut self, buf: &mut [u8]) -> Option<Received> {
         loop {
             if self.stop.load(Ordering::Relaxed) {
                 return None;
             }
             match self.rx.recv_timeout(RECV_POLL) {
-                Ok(packet) => {
+                Ok((arrival_secs, packet)) => {
                     let len = packet.len().min(buf.len());
                     buf[..len].copy_from_slice(&packet[..len]);
-                    return Some(len);
+                    return Some(Received { len, arrival_secs });
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => continue,
                 Err(mpsc::RecvTimeoutError::Disconnected) => return None,
@@ -198,7 +198,7 @@ fn spawn_reader(
     label: &'static str,
     socket: UdpSocket,
     lidar_ip: Ipv4Addr,
-    tx: mpsc::SyncSender<Vec<u8>>,
+    tx: mpsc::SyncSender<(f64, Vec<u8>)>,
     failure: Failure,
 ) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
@@ -212,7 +212,7 @@ fn spawn_reader(
                     if from.ip() != std::net::IpAddr::V4(lidar_ip) {
                         continue;
                     }
-                    match tx.try_send(buf[..len].to_vec()) {
+                    match tx.try_send((unix_now_secs(), buf[..len].to_vec())) {
                         Ok(()) => {}
                         Err(mpsc::TrySendError::Full(_)) => {
                             dropped += 1;
@@ -524,9 +524,11 @@ mod tests {
         let mut buf = [0u8; 4096];
         let mut types_seen = HashSet::new();
         for _ in 0..2 {
-            let len = source.recv(&mut buf).expect("packet before shutdown");
-            let packet = DataPacket::parse(&buf[..len]).unwrap();
+            let received = source.recv(&mut buf).expect("packet before shutdown");
+            let packet = DataPacket::parse(&buf[..received.len]).unwrap();
             types_seen.insert(packet.data_type);
+            // Live packets arrive on the host clock, the anchor for every stamp.
+            assert!((received.arrival_secs - unix_now_secs()).abs() < 5.0);
         }
         assert!(types_seen.contains(&DataType::CartesianHigh));
         assert!(types_seen.contains(&DataType::Imu));
@@ -595,8 +597,8 @@ mod tests {
         // The channel is FIFO: had the forged packet been accepted, it would
         // arrive first.
         let mut buf = [0u8; 4096];
-        let len = source.recv(&mut buf).expect("genuine packet delivered");
-        let delivered = DataPacket::parse(&buf[..len]).unwrap();
+        let received = source.recv(&mut buf).expect("genuine packet delivered");
+        let delivered = DataPacket::parse(&buf[..received.len]).unwrap();
         assert_eq!(delivered.timestamp_ns, 42);
     }
 

@@ -11,11 +11,19 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from typing import Any
+from typing import Any, TypedDict
 
 from dimos_lcm.vision_msgs.Detection3DArray import Detection3DArray as LCMDetection3DArray
 
+from dimos.msgs.geometry_msgs.PoseStamped import XyzJson
 from dimos.types.timestamped import to_timestamp
+
+
+class Detection3DJson(TypedDict):
+    label: str
+    score: float
+    position: XyzJson
+    size: XyzJson
 
 
 class Detection3DArray(LCMDetection3DArray):  # type: ignore[misc]
@@ -31,6 +39,25 @@ class Detection3DArray(LCMDetection3DArray):  # type: ignore[misc]
     @property
     def frame_id(self) -> str:
         return str(self.header.frame_id)
+
+    def to_json(self) -> list[Detection3DJson]:
+        out: list[Detection3DJson] = []
+        for d in self.detections[: self.detections_length]:
+            c, sz = d.bbox.center.position, d.bbox.size
+            out.append(
+                {
+                    "label": _label_for_detection(d),
+                    "score": round(
+                        max(
+                            (r.hypothesis.score for r in d.results[: d.results_length]), default=0.0
+                        ),
+                        2,
+                    ),
+                    "position": {"x": round(c.x, 2), "y": round(c.y, 2), "z": round(c.z, 2)},
+                    "size": {"x": round(sz.x, 2), "y": round(sz.y, 2), "z": round(sz.z, 2)},
+                }
+            )
+        return out
 
     def to_rerun(self) -> Any:
         """Convert detections to a Rerun Boxes3D archetype."""

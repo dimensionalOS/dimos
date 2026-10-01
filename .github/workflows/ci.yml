@@ -782,6 +782,7 @@ jobs:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       ALIBABA_API_KEY: ${{ secrets.ALIBABA_API_KEY }}
+      TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
       # See the `tests` job for why this is set.
       PYTHONFAULTHANDLER: "1"
     timeout-minutes: 45
@@ -1039,6 +1040,7 @@ jobs:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       ALIBABA_API_KEY: ${{ secrets.ALIBABA_API_KEY }}
+      TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
       DIMSIM_RENDER: gpu
       # See the `tests` job for why this is set.
       PYTHONFAULTHANDLER: "1"
@@ -1216,6 +1218,9 @@ jobs:
           points = np.array([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]], dtype=np.float32)
           height_cost_occupancy(PointCloud2.from_numpy(points, timestamp=1.0))
           "
+      # Avoid pending disk writes getting recorded in the benchmark.
+      - name: Flush pending writeback
+        run: sync
       - name: Run the replay under cgroup accounting
         run: uv run pytest -m '' --no-cov dimos/robot/unitree/go2/test_replay_benchmark.py
         env:
