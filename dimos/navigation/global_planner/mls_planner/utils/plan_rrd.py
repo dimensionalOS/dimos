@@ -21,6 +21,7 @@ per frame, and each planner ingests every region as it lands.
 
 from __future__ import annotations
 
+from enum import Enum, auto
 from pathlib import Path as FsPath
 from time import perf_counter
 from typing import TYPE_CHECKING, Any, NamedTuple
@@ -327,10 +328,9 @@ def _start_seed(
     ray: RayTraceMap,
     seed_pts: NDArray[np.float32],
     start: tuple[float, float, float],
-    region_m: float,
 ) -> int:
     """Partition the premap for a region-by-region seed. Returns the region count."""
-    regions = ray.mapper.start_seed(seed_pts, start, region_m)
+    regions = ray.mapper.start_seed(seed_pts, start)
     log_loaded_map(seed_pts)
     print(f"\nseeding {len(seed_pts)} premap points in {regions} regions")
     return regions
@@ -348,39 +348,49 @@ def _seed_next_region(ray: RayTraceMap, planners: list[MLSPlanner]) -> bool:
     return True
 
 
-class _Seeding:
+class SeedStage(Enum):
+    ABSENT = auto()
+    PENDING = auto()
+    LOADING = auto()
+    DONE = auto()
+
+
+class Seeding:
     """The premap seed, landing one region per frame once the recording reaches it."""
 
-    def __init__(self, loaded_map: Observation[PointCloud2] | None, region_m: float) -> None:
-        self.pending = loaded_map
-        self.seeded = loaded_map is not None
-        self.region_m = region_m
+    def __init__(
+        self,
+        loaded_map: Observation[PointCloud2] | None,
+        ray: RayTraceMap,
+        planners: list[MLSPlanner],
+        tf_lookup: StreamTF,
+        world_frame: str,
+    ) -> None:
+        self.loaded_map = loaded_map
+        self.stage = SeedStage.ABSENT if loaded_map is None else SeedStage.PENDING
         self.regions = 0
         self.landed = 0
-        self.loading = False
+        self._ray = ray
+        self._planners = planners
+        self._tf_lookup = tf_lookup
+        self._world_frame = world_frame
 
     @property
     def left(self) -> int:
         return self.regions - self.landed
 
-    def step(
-        self,
-        ray: RayTraceMap,
-        planners: list[MLSPlanner],
-        tf_lookup: StreamTF,
-        world_frame: str,
-        ts: float,
-        start: tuple[float, float, float],
-    ) -> None:
-        if self.pending is not None and ts >= self.pending.ts:
-            seed_pts = place_loaded_map(self.pending, tf_lookup, world_frame, ts)
-            self.regions = _start_seed(ray, seed_pts, start, self.region_m)
-            self.pending, self.loading = None, True
-        elif self.loading:
-            if _seed_next_region(ray, planners):
+    def step(self, ts: float, start: tuple[float, float, float]) -> None:
+        if self.stage is SeedStage.PENDING:
+            if self.loaded_map is None or ts < self.loaded_map.ts:
+                return
+            seed_pts = place_loaded_map(self.loaded_map, self._tf_lookup, self._world_frame, ts)
+            self.regions = _start_seed(self._ray, seed_pts, start)
+            self.stage = SeedStage.LOADING
+        elif self.stage is SeedStage.LOADING:
+            if _seed_next_region(self._ray, self._planners):
                 self.landed += 1
             else:
-                self.loading = False
+                self.stage = SeedStage.DONE
                 print("\nseed finished")
 
 
@@ -631,18 +641,10 @@ def main(
             min_health=min_health,
             max_health=max_health,
             support_min=support_min,
+            region_m=region_m,
         )
         ray_pipeline = pose_tagged.transform(ray)
         tf_sync = _TfSync(tf)
-
-        seeding = _Seeding(first_loaded_map(store, loaded_map_stream), region_m)
-        if seeding.pending is not None:
-            rr.log(
-                REGIONS_LEFT_SERIES,
-                rr.SeriesLines(colors=[[255, 255, 255]], names=["regions_left"]),
-                static=True,
-            )
-            print(f"loaded_map at ts={seeding.pending.ts:.3f}; seeding when reached")
 
         configs = _parse_configs(config, wall_clearance, wall_buffer, wall_buffer_weight)
         ref_clearance = configs[0][0]
@@ -656,6 +658,21 @@ def main(
             step_height=step_height,
             step_penalty_weight=step_penalty_weight,
         )
+
+        seeding = Seeding(
+            first_loaded_map(store, loaded_map_stream),
+            ray,
+            [p for _, _, p in planners],
+            tf_lookup,
+            world_frame,
+        )
+        if seeding.loaded_map is not None:
+            rr.log(
+                REGIONS_LEFT_SERIES,
+                rr.SeriesLines(colors=[[255, 255, 255]], names=["regions_left"]),
+                static=True,
+            )
+            print(f"loaded_map at ts={seeding.loaded_map.ts:.3f}; seeding when reached")
 
         rr.log("world/goal", goal_point(goal), static=True)
         rr.log(
@@ -700,10 +717,8 @@ def main(
                     ref_clearance,
                     crop,
                 )
-                seeding.step(
-                    ray, [p for _, _, p in planners], tf_lookup, world_frame, ray_obs.ts, start
-                )
-                if seeding.seeded:
+                seeding.step(ray_obs.ts, start)
+                if seeding.stage is not SeedStage.ABSENT:
                     rr.log(REGIONS_LEFT_SERIES, rr.Scalars(float(seeding.left)))
                 _log_odometry(ray_obs.pose_tuple, ray_obs.ts, sensor_trail, base)
                 frame += 1

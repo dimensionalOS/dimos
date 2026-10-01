@@ -49,6 +49,19 @@ def test_graph_edges_take_the_binding_layout() -> None:
     )
 
 
+def test_graph_nodes_are_lifted_off_the_surface() -> None:
+    pts = np.array([[1.0, 2.0, 0.0], [3.0, 4.0, 1.0]], dtype=np.float32)
+    arch = viz.graph_nodes(pts)
+    lift = viz.GRAPH_Z_LIFT
+    np.testing.assert_allclose(
+        arch.positions.as_arrow_array().to_pylist(), [[1, 2, lift], [3, 4, 1 + lift]], atol=1e-6
+    )
+    assert pts[:, 2].tolist() == [0.0, 1.0], "the caller's points are left alone"
+
+    empty = viz.graph_nodes(np.zeros((0, 3), dtype=np.float32))
+    assert len(empty.positions.as_arrow_array()) == 0
+
+
 def test_region_cells_unpack_from_the_seq_the_planner_packs() -> None:
     assert region_entity("world/surface_map", (-3 << 16) | (5 & 0xFFFF)) == "world/surface_map/-3_5"
     assert region_entity("world/node_edges", (7 << 16) | (-2 & 0xFFFF)) == "world/node_edges/7_-2"

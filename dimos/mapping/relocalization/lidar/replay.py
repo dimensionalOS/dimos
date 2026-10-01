@@ -66,12 +66,12 @@ class Replay(NamedTuple):
 
 
 def fix_error(fix: Transform, recorded: Transform) -> tuple[float, float]:
-    """Yaw (deg) and translation (m) between two fixes of the same frame pair."""
+    """Yaw in degrees and translation in meters between two fixes of the same frame pair."""
     dyaw = (yaw_deg(fix) - yaw_deg(recorded) + 180.0) % 360.0 - 180.0
     return dyaw, (fix.translation - recorded.translation).length()
 
 
-def _recorded_fix(store: SqliteStore, world_frame: str, map_frame: str) -> Transform | None:
+def recorded_fix(store: SqliteStore, world_frame: str, map_frame: str) -> Transform | None:
     """The first world -> map edge the live run published, if the recording has one."""
     if "tf" not in store.list_streams():
         return None
@@ -132,7 +132,7 @@ def replay(
     frames = lidar.transform(pose_from_tf(tf, world_frame)).transform(ray)
 
     relocalizer = LidarRelocalizer(premap.pointcloud, PRESETS[preset])
-    recorded = _recorded_fix(store, world_frame, MAP_FRAME)
+    recorded = recorded_fix(store, world_frame, MAP_FRAME)
 
     attempts: list[ReplayAttempt] = []
     fix: Transform | None = None

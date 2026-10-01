@@ -1592,7 +1592,6 @@ fn seeded_wall_normals_spare_grazing_rays() {
     );
 }
 
-/// With a fine layer on, seeding marks the observed fine cells.
 #[test]
 fn seed_sets_fine_bits_when_layer_is_on() {
     let cfg = fine_config(2);
@@ -1666,7 +1665,6 @@ fn seed_into_live_map_keeps_indexes_consistent() {
     }
 }
 
-/// Tiles land nearest the origin first.
 #[test]
 fn partition_seed_orders_tiles_nearest_the_origin_first() {
     let voxel_size = 1.0;

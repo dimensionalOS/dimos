@@ -113,6 +113,7 @@ impl VoxelRayMapper {
         region_percentile = 95.0,
         worker_threads = 4,
         emit_every = 0,
+        region_m = 4.0,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -129,6 +130,7 @@ impl VoxelRayMapper {
         region_percentile: f32,
         worker_threads: u32,
         emit_every: u32,
+        region_m: f32,
     ) -> PyResult<Self> {
         // A nonzero emit_every batches frames for take_local_bounds. Callers
         // that never take must leave it 0 or the batch grows forever.
@@ -152,7 +154,7 @@ impl VoxelRayMapper {
             world_frame: "world".to_string(),
             tf_match_tolerance_s: 0.1,
             worker_threads,
-            region_m: 4.0,
+            region_m,
             viz_emit_every: 0,
             viz_sweep_regions: 0,
         };
@@ -232,17 +234,19 @@ impl VoxelRayMapper {
         flat_to_array(py, points)
     }
 
-    /// Partition a world-frame map cloud into `region_m` regions nearest
-    /// `origin` first, ready for seed_next_region. Returns the region count.
+    /// Partition a world-frame map cloud into regions nearest `origin` first,
+    /// ready for seed_next_region. Returns the region count.
     fn start_seed(
         &mut self,
         py: Python<'_>,
         points: &Bound<'_, PyAny>,
         origin: (f32, f32, f32),
-        region_m: f32,
     ) -> PyResult<usize> {
         let pts = extract_tuples(points, "points")?;
-        let voxel_size = self.mapper.config().voxel_size;
+        let (voxel_size, region_m) = {
+            let config = self.mapper.config();
+            (config.voxel_size, config.region_m)
+        };
         let part = py.allow_threads(|| partition_seed(&pts, voxel_size, origin, region_m));
         self.mapper.reserve_voxels(part.voxels);
         let regions = part.regions.len();

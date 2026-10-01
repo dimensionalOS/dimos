@@ -160,8 +160,8 @@ struct SeedLoad {
     regions: Vec<SeedRegion>,
     next_region: usize,
     next_tile: usize,
-    tiles: usize,
-    done: usize,
+    tile_count: usize,
+    tiles_done: usize,
     created: usize,
     started: Instant,
     max_tile_ms: f64,
@@ -171,11 +171,11 @@ struct SeedLoad {
 impl SeedLoad {
     fn new(part: SeedPartition) -> Self {
         Self {
-            tiles: part.tile_count(),
+            tile_count: part.tile_count(),
             regions: part.regions,
             next_region: 0,
             next_tile: 0,
-            done: 0,
+            tiles_done: 0,
             created: 0,
             started: Instant::now(),
             max_tile_ms: 0.0,
@@ -184,7 +184,7 @@ impl SeedLoad {
     }
 
     fn mean_tile_ms(&self) -> f64 {
-        self.sum_tile_ms / self.done.max(1) as f64
+        self.sum_tile_ms / self.tiles_done.max(1) as f64
     }
 
     /// Apply the next tile. The region it completed, if any.
@@ -194,7 +194,7 @@ impl SeedLoad {
         let tile_start = Instant::now();
         self.created += tokio::task::block_in_place(|| mapper.seed_tile(tile));
         let tile_ms = tile_start.elapsed().as_secs_f64() * 1e3;
-        self.done += 1;
+        self.tiles_done += 1;
         self.max_tile_ms = self.max_tile_ms.max(tile_ms);
         self.sum_tile_ms += tile_ms;
         self.next_tile += 1;
@@ -220,9 +220,23 @@ enum SeedState {
 }
 
 impl SeedState {
-    /// Only Idle takes a cloud: reseeding would resurrect voxels live rays carved.
-    fn accepts_cloud(&self) -> bool {
-        matches!(self, SeedState::Idle)
+    /// Start placing a loaded map, or refuse it. Only Idle takes a cloud:
+    /// reseeding would resurrect voxels live rays carved.
+    fn take_cloud(&mut self) -> bool {
+        if !matches!(self, SeedState::Idle) {
+            return false;
+        }
+        *self = SeedState::Placing;
+        true
+    }
+
+    /// Placement returned. A map that could not be placed leaves the stage
+    /// Idle, so a later cloud can retry.
+    fn placed(&mut self, partition: Option<SeedPartition>) {
+        *self = match partition {
+            Some(part) => SeedState::Loading(SeedLoad::new(part)),
+            None => SeedState::Idle,
+        };
     }
 }
 
@@ -299,17 +313,18 @@ impl Worker {
             Job::Lidar(msg) => self.ingest_frame(state, msg).await,
             Job::ClearMask(msg) => self.apply_clear_mask(state, msg),
             Job::LoadedMap(msg) => self.place_loaded_map(state, msg).await,
-            Job::SeedPrepared(None) => state.seed = SeedState::Idle,
-            Job::SeedPrepared(Some(part)) => {
-                info!(
-                    regions = part.regions.len(),
-                    tiles = part.tile_count(),
-                    voxels = part.voxels,
-                    "Seed load started."
-                );
-                let mapper = &mut state.mapper;
-                tokio::task::block_in_place(|| mapper.reserve_voxels(part.voxels));
-                state.seed = SeedState::Loading(SeedLoad::new(part));
+            Job::SeedPrepared(partition) => {
+                if let Some(part) = &partition {
+                    info!(
+                        regions = part.regions.len(),
+                        tiles = part.tile_count(),
+                        voxels = part.voxels,
+                        "Seed load started."
+                    );
+                    let mapper = &mut state.mapper;
+                    tokio::task::block_in_place(|| mapper.reserve_voxels(part.voxels));
+                }
+                state.seed.placed(partition);
             }
         }
     }
@@ -389,30 +404,33 @@ impl Worker {
         }
 
         if state.mapper.viz_due() {
-            let tick_start = Instant::now();
-            let regions = tokio::task::block_in_place(|| {
-                map_regions_due(
-                    &mut state.mapper,
-                    &mut state.viz,
-                    self.config.voxel_size,
-                    self.config.region_m,
-                    self.config.viz_sweep_regions as usize,
-                )
-            });
-            debug!(
-                regions = regions.len(),
-                tick_ms = tick_start.elapsed().as_secs_f64() * 1e3,
-                "map regions published"
-            );
-            let mut bytes = 0usize;
-            for (cell, points) in regions {
-                let mut cloud = points_to_cloud(&points, out_frame_id, stamp.clone());
-                cloud.header.seq = pack_cell(cell);
-                bytes += cloud.data.len();
-                publish_cloud(&self.map_regions, &cloud).await;
-            }
-            debug!(bytes, "map region bytes published");
+            self.publish_map_regions(state, &stamp).await;
         }
+    }
+
+    /// Publish the map region cells due this viz tick, the cell in each
+    /// header seq.
+    async fn publish_map_regions(&self, state: &mut State, stamp: &Time) {
+        let tick_start = Instant::now();
+        let due = tokio::task::block_in_place(|| {
+            map_regions_due(
+                &mut state.mapper,
+                &mut state.viz,
+                self.config.voxel_size,
+                self.config.region_m,
+                self.config.viz_sweep_regions as usize,
+            )
+        });
+        let tick_ms = tick_start.elapsed().as_secs_f64() * 1e3;
+        let regions = due.len();
+        let mut bytes = 0usize;
+        for (cell, points) in due {
+            let mut cloud = points_to_cloud(&points, &self.config.world_frame, stamp.clone());
+            cloud.header.seq = pack_cell(cell);
+            bytes += cloud.data.len();
+            publish_cloud(&self.map_regions, &cloud).await;
+        }
+        debug!(regions, tick_ms, bytes, "map regions published");
     }
 
     /// Delete the voxels covering a cloud of world-frame points a sensor knows
@@ -467,10 +485,9 @@ impl Worker {
 
     /// Place the first loaded map on its own task and tile it off the worker.
     async fn place_loaded_map(&self, state: &mut State, msg: PointCloud2) {
-        if !state.seed.accepts_cloud() {
+        if !state.seed.take_cloud() {
             return;
         }
-        state.seed = SeedState::Placing;
         let tf = self.tf.clone();
         let sender = self.job_sender.clone();
         let world_frame = self.config.world_frame.clone();
@@ -515,10 +532,10 @@ impl Worker {
         let pass_start = Instant::now();
         while !load.finished() {
             let completed = load.step(&mut state.mapper);
-            if load.done % SEED_PROGRESS_TILES == 0 {
+            if load.tiles_done % SEED_PROGRESS_TILES == 0 {
                 info!(
-                    tiles_done = load.done,
-                    tiles = load.tiles,
+                    tiles_done = load.tiles_done,
+                    tiles = load.tile_count,
                     regions_done = load.next_region,
                     regions = load.regions.len(),
                     max_tile_ms = load.max_tile_ms,
@@ -544,7 +561,7 @@ impl Worker {
         info!(
             num_created = load.created,
             regions = load.regions.len(),
-            tiles = load.tiles,
+            tiles = load.tile_count,
             load_s = load.started.elapsed().as_secs_f64(),
             max_tile_ms = load.max_tile_ms,
             mean_tile_ms = load.mean_tile_ms(),
@@ -563,14 +580,27 @@ impl Worker {
         stamp: &Time,
     ) {
         let points = tokio::task::block_in_place(|| mapper.local_points(&cylinder.bounds()));
-        let frame_id = self.config.world_frame.as_str();
-        let mut bounds_msg = bounds_to_pose(cylinder, frame_id, stamp.clone());
-        bounds_msg.header.seq = seq;
+        let (bounds_msg, cloud) =
+            seed_region_messages(cylinder, &points, seq, &self.config.world_frame, stamp);
         publish_bounds(&self.seed_bounds, &bounds_msg).await;
-        let mut cloud = points_to_cloud(&points, frame_id, stamp.clone());
-        cloud.header.seq = seq;
         publish_cloud(&self.seed_map, &cloud).await;
     }
+}
+
+/// One seeded region as its bounds and cloud messages, both stamped alike
+/// with the region number in their header seq.
+fn seed_region_messages(
+    cylinder: &Cylinder,
+    points: &[f32],
+    seq: i32,
+    frame_id: &str,
+    stamp: &Time,
+) -> (PoseStamped, PointCloud2) {
+    let mut bounds = bounds_to_pose(cylinder, frame_id, stamp.clone());
+    bounds.header.seq = seq;
+    let mut cloud = points_to_cloud(points, frame_id, stamp.clone());
+    cloud.header.seq = seq;
+    (bounds, cloud)
 }
 
 /// The regions due this viz tick with their points: those whose chunks
@@ -848,7 +878,6 @@ mod tests {
         part
     }
 
-    /// A seed load hands a region on only after its last tile.
     #[tokio::test(flavor = "multi_thread")]
     async fn seed_load_hands_each_region_on_after_its_last_tile() {
         let part = two_region_seed();
@@ -868,15 +897,56 @@ mod tests {
         let second = load.step(&mut mapper).map(|c| (c.cx, c.cy));
         assert_eq!(second, Some(centers[1]));
         assert!(load.finished());
-        assert_eq!((load.done, load.tiles, load.created), (3, 3, 3));
+        assert_eq!((load.tiles_done, load.tile_count, load.created), (3, 3, 3));
     }
 
     #[test]
-    fn only_an_idle_seed_accepts_a_loaded_map() {
-        assert!(SeedState::Idle.accepts_cloud());
-        assert!(!SeedState::Placing.accepts_cloud());
-        assert!(!SeedState::Loading(SeedLoad::new(two_region_seed())).accepts_cloud());
-        assert!(!SeedState::Done.accepts_cloud());
+    fn only_an_idle_seed_takes_a_loaded_map() {
+        let mut seed = SeedState::Idle;
+        assert!(seed.take_cloud());
+        assert!(matches!(seed, SeedState::Placing));
+
+        // A second cloud is refused while the first is placing or loading.
+        assert!(!seed.take_cloud());
+        assert!(matches!(seed, SeedState::Placing));
+        seed.placed(Some(two_region_seed()));
+        assert!(!seed.take_cloud());
+        assert!(matches!(seed, SeedState::Loading(_)));
+
+        let mut done = SeedState::Done;
+        assert!(!done.take_cloud());
+        assert!(matches!(done, SeedState::Done));
+    }
+
+    #[test]
+    fn a_placed_seed_loads_and_a_failed_placement_returns_to_idle() {
+        let mut seed = SeedState::Placing;
+        seed.placed(Some(two_region_seed()));
+        let SeedState::Loading(load) = &seed else {
+            panic!("a placed seed must be loading");
+        };
+        assert_eq!((load.regions.len(), load.tile_count), (2, 3));
+
+        let mut seed = SeedState::Placing;
+        seed.placed(None);
+        assert!(matches!(seed, SeedState::Idle));
+        assert!(seed.take_cloud(), "a later cloud retries");
+    }
+
+    #[test]
+    fn seed_region_messages_pair_on_seq_and_stamp() {
+        let part = two_region_seed();
+        let stamp = Time { sec: 7, nsec: 9 };
+        for (index, region) in part.regions.iter().enumerate() {
+            let seq = index as i32 + 1;
+            let (bounds, cloud) =
+                seed_region_messages(&region.cylinder, &[1.5, 1.5, 0.5], seq, "odom", &stamp);
+            assert_eq!((bounds.header.seq, cloud.header.seq), (seq, seq));
+            assert_eq!(bounds.header.stamp, stamp);
+            assert_eq!(cloud.header.stamp, stamp);
+            assert_eq!(bounds.pose.position.x, region.cylinder.cx as f64);
+            assert_eq!(cloud.width, 1);
+        }
     }
 
     /// A seeded region is due once with its points, and once more empty after

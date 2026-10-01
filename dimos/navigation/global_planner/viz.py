@@ -39,6 +39,8 @@ if TYPE_CHECKING:
 # rerun is imported inside the renderers: it is heavy and only viewers load it.
 
 PATH_Z_LIFT = 0.05
+PATH_RADIUS = 0.05
+GOAL_RADIUS = 0.1
 # Height band the voxel maps are colored over, the same in every cell.
 HEIGHT_RANGE = (-1.0, 3.0)
 
@@ -57,7 +59,7 @@ def path_strip(
         return rr.LineStrips3D([])
     points = np.asarray(waypoints, dtype=np.float32).copy()
     points[:, 2] += PATH_Z_LIFT
-    return rr.LineStrips3D([points], colors=[color], radii=0.05)
+    return rr.LineStrips3D([points], colors=[color], radii=PATH_RADIUS)
 
 
 def render_path(msg: Path) -> Archetype | None:
@@ -70,7 +72,7 @@ def render_path(msg: Path) -> Archetype | None:
 def goal_point(xyz: tuple[float, float, float]) -> Archetype:
     import rerun as rr
 
-    return rr.Points3D([xyz], colors=[GOAL_COLOR], radii=0.1)
+    return rr.Points3D([xyz], colors=[GOAL_COLOR], radii=GOAL_RADIUS)
 
 
 def render_goal(msg: PointStamped) -> Archetype | None:

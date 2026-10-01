@@ -136,15 +136,14 @@ impl MLSPlanner {
         sensor_z: f32,
     ) -> PyResult<()> {
         let pts = extract_points(points)?;
-        let bounds = RegionBounds::capped(
-            origin.0,
-            origin.1,
+        let bounds = RegionBounds {
+            origin_x: origin.0,
+            origin_y: origin.1,
             radius,
             z_min,
             z_max,
-            sensor_z,
-            self.config.max_overhead_m,
-        );
+        }
+        .capped_at(sensor_z, self.config.max_overhead_m);
         let config = &self.config;
         let planner = &mut self.planner;
         py.allow_threads(|| planner.update_region(&pts, &bounds, config));

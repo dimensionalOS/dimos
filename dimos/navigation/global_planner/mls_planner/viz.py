@@ -39,6 +39,7 @@ NODES_ENTITY = "world/nodes"
 NODE_EDGES_ENTITY = "world/node_edges"
 
 GRAPH_Z_LIFT = 0.05
+NODE_RADIUS = 0.05
 
 TIGHT_COLOR = (4.0, 8.0, 48.0)
 OPEN_COLOR = (150.0, 200.0, 255.0)
@@ -98,7 +99,7 @@ def graph_nodes(pts: NDArray[np.float32]) -> Archetype:
         return rr.Points3D([])
     lifted = pts.copy()
     lifted[:, 2] += GRAPH_Z_LIFT
-    return rr.Points3D(positions=lifted, colors=[NODE_COLOR], radii=0.05)
+    return rr.Points3D(positions=lifted, colors=[NODE_COLOR], radii=NODE_RADIUS)
 
 
 def render_nodes(msg: PointCloud2) -> Archetype:

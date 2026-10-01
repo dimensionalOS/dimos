@@ -429,7 +429,6 @@ mod tests {
         assert_eq!(mapper.clear_metric([(5.5, 0.5, 0.5)]), 0);
     }
 
-    /// Seeds reach both emitters and stay out of the region batch.
     #[test]
     fn seed_points_emits_without_batching_regions() {
         let mut mapper = Mapper::new(config());

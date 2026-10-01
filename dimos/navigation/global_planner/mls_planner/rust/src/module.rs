@@ -298,11 +298,10 @@ impl Worker {
                     }
                     None => false,
                 };
-                if goal_changed || live_update {
+                if replan_due(goal_changed, live_update) {
                     self.maybe_replan(&mut planner, &mut last_path_at).await;
                 }
-                // Live updates apply first, then one seed region per pass. Seed
-                // regions alone never replan.
+                // Live updates apply first, then one seed region per pass.
                 let seed = self.seed_regions.lock().expect("seed mutex").pop_front();
                 let Some(seed) = seed else {
                     break;
@@ -358,26 +357,26 @@ impl Worker {
                 build_pc2_xyz(&node_points, &self.config.world_frame, now()),
             )
         });
-        debug!(
-            regions = due_regions.len(),
-            tick_ms = tick_at.elapsed().as_secs_f64() * 1e3,
-            "viz published"
-        );
+        let tick_ms = tick_at.elapsed().as_secs_f64() * 1e3;
         *last_viz_at = Some(tick_at);
         let (voxel_size, frame) = (self.config.voxel_size, self.config.world_frame.as_str());
         let stamp = now();
-        let (mut surface_bytes, mut edge_poses) = (0usize, 0usize);
+        let regions = due_regions.len();
+        let (mut surface_bytes, mut edge_segments) = (0usize, 0usize);
         for (cell, content) in due_regions {
+            edge_segments += content.segments.len();
             let (surface, edges) = tokio::task::block_in_place(|| {
                 region_messages(cell, content, voxel_size, frame, stamp.clone())
             });
             surface_bytes += surface.data.len();
-            edge_poses += edges.poses.len();
             publish_cloud(&self.surface_map, &surface).await;
             publish_path(&self.node_edges, &edges).await;
         }
         publish_cloud(&self.nodes, &node_cloud).await;
-        debug!(surface_bytes, edge_poses, "viz bytes published");
+        debug!(
+            regions,
+            tick_ms, surface_bytes, edge_segments, "viz published"
+        );
     }
 
     /// Mutate the graph from a map update. False if the cloud was unusable.
@@ -433,7 +432,7 @@ impl Worker {
         cloud: &PointCloud2,
         region: &RegionBounds,
         viz: &mut RegionViz,
-        what: &'static str,
+        label: &'static str,
     ) -> bool {
         let points = match extract_xyz(cloud) {
             Ok(p) => p,
@@ -441,7 +440,7 @@ impl Worker {
                 warn_throttled!(
                     Duration::from_secs(1),
                     error = %e,
-                    what,
+                    label,
                     "Failed to extract region points, dropped it.",
                 );
                 return false;
@@ -454,7 +453,7 @@ impl Worker {
         debug!(
             update_ms = update_start.elapsed().as_secs_f64() * 1e3,
             points = points.len(),
-            what
+            "{label}"
         );
         true
     }
@@ -507,6 +506,12 @@ impl Worker {
         );
         publish_path(&self.path, &path_msg).await;
     }
+}
+
+/// Whether a worker pass replans. Seed regions never trigger one, so a pass
+/// that only applied a seed region does not.
+fn replan_due(goal_changed: bool, live_update_applied: bool) -> bool {
+    goal_changed || live_update_applied
 }
 
 /// The region a bounds message describes: position is the center, orientation
@@ -915,6 +920,25 @@ mod tests {
             pairs.pair_cloud(c1).is_none(),
             "the expired bounds no longer pair"
         );
+    }
+
+    #[test]
+    fn a_pass_replans_on_a_goal_change_or_a_live_update_only() {
+        // goal changed, live update applied, replans
+        let passes = [
+            (true, true, true),
+            (true, false, true),
+            (false, true, true),
+            // A pass that only applied a seed region, or an idle wake.
+            (false, false, false),
+        ];
+        for (goal_changed, live_update_applied, replans) in passes {
+            assert_eq!(
+                replan_due(goal_changed, live_update_applied),
+                replans,
+                "goal_changed {goal_changed}, live_update_applied {live_update_applied}"
+            );
+        }
     }
 
     fn point(x: f64, y: f64, z: f64) -> Point {

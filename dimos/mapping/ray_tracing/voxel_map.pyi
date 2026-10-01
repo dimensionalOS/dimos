@@ -46,6 +46,7 @@ class VoxelRayMapper:
         region_percentile: float = 95.0,
         worker_threads: int = 4,
         emit_every: int = 0,
+        region_m: float = 4.0,
     ) -> None: ...
     @property
     def voxel_size(self) -> float: ...
@@ -98,7 +99,6 @@ class VoxelRayMapper:
         self,
         points: NDArray[np.float32],
         origin: tuple[float, float, float],
-        region_m: float,
     ) -> int:
         """Partition a world-frame map cloud into regions nearest origin first.
 

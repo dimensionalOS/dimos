@@ -124,12 +124,14 @@ def test_seed_points_creates_only_absent_voxels() -> None:
 
 
 def test_seed_regions_land_nearest_first_and_gate_support() -> None:
-    mapper = VoxelRayMapper(voxel_size=1.0, max_range=100.0, min_health=0, support_min=4)
+    mapper = VoxelRayMapper(
+        voxel_size=1.0, max_range=100.0, min_health=0, support_min=4, region_m=16.0
+    )
     coords = np.arange(5, dtype=np.float32) + 0.5
     slab = np.array([(x, y, 0.5) for x in coords for y in coords], dtype=np.float32)
     lone = np.array([[40.5, 40.5, 0.5]], dtype=np.float32)
 
-    assert mapper.start_seed(np.vstack([slab, lone]), (40.0, 40.0, 0.0), 16.0) == 2
+    assert mapper.start_seed(np.vstack([slab, lone]), (40.0, 40.0, 0.0)) == 2
     first = mapper.seed_next_region()
     assert first is not None
     assert first.center == (40.0, 40.0), "the origin's region lands first"

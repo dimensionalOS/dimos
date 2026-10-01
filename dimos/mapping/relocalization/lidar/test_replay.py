@@ -19,13 +19,17 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 from pytest_mock import MockerFixture
+import rerun as rr
 from scipy.spatial.transform import Rotation
 
+pytest.importorskip("dimos_voxel_ray_tracing")
+
 from dimos.mapping.ray_tracing.utils.loaded_map import LOADED_MAP_STREAM
-from dimos.mapping.relocalization.lidar.relocalize import LidarRelocalizer, RelocAttempt
+from dimos.mapping.relocalization.lidar import replay as replay_module
+from dimos.mapping.relocalization.lidar.relocalize import PRESETS, RelocAttempt
 from dimos.mapping.relocalization.lidar.replay import (
-    _recorded_fix,
     fix_error,
+    recorded_fix,
     replay,
     write_loaded_map,
 )
@@ -76,7 +80,7 @@ def test_write_loaded_map_writes_once(tmp_path: Path) -> None:
 @pytest.mark.skipif_macos
 def test_recorded_fix_is_the_first_world_to_map_edge(tmp_path: Path) -> None:
     with SqliteStore(path=str(tmp_path / "r.db")) as store:
-        assert _recorded_fix(store, "odom", "map") is None
+        assert recorded_fix(store, "odom", "map") is None
         tf = store.stream("tf", TFMessage)
         for edge in (
             _edge("odom", "base_link", 1.0),
@@ -85,10 +89,10 @@ def test_recorded_fix_is_the_first_world_to_map_edge(tmp_path: Path) -> None:
         ):
             tf.append(TFMessage(edge), ts=edge.ts, pose=None)
 
-        recorded = _recorded_fix(store, "odom", "map")
+        recorded = recorded_fix(store, "odom", "map")
         assert recorded is not None
         assert recorded.translation.x == 2.0
-        assert _recorded_fix(store, "odom", "nowhere") is None
+        assert recorded_fix(store, "odom", "nowhere") is None
 
 
 @pytest.mark.skipif_aarch64
@@ -96,23 +100,26 @@ def test_recorded_fix_is_the_first_world_to_map_edge(tmp_path: Path) -> None:
 def test_replay_spaces_attempts_and_stops_after_the_fix(
     tmp_path: Path, mocker: MockerFixture
 ) -> None:
-    pytest.importorskip("dimos_voxel_ray_tracing")
     fix = _fix(90.0, x=1.0)
     attempts = [
         RelocAttempt(None, SimpleNamespace(fitness=0.2)),
         RelocAttempt(fix, SimpleNamespace(fitness=0.9)),
     ]
-    mocker.patch.object(LidarRelocalizer, "_prepare", return_value=None)
-    attempt = mocker.patch.object(LidarRelocalizer, "attempt", side_effect=attempts)
+    relocalizer_class = mocker.patch.object(replay_module, "LidarRelocalizer", autospec=True)
+    attempt = relocalizer_class.return_value.attempt
+    attempt.side_effect = attempts
+    set_time = mocker.spy(rr, "set_time")
     span = np.arange(0.0, 1.0, 0.05)
-    points = np.array([(x, y, 0.5) for x in span for y in span], dtype=np.float32)
+    dense = np.array([(x, y, 0.5) for x in span for y in span], dtype=np.float32)
     premap = PointCloud2.from_numpy(np.eye(3, dtype=np.float32), frame_id="map")
 
     with SqliteStore(path=str(tmp_path / "r.db")) as store:
         lidar = store.stream("lidar", PointCloud2)
         tf = store.stream("tf", TFMessage)
-        for i in range(6):
+        for i in range(7):
             ts = 10.0 + i * 0.5
+            # The first frame's local map is under min_local_points.
+            points = dense[:3] if i == 0 else dense
             tf.append(TFMessage(_edge("odom", "lidar", ts)), ts=ts, pose=None)
             lidar.append(PointCloud2.from_numpy(points, frame_id="lidar", timestamp=ts), ts=ts)
         result = replay(
@@ -122,16 +129,21 @@ def test_replay_spaces_attempts_and_stops_after_the_fix(
             preset="mid360",
             world_frame="odom",
             reloc_interval=1.0,
-            min_local_points=1,
+            min_local_points=50,
             voxel_size=0.1,
-            after_s=0.5,
+            after_s=0.6,
             from_time=None,
             to_time=None,
         )
 
+    relocalizer_class.assert_called_once_with(premap.pointcloud, PRESETS["mid360"])
     assert attempt.call_count == 2
-    assert [a.t_s for a in result.attempts] == [0.0, 1.0]
+    # The sparse frame at 0.0 s is skipped, so the first attempt waits for 0.5 s.
+    assert [a.t_s for a in result.attempts] == [0.5, 1.5]
     assert [a.fix for a in result.attempts] == [None, fix]
     assert result.fix is fix
-    assert result.fix_ts == 11.0
+    assert result.fix_ts == 11.5
     assert result.recorded is None
+    # The frame at 12.0 is inside after_s of the fix, the ones at 12.5 and 13.0 are past it.
+    processed = [call.kwargs["timestamp"] for call in set_time.call_args_list]
+    assert processed == [10.0, 10.5, 11.0, 11.5, 12.0]

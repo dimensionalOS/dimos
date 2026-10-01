@@ -885,15 +885,15 @@ pub fn emit_points(
     bounds: Option<&LocalBounds>,
     live: &AHashSet<VoxelKey>,
 ) -> Vec<f32> {
-    emit_points_gated(map, voxel_size, bounds, live, true)
+    emit_points_impl(map, voxel_size, bounds, live, true)
 }
 
 /// Every healthy voxel plus this frame's live voxels, with no support gate.
 pub fn emit_points_ungated(map: &VoxelMap, voxel_size: f32, live: &AHashSet<VoxelKey>) -> Vec<f32> {
-    emit_points_gated(map, voxel_size, None, live, false)
+    emit_points_impl(map, voxel_size, None, live, false)
 }
 
-fn emit_points_gated(
+fn emit_points_impl(
     map: &VoxelMap,
     voxel_size: f32,
     bounds: Option<&LocalBounds>,

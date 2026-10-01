@@ -16,10 +16,11 @@
 //! into square cells and each cell publishes on its own, so a viewer takes the
 //! map in messages a lossy link can carry, and a change costs its cell only.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
+use std::ops::Bound::{Excluded, Unbounded};
 
-use ahash::AHasher;
+use ahash::{AHashMap, AHashSet, AHasher};
 
 use crate::mls_planner::ColumnWindow;
 use crate::voxel::VoxelKey;
@@ -59,7 +60,8 @@ pub fn cell_of((ix, iy, _): VoxelKey, pitch: i32) -> Cell {
     (ix.div_euclid(pitch), iy.div_euclid(pitch))
 }
 
-/// A cell packed into a message seq so the viewer keys entities by it.
+/// A cell packed into a message seq so the viewer keys entities by it: i in
+/// the high 16 bits, j in the low 16, both signed.
 pub fn pack_cell((i, j): Cell) -> i32 {
     debug_assert!(i16::try_from(i).is_ok() && i16::try_from(j).is_ok());
     (i << 16) | (j & 0xffff)
@@ -68,7 +70,41 @@ pub fn pack_cell((i, j): Cell) -> i32 {
 /// Cells an update may have changed since the last tick.
 enum Dirty {
     All,
-    Cells(BTreeSet<Cell>),
+    Cells(AHashSet<Cell>),
+}
+
+impl Dirty {
+    fn contains(&self, cell: &Cell) -> bool {
+        match self {
+            Dirty::All => true,
+            Dirty::Cells(cells) => cells.contains(cell),
+        }
+    }
+}
+
+/// The surface and segments bucketed into their cells, keeping the wanted
+/// cells only, or every cell when none are named.
+fn bucket(
+    surface: impl Iterator<Item = (VoxelKey, f32)>,
+    segments: impl Iterator<Item = Segment>,
+    pitch: i32,
+    wanted: Option<&AHashSet<Cell>>,
+) -> AHashMap<Cell, RegionContent> {
+    let want = |cell: &Cell| wanted.is_none_or(|w| w.contains(cell));
+    let mut cells: AHashMap<Cell, RegionContent> = AHashMap::new();
+    for entry in surface {
+        let cell = cell_of(entry.0, pitch);
+        if want(&cell) {
+            cells.entry(cell).or_default().surface.push(entry);
+        }
+    }
+    for segment in segments {
+        let cell = cell_of(segment.0, pitch);
+        if want(&cell) {
+            cells.entry(cell).or_default().segments.push(segment);
+        }
+    }
+    cells
 }
 
 /// What each cell last published, so a tick sends the cells whose content
@@ -92,7 +128,7 @@ impl RegionViz {
             pitch: pitch_voxels.max(1),
             reach: reach_voxels.max(0),
             sweep,
-            dirty: Dirty::Cells(BTreeSet::new()),
+            dirty: Dirty::Cells(AHashSet::new()),
             published: BTreeMap::new(),
             cursor: None,
         }
@@ -124,61 +160,46 @@ impl RegionViz {
     }
 
     /// The cells due this tick with their current content: the changed ones
-    /// first, then the ones that just emptied, then the sweep slice. A cell
-    /// that emptied goes out empty now, stays in the sweep until it has been
-    /// sent empty once more, and is then forgotten.
+    /// first, then the ones that just emptied, then the sweep slice.
     pub fn tick(
         &mut self,
         surface: impl Iterator<Item = (VoxelKey, f32)>,
         segments: impl Iterator<Item = Segment>,
     ) -> Vec<(Cell, RegionContent)> {
-        let dirty = std::mem::replace(&mut self.dirty, Dirty::Cells(BTreeSet::new()));
-        // Only dirty cells can turn out changed, so this many extra candidates
-        // leave a full sweep slice of unchanged ones.
-        let candidates = self.sweep_candidates(match &dirty {
-            Dirty::All => self.published.len(),
-            Dirty::Cells(cells) => cells.len(),
-        });
-        let wanted: Option<BTreeSet<Cell>> = match dirty {
+        let dirty = std::mem::replace(&mut self.dirty, Dirty::Cells(AHashSet::new()));
+        let candidates = self.sweep_candidates(&dirty);
+        let wanted = match dirty {
             Dirty::All => None,
             Dirty::Cells(mut cells) => {
                 cells.extend(candidates.iter().copied());
                 Some(cells)
             }
         };
-        let pitch = self.pitch;
-        let want = |cell: &Cell| wanted.as_ref().is_none_or(|w| w.contains(cell));
+        let cells = bucket(surface, segments, self.pitch, wanted.as_ref());
+        let (mut due, unchanged) = self.classify(cells, wanted.as_ref());
+        self.sweep_into(&mut due, candidates, unchanged);
+        due
+    }
 
-        let mut cells: BTreeMap<Cell, RegionContent> = BTreeMap::new();
-        for entry in surface {
-            let cell = cell_of(entry.0, pitch);
-            if want(&cell) {
-                cells.entry(cell).or_default().surface.push(entry);
-            }
-        }
-        for segment in segments {
-            let cell = cell_of(segment.0, pitch);
-            if want(&cell) {
-                cells.entry(cell).or_default().segments.push(segment);
-            }
-        }
-
-        let checked: Vec<Cell> = match &wanted {
-            None => self.published.keys().copied().collect(),
-            Some(w) => w.iter().copied().collect(),
-        };
-        let mut due: Vec<(Cell, RegionContent)> = Vec::new();
+    /// Record what the checked cells now hold. The changed cells then the
+    /// ones that just emptied, in cell order, and the content of the rest.
+    fn classify(
+        &mut self,
+        cells: AHashMap<Cell, RegionContent>,
+        wanted: Option<&AHashSet<Cell>>,
+    ) -> (Vec<(Cell, RegionContent)>, AHashMap<Cell, RegionContent>) {
         let mut vanished: Vec<(Cell, RegionContent)> = Vec::new();
-        let mut unchanged: BTreeMap<Cell, RegionContent> = BTreeMap::new();
-        for cell in checked {
-            if cells.contains_key(&cell) {
-                continue;
-            }
-            if let Some(slot @ Some(_)) = self.published.get_mut(&cell) {
+        for (cell, slot) in &mut self.published {
+            let checked = wanted.is_none_or(|w| w.contains(cell));
+            if checked && slot.is_some() && !cells.contains_key(cell) {
                 *slot = None;
-                vanished.push((cell, RegionContent::default()));
+                vanished.push((*cell, RegionContent::default()));
             }
         }
+        let mut cells: Vec<(Cell, RegionContent)> = cells.into_iter().collect();
+        cells.sort_unstable_by_key(|(cell, _)| *cell);
+        let mut due: Vec<(Cell, RegionContent)> = Vec::new();
+        let mut unchanged: AHashMap<Cell, RegionContent> = AHashMap::new();
         for (cell, content) in cells {
             let fp = content.fingerprint();
             if self.published.insert(cell, Some(fp)) != Some(Some(fp)) {
@@ -187,9 +208,18 @@ impl RegionViz {
                 unchanged.insert(cell, content);
             }
         }
-        let busy: BTreeSet<Cell> = due.iter().chain(&vanished).map(|(c, _)| *c).collect();
         due.extend(vanished);
+        (due, unchanged)
+    }
 
+    /// Append the sweep slice: the first candidates not already due.
+    fn sweep_into(
+        &mut self,
+        due: &mut Vec<(Cell, RegionContent)>,
+        candidates: Vec<Cell>,
+        mut unchanged: AHashMap<Cell, RegionContent>,
+    ) {
+        let busy: AHashSet<Cell> = due.iter().map(|(cell, _)| *cell).collect();
         let mut swept = 0;
         for cell in candidates {
             if swept == self.sweep {
@@ -211,22 +241,31 @@ impl RegionViz {
             swept += 1;
             self.cursor = Some(cell);
         }
-        due
     }
 
-    /// The next `sweep + extra` published cells past the cursor, wrapping.
-    fn sweep_candidates(&self, extra: usize) -> Vec<Cell> {
-        let keys: Vec<Cell> = self.published.keys().copied().collect();
-        if keys.is_empty() || self.sweep == 0 {
-            return Vec::new();
-        }
-        let start = match self.cursor {
-            Some(cursor) => keys.partition_point(|k| *k <= cursor),
-            None => 0,
+    /// Published cells past the cursor, wrapping, up to the one that makes a
+    /// full sweep slice of cells not dirty. Only dirty cells can turn out
+    /// changed, so the rest are free for the sweep.
+    fn sweep_candidates(&self, dirty: &Dirty) -> Vec<Cell> {
+        let (past, wrapped) = match self.cursor {
+            Some(cursor) => (
+                self.published.range((Excluded(cursor), Unbounded)),
+                Some(self.published.range(..=cursor)),
+            ),
+            None => (self.published.range(..), None),
         };
-        (0..(self.sweep + extra).min(keys.len()))
-            .map(|n| keys[(start + n) % keys.len()])
-            .collect()
+        let mut candidates: Vec<Cell> = Vec::new();
+        let mut clean = 0;
+        for (cell, _) in past.chain(wrapped.into_iter().flatten()) {
+            if clean == self.sweep {
+                break;
+            }
+            if !dirty.contains(cell) {
+                clean += 1;
+            }
+            candidates.push(*cell);
+        }
+        candidates
     }
 }
 
@@ -370,6 +409,28 @@ mod tests {
             due_cells(&viz.tick(changed.into_iter(), std::iter::empty())),
             vec![(0, 0), (0, 1), (1, 0), (1, 1), (2, 0)]
         );
+    }
+
+    #[test]
+    fn a_busy_tick_of_marked_cells_still_carries_a_full_sweep_slice() {
+        let mut viz = RegionViz::new(10, 0, 2);
+        let map = [(0, 0), (0, 15), (15, 0), (15, 15), (25, 0)];
+        viz.mark_all();
+        tick(&mut viz, &map, &[]);
+
+        // The three cells the sweep would reach first all changed.
+        let mut changed = surface(&map);
+        for item in changed.iter_mut().take(3) {
+            item.1 = 0.25;
+        }
+        viz.mark_window((0, 0, 0, 15));
+        viz.mark_window((15, 15, 0, 0));
+        let due = viz.tick(changed.into_iter(), std::iter::empty());
+        assert_eq!(
+            due_cells(&due),
+            vec![(0, 0), (0, 1), (1, 0), (1, 1), (2, 0)]
+        );
+        assert!(due.iter().all(|(_, content)| content.surface.len() == 1));
     }
 
     #[test]

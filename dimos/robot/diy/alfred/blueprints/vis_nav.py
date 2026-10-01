@@ -112,6 +112,8 @@ def _alfred_urdf_static(rr: Any) -> list[tuple[str, Any]]:
 
 
 VOXEL_SIZE_METERS = 0.05
+WALL_CLEARANCE_M = 0.2
+PLANNER_VIZ_HZ = 2.0
 DEPTH_MAX_RANGE_METERS = 4.0
 """4 m won the mapping grid against 6 m (top-down F1 .570 vs .506 against a
 lidar-raycast reference on drive_2026-08-18_23-05-04.db)."""
@@ -172,8 +174,9 @@ def vis_nav(
         MLSPlannerNative.blueprint(
             voxel_size=VOXEL_SIZE_METERS,
             robot_height=ALFRED.body_height,
-            wall_clearance_m=0.2,
+            wall_clearance_m=WALL_CLEARANCE_M,
             step_penalty_weight=1.0,
+            viz_publish_hz=PLANNER_VIZ_HZ,
         ).remappings([(MLSPlannerNative, "path", "planner_path")]),
         # Solely the tf-driven start_pose source for the dannav odom remaps below.
         StartRelay.blueprint(),
@@ -214,7 +217,7 @@ def vis_nav(
                     "world/image": _ir_image,
                     "world/camera_info": _ir_pinhole,
                     # The planner publishes its surface and edges by cell.
-                    **planner_visual_override(2.0, VOXEL_SIZE_METERS, 0.2),
+                    **planner_visual_override(PLANNER_VIZ_HZ, VOXEL_SIZE_METERS, WALL_CLEARANCE_M),
                 },
             },
         ),

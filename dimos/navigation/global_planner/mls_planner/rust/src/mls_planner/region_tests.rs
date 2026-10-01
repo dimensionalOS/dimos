@@ -18,9 +18,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 type SeedRegions = Vec<(RegionBounds, Vec<(f32, f32, f32)>)>;
 
-/// A world as the ray tracer hands a seeded map on: `s` meter squares,
-/// nearest `center` first, each region's cloud being every point of the map
-/// whose voxel center falls in the square's covering cylinder.
+/// Regions as the ray tracer hands a seeded map on, nearest center first.
 fn seed_regions(
     points: &[(f32, f32, f32)],
     region_m: f32,
@@ -971,7 +969,6 @@ fn reseeding_leaves_graph_bit_identical() {
     assert_eq!(node_edge_pairs(&p), before_edges, "edges changed on reseed");
 }
 
-/// Distant sticky nodes survive a seed that carries a small local change.
 #[test]
 fn seed_regions_keep_distant_nodes_sticky() {
     let cfg = test_config();

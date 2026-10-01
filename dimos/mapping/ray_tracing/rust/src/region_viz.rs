@@ -20,8 +20,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::voxel_ray_tracer::Cell;
 
-/// A cell packed into a message seq so the viewer keys entities by it. The
-/// layout is owned by pack_cell in the planner crate's region_viz.rs.
+/// A cell packed into a message seq so the viewer keys entities by it: i in
+/// the high 16 bits, j in the low 16, both signed.
 pub fn pack_cell((i, j): Cell) -> i32 {
     debug_assert!(i16::try_from(i).is_ok() && i16::try_from(j).is_ok());
     (i << 16) | (j & 0xffff)

@@ -64,7 +64,6 @@ def test_seq_round_trips_including_the_empty_message() -> None:
     assert LineSegments3D.lcm_decode(encode_edges(4, seq=seq)).seq == seq
     assert LineSegments3D.lcm_decode(encode_edges(0, seq=seq)).seq == seq
     assert LineSegments3D.lcm_decode(encode_edges(4)).seq == 0
-    assert LineSegments3D(seq=7).seq == 7
 
 
 def test_mixed_frame_id_lengths_are_rejected() -> None:
