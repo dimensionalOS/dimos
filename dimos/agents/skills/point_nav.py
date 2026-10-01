@@ -12,16 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import asyncio
+from collections.abc import AsyncIterator
 import math
-from threading import Event
-import time
-from typing import Any
 
 from dimos_lcm.std_msgs import Bool
 
 from dimos.agents.annotation import skill
 from dimos.agents.capabilities import CAP_MOVEMENT
-from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
@@ -36,12 +34,8 @@ class PointNavSkillContainerConfig(ModuleConfig):
     """The robot's body frame on tf."""
     base_height_m: float = 0.0
     """Height of base_frame above the floor; matches the planner's start_z_offset_m."""
-    goal_tolerance: float = 0.5
-    """Arrival distance in xy, wider than BasicPathFollower's 0.3 m stop radius."""
-    max_wait_s: float = 100.0
-    """Longest go_to waits before giving up; under the 120 s MCP client and RPC call timeouts."""
-    poll_interval_s: float = 0.25
-    """Seconds between position checks while go_to waits."""
+    arrival_radius_m: float = 0.3
+    """A goal nearer than this is already reached; matches the planner's goal_tolerance."""
 
 
 class PointNavSkillContainer(Module):
@@ -50,82 +44,95 @@ class PointNavSkillContainer(Module):
     config: PointNavSkillContainerConfig
 
     tf: In[TFMessage]
+    goal_reached: In[Bool]
 
     goal: Out[PointStamped]
     stop_movement: Out[Bool]
 
-    def __init__(self, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
-        self._cancelled = Event()
+    _timeout: asyncio.TimerHandle | None = None
+    """Set while a go_to is under way; fires when it runs out of time."""
+    _target: tuple[float, float] = (0.0, 0.0)
+    """The x, y of the go_to under way."""
 
-    @rpc
-    def start(self) -> None:
-        super().start()
+    async def main(self) -> AsyncIterator[None]:
         # Subscribe to tf now so the first go_to already has a pose.
         self.tfbuffer  # noqa: B018
+        yield
+        self._finish("Cancelled, module stopping")
+
+    async def handle_goal_reached(self, msg: Bool) -> None:
+        if msg.data:
+            self._finish("Path following ended")
 
     def _pose(self) -> PoseStamped | None:
         return self.tfbuffer.get_pose(self.config.world_frame, self.config.base_frame)
 
-    def _cancel_goal(self) -> None:
-        # A NaN goal cancels the planner's goal
-        self.goal.publish(
-            PointStamped(math.nan, math.nan, math.nan, frame_id=self.config.world_frame)
-        )
-        # Tell the BasicPathFollower to stop
-        self.stop_movement.publish(Bool(True))
+    @skill(uses=[CAP_MOVEMENT], lifecycle="background")
+    async def go_to(self, x: float, y: float, timeout_s: float = 90.0) -> str:
+        """Start driving to a point in the world frame and return immediately.
 
-    @skill(uses=[CAP_MOVEMENT])
-    def go_to(
-        self, x: float, y: float, wait_s: float = 90.0, poll_interval_s: float | None = None
-    ) -> str:
-        """Drive to a point in the world frame and wait until the robot is there.
+        A tool update reports where the robot is and how far from the point when it stops,
+        which can be short of it. Call stop_navigation before sending another go_to.
 
         Args:
             x: target x in metres, world frame.
             y: target y in metres, world frame.
-            wait_s: seconds to wait for arrival. When it runs out the goal is cancelled and the
-                robot stops.
-            poll_interval_s: seconds between position checks while waiting. Leave unset for the
-                module's default.
+            timeout_s: seconds allowed before the goal is cancelled and the robot stops.
         """
+        # Opened before any return so the movement claim always has a stream to release it.
+        self.start_tool("go_to")
+        if self._timeout is not None:
+            return "Already navigating. Call stop_navigation first."
+
         pose = self._pose()
         if pose is None:
+            self.stop_tool("go_to")
             return f"No goal sent: no {self.config.world_frame} -> {self.config.base_frame} on tf."
 
-        self._cancelled.clear()
+        # TODO: fix this in the planner. It drops a goal the robot is already within its
+        # goal_tolerance of without publishing anything, so no goal_reached would ever end this
+        # go_to. Until the planner announces such a goal, repeat its check here.
+        distance = math.dist((x, y), (pose.x, pose.y))
+        if distance < self.config.arrival_radius_m:
+            self.stop_tool("go_to")
+            return (
+                f"Already there: robot at ({pose.x:.2f}, {pose.y:.2f}), "
+                f"{distance:.2f} m from the target."
+            )
 
         # One x, y can have walkable surfaces at several heights, e.g. downstairs and upstairs.
         # The planner picks the one nearest the goal's z, so send the height of the floor under
         # the robot.
         floor_z = pose.z - self.config.base_height_m
         self.goal.publish(PointStamped(x, y, floor_z, frame_id=self.config.world_frame))
+        self._target = (x, y)
+        self._timeout = asyncio.get_running_loop().call_later(
+            timeout_s, self._finish, f"Gave up after {timeout_s:g}s"
+        )
+        return "Navigating. A tool update reports the robot's position when it stops."
 
-        wait_s = min(wait_s, self.config.max_wait_s)
-        deadline = time.monotonic() + wait_s
-        if poll_interval_s is None or poll_interval_s <= 0:
-            poll_interval_s = self.config.poll_interval_s
-
-        while time.monotonic() < deadline and not self._cancelled.is_set():
-            # Check if we've reached the target
-            pose = self._pose() or pose
-            if math.hypot(x - pose.x, y - pose.y) <= self.config.goal_tolerance:
-                return f"Reached ({x:.2f}, {y:.2f}); robot at ({pose.x:.2f}, {pose.y:.2f})."
-
-            self._cancelled.wait(poll_interval_s)
-
-        if self._cancelled.is_set():
-            outcome = "Cancelled"
+    def _finish(self, outcome: str) -> None:
+        if self._timeout is None:
+            return
+        self._timeout.cancel()
+        self._timeout = None
+        # A NaN goal cancels the planner's goal
+        self.goal.publish(
+            PointStamped(math.nan, math.nan, math.nan, frame_id=self.config.world_frame)
+        )
+        # Tell the BasicPathFollower to stop
+        self.stop_movement.publish(Bool(True))
+        pose = self._pose()
+        if pose is None:
+            where = "robot position unknown"
         else:
-            self._cancel_goal()
-            outcome = f"Gave up after {wait_s:.0f}s and stopped"
-        return f"{outcome}; robot was at ({pose.x:.2f}, {pose.y:.2f})."
+            distance = math.dist(self._target, (pose.x, pose.y))
+            where = f"robot at ({pose.x:.2f}, {pose.y:.2f}), {distance:.2f} m from the target"
+        self.tool_update("go_to", f"{outcome}; {where}.")
+        self.stop_tool("go_to")
 
     @skill
-    def stop_navigation(self) -> str:
+    async def stop_navigation(self) -> str:
         """Cancel the current goal and stop moving."""
-        # stop the loop in self.go_to
-        self._cancel_goal()
-        # stop the Planner and BasicPathFollower
-        self._cancelled.set()
+        self._finish("Cancelled")
         return "Stopped."
