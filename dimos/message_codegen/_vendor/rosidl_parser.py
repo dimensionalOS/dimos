@@ -907,7 +907,7 @@ def parse_action_string(pkg_name, action_name, action_string):
         pkg_name, action_name + ACTION_RESULT_SUFFIX, result_string)
     feedback_message = parse_message_string(
         pkg_name, action_name + ACTION_FEEDBACK_SUFFIX, feedback_string)
-    # ---------------------------------------------------------------------------------------------
+    # Parse action definitions.
 
     return ActionSpecification(
         pkg_name, action_name, goal_message, result_message, feedback_message)

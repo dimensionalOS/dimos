@@ -1,0 +1,12 @@
+[build-system]
+requires = ["setuptools>=70", "wheel", "pybind11==3.0.1", "cmake>=3.20"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dimos-generated"
+version = "0.1.0"
+description = "Prebuilt DimOS message values and complete ROS2 schemas"
+requires-python = ">=3.10"
+
+[project.entry-points."dimos.messages"]
+dimos_generated = "dimos_generated_schemas.provider"

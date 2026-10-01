@@ -277,9 +277,17 @@ jobs:
         with:
           enable-cache: true
           prune-cache: true
+      - name: Build standalone CDR dependency
+        run: bash scripts/setup_message_codegen.sh
       - name: Install lint dependencies
         run: uv sync --only-group lint --frozen
+      - name: Install native build typing dependencies
+        run: uv pip install --no-deps pybind11==3.0.1 types-setuptools==77.0.2.20250328
+      - name: Generate CDR typing package
+        run: uv run python -m dimos.message_codegen.generate --output build/messages
       - name: Mypy
+        env:
+          MYPYPATH: build/messages/typing
         run: uv run mypy
 
       # The deno-fmt pre-commit hook needs deno on PATH.
@@ -333,6 +341,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y portaudio19-dev
+      - name: Build standalone CDR dependency
+        run: bash scripts/setup_message_codegen.sh
       - name: Build and test PyO3 bindings
         # PyO3 extension modules (cdylib + `extension-module`) are the one case
         # that still needs a plain build: pytest imports the compiled .so.
@@ -481,6 +491,8 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 'lts/*'
+      - name: Build standalone CDR dependency
+        run: bash scripts/setup_message_codegen.sh
       - name: Install Python dependencies
         run: uv sync --group tests --frozen
       - name: Restore Hugging Face model cache
@@ -1083,7 +1095,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             `# Compiler toolchain for the in-tree pybind11 C++ extension.` \
-            build-essential \
+            build-essential cmake \
             `# Runtime lib for opencv-python (cv2 loads libGL.so.1 on import).` \
             libgl1 \
             `# Runtime lib for PyTurboJPEG (fast JPEG encode/decode).` \

@@ -18,8 +18,9 @@ from __future__ import annotations
 
 import json
 
-from dimos.message_codegen import cpp
-from dimos.message_codegen.definitions import Definitions, Message
+from . import cpp
+from .definitions import Definitions, Message
+from .ownership import ABI
 
 
 def string_literal(value: str) -> str:
@@ -30,7 +31,15 @@ def string_literal(value: str) -> str:
 
 
 def generate(
-    messages: tuple[Message, ...], definitions: Definitions, module: str
+    messages: tuple[Message, ...],
+    definitions: Definitions,
+    module: str,
+    *,
+    imports: tuple[str, ...] = (),
+    shared: bool = False,
+    version: str = "0.1.0",
+    imported: dict[str, str] | None = None,
+    dependency_versions: dict[str, str] | None = None,
 ) -> dict[str, str]:
     sources: dict[str, str] = {}
     containers = sorted(
@@ -49,6 +58,7 @@ def generate(
         lines = [
             "// Generated from ROS2 .msg definitions. Do not edit.",
             "#include <pybind11/pybind11.h>",
+            "#include <pybind11/operators.h>",
             "#include <pybind11/stl.h>",
             '#include "messages.hpp"',
             '#include "dimos_python.hpp"',
@@ -62,7 +72,8 @@ def generate(
                     "{",
                     f'auto package = py::hasattr(root, "{message.package}") ? root.attr("{message.package}").cast<py::module_>() : root.def_submodule("{message.package}");',
                     'auto module = py::hasattr(package, "msg") ? package.attr("msg").cast<py::module_>() : package.def_submodule("msg");',
-                    f'auto cls = py::class_<{native}>(module, "{message.short_name}", py::dynamic_attr(), py::module_local());',
+                    f'auto cls = py::class_<{native}>(module, "{message.short_name}", py::dynamic_attr(), py::module_local({str(not shared).lower()}));',
+                    "cls.def(py::self == py::self).def(py::self != py::self);",
                     f"cls.def(py::init([](py::kwargs kwargs) {{ {native} value{{}};",
                     "for (auto item : kwargs) { auto key = py::cast<std::string>(item.first);",
                 ]
@@ -114,6 +125,16 @@ def generate(
             )
         lines.append("}")
         sources[function + ".cpp"] = "\n".join(lines) + "\n"
+    checks = []
+    for dependency, expected in sorted((dependency_versions or {}).items()):
+        checks.append(
+            f'{{ auto dep = pybind11::module_::import("{dependency}"); if (pybind11::str(dep.attr("__dimos_version__")).cast<std::string>() != {json.dumps(expected)} || pybind11::str(dep.attr("__dimos_abi__")).cast<std::string>() != {json.dumps(ABI)}) throw pybind11::import_error("Incompatible message dependency: {dependency}"); }}'
+        )
+    for name, dependency in sorted((imported or {}).items()):
+        package, _, short = name.split("/")
+        checks.append(
+            f'if (pybind11::str(pybind11::module_::import("{dependency}").attr("{package}").attr("msg").attr("{short}").attr("schema")).cast<std::string>() != {string_literal(definitions.schema(name))}) throw pybind11::import_error("Dependency schema mismatch: {name}");'
+        )
     sources["bindings.cpp"] = (
         "\n".join(
             [
@@ -121,6 +142,10 @@ def generate(
                 "#include <pybind11/pybind11.h>",
                 *(f"void {function}(pybind11::module_&);" for function in functions),
                 f"PYBIND11_MODULE({module}, root) {{",
+                *(f'pybind11::module_::import("{dependency}");' for dependency in imports),
+                *checks,
+                f'root.attr("__dimos_version__") = {json.dumps(version)};',
+                f'root.attr("__dimos_abi__") = {json.dumps(ABI)};',
                 *(f"{function}(root);" for function in functions),
                 "}",
             ]

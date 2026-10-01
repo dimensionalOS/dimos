@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=70", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dimos-message-build"
+version = "0.1.0"
+description = "Standalone DimOS message build backend"
+requires-python = ">=3.10"
+dependencies = ["setuptools>=70", "wheel", "pybind11==3.0.1", "tomli>=2; python_version < '3.11'"]
+
+[tool.setuptools]
+packages = ["dimos_message_build", "dimos_message_build._vendor"]
+package-dir = {"dimos_message_build" = "."}
+include-package-data = false
+
+[tool.setuptools.package-data]
+"dimos_message_build" = ["schemas/**/*", "templates/*", "sources.json"]

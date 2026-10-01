@@ -16,7 +16,7 @@ mkdir -p build/message-codegen/demo/rust/src/bin build/message-codegen/demo/evid
 cp examples/message-codegen/relay.rs build/message-codegen/demo/rust/src/bin/relay.rs
 cargo build --manifest-path build/message-codegen/demo/rust/Cargo.toml
 export PYTHONPATH="$PWD/build/message-codegen/demo/cpp/build${PYTHONPATH:+:$PYTHONPATH}"
-.venv/bin/pytest dimos/message_codegen --noconftest -o addopts='' -q \
+.venv/bin/python -m pytest dimos/message_codegen --noconftest -o addopts='' -q \
   | tee build/message-codegen/demo/evidence/pytest.txt
 .venv/bin/python examples/message-codegen/demo_relay.py --build build/message-codegen/demo \
   | tee build/message-codegen/demo/evidence/relay.txt

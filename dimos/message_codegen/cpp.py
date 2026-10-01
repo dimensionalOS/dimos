@@ -22,7 +22,7 @@ import json
 import math
 from typing import Any
 
-from dimos.message_codegen.definitions import FieldType, Message
+from .definitions import FieldType, Message
 
 PRIMITIVES = {
     "bool": "bool",
@@ -202,7 +202,7 @@ def validation(message: Message) -> list[str]:
     return lines
 
 
-def generate(messages: tuple[Message, ...]) -> str:
+def generate(messages: tuple[Message, ...], imports: tuple[str, ...] = ()) -> str:
     guards = {
         message.name: "DIMOS_MESSAGE_"
         + sha256(
@@ -232,6 +232,7 @@ def generate(messages: tuple[Message, ...]) -> str:
         "#include <fastcdr/CdrSizeCalculator.hpp>",
         '#include "dimos_cdr.hpp"',
     ]
+    lines.extend(f"#include <{module}/messages.hpp>" for module in imports)
     for message in messages:
         guard = guards[message.name] + "_TYPE"
         lines.extend([f"#ifndef {guard}", f"#define {guard}"])
@@ -253,12 +254,23 @@ def generate(messages: tuple[Message, ...]) -> str:
             else:
                 default = "{" + literal(field.default, field.type.name) + "}"
             lines.append(f"{type_name(field.type)} {identifier(field.name)}{default};")
+        equal = (
+            " && ".join(
+                f"this->{identifier(field.name)} == other.{identifier(field.name)}"
+                for field in message.fields
+            )
+            or "true"
+        )
+        other = " other" if message.fields else ""
+        lines.append(f"bool operator==(const {name}&{other}) const {{ return {equal}; }}")
+        lines.append(f"bool operator!=(const {name}& other) const {{ return !(*this == other); }}")
         lines.append("void validate() const {")
         lines.extend(validation(message))
         lines.extend(["}", f'static constexpr const char* msg_name = "{message.name}";', "};", "}"])
         lines.append("#endif")
 
     lines.append("namespace eprosima::fastcdr {")
+    lines.extend(f"#include <{module}/messages.hpp>" for module in imports)
     for message in messages:
         guard = guards[message.name] + "_CODEC"
         lines.extend([f"#ifndef {guard}", f"#define {guard}"])

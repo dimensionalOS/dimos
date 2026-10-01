@@ -17,6 +17,19 @@ before output is written. Repeat `--package-root` and `--type` for multiple inpu
 omitting `--type` generates all available definitions. The output belongs in an
 ignored build directory. Generation never downloads dependencies.
 
+The `typing/<module>/` output describes the native Python fields, keyword-only
+constructors, sequence operations, and NumPy views. For a local generated build,
+point `MYPYPATH` at `typing/`. Wheels install the same interfaces as a PEP 561
+`<module>-stubs` package, so callers get type checking without source generation
+or runtime introspection. Fixed-array interfaces omit resizing methods.
+
+DimOS-owned definitions live under `schemas/dimos_msgs/msg/`. They use the same
+generation and packaging path as the pinned standard definitions. In particular,
+weighted line segments have explicit endpoints and weights; they do not reuse
+Path poses or quaternion fields. Stamped custom messages use standard Header,
+and trajectory durations use builtin_interfaces/Duration. Numeric convenience
+operations belong in helpers such as `dimos.msgs.time`, outside generated types.
+
 Python and C++ use Fast CDR 2.4.0; Python bindings use pybind11 3.0.1. Rust uses
 `re_cdr` 0.1.0 and `serde-big-array` 0.5.1. The current generator explicitly rejects
 `wstring` because the selected Rust backend has no matching wide-string Serde
@@ -45,8 +58,8 @@ To refresh the pinned inputs intentionally, edit the revisions in
 Applications and builds never run the maintenance downloader.
 
 This work is being delivered through the `replace-lcm-message-encoding` OpenSpec
-change. The generated pipeline is under development; the old runtime message APIs
-have not yet been replaced.
+change. Generation and the runtime cutover are reviewed as separate layers;
+see the message tutorials for the workflow appropriate to your checkout.
 
 ## Distribution
 
@@ -57,7 +70,8 @@ The Python sdist contains the generator, its pinned parser, and all definition
 inputs. Building the sdist regenerates source without ROS. The wheel contains
 native code plus definitions, licenses, and the `dimos.messages` provider.
 
-DimOS's own wheel uses the same `MessageBuildExt` and generator from `setup.py`.
+The independent `packages/dimos-generated` project owns built-in generation and
+the Python extension build. The root DimOS `setup.py` consumes that package.
 The release workflow preserves the existing Linux x86_64/aarch64 and macOS arm64
 wheel matrix and adds CMake/schema and Cargo source packages to GitHub releases.
 Source developers run `bash scripts/setup_message_codegen.sh` before building;

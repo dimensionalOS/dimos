@@ -24,8 +24,7 @@ from setuptools.command.build_py import build_py as _build_py
 
 # PEP 517 does not put the source tree on sys.path when executing setup.py.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from dimos.message_codegen.generate import generate
-from dimos.message_codegen.native_build import MessageBuildExt, MessageExtension
+from dimos.message_codegen.native_build import MessageBuildExt
 
 
 def python_is_macos_universal_binary(executable: str | None = None) -> bool:
@@ -156,14 +155,7 @@ if not python_is_macos_universal_binary() and os.environ.get("CIBUILDWHEEL") != 
     extra_compile_args.append("-march=native")
 
 # C++ extensions
-message_output = Path(__file__).parent / "build" / "messages"
-generate([], message_output)
 ext_modules = [
-    MessageExtension(
-        "dimos_generated",
-        message_output / "cpp",
-        Path(__file__).parent / "build/message-codegen/install",
-    ),
     Pybind11Extension(
         "dimos.navigation.replanning_a_star.min_cost_astar_ext",
         [os.path.join("dimos", "navigation", "replanning_a_star", "min_cost_astar_cpp.cpp")],

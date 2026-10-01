@@ -5,12 +5,18 @@ on:
     paths:
       - dimos/message_codegen/**
       - examples/message-codegen/**
+      - examples/message-project/**
+      - packages/dimos-generated/**
+      - docs/development/messages*.md
+      - docs/development/message-reference.md
       - native/rust/dimos-lcm-transport/**
       - scripts/*message*codegen*
       - scripts/test_message_packages.sh
+      - scripts/package_messages.sh
       - scripts/test_message_mcap.sh
       - dimos/protocol/cdr_mcap.py
       - dimos/protocol/test_cdr_mcap.py
+      - dimos/protocol/pubsub/impl/*ros*.py
       - scripts/vendor_message_definitions.py
       - .github/workflows/message-codegen.yml
       - .github/docker/message-codegen-reference.Dockerfile
@@ -35,7 +41,7 @@ jobs:
         run: |
           test ! -d /opt/ros
           uv venv .venv --python 3.12
-          uv pip install --python .venv/bin/python pybind11==3.0.1 rosbags==0.11.0 numpy pytest pytest-asyncio pytest-env lcm-dimos-fork setuptools wheel mcap==1.4.0 rerun-sdk==0.32.0 pillow
+          uv pip install --python .venv/bin/python pybind11==3.0.1 rosbags==0.11.0 numpy PyYAML==6.0.3 pytest pytest-asyncio pytest-env lcm-dimos-fork setuptools wheel mcap==1.4.0 rerun-sdk==0.32.0 pillow mypy==1.19.0
           .venv/bin/python -c "import importlib.util; assert importlib.util.find_spec('rclpy') is None"
       - name: Build the pinned standalone CDR library
         run: bash scripts/setup_message_codegen.sh
@@ -43,6 +49,37 @@ jobs:
         run: bash scripts/test_message_codegen.sh
       - name: Build and consume wheel, sdist, CMake, and Cargo packages
         run: bash scripts/test_message_packages.sh
+      - name: Build standalone message authoring and built-in packages
+        run: |
+          uv build dimos/message_codegen --out-dir build/message-codegen/ux-wheelhouse
+          CMAKE_PREFIX_PATH="$PWD/build/message-codegen/install" uv build packages/dimos-generated --out-dir build/message-codegen/ux-wheelhouse
+          uv venv --seed build/message-codegen/download-env
+          build/message-codegen/download-env/bin/python -m pip download --only-binary=:all: --dest build/message-codegen/ux-wheelhouse setuptools wheel packaging pybind11==3.0.1 cmake
+      - name: Verify custom package ownership, rebuilds, and isolated pip installs
+        env:
+          DIMOS_FASTCDR_PREFIX: ${{ github.workspace }}/build/message-codegen/install
+          DIMOS_MESSAGE_WHEELHOUSE: ${{ github.workspace }}/build/message-codegen/ux-wheelhouse
+        run: |
+          .venv/bin/python -m pytest -o addopts="" --noconftest -q \
+            dimos/message_codegen/test_project.py \
+            dimos/message_codegen/test_repository_tutorial.py \
+            dimos/message_codegen/test_ownership.py \
+            dimos/message_codegen/test_ownership_native.py \
+            dimos/message_codegen/test_project_install.py
+      - name: Package matching built-in CMake and Rust artifacts
+        run: bash scripts/package_messages.sh
+      - name: Consume relocated built-in native packages
+        env:
+          DIMOS_BUILTIN_PACKAGE: ${{ github.workspace }}/build/message-codegen/release
+          DIMOS_FASTCDR_PREFIX: ${{ github.workspace }}/build/message-codegen/install
+        run: .venv/bin/python -m pytest -o addopts="" --noconftest -q dimos/message_codegen/test_builtin_artifacts.py
+      - name: Retain standalone message build artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: message-authoring-packages
+          path: |
+            build/message-codegen/ux-wheelhouse/dimos*
+            build/message-codegen/release/dist/*
       - name: Record generated CDR and verify both viewer decoders
         run: bash scripts/test_message_mcap.sh
       - name: Retain self-contained recording and viewer evidence
@@ -61,6 +98,12 @@ jobs:
             build/message-codegen/external-app/evidence/
             build/message-codegen/external-app/dist/
             build/message-codegen/external-app/generated/rust/target/package/*.crate
+      - name: Retain the standalone Python binding for ROS bridge verification
+        uses: actions/upload-artifact@v7
+        with:
+          name: message-codegen-python-binding
+          path: build/message-codegen/demo/cpp/build/dimos_generated*.so
+          if-no-files-found: error
       - name: Retain executable demo evidence
         if: always()
         uses: actions/upload-artifact@v7
@@ -78,6 +121,10 @@ jobs:
         with:
           name: message-codegen-evidence
           path: build/message-codegen/demo/evidence/
+      - uses: actions/download-artifact@v8
+        with:
+          name: message-codegen-python-binding
+          path: build/message-codegen/demo/cpp/build/
       - name: Build independent ROS2 reference environment
         run: docker build -f .github/docker/message-codegen-reference.Dockerfile -t dimos-cdr-jazzy-reference .github/docker
       - name: Compare native payloads with independently generated ROS2 types

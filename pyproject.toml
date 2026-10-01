@@ -102,8 +102,11 @@ classifiers = [
 ]
 
 dependencies = [
+    "dimos-generated==0.1.0",
+    "dimos-message-build==0.1.0",
     # Transport Protocols
     "dimos-lcm>=0.1.3",
+    "lcm-dimos-fork>=1.5.2.post1", # Raw LCM transport; generated messages use CDR.
     "eclipse-zenoh>=1.10.1,<2.0",
     "PyTurboJPEG==1.8.2",
     "imagecodecs>=2024.6.1", # JPEG-XL for CompressedImage
@@ -165,9 +168,6 @@ dependencies = [
     "websocket-client>=1.8",
 ]
 
-
-[project.entry-points."dimos.messages"]
-builtin = "dimos.message_codegen.builtin_provider"
 
 [project.scripts]
 lcmspy = "dimos.cli.spy.run_spy:lcm_main"
@@ -279,7 +279,7 @@ unitree-dds = [
 control = [
     "piper-sdk",
     "xarm-python-sdk>=1.17.0",
-    "a750-control; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "a750-control; python_version >= '3.12' and sys_platform == 'linux' and platform_machine == 'x86_64'",
     "can-motor-control>=0.0.8",
     "python-can>=4",
     "pygame>=2.6.1",
@@ -416,6 +416,9 @@ project-deps = [
 ]
 
 tests = [
+    # Independent CDR/schema references used by message and MCAP tests.
+    "rosbags==0.11.0",
+    "mcap>=1.2.0",
     # Test runner
     "pytest==8.3.5",
     "pytest-asyncio==1.4.0",
@@ -551,6 +554,8 @@ override-dependencies = [
 ]
 
 [tool.uv.sources]
+dimos-generated = { path = "packages/dimos-generated" }
+dimos-message-build = { path = "dimos/message_codegen" }
 # CUDA builds are not published for macOS or non-x86_64 Linux. Those platforms
 # fall back to PyPI.
 torch = [
@@ -606,7 +611,7 @@ ignore = [
 # (camelCase, pinned to the TS side by the golden fixtures).
 "dimos/web/relay_bridge/protocol.py" = ["N815"]
 "dimos/web/relay_bridge/manifest.py" = ["N815"]
-# Polyfill module: re-exports ROS message types (with a dimos_lcm fallback).
+# Polyfill module: re-exports optional ROS message types.
 "dimos/types/ros_polyfill.py" = ["F401"]
 
 [tool.ruff.lint.isort]
@@ -634,10 +639,10 @@ module = [
     "a750_control.*",
     "bosdyn",
     "bosdyn.*",
+    "dimos_lcm.*",
     "builtin_interfaces.*",
     "cyclonedds",
     "cyclonedds.*",
-    "dimos_lcm.*",
     "lz4",
     "lz4.*",
     "dimos_mls_planner",
@@ -719,6 +724,7 @@ follow_imports = "skip"
 
 [tool.pytest.ini_options]
 testpaths = ["dimos"]
+markers = ["native_e2e: native module end-to-end checks requiring built executables"]
 env = [
   "GOOGLE_MAPS_API_KEY=AIzafake_google_key",
   "PYTHONWARNINGS=ignore:cupyx.jit.rawkernel is experimental:FutureWarning",

@@ -16,8 +16,8 @@
 
 from typing import Any
 
-from dimos.message_codegen.definitions import Definitions
-from dimos.message_codegen.providers import providers, schema_roots
+from .definitions import Definitions
+from .providers import providers, schema_roots
 
 
 def message_types() -> dict[str, Any]:
