@@ -48,7 +48,6 @@ from dimos.control.tasks.operator_hold_task.operator_hold_task import (
     operator_hold_task,
 )
 from dimos.control.tasks.trajectory_task.trajectory_task import (
-    JOINT_TRAJECTORY_TASK_NAME,
     JointTrajectoryTask,
     JointTrajectoryTaskConfig,
     TrajectoryExecutionStatus,
@@ -56,7 +55,6 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
 from dimos.control.tick_loop import TickLoop
 from dimos.hardware.drive_trains.spec import TwistBaseAdapter
 from dimos.hardware.manipulators.spec import ManipulatorAdapter
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState
@@ -182,7 +180,6 @@ def rig() -> Iterator[Rig]:
     try:
         yield rig
     finally:
-        rig.hold_task.acknowledge()  # a hold left on would refuse other tests' trajectories
         rig.coordinator.stop()
 
 
@@ -240,41 +237,17 @@ class TestWhileHeld:
         assert not rig.trajectory_task.is_active()
         assert rig.arm_writes()[-1] == pytest.approx(ARM_POSITIONS)
 
-    def test_new_trajectory_is_rejected_with_operator_hold(self, rig):
+    def test_trajectory_sent_during_hold_is_accepted_then_aborted_by_preemption(self, rig):
         rig.request(reason="arm stuck")
+        rig.tick()
 
         result = rig.coordinator.execute_trajectory(_trajectory())
+        rig.tick()
 
-        assert result.status is TrajectoryExecutionStatus.OPERATOR_HOLD
-        assert result.status is not TrajectoryExecutionStatus.START_STATE_MISMATCH
-        assert "arm stuck" in result.message
-        assert rig.trajectory_task.get_state() is TrajectoryState.IDLE
-
-    def test_execute_through_task_invoke_is_rejected_too(self, rig):
-        # The execution manager dispatches straight to the task's execute command.
-        rig.request()
-
-        result = rig.coordinator.task_invoke(
-            JOINT_TRAJECTORY_TASK_NAME,
-            "execute",
-            {
-                "trajectory": _trajectory(),
-                "current_positions": dict(zip(ARM_JOINTS, ARM_POSITIONS, strict=True)),
-            },
-        )
-
-        assert result.status is TrajectoryExecutionStatus.OPERATOR_HOLD
-        assert rig.trajectory_task.get_state() is TrajectoryState.IDLE
-
-    def test_streamed_joint_command_is_refused_too(self, rig):
-        rig.request()
-
-        accepted = rig.trajectory_task.on_joint_command(
-            JointState(name=list(ARM_JOINTS), position=[0.5, 0.5, 0.5]), t_now=0.0
-        )
-
-        assert accepted is False
-        assert rig.trajectory_task.get_state() is TrajectoryState.IDLE
+        assert result.status is TrajectoryExecutionStatus.ACCEPTED
+        assert rig.trajectory_task.get_state() is TrajectoryState.ABORTED
+        assert not rig.trajectory_task.is_active()
+        assert rig.arm_writes()[-1] == pytest.approx(ARM_POSITIONS)  # the arm did not move
 
 
 class TestStatus:

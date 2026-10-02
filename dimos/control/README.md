@@ -150,14 +150,15 @@ coordinator.task_invoke("operator_hold", "request", {"route": "manual", "reason"
 coordinator.task_invoke("operator_hold", "acknowledge")
 ```
 
-`route` is who asked: `manual`, `failsafe` or `agent`. While on, running
-trajectories are preempted and new ones (`execute_trajectory`, `execute`
-through `task_invoke`, or a streamed `joint_command`) come back
-`TrajectoryExecutionStatus.OPERATOR_HOLD`. `get_status` answers with an
-`OperatorHoldStatus` (on, route, reason, start time); the task also hands the
-same status to whatever `set_status_publisher()` was given, once a second
-while on and once more on acknowledge. After acknowledge nothing resumes by
-itself: the next task to command a joint takes it.
+`route` is who asked: `manual`, `failsafe` or `agent`. While on, a running
+trajectory is preempted, and a trajectory sent during the hold is accepted
+and then aborted by preemption on the next tick, so the arm stays put.
+Stopping a running policy is the policy's job, not the coordinator's.
+`get_status` answers with an `OperatorHoldStatus` (on, route, reason, start
+time); the task also hands the same status to whatever
+`set_status_publisher()` was given, once a second while on and once more on
+acknowledge. After acknowledge nothing resumes by itself: the next task to
+command a joint takes it.
 
 ## Control Modes
 

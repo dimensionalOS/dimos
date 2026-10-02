@@ -34,7 +34,6 @@ from dimos.control.task import (
 from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionResult,
     TrajectoryExecutionStatus,
-    operator_hold_rejection,
 )
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState, TrajectoryStatus
@@ -126,9 +125,6 @@ class PlanarBaseTrajectoryTask(BaseControlTask):
     ) -> TrajectoryExecutionResult:
         """Accept a trajectory. Its start is checked against ``current_positions`` when the
         caller has them, and otherwise against odometry on the first tick."""
-        rejection = operator_hold_rejection()
-        if rejection is not None:
-            return rejection
         problem = _trajectory_problem(trajectory, self._config)
         if not problem and current_positions is not None:
             problem = self._start_problem(trajectory, current_positions)

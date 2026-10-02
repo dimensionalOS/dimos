@@ -80,25 +80,6 @@ class OperatorHoldStatus:
     stamp: float = 0.0
 
 
-# Holds that are on right now, across every coordinator in this process.
-# Tasks never see each other's claims, so this is how a trajectory task
-# learns that a hold is on before it accepts a new trajectory. A deployment
-# runs one coordinator per process, so "this process" means "this robot".
-_active_holds: set[OperatorHoldTask] = set()
-_active_holds_lock = threading.Lock()
-
-
-def active_hold_status() -> OperatorHoldStatus | None:
-    """The status of an operator hold that is on in this process, or None when none is."""
-    with _active_holds_lock:
-        holds = list(_active_holds)
-    for hold in holds:
-        status = hold.get_status()
-        if status.on:
-            return status
-    return None
-
-
 def operator_hold_task(priority: int = OPERATOR_HOLD_PRIORITY) -> TaskConfig:
     """Blueprint entry for the coordinator's one operator-hold task.
 
@@ -232,15 +213,11 @@ class OperatorHoldTask(BaseControlTask):
             self._route = route_value
             self._reason = reason
             status = self._status_locked()
-        with _active_holds_lock:
-            _active_holds.add(self)
         logger.warning("Operator hold requested", route=route_value, reason=reason)
         return status
 
     def acknowledge(self) -> OperatorHoldStatus:
         """Release the hold. Nothing resumes by itself; the next task to command a joint takes it."""
-        with _active_holds_lock:
-            _active_holds.discard(self)
         with self._lock:
             was_on = self._on
             self._on = False

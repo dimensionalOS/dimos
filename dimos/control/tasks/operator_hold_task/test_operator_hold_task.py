@@ -16,36 +16,17 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-
 import pytest
 
 from dimos.control.coordinator import TaskConfig
 from dimos.control.task import ControlMode, CoordinatorState, JointStateSnapshot
-from dimos.control.tasks.operator_hold_task import operator_hold_task as hold_module
 from dimos.control.tasks.operator_hold_task.operator_hold_task import (
     OPERATOR_HOLD_TASK_NAME,
     OperatorHoldStatus,
     OperatorHoldTask,
-    active_hold_status,
     create_task,
     operator_hold_task,
 )
-from dimos.control.tasks.trajectory_task.trajectory_task import (
-    JointTrajectoryTask,
-    JointTrajectoryTaskConfig,
-    TrajectoryExecutionStatus,
-)
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
-
-
-@pytest.fixture(autouse=True)
-def _release_leftover_holds() -> Iterator[None]:
-    """A hold left on would refuse trajectories in every later test of this process."""
-    yield
-    for hold in list(hold_module._active_holds):
-        hold.acknowledge()
 
 
 def _state(positions: dict[str, float], t_now: float = 0.0) -> CoordinatorState:
@@ -151,25 +132,6 @@ def test_acknowledge_clears_everything():
 def test_status_interval_must_be_positive():
     with pytest.raises(ValueError):
         OperatorHoldTask(status_interval=0.0)
-
-
-def test_active_hold_is_visible_to_trajectory_tasks_until_acknowledged():
-    hold = OperatorHoldTask()
-    trajectory_task = JointTrajectoryTask(JointTrajectoryTaskConfig(joint_names=["arm/joint1"]))
-    trajectory = JointTrajectory(
-        joint_names=["arm/joint1"], points=[TrajectoryPoint(positions=[0.2])]
-    )
-    assert active_hold_status() is None
-
-    hold.request("agent", "need help")
-    refused = trajectory_task.execute(trajectory, {"arm/joint1": 0.0})
-    hold.acknowledge()
-    accepted = trajectory_task.execute(trajectory, {"arm/joint1": 0.0})
-
-    assert refused.status is TrajectoryExecutionStatus.OPERATOR_HOLD
-    assert "need help" in refused.message
-    assert accepted.status is TrajectoryExecutionStatus.ACCEPTED
-    assert active_hold_status() is None
 
 
 def test_blueprint_helper_and_factory():
