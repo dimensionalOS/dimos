@@ -60,6 +60,7 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
 )
 from dimos.control.tick_loop import TickLoop
 from dimos.core.stream import In
+from dimos.hardware.manipulators.mock.adapter import MockAdapter
 from dimos.hardware.manipulators.spec import ManipulatorAdapter
 from dimos.hardware.spec import JointLimits
 from dimos.hardware.whole_body.spec import MotorState, WholeBodyAdapter
@@ -333,6 +334,50 @@ class _EEFTwistCoordinator(ControlCoordinator):
 
 
 class TestControlCoordinatorLifecycle:
+    @pytest.mark.parametrize("load_fails", [False, True])
+    def test_hardware_stays_disabled_until_task_is_ready(
+        self, make_coordinator, mocker, load_fails
+    ):
+        component = HardwareComponent(
+            hardware_id="arm",
+            hardware_type=HardwareType.MANIPULATOR,
+            joints=make_joints("arm", 6),
+            adapter_type="mock",
+        )
+        coordinator = make_coordinator(
+            hardware=[component],
+            tasks=[TaskConfig(name="test_task", type="trajectory", auto_start=True)],
+        )
+        adapter = MockAdapter(dof=6)
+        task = RecordingTask("test_task")
+        observations = []
+
+        def load_task(config):
+            observations.append(("load", adapter.read_enabled()))
+            if load_fails:
+                raise RuntimeError("model loading failed")
+            return task
+
+        mocker.patch.object(coordinator, "_create_adapter", return_value=adapter)
+        mocker.patch.object(coordinator, "_create_task_from_config", side_effect=load_task)
+        mocker.patch.object(
+            task,
+            "start",
+            create=True,
+            side_effect=lambda: observations.append(("start", adapter.read_enabled())),
+        )
+
+        if load_fails:
+            with pytest.raises(RuntimeError, match="model loading failed"):
+                coordinator.start()
+            assert observations == [("load", False)]
+            assert not adapter.is_connected()
+            assert coordinator.list_hardware() == []
+        else:
+            coordinator.start()
+            assert observations == [("load", False), ("start", False)]
+            assert adapter.read_enabled()
+
     def test_start_subscribes_ee_twist_only_for_eef_twist_tasks(self, make_coordinator, mocker):
         mocker.patch("dimos.core.module.Module.start")
         mocker.patch("dimos.control.coordinator.TickLoop")

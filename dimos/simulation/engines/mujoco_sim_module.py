@@ -216,6 +216,14 @@ class _WholeBodySimHooks:
             if self._gripper_idx < len(positions):
                 shm.write_gripper_state(positions[self._gripper_idx])
 
+    def ready_for_physics(self) -> bool:
+        """Whether a complete whole-body command has been latched."""
+        return (
+            self._latest_pd_pos_target is not None
+            and self._latest_pd_kp is not None
+            and self._latest_pd_kd is not None
+        )
+
     def clear_latched_commands(self) -> None:
         self._latest_pd_pos_target = None
         self._latest_pd_kp = None
@@ -245,12 +253,14 @@ class MujocoSimModuleConfig(ModuleConfig, DepthCameraConfig):
     scene_xml: str | Path | None = None
     robot_mjcf: str | Path | None = None
     robot_meshdir: str | Path | None = None
+    robot_root_body: str | None = None  # Attach only this body from a robot+scene MJCF.
     robot_id: str = ""
     scene_entities: list[dict[str, Any]] = Field(default_factory=list)
     spawn_xy: tuple[float, float] | None = None
     spawn_z: float | None = None
     spawn_yaw: float | None = None
     reset_joint_positions: list[float] | None = None
+    wait_for_control_command: bool = False
     headless: bool = False
     tracked_bodies: list[str] = Field(default_factory=list)
     dof: int = 7
@@ -498,7 +508,7 @@ class MujocoSimModule(
         )
         if self.config.robot_mjcf is not None:
             engine_kwargs["config_path"] = Path(self.config.robot_mjcf)
-            engine_kwargs["model"] = self._compose_model()
+            engine_kwargs["model"] = self._compose_model(engine_assets)
         else:
             engine_kwargs["config_path"] = Path(self.config.address)
             engine_kwargs["assets"] = engine_assets
@@ -564,6 +574,9 @@ class MujocoSimModule(
         self._engine.set_step_hooks(
             before=self._sim_hooks.pre_step,
             after=self._publish_shm_and_lcm,
+            should_step=(
+                self._sim_hooks.ready_for_physics if self.config.wait_for_control_command else None
+            ),
         )
 
         # Start physics (sim thread spawned inside engine.connect()).
@@ -612,7 +625,7 @@ class MujocoSimModule(
             shm_key=shm_key,
         )
 
-    def _compose_model(self) -> mujoco.MjModel:
+    def _compose_model(self, assets: dict[str, bytes] | None = None) -> mujoco.MjModel:
         """Compose optional scene package MJCF + robot MJCF + scene-package entities."""
         from dimos.simulation.mujoco.scene_package_entity_composer import (
             add_scene_package_entities_to_spec,
@@ -628,6 +641,7 @@ class MujocoSimModule(
             else:
                 spec_scene = mujoco.MjSpec()
 
+            spec_scene.assets.update(assets or {})
             spec_robot = mujoco.MjSpec.from_file(str(self.config.robot_mjcf))
             if self.config.robot_meshdir is not None:
                 spec_robot.meshdir = str(self.config.robot_meshdir)
@@ -648,7 +662,13 @@ class MujocoSimModule(
                 **frame_kwargs,
             )
             prefix = f"{self.config.robot_id}-" if self.config.robot_id else None
-            spec_scene.attach(spec_robot, prefix=prefix, frame=frame)
+            if self.config.robot_root_body is None:
+                spec_scene.attach(spec_robot, prefix=prefix, frame=frame)
+            else:
+                robot_body = spec_robot.body(self.config.robot_root_body)
+                if robot_body is None:
+                    raise ValueError(f"Robot MJCF has no body {self.config.robot_root_body!r}")
+                frame.attach_body(robot_body, prefix=prefix)
 
             if self.config.scene_entities:
                 add_scene_package_entities_to_spec(
@@ -714,6 +734,20 @@ class MujocoSimModule(
         applied = engine.request_reset(wait=True)
         logger.info("MujocoSimModule: reset requested", applied=applied)
         return applied
+
+    @rpc
+    def get_root_pose(self) -> list[float] | None:
+        """Floating-base pose [x, y, z, qw, qx, qy, qz] of the robot root."""
+        engine = self._engine
+        if engine is None:
+            return None
+        pose = engine.get_root_pose()
+        if pose is None:
+            return None
+        position, quat_xyzw = pose
+        x, y, z = (float(v) for v in position)
+        qx, qy, qz, qw = (float(v) for v in quat_xyzw)
+        return [x, y, z, qw, qx, qy, qz]
 
     @rpc
     def respawn_at(

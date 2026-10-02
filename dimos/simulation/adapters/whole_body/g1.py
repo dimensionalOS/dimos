@@ -79,6 +79,7 @@ class SimMujocoG1WholeBodyAdapter:
         self._shm_key = shm_key_from_path(address)
         self._shm: ManipShmReader | None = None
         self._connected = False
+        self._active = False
 
     # Lifecycle
 
@@ -116,6 +117,7 @@ class SimMujocoG1WholeBodyAdapter:
             time.sleep(_READY_WAIT_POLL_S)
 
         self._connected = True
+        self._active = False
         logger.info(
             "SimMujocoG1WholeBodyAdapter connected",
             num_motors=_NUM_MOTORS,
@@ -130,9 +132,22 @@ class SimMujocoG1WholeBodyAdapter:
             self._shm.cleanup()
         self._shm = None
         self._connected = False
+        self._active = False
 
     def is_connected(self) -> bool:
         return self._connected and self._shm is not None
+
+    def activate(self) -> bool:
+        if not self.is_connected():
+            return False
+        self._active = True
+        return True
+
+    def deactivate(self) -> bool:
+        if not self.is_connected():
+            return False
+        self._active = False
+        return True
 
     # IO (WholeBodyAdapter protocol)
 
@@ -172,7 +187,7 @@ class SimMujocoG1WholeBodyAdapter:
         return None
 
     def write_motor_commands(self, commands: list[MotorCommand]) -> bool:
-        if not self.is_connected():
+        if not self.is_connected() or not self._active:
             return False
         assert self._shm is not None
         if len(commands) != _NUM_MOTORS:
