@@ -17,14 +17,23 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 import xml.etree.ElementTree as ET
 
 import numpy as np
 
+from dimos.manipulation.planning.groups.models import PlanningGroup
+from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
 from dimos.manipulation.planning.spec.enums import ObstacleType
-from dimos.robot.assets.model import LoadedRobotModel
+from dimos.manipulation.planning.spec.joint_space import (
+    CoordinateTopology,
+    JointCoordinate,
+    JointMechanismType,
+    JointSpace,
+)
+from dimos.robot.assets.model import JointDescription, LoadedRobotModel
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -43,10 +52,21 @@ _EXPECTED_DIMENSIONS = {
 # thousands; this is the ceiling that keeps a misaimed room-scale map from
 # quietly stalling the pipe.
 MAX_OCTREE_POINTS = 200_000
+_SUPPORTED_CONTROLLED_JOINT_TYPES = {"continuous", "prismatic", "revolute"}
 
 
-def validate_robot_model_config(config: RobotModelConfig) -> LoadedRobotModel:
-    """Validate one prepared robot model and its canonical planning groups."""
+@dataclass(frozen=True)
+class PreparedRobotModel:
+    """Materialized, validated model and its compiled canonical joint space."""
+
+    config: RobotModelConfig
+    description: LoadedRobotModel
+    joint_space: JointSpace
+    planning_groups: tuple[PlanningGroup, ...]
+
+
+def prepare_robot_model(config: RobotModelConfig) -> PreparedRobotModel:
+    """Materialize and validate one robot model exactly once."""
     if not config.joint_names:
         raise ValueError("RobotModelConfig contains no controllable joints")
     try:
@@ -75,9 +95,33 @@ def validate_robot_model_config(config: RobotModelConfig) -> LoadedRobotModel:
         raise ValueError(
             f"RobotModelConfig configured joints are missing from the model: {missing_joints}"
         )
+    joints_by_name = {joint.name: joint for joint in model_joints}
+    unsupported_joints = {
+        name: joints_by_name[name].type
+        for name in config.joint_names
+        if joints_by_name[name].type not in _SUPPORTED_CONTROLLED_JOINT_TYPES
+    }
+    if unsupported_joints:
+        raise ValueError(
+            "RobotModelConfig controlled joints must be one-DoF revolute, continuous, "
+            f"or prismatic joints; unsupported joints: {unsupported_joints}. Use "
+            "RobotModel.with_planar_base() for a floor-constrained mobile base."
+        )
     model_link_names = set(model_links)
     if config.base_link not in model_link_names:
         raise ValueError(f"RobotModelConfig base link '{config.base_link}' is missing")
+    planar_base = config.model.planar_base
+    if planar_base is not None:
+        if not config.planning_groups:
+            raise ValueError("Planar robot models require explicit planning groups")
+        if config.base_link != planar_base.root_link:
+            raise ValueError(
+                f"Planar robot base_link must be '{planar_base.root_link}', "
+                f"got '{config.base_link}'"
+            )
+        missing_base_joints = sorted(set(planar_base.joint_names) - set(config.joint_names))
+        if missing_base_joints:
+            raise ValueError(f"Planar robot controllable joints are missing: {missing_base_joints}")
 
     duplicate_group_names = _duplicates(group.name for group in config.planning_groups)
     if duplicate_group_names:
@@ -106,7 +150,57 @@ def validate_robot_model_config(config: RobotModelConfig) -> LoadedRobotModel:
                 raise ValueError(
                     f"Planning group '{group.name}' has missing {role} link '{link_name}'"
                 )
-    return model
+    coordinates = tuple(_compile_joint(joints_by_name[name]) for name in config.joint_names)
+    groups = PlanningGroupRegistry(config.planning_groups).list()
+    return PreparedRobotModel(
+        config=config,
+        description=model,
+        joint_space=JointSpace(coordinates),
+        planning_groups=groups,
+    )
+
+
+def _compile_joint(joint: JointDescription) -> JointCoordinate:
+    lower, upper = joint.lower, joint.upper
+    mechanism_type: JointMechanismType
+    if (lower is None) != (upper is None):
+        raise ValueError(f"Joint '{joint.name}' must define both lower and upper limits or neither")
+
+    if joint.type == "continuous":
+        mechanism_type = "continuous"
+        if lower is not None:
+            raise ValueError(f"Continuous joint '{joint.name}' must not define position limits")
+        topology = CoordinateTopology.CIRCLE
+    elif joint.type == "prismatic":
+        mechanism_type = "prismatic"
+        topology = CoordinateTopology.LINE if lower is None else CoordinateTopology.INTERVAL
+    elif joint.type == "revolute":
+        mechanism_type = "revolute"
+        if lower is None:
+            raise ValueError(
+                f"Revolute joint '{joint.name}' requires finite position limits; "
+                "use URDF type='continuous' for a periodic coordinate"
+            )
+        topology = CoordinateTopology.INTERVAL
+    else:
+        raise ValueError(f"Unsupported controlled joint type: {joint.type}")
+
+    if joint.velocity is None:
+        raise ValueError(f"Joint '{joint.name}' is missing a velocity limit")
+    if joint.acceleration is None:
+        raise ValueError(
+            f"Joint '{joint.name}' is missing an acceleration limit; apply "
+            "RobotModel.with_default_joint_acceleration_limit() explicitly"
+        )
+    return JointCoordinate(
+        name=joint.name,
+        mechanism_type=mechanism_type,
+        topology=topology,
+        lower=lower,
+        upper=upper,
+        max_velocity=joint.velocity,
+        max_acceleration=joint.acceleration,
+    )
 
 
 def _validate_srdf(srdf_path: Path) -> None:

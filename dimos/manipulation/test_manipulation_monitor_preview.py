@@ -22,6 +22,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from dimos.manipulation.manipulation_module import ManipulationModule
+from dimos.manipulation.manipulation_spec import CommandStatus
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
 from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
@@ -197,6 +198,23 @@ class TestOnJointState:
         assert state.position == [0.1, 0.2, 0.3]
         assert state.velocity == [1.0, 2.0, 3.0]
 
+    def test_aliases_coordinator_names_onto_model_joints(
+        self, canonical_model_config, module_factory
+    ):
+        module = _make_module_with_monitor(module_factory)
+        module.config.model = canonical_model_config
+        module.config.joint_state_aliases = {"chassis/vx": "left/joint1"}
+
+        msg = JointState(
+            name=["left/joint3", "chassis/vx", "left/joint2"],
+            position=[0.3, 0.1, 0.2],
+        )
+        module._on_joint_state(msg)
+
+        state = module._world_monitor.on_joint_state.call_args.args[0]
+        assert state.name == canonical_model_config.joint_names
+        assert state.position == [0.1, 0.2, 0.3]
+
     def test_skips_incomplete_model_state(self, canonical_model_config, module_factory):
         module = _make_module_with_monitor(module_factory)
         module.config.model = canonical_model_config
@@ -291,6 +309,15 @@ class TestWorldMonitorVisualization:
 
 
 class TestManipulationPreview:
+    def test_preview_without_a_plan_returns_rejected(self, module_factory):
+        module = module_factory()
+
+        result = module.preview_plan()
+
+        assert result.status is CommandStatus.REJECTED
+        assert not result.succeeded
+        assert result.message == "No generated plan to preview"
+
     def test_clear_planned_path_invalidates_before_dismissing_preview(self, module_factory):
         module = module_factory()
         plan = GeneratedPlan(trajectory=JointTrajectory(), group_ids=("manipulator",), path=[])
@@ -301,7 +328,7 @@ class TestManipulationPreview:
             lambda: plan_during_dismissal.append(module._last_plan)
         )
 
-        assert module.clear_planned_path() is True
+        assert module.clear_planned_path().succeeded
 
         assert plan_during_dismissal == [None]
         module._world_monitor.cancel_preview_animation.assert_called_once_with()
@@ -313,19 +340,14 @@ class TestManipulationPreview:
             trajectory=JointTrajectory(), group_ids=("manipulator",), path=[]
         )
 
-        assert module.clear_planned_path() is True
+        assert module.clear_planned_path().succeeded
         assert module._last_plan is None
-
-    def test_dismiss_preview_noop_without_monitor(self, module_factory):
-        module = module_factory()
-
-        module._dismiss_preview(["manipulator"])
 
     def test_dismiss_preview_routes_to_monitor(self, module_factory):
         module = module_factory()
         module._world_monitor = MagicMock()
 
-        module._dismiss_preview(["manipulator"])
+        module._dismiss_preview()
 
         module._world_monitor.cancel_preview_animation.assert_called_once_with()
 
@@ -334,7 +356,7 @@ class TestManipulationPreview:
         config = _one_joint_config()
         _install_generated_plan(module, config, [0.0], [2.0])
 
-        assert module.preview_plan() is True
+        assert module.preview_plan().succeeded
 
         module._world_monitor.animate_trajectory.assert_called_once_with(
             module._last_plan.trajectory, None

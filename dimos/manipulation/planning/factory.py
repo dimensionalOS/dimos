@@ -32,6 +32,7 @@ from dimos.manipulation.planning.spec.protocols import (
     PlannerSpec,
     TrajectoryParametrizerSpec,
 )
+from dimos.manipulation.planning.spec.validation import prepare_robot_model
 from dimos.manipulation.planning.trajectory_generator.config import (
     RoboPlanTOPPRAParametrizationConfig,
     SimpleTrapezoidParametrizationConfig,
@@ -267,7 +268,7 @@ def create_planning_stack(
         kinematics=kinematics,
     )
 
-    world.load_model(robot_config)
+    world.load_model(prepare_robot_model(robot_config))
     world.finalize()
 
     return world, planning_specs.kinematics, planning_specs.planner

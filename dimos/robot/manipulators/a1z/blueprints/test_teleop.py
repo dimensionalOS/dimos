@@ -25,7 +25,7 @@ from dimos.robot.manipulators.a1z.blueprints.teleop import (
     keyboard_teleop_a1z,
 )
 from dimos.robot.manipulators.a1z.config import a1z_hardware
-from dimos.teleop.quest.blueprints import teleop_quest_a1z
+from dimos.teleop.webxr.blueprints import teleop_webxr_a1z
 
 
 def _coordinator_kwargs(blueprint: Blueprint) -> dict[str, Any]:
@@ -51,7 +51,7 @@ def test_trajectory_accepts_gripper_and_gripper_has_dedicated_task(
     assert (gripper.name, gripper.joint_names) == ("arm_gripper", ["arm/gripper"])
 
 
-def test_quest_teleop_uses_mock_a1z_hardware_and_gripper_by_default() -> None:
+def test_webxr_teleop_uses_mock_a1z_hardware_and_gripper_by_default() -> None:
     kwargs = _coordinator_kwargs(coordinator_teleop_a1z)
     hardware = kwargs["hardware"][0]
     tasks = cast("list[TaskConfig]", kwargs["tasks"])
@@ -70,8 +70,8 @@ def test_quest_teleop_uses_mock_a1z_hardware_and_gripper_by_default() -> None:
     assert gripper.stream_bind == {"gripper_command": "left_gripper_command"}
 
 
-def test_quest_left_controller_routes_to_a1z_teleop() -> None:
-    assert teleop_quest_a1z.remapping_map == {
+def test_webxr_left_controller_routes_to_a1z_teleop() -> None:
+    assert teleop_webxr_a1z.remapping_map == {
         ("armteleopmodule", "left_controller_output"): "left_cartesian_command",
         ("armteleopmodule", "left_gripper_command"): "left_gripper_command",
     }

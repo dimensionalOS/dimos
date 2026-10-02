@@ -76,7 +76,7 @@ planning:
 
 ```python skip
 groups = manip.list_planning_groups()
-pose_groups = [group for group in groups if group.has_pose_target]
+pose_groups = [group for group in groups if group.tip_frame is not None]
 group_id = pose_groups[0].id
 ```
 

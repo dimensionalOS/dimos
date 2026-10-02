@@ -169,7 +169,7 @@ class RustRecordingSession:
                 "store": store,
                 "encoding_threads": global_config.record_encoding_threads
                 or _DEFAULT_ENCODING_THREADS,
-                "streams": [stream.model_dump() for stream in self.plan.streams],
+                "streams": [stream.model_dump(exclude_none=True) for stream in self.plan.streams],
             },
             "session": session_config().to_wire() if self.plan.backend == "zenoh" else {},
         }

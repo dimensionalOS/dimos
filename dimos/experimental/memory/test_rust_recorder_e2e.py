@@ -55,7 +55,12 @@ from dimos.protocol.service.zenohservice import ZenohConfig, ZenohSessionPool
 pytestmark = pytest.mark.self_hosted
 
 _RUST_PACKAGE = DIMOS_PROJECT_ROOT / "dimos" / "experimental" / "memory" / "rust"
-_EXECUTABLE = _RUST_PACKAGE / "result" / "bin" / "dimos-memory-recorder"
+_EXECUTABLE = Path(
+    os.environ.get(
+        "DIMOS_MEMORY_RECORDER_TEST_EXECUTABLE",
+        str(_RUST_PACKAGE / "result" / "bin" / "dimos-memory-recorder"),
+    )
+)
 
 
 class InteropRustRecorder(RustRecorder):
@@ -73,19 +78,21 @@ class FakeTransport:
 
 @pytest.fixture(scope="module")
 def rust_recorder_executable() -> Path:
-    subprocess.run(
-        [
-            "nix",
-            "--extra-experimental-features",
-            "nix-command flakes",
-            "build",
-            "-L",
-            ".#dimos-memory-recorder",
-            "--no-write-lock-file",
-        ],
-        cwd=_RUST_PACKAGE,
-        check=True,
-    )
+    # Build locally. Should already be built in CI.
+    if not _EXECUTABLE.is_file():
+        subprocess.run(
+            [
+                "nix",
+                "--extra-experimental-features",
+                "nix-command flakes",
+                "build",
+                "-L",
+                ".#dimos-memory-recorder",
+                "--no-write-lock-file",
+            ],
+            cwd=_RUST_PACKAGE,
+            check=True,
+        )
     assert _EXECUTABLE.is_file()
     return _EXECUTABLE
 

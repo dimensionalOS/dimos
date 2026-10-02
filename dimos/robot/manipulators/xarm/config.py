@@ -67,14 +67,43 @@ XARM7_SIM_HOME = [0.0, -0.247, 0.0, 0.909, 0.0, 1.15644, 0.0]
 # z=0.12. Place the planning model to match, or the planner solves poses 12cm
 # below the arm it is driving and every grasp closes on air.
 XARM7_SIM_BASE_POSE = PoseStamped(frame_id="world", position=Vector3(z=0.12))
+# Every link the xArm7-with-gripper URDF gives collision geometry. A point-cloud
+# self filter needs a capture-time transform for each one, and drops the whole
+# cloud if any is missing, so publish them all as TF when one is composed in.
+XARM7_COLLISION_LINKS = [
+    "link_base",
+    "link1",
+    "link2",
+    "link3",
+    "link4",
+    "link5",
+    "link6",
+    "link7",
+    "xarm_gripper_base_link",
+    "left_outer_knuckle",
+    "left_finger",
+    "left_inner_knuckle",
+    "right_outer_knuckle",
+    "right_finger",
+    "right_inner_knuckle",
+]
 
 
-def make_xarm7_sim_robot_config() -> RobotModelConfig:
+def make_xarm7_sim_robot_config(
+    base_pose: PoseStamped | None = None,
+    tf_extra_links: list[str] | None = None,
+) -> RobotModelConfig:
+    """Build the sim planning model.
+
+    Pass ``base_pose`` for a scene that mounts ``link_base`` somewhere other than
+    the pedestal ``data/xarm7`` uses, and ``tf_extra_links`` when a consumer needs
+    more than the tip transform.
+    """
     return make_xarm7_model_config(
         add_gripper=True,
         gripper_hardware_id="arm",
-        base_pose=XARM7_SIM_BASE_POSE,
-        tf_extra_links=["link7"],
+        base_pose=XARM7_SIM_BASE_POSE if base_pose is None else base_pose,
+        tf_extra_links=["link7"] if tf_extra_links is None else tf_extra_links,
         home_joints=XARM7_SIM_HOME,
         pre_grasp_offset=0.05,
     )
@@ -98,7 +127,7 @@ def make_dual_xarm6_model_config() -> RobotModelConfig:
                 "add_gripper_1": "true",
                 "add_gripper_2": "true",
             },
-        ),
+        ).with_default_joint_acceleration_limit(2.0),
         joint_names=canonical_joints,
         base_link="world",
         planning_groups=[
@@ -280,6 +309,7 @@ def xarm6_hardware(
 def make_xarm_model_config(
     dof: int,
     *,
+    robot_type: str = "xarm",
     prefix: str = "",
     add_gripper: bool = True,
     gripper_hardware_id: str | None = None,
@@ -290,6 +320,7 @@ def make_xarm_model_config(
 ) -> RobotModelConfig:
     xacro_args = {
         "dof": str(dof),
+        "robot_type": robot_type,
         "prefix": prefix,
         "limited": "true",
         "attach_xyz": "0 0 0",
@@ -308,7 +339,7 @@ def make_xarm_model_config(
             XARM_MODEL_PATH,
             package_paths=XARM_PACKAGE_PATHS,
             xacro_args=xacro_args,
-        ),
+        ).with_default_joint_acceleration_limit(2.0),
         base_pose=base_pose if base_pose is not None else PoseStamped(),
         joint_names=model_joint_names,
         base_link=f"{prefix}link_base",
@@ -321,7 +352,9 @@ def make_xarm_model_config(
             )
         ],
         auto_convert_meshes=True,
-        collision_exclusion_pairs=collision_exclusions if add_gripper else [],
+        collision_exclusion_pairs=(
+            collision_exclusions if add_gripper and robot_type == "xarm" else []
+        ),
         gripper_hardware_id=gripper_hardware_id,
         tf_extra_links=[f"{prefix}{link}" for link in (tf_extra_links or [])],
         home_joints=home_joints or [0.0] * dof,
@@ -339,3 +372,31 @@ def make_xarm7_model_config(
     **kwargs: Any,
 ) -> RobotModelConfig:
     return make_xarm_model_config(7, **kwargs)
+
+
+def make_lite6_model_config(
+    **kwargs: Any,
+) -> RobotModelConfig:
+    return make_xarm_model_config(6, robot_type="lite", **kwargs)
+
+
+def lite6_hardware(
+    hw_id: str = "arm",
+    *,
+    gripper: bool = False,
+    mock_without_address: bool = False,
+    home_joints: list[float] | None = None,
+    canonical_joint_names: list[str] | None = None,
+) -> HardwareComponent:
+    """Lite 6 speaks the xArm SDK; the adapter detects the model on connect. No sim scene yet."""
+    address = global_config.lite6_ip
+    adapter_type = "mock" if mock_without_address and not address else "xarm"
+    return make_xarm_hardware(
+        hw_id,
+        6,
+        adapter_type=adapter_type,
+        address=address,
+        gripper=gripper,
+        home_joints=home_joints,
+        canonical_joint_names=canonical_joint_names,
+    )

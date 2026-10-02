@@ -20,7 +20,7 @@ robot client pushing synthetic color_image JPEGs as fast as they encode
 both. Open the printed URL in Chrome/Firefox to watch the same stream in the
 Cockpit (build web/cockpit first if the page reports a missing dist).
 
-Run: uv run python -m dimos.web.relay_bridge.demo_smoke [--secs 20] [--url https://...]
+Run: uv run python -m dimos.web.relay_bridge.demo_smoke [--secs 20] [--url http://localhost:7780]
 """
 
 from __future__ import annotations
@@ -32,7 +32,6 @@ import json
 import math
 import time
 from typing import Any
-from urllib.parse import urlparse
 
 import numpy as np
 
@@ -46,7 +45,7 @@ from dimos.web.relay_bridge.protocol import (
     Watch,
 )
 from dimos.web.relay_bridge.relay_process import RelayProcess
-from dimos.web.relay_bridge.wt_client import RelayClient
+from dimos.web.relay_bridge.wt_client import RelayClient, fetch_relay_info
 
 WIDTH, HEIGHT = 640, 480
 
@@ -158,11 +157,13 @@ async def _wait_subscribed(robot: RelayClient, viewer: RelayClient, timeout: flo
     )
 
 
-async def run(url: str, secs: float) -> None:
+async def run(base_url: str, secs: float) -> None:
+    info = await fetch_relay_info(base_url)
+    insecure = info.cert_hash is not None
     stats = ViewerStats()
     async with (
-        await RelayClient.connect(url, "robot") as robot,
-        await RelayClient.connect(url, "viewer") as viewer,
+        await RelayClient.connect(info.wt_url, "robot", insecure=insecure) as robot,
+        await RelayClient.connect(info.wt_url, "viewer", insecure=insecure) as viewer,
     ):
         await robot.hello(robot=ROBOT, manifest=MANIFEST)
         await _attach_viewer(viewer)
@@ -228,20 +229,21 @@ async def run(url: str, secs: float) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--url", default=None, help="attach to a running relay (wtUrl)")
+    parser.add_argument(
+        "--url",
+        default=None,
+        help="attach to a running relay (its HTTP URL, e.g. http://localhost:7780)",
+    )
     parser.add_argument("--secs", type=float, default=0, help="run time; 0 = until Ctrl-C")
     args = parser.parse_args()
 
     if args.url is not None:
-        # /api/info's wtUrl ends in /viewer; strip the path so each role picks its own.
-        parsed = urlparse(args.url)
-        url = f"{parsed.scheme}://{parsed.netloc}" if parsed.netloc else args.url
-        asyncio.run(run(url, args.secs))
+        asyncio.run(run(args.url, args.secs))
         return
     with RelayProcess() as info:
         print(f"relay up; open {info.open_url} in Chrome/Firefox to watch")
         with contextlib.suppress(KeyboardInterrupt):
-            asyncio.run(run(info.wt_url, args.secs))
+            asyncio.run(run(info.open_url, args.secs))
 
 
 if __name__ == "__main__":

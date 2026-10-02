@@ -11,6 +11,14 @@ on:
       - .github/actions/build-cockpit/action.yml
       - .github/scripts/check_sdist.py
       - .github/scripts/wheel_smoke.py
+      - .github/scripts/native_wheel_smoke.py
+      - dimos/experimental/memory/**
+      - dimos/memory/**
+      - dimos/core/native_module.py
+      - dimos/core/transport.py
+      - native/rust/**
+      - Cargo.toml
+      - Cargo.lock
       - pyproject.toml
       - setup.py
       - MANIFEST.in
@@ -40,11 +48,48 @@ jobs:
       - name: Build cockpit dist
         uses: ./.github/actions/build-cockpit
       - name: Build one wheel
-        uses: pypa/cibuildwheel@v4.2.0
+        uses: pypa/cibuildwheel@v4.2.1
         env:
           CIBW_ENVIRONMENT: DIMOS_BUILD_REVISION=${{ github.sha }}
         with:
           only: cp312-manylinux_x86_64
+
+      - name: Upload wheel for installed native integration
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-smoke-wheel
+          path: wheelhouse/*.whl
+
+  native-wheel-smoke:
+    needs: build-one-wheel
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Download built wheel
+        uses: actions/download-artifact@v8
+        with:
+          name: native-smoke-wheel
+          path: wheelhouse
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.2.0
+      - name: Install Nix
+        env:
+          INPUT_EXTRA_NIX_CONFIG: |
+            extra-substituters = https://dimensionalos.cachix.org
+            extra-trusted-public-keys = dimensionalos.cachix.org-1:20ynj6TjpoD3qTxkdNoeHtgs2G2pNvgAq1EQYLTHJXI=
+        run: bash docker/ros/install-nix.sh
+      - name: Install core wheel outside the checkout
+        run: |
+          uv venv --python 3.12 "$RUNNER_TEMP/native-wheel-env"
+          uv pip install --python "$RUNNER_TEMP/native-wheel-env/bin/python" wheelhouse/*.whl
+      - name: Prepare, record, reopen, and inspect SQLite and MCAP
+        working-directory: ${{ runner.temp }}
+        run: |
+          "$RUNNER_TEMP/native-wheel-env/bin/python" "$GITHUB_WORKSPACE/.github/scripts/native_wheel_smoke.py"
 
   build-sdist:
     runs-on: ubuntu-latest
@@ -56,7 +101,7 @@ jobs:
       - name: Build cockpit dist
         uses: ./.github/actions/build-cockpit
       - name: Install uv
-        uses: astral-sh/setup-uv@v10.0.1
+        uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
           prune-cache: true

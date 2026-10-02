@@ -7,6 +7,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -18,6 +19,7 @@
 #include <iostream>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -39,8 +41,8 @@ using DecodeFn = std::function<T(const uint8_t*, std::size_t)>;
 template <class T>
 using HandlerFn = std::function<void(T)>;
 
-constexpr std::size_t kInputQueueCapacity = 128;
-constexpr std::size_t kPublishQueueCapacity = 32;
+constexpr std::size_t INPUT_QUEUE_CAPACITY = 128;
+constexpr std::size_t PUBLISH_QUEUE_CAPACITY = 32;
 
 // Process-wide shutdown flag, set from an async-signal-safe handler. A native
 // module exits when the coordinator sends SIGTERM (or on Ctrl-C).
@@ -151,14 +153,14 @@ private:
     void push(T msg) {
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            if (queue_.size() >= kInputQueueCapacity) {
+            if (queue_.size() >= INPUT_QUEUE_CAPACITY) {
                 std::uint64_t n = dropped_.fetch_add(1, std::memory_order_relaxed) + 1;
                 if (log::check_and_record(last_warn_ns_, log::from_secs(1))) {
                     log::warn("handler full, dropping message",
                               {log::Field("topic", topic_),
                                log::Field("dropped", static_cast<std::int64_t>(n)),
                                log::Field("capacity",
-                                          static_cast<std::int64_t>(kInputQueueCapacity))});
+                                          static_cast<std::int64_t>(INPUT_QUEUE_CAPACITY))});
                 }
                 return;
             }
@@ -188,14 +190,14 @@ public:
             if (stopped_) {
                 return;
             }
-            if (queue_.size() >= kPublishQueueCapacity) {
+            if (queue_.size() >= PUBLISH_QUEUE_CAPACITY) {
                 std::uint64_t n = dropped_.fetch_add(1, std::memory_order_relaxed) + 1;
                 if (log::check_and_record(last_warn_ns_, log::from_secs(1))) {
                     log::warn("publish queue full, dropping message",
                               {log::Field("channel", channel_),
                                log::Field("dropped", static_cast<std::int64_t>(n)),
                                log::Field("capacity",
-                                          static_cast<std::int64_t>(kPublishQueueCapacity))});
+                                          static_cast<std::int64_t>(PUBLISH_QUEUE_CAPACITY))});
                 }
                 return;
             }
@@ -289,17 +291,35 @@ public:
         return Output<T>(std::move(encode), queue);
     }
 
-    // A port the coordinator did not wire is a startup error. Falling back to a
-    // bare channel name would leave the module running against a dead topic.
-    std::string topic_for(const std::string& port) const {
+    std::string topic_for(const std::string& port) {
+        requested_.insert(port);
         auto it = topics_.find(port);
-        if (it == topics_.end()) {
-            throw std::runtime_error(
-                "no topic for port '" + port +
-                "': the coordinator did not wire it. Check the port name matches "
-                "the Python module, and that its config sets stdin_config = True.");
+        return it == topics_.end() ? "/" + port : it->second;
+    }
+
+    // An unsent topic leaves the port on a fallback name nothing else publishes
+    // to. Rust also rejects the reverse, a topic no port claimed.
+    // TODO: add tf port type to C++ to match rust (so we can better check input)
+    void enforce_topics_match_ports() const {
+        std::vector<std::string> missing;
+        for (const std::string& port : requested_) {
+            if (topics_.find(port) == topics_.end()) {
+                missing.push_back(port);
+            }
         }
-        return it->second;
+        if (missing.empty()) {
+            return;
+        }
+        std::vector<std::string> unexpected;
+        for (const auto& topic : topics_) {
+            if (requested_.find(topic.first) == requested_.end()) {
+                unexpected.push_back(topic.first);
+            }
+        }
+        std::sort(unexpected.begin(), unexpected.end());
+        throw std::runtime_error("topics do not match module ports: missing " +
+                                 quoted_list(missing) + ", unexpected " +
+                                 quoted_list(unexpected));
     }
 
     const std::vector<std::pair<std::string, Dispatch>>& routes() const { return routes_; }
@@ -310,6 +330,7 @@ public:
 
 private:
     std::unordered_map<std::string, std::string> topics_;
+    std::set<std::string> requested_;
     Notifier* notifier_;
     std::vector<std::pair<std::string, Dispatch>> routes_;
     std::vector<std::unique_ptr<InputPort>> owned_inputs_;
@@ -347,7 +368,7 @@ protected:
     // Default main body: round-robin drain inputs (fair, one per input per round)
     // until shutdown. With no inputs, just wait for shutdown.
     void default_handle() {
-        constexpr auto kPoll = std::chrono::milliseconds(100);
+        constexpr auto POLL_INTERVAL = std::chrono::milliseconds(100);
         while (!shutdown_requested()) {
             // Snapshot before draining so a message that lands mid-round blocks
             // the wait below instead of sleeping until the poll timeout.
@@ -362,9 +383,9 @@ protected:
             }
             if (!progressed) {
                 if (notifier_ != nullptr) {
-                    notifier_->wait_for(seq, kPoll, [this] { return shutdown_requested(); });
+                    notifier_->wait_for(seq, POLL_INTERVAL, [this] { return shutdown_requested(); });
                 } else {
-                    std::this_thread::sleep_for(kPoll);
+                    std::this_thread::sleep_for(POLL_INTERVAL);
                 }
             }
         }
@@ -375,17 +396,23 @@ private:
     Notifier* notifier_ = nullptr;
 };
 
-// Parse the coordinator's stdin line into topics / config. Other keys the
-// coordinator sends, such as qos, are ignored.
+// The coordinator's stdin line: the topics and config this SDK reads out of it,
+// plus the whole blob, which the transport reads its own keys off.
 struct StdinConfig {
     std::unordered_map<std::string, std::string> topics;
     nlohmann::json config;
+    nlohmann::json launch;
 };
 
 inline StdinConfig parse_stdin_config(const std::string& line) {
+    constexpr const char* WHITESPACE = " \t\n\v\f\r";
+    std::size_t begin = line.find_first_not_of(WHITESPACE);
+    std::size_t end = line.find_last_not_of(WHITESPACE);
+    std::string trimmed =
+        begin == std::string::npos ? std::string() : line.substr(begin, end - begin + 1);
+
     StdinConfig out;
-    nlohmann::json blob =
-        line.empty() ? nlohmann::json::object() : nlohmann::json::parse(line);
+    nlohmann::json blob = nlohmann::json::parse(trimmed);
     if (!blob.is_object()) {
         throw std::runtime_error("stdin config must be a JSON object");
     }
@@ -396,15 +423,28 @@ inline StdinConfig parse_stdin_config(const std::string& line) {
             }
         }
     }
-    out.config = blob.contains("config") ? blob["config"] : nlohmann::json();
+    auto config = blob.find("config");
+    if (config == blob.end()) {
+        throw std::runtime_error(
+            "missing 'config' field in stdin JSON: coordinator must always send a config object");
+    }
+    out.config = *config;
+    out.launch = std::move(blob);
     return out;
 }
 
-template <class M>
-void run_fallible(std::unique_ptr<Transport> transport) {
+/// Read the coordinator's launch line off stdin. The transport is built from it,
+/// so it is read before the transport exists.
+inline StdinConfig read_stdin_config() {
     std::string line;
     std::getline(std::cin, line);
-    StdinConfig parsed = parse_stdin_config(line);
+    return parse_stdin_config(line);
+}
+
+template <class M>
+void run_fallible(std::unique_ptr<Transport> transport, StdinConfig parsed) {
+    transport->set_publisher_qos(parsed.launch.contains("qos") ? parsed.launch["qos"]
+                                                              : nlohmann::json());
 
     Notifier notifier;
     Builder builder(std::move(parsed.topics), &notifier);
@@ -412,6 +452,7 @@ void run_fallible(std::unique_ptr<Transport> transport) {
     Config config(std::move(parsed.config));
     module.build(builder, config);
     config.enforce_all_consumed();
+    builder.enforce_topics_match_ports();
 
     std::vector<std::thread> workers;
 
@@ -462,12 +503,12 @@ void run_fallible(std::unique_ptr<Transport> transport) {
     module.teardown();
 }
 
-/// Run module `M` over `transport`, reading config from stdin and blocking until
-/// shutdown. Any startup error is logged and the process exits non-zero.
+/// Run module `M` over `transport`, blocking until shutdown. Any startup error
+/// is logged and the process exits non-zero.
 template <class M>
-void run(std::unique_ptr<Transport> transport) {
+void run(std::unique_ptr<Transport> transport, StdinConfig parsed) {
     try {
-        run_fallible<M>(std::move(transport));
+        run_fallible<M>(std::move(transport), std::move(parsed));
     } catch (const std::exception& e) {
         log::error(e.what());
         std::exit(1);

@@ -19,6 +19,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, TypeAlias
+from uuid import uuid4
 
 from dimos.manipulation.planning.spec.enums import (
     IKStatus,
@@ -31,7 +32,7 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
     from dimos.manipulation.planning.groups.models import PlanningGroup
-    from dimos.manipulation.planning.spec.config import RobotModelConfig
+    from dimos.manipulation.planning.spec.validation import PreparedRobotModel
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
     from dimos.msgs.geometry_msgs.Transform import Transform
     from dimos.msgs.sensor_msgs.JointState import JointState
@@ -63,8 +64,8 @@ class PlanningSceneInfo:
     backend handles, mutable world contexts, GUI state, or execution state.
     """
 
-    model: RobotModelConfig
-    """The configured logical robot model."""
+    model: PreparedRobotModel
+    """The materialized and validated logical robot model."""
 
     planning_groups: tuple[PlanningGroup, ...] = ()
     """Resolved immutable planning groups for the initialized scene."""
@@ -159,7 +160,8 @@ class PlanningResult:
         path: List of joint states forming the path (empty if failed).
             Each JointState contains names, positions, and optionally velocities.
         planning_time: Time taken to plan (seconds)
-        path_length: Total path length in joint space (radians)
+        path_length: Unweighted Euclidean coordinate-space length. This diagnostic
+            has no single physical unit when a path mixes linear and angular joints.
         iterations: Number of iterations/nodes expanded
         message: Human-readable status message
         timestamps: Optional timestamps for each waypoint (seconds from start).
@@ -192,6 +194,7 @@ class GeneratedPlan:
     path_length: float = 0.0
     iterations: int = 0
     message: str = ""
+    plan_id: str = field(default_factory=lambda: uuid4().hex)
 
     def is_success(self) -> bool:
         """Check if the generated plan was successful."""

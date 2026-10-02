@@ -154,21 +154,24 @@ class TickLoop:
 
     def _loop(self) -> None:
         """Main control loop - deterministic read → compute → arbitrate → write."""
-        period = 1.0 / self._tick_rate
+        period_ns = round(1_000_000_000 / self._tick_rate)
+        next_tick_time = time.perf_counter_ns()
 
         while not self._stop_event.is_set():
-            tick_start = time.perf_counter()
-
             try:
                 self._tick()
             except Exception as e:
                 logger.error(f"TickLoop tick error: {e}")
 
-            # Rate control - recalculate sleep time to account for overhead
-            next_tick_time = tick_start + period
-            sleep_time = next_tick_time - time.perf_counter()
-            if sleep_time > 0:
-                time.sleep(sleep_time)
+            # We simply increment the time from the last loop so we correct for long
+            # sleeps (e.g. Mac OS typically oversleeps upto 25%).
+            next_tick_time += period_ns
+            sleep_ns = next_tick_time - time.perf_counter_ns()
+            if sleep_ns > 0:
+                time.sleep(sleep_ns / 1_000_000_000)
+            else:
+                # Over a full period behind, reset the timer.
+                next_tick_time = time.perf_counter_ns()
 
     def _tick(self) -> None:
         """Single tick: read → compute → arbitrate → route → write."""

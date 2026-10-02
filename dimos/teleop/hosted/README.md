@@ -1,7 +1,7 @@
 # Remote Teleop
 
 Robot dials out to the dimensional-teleop broker —
-no inbound ports needed. The browser/VR operator connects through the broker;
+no inbound ports needed. The browser/WebXR operator connects through the broker;
 commands arrive over WebRTC datachannels, robot video goes out as a WebRTC
 track.
 
@@ -16,7 +16,7 @@ that all run in one worker so everything shares that single session (the
 
 - **`go2_command.py`** — `Go2CommandModule`: operator command / E-STOP dispatch
   and the manual-drive guard. Reaches the driver over `@rpc` (`GO2Connection`).
-- **`arm_command.py`** — `ArmCommandModule`: VR controller poses and browser
+- **`arm_command.py`** — `ArmCommandModule`: WebXR controller poses and browser
   EE-twist → ControlCoordinator tasks (stale/reorder/future-stamp guarded).
 - **`camera_mux.py`** — `CameraMuxModule`: N cameras → one composited, capped
   video track (operator-selectable views).

@@ -87,6 +87,7 @@ Config(
         unitree_aes_128_key=None,
         xarm7_ip=None,
         xarm6_ip=None,
+        lite6_ip=None,
         can_port=None,
         device_path=None,
         simulation='',
@@ -132,8 +133,10 @@ Config(
         dimsim_scene='apartment',
         dimsim_port=8090,
         dimsim_headless=True,
+        mujoco_scene=None,
         local_relay=False,
         relay_url=None,
+        relay_ca=None,
         dimos_cloud_url='https://api.dimensional.org',
         dimos_api_key=None
     ),

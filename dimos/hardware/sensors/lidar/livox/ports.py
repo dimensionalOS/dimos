@@ -19,6 +19,9 @@ Both the Mid-360 driver and FAST-LIO2 modules reference this single source
 so port numbers are defined in one place on the Python side.
 """
 
+# Multicast group the SDK joins for point/IMU data by default.
+SDK_MULTICAST_GROUP = "224.1.1.5"
+
 SDK_CMD_DATA_PORT = 56100
 SDK_PUSH_MSG_PORT = 56200
 SDK_POINT_DATA_PORT = 56300

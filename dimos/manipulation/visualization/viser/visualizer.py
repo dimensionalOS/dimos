@@ -30,6 +30,7 @@ from dimos.manipulation.visualization.viser.runtime import (
 )
 from dimos.manipulation.visualization.viser.scene import ViserManipulationScene
 from dimos.manipulation.visualization.viser.theme import apply_dimos_theme
+from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.utils.logging_config import setup_logger
@@ -129,7 +130,7 @@ class ViserManipulationVisualizer:
         """Initialize Viser robot visuals from a one-shot visualization session."""
         self._operator = session.operator
         self._session_scene = session.scene
-        self._model_config = session.scene.model
+        self._model_config = session.scene.model.config
         self._initialize_scene(session.scene)
 
     def _initialize_scene(self, scene: PlanningSceneInfo) -> None:
@@ -215,6 +216,14 @@ class ViserManipulationVisualizer:
         self._ensure_started()
         if self._scene is not None:
             self._scene.clear_vis_obstacles()
+
+    def show_grasp_proposals(self, candidates: GraspCandidateArray) -> None:
+        """Draw the ranked grasp proposals; an empty array clears them."""
+        if self._closed:
+            return
+        self._ensure_started()
+        if self._scene is not None:
+            self._scene.show_grasp_proposals(candidates)
 
     def update_state(self, frame: VisualizationStateFrame) -> None:
         """Update current robot render state from a pushed state frame."""

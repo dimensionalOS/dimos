@@ -27,6 +27,7 @@ subclass): factories return evaluators called with
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+import math
 from typing import TypeVar
 
 T = TypeVar("T")
@@ -36,30 +37,106 @@ def exact(expected: T, got: T) -> float:
     return float(expected == got)
 
 
+def rank_order(expected: Sequence[str], got: Sequence[str]) -> float:
+    """Fraction of correctly ordered pairs in a complete, unique-label ranking."""
+    if len(expected) < 2 or len(set(expected)) != len(expected):
+        raise ValueError("Expected ranking must contain at least two unique labels")
+    if len(got) != len(expected) or set(got) != set(expected):
+        return 0.0
+    positions = {label: i for i, label in enumerate(got)}
+    correct = sum(
+        positions[left] < positions[right]
+        for i, left in enumerate(expected)
+        for right in expected[i + 1 :]
+    )
+    return correct / (len(expected) * (len(expected) - 1) / 2)
+
+
+def numeric(expected: float, got: float, *, tolerance: float, band: float) -> float:
+    """Compare numbers: full credit within tolerance, linear to zero at band.
+
+    Parse model text separately, e.g. with ``first_number``. Non-finite
+    observations receive zero; invalid scoring parameters raise ValueError.
+    """
+    if not all(math.isfinite(v) for v in (expected, tolerance, band)) or not 0 <= tolerance < band:
+        raise ValueError("Require finite reference and 0 <= tolerance < band")
+    if not math.isfinite(got):
+        return 0.0
+    error = abs(got - expected)
+    # Allow only a few floating-point ULPs, capped relative to the score band.
+    rounding = min(4 * max(math.ulp(got), math.ulp(expected)), (band - tolerance) * 1e-12)
+    if error <= tolerance or abs(error - tolerance) <= rounding:
+        return 1.0
+    if error >= band or abs(error - band) <= rounding:
+        return 0.0
+    return max(0.0, min(1.0, (band - error) / (band - tolerance)))
+
+
 # -- parsers (model text -> typed answer) -----------------------------------------
 
 
+def ranking(text: str) -> tuple[str, ...]:
+    """Parse single-letter labels, contiguous or separated by commas/whitespace.
+
+    Vocabulary, completeness, and uniqueness are checked by ``rank_order``.
+    """
+    return tuple(c for c in text.strip().upper() if c != "," and not c.isspace())
+
+
 def first_number(text: str) -> float:
-    """Pull the first number out of a model reply ("about 12.5 meters" -> 12.5)."""
+    """The number a reply answers with: the only number on its last line ("...\\n\\n4",
+    "≈ 3.1 m²", "Answer: 4"), else the first number anywhere ("about 12.5 meters")."""
     import re
 
-    match = re.search(r"-?\d+(?:\.\d+)?", text)
+    plain = re.sub(r"(?<=\d),(?=\d{3}\b)", "", text)  # 20,834 -> 20834
+    on_last_line = re.findall(_NUMBER, _last_line(plain))
+    if len(on_last_line) == 1:
+        return float(on_last_line[0])
+    match = re.search(_NUMBER, plain)
     if match is None:
         raise ValueError(f"no number in reply: {text[:80]!r}")
     return float(match.group())
 
 
 def yes_no(text: str) -> str:
-    """Normalize a reply to "yes"/"no"."""
-    t = text.strip().lower()
+    """Normalize a reply to "yes"/"no": the only yes/no on its last line, else its opening word."""
+    import re
+
+    on_last_line = re.findall(r"\b(yes|no)\b", _last_line(text).lower())
+    if len(on_last_line) == 1:
+        return str(on_last_line[0])
+    t = text.strip().lower().lstrip("*_`#\"' ")
     if t.startswith(("yes", "no")):
         return "yes" if t.startswith("yes") else "no"
     raise ValueError(f"not a yes/no reply: {text[:80]!r}")
 
 
-def choice(text: str) -> str:
-    """Normalize a multiple-choice reply for exact comparison."""
-    return text.strip().lower().rstrip(".")
+def choice(options: Sequence[str], *, case_sensitive: bool = False) -> Callable[[str], str]:
+    """Parser for a multiple-choice reply: the last option the model names, so
+    that reasoning before the answer does not decide it. Longest option first,
+    so "northeast" wins over "north". ``case_sensitive`` for lettered options
+    ("A", "B"), where the article "a" must not count."""
+    import re
+
+    words = "|".join(re.escape(o) for o in sorted(options, key=len, reverse=True))
+    pattern = re.compile(rf"\b({words})\b", 0 if case_sensitive else re.I)
+
+    def parse(text: str) -> str:
+        # "north-west" must read as northwest, not as west.
+        found = pattern.findall(re.sub(r"(?<=[A-Za-z])-(?=[A-Za-z])", "", text))
+        if not found:
+            raise ValueError(f"no option from {list(options)} in reply: {text[:80]!r}")
+        return str(found[-1]) if case_sensitive else str(found[-1]).lower()
+
+    return parse
+
+
+_NUMBER = r"-?\d+(?:\.\d+)?"
+
+
+def _last_line(text: str) -> str:
+    lines = [line.strip("*_` .!\t") for line in text.splitlines() if line.strip()]
+    return lines[-1] if lines else ""
 
 
 def within(band: float) -> Callable[[float, float], float]:
@@ -90,7 +167,7 @@ def judge(rubric: str, *, model: str = "openai:gpt-5.6-luna") -> Callable[[str, 
     return _score
 
 
-# -- aggregates for interactive score series -------------------------------------
+# -- reducers over a series (e.g. a score per recorded pose) --------------------------
 
 
 def final(scores: Sequence[float]) -> float:

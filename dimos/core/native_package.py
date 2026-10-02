@@ -81,7 +81,7 @@ def _nix(arguments: list[str]) -> str:
     # Stdout is machine-readable; stream stderr so evaluation and builds remain visible.
     with subprocess.Popen(command, stdout=subprocess.PIPE, text=True) as process:
         assert process.stdout is not None
-        output = process.stdout.read()
+        output: str = process.stdout.read()
         status = process.wait()
     if status:
         raise RuntimeError(

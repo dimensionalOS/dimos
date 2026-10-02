@@ -25,6 +25,7 @@ from dimos.experimental.memory.rust_recorder import (
     RustRecorder,
     RustRecorderConfig,
     RustSqliteStoreConfig,
+    RustStreamSpec,
 )
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.type.recording import OnExisting
@@ -112,6 +113,46 @@ def test_specs_use_native_defaults_remapping_and_configured_workers(
         },
     ]
     assert set(config) == {"encoding_threads", "store", "streams"}
+
+
+def test_json_options_cross_the_native_boundary_only_when_configured() -> None:
+    schema = {"type": "object", "properties": {"sent": {"type": "number"}}}
+    config = RustRecorderConfig(
+        streams=[
+            RustStreamSpec(
+                port="events",
+                name="events",
+                payload_type="dimos.msgs.std_msgs.String.String",
+                codec="json",
+                timestamp_field="sent",
+                json_schema=schema,
+            )
+        ]
+    )
+
+    assert config.to_config_dict()["streams"] == [
+        {
+            "port": "events",
+            "name": "events",
+            "payload_type": "dimos.msgs.std_msgs.String.String",
+            "codec": "json",
+            "timestamp_field": "sent",
+            "json_schema": schema,
+        }
+    ]
+
+
+@pytest.mark.parametrize("codec", ["lcm", "jpeg", "lz4+lcm", "json"])
+def test_unconfigured_json_options_are_omitted_from_native_streams(codec: str) -> None:
+    config = RustRecorderConfig(
+        streams=[
+            RustStreamSpec(port="samples", name="samples", payload_type="test.Raw", codec=codec)
+        ]
+    )
+
+    assert config.to_config_dict()["streams"] == [
+        {"port": "samples", "name": "samples", "payload_type": "test.Raw", "codec": codec}
+    ]
 
 
 def test_store_preparation_creates_a_python_readable_registry(

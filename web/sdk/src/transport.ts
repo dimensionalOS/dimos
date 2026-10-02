@@ -1,13 +1,17 @@
-// Reconnecting WebTransport wrapper: fetch /api/info, connect with the pinned
-// cert hash, hand the session off, and retry forever with capped backoff when
-// anything dies. /api/info is re-fetched on every attempt because a relay
-// restart means a new QUIC port and a new ephemeral certificate.
+// Reconnecting WebTransport wrapper: fetch /api/info, connect (pinning the
+// relay's certificate hash when it advertises one; a relay with a real
+// certificate advertises none and the browser verifies it normally), hand the
+// session off, and retry forever with capped backoff when anything dies.
+// /api/info is re-fetched on every attempt because a relay restart means a
+// new QUIC port and a new ephemeral certificate.
 
 import { PROTOCOL_VERSION } from "@dimos/shared";
 
 export interface RelayInfo {
+  /** WebTransport base URL (no path); connectWebTransport appends /viewer. */
   wtUrl: string;
-  certHash: string;
+  /** base64 SHA-256 of the relay's ephemeral certificate; absent with a real one. */
+  certHash?: string;
   v: number;
 }
 
@@ -20,7 +24,9 @@ export type TransportPhase =
   // reason: why the previous connection ended (e.g. the relay's kick reason
   // from WebTransportCloseInfo), when known.
   | { phase: "reconnecting"; attempt: number; retryAtMs: number; reason?: string }
-  | { phase: "failed"; reason: string };
+  // code: the relay's error code when a relay error ended the session for
+  // good (auth_failed, version_mismatch); absent for local failures.
+  | { phase: "failed"; reason: string; code?: string };
 
 // Structural subset of WebTransport so tests (and later non-browser hosts) can
 // fake it. The real WebTransport satisfies this as-is.
@@ -92,7 +98,8 @@ export async function fetchRelayInfo(url: string, signal: AbortSignal): Promise<
   if (
     typeof data !== "object" || data === null ||
     typeof (data as Record<string, unknown>).wtUrl !== "string" ||
-    typeof (data as Record<string, unknown>).certHash !== "string" ||
+    ((data as Record<string, unknown>).certHash !== undefined &&
+      typeof (data as Record<string, unknown>).certHash !== "string") ||
     typeof (data as Record<string, unknown>).v !== "number"
   ) {
     throw new Error(`${url} returned an unexpected shape`);
@@ -100,11 +107,13 @@ export async function fetchRelayInfo(url: string, signal: AbortSignal): Promise<
   return data as unknown as RelayInfo;
 }
 
-function connectWebTransport(info: RelayInfo): WebTransportLike {
-  const hash = Uint8Array.from(atob(info.certHash), (c) => c.charCodeAt(0));
-  return new WebTransport(info.wtUrl, {
-    serverCertificateHashes: [{ algorithm: "sha-256", value: hash }],
-  });
+export function connectWebTransport(info: RelayInfo): WebTransportLike {
+  const options: WebTransportOptions = {};
+  if (info.certHash !== undefined) {
+    const hash = Uint8Array.from(atob(info.certHash), (c) => c.charCodeAt(0));
+    options.serverCertificateHashes = [{ algorithm: "sha-256", value: hash }];
+  }
+  return new WebTransport(`${info.wtUrl}/viewer`, options);
 }
 
 export class ReconnectingTransport {
@@ -160,10 +169,10 @@ export class ReconnectingTransport {
     if (this.#phase.phase !== "connected") this.#setPhase({ phase: "connected" });
   }
 
-  /** Terminal failure (protocol mismatch, no WebTransport support, ...). */
-  fail(reason: string): void {
+  /** Terminal failure (protocol mismatch, auth failure, no WebTransport support, ...). */
+  fail(reason: string, code?: string): void {
     if (this.#stopped) return;
-    this.#setPhase({ phase: "failed", reason });
+    this.#setPhase({ phase: "failed", reason, ...(code !== undefined ? { code } : {}) });
     this.stop();
   }
 

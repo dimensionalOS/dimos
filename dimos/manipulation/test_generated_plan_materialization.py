@@ -25,7 +25,13 @@ from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
 from dimos.manipulation.planning.planners.roboplan_config import RoboPlanCartesianPathConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import PlanningStatus
+from dimos.manipulation.planning.spec.joint_space import (
+    CoordinateTopology,
+    JointCoordinate,
+    JointSpace,
+)
 from dimos.manipulation.planning.spec.models import PlanningResult
+from dimos.manipulation.planning.spec.validation import PreparedRobotModel
 from dimos.manipulation.planning.trajectory_generator.config import (
     SimpleTrapezoidParametrizationConfig,
 )
@@ -39,7 +45,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
-from dimos.robot.assets.model import RobotModel
+from dimos.robot.assets.model import LoadedRobotModel, RobotModel
 
 
 class RecordingGenerator:
@@ -91,8 +97,6 @@ def _model() -> RobotModelConfig:
                 tip_link="right_tip",
             ),
         ],
-        max_velocity=3.0,
-        max_acceleration=4.0,
     )
 
 
@@ -108,7 +112,25 @@ def _module(monkeypatch: pytest.MonkeyPatch, module_factory):
     module = module_factory()
     module._world_monitor = MagicMock()
     module._world_monitor.world = MagicMock()
-    module._world_monitor.world.get_model_config.return_value = model
+    module._world_monitor.world.get_prepared_model.return_value = PreparedRobotModel(
+        config=model,
+        description=LoadedRobotModel("<robot/>", Path("/robot.urdf"), {}),
+        joint_space=JointSpace(
+            tuple(
+                JointCoordinate(
+                    name=name,
+                    mechanism_type="revolute",
+                    topology=CoordinateTopology.INTERVAL,
+                    lower=-1.0,
+                    upper=1.0,
+                    max_velocity=3.0,
+                    max_acceleration=4.0,
+                )
+                for name in model.joint_names
+            )
+        ),
+        planning_groups=(),
+    )
     module._world_monitor.planning_groups = PlanningGroupRegistry(model.planning_groups)
     module._planner = MagicMock()
     module._trajectory_parametrizer = SimpleTrapezoidParametrizer(

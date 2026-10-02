@@ -14,7 +14,11 @@
 
 """Wire descriptions shared by native recording controllers."""
 
-from pydantic import BaseModel
+from __future__ import annotations
+
+from typing import Any
+
+from pydantic import BaseModel, model_validator
 
 
 class RustStreamSpec(BaseModel):
@@ -24,3 +28,13 @@ class RustStreamSpec(BaseModel):
     name: str
     payload_type: str
     codec: str
+    timestamp_field: str | None = None
+    json_schema: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def _json_options(self) -> RustStreamSpec:
+        if self.codec != "json" and (
+            self.timestamp_field is not None or self.json_schema is not None
+        ):
+            raise ValueError("JSON options require the json codec")
+        return self

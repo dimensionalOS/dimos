@@ -19,6 +19,11 @@ decode automatically. Other formats use a caller-supplied ``codecs`` map (wire
 topic -> codec), while ``streams`` may map friendly stream names to topics. See
 ``dimos.robot.unitree.go2.dds.store.Go2McapStore`` for the Go2 DDS wiring.
 
+Channels published by dimos itself need neither: a dimos topic carries its
+message type in its own name, so it is decoded and named from the wire with no
+registry at all (``_dimos_wire``). An injected codec still wins where both
+apply.
+
 Read-only: no append, blobs, vectors, or embeddings. Payloads decode lazily on
 ``obs.data``; ts and counts are cheap (counts come from the mcap index).
 """
@@ -26,7 +31,7 @@ Read-only: no append, blobs, vectors, or embeddings. Payloads decode lazily on
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from functools import partial
 import re
 from typing import Any, Protocol, runtime_checkable
@@ -36,6 +41,7 @@ from mcap.reader import make_reader
 from dimos.memory.backend import Backend
 from dimos.memory.codecs.base import codec_for
 from dimos.memory.codecs.jpeg import JpegCodec
+from dimos.memory.codecs.json import JsonCodec
 from dimos.memory.codecs.lcm import LcmCodec
 from dimos.memory.codecs.lz4 import Lz4Codec
 from dimos.memory.notifier.subject import SubjectNotifier
@@ -44,6 +50,7 @@ from dimos.memory.store.base import Store, StoreConfig
 from dimos.memory.type.filter import StreamQuery
 from dimos.memory.type.observation import Observation
 from dimos.msgs.helpers import resolve_msg_type
+from dimos.protocol.pubsub.impl.rospubsub_conversion import get_dimos_type
 
 
 @runtime_checkable
@@ -68,12 +75,44 @@ class _BytesCodec:
 _BYTES_CODEC = _BytesCodec()
 
 
+@dataclass(frozen=True)
+class _DimosCodec:
+    """Decodes a dimos wire channel through its own message type."""
+
+    payload_type: type
+
+    def decode(self, data: bytes) -> Any:
+        return self.payload_type.lcm_decode(data)  # type: ignore[attr-defined]
+
+
+def _dimos_wire(topic: str) -> tuple[str, type] | None:
+    """Split a dimos wire topic into its port name and message type.
+
+    A dimos topic embeds the type in its last segment,
+    ``dimos/<port>/<msg_name>`` (built by ``zenohpubsub.Topic.key_expr``), so
+    every dimos channel describes itself and no per-topic registry is needed.
+    None for anything that is not one, which leaves DDS and app channels to
+    the injected codecs.
+    """
+    prefix, _, rest = topic.partition("/")
+    port, _, msg_name = rest.rpartition("/")
+    if prefix != "dimos" or not port:
+        return None
+    msg_type = get_dimos_type(msg_name)
+    return (port, msg_type) if msg_type is not None else None
+
+
 def _slug(topic: str) -> str:
     """Auto stream name from a topic: drop the ``rt/`` prefix and ``/`` -> ``_``.
 
     ``rt/`` is the ROS2-over-DDS topic prefix; ``removeprefix`` only strips it
-    where present (e.g. app-level ``control_log`` is left alone).
+    where present (e.g. app-level ``control_log`` is left alone). A dimos topic
+    names itself by its port, dropping the type segment: the dot in
+    ``nav_msgs.Path`` is not attribute-addressable on ``store.streams``.
     """
+    wire = _dimos_wire(topic)
+    if wire is not None:
+        return wire[0].replace("/", "_")
     return topic.removeprefix("rt/").replace("/", "_")
 
 
@@ -193,6 +232,20 @@ class McapStore(Store):
             for cid, ch in summary.channels.items():
                 count = summary.statistics.channel_message_counts.get(cid, 0)
                 name = name_of.get(ch.topic) or _slug(ch.topic)
+                taken = self._stream_topic.get(name)
+                if taken is not None and taken != ch.topic:
+                    # Two topics, one name. One port carrying two types is
+                    # the type's to tell apart (`shared` -> `shared_Imu`); two
+                    # ports folding to one slug is a naming decision for
+                    # `streams=`, not something to guess at.
+                    wire, had = _dimos_wire(ch.topic), _dimos_wire(taken)
+                    if wire is not None and had is not None and wire[0] == had[0]:
+                        name = f"{name}_{wire[1].__name__}"
+                    if self._stream_topic.get(name, ch.topic) != ch.topic:
+                        raise ValueError(
+                            f"stream {name!r} would name both {taken!r} and {ch.topic!r};"
+                            " pass streams= to name them apart"
+                        )
                 if ch.topic not in self._codecs and ch.message_encoding == "jpeg":
                     self._codecs[ch.topic] = JpegCodec()
                 if ch.topic not in self._codecs and ch.message_encoding in {"lcm", "lz4+lcm"}:
@@ -208,12 +261,19 @@ class McapStore(Store):
                         self._codecs[ch.topic] = (
                             Lz4Codec(codec) if ch.message_encoding == "lz4+lcm" else codec
                         )
+                if ch.topic not in self._codecs and ch.message_encoding == "json":
+                    kind = JsonCodec.payload_type
+                    if (
+                        ch.metadata.get("dimos.payload_type")
+                        == f"{kind.__module__}.{kind.__qualname__}"
+                    ):
+                        self._codecs[ch.topic] = JsonCodec()
                 self._stream_topic[name] = ch.topic
                 self._available[name] = count
                 self._observation_uses_publish_time[name] = (
                     ch.metadata.get("dimos.observation_time") == "publish_time"
                 )
-                if ch.topic not in self._codecs:
+                if ch.topic not in self._codecs and _dimos_wire(ch.topic) is None:
                     sch = summary.schemas.get(ch.schema_id)
                     self._raw[name] = sch.name if sch else None
 
@@ -237,7 +297,10 @@ class McapStore(Store):
         if name not in self._available:
             raise KeyError(f"No stream {name!r}. Available: {sorted(self._available)}")
         topic = self._stream_topic[name]
-        codec = self._codecs.get(topic) or _BYTES_CODEC  # no codec -> Stream[bytes]
+        # Injected codecs win; a dimos channel decodes itself; the rest stay bytes.
+        wire = _dimos_wire(topic)
+        fallback: StreamCodec = _DimosCodec(wire[1]) if wire is not None else _BYTES_CODEC
+        codec = self._codecs.get(topic) or fallback
         ptype = codec.payload_type
         obs = McapObservationStore(
             name=name,

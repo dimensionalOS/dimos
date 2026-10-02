@@ -28,10 +28,10 @@ use normals::{pooled_normal, refresh_voxels, should_spare, NORMAL_MIN_POINTS};
 
 pub type VoxelKey = (i32, i32, i32);
 pub type VoxelHealth = i32;
-type ChunkKey = (i32, i32, i32);
+pub type ChunkKey = (i32, i32, i32);
 
 /// Voxels per chunk edge for the healthy-voxel spatial index `emit_points` scans.
-const CHUNK_SIZE: i32 = 16;
+pub(crate) const CHUNK_SIZE: i32 = 16;
 
 #[inline]
 fn chunk_of(key: VoxelKey) -> ChunkKey {
@@ -39,6 +39,20 @@ fn chunk_of(key: VoxelKey) -> ChunkKey {
         key.0.div_euclid(CHUNK_SIZE),
         key.1.div_euclid(CHUNK_SIZE),
         key.2.div_euclid(CHUNK_SIZE),
+    )
+}
+
+/// A cell of the region grid seeds load by and the map viz publishes by.
+pub type Cell = (i32, i32);
+
+/// The region grid cell a chunk's center falls in. Cells never run smaller
+/// than a chunk, so a chunk lies in exactly one.
+pub fn region_of(chunk: ChunkKey, voxel_size: f32, region_m: f32) -> Cell {
+    let edge = CHUNK_SIZE as f32 * voxel_size;
+    let cell_m = region_m.max(edge);
+    (
+        (((chunk.0 as f32) + 0.5) * edge / cell_m).floor() as i32,
+        (((chunk.1 as f32) + 0.5) * edge / cell_m).floor() as i32,
     )
 }
 
@@ -98,9 +112,21 @@ pub struct Config {
     /// Max stamp gap between a cloud and the transform used to register it (s).
     #[validate(range(exclusive_min = 0.0))]
     pub tf_match_tolerance_s: f64,
+    /// Clouds this much (s) older than the newest transform for their frame are skipped, so a map that fell behind catches up
+    /// instead of working through a stale queue; 0 keeps every cloud.
+    #[validate(range(min = 0.0))]
+    pub max_cloud_age_s: f64,
     /// Worker threads for parallel map work.
     #[validate(range(min = 1))]
     pub worker_threads: u32,
+    /// Edge of the square regions a seed load is handed on in and the map
+    /// viz publishes by.
+    #[validate(range(exclusive_min = 0.0))]
+    pub region_m: f32,
+    /// Publish the regions whose chunks changed every Nth frame. Zero disables it.
+    pub viz_emit_every: u32,
+    /// Unchanged regions republished per viz tick, round robin. Zero turns the sweep off.
+    pub viz_sweep_regions: u32,
 }
 
 fn validate_config(cfg: &Config) -> Result<(), ValidationError> {
@@ -165,9 +191,20 @@ pub struct VoxelMap {
     /// Healthy (health > 0) voxel keys grouped by chunk, kept in sync with `voxels`
     /// on every health transition. `emit_points` scans this instead of the whole map.
     healthy_chunks: AHashMap<ChunkKey, AHashSet<VoxelKey>>,
+    /// Chunks whose emitted points changed since the viz last took them.
+    changed_chunks: AHashSet<ChunkKey>,
+    /// Occupied neighbors a healthy voxel needs to be emitted, zero for none.
+    support_min: i32,
 }
 
 impl VoxelMap {
+    pub fn with_support_min(support_min: i32) -> Self {
+        Self {
+            support_min,
+            ..Default::default()
+        }
+    }
+
     pub fn healthy_count(&self) -> usize {
         self.voxels.values().filter(|c| c.health > 0).count()
     }
@@ -210,6 +247,7 @@ impl VoxelMap {
             return;
         }
         let chunk = chunk_of(key);
+        self.changed_chunks.insert(chunk);
         if now_healthy {
             self.healthy_chunks.entry(chunk).or_default().insert(key);
         } else if let Some(set) = self.healthy_chunks.get_mut(&chunk) {
@@ -218,6 +256,20 @@ impl VoxelMap {
                 self.healthy_chunks.remove(&chunk);
             }
         }
+    }
+
+    /// The chunks whose emitted points changed since the last take.
+    pub fn take_changed_chunks(&mut self) -> AHashSet<ChunkKey> {
+        std::mem::take(&mut self.changed_chunks)
+    }
+
+    pub fn healthy_chunk_keys(&self) -> impl Iterator<Item = ChunkKey> + '_ {
+        self.healthy_chunks.keys().copied()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_support_min(&mut self, support_min: i32) {
+        self.support_min = support_min;
     }
 
     /// Count of a key's 26 neighbors that currently exist and are healthy.
@@ -244,6 +296,7 @@ impl VoxelMap {
     /// `key`'s health crossed the healthy boundary. Absent neighbors pick up
     /// the right count from `count_healthy_neighbors` at creation.
     fn propagate_neighbor_support(&mut self, key: VoxelKey, delta: i32) {
+        let support_min = self.support_min;
         for dx in -1..=1 {
             for dy in -1..=1 {
                 for dz in -1..=1 {
@@ -257,11 +310,39 @@ impl VoxelMap {
                             (0..=26).contains(&updated),
                             "support count out of range: {updated}"
                         );
+                        let was_emitted = c.health > 0 && voxel_supported(c, support_min);
                         c.support = updated as u32;
+                        if was_emitted != (c.health > 0 && voxel_supported(c, support_min)) {
+                            self.changed_chunks.insert(chunk_of(nk));
+                        }
                     }
                 }
             }
         }
+    }
+
+    /// Make room for `additional` voxels ahead of a bulk load.
+    pub fn reserve(&mut self, additional: usize) {
+        self.voxels.reserve(additional);
+    }
+
+    /// Create a healthy seed voxel if absent. Returns whether it was created.
+    fn insert_seed(&mut self, key: VoxelKey) -> bool {
+        if self.voxels.contains_key(&key) {
+            return false;
+        }
+        let support = self.count_healthy_neighbors(key);
+        self.voxels.insert(
+            key,
+            Voxel {
+                health: SEED_HEALTH,
+                support,
+                ..Default::default()
+            },
+        );
+        self.update_health_index(key, false, true);
+        self.propagate_neighbor_support(key, 1);
+        true
     }
 
     /// Register a ray hit: create the voxel at `min_health` if new, then bump its
@@ -723,12 +804,12 @@ fn voxel_supported(v: &Voxel, support_min: i32) -> bool {
     support_min <= 0 || v.support >= support_min as u32
 }
 
-fn is_supported(map: &VoxelMap, key: VoxelKey, support_min: i32) -> bool {
-    support_min <= 0
+fn is_supported(map: &VoxelMap, key: VoxelKey) -> bool {
+    map.support_min <= 0
         || map
             .voxels
             .get(&key)
-            .is_some_and(|v| voxel_supported(v, support_min))
+            .is_some_and(|v| voxel_supported(v, map.support_min))
 }
 
 /// Scan the healthy voxels of every chunk overlapping `bounds` (all chunks
@@ -779,15 +860,49 @@ where
     flatten_with_capacity(parts, 3 * extra_points)
 }
 
+/// Points of the given chunks, flat (x, y, z) triples: their healthy voxels
+/// that clear the map's support gate.
+pub fn chunk_points(map: &VoxelMap, voxel_size: f32, chunks: &[ChunkKey]) -> Vec<f32> {
+    let parts: Vec<Vec<f32>> = chunks
+        .par_iter()
+        .filter_map(|chunk| map.healthy_chunks.get(chunk))
+        .map(|keys| {
+            let mut part = Vec::with_capacity(3 * keys.len());
+            for &key in keys {
+                if is_supported(map, key) {
+                    let (x, y, z) = voxel_center(key, voxel_size);
+                    part.extend_from_slice(&[x, y, z]);
+                }
+            }
+            part
+        })
+        .collect();
+    flatten_with_capacity(parts, 0)
+}
+
 /// Points for an emitted cloud, flat (x, y, z) triples: healthy surface voxels
-/// within `bounds` (all when `None`) with at least `support_min` occupied
-/// neighbors, plus this frame's not-yet-healthy `live` voxels within `bounds`.
+/// within `bounds` that clear the map's support gate, plus this frame's
+/// not-yet-healthy `live` voxels within `bounds`. No bounds means the whole map.
 pub fn emit_points(
     map: &VoxelMap,
     voxel_size: f32,
     bounds: Option<&LocalBounds>,
-    support_min: i32,
     live: &AHashSet<VoxelKey>,
+) -> Vec<f32> {
+    emit_points_impl(map, voxel_size, bounds, live, true)
+}
+
+/// Every healthy voxel plus this frame's live voxels, with no support gate.
+pub fn emit_points_ungated(map: &VoxelMap, voxel_size: f32, live: &AHashSet<VoxelKey>) -> Vec<f32> {
+    emit_points_impl(map, voxel_size, None, live, false)
+}
+
+fn emit_points_impl(
+    map: &VoxelMap,
+    voxel_size: f32,
+    bounds: Option<&LocalBounds>,
+    live: &AHashSet<VoxelKey>,
+    gated: bool,
 ) -> Vec<f32> {
     let mut out = scan_chunks(
         map,
@@ -802,7 +917,7 @@ pub fn emit_points(
             if !(chunk_inside || bounds.is_none_or(|b| b.contains(x, y, z))) {
                 return;
             }
-            if is_supported(map, key, support_min) {
+            if !gated || is_supported(map, key) {
                 part.extend_from_slice(&[x, y, z]);
             }
         },
@@ -822,15 +937,14 @@ pub fn emit_points(
 }
 
 /// Points for a fine emitted cloud, flat (x, y, z) triples: observed fine
-/// cells inside healthy voxels clearing `support_min`, within `bounds` (all
-/// when `None`), plus this frame's `live_fine` cells whose voxel is not yet
-/// healthy.
+/// cells inside healthy voxels clearing the map's support gate, within `bounds`,
+/// plus this frame's `live_fine` cells whose voxel is not yet healthy. No bounds
+/// means the whole map.
 pub fn emit_points_fine(
     map: &VoxelMap,
     voxel_size: f32,
     fine_divisor: u32,
     bounds: Option<&LocalBounds>,
-    support_min: i32,
     live_fine: &AHashSet<VoxelKey>,
 ) -> Vec<f32> {
     let divisor = fine_divisor as i32;
@@ -855,7 +969,7 @@ pub fn emit_points_fine(
             let Some(v) = map.voxels.get(&key) else {
                 return;
             };
-            if !voxel_supported(v, support_min) {
+            if !voxel_supported(v, map.support_min) {
                 return;
             }
             let mut bits = v.fine;
@@ -1001,6 +1115,194 @@ pub fn update_map(
         coarse: hits,
         fine: fine_live,
     }
+}
+
+/// Health seeded voxels start at: healthy, but easily carved by live misses.
+const SEED_HEALTH: VoxelHealth = 1;
+
+/// One tile of a seed load: the world-frame points falling in one chunk.
+pub type SeedTile = Vec<(f32, f32, f32)>;
+
+/// The chunk tiles under one square of the seed region grid, with the
+/// cylinder that covers them.
+pub struct SeedRegion {
+    pub cylinder: Cylinder,
+    pub tiles: Vec<SeedTile>,
+}
+
+/// A cloud split for seeding, with the count of distinct voxels it covers.
+pub struct SeedPartition {
+    pub regions: Vec<SeedRegion>,
+    pub voxels: usize,
+}
+
+impl SeedPartition {
+    pub fn tiles(&self) -> impl Iterator<Item = &SeedTile> {
+        self.regions.iter().flat_map(|r| r.tiles.iter())
+    }
+
+    pub fn tile_count(&self) -> usize {
+        self.regions.iter().map(|r| r.tiles.len()).sum()
+    }
+}
+
+/// Split a world-frame cloud into `region_m` squares of chunk tiles, nearest
+/// `origin` first at both levels.
+pub fn partition_seed(
+    points: &[(f32, f32, f32)],
+    voxel_size: f32,
+    origin: (f32, f32, f32),
+    region_m: f32,
+) -> SeedPartition {
+    let (tiles, voxels) = seed_tiles(points, voxel_size, origin);
+    SeedPartition {
+        regions: seed_regions(tiles, voxel_size, region_m),
+        voxels,
+    }
+}
+
+/// Bucket a cloud into chunk tiles, nearest `origin` first, with the count of
+/// distinct voxels it covers.
+fn seed_tiles(
+    points: &[(f32, f32, f32)],
+    voxel_size: f32,
+    origin: (f32, f32, f32),
+) -> (Vec<(ChunkKey, SeedTile)>, usize) {
+    let inv = 1.0 / voxel_size;
+    let mut tiles: AHashMap<ChunkKey, SeedTile> = AHashMap::new();
+    let mut keys: AHashSet<VoxelKey> = AHashSet::new();
+    for &(x, y, z) in points {
+        if !(x.is_finite() && y.is_finite() && z.is_finite()) {
+            continue;
+        }
+        let key = world_to_voxel(x, y, z, inv);
+        keys.insert(key);
+        tiles.entry(chunk_of(key)).or_default().push((x, y, z));
+    }
+    let edge = CHUNK_SIZE as f32 * voxel_size;
+    let mut ordered: Vec<(f32, ChunkKey, SeedTile)> = tiles
+        .into_iter()
+        .map(|(chunk, tile)| {
+            let dx = (chunk.0 as f32 + 0.5) * edge - origin.0;
+            let dy = (chunk.1 as f32 + 0.5) * edge - origin.1;
+            let dz = (chunk.2 as f32 + 0.5) * edge - origin.2;
+            (dx * dx + dy * dy + dz * dz, chunk, tile)
+        })
+        .collect();
+    ordered.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let ordered = ordered
+        .into_iter()
+        .map(|(_, chunk, tile)| (chunk, tile))
+        .collect();
+    (ordered, keys.len())
+}
+
+/// Group tiles into region grid cells in the order the tiles arrive, each
+/// region's cylinder sized to the chunk boxes it holds.
+fn seed_regions(
+    tiles: Vec<(ChunkKey, SeedTile)>,
+    voxel_size: f32,
+    region_m: f32,
+) -> Vec<SeedRegion> {
+    let edge = CHUNK_SIZE as f32 * voxel_size;
+    let mut regions: AHashMap<Cell, (Aabb, Vec<SeedTile>)> = AHashMap::new();
+    let mut order: Vec<Cell> = Vec::new();
+    for (chunk, tile) in tiles {
+        let lo = (
+            chunk.0 as f32 * edge,
+            chunk.1 as f32 * edge,
+            chunk.2 as f32 * edge,
+        );
+        let hi = (lo.0 + edge, lo.1 + edge, lo.2 + edge);
+        let cell = region_of(chunk, voxel_size, region_m);
+        let (aabb, tiles) = regions.entry(cell).or_insert_with(|| {
+            order.push(cell);
+            (Aabb { lo, hi }, Vec::new())
+        });
+        aabb.lo = (
+            aabb.lo.0.min(lo.0),
+            aabb.lo.1.min(lo.1),
+            aabb.lo.2.min(lo.2),
+        );
+        aabb.hi = (
+            aabb.hi.0.max(hi.0),
+            aabb.hi.1.max(hi.1),
+            aabb.hi.2.max(hi.2),
+        );
+        tiles.push(tile);
+    }
+    order
+        .into_iter()
+        .map(|cell| {
+            let (aabb, tiles) = regions.remove(&cell).expect("region recorded in order");
+            SeedRegion {
+                cylinder: aabb.covering_cylinder(voxel_size),
+                tiles,
+            }
+        })
+        .collect()
+}
+
+/// An axis-aligned box of world-frame chunk extents.
+struct Aabb {
+    lo: (f32, f32, f32),
+    hi: (f32, f32, f32),
+}
+
+impl Aabb {
+    /// The cylinder on the box's xy center that reaches its corners with a
+    /// voxel of margin all round.
+    fn covering_cylinder(&self, margin: f32) -> Cylinder {
+        let hx = (self.hi.0 - self.lo.0) * 0.5;
+        let hy = (self.hi.1 - self.lo.1) * 0.5;
+        Cylinder {
+            cx: self.lo.0 + hx,
+            cy: self.lo.1 + hy,
+            radius: hx.hypot(hy) + margin,
+            z_min: self.lo.2 - margin,
+            z_max: self.hi.2 + margin,
+        }
+    }
+}
+
+/// Seed one tile without ray tracing, creating only absent voxels. Returns
+/// the created keys.
+pub fn seed_tile(
+    map: &mut VoxelMap,
+    points: &[(f32, f32, f32)],
+    cfg: &Config,
+) -> AHashSet<VoxelKey> {
+    let inv = 1.0 / cfg.voxel_size;
+    let fine = cfg.fine_layer().map(|(d, _)| d as i32);
+
+    let mut created: AHashSet<VoxelKey> = AHashSet::new();
+    for &(x, y, z) in points {
+        if !(x.is_finite() && y.is_finite() && z.is_finite()) {
+            continue;
+        }
+        let key = world_to_voxel(x, y, z, inv);
+        if map.insert_seed(key) {
+            created.insert(key);
+        } else if !created.contains(&key) {
+            continue;
+        }
+        map.accumulate((x, y, z), cfg.voxel_size, fine);
+    }
+    if !created.is_empty() {
+        refresh_voxels(map, &created, &[], cfg.voxel_size);
+    }
+    created
+}
+
+/// Bulk-load a whole world-frame cloud in one call, tile by tile. Returns
+/// how many voxels were created.
+pub fn seed_points(map: &mut VoxelMap, points: &[(f32, f32, f32)], cfg: &Config) -> usize {
+    let region_m = CHUNK_SIZE as f32 * cfg.voxel_size;
+    let part = partition_seed(points, cfg.voxel_size, (0.0, 0.0, 0.0), region_m);
+    map.reserve(part.voxels);
+    part.tiles()
+        .map(|tile| seed_tile(map, tile, cfg).len())
+        .sum()
 }
 
 #[inline]

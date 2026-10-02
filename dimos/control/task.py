@@ -38,7 +38,7 @@ if TYPE_CHECKING:
     from dimos.msgs.geometry_msgs.Pose import Pose
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
     from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
-    from dimos.teleop.quest.quest_types import Buttons
+    from dimos.teleop.webxr.controller_types import Buttons
 
 
 @dataclass(frozen=True)

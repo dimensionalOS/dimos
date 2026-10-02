@@ -64,7 +64,9 @@ def _local_result_dataclasses() -> set[type[object]]:
             visit(hints[item.name])
 
     for member in ManipulationSpec.__dict__.values():
-        if inspect.isfunction(member):
+        # TODO(PY312): drop the module check — before 3.12, Protocol injects
+        # unannotated __init__/__subclasshook__ functions into the class dict.
+        if inspect.isfunction(member) and member.__module__ == manipulation_spec.__name__:
             visit(get_type_hints(member)["return"])
     return found
 
@@ -153,3 +155,7 @@ def test_manipulation_module_exposes_no_skills() -> None:
 
 def test_manipulation_module_satisfies_group_native_spec() -> None:
     assert spec_annotation_compliance(ManipulationModule, ManipulationSpec)
+    for name, member in ManipulationSpec.__dict__.items():
+        if inspect.isfunction(member) and not name.startswith("_"):
+            assert name in ManipulationModule.rpcs
+    assert "plan_to_pose" not in ManipulationModule.rpcs

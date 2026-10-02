@@ -12,20 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Control coordinator carrying Quest arm teleoperation inputs."""
+"""Control coordinator carrying spatial poses and keyboard end-effector twists."""
 
 from dimos.control.coordinator import ControlCoordinator
 from dimos.core.stream import In
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.std_msgs.Float32 import Float32
-from dimos.teleop.quest.quest_types import Buttons
+from dimos.teleop.webxr.controller_types import Buttons
 
 
 class TeleopControlCoordinator(ControlCoordinator):
-    """Add the pose and control ports consumed by teleoperation task cards."""
+    """Add the pose, twist, and control ports consumed by teleoperation task cards."""
 
     left_cartesian_command: In[PoseStamped]
     right_cartesian_command: In[PoseStamped]
     left_gripper_command: In[Float32]
     right_gripper_command: In[Float32]
     teleop_buttons: In[Buttons]
+    ee_twist_command: In[TwistStamped]

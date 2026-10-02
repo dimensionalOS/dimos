@@ -5,6 +5,8 @@ FROM ${FROM_IMAGE}
 RUN apt-get update && apt-get install -y \
     python-is-python3 \
     curl \
+    libsndfile1 \
+    ffmpeg \
     gnupg2 \
     lsb-release \
     python3-pip \
@@ -41,7 +43,7 @@ RUN apt-get update && apt-get install -y \
 RUN apt-get purge -y python3-blinker python3-sympy python3-oauthlib || true
 
 # Setup needed for Python's cyclonedds to work.
-RUN mkdir -p /opt/cyclonedds && ln -s /usr/include /opt/cyclonedds/include && ln -s /usr/lib/x86_64-linux-gnu /opt/cyclonedds/lib
+RUN mkdir -p /opt/cyclonedds && ln -s /usr/include /opt/cyclonedds/include && ln -s /usr/lib/x86_64-linux-gnu /opt/cyclonedds/lib && ln -s /usr/bin /opt/cyclonedds/bin
 ENV CYCLONEDDS_HOME=/opt/cyclonedds
 
 # Install UV for fast Python package management

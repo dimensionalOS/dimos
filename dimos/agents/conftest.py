@@ -16,7 +16,6 @@ import os
 from pathlib import Path
 from threading import Event
 
-from dotenv import load_dotenv
 from langchain_core.messages.base import BaseMessage
 import pytest
 
@@ -27,8 +26,6 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.global_config import global_config
 from dimos.core.transport import pLCMTransport
-
-load_dotenv()
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures"
 

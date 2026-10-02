@@ -14,6 +14,9 @@
 
 """The connect timeout bounds our own wait and zenoh's dial retries."""
 
+import time
+from types import SimpleNamespace
+
 from pydantic import ValidationError
 import pytest
 import zenoh
@@ -74,3 +77,18 @@ def test_a_pooled_session_is_still_shared_by_matching_configs(zenoh_defaults, mo
         ZenohConfig(connect_timeout=1.0)
     )
     assert len(opens) == 1
+
+
+def test_a_session_waits_for_its_links_only_once(zenoh_defaults, monkeypatch):
+    """After one timed-out wait, later services on the same session start at once."""
+    unlinked = SimpleNamespace(info=SimpleNamespace(links=lambda: []))
+    monkeypatch.setattr(zenohservice.zenoh, "open", lambda zconfig: unlinked)
+    pool = ZenohSessionPool()
+
+    def acquire_seconds() -> float:
+        started = time.monotonic()
+        pool.acquire(ZenohConfig(connect=["tcp/192.0.2.10:7447"], connect_timeout=0.2))
+        return time.monotonic() - started
+
+    assert acquire_seconds() >= 0.2
+    assert acquire_seconds() < 0.1

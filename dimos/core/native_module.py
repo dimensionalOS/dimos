@@ -62,7 +62,9 @@ from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.native_package import ensure_native_package
 from dimos.core.transport_factory import session_config
+from dimos.protocol.service.lcmservice import LCMConfig
 from dimos.protocol.service.spec import SessionConfig
+from dimos.protocol.service.zenohservice import ZenohConfig
 from dimos.utils.logging_config import setup_logger
 
 if sys.platform.startswith("linux"):
@@ -126,7 +128,7 @@ class NativeModuleConfig(ModuleConfig):
     extra_env: dict[str, str] = Field(default_factory=dict)
     # Session settings for this module alone, e.g. opening it as the zenoh router
     # the rest of the graph connects to. None follows the global config.
-    session: SessionConfig | None = None
+    session: ZenohConfig | LCMConfig | None = None
     shutdown_timeout: float = DEFAULT_THREAD_JOIN_TIMEOUT
     log_format: LogFormat = LogFormat.JSON
     auto_build: bool = False
@@ -368,7 +370,10 @@ class NativeModule(Module):
                 module=self._module_label,
                 pid=proc.pid,
             )
-            proc.send_signal(signal.SIGTERM)
+            try:
+                os.killpg(proc.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
             try:
                 proc.wait(timeout=self.config.shutdown_timeout)
             except subprocess.TimeoutExpired:
@@ -377,7 +382,10 @@ class NativeModule(Module):
                     module=self._module_label,
                     pid=proc.pid,
                 )
-                proc.kill()
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
                 try:
                     proc.wait(timeout=self.config.shutdown_timeout)
                 except subprocess.TimeoutExpired:

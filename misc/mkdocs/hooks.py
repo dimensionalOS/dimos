@@ -138,7 +138,8 @@ def _rewrite_link(match: re.Match[str], src_uri: str) -> str:
         return f"]({rel}{anchor}{title})"
 
     root = target.lstrip("/").split("/", 1)[0]
-    if root in SOURCE_ROOTS:
+    # A file at the repo root (`/setup.py`) is source too: it has no page here.
+    if root in SOURCE_ROOTS or root == target.lstrip("/"):
         return f"]({GITHUB_BLOB}{target}{anchor}{title})"
 
     return match.group(0)
@@ -239,17 +240,24 @@ def on_page_markdown(markdown, page, config, files):
 
 _SVG_VIEWBOX = re.compile(r"<svg(?![^>]* width=)[^>]*?viewBox=['\"]0 0 ([\d.]+) ([\d.]+)['\"]")
 
+# An <img> of an svg cannot use the page's stylesheet, so without a font of
+# its own every diagram label falls back to the browser's default serif.
+_SVG_FONT = "Inter, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
+
 
 def on_post_build(config):
     """Pikchr svgs carry only a viewBox; an <img> of one has no intrinsic size,
-    so the browser stretches it to the column. Stamp the natural size on."""
+    so the browser stretches it to the column. Stamp the natural size and the
+    font on."""
     for svg in Path(config["site_dir"]).rglob("*.svg"):
         text = svg.read_text(encoding="utf-8")
         if 'class="pikchr"' not in text[:300]:
             continue
         match = _SVG_VIEWBOX.search(text)
         if match:
-            size = f'<svg width="{match.group(1)}" height="{match.group(2)}"'
+            size = (
+                f'<svg width="{match.group(1)}" height="{match.group(2)}" font-family="{_SVG_FONT}"'
+            )
             svg.write_text(text.replace("<svg", size, 1), encoding="utf-8")
 
 

@@ -31,6 +31,7 @@ from dimos.manipulation.planning.planners.roboplan_config import (
     RoboPlanPlannerConfig,
 )
 from dimos.manipulation.planning.spec.enums import PlanningStatus
+from dimos.manipulation.planning.spec.validation import prepare_robot_model
 from dimos.manipulation.planning.utils.kinematics_utils import compute_pose_error
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -71,7 +72,7 @@ def test_real_roboplan_plans_fixed_orientation_cartesian_path(
 
     world_type, planner_type = roboplan_types
     world = world_type()
-    world.load_model(config)
+    world.load_model(prepare_robot_model(config))
     world.finalize()
     planner = planner_type(world, RoboPlanPlannerConfig())
     _sync_zero_state(world, config.joint_names)
@@ -124,7 +125,7 @@ def test_real_roboplan_synchronizes_different_length_dual_arm_targets(
 
     world_type, planner_type = roboplan_types
     world = world_type()
-    world.load_model(config)
+    world.load_model(prepare_robot_model(config))
     world.finalize()
     planner = planner_type(world, RoboPlanPlannerConfig())
     _sync_zero_state(world, config.joint_names)

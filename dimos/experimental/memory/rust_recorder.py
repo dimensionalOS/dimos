@@ -31,13 +31,14 @@ from dimos.experimental.memory.rust_types import RustStreamSpec
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.type.recording import OnExisting
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.std_msgs.String import String
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.data import backup_file
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-_SUPPORTED_NATIVE_CODECS = {"lcm", "jpeg", "lz4+lcm"}
+_SUPPORTED_NATIVE_CODECS = {"lcm", "jpeg", "lz4+lcm", "json"}
 
 
 class RustStoreConfig(BaseModel):
@@ -113,6 +114,9 @@ class RustRecorderConfig(NativeModuleConfig):
         exclude=True,
         description="Map input port names to artifact stream names.",
     )
+    stream_timestamp_fields: dict[str, str] = Field(default_factory=dict, exclude=True)
+    stream_json_schemas: dict[str, dict[str, Any]] = Field(default_factory=dict, exclude=True)
+
     stream_codecs: dict[str, str] = Field(
         default_factory=dict,
         exclude=True,
@@ -134,6 +138,12 @@ class RustRecorderConfig(NativeModuleConfig):
         if self.extra_args:
             raise ValueError("RustRecorder is stdin-only and does not accept extra_args")
         return self
+
+    def to_config_dict(self) -> dict[str, Any]:
+        config = super().to_config_dict()
+        # Older recorder binaries reject unknown stream fields, even null ones.
+        config["streams"] = [stream.model_dump(exclude_none=True) for stream in self.streams]
+        return config
 
 
 class RustRecorder(NativeModule):
@@ -204,6 +214,8 @@ class RustRecorder(NativeModule):
                     name=stream_name,
                     payload_type=f"{port.type.__module__}.{port.type.__qualname__}",
                     codec=codec,
+                    timestamp_field=self.config.stream_timestamp_fields.get(stream_name),
+                    json_schema=self.config.stream_json_schemas.get(stream_name),
                 )
             )
 
@@ -214,6 +226,11 @@ class RustRecorder(NativeModule):
         if not specs:
             logger.warning("Native recorder has no connected streams")
         return specs
+
+    def _collect_topics(self) -> dict[str, str]:
+        topics = super()._collect_topics()
+        enabled_ports = {spec.port for spec in self.config.streams}
+        return {port: topic for port, topic in topics.items() if port in enabled_ports}
 
     @staticmethod
     def _default_codec(payload_type: type[Any]) -> str:
@@ -232,6 +249,8 @@ class RustRecorder(NativeModule):
                 f"Unsupported native codec {codec!r} for stream {stream_name!r}; "
                 f"choose one of {sorted(_SUPPORTED_NATIVE_CODECS)}"
             )
+        if codec == "json" and payload_type is not String:
+            raise TypeError("JSON codec requires std_msgs.String")
         if codec == "jpeg" and not issubclass(payload_type, Image):
             raise TypeError(f"JPEG codec requires Image, got {payload_type.__qualname__}")
         if not hasattr(payload_type, "lcm_encode") or not hasattr(payload_type, "lcm_decode"):

@@ -74,8 +74,8 @@ from dimos.msgs.nav_msgs.Path import Path as NavPath
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
+from dimos.navigation.go2.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.navigation.movement_manager.movement_manager import MovementManager
-from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.robot.unitree.g1.config import G1
 from dimos.robot.unitree.g1.g1_rerun import (
     G1_RERUN_ROOT,
@@ -283,12 +283,6 @@ if global_config.simulation == "mujoco":
     _default_ramp_seconds = 0.0
     _decimation: int | None = 1
     _n_workers = 2  # sim: keep the default worker count
-    _arm_holder = joint_trajectory_task(
-        g1_arms,
-        priority=10,
-        velocity_limits={name: 1.0 for name in g1_arms},
-        hold_position_when_idle=True,
-    )
     _mapper = VoxelGridMapper.blueprint(emit_every=1)
     _nav_stack = autoconnect(
         _mapper,
@@ -309,6 +303,7 @@ if global_config.simulation == "mujoco":
     _nav_remappings = [(VoxelGridMapper, "lidar", "pointcloud")]
 else:
     from dimos.hardware.sensors.lidar.pointlio.module import PointLio
+    from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
     from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
     from dimos.robot.unitree.g1.wholebody_connection import G1WholeBodyConnection
 
@@ -326,16 +321,11 @@ else:
     _default_ramp_seconds = 10.0
     _decimation = 2  # 100 Hz tick / 2 = 50 Hz policy (training + sim rate).
     # One process per heavy module; fewer workers starve the Rerun bridge.
-    _n_workers = 10
-    _arm_holder = joint_trajectory_task(
-        g1_arms,
-        priority=10,
-        velocity_limits={name: 1.0 for name in g1_arms},
-        hold_position_when_idle=True,
-    )
+    _n_workers = 11
     # Same nav middle as unitree-g1-nav-simple, fed by Point-LIO from the
     # MID-360, executed through the coordinator's twist_command.
     _nav_stack = autoconnect(
+        mid360_for_pointlio(),
         PointLio.blueprint(),
         RayTracingVoxelMap.blueprint(
             voxel_size=_G1_REAL_NAV_VOXEL_RESOLUTION,
@@ -360,6 +350,13 @@ else:
         MovementManager.blueprint(),
     )
     _nav_remappings = []
+
+
+_arm_trajectory_task = joint_trajectory_task(
+    g1_arms,
+    priority=10,
+    velocity_limits={name: 1.0 for name in g1_arms},
+)
 
 
 def _g1_groot_rerun_blueprint() -> Any:
@@ -492,6 +489,7 @@ if global_config.simulation != "mujoco":
     _rerun_config["visual_override"]["world/navigation_costmap"] = _g1_real_costmap
     # Raw scan is sensor-frame (LIO contract); the voxel map is the live view.
     _rerun_config["visual_override"]["world/lidar"] = None
+    _rerun_config["visual_override"]["world/lidar_raw"] = None
 
 
 def _viewer() -> Any:
@@ -528,8 +526,8 @@ _coordinator = _G1GrootCoordinator.blueprint(
                 "decimation": _decimation,
             },
         ),
-        _arm_holder,
-        # Shared bimanual Quest task with G1-only model and objective tuning.
+        _arm_trajectory_task,
+        # Shared bimanual WebXR task with G1-only model and objective tuning.
         TaskConfig(
             name="teleop_g1",
             type="teleop_ik",
@@ -557,7 +555,7 @@ _coordinator = _G1GrootCoordinator.blueprint(
         ("cmd_vel", Twist): LCMTransport(_cmd_vel_topic, Twist),
         # Real-hw only: the transport_lcm adapter speaks to
         # G1WholeBodyConnection over these topics. autoconnect already
-        # matches by (name, type) so sim doesn't need them -- they're
+        # matches by (name, type) so sim doesn't need them; they're
         # harmless when the sim engine doesn't expose those ports.
         ("motor_states", JointState): LCMTransport("/g1/motor_states", JointState),
         ("imu", Imu): LCMTransport("/g1/imu", Imu),

@@ -27,8 +27,6 @@ from dimos.core import native_package
 from dimos.core.native_module import NativeModuleConfig
 from dimos.experimental.memory.rust_recorder import RustRecorder
 from dimos.hardware.sensors.lidar.fastlio2.module import FastLio2
-from dimos.hardware.sensors.lidar.livox.module import Mid360
-from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 
 
 @pytest.fixture
@@ -106,14 +104,14 @@ def test_preparation_reuses_exact_outputs_and_rechecks_inputs(isolated_packages,
 def test_missing_nix_has_installation_guidance(isolated_packages, mocker):
     mocker.patch.object(native_package.shutil, "which", return_value=None)
     with pytest.raises(RuntimeError, match="require Nix"):
-        native_package.ensure_native_package("mid360")
+        native_package.ensure_native_package("fastlio2")
 
 
 def test_failed_evaluation_does_not_attempt_build(isolated_packages, mocker):
     mocker.patch.object(native_package.shutil, "which", return_value="nix")
     nix = mocker.patch.object(native_package, "_nix", side_effect=RuntimeError("download failed"))
     with pytest.raises(RuntimeError, match="download failed"):
-        native_package.ensure_native_package("pointlio")
+        native_package.ensure_native_package("fastlio2")
     assert nix.call_count == 1
 
 
@@ -131,8 +129,6 @@ def test_failed_nix_command_reports_status(mocker):
     "module_class, package_id",
     [
         (RustRecorder, "dimos-memory-recorder"),
-        (Mid360, "mid360"),
-        (PointLio, "pointlio"),
         (FastLio2, "fastlio2"),
     ],
 )
