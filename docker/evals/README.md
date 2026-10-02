@@ -21,30 +21,27 @@ one; `docker stop <name>` abandons one, keeping what it wrote so far but no
 which boots a dimos plus DimSim per case, runs the agent, records, and tears
 them down again.
 
-## Using it on your branch
+## Setup
 
-Nothing here depends on a particular suite or agent. On a branch based on a
-main that has this, it is already there. Before that, take its commits:
+Build the image once from the repo root, with the DimSim assets fetched (the
+image bakes them, and the sim refuses to load LFS pointer stubs), and export
+the API keys the evals use (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
+`TYPESAFE_API_KEY`):
 
 ```bash
-git fetch origin ruthwik/feat/docker-evals && git cherry-pick origin/main..origin/ruthwik/feat/docker-evals
+git lfs pull --include="misc/DimSim/**"
+docker build -f docker/evals/Dockerfile -t dimensional/evals .
 ```
 
-The one file an evals branch is likely to touch as well is
-`dimos/evals/cli.py`, where this adds the `--docker` option to `run`; keep
-both sets of options if it conflicts.
-
-On the instance, the image is a snapshot of the checkout, so each branch
-needs its own build. Tag it and point `EVALS_IMAGE` at it, so a rebuild for
-one branch never replaces the image another person's eval is running on:
+The image is a snapshot of the checkout, so rebuild after code changes; the
+dependency layer is cached unless the lock file moved, so that is minutes, not
+the first build's half hour. On a shared host, tag one image per branch so a
+rebuild never replaces the image someone else's eval is running on:
 
 ```bash
 docker build -f docker/evals/Dockerfile -t dimensional/evals:my-branch .
 export EVALS_IMAGE=dimensional/evals:my-branch
 ```
-
-Rebuild after code changes; the dependency layer is cached unless the lock
-file moved, so that is minutes, not the first build's half hour.
 
 ## What a run leaves behind
 
@@ -73,23 +70,6 @@ next to that run's `memory.db`. The same `--rerun-save` flag works on a bare
 accordingly and sync the runs directory to S3 after a batch. `RERUN_SAVE=0`
 in front of a `--docker` run skips the file for that run.
 
-## Setup
-
-Build the image once from the repo root, with the DimSim assets fetched (the
-image bakes them, and the sim refuses to load LFS pointer stubs):
-
-```bash
-git lfs pull --include="misc/DimSim/**"
-docker build -f docker/evals/Dockerfile -t dimensional/evals .
-```
-
-The image is a snapshot of the repo as it is on disk at build time, with the
-venv, Deno, headless Chromium, the Pi agent CLI, and the DimSim frontend and
-assets baked in. Rebuild after code changes; the dependency layer is cached
-unless the lock file moved. API keys come from the host environment
-(`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `TYPESAFE_API_KEY`); export them
-before running.
-
 ## Habitat
 
 The image also carries Habitat: habitat-sim's own python 3.9 conda environment
@@ -111,8 +91,7 @@ Only the HM3D example house is in the image. HSSD, ReplicaCAD and licensed
 HM3D splits go on a host directory that `compose.habitat-data.yaml` mounts
 over the container's `target/habitat/data`, so suites find them at their
 default paths. Add it to `COMPOSE_FILE` next to the GPU overlay and set
-`HABITAT_DATA_DIR`; the overlay's header shows how to fill the directory with
-the image's own downloader.
+`HABITAT_DATA_DIR`; step 8 of the runbook fills it.
 
 ## EC2 runbook
 
@@ -219,42 +198,27 @@ Sizing: with hardware rendering plan on 3 to 4 vCPU, 4 to 5 GB of RAM and a
 slice of the one GPU per concurrent eval; start a `g6.8xlarge` at six and
 watch per-case duration, score and `nvidia-smi` as you add more. The sim runs
 on wall clock, so a starved GPU or CPU shows up as lower scores, not just
-slower runs. Multi-GPU instances need one X screen per GPU and a
-per-container `DISPLAY`, which the compose files do not do yet.
+slower runs.
 
 ## Many at once
 
 There is no scheduler: to run a suite N ways, start N `--docker` invocations
 that select disjoint parts of it with `--tags`, and let each container work
 through its part in order. A shell loop with `xargs -P N` over a list of
-such commands is all the parallelism there is; `docker ps`
-shows what is running and `EVAL_RUNS_DIR` collects every run. A benchmark
-that spans scenes and agent configurations maps one container to each
-(configuration, scene) pair.
+such commands is all the parallelism there is; `docker ps` shows what is
+running and `EVAL_RUNS_DIR` collects every run. A benchmark that spans scenes
+and agent configurations maps one container to each (configuration, scene)
+pair.
 
 ## Notes
 
-- Workers run dimos on LCM (`DIMOS_TRANSPORT=lcm`). DimSim's Deno bridge
-  publishes odometry and takes velocity commands over LCM only; under the
-  default zenoh transport the eval waits for odometry that never arrives.
-- Workers get `NET_ADMIN` so dimos's own LCM setup can enable multicast on
-  the loopback inside the container, and a raised `memlock` limit for zenoh's
-  shared-memory pool.
 - Everything in a container runs as root; the entrypoint sets `umask 0000`
   so whatever a run writes, even one stopped midway, is readable and
   deletable by the host user. It is so for every other local account too,
   prompts and trajectories included: on a shared multi-user machine, keep
   `EVAL_RUNS_DIR` somewhere only you can reach.
-- Run ids carry a random 4-hex token after the stamp (`generate_run_id`).
-  Two evals booting the same blueprint in the same second used to get the
-  same run id and write one recording folder, one `memory.db` and one `rerun.rrd` between them.
-- The dimos run registry (`/state/dimos/runs`) is an anonymous volume per
-  container, not part of the shared mount. It is keyed by pid, and with a
-  shared one a container's stale-entry sweep deletes its neighbours' live
-  runs, whose evals then wait out their launch timeout looking for a
-  recording.
 - One Xorg display per host means one GPU per host. Multi-GPU instances need
-  one X screen per GPU and a per-container `DISPLAY`, which the compose file
-  does not do yet.
+  one X screen per GPU and a per-container `DISPLAY`, which the compose files
+  do not do yet.
 - Every concurrent eval calls the model API, so the account's rate limit caps
   useful parallelism as much as hardware does.

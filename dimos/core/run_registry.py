@@ -101,10 +101,8 @@ class RunEntry:
 def generate_run_id(blueprint: str) -> str:
     """Generate a human-readable run ID: ``<stamp>-<4 hex>-<blueprint>``.
 
-    The token keeps two runs of one blueprint started in the same second apart:
-    the run ID names the recording and log directories, and parallel runs (eval
-    workers on one host) would otherwise write into one. It sits right after the
-    stamp so the blueprint name stays everything after it.
+    The token keeps parallel runs of one blueprint, started in the same second,
+    out of each other's recording and log folders.
     """
     ts = time.strftime("%Y%m%d-%H%M%S")
     safe_name = re.sub(r"[^a-zA-Z0-9_-]", "-", blueprint)

@@ -124,10 +124,7 @@ def run(
     tags: str = typer.Option("", help="Comma-separated tag filter"),
     limit: int = typer.Option(0, min=0, help="Run at most N cases"),
     docker: bool = typer.Option(
-        False,
-        "--docker",
-        help="Run this eval in a fresh, detached worker container (docker/evals/compose.yaml) "
-        "and return at once; one container per invocation, gone when the eval ends",
+        False, "--docker", help="Run in a detached container (docker/evals/compose.yaml)"
     ),
 ) -> None:
     if docker:

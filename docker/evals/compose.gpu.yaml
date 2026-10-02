@@ -1,6 +1,4 @@
-# Overlay for hardware WebGL: the host runs one Xorg on the GPU (DISPLAY=:0 by
-# default) and every worker renders through its socket, as the self-hosted CI
-# runner does. Usage, before `dimos evals run --docker ...`:
+# Overlay: render through the host's Xorg on the GPU (README.md, EC2 runbook).
 #   export COMPOSE_FILE=docker/evals/compose.yaml:docker/evals/compose.gpu.yaml
 services:
   worker:

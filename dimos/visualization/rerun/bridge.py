@@ -292,7 +292,6 @@ class Config(ModuleConfig):
     memory_limit: str = "25%"
     rerun_open: RerunOpenOption = RERUN_OPEN_DEFAULT
     rerun_web: bool = RERUN_ENABLE_WEB
-    # Also write everything logged to recordings/<run-id>/rerun.rrd.
     rerun_save: bool = False
     web_port: int = RERUN_WEB_VIEWER_PORT
     blueprint: BlueprintFactory | None = _default_blueprint

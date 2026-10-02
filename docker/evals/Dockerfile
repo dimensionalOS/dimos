@@ -1,10 +1,5 @@
-# Eval worker image: one container runs one eval, booting its own dimos + simulator
-# inside the container's network namespace so N containers never share a port or a
-# multicast bus. Started from the host by `dimos evals run --docker`.
-#
-# Build from the repo root (the DimSim LFS assets must be real, not pointer stubs):
-#   git lfs pull --include="misc/DimSim/**"
-#   docker build -f docker/evals/Dockerfile -t dimensional/evals .
+# Eval worker image for `dimos evals run --docker`; see README.md. Build from the
+# repo root after `git lfs pull --include="misc/DimSim/**"`.
 FROM ubuntu:24.04
 
 # Keep in sync with dimos/utils/deno.py (DENO_VERSION) and
@@ -15,9 +10,7 @@ ARG PYTHON_VERSION=3.12
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Mirrors the apt list of the self-hosted CI job that runs DimSim tests, plus the
-# rest of Chromium's runtime libs, iproute2 for dimos's LCM network setup, and
-# wget for habitat-sim's dataset downloader.
+# The self-hosted CI job's apt list plus Chromium's runtime libs.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl wget git unzip build-essential pkg-config \
     libgl1 libturbojpeg portaudio19-dev \
@@ -28,8 +21,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     iproute2 xvfb ffmpeg x11-utils \
     && rm -rf /var/lib/apt/lists/*
 
-# Everything dimos caches or records lives under /cache and /state so a bind
-# mount on /state captures recordings, the run registry and eval results.
+# Recordings and results land under /state, which compose bind-mounts.
 ENV XDG_CACHE_HOME=/cache \
     XDG_STATE_HOME=/state \
     XDG_CONFIG_HOME=/config \
@@ -42,8 +34,7 @@ RUN curl -fsSL "https://github.com/denoland/deno/releases/download/${DENO_VERSIO
     && unzip -q /tmp/deno.zip -d /usr/local/bin && rm /tmp/deno.zip \
     && chmod +x /usr/local/bin/deno
 
-# Headless Chromium, the exact command dimos runs before every DimSim launch, so
-# at runtime it finds the browser installed and does nothing.
+# The same install dimos runs before each DimSim launch, so it is a no-op then.
 RUN deno run --allow-all "npm:playwright@${PLAYWRIGHT_VERSION}" install chromium
 
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -58,8 +49,7 @@ RUN curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash - \
 
 WORKDIR /app
 
-# Dependencies first, project last, so code edits don't invalidate the deps layer.
-# The dependency set is the one the self-hosted CI job uses to run DimSim evals.
+# Dependencies first so code edits don't invalidate the deps layer.
 COPY pyproject.toml uv.lock README.md setup.py ./
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv python install "${PYTHON_VERSION}" \
@@ -71,33 +61,25 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --python "${PYTHON_VERSION}" --group tests-self-hosted \
     && uv run python setup.py build_ext --inplace
 
-# DimSim's frontend, built the way cli.ts would on first run (dist/ is gitignored),
-# and the bridge CLI's own JSR/npm dependencies, cached with the same entrypoint and
-# working directory dimos launches it from so nothing downloads at runtime.
+# DimSim's frontend and bridge dependencies, so nothing downloads at run time.
 RUN cd misc/DimSim \
     && deno install --no-lock \
     && deno run -A --no-lock "npm:vite@^5.4.10" build \
     && cd /app && deno install --entrypoint misc/DimSim/cli/cli.ts
 
-# Habitat. habitat-sim is conda-only (python 3.9), so it lives in its own env under
-# target/habitat, built by the module's own installer with micromamba standing in
-# for the nix shell that normally provides it. The installer also fetches the
-# annotated HM3D example house and writes the `habitat-native` wrapper NativeModule
-# treats as the build sentinel, so a run never rebuilds. Headless rendering needs
-# EGL from the host's NVIDIA driver at run time: use compose.gpu.yaml.
+# Habitat's conda env (python 3.9) and HM3D example via the module's installer,
+# with micromamba in place of its nix shell.
 RUN curl -Ls https://micro.mamba.pm/api/micromamba/linux-64/latest \
         | tar -xj -C /usr/local/bin --strip-components=1 bin/micromamba \
     && bash dimos/simulation/habitat/nix/install.sh \
     && MAMBA_ROOT_PREFIX=/app/target/habitat/mm micromamba clean -a -y
 
-# `dimos` on PATH for the eval runner's `dimos run` subprocess; no rerun viewer.
 ENV PATH="/app/.venv/bin:${PATH}" \
     VIEWER=none \
     PYTHONUNBUFFERED=1
 
 RUN mkdir -p /state /config
 
-# `dimos evals run --docker` runs one eval per container through this entrypoint.
 COPY docker/evals/entrypoint.sh /entrypoint.sh
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["bash"]
