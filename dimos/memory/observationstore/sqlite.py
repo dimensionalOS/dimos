@@ -300,6 +300,10 @@ class SqliteObservationStore(ObservationStore[T]):
         return self._name
 
     @property
+    def transaction_lock(self) -> threading.RLock:
+        return self._lock
+
+    @property
     def _join_blobs(self) -> bool:
         return self._blob_store_conn_match
 

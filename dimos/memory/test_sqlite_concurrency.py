@@ -20,6 +20,7 @@ from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import tempfile
+import threading
 import tracemalloc
 
 import pytest
@@ -117,3 +118,67 @@ def test_repeated_stop_does_not_leak_connection_locks(tmp_path: Path) -> None:
     store.stop()
 
     assert len(_locks) == before
+
+
+def _race_failing_append(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, b_finishes_first: bool
+) -> list[float]:
+    """Append A (ts=1) fails in its blob write while append B (ts=2) hits the same stream.
+
+    Returns the timestamps left in the store. B only reaches the store between A's
+    insert and A's failure if appends are not serialized for their whole transaction.
+    """
+    wait = 0.2
+    with SqliteStore(path=str(tmp_path / "race.db")) as store:
+        stream = store.stream("race", bytes)
+        backend = stream._source
+        a_inserted, b_inserted, a_done, b_done = (threading.Event() for _ in range(4))
+        insert, put = backend.metadata_store.insert, backend.blob_store.put
+
+        ts_by_row: dict[int, float] = {}
+
+        def racing_insert(obs):
+            if obs.ts == 2.0:
+                a_inserted.wait(wait)
+            row_id = insert(obs)
+            ts_by_row[row_id] = obs.ts
+            (a_inserted if obs.ts == 1.0 else b_inserted).set()
+            return row_id
+
+        def racing_put(name, key, data):
+            if ts_by_row[key] == 1.0:
+                (b_done if b_finishes_first else b_inserted).wait(wait)
+                raise RuntimeError("blob write failed")
+            if not b_finishes_first:
+                a_done.wait(wait)
+            put(name, key, data)
+
+        monkeypatch.setattr(backend.metadata_store, "insert", racing_insert)
+        monkeypatch.setattr(backend.blob_store, "put", racing_put)
+
+        def append(payload: bytes, ts: float, done: threading.Event) -> None:
+            try:
+                stream.append(payload, ts=ts)
+            finally:
+                done.set()
+
+        with ThreadPoolExecutor(2) as ex:
+            fa = ex.submit(append, b"A", 1.0, a_done)
+            fb = ex.submit(append, b"B", 2.0, b_done)
+            with pytest.raises(RuntimeError, match="blob write failed"):
+                fa.result(timeout=10)
+            fb.result(timeout=10)
+
+        return [obs.ts for obs in stream]
+
+
+def test_failed_append_does_not_roll_back_concurrent_append(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert _race_failing_append(tmp_path, monkeypatch, b_finishes_first=False) == [2.0]
+
+
+def test_failed_append_is_not_committed_by_concurrent_append(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert _race_failing_append(tmp_path, monkeypatch, b_finishes_first=True) == [2.0]
