@@ -166,6 +166,12 @@ class RustRecorderConfig(NativeModuleConfig):
             raise ValueError("RustRecorder is stdin-only and does not accept extra_args")
         return self
 
+    def to_config_dict(self) -> dict[str, Any]:
+        config = super().to_config_dict()
+        # Older recorder binaries reject unknown stream fields, even null ones.
+        config["streams"] = [stream.model_dump(exclude_none=True) for stream in self.streams]
+        return config
+
 
 class RustRecorder(NativeModule):
     """Experimentally record connected ``In`` ports to native SQLite or MCAP.
