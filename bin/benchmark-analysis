@@ -7,10 +7,11 @@ change point detection over the result. A change point is the first main
 commit of a new level, which on a squash-merged main is one PR; each
 regression becomes an issue assigned to that commit's author.
 
-Why rescale: hosted runners are a mix of machine types whose CPU seconds for
-identical code differ by 10-20%, so left raw every switch between machine
-types looks like a change point. See `aligned` for how the scale of a machine
-type is estimated without flattening real shifts.
+Why rescale: hosted runners can be a mix of machine types whose numbers for
+identical code differ (CPU seconds on the x86 runners did by 10-20%), so left
+raw every switch between machine types looks like a change point. See
+`aligned` for how the scale of a machine type is estimated without flattening
+real shifts.
 
 Usage (Otava comes from the .github/benchmark-analysis project; the script itself
 needs only the stdlib):
@@ -109,9 +110,15 @@ def load_series(path: Path) -> tuple[list[Point], dict[str, str]]:
     return points, units
 
 
-def gate(
-    points: list[Point], units: dict[str, str], current: Path, threshold: float, acknowledged: bool
-) -> int:
+def emit(text: str) -> None:
+    """Print, and append to the job summary when there is one."""
+    print(text)
+    if summary := os.environ.get("GITHUB_STEP_SUMMARY"):
+        with Path(summary).open("a") as f:
+            f.write(text + "\n")
+
+
+def gate(points: list[Point], current: Path, threshold: float, acknowledged: bool) -> int:
     """Compare a run's gated series with the last run on main; 1 on a regression.
 
     The same comparison github-action-benchmark makes, done here so the failing
@@ -120,7 +127,7 @@ def gate(
     """
     benches = json.loads(current.read_text())
     now = {b["name"]: float(b["value"]) for b in benches}
-    units = {**{b["name"]: b["unit"] for b in benches}, **units}
+    units = {b["name"]: b["unit"] for b in benches}
     rows = []
     regressions = []
     previous: Point | None = None
@@ -156,11 +163,7 @@ def gate(
             "If this regression is expected, a maintainer can add the `benchmark-ack`",
             "label to the PR and re-run this job in order to merge.",
         ]
-    text = "\n".join(lines)
-    print(text)
-    if summary := os.environ.get("GITHUB_STEP_SUMMARY"):
-        with Path(summary).open("a") as f:
-            f.write(text + "\n")
+    emit("\n".join(lines))
     if regressions and not acknowledged:
         print(
             f"::error title=Benchmark regression::{', '.join(regressions)} above {threshold:.0%} "
@@ -261,13 +264,12 @@ def detect(
         file = workdir / f"{len(tests)}.csv"
         with file.open("w", newline="") as f:
             writer = csv.writer(f)
-            writer.writerow(["time", "commit", "cpu", "value"])
+            writer.writerow(["time", "commit", "value"])
             for point, value in series:
                 writer.writerow(
                     [
                         point.time.strftime("%Y-%m-%d %H:%M:%S %z"),
                         point.sha,
-                        point.cpu,
                         f"{value:.6f}",
                     ]
                 )
@@ -275,7 +277,7 @@ def detect(
             "type": "csv",
             "file": str(file),
             "time_column": "time",
-            "attributes": ["commit", "cpu"],
+            "attributes": ["commit"],
             "metrics": {"value": {"column": "value", "direction": -1}},
         }
     if not tests:
@@ -393,7 +395,7 @@ def issue_body(
         for c in sha_changes
     )
     run = (
-        f" in [this run]({os.environ['GITHUB_SERVER_URL']}/{repo}/actions/runs/{os.environ['GITHUB_RUN_ID']})"
+        f" in [this run]({url}/actions/runs/{os.environ['GITHUB_RUN_ID']})"
         if os.environ.get("GITHUB_RUN_ID")
         else ""
     )
@@ -423,11 +425,18 @@ def file_issues(
     magnitude: float,
 ) -> list[str]:
     """One issue per change-point commit; skipped when one already covers it."""
+    groups: dict[str, list[Change]] = {}
+    for c in changes:
+        if c.regression:
+            groups.setdefault(c.point.sha, []).append(c)
+    if not groups:
+        return []
+
     filed = set()
     for page in count(1):
         _, issues = gh.request("GET", f"/issues?labels={LABEL}&state=all&per_page=100&page={page}")
         for issue in issues or []:
-            if m := re.search(r"benchmark-analysis: ([0-9a-f]{40})", issue.get("body") or ""):
+            if m := re.search(MARKER.format(sha="([0-9a-f]{40})"), issue.get("body") or ""):
                 filed.add(m.group(1))
         if len(issues or []) < 100:
             break
@@ -438,10 +447,6 @@ def file_issues(
             {"name": LABEL, "color": "d93f0b", "description": "Filed by bin/benchmark-analysis"},
         )
 
-    groups: dict[str, list[Change]] = {}
-    for c in changes:
-        if c.regression:
-            groups.setdefault(c.point.sha, []).append(c)
     actions = []
     for sha, sha_changes in groups.items():
         # A change point can wander by one point between runs as the series
@@ -484,7 +489,7 @@ def report(changes: list[Change], actions: list[str]) -> str:
     return "\n".join(lines)
 
 
-def main() -> None:
+def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("data", type=Path, help="data.js from the gh-pages branch")
     parser.add_argument("--create-issues", action="store_true")
@@ -509,7 +514,7 @@ def main() -> None:
 
     points, units = load_series(args.data)
     if args.gate:
-        return gate(points, units, args.gate, args.threshold, args.acknowledged)
+        return gate(points, args.gate, args.threshold, args.acknowledged)
     with tempfile.TemporaryDirectory() as tmp:
         changes = detect(
             points, Path(tmp), args.otava, args.p_value, args.magnitude, args.min_segment
@@ -521,11 +526,8 @@ def main() -> None:
         gh = GitHub(repo, os.environ["GITHUB_TOKEN"])
         actions = file_issues(changes, units, gh, repo, args.p_value, args.magnitude)
 
-    text = report(changes, actions)
-    print(text)
-    if summary := os.environ.get("GITHUB_STEP_SUMMARY"):
-        with Path(summary).open("a") as f:
-            f.write(text + "\n")
+    emit(report(changes, actions))
+    return 0
 
 
 if __name__ == "__main__":

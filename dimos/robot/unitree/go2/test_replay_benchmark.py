@@ -90,14 +90,14 @@ def _cgroup_stat(name: str) -> dict[str, str]:
 def _cgroup_anon_bytes() -> int:
     """Anonymous memory currently charged to this cgroup, whole process tree.
 
-    Cgroup accounting counts every process in the job's cgroup, live or
-    exited — per-process rusage can't: the forkserver workers doing most of
-    the work are never reaped by the test process, so RUSAGE_CHILDREN misses
-    them. Page cache is deliberately excluded (memory.current would include
-    it): it scales with file reads and global memory pressure, not with the
-    pipeline. memory.peak is no use either — it is cumulative since cgroup
-    creation, so on a CI runner it would report the job's setup steps, not
-    the benchmark.
+    Cgroup accounting counts every process in the job's cgroup — per-process
+    rusage can't: the forkserver workers doing most of the work are never
+    reaped by the test process, so RUSAGE_CHILDREN misses them.
+
+    Page cache is deliberately excluded (memory.current would include it): it
+    scales with file reads and global memory pressure, not with the pipeline.
+    memory.peak is no use either — it is cumulative since cgroup creation, so
+    on a CI runner it would report the job's setup steps, not the benchmark.
     """
     return int(_cgroup_stat("memory.stat")["anon"])
 
@@ -157,11 +157,7 @@ def _net_bytes() -> int:
         if line.startswith("IpExt:")
     ]
     ipext = dict(zip(lines[0].split()[1:], lines[1].split()[1:], strict=True))
-    loopback = 0
-    for line in Path("/proc/net/dev").read_text().splitlines()[2:]:
-        name, _, rest = line.partition(":")
-        if name.strip() == "lo":
-            loopback += int(rest.split()[0])
+    loopback = int(Path("/sys/class/net/lo/statistics/rx_bytes").read_text())
     return loopback + int(ipext["InMcastOctets"])
 
 
@@ -195,7 +191,7 @@ def _perf_counts(path: Path, events: list[str]) -> tuple[dict[str, float], float
             raise RuntimeError(f"perf could not count {event}: {count!r}") from None
         totals[event] = totals.get(event, 0.0) + value
         counted = min(counted, float(share))
-    missing = [e for e in events if event not in totals]
+    missing = [e for e in events if e not in totals]
     if missing:
         raise RuntimeError(f"perf reported nothing for {missing} in {path}")
     return {e: totals[e] for e in events}, counted
@@ -217,13 +213,6 @@ def test_go2_replay_realtime_load() -> None:
 
     counts = dict.fromkeys(FLOOR_FRACTION, 0)
     lock = threading.Lock()
-    io_marks: dict[str, int] = {}
-    net_marks: dict[str, int] = {}
-
-    def mark(name: str) -> None:
-        if METRICS_PATH:
-            io_marks[name] = _cgroup_io_bytes()
-            net_marks[name] = _net_bytes()
 
     def record(name: str) -> None:
         with lock:
@@ -273,8 +262,11 @@ def test_go2_replay_realtime_load() -> None:
             *("--", "sh", "-c", '"$@"; echo $? >"$0"', str(rc_path)),
             *cmd,
         ]
-    mark("start")
     if METRICS_PATH:
+        # Flush what the job's setup and pytest's startup left dirty.
+        os.sync()
+        io_start = _cgroup_io_bytes()
+        net_start = _net_bytes()
         sampler.start()
     # Its own process group, so a timeout can signal the CLI through perf.
     proc = subprocess.Popen(cmd, start_new_session=True)
@@ -286,7 +278,9 @@ def test_go2_replay_realtime_load() -> None:
                 f"dimos did not exit within {RUN_TIMEOUT:.0f}s: counts={counts}, "
                 f"expected~{expected}"
             )
-        mark("end")
+        if METRICS_PATH:
+            io_end = _cgroup_io_bytes()
+            net_end = _net_bytes()
         if PERF_EVENTS and rc_path.exists():
             returncode = int(rc_path.read_text())
     finally:
@@ -315,11 +309,10 @@ def test_go2_replay_realtime_load() -> None:
             ("peak threads", float(peak_tasks), "threads"),
             # Bytes between the workers: loopback for zenoh, looped multicast
             # for LCM.
-            ("network (transport)", (net_marks["end"] - net_marks["start"]) / 2**20, "MB"),
-            # Block-device writeback across the run: the deployment's logs, once
-            # the job has warmed pytest's plugin caches (otherwise their
-            # ~8 MB of bytecode lands here). Tracked, not gated.
-            ("disk write", (io_marks["end"] - io_marks["start"]) / 2**20, "MB"),
+            ("network (transport)", (net_end - net_start) / 2**20, "MB"),
+            # Block-device writeback across the run: the deployment's logs.
+            # Tracked, not gated.
+            ("disk write", (io_end - io_start) / 2**20, "MB"),
         ]
         # Context for reading a point, not series: what was delivered (work
         # that got shed under load shows here first) and whether perf had a

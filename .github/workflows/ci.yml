@@ -1218,7 +1218,7 @@ jobs:
           UV_COMPILE_BYTECODE: "1"
       # The above skips dimos itself, as it's an editable install.
       - name: Compile the dimos bytecode
-        run: uv run python -m compileall -q dimos
+        run: uv run python -m compileall -q -j 0 dimos
       - name: Pre-extract the replay database
         run: uv run python -c "from dimos.utils.data import get_data; print(get_data('go2_short.db'))"
       - name: Precompile the numba kernels
@@ -1231,11 +1231,6 @@ jobs:
           points = np.array([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]], dtype=np.float32)
           height_cost_occupancy(PointCloud2.from_numpy(points, timestamp=1.0))
           "
-      - name: Warm pytest's plugin caches
-        run: uv run pytest -m '' --no-cov --collect-only -q dimos/robot/unitree/go2/test_replay_benchmark.py
-      # Avoid pending disk writes getting recorded in the benchmark.
-      - name: Flush pending writeback
-        run: sync
       - name: Run the replay under cgroup accounting
         run: uv run pytest -m '' --no-cov dimos/robot/unitree/go2/test_replay_benchmark.py
         env:
@@ -1283,6 +1278,7 @@ jobs:
         uses: benchmark-action/github-action-benchmark@v1
         with:
           # A new series: the arm runner's numbers don't continue the x86 ones.
+          # bin/benchmark-analysis reads it by this name (SERIES).
           name: go2 replay realtime (arm64)
           tool: customSmallerIsBetter
           output-file-path: benchmark.json
@@ -1292,7 +1288,6 @@ jobs:
           save-data-file: ${{ github.event_name == 'push' }}
           # The gate below does the alerting, on the stable series only; this
           # step tracks every series and posts the comparison table.
-          alert-threshold: 10000%
           comment-on-alert: false
           fail-on-alert: false
           # Fork PRs run with a read-only token that can't post comments;
@@ -1327,7 +1322,10 @@ jobs:
           git fetch --depth=1 origin gh-pages
           git show FETCH_HEAD:dev/bench/data.js > data.js
       - name: Install uv
-        uses: astral-sh/setup-uv@v8.3.2
+        uses: astral-sh/setup-uv@v10.2.0
+        with:
+          # Nothing worth caching: Otava's dependencies are all prebuilt wheels.
+          enable-cache: false
       - name: Install Otava
         run: uv sync --project .github/benchmark-analysis --frozen
       - name: Analyse the series and file regressions
