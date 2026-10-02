@@ -66,11 +66,12 @@ class OperatorHoldStatus:
     """What the hold is doing right now.
 
     Attributes:
-        on: True while every joint is being held.
+        on: True while the hold is requested.
         route: The HoldRoute value that asked for the hold; "" when off.
         reason: Free text from the requester; "" when off.
         started_at: Unix time in seconds the hold was requested; 0.0 when off.
         stamp: Unix time in seconds this status was produced.
+        unheld: Joints with no valid position reading, not held yet.
     """
 
     on: bool
@@ -78,6 +79,7 @@ class OperatorHoldStatus:
     reason: str = ""
     started_at: float = 0.0
     stamp: float = 0.0
+    unheld: tuple[str, ...] = ()
 
 
 def operator_hold_task(priority: int = OPERATOR_HOLD_PRIORITY) -> TaskConfig:
@@ -108,7 +110,7 @@ class OperatorHoldTask(BaseControlTask):
     frozen at its measured position (zero for a base's velocity joints), and
     the whole set is commanded every tick until ``acknowledge()``. A joint
     that appears later, e.g. hardware added during a hold, is frozen when
-    first seen.
+    first seen. A joint with no valid reading waits in ``unheld``.
 
     Status goes to the publisher given to ``set_status_publisher`` on the
     first tick after a request, once per ``status_interval`` after that, and
@@ -140,6 +142,7 @@ class OperatorHoldTask(BaseControlTask):
         self._reason = ""
         self._started_at = 0.0
         self._held: dict[str, float] = {}  # joint -> value commanded while on
+        self._unheld: set[str] = set()  # joints seen without a finite reading
         self._last_status_t: float | None = None  # coordinator time of the last status
 
     def set_status_publisher(self, publish: Callable[[OperatorHoldStatus], None] | None) -> None:
@@ -161,12 +164,19 @@ class OperatorHoldTask(BaseControlTask):
     def compute(self, state: CoordinatorState) -> JointCommandOutput | None:
         """Command the frozen value of every joint; freeze joints seen for the first time."""
         status: OperatorHoldStatus | None = None
+        newly_unheld: list[str] = []
         with self._lock:
             if not self._on:
                 return None
             for name, position in state.joints.joint_positions.items():
-                if name not in self._held and math.isfinite(position):
+                if name in self._held:
+                    continue
+                if math.isfinite(position):
                     self._held[name] = _hold_value(name, position)
+                    self._unheld.discard(name)
+                elif name not in self._unheld:
+                    self._unheld.add(name)
+                    newly_unheld.append(name)
             if (
                 self._last_status_t is None
                 or state.t_now - self._last_status_t >= self._status_interval
@@ -175,6 +185,11 @@ class OperatorHoldTask(BaseControlTask):
                 status = self._status_locked()
             names = list(self._held)
             values = [self._held[name] for name in names]
+        if newly_unheld:
+            logger.warning(
+                "Operator hold cannot hold joints without a valid position reading",
+                joints=newly_unheld,
+            )
         if status is not None:
             self._emit(status)
         if not names:
@@ -207,6 +222,7 @@ class OperatorHoldTask(BaseControlTask):
             if not self._on:
                 self._on = True
                 self._held = {}
+                self._unheld = set()
                 # Wall clock, for people reading the status; never used for control.
                 self._started_at = time.time()
                 self._last_status_t = None
@@ -217,11 +233,15 @@ class OperatorHoldTask(BaseControlTask):
         return status
 
     def acknowledge(self) -> OperatorHoldStatus:
-        """Release the hold. Nothing resumes by itself; the next task to command a joint takes it."""
+        """Release the hold. Nothing resumes by itself; the next task to command a joint takes it.
+
+        Operator only: never expose this as an agent skill.
+        """
         with self._lock:
             was_on = self._on
             self._on = False
             self._held = {}
+            self._unheld = set()
             self._route = ""
             self._reason = ""
             self._started_at = 0.0
@@ -244,6 +264,7 @@ class OperatorHoldTask(BaseControlTask):
             reason=self._reason,
             started_at=self._started_at,
             stamp=time.time(),
+            unheld=tuple(sorted(self._unheld)),
         )
 
     def _emit(self, status: OperatorHoldStatus) -> None:

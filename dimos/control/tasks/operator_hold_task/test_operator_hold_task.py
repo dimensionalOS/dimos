@@ -69,14 +69,32 @@ def test_freezes_each_joint_at_first_sight_and_base_joints_at_zero():
     assert task.claim().priority == 100
 
 
-def test_non_finite_readings_are_not_frozen():
+def test_joint_without_a_valid_reading_is_reported_until_frozen():
+    published: list[OperatorHoldStatus] = []
     task = OperatorHoldTask()
+    task.set_status_publisher(published.append)
     task.request("failsafe")
 
     output = task.compute(_state({"arm/joint1": float("nan"), "arm/joint2": 0.1}))
 
     assert output is not None
     assert output.joint_names == ["arm/joint2"]
+    assert published[-1].unheld == ("arm/joint1",)
+    assert task.get_status().unheld == ("arm/joint1",)
+
+    output = task.compute(_state({"arm/joint1": 0.4, "arm/joint2": 0.3}))
+
+    assert output is not None
+    assert dict(zip(output.joint_names, output.positions, strict=True)) == {
+        "arm/joint2": 0.1,
+        "arm/joint1": 0.4,
+    }
+    assert task.get_status().unheld == ()
+
+    task.compute(_state({"arm/joint3": float("nan")}))
+    assert task.get_status().unheld == ("arm/joint3",)
+    task.acknowledge()
+    assert task.get_status().unheld == ()
 
 
 def test_request_rejects_unknown_route_and_stays_off():
