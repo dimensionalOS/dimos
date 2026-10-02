@@ -14,8 +14,8 @@
 
 """Read-only memory store backed by an mcap file.
 
-Generic and robot-independent. JPEG channels decode automatically because their
-payload type is fixed. Other formats use a caller-supplied ``codecs`` map (wire
+Generic and robot-independent. JPEG channels and native DimOS message channels
+decode automatically. Other formats use a caller-supplied ``codecs`` map (wire
 topic -> codec), while ``streams`` may map friendly stream names to topics. See
 ``dimos.robot.unitree.go2.dds.store.Go2McapStore`` for the Go2 DDS wiring.
 
@@ -33,17 +33,23 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, replace
 from functools import partial
+import re
 from typing import Any, Protocol, runtime_checkable
+
+from mcap.reader import make_reader
 
 from dimos.memory.backend import Backend
 from dimos.memory.codecs.base import codec_for
 from dimos.memory.codecs.jpeg import JpegCodec
 from dimos.memory.codecs.json import JsonCodec
+from dimos.memory.codecs.lcm import LcmCodec
+from dimos.memory.codecs.lz4 import Lz4Codec
 from dimos.memory.notifier.subject import SubjectNotifier
 from dimos.memory.observationstore.base import ObservationStore, ObservationStoreConfig
 from dimos.memory.store.base import Store, StoreConfig
 from dimos.memory.type.filter import StreamQuery
 from dimos.memory.type.observation import Observation
+from dimos.msgs.helpers import resolve_msg_type
 from dimos.protocol.pubsub.impl.rospubsub_conversion import get_dimos_type
 
 
@@ -143,8 +149,6 @@ class McapObservationStore(ObservationStore[Any]):
         return self.config.name
 
     def _iter(self, reverse: bool = False) -> Iterator[Observation[Any]]:
-        from mcap.reader import make_reader  # optional mcap dependency
-
         decode, dtype, n = self._codec.decode, self._codec.payload_type, self._count
         with open(self._path, "rb") as f:
             msgs = make_reader(f).iter_messages(topics=[self._topic], reverse=reverse)
@@ -212,8 +216,6 @@ class McapStore(Store):
         streams: dict[str, str] | None = None,
         **kwargs: Any,
     ) -> None:
-        from mcap.reader import make_reader  # optional mcap dependency
-
         super().__init__(**kwargs)
         self._codecs = dict(codecs or {})
         name_of = {topic: name for name, topic in (streams or {}).items()}  # topic -> override
@@ -246,6 +248,19 @@ class McapStore(Store):
                         )
                 if ch.topic not in self._codecs and ch.message_encoding == "jpeg":
                     self._codecs[ch.topic] = JpegCodec()
+                if ch.topic not in self._codecs and ch.message_encoding in {"lcm", "lz4+lcm"}:
+                    # Only built-in message names may select a decoder. Never
+                    # import arbitrary Python modules named by artifact metadata.
+                    match = re.fullmatch(
+                        r"dimos\.msgs\.([a-z][a-z0-9_]*_msgs)\.([A-Z][A-Za-z0-9]*)\.\2",
+                        ch.metadata.get("dimos.payload_type", ""),
+                    )
+                    payload_type = resolve_msg_type(f"{match[1]}.{match[2]}") if match else None
+                    if payload_type is not None:
+                        codec = LcmCodec(payload_type)
+                        self._codecs[ch.topic] = (
+                            Lz4Codec(codec) if ch.message_encoding == "lz4+lcm" else codec
+                        )
                 if ch.topic not in self._codecs and ch.message_encoding == "json":
                     kind = JsonCodec.payload_type
                     if (

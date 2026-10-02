@@ -16,7 +16,6 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from datetime import datetime
-import enum
 import inspect
 import os
 from pathlib import Path
@@ -39,6 +38,7 @@ from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.stream import Stream
 from dimos.memory.transform import QualityWindow
 from dimos.memory.type.observation import EmbeddedObservation, Observation
+from dimos.memory.type.recording import OnExisting
 from dimos.models.embedding.base import EmbeddingModel
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
@@ -266,13 +266,6 @@ class SemanticSearch(MemoryModule):
         if best.pose_stamped is None:
             raise LookupError("No pose on best search result")
         return best.pose_stamped
-
-
-class OnExisting(str, enum.Enum):
-    OVERWRITE = "overwrite"
-    ERROR = "error"
-    BACKUP = "backup"
-    APPEND = "append"
 
 
 class RecorderConfig(MemoryModuleConfig):

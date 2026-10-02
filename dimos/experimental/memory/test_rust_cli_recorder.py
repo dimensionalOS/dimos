@@ -28,7 +28,7 @@ from dimos.core.global_config import global_config
 from dimos.core.transport import LCMTransport, ZenohTransport
 from dimos.experimental.memory import rust_cli_recorder
 from dimos.experimental.memory.rust_cli_recorder import RustRecordingPlan, RustRecordingSession
-from dimos.experimental.memory.rust_recorder import RustStreamSpec
+from dimos.experimental.memory.rust_types import RustStreamSpec
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
@@ -71,16 +71,6 @@ def test_plan_uses_actual_lcm_channels_and_memory_codecs(tmp_path: Path) -> None
         ("color_image", "jpeg"),
     ]
     assert plan.path == tmp_path / "memory.db"
-
-
-def test_replay_does_not_build_the_native_recorder(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(global_config, "replay", True)
-    monkeypatch.setattr(
-        "dimos.experimental.memory.rust_cli_recorder.subprocess.Popen",
-        lambda *args, **kwargs: pytest.fail("replay must not build the recorder"),
-    )
-
-    rust_cli_recorder.prepare_rust_recorder()
 
 
 def test_plan_uses_mcap_artifact_for_zenoh(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -207,7 +197,9 @@ def _start_fake_session(
     monkeypatch: pytest.MonkeyPatch,
     process: _FakeProcess,
 ) -> RustRecordingSession:
-    monkeypatch.setattr(rust_cli_recorder, "prepare_rust_recorder", lambda: None)
+    monkeypatch.setattr(
+        rust_cli_recorder, "ensure_native_package", lambda package_id: tmp_path / "recorder"
+    )
     monkeypatch.setattr(
         "dimos.experimental.memory.rust_cli_recorder.subprocess.Popen",
         lambda *args, **kwargs: process,
@@ -215,34 +207,6 @@ def _start_fake_session(
     session = RustRecordingSession(_plan(tmp_path))
     session.start()
     return session
-
-
-def test_reuses_existing_memory_recorder_binary() -> None:
-    assert rust_cli_recorder._EXECUTABLE.name == "dimos-memory-recorder"
-
-
-def test_existing_binary_skips_build(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    executable = tmp_path / "dimos-memory-recorder"
-    executable.touch()
-    monkeypatch.setattr(rust_cli_recorder, "_EXECUTABLE", executable)
-    monkeypatch.setattr(
-        "dimos.experimental.memory.rust_cli_recorder.subprocess.Popen",
-        lambda *args, **kwargs: pytest.fail("existing binary must not be rebuilt"),
-    )
-
-    rust_cli_recorder.prepare_rust_recorder()
-
-
-def test_build_failure_is_reported(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    process = SimpleNamespace(stdout=BytesIO(b"build output\n"), wait=lambda: 7)
-    monkeypatch.setattr(rust_cli_recorder, "_EXECUTABLE", tmp_path / "missing")
-    monkeypatch.setattr(
-        "dimos.experimental.memory.rust_cli_recorder.subprocess.Popen",
-        lambda *args, **kwargs: process,
-    )
-
-    with pytest.raises(RuntimeError, match="Rust recorder build failed.*exit 7"):
-        rust_cli_recorder.prepare_rust_recorder()
 
 
 @pytest.mark.parametrize("encoding_threads", [None, 8])
@@ -267,7 +231,9 @@ def test_process_exit_before_ready_fails_startup(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     process = _FakeProcess(stdout=b"", returncode=3)
-    monkeypatch.setattr(rust_cli_recorder, "prepare_rust_recorder", lambda: None)
+    monkeypatch.setattr(
+        rust_cli_recorder, "ensure_native_package", lambda package_id: tmp_path / "recorder"
+    )
     monkeypatch.setattr(
         "dimos.experimental.memory.rust_cli_recorder.subprocess.Popen",
         lambda *args, **kwargs: process,
@@ -280,7 +246,9 @@ def test_process_exit_before_ready_fails_startup(
 def test_readiness_timeout_fails_startup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     process = _FakeProcess(stdout=b"")
     monkeypatch.setattr(rust_cli_recorder, "_READY_TIMEOUT", 0.01)
-    monkeypatch.setattr(rust_cli_recorder, "prepare_rust_recorder", lambda: None)
+    monkeypatch.setattr(
+        rust_cli_recorder, "ensure_native_package", lambda package_id: tmp_path / "recorder"
+    )
     monkeypatch.setattr(
         "dimos.experimental.memory.rust_cli_recorder.subprocess.Popen",
         lambda *args, **kwargs: process,
@@ -317,3 +285,54 @@ def test_stop_kills_process_that_does_not_flush(
 
     assert process.signals == [signal.SIGTERM]
     assert process.killed
+
+
+def test_custom_lcm_url_reaches_recorder_child(tmp_path, monkeypatch, mocker):
+    monkeypatch.setenv("LCM_DEFAULT_URL", "udpm://239.255.76.68:7667?ttl=0")
+    url = "udpm://239.255.76.69:7667?ttl=0"
+    transport = LCMTransport("/odom", PoseStamped, url=url)
+    process = _FakeProcess()
+    mocker.patch.object(
+        rust_cli_recorder, "ensure_native_package", return_value=tmp_path / "recorder"
+    )
+    popen = mocker.patch.object(rust_cli_recorder.subprocess, "Popen", return_value=process)
+    session = RustRecordingSession(rust_cli_recorder.make_plan({("odom", PoseStamped): transport}))
+    try:
+        session.start()
+        assert popen.call_args.kwargs["env"]["LCM_DEFAULT_URL"] == url
+        assert "cwd" not in popen.call_args.kwargs
+    finally:
+        session.stop()
+        transport.stop()
+
+
+def test_conflicting_lcm_urls_are_rejected():
+    first = LCMTransport("/first", PoseStamped, url="udpm://239.255.76.68:7667?ttl=0")
+    second = LCMTransport("/second", PoseStamped, url="udpm://239.255.76.69:7667?ttl=0")
+    try:
+        with pytest.raises(ValueError, match="conflicting LCM URLs"):
+            rust_cli_recorder.make_plan(
+                {("first", PoseStamped): first, ("second", PoseStamped): second}
+            )
+    finally:
+        first.stop()
+        second.stop()
+
+
+def test_external_lcm_connection_is_rejected():
+    transport = _lcm("/odom")
+    transport.lcm.config.lcm = transport.lcm.l
+    try:
+        with pytest.raises(ValueError, match="external LCM connection"):
+            rust_cli_recorder.make_plan({("odom", PoseStamped): transport})
+    finally:
+        transport.stop()
+
+
+def test_preparation_failure_does_not_create_artifact(tmp_path, mocker):
+    mocker.patch.object(
+        rust_cli_recorder, "ensure_native_package", side_effect=RuntimeError("build failed")
+    )
+    with pytest.raises(RuntimeError, match="build failed"):
+        RustRecordingSession(_plan(tmp_path)).start()
+    assert not (tmp_path / "memory.db").exists()

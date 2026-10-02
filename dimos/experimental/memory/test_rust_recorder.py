@@ -25,10 +25,10 @@ from dimos.experimental.memory.rust_recorder import (
     RustRecorder,
     RustRecorderConfig,
     RustSqliteStoreConfig,
-    RustStreamSpec,
 )
-from dimos.memory.module import OnExisting
+from dimos.experimental.memory.rust_types import RustStreamSpec
 from dimos.memory.store.sqlite import SqliteStore
+from dimos.memory.type.recording import OnExisting
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
 
@@ -222,14 +222,6 @@ def test_default_store_path_is_resolved_from_the_project_root() -> None:
 
     assert Path(config.store.path).is_absolute()
     assert Path(config.store.path).name == "recording.db"
-
-
-def test_native_recorder_is_built_and_run_from_the_nix_package() -> None:
-    config = RustRecorderConfig()
-
-    assert Path(config.cwd) == Path(__file__).with_name("rust")
-    assert config.build_command == ("nix build -L .#dimos-memory-recorder")
-    assert config.executable == "result/bin/dimos-memory-recorder"
 
 
 def test_invalid_codec_fails_during_preflight(tmp_path: Path, make_recorder: Any) -> None:

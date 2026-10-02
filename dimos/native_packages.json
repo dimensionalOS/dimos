@@ -1,0 +1,12 @@
+{
+  "dimos-memory-recorder": {
+    "flake_dir": "dimos/experimental/memory/rust",
+    "attribute": "dimos-memory-recorder",
+    "executable": "dimos-memory-recorder"
+  },
+  "fastlio2": {
+    "flake_dir": "dimos/hardware/sensors/lidar/fastlio2/cpp",
+    "attribute": "fastlio2_native",
+    "executable": "fastlio2_native"
+  }
+}

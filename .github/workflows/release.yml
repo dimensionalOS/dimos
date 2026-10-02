@@ -116,6 +116,7 @@ jobs:
       attestations: write  # For uploading the SLSA build-provenance attestation
     env:
       CIBW_ARCHS: ${{ matrix.arch }}
+      CIBW_ENVIRONMENT: DIMOS_BUILD_REVISION=${{ github.sha }}
       # Skip musllinux (Alpine) — Pinocchio's build ecosystem (pin/coal/cmeel-*)
       # is glibc-only; cmeel-assimp >= 6.0.5 has no musllinux wheels.
       CIBW_SKIP: "*-musllinux_*"

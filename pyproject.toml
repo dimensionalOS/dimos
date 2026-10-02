@@ -99,6 +99,8 @@ classifiers = [
 ]
 
 dependencies = [
+    "mcap>=1.2.0", # Core memory CLI reads native MCAP recordings.
+    "matplotlib>=3.7.1", # Rerun initializes point-cloud colormaps for all streams.
     # Transport Protocols
     "dimos-lcm>=0.1.4",
     "eclipse-zenoh>=1.10.1,<2.0",
@@ -266,7 +268,6 @@ unitree-dds = [
     "dimos[unitree]",
     "unitree-sdk2py-dimos>=1.0.2",
     "cyclonedds>=0.10.5",
-    "mcap>=1.2.0",  # decode Go2 DDS mcap recordings (go2 dds store)
 ]
 
 # Coordinators, arm hardware adapters, and keyboard/Cartesian control.
@@ -291,7 +292,6 @@ planning = [
     "pycollada",
     "viser[urdf]>=1.0.29",
     "yourdfpy>=0.0.60",
-    "matplotlib>=3.7.1",
     "pyyaml>=6.0",
 ]
 

@@ -27,8 +27,9 @@ from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In
-from dimos.memory.module import OnExisting
+from dimos.experimental.memory.rust_types import RustStreamSpec
 from dimos.memory.store.sqlite import SqliteStore
+from dimos.memory.type.recording import OnExisting
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.std_msgs.String import String
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
@@ -38,25 +39,6 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 _SUPPORTED_NATIVE_CODECS = {"lcm", "jpeg", "lz4+lcm", "json"}
-
-
-class RustStreamSpec(BaseModel):
-    """Fully resolved stream settings sent to the native process."""
-
-    port: str
-    name: str
-    payload_type: str
-    codec: str
-    timestamp_field: str | None = None
-    json_schema: dict[str, Any] | None = None
-
-    @model_validator(mode="after")
-    def _json_options(self) -> RustStreamSpec:
-        if self.codec != "json" and (
-            self.timestamp_field is not None or self.json_schema is not None
-        ):
-            raise ValueError("JSON options require the json codec")
-        return self
 
 
 class RustStoreConfig(BaseModel):
@@ -97,16 +79,14 @@ RustRecordingStoreConfig: TypeAlias = Annotated[
 
 
 class RustRecorderConfig(NativeModuleConfig):
-    """Compatibility-first configuration for :class:`RustRecorder`.
+    """Configuration for :class:`RustRecorder`.
 
     Python owns artifact lifecycle and stream registration. The native process
     receives only ``store``, ``encoding_threads``, and the internally resolved
     ``streams`` list over stdin.
     """
 
-    executable: str = "result/bin/dimos-memory-recorder"
-    build_command: str = "nix build -L .#dimos-memory-recorder"
-    cwd: str = "rust"
+    native_package: str | None = "dimos-memory-recorder"
     stdin_config: bool = True
 
     store: RustRecordingStoreConfig = Field(
@@ -152,13 +132,6 @@ class RustRecorderConfig(NativeModuleConfig):
         init=False,
         description="Resolved stream plan populated internally before native launch.",
     )
-
-    @model_validator(mode="after")
-    def _resolve_cwd(self) -> RustRecorderConfig:
-        # Subclassed recorders share this native project, regardless of their source file.
-        if not Path(self.cwd).is_absolute():
-            self.cwd = str(Path(__file__).parent / self.cwd)
-        return self
 
     @model_validator(mode="after")
     def _stdin_only(self) -> RustRecorderConfig:
@@ -324,4 +297,4 @@ class RustRecorder(NativeModule):
 
     def _argv(self, _topics: dict[str, str]) -> list[str]:
         """Launch the stdin-only recorder without topic or configuration arguments."""
-        return [self.config.executable]
+        return [self._executable]

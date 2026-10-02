@@ -28,7 +28,6 @@ import importlib
 from importlib.machinery import SourceFileLoader
 from importlib.util import module_from_spec, spec_from_loader
 import inspect
-import json
 import os
 from pathlib import Path
 import re
@@ -38,6 +37,7 @@ from typing import NamedTuple
 import pytest
 
 from dimos.constants import DIMOS_PROJECT_ROOT
+from dimos.core.native_package import native_packages
 
 _SCRIPT_PATH = DIMOS_PROJECT_ROOT / "bin" / "build-native-modules"
 if not _SCRIPT_PATH.is_file():
@@ -71,6 +71,7 @@ class _ClassDef(NamedTuple):
     command: str | None  # build_command literal defined in this class body
     command_kind: str  # "absent" | "literal" | "opaque"
     owns_cwd: bool = False
+    package_id: str | None = None
 
 
 def _base_names(node: ast.ClassDef) -> tuple[str, ...]:
@@ -120,9 +121,16 @@ def _scan_all_config_classes() -> list[_ClassDef]:
                 if isinstance(node, ast.ClassDef):
                     kind, command = _own_default(node, "build_command")
                     cwd_kind, _ = _own_default(node, "cwd")
+                    _, package_id = _own_default(node, "native_package")
                     classes.append(
                         _ClassDef(
-                            rel, node.name, _base_names(node), command, kind, cwd_kind != "absent"
+                            rel,
+                            node.name,
+                            _base_names(node),
+                            command,
+                            kind,
+                            cwd_kind != "absent",
+                            package_id,
                         )
                     )
     return classes
@@ -172,6 +180,9 @@ def _closure_nix_configs(classes: list[_ClassDef]) -> set[tuple[str, str]]:
                 f"{cls.file}: {cls.name}.build_command is statically readable — remove it"
                 " from EXTERNALLY_PROVISIONED in bin/build-native-modules"
             )
+            continue
+        if cls.package_id:
+            nix_configs.add((cls.file, cls.name))
             continue
         kind, command, owner = effective_command(cls, frozenset())
         assert kind != "opaque", (
@@ -237,6 +248,13 @@ def test_ast_extraction_matches_runtime() -> None:
         dotted, class_name = module.qualname.rsplit(".", 1)
         config_class = getattr(importlib.import_module(dotted), class_name)
         fields = config_class.model_fields
+        package_id = fields["native_package"].default
+        if package_id:
+            package = native_packages()[package_id]
+            assert module.build_dir == package.flake_dir
+            assert module.build_command == f"nix build -L .#{package.attribute}"
+            assert fields["cwd"].default is None
+            continue
         assert fields["build_command"].default == module.build_command
         cwd = fields["cwd"].default
         base_dir = Path(inspect.getfile(config_class)).resolve().parent
@@ -254,6 +272,13 @@ def test_no_module_hashes_the_repo_root() -> None:
             f"{module.qualname}: input set includes the repo root — a fileset root anchor "
             "is being hashed, which busts the publish marker on every commit"
         )
+
+
+def test_catalog_points_to_existing_flakes_and_outputs() -> None:
+    for package in native_packages().values():
+        flake = DIMOS_PROJECT_ROOT / package.flake_dir / "flake.nix"
+        assert flake.is_file()
+        assert package.attribute in flake.read_text()
 
 
 def test_recorder_fileset_covers_every_workspace_member() -> None:
