@@ -733,8 +733,6 @@ class RerunBridgeModule(Module):
         self._override_cache.clear()
         self._frame_attached.clear()
         self._tf_tree = None
-        # Close the .rrd only once the subscriptions are disposed, so nothing a
-        # late callback logs misses the file.
         try:
             super().stop()
         finally:
@@ -783,9 +781,7 @@ def _start_save_client(server_uri: str) -> subprocess.Popen[bytes] | None:
     path = RECORDINGS_DIR / run_id / "rerun.rrd"
     path.parent.mkdir(parents=True, exist_ok=True)
     logger.info("Saving the Rerun stream", path=str(path))
-    # The CLI also starts a gRPC server of its own: on the default 9876 it dies
-    # silently when that port is taken (another run's save client, a stock
-    # viewer), leaving an empty .rrd, and it would listen on all interfaces.
+    # It also serves gRPC itself; on a taken default port it exits with an empty .rrd.
     return subprocess.Popen(
         [cli, "--save", str(path), "--bind", "127.0.0.1", "--port", "auto", server_uri],
         stdin=subprocess.DEVNULL,

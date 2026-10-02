@@ -207,11 +207,8 @@ def _run_in_docker(
     files = [] if os.environ.get("COMPOSE_FILE") else ["-f", str(compose)]
     command = ["docker", "compose", *files, "run", "--rm", "-d", "--name", name, "worker"]
     command += ["dimos", "evals", "run", *argv]
-    # Compose resolves a relative EVAL_RUNS_DIR against the compose file's folder.
     runs = compose.parent / (os.environ.get("EVAL_RUNS_DIR") or "eval-runs")
-    # Docker would create the mount points (the bind and the run registry volume
-    # nested in it) as root 0755, leaving the host user unable to delete what the
-    # eval writes under them; made here first, they stay the host user's.
+    # Created as the host user, else docker makes the mount points root-owned.
     (runs / "dimos" / "runs").mkdir(parents=True, exist_ok=True)
     subprocess.run(command, check=True, stdout=subprocess.DEVNULL)
     typer.echo(f"{name}: started (detached)")

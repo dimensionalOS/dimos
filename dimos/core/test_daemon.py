@@ -136,7 +136,6 @@ class TestGenerateRunId:
 
     def test_blueprint_round_trips(self):
         assert blueprint_from_run_id(generate_run_id("unitree-go2")) == "unitree-go2"
-        # IDs from before the token, and blueprints ending in hex, read whole.
         assert blueprint_from_run_id("20260830-155733-unitree-go2") == "unitree-go2"
         assert blueprint_from_run_id("20260830-155733-a3f1-nav-cafe") == "nav-cafe"
         assert blueprint_from_run_id("downloads") is None

@@ -259,8 +259,7 @@ class EvalRunner(Configurable):
     def _new_run_dir(self) -> Path:
         self.config.out_dir.mkdir(parents=True, exist_ok=True)
         prefix = time.strftime("run-%Y%m%d-%H%M%S-")
-        # Not mkdtemp: its 0700 ignores the umask, and the eval container relies
-        # on its umask to leave results readable by the host user.
+        # Not mkdtemp: its 0700 ignores the umask the eval container relies on.
         while True:
             path = self.config.out_dir / f"{prefix}{secrets.token_hex(4)}"
             try:
