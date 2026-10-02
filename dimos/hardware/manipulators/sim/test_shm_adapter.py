@@ -26,6 +26,7 @@ import pytest
 import dimos.hardware.manipulators.sim.adapter as adapter_mod
 from dimos.hardware.manipulators.sim.adapter import ShmMujocoAdapter
 from dimos.hardware.manipulators.spec import ControlMode, ManipulatorAdapter
+from dimos.simulation.engines import mujoco_shm
 from dimos.simulation.engines.mujoco_shm import SEQ_POSITIONS, ManipShmWriter
 from dimos.simulation.engines.mujoco_sim_module import _WholeBodySimHooks
 
@@ -332,7 +333,7 @@ class TestConnect:
 
     def test_connected_adapter_rejects_stale_state(self, shm_key, monkeypatch) -> None:
         monkeypatch.setattr(adapter_mod, "shm_key_from_path", lambda _: shm_key)
-        monkeypatch.setattr(adapter_mod, "_STATE_STALE_TIMEOUT_S", 0.05)
+        monkeypatch.setattr(mujoco_shm, "STATE_STALE_TIMEOUT_S", 0.05)
         writer = ManipShmWriter(shm_key)
         writer.signal_ready(num_joints=ARM_DOF)
         stop, heartbeat = start_heartbeat(writer)

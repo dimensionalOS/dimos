@@ -105,6 +105,9 @@ CTRL_COMMAND_MODE = 2
 CTRL_NUM_JOINTS = 3
 CTRL_ARM_JOINTS = 4
 
+# Joint state that stops advancing for this long belongs to a dead or orphaned simulator.
+STATE_STALE_TIMEOUT_S = 5.0
+
 # Command modes.
 CMD_MODE_POSITION = 0
 CMD_MODE_VELOCITY = 1
@@ -541,7 +544,7 @@ class ManipShmReader:
     def position_sequence(self) -> int:
         return self._get_seq(SEQ_POSITIONS)
 
-    def is_live(self, stale_after_s: float) -> bool:
+    def is_live(self, stale_after_s: float | None = None) -> bool:
         if self.should_stop():
             return False
         sequence = self.position_sequence()
@@ -549,7 +552,8 @@ class ManipShmReader:
         if sequence != self._last_position_seq:
             self._last_position_seq = sequence
             self._last_position_change_s = now
-        return now - self._last_position_change_s <= stale_after_s
+        limit = STATE_STALE_TIMEOUT_S if stale_after_s is None else stale_after_s
+        return now - self._last_position_change_s <= limit
 
     def should_stop(self) -> bool:
         return bool(self._control()[CTRL_STOP] == 1)

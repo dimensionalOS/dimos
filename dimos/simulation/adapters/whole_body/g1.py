@@ -49,7 +49,6 @@ _READY_WAIT_TIMEOUT_S = 180.0
 _READY_WAIT_POLL_S = 0.1
 _ATTACH_RETRY_TIMEOUT_S = 30.0
 _ATTACH_RETRY_POLL_S = 0.2
-_STATE_STALE_TIMEOUT_S = 5.0
 
 
 class SimMujocoG1WholeBodyAdapter:
@@ -175,7 +174,7 @@ class SimMujocoG1WholeBodyAdapter:
         shm = self._shm
         if not self._connected or shm is None:
             return None
-        if shm.is_live(_STATE_STALE_TIMEOUT_S):
+        if shm.is_live():
             return shm
         shm.cleanup()
         self._shm = None

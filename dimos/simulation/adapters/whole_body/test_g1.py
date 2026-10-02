@@ -20,6 +20,7 @@ import uuid
 from dimos.hardware.whole_body.spec import WholeBodyAdapter
 import dimos.simulation.adapters.whole_body.g1 as g1_mod
 from dimos.simulation.adapters.whole_body.g1 import SimMujocoG1WholeBodyAdapter
+from dimos.simulation.engines import mujoco_shm
 from dimos.simulation.engines.mujoco_shm import SEQ_POSITIONS, ManipShmWriter
 
 
@@ -33,7 +34,7 @@ def test_sim_g1_adapter_satisfies_whole_body_protocol() -> None:
 def test_sim_g1_adapter_rejects_stale_state(monkeypatch) -> None:
     key = uuid.uuid4().hex[:10]
     monkeypatch.setattr(g1_mod, "shm_key_from_path", lambda _: key)
-    monkeypatch.setattr(g1_mod, "_STATE_STALE_TIMEOUT_S", 0.05)
+    monkeypatch.setattr(mujoco_shm, "STATE_STALE_TIMEOUT_S", 0.05)
     writer = ManipShmWriter(key)
     writer.signal_ready(num_joints=29, arm_joints=29)
     stop = threading.Event()
