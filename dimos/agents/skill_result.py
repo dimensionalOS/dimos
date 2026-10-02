@@ -12,76 +12,49 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Structured return type for ``@skill`` methods.
+"""Return type for ``@skill`` methods.
 
-Skills historically returned free-form strings, which forced agents to parse
-prose to tell success from failure. ``SkillResult`` carries a typed
-``error_code`` that any caller (LLM agent, RPC client, tests) can branch on.
+A skill returns a plain statement of what it did and measured, as a
+``SkillResult``. The agent reading it decides whether that is what it wanted.
+When the skill's own code or a driver fails, the skill raises instead; the MCP
+server turns the exception into a failed tool call.
 
-The MCP server's ``agent_encode`` hook (``dimos/agents/mcp/mcp_server.py``)
-auto-detects the method on this class and forwards its output as the JSON-RPC
-``content`` field, so no MCP changes are required.
-
-Error codes are plain strings constrained by ``Literal`` types — each domain
-declares its own alias (see e.g. ``dimos.manipulation.skill_errors``) and a
-skill annotates ``SkillResult[DomainError]`` so the type checker enforces that
-only that domain's codes are emitted. ``CommonSkillError`` holds codes that
-any domain might emit.
+The MCP server (``dimos/agents/mcp/mcp_server.py``) calls ``agent_encode`` on
+this class and forwards its output as the tool call's ``content``.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 import json
-from typing import Any, Generic, Literal
-
-# typing_extensions for PEP 696 TypeVar default support on Python < 3.13.
-from typing_extensions import TypeVar
-
-CommonSkillError = Literal[
-    "ROBOT_NOT_FOUND",
-    "INVALID_INPUT",
-    "INVALID_STATE",
-    "NOT_CONFIGURED",
-    "EXECUTION_FAILED",
-    "EXECUTION_TIMEOUT",
-]
-
-
-E = TypeVar("E", bound=str, default=str)
+from typing import Any
 
 
 @dataclass
-class SkillResult(Generic[E]):
-    """Structured outcome of a ``@skill`` call.
+class SkillResult:
+    """What a ``@skill`` call did, written for the agent to read.
 
-    Parameterize the class with the domain's error-code alias to constrain
-    ``error_code`` (e.g. ``SkillResult[ManipulationError]``). Unparameterized,
-    any string is accepted.
+    Args:
+        message: Plain statement of what happened, e.g. "Opened the gripper; it
+            reads 0.08 m".
+        duration_ms: Wall time the skill took, in milliseconds. The ``@skill``
+            decorator fills this in.
+        metadata: Extra values the agent may use, e.g. a list of object ids.
     """
 
-    success: bool
     message: str = ""
-    error_code: E | None = None
     duration_ms: float = 0.0
     metadata: dict[str, Any] = field(default_factory=dict)
 
-    def is_success(self) -> bool:
-        return self.success
-
     @classmethod
-    def ok(cls, message: str = "", **metadata: Any) -> SkillResult[E]:
-        return cls(success=True, message=message, metadata=dict(metadata))
-
-    @classmethod
-    def fail(cls, error_code: E, message: str = "") -> SkillResult[E]:
-        return cls(success=False, error_code=error_code, message=message)
+    def ok(cls, message: str = "", **metadata: Any) -> SkillResult:
+        """Build a result from a message; keyword arguments become ``metadata``."""
+        return cls(message=message, metadata=dict(metadata))
 
     def agent_encode(self) -> list[dict[str, Any]]:
+        """Encode as MCP tool-call content: one text item holding a JSON object."""
         payload: dict[str, Any] = {
-            "success": self.success,
             "message": self.message,
-            "error_code": self.error_code,
             "duration_ms": round(self.duration_ms, 1),
         }
         if self.metadata:
@@ -89,7 +62,4 @@ class SkillResult(Generic[E]):
         return [{"type": "text", "text": json.dumps(payload)}]
 
     def __str__(self) -> str:
-        if self.success:
-            return f"OK: {self.message}" if self.message else "OK"
-        code = self.error_code if self.error_code is not None else "ERROR"
-        return f"{code}: {self.message}" if self.message else code
+        return self.message

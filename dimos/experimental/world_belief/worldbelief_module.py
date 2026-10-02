@@ -233,6 +233,9 @@ class WorldBeliefModule(Module):
         """Fold recorded frames and publish present objects.
 
         ``prompt`` overrides configured prompts; ``window`` limits the initial scan.
+        Raises ValueError for an empty or non-string prompt, and RuntimeError,
+        FileNotFoundError or ScanIncompleteError when the recording or scan is
+        unavailable.
         """
         import copy as _copy
 
@@ -249,65 +252,55 @@ class WorldBeliefModule(Module):
         if not isinstance(requested, list) or any(
             not isinstance(value, str) or not value.strip() for value in requested
         ):
-            return SkillResult.fail("INVALID_INPUT", "prompt must contain only non-empty strings")
+            raise ValueError("prompt must contain only non-empty strings")
         prompts = sorted({value.strip() for value in requested})
         if not prompts:
-            return SkillResult.fail(
-                "INVALID_INPUT", "scan requires a prompt or configured scan_prompts"
-            )
+            raise ValueError("scan requires a prompt or configured scan_prompts")
 
-        try:
-            rec_path = self._recording_path()
-        except (TimeoutError, OSError, RuntimeError) as exc:
-            return SkillResult.fail("INVALID_STATE", f"Recorder unavailable: {exc}")
+        rec_path = self._recording_path()
 
-        try:
-            with SqliteStore(path=rec_path, must_exist=True) as read_store:
-                with self._engine() as (scanner, belief):
-                    vocabulary = tuple(prompts)
-                    active = getattr(self, "_active_scan_prompts", None)
-                    prompt_changed = active is not None and active != vocabulary
-                    result = scanner.scan_recent(
-                        read_store,
-                        belief,
-                        window=window,
-                        prompt=prompts,
+        with SqliteStore(path=rec_path, must_exist=True) as read_store:
+            with self._engine() as (scanner, belief):
+                vocabulary = tuple(prompts)
+                active = getattr(self, "_active_scan_prompts", None)
+                prompt_changed = active is not None and active != vocabulary
+                result = scanner.scan_recent(
+                    read_store,
+                    belief,
+                    window=window,
+                    prompt=prompts,
+                )
+                if prompt_changed and result.folded_frames == 0:
+                    raise ScanIncompleteError(
+                        "no new frame was available for the changed prompt vocabulary"
                     )
-                    if prompt_changed and result.folded_frames == 0:
-                        raise ScanIncompleteError(
-                            "no new frame was available for the changed prompt vocabulary"
-                        )
-                    self._active_scan_prompts = vocabulary
-                    # Out.publish may invoke in-process consumers with the same object.
-                    # Deep snapshots keep those consumers out of mutable belief state.
-                    observations = _copy.deepcopy(result.objects)
-                    present = _copy.deepcopy(belief.present())
-            summaries = [
-                {
-                    "name": obj.name,
-                    "id": obj.object_id,
-                    "trust": obj.identity_status,
-                    "basis": obj.identity_basis,
-                    "frame_id": self.config.belief.frame_id,
-                    "last_seen_ts": float(obj.last_seen_ts or obj.ts),
-                    "geometry_ts": float(obj.ts),
-                    "geometry_frozen": bool(
-                        obj.observation_partial
-                        or (obj.last_seen_ts is not None and obj.last_seen_ts > obj.ts)
-                    ),
-                    "observation_partial": bool(obj.observation_partial),
-                    "xyz": [
-                        float(obj.center.x),
-                        float(obj.center.y),
-                        float(obj.center.z),
-                    ],
-                }
-                for obj in observations
-            ]
-        except FileNotFoundError as exc:
-            return SkillResult.fail("INVALID_STATE", str(exc))
-        except ScanIncompleteError as exc:
-            return SkillResult.fail("EXECUTION_FAILED", f"Scan incomplete: {exc}")
+                self._active_scan_prompts = vocabulary
+                # Out.publish may invoke in-process consumers with the same object.
+                # Deep snapshots keep those consumers out of mutable belief state.
+                observations = _copy.deepcopy(result.objects)
+                present = _copy.deepcopy(belief.present())
+        summaries = [
+            {
+                "name": obj.name,
+                "id": obj.object_id,
+                "trust": obj.identity_status,
+                "basis": obj.identity_basis,
+                "frame_id": self.config.belief.frame_id,
+                "last_seen_ts": float(obj.last_seen_ts or obj.ts),
+                "geometry_ts": float(obj.ts),
+                "geometry_frozen": bool(
+                    obj.observation_partial
+                    or (obj.last_seen_ts is not None and obj.last_seen_ts > obj.ts)
+                ),
+                "observation_partial": bool(obj.observation_partial),
+                "xyz": [
+                    float(obj.center.x),
+                    float(obj.center.y),
+                    float(obj.center.z),
+                ],
+            }
+            for obj in observations
+        ]
 
         frame_id = self.config.belief.frame_id
         self.detections_3d.publish(

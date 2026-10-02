@@ -38,18 +38,14 @@ class TestFactories:
         result = SkillResult.ok("done", planning_ms=12.3, attempts=2)
         assert result.metadata == {"planning_ms": 12.3, "attempts": 2}
 
-    def test_fail_stores_string_code(self):
-        """`fail` accepts a plain string; codes are Literal strings at runtime."""
-        result = SkillResult.fail("ROBOT_NOT_FOUND", "no arm")
-        assert not result.is_success()
-        assert result.error_code == "ROBOT_NOT_FOUND"
-        assert result.message == "no arm"
+    def test_str_is_the_message(self):
+        assert str(SkillResult.ok("Opened the gripper")) == "Opened the gripper"
 
 
 class TestAgentEncode:
     """Pins the wire contract used by the MCP server's ``agent_encode`` hook."""
 
-    def test_success_payload_shape(self):
+    def test_payload_shape(self):
         result = SkillResult.ok("picked")
         result.duration_ms = 123.456
 
@@ -58,21 +54,7 @@ class TestAgentEncode:
         assert encoded[0]["type"] == "text"
 
         payload = json.loads(encoded[0]["text"])
-        assert payload == {
-            "success": True,
-            "message": "picked",
-            "error_code": None,
-            "duration_ms": 123.5,
-        }
-
-    def test_failure_payload_carries_code_string_verbatim(self):
-        """Failure encodes ``error_code`` straight into the JSON — no conversion ceremony."""
-        result = SkillResult.fail("EXECUTION_TIMEOUT", "took too long")
-
-        payload = json.loads(result.agent_encode()[0]["text"])
-        assert payload["success"] is False
-        assert payload["error_code"] == "EXECUTION_TIMEOUT"
-        assert payload["message"] == "took too long"
+        assert payload == {"message": "picked", "duration_ms": 123.5}
 
     def test_metadata_included_when_present(self):
         result = SkillResult.ok("done", attempts=3)
@@ -133,25 +115,16 @@ class TestSkillDecoratorTiming:
 
         assert my_skill() == "plain string"
 
-    def test_logs_success_with_function_name(self, skill_logs):
+    def test_logs_message_with_function_name(self, skill_logs):
         @skill
         def set_gripper() -> SkillResult:
-            return SkillResult.ok("done")
+            return SkillResult.ok("Opened the gripper")
 
         set_gripper()
         msgs = _skill_lines(skill_logs, "SKILL set_gripper")
         assert len(msgs) == 1
-        assert "SKILL set_gripper result=OK duration_ms=" in msgs[0]
-
-    def test_logs_failure_with_error_code(self, skill_logs):
-        @skill
-        def pick() -> SkillResult:
-            return SkillResult.fail("ROBOT_NOT_FOUND", "x")
-
-        pick()
-        msgs = _skill_lines(skill_logs, "SKILL pick")
-        assert len(msgs) == 1
-        assert "SKILL pick result=ROBOT_NOT_FOUND duration_ms=" in msgs[0]
+        assert "SKILL set_gripper duration_ms=" in msgs[0]
+        assert "message=Opened the gripper" in msgs[0]
 
     def test_exception_path_logs_and_reraises(self, skill_logs):
         """An uncaught exception emits ``result=EXCEPTION`` and re-raises."""
@@ -167,29 +140,16 @@ class TestSkillDecoratorTiming:
         assert len(msgs) == 1
         assert "SKILL boom result=EXCEPTION duration_ms=" in msgs[0]
 
-    def test_failed_result_without_code_logs_failed_not_ok(self, skill_logs):
-        """success=False is authoritative even when error_code is unset."""
-
-        @skill
-        def half_broken() -> SkillResult:
-            return SkillResult(success=False)  # no error_code set
-
-        half_broken()
-        msgs = _skill_lines(skill_logs, "SKILL half_broken")
-        assert len(msgs) == 1
-        assert "result=FAILED" in msgs[0]
-
-    def test_non_skillresult_return_logs_unknown(self, skill_logs):
-        """A bare string return can't be verified — don't claim result=OK."""
-
+    def test_non_skillresult_return_logs_duration_only(self, skill_logs):
         @skill
         def legacy() -> str:
-            return "Error: something the decorator can't interpret"
+            return "plain string"
 
         legacy()
         msgs = _skill_lines(skill_logs, "SKILL legacy")
         assert len(msgs) == 1
-        assert "result=UNKNOWN" in msgs[0]
+        assert "SKILL legacy duration_ms=" in msgs[0]
+        assert "message=" not in msgs[0]
 
     def test_decorator_does_not_mutate_returned_skillresult(self):
         """The decorator returns a fresh SkillResult instance — the body's return
