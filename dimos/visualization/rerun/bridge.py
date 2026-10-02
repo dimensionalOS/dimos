@@ -745,7 +745,12 @@ class RerunBridgeModule(Module):
     def _stop_save_client(self) -> None:
         """Hand the save client everything logged so far, then let it close the file."""
         client, self._save_client = self._save_client, None
-        if client is None or client.poll() is not None:
+        if client is None:
+            return
+        if client.poll() is not None:
+            logger.warning(
+                f"rerun --save exited early (code {client.returncode}); the .rrd may be empty"
+            )
             return
         import rerun as rr
 
@@ -778,8 +783,11 @@ def _start_save_client(server_uri: str) -> subprocess.Popen[bytes] | None:
     path = RECORDINGS_DIR / run_id / "rerun.rrd"
     path.parent.mkdir(parents=True, exist_ok=True)
     logger.info("Saving the Rerun stream", path=str(path))
+    # The CLI also starts a gRPC server of its own: on the default 9876 it dies
+    # silently when that port is taken (another run's save client, a stock
+    # viewer), leaving an empty .rrd, and it would listen on all interfaces.
     return subprocess.Popen(
-        [cli, "--save", str(path), server_uri],
+        [cli, "--save", str(path), "--bind", "127.0.0.1", "--port", "auto", server_uri],
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
