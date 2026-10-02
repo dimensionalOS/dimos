@@ -733,8 +733,12 @@ class RerunBridgeModule(Module):
         self._override_cache.clear()
         self._frame_attached.clear()
         self._tf_tree = None
-        self._stop_save_client()
-        super().stop()
+        # Close the .rrd only once the subscriptions are disposed, so nothing a
+        # late callback logs misses the file.
+        try:
+            super().stop()
+        finally:
+            self._stop_save_client()
 
     _save_client: subprocess.Popen[bytes] | None = None
 

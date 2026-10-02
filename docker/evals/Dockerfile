@@ -100,4 +100,4 @@ RUN mkdir -p /state /config
 # `dimos evals run --docker` runs one eval per container through this entrypoint.
 COPY docker/evals/entrypoint.sh /entrypoint.sh
 ENTRYPOINT ["/entrypoint.sh"]
-CMD ["sleep", "infinity"]
+CMD ["bash"]

@@ -10,7 +10,6 @@ services:
     build:
       context: ../..
       dockerfile: docker/evals/Dockerfile
-    command: ["sleep", "infinity"]
     init: true
     # Chromium needs more than Docker's 64 MB default /dev/shm.
     shm_size: 2g
