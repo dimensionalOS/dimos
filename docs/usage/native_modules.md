@@ -1,14 +1,14 @@
 # Native Modules
 
-Prerequisite for this is to understand DimOS [Modules](/docs/usage/modules.md) and [Blueprints](/docs/usage/blueprints.md).
+Prerequisite for this is to understand dimOS [Modules](/docs/usage/modules.md) and [Blueprints](/docs/usage/blueprints.md).
 
-Native modules let you wrap **any executable** as a first-class DimOS module, given it speaks LCM or zenoh.
+Native modules let you wrap **any executable** as a first-class dimOS module, given it speaks LCM or zenoh.
 
 Python will handle blueprint wiring, lifecycle, and logging. Native binary handles the actual computation, publishing and subscribing directly on the transport.
 
 Python module **never touches the pubsub data**. It just passes configuration and the topics to use via CLI args to your executable.
 
-To learn how to communicate with the rest of DimOS over LCM, read our [LCM intro](/docs/usage/lcm.md).
+To learn how to communicate with the rest of dimOS over LCM, read our [LCM intro](/docs/usage/lcm.md).
 
 An experimental Python runtime with an isolated dependency environment is
 available in [`dimos/experimental/isolated_python/README.md`](/dimos/experimental/isolated_python/README.md).
@@ -39,7 +39,7 @@ class MyLidar(NativeModule):
 
 ```
 
-That's it. `MyLidar` is a full DimOS module. You can use it with `autoconnect`, blueprints, transport overrides, and specs. Once this module is started, your `./build/my_lidar` will get called with specific CLI args.
+That's it. `MyLidar` is a full dimOS module. You can use it with `autoconnect`, blueprints, transport overrides, and specs. Once this module is started, your `./build/my_lidar` will get called with specific CLI args.
 
 ## How it works
 
@@ -231,7 +231,7 @@ A complete ping-pong pair lives at [/examples/native-modules/cpp/](/examples/nat
 
 ## Examples
 
-For language interop examples (subscribing to DimOS topics from C++, TypeScript, Lua), see [/examples/language-interop/](/examples/language-interop/README.md).
+For language interop examples (subscribing to dimOS topics from C++, TypeScript, Lua), see [/examples/language-interop/](/examples/language-interop/README.md).
 
 ### Livox Mid-360 Module
 
@@ -290,7 +290,7 @@ Mid360 and PointLIO use workspace Cargo builds. They are outside this catalog
 and still require a source checkout; this feature does not add pip installation
 support for those Rust lidar modules.
 
-Nix with flakes enabled is required. A pip-installed DimOS uses the immutable
+Nix with flakes enabled is required. A pip-installed dimOS uses the immutable
 source revision embedded in its wheel or source distribution. An editable
 checkout uses its local native sources. Nix determines reuse from the build
 inputs: unrelated Python edits do not force recompilation. Add newly created
@@ -306,7 +306,7 @@ dimos native prepare fastlio2
 The same commands prepare local edits in a checkout. `--build-native` reruns
 preparation during module building; it does not bypass Nix's reuse of identical
 outputs. Executables and their dependencies stay in the Nix store, with output
-links under the DimOS cache root. Runtime processes do not need a source-tree
+links under the dimOS cache root. Runtime processes do not need a source-tree
 working directory. Different native builds have independent output links.
 
 Package declarations live in `dimos/native_packages.json` and are consumed by
@@ -322,7 +322,7 @@ Their relative paths resolve against the Python module defining them.
 
 ### Configure Cachix
 
-DimOS requests the same cache CI publishes to on each Nix invocation. For a
+dimOS requests the same cache CI publishes to on each Nix invocation. For a
 multi-user installation whose daemon does not trust user-supplied caches, an
 administrator must configure the cache in `/etc/nix/nix.conf`:
 
@@ -331,7 +331,7 @@ extra-substituters = https://dimensionalos.cachix.org
 extra-trusted-public-keys = dimensionalos.cachix.org-1:20ynj6TjpoD3qTxkdNoeHtgs2G2pNvgAq1EQYLTHJXI=
 ```
 
-Follow Nix's installation instructions when configuring daemon trust. DimOS
+Follow Nix's installation instructions when configuring daemon trust. dimOS
 does not edit system Nix configuration. If Nix warns that it ignored an
 untrusted substituter, configure daemon trust to avoid compiling packages
 that are already available from Cachix. The shared

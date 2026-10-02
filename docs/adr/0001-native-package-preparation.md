@@ -1,6 +1,6 @@
 # Share native package preparation through Nix
 
-DimOS native launchers depended on build directories beside Python modules,
+dimOS native launchers depended on build directories beside Python modules,
 which are absent from pip installations. The recorder and FastLIO2 now share a package catalog and automatic preparation: Nix reuses
 local outputs, substitutes from Cachix, or builds the selected sources. Wheels
 and source distributions carry an immutable source revision; editable
