@@ -340,9 +340,7 @@ def inspect_dataset(path: Path | str) -> dict[str, Any]:
 
         return inspect(p)
     if (p / "meta" / "info.json").exists():
-        from dimos.imitation.dataprep.formats.lerobot.reader import (
-            inspect as inspect_lerobot_dataset,
-        )
+        from dimos.imitation.dataprep.lerobot import inspect_lerobot_dataset
 
         return inspect_lerobot_dataset(p)
     raise ValueError(

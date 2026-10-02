@@ -160,8 +160,9 @@ exported episode boundaries/task labels, output format and metadata.
 `fps` defaults to `sync.rate_hz` unless explicitly supplied in output metadata.
 
 `dimos dataprep inspect data/datasets/session.hdf5` inspects the built dataset.
-LeRobot output remains supported through the format-specific writer; choosing
-a writer does not change the source feature or alignment contract.
+LeRobot output uses the [isolated runtime](/dimos/imitation/dataprep/lerobot.md), with
+`run_lerobot_dataprep(config)` as its host entry point. Choosing an exporter
+does not change the source feature or alignment contract.
 
 Unlabeled explicit ranges use `output.metadata.default_task_label` (default
 `"task"`) for dataset task metadata. Saved episode labels take precedence.
