@@ -351,6 +351,57 @@ class TestConnect:
             adapter.disconnect()
             writer.cleanup()
 
+    def test_replacement_during_attach_never_mixes_buffers(self, shm_key, monkeypatch) -> None:
+        """A sim that replaces the buffers mid-attach must not leave the reader
+        holding its orphaned predecessors: commands have to reach the new sim."""
+        stale = ManipShmWriter(shm_key)
+        stale.write_joint_state([0.0] * ARM_DOF, [0.0] * ARM_DOF, [0.0] * ARM_DOF)
+        stale.signal_ready(num_joints=ARM_DOF)
+        real_attach = mujoco_shm.attach_shm
+        fresh: list[ManipShmWriter] = []
+
+        def attach_then_replace(name, timeout):
+            shm = real_attach(name, timeout=timeout)
+            # The new sim replaces everything once the command buffer is attached.
+            if not fresh and name.endswith("_pos_t"):
+                fresh.append(ManipShmWriter(shm_key))
+                fresh[0].signal_ready(num_joints=ARM_DOF)
+            return shm
+
+        monkeypatch.setattr(mujoco_shm, "attach_shm", attach_then_replace)
+        reader = None
+        try:
+            stop, heartbeat = None, None
+            reader_box: list[mujoco_shm.ManipShmReader | None] = []
+            attach = threading.Thread(
+                target=lambda: reader_box.append(
+                    mujoco_shm.ManipShmReader.wait_for_live(
+                        shm_key, attach_timeout_s=2.0, ready_timeout_s=2.0, poll_s=0.01
+                    )
+                )
+            )
+            attach.start()
+            while not fresh:
+                time.sleep(0.001)
+            stop, heartbeat = start_heartbeat(fresh[0])
+            attach.join(timeout=3.0)
+            reader = reader_box[0]
+            assert reader is not None
+            reader.write_position_command([0.25] * ARM_DOF)
+            delivered = fresh[0].read_position_command(ARM_DOF)
+            assert delivered is not None
+            assert list(delivered) == pytest.approx([0.25] * ARM_DOF)
+        finally:
+            if stop is not None:
+                stop.set()
+                heartbeat.join()
+            if reader is not None:
+                reader.cleanup()
+            if fresh:
+                fresh[0].cleanup()
+            for shm in stale.shm.as_list():
+                shm.close()  # its names now belong to the fresh sim
+
     def test_connect_before_sim_ready_times_out(self, shm_key, monkeypatch):
         """If sim module never signals ready, connect() returns False after timeout."""
         monkeypatch.setattr(adapter_mod, "shm_key_from_path", lambda _: shm_key)

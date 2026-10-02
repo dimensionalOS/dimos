@@ -193,9 +193,13 @@ class ManipShmSet:
 
     @classmethod
     def attach(cls, key: str) -> ManipShmSet:
-        """Attach to existing SHM buffers created by the sim side."""
+        """Attach to existing SHM buffers created by the sim side.
+
+        seq and ctl go first because create() replaces them last: a fresh seq
+        means every buffer attached after it is fresh too.
+        """
         buffers: dict[str, SharedMemory] = {}
-        for buffer_name in _shm_sizes:
+        for buffer_name in ("seq", "ctl", *(n for n in _shm_sizes if n not in ("seq", "ctl"))):
             name = _buffer_name(key, buffer_name)
             buffers[buffer_name] = attach_shm(name, timeout=_ATTACH_WINDOW_S)
         return cls(**buffers)
