@@ -178,6 +178,10 @@ class ControlCoordinator(Module):
         self._tasks: dict[TaskName, ControlTask] = {}
         self._task_lock = threading.Lock()
         self._trajectory_task: JointTrajectoryTask | None = None
+        # Cancellation epoch, guarded by _task_lock. A rollout captures it
+        # before inference so cancellation also rejects its delayed submissions.
+        # Callers that omit expected_generation are not fenced by this token.
+        self._trajectory_generation = 0
 
         # Card-declared stream routes, keyed by the port stream_bind resolved to:
         # port -> (task, bound handler, routing). Guarded by _task_lock; entries
@@ -438,10 +442,32 @@ class ControlCoordinator(Module):
             return positions
 
     @rpc
-    def execute_trajectory(self, trajectory: JointTrajectory) -> TrajectoryExecutionResult:
-        """Execute a trajectory through the coordinator's sole trajectory task."""
+    def get_trajectory_generation(self) -> int:
+        """Return the cancellation generation for fencing delayed submissions."""
+        with self._task_lock:
+            return self._trajectory_generation
+
+    @rpc
+    def execute_trajectory(
+        self, trajectory: JointTrajectory, expected_generation: int | None = None
+    ) -> TrajectoryExecutionResult:
+        """Execute a trajectory through the coordinator's sole trajectory task.
+
+        Capture ``get_trajectory_generation()`` before computing an action and
+        pass it here to reject a submission delayed past cancellation. Checking
+        the token and accepting the trajectory both hold ``_task_lock``.
+        Omitting ``expected_generation`` preserves unfenced, unversioned calls.
+        """
         current_positions = self.get_joint_positions()
         with self._task_lock:
+            if (
+                expected_generation is not None
+                and expected_generation != self._trajectory_generation
+            ):
+                return TrajectoryExecutionResult(
+                    TrajectoryExecutionStatus.STALE_REQUEST,
+                    "Trajectory submission was invalidated by cancellation",
+                )
             if self._trajectory_task is None:
                 return TrajectoryExecutionResult(
                     TrajectoryExecutionStatus.NO_TRAJECTORY_TASK,
@@ -450,9 +476,26 @@ class ControlCoordinator(Module):
             return self._trajectory_task.execute(trajectory, current_positions)
 
     @rpc
-    def cancel_trajectory(self) -> TrajectoryCancellationResult:
-        """Cancel the coordinator's sole trajectory task."""
+    def cancel_trajectory(
+        self, expected_generation: int | None = None
+    ) -> TrajectoryCancellationResult:
+        """Cancel execution and invalidate versioned submissions already in flight.
+
+        A matching token advances the epoch even when no trajectory is active,
+        rejecting delayed submissions from that rollout. An old token leaves a
+        newer rollout untouched, including during the old rollout's cleanup.
+        Omitting the token cancels unconditionally and advances the current epoch.
+        """
         with self._task_lock:
+            if (
+                expected_generation is not None
+                and expected_generation != self._trajectory_generation
+            ):
+                return TrajectoryCancellationResult(
+                    TrajectoryCancellationStatus.ALREADY_STOPPED,
+                    "Trajectory generation was already invalidated",
+                )
+            self._trajectory_generation += 1
             if self._trajectory_task is None:
                 return TrajectoryCancellationResult(
                     TrajectoryCancellationStatus.NO_TRAJECTORY_TASK,

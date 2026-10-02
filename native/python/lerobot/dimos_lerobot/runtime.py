@@ -100,6 +100,7 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
         self._last_error = None
         self._active = False
         self._manual_control = False
+        self._trajectory_generation: int | None = None
 
     @rpc
     def start(self) -> None:
@@ -172,7 +173,8 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
                 return self._status_locked()
             try:
                 self._snapshot_observation(time.time())
-            except RuntimeError as exc:
+                self._trajectory_generation = self._control.get_trajectory_generation()
+            except Exception as exc:
                 self._last_error = str(exc)
                 return self._status_locked()
 
@@ -436,7 +438,15 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
                 actions = bounded_actions
                 if self._stop_event.is_set():
                     break
-                result = self._control.execute_trajectory(self._trajectory(state, actions))
+                result = self._control.execute_trajectory(
+                    self._trajectory(state, actions),
+                    expected_generation=self._trajectory_generation,
+                )
+                if (
+                    result.status is TrajectoryExecutionStatus.STALE_REQUEST
+                    and self._stop_event.is_set()
+                ):
+                    break
                 if result.status is TrajectoryExecutionStatus.START_STATE_MISMATCH:
                     self._wait_for_newer_joint_state(state_ts)
                     continue
@@ -525,7 +535,9 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
 
     def _cancel_trajectory(self) -> str | None:
         try:
-            result = self._control.cancel_trajectory()
+            result = self._control.cancel_trajectory(
+                expected_generation=self._trajectory_generation
+            )
         except Exception as exc:
             logger.exception(
                 "Failed to cancel policy trajectory",
