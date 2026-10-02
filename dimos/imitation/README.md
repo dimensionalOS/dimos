@@ -1,11 +1,14 @@
 # Imitation Learning
 
+See [Collection profiles](/dimos/imitation/collection/README.md) for the recording contract,
+shared feature class and executable custom-robot examples.
+
 Collect demonstrations, build training datasets, and run trained policies in
 DimOS. Teleoperation records episodes, and DataPrep converts SQLite or MCAP
 recordings into a LeRobot or HDF5 dataset for imitation learning.
 
 ```
-teleop (WebXR) ─▶ CollectionRecorder ─▶ session_<robot>_<ts>.db ─▶ dimos dataprep ─▶ dataset
+teleop (WebXR) -> CollectionRecorder -> recording directory -> DataPrep -> dataset
 ```
 
 After training, use the production
@@ -52,37 +55,51 @@ prints one line per transition:
 
 ### Where the recording goes
 
-```
-~/.local/state/dimos/recordings/session_<robot>_<YYYYMMDD_HHMMSS>.db
-```
+The recorder creates a new session directory under
+`~/.local/state/dimos/recordings/`. It contains `schema.json` and one raw
+payload: `recording.mcap` by default, or `recording.db` for SQLite.
 
-A new timestamped file per run (nothing is overwritten). It records three
-streams: `color_image`, `coordinator_joint_state`, and `status` (the episode
-start/save/discard markers).
+The saved schema describes feature projections, episode markers, alignment and
+quality rules. Its stream names are the actual recorded topics. No Python
+message classes or absolute recording paths are stored in it. The profile
+supplies the typed inputs; multiple features can project different fields from
+one recorded stream.
 
-The exact path is printed when the recorder starts — note it for the next step.
+The exact directory is printed when the recorder starts. Existing directories
+are errors, so a new capture cannot silently replace a previous session.
 
 ---
 
 ## 2. Build a dataset
 
-DataPrep is an offline batch step over SQLite (`.db`) or MCAP (`.mcap`)
-recordings. Start from [example_config.json](/dimos/imitation/dataprep/example_config.json),
-adapt the feature schemas to your robot, and set the source and output paths.
+Use the schema saved beside the payload to prepare a collection. This preserves
+its topic names and joint ordering rather than guessing them from the robot name.
+The input directory in this example must contain a completed recording:
 
-Run `dimos dataprep build --source data/recordings/session.db --config
-dimos/imitation/dataprep/example_config.json --format hdf5 --output
-data/datasets/session.hdf5` with your actual recording and config. The
-`--source`, `--output`, and `--format` flags override config values. LeRobot
-output uses `--format lerobot`.
+```python skip
+from pathlib import Path
 
-Use `dimos dataprep inspect data/recordings/session.db` to inspect a recording,
-or `dimos dataprep inspect data/datasets/session.hdf5` to inspect the output.
-Saved episodes are validated before export; discarded and unfinished episodes
-are excluded. HDF5 export requires an episode task label.
+from dimos.imitation.collection.recording import RecordingSchema
+from dimos.imitation.dataprep.lerobot import run_lerobot_dataprep
+from dimos.imitation.dataprep.schema import OutputConfig
 
-See the [offline dataset guide](/dimos/imitation/dataprep/README.md) for an executable config
-example, Python quality-inspection API, alignment rules, and output provenance.
+recording = Path("data/recordings/session")
+schema = RecordingSchema.read(recording)
+config = schema.dataprep_config(recording, OutputConfig(path=Path("data/datasets/session")))
+run_lerobot_dataprep(config)
+```
+
+For HDF5, select `OutputConfig(format="hdf5", path=...)` and call the host
+`run_dataprep(config)`. LeRobot build and inspection use the isolated runtime.
+
+The low-level `dimos dataprep` command remains available for explicit SQLite or
+MCAP configs. Generate a config from the saved schema before passing it to
+`--config`; `schema.json` itself is a recording contract, not a `DataPrepConfig`.
+The old CLI is removed only when its `dimos imitation` replacement is registered.
+
+See the [offline dataset guide](/dimos/imitation/dataprep/README.md) and
+[isolated LeRobot exporter](/dimos/imitation/dataprep/lerobot.md) for validation,
+inspection and output provenance. Discarded and unfinished episodes are excluded.
 
 ---
 
