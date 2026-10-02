@@ -27,8 +27,8 @@ from dataclasses import asdict, dataclass, replace
 import json
 from pathlib import Path
 import re
+import secrets
 import subprocess
-import tempfile
 import time
 from typing import Any
 
@@ -259,7 +259,15 @@ class EvalRunner(Configurable):
     def _new_run_dir(self) -> Path:
         self.config.out_dir.mkdir(parents=True, exist_ok=True)
         prefix = time.strftime("run-%Y%m%d-%H%M%S-")
-        return Path(tempfile.mkdtemp(prefix=prefix, dir=self.config.out_dir))
+        # Not mkdtemp: its 0700 ignores the umask, and the eval container relies
+        # on its umask to leave results readable by the host user.
+        while True:
+            path = self.config.out_dir / f"{prefix}{secrets.token_hex(4)}"
+            try:
+                path.mkdir()
+                return path
+            except FileExistsError:
+                continue
 
     def _write_artifacts(self, results: list[EvalResult]) -> None:
         lines = [json.dumps(asdict(r)) for r in results]

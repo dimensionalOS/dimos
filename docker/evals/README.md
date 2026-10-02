@@ -16,9 +16,10 @@ dimos evals run --docker dimos.evals.suites.dimsim_apartment_qa \
 ```
 
 `docker ps` lists the evals still running; `docker logs -f <name>` follows
-one; `docker stop <name>` abandons one. Nothing in `dimos/evals` changes for
-this: the container runs the stock `EvalRunner`, which boots a dimos plus
-DimSim per case, runs the agent, records, and tears them down again.
+one; `docker stop <name>` abandons one, keeping what it wrote so far but no
+`results.jsonl`/`summary.json`. The container runs the stock `EvalRunner`,
+which boots a dimos plus DimSim per case, runs the agent, records, and tears
+them down again.
 
 ## Using it on your branch
 
@@ -239,11 +240,12 @@ that spans scenes and agent configurations maps one container to each
 - Workers get `NET_ADMIN` so dimos's own LCM setup can enable multicast on
   the loopback inside the container, and a raised `memlock` limit for zenoh's
   shared-memory pool.
-- Everything in a container runs as root; the entrypoint opens permissions on
-  what a run wrote so the host user can read and delete it.
-- Run ids carry a random 4-hex suffix (`generate_run_id`). Two evals booting
-  the same blueprint in the same second used to get the same run id and write
-  one recording folder, one `memory.db` and one `rerun.rrd` between them.
+- Everything in a container runs as root; the entrypoint sets `umask 0000`
+  so whatever a run writes, even one stopped midway, is readable and
+  deletable by the host user.
+- Run ids carry a random 4-hex token after the stamp (`generate_run_id`).
+  Two evals booting the same blueprint in the same second used to get the
+  same run id and write one recording folder, one `memory.db` and one `rerun.rrd` between them.
 - The dimos run registry (`/state/dimos/runs`) is an anonymous volume per
   container, not part of the shared mount. It is keyed by pid, and with a
   shared one a container's stale-entry sweep deletes its neighbours' live

@@ -11,9 +11,6 @@ services:
       context: ../..
       dockerfile: docker/evals/Dockerfile
     init: true
-    # Time for dimos and the sim to shut down after `docker stop` before the
-    # SIGKILL, so the entrypoint still opens up the results (default is 10 s).
-    stop_grace_period: 60s
     # Chromium needs more than Docker's 64 MB default /dev/shm.
     shm_size: 2g
     # Zenoh's shared-memory pool wants 64 MB of locked memory; Docker's default is 8 MB.
