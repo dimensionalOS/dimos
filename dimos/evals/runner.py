@@ -25,10 +25,11 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, replace
 import json
+import os
 from pathlib import Path
 import re
-import secrets
 import subprocess
+import tempfile
 import time
 from typing import Any
 
@@ -259,14 +260,11 @@ class EvalRunner(Configurable):
     def _new_run_dir(self) -> Path:
         self.config.out_dir.mkdir(parents=True, exist_ok=True)
         prefix = time.strftime("run-%Y%m%d-%H%M%S-")
-        # Not mkdtemp: its 0700 ignores the umask the eval container relies on.
-        while True:
-            path = self.config.out_dir / f"{prefix}{secrets.token_hex(4)}"
-            try:
-                path.mkdir()
-                return path
-            except FileExistsError:
-                continue
+        path = Path(tempfile.mkdtemp(prefix=prefix, dir=self.config.out_dir))
+        # The eval container runs as root; open the run dir so the host user can read it.
+        if os.environ.get("DIMOS_EVALS_OPEN_OUTPUT") == "1":
+            path.chmod(0o777)
+        return path
 
     def _write_artifacts(self, results: list[EvalResult]) -> None:
         lines = [json.dumps(asdict(r)) for r in results]
