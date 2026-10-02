@@ -248,7 +248,7 @@ class Mid360Config(NativeModuleConfig):
     executable: str = str(DIMOS_PROJECT_ROOT / "target" / "release" / "mid360_native")
     build_command: str | None = "cargo build --release"
     host_ip: str | None = None  # auto-detected on the lidar's subnet
-    lidar_ip: str = "192.168.1.155"
+    lidar_ip: str | None = None  # required for a live sensor
     frequency: float = 10.0
     enable_imu: bool = True
     frame_id: str = "lidar_link"

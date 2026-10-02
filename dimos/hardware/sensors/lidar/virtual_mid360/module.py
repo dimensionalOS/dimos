@@ -23,7 +23,7 @@ Usage::
 
     autoconnect(
         VirtualMid360.blueprint(pcap="/path/to/ruwik2.pcap"),
-        Mid360.blueprint(),
+        Mid360.blueprint(lidar_ip="192.168.1.155"),
     )
 """
 
