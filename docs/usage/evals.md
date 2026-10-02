@@ -464,7 +464,11 @@ waits until every joint is slower than `at_rest_rad_s`. Floating-base robots
 still settle on `odom`. The recording keeps color, camera info, joint state,
 `tf` and `odom`; depth frames are float32, which the JPEG recorder rejects. `module_env` passes extra
 `MODULE__FIELD` overrides to the launched dimos, which beat blueprint-pinned
-values, so a case can retune a module without a new blueprint.
+values, so a case can retune a module without a new blueprint. `scene` passes
+`--mujoco-scene`: a full MJCF, robot included, that `xarm-perception-sim` loads
+instead of its default `scene.xml`. The planner's base pose is
+`XARM7_SIM_BASE_POSE` in the xArm config, so a scene must keep the arm where
+`scene.xml` puts it, or that value must change to match.
 `dimos.evals.suites.mujoco_xarm` is the xArm7 table scene with the perception
 modules disabled: pick up the cylinder, then put the red ball on top of it.
 

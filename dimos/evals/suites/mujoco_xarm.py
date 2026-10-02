@@ -27,6 +27,7 @@ from dimos.evals.environments.lib.recorded_poses import first_body_transform, la
 from dimos.evals.environments.mujoco_sim import MujocoEnvironment
 from dimos.evals.scorers import ramp
 from dimos.evals.types import EvalCase, Outcome, Suite, recording
+from dimos.utils.data import LfsPath
 
 TRACKED = ("apple", "cup")
 
@@ -50,6 +51,7 @@ def environment() -> MujocoEnvironment:
     return MujocoEnvironment(
         blueprint=["xarm-perception-sim", "mcp-server", "observe-skill"],
         disable=PERCEPTION_MODULES,
+        scene=LfsPath("xarm7/scene.xml"),
         tracked_bodies=TRACKED,
     )
 

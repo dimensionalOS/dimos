@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import json
+from pathlib import Path
 import time
 
 import numpy as np
@@ -55,6 +56,10 @@ def test_launch_flags(monkeypatch):
     proc = DimosCliCall()
     environment().configure_launch(proc)
     assert "MUJOCOSIMMODULE__TRACKED_BODIES" not in proc.extra_env
+
+    proc = DimosCliCall()
+    environment(scene=Path("scenes/table.xml")).configure_launch(proc)
+    assert proc.global_args[-2:] == ["--mujoco-scene", str(Path("scenes/table.xml").resolve())]
 
     monkeypatch.setenv("MUJOCOSIMMODULE__HEADLESS", "false")
     proc = DimosCliCall()
