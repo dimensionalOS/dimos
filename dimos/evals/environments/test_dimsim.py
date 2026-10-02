@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from pathlib import Path
+import time
 from unittest.mock import Mock
 
 import pytest
@@ -43,3 +45,25 @@ def test_dimsim_launch_setup_and_pose(mocker):
     finally:
         env.stop()
     client.stop.assert_called_once()
+
+
+def test_prepare_recording_returns_once_odom_is_fresh():
+    env = DimSimEnvironment(blueprint=["unitree-go2"], fresh_odom_s=10.0)
+    with MemoryStore() as store:
+        store.stream("odom", PoseStamped).append(PoseStamped(frame_id="world"), ts=time.time())
+        assert env.prepare_recording(store, Path("/nonexistent"), time.monotonic() + 5.0) == {}
+
+
+def test_prepare_recording_ignores_stale_odom_and_times_out():
+    env = DimSimEnvironment(blueprint=["unitree-go2"], fresh_odom_s=10.0)
+    with MemoryStore() as store:
+        stale = time.time() - 60.0
+        store.stream("odom", PoseStamped).append(PoseStamped(frame_id="world"), ts=stale)
+        with pytest.raises(TimeoutError, match="fresh odometry"):
+            env.prepare_recording(store, Path("/nonexistent"), time.monotonic() + 0.3)
+
+
+def test_prepare_recording_times_out_with_no_odom_stream():
+    env = DimSimEnvironment(blueprint=["unitree-go2"])
+    with MemoryStore() as store, pytest.raises(TimeoutError):
+        env.prepare_recording(store, Path("/nonexistent"), time.monotonic() + 0.3)

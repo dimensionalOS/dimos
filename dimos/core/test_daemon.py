@@ -127,8 +127,11 @@ class TestGenerateRunId:
 
     def test_generate_run_id_format(self):
         rid = generate_run_id("unitree-go2")
-        # Pattern: YYYYMMDD-HHMMSS-<name>
-        assert re.match(r"^\d{8}-\d{6}-unitree-go2$", rid), f"unexpected format: {rid}"
+        # Pattern: YYYYMMDD-HHMMSS-<name>-<4 hex>
+        assert re.match(r"^\d{8}-\d{6}-unitree-go2-[0-9a-f]{4}$", rid), f"unexpected format: {rid}"
+
+    def test_same_second_runs_differ(self):
+        assert generate_run_id("unitree-go2") != generate_run_id("unitree-go2")
 
     def test_sanitizes_slashes(self):
         rid = generate_run_id("path/to/bp")

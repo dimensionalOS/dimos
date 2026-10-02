@@ -98,7 +98,7 @@ from dimos.utils.testing.waiting import retry_until as _retry_until, wait_until 
 tqdm.tqdm.monitor_interval = 0
 
 _dotenv = dotenv_values()
-for _key in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "ALIBABA_API_KEY"):
+for _key in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "ALIBABA_API_KEY", "TYPESAFE_API_KEY"):
     if _dotenv.get(_key):
         os.environ.setdefault(_key, _dotenv[_key])
 

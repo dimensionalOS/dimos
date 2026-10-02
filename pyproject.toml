@@ -226,6 +226,11 @@ agents = [
     "faster-whisper>=1.0.0",
 ]
 
+# TypeSafe (Jev) System One model — dimos/evals/agents/typesafe_policy.py
+typesafe = [
+    "typesafe-sdk>=0.6.0",
+]
+
 web = [
     "fastapi>=0.115.6",
     "python-socketio>=5.16.1",  # WebsocketVisModule, also imported by Quest visualization
@@ -513,7 +518,7 @@ dev = [
 required-version = ">=0.9.25"
 default-groups = ["tests"]
 exclude-newer = "7 days"
-exclude-newer-package = { dimos-viewer = false, dimos-lcm = false, lcm-dimos-fork = false, roboplan = false, md-babel-py = false, can-motor-control = false, edgetam-dimos = false, dim-odom = false, eclipse-zenoh = false }
+exclude-newer-package = { dimos-viewer = false, dimos-lcm = false, lcm-dimos-fork = false, roboplan = false, md-babel-py = false, can-motor-control = false, edgetam-dimos = false, dim-odom = false, eclipse-zenoh = false, typesafe-sdk = false }
 constraint-dependencies = [
     # TODO(PY311): drop this fork. onnxruntime(-gpu) 1.24 dropped cp310
     # wheels, so 3.10 environments resolve 1.23.x (matching what a 3.10
