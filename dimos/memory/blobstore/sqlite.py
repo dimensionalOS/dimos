@@ -119,9 +119,10 @@ class SqliteBlobStore(BlobStore):
         # LENGTH(data) comes from the record header, so this never reads payload pages.
         validate_identifier(stream_name)
         try:
-            row = self._conn.execute(
-                f'SELECT SUM(LENGTH(data)) FROM "{stream_name}_blob"'
-            ).fetchone()
+            with self._lock:
+                row = self._conn.execute(
+                    f'SELECT SUM(LENGTH(data)) FROM "{stream_name}_blob"'
+                ).fetchone()
         except sqlite3.OperationalError:  # no blob table for this stream
             return 0
         return int(row[0]) if row[0] is not None else 0

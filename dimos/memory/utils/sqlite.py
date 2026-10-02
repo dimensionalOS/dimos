@@ -59,14 +59,10 @@ def close_sqlite_connection(conn: sqlite3.Connection) -> None:
 
 
 def open_sqlite_connection(path: str | Path) -> sqlite3.Connection:
-    """Open a WAL-mode SQLite connection with sqlite-vec loaded.
-
-    A reentrant lock is registered for the connection via :func:`conn_lock`.
-    """
+    """Open a WAL-mode SQLite connection with sqlite-vec loaded."""
     import sqlite_vec
 
     conn = sqlite3.connect(path, check_same_thread=False)
-    conn_lock(conn)  # register lock eagerly
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
     # WAL has one writer; concurrent writer threads outlast the 5s default

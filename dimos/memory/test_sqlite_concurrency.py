@@ -24,9 +24,10 @@ import threading
 import tracemalloc
 
 import pytest
+import sqlite_vec
 
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.memory.utils.sqlite import _locks
+from dimos.memory.utils.sqlite import _locks, open_sqlite_connection
 
 
 @pytest.fixture
@@ -182,3 +183,31 @@ def test_failed_append_is_not_committed_by_concurrent_append(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     assert _race_failing_append(tmp_path, monkeypatch, b_finishes_first=True) == [2.0]
+
+
+def test_concurrent_size_bytes_is_consistent(populated_store: SqliteStore) -> None:
+    stream = populated_store.stream("color_image")
+    expected = stream.size_bytes()
+    assert expected
+
+    def worker() -> list[int | None]:
+        return [stream.size_bytes() for _ in range(250)]
+
+    with ThreadPoolExecutor(16) as ex:
+        results = [r for f in [ex.submit(worker) for _ in range(16)] for r in f.result()]
+
+    assert Counter(results) == Counter({expected: 16 * 250})
+
+
+def test_failed_open_does_not_leak_connection_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail(conn: object) -> None:
+        raise RuntimeError("extension load failed")
+
+    monkeypatch.setattr(sqlite_vec, "load", fail)
+    before = len(_locks)
+    with pytest.raises(RuntimeError, match="extension load failed"):
+        open_sqlite_connection(tmp_path / "failed.db")
+
+    assert len(_locks) == before
