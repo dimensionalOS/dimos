@@ -27,6 +27,7 @@ import pytest
 from dimos.core import run_registry
 from dimos.core.run_registry import (
     RunEntry,
+    blueprint_from_run_id,
     cleanup_stale,
     generate_run_id,
     list_runs,
@@ -127,11 +128,18 @@ class TestGenerateRunId:
 
     def test_generate_run_id_format(self):
         rid = generate_run_id("unitree-go2")
-        # Pattern: YYYYMMDD-HHMMSS-<name>-<4 hex>
-        assert re.match(r"^\d{8}-\d{6}-unitree-go2-[0-9a-f]{4}$", rid), f"unexpected format: {rid}"
+        # Pattern: YYYYMMDD-HHMMSS-<4 hex>-<name>
+        assert re.match(r"^\d{8}-\d{6}-[0-9a-f]{4}-unitree-go2$", rid), f"unexpected format: {rid}"
 
     def test_same_second_runs_differ(self):
         assert generate_run_id("unitree-go2") != generate_run_id("unitree-go2")
+
+    def test_blueprint_round_trips(self):
+        assert blueprint_from_run_id(generate_run_id("unitree-go2")) == "unitree-go2"
+        # IDs from before the token, and blueprints ending in hex, read whole.
+        assert blueprint_from_run_id("20260830-155733-unitree-go2") == "unitree-go2"
+        assert blueprint_from_run_id("20260830-155733-a3f1-nav-cafe") == "nav-cafe"
+        assert blueprint_from_run_id("downloads") is None
 
     def test_sanitizes_slashes(self):
         rid = generate_run_id("path/to/bp")

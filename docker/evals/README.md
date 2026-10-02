@@ -10,8 +10,8 @@ default ports and multicast groups without touching its neighbours.
 ```bash
 dimos evals run --docker dimos.evals.suites.dimsim_apartment_qa \
     --agent dimos.evals.agents.pi --set max_steps=12 --limit 4
-# evals-20260918-133000-dimsim_apartment_qa-3f1a: started (detached)
-#   follow:   docker logs -f evals-20260918-133000-dimsim_apartment_qa-3f1a
+# evals-20260918-133000-3f1a-dimsim_apartment_qa: started (detached)
+#   follow:   docker logs -f evals-20260918-133000-3f1a-dimsim_apartment_qa
 #   results:  docker/evals/eval-runs/dimos/evals/   recordings + rerun.rrd: docker/evals/eval-runs/dimos/recordings/
 ```
 
@@ -159,6 +159,13 @@ skip what you have.
 
    `xhost` printing "non-network local connections being added" means Xorg
    is up; `sudo journalctl -u xorg -n 30` otherwise.
+
+   Only do this on a dedicated eval host. `xhost +local:root` lets every
+   container (they all run as root) connect to that display, and X11 does not
+   isolate its clients: any of them can read the screen and keystrokes and
+   inject input. Workers seeing each other's Chromium is harmless; pointing
+   `compose.gpu.yaml` at your own desktop session (a laptop's `DISPLAY`) hands
+   it to whatever code runs in the eval.
 
 4. The socket buffers dimos's LCM setup asks for; host-wide, so they cannot
    be set per container:

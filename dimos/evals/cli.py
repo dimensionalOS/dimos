@@ -201,7 +201,7 @@ def _run_in_docker(
         argv += ["--limit", str(limit)]
 
     stamp = time.strftime("%Y%m%d-%H%M%S")
-    name = f"evals-{stamp}-{suite.rsplit('.', 1)[-1]}-{secrets.token_hex(2)}"
+    name = f"evals-{stamp}-{secrets.token_hex(2)}-{suite.rsplit('.', 1)[-1]}"
     # COMPOSE_FILE set in the environment (e.g. to add compose.gpu.yaml) wins.
     compose = DIMOS_PROJECT_ROOT / "docker" / "evals" / "compose.yaml"
     files = [] if os.environ.get("COMPOSE_FILE") else ["-f", str(compose)]
