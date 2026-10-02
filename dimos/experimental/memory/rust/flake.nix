@@ -36,6 +36,7 @@
             ../../../../dimos/mapping/ray_tracing/rust/py
             ../../../../dimos/navigation/global_planner/mls_planner/rust
             ../../../../dimos/navigation/global_planner/mls_planner/rust/py
+            ../../../../dimos/perception/depth2depth_cloud/rust
             ../../../../dimos/hardware/sensors/lidar/livox/rust
             ../../../../dimos/hardware/sensors/lidar/pointlio/rust
             ../../../../dimos/hardware/sensors/lidar/virtual_mid360
@@ -46,6 +47,7 @@
         cargoLock = {
           lockFile = ../../../../Cargo.lock;
           outputHashes = {
+            "depth2depth-0.2.2" = "sha256-e6bIZfN3KHcaHK/TC+mCpAG4dIJXsdLCbJXGgiKWFEA=";
             "dimos-lcm-0.1.0" = "sha256-GGkx4Mn6NYP6KZecmoRLKGWIih/+y8OgNn12DeXX6n8=";
             "pointlio-core-0.1.0" = "sha256-iC7nDbEipfi3cViK7fqKiy2hT9ENGi4Ge7L6Wt1W01Q=";
           };

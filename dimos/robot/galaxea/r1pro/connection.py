@@ -49,8 +49,10 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.hardware.whole_body.spec import VEL_STOP
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.msgs.sensor_msgs.Image import Image
@@ -59,6 +61,7 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.robot.assets.model import RobotModel
 from dimos.robot.galaxea.r1pro.joints import UPPER_BODY_JOINTS, coordinator_name
 from dimos.utils.logging_config import setup_logger
 
@@ -75,13 +78,7 @@ _FEEDBACK_DISCOVERY_TIMEOUT_S = 5.0
 R1PRO_UPPER_BODY_JOINTS: list[str] = [coordinator_name(j) for j in UPPER_BODY_JOINTS]
 assert len(R1PRO_UPPER_BODY_JOINTS) == _NUM_MOTORS
 
-# JPEG color streams: stream name → ROS topic.
-_HEAD_COLOR_CAMERAS: dict[str, str] = {
-    "head_left_color": "/hdas/camera_head/left_raw/image_raw_color/compressed",
-    "head_right_color": "/hdas/camera_head/right_raw/image_raw_color/compressed",
-}
-
-# Color streams gated by config.enable_wrist_color.
+# JPEG color streams: stream name → ROS topic, gated by config.enable_wrist_color.
 _WRIST_COLOR_CAMERAS: dict[str, str] = {
     "wrist_left_color": "/hdas/camera_wrist_left/color/image_raw/compressed",
     "wrist_right_color": "/hdas/camera_wrist_right/color/image_raw/compressed",
@@ -136,6 +133,75 @@ def _ros_stamp_now() -> Any:
     return RosTime(sec=sec, nanosec=int((t - sec) * 1e9))
 
 
+class ArticulatedTf:
+    """FK for every URDF joint, one parent -> child edge each; pinocchio because yourdfpy is absent on aarch64."""
+
+    def __init__(self, model: RobotModel, root_link: str = "") -> None:
+        import xml.etree.ElementTree as ElementTree
+
+        import pinocchio
+
+        loaded = model.load()
+        self._model = pinocchio.buildModelFromXML(loaded.xml)
+        self._data = self._model.createData()
+        self._neutral_q = pinocchio.neutral(self._model)
+        self.root_link = root_link or loaded.root_link
+        self._unknown_joints: set[str] = set()
+
+        self._joint_q_index = {
+            self._model.names[joint_id]: self._model.joints[joint_id].idx_q
+            for joint_id in range(1, self._model.njoints)
+            if self._model.joints[joint_id].nq == 1
+        }
+        rename = {loaded.root_link: self.root_link}
+        self._edges: list[tuple[str, str, int, int]] = []
+        for joint in ElementTree.fromstring(loaded.xml).iter("joint"):
+            parent = joint.find("parent").attrib["link"]  # type: ignore[union-attr]
+            child = joint.find("child").attrib["link"]  # type: ignore[union-attr]
+            self._edges.append(
+                (
+                    rename.get(parent, parent),
+                    child,
+                    self._model.getFrameId(parent),
+                    self._model.getFrameId(child),
+                )
+            )
+
+    def transforms(self, joint_state: JointState) -> list[Transform]:
+        import pinocchio
+        from scipy.spatial.transform import Rotation
+
+        q = self._neutral_q.copy()
+        for name, position in zip(joint_state.name, joint_state.position, strict=False):
+            index = self._joint_q_index.get(name)
+            if index is None:
+                if name not in self._unknown_joints:
+                    self._unknown_joints.add(name)
+                    logger.warning("R1Pro FK: no model joint named %r", name)
+                continue
+            q[index] = position
+
+        pinocchio.framesForwardKinematics(self._model, self._data, q)
+        # Fixed joints are republished with the moving ones: a chained lookup is only as fresh as its stalest edge.
+        placements = [
+            self._data.oMf[parent_id].actInv(self._data.oMf[child_id])
+            for _, _, parent_id, child_id in self._edges
+        ]
+        quaternions = Rotation.from_matrix([p.rotation for p in placements]).as_quat()
+        return [
+            Transform(
+                translation=Vector3(*placement.translation),
+                rotation=Quaternion(*quaternion),
+                frame_id=parent,
+                child_frame_id=child,
+                ts=joint_state.ts,
+            )
+            for (parent, child, _, _), placement, quaternion in zip(
+                self._edges, placements, quaternions, strict=True
+            )
+        ]
+
+
 class R1ProConnectionConfig(ModuleConfig):
     publish_rate_hz: float = Field(default=100.0)
     # rad/s used when MotorCommand.dq is the VEL_STOP sentinel or 0.
@@ -153,6 +219,10 @@ class R1ProConnectionConfig(ModuleConfig):
     enable_wrist_color: bool = Field(default=True)
     # Max Hz per color camera (0 = no cap); the cameras arrive at ~28 Hz, so 30 passes every frame.
     color_publish_hz: float = Field(default=30.0)
+    # Publish every URDF joint as a tf edge, posed by FK from live joint angles.
+    publish_joint_tf: bool = Field(default=True)
+    # Joint feedback runs at publish_rate_hz (100), far more tf than any consumer needs.
+    articulated_tf_hz: float = Field(default=30.0, gt=0.0)
 
 
 class R1ProConnection(Module):
@@ -177,8 +247,6 @@ class R1ProConnection(Module):
     tf: Out[TFMessage]
 
     # Perception.
-    head_left_color: Out[CompressedImage]
-    head_right_color: Out[CompressedImage]
     head_depth: Out[Image]
     lidar: Out[PointCloud2]
     wrist_left_color: Out[CompressedImage]
@@ -219,6 +287,7 @@ class R1ProConnection(Module):
         self._right_seen = False
         self._latest_imu_chassis: Imu | None = None
         self._latest_imu_torso: Imu | None = None
+        self._articulated_tf: ArticulatedTf | None = None
 
         # Odom dead-reckoning, integrated from /motion_control/chassis_speed.
         self._odom_x = 0.0
@@ -246,6 +315,11 @@ class R1ProConnection(Module):
         # Lazy import — RawROS pulls rclpy which must not load on import in
         # environments without ROS 2.
         from dimos.protocol.pubsub.impl.rospubsub import RawROS
+
+        if self.config.publish_joint_tf:
+            from dimos.robot.galaxea.r1pro.config import R1PRO_MODEL
+
+            self._articulated_tf = ArticulatedTf(R1PRO_MODEL, root_link=self.config.frame_id)
 
         self._ros = RawROS(node_name="r1pro_control")
         self._ros.start()
@@ -408,14 +482,19 @@ class R1ProConnection(Module):
                 Thread(target=worker, args=(stream, q, *args), daemon=True, name=f"r1pro-{stream}")
             )
 
-        cameras = dict(_HEAD_COLOR_CAMERAS)
         if self.config.enable_wrist_color:
-            cameras.update(_WRIST_COLOR_CAMERAS)
-        for stream, topic in cameras.items():
-            add_stream(stream, topic, RosCompressedImage, self._compressed_image_loop)
+            for stream, topic in _WRIST_COLOR_CAMERAS.items():
+                add_stream(stream, topic, RosCompressedImage, self._compressed_image_loop)
 
         add_stream("head_depth", _HEAD_DEPTH_TOPIC, RosImage, self._convert_loop, Image)
-        add_stream("lidar", _LIDAR_TOPIC, RosPointCloud2, self._convert_loop, PointCloud2)
+        add_stream(
+            "lidar",
+            _LIDAR_TOPIC,
+            RosPointCloud2,
+            self._convert_loop,
+            PointCloud2,
+            self.config.lidar_frame_id,
+        )
 
         if self.config.enable_wrist_depth:
             for stream, topic in _WRIST_DEPTH_CAMERAS.items():
@@ -624,8 +703,6 @@ class R1ProConnection(Module):
         self._odom_yaw += wz * dt
 
         from dimos.msgs.geometry_msgs.Pose import Pose
-        from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-        from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
         half = self._odom_yaw * 0.5
         position = Vector3(self._odom_x, self._odom_y, 0.0)
@@ -664,6 +741,8 @@ class R1ProConnection(Module):
         next_tick = time.perf_counter()
         frame_id = self.config.frame_id
         bootstrapped = False
+        next_articulated_tf = 0.0
+        articulated_tf_period = 1.0 / self.config.articulated_tf_hz
 
         while not self._stop_event.is_set():
             with self._lock:
@@ -697,16 +776,18 @@ class R1ProConnection(Module):
                     ts = min(self._ts_torso, self._ts_left, self._ts_right)
 
             if bootstrapped:
-                self.motor_states.publish(
-                    JointState(
-                        ts=ts,
-                        frame_id=frame_id,
-                        name=R1PRO_UPPER_BODY_JOINTS,
-                        position=positions,  # type: ignore[arg-type]
-                        velocity=velocities,
-                        effort=efforts,
-                    )
+                joint_state = JointState(
+                    ts=ts,
+                    frame_id=frame_id,
+                    name=R1PRO_UPPER_BODY_JOINTS,
+                    position=positions,  # type: ignore[arg-type]
+                    velocity=velocities,
+                    effort=efforts,
                 )
+                self.motor_states.publish(joint_state)
+                if self._articulated_tf is not None and time.monotonic() >= next_articulated_tf:
+                    next_articulated_tf = time.monotonic() + articulated_tf_period
+                    self.tf.publish(TFMessage(*self._articulated_tf.transforms(joint_state)))
                 if imu_chassis is not None:
                     self.imu_chassis.publish(imu_chassis)
                 if imu_torso is not None:
@@ -753,25 +834,23 @@ class R1ProConnection(Module):
                 self._record_decode(stream, (time.perf_counter() - t0) * 1e3, ok=False)
                 logger.exception(f"R1Pro {stream} conversion error")
 
-    def _convert_loop(self, stream: str, q: queue.Queue[Any], dimos_type: type) -> None:
-        """ros_to_dimos passthrough worker (depth images, lidar)."""
-        from dimos.protocol.pubsub.impl.rospubsub_conversion import ros_to_dimos
-
-        out: Out[Any] = getattr(self, stream)
-        while not self._sensor_stop.is_set():
-            try:
-                msg = q.get(timeout=0.5)
-            except queue.Empty:
-                continue
-            if msg is None:
-                break
-            t0 = time.perf_counter()
-            try:
-                out.publish(ros_to_dimos(msg, dimos_type))
-                self._record_decode(stream, (time.perf_counter() - t0) * 1e3, ok=True)
-            except Exception:
-                self._record_decode(stream, (time.perf_counter() - t0) * 1e3, ok=False)
-                logger.exception(f"R1Pro {stream} decode error")
+    def _convert_loop(
+        self,
+        stream: str,
+        q: queue.Queue[Any],
+        dimos_type: type,
+        frame_id: str | None = None,
+    ) -> None:
+        """ros_to_dimos passthrough worker (depth images, lidar, camera info)."""
+        convert_loop(
+            stream=stream,
+            queue_in=q,
+            dimos_type=dimos_type,
+            out=getattr(self, stream),
+            stop=self._sensor_stop,
+            record_decode=self._record_decode,
+            frame_id=frame_id,
+        )
 
     def _imu_loop(self, stream: str, q: queue.Queue[Any]) -> None:
         """Store the latest converted IMU; re-emitted by the publish loop."""
@@ -811,3 +890,35 @@ def _enqueue_drop_oldest(q: queue.Queue[Any], item: Any) -> bool:
         except queue.Full:
             pass
         return True
+
+
+def convert_loop(
+    *,
+    stream: str,
+    queue_in: queue.Queue[Any],
+    dimos_type: type,
+    out: Any,
+    stop: Any,
+    record_decode: Any,
+    frame_id: str | None = None,
+) -> None:
+    """Convert and publish each queued ROS message; *frame_id* restamps it (vendor lidar)."""
+    from dimos.protocol.pubsub.impl.rospubsub_conversion import ros_to_dimos
+
+    while not stop.is_set():
+        try:
+            msg = queue_in.get(timeout=0.5)
+        except queue.Empty:
+            continue
+        if msg is None:
+            break
+        t0 = time.perf_counter()
+        try:
+            converted: Any = ros_to_dimos(msg, dimos_type)
+            if frame_id:
+                converted.frame_id = frame_id
+            out.publish(converted)
+            record_decode(stream, (time.perf_counter() - t0) * 1e3, ok=True)
+        except Exception:
+            record_decode(stream, (time.perf_counter() - t0) * 1e3, ok=False)
+            logger.exception(f"R1Pro {stream} decode error")

@@ -50,14 +50,17 @@ dimos run r1pro-nav             # + click-to-drive nav (costmap + A*)
 dimos run r1pro-manipulation    # + dual-arm planning (experimental)
 dimos run r1pro-planar-preview   # planar-base planning preview with fake hardware
 dimos run r1pro-pointlio --g.transport lcm   # coordinator + Point-LIO on the chassis lidar
+dimos run r1pro-head-depth --g.transport lcm # + head depth anchored on the lidar
 ```
 
-## Point-LIO
+## Point-LIO and head depth
 
 `r1pro-pointlio` places `base_link` by Point-LIO on the chassis Mid-360 instead
-of wheel odometry; `chassis_odom` keeps its name.
-The Mid-360 driver and Point-LIO are native binaries built on first run, so
-`cargo` must be on the path.
+of wheel odometry; `chassis_odom` keeps its name. `r1pro-head-depth` adds a
+dense cloud from the left head camera: Depth Anything, calibrated per pixel to
+the last two seconds of Point-LIO scans (`Depth2DepthCloud`).
+The Mid-360 driver, Point-LIO and the head depth are native binaries built on
+first run, so `cargo` (and on an Orin, `nvcc` for CUDA) must be on the path.
 
 **Transport.** Run with `--g.transport lcm`. The vendor's `realsense2_camera`
 holds LCM's default port, so set
