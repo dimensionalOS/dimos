@@ -69,7 +69,7 @@ def test_collection_status_is_wired_to_webxr_hud(blueprint: Blueprint) -> None:
     status = next(stream for stream in hud.streams if stream.name == "status")
 
     assert status.direction == "in"
-    assert status.type.__name__ == "EpisodeStatus"
+    assert status.type.__name__ == "String"
 
 
 def _joint_streams(blueprint: Blueprint) -> dict[tuple[str, str], str]:
