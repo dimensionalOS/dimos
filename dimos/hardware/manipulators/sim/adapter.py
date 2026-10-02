@@ -119,6 +119,10 @@ class ShmMujocoAdapter:
     def is_connected(self) -> bool:
         return self._live_shm() is not None
 
+    def has_live_state(self) -> bool:
+        """Gates ConnectedHardware reads and commands on fresh sim state."""
+        return self.is_connected()
+
     def activate(self) -> bool:
         return self.write_enable(True)
 

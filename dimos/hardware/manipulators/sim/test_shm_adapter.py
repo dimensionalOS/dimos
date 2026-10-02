@@ -23,6 +23,8 @@ import uuid
 
 import pytest
 
+from dimos.control.components import HardwareComponent, HardwareType, make_joints
+from dimos.control.hardware_interface import ConnectedHardware
 import dimos.hardware.manipulators.sim.adapter as adapter_mod
 from dimos.hardware.manipulators.sim.adapter import ShmMujocoAdapter
 from dimos.hardware.manipulators.spec import ControlMode, ManipulatorAdapter
@@ -339,12 +341,23 @@ class TestConnect:
         stop, heartbeat = start_heartbeat(writer)
         adapter = ShmMujocoAdapter(dof=ARM_DOF, address="/fake/scene.xml")
         assert adapter.connect() is True
+        hardware = ConnectedHardware(
+            adapter,
+            HardwareComponent(
+                hardware_id="arm",
+                hardware_type=HardwareType.MANIPULATOR,
+                joints=make_joints("arm", ARM_DOF),
+            ),
+        )
+        assert hardware.ready_for_control() is True
         stop.set()
         heartbeat.join()
         time.sleep(0.06)
         try:
             assert adapter.read_error() == (0, "")
             assert adapter.is_connected() is False
+            # The tick loop skips unready hardware, so no zeros pass as measured state.
+            assert hardware.ready_for_control() is False
             assert adapter.write_joint_positions([0.0] * ARM_DOF) is False
             assert adapter.read_error() == (1, "MuJoCo joint state stopped updating")
         finally:
