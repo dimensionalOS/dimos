@@ -53,7 +53,13 @@ impl McapRecordingStore {
                     "publish_time".to_string(),
                 ),
             ]);
-            let channel = writer.add_channel(0, &stream.name, stream.codec.id(), &metadata)?;
+            let schema_id = if let Some(schema) = &stream.json_schema {
+                writer.add_schema(&stream.name, "jsonschema", &serde_json::to_vec(schema)?)?
+            } else {
+                0
+            };
+            let channel =
+                writer.add_channel(schema_id, &stream.name, stream.codec.id(), &metadata)?;
             channels.insert(stream.name.clone(), channel);
         }
         Ok(Self {

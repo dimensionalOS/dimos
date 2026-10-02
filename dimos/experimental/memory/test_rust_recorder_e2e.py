@@ -56,7 +56,12 @@ from dimos.protocol.service.zenohservice import ZenohConfig, ZenohSessionPool
 pytestmark = pytest.mark.self_hosted
 
 _RUST_PACKAGE = DIMOS_PROJECT_ROOT / "dimos" / "experimental" / "memory" / "rust"
-_EXECUTABLE = _RUST_PACKAGE / "result" / "bin" / "dimos-memory-recorder"
+_EXECUTABLE = Path(
+    os.environ.get(
+        "DIMOS_MEMORY_RECORDER_TEST_EXECUTABLE",
+        str(_RUST_PACKAGE / "result" / "bin" / "dimos-memory-recorder"),
+    )
+)
 _MCAP_AVAILABLE = importlib.util.find_spec("mcap") is not None
 
 

@@ -103,12 +103,16 @@ def test_specs_use_native_defaults_remapping_and_configured_workers(
             "name": "color_image",
             "payload_type": "dimos.msgs.sensor_msgs.Image.Image",
             "codec": "lz4+lcm",
+            "timestamp_field": None,
+            "json_schema": None,
         },
         {
             "port": "odometry",
             "name": "pose",
             "payload_type": "dimos.msgs.geometry_msgs.PoseStamped.PoseStamped",
             "codec": "lcm",
+            "timestamp_field": None,
+            "json_schema": None,
         },
     ]
     assert set(config) == {"encoding_threads", "store", "streams"}
@@ -186,8 +190,8 @@ def test_default_store_path_is_resolved_from_the_project_root() -> None:
 def test_native_recorder_is_built_and_run_from_the_nix_package() -> None:
     config = RustRecorderConfig()
 
-    assert config.cwd == "rust"
-    assert config.build_command == "nix build -L .#dimos-memory-recorder"
+    assert Path(config.cwd) == Path(__file__).with_name("rust")
+    assert config.build_command == ("nix build -L .#dimos-memory-recorder")
     assert config.executable == "result/bin/dimos-memory-recorder"
 
 
