@@ -33,7 +33,7 @@ The Rust engine records exact `LCMTransport` and `ZenohTransport` streams. It
 rejects SHM, DDS, ROS, WebRTC, pickled, JPEG-transport, mixed LCM/Zenoh, and
 other specialized transports before creating an artifact. Narrow
 `--record-topics` or use the Python engine when a selection contains one of
-those transports. Payloads must also be dimOS LCM message types.
+those transports. Payloads must also be DimOS LCM message types.
 
 The engine automatically prepares `dimos-memory-recorder` through the shared
 [Nix package workflow](/docs/usage/native_modules.md#preparing-native-packages).
@@ -65,7 +65,7 @@ dimos --record --record-topics 'global_*' run unitree-go2
 
 A pattern that matches no stream throws an error at startup, listing the valid stream names of the given blueprint.
 
-Streams whose type is not a dimOS message (`Any`, `dict`) are not recorded. If
+Streams whose type is not a DimOS message (`Any`, `dict`) are not recorded. If
 none of the selected streams is recordable, startup fails.
 
 ## Inspecting and replaying

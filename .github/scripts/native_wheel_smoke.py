@@ -52,8 +52,8 @@ def main() -> None:
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
     url = f"udpm://239.255.76.67:{port}?ttl=0"
-    transport = LCMTransport(f"/native-wheel-{uuid.uuid4().hex}", Imu, url=url)
-    status_transport = LCMTransport(f"/native-wheel-json-{uuid.uuid4().hex}", String, url=url)
+    transport = LCMTransport(f"/wheel-imu-{uuid.uuid4().hex[:8]}", Imu, url=url)
+    status_transport = LCMTransport(f"/wheel-json-{uuid.uuid4().hex[:8]}", String, url=url)
     schema = {"type": "object", "properties": {"sent": {"type": "number"}}}
     expected_imu = Imu(ts=22.5, frame_id="imu", angular_velocity=Vector3(1, 2, 3))
     expected_status = String(json.dumps({"sent": 23.5, "state": "ready"}))
