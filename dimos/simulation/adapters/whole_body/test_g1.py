@@ -21,7 +21,7 @@ from dimos.hardware.whole_body.spec import WholeBodyAdapter
 import dimos.simulation.adapters.whole_body.g1 as g1_mod
 from dimos.simulation.adapters.whole_body.g1 import SimMujocoG1WholeBodyAdapter
 from dimos.simulation.engines import mujoco_shm
-from dimos.simulation.engines.mujoco_shm import SEQ_POSITIONS, ManipShmWriter
+from dimos.simulation.engines.mujoco_shm import ManipShmWriter
 
 
 def test_sim_g1_adapter_satisfies_whole_body_protocol() -> None:
@@ -41,7 +41,7 @@ def test_sim_g1_adapter_rejects_stale_state(monkeypatch) -> None:
 
     def publish() -> None:
         while not stop.wait(0.01):
-            writer._increment_seq(SEQ_POSITIONS)
+            writer._mark_joint_state()
 
     heartbeat = threading.Thread(target=publish, daemon=True)
     heartbeat.start()

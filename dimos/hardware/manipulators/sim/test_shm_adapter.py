@@ -27,7 +27,7 @@ import dimos.hardware.manipulators.sim.adapter as adapter_mod
 from dimos.hardware.manipulators.sim.adapter import ShmMujocoAdapter
 from dimos.hardware.manipulators.spec import ControlMode, ManipulatorAdapter
 from dimos.simulation.engines import mujoco_shm
-from dimos.simulation.engines.mujoco_shm import SEQ_POSITIONS, ManipShmWriter
+from dimos.simulation.engines.mujoco_shm import ManipShmWriter
 from dimos.simulation.engines.mujoco_sim_module import _WholeBodySimHooks
 
 ARM_DOF = 7
@@ -43,7 +43,7 @@ def start_heartbeat(writer: ManipShmWriter) -> tuple[threading.Event, threading.
 
     def publish() -> None:
         while not stop.wait(0.01):
-            writer._increment_seq(SEQ_POSITIONS)
+            writer._mark_joint_state()
 
     thread = threading.Thread(target=publish, daemon=True)
     thread.start()
@@ -401,6 +401,23 @@ class TestConnect:
                 fresh[0].cleanup()
             for shm in stale.shm.as_list():
                 shm.close()  # its names now belong to the fresh sim
+
+    def test_state_freshness_comes_from_the_writer(self, shm_key) -> None:
+        """A reader that stopped checking must not count a sim that died in the
+        gap as live just because the sequence moved since its last look."""
+        writer = ManipShmWriter(shm_key)
+        writer.signal_ready(num_joints=ARM_DOF)
+        reader = mujoco_shm.ManipShmReader(shm_key)
+        try:
+            # The sim writes once, then dies while the reader is not looking.
+            writer.write_joint_state([0.0] * ARM_DOF, [0.0] * ARM_DOF, [0.0] * ARM_DOF)
+            time.sleep(0.06)
+            assert reader.is_live(0.05) is False
+            writer.write_joint_state([0.0] * ARM_DOF, [0.0] * ARM_DOF, [0.0] * ARM_DOF)
+            assert reader.is_live(0.05) is True
+        finally:
+            reader.cleanup()
+            writer.cleanup()
 
     def test_connect_before_sim_ready_times_out(self, shm_key, monkeypatch):
         """If sim module never signals ready, connect() returns False after timeout."""

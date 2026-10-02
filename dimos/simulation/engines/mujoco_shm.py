@@ -97,6 +97,10 @@ SEQ_IMU = 7
 SEQ_KP_CMD = 8
 SEQ_KD_CMD = 9
 SEQ_TAU_CMD = 10
+# Not a counter: CLOCK_MONOTONIC ns of the writer's last joint-state write.
+# The clock is shared by every process on the host, so readers compare it
+# directly against their own time.monotonic_ns().
+SEQ_STATE_TIME_NS = 11
 
 # Control indices.
 CTRL_READY = 0
@@ -241,7 +245,7 @@ class ManipShmWriter:
         pos_arr[:n] = positions[:n]
         vel_arr[:n] = velocities[:n]
         eff_arr[:n] = efforts[:n]
-        self._increment_seq(SEQ_POSITIONS)
+        self._mark_joint_state()
         self._increment_seq(SEQ_VELOCITIES)
         self._increment_seq(SEQ_EFFORTS)
 
@@ -361,6 +365,11 @@ class ManipShmWriter:
     def _control(self) -> NDArray[np.int32]:
         return np.ndarray((_NUM_CTRL_FIELDS,), dtype=np.int32, buffer=self.shm.ctl.buf)
 
+    def _mark_joint_state(self) -> None:
+        self._increment_seq(SEQ_POSITIONS)
+        seq_arr = np.ndarray((_NUM_SEQ_COUNTERS,), dtype=np.int64, buffer=self.shm.seq.buf)
+        seq_arr[SEQ_STATE_TIME_NS] = time.monotonic_ns()
+
     def _increment_seq(self, index: int) -> None:
         seq_arr = np.ndarray((_NUM_SEQ_COUNTERS,), dtype=np.int64, buffer=self.shm.seq.buf)
         seq_arr[index] += 1
@@ -381,8 +390,6 @@ class ManipShmReader:
 
     def __init__(self, key: str) -> None:
         self.shm = ManipShmSet.attach(key)
-        self._last_position_seq = self.position_sequence()
-        self._last_position_change_s = time.monotonic()
 
     @classmethod
     def wait_for_live(
@@ -412,8 +419,6 @@ class ManipShmReader:
             while time.monotonic() <= probe_deadline:
                 current_seq = candidate.position_sequence()
                 if candidate.is_ready() and current_seq != initial_seq:
-                    candidate._last_position_seq = current_seq
-                    candidate._last_position_change_s = time.monotonic()
                     return candidate
                 if candidate.should_stop():
                     break
@@ -551,13 +556,11 @@ class ManipShmReader:
     def is_live(self, stale_after_s: float | None = None) -> bool:
         if self.should_stop():
             return False
-        sequence = self.position_sequence()
-        now = time.monotonic()
-        if sequence != self._last_position_seq:
-            self._last_position_seq = sequence
-            self._last_position_change_s = now
+        written_ns = self._get_seq(SEQ_STATE_TIME_NS)
+        if written_ns == 0:
+            return False
         limit = STATE_STALE_TIMEOUT_S if stale_after_s is None else stale_after_s
-        return now - self._last_position_change_s <= limit
+        return time.monotonic_ns() - written_ns <= limit * 1e9
 
     def should_stop(self) -> bool:
         return bool(self._control()[CTRL_STOP] == 1)
