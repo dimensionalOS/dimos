@@ -161,11 +161,14 @@ def _zenoh_transport(
 def r1pro_control(
     *,
     tasks: Sequence[TaskConfig] | None = None,
+    publish_odom: bool | None = None,
+    enable_wrist_color: bool | None = None,
 ) -> Blueprint:
     """R1ProConnection and ControlCoordinator.
 
     ``tasks`` overrides the default task set (whole-body trajectory + chassis
     velocity); transports and remappings stay identical either way.
+    The other keyword args override the matching ``R1ProConnectionConfig`` fields.
     """
     resolved_tasks = (
         list(tasks)
@@ -183,7 +186,12 @@ def r1pro_control(
 
     return (
         autoconnect(
-            R1ProConnection.blueprint(),
+            R1ProConnection.blueprint(
+                **({} if publish_odom is None else {"publish_odom": publish_odom}),
+                **(
+                    {} if enable_wrist_color is None else {"enable_wrist_color": enable_wrist_color}
+                ),
+            ),
             ControlCoordinator.blueprint(
                 tick_rate=100,
                 hardware=[

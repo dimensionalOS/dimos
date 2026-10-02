@@ -76,9 +76,13 @@ R1PRO_UPPER_BODY_JOINTS: list[str] = [coordinator_name(j) for j in UPPER_BODY_JO
 assert len(R1PRO_UPPER_BODY_JOINTS) == _NUM_MOTORS
 
 # JPEG color streams: stream name → ROS topic.
-_COLOR_CAMERAS: dict[str, str] = {
+_HEAD_COLOR_CAMERAS: dict[str, str] = {
     "head_left_color": "/hdas/camera_head/left_raw/image_raw_color/compressed",
     "head_right_color": "/hdas/camera_head/right_raw/image_raw_color/compressed",
+}
+
+# Color streams gated by config.enable_wrist_color.
+_WRIST_COLOR_CAMERAS: dict[str, str] = {
     "wrist_left_color": "/hdas/camera_wrist_left/color/image_raw/compressed",
     "wrist_right_color": "/hdas/camera_wrist_right/color/image_raw/compressed",
 }
@@ -145,8 +149,10 @@ class R1ProConnectionConfig(ModuleConfig):
     # Wrist depth is raw 16-bit at up to 30 Hz per wrist — too heavy for the
     # on-robot CPU budget by default; enable when manipulation needs it.
     enable_wrist_depth: bool = Field(default=False)
-    # Max Hz per color camera (0 = no cap).
-    color_publish_hz: float = Field(default=5.0)
+    # Each wrist copies and publishes JPEG frames even when unread; turn off if nothing reads them.
+    enable_wrist_color: bool = Field(default=True)
+    # Max Hz per color camera (0 = no cap); the cameras arrive at ~28 Hz, so 30 passes every frame.
+    color_publish_hz: float = Field(default=30.0)
 
 
 class R1ProConnection(Module):
@@ -402,7 +408,10 @@ class R1ProConnection(Module):
                 Thread(target=worker, args=(stream, q, *args), daemon=True, name=f"r1pro-{stream}")
             )
 
-        for stream, topic in _COLOR_CAMERAS.items():
+        cameras = dict(_HEAD_COLOR_CAMERAS)
+        if self.config.enable_wrist_color:
+            cameras.update(_WRIST_COLOR_CAMERAS)
+        for stream, topic in cameras.items():
             add_stream(stream, topic, RosCompressedImage, self._compressed_image_loop)
 
         add_stream("head_depth", _HEAD_DEPTH_TOPIC, RosImage, self._convert_loop, Image)
