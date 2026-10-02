@@ -12,16 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The old entry point stays usable until its replacement is introduced."""
 
-from typer.testing import CliRunner
+TASK_FACTORIES = {
+    "hand_guiding": "dimos.control.tasks.hand_guiding_task.hand_guiding_task:create_task",
+}
 
-from dimos.cli.dimos import main
-
-
-def test_dataprep_remains_registered_before_the_imitation_cli():
-    result = CliRunner().invoke(main, ["dataprep", "--help"])
-
-    assert result.exit_code == 0, result.output
-    assert "build" in result.output
-    assert "inspect" in result.output
+TASK_EXPOSES = {
+    "hand_guiding": ["start", "stop", "set_estop"],
+}
