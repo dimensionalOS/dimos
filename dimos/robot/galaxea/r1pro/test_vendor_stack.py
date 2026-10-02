@@ -15,6 +15,7 @@
 from pathlib import Path
 
 from dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_coordinator import r1pro_control
+from dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_pointlio import r1pro_pointlio
 from dimos.robot.galaxea.r1pro.vendor_stack import (
     VENDOR_PROFILE,
     R1ProVendorStack,
@@ -54,6 +55,8 @@ def _has_vendor_stack(blueprint) -> bool:
     return any(atom.module is R1ProVendorStack for atom in blueprint.active_blueprints)
 
 
-def test_off_for_the_vendors_own_lidar_by_default() -> None:
+def test_blueprints_on_our_mid360_driver_opt_in_and_stop_the_vendor_lidar() -> None:
     assert not _has_vendor_stack(r1pro_control())
+    atom = next(a for a in r1pro_pointlio.active_blueprints if a.module is R1ProVendorStack)
+    assert atom.kwargs["stop_vendor_lidar"] is True
     assert R1ProVendorStackConfig().stop_vendor_lidar is False
