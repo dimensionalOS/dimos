@@ -104,7 +104,7 @@ def ensure_native_package(package_id: str) -> Path:
         )
     if shutil.which("nix") is None:
         raise RuntimeError(
-            "Native packages require Nix with flakes enabled. "
+            "Native packages require Nix 2.26 or newer with flakes enabled. "
             "See https://github.com/dimensionalOS/dimos/blob/main/docs/installation/nix.md and configure the dimensionalos Cachix cache."
         )
     package = packages[package_id]

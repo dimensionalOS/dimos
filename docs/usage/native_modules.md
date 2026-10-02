@@ -290,7 +290,8 @@ Mid360 and PointLIO use workspace Cargo builds. They are outside this catalog
 and still require a source checkout; this feature does not add pip installation
 support for those Rust lidar modules.
 
-Nix with flakes enabled is required. A pip-installed dimOS uses the immutable
+Nix 2.26 or newer with flakes enabled is required. FastLIO2 uses the relative
+flake input format introduced in [Nix 2.26](https://github.com/NixOS/nix/blob/2.26.0/doc/manual/source/release-notes/rl-2.26.md). A pip-installed dimOS uses the immutable
 source revision embedded in its wheel or source distribution. An editable
 checkout uses its local native sources. Nix determines reuse from the build
 inputs: unrelated Python edits do not force recompilation. Add newly created
