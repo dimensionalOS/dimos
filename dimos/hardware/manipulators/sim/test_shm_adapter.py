@@ -343,8 +343,10 @@ class TestConnect:
         heartbeat.join()
         time.sleep(0.06)
         try:
+            assert adapter.read_error() == (0, "")
             assert adapter.is_connected() is False
             assert adapter.write_joint_positions([0.0] * ARM_DOF) is False
+            assert adapter.read_error() == (1, "MuJoCo joint state stopped updating")
         finally:
             adapter.disconnect()
             writer.cleanup()

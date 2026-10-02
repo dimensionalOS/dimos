@@ -38,6 +38,7 @@ _READY_WAIT_TIMEOUT_S = 60.0
 _READY_WAIT_POLL_S = 0.1
 _ATTACH_RETRY_TIMEOUT_S = 30.0
 _ATTACH_RETRY_POLL_S = 0.2
+_STALE_STATE_ERROR = 1
 
 
 class ShmMujocoAdapter:
@@ -97,6 +98,8 @@ class ShmMujocoAdapter:
             self._gripper_range = self._shm.read_gripper_range()
         self._connected = True
         self._servos_enabled = True
+        self._error_code = 0
+        self._error_message = ""
         logger.info(
             "ShmMujocoAdapter connected",
             dof=self._dof,
@@ -236,7 +239,9 @@ class ShmMujocoAdapter:
         self._shm = None
         self._connected = False
         self._servos_enabled = False
-        logger.error("MuJoCo joint state stopped updating", shm_key=self._shm_key)
+        self._error_code = _STALE_STATE_ERROR
+        self._error_message = "MuJoCo joint state stopped updating"
+        logger.error(self._error_message, shm_key=self._shm_key)
         return None
 
     def write_enable(self, enable: bool) -> bool:
