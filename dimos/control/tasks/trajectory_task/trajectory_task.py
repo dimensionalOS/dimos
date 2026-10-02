@@ -38,6 +38,7 @@ from dimos.control.task import (
     JointCommandOutput,
     ResourceClaim,
 )
+from dimos.control.tasks.operator_hold_task.operator_hold_task import active_hold_status
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
@@ -84,6 +85,9 @@ class TrajectoryExecutionStatus(Enum):
     START_STATE_UNAVAILABLE = auto()
     START_STATE_MISMATCH = auto()
     ALREADY_EXECUTING = auto()
+    # An operator hold is on. Not START_STATE_MISMATCH: the ACT policy retries
+    # that one, and a hold must stop a rollout rather than be retried through.
+    OPERATOR_HOLD = auto()
 
 
 @dataclass(frozen=True)
@@ -92,6 +96,18 @@ class TrajectoryExecutionResult:
 
     status: TrajectoryExecutionStatus
     message: str = ""
+
+
+def operator_hold_rejection() -> TrajectoryExecutionResult | None:
+    """The answer a new trajectory gets while an operator hold is on; None when it may start."""
+    held = active_hold_status()
+    if held is None:
+        return None
+    return TrajectoryExecutionResult(
+        TrajectoryExecutionStatus.OPERATOR_HOLD,
+        f"Operator hold is on ({held.route}: {held.reason or 'no reason given'}); "
+        "acknowledge it before sending trajectories",
+    )
 
 
 class TrajectoryCancellationStatus(Enum):
@@ -399,6 +415,11 @@ class JointTrajectoryTask(BaseControlTask):
         Returns:
             Semantic execution acceptance result.
         """
+        rejection = operator_hold_rejection()
+        if rejection is not None:
+            logger.warning("Trajectory refused during operator hold", task_name=self._name)
+            return rejection
+
         if self._state == TrajectoryState.FAULT:
             logger.warning(f"Cannot execute: {self._name} in FAULT state")
             return TrajectoryExecutionResult(
