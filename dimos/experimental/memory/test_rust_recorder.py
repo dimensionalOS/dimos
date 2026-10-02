@@ -25,8 +25,8 @@ from dimos.experimental.memory.rust_recorder import (
     RustRecorder,
     RustRecorderConfig,
     RustSqliteStoreConfig,
-    RustStreamSpec,
 )
+from dimos.experimental.memory.rust_types import RustStreamSpec
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.type.recording import OnExisting
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped

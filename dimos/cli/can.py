@@ -16,7 +16,6 @@
 
 from __future__ import annotations
 
-import importlib
 import os
 import shlex
 import subprocess
@@ -64,7 +63,6 @@ def list_devices() -> None:
         typer.echo(output or "No SocketCAN interfaces found")
         return
     if sys.platform == "darwin":
-        can_motor_control = importlib.import_module("can_motor_control")
         try:
             import can_motor_control
         except ImportError as exc:
