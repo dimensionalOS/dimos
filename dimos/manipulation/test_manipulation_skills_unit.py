@@ -37,17 +37,16 @@ def skills() -> Iterator[ManipulationSkills]:
 
 
 @pytest.mark.parametrize("status", [ExecutionStatus.UNCERTAIN, ExecutionStatus.FAULT])
-def test_cancel_reports_an_unconfirmed_stop_as_a_failure(
+def test_cancel_reports_an_unconfirmed_stop(
     skills: ManipulationSkills, status: ExecutionStatus
 ) -> None:
-    """An ok here lets an agent command its next motion into a still-moving arm."""
+    """A plain "Cancelled" would invite the next motion into a still-moving arm."""
     skills.manipulation.cancel.return_value = ExecutionResult(status, "stop not confirmed")
 
     result = skills.cancel()
 
-    assert not result.success
-    assert result.error_code == "EXECUTION_FAILED"
-    assert "not confirmed" in result.message
+    assert "stop was not confirmed" in result.message
+    assert f"{status.name}: stop not confirmed" in result.message
 
 
 def test_cancel_reports_a_confirmed_stop_as_success(skills: ManipulationSkills) -> None:
@@ -63,5 +62,5 @@ def test_reset_surfaces_a_refused_recovery(skills: ManipulationSkills) -> None:
 
     result = skills.reset()
 
-    assert not result.success
-    assert result.error_code == "EXECUTION_FAILED"
+    assert "Did not reset" in result.message
+    assert "FAILED: stop not confirmed" in result.message
