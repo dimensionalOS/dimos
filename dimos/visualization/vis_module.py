@@ -61,6 +61,7 @@ def vis_module(
             rerun_config.setdefault("pubsubs", [LCM()])
             rerun_config.setdefault("rerun_open", global_config.rerun_open)
             rerun_config.setdefault("rerun_web", global_config.rerun_web)
+            rerun_config.setdefault("rerun_save", global_config.rerun_save)
             bundle = autoconnect(
                 RerunBridgeModule.blueprint(
                     **rerun_config,

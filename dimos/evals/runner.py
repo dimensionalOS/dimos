@@ -25,6 +25,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, replace
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -250,7 +251,11 @@ class EvalRunner(Configurable):
     def _new_run_dir(self) -> Path:
         self.config.out_dir.mkdir(parents=True, exist_ok=True)
         prefix = time.strftime("run-%Y%m%d-%H%M%S-")
-        return Path(tempfile.mkdtemp(prefix=prefix, dir=self.config.out_dir))
+        path = Path(tempfile.mkdtemp(prefix=prefix, dir=self.config.out_dir))
+        # The eval container runs as root; open the run dir so the host user can read it.
+        if os.environ.get("DIMOS_EVALS_OPEN_OUTPUT") == "1":
+            path.chmod(0o777)
+        return path
 
     def _write_artifacts(self, results: list[EvalResult]) -> None:
         lines = [json.dumps(asdict(r)) for r in results]

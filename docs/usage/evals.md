@@ -475,6 +475,10 @@ modules disabled: pick up the cylinder, then put the red ball on top of it.
 ## Running
 
 - **CLI**: `dimos evals run <dotted.suite> --agent <agent-module> [--set model=gpt-4o] [--tags nav] [--limit 5]`
+- **Docker**: add `--docker` to run that eval in a fresh, detached container
+  from the eval image, one per invocation, any number side by side on one
+  host; setup, GPU rendering and an EC2 runbook are in
+  [`docker/evals/README.md`](/docker/evals/README.md).
 - **Python**: `EvalRunner().run(SUITE, agent, tags=frozenset({"encoding"}))`
 - **pytest**: suites are importable lists. Use
   `@pytest.mark.parametrize("case", SUITE)` and assert on `passed`
