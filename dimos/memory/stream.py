@@ -501,7 +501,7 @@ class Stream(CompositeResource, Generic[T, O]):
 
     def get_time_range(self) -> tuple[float, float]:
         """Return (min_ts, max_ts) for matching observations."""
-        first = self.first()
+        first = self.order_by("ts").first()
         last = self.last()
         return (first.ts, last.ts)
 

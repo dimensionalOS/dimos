@@ -17,7 +17,8 @@
 One entry point for every CLI that opens a recording. :func:`open_dataset`
 resolves a dataset name/path (bare names look up the cwd / repo ``data/`` dir)
 and picks the store by file extension: ``.db`` -> SqliteStore, ``.mcap`` ->
-Go2McapStore. Use :func:`open_store` when the path is already resolved.
+McapRecordingStore (DimOS profile) or Go2McapStore (DDS data).
+Use :func:`open_store` when the path is already resolved.
 """
 
 from __future__ import annotations
@@ -35,6 +36,13 @@ def open_store(path: str | Path) -> Store:
     """Open an already-resolved dataset *path*, dispatching on its extension."""
     s = str(path)
     if s.endswith(".mcap"):
+        from mcap.reader import make_reader
+
+        with open(s, "rb") as source:
+            if make_reader(source).get_header().profile == "dimos":
+                from dimos.memory.store.mcap_recording import McapRecordingStore
+
+                return McapRecordingStore(path=s)
         from dimos.robot.unitree.go2.dds.store import Go2McapStore  # lazy: robot-layer codecs
 
         return Go2McapStore(path=s)

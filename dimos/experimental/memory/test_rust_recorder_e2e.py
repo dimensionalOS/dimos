@@ -40,9 +40,7 @@ from dimos.experimental.memory.rust_recorder import (
     RustRecordingStoreConfig,
     RustSqliteStoreConfig,
 )
-from dimos.memory.codecs.lcm import LcmCodec
-from dimos.memory.codecs.lz4 import Lz4Codec
-from dimos.memory.store.mcap import McapStore
+from dimos.memory.store.mcap_recording import McapRecordingStore
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.type.observation import Observation
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -143,7 +141,7 @@ def test_rust_artifact_is_readable_by_python_memory2(
     suffix = ".db" if store_kind == "sqlite" else ".mcap"
     artifact = tmp_path / f"recording{suffix}"
     store: RustRecordingStoreConfig
-    memory: SqliteStore | McapStore
+    memory: SqliteStore | McapRecordingStore
     if store_kind == "sqlite":
         store = RustSqliteStoreConfig(path=str(artifact))
     else:
@@ -155,7 +153,7 @@ def test_rust_artifact_is_readable_by_python_memory2(
         store=store,
         record_tf=False,
         encoding_threads=2,
-        stream_codecs={"imu": "lz4+lcm"},
+        stream_codecs={"imu": "lz4+lcm"} if store_kind == "sqlite" else {},
         session=ZenohConfig(
             mode="peer",
             connect=[],
@@ -242,10 +240,7 @@ def test_rust_artifact_is_readable_by_python_memory2(
     if store_kind == "sqlite":
         memory = SqliteStore(path=str(artifact))
     else:
-        memory = McapStore(
-            path=str(artifact),
-            codecs={"imu": Lz4Codec(LcmCodec(Imu))},
-        )
+        memory = McapRecordingStore(path=str(artifact))
     with memory:
         observation = cast("Observation[Imu]", memory.stream("imu").first())
         assert observation.ts == 12.5
@@ -299,7 +294,7 @@ def test_cli_recording_uses_existing_binary_for_both_formats(
         session.stop()
         publisher.stop()
 
-    memory: SqliteStore | McapStore
+    memory: SqliteStore | McapRecordingStore
     if store_kind == "mcap" and not _MCAP_AVAILABLE:
         data = artifact.read_bytes()
         assert data.startswith(b"\x89MCAP0\r\n")
@@ -308,7 +303,7 @@ def test_cli_recording_uses_existing_binary_for_both_formats(
     if store_kind == "sqlite":
         memory = SqliteStore(path=str(artifact))
     else:
-        memory = McapStore(path=str(artifact), codecs={"imu": LcmCodec(Imu)})
+        memory = McapRecordingStore(path=str(artifact))
     with memory:
         observation = cast("Observation[Imu]", memory.stream("imu").first())
         assert observation.ts == 22.5

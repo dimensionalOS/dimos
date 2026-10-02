@@ -38,6 +38,9 @@ pub(crate) fn encode(
         Codec::Lcm => lcm_encode(observation.payload),
         Codec::Lz4Lcm => lz4_frame(&lcm_encode(observation.payload))?,
         Codec::Jpeg => jpeg_encode(observation.payload)?,
+        Codec::Cdr | Codec::Json | Codec::RosJpeg => {
+            return Err(anyhow!("MCAP codecs require the MCAP input converter"));
+        }
     };
     Ok(StoredObservation {
         ts: observation.ts,
@@ -53,11 +56,15 @@ fn lcm_encode(payload: DecodedPayload) -> Vec<u8> {
 }
 
 fn jpeg_encode(payload: DecodedPayload) -> Result<Vec<u8>> {
-    let DecodedPayload::Image(mut image) = payload else {
+    let DecodedPayload::Image(image) = payload else {
         return Err(anyhow!("JPEG storage codec requires an Image payload"));
     };
+    Ok(jpeg_image(image)?.encode())
+}
+
+pub(crate) fn jpeg_image(mut image: Image) -> Result<Image> {
     if image.encoding == "jpeg" {
-        return Ok(image.encode());
+        return Ok(image);
     }
 
     let format = pixel_format(&image.encoding)?;
@@ -69,13 +76,18 @@ fn jpeg_encode(payload: DecodedPayload) -> Result<Vec<u8>> {
         height: image.height as usize,
         format,
     };
-    let jpeg = turbojpeg::compress(source, JPEG_QUALITY, Subsamp::Sub2x1)
+    let subsampling = if format == PixelFormat::GRAY {
+        Subsamp::Gray
+    } else {
+        Subsamp::Sub2x1
+    };
+    let jpeg = turbojpeg::compress(source, JPEG_QUALITY, subsampling)
         .context("TurboJPEG compression failed")?;
     image.encoding = "jpeg".to_string();
     image.is_bigendian = 0;
     image.step = 0;
     image.data = jpeg.to_vec();
-    Ok(image.encode())
+    Ok(image)
 }
 
 fn pixel_format(encoding: &str) -> Result<PixelFormat> {

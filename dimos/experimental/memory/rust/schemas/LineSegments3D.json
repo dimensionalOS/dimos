@@ -1,0 +1,42 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "dimos.LineSegments3D",
+  "type": "object",
+  "required": [
+    "ts",
+    "frame_id",
+    "segments",
+    "weights"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "ts": {
+      "type": "number"
+    },
+    "frame_id": {
+      "type": "string"
+    },
+    "segments": {
+      "type": "array",
+      "items": {
+        "type": "array",
+        "minItems": 2,
+        "maxItems": 2,
+        "items": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": {
+            "type": "number"
+          }
+        }
+      }
+    },
+    "weights": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      }
+    }
+  }
+}

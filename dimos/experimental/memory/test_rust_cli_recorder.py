@@ -317,3 +317,14 @@ def test_stop_kills_process_that_does_not_flush(
 
     assert process.signals == [signal.SIGTERM]
     assert process.killed
+
+
+def test_mcap_unsupported_payload_preserves_artifact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(global_config, "record", "mcap")
+    artifact = tmp_path / "memory.mcap"
+    artifact.write_bytes(b"existing recording")
+    with pytest.raises(TypeError, match="No MCAP recording mapping"):
+        rust_cli_recorder.make_plan({("values", dict): _lcm("/values")})
+    assert artifact.read_bytes() == b"existing recording"

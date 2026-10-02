@@ -288,6 +288,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "cdr"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9617422bf43fde9280707a7e90f8f7494389c182f5c70b0f67592d0f06d41dfa"
+dependencies = [
+ "byteorder",
+ "serde",
+]
+
+[[package]]
 name = "cfg-if"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -681,6 +691,7 @@ name = "dimos-memory-recorder"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "cdr",
  "crossbeam-channel",
  "crossbeam-utils",
  "dimos-module",

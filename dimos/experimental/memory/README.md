@@ -1,8 +1,8 @@
 # Experimental Native Memory Recorder
 
 The Rust recorder is an experimental high-throughput alternative to the Python
-Memory2 recorder. It remains compatible with the existing Python readers while
-its API and operational behavior are evaluated. Experimental imports may change
+Memory2 recorder, with SQLite support and schema-aware MCAP recording.
+Its API and operational behavior are under evaluation. Experimental imports may change
 without compatibility aliases.
 
 ## Build and runtime packaging
@@ -62,8 +62,8 @@ replays through the stable Python `SqliteStore` API.
 
 ## MCAP
 
-Select MCAP to write the same Memory2 storage encodings into an indexed,
-portable container:
+Select MCAP to write CDR with embedded ROS 2 message definitions, or JSON with
+JSON Schema for LineSegments3D, into indexed Zstd chunks:
 
 ```python
 from dimos.experimental.memory.rust_recorder import RustMcapStoreConfig
@@ -71,27 +71,30 @@ from dimos.experimental.memory.rust_recorder import RustMcapStoreConfig
 mcap_recorder = SensorRecorder.blueprint(
     store=RustMcapStoreConfig(path="session.mcap"),
     encoding_threads=4,
-    stream_codecs={"lidar": "lz4+lcm"},
 )
 ```
 
-MCAP stores each stream's selected `lcm`, `jpeg`, or `lz4+lcm` representation
-in indexed Zstd chunks. Source time is the MCAP publish time and recorder
-reception time is the log time. JPEG channels decode automatically. Supply
-trusted codecs explicitly for LCM channels instead of trusting artifact
-metadata:
+Images default to lossless `sensor_msgs/msg/Image`, including depth data.
+Use `stream_codecs={"color_image": "jpeg"}` to opt into lossy 8-bit JPEG as
+`sensor_msgs/msg/CompressedImage`; depth-to-JPEG is rejected. Serialization and
+compression happen in Rust. LCM is only the input transport representation.
+Source time is the MCAP publish time, and recorder reception time is the log time.
+
+Install `dimos[recording]` and open the result with the new schema-aware store:
 
 ```python
-from dimos.memory.codecs.lcm import LcmCodec
-from dimos.memory.codecs.lz4 import Lz4Codec
-from dimos.memory.store.mcap import McapStore
-from dimos.msgs.sensor_msgs.Imu import Imu
+from dimos.memory.store.mcap_recording import McapRecordingStore
 
-store = McapStore(
-    path="session.mcap",
-    codecs={"imu": Lz4Codec(LcmCodec(Imu))},
-)
+with McapRecordingStore(path="session.mcap") as store:
+    print(store.summary())
+    image = store.stream("color_image").first().data
 ```
+
+`dimos mem summary session.mcap` and `dimos mem rerun session.mcap` select this
+store automatically for the `dimos` profile. No LCM codec registry is needed.
+See [recording usage](../../../docs/usage/recording.md) for the supported types
+and [the design decision](../../../docs/architecture/mcap-recording.md) for the
+conversion boundaries. Unknown selected types fail before modifying artifacts.
 
 Append mode remains unsupported for MCAP.
 

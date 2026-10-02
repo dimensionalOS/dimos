@@ -21,8 +21,8 @@ Select the native engine explicitly:
 
 ```bash
 dimos --record sqlite --record-engine rust run unitree-go2
-dimos --record mcap --record-engine rust run unitree-go2
-dimos --record mcap --record-engine rust --record-encoding-threads 8 run unitree-go2
+dimos --record mcap --record-engine rust --record-topics color_image,lidar,odom,tf run unitree-go2
+dimos --record mcap --record-engine rust --record-encoding-threads 8 --record-topics color_image,lidar,odom,tf run unitree-go2
 ```
 
 `--record-encoding-threads` defaults to `4` and is valid only for the Rust
@@ -41,6 +41,51 @@ the error is logged and the rest of `dimos run` continues. Normal shutdown sends
 SIGTERM and lets the existing native module runtime flush the artifact. There is
 no automatic fallback to Python.
 
+## MCAP format and supported messages
+
+The Rust MCAP recorder writes a schema-aware file with profile `dimos`, indexed
+Zstd chunks, and complete embedded schemas; no ROS installation or rosbag layout
+is required. Install Python reading support with `uv sync --extra recording`.
+
+| DimOS input | MCAP message encoding | Schema encoding / name |
+|---|---|---|
+| Image (default, including depth) | `cdr` | `ros2msg` / `sensor_msgs/msg/Image` |
+| Image with explicit `jpeg` codec | `cdr` | `ros2msg` / `sensor_msgs/msg/CompressedImage` |
+| PointCloud2, CameraInfo, Imu, JointState | `cdr` | `ros2msg` / matching `sensor_msgs/msg/*` |
+| PoseStamped | `cdr` | `ros2msg` / `geometry_msgs/msg/PoseStamped` |
+| Odometry, Path | `cdr` | `ros2msg` / matching `nav_msgs/msg/*` |
+| TFMessage | `cdr` | `ros2msg` / `tf2_msgs/msg/TFMessage` |
+| LineSegments3D | `json` | `jsonschema` / `dimos.LineSegments3D` |
+
+LCM remains the transport input; Rust decodes that input and serializes CDR or
+JSON directly. The recording never stores an LCM envelope. Raw images preserve
+pixel data and depth precision. An explicit `stream_codecs={"color_image": "jpeg"}`
+on a `RustRecorder` module enables lossy JPEG for 8-bit images; depth-to-JPEG is
+rejected. The CLI uses the lossless default.
+
+`publish_time` holds the positive source timestamp (reception time if absent),
+while `log_time` holds reception time; TF batches become individually timestamped
+TF messages. PointCloud2 fields, data, padding, and endianness are preserved in
+the file, as are IMU and odometry covariances and camera calibration.
+
+```bash
+dimos --record mcap --record-engine rust --record-topics 'color_image,lidar,odom,camera_info,tf' run unitree-go2
+dimos mem summary recordings/<run-id>/memory.mcap
+dimos mem rerun recordings/<run-id>/memory.mcap --no-gui
+```
+
+`McapRecordingStore` opens these files through the Memory2 API and decodes from
+embedded schemas, without passing through LCM or importing classes named by file
+metadata. Known schemas become DimOS messages, unknown ROS schemas remain decoded
+objects, and unknown JSON schemas yield dictionaries. The DimOS point-cloud view
+loads XYZ, packed RGB, intensity, and Livox per-point attributes; other fields
+remain available in the MCAP payload. Custom JSON data is inspectable in generic
+MCAP tools, but specialized visualization depends on each tool's schema support.
+
+The existing Go2 DDS MCAP reader keeps its robot-specific behavior. Legacy
+schema-zero Rust recordings are not accepted by the new recording store, and
+MCAP append is unsupported.
+
 ## Choosing streams
 
 `--record-topics` takes comma-separated globs on the stream name (the blueprint name, e.g. `lidar`, not `/lidar`). Default `*`.
@@ -53,8 +98,9 @@ dimos --record --record-topics 'global_*' run unitree-go2
 
 A pattern that matches no stream throws an error at startup, listing the valid stream names of the given blueprint.
 
-Streams whose type is not a dimOS message (`Any`, `dict`) are not recorded. If
-none of the selected streams is recordable, startup fails.
+SQLite skips streams whose type is not a DimOS message (`Any`, `dict`), and
+fails if none of the selection is recordable. MCAP rejects every selected type
+without an explicit mapping before creating or replacing the artifact.
 
 ## Inspecting and replaying
 
