@@ -225,9 +225,9 @@ per-container `DISPLAY`, which the compose files do not do yet.
 ## Many at once
 
 There is no scheduler: to run a suite N ways, start N `--docker` invocations
-that select disjoint parts of it, with `--tags` or `--case`, and let each
-container work through its part in order. A shell loop with `xargs -P N`
-over a list of such commands is all the parallelism there is; `docker ps`
+that select disjoint parts of it with `--tags`, and let each container work
+through its part in order. A shell loop with `xargs -P N` over a list of
+such commands is all the parallelism there is; `docker ps`
 shows what is running and `EVAL_RUNS_DIR` collects every run. A benchmark
 that spans scenes and agent configurations maps one container to each
 (configuration, scene) pair.
