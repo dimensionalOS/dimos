@@ -561,6 +561,7 @@ url = "https://download.pytorch.org/whl/cu128"
 explicit = true
 
 [tool.ruff]
+extend-exclude = ["native/python/abc/abc_minimal"]
 line-length = 100
 exclude = [
     ".git",

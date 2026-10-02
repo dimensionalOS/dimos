@@ -22,7 +22,7 @@ from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module
 from dimos.imitation.collection.episode import EpisodeStatus
 from dimos.imitation.collection.episode_monitor import EpisodeCommand, EpisodeControlSpec
-from dimos.imitation.policy.lerobot.module import RolloutControlSpec
+from dimos.imitation.policy.module import RolloutControlSpec
 from dimos.imitation.tui import CollectionApp, CollectionSession, RolloutApp, RolloutSession
 from dimos.porcelain.dimos import Dimos
 

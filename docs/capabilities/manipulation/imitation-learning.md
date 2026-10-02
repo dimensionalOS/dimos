@@ -270,14 +270,14 @@ Native recordings describe their message types and codecs. Preparation imports
 those types: only prepare trusted recordings, and install custom message
 packages in the conversion environment.
 
-## Existing policy rollout
+## Policy rollout
 
 Stop the collection stack before launching rollout. Replace `CHECKPOINT_DIR`
 with a compatible pretrained-model directory, such as
 `outputs/openyam-act/checkpoints/last/pretrained_model`.
 
 ```bash
-dimos --can-port follower_l run openyam-lerobot-rollout --daemon \
+dimos --can-port follower_l run openyam-policy-rollout --daemon \
   --policy.policy-path CHECKPOINT_DIR \
   --policy.task "pick up the red block" \
   --policy.device cuda \
@@ -285,7 +285,7 @@ dimos --can-port follower_l run openyam-lerobot-rollout --daemon \
 dimos imitation rollout
 ```
 
-Use `openyam-lerobot-quest-rollout` for the graph with Quest takeover.
+Use `openyam-policy-quest-rollout` for the graph with Quest takeover.
 The optional rollout panel discovers `RolloutControlSpec` and shows policy
 state and errors. Space explicitly starts/stops policy execution. Before
 starting, preflight loads the checkpoint and checks the control task and fresh
@@ -297,9 +297,12 @@ again to reattach. To finish, stop the policy with Space, detach, support the
 arm, and use `dimos stop` to shut down the runtime. Neither UI is a deadman
 switch: lost connectivity does not guarantee stopping motion.
 
-See the [LeRobot module contract](/dimos/imitation/policy/lerobot/README.md)
-for checkpoint and control requirements. Rollout uses the existing single-arm,
-single-camera contract with absolute joint targets in the hardware's native
-coordinates. A prepared dataset does not establish checkpoint compatibility
-with another robot. ABC integration, dual-arm policy rollout, and policy
-backend generalization are deferred.
+See the [shared policy module contract](/dimos/imitation/policy/README.md)
+for backend configuration, camera bindings, and execution requirements.
+
+Dual-YAM rollout is available as `dual-openyam-policy-rollout` and
+`dual-openyam-policy-quest-rollout`. Select `--policy.backend abc` or `lerobot`
+through normal module configuration. The ABC preset uses the released bottles
+checkpoint with two wrist D405s and an overhead RGB camera. Follow the
+[ABC bringup guide](/dimos/imitation/policy/abc/README.md) for checkpoint setup,
+camera identities, joint ordering, and physical acceptance checks.
