@@ -96,6 +96,7 @@ all_blueprints = {
     "learning-collect-webxr-piper": "dimos.imitation.collection.blueprint:learning_collect_webxr_piper",
     "learning-collect-webxr-xarm7": "dimos.imitation.collection.blueprint:learning_collect_webxr_xarm7",
     "lite6-planner-coordinator": "dimos.robot.manipulators.xarm.blueprints.basic:lite6_planner_coordinator",
+    "microduck-sim": "dimos.robot.pollen.microduck.blueprints.simulation:microduck_sim",
     "mid360": "dimos.hardware.sensors.lidar.livox.livox_blueprints:mid360",
     "mid360-fastlio": "dimos.hardware.sensors.lidar.fastlio2.fastlio_blueprints:mid360_fastlio",
     "mid360-fastlio-ray-trace": "dimos.hardware.sensors.lidar.fastlio2.fastlio_blueprints:mid360_fastlio_ray_trace",
