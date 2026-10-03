@@ -202,7 +202,7 @@ function scopeOf(spec: RawChannelSpec): string | null {
 // "Supported JSON encoding" for generic publish is the family-name rule
 // (json.v1, text.json.v1, ...): the manifest layer cannot see the codec
 // registries, so real decodability is enforced at authoring time.
-const JSON_ENCODING_RE = /(^|\.)json\.v[0-9]+$/;
+const JSON_ENCODING_RE = /(^|\.)json\.v[0-9]+$|\.lcm\.v1$/;
 
 /**
  * Depth-first layout validation + rebuild. A node's own structure (row/col

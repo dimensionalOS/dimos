@@ -126,7 +126,7 @@ An encoding id names a codec pair: the encoder in the bridge and the decoder in 
 Two more need no registration:
 
 - `json.v1`: JSON scalars, lists, dicts and plain dataclasses on rx. On tx, scalars, lists and dicts only (a dataclass built from untrusted browser JSON needs an explicit decoder).
-- `<package>.<Message>.lcm.v1`, for example `geometry_msgs.PoseStamped.lcm.v1`: any dimOS message with an LCM schema, rx only. The frame is the message's `lcm_encode()` bytes and the manifest carries the schema, so the browser decodes it into a plain object with no registration. A bulk message costs its full size per frame (a `PointCloud2` is 16 bytes per point), so set `max_hz` accordingly or write an encoder that sends less. `voxels.zlib.v1`, the Map3D encoding, is one: it sends a cloud as voxel occupancy bits, about 0.3 bytes per voxel.
+- `<package>.<Message>.lcm.v1`, for example `geometry_msgs.PoseStamped.lcm.v1`: any dimOS message with an LCM schema, rx and tx. The frame is the message's `lcm_encode()` bytes and the manifest carries the schema, so the browser decodes it into a plain object with no registration. A bulk message costs its full size per frame (a `PointCloud2` is 16 bytes per point), so set `max_hz` accordingly or write an encoder that sends less. `voxels.zlib.v1`, the Map3D encoding, is one: it sends a cloud as voxel occupancy bits, about 0.3 bytes per voxel.
 
 When `encoding` is not given, an rx dimOS message gets its LCM encoding and everything else (every tx channel included) gets `json.v1`. `Image` has no default: use `jpeg.v1` or an encoder of your own. The built-in names keep their codecs: `Channel("odom", PoseStamped)` in `cockpit(channels=[...])` raises, because `odom` is `pose.json.v1`. Any other name takes the default:
 
@@ -183,6 +183,12 @@ Codec functions must be module-level functions that can be imported by name. `co
 ## Publishing from the browser
 
 A `Channel(..., dir="tx", publish="shared")` is a browser input. It must be `reliable` and JSON-encoded. When a value arrives, the bridge decodes it with the registered decoder, publishes it on the generated `Out` port, and only then acknowledges to the browser. A decoder error or a publish error goes back as a rejection (`decode_failed`, `publish_failed`) and leaves other channels alone. The relay caps values at 32 KiB and rate-limits at the channel's `max_hz`, per viewer and per robot.
+
+A `<package>.<Message>.lcm.v1` publish channel needs no decoder: the published JSON value is the message's `lcm_encode()` bytes as base64, passed through untouched (in-process subscribers receive the raw `bytes`).
+
+```python skip
+Channel("joint_commands", JointState, dir="tx", publish="shared", encoding="sensor_msgs.JointState.lcm.v1")
+```
 
 `@web_decoder("id")` registers the decoder. Its return annotation is the message type it produces (the channel's `message_type`), its first parameter is the JSON value, and an optional second parameter annotated `PublishContext` receives provenance: the robot id, the channel, the relay's receive time and forwarding id, the viewer's name when the relay has an auth file, and the browser's send time when the page passed one. The same module-level rule as for encoders applies. [`builtin_codecs.py`](/dimos/web/relay_bridge/builtin_codecs.py#L15) has the `text.json.v1`, `point.json.v1` and `bool.json.v1` decoders the Chat and Map2D panels use.
 

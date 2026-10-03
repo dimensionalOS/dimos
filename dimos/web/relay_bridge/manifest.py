@@ -131,7 +131,7 @@ def _bounded_id(s: str) -> bool:
 # "Supported JSON encoding" for generic publish is the family-name rule
 # (json.v1, text.json.v1, ...): the manifest layer cannot see the codec
 # registries, so real decodability is enforced at authoring time.
-_JSON_ENCODING_RE = re.compile(r"(^|\.)json\.v[0-9]+$")
+_JSON_ENCODING_RE = re.compile(r"(^|\.)json\.v[0-9]+$|\.lcm\.v1$")
 
 
 def _validate_layout_node(node: Any, panel_ids: set[str], seen: set[str]) -> Any:

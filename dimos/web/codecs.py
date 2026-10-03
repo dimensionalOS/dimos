@@ -42,6 +42,7 @@ the schema rides the channel's params["lcm"]). Anything else potentially
 large (images, arrays, bytes) needs an explicit @web_encoder.
 """
 
+import base64
 from collections.abc import Callable, Mapping
 import dataclasses
 from dataclasses import dataclass
@@ -405,6 +406,9 @@ def resolve_decoder(encoding: str, message_type: type[Any]) -> DecoderDef:
                 "and qualified name"
             )
         return definition
+    if encoding.endswith(LCM_V1_SUFFIX):
+        # the JSON value is the message's LCM bytes as base64, passed through untouched
+        return DecoderDef(encoding, message_type, base64.b64decode, takes_context=False)
     if encoding == "json.v1":
         # Narrower than the encoder side on purpose: reconstructing a
         # dataclass from untrusted browser JSON needs an explicit decoder.

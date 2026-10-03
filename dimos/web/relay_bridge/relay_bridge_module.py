@@ -82,6 +82,7 @@ from dimos.web.cockpit import (
     build_manifest_data,
 )
 from dimos.web.codecs import EncodedPayload, PublishContext, encoder_definition
+from dimos.web.lcm_codec import LCM_V1_SUFFIX
 
 # Imported for its registration side effect: the built-in encoders must be in
 # the codec registry wherever this module runs (parent and worker).
@@ -1145,7 +1146,9 @@ class RelayBridgeModule(Module):
         except Exception as e:
             nack("decode_failed", e)
             return
-        if not _matches_message_type(result, spec.message_type):
+        # *.lcm.v1 publishes pass through as the message's LCM bytes
+        passthrough = spec.encoding.endswith(LCM_V1_SUFFIX) and isinstance(result, bytes)
+        if not passthrough and not _matches_message_type(result, spec.message_type):
             nack(
                 "decode_failed",
                 f"decoder returned {type(result).__name__}, not {spec.message_type.__name__}",
