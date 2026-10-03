@@ -25,6 +25,7 @@ from collections.abc import Sequence
 from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
+from pathlib import Path
 from threading import RLock
 from typing import TYPE_CHECKING, Any
 
@@ -87,12 +88,14 @@ class RoboPlanContext:
     """DimOS context wrapper for RoboPlan world state."""
 
     q: NDArray[np.float64] = field(default_factory=lambda: np.empty(0, dtype=np.float64))
+    native: Any | None = field(default=None, repr=False)
 
 
 class RoboPlanWorld:
     """WorldSpec implementation backed by RoboPlan scene and collision queries."""
 
     def __init__(self, enable_viz: bool = False, **_: object) -> None:
+        self._body_filter: Any | None = None
         self._scene: Any | None = None
         self._model: RoboPlanModel | None = None
         self._enable_viz = enable_viz
@@ -241,7 +244,7 @@ class RoboPlanWorld:
             model = build_roboplan_model(
                 self.get_prepared_model(),
                 self._planning_groups,
-                roboplan_core.Scene,
+                _create_scene,
             )
             self._model = model
             self._scene = model.scene
@@ -301,6 +304,31 @@ class RoboPlanWorld:
         if not len(q):
             q = np.zeros(len(model_data.config.joint_names), dtype=np.float64)
         return JointState(name=model_data.config.joint_names, position=q.astype(float).tolist())
+
+    def robot_body_mask(
+        self,
+        ctx: RoboPlanContext,
+        points: NDArray[np.float64],
+        *,
+        padding: float = 0.01,
+        extra_padding: NDArray[np.float64] | None = None,
+    ) -> NDArray[np.bool_]:
+        """Classify world-frame points with upstream geometry and consumer state."""
+        with self._lock:
+            self._require_finalized()
+            if self._body_filter is None or self._body_filter.getOptions().padding != padding:
+                self._body_filter = roboplan_core.RobotBodyFilter(
+                    self._require_scene(),
+                    roboplan_core.RobotBodyFilterOptions(
+                        padding=padding,
+                        method=roboplan_core.RobotBodyFilterMethod.Narrowphase,
+                        num_threads=1,
+                    ),
+                )
+            return np.asarray(
+                self._body_filter.computeMask(self._full_scene_q(ctx), points, extra_padding),
+                dtype=bool,
+            )
 
     # Collision Checking
 
@@ -367,11 +395,9 @@ class RoboPlanWorld:
     def get_link_pose(self, ctx: RoboPlanContext, link_name: str) -> NDArray[np.float64]:
         """Get link pose as a 4x4 homogeneous transform."""
         q = ctx.q
-        scene = self._require_scene()
         with self._lock:
             scene_q = self._full_scene_q(ctx, overlay=q)
-            scene.setJointPositions(scene_q)
-            result = scene.forwardKinematics(
+            result = self._query_context(ctx).forwardKinematics(
                 scene_q,
                 link_name,
                 "",
@@ -469,12 +495,25 @@ class RoboPlanWorld:
         with self._lock:
             yield self._require_model()
 
+    def _query_context(self, ctx: RoboPlanContext) -> Any:
+        """Refresh consumer scratch after geometry edits, under the scene lock.
+
+        The lock also excludes concurrent geometry placement updates. Native
+        planners and the Python Jacobian/path bindings still require Scene and
+        retain the same lock until upstream exposes context overloads.
+        """
+        scene = self._require_scene()
+        if ctx.native is not None and ctx.native.getScene() is not scene:
+            raise ValueError("RoboPlan context belongs to another world")
+        if ctx.native is None or not ctx.native.isGeometryCurrent():
+            ctx.native = roboplan_core.SceneContext(scene)
+        return ctx.native
+
     def _full_scene_q(
         self,
         ctx: RoboPlanContext,
         overlay: NDArray[np.float64] | None = None,
     ) -> NDArray[np.float64]:
-        scene = self._require_scene()
         group = self._require_model().all_group
         positions = self._current_positions(ctx, overlay)
         circle_names = {
@@ -490,7 +529,9 @@ class RoboPlanWorld:
             else:
                 group_positions.append(value)
         q = np.asarray(group_positions, dtype=np.float64)
-        return np.asarray(scene.toFullJointPositions(group.name, q), dtype=np.float64)
+        return np.asarray(
+            self._query_context(ctx).toFullJointPositions(group.name, q), dtype=np.float64
+        )
 
     def _current_positions(
         self,
@@ -510,10 +551,8 @@ class RoboPlanWorld:
         q: NDArray[np.float64],
     ) -> bool:
         with self._lock:
-            scene = self._require_scene()
             scene_q = self._full_scene_q(ctx, overlay=q)
-            scene.setJointPositions(scene_q)
-            return bool(scene.hasCollisions(scene_q))
+            return bool(self._query_context(ctx).hasCollisions(scene_q))
 
     def _call_path_collision_checker(
         self,
@@ -620,3 +659,13 @@ def _octree(obstacle: Obstacle) -> Any:
         np.array((x, y, z, resolution, 1.0, 0.5), dtype=np.float64) for x, y, z in obstacle.points
     ]
     return roboplan_core.OcTree(boxes, resolution)
+
+
+def _create_scene(
+    *, name: str, urdf: str, srdf: str, package_paths: Sequence[str], joint_limits: Path
+) -> Any:
+    description = roboplan_core.loadUrdfSceneDescriptionFromXml(urdf, package_paths)
+    scene = roboplan_core.Scene(name, description)
+    scene.importSrdf(srdf)
+    scene.importJointLimitsFromConfig(roboplan_core.loadJointLimitsConfig(joint_limits))
+    return scene

@@ -17,6 +17,8 @@
 import pytest
 
 pytest.importorskip("roboplan.core")
+pytest.importorskip("roboplan.cartesian_planning")
+pytest.importorskip("roboplan.rrt")
 
 from dimos.manipulation.planning.planners import roboplan_planner as roboplan_planner_module
 from dimos.manipulation.planning.planners.roboplan_config import RoboPlanPlannerConfig

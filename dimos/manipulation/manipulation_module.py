@@ -24,7 +24,7 @@ import math
 import threading
 import time
 import traceback
-from typing import Any, Literal, TypeAlias
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
 
 import numpy as np
 from pydantic import Field, model_validator
@@ -33,7 +33,7 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.control.coordinator import ControlCoordinator
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.stream import In, Out
+from dimos.core.stream import IO, In, Out
 from dimos.manipulation.execution_manager import PlanExecutionManager
 from dimos.manipulation.manipulation_spec import (
     UNCONFIRMED_STOP,
@@ -100,7 +100,11 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.perception.experimental.object import Object as DetObject
+from dimos.types.timestamped import TimestampedBufferCollection
 from dimos.utils.logging_config import setup_logger
+
+if TYPE_CHECKING:
+    from dimos.manipulation.planning.world.roboplan_world import RoboPlanWorld
 
 logger = setup_logger()
 
@@ -165,6 +169,11 @@ class ManipulationModuleConfig(ModuleConfig):
     # Edge length of a voxel_map cell (meters). Must match the mapper's
     # voxel_size, or the octree will not line up with what was mapped.
     voxel_map_resolution: float = Field(default=0.05, gt=0.0)
+    # Filter camera returns before mapping, using this module's prepared model.
+    filter_robot_points: bool = False
+    pointcloud_padding_m: float = Field(default=0.01, ge=0.0)
+    pointcloud_match_tolerance_s: float = Field(default=0.1, ge=0.0)
+    pointcloud_state_history_s: float = Field(default=5.0, gt=0.0)
     default_speed_scale: float = Field(default=1.0, gt=0.0, le=1.0)
     linear_speed_scale: float = Field(default=0.5, gt=0.0, le=1.0)
     execution_timeout: float = Field(default=60.0, gt=0.0)
@@ -177,6 +186,8 @@ class ManipulationModuleConfig(ModuleConfig):
 
     @model_validator(mode="after")
     def _validate_trajectory_tasks(self) -> ManipulationModuleConfig:
+        if self.filter_robot_points and self.world_backend != "roboplan":
+            raise ValueError("filter_robot_points requires the roboplan world backend")
         model_joints = set(self.model.joint_names)
         owners: dict[str, str] = {}
         for task, joints in self.trajectory_tasks.items():
@@ -218,8 +229,10 @@ class ManipulationModule(Module):
     # Input: occupied cells of a mapped workspace, in the planning frame. Each
     # message is a complete map, so it replaces the obstacle rather than adding.
     voxel_map: In[PointCloud2]
+    pointcloud: In[PointCloud2]
+    filtered_pointcloud: Out[PointCloud2]
     objects: In[list[DetObject]]
-    tf: Out[TFMessage]
+    tf: IO[TFMessage]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -230,6 +243,11 @@ class ManipulationModule(Module):
         self._error_message = ""
         self._planning_epoch = 0
         self._started = False
+        self._pointcloud_lock = threading.RLock()
+        self._pointcloud_states = TimestampedBufferCollection[JointState](
+            self.config.pointcloud_state_history_s
+        )
+        self._last_pointcloud_stamp: float | None = None
 
         # Planning components (initialized in start())
         self._world_monitor: WorldMonitor | None = None
@@ -269,6 +287,8 @@ class ManipulationModule(Module):
             if self.coordinator_joint_state is not None:
                 self.coordinator_joint_state.subscribe(self._on_joint_state)
                 logger.info("Subscribed to coordinator_joint_state port")
+            if self.config.filter_robot_points:
+                self.process_observable(self.pointcloud.pure_observable(), self._handle_pointcloud)
             logger.info("ManipulationModule started")
         except BaseException:
             self._started = False
@@ -350,18 +370,37 @@ class ManipulationModule(Module):
             aliases = self.config.joint_state_aliases
             name_to_idx = {aliases.get(name, name): i for i, name in enumerate(msg.name)}
             names = self.config.model.joint_names
+            canonical_names = [aliases.get(name, name) for name in msg.name]
+            if (
+                len(msg.name) != len(msg.position)
+                or len(set(canonical_names)) != len(canonical_names)
+                or not np.isfinite(msg.position).all()
+                or not np.isfinite(msg.ts)
+            ):
+                logger.warning("Skipping malformed model state")
+                return
             missing = [name for name in names if name not in name_to_idx]
             if missing:
                 logger.warning("Skipping incomplete model state", missing_joints=missing)
                 return
             indices = [name_to_idx[name] for name in names]
             state = JointState(
+                ts=msg.ts,
                 name=list(names),
                 position=[msg.position[index] for index in indices],
                 velocity=[msg.velocity[index] for index in indices]
                 if len(msg.velocity) == len(msg.name)
                 else [],
             )
+            if self.config.filter_robot_points:
+                with self._pointcloud_lock:
+                    self._pointcloud_states.remove_by_timestamp(state.ts)
+                    self._pointcloud_states.add(JointState(state))
+                    latest = self._pointcloud_states.last()
+                    if latest is not None:
+                        self._pointcloud_states.prune_old(
+                            latest.ts - self.config.pointcloud_state_history_s
+                        )
             self._world_monitor.on_joint_state(state)
             if self._init_joints is None:
                 self._init_joints = state
@@ -1268,6 +1307,66 @@ class ManipulationModule(Module):
             mesh_path=mesh_path,
         )
         return self._world_monitor.update_obstacle(obstacle)
+
+    async def _handle_pointcloud(self, cloud: PointCloud2) -> None:
+        """Exclude robot surface returns before they reach the mapper."""
+        await asyncio.to_thread(self._publish_filtered_pointcloud, cloud)
+
+    def _publish_filtered_pointcloud(self, cloud: PointCloud2) -> None:
+        with self._pointcloud_lock:
+            filtered = self._filter_pointcloud(cloud)
+            if filtered is not None:
+                self.filtered_pointcloud.publish(filtered)
+
+    def _filter_pointcloud(self, cloud: PointCloud2) -> PointCloud2 | None:
+        """Match capture state/TF and call the prepared world's native filter."""
+        with self._pointcloud_lock:
+            if not self.config.filter_robot_points or self._world_monitor is None:
+                return None
+            if not np.isfinite(cloud.ts) or (
+                self._last_pointcloud_stamp is not None and cloud.ts < self._last_pointcloud_stamp
+            ):
+                logger.warning("Dropping point cloud: invalid or out-of-order timestamp")
+                return None
+            tolerance = self.config.pointcloud_match_tolerance_s
+            state = self._pointcloud_states.find_closest(cloud.ts, tolerance)
+            if state is None:
+                logger.warning("Dropping point cloud: capture-time joint state unavailable")
+                return None
+            world_from_sensor = self.tfbuffer.get(
+                self.config.world_frame,
+                cloud.frame_id,
+                time_point=cloud.ts,
+                time_tolerance=tolerance,
+                forward_tolerance=tolerance,
+            )
+            if world_from_sensor is None:
+                logger.warning("Dropping point cloud: capture-time sensor TF unavailable")
+                return None
+            points = cloud.points_f32()
+            if not np.isfinite(points).all():
+                logger.warning("Dropping point cloud: non-finite points")
+                return None
+            transform = world_from_sensor.to_matrix()
+            world_points = np.asarray(points @ transform[:3, :3].T + transform[:3, 3])
+            world = cast("RoboPlanWorld", self._world_monitor.world)
+            with world.scratch_context() as ctx:
+                world.set_joint_state(ctx, state)
+                keep = ~world.robot_body_mask(
+                    ctx, world_points, padding=self.config.pointcloud_padding_m
+                )
+            intensities = cloud.intensities_f32()
+            filtered = PointCloud2.from_numpy(
+                points[keep],
+                frame_id=cloud.frame_id,
+                timestamp=cloud.ts,
+                intensities=intensities[keep] if intensities is not None else None,
+            )
+            for name, values in cloud.pointcloud_tensor.point.items():
+                if name not in ("positions", "intensities"):
+                    filtered.pointcloud_tensor.point[name] = values[keep]
+            self._last_pointcloud_stamp = cloud.ts
+            return filtered
 
     async def handle_voxel_map(self, cloud: PointCloud2) -> None:
         """Replace the mapped workspace, held as one octree obstacle.

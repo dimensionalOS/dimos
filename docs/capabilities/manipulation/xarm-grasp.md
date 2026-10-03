@@ -58,17 +58,21 @@ the registered objects:
 
 ```
 camera pointcloud
-  -> PointCloudSelfFilter        drops the arm's own returns, emits a clear mask
-  -> RayTracingVoxelMap          accumulates occupied cells in the world frame
-  -> ManipulationModule.voxel_map   rebuilt as the "mapping/voxel-map" obstacle
+  -> ManipulationModule.pointcloud  upstream robot surface exclusion
+  -> filtered_pointcloud
+  -> RayTracingVoxelMap             accumulated world-frame occupied cells
+  -> ManipulationModule.voxel_map   "mapping/voxel-map" planner obstacle
 ```
 
-`XARM_GRASP_VOXEL_SIZE` is the single resolution all three stages share; they
-must agree or the clear mask names cells the map does not hold and the octree
-does not line up with what was mapped. The blueprint also enables the camera's
-`pointcloud` output, which is off by default on both the RealSense and the
-MuJoCo camera, and publishes TF for every one of the arm's collision links. The
-self filter drops a whole cloud if any link transform is missing at capture time.
+`XARM_GRASP_VOXEL_SIZE` keeps mapper cells and the planner octree aligned.
+The blueprint enables the camera's `pointcloud` output, which is off by default
+on RealSense and MuJoCo. Filtering reuses the prepared RoboPlan scene and matches
+canonical joint state and sensor TF to the capture timestamp. Missing alignment
+drops a cloud. Only `link7` needs extra TF for the real wrist camera attachment.
+
+Robot surface returns are excluded before mapping. Solid-volume sampling and
+historical robot-volume clear masks are removed; normal ray tracing clears the
+map. Previously occupied deep mesh interiors are not filled and erased explicitly.
 
 Because the target object is itself mapped geometry, a collision-checked plan
 into it can only ever be rejected. The pregrasp-to-grasp leg and the retreat are

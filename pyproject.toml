@@ -285,7 +285,7 @@ planning = [
     "dimos[control]",
     "drake==1.45.0; sys_platform == 'darwin' and platform_machine != 'aarch64'",
     "drake>=1.40.0; sys_platform != 'darwin' and platform_machine != 'aarch64'",
-    "roboplan>=0.6.0,<0.7.0",
+    "roboplan>=0.7.0,<0.8.0",
     # Mesh conversion (STL/DAE → OBJ for Drake collision geometry)
     "trimesh",
     "pycollada",
@@ -442,6 +442,8 @@ tests = [
     # extra can't be included: usd-core ships no linux-aarch64 wheel.
     "coacd>=1.0.0",
     "trimesh>=4.0.0",
+    # Point-cloud self-filter tests exercise native Narrowphase queries.
+    "roboplan-core>=0.7.0,<0.8.0",
     "mujoco>=3.3.4",
     "pygame>=2.6.1",
     "python-can>=4",
@@ -470,7 +472,7 @@ lint = [
     "pytest==8.3.5",
     "python-can>=4",
     "python-socketio>=5.16.1",
-    "roboplan>=0.6.0,<0.7.0",
+    "roboplan>=0.7.0,<0.8.0",
     "sounddevice>=0.5.5",
     "trimesh>=4.12",
     "watchdog>=3.0.0",
