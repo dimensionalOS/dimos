@@ -152,6 +152,11 @@ class JointTrajectoryTaskConfig:
         allow_inf_nan=False,
     )
     velocity_limits: dict[str, float] | None = None
+    # A streamed target arriving this soon after the previous one completed
+    # continues from the last commanded position instead of the measured one,
+    # as long as nothing else moved the joint past the tolerance.
+    stream_anchor_window_s: float = Field(default=0.1, ge=0.0, allow_inf_nan=False)
+    stream_anchor_tolerance: float = Field(default=0.25, ge=0.0, allow_inf_nan=False)
 
 
 @dataclass
@@ -200,6 +205,9 @@ class JointTrajectoryTask(BaseControlTask):
         self._trajectory: JointTrajectory | None = None
         self._motions: dict[str, tuple[_TrajectoryRun, int]] = {}
         self._commanded_positions: dict[str, float] = {}
+        # joint -> (last commanded position, coordinator time it was emitted)
+        self._stream_anchors: dict[str, tuple[float, float]] = {}
+        self._streaming = False
         self._start_time: float = 0.0
         self._pending_start: bool = False  # Defer start time to first compute()
         self._last_duration: float = 0.0
@@ -277,8 +285,8 @@ class JointTrajectoryTask(BaseControlTask):
             desired = run.trajectory.sample(elapsed)[0][index]
             current = self._commanded_positions.get(joint_name)
             if current is None:
-                current = state.joints.get_position(joint_name)
-                if current is None or not math.isfinite(current):
+                current = self._anchor_position(joint_name, state)
+                if current is None:
                     all_complete = False
                     continue
             max_delta = self._velocity_limits[joint_name] * max(0.0, state.dt)
@@ -298,7 +306,10 @@ class JointTrajectoryTask(BaseControlTask):
             self._state = TrajectoryState.COMPLETED
             self._trajectory = None
             self._pending_start = False
-            logger.info("Trajectory completed", task_name=self._name)
+            if self._streaming:
+                logger.debug("Trajectory completed", task_name=self._name)
+            else:
+                logger.info("Trajectory completed", task_name=self._name)
 
         emitted_names = [name for name in output_names if name in self._commanded_positions]
         if not emitted_names:
@@ -309,13 +320,33 @@ class JointTrajectoryTask(BaseControlTask):
             mode=ControlMode.SERVO_POSITION,
         )
         # Emit the final command, then forget joints we no longer control.
-        # Another task may move them before the next execution.
+        # Another task may move them before the next execution. Remember the
+        # final command briefly so a streamed follow-up target continues from it.
+        for name, position in self._commanded_positions.items():
+            if name not in self._motions:
+                self._stream_anchors[name] = (position, state.t_now)
         self._commanded_positions = {
             name: position
             for name, position in self._commanded_positions.items()
             if name in self._motions
         }
         return output
+
+    def _anchor_position(self, joint_name: str, state: CoordinatorState) -> float | None:
+        """Starting position for a joint with no live command: recent command or measured."""
+        measured = state.joints.get_position(joint_name)
+        if measured is None or not math.isfinite(measured):
+            return None
+        anchor = self._stream_anchors.pop(joint_name, None)
+        if anchor is None:
+            return measured
+        position, emitted_at = anchor
+        if (
+            state.t_now - emitted_at <= self._config.stream_anchor_window_s
+            and abs(measured - position) <= self._config.stream_anchor_tolerance
+        ):
+            return position
+        return measured
 
     def on_preempted(self, by_task: str, joints: frozenset[str]) -> None:
         """Handle preemption by higher-priority task.
@@ -329,6 +360,8 @@ class JointTrajectoryTask(BaseControlTask):
         if joints & self._joint_names:
             self._state = TrajectoryState.ABORTED
             self._clear_active_trajectory()
+            for joint_name in joints:
+                self._stream_anchors.pop(joint_name, None)
 
     def _clear_active_trajectory(self) -> None:
         """Clear stored trajectory-specific execution state."""
@@ -469,7 +502,9 @@ class JointTrajectoryTask(BaseControlTask):
         self._pending_start = True  # Start time set on first compute()
         self._state = TrajectoryState.EXECUTING
 
-        logger.info(
+        self._streaming = len(trajectory.points) == 1
+        log = logger.debug if self._streaming else logger.info
+        log(
             f"Executing trajectory on {self._name}: "
             f"{len(trajectory.points)} points, duration={trajectory.duration:.3f}s"
         )
@@ -566,6 +601,8 @@ class JointTrajectoryTaskParams(BaseConfig):
         allow_inf_nan=False,
     )
     velocity_limits: dict[str, float] | None = None
+    stream_anchor_window_s: float = Field(default=0.1, ge=0.0, allow_inf_nan=False)
+    stream_anchor_tolerance: float = Field(default=0.25, ge=0.0, allow_inf_nan=False)
 
 
 def create_task(cfg: Any, hardware: Any) -> JointTrajectoryTask:
@@ -580,5 +617,7 @@ def create_task(cfg: Any, hardware: Any) -> JointTrajectoryTask:
             priority=cfg.priority,
             start_position_tolerance=params.start_position_tolerance,
             velocity_limits=params.velocity_limits,
+            stream_anchor_window_s=params.stream_anchor_window_s,
+            stream_anchor_tolerance=params.stream_anchor_tolerance,
         ),
     )
