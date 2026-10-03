@@ -50,7 +50,7 @@ def test_launch_flags(monkeypatch):
     assert json.loads(proc.extra_env["MUJOCOSIMMODULE__TRACKED_BODIES"]) == ["apple", "cup"]
     assert proc.global_args == [
         "--record-topics",
-        "color_image,camera_info,coordinator_joint_state,tf,odom",
+        "color_image,camera_info,coordinator_joint_state,tf,odom,overview_image,overview_camera_info",
     ]
 
     proc = DimosCliCall()
@@ -99,6 +99,49 @@ def test_latest_pose_needs_odom():
             env.latest_pose(store)
         store.stream("odom", PoseStamped).append(PoseStamped(ts=5, frame_id="world"))
         assert env.latest_pose(store).ts == 5
+
+
+def test_raw_manipulation_appends_transport_and_keeps_control_in_robot_blueprint():
+    from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
+    from dimos.robot.manipulators.xarm.blueprints.simulation import xarm_sim
+
+    env = MujocoEnvironment(
+        blueprint=["xarm-sim", "mcp-server"],
+        raw_bridge=True,
+        raw_interface="manipulation",
+    )
+    assert env.provides_raw_robot
+    assert env._bridge_modules == ["raw-manipulation-bridge"]
+    assert env._raw_module == "raw-manipulation-bridge"
+    parsed = BlueprintConfigParser(xarm_sim).parse(environ={})
+    tasks = parsed.module_kwargs("ControlCoordinator")["tasks"]
+    twist = next(task for task in tasks if task["type"] == "eef_twist")
+    assert twist["params"]["robot_model"] is not None
+
+
+def test_no_dimos_guidance_selects_manipulation_protocol(tmp_path):
+    from dimos.evals.agents.pi import PiAdapter
+    from dimos.evals.types import RunningEnvironment
+
+    env = RunningEnvironment(
+        mcp_url="unused",
+        streams=(),
+        artifacts={},
+        raw_endpoint="tcp/127.0.0.1:12345",
+        raw_interface="manipulation",
+    )
+    files = PiAdapter(no_dimos=True)._no_dimos_files(env, tmp_path)
+    guide = files["robot"].read_text()
+    assert "arm/command/json" in guide
+    assert "tcp/127.0.0.1:12345" in guide
+    assert "cmd_vel/json" not in guide
+    assert '"kind":"twist"' in guide
+    assert '"kind":"delta"' not in guide
+    assert "camera/depth_f32" in guide
+    assert 'np.frombuffer(payload, dtype="<f4")' in guide
+    assert "robot/overview/jpeg" in guide
+    assert "robot/overview/camera_info/json" in guide
+    assert "robot/overview/depth" not in guide
 
 
 def test_ready_needs_fresh_streams_and_tracked_body_poses():

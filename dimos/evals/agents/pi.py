@@ -47,12 +47,16 @@ from dimos.evals.constants import (
     NO_DIMOS_GUIDANCE,
     PASSTHROUGH_ENV,
     PROVIDERS,
+    RAW_MANIPULATION_README,
     RAW_MAX_ANGULAR_RPS,
     RAW_MAX_CMD_S,
+    RAW_MAX_EE_ANGULAR_RPS,
+    RAW_MAX_EE_LINEAR_MPS,
     RAW_MAX_LINEAR_MPS,
     RAW_README,
 )
 from dimos.evals.environments.base import Environment
+from dimos.evals.robot_context import stage_robot_context
 from dimos.evals.types import (
     EndedBy,
     RunningEnvironment,
@@ -249,7 +253,17 @@ class PiAdapter(Agent):
             files = dict(env.artifacts)
             if env.streams:
                 files["recording"] = recording_file(env.streams, run_dir / "recording.db")
+        if env.robot_context is not None:
+            files.update(stage_robot_context(env.robot_context, run_dir / "robot"))
         parts = [self.config.system_prompt, self.config.instructions]
+        if env.robot_context is not None:
+            parts.append(
+                "Robot context is in robot/README.md and robot/robot_info.json. "
+                "robot/robot.urdf and robot/gripper.urdf have local mesh references. "
+                "Read the short README/JSON once for frames, limits, gripper dimensions and TCP geometry; "
+                "consult the URDFs selectively or parse them in code if needed. "
+                "Use live observations for current poses and objects."
+            )
         parts.append("Files:\n" + "\n".join(f"- {name}: {path}" for name, path in files.items()))
         if self.config.no_dimos:
             parts.append(NO_DIMOS_GUIDANCE)
@@ -279,11 +293,15 @@ class PiAdapter(Agent):
         if env.raw_endpoint:
             readme = run_dir / "ROBOT.md"
             readme.write_text(
-                RAW_README.format(
+                (
+                    RAW_MANIPULATION_README if env.raw_interface == "manipulation" else RAW_README
+                ).format(
                     endpoint=env.raw_endpoint,
                     max_cmd_s=RAW_MAX_CMD_S,
                     max_linear=RAW_MAX_LINEAR_MPS,
                     max_angular=RAW_MAX_ANGULAR_RPS,
+                    max_ee_linear=RAW_MAX_EE_LINEAR_MPS,
+                    max_ee_angular=RAW_MAX_EE_ANGULAR_RPS,
                 )
             )
             files["robot"] = readme

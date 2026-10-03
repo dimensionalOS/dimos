@@ -472,6 +472,11 @@ instead of its default `scene.xml`. The planner's base pose is
 `dimos.evals.suites.mujoco_xarm` is the xArm7 table scene with the perception
 modules disabled: pick up the cylinder, then put the red ball on top of it.
 
+`dimos.evals.suites.mujoco_xarm_raw` evaluates a cylinder lift in the default
+scene using plain robot commands and observations. Run it with Pi and
+`--set no_dimos=true`; see [Raw manipulation](/docs/usage/raw_manipulation.md) for the
+interface, robot context and launcher configuration.
+
 ## Running
 
 - **CLI**: `dimos evals run <dotted.suite> --agent <agent-module> [--set model=gpt-4o] [--tags nav] [--limit 5]`

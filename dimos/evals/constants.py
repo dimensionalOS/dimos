@@ -50,6 +50,8 @@ RAW_TOPIC_PREFIX = "robot"
 RAW_MAX_CMD_S = 2.0
 RAW_MAX_LINEAR_MPS = 1.0
 RAW_MAX_ANGULAR_RPS = 1.5
+RAW_MAX_EE_LINEAR_MPS = 0.1
+RAW_MAX_EE_ANGULAR_RPS = 0.5
 RAW_DRIVE_HZ = 10.0
 RAW_JPEG_QUALITY = 90
 
@@ -66,4 +68,88 @@ any Zenoh client works, e.g. `pip install eclipse-zenoh`.
                            Speeds are clamped to {max_linear:g} m/s and {max_angular:g} rad/s; non-finite values are ignored.
 
 There is no other interface to this robot.
+"""
+
+RAW_MANIPULATION_README = """\
+Robot interface: a Zenoh peer at {endpoint}. Use a plain Zenoh client, for example
+`pip install eclipse-zenoh`. Disable multicast and gossip scouting, and connect
+directly to this endpoint. Explicitly close the session before your script exits.
+
+Python connection setup (use the same Python environment for installing and running):
+If pip is unavailable, create a client environment with:
+  uv venv .clientenv
+  uv pip install --python .clientenv/bin/python eclipse-zenoh numpy pillow
+Then run your scripts with .clientenv/bin/python.
+
+  import json, zenoh
+  config = zenoh.Config()
+  config.insert_json5("mode", '"peer"')
+  config.insert_json5("connect/endpoints", json.dumps(["{endpoint}"]))
+  config.insert_json5("scouting/multicast/enabled", "false")
+  config.insert_json5("scouting/gossip/enabled", "false")
+  session = zenoh.open(config)
+
+Subscribe before commanding. Topics:
+  robot/camera/jpeg        JPEG wrist-camera frames; attachment {{"t": unix_seconds}}
+  robot/camera/depth_f32   Float32 little-endian (height,width), row-major optical Z
+                           depth in metres; attachment {{"t": unix_seconds}}
+  robot/camera/depth_info/json  {{"t", "width", "height", "dtype":"<f4", "unit":"metres", "frame_id"}}
+  robot/camera_info/json   {{"width", "height", "K"}}: camera intrinsics
+  robot/camera_pose/json   {{"t", "frame":"world", "xyz", "quaternion_xyzw"}}:
+                           camera optical pose; +Z forward, +X right, +Y down
+  robot/overview/jpeg      RGB-only fixed env_camera overview; attachment {{"t": unix_seconds}}
+  robot/overview/camera_info/json  {{"width", "height", "K"}}: overview's own intrinsics
+  robot/overview/camera_pose/json  {{"t", "frame":"world", "xyz", "quaternion_xyzw"}}:
+                           overview optical pose in the world frame
+  robot/arm/info/json      static info at 1 Hz: commands, twist_frame, max_linear_mps,
+                           max_angular_rps, max_cmd_s, gripper units
+  robot/arm/state/json     {{"t", "joint_names", "positions", "velocities", "gripper_opening"}}
+                           measured arm joints (radians, rad/s) and gripper opening 0..1
+
+There is no end-effector pose topic: infer progress from joints and the cameras.
+If robot context files are listed, read robot/README.md and robot/robot_info.json
+once for URDFs, joint/frame conventions and gripper geometry.
+Keep the latest sensor message per topic rather than printing every frame.
+Use compact state snapshots to decide whether the robot reached your intended target.
+Save JPEG/depth bytes to files instead of printing binary payloads or entire arrays.
+Use a depth neighborhood or compact numeric summary for the region being inspected.
+
+The wrist camera provides aligned RGB and depth: use camera_info K and camera_pose
+for that pair. The fixed overview provides RGB only, with DIFFERENT intrinsics and
+pose on its own overview topics. Use it to see the whole workspace and check the
+object after a grasp/lift, especially when the wrist view is blocked by the gripper.
+Never index wrist depth using an overview image pixel. Match image/depth attachments
+and pose by timestamp within each camera; topics arrive separately and the two
+cameras may run at different frame rates (wrist 15 Hz, overview 5 Hz by default).
+Decode wrist depth with NumPy:
+  depth = np.frombuffer(payload, dtype="<f4").reshape(height, width)
+Depth is optical-axis Z, not distance along the pixel ray. For pixel (u,v), let
+z=depth[v,u], x=(u-cx)*z/fx, y=(v-cy)*z/fy, using K's fx,fy,cx,cy. Transform
+[x,y,z] into the robot base frame with camera_pose's quaternion and translation.
+Ignore non-finite/nonpositive depths; distant background can have very large
+depths. Depth contains the visible robot/gripper as well as scene surfaces.
+Save the numeric array as .npy if needed; JPEG or a colorized preview loses depth.
+
+Publish JSON to robot/arm/command/json. Commands are fire-and-forget:
+  {{"kind":"twist", "linear":[0,0,0.05], "angular":[0,0,0], "t":1.0}}
+  {{"kind":"gripper", "opening":1.0}}
+
+twist moves the end effector (tool centre point) at the given velocity: linear in m/s,
+angular in rad/s about fixed world X/Y/Z axes, both expressed in the world frame
+(the robot base is unrotated in this scene). The robot holds that velocity for t seconds
+(max {max_cmd_s:g}), then stops. Republish to keep moving; a new twist replaces the
+previous one, and a zero twist (or t=0) stops the arm. Components are clamped to
+{max_ee_linear:g} m/s and {max_ee_angular:g} rad/s. Omitted linear/angular mean zero.
+Motion is local IK tracking, not obstacle-aware planning: move in small steps and check.
+
+gripper opening is normalized: 0.0 closed, 1.0 fully open. It is independent of the arm
+and persists until changed. A gripper blocked by an object holds its target; inspect
+measured gripper_opening and object motion rather than treating closure as grasp success.
+
+There are no command IDs, acknowledgements or execution-status messages. Publishing
+does not mean the motion finished. Observe measured robot state and camera images.
+Invalid or non-finite commands are dropped.
+
+Only these robot observations and commands are available. The full internal TF
+tree, object ground-truth poses, and higher-level manipulation tools are not exposed.
 """

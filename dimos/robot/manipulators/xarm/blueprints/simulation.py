@@ -24,7 +24,12 @@ from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.manipulation_skills import ManipulationSkills
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
 from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
-from dimos.robot.manipulators.common.blueprints import coordinator, trajectory_task
+from dimos.robot.manipulators.common.blueprints import (
+    coordinator,
+    eef_twist_task,
+    trajectory_task,
+)
+from dimos.robot.manipulators.common.coordinators import ArmTwistCoordinator
 from dimos.robot.manipulators.xarm.config import (
     XARM7_SIM_PATH,
     make_xarm7_sim_hardware,
@@ -34,9 +39,10 @@ from dimos.robot.manipulators.xarm.config import (
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 
-_xarm7_sim_model = make_xarm7_sim_robot_config()
 _xarm7_sim_scene = global_config.mujoco_scene or XARM7_SIM_PATH
+_xarm7_sim_model = make_xarm7_sim_robot_config()
 _xarm7_sim_hw = make_xarm7_sim_hardware(_xarm7_sim_scene)
+_xarm7_sim_kwargs = make_xarm7_sim_module_kwargs(_xarm7_sim_scene)
 
 xarm_perception_sim = autoconnect(
     ManipulationModule.blueprint(
@@ -47,7 +53,7 @@ xarm_perception_sim = autoconnect(
     ManipulationSkills.blueprint(),
     PickAndPlaceModule.blueprint(planning_frame="world"),
     HeuristicGraspModule.blueprint(),
-    MujocoSimModule.blueprint(**make_xarm7_sim_module_kwargs(_xarm7_sim_scene)),
+    MujocoSimModule.blueprint(**_xarm7_sim_kwargs),
     ObjectSceneRegistrationModule.blueprint(
         target_frame="world",
         detector_backend="moondream",
@@ -67,4 +73,30 @@ xarm_perception_sim = autoconnect(
         ],
     ),
     RerunBridgeModule.blueprint(),
+)
+
+# Robot-only stack: low-level control and sensors, reusable with any transport.
+xarm_sim = autoconnect(
+    MujocoSimModule.blueprint(
+        **{**_xarm7_sim_kwargs, "base_frame_id": "world", "overview_camera_name": "env_camera"}
+    ),
+    coordinator(
+        hardware=[_xarm7_sim_hw],
+        tasks=[
+            eef_twist_task(
+                _xarm7_sim_hw,
+                robot_model=_xarm7_sim_model,
+                target_frame="link_tcp",
+                max_joint_velocity_rad_s=0.5,
+            ),
+            TaskConfig(
+                name="arm_gripper",
+                type="gripper",
+                joint_names=["arm/gripper"],
+                priority=20,
+            ),
+        ],
+        cls=ArmTwistCoordinator,
+        instance_name="ControlCoordinator",
+    ),
 )

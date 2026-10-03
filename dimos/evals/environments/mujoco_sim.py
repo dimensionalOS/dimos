@@ -44,6 +44,8 @@ class MujocoEnvironmentConfig(SimConfig):
         "coordinator_joint_state",
         "tf",
         "odom",
+        "overview_image",
+        "overview_camera_info",
     )
     scene: Path | None = None
 
