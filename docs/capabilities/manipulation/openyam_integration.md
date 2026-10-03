@@ -91,6 +91,35 @@ The bus uses classical CAN at 1 Mbit/s. Opening the gripper decreases motor
 position. The arm and gripper are exposed together as one whole-body hardware
 component.
 
+## Grasping on the dual rig
+
+`dual-openyam-grasp` is the xArm grasp stack on the dual OpenYAM: coordinator,
+planner, pick-and-place, scene registration and a heuristic grasp provider,
+with a fixed RealSense over the table. Each arm is a planning group with its
+own gripper, so pick-and-place calls take `left_manipulator` or
+`right_manipulator`.
+
+```bash
+# robot
+dimos run dual-openyam-grasp --left-can-port follower_l --right-can-port follower_r \
+  --realsensecamera.serial-number <SERIAL>
+
+# in-memory arms, no CAN or camera needed
+dimos run dual-openyam-grasp --disable real-sense-camera --disable object-scene-registration-module
+```
+
+Then from `dimos shell`:
+
+```python skip
+app.ManipulationSkills.go_init()
+scan = app.PickAndPlaceModule.scan_objects(["mustard bottle", "soup can"])
+app.PickAndPlaceModule.pick_object("<object_id>", planning_group="right_manipulator")
+app.PickAndPlaceModule.place_at(0.35, -0.25, 0.20, planning_group="right_manipulator")
+```
+
+The camera pose in `blueprints/grasp.py` (`DUAL_OPENYAM_CAMERA_TRANSFORM`) is
+the mount on the benchmark rig; re-measure it when the camera moves.
+
 ## Safety
 
 - Keep the workspace clear and the emergency stop reachable during first
