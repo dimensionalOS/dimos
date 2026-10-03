@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 import math
 from typing import TYPE_CHECKING
 
@@ -156,12 +157,14 @@ class Arm:
         position: ArrayLike,
         *,
         orientation: ArrayLike | None = None,
+        auxiliary_groups: Sequence[PlanningGroupID] = (),
         speed_scale: float | None = None,
         timeout: float | None = None,
     ) -> ExecutionResult:
         """Plan and move to world XYZ in metres, with optional XYZW orientation.
 
         Omitting orientation preserves the current end-effector orientation.
+        Auxiliary groups may assist the pose target; unselected joints remain fixed.
         This targets an endpoint; use ``move_linear`` for a straight translation.
         """
         xyz = _vector(position, 3, "position")
@@ -173,7 +176,14 @@ class Arm:
         if math.hypot(*rotation.to_tuple()) == 0.0:
             raise ValueError("orientation must have nonzero norm")
         target = PoseStamped(frame_id="world", position=xyz, orientation=rotation)
-        plan = self.rpc.plan_to_poses({self.info.id: target}, speed_scale=speed_scale)
+        if auxiliary_groups:
+            plan = self.rpc.plan_to_poses(
+                {self.info.id: target},
+                speed_scale=speed_scale,
+                auxiliary_groups=tuple(auxiliary_groups),
+            )
+        else:
+            plan = self.rpc.plan_to_poses({self.info.id: target}, speed_scale=speed_scale)
         return self._execute("move_pose", plan, timeout)
 
     def _execute(self, operation: str, plan: PlanResult, timeout: float | None) -> ExecutionResult:
@@ -190,6 +200,7 @@ class Arm:
         dy: float = 0.0,
         dz: float = 0.0,
         *,
+        auxiliary_groups: Sequence[PlanningGroupID] = (),
         check_collision: bool = False,
         speed_scale: float | None = None,
         timeout: float | None = None,
@@ -204,6 +215,7 @@ class Arm:
             dy=float(delta[1]),
             dz=float(delta[2]),
             planning_group=self.info.id,
+            auxiliary_groups=tuple(auxiliary_groups),
             check_collision=check_collision,
             speed_scale=speed_scale,
             blocking=True,

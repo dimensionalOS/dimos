@@ -115,3 +115,31 @@ def test_stale_base_pose_cannot_update_planning_model(bridge, mocker):
         )
     )
     planner.assert_not_called()
+
+
+def test_configured_gripper_targets_and_feedback_reach_coordinator(mocker):
+    n = len(MODEL_JOINTS)
+    limits = mocker.patch(
+        "dimos.simulation.behavior.r1pro_bridge.joint_limits",
+        return_value=JointLimits([-1.0] * n, [1.0] * n, [1.0] * n),
+    )
+    module = BehaviorR1ProBridge(command_joints=MODEL_JOINTS)
+    try:
+        limits.assert_called_once_with(MODEL_JOINTS)
+        publish = mocker.patch.object(module.joint_command, "publish")
+        feedback = mocker.patch.object(module.motor_states, "publish")
+        targets = [0.2] * n
+        module._on_command(MotorCommandArray(q=targets))
+        assert publish.call_args.args[0].name == list(MODEL_JOINTS)
+        assert publish.call_args.args[0].position == targets
+        module._on_state(
+            JointState(
+                name=list(MODEL_JOINTS),
+                position=targets,
+                velocity=[0.0] * n,
+                effort=[0.0] * n,
+            )
+        )
+        assert feedback.call_args.args[0].name == [f"r1pro/{name}" for name in MODEL_JOINTS]
+    finally:
+        module.stop()

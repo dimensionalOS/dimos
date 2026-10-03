@@ -26,10 +26,11 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionStatus,
 )
 from dimos.manipulation.manipulation_module import ManipulationModule, ManipulationState
-from dimos.manipulation.manipulation_spec import ExecutionStatus
+from dimos.manipulation.manipulation_spec import ExecutionStatus, PlanStatus
 from dimos.manipulation.planning.spec.enums import PlanningStatus
 from dimos.manipulation.planning.spec.models import GeneratedPlan
 from dimos.manipulation.visualization.operator import ManipulationOperator
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
@@ -287,3 +288,16 @@ def _executed(coordinator, task: str = "joint_trajectory"):
 def _cancelled(coordinator) -> list[str]:
     """Tasks that were asked to cancel."""
     return [c.args[0] for c in coordinator.task_invoke.call_args_list if c.args[1] == "cancel"]
+
+
+def test_pose_rpc_preserves_auxiliary_selection_and_exact_plan(module_factory, mocker):
+    module = module_factory(_coordinator())
+    plan = _plan()
+    generate = mocker.patch.object(module, "generate_plan_to_pose_targets", return_value=plan)
+    targets = {"manipulator": PoseStamped(frame_id="world", position=[0.4, 0, 0.5])}
+
+    result = module.plan_to_poses(targets, auxiliary_groups=["torso"], speed_scale=0.2)
+
+    assert result.status is PlanStatus.SUCCEEDED
+    assert result.plan is plan
+    generate.assert_called_once_with(targets, auxiliary_groups=["torso"], speed_scale=0.2)

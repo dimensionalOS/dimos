@@ -20,6 +20,8 @@ import pytest
 from dimos.experimental.isolated_python.bootstrap import validate_runtime
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.simulation.behavior.connection import BehaviorConnection
+from dimos.simulation.behavior.test_radio_evidence import atomic_capture  # noqa: F401 - fixture
+from dimos.simulation.behavior.test_radio_policy import raw_camera  # noqa: F401 - fixture
 from dimos.simulation.behavior.types import ControlMode
 
 
@@ -192,3 +194,27 @@ def test_failed_generator_is_reported_and_owner_holds(runtime):
     assert module.get_operation(operation).error == "planner failed"
     assert module.get_status().control == ControlMode.PRIMITIVE
     assert engine.step.call_args.args == ("hold",)
+
+
+def test_native_owner_keeps_atomic_camera_capture_separate_from_truth(
+    runtime, atomic_capture, mocker
+):
+    module, engine = runtime
+    messages = atomic_capture["sensors"]
+    engine.messages.return_value = messages
+    engine.ground_truth.return_value = {"objects": {"radio": {"secret": True}}}
+    mocker.patch.object(module.config, "policy_hide_toggle_markers", True)
+    for name in messages:
+        mocker.patch.object(getattr(module, name), "publish")
+    module._state.episode.step = 42
+    module._started.set()
+    module._refresh()
+    snapshot = module.get_sensor_snapshot()
+    assert snapshot["step"] == 42
+    assert snapshot["episode"] == module._state.episode.id
+    assert "objects" not in snapshot["sensors"]
+    snapshot["sensors"]["left_wrist_image"].data[0, 0, 0] = 77
+    assert module.get_sensor_snapshot()["sensors"]["left_wrist_image"].data[0, 0, 0] == 0
+    module._state.episode.id = "next-episode"
+    with pytest.raises(RuntimeError, match="this episode"):
+        module.get_sensor_snapshot()

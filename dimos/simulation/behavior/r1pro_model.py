@@ -79,11 +79,15 @@ def simulation_model_config() -> RobotModelConfig:
     return config
 
 
-def upper_body_limits() -> JointLimits:
+def joint_limits(names: tuple[str, ...] = UPPER_BODY_JOINTS) -> JointLimits:
     joints = {joint.name: joint for joint in simulation_model().load().joints}
-    selected = [joints[coordinator_name(name)] for name in UPPER_BODY_JOINTS]
+    selected = [joints[coordinator_name(name)] for name in names]
     return JointLimits(
         position_lower=[j.lower for j in selected],
         position_upper=[j.upper for j in selected],
         velocity_max=[j.velocity for j in selected],
     )
+
+
+def upper_body_limits() -> JointLimits:
+    return joint_limits()

@@ -760,12 +760,15 @@ class ManipulationModule(Module):
         self,
         targets: Mapping[PlanningGroupID, PoseStamped],
         speed_scale: float | None = None,
+        auxiliary_groups: Sequence[PlanningGroupID] = (),
     ) -> PlanResult:
         """Plan one synchronized pose target set without moving hardware."""
         self._clear_pending_plan()
         if not targets:
             return PlanResult(PlanStatus.INVALID_TARGET, "At least one target is required")
-        plan = self.generate_plan_to_pose_targets(targets, speed_scale=speed_scale)
+        plan = self.generate_plan_to_pose_targets(
+            targets, auxiliary_groups=auxiliary_groups, speed_scale=speed_scale
+        )
         if plan is None:
             return PlanResult(PlanStatus.FAILED, self._error_message or "Planning failed")
         return PlanResult(PlanStatus.SUCCEEDED, plan.message, plan)
@@ -913,6 +916,7 @@ class ManipulationModule(Module):
         speed_scale: float | None = None,
         blocking: bool = True,
         timeout: float | None = None,
+        auxiliary_groups: Sequence[PlanningGroupID] = (),
     ) -> MoveResult:
         """Move one end effector by a world-frame translation."""
         delta = (float(dx), float(dy), float(dz))
@@ -935,6 +939,7 @@ class ManipulationModule(Module):
         plan = self.generate_cartesian_plan(
             {group.id: (Transform.identity(), relative)},
             CartesianPathConfig(),
+            auxiliary_groups=auxiliary_groups,
             speed_scale=resolved_speed,
             check_collision=check_collision,
         )
