@@ -427,3 +427,19 @@ def test_motion_skills_declare_movement_capability() -> None:
     ]
 
     assert all(skill.__skill_uses__ == ["movement"] for skill in skills)
+
+
+def test_pregrasp_along_tool_z_backs_off_the_other_way(module: PickAndPlaceModule) -> None:
+    manipulation: Any = module._manipulation
+    module.config.pregrasp_along_tool_z = True
+    module._selected_grasp = PoseStamped(
+        frame_id="world",
+        orientation=Quaternion.from_euler(Vector3(-3.141592653589793, 0.0, 0.0)),
+    )
+    module._holding_object = True
+
+    result = module.place_at(0.4, 0.0, 0.2)
+
+    assert result.is_success()
+    preplace = manipulation.plan_to_poses.call_args_list[0].args[0]["arm/tool"]
+    assert preplace.position.z == pytest.approx(0.1)

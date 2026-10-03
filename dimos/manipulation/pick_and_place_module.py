@@ -46,6 +46,10 @@ from dimos.perception.experimental.object_scene_registration_spec import ObjectS
 class PickAndPlaceModuleConfig(ModuleConfig):
     planning_frame: str = "base_link"
     pregrasp_offset: float = Field(default=0.10, gt=0.0)
+    # The pregrasp backs off along the tool's -Z. Grippers whose grasp frame
+    # points Z out of the back of the palm need +Z, or the approach starts
+    # underneath the object.
+    pregrasp_along_tool_z: bool = False
     # A learned provider returns a ranked spread whose best-scoring pose is not
     # always kinematically reachable; a single-candidate provider is unaffected.
     max_grasp_attempts: int = Field(default=5, gt=0)
@@ -159,7 +163,7 @@ class PickAndPlaceModule(Module):
                 ),
                 group,
             )
-            pregrasp = self._offset_pose(grasp, self.config.pregrasp_offset)
+            pregrasp = self._offset_pose(grasp, self._pregrasp_offset())
             failure = self._move(pregrasp, group) or self._servo(pregrasp, grasp, group)
             if failure is not None:
                 # Only an unreachable pose is worth demoting to the next candidate;
@@ -219,7 +223,7 @@ class PickAndPlaceModule(Module):
             position=Vector3(x, y, z),
             orientation=self._selected_grasp.orientation,
         )
-        preplace = self._offset_pose(place, self.config.pregrasp_offset)
+        preplace = self._offset_pose(place, self._pregrasp_offset())
         if failure := self._move(preplace, group):
             return failure
         if failure := self._servo(preplace, place, group):
@@ -260,6 +264,10 @@ class PickAndPlaceModule(Module):
             position=pose.position,
             orientation=Quaternion.from_euler(Vector3(euler.x, euler.y, current_euler.z)),
         )
+
+    def _pregrasp_offset(self) -> float:
+        offset = self.config.pregrasp_offset
+        return -offset if self.config.pregrasp_along_tool_z else offset
 
     @staticmethod
     def _offset_pose(pose: PoseStamped, offset: float) -> PoseStamped:
