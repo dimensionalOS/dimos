@@ -52,8 +52,6 @@ logger = setup_logger()
 
 class SpatialConfig(ModuleConfig):
     collection_name: str = "spatial_memory"
-    embedding_model: str = "clip"
-    embedding_dimensions: int = 512
     min_distance_threshold: float = 0.01  # Min distance in meters to store a new frame
     min_time_threshold: float = 1.0  # Min time in seconds to record a new frame
     db_path: str | None = str(_DB_PATH)  # Path for ChromaDB persistence
@@ -89,8 +87,6 @@ class SpatialMemory(Module):
 
         Args:
             collection_name: Name of the vector database collection
-            embedding_model: Model to use for image embeddings ("clip", "resnet", etc.)
-            embedding_dimensions: Dimensions of the embedding vectors
             min_distance_threshold: Minimum distance in meters to record a new frame
             min_time_threshold: Minimum time in seconds to record a new frame
             chroma_client: Optional ChromaDB client for persistent storage
@@ -100,8 +96,6 @@ class SpatialMemory(Module):
         super().__init__(**kwargs)
 
         self.collection_name = self.config.collection_name
-        self.embedding_model = self.config.embedding_model
-        self.embedding_dimensions = self.config.embedding_dimensions
         self.min_distance_threshold = self.config.min_distance_threshold
         self.min_time_threshold = self.config.min_time_threshold
         self.db_path = self.config.db_path
@@ -151,9 +145,7 @@ class SpatialMemory(Module):
                     logger.error(f"Error loading visual memory: {e}")
                     self._visual_memory = VisualMemory(output_dir=self.config.output_dir)
 
-        self.embedding_provider = ImageEmbeddingProvider(
-            model_name=self.embedding_model, dimensions=self.embedding_dimensions
-        )
+        self.embedding_provider = ImageEmbeddingProvider()
 
         self.vector_db: SpatialVectorDB = SpatialVectorDB(
             collection_name=self.collection_name,

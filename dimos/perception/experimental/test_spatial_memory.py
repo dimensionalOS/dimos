@@ -42,7 +42,6 @@ class TestSpatialMemory:
         # Create a single SpatialMemory instance to be reused across all tests
         memory = SpatialMemory(
             collection_name="test_collection",
-            embedding_model="clip",
             new_memory=True,
             db_path=os.path.join(temp_dir, "chroma_db"),
             visual_memory_path=os.path.join(temp_dir, "visual_memory.pkl"),
@@ -58,7 +57,6 @@ class TestSpatialMemory:
         """Test SpatialMemory initializes correctly with CLIP model."""
         # Use the shared spatial_memory fixture
         assert spatial_memory is not None
-        assert spatial_memory.embedding_model == "clip"
         assert spatial_memory.embedding_provider is not None
 
     def test_image_embedding(self, spatial_memory) -> None:
@@ -74,7 +72,7 @@ class TestSpatialMemory:
         # Check embedding shape and characteristics
         assert embedding is not None
         assert isinstance(embedding, np.ndarray)
-        assert embedding.shape[0] == spatial_memory.embedding_dimensions
+        assert embedding.shape[0] == 512
 
         # Check that embedding is normalized (unit vector)
         assert np.isclose(np.linalg.norm(embedding), 1.0, atol=1e-5)
@@ -83,7 +81,7 @@ class TestSpatialMemory:
         text_embedding = spatial_memory.embedding_provider.get_text_embedding("a blue square")
         assert text_embedding is not None
         assert isinstance(text_embedding, np.ndarray)
-        assert text_embedding.shape[0] == spatial_memory.embedding_dimensions
+        assert text_embedding.shape[0] == 512
         assert np.isclose(np.linalg.norm(text_embedding), 1.0, atol=1e-5)
 
     def test_spatial_memory_processing(self, spatial_memory, temp_dir) -> None:
