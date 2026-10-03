@@ -22,7 +22,7 @@ import math
 import threading
 from typing import Any
 
-from pydantic import ConfigDict, NonNegativeFloat, PositiveFloat
+from pydantic import ConfigDict, Field, NonNegativeFloat, PositiveFloat
 
 from dimos.control.task import (
     BaseControlTask,
@@ -354,6 +354,8 @@ def _trajectory_problem(
 class PlanarBaseTrajectoryTaskParams(BaseConfig):
     model_config = ConfigDict(allow_inf_nan=False)
 
+    # Exactly 3 joints: vx, vy, wz.
+    joint_names: list[str] = Field(min_length=3, max_length=3)
     kp: tuple[NonNegativeFloat, NonNegativeFloat, NonNegativeFloat] = (1.0, 1.0, 1.0)
     max_linear: PositiveFloat = 1.0
     max_angular: PositiveFloat = 2.0
@@ -369,10 +371,13 @@ class PlanarBaseTrajectoryTaskParams(BaseConfig):
 
 
 def create_task(cfg: Any, hardware: Any) -> PlanarBaseTrajectoryTask:
-    params = PlanarBaseTrajectoryTaskParams.model_validate(cfg.params)
+    raw = dict(cfg.params)
+    if "joint_names" in raw:
+        raise ValueError("joint_names must be set on TaskConfig, not in params")
+    params = PlanarBaseTrajectoryTaskParams.model_validate(
+        {**raw, "joint_names": list(cfg.joint_names)}
+    )
     return PlanarBaseTrajectoryTask(
         cfg.name,
-        PlanarBaseTrajectoryTaskConfig(
-            joint_names=list(cfg.joint_names), priority=cfg.priority, **params.model_dump()
-        ),
+        PlanarBaseTrajectoryTaskConfig(priority=cfg.priority, **params.model_dump()),
     )
