@@ -402,7 +402,14 @@ class R1ProConnection(Module):
             add_stream(stream, topic, RosCompressedImage, self._compressed_image_loop)
 
         add_stream("head_depth", _HEAD_DEPTH_TOPIC, RosImage, self._convert_loop, Image)
-        add_stream("lidar", _LIDAR_TOPIC, RosPointCloud2, self._convert_loop, PointCloud2)
+        add_stream(
+            "lidar",
+            _LIDAR_TOPIC,
+            RosPointCloud2,
+            self._convert_loop,
+            PointCloud2,
+            self.config.lidar_frame_id,
+        )
 
         if self.config.enable_wrist_depth:
             for stream, topic in _WRIST_DEPTH_CAMERAS.items():
@@ -740,25 +747,23 @@ class R1ProConnection(Module):
                 self._record_decode(stream, (time.perf_counter() - t0) * 1e3, ok=False)
                 logger.exception(f"R1Pro {stream} conversion error")
 
-    def _convert_loop(self, stream: str, q: queue.Queue[Any], dimos_type: type) -> None:
-        """ros_to_dimos passthrough worker (depth images, lidar)."""
-        from dimos.protocol.pubsub.impl.rospubsub_conversion import ros_to_dimos
-
-        out: Out[Any] = getattr(self, stream)
-        while not self._sensor_stop.is_set():
-            try:
-                msg = q.get(timeout=0.5)
-            except queue.Empty:
-                continue
-            if msg is None:
-                break
-            t0 = time.perf_counter()
-            try:
-                out.publish(ros_to_dimos(msg, dimos_type))
-                self._record_decode(stream, (time.perf_counter() - t0) * 1e3, ok=True)
-            except Exception:
-                self._record_decode(stream, (time.perf_counter() - t0) * 1e3, ok=False)
-                logger.exception(f"R1Pro {stream} decode error")
+    def _convert_loop(
+        self,
+        stream: str,
+        q: queue.Queue[Any],
+        dimos_type: type,
+        frame_id: str | None = None,
+    ) -> None:
+        """ros_to_dimos passthrough worker (depth images, lidar, camera info)."""
+        convert_loop(
+            stream=stream,
+            queue_in=q,
+            dimos_type=dimos_type,
+            out=getattr(self, stream),
+            stop=self._sensor_stop,
+            record_decode=self._record_decode,
+            frame_id=frame_id,
+        )
 
     def _imu_loop(self, stream: str, q: queue.Queue[Any]) -> None:
         """Store the latest converted IMU; re-emitted by the publish loop."""
@@ -798,3 +803,35 @@ def _enqueue_drop_oldest(q: queue.Queue[Any], item: Any) -> bool:
         except queue.Full:
             pass
         return True
+
+
+def convert_loop(
+    *,
+    stream: str,
+    queue_in: queue.Queue[Any],
+    dimos_type: type,
+    out: Any,
+    stop: Any,
+    record_decode: Any,
+    frame_id: str | None = None,
+) -> None:
+    """Convert and publish each queued ROS message; *frame_id* restamps it (vendor lidar)."""
+    from dimos.protocol.pubsub.impl.rospubsub_conversion import ros_to_dimos
+
+    while not stop.is_set():
+        try:
+            msg = queue_in.get(timeout=0.5)
+        except queue.Empty:
+            continue
+        if msg is None:
+            break
+        t0 = time.perf_counter()
+        try:
+            converted: Any = ros_to_dimos(msg, dimos_type)
+            if frame_id:
+                converted.frame_id = frame_id
+            out.publish(converted)
+            record_decode(stream, (time.perf_counter() - t0) * 1e3, ok=True)
+        except Exception:
+            record_decode(stream, (time.perf_counter() - t0) * 1e3, ok=False)
+            logger.exception(f"R1Pro {stream} decode error")
