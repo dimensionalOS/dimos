@@ -40,6 +40,7 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.hardware.sensors.camera.v4l2.module import V4L2Camera, V4L2CameraConfig
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+from dimos.robot.galaxea.r1pro.head_trigger import trigger_head_cameras
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -82,9 +83,19 @@ class HeadRightCameraConfig(HeadLeftCameraConfig):
 class HeadLeftCamera(V4L2Camera):
     config: HeadLeftCameraConfig
 
+    @rpc
+    def start(self) -> None:
+        trigger_head_cameras(int(HEAD_FPS))
+        super().start()
+
 
 class HeadRightCamera(V4L2Camera):
     config: HeadRightCameraConfig
+
+    @rpc
+    def start(self) -> None:
+        trigger_head_cameras(int(HEAD_FPS))
+        super().start()
 
 
 def head_camera_infos(path: str = HEAD_STEREO_CALIBRATION) -> tuple[CameraInfo, CameraInfo]:
