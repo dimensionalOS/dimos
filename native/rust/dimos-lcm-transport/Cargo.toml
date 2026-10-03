@@ -1,0 +1,11 @@
+[package]
+name = "dimos-lcm-transport"
+version = "0.1.0"
+edition = "2021"
+description = "Schema-independent LCM UDP multicast transport for DimOS"
+license = "Apache-2.0"
+
+[dependencies]
+byteorder = "1"
+socket2 = { version = "0.5", features = ["all"] }
+tokio = { version = "1.51.1", features = ["net", "rt-multi-thread", "macros", "time"] }

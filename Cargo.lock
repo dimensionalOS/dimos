@@ -658,6 +658,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "dimos-lcm-transport"
+version = "0.1.0"
+dependencies = [
+ "byteorder",
+ "socket2 0.5.10",
+ "tokio",
+]
+
+[[package]]
 name = "dimos-livox"
 version = "0.1.0"
 dependencies = [
