@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+case "$(uname -s)" in
+    Darwin)
+        echo "macOS $(sw_vers -productVersion) $(uname -m)"
+        ;;
+    Linux)
+        . /etc/os-release
+        echo "${PRETTY_NAME:-Linux} $(uname -m)"
+        ;;
+    *)
+        uname -sm
+        ;;
+esac
