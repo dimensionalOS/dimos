@@ -18,13 +18,14 @@ The first three tests are the important ones. ``conftest.py`` writes out three
 descriptions by hand -- an arm, a humanoid body, a base -- and each test
 rebuilds one through its preset and checks they match exactly.
 
-The rest cover what each preset decides: which limits an arm keeps, that a
-gripper and an orientation sensor are added as asked, and that a base is one
-part whose speed limits clamp.
+The rest cover what each preset decides: what an arm or body takes from its
+robot model, that a gripper and an orientation sensor are added as asked, and
+that a base is one part whose speed limits clamp.
 """
 
 from __future__ import annotations
 
+from pathlib import Path
 import pickle
 
 import pytest
@@ -34,6 +35,7 @@ from dimos.control.contract.description import ControlDescription, Limits, Resou
 from dimos.control.contract.keys import EFFORT, KD, KP, POSITION, VELOCITY, VX, VY, WZ, Key, Unit
 from dimos.control.contract.presets import (
     GripperSpec,
+    imu_resource,
     manipulator_description,
     pd_joint_description,
     twist_base_description,
@@ -46,6 +48,7 @@ from dimos.control.contract.validate import (
     validate_description,
 )
 from dimos.msgs.control_msgs.ControlValues import ControlValues
+from dimos.robot.assets.model import RobotModel
 
 ARM_LIMITS = {Key.of("arm", j, POSITION): Limits(-3.14, 3.14) for j in ARM_JOINTS} | {
     Key.of("arm", j, VELOCITY): Limits(-1.0, 1.0) for j in ARM_JOINTS
@@ -71,7 +74,7 @@ def preset_arm() -> ControlDescription:
 
 def preset_g1() -> ControlDescription:
     """The conftest humanoid, built through the preset."""
-    return pd_joint_description("g1", G1_JOINTS, limits=G1_LIMITS, imu="imu")
+    return pd_joint_description("g1", G1_JOINTS, limits=G1_LIMITS, sensors=[imu_resource()])
 
 
 def preset_chassis() -> ControlDescription:
@@ -120,14 +123,6 @@ def test_an_arm_is_told_position_and_velocity_unless_it_says_otherwise() -> None
     assert only.resource("joint1").command_interfaces == (POSITION,)
 
 
-def test_an_arm_leaves_out_limits_on_what_it_is_not_told() -> None:
-    # A robot model gives effort limits too, but this arm is never told an
-    # effort, so there is nothing for that limit to apply to.
-    limits = ARM_LIMITS | {Key.of("arm", "joint1", EFFORT): Limits(-40.0, 40.0)}
-    described = manipulator_description("arm", ARM_JOINTS, limits=limits)
-    assert set(described.limits) == set(ARM_LIMITS)
-
-
 def test_a_limit_for_a_joint_the_arm_does_not_have_is_an_error() -> None:
     limits = {Key.of("arm", "joint99", POSITION): Limits(-1.0, 1.0)}
     with pytest.raises(DescriptionError, match="joint99"):
@@ -173,7 +168,7 @@ def test_a_body_is_told_stiffness_and_damping_with_every_target() -> None:
 
 
 def test_an_orientation_sensor_only_reports() -> None:
-    described = pd_joint_description("g1", G1_JOINTS, limits={}, imu="chest_imu")
+    described = pd_joint_description("g1", G1_JOINTS, sensors=[imu_resource("chest_imu")])
     imu = described.resource("chest_imu")
     assert imu.kind is ResourceKind.SENSOR and imu.command_interfaces == ()
     assert "g1/chest_imu/qw" in described.state_keys()
@@ -229,3 +224,140 @@ def test_a_base_reports_only_what_it_can() -> None:
     # One that can only repeat back what it was told does not claim to measure.
     no_speed = twist_base_description("chassis", limits={}, measured_velocity=False)
     assert no_speed.resources[0].state_interfaces == ("x", "y", "yaw")
+
+
+def test_any_preset_can_carry_an_orientation_sensor() -> None:
+    arm = manipulator_description("arm", ARM_JOINTS, sensors=[imu_resource()])
+    base = twist_base_description("chassis", limits=CHASSIS_LIMITS, sensors=[imu_resource()])
+    assert "arm/imu/qw" in arm.state_keys()
+    assert "chassis/imu/qw" in base.state_keys()
+
+
+# A small robot model covering each kind of joint a preset has to handle,
+# because no real robot has all of them at once.
+TOY_URDF = """<?xml version="1.0"?>
+<robot name="toy">
+  <link name="base"/>
+  <link name="l1"/>
+  <link name="l2"/>
+  <link name="l3"/>
+  <link name="l4"/>
+  <joint name="shoulder" type="revolute">
+    <parent link="base"/>
+    <child link="l1"/>
+    <limit lower="-1.5" upper="2.5" velocity="3.0" effort="40.0"/>
+  </joint>
+  <joint name="spinner" type="continuous">
+    <parent link="l1"/>
+    <child link="l2"/>
+    <limit velocity="10.0" effort="5.0"/>
+  </joint>
+  <joint name="slider" type="prismatic">
+    <parent link="l2"/>
+    <child link="l3"/>
+    <limit lower="0.0" upper="0.4" velocity="0.2" effort="100.0"/>
+  </joint>
+  <joint name="mount" type="fixed">
+    <parent link="l3"/>
+    <child link="l4"/>
+  </joint>
+</robot>
+"""
+
+
+def toy_model(tmp_path: Path, urdf: str = TOY_URDF) -> RobotModel:
+    path = tmp_path / "toy.urdf"
+    path.write_text(urdf)
+    return RobotModel.from_file(path)
+
+
+def test_an_arm_takes_its_limits_from_its_model(tmp_path: Path) -> None:
+    arm = manipulator_description("arm", ["shoulder"], model=toy_model(tmp_path))
+    assert arm.limits == {
+        "arm/shoulder/position": Limits(-1.5, 2.5),
+        "arm/shoulder/velocity": Limits(-3.0, 3.0),
+    }
+    # The arm is not told an effort, so the model's effort limit has no place.
+    assert "arm/shoulder/effort" not in arm.limits
+
+
+def test_a_body_takes_its_effort_limits_from_its_model(tmp_path: Path) -> None:
+    body = pd_joint_description("toy", ["shoulder"], model=toy_model(tmp_path))
+    assert body.limits["toy/shoulder/effort"] == Limits(-40.0, 40.0)
+    assert "toy/shoulder/kp" not in body.limits
+
+
+def test_a_sliding_joint_is_measured_in_metres(tmp_path: Path) -> None:
+    arm = manipulator_description("arm", ["slider"], model=toy_model(tmp_path))
+    assert arm.unit_of("arm/slider/position") is Unit.M
+    assert arm.unit_of("arm/slider/velocity") is Unit.M_PER_S
+    assert arm.unit_of("arm/slider/effort") is Unit.N
+
+
+def test_a_joint_that_spins_freely_gets_no_position_limit(tmp_path: Path) -> None:
+    arm = manipulator_description("arm", ["spinner"], model=toy_model(tmp_path))
+    assert "arm/spinner/position" not in arm.limits
+    assert arm.limits["arm/spinner/velocity"] == Limits(-10.0, 10.0)
+
+
+def test_limits_given_by_hand_replace_the_models(tmp_path: Path) -> None:
+    slower = {"arm/shoulder/velocity": Limits(-0.5, 0.5)}
+    arm = manipulator_description("arm", ["shoulder"], model=toy_model(tmp_path), limits=slower)
+    assert arm.limits["arm/shoulder/velocity"] == Limits(-0.5, 0.5)
+    assert arm.limits["arm/shoulder/position"] == Limits(-1.5, 2.5)
+
+
+def test_a_joint_missing_from_the_model_raises(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="not in the robot model"):
+        manipulator_description("arm", ["elbow"], model=toy_model(tmp_path))
+
+
+def test_a_fixed_joint_cannot_be_driven(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="cannot be driven"):
+        manipulator_description("arm", ["mount"], model=toy_model(tmp_path))
+
+
+@pytest.mark.parametrize(
+    ("broken", "match"),
+    [
+        ('lower="-1.5" upper="2.5"', "no position range"),
+        ('upper="2.5"', "half a position range"),
+        ('velocity="3.0"', "no velocity limit"),
+    ],
+)
+def test_a_model_unclear_about_a_limit_raises(tmp_path: Path, broken: str, match: str) -> None:
+    # Reading a missing bound as "no limit" would let the joint go anywhere.
+    model = toy_model(tmp_path, TOY_URDF.replace(broken, "", 1))
+    with pytest.raises(ValueError, match=match):
+        manipulator_description("arm", ["shoulder"], model=model)
+
+
+#: The G1 shipped in this repo, to check the presets against a model nobody
+#: here wrote. Its expected numbers are typed out rather than read back from
+#: the same file, so a change to the model fails here instead of agreeing.
+G1_URDF = Path(__file__).resolve().parents[2] / "robot" / "unitree" / "g1" / "g1.urdf"
+G1_LEG = ("left_hip_pitch", "left_hip_roll", "left_knee")
+
+
+def g1_leg_model() -> RobotModel:
+    return RobotModel.from_file(G1_URDF).with_renamed_joints({f"{j}_joint": j for j in G1_LEG})
+
+
+def test_the_in_repo_g1_gets_its_limits_from_its_model() -> None:
+    body = pd_joint_description("g1", G1_LEG, model=g1_leg_model())
+    assert body.limits["g1/left_hip_pitch/position"] == Limits(-2.5307, 2.8798)
+    assert body.limits["g1/left_hip_pitch/velocity"] == Limits(-32.0, 32.0)
+    assert body.limits["g1/left_hip_pitch/effort"] == Limits(-88.0, 88.0)
+    # An asymmetric range, so nothing here is quietly symmetrizing position.
+    assert body.limits["g1/left_knee/position"] == Limits(-0.087267, 2.8798)
+    assert body.limits["g1/left_knee/effort"] == Limits(-139.0, 139.0)
+
+
+def test_the_in_repo_g1_refuses_a_command_past_its_model_limit() -> None:
+    body = pd_joint_description("g1", G1_LEG, model=g1_leg_model())
+    assert not isinstance(
+        validate_command(body, command({"g1/left_knee/position": 1.0}), last_sequence=None),
+        Rejected,
+    )
+    refused = validate_command(body, command({"g1/left_knee/position": 3.0}), last_sequence=None)
+    assert isinstance(refused, Rejected) and refused.reason == "limit"
