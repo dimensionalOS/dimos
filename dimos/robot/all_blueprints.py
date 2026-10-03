@@ -363,6 +363,8 @@ all_modules = {
     "type-safe-navigation-agent": "dimos.agents.typesafe.navigation.TypeSafeNavigationAgent",
     "unitree-g1-skill-container": "dimos.robot.unitree.g1.skill_container.UnitreeG1SkillContainer",
     "unitree-skill-container": "dimos.robot.unitree.unitree_skill_container.UnitreeSkillContainer",
+    "v4-l2-camera-module": "dimos.hardware.sensors.camera.v4l2_camera.V4L2CameraModule",
+    "v4-l2-color-depth-module": "dimos.hardware.sensors.camera.v4l2_color_depth.V4L2ColorDepthModule",
     "video-arm-teleop-module": "dimos.teleop.webxr.extensions.VideoArmTeleopModule",
     "virtual-mid360": "dimos.hardware.sensors.lidar.virtual_mid360.module.VirtualMid360",
     "vlm-agent": "dimos.agents.vlm_agent.VLMAgent",
@@ -375,5 +377,9 @@ all_modules = {
     "world-belief-module": "dimos.experimental.world_belief.worldbelief_module.WorldBeliefModule",
     "world-belief-recorder": "dimos.experimental.world_belief.worldbelief_recorder.WorldBeliefRecorder",
     "wrist-camera": "dimos.teleop.hosted.blueprints.cloudflare.WristCamera",
+    "wrist-left-camera": "dimos.robot.galaxea.r1pro.wrist_cameras.WristLeftCamera",
+    "wrist-left-color-depth": "dimos.robot.galaxea.r1pro.wrist_cameras.WristLeftColorDepth",
+    "wrist-right-camera": "dimos.robot.galaxea.r1pro.wrist_cameras.WristRightCamera",
+    "wrist-right-color-depth": "dimos.robot.galaxea.r1pro.wrist_cameras.WristRightColorDepth",
     "zed-camera": "dimos.hardware.sensors.camera.zed.camera.ZEDCamera",
 }

@@ -51,7 +51,7 @@ _manipulation_tasks = [
 
 r1pro_manipulation = autoconnect(
     r1pro_visualization(),
-    r1pro_control(tasks=_manipulation_tasks),
+    r1pro_control(tasks=_manipulation_tasks, wrist_depth=True),
     ManipulationModule.blueprint(
         model=make_r1pro_model_config(),
         planning_timeout=10.0,

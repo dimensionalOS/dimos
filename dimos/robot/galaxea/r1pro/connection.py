@@ -75,19 +75,14 @@ _FEEDBACK_DISCOVERY_TIMEOUT_S = 5.0
 R1PRO_UPPER_BODY_JOINTS: list[str] = [coordinator_name(j) for j in UPPER_BODY_JOINTS]
 assert len(R1PRO_UPPER_BODY_JOINTS) == _NUM_MOTORS
 
-# JPEG color streams: stream name → ROS topic.
+# JPEG color streams: stream name → ROS topic. The wrist cameras are not here:
+# the blueprints read their colour and depth straight off V4L2 (see
+# ``wrist_cameras``).
 _COLOR_CAMERAS: dict[str, str] = {
     "head_left_color": "/hdas/camera_head/left_raw/image_raw_color/compressed",
     "head_right_color": "/hdas/camera_head/right_raw/image_raw_color/compressed",
-    "wrist_left_color": "/hdas/camera_wrist_left/color/image_raw/compressed",
-    "wrist_right_color": "/hdas/camera_wrist_right/color/image_raw/compressed",
 }
 
-# Raw-image depth streams, gated by config.enable_wrist_depth.
-_WRIST_DEPTH_CAMERAS: dict[str, str] = {
-    "wrist_left_depth": "/hdas/camera_wrist_left/aligned_depth_to_color/image_raw",
-    "wrist_right_depth": "/hdas/camera_wrist_right/aligned_depth_to_color/image_raw",
-}
 _HEAD_DEPTH_TOPIC = "/hdas/camera_head/depth/depth_registered"
 _LIDAR_TOPIC = "/hdas/lidar_chassis_left"
 # base_link -> lidar_chassis_left_link, the fixed joint origin in the vendor URDF.
@@ -142,9 +137,6 @@ class R1ProConnectionConfig(ModuleConfig):
     lidar_frame_id: str = Field(default="lidar_chassis_left_link")
     # Seconds between per-stream sensor-stats log lines (0 disables).
     sensor_stats_interval_s: float = Field(default=10.0)
-    # Wrist depth is raw 16-bit at up to 30 Hz per wrist — too heavy for the
-    # on-robot CPU budget by default; enable when manipulation needs it.
-    enable_wrist_depth: bool = Field(default=False)
     # Max Hz per color camera (0 = no cap).
     color_publish_hz: float = Field(default=5.0)
 
@@ -175,10 +167,6 @@ class R1ProConnection(Module):
     head_right_color: Out[CompressedImage]
     head_depth: Out[Image]
     lidar: Out[PointCloud2]
-    wrist_left_color: Out[CompressedImage]
-    wrist_left_depth: Out[Image]
-    wrist_right_color: Out[CompressedImage]
-    wrist_right_depth: Out[Image]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -407,10 +395,6 @@ class R1ProConnection(Module):
 
         add_stream("head_depth", _HEAD_DEPTH_TOPIC, RosImage, self._convert_loop, Image)
         add_stream("lidar", _LIDAR_TOPIC, RosPointCloud2, self._convert_loop, PointCloud2)
-
-        if self.config.enable_wrist_depth:
-            for stream, topic in _WRIST_DEPTH_CAMERAS.items():
-                add_stream(stream, topic, RosImage, self._convert_loop, Image)
 
         add_stream("imu_chassis", "/hdas/imu_chassis", RosImu, self._imu_loop, maxsize=4)
         add_stream("imu_torso", "/hdas/imu_torso", RosImu, self._imu_loop, maxsize=4)
