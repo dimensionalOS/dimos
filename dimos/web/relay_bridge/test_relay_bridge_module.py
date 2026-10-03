@@ -18,7 +18,8 @@ Relay discovery and `RelayClient.connect` are replaced by fakes and fake
 transports sit under the module's `In` streams (module_test_support.py), so lazy
 subscribe/unsubscribe, the maxHz gate, the encode path, and reconnect are all
 observable directly. cockpit()-authored channels and the publish path are
-covered in test_relay_bridge_authoring.py.
+covered in test_relay_bridge_authoring.py, WebRTC video in
+test_relay_bridge_rtc.py.
 """
 
 from __future__ import annotations
