@@ -115,15 +115,18 @@ _R1PRO_UPPER_BODY_PLANNING_GROUPS = (
 )
 
 
-def make_r1pro_model_config() -> RobotModelConfig:
-    """Build the hardware-backed torso and bimanual planning model."""
+def make_r1pro_model_config(
+    model: RobotModel = R1PRO_MODEL,
+    collision_exclusions: tuple[tuple[str, str], ...] = R1PRO_COLLISION_EXCLUSIONS,
+) -> RobotModelConfig:
+    """Build torso and bimanual groups with the supplied R1 Pro description."""
     return RobotModelConfig(
-        model=R1PRO_MODEL,
+        model=model,
         joint_names=list(R1PRO_UPPER_BODY_PLANNING_JOINTS),
         base_link="base_link",
         planning_groups=list(_R1PRO_UPPER_BODY_PLANNING_GROUPS),
         auto_convert_meshes=True,
-        collision_exclusion_pairs=list(R1PRO_COLLISION_EXCLUSIONS),
+        collision_exclusion_pairs=list(collision_exclusions),
         home_joints=[0.0] * len(R1PRO_UPPER_BODY_PLANNING_JOINTS),
     )
 

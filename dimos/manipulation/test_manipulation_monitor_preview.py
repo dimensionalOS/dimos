@@ -16,7 +16,9 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+import threading
 from unittest.mock import MagicMock
 
 import pytest
@@ -56,6 +58,34 @@ def canonical_model_config() -> RobotModelConfig:
             )
         ],
     )
+
+
+def test_concurrent_stop_closes_monitors_once(canonical_model_config, mocker):
+    module = ManipulationModule(model=canonical_model_config)
+    entered = threading.Event()
+    release = threading.Event()
+
+    def stop_monitors():
+        entered.set()
+        assert release.wait(timeout=3)
+
+    monitor = mocker.Mock()
+    monitor.stop_all_monitors.side_effect = stop_monitors
+    mocker.patch.object(module, "_world_monitor", monitor)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            first = executor.submit(module.stop)
+            try:
+                assert entered.wait(timeout=3)
+                second = executor.submit(module.stop)
+            finally:
+                release.set()
+            first.result(timeout=3)
+            second.result(timeout=3)
+        monitor.stop_all_monitors.assert_called_once()
+    finally:
+        release.set()
+        module.stop()
 
 
 def _one_joint_config(name: str = "arm") -> RobotModelConfig:

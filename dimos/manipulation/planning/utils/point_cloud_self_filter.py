@@ -19,13 +19,13 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from functools import partial
+from importlib import import_module
 from io import BytesIO
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from pydantic import Field
 import trimesh
-import yourdfpy  # type: ignore[import-untyped]
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
@@ -36,6 +36,9 @@ from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.tf.tf import TF
 from dimos.robot.assets.model import RobotModel
 from dimos.utils.logging_config import setup_logger
+
+if TYPE_CHECKING:
+    import open3d as o3d
 
 logger = setup_logger()
 
@@ -48,6 +51,7 @@ class _CollisionGeometry:
     shape: str
     dimensions: tuple[float, ...]
     clear_samples: np.ndarray
+    distance_scene: o3d.t.geometry.RaycastingScene | None
 
 
 class PointCloudSelfFilterConfig(ModuleConfig):
@@ -123,6 +127,7 @@ class PointCloudSelfFilter(Module):
                     geometry.dimensions,
                     geometry.mesh,
                     config.padding_m,
+                    geometry.distance_scene,
                 )
 
             world_from_geometry = world_from_link.to_matrix() @ geometry.link_from_geometry
@@ -177,6 +182,9 @@ class PointCloudSelfFilter(Module):
         self.filtered_pointcloud.publish(filtered)
 
     def _load_collision_geometry(self) -> list[_CollisionGeometry]:
+        o3d = import_module("open3d")
+        yourdfpy = import_module("yourdfpy")
+
         # The URDF is read as-is: yourdfpy tolerates what Drake needs stripped,
         # and trimesh loads DAE and STL without conversion.
         description = self.config.model.load()
@@ -189,17 +197,37 @@ class PointCloudSelfFilter(Module):
             load_collision_meshes=False,
         )
         resolve = partial(yourdfpy.filename_handler_magic, dir=mesh_dir)
+        # Simulators may merge fixed links into their movable ancestor. Their
+        # collision geometry still has an exact pose without a separate TF edge.
+        fixed_parents = {
+            joint.child: joint for joint in robot.robot.joints if joint.type == "fixed"
+        }
         result: list[_CollisionGeometry] = []
         for link in robot.robot.links:
+            frame = link.name
+            frame_from_link = np.eye(4)
+            while frame in fixed_parents:
+                joint = fixed_parents[frame]
+                origin = np.eye(4) if joint.origin is None else np.asarray(joint.origin)
+                frame_from_link = origin @ frame_from_link
+                frame = joint.parent
             for collision in link.collisions:
                 shape = _geometry_mesh(collision.geometry, resolve)
                 if shape is None:
                     continue
                 mesh, shape_name, dimensions = shape
+                scene = None
+                if shape_name == "mesh":
+                    scene = o3d.t.geometry.RaycastingScene(nthreads=1)
+                    scene.add_triangles(
+                        o3d.core.Tensor(np.asarray(mesh.vertices, dtype=np.float32)),
+                        o3d.core.Tensor(np.asarray(mesh.faces, dtype=np.uint32)),
+                    )
                 result.append(
                     _CollisionGeometry(
-                        link=link.name,
-                        link_from_geometry=(
+                        link=frame,
+                        link_from_geometry=frame_from_link
+                        @ (
                             np.eye(4, dtype=np.float64)
                             if collision.origin is None
                             else np.asarray(collision.origin, dtype=np.float64)
@@ -207,13 +235,14 @@ class PointCloudSelfFilter(Module):
                         mesh=mesh,
                         shape=shape_name,
                         dimensions=dimensions,
-                        clear_samples=self._clear_samples(mesh, shape_name, dimensions),
+                        clear_samples=self._clear_samples(mesh, shape_name, dimensions, scene),
+                        distance_scene=scene,
                     )
                 )
         return result
 
     def _clear_samples(
-        self, mesh: trimesh.Trimesh, shape: str, dimensions: tuple[float, ...]
+        self, mesh: trimesh.Trimesh, shape: str, dimensions: tuple[float, ...], scene: Any | None
     ) -> np.ndarray:
         """Grid points covering the geometry, at map resolution.
 
@@ -229,7 +258,7 @@ class PointCloudSelfFilter(Module):
             for lo, hi in zip(lower, upper, strict=True)
         ]
         grid = np.stack(np.meshgrid(*axes, indexing="ij"), axis=-1).reshape((-1, 3))
-        inside = _points_inside(grid, shape, dimensions, mesh, margin)
+        inside = _points_inside(grid, shape, dimensions, mesh, margin, scene)
         return np.asarray(grid[inside], dtype=np.float64)
 
 
@@ -271,11 +300,11 @@ def _points_inside(
     dimensions: tuple[float, ...],
     mesh: trimesh.Trimesh,
     padding: float,
+    scene: Any | None,
 ) -> np.ndarray:
     """Mask of points within `padding` of the shape, in its own frame.
 
-    Primitives answer analytically. Only a real mesh falls through to
-    trimesh.proximity, which needs rtree.
+    Primitives answer analytically. Meshes use a cached Open3D distance-query scene.
     """
     if shape == "box":
         half_size = np.asarray(dimensions, dtype=np.float64) / 2.0
@@ -299,10 +328,14 @@ def _points_inside(
     candidates = np.all((points >= padded_lower) & (points <= padded_upper), axis=1)
     inside = np.zeros(len(points), dtype=bool)
     if np.any(candidates):
-        signed_distance = trimesh.proximity.signed_distance(  # type: ignore[no-untyped-call]
-            mesh, points[candidates]
-        )
-        inside[candidates] = signed_distance >= -padding
+        assert scene is not None
+        o3d = import_module("open3d")
+        signed_distance = scene.compute_signed_distance(
+            o3d.core.Tensor(np.asarray(points[candidates], dtype=np.float32)),
+            nthreads=1,
+            nsamples=3,
+        ).numpy()
+        inside[candidates] = signed_distance <= padding
     return inside
 
 
