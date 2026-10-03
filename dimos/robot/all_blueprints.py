@@ -229,6 +229,7 @@ all_modules = {
     "demo-robot-actions": "dimos.agents.demos.demo_capabilities.DemoRobotActions",
     "demo-sensors": "dimos.agents.demos.demo_capabilities.DemoSensors",
     "depth-camera-feed": "dimos.perception.localize.demo_blueprints.xarm_feed.DepthCameraFeed",
+    "depth2-depth-cloud": "dimos.perception.depth2depth_cloud.module.Depth2DepthCloud",
     "desk-static-tf-module": "dimos.perception.fiducial.blueprints.desk_marker_tf.DeskStaticTfModule",
     "detection2-d-module": "dimos.perception.detection.module2D.Detection2DModule",
     "detection3-d-module": "dimos.perception.detection.module3D.Detection3DModule",

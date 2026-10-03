@@ -1,0 +1,49 @@
+[package]
+name = "dimos-depth2depth-cloud"
+version = "0.1.0"
+edition = "2021"
+description = "Native Rust module: Depth Anything calibrated to a lidar, as a camera-frame point cloud"
+license = "Apache-2.0"
+
+[lib]
+name = "dimos_depth2depth_cloud"
+path = "src/lib.rs"
+
+[[bin]]
+name = "depth2depth_cloud"
+path = "src/bin/depth2depth_cloud.rs"
+
+# Bake registry entry, cross-checked at compile time by the module macro.
+[package.metadata.dimos.module.depth2depth_cloud]
+path = "dimos_depth2depth_cloud::module::Depth2DepthCloud"
+python = "dimos.perception.depth2depth_cloud.module:Depth2DepthCloud"
+
+[package.metadata.dimos.module.depth2depth_cloud.inputs]
+image = "sensor_msgs.CompressedImage"
+camera_info = "sensor_msgs.CameraInfo"
+lidar = "sensor_msgs.PointCloud2"
+tf = "tf2_msgs.TFMessage"
+
+[package.metadata.dimos.module.depth2depth_cloud.outputs]
+depth_cloud = "sensor_msgs.PointCloud2"
+
+[dependencies]
+dimos-module = { path = "../../../../native/rust/dimos-module" }
+lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
+serde = { version = "1", features = ["derive"] }
+tracing = "0.1"
+validator = { version = "0.21", features = ["derive"] }
+nalgebra = "0.35.0"
+rayon = "1"
+turbojpeg = { version = "1.5.1", default-features = false, features = ["cmake"] }
+
+# The model runs on the GPU each platform has: TensorRT on a Jetson, Metal on a Mac.
+[target.'cfg(all(target_os = "linux", target_arch = "aarch64"))'.dependencies]
+depth2depth = { git = "https://github.com/jeff-hykin/depth2depth.git", rev = "77b22b8", features = ["tensorrt"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+depth2depth = { git = "https://github.com/jeff-hykin/depth2depth.git", rev = "77b22b8", features = ["metal"] }
+
+[target.'cfg(not(any(target_os = "macos", all(target_os = "linux", target_arch = "aarch64"))))'.dependencies]
+depth2depth = { git = "https://github.com/jeff-hykin/depth2depth.git", rev = "77b22b8" }
