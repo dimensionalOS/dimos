@@ -30,6 +30,7 @@ gatekeeper. ROS env (``ROS_DOMAIN_ID`` etc.) comes from the environment.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from functools import cache
 import math
 import queue
 import threading
@@ -42,6 +43,7 @@ from reactivex.disposable import Disposable
 
 if TYPE_CHECKING:
     from dimos.protocol.pubsub.impl.rospubsub import RawROS, RawROSTopic
+    from dimos.robot.assets.model import JointDescription
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
@@ -88,8 +90,18 @@ _WRIST_DEPTH_CAMERAS: dict[str, str] = {
 }
 _HEAD_DEPTH_TOPIC = "/hdas/camera_head/depth/depth_registered"
 _LIDAR_TOPIC = "/hdas/lidar_chassis_left"
-# base_link -> lidar_chassis_left_link, the fixed joint origin in the vendor URDF.
-_LIDAR_MOUNT_XYZ = (0.15711, 0.21215, 0.29465)
+_LIDAR_MOUNT_JOINT = "lidar_chassis_left_joint"
+
+
+@cache
+def _lidar_mount_joint() -> JointDescription:
+    """base_link -> lidar_chassis_left_link, the fixed joint in the vendor URDF."""
+    from dimos.robot.galaxea.r1pro.config import R1PRO_MODEL
+
+    joint = R1PRO_MODEL.load().get_joint(_LIDAR_MOUNT_JOINT)
+    if joint is None:
+        raise ValueError(f"R1 Pro URDF has no {_LIDAR_MOUNT_JOINT}")
+    return joint
 
 
 @dataclass
@@ -242,6 +254,7 @@ class R1ProConnection(Module):
         self._sensors = RawROS(node_name="r1pro_sensors")
         self._sensors.start()
 
+        _lidar_mount_joint()  # parse the URDF before the first odom callback needs it
         self._setup_control_topics()
         self._setup_sensor_streams()
 
@@ -620,6 +633,7 @@ class R1ProConnection(Module):
         frame_id = self.config.odom_frame_id
         base = self.config.frame_id
         pose = PoseStamped(ts=now, frame_id=frame_id, position=position, orientation=orientation)
+        lidar_mount = _lidar_mount_joint()
         self.odom.publish(pose)
         self.odometry.publish(
             Odometry(
@@ -636,7 +650,8 @@ class R1ProConnection(Module):
             TFMessage(
                 Transform.from_pose(base, pose),
                 Transform(
-                    translation=Vector3(*_LIDAR_MOUNT_XYZ),
+                    translation=Vector3(*lidar_mount.origin_xyz),
+                    rotation=Quaternion.from_euler(Vector3(*lidar_mount.origin_rpy)),
                     frame_id=base,
                     child_frame_id=self.config.lidar_frame_id,
                     ts=now,
