@@ -279,7 +279,10 @@ def test_pick_rejects_when_already_holding(module: PickAndPlaceModule) -> None:
 
     pick = module.pick_object("cup-1")
 
-    assert pick.message == "Still holding object cup-0; did not start a pick of object cup-1."
+    assert pick.message == (
+        "Still holding object cup-0; did not start a pick of object cup-1. "
+        "Use place_at to put it down first."
+    )
     manipulation.set_gripper_position.assert_not_called()
 
 
@@ -288,7 +291,10 @@ def test_failed_pick_clears_previous_selection(module: PickAndPlaceModule) -> No
 
     result = module.pick_object("missing")
 
-    assert result.message == "No object with id missing in the latest scan. Scanned ids: cup-1."
+    assert result.message == (
+        "No object with id missing in the latest scan. Scanned ids: cup-1. "
+        "Use scan_objects to refresh the list."
+    )
     assert module._selected_grasp is None
 
 
@@ -418,7 +424,8 @@ def test_place_retains_held_state_when_release_fails(
     result = module.place_at(0.4, 0.0, 0.2)
 
     assert result.message == (
-        "Opened the gripper to release the object. Final gripper position 0.50."
+        "Commanded the gripper open to release the object. Final gripper position 0.50. "
+        "The arm stayed at the place pose."
     )
     assert module._holding_object
     assert module._selected_grasp is not None

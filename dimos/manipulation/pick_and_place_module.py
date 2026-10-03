@@ -130,17 +130,20 @@ class PickAndPlaceModule(Module):
         if self._holding_object:
             return SkillResult.ok(
                 f"Still holding object {self._selected_object_id}; "
-                f"did not start a pick of object {object_id}."
+                f"did not start a pick of object {object_id}. Use place_at to put it down first."
             )
         self._clear_selection()
         if object_id not in self._objects:
             scanned = ", ".join(self._objects) or "none"
             return SkillResult.ok(
-                f"No object with id {object_id} in the latest scan. Scanned ids: {scanned}."
+                f"No object with id {object_id} in the latest scan. Scanned ids: {scanned}. "
+                "Use scan_objects to refresh the list."
             )
         pointcloud = self._scene.get_object_pointcloud_by_object_id(object_id)
         if pointcloud is None:
-            return SkillResult.ok(f"Object {object_id} has no point cloud in the latest scan.")
+            return SkillResult.ok(
+                f"Object {object_id} has no point cloud in the latest scan. Use scan_objects again."
+            )
         candidates = self._grasp_generator.propose_grasps(pointcloud)
         self._grasp_candidates = candidates
         self._manipulation.show_grasp_proposals(candidates)
@@ -221,7 +224,9 @@ class PickAndPlaceModule(Module):
         """
         target = f"({x:.2f}, {y:.2f}, {z:.2f})"
         if self._selected_grasp is None or not self._holding_object:
-            return SkillResult.ok(f"Not holding any object; nothing was placed at {target}.")
+            return SkillResult.ok(
+                f"Not holding any object; nothing was placed at {target}. Use pick_object first."
+            )
         group = self._gripper_group(planning_group)
         place = PoseStamped(
             frame_id=self.config.planning_frame,
@@ -234,7 +239,7 @@ class PickAndPlaceModule(Module):
         if blocked := self._servo(preplace, place, group):
             return self._stopped(f"Move down to the place pose {target}", blocked)
         if not_open := self._open_gripper(group, "to release the object"):
-            return not_open
+            return SkillResult.ok(f"{not_open.message} The arm stayed at the place pose.")
         self._holding_object = False
         self._clear_selection()
         if blocked := self._servo(place, preplace, group):
@@ -383,7 +388,7 @@ class PickAndPlaceModule(Module):
 
         Args:
             planning_group: Group whose gripper to open.
-            step: Why it is being opened, completing "Opened the gripper ...".
+            step: Why it is being opened, completing "Commanded the gripper open ...".
 
         Returns None when the jaws reached open (or there is no readback), else a
         statement of where they stopped.
@@ -398,7 +403,7 @@ class PickAndPlaceModule(Module):
         )
         if settle.position is None or open_failure(settle, self.config.grasp_verification) is None:
             return None
-        return SkillResult.ok(f"Opened the gripper {step}. {_gripper_reading(settle)}")
+        return SkillResult.ok(f"Commanded the gripper open {step}. {_gripper_reading(settle)}")
 
     def _close_and_verify(
         self, planning_group: PlanningGroupID, object_id: str
