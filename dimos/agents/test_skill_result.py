@@ -34,19 +34,19 @@ _ANNOTATION_LOGGER = "dimos/agents/annotation.py"
 
 class TestFactories:
     def test_ok_factory_packs_kwargs_into_metadata(self):
-        """`ok(message, **kwargs)` routes kwargs to the metadata dict — non-obvious."""
-        result = SkillResult.ok("done", planning_ms=12.3, attempts=2)
+        """Metadata is carried through to the encoded payload."""
+        result = SkillResult("done", metadata={"planning_ms": 12.3, "attempts": 2})
         assert result.metadata == {"planning_ms": 12.3, "attempts": 2}
 
     def test_str_is_the_message(self):
-        assert str(SkillResult.ok("Opened the gripper")) == "Opened the gripper"
+        assert str(SkillResult("Opened the gripper")) == "Opened the gripper"
 
 
 class TestAgentEncode:
     """Pins the wire contract used by the MCP server's ``agent_encode`` hook."""
 
     def test_payload_shape(self):
-        result = SkillResult.ok("picked")
+        result = SkillResult("picked")
         result.duration_ms = 123.456
 
         encoded = result.agent_encode()
@@ -57,13 +57,13 @@ class TestAgentEncode:
         assert payload == {"message": "picked", "duration_ms": 123.5}
 
     def test_metadata_included_when_present(self):
-        result = SkillResult.ok("done", attempts=3)
+        result = SkillResult("done", metadata={"attempts": 3})
         payload = json.loads(result.agent_encode()[0]["text"])
         assert payload["metadata"] == {"attempts": 3}
 
     def test_metadata_omitted_when_empty(self):
         """Empty metadata is dropped from the wire to keep the payload small."""
-        result = SkillResult.ok("done")
+        result = SkillResult("done")
         payload = json.loads(result.agent_encode()[0]["text"])
         assert "metadata" not in payload
 
@@ -100,7 +100,7 @@ class TestSkillDecoratorTiming:
         @skill
         def my_skill() -> SkillResult:
             time.sleep(0.05)
-            return SkillResult.ok("done")
+            return SkillResult("done")
 
         result = my_skill()
         assert isinstance(result, SkillResult)
@@ -118,7 +118,7 @@ class TestSkillDecoratorTiming:
     def test_logs_message_with_function_name(self, skill_logs):
         @skill
         def set_gripper() -> SkillResult:
-            return SkillResult.ok("Opened the gripper")
+            return SkillResult("Opened the gripper")
 
         set_gripper()
         msgs = _skill_lines(skill_logs, "SKILL set_gripper")
@@ -154,7 +154,7 @@ class TestSkillDecoratorTiming:
     def test_decorator_does_not_mutate_returned_skillresult(self):
         """The decorator returns a fresh SkillResult instance — the body's return
         object keeps its original duration_ms (whatever it was before)."""
-        sentinel = SkillResult.ok("done")
+        sentinel = SkillResult("done")
         sentinel.duration_ms = 999.0
 
         @skill

@@ -311,17 +311,19 @@ class WorldBeliefModule(Module):
         cloud.ts = result.as_of_ts
         self.pointcloud.publish(cloud)
         self.objects.publish(present)
-        return SkillResult.ok(
+        return SkillResult(
             f"Scan complete: {len(present)} object(s) present",
-            objects=summaries,
-            frame_id=frame_id,
-            source_end_ts=result.source_end_ts,
-            as_of_ts=result.as_of_ts,
-            selected_frames=result.selected_frames,
-            folded_frames=result.folded_frames,
-            skipped_frames=result.skipped_frames,
-            prompts=list(vocabulary),
-            prompt_changed=prompt_changed,
+            metadata={
+                "objects": summaries,
+                "frame_id": frame_id,
+                "source_end_ts": result.source_end_ts,
+                "as_of_ts": result.as_of_ts,
+                "selected_frames": result.selected_frames,
+                "folded_frames": result.folded_frames,
+                "skipped_frames": result.skipped_frames,
+                "prompts": list(vocabulary),
+                "prompt_changed": prompt_changed,
+            },
         )
 
     @skill

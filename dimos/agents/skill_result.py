@@ -46,11 +46,6 @@ class SkillResult:
     duration_ms: float = 0.0
     metadata: dict[str, Any] = field(default_factory=dict)
 
-    @classmethod
-    def ok(cls, message: str = "", **metadata: Any) -> SkillResult:
-        """Build a result from a message; keyword arguments become ``metadata``."""
-        return cls(message=message, metadata=dict(metadata))
-
     def agent_encode(self) -> list[dict[str, Any]]:
         """Encode as MCP tool-call content: one text item holding a JSON object."""
         payload: dict[str, Any] = {
