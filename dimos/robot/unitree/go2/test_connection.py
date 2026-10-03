@@ -197,11 +197,12 @@ def test_camera_info_is_restamped_on_each_publish(
     conn.camera_info = MagicMock()
     conn.camera_info_static = CameraInfo(frame_id="camera_optical", ts=1.0)
 
-    def sleep(_seconds: float) -> None:
+    def wait(_seconds: float) -> bool:
         if conn.camera_info.publish.call_count >= 2:
             raise _StopLoopError
+        return False
 
-    mocker.patch.object(go2_conn.time, "sleep", side_effect=sleep)
+    mocker.patch.object(conn._camera_info_stop, "wait", side_effect=wait)
     before = time.time()
     with pytest.raises(_StopLoopError):
         conn.publish_camera_info()

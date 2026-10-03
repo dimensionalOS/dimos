@@ -32,8 +32,9 @@ _DIMSIM_DIR = DIMOS_PROJECT_ROOT / "misc" / "DimSim"
 
 
 class DimSimProcess:
-    def __init__(self, global_config: GlobalConfig) -> None:
+    def __init__(self, global_config: GlobalConfig, *, lcm_url: str | None = None) -> None:
         self.global_config = global_config
+        self.lcm_url = lcm_url
         self.process: subprocess.Popen[bytes] | None = None
 
     def start(self) -> None:
@@ -75,14 +76,17 @@ class DimSimProcess:
                 f"Open http://localhost:{port} in your browser; sensors won't publish until that tab is loaded."
             )
 
-        self.process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        env = os.environ.copy()
+        if self.lcm_url is not None:
+            env["LCM_DEFAULT_URL"] = self.lcm_url
+        self.process = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env
+        )
 
         self._start_log_reader()
 
     def stop(self) -> None:
         if self.process:
-            if self.process.stderr:
-                self.process.stderr.close()
             try:
                 self.process.terminate()
                 self.process.wait(timeout=5)
@@ -92,6 +96,13 @@ class DimSimProcess:
                 self.process.wait(timeout=2)
             except Exception as e:
                 logger.error(f"Error stopping DimSim process: {e}")
+            finally:
+                # Terminate the writer before closing pipes: the log-reader
+                # thread can hold their locks while blocked in readline().
+                if self.process.stderr:
+                    self.process.stderr.close()
+                if self.process.stdout:
+                    self.process.stdout.close()
             self.process = None
 
     def _start_log_reader(self) -> None:
