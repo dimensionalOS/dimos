@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import threading
+import time
 from typing import TYPE_CHECKING
 
 import pytest
@@ -414,3 +415,41 @@ def test_dedicated_workers_trigger_autoscale(manager_and_modules):
     # at least match the dedicated count.
     assert len(manager._workers) == 4
     assert sum(1 for w in manager._workers if w.dedicated) == 2
+
+
+class WarmedMsg:
+    """Stand-in for a message type with heavy decode dependencies."""
+
+    warmed_on: str | None = None  # thread name, set in the worker process
+
+    @classmethod
+    def lcm_warmup(cls) -> None:
+        cls.warmed_on = threading.current_thread().name
+
+
+class WarmedModule(Module):
+    input: In[WarmedMsg]
+
+    @rpc
+    def start(self) -> None:
+        pass
+
+    @rpc
+    def warmed_on(self) -> str | None:
+        return WarmedMsg.warmed_on
+
+
+@pytest.mark.skipif_macos_bug
+def test_deploy_warms_up_input_types_on_a_background_thread(create_worker_manager):
+    worker_manager = create_worker_manager(n_workers=1)
+    module = worker_manager.deploy(WarmedModule, global_config, {})
+    module.start()
+
+    deadline = time.monotonic() + 5
+    warmed_on = module.warmed_on()
+    while warmed_on is None and time.monotonic() < deadline:
+        time.sleep(0.05)
+        warmed_on = module.warmed_on()
+
+    assert warmed_on == "warmup-WarmedModule"
+    module.stop()
