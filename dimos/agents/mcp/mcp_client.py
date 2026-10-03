@@ -52,6 +52,15 @@ logger = setup_logger()
 _RESPONSES_REASONING_MODEL_PREFIXES = ("gpt-5", "o1", "o3", "o4")
 
 
+def _preload_agent_deps() -> None:
+    # About 5 s (langchain_core pulls in transformers and torch); started from
+    # __init__ so the imports overlap the deploy and start phases instead of
+    # running inside on_system_modules().
+    import langchain.agents
+    import langchain.chat_models  # noqa: F401
+    import langchain_openai  # noqa: F401
+
+
 def init_model(model_name: str, trace_dir: Path | None = None) -> Any:
     """Initialize a model while preserving LangChain provider resolution.
 
@@ -122,6 +131,7 @@ class McpClient(Module):
         self._http_client = requests.Session()
         self._seq_ids = SequentialIds()
         self._tool_stream_cleanup = None
+        Thread(target=_preload_agent_deps, name="McpClient-preload", daemon=True).start()
 
     def __reduce__(self) -> Any:
         return (self.__class__, (), {})
