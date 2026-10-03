@@ -118,20 +118,24 @@ class ManipulationSkills(Module):
 
     @skill
     def cancel(self) -> SkillResult:
-        """Stop the active motion or planning attempt, leaving the arm where it is."""
+        """Stop the active motion or planning attempt, leaving the arm where it is.
+
+        Raises RuntimeError when the coordinator does not confirm the stop.
+        """
         result = self.manipulation.cancel()
         if result.status in UNCONFIRMED_STOP:
-            return SkillResult.ok(
-                f"Requested a stop; the arm's stop was not confirmed ({_status(result)})"
-            )
+            raise RuntimeError(f"Stop was not confirmed by the coordinator: {_status(result)}")
         return SkillResult.ok(result.message or "Cancelled")
 
     @skill
     def reset(self) -> SkillResult:
-        """Stop any motion and return to IDLE. Use after a motion fails."""
+        """Stop any motion and return to IDLE. Use after a motion fails.
+
+        Raises RuntimeError when the module refuses to reset.
+        """
         result = self.manipulation.reset()
         if not result.succeeded:
-            return SkillResult.ok(f"Did not reset; module returned {_status(result)}")
+            raise RuntimeError(f"Reset was refused by the module: {_status(result)}")
         return SkillResult.ok(result.message)
 
     @skill

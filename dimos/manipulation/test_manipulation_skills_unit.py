@@ -43,10 +43,8 @@ def test_cancel_reports_an_unconfirmed_stop(
     """A plain "Cancelled" would invite the next motion into a still-moving arm."""
     skills.manipulation.cancel.return_value = ExecutionResult(status, "stop not confirmed")
 
-    result = skills.cancel()
-
-    assert "stop was not confirmed" in result.message
-    assert f"{status.name}: stop not confirmed" in result.message
+    with pytest.raises(RuntimeError, match=f"not confirmed.*{status.name}: stop not confirmed"):
+        skills.cancel()
 
 
 def test_cancel_reports_a_confirmed_stop_as_success(skills: ManipulationSkills) -> None:
@@ -60,7 +58,5 @@ def test_reset_surfaces_a_refused_recovery(skills: ManipulationSkills) -> None:
         CommandStatus.FAILED, "stop not confirmed"
     )
 
-    result = skills.reset()
-
-    assert "Did not reset" in result.message
-    assert "FAILED: stop not confirmed" in result.message
+    with pytest.raises(RuntimeError, match="refused.*FAILED: stop not confirmed"):
+        skills.reset()
