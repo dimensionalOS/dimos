@@ -24,6 +24,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 import numpy as np
+from pymavlink import mavutil  # type: ignore[import-untyped]
 import pytest
 
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -34,6 +35,11 @@ from dimos.robot.drone.dji_video_stream import FakeDJIVideoStream
 
 # Drone class removed - use blueprints instead
 from dimos.robot.drone.mavlink_connection import FakeMavlinkConnection, MavlinkConnection
+
+ACCEPTED = mavutil.mavlink.MAV_RESULT_ACCEPTED
+DENIED = mavutil.mavlink.MAV_RESULT_DENIED
+ARM = mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM
+SET_MODE = mavutil.mavlink.MAV_CMD_DO_SET_MODE
 
 
 class TestMavlinkProcessing(unittest.TestCase):
@@ -885,3 +891,37 @@ class TestVisualServoingVelocity(unittest.TestCase):
         self.assertGreater(vy, 0)
         # No vertical offset -> vx should be ~0
         self.assertAlmostEqual(vx, 0, places=1)
+
+
+@pytest.fixture
+def conn(mocker) -> MavlinkConnection:
+    conn = MavlinkConnection("replay")
+    conn.connected = True
+    conn.mavlink = MagicMock()
+    mocker.patch.object(conn, "update_telemetry")
+    return conn
+
+
+def test_arm_skips_unrelated_ack(conn: MavlinkConnection) -> None:
+    conn.mavlink.recv_match.side_effect = [
+        MagicMock(command=SET_MODE, result=ACCEPTED),
+        MagicMock(command=ARM, result=ACCEPTED),
+        MagicMock(base_mode=mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED),
+    ]
+
+    assert conn.arm()
+
+
+@pytest.mark.parametrize(
+    ("other_result", "mode_result", "expected"),
+    [(ACCEPTED, DENIED, False), (DENIED, ACCEPTED, True)],
+)
+def test_set_mode_skips_unrelated_ack(
+    conn: MavlinkConnection, other_result: int, mode_result: int, expected: bool
+) -> None:
+    conn.mavlink.recv_match.side_effect = [
+        MagicMock(command=ARM, result=other_result),
+        MagicMock(command=SET_MODE, result=mode_result),
+    ]
+
+    assert conn.set_mode("GUIDED") is expected

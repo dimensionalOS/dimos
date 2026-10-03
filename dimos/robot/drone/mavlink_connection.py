@@ -83,6 +83,18 @@ class MavlinkConnection:
             logger.error(f"Connection failed: {e}")
             return False
 
+    def _wait_for_command_ack(self, command: int, timeout: float) -> Any:
+        """Wait for the acknowledgement of a specific MAVLink command."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            remaining = deadline - time.monotonic()
+            ack = self.mavlink.recv_match(type="COMMAND_ACK", blocking=True, timeout=remaining)
+            if ack is None:
+                return None
+            if ack.command == command:
+                return ack
+        return None
+
     def update_telemetry(self, timeout: float = 0.1) -> None:
         """Update telemetry data from available messages."""
         if not self.connected:
@@ -568,9 +580,8 @@ class MavlinkConnection:
             0,
         )
 
-        # Wait for ACK
-        ack = self.mavlink.recv_match(type="COMMAND_ACK", blocking=True, timeout=5)
-        if ack and ack.command == mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM:
+        ack = self._wait_for_command_ack(mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM, timeout=5)
+        if ack:
             if ack.result == mavutil.mavlink.MAV_RESULT_ACCEPTED:
                 logger.info("Arm command accepted")
 
@@ -972,7 +983,7 @@ class MavlinkConnection:
             0,
         )
 
-        ack = self.mavlink.recv_match(type="COMMAND_ACK", blocking=True, timeout=3)
+        ack = self._wait_for_command_ack(mavutil.mavlink.MAV_CMD_DO_SET_MODE, timeout=3)
         if ack and ack.result == mavutil.mavlink.MAV_RESULT_ACCEPTED:
             logger.info(f"Mode changed to {mode}")
             self.telemetry["mode"] = mode_id
