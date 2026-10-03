@@ -805,11 +805,14 @@ jobs:
                 # provision step roots the live closure so GC keeps it.
                 - /var/cache/dimos-nix:/nix
             markers: "self_hosted or skipif_no_ros"
+            # cyclonedds builds from sdist against the C lib only this image ships.
+            dep-group: tests-self-hosted-dds
             experimental: false
           - os: macOS
             container: null  # run on host — `container:` is Linux-only
             # web_browser: the cockpit browser e2e that Linux runs in the `web` job.
             markers: "self_hosted or web_browser"
+            dep-group: tests-self-hosted
             experimental: true
     runs-on:
       - self-hosted
@@ -856,7 +859,7 @@ jobs:
           uv venv .codecov-venv
           uv pip install --python .codecov-venv/bin/python codecov-cli==11.2.8
       - name: Install dependencies
-        run: uv sync --group tests-self-hosted --frozen
+        run: uv sync --group ${{ matrix.dep-group }} --frozen
       - name: Install web_browser e2e dependencies (macOS)
         if: matrix.os == 'macOS'
         run: |
