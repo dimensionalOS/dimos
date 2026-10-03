@@ -810,7 +810,7 @@ jobs:
             container: null  # run on host — `container:` is Linux-only
             # web_browser: the cockpit browser e2e that Linux runs in the `web` job.
             markers: "self_hosted or web_browser"
-            experimental: true
+            experimental: false
     runs-on:
       - self-hosted
       - ${{ matrix.os }}
