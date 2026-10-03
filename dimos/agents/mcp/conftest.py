@@ -66,6 +66,7 @@ def agent_setup(request, mcp_url: str, lcm_url: str):
         client_kwargs: dict = {
             "system_prompt": system_prompt,
             "mcp_server_url": mcp_url,
+            "persist_history": False,
         }
 
         if recording or fixture_path.exists():
