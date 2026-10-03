@@ -5,7 +5,7 @@
 ## Requirements
 
 - Unitree G1 EDU (need SDK/SSH access)
-- Laptop/Desktop with Ubuntu 22.04/24.04 with CUDA GPU (recommended), or macOS (experimental)
+- Laptop/Desktop with Ubuntu 22.04/24.04/26.04 with CUDA GPU (recommended), or macOS (experimental)
 
 ## 1. Get SSH Access
 

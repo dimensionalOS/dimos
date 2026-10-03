@@ -77,7 +77,7 @@ pytest -m self_hosted dimos/path/to/test_something.py
 
 ## Testing on a fresh Ubuntu install
 
-Installation CI runs `scripts/test-install.sh` in fresh Ubuntu 22.04/24.04 containers on x86_64 and ARM64. It verifies one library or developer installation per job without starting blueprints. See [local installation checks](#test-a-checkout-locally).
+Installation CI runs `scripts/test-install.sh` in fresh Ubuntu 22.04/24.04/26.04 containers on x86_64 and ARM64. It verifies one library or developer installation per job without starting blueprints. See [local installation checks](#test-a-checkout-locally).
 
 The application test suite uses pre-built images and cached dependencies. For additional application tests, the
 [misc/fresh-ubuntu-tests/](/misc/fresh-ubuntu-tests/) harness runs its install and test flow inside a fresh, official,

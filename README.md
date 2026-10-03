@@ -149,7 +149,7 @@ curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/in
 
 See [installer options](docs/installation/index.md), or platform notes:
 
-- 🟩 [Ubuntu 22.04 / 24.04](docs/installation/ubuntu.md)
+- 🟩 [Ubuntu 22.04 / 24.04 / 26.04](docs/installation/ubuntu.md)
 - [NixOS / General Linux (not CI-tested)](docs/installation/nix.md)
 - 🟧 [macOS](docs/installation/osx.md)
 
