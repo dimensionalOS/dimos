@@ -1,0 +1,75 @@
+[build-system]
+requires = ["setuptools>=71,<81"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dimos-behavior-runtime"
+version = "0.1.0"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "dimos-lcm @ git+https://github.com/dimensionalOS/dimos-lcm.git@dd2159513ebfaa7ebc5fc32bf60209cd09aa1ca5",
+    "eclipse-zenoh>=1.10.1,<2",
+    "scipy>=1.10",
+    "pydantic>=2",
+    "pydantic-settings>=2",
+    "reactivex>=4",
+    "structlog>=25,<26",
+    "typer>=0.19,<1",
+    "python-dotenv",
+    "annotation-protocol>=1.4",
+    "plum-dispatch==2.5.7",
+    "sortedcontainers",
+    "toolz",
+    "psutil==5.9.8",
+    "PyTurboJPEG==1.8.2",
+    "typing-extensions",
+    "rich",
+    "PyYAML",
+    "filelock",
+    "numpy==1.26.4",
+    "open3d==0.19.0",
+    "omnigibson[primitives]",
+    "bddl",
+    "torch==2.7.0",
+    "torchvision==0.22.0",
+    "torchaudio==2.7.0",
+    "torchcodec==0.5",
+    "isaacsim[all,extscache]==5.1.0",
+    "opencv-python>=4.8,<4.12",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["dimos_behavior*"]
+
+[tool.uv]
+default-groups = []
+# Upstream installs Isaac after OmniGibson; reproduce Isaac's Pillow selection explicitly.
+# Its setup script also reinstalls websockets >=15 and cffi, and removes bundled packaging.
+# NumPy 1.26.4 supports array pickles from the NumPy 2 host; Isaac pins 1.26.0.
+override-dependencies = ["numpy==1.26.4", "pillow==11.3.0", "websockets==15.0.1", "packaging==25.0", "cffi==1.17.1"]
+environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
+
+[tool.uv.sources]
+omnigibson = { git = "https://github.com/StanfordVL/BEHAVIOR-1K.git", rev = "b1979916ec1549b10a4e65e630bc6504a9af1b00", subdirectory = "OmniGibson" }
+bddl = { git = "https://github.com/StanfordVL/BEHAVIOR-1K.git", rev = "b1979916ec1549b10a4e65e630bc6504a9af1b00", subdirectory = "bddl3" }
+torch = { index = "pytorch-cu128" }
+torchvision = { index = "pytorch-cu128" }
+torchaudio = { index = "pytorch-cu128" }
+
+[tool.uv.extra-build-dependencies]
+nvidia-curobo = ["torch==2.7.0", "numpy==1.26.0"]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[[tool.uv.index]]
+name = "nvidia"
+url = "https://pypi.nvidia.com"
+explicit = false
+
+[tool.pytest.ini_options]
+testpaths = ["dimos_behavior"]
+addopts = "--confcutdir=."

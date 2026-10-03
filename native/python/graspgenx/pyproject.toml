@@ -2,7 +2,32 @@
 name = "dimos-graspgenx-runtime"
 version = "0.1.0"
 requires-python = ">=3.12,<3.13"
-dependencies = ["graspgenx", "matplotlib>=3.7.1"]
+dependencies = [
+    "graspgenx",
+    "matplotlib>=3.7.1",
+    "open3d>=0.19",
+    "opencv-contrib-python>=4.8,<5",
+    "dimos-lcm @ git+https://github.com/dimensionalOS/dimos-lcm.git@dd2159513ebfaa7ebc5fc32bf60209cd09aa1ca5",
+    "eclipse-zenoh>=1.10.1,<2",
+    "numpy>=1.26.4",
+    "scipy>=1.10",
+    "pydantic>=2",
+    "pydantic-settings>=2",
+    "reactivex>=4",
+    "structlog>=25,<26",
+    "typer>=0.19,<1",
+    "python-dotenv",
+    "annotation-protocol>=1.4",
+    "plum-dispatch==2.5.7",
+    "sortedcontainers",
+    "toolz",
+    "psutil>=7",
+    "PyTurboJPEG==1.8.2",
+    "typing-extensions",
+    "rich",
+    "PyYAML",
+    "filelock",
+]
 
 [dependency-groups]
 lint = ["mypy==1.19.0"]

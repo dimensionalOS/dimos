@@ -1,0 +1,11 @@
+[workspace]
+name = "dimos-behavior-toolchain"
+channels = ["conda-forge", "nvidia"]
+platforms = ["linux-64"]
+
+[dependencies]
+uv = ">=0.9.25"
+cuda-toolkit = "12.8.*"
+gxx_linux-64 = "13.*"
+libglu = "*"
+libxml2 = "2.13.*"
