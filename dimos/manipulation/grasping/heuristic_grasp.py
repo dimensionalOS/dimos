@@ -44,6 +44,11 @@ class HeuristicGraspConfig(ModuleConfig):
     """
 
     tool_rotation_rpy: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    # Extra wrist yaws to offer alongside the narrow-axis one. A parallel jaw
+    # is symmetric under a half turn, and on a round object the narrow axis is
+    # arbitrary, so these are the same physical grasp reached differently -
+    # which matters when one wrist angle falls outside an arm's envelope.
+    yaw_candidates: int = 1
 
 
 class HeuristicGraspModule(Module, GraspGenSpec):
@@ -69,15 +74,45 @@ class HeuristicGraspModule(Module, GraspGenSpec):
         xy = points[:, :2]
         center_xy = np.median(xy, axis=0)
         low_z, high_z = np.quantile(points[:, 2], [0.05, 0.95])
-        orientation = Quaternion.from_euler(Vector3(-math.pi, 0.0, self._narrow_axis_yaw(xy)))
-        pose = Pose(
-            Vector3(float(center_xy[0]), float(center_xy[1]), float((low_z + high_z) / 2.0)),
-            self._apply_tool_rotation(orientation),
-        )
+        position = Vector3(float(center_xy[0]), float(center_xy[1]), float((low_z + high_z) / 2.0))
+        base_yaw, ambiguous = self._narrow_axis_yaw(xy)
+        candidates = [
+            GraspCandidate(
+                Pose(
+                    position,
+                    self._apply_tool_rotation(
+                        Quaternion.from_euler(Vector3(-math.pi, 0.0, base_yaw + delta))
+                    ),
+                ),
+                score=score,
+            )
+            for delta, score in self._yaw_offsets(ambiguous)
+        ]
         return GraspCandidateArray(
             Header(float(object_pointcloud.ts), object_pointcloud.frame_id),
-            [GraspCandidate(pose, score=1.0)],
+            candidates,
         )
+
+    def _yaw_offsets(self, ambiguous: bool) -> list[tuple[float, float]]:
+        """Wrist yaw deltas to try, best first. The narrow-axis grasp stays first.
+
+        A half turn is always safe: parallel jaws are symmetric. Anything else
+        would grasp across the wide axis, so it is offered only when the cross
+        section has no narrow axis to speak of.
+        """
+        quarter = math.pi / 2.0
+        eighth = math.pi / 4.0
+        offsets = [(0.0, 1.0), (math.pi, 0.95)]
+        if ambiguous:
+            offsets += [
+                (quarter, 0.9),
+                (-quarter, 0.85),
+                (eighth, 0.8),
+                (-eighth, 0.75),
+                (math.pi - eighth, 0.7),
+                (eighth - math.pi, 0.65),
+            ]
+        return offsets[: max(1, self.config.yaw_candidates)]
 
     def _apply_tool_rotation(self, orientation: Quaternion) -> Quaternion:
         roll, pitch, yaw = self.config.tool_rotation_rpy
@@ -86,13 +121,14 @@ class HeuristicGraspModule(Module, GraspGenSpec):
         return orientation * Quaternion.from_euler(Vector3(roll, pitch, yaw))
 
     @staticmethod
-    def _narrow_axis_yaw(xy: NDArray[np.float32]) -> float:
+    def _narrow_axis_yaw(xy: NDArray[np.float32]) -> tuple[float, bool]:
+        """Yaw of the cross-section's narrow axis, and whether it is ambiguous."""
         centered = xy - np.mean(xy, axis=0)
         covariance = centered.T @ centered
         values, vectors = np.linalg.eigh(covariance)
         if values[1] <= 0.0 or np.isclose(values[0], values[1], rtol=0.05):
-            return 0.0
+            return 0.0, True
         narrow_axis = vectors[:, 0]
         yaw = math.atan2(float(narrow_axis[1]), float(narrow_axis[0])) - math.pi / 2.0
         # A parallel-jaw grasp is unchanged by a 180-degree wrist rotation.
-        return (yaw + math.pi / 2.0) % math.pi - math.pi / 2.0
+        return (yaw + math.pi / 2.0) % math.pi - math.pi / 2.0, False
