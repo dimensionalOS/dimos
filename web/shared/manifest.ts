@@ -87,6 +87,10 @@ export const MAX_MANIFEST_ID_LEN = 64;
  * and can never be declared by a manifest. */
 export const RESERVED_CHANNEL_PREFIX = "@";
 
+/** A video channel delivered as a WebRTC track through the relay's SFU: no
+ * frame ever rides the relay for it. */
+export const TRACK_ENCODING = "video.webrtc.v1";
+
 export class ManifestError extends Error {
   constructor(readonly code: string, message: string) {
     super(`${code}: ${message}`);
@@ -377,10 +381,13 @@ export function parseManifest(value: unknown): Manifest {
         );
       }
       const bound = chIds.get(panel.channels[0])!;
-      if (bound.encoding !== "jpeg.v1" || bound.delivery !== "latest" || dirOf(bound) !== "rx") {
+      if (
+        (bound.encoding !== "jpeg.v1" && bound.encoding !== TRACK_ENCODING) ||
+        bound.delivery !== "latest" || dirOf(bound) !== "rx"
+      ) {
         throw new ManifestError(
           "invalid_video_panel",
-          `video panel ${panel.id} needs a jpeg.v1 latest rx channel`,
+          `video panel ${panel.id} needs a jpeg.v1 or ${TRACK_ENCODING} latest rx channel`,
         );
       }
     }
