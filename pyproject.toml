@@ -644,6 +644,7 @@ module = [
     "h5py.*",
     "mcap",
     "mcap.*",
+    "mcap_ros2.*",
     "mujoco",
     "mujoco_playground.*",
     "nav_msgs.*",
