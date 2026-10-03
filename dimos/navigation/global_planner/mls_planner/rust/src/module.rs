@@ -27,7 +27,7 @@ use lcm_msgs::nav_msgs::Path;
 use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
 use lcm_msgs::std_msgs::{Header, Time};
 use tokio::sync::Notify;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 /// A point in the planner's world frame.
 type Xyz = (f32, f32, f32);
@@ -57,6 +57,78 @@ struct SeedRegion {
 
 /// How long half a seed region waits for its counterpart before it is dropped.
 const SEED_PAIR_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Seed regions between progress lines.
+const SEED_PROGRESS_REGIONS: usize = 20;
+
+/// A seed queue quiet this long is taken as a finished load.
+const SEED_SETTLE: Duration = Duration::from_secs(2);
+
+/// The seed regions applied since the queue was last quiet, for the log.
+#[derive(Default)]
+struct SeedProgress {
+    started: Option<Instant>,
+    last_at: Option<Instant>,
+    applied: usize,
+    unusable: usize,
+    points: usize,
+    max_region_ms: f64,
+    sum_region_ms: f64,
+}
+
+impl SeedProgress {
+    fn in_flight(&self) -> bool {
+        self.started.is_some()
+    }
+
+    fn mean_region_ms(&self) -> f64 {
+        self.sum_region_ms / self.applied.max(1) as f64
+    }
+
+    /// Count one region. True when a progress line is due.
+    fn record(&mut self, applied: bool, points: usize, region_ms: f64) -> bool {
+        let now = Instant::now();
+        self.started.get_or_insert(now);
+        self.last_at = Some(now);
+        if !applied {
+            self.unusable += 1;
+            return false;
+        }
+        self.applied += 1;
+        self.points += points;
+        self.max_region_ms = self.max_region_ms.max(region_ms);
+        self.sum_region_ms += region_ms;
+        self.applied.is_multiple_of(SEED_PROGRESS_REGIONS)
+    }
+
+    fn log_progress(&self, queued: usize) {
+        info!(
+            regions_done = self.applied,
+            queued,
+            unusable = self.unusable,
+            points = self.points,
+            max_region_ms = self.max_region_ms,
+            mean_region_ms = self.mean_region_ms(),
+            "Seed regions in progress."
+        );
+    }
+
+    /// Log the load's summary and start over.
+    fn finish(&mut self) {
+        if let (Some(started), Some(last_at)) = (self.started, self.last_at) {
+            info!(
+                regions = self.applied,
+                unusable = self.unusable,
+                points = self.points,
+                load_s = last_at.duration_since(started).as_secs_f64(),
+                max_region_ms = self.max_region_ms,
+                mean_region_ms = self.mean_region_ms(),
+                "Applied the seed regions to the graph."
+            );
+        }
+        *self = Self::default();
+    }
+}
 
 /// Seed clouds and bounds waiting for their counterpart, keyed by the region
 /// number in their header seq, since every region of a seed shares one stamp.
@@ -286,8 +358,17 @@ impl Worker {
             self.config.viz_reach_cells(),
             self.config.viz_sweep_regions as usize,
         );
+        let mut seed_progress = SeedProgress::default();
         loop {
-            self.wake.notified().await;
+            if seed_progress.in_flight() {
+                let woke = tokio::time::timeout(SEED_SETTLE, self.wake.notified()).await;
+                if woke.is_err() {
+                    seed_progress.finish();
+                    continue;
+                }
+            } else {
+                self.wake.notified().await;
+            }
             loop {
                 let goal_changed = self.goal_changed.swap(false, Ordering::SeqCst);
                 let update = self.pending.lock().expect("pending mutex").take();
@@ -302,11 +383,22 @@ impl Worker {
                     self.maybe_replan(&mut planner, &mut last_path_at).await;
                 }
                 // Live updates apply first, then one seed region per pass.
-                let seed = self.seed_regions.lock().expect("seed mutex").pop_front();
+                let (seed, queued) = {
+                    let mut queue = self.seed_regions.lock().expect("seed mutex");
+                    (queue.pop_front(), queue.len())
+                };
                 let Some(seed) = seed else {
                     break;
                 };
-                if tokio::task::block_in_place(|| self.ingest_seed(&mut planner, seed, &mut viz)) {
+                let points = seed.cloud.width as usize * seed.cloud.height as usize;
+                let region_start = Instant::now();
+                let applied =
+                    tokio::task::block_in_place(|| self.ingest_seed(&mut planner, seed, &mut viz));
+                let region_ms = region_start.elapsed().as_secs_f64() * 1e3;
+                if seed_progress.record(applied, points, region_ms) {
+                    seed_progress.log_progress(queued);
+                }
+                if applied {
                     self.publish_viz_if_due(&planner, &mut viz, &mut last_viz_at)
                         .await;
                 }
@@ -920,6 +1012,34 @@ mod tests {
             pairs.pair_cloud(c1).is_none(),
             "the expired bounds no longer pair"
         );
+    }
+
+    #[test]
+    fn seed_progress_counts_applied_regions_and_is_due_every_batch() {
+        let mut progress = SeedProgress::default();
+        assert!(!progress.in_flight());
+        assert!(
+            !progress.record(false, 500, 1.0),
+            "unusable regions never trigger a line"
+        );
+        assert!(progress.in_flight());
+        for i in 1..SEED_PROGRESS_REGIONS {
+            assert!(!progress.record(true, 100, i as f64), "region {i}");
+        }
+        assert!(
+            progress.record(true, 100, 0.5),
+            "the batch's last region is due"
+        );
+        assert_eq!(progress.applied, SEED_PROGRESS_REGIONS);
+        assert_eq!(progress.unusable, 1);
+        assert_eq!(progress.points, 100 * SEED_PROGRESS_REGIONS);
+        assert_eq!(progress.max_region_ms, (SEED_PROGRESS_REGIONS - 1) as f64);
+        let sum: f64 = (1..SEED_PROGRESS_REGIONS).map(|i| i as f64).sum::<f64>() + 0.5;
+        assert!((progress.mean_region_ms() - sum / SEED_PROGRESS_REGIONS as f64).abs() < 1e-9);
+
+        progress.finish();
+        assert!(!progress.in_flight());
+        assert_eq!(progress.applied, 0);
     }
 
     #[test]
