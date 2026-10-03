@@ -21,11 +21,9 @@ from collections.abc import Callable
 import functools
 import json
 import os
-from pathlib import Path
 import pickle
 import subprocess
 import sys
-import sysconfig
 import threading
 import time
 from typing import Any, TypeVar
@@ -57,6 +55,7 @@ from dimos.simulation.mujoco.constants import (
 from dimos.simulation.mujoco.shared_memory import ShmWriter
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.mjpython import prepare_mjpython_launch
 
 ODOM_FREQUENCY = 50
 
@@ -114,18 +113,13 @@ class MujocoConnection:
 
         # Launch the subprocess
         try:
-            # mjpython must be used on macOS (because of launch_passive inside mujoco_process.py).
-            # It needs libpython on the dylib search path; uv-installed Pythons
-            # use @rpath which doesn't always resolve inside venvs, so we
-            # point DYLD_LIBRARY_PATH at the real libpython directory.
-            executable = sys.executable if sys.platform != "darwin" else "mjpython"
-            env = os.environ.copy()
+            # mujoco_process.py calls launch_passive, so macOS needs mjpython.
             if sys.platform == "darwin":
-                # on some systems mujoco looks in the wrong place for shared libraries. So we force it look in the right place
-                libdir = Path(sysconfig.get_config_var("LIBDIR") or "")
-                if libdir.is_dir():
-                    existing = env.get("DYLD_LIBRARY_PATH", "")
-                    env["DYLD_LIBRARY_PATH"] = f"{libdir}:{existing}" if existing else str(libdir)
+                mjpython, env = prepare_mjpython_launch()
+                executable = str(mjpython)
+            else:
+                executable = sys.executable
+                env = os.environ.copy()
 
             self.process = subprocess.Popen(
                 [executable, str(LAUNCHER_PATH), config_pickle, shm_names_json],
