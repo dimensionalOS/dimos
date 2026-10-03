@@ -2322,7 +2322,7 @@ dependencies = [
 [[package]]
 name = "pointlio-core"
 version = "0.1.0"
-source = "git+https://github.com/dimensionalOS/dimos-module-pointlio.git?rev=3c1dcf8b9dfe6402aaf141e116f4caef6c5c8088#3c1dcf8b9dfe6402aaf141e116f4caef6c5c8088"
+source = "git+https://github.com/dimensionalOS/dimos-module-pointlio.git?rev=22a5403f827d030b248ae473c2808b5d405b3d55#22a5403f827d030b248ae473c2808b5d405b3d55"
 dependencies = [
  "nalgebra",
  "serde",
