@@ -34,7 +34,8 @@ def test_sim_g1_adapter_satisfies_whole_body_protocol() -> None:
 def test_sim_g1_adapter_rejects_stale_state(monkeypatch) -> None:
     key = uuid.uuid4().hex[:10]
     monkeypatch.setattr(g1_mod, "shm_key_from_path", lambda _: key)
-    monkeypatch.setattr(mujoco_shm, "STATE_STALE_TIMEOUT_S", 0.05)
+    # Wide enough that a loaded CI runner's scheduling stalls never read as stale.
+    monkeypatch.setattr(mujoco_shm, "STATE_STALE_TIMEOUT_S", 0.5)
     writer = ManipShmWriter(key)
     writer.signal_ready(num_joints=29, arm_joints=29)
     stop = threading.Event()
@@ -46,13 +47,15 @@ def test_sim_g1_adapter_rejects_stale_state(monkeypatch) -> None:
     heartbeat = threading.Thread(target=publish, daemon=True)
     heartbeat.start()
     adapter = SimMujocoG1WholeBodyAdapter(address=Path("unused.xml"))
-    assert adapter.connect() is True
-    stop.set()
-    heartbeat.join()
-    time.sleep(0.06)
     try:
+        assert adapter.connect() is True
+        stop.set()
+        heartbeat.join()
+        time.sleep(0.6)
         assert adapter.is_connected() is False
         assert adapter.write_motor_commands([]) is False
     finally:
+        stop.set()
+        heartbeat.join()
         adapter.disconnect()
         writer.cleanup()

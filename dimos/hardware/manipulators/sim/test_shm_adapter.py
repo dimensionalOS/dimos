@@ -335,25 +335,26 @@ class TestConnect:
 
     def test_connected_adapter_rejects_stale_state(self, shm_key, monkeypatch) -> None:
         monkeypatch.setattr(adapter_mod, "shm_key_from_path", lambda _: shm_key)
-        monkeypatch.setattr(mujoco_shm, "STATE_STALE_TIMEOUT_S", 0.05)
+        # Wide enough that a loaded CI runner's scheduling stalls never read as stale.
+        monkeypatch.setattr(mujoco_shm, "STATE_STALE_TIMEOUT_S", 0.5)
         writer = ManipShmWriter(shm_key)
         writer.signal_ready(num_joints=ARM_DOF)
         stop, heartbeat = start_heartbeat(writer)
         adapter = ShmMujocoAdapter(dof=ARM_DOF, address="/fake/scene.xml")
-        assert adapter.connect() is True
-        hardware = ConnectedHardware(
-            adapter,
-            HardwareComponent(
-                hardware_id="arm",
-                hardware_type=HardwareType.MANIPULATOR,
-                joints=make_joints("arm", ARM_DOF),
-            ),
-        )
-        assert hardware.ready_for_control() is True
-        stop.set()
-        heartbeat.join()
-        time.sleep(0.06)
         try:
+            assert adapter.connect() is True
+            hardware = ConnectedHardware(
+                adapter,
+                HardwareComponent(
+                    hardware_id="arm",
+                    hardware_type=HardwareType.MANIPULATOR,
+                    joints=make_joints("arm", ARM_DOF),
+                ),
+            )
+            assert hardware.ready_for_control() is True
+            stop.set()
+            heartbeat.join()
+            time.sleep(0.6)
             assert adapter.read_error() == (0, "")
             assert adapter.is_connected() is False
             # The tick loop skips unready hardware, so no zeros pass as measured state.
@@ -361,6 +362,8 @@ class TestConnect:
             assert adapter.write_joint_positions([0.0] * ARM_DOF) is False
             assert adapter.read_error() == (1, "MuJoCo joint state stopped updating")
         finally:
+            stop.set()
+            heartbeat.join()
             adapter.disconnect()
             writer.cleanup()
 
