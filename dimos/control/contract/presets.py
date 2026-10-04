@@ -27,8 +27,8 @@ functions build it in one call::
 
 Given the robot's model (its URDF, loaded as a ``RobotModel``), the arm and
 body presets read each joint's kind and limits from it. Without one, every
-joint is taken to turn, measured in radians, and limited only by what is
-passed in ``limits``.
+joint is taken to be revolute, measured in radians, and limited only by
+what is passed in ``limits``.
 
 Each one checks its own result before handing it back, so a description built
 this way is always a valid one.
@@ -76,17 +76,17 @@ from dimos.control.contract.validate import validate_description
 if TYPE_CHECKING:
     from dimos.robot.assets.model import JointDescription, RobotModel
 
-#: The unit of each joint interface, for a joint that turns and one that
-#: slides. A gripper is the exception: it sets its own, because some are
+#: The unit of each joint interface, for a revolute joint and a prismatic
+#: one. A gripper is the exception: it sets its own, because some are
 #: measured in metres and some in a 0-to-1 fraction of fully open.
-_TURNING: Mapping[str, Unit] = {
+_REVOLUTE: Mapping[str, Unit] = {
     POSITION: Unit.RAD,
     VELOCITY: Unit.RAD_PER_S,
     EFFORT: Unit.NM,
     KP: Unit.UNITLESS,
     KD: Unit.UNITLESS,
 }
-_SLIDING: Mapping[str, Unit] = {
+_PRISMATIC: Mapping[str, Unit] = {
     POSITION: Unit.M,
     VELOCITY: Unit.M_PER_S,
     EFFORT: Unit.N,
@@ -96,9 +96,9 @@ _SLIDING: Mapping[str, Unit] = {
 #: Units by the kind of joint a URDF says it is. Any other kind (fixed,
 #: floating, planar) cannot be driven.
 _UNITS_BY_URDF_TYPE: Mapping[str, Mapping[str, Unit]] = {
-    "revolute": _TURNING,
-    "continuous": _TURNING,
-    "prismatic": _SLIDING,
+    "revolute": _REVOLUTE,
+    "continuous": _REVOLUTE,
+    "prismatic": _PRISMATIC,
 }
 
 _PD_STATE: tuple[str, ...] = (POSITION, VELOCITY, EFFORT)
@@ -204,7 +204,7 @@ def _joints(
     resources: list[Resource] = []
     found: dict[str, Limits] = {}
     for name in joints:
-        kind_units = _TURNING
+        kind_units = _REVOLUTE
         if loaded is not None:
             joint = loaded.get_joint(name)
             if joint is None:
@@ -262,9 +262,9 @@ def manipulator_description(
             starts with it, e.g. "arm".
         joints: The arm's joint names, in the order the hardware lists them.
             With a model, each must be a joint in it.
-        model: The arm's robot model. Each joint's kind (turning or sliding,
+        model: The arm's robot model. Each joint's type (revolute or prismatic,
             which sets its units) and its limits on everything it is told
-            come from here. ``None`` to treat every joint as turning, limited
+            come from here. ``None`` to treat every joint as revolute, limited
             only by ``limits``.
         limits: Limits by full name, such as "arm/joint1/position". With a
             model, each one replaces the model's, e.g. to drive slower than
@@ -339,9 +339,9 @@ def pd_joint_description(
         joints: Joint names, in the order the hardware lists them. The order
             is how commands line up with the right motors. With a model, each
             must be a joint in it.
-        model: The body's robot model. Each joint's kind (turning or sliding,
+        model: The body's robot model. Each joint's type (revolute or prismatic,
             which sets its units) and its position, speed and force limits
-            come from here. ``None`` to treat every joint as turning, limited
+            come from here. ``None`` to treat every joint as revolute, limited
             only by ``limits``.
         limits: Limits by full name, such as "g1/left_knee/position". With a
             model, each one replaces the model's.
