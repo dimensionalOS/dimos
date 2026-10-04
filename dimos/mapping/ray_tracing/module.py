@@ -78,6 +78,12 @@ class RayTracingVoxelMapConfig(NativeModuleConfig):
     max_cloud_age_s: float = 0.0
     # Worker threads for parallel map work.
     worker_threads: int = 4
+    # Edge of the square regions a seeded map is handed on in and the map viz publishes by.
+    region_m: float = 4.0
+    # Publish the regions whose chunks changed every Nth frame, zero for never.
+    viz_emit_every: int = 0
+    # Unchanged regions published per viz tick, round robin.
+    viz_sweep_regions: int = 2
 
 
 class RayTracingVoxelMap(NativeModule, mapping.GlobalPointcloud):
@@ -90,11 +96,21 @@ class RayTracingVoxelMap(NativeModule, mapping.GlobalPointcloud):
     # outright, reaching space ray tracing cannot clear: a wrist camera's own
     # arm occludes the volume behind it, so no ray ever misses through it.
     voxel_clear_mask: In[PointCloud2]
+    # An externally loaded map cloud, placed by the latest tf world_frame ->
+    # cloud frame_id. Only the first cloud seeds the map.
+    loaded_map: In[PointCloud2]
     tf: In[TFMessage]
     global_map: Out[PointCloud2]
     local_map: Out[PointCloud2]
     local_map_fine: Out[PointCloud2]
     region_bounds: Out[PoseStamped]
+    # One region of a seeded map as it lands, gated like local_map. seed_bounds
+    # carries its cylinder like region_bounds.
+    seed_map: Out[PointCloud2]
+    seed_bounds: Out[PoseStamped]
+    # The map for viewers, one region cell per message with the cell packed in
+    # the header seq.
+    map_regions: Out[PointCloud2]
 
 
 if TYPE_CHECKING:

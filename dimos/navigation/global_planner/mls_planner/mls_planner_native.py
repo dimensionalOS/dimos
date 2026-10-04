@@ -54,6 +54,10 @@ class MLSPlannerNativeConfig(NativeModuleConfig):
     step_penalty_weight: float = 4.0
     goal_tolerance: float = 0.3
     viz_publish_hz: float = 2.0
+    # The surface and edge viz publish by square cells of this edge, only the
+    # changed ones each tick, plus this many unchanged ones round robin.
+    viz_region_m: float = 4.0
+    viz_sweep_regions: int = 2
     # Worker threads for parallel planner work.
     worker_threads: int = 4
 
@@ -70,6 +74,10 @@ class MLSPlannerNative(NativeModule, spec.GlobalPlanner):
     global_map: In[PointCloud2]
     local_map: In[PointCloud2]
     region_bounds: In[PoseStamped]
+    # A seeded map's regions as RayTracingVoxelMap lands them, applied through
+    # the region pipeline between live updates. Live updates keep priority.
+    seed_map: In[PointCloud2]
+    seed_bounds: In[PoseStamped]
     goal: In[PointStamped]
     tf: In[TFMessage]
 

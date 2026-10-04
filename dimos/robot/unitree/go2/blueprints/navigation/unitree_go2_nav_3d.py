@@ -19,54 +19,30 @@ The Mid-360 driver defaults to the factory lidar IP. Set ``MID360__LIDAR_IP`` wh
 the sensor lives elsewhere.
 """
 
-from typing import Any
-
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPlannerNative
-from dimos.navigation.global_planner.mls_planner.viz import planner_visual_override
+from dimos.navigation.global_planner.viz import nav_static, nav_visual_override
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.trajectory_follower.basic.module import BasicPathFollower
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import rerun_config
 from dimos.robot.unitree.go2.connection import GO2Connection
-from dimos.robot.unitree.go2.constants import (
-    BASE_LINK_HEIGHT,
-    ROBOT_HEIGHT,
-    ROBOT_LENGTH,
-    ROBOT_WIDTH,
-)
+from dimos.robot.unitree.go2.constants import ROBOT_HEIGHT, ROBOT_LENGTH, ROBOT_WIDTH
 from dimos.robot.unitree.go2.go2_mid360_static_transforms import Go2Mid360StaticTf
+from dimos.robot.unitree.go2.nav_3d_config import (
+    mls_planner_config,
+    ray_tracing_config,
+    relocalization,
+    voxel_size,
+    wall_clearance_m,
+)
 from dimos.visualization.vis_module import vis_module
 
-voxel_size = 0.08
-# Raise above 0 to draw what the planner searched over (surface, nodes, weighted edges).
-planner_viz_hz = 0.0
-
-
-def _render_global_map(msg: Any) -> Any:
-    return msg.to_rerun()
-
-
-def _render_path(msg: Any) -> Any:
-    # The planner emits an empty path when it finds no route to the goal.
-    # Logging those would blank the line, so drop them and keep the last path.
-    if len(msg.poses) == 0:
-        return None
-    return msg
-
-
-def _static_robot_body(rr: Any) -> list[Any]:
-    """Go2-shaped box on the body frame."""
-    return [
-        rr.Boxes3D(
-            half_sizes=[ROBOT_LENGTH / 2, ROBOT_WIDTH / 2, ROBOT_HEIGHT / 2],
-            colors=[(0, 255, 127)],
-        ),
-        rr.Transform3D(parent_frame="tf#/base_link"),
-    ]
+# What the planner searched over, by changed cell: surface, nodes and weighted edges.
+planner_viz_hz = 2.0
 
 
 _nav_rerun_config = {
@@ -81,18 +57,16 @@ _nav_rerun_config = {
     "memory_limit": "64MB",
     # The robot box hangs off base_link on its own entity: a static transform
     # under world/tf would override the live one.
-    "static": {
-        "world/robot_body": _static_robot_body,
-    },
+    "static": nav_static(ROBOT_LENGTH, ROBOT_WIDTH, ROBOT_HEIGHT, wall_clearance_m),
     "visual_override": {
         **rerun_config["visual_override"],
-        "world/global_map": _render_global_map,
-        "world/path": _render_path,
+        # The raw premap is millions of points. The viewer gets its voxels on map_regions.
+        "world/loaded_map": None,
         "world/camera_info": None,
         "world/color_image": None,
         "world/lidar": None,
         "world/lidar_raw": None,
-        **planner_visual_override(planner_viz_hz),
+        **nav_visual_override(planner_viz_hz, voxel_size, wall_clearance_m),
     },
 }
 
@@ -114,29 +88,18 @@ unitree_go2_nav_3d = autoconnect(
     mid360_for_pointlio(),
     PointLio.blueprint(),
     Go2Mid360StaticTf.blueprint(),
-    RayTracingVoxelMap.blueprint(
-        voxel_size=voxel_size,
-        emit_every=1,
-        global_emit_every=50,
-        min_health=-1,
-        max_health=5,
-        support_min=4,
-    ),
-    # global_map is remapped off so the planner runs purely on the
-    # incremental local_map + region_bounds pair.
+    RayTracingVoxelMap.blueprint(**ray_tracing_config.model_dump(exclude_unset=True)),
     MLSPlannerNative.blueprint(
-        world_frame="odom",
-        voxel_size=voxel_size,
-        robot_height=ROBOT_HEIGHT,
-        start_z_offset_m=BASE_LINK_HEIGHT,
-        surface_closing_radius=0.3,
-        wall_clearance_m=0.1,
-        wall_buffer_m=0.75,
-        wall_buffer_weight=100.0,
-        step_threshold_m=0.16,
-        step_penalty_weight=4.0,
-        viz_publish_hz=planner_viz_hz,
+        **mls_planner_config.model_copy(update={"viz_publish_hz": planner_viz_hz}).model_dump(
+            exclude_unset=True
+        )
     ).remappings([(MLSPlannerNative, "global_map", "global_map_unused")]),
-    BasicPathFollower.blueprint(speed=0.5, heading_gain=1.5, max_angular=1.5),
+    BasicPathFollower.blueprint(heading_gain=1.0, lookahead_time_s=2.5, min_lookahead_m=1.2),
     MovementManager.blueprint(),
 ).global_config(n_workers=11, robot_model="unitree_go2", obstacle_avoidance=False)
+
+# LCM can lose the one-shot loaded_map publish, so this stack republishes it.
+unitree_go2_nav_3d_relocalization = autoconnect(
+    unitree_go2_nav_3d,
+    relocalization(republish_loaded_map=30.0),
+).global_config(n_workers=12)

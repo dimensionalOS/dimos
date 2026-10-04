@@ -14,6 +14,16 @@
 
 use super::*;
 
+/// A xorshift stream, for stable random test inputs.
+fn test_rng(mut state: u64) -> impl FnMut() -> u64 + Copy {
+    move || {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        state
+    }
+}
+
 fn basic_config() -> Config {
     Config {
         voxel_size: 1.0,
@@ -34,7 +44,21 @@ fn basic_config() -> Config {
         tf_match_tolerance_s: 0.1,
         max_cloud_age_s: 0.0,
         worker_threads: 4,
+        region_m: 4.0,
+        viz_emit_every: 0,
+        viz_sweep_regions: 0,
     }
+}
+
+/// Seed a whole cloud and collect every created key.
+fn seed_all(map: &mut VoxelMap, points: &[(f32, f32, f32)], cfg: &Config) -> AHashSet<VoxelKey> {
+    let region_m = CHUNK_SIZE as f32 * cfg.voxel_size;
+    let part = partition_seed(points, cfg.voxel_size, (0.0, 0.0, 0.0), region_m);
+    let mut created = AHashSet::new();
+    for tile in part.tiles() {
+        created.extend(seed_tile(map, tile, cfg));
+    }
+    created
 }
 
 #[test]
@@ -139,12 +163,12 @@ fn clear_empties_healthy_chunk_index() {
     let mut map = VoxelMap::default();
     update_map(&mut map, (0.0, 0.0, 0.0), &[(5.5, 0.5, 0.5)], &cfg);
     let no_live = AHashSet::new();
-    assert!(!emit_points(&map, 1.0, None, 0, &no_live).is_empty());
+    assert!(!emit_points(&map, 1.0, None, &no_live).is_empty());
 
     map.clear();
     assert!(map.voxels.is_empty());
     assert!(
-        emit_points(&map, 1.0, None, 0, &no_live).is_empty(),
+        emit_points(&map, 1.0, None, &no_live).is_empty(),
         "cleared map must not emit from a stale chunk index"
     );
 }
@@ -309,6 +333,9 @@ fn ground_clipping_single_ray() {
         tf_match_tolerance_s: 0.1,
         max_cloud_age_s: 0.0,
         worker_threads: 4,
+        region_m: 4.0,
+        viz_emit_every: 0,
+        viz_sweep_regions: 0,
     };
     // Build the floor over a y band so it is a 2d plane, not a wire.
     let max_x = 25.0_f32;
@@ -467,6 +494,9 @@ fn stair_clipping_ray_fan() {
         tf_match_tolerance_s: 0.1,
         max_cloud_age_s: 0.0,
         worker_threads: 4,
+        region_m: 4.0,
+        viz_emit_every: 0,
+        viz_sweep_regions: 0,
     };
 
     // Staircase
@@ -547,6 +577,9 @@ fn landing_floor_ray_fan() {
         tf_match_tolerance_s: 0.1,
         max_cloud_age_s: 0.0,
         worker_threads: 4,
+        region_m: 4.0,
+        viz_emit_every: 0,
+        viz_sweep_regions: 0,
     };
 
     // Flat floor from the sensor out to a vertical wall.
@@ -615,6 +648,9 @@ fn landing_grazed_from_below() {
         tf_match_tolerance_s: 0.1,
         max_cloud_age_s: 0.0,
         worker_threads: 4,
+        region_m: 4.0,
+        viz_emit_every: 0,
+        viz_sweep_regions: 0,
     };
 
     // Staircase topped by a flat landing and a back wall.
@@ -752,6 +788,9 @@ fn grazing_ray_spares_planar_floor() {
         tf_match_tolerance_s: 0.1,
         max_cloud_age_s: 0.0,
         worker_threads: 4,
+        region_m: 4.0,
+        viz_emit_every: 0,
+        viz_sweep_regions: 0,
     };
     let (mut map, _) = build_surface(&floor, voxel_size, cfg.max_health);
     let row: Vec<VoxelKey> = map
@@ -787,13 +826,14 @@ fn support_gate_drops_isolated_voxels() {
     let no_live = AHashSet::new();
     // support_min 0 emits every surface voxel.
     assert_eq!(
-        tuples(emit_points(&map, voxel_size, Some(&bounds), 0, &no_live)).len(),
+        tuples(emit_points(&map, voxel_size, Some(&bounds), &no_live)).len(),
         10
     );
 
     // Every patch cell has at least 3 surface neighbors (the corners exactly
     // 3), so support_min 3 keeps the patch and drops only the isolated voxel.
-    let gated = tuples(emit_points(&map, voxel_size, Some(&bounds), 3, &no_live));
+    map.set_support_min(3);
+    let gated = tuples(emit_points(&map, voxel_size, Some(&bounds), &no_live));
     assert_eq!(gated.len(), 9);
     let half = voxel_size * 0.5;
     let isolated = (20.0 + half, 20.0 + half, half);
@@ -859,13 +899,7 @@ fn tuples(flat: Vec<f32>) -> Vec<(f32, f32, f32)> {
 /// dense regions, and both bounded and unbounded queries.
 #[test]
 fn emit_points_matches_naive_scan_on_random_maps() {
-    let mut state = 88172645463325252_u64;
-    let mut next_u64 = move || {
-        state ^= state << 13;
-        state ^= state >> 7;
-        state ^= state << 17;
-        state
-    };
+    let mut next_u64 = test_rng(88172645463325252);
 
     let voxel_size = 0.5;
     let bounds = LocalBounds {
@@ -891,8 +925,9 @@ fn emit_points_matches_naive_scan_on_random_maps() {
         }
 
         for (support_min, use_bounds) in [(0, false), (0, true), (2, false), (2, true), (4, true)] {
+            map.set_support_min(support_min);
             let b = use_bounds.then_some(&bounds);
-            let got = sort_points(tuples(emit_points(&map, voxel_size, b, support_min, &live)));
+            let got = sort_points(tuples(emit_points(&map, voxel_size, b, &live)));
             let want = sort_points(emit_points_naive(&map, voxel_size, b, support_min, &live));
             assert_eq!(
                 got, want,
@@ -918,7 +953,7 @@ fn healthy_chunk_index_excludes_dead_entries_regardless_of_count() {
     }
 
     let live = AHashSet::new();
-    let points = tuples(emit_points(&map, 1.0, None, 0, &live));
+    let points = tuples(emit_points(&map, 1.0, None, &live));
     assert_eq!(points.len(), 9, "only the healthy patch is emitted");
 
     let indexed: usize = map.healthy_chunks.values().map(|s| s.len()).sum();
@@ -965,13 +1000,7 @@ fn healthy_chunk_index_tracks_health_transitions_through_update_map() {
 /// neighbors already exist, which seeding only at creation would miss.
 #[test]
 fn support_field_matches_neighbor_scan_after_random_transitions() {
-    let mut state = 5573589319906701683_u64;
-    let mut next_u64 = move || {
-        state ^= state << 13;
-        state ^= state >> 7;
-        state ^= state << 17;
-        state
-    };
+    let mut next_u64 = test_rng(5573589319906701683);
 
     let cfg = Config {
         min_health: -1,
@@ -1090,7 +1119,7 @@ fn fine_emission_nests_inside_healthy_voxels() {
         &cfg,
     );
     let no_live = AHashSet::new();
-    let got = sort_points(tuples(emit_points_fine(&map, 1.0, 2, None, 0, &no_live)));
+    let got = sort_points(tuples(emit_points_fine(&map, 1.0, 2, None, &no_live)));
     assert_eq!(got, vec![(5.25, 0.25, 0.25), (5.75, 0.75, 0.75)]);
 }
 
@@ -1107,7 +1136,7 @@ fn cleared_voxel_drops_fine_detail() {
     // Re-observing the voxel starts fresh instead of resurrecting old detail.
     update_map(&mut map, (0.0, 0.0, 0.0), &[(5.6, 0.6, 0.6)], &cfg);
     let no_live = AHashSet::new();
-    let got = tuples(emit_points_fine(&map, 1.0, 2, None, 0, &no_live));
+    let got = tuples(emit_points_fine(&map, 1.0, 2, None, &no_live));
     assert!(got.contains(&(5.75, 0.75, 0.75)));
     assert!(
         !got.contains(&(5.25, 0.25, 0.25)),
@@ -1126,9 +1155,9 @@ fn live_fine_cells_emit_before_confirmation() {
     assert_eq!(map.health((5, 0, 0)), Some(0), "not yet healthy");
 
     let no_live = AHashSet::new();
-    assert!(emit_points_fine(&map, 1.0, 2, None, 0, &no_live).is_empty());
+    assert!(emit_points_fine(&map, 1.0, 2, None, &no_live).is_empty());
     assert_eq!(
-        tuples(emit_points_fine(&map, 1.0, 2, None, 0, &hits.fine)),
+        tuples(emit_points_fine(&map, 1.0, 2, None, &hits.fine)),
         vec![(5.25, 0.25, 0.25)],
         "this frame's returns show through the live merge"
     );
@@ -1136,7 +1165,7 @@ fn live_fine_cells_emit_before_confirmation() {
     // Once the voxel confirms healthy the gated path covers the live cell.
     let hits = update_map(&mut map, (0.0, 0.0, 0.0), &[(5.1, 0.1, 0.1)], &cfg);
     assert_eq!(
-        tuples(emit_points_fine(&map, 1.0, 2, None, 0, &hits.fine)),
+        tuples(emit_points_fine(&map, 1.0, 2, None, &hits.fine)),
         vec![(5.25, 0.25, 0.25)],
         "a covered live cell is not emitted twice"
     );
@@ -1156,10 +1185,11 @@ fn fine_emission_applies_support_min() {
 
     let no_live = AHashSet::new();
     assert_eq!(
-        tuples(emit_points_fine(&map, 1.0, 2, None, 0, &no_live)).len(),
+        tuples(emit_points_fine(&map, 1.0, 2, None, &no_live)).len(),
         10
     );
-    let gated = tuples(emit_points_fine(&map, 1.0, 2, None, 3, &no_live));
+    map.set_support_min(3);
+    let gated = tuples(emit_points_fine(&map, 1.0, 2, None, &no_live));
     assert_eq!(gated.len(), 9, "isolated voxel's fine cell is gated out");
 }
 
@@ -1168,13 +1198,7 @@ fn fine_emission_applies_support_min() {
 /// a from-scratch pooled fit almost exactly.
 #[test]
 fn milestone_gated_normals_match_full_refit() {
-    let mut state = 7043284794951226509_u64;
-    let mut next_u64 = move || {
-        state ^= state << 13;
-        state ^= state >> 7;
-        state ^= state << 17;
-        state
-    };
+    let mut next_u64 = test_rng(7043284794951226509);
     let jitter = move || ((next_u64() % 1000) as f32 / 1000.0 - 0.5) * 0.01;
 
     let voxel_size = 0.1_f32;
@@ -1293,13 +1317,7 @@ fn emit_points_fine_naive(
 /// bounded and unbounded queries.
 #[test]
 fn emit_points_fine_matches_naive_scan_on_random_maps() {
-    let mut state = 3141592653589793238_u64;
-    let mut next_u64 = move || {
-        state ^= state << 13;
-        state ^= state >> 7;
-        state ^= state << 17;
-        state
-    };
+    let mut next_u64 = test_rng(3141592653589793238);
     let mut next_coord = move || (next_u64() % 2400) as f32 / 100.0 - 12.0;
 
     let cfg = fine_config(3);
@@ -1322,15 +1340,9 @@ fn emit_points_fine_matches_naive_scan_on_random_maps() {
         }
 
         for (support_min, use_bounds) in [(0, false), (0, true), (2, true), (4, true)] {
+            map.set_support_min(support_min);
             let b = use_bounds.then_some(&bounds);
-            let got = sort_points(tuples(emit_points_fine(
-                &map,
-                1.0,
-                3,
-                b,
-                support_min,
-                &no_live,
-            )));
+            let got = sort_points(tuples(emit_points_fine(&map, 1.0, 3, b, &no_live)));
             let want = sort_points(emit_points_fine_naive(&map, 1.0, 3, b, support_min));
             assert_eq!(
                 got, want,
@@ -1345,13 +1357,7 @@ fn emit_points_fine_matches_naive_scan_on_random_maps() {
 /// voxel that saw returns emits at least one child.
 #[test]
 fn fine_children_bin_exactly_to_their_parents() {
-    let mut state = 2891336453748303025_u64;
-    let mut next_u64 = move || {
-        state ^= state << 13;
-        state ^= state >> 7;
-        state ^= state << 17;
-        state
-    };
+    let mut next_u64 = test_rng(2891336453748303025);
     let mut next_coord = move || (next_u64() % 1600) as f32 / 100.0 - 8.0;
 
     let cfg = fine_config(3);
@@ -1362,12 +1368,12 @@ fn fine_children_bin_exactly_to_their_parents() {
     update_map(&mut map, (20.0, 20.0, 20.0), &points, &cfg);
 
     let no_live = AHashSet::new();
-    let fine = tuples(emit_points_fine(&map, 1.0, 3, None, 0, &no_live));
+    let fine = tuples(emit_points_fine(&map, 1.0, 3, None, &no_live));
     let binned: AHashSet<VoxelKey> = fine
         .iter()
         .map(|&(x, y, z)| world_to_voxel(x, y, z, 1.0))
         .collect();
-    let healthy: AHashSet<VoxelKey> = tuples(emit_points(&map, 1.0, None, 0, &no_live))
+    let healthy: AHashSet<VoxelKey> = tuples(emit_points(&map, 1.0, None, &no_live))
         .iter()
         .map(|&(x, y, z)| world_to_voxel(x, y, z, 1.0))
         .collect();
@@ -1391,13 +1397,13 @@ fn clear_voxels_removes_from_the_healthy_chunk_index() {
     let mut map = VoxelMap::default();
     update_map(&mut map, (0.0, 0.0, 0.0), &[(5.5, 0.5, 0.5)], &cfg);
     let no_live = AHashSet::new();
-    assert!(!emit_points(&map, 1.0, None, 0, &no_live).is_empty());
+    assert!(!emit_points(&map, 1.0, None, &no_live).is_empty());
 
     assert_eq!(map.clear_voxels([(5, 0, 0)]), 1);
 
     assert_eq!(map.health((5, 0, 0)), None);
     assert!(
-        emit_points(&map, 1.0, None, 0, &no_live).is_empty(),
+        emit_points(&map, 1.0, None, &no_live).is_empty(),
         "cleared voxel must not emit from a stale chunk index"
     );
 }
@@ -1455,9 +1461,454 @@ fn clear_voxels_takes_the_fine_layer_with_it() {
     let mut map = VoxelMap::default();
     update_map(&mut map, (0.0, 0.0, 0.0), &[(5.1, 0.1, 0.1)], &cfg);
     let no_live = AHashSet::new();
-    assert!(!emit_points_fine(&map, 1.0, 2, None, 0, &no_live).is_empty());
+    assert!(!emit_points_fine(&map, 1.0, 2, None, &no_live).is_empty());
 
     assert_eq!(map.clear_voxels([(5, 0, 0)]), 1);
 
-    assert!(emit_points_fine(&map, 1.0, 2, None, 0, &no_live).is_empty());
+    assert!(emit_points_fine(&map, 1.0, 2, None, &no_live).is_empty());
+}
+
+/// Seeding into an empty map builds exactly what the incremental path
+/// builds: voxels, health, moments, support, chunk index, normals.
+#[test]
+fn seed_matches_from_scratch_build() {
+    let mut next_u64 = test_rng(6364136223846793005);
+    let mut next_coord = move || (next_u64() % 1200) as f32 / 100.0 - 6.0;
+    let cfg = basic_config();
+    let points: Vec<(f32, f32, f32)> = (0..600)
+        .map(|_| (next_coord(), next_coord(), next_coord()))
+        .collect();
+
+    let mut seeded = VoxelMap::default();
+    let created = seed_all(&mut seeded, &points, &cfg);
+    let (mut reference, keys) = build_surface(&points, cfg.voxel_size, SEED_HEALTH);
+
+    let mut created_sorted: Vec<VoxelKey> = created.iter().copied().collect();
+    created_sorted.sort();
+    assert_eq!(created_sorted, keys);
+    assert_eq!(seeded.voxels.len(), reference.voxels.len());
+    for (&key, want) in reference.voxels.iter() {
+        let got = &seeded.voxels[&key];
+        assert_eq!(got.health, want.health, "health at {key:?}");
+        assert_eq!(got.num_pts, want.num_pts, "num_pts at {key:?}");
+        assert_eq!(got.sum, want.sum, "sum at {key:?}");
+        assert_eq!(got.support, want.support, "support at {key:?}");
+        match (got.normal, want.normal) {
+            (Some(a), Some(b)) => {
+                assert!(a.dot(&b).abs() > 0.999, "normal at {key:?}: {a:?} vs {b:?}")
+            }
+            (a, b) => assert_eq!(a.is_some(), b.is_some(), "normal presence at {key:?}"),
+        }
+    }
+    assert_eq!(seeded.healthy_chunks, reference.healthy_chunks);
+
+    let no_live = AHashSet::new();
+    for support_min in [0, 3] {
+        seeded.set_support_min(support_min);
+        reference.set_support_min(support_min);
+        let got = sort_points(tuples(emit_points(&seeded, 1.0, None, &no_live)));
+        let want = sort_points(tuples(emit_points(&reference, 1.0, None, &no_live)));
+        assert_eq!(got, want, "emit at support_min={support_min}");
+    }
+}
+
+/// A seed leaves existing voxels' health and moments alone. Only their
+/// support counts see the new neighbors.
+#[test]
+fn seed_leaves_live_voxels_untouched() {
+    let cfg = basic_config();
+    let mut map = VoxelMap::default();
+    update_map(&mut map, (0.0, 0.0, 0.0), &[(5.2, 0.2, 0.2)], &cfg);
+    let before = map.voxels[&(5, 0, 0)].clone();
+
+    let created = seed_all(&mut map, &[(5.7, 0.7, 0.7), (6.5, 0.5, 0.5)], &cfg);
+
+    assert_eq!(created.len(), 1);
+    assert!(created.contains(&(6, 0, 0)));
+    let after = &map.voxels[&(5, 0, 0)];
+    assert_eq!(after.health, before.health);
+    assert_eq!(
+        after.num_pts, before.num_pts,
+        "seeded points must not pollute live moments"
+    );
+    assert_eq!(after.sum, before.sum);
+    assert_eq!(after.support, 1, "the seeded neighbor still counts");
+    assert_eq!(map.voxels[&(6, 0, 0)].support, 1);
+    assert_eq!(map.health((6, 0, 0)), Some(SEED_HEALTH));
+}
+
+/// Seeding the same cloud twice creates nothing and adds no moments.
+#[test]
+fn second_seed_is_a_no_op() {
+    let cfg = basic_config();
+    let mut map = VoxelMap::default();
+    let points = [(1.5, 1.5, 0.5), (2.5, 1.5, 0.5)];
+    assert_eq!(seed_points(&mut map, &points, &cfg), 2);
+    let num_pts_before = map.voxels[&(1, 1, 0)].num_pts;
+    let support_before = map.voxels[&(1, 1, 0)].support;
+
+    let again = seed_points(&mut map, &points, &cfg);
+
+    assert_eq!(again, 0);
+    assert_eq!(map.voxels.len(), 2);
+    assert_eq!(map.voxels[&(1, 1, 0)].num_pts, num_pts_before);
+    assert_eq!(map.voxels[&(1, 1, 0)].support, support_before);
+}
+
+/// Seeded wall voxels get normals, so a grazing ray spares them where a
+/// moment-less wall is carved.
+#[test]
+fn seeded_wall_normals_spare_grazing_rays() {
+    let cfg = basic_config();
+    let mut wall: Vec<(f32, f32, f32)> = Vec::new();
+    for iy in 0..16 {
+        for iz in 0..16 {
+            wall.push((5.5, 0.25 + iy as f32 * 0.5, 0.25 + iz as f32 * 0.5));
+        }
+    }
+
+    let mut seeded = VoxelMap::default();
+    seed_points(&mut seeded, &wall, &cfg);
+    assert!(
+        seeded.voxels[&(5, 4, 4)].planar_normal().is_some(),
+        "seeded wall voxel must carry a normal"
+    );
+
+    // The same wall without moments, so no normals.
+    let mut bare = VoxelMap::default();
+    for key in metric_voxel_keys(wall.iter().copied(), cfg.voxel_size) {
+        bare.set_health(key, SEED_HEALTH);
+    }
+
+    // A ray along the wall plane.
+    let origin = (5.5, -2.5, 4.5);
+    let hit = [(5.5, 10.5, 4.5)];
+    update_map(&mut seeded, origin, &hit, &cfg);
+    update_map(&mut bare, origin, &hit, &cfg);
+
+    assert_eq!(
+        seeded.health((5, 4, 4)),
+        Some(SEED_HEALTH),
+        "the normal earns the grazing spare"
+    );
+    assert_eq!(
+        bare.health((5, 4, 4)),
+        None,
+        "without a normal the graze carves"
+    );
+}
+
+#[test]
+fn seed_sets_fine_bits_when_layer_is_on() {
+    let cfg = fine_config(2);
+    let mut map = VoxelMap::default();
+    seed_points(&mut map, &[(5.1, 0.1, 0.1)], &cfg);
+
+    let no_live = AHashSet::new();
+    assert_eq!(
+        tuples(emit_points_fine(&map, 1.0, 2, None, &no_live)),
+        vec![(5.25, 0.25, 0.25)]
+    );
+}
+
+/// Seeding a live map leaves existing health alone and keeps support and
+/// the chunk index matching a from-scratch scan.
+#[test]
+fn seed_into_live_map_keeps_indexes_consistent() {
+    let mut next_u64 = test_rng(1442695040888963407);
+    let mut next_coord = move || (next_u64() % 800) as f32 / 100.0 - 4.0;
+    let cfg = Config {
+        min_health: -1,
+        max_health: 3,
+        ..basic_config()
+    };
+
+    for trial in 0..5 {
+        let mut map = VoxelMap::default();
+        for _ in 0..3 {
+            let frame: Vec<(f32, f32, f32)> = (0..150)
+                .map(|_| (next_coord(), next_coord(), next_coord()))
+                .collect();
+            update_map(&mut map, (0.0, 0.0, 10.0), &frame, &cfg);
+        }
+        let cloud: Vec<(f32, f32, f32)> = (0..400)
+            .map(|_| (next_coord(), next_coord(), next_coord()))
+            .collect();
+        let healths_before: AHashMap<VoxelKey, VoxelHealth> =
+            map.voxels.iter().map(|(&k, v)| (k, v.health)).collect();
+
+        let created = seed_all(&mut map, &cloud, &cfg);
+
+        for (key, health) in healths_before {
+            assert_eq!(
+                map.voxels[&key].health, health,
+                "trial {trial}: pre-existing {key:?} changed"
+            );
+        }
+        for &key in created.iter() {
+            assert_eq!(map.voxels[&key].health, SEED_HEALTH, "trial {trial}");
+        }
+        let keys: Vec<VoxelKey> = map.voxels.keys().copied().collect();
+        for k in keys {
+            assert_eq!(
+                map.voxels[&k].support,
+                map.count_healthy_neighbors(k),
+                "trial {trial}: support({k:?})"
+            );
+        }
+        let indexed: AHashSet<VoxelKey> = map
+            .healthy_chunks
+            .values()
+            .flat_map(|s| s.iter().copied())
+            .collect();
+        let healthy: AHashSet<VoxelKey> = map
+            .voxels
+            .iter()
+            .filter(|(_, v)| v.health > 0)
+            .map(|(&k, _)| k)
+            .collect();
+        assert_eq!(indexed, healthy, "trial {trial}: chunk index");
+    }
+}
+
+#[test]
+fn partition_seed_orders_tiles_nearest_the_origin_first() {
+    let voxel_size = 1.0;
+    let edge = CHUNK_SIZE as f32 * voxel_size;
+    let points: Vec<(f32, f32, f32)> = (0..6).map(|i| (i as f32 * edge + 0.5, 0.5, 0.5)).collect();
+    let origin = points[3];
+
+    let part = partition_seed(&points, voxel_size, origin, edge);
+    let tiles: Vec<&SeedTile> = part.tiles().collect();
+
+    assert_eq!(part.voxels, points.len(), "one voxel per point here");
+    assert_eq!(tiles.len(), points.len(), "one tile per chunk");
+    assert_eq!(*tiles[0], vec![points[3]]);
+    let distances: Vec<f32> = tiles.iter().map(|t| (t[0].0 - origin.0).abs()).collect();
+    assert!(distances.windows(2).all(|w| w[0] <= w[1]), "{distances:?}");
+}
+
+/// Regions are the squares of a `region_m` grid, nearest the origin first,
+/// each cylinder covering its chunks with a voxel to spare.
+#[test]
+fn partition_seed_groups_chunks_into_regions_with_covering_cylinders() {
+    let voxel_size = 1.0;
+    let edge = CHUNK_SIZE as f32 * voxel_size;
+    let region_m = 2.0 * edge;
+    // Two chunks stacked in z in the first region, one chunk in the next.
+    let points = vec![
+        (0.5, 0.5, 0.5),
+        (0.5, 0.5, edge + 0.5),
+        (2.0 * edge + 0.5, 0.5, 0.5),
+    ];
+    let origin = (2.0 * edge + 0.5, 0.5, 0.5);
+
+    let part = partition_seed(&points, voxel_size, origin, region_m);
+
+    assert_eq!(part.regions.len(), 2);
+    let near = &part.regions[0];
+    assert_eq!(near.tiles.len(), 1, "the origin's region comes first");
+    assert_eq!(near.tiles[0], vec![points[2]]);
+    let far = &part.regions[1];
+    assert_eq!(far.tiles.len(), 2, "both stacked chunks share one region");
+    assert_eq!((far.cylinder.cx, far.cylinder.cy), (edge / 2.0, edge / 2.0));
+    assert_eq!(far.cylinder.z_min, -voxel_size);
+    assert_eq!(far.cylinder.z_max, 2.0 * edge + voxel_size);
+    assert_regions_cover_their_tiles(&part);
+
+    // A region grid finer than a chunk still yields regions covering their chunk.
+    let fine = partition_seed(&points, voxel_size, origin, edge / 4.0);
+    assert_regions_cover_their_tiles(&fine);
+}
+
+fn assert_regions_cover_their_tiles(part: &SeedPartition) {
+    for region in &part.regions {
+        let b = region.cylinder.bounds();
+        for tile in &region.tiles {
+            for &(x, y, z) in tile {
+                assert!(
+                    b.contains(x, y, z),
+                    "point {:?} outside its region",
+                    (x, y, z)
+                );
+            }
+        }
+    }
+}
+
+/// Live frames between seed tiles never see a half-updated map: support
+/// counts and the healthy-chunk index stay exact after every tile.
+#[test]
+fn seed_tiles_interleaved_with_live_frames_keep_indexes_consistent() {
+    let mut next_u64 = test_rng(1442695040888963407);
+    let mut next_coord = move || (next_u64() % 4000) as f32 / 100.0 - 20.0;
+    let cfg = Config {
+        min_health: -1,
+        max_health: 3,
+        ..basic_config()
+    };
+    let cloud: Vec<(f32, f32, f32)> = (0..1500)
+        .map(|_| (next_coord(), next_coord(), next_coord()))
+        .collect();
+    let region_m = CHUNK_SIZE as f32 * cfg.voxel_size;
+    let part = partition_seed(&cloud, cfg.voxel_size, (0.0, 0.0, 0.0), region_m);
+    let tiles: Vec<&SeedTile> = part.tiles().collect();
+    assert!(tiles.len() > 4, "the cloud must span several chunks");
+
+    let mut map = VoxelMap::default();
+    let mut created_total = 0;
+    for (i, tile) in tiles.iter().enumerate() {
+        created_total += seed_tile(&mut map, tile, &cfg).len();
+        let frame: Vec<(f32, f32, f32)> = (0..200)
+            .map(|_| (next_coord(), next_coord(), next_coord()))
+            .collect();
+        update_map(&mut map, (0.0, 0.0, 30.0), &frame, &cfg);
+
+        let keys: Vec<VoxelKey> = map.voxels.keys().copied().collect();
+        for k in keys {
+            assert_eq!(
+                map.voxels[&k].support,
+                map.count_healthy_neighbors(k),
+                "after tile {i}: support({k:?})"
+            );
+        }
+        let indexed: AHashSet<VoxelKey> = map
+            .healthy_chunks
+            .values()
+            .flat_map(|s| s.iter().copied())
+            .collect();
+        let healthy: AHashSet<VoxelKey> = map
+            .voxels
+            .iter()
+            .filter(|(_, v)| v.health > 0)
+            .map(|(&k, _)| k)
+            .collect();
+        assert_eq!(indexed, healthy, "after tile {i}: chunk index");
+    }
+    assert!(created_total > 0);
+}
+
+/// A seeded voxel starts at health 1: one miss drops it out of every emit,
+/// the next removes it from the map.
+#[test]
+fn live_rays_carve_seeded_voxels_they_pass_through() {
+    let cfg = Config {
+        min_health: -1,
+        max_health: 5,
+        ..basic_config()
+    };
+    let mut map = VoxelMap::default();
+    let created = seed_all(&mut map, &[(5.5, 0.5, 0.5)], &cfg);
+    assert!(created.contains(&(5, 0, 0)));
+    let no_live = AHashSet::new();
+    assert!(tuples(emit_points(&map, 1.0, None, &no_live)).contains(&(5.5, 0.5, 0.5)));
+
+    // A live return well beyond the seed, along a ray that crosses it.
+    let origin = (0.5, 0.5, 0.5);
+    update_map(&mut map, origin, &[(20.5, 0.5, 0.5)], &cfg);
+    assert_eq!(map.health((5, 0, 0)), Some(0), "one miss ends its emission");
+    assert!(!tuples(emit_points(&map, 1.0, None, &no_live)).contains(&(5.5, 0.5, 0.5)));
+
+    update_map(&mut map, origin, &[(20.5, 0.5, 0.5)], &cfg);
+    assert_eq!(map.health((5, 0, 0)), None, "the next miss removes it");
+}
+
+#[test]
+fn a_health_crossing_marks_exactly_its_chunk_once() {
+    let mut map = VoxelMap::default();
+    let key = (3, 4, 5);
+    // Created unhealthy at min_health, then hit up across zero: one crossing.
+    map.record_hit(key, -1, 5);
+    assert!(
+        map.take_changed_chunks().is_empty(),
+        "a voxel below zero emits nothing"
+    );
+    map.record_hit(key, -1, 5);
+    map.record_hit(key, -1, 5);
+    let marked = map.take_changed_chunks();
+    assert_eq!(marked.into_iter().collect::<Vec<_>>(), vec![chunk_of(key)]);
+    assert!(
+        map.take_changed_chunks().is_empty(),
+        "a take empties the set"
+    );
+
+    // A hit on an already healthy voxel changes nothing it emits.
+    map.record_hit(key, -1, 5);
+    assert!(map.take_changed_chunks().is_empty());
+
+    // Carving it back to zero flips it out of the emitted set.
+    map.clear_voxels([key]);
+    assert_eq!(map.take_changed_chunks().len(), 1);
+}
+
+#[test]
+fn a_support_crossing_marks_the_neighbors_chunk_only_with_a_gate() {
+    for (support_min, expect_neighbor_mark) in [(4, true), (0, false)] {
+        let mut map = VoxelMap::with_support_min(support_min);
+        // A healthy voxel at the low edge of chunk 1 with three healthy neighbors in chunk 0.
+        let edge = (CHUNK_SIZE, 0, 0);
+        map.insert_seed(edge);
+        for n in [
+            (CHUNK_SIZE - 1, 0, 0),
+            (CHUNK_SIZE - 1, 1, 0),
+            (CHUNK_SIZE - 1, 0, 1),
+        ] {
+            map.insert_seed(n);
+        }
+        map.take_changed_chunks();
+        // The fourth healthy neighbor, in chunk 0, lifts the edge voxel over the gate.
+        map.insert_seed((CHUNK_SIZE - 1, 1, 1));
+        let marked = map.take_changed_chunks();
+        assert!(marked.contains(&chunk_of((CHUNK_SIZE - 1, 1, 1))));
+        assert_eq!(
+            marked.contains(&chunk_of(edge)),
+            expect_neighbor_mark,
+            "support_min {support_min}"
+        );
+    }
+}
+
+#[test]
+fn chunk_points_equal_emit_points_filtered_to_the_chunk() {
+    let cfg = basic_config();
+    let mut map = VoxelMap::default();
+    let keys = [
+        (0, 0, 0),
+        (1, 0, 0),
+        (1, 1, 0),
+        (CHUNK_SIZE + 2, 0, 0),
+        (CHUNK_SIZE + 2, 1, 0),
+    ];
+    for key in keys {
+        map.insert_seed(key);
+    }
+    let chunk = chunk_of((CHUNK_SIZE + 2, 0, 0));
+    let mut from_chunk = chunk_points(&map, cfg.voxel_size, &[chunk]);
+    let edge = CHUNK_SIZE as f32 * cfg.voxel_size;
+    let all = emit_points(&map, cfg.voxel_size, None, &AHashSet::new());
+    let mut expected: Vec<f32> = Vec::new();
+    for p in all.chunks(3) {
+        if p[0] >= edge {
+            expected.extend_from_slice(p);
+        }
+    }
+    let triples = |v: &mut Vec<f32>| {
+        let mut t: Vec<[f32; 3]> = v.chunks(3).map(|c| [c[0], c[1], c[2]]).collect();
+        t.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        t
+    };
+    assert_eq!(triples(&mut from_chunk), triples(&mut expected));
+    assert_eq!(from_chunk.len(), 6);
+}
+
+#[test]
+fn regions_group_chunks_by_center_and_never_split_a_chunk() {
+    // 16 voxels of 0.25 m make 4 m chunks, on a 4 m grid: one chunk per cell.
+    assert_eq!(region_of((0, 0, 3), 0.25, 4.0), (0, 0));
+    assert_eq!(region_of((-1, 2, 0), 0.25, 4.0), (-1, 2));
+    // 1.28 m chunks on a 4 m grid: chunk 3 is centered at 4.48 m, cell 1.
+    assert_eq!(region_of((2, 0, 0), 0.08, 4.0), (0, 0));
+    assert_eq!(region_of((3, 0, 0), 0.08, 4.0), (1, 0));
+    // A grid finer than a chunk widens to the chunk.
+    assert_eq!(region_of((5, -1, 0), 0.25, 1.0), (5, -1));
 }
