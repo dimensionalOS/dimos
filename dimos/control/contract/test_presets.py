@@ -287,7 +287,7 @@ def test_a_body_takes_its_effort_limits_from_its_model(tmp_path: Path) -> None:
     assert "toy/shoulder/kp" not in body.limits
 
 
-def test_a_sliding_joint_is_measured_in_metres(tmp_path: Path) -> None:
+def test_a_prismatic_joint_is_measured_in_metres(tmp_path: Path) -> None:
     arm = manipulator_description("arm", ["slider"], model=toy_model(tmp_path))
     assert arm.unit_of("arm/slider/position") is Unit.M
     assert arm.unit_of("arm/slider/velocity") is Unit.M_PER_S
