@@ -38,3 +38,25 @@ def test_a_failed_trigger_leaves_the_cameras_free_running(
     monkeypatch.setattr(head_trigger.subprocess, "run", run)
 
     head_trigger.trigger_head_cameras(30)  # does not raise
+
+
+def test_no_sdk_skips_the_trigger(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Off the robot there is no SDK, so nothing is launched."""
+
+    def run(*_: Any, **__: Any) -> None:
+        raise AssertionError("launched without an SDK")
+
+    monkeypatch.setattr(head_trigger.os.path, "exists", lambda _: False)
+    monkeypatch.setattr(head_trigger.subprocess, "run", run)
+
+    head_trigger.trigger_head_cameras(30)
+
+
+def test_trigger_runs_in_its_own_process_at_the_given_rate(monkeypatch: pytest.MonkeyPatch) -> None:
+    launched: list[list[str]] = []
+    monkeypatch.setattr(head_trigger.os.path, "exists", lambda _: True)
+    monkeypatch.setattr(head_trigger.subprocess, "run", lambda argv, **_: launched.append(argv))
+
+    head_trigger.trigger_head_cameras(30)
+
+    assert launched == [[head_trigger.sys.executable, "-m", head_trigger.__name__, "30"]]
