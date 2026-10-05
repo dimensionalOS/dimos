@@ -47,11 +47,12 @@ SUITE: Suite = [
             raw_guide=RAW_ARM_README + XARM7_NOTES,
             module_env={
                 "RAWROBOTBRIDGE__CAMERA_FRAME": "wrist_camera_color_optical_frame",
+                "RAWROBOTBRIDGE__OVERVIEW_FRAME": "env_camera_color_optical_frame",
                 "RAWROBOTBRIDGE__EE_FRAME": "link_tcp",
                 "RAWROBOTBRIDGE__GRIPPER_JOINT": "arm/gripper",
                 "RAWROBOTBRIDGE__GRIPPER_RANGE": "[0.0, 0.85]",
             },
-            ready_streams=("color_image", "coordinator_joint_state"),
+            ready_streams=("color_image", "overview_image", "coordinator_joint_state"),
             scene=LfsPath("xarm7/scene.xml"),
             tracked_bodies=("cup",),
         ),
