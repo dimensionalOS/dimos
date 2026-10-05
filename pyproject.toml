@@ -490,13 +490,18 @@ lint = [
 tests-self-hosted = [
     {include-group = "tests"},
     "dimos[manipulation,misc,unitree]",
-    # go2 dds store tests decode mcap (pure-Python). The full `unitree-dds` extra
-    # pulls `cyclonedds`, whose wheel needs a CycloneDDS C lib the ros-dev image
-    # doesn't expose to the build — and these tests never open a live DDS link.
+    # go2 dds store tests decode mcap (pure-Python) without a live DDS link.
     "mcap>=1.2.0",
     # Needed to compile the in-tree extensions.
     "pybind11>=2.12",
     "dim-odom>=0.4.1",
+]
+# Adds cyclonedds, which builds from sdist against the CycloneDDS C lib. Only the
+# ros-dev container provides that lib (CYCLONEDDS_HOME); the host-run jobs (macOS
+# leg, self-hosted-large-tests) stay on `tests-self-hosted`.
+tests-self-hosted-dds = [
+    {include-group = "tests-self-hosted"},
+    "dimos[unitree-dds]",
 ]
 docs = [
     "mkdocs-awesome-nav>=3.3.0",
