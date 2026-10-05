@@ -471,6 +471,9 @@ instead of its default `scene.xml`. The planner's base pose is
 `scene.xml` puts it, or that value must change to match.
 `dimos.evals.suites.mujoco_xarm` is the xArm7 table scene with the perception
 modules disabled: pick up the cylinder, then put the red ball on top of it.
+`dimos.evals.suites.dimsim_emergency` is apartment watch duty: kitchen smoke
+above the gas range should lead to waking the person by the bed; a quiet
+control uses the same duty prompt with no smoke.
 
 ## Running
 
