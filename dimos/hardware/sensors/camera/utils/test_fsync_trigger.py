@@ -19,7 +19,7 @@ from typing import Any
 
 import pytest
 
-from dimos.robot.galaxea.r1pro import head_trigger
+from dimos.hardware.sensors.camera.utils import fsync_trigger
 
 
 @pytest.mark.parametrize(
@@ -34,10 +34,10 @@ def test_a_failed_trigger_leaves_the_cameras_free_running(
     def run(*_: Any, **__: Any) -> None:
         raise failure
 
-    monkeypatch.setattr(head_trigger.os.path, "exists", lambda _: True)
-    monkeypatch.setattr(head_trigger.subprocess, "run", run)
+    monkeypatch.setattr(fsync_trigger.os.path, "exists", lambda _: True)
+    monkeypatch.setattr(fsync_trigger.subprocess, "run", run)
 
-    head_trigger.trigger_head_cameras(30)  # does not raise
+    fsync_trigger.trigger_gmsl_cameras(30, 0x0F)  # does not raise
 
 
 def test_no_sdk_skips_the_trigger(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -46,17 +46,17 @@ def test_no_sdk_skips_the_trigger(monkeypatch: pytest.MonkeyPatch) -> None:
     def run(*_: Any, **__: Any) -> None:
         raise AssertionError("launched without an SDK")
 
-    monkeypatch.setattr(head_trigger.os.path, "exists", lambda _: False)
-    monkeypatch.setattr(head_trigger.subprocess, "run", run)
+    monkeypatch.setattr(fsync_trigger.os.path, "exists", lambda _: False)
+    monkeypatch.setattr(fsync_trigger.subprocess, "run", run)
 
-    head_trigger.trigger_head_cameras(30)
+    fsync_trigger.trigger_gmsl_cameras(30, 0x0F)
 
 
 def test_trigger_runs_in_its_own_process_at_the_given_rate(monkeypatch: pytest.MonkeyPatch) -> None:
     launched: list[list[str]] = []
-    monkeypatch.setattr(head_trigger.os.path, "exists", lambda _: True)
-    monkeypatch.setattr(head_trigger.subprocess, "run", lambda argv, **_: launched.append(argv))
+    monkeypatch.setattr(fsync_trigger.os.path, "exists", lambda _: True)
+    monkeypatch.setattr(fsync_trigger.subprocess, "run", lambda argv, **_: launched.append(argv))
 
-    head_trigger.trigger_head_cameras(30)
+    fsync_trigger.trigger_gmsl_cameras(30, 0x0F)
 
-    assert launched == [[head_trigger.sys.executable, "-m", head_trigger.__name__, "30"]]
+    assert launched == [[fsync_trigger.sys.executable, "-m", fsync_trigger.__name__, "30", "15"]]

@@ -12,14 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Fire the R1 Pro's head cameras from MIIVII's hardware trigger (FSYNC), so both eyes expose together.
+"""Fire GMSL cameras from MIIVII's hardware trigger (FSYNC), so every triggered camera exposes together.
 
 In trigger mode a camera takes one frame per pulse, so the trigger rate is the frame rate.
 The trigger is only reachable through MIIVII's closed C++ SDK, whose config-only
 ``MvGmslCamera`` constructor hands the config to GmslServer. Run it in its own process
-(``python -m dimos.robot.galaxea.r1pro.head_trigger HZ``): the SDK opens the GPU, leaves a
-reader thread behind, and a crash in it would take the caller down with it. The setting
-lasts until reboot.
+(``python -m dimos.hardware.sensors.camera.utils.fsync_trigger HZ LINK_MASK``): the SDK opens
+the GPU, leaves a reader thread behind, and a crash in it would take the caller down with it.
+The setting lasts until reboot.
 """
 
 from __future__ import annotations
@@ -34,8 +34,6 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 MIIVII_GMSL_SDK = "/opt/miivii/lib/libmvgmslcamera_noopencv.so"
-# Every link on the head's deserializer: a mask of only the two head links stops them streaming.
-TRIGGER_LINKS = 0x0F
 
 
 class _SyncConfig(ctypes.Structure):
@@ -52,25 +50,27 @@ class _SyncConfig(ctypes.Structure):
     ]
 
 
-def _send_trigger_config(hz: int) -> None:
+def _send_trigger_config(hz: int, link_mask: int) -> None:
     """Call ``miivii::MvGmslCamera(sync_out_a_cfg_client_t)``; never destructed, as its destructor crashes."""
     camera = ctypes.create_string_buffer(1 << 16)
-    config = _SyncConfig(bin(TRIGGER_LINKS).count("1"), hz, TRIGGER_LINKS)
+    config = _SyncConfig(bin(link_mask).count("1"), hz, link_mask)
     ctypes.CDLL(MIIVII_GMSL_SDK)._ZN6miivii12MvGmslCameraC1E23sync_out_a_cfg_client_t(
         camera, config
     )
 
 
-def trigger_head_cameras(hz: int) -> None:
-    """Fire both head cameras from one hardware trigger at ``hz``, so their frames start within ~30 us."""
+def trigger_gmsl_cameras(hz: int, link_mask: int) -> None:
+    """Fire the cameras on the GMSL links in ``link_mask`` from one hardware trigger at ``hz``, so their frames start within ~30 us."""
     if not os.path.exists(MIIVII_GMSL_SDK):
-        logger.warning("no MIIVII GMSL SDK at %s; head cameras stay free-running", MIIVII_GMSL_SDK)
+        logger.warning("no MIIVII GMSL SDK at %s; cameras stay free-running", MIIVII_GMSL_SDK)
         return
     try:
-        subprocess.run([sys.executable, "-m", __name__, str(hz)], check=True, timeout=10)
+        subprocess.run(
+            [sys.executable, "-m", __name__, str(hz), str(link_mask)], check=True, timeout=10
+        )
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
-        logger.warning("head camera trigger not set (%s); head cameras stay free-running", error)
+        logger.warning("camera trigger not set (%s); cameras stay free-running", error)
 
 
 if __name__ == "__main__":
-    _send_trigger_config(int(sys.argv[1]))
+    _send_trigger_config(int(sys.argv[1]), int(sys.argv[2], 0))
