@@ -24,8 +24,10 @@ from typing import TYPE_CHECKING, cast
 
 from pydantic import Field
 
+from dimos.core.transport_factory import make_transport
 from dimos.evals.environments.lib.recorded_poses import last_body_transform
 from dimos.evals.environments.sim import Sim, SimConfig
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 
 if TYPE_CHECKING:
     from dimos.e2e_tests.dimos_cli_call import DimosCliCall
@@ -42,14 +44,13 @@ class MujocoEnvironmentConfig(SimConfig):
         "color_image",
         "camera_info",
         "coordinator_joint_state",
-        "tf",
         "odom",
     )
     scene: Path | None = None
 
 
 class MujocoEnvironment(Sim):
-    """Run agent evaluations in a MuJoCo scene, with ground-truth object poses recorded on tf."""
+    """Run agent evaluations in a MuJoCo scene, with every ``tf`` message recorded for the grader."""
 
     config: MujocoEnvironmentConfig
 
@@ -68,10 +69,23 @@ class MujocoEnvironment(Sim):
             )
 
     def prepare_recording(self, recording: Store, path: Path, deadline: float) -> dict[str, Path]:
-        self.wait_ready(recording, deadline=deadline)
-        return {}
+        """Record ``tf`` next to the recording as ``sim_transforms``, which only the grader gets."""
+        from dimos.memory.store.sqlite import SqliteStore
+        from dimos.memory.tap import TransportRecorder
 
-    def wait_ready(self, recording: Store, *, deadline: float) -> None:
+        sim_transforms_path = path.parent / "sim_transforms.db"
+        sim_transforms = SqliteStore(path=str(sim_transforms_path))
+        sim_transforms.start()
+        self._resources.callback(sim_transforms.stop)
+        recorder = TransportRecorder(sim_transforms)
+        self._resources.callback(recorder.close)
+        transport = make_transport("/tf", TFMessage)
+        self._resources.callback(transport.stop)
+        recorder.tap("tf", TFMessage, transport)
+        self.wait_ready(recording, sim_transforms, deadline=deadline)
+        return {"sim_transforms": sim_transforms_path}
+
+    def wait_ready(self, recording: Store, sim_transforms: Store, *, deadline: float) -> None:
         """Wait for fresh samples on every ready stream and a pose for every tracked body."""
         while time.monotonic() < deadline:
             try:
@@ -81,7 +95,7 @@ class MujocoEnvironment(Sim):
                     if name in recording.streams
                 ]
                 for body in self.config.tracked_bodies:
-                    last_body_transform(recording, body)
+                    last_body_transform(sim_transforms, body)
             except (LookupError, AttributeError):
                 ages = []
             if len(ages) == len(self.config.ready_streams) and all(age < 10.0 for age in ages):

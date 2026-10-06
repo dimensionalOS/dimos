@@ -60,7 +60,7 @@ def lifted(body: str, *, by_m: float) -> Callable[[Outcome], float]:
     """How far the body ended above where it started, full credit at ``by_m``."""
 
     def grade(outcome: Outcome) -> float:
-        with recording(outcome) as store:
+        with recording(outcome, "sim_transforms") as store:
             try:
                 start = first_body_transform(store, body).translation.z
                 end = last_body_transform(store, body).translation.z
@@ -78,7 +78,7 @@ def stacked_on(
     0.0 at ``band_m`` off. A body held higher than the resting height scores 0.0."""
 
     def grade(outcome: Outcome) -> float:
-        with recording(outcome) as store:
+        with recording(outcome, "sim_transforms") as store:
             try:
                 t = last_body_transform(store, top).translation
                 b = last_body_transform(store, base).translation

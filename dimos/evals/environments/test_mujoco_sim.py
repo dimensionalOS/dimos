@@ -50,7 +50,7 @@ def test_launch_flags(monkeypatch):
     assert json.loads(proc.extra_env["MUJOCOSIMMODULE__TRACKED_BODIES"]) == ["apple", "cup"]
     assert proc.global_args == [
         "--record-topics",
-        "color_image,camera_info,coordinator_joint_state,tf,odom",
+        "color_image,camera_info,coordinator_joint_state,odom",
     ]
 
     proc = DimosCliCall()
@@ -103,9 +103,9 @@ def test_latest_pose_needs_odom():
 
 def test_ready_needs_fresh_streams_and_tracked_body_poses():
     env = environment(tracked_bodies=("apple",))
-    with MemoryStore() as store:
+    with MemoryStore() as store, MemoryStore() as sim_transforms:
         with pytest.raises(TimeoutError, match="apple"):
-            env.wait_ready(store, deadline=time.monotonic() + 0.3)
+            env.wait_ready(store, sim_transforms, deadline=time.monotonic() + 0.3)
         now = time.time()
         store.stream("color_image", Image).append(
             Image(data=np.zeros((1, 1, 3), dtype=np.uint8), format=ImageFormat.RGB, ts=now)
@@ -114,7 +114,10 @@ def test_ready_needs_fresh_streams_and_tracked_body_poses():
             JointState(ts=now, name=["j1"], position=[0.0], velocity=[0.0])
         )
         store.stream("tf", TFMessage).append(_tf(now, "apple", 0.17))
-        env.wait_ready(store, deadline=time.monotonic() + 2.0)
+        with pytest.raises(TimeoutError, match="apple"):
+            env.wait_ready(store, sim_transforms, deadline=time.monotonic() + 0.3)
+        sim_transforms.stream("tf", TFMessage).append(_tf(now, "apple", 0.17))
+        env.wait_ready(store, sim_transforms, deadline=time.monotonic() + 2.0)
 
 
 def test_settle_waits_for_joints_to_stop():
@@ -148,6 +151,7 @@ def test_launch_and_cleanup(tmp_path, mocker):
         "dimos.evals.environments.sim.McpAdapter"
     ).return_value.wait_for_ready.return_value = True
     store = mocker.patch("dimos.memory.store.sqlite.SqliteStore").return_value
+    transport = mocker.patch("dimos.evals.environments.mujoco_sim.make_transport").return_value
     env = environment(tracked_bodies=("apple",), disable=("rerun-bridge-module",))
     mocker.patch.object(env, "_wait_recording", return_value=tmp_path / "memory.db")
     ready = mocker.patch.object(env, "wait_ready")
@@ -165,8 +169,11 @@ def test_launch_and_cleanup(tmp_path, mocker):
         ]
         assert "MUJOCOSIMMODULE__HEADLESS" in proc.extra_env
         ready.assert_called_once()
-        assert set(result.artifacts) == {"recording"}
+        assert set(result.artifacts) == {"recording", "sim_transforms"}
+        assert result.artifacts["sim_transforms"] == tmp_path / "sim_transforms.db"
+        transport.subscribe.assert_called_once()
     finally:
         env.stop()
     proc.stop.assert_called_once()
-    store.stop.assert_called_once()
+    transport.stop.assert_called_once()
+    assert store.stop.call_count == 2

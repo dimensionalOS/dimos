@@ -315,9 +315,9 @@ The grader gets all of them. The agent gets only the ones named in the
 environment's `agent_artifacts`: by default the `recording` for simulators and
 the `image` for `ImageFile`. A `Dataset` names none, since its `recording` is
 the whole dataset and the agent is given the `select`ed streams instead. A file
-that holds answers, like Habitat's episode metadata with its prop positions,
-stays with the grader. Pass `agent_artifacts=(...)` to the environment to
-change it.
+that holds answers, like Habitat's episode metadata with its prop positions or
+MuJoCo's `sim_transforms` with its object poses, stays with the grader. Pass
+`agent_artifacts=(...)` to the environment to change it.
 
 **Limits.** The case's `timeout_s` sets the time budget for the agent and
 subsequent motion settling. `McpClientAdapter` returns what it has when its
@@ -439,8 +439,9 @@ environment only launches `dimos --simulation mujoco --record run <blueprint>
 <modules>` headless; `MUJOCOSIMMODULE__HEADLESS=false` in the shell opens the viewer on
 Linux. Manipulation graders need ground-truth object poses:
 `tracked_bodies` names free bodies in the MJCF, and the simulator publishes
-`world -> <body>` on `tf` next to its camera frames. `first_body_transform` and
-`last_body_transform` read them back from the recording:
+`world -> <body>` on `tf` next to its camera frames. The eval process records
+`tf` into the `sim_transforms` artifact, which only the grader gets, and
+`first_body_transform` and `last_body_transform` read the poses back from it:
 
 ```python session=evals ansi=false no-result
 from dimos.evals.environments.lib.recorded_poses import first_body_transform, last_body_transform
@@ -448,7 +449,7 @@ from dimos.evals.environments.mujoco_sim import MujocoEnvironment
 
 
 def lifted_apple(o):
-    with recording(o) as store:
+    with recording(o, "sim_transforms") as store:
         start = first_body_transform(store, "apple").translation.z
         end = last_body_transform(store, "apple").translation.z
     return min(max((end - start) / 0.05, 0.0), 1.0)
@@ -470,8 +471,8 @@ lift_apple = EvalCase(
 A fixed-base arm has no odometry, so readiness waits for fresh `color_image`
 and `coordinator_joint_state` plus a pose for every tracked body, and settling
 waits until every joint is slower than `at_rest_rad_s`. Floating-base robots
-still settle on `odom`. The recording keeps color, camera info, joint state,
-`tf` and `odom`; depth frames are float32, which the JPEG recorder rejects. `module_env` passes extra
+still settle on `odom`. The recording keeps color, camera info, joint state
+and `odom`; depth frames are float32, which the JPEG recorder rejects. `module_env` passes extra
 `MODULE__FIELD` overrides to the launched dimos, which beat blueprint-pinned
 values, so a case can retune a module without a new blueprint. `scene` passes
 `--mujoco-scene`: a full MJCF, robot included, that `xarm-perception-sim` loads

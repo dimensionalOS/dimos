@@ -157,11 +157,11 @@ class Outcome:
     artifacts: Mapping[str, Path]  # what the environment produced, by name
 
 
-def recording(o: Outcome) -> Store:
-    """The memory recording an environment produced, opened for grading."""
+def recording(o: Outcome, artifact: str = "recording") -> Store:
+    """A memory recording an environment produced, opened for grading."""
     from dimos.memory.store.sqlite import SqliteStore
 
-    return SqliteStore(path=str(o.artifacts["recording"]), must_exist=True)
+    return SqliteStore(path=str(o.artifacts[artifact]), must_exist=True)
 
 
 @dataclass(frozen=True, kw_only=True)
