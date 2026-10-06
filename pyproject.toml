@@ -226,6 +226,21 @@ agents = [
     "faster-whisper>=1.0.0",
 ]
 
+space = [
+    "dimos[agents]",
+    "anthropic",
+    "fire",
+    "func-timeout",
+    "imageio",
+    "mdutils",
+    "networkx",
+    "Pillow>=12.2",
+    "requests",
+    # Official evaluate_qas imports its vLLM helper, which imports torch eagerly.
+    "torch>=2.1,<2.8",
+    "tqdm",
+]
+
 web = [
     "fastapi>=0.115.6",
     "python-socketio>=5.16.1",  # WebsocketVisModule, also imported by Quest visualization
@@ -373,7 +388,7 @@ scene = [
 ]
 
 all = [
-    "dimos[apriltag,cuda,drone,manipulation,misc,scene,unitree,webrtc]",
+    "dimos[apriltag,cuda,drone,manipulation,misc,scene,space,unitree,webrtc]",
 ]
 
 [dependency-groups]
@@ -489,7 +504,7 @@ lint = [
 # GPU, ROS-dependent integration tests, simulation).
 tests-self-hosted = [
     {include-group = "tests"},
-    "dimos[manipulation,misc,unitree]",
+    "dimos[manipulation,misc,space,unitree]",
     # go2 dds store tests decode mcap (pure-Python). The full `unitree-dds` extra
     # pulls `cyclonedds`, whose wheel needs a CycloneDDS C lib the ros-dev image
     # doesn't expose to the build — and these tests never open a live DDS link.

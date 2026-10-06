@@ -21,6 +21,7 @@ from typing import Any
 import uuid
 import warnings
 
+import httpx
 from langchain_core._api.deprecation import LangChainPendingDeprecationWarning
 
 # Importing langchain_core un-mutes its pending-deprecation warnings, so this ignore
@@ -52,23 +53,46 @@ logger = setup_logger()
 _RESPONSES_REASONING_MODEL_PREFIXES = ("gpt-5", "o1", "o3", "o4")
 
 
-def init_model(model_name: str, trace_dir: Path | None = None) -> Any:
+def init_model(
+    model_name: str,
+    trace_dir: Path | None = None,
+    *,
+    http_client: httpx.Client | None = None,
+    timeout: float | None = None,
+    max_retries: int | None = None,
+    max_tokens: int | None = None,
+) -> Any:
     """Initialize a model while preserving LangChain provider resolution.
 
     With *trace_dir*, every request/response body goes to disk whole
     (:mod:`dimos.agents.llm_trace`). Only OpenAI-backed models take the
     ``http_client``; other providers keep working, untraced at the wire.
+    An injected HTTP client is owned by the caller. Omitted provider options
+    retain the provider's defaults.
     """
     # ~2s: langchain's chat-model machinery pulls transformers+torch; deferred to
     # keep module import (test collection, CLI startup) light.
     from langchain.chat_models import init_chat_model
     from langchain_openai import ChatOpenAI
 
-    client = None if trace_dir is None else tracing_http_client(trace_dir)
+    if trace_dir is not None and http_client is not None:
+        raise ValueError("pass trace_dir or http_client, not both")
+    client = http_client if trace_dir is None else tracing_http_client(trace_dir)
+    options: dict[str, Any] = {
+        name: value
+        for name, value in {
+            "timeout": timeout,
+            "max_retries": max_retries,
+            "max_tokens": max_tokens,
+        }.items()
+        if value is not None
+    }
     if ":" in model_name or not model_name.startswith(_RESPONSES_REASONING_MODEL_PREFIXES):
-        model = init_chat_model(model=model_name)
+        model = init_chat_model(model=model_name, **options)
         if client is not None and isinstance(model, ChatOpenAI):
-            return init_chat_model(model=model_name, http_client=client)
+            return init_chat_model(model=model_name, http_client=client, **options)
+        if trace_dir is not None and client is not None:
+            client.close()
         return model
 
     return ChatOpenAI(
@@ -76,6 +100,7 @@ def init_model(model_name: str, trace_dir: Path | None = None) -> Any:
         use_responses_api=True,
         reasoning={"effort": "medium", "summary": "auto"},
         http_client=client,
+        **options,
     )
 
 
