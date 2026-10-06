@@ -12,9 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from pathlib import Path
 from subprocess import CalledProcessError, CompletedProcess, run
 
 import pytest
+import yaml
 
 from dimos.utils import commit_message
 
@@ -167,14 +169,30 @@ def test_clean_range_passes(monkeypatch, mocker, capsys):
 
 
 @pytest.mark.parametrize(
-    "message, expected",
+    "message, base_has_policy, expected, error",
     [
-        ("Fix recording reader", 0),
-        ("Fix recording reader\n\nCo-authored-by: Alice <alice@example.com>", 0),
-        ("Fix recording reader\n\nCo-authored-by: Codex <noreply@openai.com>", 1),
+        ("Fix recording reader", True, 0, ""),
+        ("Fix recording reader\n\nCo-authored-by: Alice <alice@example.com>", True, 0, ""),
+        (
+            "Fix recording reader\n\nCo-authored-by: Codex <noreply@openai.com>",
+            True,
+            1,
+            "AI co-author:",
+        ),
+        ("Fix recording reader", False, 1, "Update this branch from main and retry."),
     ],
 )
-def test_policy_checks_real_git_range(tmp_path, monkeypatch, capsys, message, expected):
+def test_workflow_uses_only_base_policy(
+    tmp_path, monkeypatch, message, base_has_policy, expected, error
+):
+    workflow_path = Path(__file__).resolve().parents[2] / ".github/workflows/ci.yml"
+    workflow = yaml.safe_load(workflow_path.read_text())
+    script = next(
+        step["run"]
+        for step in workflow["jobs"]["commit-messages"]["steps"]
+        if step["name"] == "Check incoming commit messages"
+    )
+    policy = Path(commit_message.__file__).read_text()
     monkeypatch.chdir(tmp_path)
     for role in ("AUTHOR", "COMMITTER"):
         monkeypatch.setenv(f"GIT_{role}_NAME", "Policy test")
@@ -183,9 +201,19 @@ def test_policy_checks_real_git_range(tmp_path, monkeypatch, capsys, message, ex
     tree = run(
         ["git", "mktree"], input="", text=True, capture_output=True, check=True
     ).stdout.strip()
+    policy_path = tmp_path / "dimos/utils/commit_message.py"
+    policy_path.parent.mkdir(parents=True)
+    if base_has_policy:
+        policy_path.write_text(policy)
+        run(["git", "add", str(policy_path)], check=True)
+        tree = run(["git", "write-tree"], text=True, capture_output=True, check=True).stdout.strip()
     base = run(
         ["git", "commit-tree", tree, "-m", "Base"], text=True, capture_output=True, check=True
     ).stdout.strip()
+    # A PR can replace its policy with a no-op, but CI must still use the base.
+    policy_path.write_text("raise SystemExit(0)\n")
+    run(["git", "add", str(policy_path)], check=True)
+    tree = run(["git", "write-tree"], text=True, capture_output=True, check=True).stdout.strip()
     rejected_or_allowed = run(
         ["git", "commit-tree", tree, "-p", base, "-m", message],
         text=True,
@@ -200,6 +228,9 @@ def test_policy_checks_real_git_range(tmp_path, monkeypatch, capsys, message, ex
     ).stdout.strip()
     monkeypatch.setenv("PRE_COMMIT_FROM_REF", base)
     monkeypatch.setenv("PRE_COMMIT_TO_REF", head)
+    monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
 
-    assert commit_message.check_commits() == expected
-    assert ("AI co-author:" in capsys.readouterr().err) == bool(expected)
+    result = run(["bash", "-e", "-c", script], text=True, capture_output=True)
+
+    assert result.returncode == expected
+    assert error in result.stderr
