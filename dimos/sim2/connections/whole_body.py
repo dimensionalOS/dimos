@@ -96,7 +96,13 @@ class WholeBodyConnection(Module):
         try:
             while not self._stop.is_set():
                 before = time.monotonic()
-                frame = self._device.sample()
+                try:
+                    frame = self._device.sample()
+                except BlockingIOError:
+                    # A missed read is not new feedback. Retry next period;
+                    # the policy watchdog still detects sustained starvation.
+                    self._stop.wait(1.0 / self.config.rate_hz)
+                    continue
                 v = frame.values
                 ts = float(v["wall_time"][0])
                 self.motor_states.publish(

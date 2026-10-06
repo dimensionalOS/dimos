@@ -246,7 +246,9 @@ class RobotChannel:
             active_before = struct.unpack_from("<I", self._buffer, active_offset)[0]
             slot_offset = base_offset + active_before * layout.slot_size
             meta_raw = _FRAME_META.unpack_from(self._buffer, slot_offset)
-            if meta_raw[0] != sequence_before:
+            # The active slot commits the frame. The writer updates the global
+            # sequence first, so it may already describe the next, inactive slot.
+            if meta_raw[0] == 0:
                 continue
             values = {
                 field.name: np.ndarray(
@@ -257,14 +259,9 @@ class RobotChannel:
                 ).copy()
                 for field in layout.fields
             }
-            sequence_after = struct.unpack_from("<Q", self._buffer, sequence_offset)[0]
             active_after = struct.unpack_from("<I", self._buffer, active_offset)[0]
             slot_sequence_after = struct.unpack_from("<Q", self._buffer, slot_offset)[0]
-            if (
-                sequence_before == sequence_after
-                and active_before == active_after
-                and slot_sequence_after == meta_raw[0]
-            ):
+            if active_before == active_after and slot_sequence_after == meta_raw[0]:
                 return ChannelFrame(
                     metadata=FrameMetadata(
                         sequence=meta_raw[0],
@@ -276,7 +273,7 @@ class RobotChannel:
                     ),
                     values=values,
                 )
-        raise RuntimeError(f"could not read coherent {direction} frame after {retries} retries")
+        raise BlockingIOError(f"could not read coherent {direction} frame after {retries} retries")
 
     def _direction(
         self,
