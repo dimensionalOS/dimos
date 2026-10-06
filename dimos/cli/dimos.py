@@ -61,6 +61,7 @@ from dimos.cli.commands.info import list_blueprints, show_config
 from dimos.cli.commands.lifecycle import log_cmd, restart, run, status, stop
 from dimos.cli.commands.map import map_app
 from dimos.cli.commands.mcp import agent_send_cmd, mcp_app
+from dimos.cli.commands.network import network_app
 from dimos.cli.commands.rerun_bridge import rerun_bridge_cmd
 from dimos.cli.commands.topic import topic_app
 from dimos.cli.commands.tuis import agentspy, humancli, lcmspy, spy, top
@@ -138,6 +139,7 @@ main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options
 main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})(humancli)
 main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})(top)
 main.add_typer(topic_app, name="topic")
+main.add_typer(network_app, name="network")
 main.add_typer(map_app, name="map")
 
 from dimos.navigation.global_planner.evaluator.cli import app as nav_eval_app
