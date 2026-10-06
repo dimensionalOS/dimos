@@ -24,7 +24,7 @@ from dimos.memory.store.base import StreamAccessor
 if TYPE_CHECKING:
     from dimos.memory.store.sqlite import SqliteStore
 
-pytestmark = pytest.mark.macos_ci
+pytestmark = pytest.mark.self_hosted
 
 
 def _populate(store: SqliteStore, name: str, timestamps: list[float]) -> None:

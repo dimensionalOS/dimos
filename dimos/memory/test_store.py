@@ -31,7 +31,7 @@ from dimos.memory.vectorstore.base import VectorStore
 if TYPE_CHECKING:
     from dimos.memory.store.base import Store
 
-pytestmark = pytest.mark.macos_ci
+pytestmark = pytest.mark.self_hosted
 
 
 class TestStoreBasic:

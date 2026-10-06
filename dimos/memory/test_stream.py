@@ -35,7 +35,7 @@ from dimos.memory.type.observation import Observation
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-pytestmark = pytest.mark.macos_ci
+pytestmark = pytest.mark.self_hosted
 
 
 @pytest.fixture

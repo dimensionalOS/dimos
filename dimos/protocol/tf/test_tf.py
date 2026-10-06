@@ -641,7 +641,7 @@ def _t(parent: str, child: str, x: float, ts: float) -> Transform:
         "stream_memory",
         pytest.param(
             "stream_sqlite",
-            marks=[pytest.mark.skipif_aarch64, pytest.mark.macos_ci],
+            marks=[pytest.mark.skipif_aarch64, pytest.mark.self_hosted],
         ),
     ]
 )
