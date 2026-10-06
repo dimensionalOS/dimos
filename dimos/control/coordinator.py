@@ -41,6 +41,9 @@ from dimos.control.components import (
     TaskName,
     split_joint_name,
 )
+from dimos.control.connection_source import ConnectionSource
+from dimos.control.contract.convert import COMMAND_PORTS, STATE_PORTS
+from dimos.control.contract.validate import DescriptionError, validate_description
 from dimos.control.hardware_interface import (
     ConnectedHardware,
     ConnectedTwistBase,
@@ -58,6 +61,7 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
 from dimos.control.tick_loop import TickLoop
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
+from dimos.core.rpc_client import RPCClient
 from dimos.core.stream import In, Out
 from dimos.hardware.drive_trains.spec import (
     TwistBaseAdapter,
@@ -118,6 +122,14 @@ class ControlCoordinator(Module):
     3. Arbitrates conflicting commands per joint (highest priority wins)
     4. Routes commands to the owning hardware adapter
     5. Publishes the aggregated canonical joint state
+
+    Robots driven by connection modules (``ConnectionModule``) are found when
+    the system calls ``on_system_modules``. Each robot needs its own ports on
+    a coordinator subclass, named after the robot and the driver's port, e.g.
+    ``arm_joint_state: In[JointState]`` and ``arm_position_command:
+    Out[JointState]``; the blueprint remaps the driver's ports onto them.
+    Each tick every robot is sent a complete command. A coordinator drives
+    either hardware adapters or connection modules, never both.
 
     Key design decisions:
     - Joint-centric commands (not hardware-centric)
@@ -188,6 +200,16 @@ class ControlCoordinator(Module):
         # Card-declared command names per task, keyed by task name.
         # Guarded by _task_lock; added/pruned with their task.
         self._task_commands: dict[TaskName, frozenset[str]] = {}
+
+        # Robots driven through connection modules, by name. Guarded by
+        # _hardware_lock; changed in place, as the tick loop holds this dict.
+        self._connections: dict[str, ConnectionSource] = {}
+        # Each robot's command ports, by the driver's port name. Guarded by
+        # _hardware_lock.
+        self._command_ports: dict[str, dict[str, Out[Any]]] = {}
+        # Subscriptions to the robots' reading ports, by "<robot>/<driver port>".
+        # Guarded by _subscribe_lock.
+        self._reading_unsubs: dict[str, Callable[[], None]] = {}
 
         # Tick loop (created on start)
         self._tick_loop: TickLoop | None = None
@@ -328,7 +350,179 @@ class ControlCoordinator(Module):
         )
 
     def _publish_robot_joint_state(self, hardware_id: HardwareId, msg: JointState) -> None:
-        self._robot_joint_port(hardware_id).publish(msg)
+        # Adapter hardware is checked for its port when added. A connection
+        # without one is warned about when found, and only joins the merged state.
+        port = getattr(self, f"{hardware_id}_joints", None)
+        if isinstance(port, Out):
+            port.publish(msg)
+
+    @rpc
+    def on_system_modules(self, modules: list[RPCClient]) -> None:
+        """Find every connection module in the running system and drive its robots.
+
+        The system calls this after it starts, after every ``load_blueprint``
+        and after every ``restart_module``, each time with every running
+        module. Every connection module is asked again for its description and
+        what was found before is replaced. A robot whose module kept running
+        keeps the positions it is held at; one whose module restarted (a new
+        session) is held where it now is. A module is a connection module when
+        it serves a ``describe_control`` RPC.
+        """
+        found: dict[str, ConnectionSource] = {}
+        try:
+            for module in modules:
+                if "describe_control" not in module.rpcs:
+                    continue
+                try:
+                    described = module.describe_control()
+                except Exception:
+                    logger.exception(
+                        "describe_control failed; that module's robots are not driven",
+                        module=module.remote_name,
+                    )
+                    continue
+                for description in described.descriptions:
+                    try:
+                        validate_description(description)
+                    except DescriptionError as error:
+                        logger.error(f"Not driving {description.source!r}: {error}")
+                        continue
+                    reason = ConnectionSource.why_not_drivable(description)
+                    if reason is not None:
+                        logger.error(f"Not driving {description.source!r}: {reason}")
+                        continue
+                    if description.source in found:
+                        logger.error(
+                            f"Two connection modules describe a robot called "
+                            f"{description.source!r}; driving only the first"
+                        )
+                        continue
+                    found[description.source] = ConnectionSource(description, described.session_id)
+        finally:
+            # Each proxy received here opened its own RPC client.
+            for module in modules:
+                module.stop_rpc_client()
+        self._set_connections(found)
+
+    def _set_connections(self, found: dict[str, ConnectionSource]) -> None:
+        """Replace the robots driven through connection modules with ``found``."""
+        with self._hardware_lock:
+            has_adapters = bool(self._hardware)
+        if found and has_adapters:
+            logger.error(
+                "This coordinator drives hardware adapters, so it ignores connection "
+                "modules; a blueprint uses one or the other",
+                ignored=sorted(found),
+            )
+            found = {}
+
+        command_ports: dict[str, dict[str, Out[Any]]] = {}
+        # "<robot>/<driver port>" -> (robot, driver port, the coordinator's port)
+        reading_ports: dict[str, tuple[str, str, In[Any]]] = {}
+        period_s = 1.0 / self.config.tick_rate
+        for source, connection in list(found.items()):
+            ports = self._robot_ports(connection)
+            if ports is None:
+                del found[source]
+                continue
+            command_ports[source], inputs = ports
+            reading_ports.update(
+                (f"{source}/{name}", (source, name, port)) for name, port in inputs.items()
+            )
+            deadman_s = connection.description.deadman_timeout_s
+            if period_s >= deadman_s / 2:
+                logger.warning(
+                    f"{source!r} halts after {deadman_s} s without a command, but the "
+                    f"coordinator only ticks every {period_s:.3f} s; raise tick_rate"
+                )
+            if self.config.publish_robot_joint_states and not isinstance(
+                getattr(self, f"{source}_joints", None), Out
+            ):
+                logger.warning(
+                    f"publish_robot_joint_states is on but there is no `{source}_joints` "
+                    f"port; {source!r} only appears in coordinator_joint_state"
+                )
+
+        with self._subscribe_lock:
+            for key in reading_ports.keys() - self._reading_unsubs.keys():
+                source, name, port = reading_ports[key]
+                self._reading_unsubs[key] = port.subscribe(self._reading_handler(source, name))
+            for key in self._reading_unsubs.keys() - reading_ports.keys():
+                self._reading_unsubs.pop(key)()
+
+        with self._hardware_lock:
+            for source, connection in found.items():
+                previous = self._connections.get(source)
+                if (
+                    previous is not None
+                    and previous.session_id == connection.session_id
+                    and previous.description == connection.description
+                ):
+                    # Keeps an idle robot's holds when something unrelated is loaded.
+                    connection.adopt(previous)
+            for previous in self._connections.values():
+                for joint in previous.joint_names:
+                    self._joint_to_hardware.pop(joint, None)
+            for connection in found.values():
+                for joint in connection.joint_names:
+                    self._joint_to_hardware[joint] = connection.hardware_id
+            self._connections.clear()
+            self._connections.update(found)
+            self._command_ports = command_ports
+        if found:
+            logger.info(f"Driving robots through connection modules: {sorted(found)}")
+
+    def _robot_ports(
+        self, connection: ConnectionSource
+    ) -> tuple[dict[str, Out[Any]], dict[str, In[Any]]] | None:
+        """The coordinator's ports for one robot, by the driver's port names:
+        command outputs, then reading inputs. ``None``, logged, if any is missing.
+
+        Each is named after the robot and the driver's port, e.g.
+        ``arm_position_command``, and carries the driver port's message.
+        """
+        source = connection.hardware_id
+        outputs: dict[str, Out[Any]] = {}
+        inputs: dict[str, In[Any]] = {}
+        missing: list[str] = []
+        for name in connection.command_ports:
+            out = getattr(self, f"{source}_{name}", None)
+            if isinstance(out, Out) and out.type is COMMAND_PORTS[name]:
+                outputs[name] = out
+            else:
+                missing.append(f"{source}_{name}: Out[{COMMAND_PORTS[name].__name__}]")
+        for name in connection.reading_ports:
+            inp = getattr(self, f"{source}_{name}", None)
+            if isinstance(inp, In) and inp.type is STATE_PORTS[name]:
+                inputs[name] = inp
+            else:
+                missing.append(f"{source}_{name}: In[{STATE_PORTS[name].__name__}]")
+        if missing:
+            logger.error(
+                f"Not driving {source!r}: add {missing} to the coordinator subclass, and "
+                "remap the driver's ports onto them"
+            )
+            return None
+        return outputs, inputs
+
+    def _reading_handler(self, source: str, port: str) -> "Callable[[Any], None]":
+        """Pass each message on a robot's reading port to whichever record of
+        the robot is current when it arrives."""
+
+        def on_message(msg: Any) -> None:
+            connection = self._connections.get(source)
+            if connection is not None:
+                connection.on_message(port, msg)
+
+        return on_message
+
+    def _publish_command(self, source: str, values: dict[str, float]) -> None:
+        """Send one robot its command for this tick. Called by the tick loop,
+        which holds ``_hardware_lock``."""
+        connection = self._connections[source]
+        ports = self._command_ports[source]
+        for name, msg in connection.command_messages(values, time.time()):
+            ports[name].publish(msg)
 
     @rpc
     def add_hardware(
@@ -426,9 +620,9 @@ class ControlCoordinator(Module):
 
     @rpc
     def list_hardware(self) -> list[str]:
-        """List registered hardware IDs."""
+        """List registered hardware IDs, then robots driven through connection modules."""
         with self._hardware_lock:
-            return list(self._hardware.keys())
+            return [*self._hardware, *self._connections]
 
     @rpc
     def list_joints(self) -> list[str]:
@@ -445,6 +639,8 @@ class ControlCoordinator(Module):
                 state = hw.read_state()  # {joint_name: JointState}
                 for joint_name, joint_state in state.items():
                     positions[joint_name] = joint_state.position
+            for connection in self._connections.values():
+                positions.update(connection.read_joints().joint_positions)
             return positions
 
     @rpc
@@ -922,6 +1118,8 @@ class ControlCoordinator(Module):
             frame_pose_hz=self.config.frame_pose_hz,
             frame_id=self.config.joint_state_frame_id,
             log_ticks=self.config.log_ticks,
+            connections=self._connections,
+            command_callback=self._publish_command,
         )
         self._tick_loop.start()
 
@@ -944,6 +1142,10 @@ class ControlCoordinator(Module):
             for unsub in self._stream_unsubs.values():
                 unsub()
             self._stream_unsubs.clear()
+
+            for unsub in self._reading_unsubs.values():
+                unsub()
+            self._reading_unsubs.clear()
 
         if self._tick_loop:
             self._tick_loop.stop()
