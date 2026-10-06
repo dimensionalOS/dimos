@@ -102,7 +102,7 @@ def _mock_session(payload_fn: Callable[[dict[str, object]], dict[str, object]]) 
 @pytest.fixture
 def mcp_client() -> McpClient:
     """Build an McpClient wired to a mock requests session."""
-    client = McpClient(mcp_server_url="http://localhost:9990/mcp")
+    client = McpClient(mcp_server_url="http://localhost:9990/mcp", persist_history=False)
     client._http_client = _mock_session(_mock_payload)
     try:
         yield client

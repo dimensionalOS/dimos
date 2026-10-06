@@ -21,6 +21,7 @@ from typing import Any
 import pytest
 from typer.testing import CliRunner
 
+from dimos.agents.mcp.mcp_client import McpClient
 import dimos.cli.commands.lifecycle as lifecycle
 from dimos.cli.commands.lifecycle import _with_relay_bridge
 from dimos.cli.dimos import main, normalize_argv
@@ -318,6 +319,49 @@ def test_run_parses_spaced_and_equals_config_flags(stubbed_run: dict[str, Any]) 
     assert parsed.module_kwargs("runmoduleb")["lookahead"] == 2.5
     assert stubbed_run["entry"]["blueprint"] == "alpha-beta"
     assert stubbed_run["entry"]["cli_args"] == ["alpha", "beta"]
+
+
+@pytest.mark.parametrize(
+    "flags",
+    [
+        ["--restore-session", "123e4567-e89b-12d3-a456-426614174000"],
+        ["--restore-session=123e4567-e89b-12d3-a456-426614174000"],
+        ["--mcpclient.restore-session", "123e4567-e89b-12d3-a456-426614174000"],
+    ],
+)
+def test_run_accepts_agent_session_restore(
+    flags: list[str], stubbed_run: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        get_all_blueprints, "get_by_name_or_exit", lambda name: McpClient.blueprint()
+    )
+    result = CliRunner().invoke(main, ["run", "agent", *flags])
+    assert result.exit_code == 0, result.output
+    assert stubbed_run["parsed_config"].module_kwargs("mcpclient")["restore_session"] == (
+        "123e4567-e89b-12d3-a456-426614174000"
+    )
+
+
+def test_run_rejects_invalid_agent_session_before_build(
+    stubbed_run: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        get_all_blueprints, "get_by_name_or_exit", lambda name: McpClient.blueprint()
+    )
+    result = CliRunner().invoke(main, ["run", "agent", "--restore-session", "../escape"])
+    assert result.exit_code != 0
+    assert "blueprint" not in stubbed_run
+
+
+def test_run_accepts_disabled_agent_history(
+    stubbed_run: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        get_all_blueprints, "get_by_name_or_exit", lambda name: McpClient.blueprint()
+    )
+    result = CliRunner().invoke(main, ["run", "agent", "--persist-history", "false"])
+    assert result.exit_code == 0, result.output
+    assert stubbed_run["parsed_config"].module_kwargs("mcpclient")["persist_history"] is False
 
 
 @pytest.mark.parametrize(
