@@ -262,7 +262,12 @@ class SemanticSearch(MemoryModule):
         def _similarity(obs: Observation[Any]) -> float:
             return cast("EmbeddedObservation[Any]", obs).similarity or 0.0
 
-        best = results.transform(peaks(key=_similarity, distance=1.0)).last()
+        best = (
+            results.order_by("ts")
+            .transform(peaks(key=_similarity, distance=1.0))
+            .order_by("similarity", desc=True)
+            .first()
+        )
         if best.pose_stamped is None:
             raise LookupError("No pose on best search result")
         return best.pose_stamped
