@@ -744,6 +744,7 @@ ignore = [
     "dimos/navigation/local_planner/rust/src/planner.rs",
     "*/uv.lock",
     "*/package-lock.json",
+    "agent/npm-shrinkwrap.json",
     "Cargo.lock",
     "*/Cargo.lock",
     "dimos/web/dimos_interface/themes.json",

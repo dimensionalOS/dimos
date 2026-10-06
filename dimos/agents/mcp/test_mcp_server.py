@@ -20,7 +20,8 @@ import threading
 from unittest.mock import MagicMock
 
 from dimos.agents.capabilities import CapabilityRegistry
-from dimos.agents.mcp.mcp_server import app, handle_request
+from dimos.agents.mcp.mcp_server import _mcp_content, app, handle_request
+from dimos.agents.skill_result import SkillResult
 from dimos.core.module import SkillInfo
 
 
@@ -334,3 +335,18 @@ def test_instant_holder_conflict_waits_then_runs() -> None:
         app.state.skills_by_name = saved_skills
         app.state.cap_registry = saved_registry
         app.state.cap_acquire_timeout = saved_timeout
+
+
+def test_mcp_image_and_structured_failure() -> None:
+    encoded = [{"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,YWJj"}}]
+    assert _mcp_content(encoded) == [{"type": "image", "mimeType": "image/jpeg", "data": "YWJj"}]
+    result = asyncio.run(
+        handle_request(
+            {"id": 5, "method": "tools/call", "params": {"name": "fail", "arguments": {}}},
+            [],
+            {"fail": lambda: SkillResult.fail("EXPECTED", "fixture")},
+        )
+    )
+    assert result is not None
+    assert result["result"]["isError"] is True
+    assert "EXPECTED" in result["result"]["content"][0]["text"]

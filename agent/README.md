@@ -1,0 +1,176 @@
+# dimcode
+
+Persistent terminal agent for DimOS, built on Pi. The gateway runs independently of robot blueprints. Existing MCP exposes skills; Pi's coding tools use the existing DimOS CLI/Python APIs. Media uses the existing Web SDK only while a renderer needs it.
+
+## Install
+
+Test release: **`@spomichter/dimcode@next`**. Install on Linux x64/arm64 or Apple Silicon:
+
+```sh
+curl -fsSL https://github.com/dimensionalOS/dimos/releases/download/dimcode-v0.1.0-next.1/install.sh | sh
+```
+
+The installer downloads and checks a private Node 24 runtime, installs the npm package and creates `~/.local/bin/dimcode`. It offers to open setup immediately. No system Node upgrade, sudo, source checkout or build commands are needed. If `~/.local/bin` is not on your PATH, use the absolute launcher path printed by the installer.
+
+With Node **24 or 26** already installed, npm also works:
+
+```sh
+npm install -g https://registry.npmjs.org/@spomichter/dimcode/-/dimcode-0.1.0-next.1.tgz
+dimcode setup
+```
+
+`setup` signs you in, selects a model and asks whether to start the gateway at login, then opens **agent-led DimOS setup** in the terminal. Drop a checkout/environment path or describe what you want to build. The agent reads DimOS's own installation instructions and uses its ordinary coding tools to inspect, install, verify and connect it. There is no hard-coded DimOS installer in dimcode.
+
+Run `dimcode` to launch again. Existing credentials, recordings and sessions are preserved. The shell installer itself starts no daemon or blueprint; setup offers the optional Linux user service. Windows, Homebrew and WinGet distribution are not part of this prerelease.
+
+`dimcode` opens the fullscreen Pi-based terminal: scrollable chat, a multiline editor with command/file completion, compact tool output, and a persistent model/status footer. Shift+Enter adds a line; Ctrl-C detaches from the running gateway.
+
+Memory results appear **inside the agent's tool card**, with an overview combining DimOS's timeline, spatial map and selected frames. Click a panel label or enter `/panel 1`, `/panel 2`, etc. to see a larger individual view; `/panel 0` returns to the overview. `/expand` shows the latest tool's full output and source hashes. Use a terminal with image support (such as Kitty) for the SVG/PNG views; other terminals show image metadata.
+
+To inspect a saved cloud without a model call, enter these commands **inside dimcode**:
+
+```text
+/inspect /absolute/path/to/cloud.json
+/view
+```
+
+Cloud exports use `{ "points": [[x, y, z]], "frame": "world", "timestamp": 123.45 }`. In the inspector, **←/→** rotates, **+/-** zooms, **g** switches graphics/Braille, **d** shows source/hash, **0** resets the view, and **Esc** returns to chat. An export can supply `selectedIndices` to highlight the exact selection produced by its owning operation. Rotation and zoom change the view only; memory analysis and filtering stay in DimOS.
+
+Point-cloud results from `dimcode_render` open the same inspector through `/view`. The terminal verifies the source hash before loading interactive geometry; if the file changed, the original tool preview remains available. `/expand` toggles details for the latest tool. Images use supported terminal graphics; Braille supports point-cloud inspection without image support.
+
+A fresh `dimcode` launch opens setup automatically. Repeating `dimcode setup` lets you change the choices; configured providers offer **Use configured credentials** so you do not need to paste a key again. Credentials never enter chat.
+
+```sh
+dimcode setup       # repeat interactive setup
+dimcode tui         # open the terminal (same as dimcode)
+dimcode --help      # all launch commands
+```
+
+The bundled [`dimensional-install` skill](skills/dimensional-install/SKILL.md) handles DimOS onboarding. Existing environments and editable checkouts are inspected and reused; a new install follows the selected version's README and OS-specific instructions, including its Python requirements and requested extras. Commands and failures appear in normal tool cards. The resulting conversation can be detached and resumed like any session. Agent-led setup needs a working model; `setup --provider NAME --key-env VAR` configures credentials without launching a model or installing DimOS.
+
+## What is installed / where is the source?
+
+This package uses **upstream Pi 0.85.1**, pinned as npm dependencies. It is not a Pi fork or a native binary. `dimcode` is a Node CLI with a Dimensional gateway, terminal frontend and extensions. Pi supplies the agent runtime, provider login, coding tools, message components and tool cards. A fork is unnecessary for these customizations.
+
+All source is in this repository's [`agent/src/`](src): [`main.ts`](src/main.ts) launches the CLI; [`setup.ts`](src/setup.ts) handles private bootstrap; [`skills/dimensional-install`](skills/dimensional-install) guides agent-led installation; [`terminal.ts`](src/terminal.ts) renders chat; [`gateway.ts`](src/gateway.ts) owns persistent sessions; [`media.ts`](src/media.ts) lazily connects the existing Web SDK. [`skills/dimensional`](skills/dimensional) supplies DimOS instructions.
+
+## Authentication and service
+
+API keys are entered outside chat and stored by Pi in the user-only auth file. An environment key can be installed with `dimcode setup --provider openai --key-env OPENAI_API_KEY`. ChatGPT subscription login uses `--provider openai-codex --oauth`. Use Anthropic API keys for Claude in dimcode. Refresh/logout use Pi's provider implementation.
+
+```sh
+dimcode service install
+dimcode service status
+dimcode service uninstall
+```
+
+This is a Linux **user** service. Without it, first attach starts a detached gateway. `dimcode stop` stops that gateway; `dimcode gateway` runs it in the foreground for diagnostics, or reports that it is already running. `dimcode --foreground` runs gateway and terminal in one foreground process.
+
+Config/auth live in `$XDG_CONFIG_HOME/dimcode` (or `~/.config/dimcode`), sessions in `$XDG_STATE_HOME/dimcode`, previews in `$XDG_CACHE_HOME/dimcode`. `DIMCODE_HOME` overrides the config directory. The runtime socket is user-only. Service removal preserves sessions, credentials and DimOS data.
+
+## Connect and work
+
+```sh
+dimcode connect go2 http://127.0.0.1:9990/mcp
+dimcode relay http://127.0.0.1:7780 my-robot
+dimcode workspace /path/to/app   # save the default workspace
+dimcode --cwd /path/to/app
+dimcode sessions
+dimcode --session SESSION_ID
+dimcode --session SESSION_ID --view
+dimcode run "inspect the app and explain its blueprint"
+```
+
+Endpoints are explicit; ports are examples, not instance identities. Use `/reload` after changing endpoints. Every advertised skill is registered with its original schema, metadata and remote routing. Tool names are bounded and collision-resistant. There is no static copy of the robot's tools or a parallel lifecycle service.
+
+Terminal commands: `/new`, `/sessions`, `/resume ID`, `/models`, `/model PROVIDER MODEL`, `/login PROVIDER [oauth]`, `/logout PROVIDER`, `/abort`, `/steer TEXT`, `/follow TEXT`, `/reload`, `/image PATH`, `/panel N`, `/inspect PATH`, `/view`, `/expand`, `/exit`. Ctrl-C detaches. One terminal owns input; other viewers may observe. Detaching keeps the turn running. Restart restores Pi history and never automatically replays external actions. Very large histories show a bounded recent transcript with an omission notice; the complete agent history remains on disk. Session events carry their source identity so switching sessions cannot mix transcripts.
+
+Pi owns context loading, skills, compaction, models and coding-tool behavior. Workspace instructions and configured Pi extensions load normally. Attached terminals support serialized dialogs/notifications; executable extension UI factories belong in the terminal renderer and cannot be sent through a socket.
+
+## Tool rendering
+
+DimOS owns reusable visualizations and encodings for agent understanding: geometry, axes, units, timestamps, legends and selections. Dimcode owns terminal styling and interaction: cards, themes, camera/point presentation, resizing, controls and graphics/Braille adaptation. Terminal styling preserves the meaning of colors and labels in supplied visuals.
+
+DimOS memory owns video/frame/point-cloud analysis. Evaluate the memory operation once with `materialize()`, then use its existing `Space.to_svg()` / `Plot.to_svg()` and selected-frame exports. Pass those exports together to `dimcode_render`:
+
+```json
+{"kind":"image","title":"Memory · plant search","views":[{"label":"Timeline","path":"timeline.svg"},{"label":"Spatial","path":"space.svg"},{"label":"Frames","path":"frames.png"}]}
+```
+
+The tool rasterizes the original SVG/PNG views for terminal display and model context. Every view reaches the model; the terminal presents a selectable overview. Each export retains its source path and SHA-256. MCP tool results containing multiple images also appear together automatically. No query or filter runs inside the renderer. Existing skills that return only a pose or JSON still require an explicit export; the harness does not invent missing views.
+
+Built-in presentation stays constrained to **point clouds and images/SVGs**, with one player for finite sequences of either. `dimcode_render({path:"result.json"})` detects a cloud or frame index; other image paths are rasterized. Numeric plots and graphs use DimOS/Python SVG exports, not a harness plotting engine. Cloud JSON may also supply `colors: [[r,g,b]]` (0–255) and `selectedIndices`; source RGB is preserved and explicit selections are highlighted.
+
+For a memory/replay interval, materialize the selection in DimOS and export an index alongside the existing frames:
+
+```json
+{
+  "type": "points",
+  "timeOrigin": 1766747348.2995782,
+  "source": "Go2 memory · lidar · seconds 1–5",
+  "frames": [
+    {"path":"cloud-0.json","timestamp":1766747349.3433642},
+    {"path":"cloud-1.json","timestamp":1766747349.4723642}
+  ]
+}
+```
+
+Use `type:"image"` for PNG/JPEG frames or any custom SVG animation. Paths are relative to the index, timestamps are seconds and must increase; optional per-frame `sha256` checks the original exports. Use one recording origin for synchronized camera/cloud windows. This file indexes already exported results; it is not a new query or transport API.
+
+Call `dimcode_render({path:"clip.json",title:"Memory · seconds 1–5"})`, or use these commands **inside dimcode** without a model call:
+
+```text
+/inspect /absolute/path/to/clip.json
+```
+
+The latest clip loops automatically, including after reconnect, with no player buttons or timeline. Ask the agent “show a single frame at 2 seconds” to inspect a still; it selects the timestamped result and renders that frame. A single-frame result stays static. Leaving the session or closing the terminal stops playback. Point-cloud clips share one camera, bounds and height scale; mismatched coordinate frames must be aligned in DimOS first.
+
+The terminal plays timestamped PNGs. A looping GIF is exported for sharing (GIF timing rounds to centiseconds); the model receives a contact sheet of up to six labeled frames. `dimcode_render({path:"clip.json",frame:17})` returns original zero-based frame 17 for closer inspection, even if preview sampling omitted it. The renderer reads saved files only and never repeats the source query.
+
+Previews are bounded to 60 seconds, at most 120 frames and approximately 10 Hz, retaining first/last timestamps and original indexes. Source-frame gaps remain visible in playback. Per-file reads are limited to 32 MiB, a selected clip to 128 MiB/two million points, generated PNGs to 64 MiB and GIFs to 32 MiB. If a limit is reached, export a smaller preview with DimOS. Individual clouds label point display sampling. Original recordings and exports remain unchanged.
+
+The agent is instructed to visualize each meaningful sensor/memory operation. When no supported type or existing visualizer applies, it generates a self-contained SVG with inline Python from the evaluated result and displays it through `dimcode_render({kind:"image",path:"result.svg"})`. This supports arbitrary plots, images, simple graphs and labeled proposed overlays. The same rendered image is returned to the model for visual inspection. Rendering failures remain explicit.
+
+Live tools select an existing relay/robot/channel. The terminal receives frames directly through the Web SDK and coalesces drawing to 10 Hz. The gateway retains one final snapshot for model context. Closing/cancelling the tool releases consumers; the last consumer closes the connection. MediaPool is generic over decoded SDK slots and accepts existing decoder registries. The initial live image renderer handles JPEG; other channel types use their owning decoder/renderer or saved exports.
+
+Graphics use Pi terminal-image support with text fallback. In Warp, terminal images are rendered as complete cell-row slices so partial scrolling crops the image without compressing its aspect ratio. Derived PNGs/GIFs have a bounded 128 MiB cache; evicted previews show an explicit unavailable state and can be regenerated from retained exports; original DimOS recordings stay with DimOS. No recording, raw continuous video, new transport protocol or new DimOS gateway is introduced.
+
+## Contributor development and validation
+
+These commands are for working on the source, not the user installation:
+
+```sh
+cd agent
+npm ci
+npm run check
+node dist/main.js setup
+node dist/main.js
+```
+
+These commands run the source build without installing the `dimcode` command. `npm pack` produces the distributable tarball. `npm-shrinkwrap.json` pins the published dependency tree.
+
+Prereleases are published by [dimcode-release.yml](../.github/workflows/dimcode-release.yml) from `dimcode-vVERSION` tags matching the package's `-next.N` version. The workflow checks Linux/macOS, publishes to npm's `next` tag using `DIMCODE_NPM_TOKEN`, then creates a GitHub prerelease with the tarball and installer. Ordinary branch pushes do not publish. The personal npm scope is for this test release.
+
+Installer options: `DIMCODE_VERSION` selects a version/tag (default `next`), `DIMCODE_INSTALL_DIR` selects private runtime/releases, `DIMCODE_BIN_DIR` selects the launcher directory, and `DIMCODE_SETUP=0` skips the setup offer. Node downloads and npm tarballs are verified before installation. The installer resolves npm’s version metadata directly and checks the package SHA-512, so a newly published release does not depend on npm’s package-index propagation. Run the installer again to update the launcher; older releases remain available to running sessions. Existing gateways continue using their current release until restarted with `dimcode service install` after active turns finish.
+
+To run the complete integration suite with an existing DimOS environment and Go2 recording:
+
+```sh
+DIMCODE_TEST_PYTHON=/path/to/dimos/.venv/bin/python \
+DIMCODE_TEST_DENO=/path/to/deno \
+DIMCODE_TEST_GO2_DB=/path/to/go2_bigoffice.db \
+npm test
+```
+
+The Go2 E2E test starts the standard `unitree-go2` blueprint in **recorded-data replay**, composed with the existing cockpit relay bridge. It starts its own relay and isolates transport discovery. No robot hardware or model API key is required. It verifies:
+
+- Multiple distinct, successfully decoded JPEG video frames and timestamped odometry.
+- Full XYZ float32 point clouds, every coordinate finite, source timestamps/frame metadata, and byte-for-byte source SHA-256 matches. A test-only encoder/SDK decoder uses the existing codec registry; it does not mislabel the default XY lidar projection as XYZ.
+- One shared SDK connection, lazy subscriptions, continued cloud reception after video closes, then zero viewers/subscriptions after the last renderer closes.
+- Cleanup of the blueprint and relay, including failure paths.
+
+A separate memory test materializes seconds 1–5 once, exports full cloud/camera frames and a native DimOS plot, then checks GIF frame counts, shared time origin and every preview frame’s source hash. Playback unit tests cover looping, cancellation, stale files, RGB preservation and disposal. A scrolling regression checks exact visible pixels at multiple scroll positions and widths.
+
+Set `DIMCODE_TEST_REPORT=/absolute/path/report.json` to save measured counts. Without `DIMCODE_TEST_GO2_DB`, the large recording test is explicitly skipped. The Python and Deno variables separately enable the MCP-handler and QUIC relay tests. Unit/CLI tests also cover onboarding, private credentials, cancellation, `tui`, existing-gateway handling, session ownership, detach/recovery and renderer provenance.
+
+A video stream here means consecutive JPEG frames over WebTransport. This does not claim an H.264/WebCodecs decoder, browser UI coverage, or a physical robot test. The harness's initial live terminal renderer displays JPEG; saved point clouds, timed sequences and SVGs render from exported results. Other live types can plug into the generic SDK codec registry.
