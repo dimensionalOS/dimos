@@ -1,0 +1,267 @@
+{
+  "date": "2026-10-07",
+  "scope": "Isolated simulated rollouts, not complete blueprint or hardware acceptance",
+  "original_robot_xml_sha256": "50adb09a4365293e2acdaf2010ae35a82b0f09fea18ae51806fef91e310ed04a",
+  "rust_python_reference": {
+    "duration_seconds": 14,
+    "step_height_m": 0.08,
+    "max_base_position_difference_m": 2.652297631354142e-05
+  },
+  "stair_sets": {
+    "narrow_original": {
+      "passed": 5,
+      "total": 6,
+      "failed_files": [
+        "narrow-baseline-h0.12-x1.15.json"
+      ]
+    },
+    "narrow_adjusted": {
+      "passed": 6,
+      "total": 6,
+      "failed_files": []
+    },
+    "narrow_rust_blind": {
+      "passed": 4,
+      "total": 6,
+      "failed_files": [
+        "narrow-blind-h0.12-x1.15.json",
+        "narrow-blind-h0.18-x1.15.json"
+      ]
+    },
+    "held_out_original": {
+      "passed": 5,
+      "total": 6,
+      "failed_files": [
+        "holdout-baseline-h0.2-yaw4.json"
+      ]
+    },
+    "held_out_adjusted": {
+      "passed": 5,
+      "total": 6,
+      "failed_files": [
+        "holdout-damp.1-h0.2-yaw4.json"
+      ]
+    }
+  },
+  "flat_by_passive_damping": {
+    "2.0": {
+      "forward": {
+        "late_body_velocity": [
+          0.5245545808588296,
+          0.13182037234510474,
+          0.08135915997245884
+        ],
+        "late_yaw_rate": 0.004227000015013534,
+        "max_tilt_deg": 14.88441440445019,
+        "fallen": false
+      },
+      "backward": {
+        "late_body_velocity": [
+          -0.3245996556269915,
+          -0.009328379833338295,
+          -0.019062537077772418
+        ],
+        "late_yaw_rate": 0.03316929790345258,
+        "max_tilt_deg": 6.785642142877151,
+        "fallen": false
+      },
+      "side-small": {
+        "late_body_velocity": [
+          0.028594825219130964,
+          0.10933928809721236,
+          0.010145108721950104
+        ],
+        "late_yaw_rate": -0.009164007133983378,
+        "max_tilt_deg": 7.178298311668451,
+        "fallen": false
+      },
+      "side": {
+        "late_body_velocity": [
+          0.11143412100826743,
+          0.40626411434456977,
+          0.05826551995078201
+        ],
+        "late_yaw_rate": 0.041793617242975624,
+        "max_tilt_deg": 16.74598459134016,
+        "fallen": false
+      },
+      "turn-small": {
+        "late_body_velocity": [
+          0.003643385875950852,
+          0.007422138536962694,
+          0.0001985877961003436
+        ],
+        "late_yaw_rate": 0.09783040677416595,
+        "max_tilt_deg": 5.52895319090461,
+        "fallen": false
+      },
+      "turn": {
+        "late_body_velocity": [
+          0.05963958323660554,
+          0.009817760759301441,
+          0.018881801368057886
+        ],
+        "late_yaw_rate": 0.5512119573315628,
+        "max_tilt_deg": 19.02625560090907,
+        "fallen": false
+      }
+    },
+    "0.1": {
+      "forward": {
+        "late_body_velocity": [
+          0.4125558972864265,
+          0.008318061705957131,
+          -0.00424508318299236
+        ],
+        "late_yaw_rate": 0.006147401815236611,
+        "max_tilt_deg": 6.9292438362350355,
+        "fallen": false
+      },
+      "backward": {
+        "late_body_velocity": [
+          -0.3685200878116038,
+          0.006754524305251231,
+          -0.023566697825091902
+        ],
+        "late_yaw_rate": 0.029546385720667857,
+        "max_tilt_deg": 5.784026841267232,
+        "fallen": false
+      },
+      "side-small": {
+        "late_body_velocity": [
+          0.027629678279989037,
+          0.06537053883656692,
+          0.0030816353386889928
+        ],
+        "late_yaw_rate": -0.0005411302845954951,
+        "max_tilt_deg": 8.550081212915243,
+        "fallen": false
+      },
+      "side": {
+        "late_body_velocity": [
+          0.03580480509524664,
+          0.28720376214299875,
+          -0.0006911358111969484
+        ],
+        "late_yaw_rate": 0.002548566598726945,
+        "max_tilt_deg": 5.958873811879096,
+        "fallen": false
+      },
+      "turn-small": {
+        "late_body_velocity": [
+          0.0019922404537183838,
+          0.004214758553759228,
+          0.0006652213932761317
+        ],
+        "late_yaw_rate": 0.08788353967632177,
+        "max_tilt_deg": 5.784026841267232,
+        "fallen": false
+      },
+      "turn": {
+        "late_body_velocity": [
+          0.009611884470851392,
+          0.01627879780186072,
+          -0.000508123431760263
+        ],
+        "late_yaw_rate": 0.528505259667716,
+        "max_tilt_deg": 5.784026841267232,
+        "fallen": false
+      }
+    }
+  },
+  "native_sim2_shm_trial": {
+    "policy": "python-free",
+    "weights_sha256": "406e735c32a8e5501c9122ef83fa61d67c70aa9bfc9a4dae266b321db1458330",
+    "reference_revision": "1ffe3ee6ab17f387c4fc6d6abf84b99d9748e6a7",
+    "robot": "data/go2_menagerie/go2.xml",
+    "robot_xml_sha256": "7fb154388bf245a832ac01250cbfd8d3c6e5c8ebd001e2bedcfb5b238285ab2b",
+    "parameters": {
+      "policy": "python-free",
+      "sim2": true,
+      "height": 0.18,
+      "steps": 4,
+      "tread": 0.3,
+      "width": 1.2,
+      "start": 1.0,
+      "seconds": 24.0,
+      "hold": 1,
+      "settle": 2,
+      "command": [
+        0.5,
+        0.0,
+        0.0
+      ],
+      "hz": 50,
+      "dt": 0.0025,
+      "damping": null,
+      "frictionloss": null,
+      "kp_scale": 1,
+      "kd_scale": 1,
+      "cone": "elliptic",
+      "impratio": 10.0,
+      "lateral_offset": 0,
+      "yaw_degrees": 0
+    },
+    "seconds": 13.07999999999954,
+    "wall_seconds": 7.180671665817499,
+    "fallen": false,
+    "stairs_reached_top": true,
+    "reached_at_seconds": 10.06000000000014,
+    "final_position": [
+      2.6737472835195932,
+      -0.044196422182898404,
+      0.980039311133514
+    ],
+    "final_foot_positions": [
+      [
+        2.9033238464354203,
+        0.0861659208981291,
+        0.7292002528464403
+      ],
+      [
+        2.8647433221962633,
+        -0.1884761957956344,
+        0.7291892251735231
+      ],
+      [
+        2.4497343130353673,
+        0.10241604111232919,
+        0.7291555072868708
+      ],
+      [
+        2.458553429699986,
+        -0.18813053760200552,
+        0.7293141570168765
+      ]
+    ],
+    "max_x": 2.6746957379563887,
+    "max_tilt_deg": 33.406118918469716,
+    "late_body_velocity": [
+      0.12212138250086244,
+      0.0018014493714929715,
+      -0.020043439239416844
+    ],
+    "late_yaw_rate": 0.006162462669815215,
+    "final_tilt_deg": 9.078045857381872,
+    "late_lateral_velocity_rms": 0.027420190325014564,
+    "physics_options": {
+      "cone": "mjCONE_ELLIPTIC",
+      "impratio": 10.0,
+      "timestep": 0.0025
+    },
+    "passive_damping": [
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1
+    ]
+  }
+}

@@ -10,6 +10,11 @@ a fatal feedback-thread error; `844f0a2bd` fixes the read/publication race and
 transient-read handling. Slow lateral and turning behavior remains unaccepted.
 See the diagnosis below before describing this as a working locomotion baseline.
 
+**Stair follow-up, 2026-10-07:** [STAIRS.md](STAIRS.md) records matched Rust
+controller comparisons, a four-by-18-cm sim2/SHM climb-and-stop, and a retained
+passive-damping adjustment. Slow turning/lateral tracking remains unaccepted;
+the earlier measurements below describe the original model, not that adjustment.
+
 ## Ownership
 
 ```text
@@ -77,7 +82,9 @@ The 4.4 MiB robot archive contains only the Menagerie Go2 MJCF, meshes and
 upstream BSD-3-Clause license/README/changelog, extracted from Andrew's retained
 asset. It contains neither policy weights nor another Mid360 model. Joint gains
 and starting pose match the pinned FREE metadata; physical inertias, contacts,
-damping and actuator limits retain the source MJCF. The camera is an ideal RGB-D
+damping and actuator limits initially retained the source MJCF. The later
+[stair study](STAIRS.md) changes only passive damping from 2.0 to 0.1, with the
+deviation recorded in the asset README. The camera is an ideal RGB-D
 device, not a calibrated Go2 front camera. Mid360 uses the existing measured SF
 mount: camera offset plus (-0.032, 0, 0.12) m and 60-degree downward pitch.
 
@@ -213,8 +220,10 @@ rate changed from 0.0207 to 0.1186 rad/s, still below the request. This is not a
 justification to change expert selection: it matches the recovered upstream
 controller today, and its equivalence to the original firmware must be checked.
 
-No alternative physics parameters, weights, command multipliers, terrain
-inputs or policies were adopted. The remaining gait problem is reproducible
+At this diagnosis checkpoint, no alternative physics parameters, weights,
+command multipliers, terrain inputs or policies were adopted. The gait problem was reproducible
 without transport/navigation, but its cause within policy deployment and
 physical-model behavior is not yet established. A matched FREE deployment
-reference is needed before claiming faithful real-Go2 behavior or stair ability.
+reference was needed before claiming faithful real-Go2 behavior or stair ability.
+The subsequent [stair study](STAIRS.md) supplies a recovered-controller
+comparison and bounded simulation evidence, not physical-Go2 equivalence.
