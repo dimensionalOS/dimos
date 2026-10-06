@@ -38,7 +38,7 @@ from dimos.core.run_registry import (
 )
 from dimos.core.stream import Out
 
-pytestmark = pytest.mark.macos_ci
+pytestmark = pytest.mark.self_hosted
 
 
 class PingModule(Module):
