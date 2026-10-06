@@ -51,6 +51,7 @@ from dimos.control.contract.convert import (
     motor_command_to_values,
     motor_joints,
     pose_from_values,
+    twist_from_values,
     twist_to_values,
 )
 from dimos.control.contract.description import ControlDescription, ResourceKind
@@ -66,6 +67,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.msgs.control_msgs.ControlValues import ControlValues
+from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.logging_config import setup_logger
 
@@ -405,6 +407,12 @@ class ConnectionModule(Module, ABC):
             odom = self._only([b for b, _, st in bases if set(POSE_INTERFACES) <= st], "odom")
             published |= _keys([odom], POSE_INTERFACES)
             self._outputs.append((_source(odom), outputs["odom"], pose_from_values, odom))
+        if "base_velocity" in outputs:
+            speed = self._only(
+                [b for b, _, st in bases if set(TWIST_INTERFACES) <= st], "base_velocity"
+            )
+            published |= _keys([speed], TWIST_INTERFACES)
+            self._outputs.append((_source(speed), outputs["base_velocity"], _measured_twist, speed))
         if "imu" in outputs:
             sensors = _parts(descriptions, ResourceKind.SENSOR)
             imu = self._only([s for s, _, st in sensors if set(IMU_INTERFACES) <= st], "imu")
@@ -550,6 +558,11 @@ class ConnectionModule(Module, ABC):
 def _source(key: str) -> str:
     """The robot a key or part name belongs to: "arm" for "arm/joint1"."""
     return key.split(SEPARATOR, 1)[0]
+
+
+def _measured_twist(values: Values, base: str, ts: float) -> Twist:
+    """A base's measured speed as a Twist, which carries no time."""
+    return twist_from_values(values, base)
 
 
 def _keys(parts: list[str], interfaces: tuple[str, ...]) -> set[str]:

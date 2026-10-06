@@ -83,6 +83,7 @@ COMMAND_PORTS: Mapping[str, type] = {
 STATE_PORTS: Mapping[str, type] = {
     "joint_state": JointState,
     "odom": PoseStamped,
+    "base_velocity": Twist,
     "imu": Imu,
 }
 
@@ -133,7 +134,8 @@ def twist_to_values(twist: Twist, base: str) -> dict[str, float]:
 
 
 def twist_from_values(values: Mapping[str, float], base: str) -> Twist:
-    """A Twist from a base's ``vx``, ``vy`` and ``wz`` (m/s, m/s, rad/s)."""
+    """A Twist from a base's ``vx``, ``vy`` and ``wz`` (m/s, m/s, rad/s): a
+    speed to command, or one the base measured."""
     vx, vy, wz = _take(values, base, TWIST_INTERFACES)
     return Twist(linear=Vector3(vx, vy, 0.0), angular=Vector3(0.0, 0.0, wz))
 

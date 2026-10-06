@@ -135,13 +135,15 @@ class BodyAndBase(MockConnectionModule):
     motor_command: In[MotorCommandArray]
     base_command: In[Twist]
     odom: Out[PoseStamped]
+    base_velocity: Out[Twist]
     imu: Out[Imu]
 
     def describe(self) -> list[ControlDescription]:
         limits = {Key.of("base", "base", axis): Limits(-1.0, 1.0) for axis in (VX, VY, WZ)}
         return [
             pd_joint_description("g1", ["j1", "j2"], sensors=[imu_resource()]),
-            twist_base_description("base", limits=limits, measured_velocity=False),
+            # The preset's defaults: it reports where it is and how fast.
+            twist_base_description("base", limits=limits),
         ]
 
 
@@ -300,6 +302,9 @@ def test_readings_go_out_typed(rig: Callable[..., Rig]) -> None:
         "base/base/x": 1.0,
         "base/base/y": 2.0,
         "base/base/yaw": 0.5,
+        "base/base/vx": 0.4,
+        "base/base/vy": -0.1,
+        "base/base/wz": 0.2,
     }
     r.module.publish_state(readings)
     [joints] = r.sent("joint_state")
@@ -309,9 +314,23 @@ def test_readings_go_out_typed(rig: Callable[..., Rig]) -> None:
     assert isinstance(odom, PoseStamped)
     assert (odom.position.x, odom.position.y) == (1.0, 2.0)
     assert odom.orientation.z == pytest.approx(math.sin(0.25))
+    [speed] = r.sent("base_velocity")
+    assert isinstance(speed, Twist)
+    assert (speed.linear.x, speed.linear.y, speed.angular.z) == (0.4, -0.1, 0.2)
     [imu] = r.sent("imu")
     assert isinstance(imu, Imu)
     assert (imu.orientation.w, imu.angular_velocity.z, imu.linear_acceleration.z) == (1.0, 0.3, 9.8)
+
+
+def test_a_base_described_with_the_preset_defaults_reports_its_speed(
+    rig: Callable[..., Rig],
+) -> None:
+    r = rig(BodyAndBase)
+    r.send("base_command", Twist(linear=Vector3(0.5, 0.0, 0.0), angular=Vector3(0.0, 0.0, 0.2)))
+    # The mock's base reports the speed it was last told.
+    assert wait_until(
+        lambda: any(t.linear.x == 0.5 and t.angular.z == 0.2 for t in r.sent("base_velocity"))
+    )
 
 
 def test_joints_of_other_robots_are_ignored(rig: Callable[..., Rig]) -> None:
@@ -429,7 +448,7 @@ def test_published_readings_are_checked_against_the_description(
     rig: Callable[..., Rig],
 ) -> None:
     r = rig(PushedBodyAndBase)
-    r.module.publish_state({"base/base/x": 0.0, "base/base/y": 0.0, "base/base/yaw": 0.0})
+    r.module.publish_state({f"base/base/{i}": 0.0 for i in ("x", "y", "yaw", "vx", "vy", "wz")})
     assert len(r.sent("odom")) == 1
 
     r.module.publish_state({"base/base/x": 0.0})
