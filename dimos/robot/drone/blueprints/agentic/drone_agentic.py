@@ -20,7 +20,7 @@ Composes on top of drone_basic (connection + camera + vis) and adds
 tracking, mapping skills, and an LLM agent.
 """
 
-from dimos.agents.mcp.mcp_client import McpClient
+from dimos.agents.agent import Agent
 from dimos.agents.mcp.mcp_server import McpServer
 from dimos.agents.skills.google_maps_skill_container import GoogleMapsSkillContainer
 from dimos.agents.skills.observe_skill import ObserveSkill
@@ -48,7 +48,7 @@ drone_agentic = autoconnect(
     ObserveSkill.blueprint(),
     OsmSkill.blueprint(),
     McpServer.blueprint(),
-    McpClient.blueprint(system_prompt=DRONE_SYSTEM_PROMPT, model="gpt-4o"),
+    Agent.blueprint(system_prompt=DRONE_SYSTEM_PROMPT, model="gpt-4o"),
     WebInput.blueprint(),
 ).remappings(
     [

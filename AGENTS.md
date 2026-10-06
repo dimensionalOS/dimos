@@ -39,7 +39,7 @@ dimos restart          # stop + re-run with same original args
 
 | Blueprint | Robot | Hardware | Agent | MCP server | Notes |
 |-----------|-------|----------|-------|------------|-------|
-| `unitree-go2-agentic` | Go2 | real | via McpClient | ✓ | McpServer live |
+| `unitree-go2-agentic` | Go2 | real | via Agent | ✓ | McpServer live |
 | `unitree-g1-agentic-sim` | G1 | sim | gpt-5.6-luna (G1 prompt) | ✓ | Full agentic sim, no real robot needed |
 | `xarm-perception-agent` | xArm | real | gpt-5.6-luna | ✓ | Manipulation + perception + agent |
 | `xarm-perception-sim-agent` | xArm | sim | gpt-5.6-luna | ✓ | Manipulation + perception + agent, sim |
@@ -53,7 +53,7 @@ Run `dimos list` for the full list.
 
 ## Tools available to you (MCP)
 
-**MCP only works if the blueprint includes `McpServer`.** All shipped agentic blueprints use `McpServer` + `McpClient`. E.g.: `unitree-go2-agentic`.
+**MCP only works if the blueprint includes `McpServer`.** All shipped agentic blueprints use `McpServer` + `Agent`. E.g.: `unitree-go2-agentic`.
 
 ```bash
 # Start the MCP-enabled blueprint first:
@@ -74,16 +74,16 @@ The MCP server runs at `http://localhost:9990/mcp` (`GlobalConfig.mcp_port`).
 
 ### Adding McpServer to a blueprint
 
-Use **both** `McpServer.blueprint()` and `McpClient.blueprint()`.
+Use **both** `McpServer.blueprint()` and `Agent.blueprint()`.
 
 ```python
-from dimos.agents.mcp.mcp_client import McpClient
+from dimos.agents.agent import Agent
 from dimos.agents.mcp.mcp_server import McpServer
 
 unitree_go2_agentic = autoconnect(
     unitree_go2_spatial,   # robot stack
     McpServer.blueprint(), # HTTP MCP server — exposes all @skill methods on port 9990
-    McpClient.blueprint(), # LLM agent — fetches tools from McpServer
+    Agent.blueprint(), # LLM agent — fetches tools from McpServer
     _common_agentic,       # skill containers
 )
 ```
@@ -123,7 +123,7 @@ dimos/
 ├── agents/
 │   ├── system_prompt.py     # Default Go2 system prompt
 │   ├── annotation.py        # @skill decorator
-│   ├── mcp/                 # McpServer, McpClient, McpAdapter (the LangGraph agent lives here)
+│   ├── mcp/                 # McpServer, McpClient, McpAdapter
 │   └── skills/              # NavigationSkillContainer, SpeakSkill, etc.
 ├── navigation/              # Path planning, frontier exploration
 ├── perception/              # Object detection, tracking, memory
@@ -292,7 +292,7 @@ my_skill_container = MySkillContainer.blueprint
 | Go2 (default) | `dimos/agents/system_prompt.py` | `SYSTEM_PROMPT` |
 | G1 humanoid | `dimos/robot/unitree/g1/system_prompt.py` | `G1_SYSTEM_PROMPT` |
 
-Pass the robot-specific prompt: `McpClient.blueprint(system_prompt=G1_SYSTEM_PROMPT)`. The default prompt is Go2-specific; using it on G1 causes hallucinated skills.
+Pass the robot-specific prompt: `Agent.blueprint(system_prompt=G1_SYSTEM_PROMPT)`. The default prompt is Go2-specific; using it on G1 causes hallucinated skills.
 
 ### RPC Wiring
 

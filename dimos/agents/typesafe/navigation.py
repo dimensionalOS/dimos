@@ -23,7 +23,6 @@ import time
 from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage
-from langchain_core.messages.base import BaseMessage
 from reactivex import Observable, operators as ops
 from reactivex.disposable import Disposable
 
@@ -94,12 +93,9 @@ class TypeSafeNavigationAgent(TypeSafeAgent):
     detections_3d: In[Detection3DArray]
     detections_2d: In[Detection2DArray]
     lidar: In[PointCloud2]
-    human_input: In[str]
 
     cmd_vel: Out[Twist]
     goal: Out[PointStamped]  # world-frame XY the goal text resolved to
-    agent: Out[BaseMessage]
-    agent_idle: Out[bool]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)

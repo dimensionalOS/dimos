@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Evaluate the production McpClient through its input and output topics."""
+"""Evaluate the production Agent through its input and output topics."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ from typing import Any
 from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 
 from dimos.agents.llm_trace import list_llm_trace_pairs
-from dimos.evals.agents.base import Agent
+from dimos.evals.agents.base import EvalAgent
 from dimos.evals.agents.lib.langchain_to_atif import append_ai_message_to_atif
 from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
 from dimos.evals.environments.base import Environment
@@ -32,7 +32,7 @@ from dimos.evals.types import RunningEnvironment, Trajectory
 
 
 class _Turn:
-    """One McpClient turn as seen on the wire: every message on ``/agent``
+    """One Agent turn as seen on the wire: every message on ``/agent``
     from the moment ``/agent_idle`` goes False until it comes back True.
     ``/agent_idle`` is its own topic and can overtake the last ``/agent``
     message, so the turn is done only once the received ``AIMessage``s match
@@ -67,8 +67,8 @@ class _Turn:
             self.done.set()
 
 
-class McpClientAdapter(Agent):
-    """An eval adapter for the production ``McpClient``.
+class McpClientAdapter(EvalAgent):
+    """An eval adapter for the production ``Agent``.
 
     Send the instruction on ``/human_input`` and capture ``/agent`` until
     ``/agent_idle``. Configure the model and prompt on the production module;
@@ -89,30 +89,28 @@ class McpClientAdapter(Agent):
     def preflight(self, environment: Environment) -> None:
         if not environment.has_robot and not self.config.modules:
             raise RuntimeError(
-                f"McpClientAdapter needs a running McpClient; {type(environment).__name__} "
+                f"McpClientAdapter needs a running Agent; {type(environment).__name__} "
                 "has no robot and this agent adds no modules"
             )
 
     def run(
         self, inputs: str, env: RunningEnvironment, run_dir: Path, *, timeout_s: float
     ) -> Trajectory:
-        from dimos.agents.mcp.mcp_client import McpClientConfig
+        from dimos.agents.agent import AgentConfig
         from dimos.core.transport_factory import make_transport
         from dimos.porcelain.dimos import Dimos
 
         # Set the directory for logging raw request/response payloads
-        # in dimos.agents.mcp.mcp_client.McpClient
+        # in dimos.agents.agent.Agent
         app = Dimos.connect()
         try:
-            mcp_client: Any = app.McpClient  # handle type depends on what's importable
+            mcp_client: Any = app.Agent  # handle type depends on what's importable
             mcp_client.set_trace_dir(str(run_dir / "raw"))
         finally:
             app.stop()
 
-        # init the stateful trajectory builder and subscribe to McpClient events
-        trajectory = TrajectoryBuilder(
-            inputs, name=type(self).__name__, model=McpClientConfig().model
-        )
+        # init the stateful trajectory builder and subscribe to Agent events
+        trajectory = TrajectoryBuilder(inputs, name=type(self).__name__, model=AgentConfig().model)
         turn = _Turn(run_dir / "raw")
         agent_t, idle_t, human_t = (
             make_transport("/agent"),
@@ -137,7 +135,7 @@ class McpClientAdapter(Agent):
             if isinstance(msg, AIMessage):
                 if calls >= len(pairs):
                     raise RuntimeError(
-                        f"McpClient wrote no LLM trace for call {calls} under {run_dir / 'raw'}; "
+                        f"Agent wrote no LLM trace for call {calls} under {run_dir / 'raw'}; "
                         "every call must be captured whole"
                     )
                 _, request_path, response_path = pairs[calls]

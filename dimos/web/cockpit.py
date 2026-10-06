@@ -526,9 +526,9 @@ class Teleop(Panel):
 @dataclass(frozen=True)
 class Chat(Panel):
     """Agent conversation: the humancli contract as a panel. Typed text
-    goes out on `input` (McpClient.human_input); the LangChain transcript
-    comes back on `messages` (McpClient.agent, one chat.json.v1 frame per
-    message, none dropped) and `idle` (McpClient.agent_idle) drives the
+    goes out on `input` (Agent.human_input); the LangChain transcript
+    comes back on `messages` (Agent.agent, one chat.json.v1 frame per
+    message, none dropped) and `idle` (Agent.agent_idle) drives the
     thinking spinner. The composer's push-to-talk mic ships recordings as
     audio.json.v1 chunks on `audio` (VoiceInput.audio_in); the transcript
     joins the conversation like typed text. A grid panel next to video/map;

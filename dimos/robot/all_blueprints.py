@@ -203,6 +203,7 @@ all_blueprints = {
 
 
 all_modules = {
+    "agent": "dimos.agents.agent.Agent",
     "alfred-high-level": "dimos.robot.diy.alfred.effector_high_level.AlfredHighLevel",
     "alfred-mount-tf": "dimos.robot.diy.alfred.mount_tf.AlfredMountTf",
     "arm-command-module": "dimos.teleop.hosted.arm_command.ArmCommandModule",
@@ -297,7 +298,6 @@ all_modules = {
     "map-compress-module": "dimos.teleop.hosted.map_compress.MapCompressModule",
     "marker-detection-stream-module": "dimos.perception.fiducial.marker_detection_stream_module.MarkerDetectionStreamModule",
     "marker-tf-module": "dimos.perception.fiducial.marker_tf_module.MarkerTfModule",
-    "mcp-client": "dimos.agents.mcp.mcp_client.McpClient",
     "mcp-server": "dimos.agents.mcp.mcp_server.McpServer",
     "memory-module": "dimos.memory.module.MemoryModule",
     "mid360-pcap-recorder": "dimos.hardware.sensors.lidar.virtual_mid360.recorder.Mid360PcapRecorder",

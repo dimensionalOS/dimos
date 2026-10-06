@@ -15,7 +15,7 @@
 """The agentic go2 with an authored cockpit: video over the 3D voxel map
 left, costmap+pose over keyboard teleop in the middle, the agent chat right
 (the humancli
-conversation on McpClient's human_input/agent/agent_idle streams, with the
+conversation on Agent's human_input/agent/agent_idle streams, with the
 composer's push-to-talk mic feeding VoiceInput -> the shared Whisper
 pipeline), plus a full-page camera view on its own tab. The cockpit
 replaces the legacy :5555 WebInput page, so that module is disabled here

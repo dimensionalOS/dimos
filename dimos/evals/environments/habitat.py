@@ -30,7 +30,7 @@ from dimos.simulation.habitat.server import HabitatProp
 
 if TYPE_CHECKING:
     from dimos.e2e_tests.dimos_cli_call import DimosCliCall
-    from dimos.evals.agents.base import Agent
+    from dimos.evals.agents.base import EvalAgent
     from dimos.memory.store.base import Store
     from dimos.simulation.habitat.connection import HabitatConnectionConfig
 
@@ -80,7 +80,7 @@ class HabitatEnvironment(Sim):
         super().__init__(**kwargs)
         self._spawn: PoseStamped | None = None
 
-    def preflight(self, agent: Agent) -> None:
+    def preflight(self, agent: EvalAgent) -> None:
         """Check scene inputs and the existing native build/install prerequisites.
 
         Reuse HabitatConnection's build flow. Do not require the separate

@@ -67,7 +67,7 @@ JSON_THEME = Theme(
 
 # How many of a tool's most recent stream lines to show inside its box.
 RECENT_LINES = 5
-# Prefix `McpClient` puts on tool-stream updates it re-emits to `/agent`.
+# Prefix `Agent` puts on tool-stream updates it re-emits to `/agent`.
 TOOL_MSG_PREFIX = "[tool:"
 # Markers pairing a tool call with its result in the scrollback.
 TOOL_CALL_MARKER = "▶"

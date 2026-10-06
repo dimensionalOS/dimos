@@ -35,7 +35,7 @@ from dimos.evals.types import RunningEnvironment
 from dimos.protocol.service.spec import BaseConfig
 
 if TYPE_CHECKING:
-    from dimos.evals.agents.base import Agent
+    from dimos.evals.agents.base import EvalAgent
     from dimos.memory.store.base import Store
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
@@ -88,7 +88,7 @@ class Sim(Environment):
     def latest_pose(self, recording: Store) -> PoseStamped:
         """Return achieved pose for settling; raise LookupError before the first sample."""
 
-    def preflight(self, agent: Agent) -> None:
+    def preflight(self, agent: EvalAgent) -> None:
         if self.config.attach:
             if agent.config.modules:
                 raise RuntimeError(

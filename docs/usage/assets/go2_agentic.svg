@@ -39,11 +39,11 @@
 <polygon fill="#0b0f0f" stroke="#5c9ff0" points="447.7,-296.73 360.55,-296.73 360.55,-260.73 447.7,-260.73 447.7,-296.73"/>
 <text text-anchor="middle" x="404.12" y="-275.95" font-family="fixed" font-size="12.00" fill="#b5e4f4">HumanInput</text>
 </g>
-<!-- LlmAgent -->
+<!-- Agent -->
 <g id="node2" class="node">
-<title>LlmAgent</title>
+<title>Agent</title>
 <polygon fill="#0b0f0f" stroke="#5c9ff0" points="438.32,-350.73 369.92,-350.73 369.92,-314.73 438.32,-314.73 438.32,-350.73"/>
-<text text-anchor="middle" x="404.12" y="-329.95" font-family="fixed" font-size="12.00" fill="#b5e4f4">LlmAgent</text>
+<text text-anchor="middle" x="404.12" y="-329.95" font-family="fixed" font-size="12.00" fill="#b5e4f4">Agent</text>
 </g>
 <!-- NavigationSkillContainer -->
 <g id="node3" class="node">

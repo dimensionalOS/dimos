@@ -33,7 +33,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 from dimos.web.codecs import web_encoder
 
 # Tool progress rides /agent as HumanMessage("[tool:NAME] text")
-# (mcp_client._on_tool_stream_message); same parse as humancli.
+# (Agent._on_tool_stream_message); same parse as humancli.
 _TOOL_MSG_PREFIX = "[tool:"
 # A tool result can be megabytes and the cockpit's JSON decoder drops payloads
 # above 256 KiB; a chat line is for reading, not for carrying data.

@@ -37,7 +37,7 @@ import pytest
 from pytest_mock import MockerFixture
 
 from dimos.core.transport_factory import make_transport
-from dimos.evals.agents.base import Agent
+from dimos.evals.agents.base import EvalAgent
 from dimos.evals.agents.blind import BLIND_BLOCK, Blind
 from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
 from dimos.evals.agents.mcp_client_adapter import McpClientAdapter
@@ -143,7 +143,7 @@ class FakeEnvironment(Environment):
         super().stop()
 
 
-class FakeAgent(Agent):
+class FakeAgent(EvalAgent):
     """Replies with a canned answer or timeout."""
 
     def __init__(self, answer: str = "", timed_out: bool = False) -> None:
@@ -226,12 +226,12 @@ def test_dataset_launches_and_cleans_up_the_agents_modules(
     env = Dataset(dataset)
 
     try:
-        running = env.start(("mcp-server", "mcp-client"))
+        running = env.start(("mcp-server", "agent"))
         assert running.mcp_url == default_mcp_url()
     finally:
         env.stop()
 
-    assert proc.demo_args == ["run", "mcp-server", "mcp-client"]
+    assert proc.demo_args == ["run", "mcp-server", "agent"]
     assert proc.simulator is None
     proc.start.assert_called_once_with()
     proc.stop.assert_called_once_with()
@@ -270,7 +270,7 @@ def test_dataset_stops_the_process_when_closing_its_store_fails(
 
 def test_sim_attach_rejects_added_modules() -> None:
     with pytest.raises(RuntimeError, match="attaches.*also adds modules"):
-        _sim(attach=True).preflight(McpClientAdapter(modules=("mcp-client",)))
+        _sim(attach=True).preflight(McpClientAdapter(modules=("agent",)))
 
 
 def test_sim_launches_base_blueprints_and_agent_modules_in_order(
@@ -290,13 +290,13 @@ def test_sim_launches_base_blueprints_and_agent_modules_in_order(
     mocker.patch.object(env, "_wait_recording", return_value=Path(dataset))
 
     try:
-        env.start(("mcp-client", "speak-skill"))
+        env.start(("agent", "speak-skill"))
         assert proc.demo_args == [
             "run",
             "unitree-go2",
             "mcp-server",
             "unitree-skill-container",
-            "mcp-client",
+            "agent",
             "speak-skill",
             "--disable",
             "wavefront-frontier-explorer",
@@ -371,9 +371,9 @@ def test_sim_settle_without_motion_data_returns_immediately(mocker: MockerFixtur
 
 def test_agent_preflight_mismatches(dataset: str) -> None:
     frozen = Dataset(dataset)
-    with pytest.raises(RuntimeError, match="McpClientAdapter needs a running McpClient"):
+    with pytest.raises(RuntimeError, match="McpClientAdapter needs a running Agent"):
         McpClientAdapter().preflight(frozen)
-    McpClientAdapter(modules=("mcp-server", "mcp-client")).preflight(frozen)  # brings its own
+    McpClientAdapter(modules=("mcp-server", "agent")).preflight(frozen)  # brings its own
     McpClientAdapter().preflight(_sim())  # the environment will launch the stack
 
 
@@ -737,7 +737,7 @@ def test_load_agent_is_the_module_plus_set_overrides() -> None:
     with pytest.raises(TypeError, match="0 agents"):
         load_agent("dimos.evals.agents.lib.single_call")
     with pytest.raises(ValidationError, match="modules"):
-        load_agent("dimos.evals.agents.mcp_client_adapter", ["modules=mcp-server mcp-client"])
+        load_agent("dimos.evals.agents.mcp_client_adapter", ["modules=mcp-server agent"])
     with pytest.raises(ValidationError, match="frames_per_stream"):
         load_agent("dimos.evals.agents.question_answer", ["frames_per_stream=0"])
 
@@ -746,19 +746,17 @@ def test_load_agent_is_the_module_plus_set_overrides() -> None:
 def test_mcp_client_adapter_drives_a_turn_over_real_transports(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, goes_idle: bool
 ) -> None:
-    """The production agent points the McpClient's raw capture at run_dir/raw,
+    """The production agent points the Agent's raw capture at run_dir/raw,
     publishes on /human_input, reads the turn back on /agent until
     /agent_idle or its budget runs out, and links every model call to the
-    McpClient's trace files (the message must arrive with no flush sleep: LCM
+    Agent's trace files (the message must arrive with no flush sleep: LCM
     publish is a synchronous send)."""
 
     trace_dir = tmp_path / "case" / "raw"
     trace_dir.mkdir(parents=True)
 
     repointed: list[str] = []
-    app = SimpleNamespace(
-        McpClient=SimpleNamespace(set_trace_dir=repointed.append), stop=lambda: None
-    )
+    app = SimpleNamespace(Agent=SimpleNamespace(set_trace_dir=repointed.append), stop=lambda: None)
     monkeypatch.setattr("dimos.porcelain.dimos.Dimos.connect", lambda: app)
 
     human, agent_t, idle = (
@@ -769,7 +767,7 @@ def test_mcp_client_adapter_drives_a_turn_over_real_transports(
     for t in (human, agent_t, idle):
         t.start()
 
-    def fake_mcp_client(text: str) -> None:
+    def fake_agent(text: str) -> None:
         idle.publish(False)
         agent_t.publish(HumanMessage(content=text))
         for i in range(2):
@@ -793,7 +791,7 @@ def test_mcp_client_adapter_drives_a_turn_over_real_transports(
     workers: list[threading.Thread] = []
 
     def on_human(msg: str) -> None:
-        worker = threading.Thread(target=fake_mcp_client, args=(msg,))
+        worker = threading.Thread(target=fake_agent, args=(msg,))
         workers.append(worker)
         worker.start()
 

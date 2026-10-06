@@ -298,13 +298,13 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
 from dimos.msgs.sensor_msgs import Image
 from dimos.robot.unitree.go2.connection import go2_connection
-from dimos.agents.mcp.mcp_client import McpClient
+from dimos.agents.agent import Agent
 from dimos.agents.mcp.mcp_server import McpServer
 
 blueprint = autoconnect(
     go2_connection(),
     McpServer.blueprint(),
-    McpClient.blueprint(),
+    Agent.blueprint(),
 ).transports({("color_image", Image): LCMTransport("/color_image", Image)})
 
 # Run the blueprint
