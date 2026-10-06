@@ -7,15 +7,11 @@
     cu-vslam-rs.url = "github:jeff-hykin/cu_vslam_rs";
     cu-vslam-rs.inputs.nixpkgs.follows = "nixpkgs";
     cu-vslam-rs.inputs.flake-utils.follows = "flake-utils";
-    # Relative path: resolves against the flake, not the cwd (unlike git+file, nix#12281), and
-    # locks as-is. Only reachable when entered as git+file:<dimos>?dir=...; the devShell never
-    # touches it, so `nix develop path:<this dir>` works from any cwd.
-    dimos-repo = { url = "path:../../../.."; flake = false; };
     crate2nix.url = "github:nix-community/crate2nix";
     crate2nix.inputs.nixpkgs.follows = "nixpkgs";
   };
 
-  outputs = { self, nixpkgs, flake-utils, cu-vslam-rs, dimos-repo, crate2nix }:
+  outputs = { self, nixpkgs, flake-utils, cu-vslam-rs, crate2nix }:
     # Not eachDefaultSystem: nixpkgs 26.11 dropped x86_64-darwin, and merely naming
     # it is an eval error.
     flake-utils.lib.eachSystem [ "aarch64-darwin" "aarch64-linux" "x86_64-linux" ] (system:
@@ -26,8 +22,9 @@
           config = { allowUnfree = true; cudaSupport = !isDarwin; };
         };
 
-        sdkPackages = nixpkgs.lib.filterAttrs (name: _: nixpkgs.lib.hasPrefix "sdk-" name) cu-vslam-rs.packages.${system};
-        variants = map (nixpkgs.lib.removePrefix "sdk-") (builtins.attrNames sdkPackages);
+        sdkPackages = nixpkgs.lib.mapAttrs' (name: sdk: { name = nixpkgs.lib.removePrefix "sdk-" name; value = sdk; })
+          (nixpkgs.lib.filterAttrs (name: _: nixpkgs.lib.hasPrefix "sdk-" name) cu-vslam-rs.packages.${system});
+        cuvslamVariant = cu-vslam-rs.packages.${system}.cuvslam-variant;
 
         src = pkgs.runCommand "dim-slam-module-src" {} ''
           mkdir -p $out/dimos/mapping/dim_slam/rust
@@ -37,8 +34,8 @@
           cp ${./build.rs} $out/dimos/mapping/dim_slam/rust/build.rs
 
           mkdir -p $out/native/rust
-          cp -r ${dimos-repo}/native/rust/dimos-module $out/native/rust/dimos-module
-          cp -r ${dimos-repo}/native/rust/dimos-module-macros $out/native/rust/dimos-module-macros
+          cp -r ${../../../../native/rust/dimos-module} $out/native/rust/dimos-module
+          cp -r ${../../../../native/rust/dimos-module-macros} $out/native/rust/dimos-module-macros
         '';
 
         generatedCargoNix = crate2nix.tools.${system}.generatedCargoNix {
@@ -47,7 +44,7 @@
           cargoToml = "dimos/mapping/dim_slam/rust/Cargo.toml";
         };
 
-        packageFor = variant: let sdkPackage = sdkPackages."sdk-${variant}"; in
+        packageFor = variant: let sdkPackage = sdkPackages.${variant}; in
           (import generatedCargoNix {
             inherit pkgs;
             buildRustCrateForPkgs = cratePkgs: cratePkgs.buildRustCrate.override {
@@ -61,29 +58,31 @@
               };
             };
           }).rootCrate.build;
+
+        # JetPack 6 can't load CUDA 13, so one build per variant and a launcher picks.
+        variantBuilds = pkgs.linkFarm "dim-slam-variants"
+          (nixpkgs.lib.mapAttrsToList (name: _: { inherit name; path = packageFor name; }) cu-vslam-rs.bundledVariants.${system});
+        launcher = pkgs.writeShellScriptBin "dim_slam" ''
+          variant=$(${cuvslamVariant}/bin/cuvslam-variant) || exit 1
+          if [ ! -x "${variantBuilds}/$variant/bin/dim_slam" ]; then
+            echo "dim_slam: the default has no $variant build; build .#$variant" >&2
+            exit 1
+          fi
+          echo "dim_slam: running the $variant build" >&2
+          exec "${variantBuilds}/$variant/bin/dim_slam" "$@"
+        '';
       in {
-        packages = nixpkgs.lib.genAttrs variants packageFor;
+        packages = nixpkgs.lib.mapAttrs (name: _: packageFor name) sdkPackages // { default = launcher; };
 
         # script needs to detect cuda/non-cuda to pick the right things to load
         devShells.default = pkgs.mkShellNoCC {
           shellHook = ''
             if [ -z "''${CUVSLAM_SDK_DIR:-}" ]; then
-              case "$(uname -s)-$(uname -m)" in
-                Darwin-arm64) cuvslam_variant=metal ;;
-                Linux-aarch64)
-                  case "$(tr -d '\0' < /proc/device-tree/compatible 2>/dev/null)" in
-                    *tegra264*) cuvslam_variant=thor ;;
-                    *tegra234*) cuvslam_variant=orin ;;
-                    *) cuvslam_variant=aarch64 ;;
-                  esac ;;
-                *)
-                  cuda_major=$(nvidia-smi 2>/dev/null | sed -n 's/.*CUDA Version: \([0-9]*\).*/\1/p')
-                  cuvslam_variant="x86_64''${cuda_major:+-cuda$cuda_major}" ;;
-              esac
+              cuvslam_variant=$(${cuvslamVariant}/bin/cuvslam-variant)
               case "$cuvslam_variant" in
-${nixpkgs.lib.concatMapStringsSep "\n" (variant:
-  "                ${variant}) cuvslam_sdk_drv=${builtins.unsafeDiscardStringContext sdkPackages."sdk-${variant}".drvPath} ;;"
-) variants}
+${nixpkgs.lib.concatStringsSep "\n" (nixpkgs.lib.mapAttrsToList (variant: sdk:
+  "                ${variant}) cuvslam_sdk_drv=${builtins.unsafeDiscardStringContext sdk.drvPath} ;;"
+) sdkPackages)}
                 *) cuvslam_sdk_drv= ;;
               esac
               if [ -n "$cuvslam_sdk_drv" ] \
@@ -92,7 +91,7 @@ ${nixpkgs.lib.concatMapStringsSep "\n" (variant:
               else
                 echo "no cuVSLAM SDK for variant '$cuvslam_variant'; building the stub" >&2
               fi
-              unset cuvslam_variant cuvslam_sdk_drv cuda_major
+              unset cuvslam_variant cuvslam_sdk_drv
             fi
           '';
         };
