@@ -89,24 +89,22 @@ class ConnectionSource:
     - otherwise: hold its position. That is the last position a task sent,
       or, if none did, where the joint was when the hold began. A held
       position is kept inside the joint's position limit. A joint that
-      cannot be told a position gets velocity 0 instead.
+      cannot be held at a position it reports gets velocity 0 instead.
 
     A base is told 0 on every axis. Sensors are never told anything.
 
     Commands go out as one message per kind: a position ``JointState``, a
     velocity ``JointState``, a ``Twist`` for the base. What tasks ask for is
     sent as is, even past a limit; the connection module then refuses that
-    whole message. A task asking for something the joint does not accept is
-    logged, and the joint is held instead.
+    whole message.
 
     A robot whose readings stop for longer than its deadman timeout is no
     longer commanded; its connection's deadman halts it. When its readings
     come back, it is held where it then is.
 
-    Joints that accept only effort can't be held when idle, and joints held
-    by stiffness and damping need gains the coordinator has no source for, so
-    the coordinator won't drive a robot that has either (see
-    ``why_not_drivable``).
+    The coordinator only drives robots whose joints it can hold when no task
+    drives them, and that need no stiffness and damping gains, which it has
+    no source for.
 
     Does no I/O: the coordinator feeds it messages and publishes what it
     builds.
@@ -115,12 +113,34 @@ class ConnectionSource:
         description: What the robot reports and accepts, from its connection
             module's ``describe_control``.
         session_id: The connection module's session, new each time it starts.
+
+    Raises:
+        ValueError: If a joint can neither be told a velocity nor held at a
+            position it reports (an arm left with effort 0 falls under
+            gravity), or takes stiffness and damping (``kp``, ``kd``).
     """
 
     def __init__(self, description: ControlDescription, session_id: str = "") -> None:
+        unholdable = [
+            r.name
+            for r in description.resources
+            if r.kind is ResourceKind.JOINT
+            and VELOCITY not in r.command_interfaces
+            and not (POSITION in r.command_interfaces and POSITION in r.state_interfaces)
+        ]
+        if unholdable:
+            raise ValueError(
+                f"{description.source!r}: joint(s) {unholdable} cannot be held when no task "
+                "drives them; each needs to take a velocity, or take a position it reports"
+            )
+        gains = motor_joints([description])
+        if gains:
+            raise ValueError(
+                f"{description.source!r}: joint(s) {gains} need stiffness and damping, "
+                "which the coordinator cannot send"
+            )
         self._description = description
         self._session_id = session_id
-        self._prefix = f"{description.source}{SEPARATOR}"
         self._state_keys = frozenset(description.state_keys())
         self._joints: list[_Joint] = []
         self._sensors: list[tuple[str, str, str]] = []
@@ -128,7 +148,7 @@ class ConnectionSource:
         self._base: str | None = None
         self._command_ports: list[str] = []
         for resource in description.resources:
-            part = f"{self._prefix}{resource.name}"
+            part = f"{description.source}{SEPARATOR}{resource.name}"
             state, command = set(resource.state_interfaces), set(resource.command_interfaces)
             if resource.kind is ResourceKind.JOINT:
                 self._joints.append(
@@ -175,32 +195,6 @@ class ConnectionSource:
         self._holds: dict[str, float] = {}
         self._last_warned = float("-inf")
 
-    @staticmethod
-    def why_not_drivable(description: ControlDescription) -> str | None:
-        """Why the coordinator cannot drive this robot, or ``None`` if it can.
-
-        A joint that accepts neither position nor velocity cannot be held when
-        no task drives it: effort 0 lets an arm fall under gravity. A joint
-        held by stiffness and damping (``kp``, ``kd``) needs gains in every
-        command, and the coordinator has none to send.
-        """
-        effort_only = [
-            r.name
-            for r in description.resources
-            if r.kind is ResourceKind.JOINT
-            and POSITION not in r.command_interfaces
-            and VELOCITY not in r.command_interfaces
-        ]
-        if effort_only:
-            return (
-                f"joint(s) {effort_only} accept neither position nor velocity, so they "
-                "cannot be held when no task drives them"
-            )
-        gains = motor_joints([description])
-        if gains:
-            return f"joint(s) {gains} need stiffness and damping, which the coordinator cannot send"
-        return None
-
     @property
     def hardware_id(self) -> str:
         """The robot's name, e.g. "arm"."""
@@ -238,19 +232,20 @@ class ConnectionSource:
 
         Every message counts: a driver may send several per tick, e.g. one for
         joints that report effort and one for a gripper that does not. Values
-        for other robots, which share a topic with this one, are ignored.
-        Messages that do not match the description are dropped and logged at
-        most once a second.
+        for other robots, which share a topic with this one, are ignored. A
+        message that cannot be read is dropped and logged at most once a
+        second; if they keep coming, the robot's readings go stale and it is
+        no longer commanded.
         """
         try:
             values = self._readers[port](msg)
         except ValueError as error:
-            self._warn(f"Dropped a {port} message for {self.hardware_id!r}: {error}")
+            now = time.monotonic()
+            if now - self._last_warned >= 1.0:
+                self._last_warned = now
+                logger.warning(f"Dropped a {port} message for {self.hardware_id!r}: {error}")
             return
         mine = {key: value for key, value in values.items() if key in self._state_keys}
-        undeclared = [k for k in values if k.startswith(self._prefix) and k not in mine]
-        if undeclared:
-            self._warn(f"{self.hardware_id!r} reported {undeclared}, which it never described")
         if not mine:
             return
         now = time.monotonic()
@@ -336,6 +331,11 @@ class ConnectionSource:
                 ``{"arm/joint1": 0.3}``. Only this robot's joints.
             mode: How the winners drive their joints. ``None`` when no task
                 drives this robot this tick.
+
+        Raises:
+            ValueError: If a task drives a joint in a way it does not accept,
+                e.g. by velocity when it only takes a position. The robot then
+                gets no command this tick.
         """
         with self._lock:
             latest = self._latest
@@ -347,15 +347,15 @@ class ConnectionSource:
         values: Values = {}
         for joint in self._joints:
             if joint.name in winners:
-                if sendable and interface in joint.command_keys:
-                    value = winners[joint.name]
-                    values[joint.command_keys[interface]] = value
-                    if interface == POSITION:
-                        self._holds[joint.name] = value
-                    else:
-                        self._holds.pop(joint.name, None)
-                    continue
-                self._warn(f"{joint.name} cannot be sent {interface}; holding it instead")
+                if not sendable or interface not in joint.command_keys:
+                    raise ValueError(f"{joint.name} cannot be told its {interface}")
+                value = winners[joint.name]
+                values[joint.command_keys[interface]] = value
+                if interface == POSITION:
+                    self._holds[joint.name] = value
+                else:
+                    self._holds.pop(joint.name, None)
+                continue
             velocity_key = joint.command_keys.get(VELOCITY)
             if mode is ControlMode.VELOCITY and velocity_key is not None:
                 values[velocity_key] = 0.0
@@ -414,13 +414,6 @@ class ConnectionSource:
             if limit.hi is not None:
                 held = min(held, limit.hi)
         return held
-
-    def _warn(self, message: str) -> None:
-        """Log ``message``, at most once a second."""
-        now = time.monotonic()
-        if now - self._last_warned >= 1.0:
-            self._last_warned = now
-            logger.warning(message)
 
 
 def _read_joint_state(msg: Any) -> Values:

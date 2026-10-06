@@ -19,6 +19,8 @@ from __future__ import annotations
 import time
 from typing import Any
 
+import pytest
+
 from dimos.control.connection_source import ConnectionSource
 from dimos.control.contract.description import ControlDescription, Limits
 from dimos.control.contract.keys import EFFORT, POSITION, VELOCITY, VX, VY, WZ, Key, Unit
@@ -184,13 +186,11 @@ def test_a_joint_that_cannot_take_a_position_gets_zero_velocity() -> None:
     assert source.command({}, None) == {f"{J1}/velocity": 0.0, f"{J2}/velocity": 0.0}
 
 
-def test_a_winner_the_joint_cannot_take_is_held_instead() -> None:
+def test_a_task_driving_a_joint_in_a_way_it_does_not_accept_raises() -> None:
     source = source_at(0.3, 0.0, description=arm(command=(POSITION,)))
 
-    assert source.command({J1: 0.2}, ControlMode.VELOCITY) == {
-        f"{J1}/position": 0.3,
-        f"{J2}/position": 0.0,
-    }
+    with pytest.raises(ValueError, match="velocity"):
+        source.command({J1: 0.2}, ControlMode.VELOCITY)
 
 
 def test_each_kind_of_command_goes_in_its_own_message() -> None:
@@ -255,10 +255,13 @@ def test_a_robot_that_goes_quiet_is_held_where_it_is_when_it_comes_back() -> Non
     assert source.command({}, None)[f"{J1}/position"] == 0.8
 
 
-def test_robots_it_cannot_hold_are_named() -> None:
+def test_a_robot_it_cannot_hold_is_refused() -> None:
     effort_only = manipulator_description("arm", ["joint1"], state=(POSITION,), command=(EFFORT,))
-    body = pd_joint_description("g1", ["hip"])
+    unmeasured = manipulator_description("arm", ["joint1"], state=(EFFORT,), command=(POSITION,))
 
-    assert ConnectionSource.why_not_drivable(arm()) is None
-    assert "joint1" in str(ConnectionSource.why_not_drivable(effort_only))
-    assert "stiffness" in str(ConnectionSource.why_not_drivable(body))
+    with pytest.raises(ValueError, match="joint1"):
+        ConnectionSource(effort_only)
+    with pytest.raises(ValueError, match="joint1"):
+        ConnectionSource(unmeasured)
+    with pytest.raises(ValueError, match="stiffness"):
+        ConnectionSource(pd_joint_description("g1", ["hip"]))

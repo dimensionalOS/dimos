@@ -48,7 +48,7 @@ from dimos.utils.logging_config import setup_logger
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from dimos.control.components import HardwareId, JointName, TaskName
+    from dimos.control.components import HardwareId, JointName, JointState as JointReading, TaskName
     from dimos.control.connection_source import ConnectionSource
     from dimos.control.hardware_interface import ConnectedHardware
     from dimos.hardware.manipulators.spec import ControlMode
@@ -71,7 +71,7 @@ class TickLoop:
     """Core tick loop for the control coordinator.
 
     Runs the deterministic control cycle:
-    1. READ: Collect joint state from all hardware and connections
+    1. READ: Collect joint state from all hardware
     2. COMPUTE: Run all active tasks
     3. ARBITRATE: Per-joint conflict resolution (highest priority wins)
     4. NOTIFY: Send preemption notifications to affected tasks
@@ -83,18 +83,18 @@ class TickLoop:
     Args:
         tick_rate: Control loop frequency in Hz
         hardware: Dict of hardware_id -> ConnectedHardware
-        hardware_lock: Lock protecting hardware and connections dicts
+        hardware_lock: Lock protecting hardware dict
         tasks: Dict of task_name -> ControlTask
         task_lock: Lock protecting tasks dict
-        joint_to_hardware: Dict mapping joint_name -> hardware_id (or the
-            name of the robot behind a connection module)
+        joint_to_hardware: Dict mapping joint_name -> hardware_id
         publish_callback: Optional callback to publish the merged JointState
         publish_robot_callback: Optional callback, called with (hardware_id, msg)
         publish_tf_callback: Optional callback publishing tasks' measured frame poses as TF
         frame_pose_hz: Maximum rate for publish_tf_callback
         frame_id: Frame ID for published JointState
         log_ticks: Whether to log tick information
-        connections: Robots driven through connection modules, by name
+        connections: Robots driven through connection modules, by name. Guarded
+            by hardware_lock; their joints are in joint_to_hardware too.
         command_callback: Called once per tick for each robot in
             ``connections`` that is ready, with (name, command by key)
     """
@@ -229,7 +229,7 @@ class TickLoop:
             self._publish_joint_state(joint_states)
 
         if self._publish_robot_callback:
-            self._publish_robot_joint_states(per_hardware, joint_states)
+            self._publish_robot_joint_states(per_hardware, joint_states.timestamp)
 
         if (
             self._publish_tf_callback
@@ -249,16 +249,12 @@ class TickLoop:
 
     def _read_all_hardware(
         self,
-    ) -> tuple[JointStateSnapshot, dict[HardwareId, list[JointName]]]:
-        """Read state from all hardware interfaces and connections.
-
-        Returns the merged state, and each robot's joint names (filled only
-        when per-robot messages are published).
-        """
+    ) -> tuple[JointStateSnapshot, dict[HardwareId, dict[JointName, JointReading]]]:
+        """Read state from all hardware interfaces."""
         joint_positions: dict[str, float] = {}
         joint_velocities: dict[str, float] = {}
         joint_efforts: dict[str, float] = {}
-        per_hardware: dict[HardwareId, list[JointName]] = {}
+        per_hardware: dict[HardwareId, dict[JointName, JointReading]] = {}
 
         with self._hardware_lock:
             for hw in self._hardware.values():
@@ -271,7 +267,7 @@ class TickLoop:
                         joint_velocities[joint_name] = joint_state.velocity
                         joint_efforts[joint_name] = joint_state.effort
                     if self._publish_robot_callback:
-                        per_hardware[hw.hardware_id] = list(state)
+                        per_hardware[hw.hardware_id] = state
                 except Exception as e:
                     logger.error(f"Failed to read {hw.hardware_id}: {e}")
             # Read whether or not a robot can be commanded yet: one described
@@ -281,8 +277,6 @@ class TickLoop:
                 joint_positions.update(joints.joint_positions)
                 joint_velocities.update(joints.joint_velocities)
                 joint_efforts.update(joints.joint_efforts)
-                if self._publish_robot_callback and joints.joint_positions:
-                    per_hardware[source.hardware_id] = list(joints.joint_positions)
 
         snapshot = JointStateSnapshot(
             joint_positions=joint_positions,
@@ -510,28 +504,21 @@ class TickLoop:
                 if name in hw_commands:
                     winners, mode = hw_commands[name]
                 try:
-                    values = source.command(winners, mode)
-                    # An empty frame would command nothing and feed no deadman.
-                    if values:
-                        publish(name, values)
+                    publish(name, source.command(winners, mode))
                 except Exception as e:
                     logger.error(f"Failed to send a command to {name}: {e}")
 
-    def _joint_state_msg(
-        self, snapshot: JointStateSnapshot, names: list[JointName], frame_id: str
-    ) -> JointState:
-        return JointState(
+    def _publish_joint_state(self, snapshot: JointStateSnapshot) -> None:
+        """Publish aggregated JointState for external consumers."""
+        names = list(snapshot.joint_positions.keys())
+        msg = JointState(
             ts=snapshot.timestamp,
-            frame_id=frame_id,
+            frame_id=self._frame_id,
             name=names,
             position=[snapshot.joint_positions[n] for n in names],
             velocity=[snapshot.joint_velocities.get(n, 0.0) for n in names],
             effort=[snapshot.joint_efforts.get(n, 0.0) for n in names],
         )
-
-    def _publish_joint_state(self, snapshot: JointStateSnapshot) -> None:
-        """Publish aggregated JointState for external consumers."""
-        msg = self._joint_state_msg(snapshot, list(snapshot.joint_positions), self._frame_id)
         if self._publish_callback:
             self._publish_callback(msg)
 
@@ -564,15 +551,23 @@ class TickLoop:
 
     def _publish_robot_joint_states(
         self,
-        per_hardware: dict[HardwareId, list[JointName]],
-        snapshot: JointStateSnapshot,
+        per_hardware: dict[HardwareId, dict[JointName, JointReading]],
+        timestamp: float,
     ) -> None:
         publish = self._publish_robot_callback
         if publish is None:
             return
 
-        for hw_id, names in per_hardware.items():
-            msg = self._joint_state_msg(snapshot, names, hw_id)
+        for hw_id, state in per_hardware.items():
+            names = list(state.keys())
+            msg = JointState(
+                ts=timestamp,
+                frame_id=hw_id,
+                name=names,
+                position=[state[n].position for n in names],
+                velocity=[state[n].velocity for n in names],
+                effort=[state[n].effort for n in names],
+            )
             try:
                 publish(hw_id, msg)
             except Exception as e:

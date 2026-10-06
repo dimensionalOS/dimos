@@ -42,7 +42,6 @@ from dimos.control.contract.presets import (
     pd_joint_description,
     twist_base_description,
 )
-import dimos.control.coordinator as coord_mod
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.task import (
     BaseControlTask,
@@ -103,22 +102,18 @@ class StandIn:
         self,
         name: str,
         descriptions: list[ControlDescription] | None = None,
-        error: Exception | None = None,
         session: str = "s1",
     ) -> None:
         self.remote_name = name
         self.descriptions = descriptions or []
-        self.error = error
         self.session = session
-        connection = descriptions is not None or error is not None
+        connection = descriptions is not None
         self.rpcs = {"start", "stop", *(["describe_control"] if connection else [])}
         self.asked = 0
         self.closed = False
 
     def describe_control(self) -> ConnectionDescription:
         self.asked += 1
-        if self.error is not None:
-            raise self.error
         return ConnectionDescription(self.session, tuple(self.descriptions))
 
     def stop_rpc_client(self) -> None:
@@ -263,30 +258,23 @@ def test_every_call_asks_again_and_replaces_what_was_found(rig: Callable[..., Ri
     assert r.coordinator.list_joints() == []
 
 
-def test_one_failing_module_does_not_stop_the_rest(rig: Callable[..., Rig]) -> None:
+def test_two_robots_with_one_name_are_refused(rig: Callable[..., Rig]) -> None:
     r = rig()
-    broken = StandIn("Broken", error=RuntimeError("no"))
-    first = StandIn("First", [arm(joints=2)])
-    duplicate = StandIn("Duplicate", [arm(joints=3)])
 
-    r.find(broken, first, duplicate)
-
-    assert r.coordinator.list_joints() == ["arm/joint1", "arm/joint2"]
+    with pytest.raises(ValueError, match="'arm'"):
+        r.find(StandIn("First", [arm(joints=2)]), StandIn("Duplicate", [arm(joints=3)]))
 
 
 def test_every_proxy_it_was_given_is_closed(rig: Callable[..., Rig]) -> None:
     r = rig()
-    modules = [StandIn("Other"), StandIn("Mock", [arm()]), StandIn("Broken", error=ValueError())]
+    modules = [StandIn("Other"), StandIn("Mock", [arm()])]
 
     r.find(*modules)
 
     assert all(module.closed for module in modules)
 
 
-def test_a_coordinator_with_adapters_ignores_connections(
-    rig: Callable[..., Rig], mocker: Any
-) -> None:
-    error = mocker.patch.object(coord_mod.logger, "error")
+def test_a_coordinator_with_adapters_refuses_connections(rig: Callable[..., Rig]) -> None:
     adapter_arm = HardwareComponent(
         hardware_id="left_arm",
         hardware_type=HardwareType.MANIPULATOR,
@@ -295,37 +283,30 @@ def test_a_coordinator_with_adapters_ignores_connections(
     )
     r = rig(hardware=[adapter_arm])
 
-    r.find(StandIn("Mock", [arm()]))
-
-    assert r.coordinator.list_hardware() == ["left_arm"]
-    assert "adapters" in str(error.call_args)
+    with pytest.raises(ValueError, match="adapters"):
+        r.find(StandIn("Mock", [arm()]))
 
 
-def test_robots_it_cannot_hold_are_not_driven(rig: Callable[..., Rig], mocker: Any) -> None:
-    error = mocker.patch.object(coord_mod.logger, "error")
+def test_a_robot_it_cannot_hold_is_refused(rig: Callable[..., Rig]) -> None:
     r = rig()
     limp = manipulator_description("limp", ["joint1"], state=(POSITION,), command=(EFFORT,))
-    body = pd_joint_description("g1", ["hip"])
 
-    r.find(StandIn("Limp", [limp]), StandIn("Body", [body]), StandIn("Mock", [arm()]))
-
-    assert r.coordinator.list_hardware() == ["arm"]
-    logged = " ".join(str(call) for call in error.call_args_list)
-    assert "'limp'" in logged and "joint1" in logged
-    assert "'g1'" in logged and "stiffness" in logged
+    with pytest.raises(ValueError, match="'limp'"):
+        r.find(StandIn("Limp", [limp]))
+    with pytest.raises(ValueError, match="'g1'.*stiffness"):
+        r.find(StandIn("Body", [pd_joint_description("g1", ["hip"])]))
 
 
-def test_a_robot_without_its_ports_is_not_driven(rig: Callable[..., Rig], mocker: Any) -> None:
-    error = mocker.patch.object(coord_mod.logger, "error")
+def test_a_robot_without_its_ports_is_refused(rig: Callable[..., Rig]) -> None:
     r = rig()
     other = manipulator_description("other", ["joint1"], state=(POSITION,), command=(POSITION,))
 
-    r.find(StandIn("Other", [other]), StandIn("Mock", [arm()]))
+    with pytest.raises(ValueError) as raised:
+        r.find(StandIn("Other", [other]), StandIn("Mock", [arm()]))
 
-    assert r.coordinator.list_hardware() == ["arm"]
-    logged = str(error.call_args)
-    assert "other_position_command: Out[JointState]" in logged
-    assert "other_joint_state: In[JointState]" in logged
+    assert "other_position_command: Out[JointState]" in str(raised.value)
+    assert "other_joint_state: In[JointState]" in str(raised.value)
+    assert r.coordinator.list_hardware() == []
 
 
 def test_every_robot_that_has_reported_gets_a_complete_command_each_tick(
@@ -448,7 +429,7 @@ def test_a_robot_whose_readings_stop_is_not_commanded(rig: Callable[..., Rig]) -
     assert r.positions_sent()[-1] == [0.6, 0.0]
 
 
-def test_a_robot_without_its_own_joints_port_is_still_driven(
+def test_connection_robots_stay_out_of_per_robot_joint_states(
     rig: Callable[..., Rig], mocker: Any
 ) -> None:
     error = mocker.patch.object(tick_mod.logger, "error")
