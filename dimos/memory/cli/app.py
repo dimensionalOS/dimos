@@ -16,9 +16,14 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import typer
 
 from dimos.memory.cli.summary import main as _summary_main
+from dimos.memory.convert_recording import convert as convert_recording
+from dimos.memory.recording_migration import inspect_recording, migrate
 
 mem_app = typer.Typer(help="memory store commands", no_args_is_help=True)
 mem_app.command("summary")(_summary_main)
@@ -39,3 +44,37 @@ def rerun(
     from dimos.memory.cli.render import render_store
 
     render_store(open_dataset(path), out=out, seconds=seconds, no_gui=no_gui, root=root)
+
+
+@mem_app.command("convert")
+def convert(
+    source: Path = typer.Argument(..., help="Local recording file or explicit batch directory"),
+    destination: Path = typer.Argument(..., help="New output file or new batch directory"),
+    output_format: str = typer.Option(
+        "mcap", "--format", help="Directory output format: mcap or db"
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Read-only type/schema/count preflight; no outputs or downloads"
+    ),
+) -> None:
+    """Migrate legacy recordings to generated CDR; originals are never overwritten."""
+    try:
+        if source.is_dir():
+            result = migrate(source, destination, output_format=output_format, dry_run=dry_run)
+        elif dry_run:
+            if (
+                destination.exists()
+                or destination.is_symlink()
+                or Path(str(destination) + ".conversion.jsonl").exists()
+                or Path(str(destination) + ".conversion.jsonl").is_symlink()
+            ):
+                raise FileExistsError("Refusing an existing output or report")
+            result = inspect_recording(source, destination.suffix.lstrip("."))
+        else:
+            result = convert_recording(source, destination)
+    except Exception as exc:
+        typer.echo(f"conversion failed: {exc}", err=True)
+        raise typer.Exit(2) from exc
+    typer.echo(json.dumps(result, indent=2))
+    if result.get("blocked", 0):
+        raise typer.Exit(2)
