@@ -4,6 +4,12 @@ Measured 2026-10-06 on Apple M4 Max, macOS 15.6, Python 3.12.13,
 MuJoCo 3.10.0, native Zenoh 1.10.1. Base: `pim/feat/sim2-core` at
 `65cd8b8e1`. Work: `pim/feat/sim2-go2-freewalk`.
 
+**Owner-run correction, 2026-10-06:** the short probes below establish wiring
+and numerical inference, not satisfactory gait quality. The owner run exposed
+a fatal feedback-thread error; `844f0a2bd` fixes the read/publication race and
+transient-read handling. Slow lateral and turning behavior remains unaccepted.
+See the diagnosis below before describing this as a working locomotion baseline.
+
 ## Ownership
 
 ```text
@@ -142,3 +148,73 @@ the lateral phase also drifted 0.387 m forward and the turn under-rotated. Do no
 hide that by tuning the simulator to the test. Closed-loop navigation goal
 completion and sensor mounting calibration are separate acceptance checks.
 The Mid360 material/IMU fidelity limits in `../mid360/README.md` still apply.
+
+## Owner-Run Diagnosis
+
+Run `20261006-233851-unitree-go2-freewalk-pointlio` logged a coherent-frame read
+failure at 21:42:23.381705 UTC in `WholeBodyConnection._publish`. That permanently
+stopped joint/IMU publication. At 21:42:23.540551 the policy's freshness watchdog
+latched passive damping. Read-only observation of the running simulation later
+measured 400.03 physics Hz, 49.38 motor frames/s, but all `kp` values were zero
+and body height was 0.077-0.092 m. The continuing motor messages were damping,
+not walking commands. No user process was restarted, rearmed or commanded.
+
+The channel writer publishes sequence and active-slot headers separately. The
+reader incorrectly required them to agree even in the valid interval before
+the active-slot switch. It now validates the active slot's own sequence before
+and after copying. Actual contention is a `BlockingIOError`; the device skips
+that publication and retries next period, without refreshing the feedback
+timestamp. Sustained missing feedback still trips the unchanged policy watchdog.
+
+Verification: 32 focused tests passed, including six new regression cases,
+real MuJoCo runtime tests and policy/connection tests. Two production source
+files passed scoped mypy and commit hooks. A separate, read-only ten-second
+comparison made 351,176 reads through each reader against the live physics
+writer; neither reader failed during that particular interval. This does not
+reproduce the intermittent fault or measure an improvement; the deterministic
+regression test pauses the writer between its header writes to expose it.
+
+### Walking Is A Separate Open Issue
+
+Rechecked go2web `himloco.rs`, `obs.rs` and `src/policy.rs` at the pinned revision.
+The FREE path consumes velocity commands, body gyro, projected gravity, twelve
+joint positions/velocities and previous actions, with six history frames.
+Joint remapping, normalization, history order, output scaling and PD gains match
+the port. It does not consume lidar or a heightmap. Upstream `obstacle.rs` is a
+separate occupancy-grid-to-velocity policy, not terrain-aware foot placement.
+
+Isolated diagnostics used the same weights in direct MuJoCo, with no DimOS
+modules, streams, planner or lidar. One-second default-pose hold, two seconds
+zero-command policy, six seconds requested command; report the last four
+seconds. Physics was 400 Hz, inference exactly 50 Hz, implicitfast integration,
+the source model's elliptic cone/impratio, a flat plane, and the same velocity
+slew limits as the connection. These are model-only diagnostics, not repetitions
+of the complete logistics-scene blueprint.
+
+| Command | Menagerie model, measured | Unitree MuJoCo model, measured |
+| --- | --- | --- |
+| Forward 0.3 m/s | 0.380 m/s forward, 0.072 m/s sideways | 0.171 m/s forward, 0.004 m/s sideways |
+| Forward 0.6 m/s | 0.639 m/s forward, 0.221 m/s sideways | 0.512 m/s forward, 0.015 m/s sideways |
+| Lateral 0.2 m/s | 0.0067 m/s lateral | 0.0019 m/s lateral |
+| Turn 0.3 rad/s | 0.0207 rad/s | 0.0077 rad/s |
+| Turn 0.6 rad/s | 0.292 rad/s | 0.259 rad/s |
+
+Unitree comparison: local `unitree_mujoco` at `1a37b05`,
+`unitree_robots/go2/go2.xml`. Its passive joint damping is 0.1 rather than 2.0;
+foot friction and contact compliance differ too. Changing only damping to 0.1
+or 0.285 did not resolve the issue. Andrew's #4441 `4e524f40d` fitted physics
+and 15.10 ms actuator lag also left lateral speed at 0.0081 m/s and turn rate
+at 0.0210 rad/s for the 0.2/0.3 commands. His robot tests use a different ONNX
+policy; those fit constants are not demonstrated FREE calibration.
+
+An additional diagnostic forced the low-speed walking expert instead of the
+upstream-selected turn-only expert. At 0.3 rad/s requested yaw, the measured
+rate changed from 0.0207 to 0.1186 rad/s, still below the request. This is not a
+justification to change expert selection: it matches the recovered upstream
+controller today, and its equivalence to the original firmware must be checked.
+
+No alternative physics parameters, weights, command multipliers, terrain
+inputs or policies were adopted. The remaining gait problem is reproducible
+without transport/navigation, but its cause within policy deployment and
+physical-model behavior is not yet established. A matched FREE deployment
+reference is needed before claiming faithful real-Go2 behavior or stair ability.
