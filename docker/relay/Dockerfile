@@ -2,7 +2,7 @@
 # deno user (uid 1993) with the certificate and auth file mounted at /etc/relay.
 # Guide: docs/web/relay_hosting.md; compose.yaml next to this file runs it.
 # The Deno pin lives in dimos/utils/deno.py (CI greps it there); keep them equal.
-FROM denoland/deno:2.6.10
+FROM denoland/deno:2.9.7
 
 # A server has no use for the daily version check against dl.deno.land.
 ENV DENO_NO_UPDATE_CHECK=1
