@@ -407,6 +407,10 @@ const manifestCases: Record<string, unknown> = {
   publish_null: { version: 1, channels: [{ ...chOdom, publish: null }] },
   publish_shared_latest: { version: 1, channels: [{ ...chChat, delivery: "latest" }] },
   publish_shared_binary_encoding: { version: 1, channels: [{ ...chChat, encoding: "jpeg.v1" }] },
+  publish_shared_lcm: {
+    version: 1,
+    channels: [{ ...chChat, encoding: "sensor_msgs.JointState.lcm.v1" }],
+  },
   scope_without_publish: { version: 1, channels: [{ ...chOdom, requiredScope: "chat:send" }] },
   scope_empty: { version: 1, channels: [{ ...chChat, requiredScope: "" }] },
   scope_too_long: { version: 1, channels: [{ ...chChat, requiredScope: longId }] },

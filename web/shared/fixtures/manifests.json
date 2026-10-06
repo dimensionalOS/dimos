@@ -809,6 +809,41 @@
       "error": "invalid_publish"
     },
     {
+      "name": "publish_shared_lcm",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "human_input",
+            "dir": "tx",
+            "encoding": "sensor_msgs.JointState.lcm.v1",
+            "delivery": "reliable",
+            "maxHz": 2.5,
+            "publish": "shared",
+            "requiredScope": "chat:send"
+          }
+        ]
+      },
+      "manifest": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "human_input",
+            "dir": "tx",
+            "encoding": "sensor_msgs.JointState.lcm.v1",
+            "delivery": "reliable",
+            "maxHz": 2.5,
+            "params": {},
+            "publish": "shared",
+            "requiredScope": "chat:send"
+          }
+        ],
+        "panels": [],
+        "layout": null,
+        "pages": []
+      }
+    },
+    {
       "name": "scope_without_publish",
       "data": {
         "version": 1,

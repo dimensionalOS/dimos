@@ -43,6 +43,7 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.nav_msgs.Path import Path as NavPath
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.web.cockpit import Channel, Chat, Map2D, Stats, Video, cockpit
 from dimos.web.codecs import EncodedPayload, PublishContext, web_decoder, web_encoder
 from dimos.web.relay_bridge import builtin_codecs, relay_bridge_module
@@ -494,6 +495,31 @@ def test_publish_frame_decodes_publishes_then_acks(monkeypatch) -> None:
         push(module, clients[0], _pub_frame(json.dumps("salut β").encode(), seq=2))
         assert wait_until(lambda: len(clients[0].control_frames) == 2)
         assert [value for value, _ in seen] == ["salut β", "salut β"]
+    finally:
+        stop_module(module)
+
+
+def test_lcm_publish_passes_message_bytes_through(monkeypatch) -> None:
+    module, clients = _start_pub_bridge(
+        monkeypatch,
+        Channel(
+            "joint_commands",
+            JointState,
+            dir="tx",
+            publish="shared",
+            encoding="sensor_msgs.JointState.lcm.v1",
+        ),
+    )
+    try:
+        seen: list[Any] = []
+        module.joint_commands.subscribe(seen.append)
+        data = JointState(name=["j1"], position=[0.75]).lcm_encode()
+        value = json.dumps(base64.b64encode(data).decode()).encode()
+        push(module, clients[0], _pub_frame(value, ch="joint_commands"))
+        assert wait_until(lambda: clients[0].control_frames)
+        (ack,) = clients[0].control_frames
+        assert isinstance(ack, PubAck) and ack.ch == "joint_commands"
+        assert seen == [data]
     finally:
         stop_module(module)
 
