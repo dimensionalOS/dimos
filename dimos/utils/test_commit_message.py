@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from subprocess import CalledProcessError, CompletedProcess
+from subprocess import CalledProcessError, CompletedProcess, run
 
 import pytest
 
@@ -164,3 +164,42 @@ def test_clean_range_passes(monkeypatch, mocker, capsys):
     )
     assert commit_message.check_commits() == 0
     assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize(
+    "message, expected",
+    [
+        ("Fix recording reader", 0),
+        ("Fix recording reader\n\nCo-authored-by: Alice <alice@example.com>", 0),
+        ("Fix recording reader\n\nCo-authored-by: Codex <noreply@openai.com>", 1),
+    ],
+)
+def test_policy_checks_real_git_range(tmp_path, monkeypatch, capsys, message, expected):
+    monkeypatch.chdir(tmp_path)
+    for role in ("AUTHOR", "COMMITTER"):
+        monkeypatch.setenv(f"GIT_{role}_NAME", "Policy test")
+        monkeypatch.setenv(f"GIT_{role}_EMAIL", "policy@example.com")
+    run(["git", "init", "--quiet"], check=True)
+    tree = run(
+        ["git", "mktree"], input="", text=True, capture_output=True, check=True
+    ).stdout.strip()
+    base = run(
+        ["git", "commit-tree", tree, "-m", "Base"], text=True, capture_output=True, check=True
+    ).stdout.strip()
+    rejected_or_allowed = run(
+        ["git", "commit-tree", tree, "-p", base, "-m", message],
+        text=True,
+        capture_output=True,
+        check=True,
+    ).stdout.strip()
+    head = run(
+        ["git", "commit-tree", tree, "-p", rejected_or_allowed, "-m", "Clean head"],
+        text=True,
+        capture_output=True,
+        check=True,
+    ).stdout.strip()
+    monkeypatch.setenv("PRE_COMMIT_FROM_REF", base)
+    monkeypatch.setenv("PRE_COMMIT_TO_REF", head)
+
+    assert commit_message.check_commits() == expected
+    assert ("AI co-author:" in capsys.readouterr().err) == bool(expected)
