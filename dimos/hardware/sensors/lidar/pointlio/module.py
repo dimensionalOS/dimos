@@ -38,7 +38,6 @@ from typing import TYPE_CHECKING, Literal
 
 from pydantic import Field
 
-from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
@@ -59,9 +58,9 @@ class PointLioConfig(NativeModuleConfig):
     # frame_id_prefix too: the module composes the namespaced frame itself,
     # since it publishes odometry and tf without going back through Python.
     base_fields: frozenset[str] = frozenset({"frame_id", "frame_id_prefix"})
-    cwd: str | None = "rust"
+    source_dir: str | None = "dimos/hardware/sensors/lidar/pointlio/rust"
     # The crate is a workspace member, so cargo builds into the repo-root target dir.
-    executable: str = str(DIMOS_PROJECT_ROOT / "target" / "release" / "pointlio_native")
+    executable: str = "../../../../../../target/release/pointlio_native"
     build_command: str | None = "cargo build --release"
 
     # Odometry is published as frame_id (fixed) -> sensor_frame_id (moving sensor),

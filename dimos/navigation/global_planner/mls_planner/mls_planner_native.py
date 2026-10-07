@@ -16,7 +16,6 @@
 
 from __future__ import annotations
 
-from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
@@ -29,9 +28,9 @@ from dimos.navigation import spec
 
 
 class MLSPlannerNativeConfig(NativeModuleConfig):
-    cwd: str | None = "rust"
+    source_dir: str | None = "dimos/navigation/global_planner/mls_planner/rust"
     # The crate is a workspace member, so cargo builds into the repo-root target dir.
-    executable: str = str(DIMOS_PROJECT_ROOT / "target" / "release" / "mls_planner")
+    executable: str = "../../../../../target/release/mls_planner"
     build_command: str | None = "cargo build --release"
     stdin_config: bool = True
 
@@ -54,6 +53,10 @@ class MLSPlannerNativeConfig(NativeModuleConfig):
     step_penalty_weight: float = 4.0
     goal_tolerance: float = 0.3
     viz_publish_hz: float = 2.0
+    # The surface and edge viz publish by square cells of this edge, only the
+    # changed ones each tick, plus this many unchanged ones round robin.
+    viz_region_m: float = 4.0
+    viz_sweep_regions: int = 2
     # Worker threads for parallel planner work.
     worker_threads: int = 4
 
@@ -70,6 +73,10 @@ class MLSPlannerNative(NativeModule, spec.GlobalPlanner):
     global_map: In[PointCloud2]
     local_map: In[PointCloud2]
     region_bounds: In[PoseStamped]
+    # A seeded map's regions as RayTracingVoxelMap lands them, applied through
+    # the region pipeline between live updates. Live updates keep priority.
+    seed_map: In[PointCloud2]
+    seed_bounds: In[PoseStamped]
     goal: In[PointStamped]
     tf: In[TFMessage]
 

@@ -12,20 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from concurrent.futures import ThreadPoolExecutor
 import copy
 import hashlib
 import os
 from pathlib import Path
 import subprocess
+from threading import Barrier
 from typing import Any
 from unittest.mock import call
 
+from filelock import FileLock, Timeout
 from pydantic import TypeAdapter
 import pytest
 from pytest_mock import MockerFixture
 
 from dimos.utils import data
-from dimos.utils.data import LfsPath, backup_file
+from dimos.utils.data import LfsPath, backup_file, resolve_named_path
 
 
 def _make_backups(dir_path: Path, stem: str, suffix: str, timestamps: list[str]) -> None:
@@ -94,6 +97,40 @@ def test_pull_lfs_archive_initializes_lfs_before_pull(
         call.initialize(tmp_path),
         call.pull(archive, tmp_path),
     ]
+
+
+def test_resolve_named_path_appends_the_suffix_to_a_path(tmp_path: Path) -> None:
+    (tmp_path / "premap.pc2.lcm").touch()
+    assert resolve_named_path(tmp_path / "premap", ".pc2.lcm") == tmp_path / "premap.pc2.lcm"
+    assert (
+        resolve_named_path(tmp_path / "premap.pc2.lcm", ".pc2.lcm") == tmp_path / "premap.pc2.lcm"
+    )
+    assert resolve_named_path("/nowhere/premap", ".pc2.lcm") == Path("/nowhere/premap.pc2.lcm")
+
+
+def test_resolve_named_path_keeps_a_nested_lfs_name(mocker: MockerFixture) -> None:
+    pulled = Path("/lfs/maps/office.pc2.lcm")
+    get_data = mocker.patch.object(data, "get_data", return_value=pulled)
+    assert resolve_named_path("maps/office", ".pc2.lcm") == pulled
+    get_data.assert_called_once_with("maps/office.pc2.lcm")
+
+
+def test_resolve_named_path_falls_back_to_the_basename(mocker: MockerFixture) -> None:
+    pulled = Path("/lfs/not_pulled_yet.db")
+
+    def get_data(name: str) -> Path:
+        if name == "not_pulled_yet.db":
+            return pulled
+        raise FileNotFoundError(name)
+
+    spy = mocker.patch.object(data, "get_data", side_effect=get_data)
+    assert resolve_named_path("data/not_pulled_yet", ".db") == pulled
+    assert [c.args[0] for c in spy.call_args_list] == [
+        "data/not_pulled_yet.db",
+        "not_pulled_yet.db",
+    ]
+    with pytest.raises(FileNotFoundError):
+        resolve_named_path("missing", ".db")
 
 
 def test_backup_file_missing_is_noop(tmp_path: Path) -> None:
@@ -543,3 +580,25 @@ def test_lfs_path_multiple_instances() -> None:
 
     # Both caches should point to the same file
     assert cache_1 == cache_2
+
+
+def test_project_root_serializes_concurrent_clone(tmp_path, mocker):
+    data_dir = tmp_path / "data"
+    barrier = Barrier(4)
+    mocker.patch.object(data, "DIMOS_PROJECT_ROOT", tmp_path / "installed")
+
+    def user_data_dir():
+        barrier.wait(timeout=5)
+        return data_dir
+
+    def clone(*args, **kwargs):
+        with pytest.raises(Timeout), FileLock(data_dir / "repo.lock", timeout=0):
+            pass
+        (data_dir / "repo" / ".git").mkdir(parents=True)
+
+    mocker.patch.object(data, "_get_user_data_dir", side_effect=user_data_dir)
+    run = mocker.patch.object(data.subprocess, "run", side_effect=clone)
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = list(pool.map(lambda _: data.get_project_root.__wrapped__(), range(4)))
+    assert results == [data_dir / "repo"] * 4
+    run.assert_called_once()

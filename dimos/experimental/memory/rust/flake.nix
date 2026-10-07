@@ -39,6 +39,7 @@
             ../../../../dimos/hardware/sensors/lidar/livox/rust
             ../../../../dimos/hardware/sensors/lidar/pointlio/rust
             ../../../../dimos/hardware/sensors/lidar/virtual_mid360
+            ../../../../dimos/hardware/sensors/camera/v4l2/rust
             ../../../../examples/native-modules/rust
           ];
         };
@@ -47,7 +48,7 @@
           lockFile = ../../../../Cargo.lock;
           outputHashes = {
             "dimos-lcm-0.1.0" = "sha256-GGkx4Mn6NYP6KZecmoRLKGWIih/+y8OgNn12DeXX6n8=";
-            "pointlio-core-0.1.0" = "sha256-iC7nDbEipfi3cViK7fqKiy2hT9ENGi4Ge7L6Wt1W01Q=";
+            "pointlio-core-0.1.0" = "sha256-FjUcsZVI8nTcmKw8WhdxBuHelBjOCeJmyEsyqRxDvX0=";
           };
         };
 

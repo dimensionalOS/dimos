@@ -49,7 +49,7 @@ def _camera_if_real() -> tuple[Blueprint, ...]:
     return (RealSenseCamera.blueprint(enable_pointcloud=False),)
 
 
-def _collection_components(robot: str, teleop: Blueprint) -> tuple[Blueprint, ...]:
+def _collection_components(robot: str, teleop: Blueprint, *, task: str) -> tuple[Blueprint, ...]:
     producers = autoconnect(teleop, *_camera_if_real())
     coordinator = next(
         atom for atom in producers.active_blueprints if issubclass(atom.module, ControlCoordinator)
@@ -91,10 +91,14 @@ def _collection_components(robot: str, teleop: Blueprint) -> tuple[Blueprint, ..
     directory: Path = RECORDINGS_DIR / f"session_{robot}_{datetime.now():%Y%m%d_%H%M%S_%f}"
     return (
         collection_recorder(profile=profile, recording=directory, format="sqlite"),
-        EpisodeMonitorModule.blueprint(),
+        EpisodeMonitorModule.blueprint(task=task),
         producers,
     )
 
 
-learning_collect_webxr_xarm7 = autoconnect(*_collection_components("xarm7", teleop_webxr_xarm7))
-learning_collect_webxr_piper = autoconnect(*_collection_components("piper", teleop_webxr_piper))
+learning_collect_webxr_xarm7 = autoconnect(
+    *_collection_components("xarm7", teleop_webxr_xarm7, task="Teleoperate the xArm")
+)
+learning_collect_webxr_piper = autoconnect(
+    *_collection_components("piper", teleop_webxr_piper, task="Teleoperate the Piper")
+)
