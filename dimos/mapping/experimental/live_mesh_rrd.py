@@ -47,6 +47,7 @@ def main(
     world_frame: str = typer.Option("odom", "--world-frame"),
     voxel_size: float = typer.Option(0.05, "--voxel-size"),
     every: int = typer.Option(100, "--every", help="lidar frames per mesh update"),
+    trail_every: int = typer.Option(10, "--trail-every", help="lidar frames per path update"),
     from_time: float | None = typer.Option(None, "--from-time"),
     to_time: float | None = typer.Option(None, "--to-time"),
     simplify: bool = typer.Option(True, "--simplify/--no-simplify", help="simplify with --chain"),
@@ -81,7 +82,7 @@ def main(
         trail.append(obs.pose_tuple[:3])
         rr.set_time("time", timestamp=obs.ts)
         rr.log("world/odom", rr.Points3D([trail[-1]], radii=0.12, colors=[0, 255, 0]))
-        if len(trail) % every == 0:
+        if len(trail) % trail_every == 0:
             rr.log("world/odom/trail", rr.LineStrips3D([trail], colors=[0, 255, 0]))
         if show_lidar:
             x, y, z, qx, qy, qz, qw = obs.pose_tuple
