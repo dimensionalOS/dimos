@@ -49,21 +49,21 @@ class ManipulationSkills(Module):
         """Report an accepted command. Raises RuntimeError when it was not accepted."""
         if not result.succeeded:
             raise RuntimeError(_status(result))
-        return SkillResult.ok(result.message)
+        return SkillResult(result.message)
 
     @staticmethod
     def _execution_result(result: ExecutionResult) -> SkillResult:
         """Report how running the plan ended."""
         if result.succeeded:
-            return SkillResult.ok(str(result))
-        return SkillResult.ok(f"Execution ended with {_status(result)}")
+            return SkillResult(str(result))
+        return SkillResult(f"Execution ended with {_status(result)}")
 
     @staticmethod
     def _planning_result(result: PlanResult) -> SkillResult | None:
         """None when a plan was found, else a statement of what the planner returned."""
         if result.succeeded:
             return None
-        return SkillResult.ok(f"No plan; planner returned {_status(result)}")
+        return SkillResult(f"No plan; planner returned {_status(result)}")
 
     def _select_group(
         self,
@@ -125,7 +125,7 @@ class ManipulationSkills(Module):
         result = self.manipulation.cancel()
         if result.status in UNCONFIRMED_STOP:
             raise RuntimeError(f"Stop was not confirmed by the coordinator: {_status(result)}")
-        return SkillResult.ok(result.message or "Cancelled")
+        return SkillResult(result.message or "Cancelled")
 
     @skill
     def reset(self) -> SkillResult:
@@ -136,7 +136,7 @@ class ManipulationSkills(Module):
         result = self.manipulation.reset()
         if not result.succeeded:
             raise RuntimeError(f"Reset was refused by the module: {_status(result)}")
-        return SkillResult.ok(result.message)
+        return SkillResult(result.message)
 
     @skill
     def get_robot_state(self, planning_group: PlanningGroupID | None = None) -> SkillResult:
@@ -148,13 +148,13 @@ class ManipulationSkills(Module):
 
         snapshot = self.manipulation.get_state()
         if planning_group is None:
-            return SkillResult.ok(repr(snapshot))
+            return SkillResult(repr(snapshot))
         state = snapshot.groups.get(planning_group)
         if state is None:
             raise ValueError(
                 f"Unknown planning group {planning_group!r}; groups: {sorted(snapshot.groups)}"
             )
-        return SkillResult.ok(f"{planning_group}: {state!r}")
+        return SkillResult(f"{planning_group}: {state!r}")
 
     @skill(uses=[CAP_MOVEMENT])
     def move_to_pose(

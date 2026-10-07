@@ -70,6 +70,8 @@ class HabitatEnvironment(Sim):
         "start_yaw_deg",
         "start_position_ros",
         "executable",
+        "source_dir",
+        "build_command",
         "publish_semantic",
         "props",
     )
@@ -100,6 +102,12 @@ class HabitatEnvironment(Sim):
 
         fields = HabitatEnvironmentConfig.model_fields.keys() - SimConfig.model_fields.keys()
         overrides = self.config.model_dump(include=fields, exclude_none=True)
+        if self.config.executable is not None:
+            overrides.update(
+                executable=str(Path(self.config.executable).expanduser().resolve()),
+                source_dir=None,
+                build_command=None,
+            )
         if "start_position_ros_override" in overrides:
             overrides["start_position_ros"] = overrides.pop("start_position_ros_override")
         if "scene_dataset_config" in overrides and overrides["scene_dataset_config"] != "default":
