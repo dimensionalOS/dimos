@@ -95,7 +95,8 @@ class EdgeCollapse:
             good = sel & self._no_flip(v, f, a, b, p, at) & self._link(code, nv, b, cnt, at_a)
             bad = code[sel & ~good]
             g = good.nonzero().squeeze(1)
-            if len(g) == 0 and len(bad) == 0:
+            # the last rounds trickle a few collapses each: stop under 0.01% of the faces
+            if max(len(g), len(bad)) <= 1e-4 * len(f):
                 break
             blocked = torch.cat([blocked, bad]).sort().values
             a, b, p, keep_a = a[g], b[g], p[g], keep_a[g]
@@ -206,6 +207,7 @@ class PlaneSnap:
         self.merge_cos = math.cos(math.radians(merge_angle))
         self.rim = rim
         self.tol = tol
+        self.stop = 0.0
         self.min_cos = math.cos(math.radians(max_angle))
         self.smooth = int(smooth)
         self.min_faces = int(min_faces)
