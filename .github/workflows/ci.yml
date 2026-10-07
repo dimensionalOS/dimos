@@ -383,6 +383,33 @@ jobs:
           cargo build --release --locked -p dimos-livox -p dimos-virtual-mid360
           uv run pytest -m native_e2e dimos/hardware/sensors/lidar/livox/test_e2e.py --no-cov
 
+  isolated-lerobot-tests:
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      # Unlike root jobs, uv run must provision the locked isolated project.
+      UV_NO_SYNC: "0"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: true
+          prune-cache: true
+      - name: Install audio, image and video dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y portaudio19-dev libturbojpeg ffmpeg
+      - name: Test isolated LeRobot export
+        working-directory: native/python/lerobot
+        run: |
+          env -u VIRTUAL_ENV -u UV_PYTHON -u UV_PROJECT_ENVIRONMENT \
+            uv run --frozen --group tests --with-editable ../../.. pytest \
+            dimos_lerobot/dataprep_tests.py dimos_lerobot/collection_dataprep_tests.py
+
   native:
     name: Native builds (C++ and Rust)
     timeout-minutes: 30
@@ -1388,6 +1415,7 @@ jobs:
     - lint
     - rust
     - native
+    - isolated-lerobot-tests
     - md-babel
     - web
     - tests

@@ -12,12 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for the pure DataPrep helpers in `core.py`.
-
-No I/O: a tiny in-memory fake stands in for `SqliteStore`, exposing only the
-surface the helpers touch (`stream(name)` → iterable of `.ts`/`.data` records,
-with `.time_range(t0, t1)`). Keeps these fast and dependency-free.
-"""
+"""Regression coverage for the retained legacy DataPrep CLI during the split."""
 
 from __future__ import annotations
 
@@ -42,7 +37,12 @@ def test_legacy_inspect_preserves_automatic_and_explicit_formats(
     result = {"episodes": 2}
     autodetect = mocker.patch("dimos.imitation.dataprep.build.inspect_dataset", return_value=result)
     explicit = mocker.Mock(return_value=result)
-    lookup = mocker.patch("dimos.imitation.dataprep.core.get_inspector", return_value=explicit)
+    target = (
+        "dimos.imitation.dataprep.lerobot.inspect_lerobot_dataset"
+        if format_name == "lerobot"
+        else "dimos.imitation.dataprep.formats.hdf5.reader.inspect"
+    )
+    mocker.patch(target, explicit)
 
     cli.inspect(path, format_name)
 
@@ -51,7 +51,6 @@ def test_legacy_inspect_preserves_automatic_and_explicit_formats(
         autodetect.assert_called_once_with(path)
         explicit.assert_not_called()
     else:
-        lookup.assert_called_once_with(format_name)
         explicit.assert_called_once_with(path)
         autodetect.assert_not_called()
 

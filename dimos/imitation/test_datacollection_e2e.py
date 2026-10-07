@@ -21,10 +21,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-import cv2
 import h5py
 import numpy as np
-import pyarrow.parquet as pq
 import pytest
 
 from dimos.core.stream import Stream, Transport
@@ -115,7 +113,7 @@ def _dataprep_config(db_path: Path, output: OutputConfig) -> DataPrepConfig:
                 stream="color_image",
                 field="data",
                 dtype="video",
-                shape=(16, 16, 3),
+                shape=(64, 64, 3),
                 names=["height", "width", "channels"],
             ),
             "state": FeatureSpec(
@@ -188,7 +186,7 @@ def _record_session(db_path: Path) -> None:
                 publish(
                     "color_image",
                     Image(
-                        data=np.full((16, 16, 3), pixel, dtype=np.uint8),
+                        data=np.full((64, 64, 3), pixel, dtype=np.uint8),
                         format=ImageFormat.RGB,
                         frame_id="camera",
                         ts=ts,
@@ -218,19 +216,6 @@ def _record_session(db_path: Path) -> None:
         publish("status", _status(112.0, "start", "recording", 2, 1, "interrupted"))
     finally:
         recorder.stop()
-
-
-def _read_video(path: Path) -> list[np.ndarray[Any, Any]]:
-    capture = cv2.VideoCapture(str(path))
-    frames: list[np.ndarray[Any, Any]] = []
-    try:
-        while True:
-            ok, bgr = capture.read()
-            if not ok:
-                return frames
-            frames.append(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB))
-    finally:
-        capture.release()
 
 
 EXPECTED_STATE = np.asarray(
@@ -327,53 +312,3 @@ def test_collection_to_hdf5_roundtrip(
         (episode["start_ts"], episode["end_ts"], episode["task_label"])
         for episode in hdf5_meta["episodes"]
     ] == [(100.0, 102.0, "pick"), (108.0, 110.0, "place")]
-
-
-def test_collection_to_lerobot_roundtrip(
-    tmp_path: Path,
-    recorded_session: tuple[Path, dict[float, np.ndarray[Any, Any]]],
-) -> None:
-    db_path, recorded_images = recorded_session
-    try:
-        lerobot_path = run_dataprep(
-            _dataprep_config(
-                db_path,
-                OutputConfig(
-                    format="lerobot",
-                    path=tmp_path / "lerobot",
-                    metadata={"robot": "synthetic"},
-                ),
-            )
-        )
-    except RuntimeError as exc:
-        if "VideoWriter" in str(exc):
-            pytest.skip(f"no mp4v encoder available in this environment: {exc}")
-        raise
-
-    lerobot_info = inspect_dataset(lerobot_path)
-    assert (lerobot_info["episodes"], lerobot_info["frames"], lerobot_info["fps"]) == (2, 6, 1.0)
-    data = pq.read_table(lerobot_path / "data/chunk-000/file-000.parquet")
-    assert data.column("timestamp").to_pylist() == pytest.approx([0.0, 1.0, 2.0, 0.0, 1.0, 2.0])
-    assert data.column("episode_index").to_pylist() == [0, 0, 0, 1, 1, 1]
-    assert data.column("frame_index").to_pylist() == [0, 1, 2, 0, 1, 2]
-    np.testing.assert_array_equal(
-        np.asarray(data.column("observation.state").to_pylist()), EXPECTED_STATE
-    )
-    np.testing.assert_array_equal(np.asarray(data.column("action").to_pylist()), EXPECTED_ACTION)
-
-    episode_rows = pq.read_table(
-        lerobot_path / "meta/episodes/chunk-000/file-000.parquet"
-    ).to_pylist()
-    assert [row["length"] for row in episode_rows] == [3, 3]
-    assert [(row["dataset_from_index"], row["dataset_to_index"]) for row in episode_rows] == [
-        (0, 3),
-        (3, 6),
-    ]
-    assert [row["tasks"] for row in episode_rows] == [["pick"], ["place"]]
-
-    video = _read_video(lerobot_path / "videos/observation.images.camera/chunk-000/file-000.mp4")
-    assert len(video) == 6
-    expected_means = [
-        recorded_images[ts].mean() for ts in (100.0, 101.0, 102.0, 108.0, 109.0, 110.0)
-    ]
-    np.testing.assert_allclose([frame.mean() for frame in video], expected_means, atol=5.0)

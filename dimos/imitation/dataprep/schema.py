@@ -35,7 +35,6 @@ from dimos.protocol.service.spec import BaseConfig
 
 # Each host-supported format package exposes a writer through ``get_writer``.
 Writer = Callable[[Iterator["Sample"], "OutputConfig"], Path]
-Inspector = Callable[[Path], dict[str, Any]]
 
 SourceKind = Literal["snapshot", "joint_position_updates"]
 

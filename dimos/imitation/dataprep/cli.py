@@ -82,7 +82,12 @@ def build(
         raise typer.Exit(2)
 
     try:
-        path = run_dataprep(cfg)
+        if cfg.output.format == "lerobot":
+            from dimos.imitation.dataprep.lerobot import run_lerobot_dataprep
+
+            path = run_lerobot_dataprep(cfg)
+        else:
+            path = run_dataprep(cfg)
     except Exception as e:
         # CLI boundary: any failure becomes a clean message + non-zero exit
         # instead of a traceback. run_dataprep raises specific errors internally.
@@ -104,10 +109,14 @@ def inspect(dataset: Path | None, output_format: Literal["lerobot", "hdf5"] | No
     try:
         if output_format is None:
             info = inspect_dataset(dataset)
-        else:
-            from dimos.imitation.dataprep.core import get_inspector
+        elif output_format == "lerobot":
+            from dimos.imitation.dataprep.lerobot import inspect_lerobot_dataset
 
-            info = get_inspector(output_format)(dataset)
+            info = inspect_lerobot_dataset(dataset)
+        else:
+            from dimos.imitation.dataprep.formats.hdf5.reader import inspect as inspect_hdf5
+
+            info = inspect_hdf5(dataset)
     except Exception as e:
         # CLI boundary: surface failures as a message + non-zero exit, not a traceback.
         typer.echo(f"dataprep inspect failed: {e}", err=True)
