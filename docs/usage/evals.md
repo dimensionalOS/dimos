@@ -434,6 +434,36 @@ sensor streams and navigation streams supplied by the composed blueprint.
 The metadata's `point_cloud_source` describes how Habitat scans are generated
 (depth unprojection), not whether scan publication is enabled.
 
+The Habitat QA suites under `dimos.evals.suites.habitat` cover 18 furnished scenes
+(HSSD, HM3D, ReplicaCAD and the Habitat test apartment), one suite per scene; each
+suite's docstring describes its scene:
+
+```bash
+dimos evals run dimos.evals.suites.habitat.hm3d.hm3d_scene_3 --agent dimos.evals.agents.pi --limit 1
+```
+
+Agents look with `observe` and drive with `go_to(x, y)`. Exploring a whole home can
+take more than Pi's default 40 steps; raise it with `--set max_steps=100`.
+
+The datasets are not bundled. Download them from their sources (HSSD requires
+accepting its terms first), for example with habitat-sim's downloader, then set
+the variable for each dataset you use:
+
+```bash
+python -m habitat_sim.utils.datasets_download \
+    --uids hssd-hab hm3d_example replica_cad_dataset habitat_test_scenes --data-path <dir>
+```
+
+| Dataset | Variable | Default |
+|---|---|---|
+| [HSSD](https://huggingface.co/datasets/hssd/hssd-hab) | `HSSD_DATASET_CONFIG` | `data/hssd-hab/hssd-hab.scene_dataset_config.json` |
+| [HM3D example](https://github.com/matterport/habitat-matterport-3dresearch) | `HM3D_DATASET_CONFIG` | `data/hm3d-0.2/hm3d/example/hm3d_example_basis.scene_dataset_config.json` |
+| HM3D annotated example | `HM3D_ANNOTATED_DATASET_CONFIG` | `data/hm3d-0.2/hm3d/example/hm3d_annotated_example_basis.scene_dataset_config.json` |
+| [ReplicaCAD](https://huggingface.co/datasets/ai-habitat/ReplicaCAD_dataset) | `REPLICACAD_DATASET_CONFIG` | `data/replica_cad_dataset/replicaCAD.scene_dataset_config.json` |
+| [Habitat test scenes](https://huggingface.co/datasets/ai-habitat/habitat_test_scenes) | `HABITAT_TEST_SCENE` | `data/habitat_test_scenes/apartment_1.glb` |
+
+A set variable wins; otherwise the suite reads the default under the repo's `data/`.
+
 For MuJoCo, the blueprint brings its own `MujocoSimModule` and scene, so the
 environment only launches `dimos --simulation mujoco --record run <blueprint>
 <modules>` headless; `MUJOCOSIMMODULE__HEADLESS=false` in the shell opens the viewer on
