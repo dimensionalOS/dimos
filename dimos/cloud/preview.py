@@ -111,45 +111,69 @@ def build(
     if not streams:
         return None
 
-    lidar = list(streams["lidar"]) if "lidar" in streams else []
+    def sample(
+        kind: str, picks: set[int]
+    ) -> tuple[list[Any], list[tuple[float, Any]], float, float]:
+        """One pass over a stream keeping only the picked observations (payloads are
+        lazy; nothing unused is retained), every observation's attached pose, and the
+        first/last timestamps."""
+        kept: list[Any] = []
+        attached: list[tuple[float, Any]] = []
+        first = last = float("nan")
+        if kind not in streams:
+            return kept, attached, first, last
+        for i, obs in enumerate(streams[kind]):
+            first = obs.ts if i == 0 else first
+            last = obs.ts
+            if getattr(obs, "pose", None) is not None:
+                attached.append((obs.ts, obs.pose))
+            if i in picks:
+                kept.append((i, obs))
+        return kept, attached, first, last
+
+    n_lidar = streams["lidar"].count() if "lidar" in streams else 0
+    shown = set(_pick(n_lidar, frames))
+    lidar, lidar_poses, l0, l1 = sample("lidar", shown | set(_pick(n_lidar, map_scans)))
+    n_cam = streams["camera"].count() if "camera" in streams else 0
+    camera, _, c0, c1 = sample("camera", set(_pick(n_cam, frames)))
+
     # Sensor-frame clouds (e.g. a mid360 on its mount) carry the sensor's pose per
-    # observation; the map and the trajectory then both come from those poses, so they
-    # share one frame even when the recording has several odometry sources.
-    sensor_frame = (
-        bool(lidar)
-        and getattr(lidar[0].data, "frame_id", "world") not in WORLD_FRAMES
-        and getattr(lidar[0], "pose", None) is not None
+    # observation: then each scan is placed with its own pose and the trajectory comes
+    # from those poses, so the map and the path share one frame even when the recording
+    # has other odometry streams. Scans that cannot be placed in that frame are skipped.
+    sensor_frame = bool(lidar_poses) and any(
+        getattr(o.data, "frame_id", "world") not in WORLD_FRAMES for _, o in lidar
     )
+    odom: list[tuple[float, Any]] = []
     if sensor_frame:
-        poses = [o for o in lidar if getattr(o, "pose", None) is not None]
-        pos_yaw = [_position_yaw(o.pose) for o in poses]
+        t_pose = np.array([t for t, _ in lidar_poses])
+        pos_yaw = [_position_yaw(p) for _, p in lidar_poses]
     else:
-        poses = streams["pose"].to_list() if "pose" in streams else []
-        pos_yaw = [_position_yaw(o.data) for o in poses]
-    t_pose = np.array([o.ts for o in poses])
-    camera = list(streams["camera"]) if "camera" in streams else []
-    times = [
-        t for t in (t_pose[:1].tolist() + [o.ts for o in lidar[:1]] + [o.ts for o in camera[:1]])
-    ]
-    ends = [
-        t for t in (t_pose[-1:].tolist() + [o.ts for o in lidar[-1:]] + [o.ts for o in camera[-1:]])
-    ]
-    t0, t1 = min(times), max(ends)
+        odom = [(o.ts, o.data) for o in streams["pose"]] if "pose" in streams else []
+        t_pose = np.array([t for t, _ in odom])
+        pos_yaw = [_position_yaw(d) for _, d in odom]
+    p0 = [float(t_pose[0])] if len(t_pose) else []
+    p1 = [float(t_pose[-1])] if len(t_pose) else []
+    t0 = float(np.nanmin([l0, c0, *p0, np.inf]))
+    t1 = float(np.nanmax([l1, c1, *p1, t0]))
 
     def pose_at(t: float) -> Any:
-        return poses[int(np.clip(np.searchsorted(t_pose, t), 0, len(poses) - 1))].data
+        return odom[int(np.clip(np.searchsorted(t_pose, t), 0, len(odom) - 1))][1]
 
-    def world_points(obs: Any) -> np.ndarray:
+    def world_points(obs: Any) -> np.ndarray | None:
         pts = np.asarray(obs.data.points_f32(), dtype=np.float64).reshape(-1, 3)
         pts = pts[np.isfinite(pts).all(axis=1)]
-        if getattr(obs.data, "frame_id", "world") not in WORLD_FRAMES:
-            pose = obs.pose if sensor_frame else (pose_at(obs.ts) if poses else None)
-            if pose is None:
-                return pts
-            pose = pose.pose.pose if hasattr(pose, "pose") and hasattr(pose.pose, "pose") else pose
-            p = pose.position
-            pts = pts @ _rotation(pose.orientation).T + np.array([p.x, p.y, p.z])
-        return pts
+        if getattr(obs.data, "frame_id", "world") in WORLD_FRAMES:
+            return None if sensor_frame else pts
+        if sensor_frame:
+            pose = getattr(obs, "pose", None)
+        else:
+            pose = pose_at(obs.ts) if len(t_pose) else None
+        if pose is None:
+            return None
+        pose = pose.pose.pose if hasattr(pose, "pose") and hasattr(pose.pose, "pose") else pose
+        p = pose.position
+        return np.asarray(pts @ _rotation(pose.orientation).T + np.array([p.x, p.y, p.z]))
 
     # ceilings hide the floor plan from above: keep -0.5 m .. +2 m around the robot's height
     z_robot = float(np.median([p[2] for p, _ in pos_yaw])) if pos_yaw else None
@@ -162,12 +186,13 @@ def build(
     # map: up to map_scans evenly spaced scans, voxel-merged (time stays flat on long
     # recordings); scans: `frames` evenly spaced, each downsampled
     acc, scans = [], []
-    chosen = set(_pick(len(lidar), frames))
-    for i in sorted(chosen | set(_pick(len(lidar), map_scans))):
-        obs = lidar[i]
-        pts = _voxel(band(world_points(obs)), map_voxel)
+    for i, obs in lidar:
+        placed = world_points(obs)
+        if placed is None:
+            continue
+        pts = _voxel(band(placed), map_voxel)
         acc.append(pts)
-        if i in chosen:
+        if i in shown:
             scans.append((obs.ts, _cap(pts, scan_points, rng)))
         if len(acc) > 16:
             acc = [_voxel(np.concatenate(acc), map_voxel)]
@@ -179,7 +204,7 @@ def build(
 
     traj = (
         np.array([[t - t0, *p, yaw] for t, (p, yaw) in zip(t_pose, pos_yaw, strict=False)])
-        if poses
+        if len(t_pose)
         else np.zeros((0, 5))
     )
     if len(traj) > 3000:
@@ -189,13 +214,12 @@ def build(
     lo, hi = (every.min(axis=0), every.max(axis=0)) if len(every) else (np.zeros(3), np.zeros(3))
 
     shots, light = [], []
-    for i in _pick(len(camera), frames):
-        img = camera[i].data
-        small = img.resize_to_fit(thumb_width, thumb_width)[0] if img.width > thumb_width else img
+    for _, shot in camera:
+        small = shot.data.resize_to_fit(thumb_width, thumb_width)[0]
         light.append(float(np.asarray(small.as_numpy()).mean()))
         shots.append(
             {
-                "t": round(camera[i].ts - t0, 3),
+                "t": round(shot.ts - t0, 3),
                 "jpeg": base64.b64encode(small.to_jpeg_bytes(quality=70)).decode(),
             }
         )

@@ -51,6 +51,9 @@ class Image:
     def to_jpeg_bytes(self, quality: int = 75) -> bytes:
         return b"\xff\xd8" + bytes([self.level])
 
+    def resize_to_fit(self, w: int, h: int) -> tuple["Image", float]:
+        return self, 1.0
+
 
 @dataclass
 class Obs:
@@ -141,3 +144,37 @@ def test_sensor_frame_clouds_use_their_own_pose() -> None:
 
 def test_nothing_to_preview() -> None:
     assert build(Store(Stream("empty"))) is None
+
+
+def test_scans_without_a_pose_are_skipped_not_mixed() -> None:
+    """A recorder can save a sensor-frame scan before odometry arrives: that scan has no
+    pose. The others still decide the frame, and the unplaceable one is left out."""
+    mount = SimpleNamespace(
+        position=SimpleNamespace(x=5.0, y=0.0, z=0.3),
+        orientation=SimpleNamespace(x=0.0, y=0.0, z=0.0, w=1.0),
+    )
+    lidar = Stream(
+        "pointlio_lidar",
+        [
+            Obs(0.5, PointCloud2([[9.0, 9.0, 0.0]], "mid360_link")),  # before odometry
+            Obs(1.0, PointCloud2([[1.0, 0.0, 0.0]], "mid360_link"), pose=mount),
+        ],
+    )
+    doc = build(Store(lidar, Stream("go2_odom", [Obs(1.0, PoseStamped(-50.0, -50.0))])))
+    assert doc is not None
+    m = unpack(doc, doc["map"])
+    assert len(m) == 1 and np.allclose(m[0], [6.0, 0.0, 0.3], atol=0.03)
+
+
+def test_tall_images_are_resized_too() -> None:
+    sized: list[tuple[int, int]] = []
+    tall = Image(level=50)
+    tall.width = 240  # narrower than the thumbnail, but (say) 640 tall
+
+    def fit(w: int, h: int) -> tuple[Image, float]:
+        sized.append((w, h))
+        return tall, 0.5
+
+    tall.resize_to_fit = fit
+    assert build(Store(Stream("color_image", [Obs(0.0, tall)]))) is not None
+    assert sized == [(320, 320)]

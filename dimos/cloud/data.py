@@ -150,7 +150,15 @@ class MultipartBackend:
             )
             create = self.api.create(**spec)
             if create["state"] == "complete":
-                return {**create, "skipped": True}
+                # already uploaded: (re)send the preview, so a failed send is repaired
+                # by simply running the upload again
+                return {
+                    **create,
+                    "skipped": True,
+                    "preview": self._preview(create["upload_id"], path, Path(tmp))
+                    if manifest
+                    else None,
+                }
             uid = create["upload_id"]
             have = {p["part_number"] for p in self.status(uid)["parts"]}
             ps = create["part_size"]
