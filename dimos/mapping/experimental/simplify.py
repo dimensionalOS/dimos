@@ -59,8 +59,8 @@ def _drop_degenerate(f: Tensor) -> Tensor:
 class EdgeCollapse:
     """Error-bounded quadric edge collapse, in parallel rounds.
 
-    Each round collapses the edges that are the cheapest in their whole 1-ring, so no
-    two collapses touch the same face. An edge collapses only while every original
+    Each round greedily picks cheap edges whose 1-rings are disjoint, so no two
+    collapses touch the same face. An edge collapses only while every original
     plane it absorbed stays within ``tol``, no face flips past ``max_angle``,
     and the link condition keeps the mesh manifold.
     """
@@ -83,7 +83,7 @@ class EdgeCollapse:
             edges, cnt, _ = _edges(f, nv)
             a, b = edges[:, 0], edges[:, 1]
             p, keep_a, cost = self._best(v, q, a, b, locked[a], locked[b])
-            ok = (cost <= self.tol**2) & (cnt <= 2) & ~torch.isin(a * nv + b, blocked)
+            ok = (cost <= self.tol**2) & (cnt <= 2) & ~_member(a * nv + b, blocked)
             # coarse cost buckets, random within: cheap first but many winners per round
             key = (cost / self.tol**2 * 8).floor().clamp_max(8) + torch.rand_like(cost)
             sel = self._independent(f, nv, a, b, key, ok)
@@ -91,7 +91,7 @@ class EdgeCollapse:
                 break
             a, b, p, keep_a, cnt = a[sel], b[sel], p[sel], keep_a[sel], cnt[sel]
             good = self._no_flip(v, f, nv, a, b, p) & self._link(edges, nv, a, b, cnt)
-            blocked = torch.cat([blocked, (a * nv + b)[~good]])
+            blocked = torch.cat([blocked, (a * nv + b)[~good]]).sort().values
             a, b, p, keep_a = a[good], b[good], p[good], keep_a[good]
             keep, gone = torch.where(keep_a, a, b), torch.where(keep_a, b, a)
             v[keep] = p
@@ -117,16 +117,29 @@ class EdgeCollapse:
         return p, k != 1, cost
 
     @staticmethod
-    def _independent(f: Tensor, nv: int, a: Tensor, b: Tensor, cost: Tensor, ok: Tensor) -> Tensor:
-        """Edges cheapest among every edge touching their 1-ring."""
-        rank = torch.full_like(a, _INF)
-        rank[ok] = torch.argsort(torch.argsort(cost[ok]))
-        rv = torch.full((nv,), _INF, device=f.device)
-        rv.scatter_reduce_(0, a, rank, "amin").scatter_reduce_(0, b, rank, "amin")
-        fmin = rv[f].min(1).values
-        m = torch.full((nv,), _INF, device=f.device)
-        m.scatter_reduce_(0, f.reshape(-1), fmin.repeat_interleave(3), "amin")
-        return ok & (m[a] == rank) & (m[b] == rank)
+    def _independent(
+        f: Tensor, nv: int, a: Tensor, b: Tensor, key: Tensor, ok: Tensor, passes: int = 3
+    ) -> Tensor:
+        """Greedy by key: edges cheapest in their 1-ring, then again away from the winners."""
+        rank = torch.empty_like(a)
+        rank[torch.argsort(key)] = torch.arange(len(a), device=a.device)
+        fv = f.reshape(-1)
+        sel, cand = torch.zeros_like(ok), ok
+        for _ in range(passes):
+            r = torch.where(cand, rank, _INF)
+            rv = torch.full((nv,), _INF, device=f.device)
+            rv.scatter_reduce_(0, a, r, "amin").scatter_reduce_(0, b, r, "amin")
+            m = torch.full((nv,), _INF, device=f.device)
+            m.scatter_reduce_(0, fv, rv[f].amin(1).repeat_interleave(3), "amin")
+            win = cand & (m[a] == r) & (m[b] == r)
+            sel = sel | win
+            # drop every edge whose 1-ring touches a winner
+            w = torch.zeros(nv, dtype=torch.int64, device=f.device)
+            w.scatter_reduce_(0, a, win.long(), "amax").scatter_reduce_(0, b, win.long(), "amax")
+            near = torch.zeros(nv, dtype=torch.int64, device=f.device)
+            near.scatter_reduce_(0, fv, w[f].amax(1).repeat_interleave(3), "amax")
+            cand = cand & (near[a] == 0) & (near[b] == 0)
+        return sel
 
     def _no_flip(self, v: Tensor, f: Tensor, nv: int, a: Tensor, b: Tensor, p: Tensor) -> Tensor:
         """Moving a and b to p turns no surviving face past min_cos."""
@@ -282,6 +295,13 @@ class PlaneSnap:
         on &= (d <= self.tol) & ((n * pn).sum(1) > self.min_cos)
         tag = torch.where(on, label, -1 - torch.arange(nf, device=dev))
         return tag, pm, pn
+
+
+def _member(x: Tensor, sorted_set: Tensor) -> Tensor:
+    if len(sorted_set) == 0:
+        return torch.zeros_like(x, dtype=torch.bool)
+    i = torch.searchsorted(sorted_set, x).clamp_max(len(sorted_set) - 1)
+    return sorted_set[i] == x
 
 
 def _rings_from(seed: Tensor, f: Tensor, k: int) -> Tensor:
