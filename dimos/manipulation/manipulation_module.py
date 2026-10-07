@@ -1164,7 +1164,10 @@ class ManipulationModule(Module):
     def _fallback_ik_seeds(
         self, group_ids: tuple[PlanningGroupID, ...], start: JointState
     ) -> list[tuple[str, JointState]]:
-        """The configured postures (home, then init) laid over *start*, as IK seeds."""
+        """Postures laid over *start* as IK seeds: the configured home and init,
+        then the middle of the joint ranges, with the last joint turned a
+        quarter of its range either way. The folded rest pose is a poor seed
+        for anything overhead; a mid-range elbow-up posture rarely is."""
         assert self._world_monitor is not None
         seeds: list[tuple[str, JointState]] = []
         for name in ("home", "init"):
@@ -1180,6 +1183,34 @@ class ManipulationModule(Module):
             if found:
                 seeds.append(
                     (name, JointState(name=list(positions), position=list(positions.values())))
+                )
+        limits = {
+            joint.name: (joint.lower, joint.upper)
+            for joint in self.config.model.model.load().joints
+            if joint.lower is not None and joint.upper is not None
+        }
+        for label, roll in (
+            ("midrange", 0.0),
+            ("midrange_roll_pos", 0.25),
+            ("midrange_roll_neg", -0.25),
+        ):
+            positions = dict(zip(start.name, start.position, strict=True))
+            touched = False
+            for group_id in group_ids:
+                joints = list(self._world_monitor.planning_groups.get(group_id).joint_names)
+                for index, joint_name in enumerate(joints):
+                    bounds = limits.get(joint_name)
+                    if bounds is None:
+                        continue
+                    lower, upper = bounds
+                    middle = (lower + upper) / 2.0
+                    if index == len(joints) - 1:
+                        middle += roll * (upper - lower)
+                    positions[joint_name] = middle
+                    touched = True
+            if touched:
+                seeds.append(
+                    (label, JointState(name=list(positions), position=list(positions.values())))
                 )
         return seeds
 
