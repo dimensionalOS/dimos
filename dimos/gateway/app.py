@@ -58,6 +58,7 @@ from dimos.gateway import (
 from dimos.gateway.discovery import Discovery
 from dimos.gateway.jobs import Jobs
 from dimos.gateway.openapi import document, operation_id, route_doc
+from dimos.gateway.topic_rates import TopicWatch
 from dimos.gateway.uploads import Uploads
 
 LIST_TTL_S = 60.0
@@ -117,6 +118,8 @@ class ServerState:
     jobs: Jobs | None = None
     # the zenoh namespace the bus publishes under (serve() sets it once its publisher is open), None = SSE only
     zenoh_namespace: str | None = None
+    # every topic heard on the bus (serve() starts it), None = not listening
+    topics: TopicWatch | None = None
 
 
 def default_state(dimos_dir: Path) -> ServerState:
@@ -234,6 +237,24 @@ def create_app(state: ServerState, background: bool = True) -> FastAPI:
     )
     async def info() -> dict[str, Any]:
         return config.info(s.dimos_dir).to_json()
+
+    @app.get(
+        "/dimos/topics/rates",
+        response_model=models.TopicRates,
+        **route_doc(
+            "server",
+            "Every topic on the bus the gateway has heard since it started: rate, throughput, messages, last heard",
+            "The gateway listens to zenoh `dimos/**` from its start, so a topic published once (at a blueprint's "
+            "startup) is listed too, and a topic stays listed after it goes quiet (0 Hz, `lastSeen` seconds ago). "
+            "Rates are over the last 2 s. Not listed: RPC calls (zenoh queries) and LCM-only traffic. `up` is false "
+            "(with `error`) when the gateway has no zenoh session. No side effects.",
+            answer="`{ up, error, topics: [{ topic, type, hz, bps, messages, lastSeen, declared }] }`",
+        ),
+    )
+    async def topic_rates() -> dict[str, Any]:
+        if s.topics is None:
+            return {"up": False, "error": "this gateway isn't listening to the bus", "topics": []}
+        return await asyncio.to_thread(s.topics.snapshot)
 
     @app.get(
         "/dimos/paths",
@@ -362,13 +383,18 @@ def create_app(state: ServerState, background: bool = True) -> FastAPI:
             "blueprints",
             "A page showing a blueprint: its modules (rarest first) beside its module graph, each module's streams, "
             "skills, RPC methods and code",
-            "An HTML page (plain JS and CSS, its files at /dimos/blueprint_view/{file}) that reads GET "
-            "/dimos/blueprints/{name}, /dimos/catalog, /dimos/source and /dimos/runs. The graph is drawn from the "
-            "blueprint's wiring; while the blueprint runs inside dimOS Desktop it shows Desktop's live topic rates "
-            "(GET /api/topics/rates). It styles itself with Desktop's /theme.css and skin (Portal off Desktop). In "
-            'an iframe it posts to its parent, on its own origin: {type:"dimos:open-in-editor", file, line} (the '
-            'parent answers {type:"dimos:open-in-editor-result", ok, text}) and {type:"dimos:close"} (Escape). 404 '
-            "for a blueprint dimos doesn't list. No side effects.",
+            "An HTML page (plain JS and CSS, its files at /dimos/blueprint_view/{file}): dimOS Desktop's whole "
+            "blueprint Details modal. A top bar (the blueprint and its phase from GET /dimos/runs; Relaunch: POST "
+            "/dimos/runs/restart; Stop: POST /dimos/runs/stop; Configure: GET/PUT /dimos/blueprints/{name}/config and "
+            "/dimos/global-config, recommended settings from GET /dimos/robots; Show code; Logs: GET "
+            "/dimos/runs/{runId}/log), a side panel (Topic rates from GET /dimos/topics/rates; the modules, rarest "
+            "first by GET /dimos/catalog) and the module graph drawn from the blueprint's wiring, live rates on its "
+            "topics while it runs. It styles itself with Desktop's /theme.css and skin (Portal off Desktop). In an "
+            'iframe it posts to its parent, on its own origin: {type:"dimos:chrome"} (it can draw the top bar; a '
+            'parent that then shows only the page answers {type:"dimos:chrome-ok"}, and only then does the bar show), '
+            '{type:"dimos:open-in-editor", file, line} (the parent answers {type:"dimos:open-in-editor-result", ok, '
+            'text}) and {type:"dimos:close"} (its close button, or Escape). 404 for a blueprint dimos doesn\'t list. '
+            "The page itself has no side effects; its buttons do what the routes they call say.",
             errors=(400, 404),
             ok={"content": {"text/html": {"schema": {"type": "string"}}}},
             answer="an HTML page",

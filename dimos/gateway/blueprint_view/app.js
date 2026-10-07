@@ -1,15 +1,22 @@
-// The blueprint view (GET /dimos/blueprint_view?name=<blueprint>): the blueprint's modules, rarest first, beside its
+// The blueprint view (GET /dimos/blueprint_view?name=<blueprint>): the whole of dimOS Desktop's blueprint Details
+// modal. A top bar (the blueprint and its phase, Relaunch, Stop, Configure, Show code, Logs, close), then the side panel
+// (Topic rates: every topic on the bus, GET /dimos/topics/rates; the blueprint's modules, rarest first) beside its
 // module graph. A module row shows its docstring's first line and, on hover, its streams; a click (in the list or the
 // graph) drills into the module: docstring, typed streams linking to their topics' other ends, skills and RPC methods
-// as cards, its code. Served by the dimos gateway; inside dimOS Desktop (same origin, /dimos/ proxied) it takes
-// Desktop's theme, its live topic rates (GET /api/topics/rates) and its editor.
+// as cards, its code. Served by the dimos gateway, so it changes with the dimos checkout; inside dimOS Desktop (same
+// origin, /dimos/ proxied) it takes Desktop's theme and its editor.
 //
 // postMessage to the parent window (Desktop's modal), on this page's origin:
+//   {type: "dimos:chrome"}                       → this page can draw the modal's top bar; a parent that then shows
+//                                                  only this page answers {type: "dimos:chrome-ok"}, and only then
+//                                                  does the bar show (an older Desktop keeps its own: no second bar)
 //   {type: "dimos:open-in-editor", file, line}  → the parent opens it, answering {type: "dimos:open-in-editor-result",
 //                                                  ok, text} (what it ran, or why it couldn't)
-//   {type: "dimos:close"}                        → Escape with nothing left to step back from
+//   {type: "dimos:close"}                        → close (✕), or Escape with nothing left to step back from
 
+import { openConfig, same } from "./config.js"
 import { className, Graph, LAYOUTS, topicOf, typeColor, typeName } from "./graph.js"
+import { openLogs } from "./logs.js"
 
 const NAME = new URLSearchParams(location.search).get("name") ?? ""
 const FRAMED = parent !== window
@@ -26,8 +33,13 @@ const state = {
     showExtras: false,
     // a topic clicked in the graph: kept lit (as if hovered) until clicked again or the background is
     pinnedTopic: null,
-    // every live topic's rate row from Desktop (GET /api/topics/rates), for the side panel's Topic rates
+    // every topic the gateway has heard (GET /dimos/topics/rates), for the side panel's Topic rates
     rateRows: [],
+    // the latest launch (GET /dimos/runs), and the saved config Relaunch compares it with
+    launch: null,
+    saved: null,
+    relaunching: false,
+    actionError: null,
 }
 
 // ── theme: Desktop's skin (localStorage portal.theme on Desktop's origin), live ──
@@ -74,8 +86,8 @@ const h = (tag, attrs = {}, ...children) => {
     return node
 }
 
-async function getJson(url) {
-    const response = await fetch(url)
+async function getJson(url, options) {
+    const response = await fetch(url, options)
     const data = await response.json().catch(() => null)
     if (!response.ok) {
         throw Object.assign(new Error(data?.error ?? `${response.status} ${response.statusText}`), {
@@ -84,6 +96,9 @@ async function getJson(url) {
     }
     return data
 }
+
+const send = (method, url, body) =>
+    getJson(url, { method, headers: { "content-type": "application/json" }, body: JSON.stringify(body ?? {}) })
 
 const reads = (stream) => stream.direction !== "out"
 const writes = (stream) => stream.direction !== "in"
@@ -140,19 +155,42 @@ function render() {
     side.replaceChildren(module ? moduleView(module) : moduleList())
     graph.setSpot(spotNow())
     renderCode()
+    renderBar()
+}
+
+/** a collapsible section of the side panel, open or shut as last left (localStorage `key`) */
+function section(key, openByDefault, summary, ...children) {
+    let open = openByDefault
+    try {
+        const kept = localStorage.getItem(key)
+        open = kept === null ? openByDefault : kept === "1"
+    } catch {
+        // storage unavailable
+    }
+    const box = h(
+        "details",
+        {
+            ontoggle: (event) => {
+                try {
+                    localStorage.setItem(key, event.currentTarget.open ? "1" : "0")
+                } catch {
+                    // storage unavailable
+                }
+            },
+        },
+        h("summary", { class: "label" }, ...summary),
+        ...children,
+    )
+    box.open = open
+    return box
 }
 
 function moduleList() {
     const modules = state.modules
-    return h(
-        "div",
-        { class: "list" },
-        h(
-            "div",
-            { class: "head" },
-            h("div", { class: "label" }, `Modules${modules ? ` · ${modules.length}` : ""}`),
-            state.source && codeButton(state.source, "data-bp-blueprint-code"),
-        ),
+    const list = section(
+        "bp.modulesOpen",
+        true,
+        ["Modules", modules && h("span", { class: "count" }, ` · ${modules.length}`)],
         state.error && h("div", { class: "note" }, state.error),
         !modules && !state.error && h("div", { class: "note" }, "loading…"),
         h(
@@ -185,38 +223,51 @@ function moduleList() {
                 )
             ),
         ),
-        ratesSection(),
     )
+    list.classList.add("modules")
+    return h("div", { class: "list" }, ratesSection(), list)
 }
 
-// ── the side panel's Topic rates: every topic on the bus (this blueprint's or not), its Hz and bandwidth, collapsible ──
-const RATES_OPEN = "bp.ratesOpen"
+// ── the side panel's Topic rates: every topic on the bus the gateway has heard (this blueprint's or not, quiet ones
+// too) and this blueprint's own topics, its Hz and throughput, collapsible ──
 function ratesSection() {
-    let open = false
-    try {
-        open = localStorage.getItem(RATES_OPEN) === "1"
-    } catch {
-        // storage unavailable
-    }
-    const box = h(
-        "details",
-        {
-            class: "rates",
-            id: "rates",
-            ontoggle: (event) => {
-                try {
-                    localStorage.setItem(RATES_OPEN, event.currentTarget.open ? "1" : "0")
-                } catch {
-                    // storage unavailable
-                }
-            },
-        },
-        h("summary", { class: "label" }, "Topic rates", h("span", { class: "count", id: "ratesCount" })),
+    const box = section(
+        "bp.ratesOpen",
+        true,
+        ["Topic rates", h("span", { class: "count", id: "ratesCount" })],
         h("table", {}, h("tbody", { id: "ratesBody" })),
     )
-    box.open = open
+    box.classList.add("rates")
+    box.id = "rates"
     queueMicrotask(fillRates)
     return box
+}
+
+/** how hot `value` is next to `max` (log scale) as a background: blue when cool, through red, to pink at the top */
+function heat(value, max) {
+    if (!(value > 0) || !(max > 0)) {
+        return undefined
+    }
+    const t = Math.log1p(value) / Math.log1p(max)
+    // hue: blue 215 → red 360 (by t = 0.65) → pink 325; brighter and stronger as it heats up
+    const hue = t < 0.65 ? 215 + (145 * t) / 0.65 : 360 - (35 * (t - 0.65)) / 0.35
+    return { background: `hsl(${hue.toFixed(0)} 78% ${(42 + 14 * t).toFixed(0)}% / ${(0.22 + 0.5 * t).toFixed(2)})` }
+}
+
+/** the rate rows: every heard topic, plus this blueprint's own that nothing has published yet */
+function rateRows() {
+    const heard = new Set(state.rateRows.map((row) => `${row.topic} ${row.type}`))
+    const known = new Set(state.rateRows.map((row) => row.topic))
+    const own = (state.modules ?? []).flatMap((m) => m.streams.map((stream) => ({ topic: `/${topicOf(stream)}`, type: stream.type })))
+    const unheard = []
+    for (const { topic, type } of own) {
+        if (!known.has(topic) && !heard.has(`${topic} ${type}`)) {
+            heard.add(`${topic} ${type}`)
+            known.add(topic)
+            unheard.push({ topic, type, hz: 0, bps: 0, messages: 0, lastSeen: null })
+        }
+    }
+    return [...state.rateRows, ...unheard.sort((a, b) => a.topic.localeCompare(b.topic))]
 }
 
 function bandwidth(bytesPerSecond) {
@@ -235,18 +286,15 @@ function fillRates() {
     if (!body) {
         return
     }
-    const rows = state.rateRows
+    const rows = rateRows()
     $("#ratesCount").textContent = rows.length ? ` · ${rows.filter((row) => row.hz > 0).length}/${rows.length} live` : ""
-    // how hot each number is next to the others in its column (log scale): grey when idle, yellow to red as it heats up
+    // each number tinted by how hot it is next to the others in its column
     const top = (key) => Math.max(...rows.map((row) => row[key] ?? 0), 0)
-    const heat = (value, max) => {
-        if (!(value > 0) || !(max > 0)) {
-            return undefined
-        }
-        const t = Math.log1p(value) / Math.log1p(max)
-        return { color: `hsl(${(50 - 50 * t).toFixed(0)} ${(35 + 55 * t).toFixed(0)}% 64%)` }
-    }
     const [maxHz, maxBps] = [top("hz"), top("bps")]
+    const heardText = (row) =>
+        row.lastSeen === null || row.lastSeen === undefined
+            ? "never heard"
+            : `${row.messages ?? 0} message${row.messages === 1 ? "" : "s"}, last ${row.lastSeen < 2 ? "just now" : `${Math.round(row.lastSeen)} s ago`}`
     body.replaceChildren(
         ...rows.map((row) => {
             const type = String(row.type ?? "").replace(/\//g, ".")
@@ -255,7 +303,11 @@ function fillRates() {
                 { class: row.hz > 0 ? "" : "quiet" },
                 h(
                     "td",
-                    { class: "topic", title: `${row.topic}\n${type || "unknown type"}`, "--type": `var(--bv-${typeColor(type)})` },
+                    {
+                        class: "topic",
+                        title: `${row.topic}\n${type || "unknown type"}\n${heardText(row)}`,
+                        "--type": `var(--bv-${typeColor(type)})`,
+                    },
                     row.topic,
                 ),
                 h("td", { class: "num", style: heat(row.hz ?? 0, maxHz) }, `${(row.hz ?? 0).toFixed(1)} Hz`),
@@ -263,7 +315,7 @@ function fillRates() {
             )
         }),
         ...(rows.length ? [] : [
-            h("tr", {}, h("td", { class: "empty", colspan: "3" }, "no topics on the bus")),
+            h("tr", {}, h("td", { class: "empty", colspan: "3" }, state.ratesError ?? "no topics on the bus")),
         ]),
     )
 }
@@ -548,7 +600,9 @@ addEventListener("message", (event) => {
     if (event.origin !== location.origin || event.source !== parent) {
         return
     }
-    if (event.data?.type === "dimos:open-in-editor-result") {
+    if (event.data?.type === "dimos:chrome-ok") {
+        document.body.classList.add("chrome")
+    } else if (event.data?.type === "dimos:open-in-editor-result") {
         const status = $("#code").status
         if (status) {
             status.hidden = false
@@ -612,10 +666,12 @@ $("#extrasToggle").addEventListener("change", (event) => {
 async function pollRuns() {
     try {
         const { launch } = await getJson("runs")
-        state.running = launch?.blueprint === NAME && (launch.phase === "running" || launch.phase === "starting")
+        state.launch = launch?.blueprint === NAME ? launch : null
+        state.running = !!state.launch && (launch.phase === "running" || launch.phase === "starting")
     } catch {
         state.running = false
     }
+    renderBar()
     $("#liveBadge").hidden = !state.running
     if (!state.running) {
         graph.setRates(null)
@@ -624,19 +680,16 @@ async function pollRuns() {
 }
 
 async function pollRates() {
-    // Topic rates lists every topic on the bus (this blueprint's or not) whenever Desktop is there; the graph only
-    // annotates while this blueprint runs
-    if (state.noDesktop) {
-        return
-    }
+    // Topic rates lists every topic the gateway has heard, always; the graph only annotates while this blueprint runs
     let answer
     try {
-        answer = await getJson("../api/topics/rates")
+        answer = await getJson("topics/rates")
     } catch (error) {
-        // not inside Desktop (no such route): stop asking; anything else (Desktop restarting) is tried again
-        state.noDesktop = error?.status === 404
+        state.ratesError = String(error.message ?? error)
+        fillRates()
         return
     }
+    state.ratesError = answer.up ? null : answer.error
     state.rateRows = answer.topics ?? []
     fillRates()
     if (!state.running || !state.modules) {
@@ -662,6 +715,126 @@ async function pollRates() {
         graph.setModel(state.modules, state.extras)
     }
     graph.setRates(rates)
+}
+
+// ── the top bar: the blueprint and its phase, Relaunch, Stop, Configure, Show code, Logs, close ──
+
+/** what a relaunch would run with (the run's own one-off values on top of the config saved now) differs from what
+ * this run was launched with */
+function launchedWithOther(launch, saved) {
+    if (!launch?.overrides || !saved) {
+        return false
+    }
+    const merge = (base, over = {}) => {
+        const merged = { ...base }
+        for (const [key, value] of Object.entries(over)) {
+            if (value === null) {
+                delete merged[key]
+            } else {
+                merged[key] = value
+            }
+        }
+        return merged
+    }
+    // a key nothing sets is its default (the gateway's launches carry its own defaults, rerun_web…)
+    const differs = (a, b, base = {}) =>
+        [...new Set([...Object.keys(a), ...Object.keys(b)])].some((key) =>
+            !same(key in a ? a[key] : base[key], key in b ? b[key] : base[key])
+        )
+    const oneOff = launch.oneOff ?? {}
+    if (differs(merge(saved.global, oneOff.global), launch.overrides, saved.defaults)) {
+        return true
+    }
+    const ran = launch.modules ?? {}
+    const names = new Set([...Object.keys(saved.modules), ...Object.keys(oneOff.modules ?? {}), ...Object.keys(ran)])
+    return [...names].some((name) => differs(merge(saved.modules[name] ?? {}, oneOff.modules?.[name]), ran[name] ?? {}))
+}
+
+async function loadSaved() {
+    try {
+        const [global, modules] = await Promise.all([getJson("global-config"), getJson(`blueprints/${encodeURIComponent(NAME)}/config`)])
+        state.saved = { global: global.overrides ?? {}, modules: modules.overrides ?? {}, defaults: global.defaults ?? {} }
+    } catch {
+        state.saved = null
+    }
+    renderBar()
+}
+
+async function act(action) {
+    state.actionError = null
+    try {
+        await action()
+    } catch (error) {
+        state.actionError = String(error.message ?? error)
+    }
+    await pollRuns()
+}
+
+function renderBar() {
+    const launch = state.launch
+    const phase = !launch ? "not running" : state.running ? launch.phase : launch.phase === "failed" ? "failed" : "last run"
+    const stale = state.running && launchedWithOther(launch, state.saved)
+    const codeOn = state.source && state.code?.file === state.source.file && state.code?.line === state.source.line
+    $("#bar").replaceChildren(...[
+        h("strong", { class: "name" }, NAME),
+        h("span", { class: `phase ${phase.replace(/ /g, "-")}` }, phase),
+        state.actionError && h("span", { class: "failed", title: state.actionError }, state.actionError),
+        h("span", { class: "spacer" }),
+        // Relaunch: this blueprint's run again with the config saved now; filled when it isn't running
+        launch && h("button", {
+            type: "button",
+            class: `btn relaunch${state.running ? "" : " primary"}${stale && !state.relaunching ? " stale" : ""}`,
+            disabled: state.relaunching,
+            "data-bp-relaunch": true,
+            title: stale ? "the saved config changed since this run started" : undefined,
+            onclick: () => {
+                state.relaunching = true
+                renderBar()
+                act(() => send("POST", "runs/restart")).finally(() => {
+                    state.relaunching = false
+                    renderBar()
+                })
+            },
+        }, h("span", { "aria-hidden": "true" }, "↻ "), state.relaunching ? "Relaunching…" : stale ? "Relaunch to apply" : "Relaunch"),
+        state.running && h("button", {
+            type: "button",
+            class: "btn",
+            "data-bp-stop": true,
+            onclick: () => act(() => send("POST", "runs/stop", launch.runId ? { runId: launch.runId } : {})),
+        }, "Stop"),
+        h("button", {
+            type: "button",
+            class: "btn",
+            "data-bp-configure": true,
+            onclick: () => openConfig({ name: NAME, h, getJson, send, onSaved: (saved) => {
+                state.saved = saved
+                renderBar()
+            } }),
+        }, "Configure"),
+        state.source && h("button", {
+            type: "button",
+            class: `btn${codeOn ? " on" : ""}`,
+            "data-bp-blueprint-code": true,
+            onclick: () => {
+                state.code = codeOn ? null : state.source
+                render()
+            },
+        }, codeOn ? "Hide code" : "Show code"),
+        h("button", {
+            type: "button",
+            class: "btn",
+            disabled: !launch?.runId,
+            title: launch?.runId ? `${NAME}'s log` : "no log yet",
+            "data-bp-logs": true,
+            onclick: () => openLogs({ runId: launch.runId, title: NAME, h, getJson }),
+        }, "Logs"),
+        FRAMED && h("button", {
+            type: "button",
+            class: "close",
+            "aria-label": "Close",
+            onclick: () => parent.postMessage({ type: "dimos:close" }, location.origin),
+        }, "✕"),
+    ].filter(Boolean))
 }
 
 // ── load ──
@@ -710,7 +883,14 @@ export function byRarity(modules, uses) {
         .map(({ module }) => module)
 }
 
+// this page can draw the modal's top bar: a Desktop that then drops its own answers dimos:chrome-ok
+if (FRAMED) {
+    document.body.classList.add("framed")
+    parent.postMessage({ type: "dimos:chrome" }, location.origin)
+}
 load()
+loadSaved()
 pollRuns()
-setInterval(pollRuns, 5000)
+pollRates()
+setInterval(pollRuns, 3000)
 setInterval(pollRates, 2000)

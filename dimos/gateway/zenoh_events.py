@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING, Any
 from dimos.gateway import config
 
 if TYPE_CHECKING:
+    from dimos.gateway.topic_rates import TopicWatch
     from dimos.protocol.service.zenohservice import ZenohSessionPool
 
 NAMESPACE_ENV = "DIMOS_ZENOH_NAMESPACE"
@@ -127,3 +128,11 @@ def open_publisher(
         session.put(key, payload, encoding=zenoh.Encoding.APPLICATION_JSON)
 
     return Publisher(namespace, put)
+
+
+def topic_watch(connect: list[str], pool: ZenohSessionPool | None = None) -> TopicWatch:
+    """A TopicWatch on a session from dimos's zenoh pool (the publisher's, when it has one)."""
+    from dimos.gateway.topic_rates import TopicWatch
+    from dimos.protocol.service.zenohservice import ZenohConfig, default_session_pool
+
+    return TopicWatch(lambda: (pool or default_session_pool).acquire(ZenohConfig(connect=connect)))

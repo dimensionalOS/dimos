@@ -63,6 +63,32 @@ class Info(ApiModel):
     inRange: bool = Field(description="`version` is inside `range` (a launch is refused when not)")
 
 
+class TopicRate(ApiModel):
+    """One topic the gateway has heard (or seen declared) on the bus."""
+
+    topic: str = Field(
+        description="Its name, from the key `dimos/<topic>/<type>`", examples=["/lidar"]
+    )
+    type: str = Field(description="Its message type", examples=["sensor_msgs.PointCloud2"])
+    hz: float = Field(description="Messages per second over the last 2 s (0 when quiet)")
+    bps: float = Field(description="Bytes per second over the last 2 s")
+    messages: int = Field(description="Messages heard since the gateway started")
+    lastSeen: float | None = Field(
+        description="Seconds since its last message; null if never heard (declared only)"
+    )
+    declared: bool = Field(
+        description="A publisher of it is declared on the bus (zenoh liveliness)"
+    )
+
+
+class TopicRates(ApiModel):
+    """Every topic on the bus the gateway has heard since it started, busiest first."""
+
+    up: bool = Field(description="The gateway is listening to the bus")
+    error: str | None = Field(description="Why it isn't, or null")
+    topics: list[TopicRate] = Field(description="Busiest first, then by name")
+
+
 class Paths(ApiModel):
     """Where dimos keeps its things."""
 

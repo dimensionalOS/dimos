@@ -4648,6 +4648,109 @@
         "title": "Stream",
         "type": "object"
       },
+      "TopicRate": {
+        "additionalProperties": true,
+        "description": "One topic the gateway has heard (or seen declared) on the bus.",
+        "properties": {
+          "bps": {
+            "description": "Bytes per second over the last 2 s",
+            "title": "Bps",
+            "type": "number"
+          },
+          "declared": {
+            "description": "A publisher of it is declared on the bus (zenoh liveliness)",
+            "title": "Declared",
+            "type": "boolean"
+          },
+          "hz": {
+            "description": "Messages per second over the last 2 s (0 when quiet)",
+            "title": "Hz",
+            "type": "number"
+          },
+          "lastSeen": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Seconds since its last message; null if never heard (declared only)",
+            "title": "Lastseen"
+          },
+          "messages": {
+            "description": "Messages heard since the gateway started",
+            "title": "Messages",
+            "type": "integer"
+          },
+          "topic": {
+            "description": "Its name, from the key `dimos/<topic>/<type>`",
+            "examples": [
+              "/lidar"
+            ],
+            "title": "Topic",
+            "type": "string"
+          },
+          "type": {
+            "description": "Its message type",
+            "examples": [
+              "sensor_msgs.PointCloud2"
+            ],
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "topic",
+          "type",
+          "hz",
+          "bps",
+          "messages",
+          "lastSeen",
+          "declared"
+        ],
+        "title": "TopicRate",
+        "type": "object"
+      },
+      "TopicRates": {
+        "additionalProperties": true,
+        "description": "Every topic on the bus the gateway has heard since it started, busiest first.",
+        "properties": {
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why it isn't, or null",
+            "title": "Error"
+          },
+          "topics": {
+            "description": "Busiest first, then by name",
+            "items": {
+              "$ref": "#/components/schemas/TopicRate"
+            },
+            "title": "Topics",
+            "type": "array"
+          },
+          "up": {
+            "description": "The gateway is listening to the bus",
+            "title": "Up",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "up",
+          "error",
+          "topics"
+        ],
+        "title": "TopicRates",
+        "type": "object"
+      },
       "Upload": {
         "additionalProperties": true,
         "description": "One upload in the queue.",
@@ -5153,7 +5256,7 @@
   "paths": {
     "/dimos/blueprint_view": {
       "get": {
-        "description": "An HTML page (plain JS and CSS, its files at /dimos/blueprint_view/{file}) that reads GET /dimos/blueprints/{name}, /dimos/catalog, /dimos/source and /dimos/runs. The graph is drawn from the blueprint's wiring; while the blueprint runs inside dimOS Desktop it shows Desktop's live topic rates (GET /api/topics/rates). It styles itself with Desktop's /theme.css and skin (Portal off Desktop). In an iframe it posts to its parent, on its own origin: {type:\"dimos:open-in-editor\", file, line} (the parent answers {type:\"dimos:open-in-editor-result\", ok, text}) and {type:\"dimos:close\"} (Escape). 404 for a blueprint dimos doesn't list. No side effects.",
+        "description": "An HTML page (plain JS and CSS, its files at /dimos/blueprint_view/{file}): dimOS Desktop's whole blueprint Details modal. A top bar (the blueprint and its phase from GET /dimos/runs; Relaunch: POST /dimos/runs/restart; Stop: POST /dimos/runs/stop; Configure: GET/PUT /dimos/blueprints/{name}/config and /dimos/global-config, recommended settings from GET /dimos/robots; Show code; Logs: GET /dimos/runs/{runId}/log), a side panel (Topic rates from GET /dimos/topics/rates; the modules, rarest first by GET /dimos/catalog) and the module graph drawn from the blueprint's wiring, live rates on its topics while it runs. It styles itself with Desktop's /theme.css and skin (Portal off Desktop). In an iframe it posts to its parent, on its own origin: {type:\"dimos:chrome\"} (it can draw the top bar; a parent that then shows only the page answers {type:\"dimos:chrome-ok\"}, and only then does the bar show), {type:\"dimos:open-in-editor\", file, line} (the parent answers {type:\"dimos:open-in-editor-result\", ok, text}) and {type:\"dimos:close\"} (its close button, or Escape). 404 for a blueprint dimos doesn't list. The page itself has no side effects; its buttons do what the routes they call say.",
         "operationId": "get_dimos_blueprint_view",
         "parameters": [
           {
@@ -7066,6 +7169,40 @@
         "summary": "A Python file of the dimos checkout, as text (a module's code)",
         "tags": [
           "blueprints"
+        ],
+        "x-agent": false,
+        "x-family": "dimos"
+      }
+    },
+    "/dimos/topics/rates": {
+      "get": {
+        "description": "The gateway listens to zenoh `dimos/**` from its start, so a topic published once (at a blueprint's startup) is listed too, and a topic stays listed after it goes quiet (0 Hz, `lastSeen` seconds ago). Rates are over the last 2 s. Not listed: RPC calls (zenoh queries) and LCM-only traffic. `up` is false (with `error`) when the gateway has no zenoh session. No side effects.",
+        "operationId": "get_dimos_topics_rates",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TopicRates"
+                }
+              }
+            },
+            "description": "`{ up, error, topics: [{ topic, type, hz, bps, messages, lastSeen, declared }] }`"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The gateway couldn't do it: a child process, launch, stop or cloud call failed (the message says why)"
+          }
+        },
+        "summary": "Every topic on the bus the gateway has heard since it started: rate, throughput, messages, last heard",
+        "tags": [
+          "server"
         ],
         "x-agent": false,
         "x-family": "dimos"

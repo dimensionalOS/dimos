@@ -1,5 +1,6 @@
 <!doctype html>
-<!-- The blueprint view: GET /dimos/blueprint_view?name=<blueprint> (app.js). Its files are
+<!-- The blueprint view: GET /dimos/blueprint_view?name=<blueprint> (app.js), the whole of dimOS Desktop's blueprint
+     Details modal: its top bar too (Desktop only frames it once it says so, `dimos:chrome`). Its files are
      /dimos/blueprint_view/<file>. portal.css is the Portal fallback; ../theme.css (dimOS Desktop's, same origin
      through its /dimos/ proxy) overrides it with every skin's tokens when there is a Desktop. -->
 <html lang="en" data-skin="portal">
@@ -18,6 +19,8 @@
         <script type="module" src="blueprint_view/app.js"></script>
     </head>
     <body>
+        <!-- the top bar (app.js): the blueprint and its phase, Relaunch, Stop, Configure, Show code, Logs, close -->
+        <header id="bar"></header>
         <div id="app">
             <aside id="side" aria-label="Modules"></aside>
             <main id="graph" aria-label="Module graph">

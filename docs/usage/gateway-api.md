@@ -91,3 +91,19 @@ score = (robot's blueprints using the module / robot's blueprints) * ln(robots /
 
 so the robot's own connection module comes first and a module every robot uses scores 0. Robots are
 [`dimos/gateway/robots.json`](/dimos/gateway/robots.json)'s, and only blueprints that import count.
+
+## Topic rates
+
+`GET /dimos/topics/rates` lists every topic the gateway has heard on the bus since it started: rate and throughput
+over the last 2 s, messages so far, seconds since the last one. It listens to zenoh `dimos/**` from its start, so a
+topic published once (at a blueprint's startup) is listed, and one gone quiet stays (0 Hz). RPC calls (zenoh queries)
+and LCM-only traffic aren't there. The blueprint view's side panel shows it, with the blueprint's own topics that
+nothing has published yet.
+
+## The blueprint view
+
+`GET /dimos/blueprint_view?name=<blueprint>` is dimOS Desktop's whole blueprint Details modal: its top bar (phase,
+Relaunch, Stop, Configure, Show code, Logs, close), Topic rates, the modules and the module graph, all plain JS and CSS
+in `dimos/gateway/blueprint_view/`, so it changes with the dimos checkout, not with Desktop. Framed by Desktop, it posts
+`dimos:chrome`; a Desktop that then shows only the frame answers `dimos:chrome-ok` and the page shows its bar (an older
+Desktop keeps its own bar, so there's never two).
