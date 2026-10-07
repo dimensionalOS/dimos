@@ -211,3 +211,36 @@ def test_cross_host_stream_arrives_and_same_host_stream_stays_local(
     crossed = bytes_after - bytes_before
     assert carried_locally > 20 * PAYLOAD_BYTES
     assert crossed < carried_locally / 20, (crossed, carried_locally)
+
+
+def test_hosts_scout_each_other_and_answer_probes(tmp_path: Path) -> None:
+    from dimos.hosted.discovery import merge, probe_all, scouted_endpoints
+
+    group = f"224.0.0.224:{_free_port()}"
+    daemons = [
+        HostDaemon(
+            f"{name}-id",
+            name=name,
+            log_root=tmp_path / name,
+            listen=[f"tcp/127.0.0.1:{_free_port()}"],
+            autodiscovery=True,
+            scout_addr=group,
+            scout_interface="lo",
+        )
+        for name in ("one", "two")
+    ]
+    with ExitStack() as stack:
+        one, two = (stack.enter_context(d.serve()) for d in daemons)
+        deadline = time.monotonic() + 10.0
+        while not list(one.session.info.routers_zid()) and time.monotonic() < deadline:
+            time.sleep(0.1)
+        assert [str(z) for z in one.session.info.routers_zid()] == [daemons[1].router_zid]
+        assert [str(z) for z in two.session.info.routers_zid()] == [daemons[0].router_zid]
+
+        scouted = scouted_endpoints(group, "lo", timeout=1.0)
+        assert set(scouted) >= {d.listen[0] for d in daemons}
+        found = merge(probe_all([daemons[0].listen[0], daemons[1].listen[0]], timeout=2.0))
+        assert [(h.name, e) for h, e in found] == [
+            ("one", (daemons[0].listen[0],)),
+            ("two", (daemons[1].listen[0],)),
+        ]

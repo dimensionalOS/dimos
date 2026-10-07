@@ -32,9 +32,13 @@ import threading
 from typing import TYPE_CHECKING, Any, Literal
 import uuid
 
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
 from dimos.constants import DIMOS_PROJECT_ROOT, STATE_DIR
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.coordination.process_lifecycle import DIMOS_RUN_ID_ENV, kill_run_processes
+from dimos.core.global_config import ENV_FILE
 from dimos.hosted.fragment import (
     FRAGMENT_FORMAT,
     FRAGMENT_SCHEMA_VERSION,
@@ -56,6 +60,50 @@ DEFAULT_STOP_TIMEOUT = 5.0
 DEFAULT_LOG_ROOT = STATE_DIR / "hosted" / "runs"
 # The daemon is its machine's zenoh router, on zenoh's own port.
 DEFAULT_LISTEN = "tcp/0.0.0.0:7447"
+# Hosts scout each other on their own multicast group, apart from any other zenoh fabric.
+DIMOS_SCOUT_ADDR = "224.0.0.224:7449"
+
+
+class HostConfig(BaseSettings):
+    """`dimos host serve` settings, also set by HOST__<FIELD> in the environment or .env."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="HOST__", env_file=ENV_FILE, env_file_encoding="utf-8", extra="ignore"
+    )
+
+    name: str = Field(default_factory=socket.gethostname)
+    # Comma-separated placement tags, added to the auto-detected ones.
+    tags: str = ""
+    # Taken: the next free port up is used instead.
+    listen: str = DEFAULT_LISTEN
+    # Comma-separated routers this one always links to.
+    connect: str = ""
+    # Find other Hosts by scouting and the Go2 LAN probe, and link to them.
+    autodiscovery: bool = True
+    discovery_interval: float = Field(default=10.0, gt=0)
+    scout_addr: str = DIMOS_SCOUT_ADDR
+    # Empty scouts every interface.
+    scout_interface: str = ""
+
+
+def split_csv(value: str) -> list[str]:
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def free_listen(endpoint: str, tries: int = 10) -> str:
+    """``endpoint`` if its port is free, else the same endpoint on the next free port up."""
+    protocol, _, address = endpoint.partition("/")
+    host, _, port = address.rpartition(":")
+    bind_host = host.strip("[]") or "0.0.0.0"
+    for candidate in range(int(port), int(port) + tries):
+        with socket.socket(socket.AF_INET6 if ":" in bind_host else socket.AF_INET) as probe:
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                probe.bind((bind_host, candidate))
+            except OSError:
+                continue
+        return f"{protocol}/{host}:{candidate}"
+    raise OSError(f"No free port in {port}..{int(port) + tries - 1} for {endpoint}")
 
 
 def code_revision() -> str:
@@ -80,6 +128,9 @@ class HostDescriptor:
     versions: dict[str, str | int]
     state: HostState
     active_run_ids: tuple[str, ...]
+    # The zid of the router this Host serves, and that router's listen endpoints.
+    router_zid: str = ""
+    listen: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,12 +167,19 @@ class HostDaemon:
         stop_timeout: float = DEFAULT_STOP_TIMEOUT,
         listen: Sequence[str] = (DEFAULT_LISTEN,),
         connect: Sequence[str] = (),
+        autodiscovery: bool = False,
+        scout_addr: str = DIMOS_SCOUT_ADDR,
+        scout_interface: str = "",
     ) -> None:
         if not listen:
             raise ValueError("HostDaemon is a zenoh router and needs a listen endpoint")
         self._host_id = host_id
         self.listen = list(listen)
         self.connect = list(connect)
+        self.autodiscovery = autodiscovery
+        self.scout_addr = scout_addr
+        self.scout_interface = scout_interface
+        self.router_zid = ""
         self._name = name or socket.gethostname()
         self._tags = frozenset(tags)
         self._versions = dict(versions or {})
@@ -166,7 +224,11 @@ class HostDaemon:
             mode="router",
             listen=self.listen,
             connect=self.connect,
-            multicast=False,
+            multicast=self.autodiscovery,
+            scouting=self.autodiscovery,
+            scouting_interface=self.scout_interface,
+            scout_addr=self.scout_addr,
+            router_autoconnect=self.autodiscovery,
             connect_timeout=0,
             adminspace=True,
         )
@@ -175,6 +237,7 @@ class HostDaemon:
             cleanup.callback(self.shutdown)
             rpc.start()
             cleanup.callback(rpc.stop)
+            self.router_zid = str(rpc.session.zid())
             control_name = HOST_CONTROL_RPC_NAME.format(host_id=self._host_id)
             rpc.serve_rpc(self.describe, f"{control_name}/describe")  # type: ignore[arg-type]
             rpc.serve_rpc(self.start, f"{control_name}/start")  # type: ignore[arg-type]
@@ -197,6 +260,8 @@ class HostDaemon:
                 versions=dict(self._versions),
                 state=self._host_state_locked(),
                 active_run_ids=tuple(sorted(self._deployments)),
+                router_zid=self.router_zid,
+                listen=tuple(self.listen),
             )
 
     def start(self, epoch: str, fragment: HostFragment) -> DeploymentStatus:

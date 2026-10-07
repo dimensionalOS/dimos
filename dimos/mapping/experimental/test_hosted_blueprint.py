@@ -20,7 +20,7 @@ from dimos.mapping.experimental.blueprints import go2_dds_nav_hosted
 
 
 def test_go2_hosted_splits_robot_from_viewer() -> None:
-    go2 = HostDescriptor("go2-id", "e", "go2", frozenset(), {}, "available", ())
+    go2 = HostDescriptor("go2-id", "e", "go2jetson", frozenset({"go2"}), {}, "available", ())
     config = BlueprintConfigParser(go2_dds_nav_hosted).parse(environ={})
     fragments = compile_fragments(
         go2_dds_nav_hosted,

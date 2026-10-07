@@ -142,6 +142,8 @@ class ZenohConfig(SessionConfig):
     # Serve zenoh's read-only admin space (@/<zid>/...), e.g. a router's routing tables.
     # Python sessions only, native modules never see it.
     adminspace: bool = False
+    # A router links to the routers it scouts. Python sessions only.
+    router_autoconnect: bool = False
 
     @model_validator(mode="after")
     def _router_needs_a_listen_endpoint(self) -> ZenohConfig:
@@ -247,6 +249,10 @@ def _zenoh_config(config: ZenohConfig) -> zenoh.Config:
     zconfig.insert_json5("transport/shared_memory/enabled", "false")
     if config.adminspace:
         zconfig.insert_json5("adminspace/enabled", "true")
+    if config.router_autoconnect:
+        zconfig.insert_json5(
+            "scouting/multicast/autoconnect", '{router: ["router"], peer: ["router", "peer"]}'
+        )
     return zconfig
 
 

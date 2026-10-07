@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
 import time
 import uuid
@@ -44,9 +44,14 @@ def _local_descriptor(descriptors: tuple[HostDescriptor, ...], local_host: str) 
 
 
 def wait_for_hosts(
-    rpc: ZenohRPC, names: set[str], timeout: float, poll: float = 0.2
+    rpc: ZenohRPC,
+    names: set[str],
+    timeout: float,
+    tag_sets: Iterable[frozenset[str]] = (),
+    poll: float = 0.2,
 ) -> tuple[HostDescriptor, ...]:
-    """Discover until every named Host is live, or raise with what was found."""
+    """Discover until every named Host and some Host per tag set is live, or raise."""
+    tag_sets = tuple(tag_sets)
     deadline = time.monotonic() + timeout
     descriptors: tuple[HostDescriptor, ...] = ()
     while time.monotonic() < deadline:
@@ -54,11 +59,14 @@ def wait_for_hosts(
             descriptors = discover_hosts(rpc, timeout=1.0)
         except TimeoutError:
             descriptors = ()
-        if names <= {d.name for d in descriptors} | {d.host_id for d in descriptors}:
+        named = names <= {d.name for d in descriptors} | {d.host_id for d in descriptors}
+        tagged = all(any(tags <= d.tags for d in descriptors) for tags in tag_sets)
+        if named and tagged:
             return descriptors
         time.sleep(poll)
-    found = ", ".join(sorted(d.name for d in descriptors)) or "none"
-    raise TimeoutError(f"Hosts {sorted(names)} not all live; found: {found}")
+    found = ", ".join(sorted(f"{d.name}{sorted(d.tags)}" for d in descriptors)) or "none"
+    wanted = [*sorted(names), *(sorted(tags) for tags in tag_sets)]
+    raise TimeoutError(f"Hosts {wanted} not all live; found: {found}")
 
 
 @contextmanager
