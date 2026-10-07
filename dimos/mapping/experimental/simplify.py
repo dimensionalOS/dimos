@@ -324,9 +324,13 @@ def _components(n: int, a: Tensor, b: Tensor) -> Tensor:
     """Connected component labels 0..k-1 over n nodes joined by edges a-b."""
     label = torch.arange(n, device=a.device)
     while True:
-        lo = torch.minimum(label[a], label[b])
-        new = label.clone().scatter_reduce_(0, a, lo, "amin").scatter_reduce_(0, b, lo, "amin")
-        new = new[new]
+        # hook both nodes and their roots onto the smaller label, then jump pointers
+        la, lb = label[a], label[b]
+        lo = torch.minimum(la, lb)
+        new = label.clone()
+        for i in (a, b, la, lb):
+            new.scatter_reduce_(0, i, lo, "amin")
+        new = new[new][new]
         if torch.equal(new, label):
             inv: Tensor = torch.unique(label, return_inverse=True)[1]
             return inv
