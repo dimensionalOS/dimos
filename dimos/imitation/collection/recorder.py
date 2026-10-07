@@ -42,7 +42,7 @@ from dimos.experimental.memory.rust_recorder import (
 from dimos.imitation.collection.episode import EpisodeStatus
 from dimos.imitation.collection.profile import CollectionProfile
 from dimos.imitation.collection.recording import RecordingSchema
-from dimos.memory.module import OnExisting
+from dimos.memory.type.recording import OnExisting
 from dimos.msgs.std_msgs.String import String
 
 PortTypes = tuple[tuple[str, type[Any]], ...]
