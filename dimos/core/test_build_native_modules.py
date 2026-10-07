@@ -274,18 +274,17 @@ def test_module_dirs_hold_only_tracked_source() -> None:
     """`path:.` copies untracked files too, so a stray `.DS_Store` changes the hash and misses Cachix."""
     stray = []
     for flake in _SCRIPT.flake_dirs():
+        # ls-files, not status: status runs the LFS clean filter, which CI disables
         listing = subprocess.run(
-            ["git", "status", "--porcelain", "--ignored=matching", "-z", "--", flake],
+            ["git", "ls-files", "--others", "--directory", "-z", "--", flake],
             cwd=DIMOS_PROJECT_ROOT,
             capture_output=True,
             text=True,
             check=True,
         ).stdout
         for entry in filter(None, listing.split("\0")):
-            path = Path(entry[3:])
-            if entry[:2] in ("??", "!!") and not any(
-                _GUARD_EXEMPT.match(part) for part in path.relative_to(flake).parts
-            ):
+            path = Path(entry)
+            if not any(_GUARD_EXEMPT.match(part) for part in path.relative_to(flake).parts):
                 stray.append(path.as_posix())
     assert not stray, f"delete these, or commit them if they are source: {stray}"
 

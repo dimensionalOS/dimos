@@ -440,6 +440,10 @@ jobs:
         with:
           enable-cache: true
           prune-cache: true
+      - name: Install dependency for pyaudio
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y portaudio19-dev
       - name: Native module e2e tests
         run: |
           uv sync --group tests --frozen
