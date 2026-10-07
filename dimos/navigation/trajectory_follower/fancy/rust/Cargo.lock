@@ -592,9 +592,8 @@ dependencies = [
 [[package]]
 name = "dimos-local-planner"
 version = "0.1.0"
-source = "git+https://github.com/dimensionalOS/dimos?rev=6663bcb6e5e18f43a6cb9cf77ccbec613e310443#6663bcb6e5e18f43a6cb9cf77ccbec613e310443"
 dependencies = [
- "dimos-module 0.1.0 (git+https://github.com/dimensionalOS/dimos?rev=87c0c26b40e8a5aeb9d9d346104b49d5fb02696a)",
+ "dimos-module",
  "lcm-msgs",
  "serde",
  "serde_json",
@@ -610,27 +609,7 @@ version = "0.1.0"
 source = "git+https://github.com/dimensionalOS/dimos?rev=6663bcb6e5e18f43a6cb9cf77ccbec613e310443#6663bcb6e5e18f43a6cb9cf77ccbec613e310443"
 dependencies = [
  "dimos-lcm",
- "dimos-module-macros 0.1.0 (git+https://github.com/dimensionalOS/dimos?rev=6663bcb6e5e18f43a6cb9cf77ccbec613e310443)",
- "lcm-msgs",
- "nalgebra",
- "rayon",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "url",
- "validator",
- "zenoh",
-]
-
-[[package]]
-name = "dimos-module"
-version = "0.1.0"
-source = "git+https://github.com/dimensionalOS/dimos?rev=87c0c26b40e8a5aeb9d9d346104b49d5fb02696a#87c0c26b40e8a5aeb9d9d346104b49d5fb02696a"
-dependencies = [
- "dimos-lcm",
- "dimos-module-macros 0.1.0 (git+https://github.com/dimensionalOS/dimos?rev=87c0c26b40e8a5aeb9d9d346104b49d5fb02696a)",
+ "dimos-module-macros",
  "lcm-msgs",
  "nalgebra",
  "rayon",
@@ -648,17 +627,6 @@ dependencies = [
 name = "dimos-module-macros"
 version = "0.1.0"
 source = "git+https://github.com/dimensionalOS/dimos?rev=6663bcb6e5e18f43a6cb9cf77ccbec613e310443#6663bcb6e5e18f43a6cb9cf77ccbec613e310443"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 3.0.6",
- "toml 1.1.6+spec-1.1.0",
-]
-
-[[package]]
-name = "dimos-module-macros"
-version = "0.1.0"
-source = "git+https://github.com/dimensionalOS/dimos?rev=87c0c26b40e8a5aeb9d9d346104b49d5fb02696a#87c0c26b40e8a5aeb9d9d346104b49d5fb02696a"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -671,7 +639,7 @@ name = "dimos-trajectory-follower"
 version = "0.1.0"
 dependencies = [
  "dimos-local-planner",
- "dimos-module 0.1.0 (git+https://github.com/dimensionalOS/dimos?rev=6663bcb6e5e18f43a6cb9cf77ccbec613e310443)",
+ "dimos-module",
  "dimos-trajectory-follower",
  "lcm-msgs",
  "numpy",

@@ -18,7 +18,7 @@ required-features = ["module"]
 
 [dependencies]
 # The body (`Emb`) the laws are parameterised from; python feature off, see adapter.
-dimos-local-planner = { git = "https://github.com/dimensionalOS/dimos", rev = "6663bcb6e5e18f43a6cb9cf77ccbec613e310443", default-features = false }
+dimos-local-planner = { path = "../../../local_planner/rust", default-features = false }
 serde = { version = "1", features = ["derive"], optional = true }
 dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "6663bcb6e5e18f43a6cb9cf77ccbec613e310443", optional = true }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen", optional = true }
@@ -38,7 +38,7 @@ python = ["dep:pyo3", "dep:numpy", "dep:serde_json"]
 module = ["dimos-local-planner/module", "dep:serde", "dep:dimos-module", "dep:lcm-msgs", "dep:tokio", "dep:tracing", "dep:tracing-subscriber", "dep:validator"]
 
 [dev-dependencies]
-dimos-local-planner = { git = "https://github.com/dimensionalOS/dimos", rev = "6663bcb6e5e18f43a6cb9cf77ccbec613e310443", default-features = false, features = ["test-bodies"] }
+dimos-local-planner = { path = "../../../local_planner/rust", default-features = false, features = ["test-bodies"] }
 dimos-trajectory-follower = { path = ".", features = ["module"] }
 serde_json = "1"
 
@@ -58,3 +58,7 @@ goal_reached = "std_msgs.Bool"
 [profile.release]
 lto = "thin"
 codegen-units = 1
+
+# Not a member of the repo's top-level cargo workspace: this crate keeps its own
+# Cargo.lock, as it did before the workspace root existed.
+[workspace]
