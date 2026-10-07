@@ -37,7 +37,7 @@ import pytest
 from pytest_mock import MockerFixture
 
 from dimos.core.transport_factory import make_transport
-from dimos.evals.agents.base import Agent
+from dimos.evals.agents.base import EvalAgent
 from dimos.evals.agents.blind import BLIND_BLOCK, Blind
 from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
 from dimos.evals.agents.mcp_client_adapter import McpClientAdapter
@@ -143,7 +143,7 @@ class FakeEnvironment(Environment):
         super().stop()
 
 
-class FakeAgent(Agent):
+class FakeAgent(EvalAgent):
     """Replies with a canned answer or timeout."""
 
     def __init__(self, answer: str = "", timed_out: bool = False) -> None:

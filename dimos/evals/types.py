@@ -95,7 +95,7 @@ class Step:
 
 @dataclass(frozen=True, kw_only=True)
 class AgentInfo:
-    name: str  # the Agent class
+    name: str  # the EvalAgent class
     version: str
     model_name: str  # what actually ran, as reported by the provider
     tool_definitions: tuple[dict[str, Any], ...] | None = None

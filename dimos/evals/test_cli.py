@@ -24,7 +24,7 @@ from typer.testing import CliRunner
 
 from dimos.cli.dimos import main as app
 from dimos.evals import cli, runner as runner_module, suites
-from dimos.evals.agents.base import Agent
+from dimos.evals.agents.base import EvalAgent
 from dimos.evals.agents.pi import PiAdapter
 from dimos.evals.cli import run_provenance
 from dimos.evals.environments.base import Environment
@@ -37,7 +37,7 @@ AGENT_MODULE = "dimos.evals.agents.question_answer"
 
 
 class FailingEnvironment(Environment):
-    def preflight(self, agent: Agent) -> None:
+    def preflight(self, agent: EvalAgent) -> None:
         raise RuntimeError("offline preflight")
 
     def start(self, modules: Sequence[str]) -> RunningEnvironment:
@@ -166,7 +166,7 @@ def test_provenance_retains_numeric_output_limit() -> None:
 def test_allow_cli_reaches_agent_and_manifest(
     allowed: str, expected: list[str], monkeypatch: pytest.MonkeyPatch, cli_out_dir: Path
 ) -> None:
-    seen: list[Agent] = []
+    seen: list[EvalAgent] = []
 
     class CapturedPi(PiAdapter):
         def __init__(self, **kwargs: Any) -> None:
@@ -220,7 +220,7 @@ def test_allow_cli_rejects_ambiguous_input(args: list[str], cli_out_dir: Path) -
 def test_exclude_cli_reaches_agent_lowercased(
     monkeypatch: pytest.MonkeyPatch, cli_out_dir: Path
 ) -> None:
-    seen: list[Agent] = []
+    seen: list[EvalAgent] = []
 
     class CapturedPi(PiAdapter):
         def __init__(self, **kwargs: Any) -> None:

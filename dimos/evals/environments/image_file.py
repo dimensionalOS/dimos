@@ -24,7 +24,7 @@ from dimos.evals.environments.base import Environment, EnvironmentConfig
 from dimos.evals.types import RunningEnvironment
 
 if TYPE_CHECKING:
-    from dimos.evals.agents.base import Agent
+    from dimos.evals.agents.base import EvalAgent
 
 
 class ImageFileConfig(EnvironmentConfig):
@@ -40,7 +40,7 @@ class ImageFile(Environment):
     def __init__(self, path: Path, **kwargs: Any) -> None:
         super().__init__(path=path, **kwargs)
 
-    def preflight(self, agent: Agent) -> None:
+    def preflight(self, agent: EvalAgent) -> None:
         if agent.config.modules:
             raise RuntimeError(
                 f"ImageFile({self.config.path}) launches nothing; "

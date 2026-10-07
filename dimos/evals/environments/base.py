@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any
 from dimos.protocol.service.spec import BaseConfig, Configurable
 
 if TYPE_CHECKING:
-    from dimos.evals.agents.base import Agent
+    from dimos.evals.agents.base import EvalAgent
     from dimos.evals.types import RunningEnvironment
 
 
@@ -52,7 +52,7 @@ class Environment(Configurable, ABC):
         """Whether the robot is also exposed as plain topics for agents without dimOS."""
         return False
 
-    def preflight(self, agent: Agent) -> None:
+    def preflight(self, agent: EvalAgent) -> None:
         """Check compatibility before any environment starts."""
         return None
 

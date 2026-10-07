@@ -31,7 +31,7 @@ from typing import IO, TYPE_CHECKING, Any, ClassVar
 from pydantic import Field, JsonValue, TypeAdapter
 
 from dimos.core.coordination.process_lifecycle import kill_run_processes
-from dimos.evals.agents.base import Agent, ModelAgentConfig, strip_dimos
+from dimos.evals.agents.base import EvalAgent, ModelAgentConfig, strip_dimos
 from dimos.evals.agents.lib.model_trace_proxy import model_trace_proxy
 from dimos.evals.agents.lib.pi_config import (
     Provider,
@@ -158,7 +158,7 @@ class PiAdapterConfig(ModelAgentConfig):
     skills: tuple[str, ...] = ()
 
 
-class PiAdapter(Agent):
+class PiAdapter(EvalAgent):
     """Run headless Pi against case files and robot tools, recording an ATIF trajectory."""
 
     config: PiAdapterConfig

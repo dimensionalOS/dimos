@@ -27,14 +27,14 @@ from typing import TYPE_CHECKING, Any
 import typer
 
 if TYPE_CHECKING:
-    from dimos.evals.agents.base import Agent
+    from dimos.evals.agents.base import EvalAgent
 
 app = typer.Typer(help="Run agent evals on recordings, sim, or a live robot.")
 
 
-def agent_class(module: str) -> type[Agent]:
+def agent_class(module: str) -> type[EvalAgent]:
     """The one agent class defined in *module* — an agent is a module."""
-    from dimos.evals.agents.base import Agent
+    from dimos.evals.agents.base import EvalAgent
 
     mod = importlib.import_module(module)
     found = [
@@ -42,7 +42,7 @@ def agent_class(module: str) -> type[Agent]:
         for v in vars(mod).values()
         if isinstance(v, type)
         and v.__module__ == mod.__name__
-        and issubclass(v, Agent)
+        and issubclass(v, EvalAgent)
         and not inspect.isabstract(v)
     ]
     if len(found) != 1:
@@ -91,7 +91,7 @@ def run_provenance(source: dict[str, Any], module: str, kwargs: dict[str, Any]) 
     return {"source": source, "agent": agent}
 
 
-def load_agent(module: str, overrides: Iterable[str] = ()) -> Agent:
+def load_agent(module: str, overrides: Iterable[str] = ()) -> EvalAgent:
     """``--agent module --set field=value ...``: the agent class in *module*,
     constructed with the overrides. A field the agent does not have is the
     constructor's own ``TypeError``."""

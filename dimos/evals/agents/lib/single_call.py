@@ -26,7 +26,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 from langchain_core.outputs import ChatGeneration
 
 from dimos.agents.llm_trace import latest_pair, write_normalized
-from dimos.evals.agents.base import Agent, ModelAgentConfig
+from dimos.evals.agents.base import EvalAgent, ModelAgentConfig
 from dimos.evals.agents.lib.langchain_to_atif import append_ai_message_to_atif
 from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
 from dimos.evals.types import RunningEnvironment, Trajectory
@@ -39,7 +39,7 @@ class SingleCallAgentConfig(ModelAgentConfig):
     chat_model: BaseChatModel | None = None
 
 
-class SingleCallAgent(Agent):
+class SingleCallAgent(EvalAgent):
     """Encode observations, call a chat model once, and record the result.
 
     ``chat_model`` injects a LangChain model, including a fake for offline evals.
