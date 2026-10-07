@@ -86,8 +86,9 @@ DUAL_OPENYAM_WRIST_CAMERA_BOXES = [
 # The workcell in the world frame: the table top is 3 cm below the arm base
 # plates; the bin stands at the far edge, 20.5 cm ahead of the origin; the
 # centre post carries the overhead camera 46 cm up, midway between the arms.
-# Bin 28.4 x 21.1 x 11 cm measured, 1 cm margin on each face; the post
-# footprint is a placeholder until measured.
+# Bin 28.4 x 21.1 x 11 cm and post 3 x 3 cm measured, 1 cm margin on each
+# face. The 21 cm mounting base under the arm flanges sits behind and below
+# the bases where the arms do not reach, so it is not modelled.
 DUAL_OPENYAM_TABLE_TOP_Z = -0.03
 DUAL_OPENYAM_STATIC_BOXES = [
     {
@@ -100,7 +101,7 @@ DUAL_OPENYAM_STATIC_BOXES = [
         "size": (0.304, 0.231, 0.12),
         "xyz": (0.347, -0.024, DUAL_OPENYAM_TABLE_TOP_Z + 0.06),
     },
-    {"name": "camera_post", "size": (0.08, 0.08, 0.50), "xyz": (0.0, 0.0, 0.22)},
+    {"name": "camera_post", "size": (0.05, 0.05, 0.50), "xyz": (0.0, 0.0, 0.22)},
     {"name": "overhead_camera", "size": (0.10, 0.10, 0.08), "xyz": (0.016, -0.006, 0.47)},
 ]
 
