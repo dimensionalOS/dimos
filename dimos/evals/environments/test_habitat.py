@@ -86,17 +86,28 @@ def test_invalid_configuration(tmp_path):
 
 
 @pytest.mark.parametrize("relative", [False, True])
+@pytest.mark.parametrize("scene", [None, "default", "custom"])
 def test_external_executable_reaches_blueprint_without_source_build(
-    tmp_path, monkeypatch, mocker, relative
+    tmp_path, monkeypatch, mocker, relative, scene
 ):
     executable = tmp_path / "habitat-native"
     executable.touch()
+    dataset = (
+        tmp_path
+        / "data/versioned_data/hm3d-0.2/hm3d/example"
+        / "hm3d_annotated_example_basis.scene_dataset_config.json"
+    )
+    dataset.parent.mkdir(parents=True)
+    dataset.write_text("{}")
+    custom_dataset = tmp_path / "custom.json"
+    custom_dataset.write_text("{}")
     monkeypatch.chdir(tmp_path)
     source = mocker.patch(
         "dimos.core.native_module.get_project_root", side_effect=AssertionError("source fetch")
     )
     env = environment(
-        executable=executable.name if relative else str(executable), scene_dataset_config="default"
+        executable=executable.name if relative else str(executable),
+        scene_dataset_config="custom.json" if scene == "custom" else scene,
     )
     proc = DimosCliCall()
 
@@ -108,6 +119,8 @@ def test_external_executable_reaches_blueprint_without_source_build(
     assert config.resolve_paths() == (str(tmp_path), str(executable))
     assert config.source_dir is None
     assert config.build_command is None
+    expected_scene = {None: str(dataset), "default": "default", "custom": str(custom_dataset)}
+    assert config.scene_dataset_config == expected_scene[scene]
     source.assert_not_called()
 
 

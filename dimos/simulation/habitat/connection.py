@@ -16,6 +16,9 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+from typing import Any
+
 from pydantic import Field
 
 from dimos.core.native_module import LogFormat, NativeModule, NativeModuleConfig
@@ -30,6 +33,18 @@ from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.simulation.habitat.server import HabitatProp
 
 
+def _default_scene_dataset_config(config: dict[str, Any]) -> str:
+    executable = Path(config["executable"])
+    if config["source_dir"] is None:
+        executable = executable.absolute()
+    # The installer places data next to habitat-native in both launch modes.
+    return str(
+        executable.parent
+        / "data/versioned_data/hm3d-0.2/hm3d/example"
+        / "hm3d_annotated_example_basis.scene_dataset_config.json"
+    )
+
+
 class HabitatConnectionConfig(NativeModuleConfig):
     """Scene and camera settings for the Habitat native process."""
 
@@ -42,10 +57,7 @@ class HabitatConnectionConfig(NativeModuleConfig):
     log_format: LogFormat = LogFormat.TEXT
 
     # Annotated HM3D house, no Matterport credentials needed.
-    scene_dataset_config: str = (
-        "../../../../target/habitat/data/versioned_data/hm3d-0.2/hm3d/example/"
-        "hm3d_annotated_example_basis.scene_dataset_config.json"
-    )
+    scene_dataset_config: str = Field(default_factory=_default_scene_dataset_config)
     scene_id: str = "00861-GLAQ4DNUx5U"
     # ROS yaw, +left. 90 faces into the room in the default scene.
     start_yaw_deg: float = 90.0
