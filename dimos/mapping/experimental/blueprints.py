@@ -29,7 +29,7 @@ from dimos.robot.unitree.go2.nav_3d_config import voxel_size
 _viewer_mesh = autoconnect(
     nav_viewer(
         extra_topics=("mesh",),
-        visual_override={MESH_ENTITY: MeshColours(alpha=1.0)},
+        visual_override={MESH_ENTITY: MeshColours(alpha=0.4)},
         hidden=(MAP_REGIONS_ENTITY, SURFACE_MAP_ENTITY),
     ),
     MeshModule.blueprint(voxel_size=voxel_size, z_band=VIEW_Z_BAND),
