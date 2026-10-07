@@ -34,7 +34,7 @@ from dimos.gateway.models import DimosEvent, ErrorResponse
 if TYPE_CHECKING:
     from fastapi import FastAPI
 
-API_VERSION = "1.12.0"
+API_VERSION = "1.13.0"
 SPEC_FILE = Path(__file__).parent / "openapi.json"
 
 DESCRIPTION = """\
@@ -117,6 +117,12 @@ TAGS: list[dict[str, Any]] = [
         "description": "Long jobs (an extras install), shaped like Desktop's: each output line is published on zenoh "
         'at `<ns>/dimos/jobs/<job>` as `{type: "line", n, line}`, then `{type: "done", ok, error, failure, lines}`; a '
         "`job` event says one started; `GET /dimos/jobs/{job}/log` is the snapshot.",
+    },
+    {
+        "name": "skills",
+        "description": "The running blueprints' skills (a module's `@skill` methods, what their agent calls), read "
+        "and called through each run's own MCP server (an agentic blueprint's McpServer) with dimos's McpAdapter. "
+        "`POST /dimos/mcp` offers the same to an agent as two MCP tools that don't change with what runs.",
     },
     {
         "name": "events",

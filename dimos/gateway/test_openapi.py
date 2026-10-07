@@ -313,6 +313,7 @@ def test_every_operation_is_documented(spec: dict[str, Any]) -> None:
         "docs",
         "extras",
         "jobs",
+        "skills",
     }
     found = operations(spec)
     assert len(found) >= 27

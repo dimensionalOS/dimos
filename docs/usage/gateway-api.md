@@ -46,6 +46,7 @@ Operations carry Desktop's extensions: `x-family: dimos`; `x-agent: true` for wh
 | `docs`          | the guide to adding your own robot, and links into the docs site                     |
 | `extras`        | dimos's optional extras, which are installed, and installing more                    |
 | `jobs`          | long jobs (an extras install): their output, live on zenoh and as a snapshot         |
+| `skills`        | the running blueprint's skills: list them, call one, and an MCP server for agents    |
 
 ## Launch diagnostics
 
@@ -99,6 +100,25 @@ over the last 2 s, messages so far, seconds since the last one. It listens to ze
 topic published once (at a blueprint's startup) is listed, and one gone quiet stays (0 Hz). RPC calls (zenoh queries)
 and LCM-only traffic aren't there. The blueprint view's side panel shows it, with the blueprint's own topics that
 nothing has published yet.
+
+## Skills
+
+`GET /dimos/skills` lists the skills (a module's `@skill` methods) of every live run: name, module, docstring, params
+as JSON Schema, `lifecycle` and the capabilities it `uses`. The gateway asks each run's own MCP server (an agentic
+blueprint's `McpServer`, at the run's `mcp_port`, default 9990) with dimos's `McpAdapter`; a run without one is in
+`runs` with `up: false`, and nothing running is an empty list. `POST /dimos/skills/call {skill, args, module?, runId?}`
+calls one through that server's `tools/call`, exactly as the blueprint's own agent does (capability locks, background
+skills), and answers with its text once it returns. It acts on the robot.
+
+```sh
+curl -s localhost:5555/dimos/skills | jq '.skills[] | {name, module}'
+curl -s -X POST localhost:5555/dimos/skills/call -H 'content-type: application/json' \
+    -d '{"skill": "execute_sport_command", "args": {"command_name": "FrontJump"}}'
+```
+
+`POST /dimos/mcp` is an MCP server (Streamable HTTP, JSON answers) with two tools, `list_skills` and `call_skill`,
+for an agent: they don't change with what runs, so a session that connected before the blueprint started still reaches
+its skills. dimcode's `dimcode desktop --mcp-url <Desktop>/mcp` connects it too, as the MCP endpoint `skills`.
 
 ## The blueprint view
 

@@ -54,6 +54,7 @@ from dimos.gateway import (
     models,
     overrides as launch_overrides,
     runs,
+    skills_routes,
 )
 from dimos.gateway.blueprint_watch import BlueprintWatch
 from dimos.gateway.discovery import Discovery
@@ -1073,6 +1074,7 @@ def create_app(state: ServerState, background: bool = True) -> FastAPI:
 
     discovery_routes.add(app, state)
     msgs_routes.add(app)
+    skills_routes.add(app)
 
     def openapi() -> dict[str, Any]:
         if app.openapi_schema is None:

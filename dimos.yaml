@@ -23,7 +23,7 @@ install: |
 # The /dimos HTTP API the dimos gateway serves: its semver (a breaking change is a major bump) and its OpenAPI document,
 # which Desktop can read per tag without running anything. Regenerate it with `python -m dimos.gateway --write-openapi`.
 api:
-  version: "1.12.0"
+  version: "1.13.0"
   openapi: dimos/gateway/openapi.json
 # Every robot dimos supports and what each blueprint is for (title, description, tags, modes and their essential args,
 # the app to install): read per tag like the OpenAPI document. CI keeps it in step with the code
