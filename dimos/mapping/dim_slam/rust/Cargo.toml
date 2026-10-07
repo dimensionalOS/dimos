@@ -26,6 +26,4 @@ validator = { version = "0.21", features = ["derive"] }
 [profile.release]
 lto = true
 
-# Not a member of the repo's top-level cargo workspace: this crate builds through its
-# own flake, which copies it into a sandbox where that workspace root does not exist.
 [workspace]

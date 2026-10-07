@@ -176,15 +176,6 @@ def _literal_default(classdef: ast.ClassDef, field: str, source: str) -> str | N
     return None
 
 
-# Modules whose flake attr is chosen per machine at runtime (dim_slam's
-# sdk_variant: nix sees neither the installed GPU driver nor /proc/device-tree, so
-# orin vs thor and cuda12 vs cuda13 are undecidable during evaluation, and a CI
-# runner could only ever build its own variant anyway). They sit deliberately
-# outside this repo's build/publish gate; each machine builds the variant it needs.
-# Every other non-literal build_command still fails loudly.
-EXTERNALLY_PROVISIONED: frozenset[str] = frozenset()
-
-
 def is_nix_build(command: str | None) -> bool:
     """True for a `nix build …` command, the only kind that yields a `result` to publish."""
     if command is None:
@@ -195,7 +186,6 @@ def is_nix_build(command: str | None) -> bool:
 
 def discover() -> tuple[DiscoveredModule, ...]:
     found = []
-    provisioned_seen = set()
     for dirpath, dirnames, filenames in os.walk(PACKAGE_DIR):
         dirnames[:] = sorted(d for d in dirnames if d not in IGNORED_DIRS)
         for filename in sorted(filenames):
@@ -212,9 +202,6 @@ def discover() -> tuple[DiscoveredModule, ...]:
                 ):
                     continue
                 qualname = f"{source[: -len('.py')].replace('/', '.')}.{node.name}"
-                if qualname in EXTERNALLY_PROVISIONED:
-                    provisioned_seen.add(qualname)
-                    continue
                 build_command = _literal_default(node, "build_command", source)
                 if not is_nix_build(build_command):
                     continue
@@ -235,12 +222,6 @@ def discover() -> tuple[DiscoveredModule, ...]:
                         build_dir=PurePosixPath(build_rel).as_posix(),
                     )
                 )
-    stale = EXTERNALLY_PROVISIONED - provisioned_seen
-    if stale:
-        raise SystemExit(
-            f"EXTERNALLY_PROVISIONED entries not found in the tree: {sorted(stale)}"
-            " — remove them from bin/build-native-modules"
-        )
     return tuple(sorted(found))
 
 

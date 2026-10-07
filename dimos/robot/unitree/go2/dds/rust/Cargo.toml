@@ -56,6 +56,5 @@ codegen-units = 1
 # A panicked worker thread takes the process down, so the supervisor sees it.
 panic = "abort"
 
-# Own lockfile, like the other native crates: not in the repo's top-level workspace.
 [workspace]
 exclude = ["vendor/cyclonedds-sys", "vendor/cyclonedds-rs"]

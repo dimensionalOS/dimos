@@ -65,8 +65,9 @@ def test_the_generated_crate_reuses_the_module_profiles() -> None:
     release = {k: v for k, v in generated["profile"]["release"].items() if k != "package"}
 
     deliberate_deviations = {
+        # Full LTO for the SLAM core; it registers no bake module, so no host shares its target dir.
         "dimos/mapping/dim_slam/rust/Cargo.toml",
-        # panic = "abort" so the supervisor sees a dead worker; never baked into a host.
+        # panic = "abort" so its supervisor sees a dead worker thread (main's choice for the go2 driver).
         "dimos/robot/unitree/go2/dds/rust/Cargo.toml",
     }
 
