@@ -59,6 +59,9 @@ goal_reached = "std_msgs.Bool"
 lto = "thin"
 codegen-units = 1
 
+[profile.dev]
+debug = 0
+
 # Not a member of the repo's top-level cargo workspace: this crate keeps its own
 # Cargo.lock, as it did before the workspace root existed.
 [workspace]

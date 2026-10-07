@@ -64,7 +64,11 @@ def test_the_generated_crate_reuses_the_module_profiles() -> None:
     generated = tomllib.loads(render_cargo_toml("go2-nav", [MAPPER, PLANNER], Path("/repo")))
     release = {k: v for k, v in generated["profile"]["release"].items() if k != "package"}
 
-    deliberate_deviations = {"dimos/mapping/dim_slam/rust/Cargo.toml"}
+    deliberate_deviations = {
+        "dimos/mapping/dim_slam/rust/Cargo.toml",
+        # panic = "abort" so the supervisor sees a dead worker; never baked into a host.
+        "dimos/robot/unitree/go2/dds/rust/Cargo.toml",
+    }
 
     # Tracked manifests only: a baked crate under build/ is gitignored, not a module.
     tracked = subprocess.run(

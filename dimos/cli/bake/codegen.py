@@ -44,6 +44,10 @@ path = "src/main.rs"
 [dependencies]
 {dependencies}
 
+# Modules pin dimos-module by git rev; one copy, the checkout's, or the trait bounds split.
+[patch."https://github.com/dimensionalOS/dimos"]
+{dimos_module}
+
 # Must match every module workspace's profiles or the shared target dir refingerprints.
 [profile.release]
 lto = "thin"
@@ -114,8 +118,9 @@ def _entries(modules: Sequence[RegisteredModule]) -> str:
 def render_cargo_toml(
     host: str, modules: Sequence[RegisteredModule], root: Path | None = None
 ) -> str:
+    root = root or DIMOS_PROJECT_ROOT
     return _CARGO_TEMPLATE.format(
-        host=host, dependencies=_dependencies(modules, root or DIMOS_PROJECT_ROOT)
+        host=host, dependencies=_dependencies(modules, root), dimos_module=_dimos_module_dep(root)
     )
 
 
