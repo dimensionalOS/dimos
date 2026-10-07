@@ -29,7 +29,10 @@ import pytest_mock
 import torch
 from torch import Tensor
 
+from dimos.control.coordinator import ControlCoordinator
 from dimos.control.tasks.trajectory_task.trajectory_task import (
+    JointTrajectoryTask,
+    JointTrajectoryTaskConfig,
     TrajectoryCancellationResult,
     TrajectoryCancellationStatus,
     TrajectoryExecutionResult,
@@ -202,6 +205,7 @@ def make_runtime(mocker: pytest_mock.MockerFixture) -> Iterator[RuntimeFactory]:
             TrajectoryCancellationStatus.ALREADY_STOPPED
         )
         control.list_tasks.return_value = ["joint_trajectory"]
+        control.get_trajectory_generation.return_value = 0
         mocker.patch.object(module, "_control", control, create=True)
         built.append(module)
         return module, control
@@ -254,7 +258,7 @@ def test_policy_predicts_and_executes_one_native_joint_chunk(make_runtime: Runti
 
     call = control.execute_trajectory.call_args_list[0]
     trajectory = call.args[0]
-    assert call.kwargs == {}
+    assert call.kwargs == {"expected_generation": 0}
     assert trajectory.joint_names == JOINTS
     assert [point.time_from_start for point in trajectory.points] == [0.0, 0.02, 0.04]
     np.testing.assert_allclose(trajectory.points[0].positions, positions)
@@ -383,7 +387,7 @@ def test_a_press_stops_worker_before_cancelling_its_trajectory(
 
     assert stop_finished.is_set()
     assert control.execute_trajectory.call_count == 1
-    control.cancel_trajectory.assert_called_with()
+    control.cancel_trajectory.assert_called_with(expected_generation=0)
 
 
 def test_uncertain_cancellation_is_reported(make_runtime: RuntimeFactory) -> None:
@@ -402,6 +406,52 @@ def test_uncertain_cancellation_is_reported(make_runtime: RuntimeFactory) -> Non
 
     assert status["active"] is False
     assert status["last_error"] == "coordinator did not confirm cancellation"
+
+
+def test_stop_timeout_rejects_delayed_submission_at_coordinator(
+    make_runtime: RuntimeFactory, mocker: pytest_mock.MockerFixture
+) -> None:
+    policy = FakePolicy(_action_chunk(), n_action_steps=1)
+    module, control = make_runtime(policy)
+    coordinator = ControlCoordinator(publish_joint_state=False)
+    task = JointTrajectoryTask(JointTrajectoryTaskConfig(joint_names=JOINTS))
+    coordinator.add_task(task, task_type="trajectory")
+    reading = Event()
+    release = Event()
+    results: list[TrajectoryExecutionResult] = []
+    _, positions, _ = _provide_observation(module)
+
+    def delayed_positions() -> dict[str, float]:
+        reading.set()
+        assert release.wait(timeout=2.0)
+        return dict(zip(JOINTS, positions, strict=True))
+
+    def execute_trajectory(*args: Any, **kwargs: Any) -> TrajectoryExecutionResult:
+        result = coordinator.execute_trajectory(*args, **kwargs)
+        results.append(result)
+        return result
+
+    mocker.patch.object(coordinator, "get_joint_positions", side_effect=delayed_positions)
+    mocker.patch.object(policy_runtime, "DEFAULT_THREAD_JOIN_TIMEOUT", 0.0)
+    control.get_trajectory_generation.side_effect = coordinator.get_trajectory_generation
+    control.execute_trajectory.side_effect = execute_trajectory
+    control.cancel_trajectory.side_effect = coordinator.cancel_trajectory
+    _preflight(module)
+    try:
+        module.start_rollout()
+        assert reading.wait(timeout=2.0)
+        status = module.stop_rollout()
+        assert "did not stop" in (status["last_error"] or "")
+        assert not task.is_active()
+    finally:
+        release.set()
+        if module._thread is not None:
+            module._thread.join(timeout=2.0)
+        coordinator.stop()
+
+    assert results[0].status is TrajectoryExecutionStatus.STALE_REQUEST
+    assert module.rollout_status()["chunks_accepted"] == 0
+    assert "did not stop" in (module.rollout_status()["last_error"] or "")
 
 
 @pytest.mark.parametrize(
@@ -425,7 +475,7 @@ def test_invalid_action_chunk_cancels_and_latches_rollout_off(
 
     wait_until(lambda: module.rollout_status()["active"] is False, timeout=1.0)
     assert message in (module.rollout_status()["last_error"] or "")
-    control.cancel_trajectory.assert_called_with()
+    control.cancel_trajectory.assert_called_with(expected_generation=0)
 
 
 def test_trajectory_rejection_cancels_and_latches_rollout_off(
@@ -444,7 +494,7 @@ def test_trajectory_rejection_cancels_and_latches_rollout_off(
 
     wait_until(lambda: module.rollout_status()["active"] is False, timeout=1.0)
     assert module.rollout_status()["last_error"] == "outside hardware limits"
-    control.cancel_trajectory.assert_called_with()
+    control.cancel_trajectory.assert_called_with(expected_generation=0)
 
 
 @pytest.mark.parametrize(
