@@ -86,6 +86,8 @@ def test_native_collection_records_typed_zenoh_streams(
     ).active_blueprints[0]
     recorder = atom.module(
         executable=str(native_recorder_executable),
+        source_dir=None,
+        build_command=None,
         **atom.kwargs,
     )
     topic_prefix = f"dimos/test/native-collection/{uuid.uuid4().hex}"

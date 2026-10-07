@@ -238,6 +238,8 @@ def _capture_native_artifact(
     )
     if profile is not None:
         kwargs = {
+            "source_dir": None,
+            "build_command": None,
             "executable": str(rust_recorder_executable),
             "encoding_threads": 2,
             "stream_codecs": {"imu": "lz4+lcm", "status": "json"},
