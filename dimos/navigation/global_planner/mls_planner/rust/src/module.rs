@@ -21,7 +21,7 @@ use crate::mls_planner::{Config, Planner, RegionBounds};
 use crate::region_viz::{pack_cell, Cell, RegionContent, RegionViz};
 use crate::voxel::{surface_point_xyz, VoxelKey};
 use dimos_module::time::now;
-use dimos_module::{error_throttled, warn_throttled, Input, Module, Output, Tf};
+use dimos_module::{debug_throttled, error_throttled, warn_throttled, Input, Module, Output, Tf};
 use lcm_msgs::geometry_msgs::{Point, PointStamped, Pose, PoseStamped, Quaternion};
 use lcm_msgs::nav_msgs::Path;
 use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
@@ -465,9 +465,13 @@ impl Worker {
             publish_path(&self.node_edges, &edges).await;
         }
         publish_cloud(&self.nodes, &node_cloud).await;
-        debug!(
+        debug_throttled!(
+            Duration::from_secs(5),
             regions,
-            tick_ms, surface_bytes, edge_segments, "viz published"
+            tick_ms,
+            surface_bytes,
+            edge_segments,
+            "viz published"
         );
     }
 
@@ -484,8 +488,18 @@ impl Worker {
                     return false;
                 };
                 let region = region_bounds(&bounds).capped_at(sensor_z, self.config.max_overhead_m);
-                self.apply_region(planner, &cloud, &region, viz, "local region processed")
-                    .is_some()
+                let update_start = Instant::now();
+                let applied =
+                    self.apply_region(planner, &cloud, &region, viz, "local region processed");
+                if let Some(points) = applied {
+                    debug_throttled!(
+                        Duration::from_secs(5),
+                        update_ms = update_start.elapsed().as_secs_f64() * 1e3,
+                        points,
+                        "local region processed"
+                    );
+                }
+                applied.is_some()
             }
             MapUpdate::Global { cloud } => {
                 let points = match extract_xyz(&cloud) {
@@ -546,15 +560,9 @@ impl Worker {
                 return None;
             }
         };
-        let update_start = Instant::now();
         if let Some(window) = planner.update_region(&points, region, &self.config) {
             viz.mark_window(window);
         }
-        debug!(
-            update_ms = update_start.elapsed().as_secs_f64() * 1e3,
-            points = points.len(),
-            "{label}"
-        );
         Some(points.len())
     }
 
@@ -600,9 +608,12 @@ impl Worker {
 
         let stamp = now();
         let path_msg = build_path_from_waypoints(&waypoints, &self.config.world_frame, stamp);
-        debug!(
+        debug_throttled!(
+            Duration::from_secs(5),
             waypoints = waypoints.len(),
-            plan_ms, since_last_ms, "path planned"
+            plan_ms,
+            since_last_ms,
+            "path planned"
         );
         publish_path(&self.path, &path_msg).await;
     }

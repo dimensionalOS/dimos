@@ -21,7 +21,9 @@ use crate::voxel_ray_tracer::{
     partition_seed, region_of, Cell, ChunkKey, Config, Cylinder, SeedPartition, SeedRegion,
 };
 use dimos_module::pointcloud::extract_xyz;
-use dimos_module::{error_throttled, warn_throttled, Input, Module, Output, Tf, Transform};
+use dimos_module::{
+    debug_throttled, error_throttled, warn_throttled, Input, Module, Output, Tf, Transform,
+};
 use lcm_msgs::geometry_msgs::{Point, Pose as PoseMsg, PoseStamped, Quaternion};
 use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
 use lcm_msgs::std_msgs::{Header, Time};
@@ -456,7 +458,13 @@ impl Worker {
             bytes += cloud.data.len();
             publish_cloud(&self.map_regions, &cloud).await;
         }
-        debug!(regions, tick_ms, bytes, "map regions published");
+        debug_throttled!(
+            Duration::from_secs(5),
+            regions,
+            tick_ms,
+            bytes,
+            "map regions published"
+        );
     }
 
     /// Delete the voxels covering a cloud of world-frame points a sensor knows
