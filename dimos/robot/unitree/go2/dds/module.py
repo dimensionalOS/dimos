@@ -16,8 +16,7 @@
 
 The rust binary (``rust/``) terminates ``cmd_vel`` as sport ``Move`` and ``command`` verbs
 as sport requests, and streams the robot's own odometry (``odom -> base_link``, with the
-tf edge), the mount tree, the head L1 cloud, the front camera and its intrinsics. Same
-profile as :class:`GO2Zenoh`, so a blueprint written against one runs against the other.
+tf edge), the mount tree, the head L1 cloud, the front camera and its intrinsics.
 """
 
 from __future__ import annotations
@@ -38,7 +37,7 @@ from dimos.robot.unitree.go2.base import Go2Base, Go2BaseConfig
 
 
 class GO2DDSConfig(NativeModuleConfig, Go2BaseConfig):
-    cwd: str | None = "rust"
+    source_dir: str | None = "dimos/robot/unitree/go2/dds/rust"
     executable: str = "target/release/go2_dds"
     build_command: str | None = "nix develop path:nix -c cargo build --release"
     stdin_config: bool = True

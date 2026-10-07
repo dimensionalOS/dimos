@@ -21,7 +21,6 @@ import math
 from dimos_lcm.actionlib_msgs import GoalStatus
 from reactivex.disposable import Disposable
 
-from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
@@ -38,9 +37,9 @@ _HOLDS_GOAL = frozenset({GoalStatus.PENDING, GoalStatus.ACTIVE, GoalStatus.ABORT
 
 
 class MLSPlannerNativeConfig(NativeModuleConfig):
-    cwd: str | None = "rust"
+    source_dir: str | None = "dimos/navigation/global_planner/mls_planner/rust"
     # The crate is a workspace member, so cargo builds into the repo-root target dir.
-    executable: str = str(DIMOS_PROJECT_ROOT / "target" / "release" / "mls_planner")
+    executable: str = "../../../../../target/release/mls_planner"
     build_command: str | None = "cargo build --release"
     stdin_config: bool = True
 
