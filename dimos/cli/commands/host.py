@@ -146,6 +146,7 @@ def _print_hosts(
     found: Sequence[tuple[HostDescriptor, tuple[str, ...]]],
     revision: str,
     last_seen: dict[str, float] | None = None,
+    ping_ms: dict[str, float] | None = None,
 ) -> None:
     import time
 
@@ -153,7 +154,7 @@ def _print_hosts(
     from rich.table import Table
 
     table = Table(box=None, header_style="bold", pad_edge=False)
-    for header in ("NAME", "TAGS", "ADDRESSES", "REVISION", "STATE", "RUNS"):
+    for header in ("NAME", "TAGS", "ADDRESSES", "PING", "REVISION", "STATE", "RUNS"):
         table.add_column(header, overflow="fold")
     for host, endpoints in found:
         host_revision = str(host.versions.get("application_revision", ""))
@@ -165,6 +166,7 @@ def _print_hosts(
             host.name,
             _tags_text(host.tags),
             "\n".join(endpoints or host.listen) or "-",
+            f"{ping_ms[host.host_id]:.0f} ms" if ping_ms and host.host_id in ping_ms else "-",
             f"[{rev_style}]{host_revision[:10] or '-'}[/]",
             f"[{STATE_STYLES.get(host.state, 'red')}]{state}[/]",
             ",".join(host.active_run_ids) or "-",
@@ -185,7 +187,7 @@ def ls(
     import time
 
     from dimos.hosted.daemon import HostConfig, HostDescriptor, code_revision, split_csv
-    from dimos.hosted.discovery import candidates, merge, probe_all
+    from dimos.hosted.discovery import candidates, merge, probe_all, rtts
     from dimos.hosted.service import load_known_hosts, local_host, save_known_hosts
 
     _quiet_logs()
@@ -207,7 +209,8 @@ def ls(
     )
     tried = {e for g in groups for e in g}
     groups += [tuple(h["endpoints"]) for h in known.values() if not tried & set(h["endpoints"])]
-    found = merge(probe_all([g for g in groups if g], timeout))
+    probes = probe_all([g for g in groups if g], timeout)
+    found = merge(probes)
 
     now = time.time()
     seen = {h.host_id for h, _ in found}
@@ -232,13 +235,17 @@ def ls(
     save_known_hosts(known)
     last_seen = {host_id: info["last_seen"] for host_id, info in known.items()}
     if json_output:
-        output = [{**_descriptor_dict(h), "endpoints": list(e)} for h, e in found]
+        ping = rtts(probes)
+        output = [
+            {**_descriptor_dict(h), "endpoints": list(e), "ping_ms": ping.get(h.host_id)}
+            for h, e in found
+        ]
         typer.echo(json.dumps(output, indent=2, sort_keys=True))
         return
     if not found:
         typer.echo(f"No dimos Hosts answered (tried {len(groups)} router(s))")
         return
-    _print_hosts(found, code_revision(), last_seen)
+    _print_hosts(found, code_revision(), last_seen, rtts(probes))
 
 
 host_app.command("list", hidden=True)(ls)

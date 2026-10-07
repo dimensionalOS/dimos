@@ -84,3 +84,11 @@ def test_free_listen_falls_back_past_a_taken_port() -> None:
         port = holder.getsockname()[1]
         endpoint = free_listen(f"tcp/127.0.0.1:{port}", fallback=port)
     assert port < int(endpoint.rpartition(":")[2]) < port + 10
+
+
+def test_rtts_keep_each_hosts_fastest_round_trip() -> None:
+    probes = [
+        Probe("tcp/10.0.0.1:7447", "za", (), {"a": 9.0, "b": 3.0}),
+        Probe("tcp/10.0.0.2:7447", "zb", (), {"a": 2.0}),
+    ]
+    assert discovery.rtts(probes) == {"a": 2.0, "b": 3.0}

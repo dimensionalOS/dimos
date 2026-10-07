@@ -20,11 +20,12 @@ reaches a router whose zid some live Host descriptor names as its own.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Collection, Iterable, Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
+from dataclasses import dataclass, field
 import json
 import socket
 import threading
+import time
 from typing import TYPE_CHECKING
 
 from dimos.hosted.daemon import DIMOS_SCOUT_ADDR, HostDescriptor
@@ -46,6 +47,8 @@ class Probe:
     endpoint: str
     router_zid: str
     hosts: tuple[HostDescriptor, ...]
+    # Round trip of each Host's describe call through this router, in ms.
+    rtt_ms: Mapping[str, float] = field(default_factory=dict)
 
 
 def is_loopback(endpoint: str) -> bool:
@@ -184,9 +187,9 @@ def probe(endpoint: str, timeout: float = DEFAULT_TIMEOUT) -> Probe | None:
         routers = [str(zid) for zid in rpc.session.info.routers_zid()]
         if not routers:
             return None
-        hosts = tuple(
-            _describe(rpc, host_id, timeout) for host_id in discover_host_ids(rpc, timeout)
-        )
+        timed = [_describe(rpc, host_id, timeout) for host_id in discover_host_ids(rpc, timeout)]
+        hosts = tuple(host for host, _ in timed)
+        rtt_ms = {host.host_id: ms for host, ms in timed if ms is not None}
     except Exception:
         return None
     finally:
@@ -197,17 +200,27 @@ def probe(endpoint: str, timeout: float = DEFAULT_TIMEOUT) -> Probe | None:
     # A router whose own Host is too busy to describe itself still counts as a dimos Host.
     if not any(h.router_zid in (routers[0], "") for h in hosts):
         return None
-    return Probe(endpoint, routers[0], hosts)
+    return Probe(endpoint, routers[0], hosts, rtt_ms)
 
 
-def _describe(rpc: ZenohRPC, host_id: str, timeout: float) -> HostDescriptor:
-    """The Host's descriptor, or a stand-in saying it is live but did not answer."""
+def _describe(rpc: ZenohRPC, host_id: str, timeout: float) -> tuple[HostDescriptor, float | None]:
+    """The Host's descriptor and its round trip, or a stand-in saying it did not answer."""
     from dimos.hosted.client import get_host_descriptor
 
+    start = time.perf_counter()
     try:
-        return get_host_descriptor(rpc, host_id, timeout)
+        return get_host_descriptor(rpc, host_id, timeout), (time.perf_counter() - start) * 1e3
     except Exception:
-        return HostDescriptor(host_id, "", host_id[:12], {}, {}, "unresponsive", ())
+        return HostDescriptor(host_id, "", host_id[:12], {}, {}, "unresponsive", ()), None
+
+
+def rtts(probes: Iterable[Probe]) -> dict[str, float]:
+    """Each Host's fastest describe round trip over every probed router, in ms."""
+    best: dict[str, float] = {}
+    for p in probes:
+        for host_id, ms in p.rtt_ms.items():
+            best[host_id] = min(ms, best.get(host_id, ms))
+    return best
 
 
 def probe_all(
