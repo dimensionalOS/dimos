@@ -49,15 +49,15 @@ Everything a container writes lands on the host under `EVAL_RUNS_DIR`
 (default `docker/evals/eval-runs`), which the compose file mounts on `/state`:
 
 ```
-eval-runs/dimos/evals/run-<stamp>-<id>/      the EvalRunner run dir: manifest, results.jsonl, summary.json, per-case trajectory
-eval-runs/dimos/recordings/<run-id>/         one per dimos boot, i.e. one per case:
-    memory.db                                the --record sensor recording the grades read
-    rerun.rrd                                the whole Rerun stream of that case (see below)
+docker/evals/eval-runs/dimos/evals/run-<stamp>-<id>/   the EvalRunner run dir: manifest, results.jsonl, summary.json, per-case trajectory
+docker/evals/eval-runs/dimos/recordings/<run-id>/      one per dimos boot, i.e. one per case:
+    memory.db                                          the --record sensor recording the grades read
+    rerun.rrd                                          the whole Rerun stream of that case (see below)
 ```
 
 Each case's result names its recording folder, so its `memory.db` and
 `rerun.rrd` are one lookup away. Open a case's visualization with
-`rerun eval-runs/dimos/recordings/<run-id>/rerun.rrd`.
+`rerun docker/evals/eval-runs/dimos/recordings/<run-id>/rerun.rrd`.
 
 ## Rerun recording
 
@@ -88,7 +88,7 @@ DIMOS_TRANSPORT=zenoh dimos evals run --docker dimos.evals.suites.habitat_smoke 
 ```
 
 Only the HM3D example house is in the image. HSSD, ReplicaCAD and licensed
-HM3D splits go on a host directory that `compose.habitat-data.yaml` mounts
+HM3D splits go on a host directory that `docker/evals/compose.habitat-data.yaml` mounts
 over the container's `target/habitat/data`, so suites find them at their
 default paths. Add it to `COMPOSE_FILE` next to the GPU overlay and set
 `HABITAT_DATA_DIR`; step 8 of the runbook fills it.
@@ -144,7 +144,7 @@ skip what you have.
    container (they all run as root) connect to that display, and X11 does not
    isolate its clients: any of them can read the screen and keystrokes and
    inject input. Workers seeing each other's Chromium is harmless; pointing
-   `compose.gpu.yaml` at your own desktop session (a laptop's `DISPLAY`) hands
+   `docker/evals/compose.gpu.yaml` at your own desktop session (a laptop's `DISPLAY`) hands
    it to whatever code runs in the eval.
 
 4. The socket buffers dimos's LCM setup asks for; host-wide, so they cannot

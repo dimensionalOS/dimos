@@ -1,4 +1,4 @@
-# The eval worker `dimos evals run --docker` starts, one per eval; see README.md.
+# The eval worker `dimos evals run --docker` starts, one per eval; see docs/usage/evals-docker.md.
 services:
   worker:
     image: ${EVALS_IMAGE:-dimensional/evals:latest}

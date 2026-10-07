@@ -487,7 +487,7 @@ modules disabled: pick up the cylinder, then put the red ball on top of it.
 - **Docker**: add `--docker` to run that eval in a fresh, detached container
   from the eval image, one per invocation, any number side by side on one
   host; setup, GPU rendering and an EC2 runbook are in
-  [`docker/evals/README.md`](/docker/evals/README.md).
+  [`evals-docker.md`](/docs/usage/evals-docker.md).
 - **Python**: `EvalRunner().run(SUITE, agent, tags=frozenset({"encoding"}))`
 - **pytest**: suites are importable lists. Use
   `@pytest.mark.parametrize("case", SUITE)` and assert on `passed`
