@@ -44,9 +44,6 @@ from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 
-# Compose only the Rerun bridge (+ its websocket server) directly instead of the
-# shared `vis_module`: replay just needs the 3D viewer, and `vis_module` also
-# bundles the WebsocketVisModule, which auto-opens the 7779 Command Center tab.
 spot_replay = autoconnect(
     SpotReplay.blueprint(),
     OdometryHist.blueprint(),
