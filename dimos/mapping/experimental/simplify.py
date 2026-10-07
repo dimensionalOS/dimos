@@ -30,12 +30,15 @@ from torch import Tensor
 
 Simplifier = Callable[[Tensor, Tensor], tuple[Tensor, Tensor]]
 _INF = torch.iinfo(torch.int64).max
+# a quadric as the 10 unique (i, j) entries of its symmetric 4x4
+_QI = [0, 1, 2, 3, 0, 0, 0, 1, 1, 2]
+_QJ = [0, 1, 2, 3, 1, 2, 3, 2, 3, 3]
 
 
 def _sides(f: Tensor, nv: int) -> Tensor:
     """Undirected edge code lo * nv + hi of every face side, (3F,)."""
-    e = torch.cat([f[:, [0, 1]], f[:, [1, 2]], f[:, [2, 0]]]).sort(1).values
-    return e[:, 0] * nv + e[:, 1]
+    x, y = f.T.reshape(-1), f[:, [1, 2, 0]].T.reshape(-1)
+    return torch.minimum(x, y) * nv + torch.maximum(x, y)
 
 
 def boundary(f: Tensor, nv: int) -> Tensor:
@@ -46,6 +49,19 @@ def boundary(f: Tensor, nv: int) -> Tensor:
     locked[edge // nv] = True
     locked[edge % nv] = True
     return locked
+
+
+def _qcost(q: Tensor, p: Tensor) -> Tensor:
+    """[p, 1]^T Q [p, 1] for quadrics q (..., 10) at points p (..., 3)."""
+    x, y, z = p.unbind(-1)
+    a, b, c, d, xy, xz, xw, yz, yw, zw = q.unbind(-1)
+    return (
+        a * x * x
+        + b * y * y
+        + c * z * z
+        + d
+        + 2 * (xy * x * y + xz * x * z + yz * y * z + xw * x + yw * y + zw * z)
+    )
 
 
 def _normals(v: Tensor, f: Tensor) -> Tensor:
@@ -76,8 +92,8 @@ class EdgeCollapse:
         locked = boundary(f, nv)
         n = torch.nn.functional.normalize(_normals(v, f), dim=1)
         plane = torch.cat([n, -(n * v[f[:, 0]]).sum(1, keepdim=True)], 1)
-        q = torch.zeros(nv, 4, 4, device=dev).index_add_(
-            0, f.reshape(-1), (plane[:, :, None] * plane[:, None, :]).repeat_interleave(3, 0)
+        q = torch.zeros(nv, 10, device=dev).index_add_(
+            0, f.reshape(-1), (plane[:, _QI] * plane[:, _QJ]).repeat_interleave(3, 0)
         )
         blocked = torch.zeros(0, dtype=torch.int64, device=dev)
         for _ in range(self.max_rounds):
@@ -114,9 +130,7 @@ class EdgeCollapse:
     ) -> tuple[Tensor, Tensor, Tensor]:
         """Cheapest of a, b, midpoint, honouring locks; (position, keeps a, cost)."""
         cands = torch.stack([v[a], v[b], (v[a] + v[b]) / 2])
-        h = torch.cat([cands, torch.ones_like(cands[..., :1])], -1)
-        qe = q[a] + q[b]
-        cost = (h[..., :, None] * qe * h[..., None, :]).sum((-1, -2)).clamp_min(0)
+        cost = _qcost(q[a] + q[b], cands).clamp_min(0)
         allowed = torch.stack([~lb, ~la, ~la & ~lb])
         cost = torch.where(allowed, cost, torch.inf)
         cost, k = cost.min(0)
