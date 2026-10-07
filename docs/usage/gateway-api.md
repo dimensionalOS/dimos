@@ -1,8 +1,13 @@
 # The dimos gateway's HTTP API
 
 `python -m dimos.gateway` serves the `/dimos` HTTP API that dimOS Desktop uses: blueprints, global config, runs and
-their logs, events, and Dimensional cloud uploads. Desktop starts it on a unix socket and forwards `/dimos/...` to it
-unchanged (`--port 8123` also serves it on `127.0.0.1:8123`).
+their logs, events, and Dimensional cloud uploads. It listens on `127.0.0.1:<port>`: `--port`, else Desktop's
+config.yaml `dimos_gateway.port` (Desktop picks it once, its own port + 2 when that's free), else 5557. Desktop
+forwards `/dimos/...` to it unchanged.
+
+It has no login, so it binds loopback only: Desktop's proxy (behind Desktop's login) is the door from other machines.
+It also refuses a request whose `Host` isn't a loopback name or whose `Origin` is another site (`loopback.py`), so a web
+page in this machine's browser can't drive it. Any local user can still connect to the port.
 
 ## The OpenAPI document
 

@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""`dimos gateway` / `python -m dimos.gateway`: serve the /dimos API on a unix socket (and optionally a local port).
+"""`dimos gateway` / `python -m dimos.gateway`: serve the /dimos API on 127.0.0.1:<port>.
 
+Loopback only and unauthenticated: dimOS Desktop's proxy (/dimos/ behind its login) is the one door from other machines,
+and loopback.py turns away other sites' pages and DNS rebinding. Any local user can still connect to the port.
 Nothing heavy is imported here, so `dimos --help` stays fast; the app is imported when the gateway starts.
 """
 
@@ -31,31 +33,43 @@ import typer
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.gateway import config
 
+# Desktop's default for it (its own 5555 + 2); Desktop picks a port once and saves it as config.yaml `dimos_gateway.port`
+DEFAULT_PORT = 5557
 
-def default_socket() -> Path:
-    return config.gateway_dir() / "dimos-gateway.sock"
+
+def configured_port() -> int:
+    """Desktop's config.yaml `dimos_gateway.port`, else DEFAULT_PORT."""
+    port = config._section(config.load_desktop_config(), "dimos_gateway").get("port")
+    return port if isinstance(port, int) and 0 < port < 65536 else DEFAULT_PORT
 
 
 def log_file() -> Path:
     return config.logs_dir() / "dimos-gateway.log"
 
 
-def healthy(socket_path: Path, timeout: float = 2.0) -> bool:
-    """Something answers `GET /healthz` with 200 on the socket."""
+def healthy(port: int, timeout: float = 2.0) -> bool:
+    """Something answers `GET /healthz` with 200 on 127.0.0.1:<port>."""
     try:
-        with sockets.socket(sockets.AF_UNIX, sockets.SOCK_STREAM) as connection:
+        with sockets.create_connection(("127.0.0.1", port), timeout) as connection:
             connection.settimeout(timeout)
-            connection.connect(str(socket_path))
-            connection.sendall(b"GET /healthz HTTP/1.0\r\nHost: localhost\r\n\r\n")
+            connection.sendall(b"GET /healthz HTTP/1.0\r\nHost: 127.0.0.1\r\n\r\n")
             return connection.recv(64).split(b" ")[1:2] == [b"200"]
     except OSError:
         return False
 
 
+def taken(port: int) -> bool:
+    """Something accepts connections on 127.0.0.1:<port> (a dimos gateway or any other program)."""
+    try:
+        with sockets.create_connection(("127.0.0.1", port), 0.5):
+            return True
+    except OSError:
+        return False
+
+
 def serve(
-    socket_path: Path,
+    port: int,
     dimos_dir: Path,
-    port: int | None = None,
     zenoh_namespace: str | None = None,
     zenoh_connect: str | None = None,
     zenoh: bool = True,
@@ -65,29 +79,26 @@ def serve(
 
     from dimos.gateway import zenoh_events
     from dimos.gateway.app import create_app, default_state
+    from dimos.gateway.loopback import LoopbackOnly
 
     namespace = zenoh_events.resolve_namespace(zenoh_namespace) if zenoh else None
 
-    if healthy(socket_path):
-        raise SystemExit(f"a dimos gateway is already answering on {socket_path}")
-    socket_path.parent.mkdir(parents=True, exist_ok=True)
-    socket_path.unlink(missing_ok=True)
-    unix = sockets.socket(sockets.AF_UNIX, sockets.SOCK_STREAM)
-    unix.bind(str(socket_path))
-    os.chmod(socket_path, 0o600)
-    listening = [unix]
-    if port is not None:
-        tcp = sockets.socket(sockets.AF_INET, sockets.SOCK_STREAM)
-        tcp.setsockopt(sockets.SOL_SOCKET, sockets.SO_REUSEADDR, 1)
+    if healthy(port):
+        raise SystemExit(f"a dimos gateway is already answering on 127.0.0.1:{port}")
+    if taken(port):
+        raise SystemExit(
+            f"127.0.0.1:{port} is in use by another program; pick another port "
+            "(--port, or `dimos_gateway.port` in Desktop's config.yaml)"
+        )
+    tcp = sockets.socket(sockets.AF_INET, sockets.SOCK_STREAM)
+    tcp.setsockopt(sockets.SOL_SOCKET, sockets.SO_REUSEADDR, 1)
+    try:
         tcp.bind(("127.0.0.1", port))
-        listening.append(tcp)
-
-    def exit_now() -> None:
-        socket_path.unlink(missing_ok=True)
-        os._exit(0)
+    except OSError as error:
+        raise SystemExit(f"can't listen on 127.0.0.1:{port}: {error}") from error
 
     state = default_state(dimos_dir)
-    state.exit = exit_now
+    state.exit = lambda: os._exit(0)
     if namespace is not None:
         try:
             publisher = zenoh_events.open_publisher(
@@ -104,43 +115,36 @@ def serve(
             print(f"dimos gateway: no zenoh session, events are on SSE only ({error})", flush=True)
     # an open event stream never ends on its own: give up on it after 2 s
     server = uvicorn.Server(
-        uvicorn.Config(create_app(state), log_level="warning", timeout_graceful_shutdown=2)
+        uvicorn.Config(
+            LoopbackOnly(create_app(state)), log_level="warning", timeout_graceful_shutdown=2
+        )
     )
-    print(
-        f"dimos gateway -> {socket_path}{f' and 127.0.0.1:{port}' if port else ''} (dimos at {dimos_dir})",
-        flush=True,
-    )
-    try:
-        server.run(sockets=listening)
-    finally:
-        socket_path.unlink(missing_ok=True)
+    print(f"dimos gateway -> 127.0.0.1:{port} (dimos at {dimos_dir})", flush=True)
+    server.run(sockets=[tcp])
 
 
 def detach(
-    socket_path: Path,
+    port: int,
     dimos_dir: Path,
-    port: int | None = None,
     zenoh_namespace: str | None = None,
     zenoh_connect: str | None = None,
     zenoh: bool = True,
 ) -> None:
     """Starts the gateway as its own process (its own session, so it outlives whoever started it) and returns once it
     answers. One already answering = nothing to do."""
-    if healthy(socket_path):
-        print(f"the dimos gateway is already running on {socket_path}")
+    if healthy(port):
+        print(f"the dimos gateway is already running on 127.0.0.1:{port}")
         return
     log_file().parent.mkdir(parents=True, exist_ok=True)
     command = [
         sys.executable,
         "-m",
         "dimos.gateway",
-        "--socket",
-        str(socket_path),
+        "--port",
+        str(port),
         "--dimos-dir",
         str(dimos_dir),
     ]
-    if port is not None:
-        command += ["--port", str(port)]
     if zenoh_namespace is not None:
         command += ["--zenoh-namespace", zenoh_namespace]
     if zenoh_connect is not None:
@@ -156,8 +160,8 @@ def detach(
             start_new_session=True,
         )
     for _ in range(60):
-        if healthy(socket_path):
-            print(f"the dimos gateway is running on {socket_path} (pid {child.pid})")
+        if healthy(port):
+            print(f"the dimos gateway is running on 127.0.0.1:{port} (pid {child.pid})")
             return
         if child.poll() is not None:
             raise SystemExit(f"the dimos gateway exited ({child.returncode}); see {log_file()}")
@@ -166,13 +170,13 @@ def detach(
 
 
 def gateway(
-    socket: Path = typer.Option(
-        None, help="unix socket to serve on (default: <dimos state>/gateway/dimos-gateway.sock)"
-    ),
     dimos_dir: Path = typer.Option(
         DIMOS_PROJECT_ROOT, help="the dimos checkout runs are launched from"
     ),
-    port: int = typer.Option(None, help="also serve on 127.0.0.1:<port>"),
+    port: int = typer.Option(
+        None,
+        help=f"serve on 127.0.0.1:<port> (default: Desktop's config.yaml dimos_gateway.port, else {DEFAULT_PORT})",
+    ),
     detach_: bool = typer.Option(
         False, "--detach", help="start in the background and return once it answers"
     ),
@@ -199,9 +203,8 @@ def gateway(
 
         print(f"wrote {openapi.write()}")
         return
-    socket_path = socket or default_socket()
     (detach if detach_ else serve)(
-        socket_path, dimos_dir, port, zenoh_namespace, zenoh_connect, zenoh
+        port or configured_port(), dimos_dir, zenoh_namespace, zenoh_connect, zenoh
     )
 
 
