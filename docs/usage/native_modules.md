@@ -344,3 +344,6 @@ locally to skip cold compiles when the cache has them:
 extra-substituters = https://dimensionalos.cachix.org
 extra-trusted-public-keys = dimensionalos.cachix.org-1:20ynj6TjpoD3qTxkdNoeHtgs2G2pNvgAq1EQYLTHJXI=
 ```
+
+For cross-language distribution, isolated Python and runtime composition, see
+[Distributing dimOS packages](/docs/usage/packages.md).

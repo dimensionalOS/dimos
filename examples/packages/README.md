@@ -49,3 +49,37 @@ settings. The modules exchange typed messages; there is no native RPC claim.
 Editable source changes are rebuilt on the next module preparation; reinstall after
 entry-point changes or adding files. Uninstall removes the Python distribution,
 while native cache cleanup remains a separate explicit operation.
+
+## Python and isolated Python
+
+`python` exports `dimos-package-python.observer` and
+`dimos-package-python.isolated`. Both consume the native producer's `Twist`.
+The lightweight installed declaration owns a runtime project whose dependency
+on `packaging==25.0` is independent of the host's packaging version. Build this
+pure Python wheel with `python -m build examples/packages/python`.
+
+The runtime must resolve the same DimOS/contract artifacts as the host from your
+configured uv index or wheelhouse. Its development project is unlocked; a release
+should generate and include `uv.lock` against its deployment artifacts. Detailed
+runtime, editable-source and cache semantics are in the
+[isolated Python documentation](../../../dimos/experimental/isolated_python/README.md#installed-package-projects).
+
+## Manual composition
+
+From the repository root, build a compatible host wheel with
+`python -m build --wheel`. Set `DIMOS_ALLOW_MISSING_COCKPIT=1` to build a UI-less
+host without browser assets. Use a Python interpreter matching the host wheel's
+ABI and provision the native libraries described above.
+
+After installing the Rust, C++ and Python example wheels into a compatible host,
+run all four blueprints together:
+
+```bash
+dimos --transport zenoh --viewer none run dimos-package-rust.ping dimos-package-cpp.pong dimos-package-python.observer dimos-package-python.isolated
+```
+
+The ordinary Python observer uses the host environment; the isolated observer
+uses its packaged runtime project with `packaging==25.0`. Provision that project's
+dependencies through your configured uv index or wheelhouse before running it.
+Stop the composition with Ctrl-C. Native compilation happens only when a selected
+module prepares; package builds and installs remain source-only.
