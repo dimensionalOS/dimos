@@ -218,6 +218,7 @@ function moduleList() {
                             aliasOf(module) && h("span", { class: "alias" }, module.name),
                         ),
                         module.summary && h("span", { class: "summary" }, module.summary),
+                        ioCounts(module),
                         h("span", { class: "chev", "aria-hidden": "true" }, "›"),
                     ),
                 )
@@ -226,6 +227,19 @@ function moduleList() {
     )
     list.classList.add("modules")
     return h("div", { class: "list" }, ratesSection(), list)
+}
+
+/** a module row's "Inputs n" (green) and "Outputs n" (blue) boxes: how many streams it reads and writes */
+function ioCounts(module) {
+    const streams = module.streams ?? []
+    const inputs = streams.filter((stream) => stream.direction !== "out").length
+    const outputs = streams.filter((stream) => stream.direction !== "in").length
+    return h(
+        "span",
+        { class: "io" },
+        h("span", { class: "io-in" }, `Inputs ${inputs}`),
+        h("span", { class: "io-out" }, `Outputs ${outputs}`),
+    )
 }
 
 // ── the side panel's Topic rates: every topic on the bus the gateway has heard (this blueprint's or not, quiet ones
