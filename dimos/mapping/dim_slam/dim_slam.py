@@ -120,7 +120,7 @@ class SourceConfig(BaseModel):
 
 
 class DimSlamConfig(NativeModuleConfig):
-    cwd: str | None = "rust"
+    source_dir: str | None = "dimos/mapping/dim_slam/rust"
     executable: str = "result/bin/dim_slam"
     # git+file, not path:. : the flake's ../../../.. input must be inside the entered tree.
     # Builds see tracked files only.
