@@ -362,3 +362,18 @@ class TestStagedPlanning:
 
         assert result.succeeded, result.message
         assert len(paths[-1].poses) == len(first.path) + len(second.path)
+
+
+@pytest.mark.skipif(not _drake_available(), reason="Drake not installed")
+class TestHomeCapture:
+    def test_home_preset_follows_the_captured_pose(self, module, joint_state_zeros):
+        module._on_joint_state(joint_state_zeros)
+        before = module.get_state().groups["manipulator"].joint_presets.get("home")
+
+        here = JointState(name=joint_state_zeros.name, position=[0.2] * 7)
+        module._on_joint_state(here)
+        assert module.set_home_to_current().succeeded
+
+        after = module.get_state().groups["manipulator"].joint_presets["home"]
+        assert list(after.position) == pytest.approx([0.2] * 7)
+        assert before is None or list(before.position) != list(after.position)

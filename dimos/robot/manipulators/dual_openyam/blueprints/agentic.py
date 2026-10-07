@@ -50,8 +50,11 @@ Skills:
 - pick_object <object_id> <planning_group> and place_at <x> <y> <z>
   <planning_group>: the step-by-step variants that move at once; use them
   only when the user explicitly asks for an unstaged pick or place.
-- go_init <planning_group>: Return that arm to its startup pose. Use it after a
-  pick-and-place unless another action follows.
+- go_home <planning_group>: Return that arm to the home pose, which is the
+  resting pose on the supports unless set_home_here changed it.
+- set_home_here: Remember the pose every arm is in right now as home.
+  Nothing moves. Use when the user says "this is home" or "set home here".
+- go_init <planning_group>: Return that arm to its startup pose.
 - go_home, move_to_pose, move_to_joints, open_gripper, close_gripper,
   set_gripper, get_robot_state: as named, each per planning_group.
 - reset: Clear a FAULT state after a failed motion, before planning again.

@@ -60,3 +60,15 @@ def test_reset_surfaces_a_refused_recovery(skills: ManipulationSkills) -> None:
 
     with pytest.raises(RuntimeError, match="refused.*FAILED: stop not confirmed"):
         skills.reset()
+
+
+def test_set_home_here_captures_the_current_pose(skills: ManipulationSkills) -> None:
+    skills.manipulation.set_home_to_current.return_value = CommandResult(CommandStatus.SUCCEEDED)
+
+    assert skills.set_home_here().message == "Home is now the current pose of every arm."
+
+    skills.manipulation.set_home_to_current.return_value = CommandResult(
+        CommandStatus.FAILED, "No joint state yet"
+    )
+    with pytest.raises(RuntimeError, match="No joint state yet"):
+        skills.set_home_here()

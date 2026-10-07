@@ -265,6 +265,8 @@ class ManipulationModule(Module):
 
         # Init joints captured from the first complete canonical state.
         self._init_joints: JointState | None = None
+        # A home captured at runtime wins over config.home_joints.
+        self._home_joints: JointState | None = None
 
         # TF publishing thread
         self._tf_stop_event = threading.Event()
@@ -1159,7 +1161,9 @@ class ManipulationModule(Module):
                 position=[positions[name] for name in group.joint_names],
             )
 
-        if config.home_joints is not None:
+        if self._home_joints is not None:
+            presets["home"] = selected(self._home_joints)
+        elif config.home_joints is not None:
             presets["home"] = selected(
                 JointState(name=config.joint_names, position=config.home_joints)
             )
@@ -1219,6 +1223,18 @@ class ManipulationModule(Module):
         self._init_joints = joint_state
         logger.info("Init joints set", positions=joint_state.position)
         return True
+
+    @rpc
+    def set_home_to_current(self) -> CommandResult:
+        """Make the pose the arms are in right now the home preset for this run."""
+        if self._world_monitor is None:
+            return CommandResult(CommandStatus.FAILED, "Planning not initialized")
+        current = self._world_monitor.get_current_joint_state()
+        if current is None:
+            return CommandResult(CommandStatus.FAILED, "No joint state yet")
+        self._home_joints = current
+        logger.info("Home joints set to the current pose", positions=current.position)
+        return CommandResult(CommandStatus.SUCCEEDED, "Home is now the current pose")
 
     def set_init_joints_to_current(self) -> bool:
         """Set init joints to the current joint positions."""
