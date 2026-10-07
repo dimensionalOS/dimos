@@ -39,7 +39,7 @@ function textWidth(text, font) {
 export { LAYOUTS }
 
 export class Graph {
-    /** `pane`: the element the SVG fills. `on`: { module(name), hover(target|null) } */
+    /** `pane`: the element the SVG fills. `on`: { module(name), topic(name|null), hover(target|null) } */
     constructor(pane, on) {
         this.pane = pane
         this.on = on
@@ -294,6 +294,9 @@ export class Graph {
                 const node = this.nodeAt(event.target)
                 if (node?.kind === "module") {
                     this.on.module(node.name)
+                } else if (event.target.closest?.("svg") === this.svg) {
+                    // a topic stays lit once clicked (as if hovered); clicking empty space lets it go
+                    this.on.topic?.(node?.kind === "topic" ? node.topic : null)
                 }
             }
         })

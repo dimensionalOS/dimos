@@ -122,6 +122,7 @@ button {
     white-space: nowrap;
 }
 .rates .topic {
+    color: var(--type, var(--fg));
     max-width: 150px;
     overflow: hidden;
     text-overflow: ellipsis;

@@ -24,6 +24,8 @@ const state = {
     running: false,
     extras: [],
     showExtras: false,
+    // a topic clicked in the graph: kept lit (as if hovered) until clicked again or the background is
+    pinnedTopic: null,
     // every live topic's rate row from Desktop (GET /api/topics/rates), for the side panel's Topic rates
     rateRows: [],
 }
@@ -88,12 +90,24 @@ const aliasOf = (module) => module.name !== className(module).toLowerCase() ? mo
 
 // ── the graph ──
 const graph = new Graph($("#graph"), {
-    module: (name) => open(name),
+    module: (name) => {
+        state.pinnedTopic = null
+        open(name)
+    },
+    topic: (name) => {
+        state.pinnedTopic = state.pinnedTopic === name ? null : name
+        graph.setSpot(spotNow())
+    },
     hover: (target) => graph.setSpot(target ?? spotNow()),
 })
 const spotNow = () => {
-    const name = state.hovered ?? state.selected
-    return name ? { module: name } : null
+    if (state.hovered) {
+        return { module: state.hovered }
+    }
+    if (state.pinnedTopic) {
+        return { topic: state.pinnedTopic }
+    }
+    return state.selected ? { module: state.selected } : null
 }
 const tabs = $("#layouts")
 for (const { id, label } of LAYOUTS) {
@@ -173,7 +187,7 @@ function moduleList() {
     )
 }
 
-// ── the side panel's Topic rates: every live topic's Hz and bandwidth while this blueprint runs, collapsible ──
+// ── the side panel's Topic rates: every topic on the bus (this blueprint's or not), its Hz and bandwidth, collapsible ──
 const RATES_OPEN = "bp.ratesOpen"
 function ratesSection() {
     let open = false
@@ -219,20 +233,35 @@ function fillRates() {
     if (!body) {
         return
     }
-    const rows = state.running ? state.rateRows : []
+    const rows = state.rateRows
     $("#ratesCount").textContent = rows.length ? ` · ${rows.filter((row) => row.hz > 0).length}/${rows.length} live` : ""
+    // how hot each number is next to the others in its column (log scale): grey when idle, yellow to red as it heats up
+    const top = (key) => Math.max(...rows.map((row) => row[key] ?? 0), 0)
+    const heat = (value, max) => {
+        if (!(value > 0) || !(max > 0)) {
+            return undefined
+        }
+        const t = Math.log1p(value) / Math.log1p(max)
+        return { color: `hsl(${(50 - 50 * t).toFixed(0)} ${(35 + 55 * t).toFixed(0)}% 64%)` }
+    }
+    const [maxHz, maxBps] = [top("hz"), top("bps")]
     body.replaceChildren(
-        ...rows.map((row) =>
-            h(
+        ...rows.map((row) => {
+            const type = String(row.type ?? "").replace(/\//g, ".")
+            return h(
                 "tr",
                 { class: row.hz > 0 ? "" : "quiet" },
-                h("td", { class: "topic", title: `${row.topic} (${row.type ?? ""})` }, row.topic),
-                h("td", { class: "num" }, `${(row.hz ?? 0).toFixed(1)} Hz`),
-                h("td", { class: "num" }, bandwidth(row.bps ?? 0)),
+                h(
+                    "td",
+                    { class: "topic", title: `${row.topic}\n${type || "unknown type"}`, "--type": `var(--bv-${typeColor(type)})` },
+                    row.topic,
+                ),
+                h("td", { class: "num", style: heat(row.hz ?? 0, maxHz) }, `${(row.hz ?? 0).toFixed(1)} Hz`),
+                h("td", { class: "num", style: heat(row.bps ?? 0, maxBps) }, bandwidth(row.bps ?? 0)),
             )
-        ),
+        }),
         ...(rows.length ? [] : [
-            h("tr", {}, h("td", { class: "empty", colspan: "3" }, state.running ? "listening…" : "shown while it runs")),
+            h("tr", {}, h("td", { class: "empty", colspan: "3" }, "no topics on the bus")),
         ]),
     )
 }
@@ -584,15 +613,12 @@ async function pollRuns() {
     if (!state.running) {
         graph.setRates(null)
         extrasBox.hidden = true
-        state.rateRows = []
-        fillRates()
     }
 }
 
 async function pollRates() {
-    if (!state.running || !state.modules) {
-        return
-    }
+    // Topic rates lists every topic on the bus (this blueprint's or not) whenever Desktop is there; the graph only
+    // annotates while this blueprint runs
     let answer
     try {
         answer = await getJson("../api/topics/rates")
@@ -602,6 +628,9 @@ async function pollRates() {
     }
     state.rateRows = answer.topics ?? []
     fillRates()
+    if (!state.running || !state.modules) {
+        return
+    }
     const rates = new Map()
     for (const row of answer.topics ?? []) {
         const topic = String(row.topic).replace(/^\/+/, "")
