@@ -38,7 +38,7 @@ def main(
     lidar_stream: str = typer.Option("pointlio_lidar", "--lidar-stream"),
     world_frame: str = typer.Option("odom", "--world-frame"),
     voxel_size: float = typer.Option(0.05, "--voxel-size"),
-    every: int = typer.Option(10, "--every", help="lidar frames per mesh update"),
+    every: int = typer.Option(100, "--every", help="lidar frames per mesh update"),
     from_time: float | None = typer.Option(None, "--from-time"),
     to_time: float | None = typer.Option(None, "--to-time"),
     simplify: str = typer.Option(
@@ -53,6 +53,7 @@ def main(
         True, "--static/--timeline", help="keep only the latest mesh, or every version to scrub"
     ),
     alpha: float = typer.Option(1.0, "--alpha", help="mesh opacity, 0 to 1"),
+    show_lidar: bool = typer.Option(False, "--lidar", help="also log every lidar scan"),
     z_min: float = typer.Option(-2.0, "--z-min", help="turbo colormap bottom"),
     z_max: float = typer.Option(4.0, "--z-max", help="turbo colormap top"),
 ) -> None:
@@ -72,6 +73,18 @@ def main(
         rr.log("world/odom", rr.Points3D([trail[-1]], radii=0.12, colors=[0, 255, 0]))
         if len(trail) % every == 0:
             rr.log("world/odom/trail", rr.LineStrips3D([trail], colors=[0, 255, 0]))
+        if show_lidar:
+            x, y, z, qx, qy, qz, qw = obs.pose_tuple
+            rr.log(
+                "world/lidar",
+                rr.Transform3D(
+                    translation=[x, y, z], quaternion=rr.Quaternion(xyzw=[qx, qy, qz, qw])
+                ),
+            )
+            rr.log(
+                "world/lidar/scan",
+                rr.Points3D(obs.data.points_f32(), radii=0.01, colors=[255, 255, 255]),
+            )
 
     db = dataset if dataset.endswith(".db") else str(get_data(f"{dataset}.db"))
     rr.init("live_mesh")
