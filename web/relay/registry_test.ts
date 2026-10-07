@@ -12,7 +12,9 @@ import {
   PROTOCOL_VERSION,
   type RobotInfo,
   type RobotManifest,
+  type RtcOfferMsg,
   type SubsMsg,
+  TRACK_ENCODING,
 } from "@dimos/shared";
 import type { CarrierStats } from "./carrier.ts";
 import {
@@ -24,7 +26,13 @@ import {
   ReliableChannel,
   type ViewerSink,
 } from "./forward.ts";
-import { PUBLISH_TIMEOUT_MS, Registry, type RobotPeer, type ViewerPeer } from "./registry.ts";
+import {
+  PUBLISH_TIMEOUT_MS,
+  Registry,
+  type RobotPeer,
+  type RtcBroker,
+  type ViewerPeer,
+} from "./registry.ts";
 
 class FakeSink implements ViewerSink {
   sent: Uint8Array[] = [];
@@ -1209,4 +1217,154 @@ Deno.test("watch switch clears pub buckets but keeps pending routable", () => {
     viewer.pushed.filter((m) => m.t === "pub_ack").map((m) => (m as { id: string }).id),
     ["v-1"],
   );
+});
+
+// ---------- WebRTC hub hooks (protocol v7) ----------
+
+class FakeHub implements RtcBroker {
+  events: string[] = [];
+
+  iceMsg(): Msg {
+    return { t: "rtc_ice", iceServers: [] };
+  }
+
+  robotOffer(peer: RobotPeer, msg: RtcOfferMsg): void {
+    this.events.push(`robotOffer:${peer.info?.id}:${msg.sdp}`);
+  }
+
+  robotStalled(peer: RobotPeer, ch: string): void {
+    this.events.push(`robotStalled:${peer.info?.id}:${ch}`);
+  }
+
+  robotClosed(peer: RobotPeer): void {
+    this.events.push(`robotClosed:${peer.info?.id}`);
+  }
+
+  viewerOffer(viewer: ViewerPeer, sdp: string): void {
+    this.events.push(`viewerOffer:${viewer.id}:${sdp}`);
+  }
+
+  viewerAnswer(viewer: ViewerPeer, sdp: string): void {
+    this.events.push(`viewerAnswer:${viewer.id}:${sdp}`);
+  }
+
+  viewerChanged(viewer: ViewerPeer): void {
+    this.events.push(`viewerChanged:${viewer.id}`);
+  }
+
+  viewerClosed(viewer: ViewerPeer): void {
+    this.events.push(`viewerClosed:${viewer.id}`);
+  }
+
+  stats(): Record<string, number> {
+    return { pulls: 0 };
+  }
+}
+
+const TRACK_SPECS: ChannelSpec[] = [rxSpec("color_image", TRACK_ENCODING, "latest"), SPECS[1]];
+
+Deno.test("with a hub: hello replies rtc_ice after robots; registration sends it after the baseline", () => {
+  const hub = new FakeHub();
+  const reg = new Registry(Date.now, hub);
+  const robot = new FakeRobot("r1", TRACK_SPECS);
+  reg.registerRobot(robot);
+  assertEquals(robot.control, [{ t: "subs", chs: [], n: 1 }, { t: "rtc_ice", iceServers: [] }]);
+  reg.registerRobot(robot); // hello resend: nothing repeated
+  assertEquals(robot.control.length, 2);
+
+  const viewer = new FakeViewer();
+  reg.addViewer(viewer);
+  send(reg, viewer, { t: "hello", v: PROTOCOL_VERSION, role: "viewer" });
+  assertEquals(viewer.replies, [
+    { t: "welcome", v: PROTOCOL_VERSION },
+    { t: "robots", robots: [robot.info!] },
+    { t: "rtc_ice", iceServers: [] },
+  ]);
+});
+
+Deno.test("with a hub: watch, sub, unsub, disconnect and robot loss report to it", () => {
+  const hub = new FakeHub();
+  const reg = new Registry(Date.now, hub);
+  const robot = new FakeRobot("r1", TRACK_SPECS);
+  reg.registerRobot(robot);
+  const viewer = attach(reg, "r1", ["color_image"]);
+  send(reg, viewer, { t: "unsub", ch: "color_image" });
+  reg.viewerClosed(viewer);
+  reg.robotClosed(robot);
+  assertEquals(hub.events, [
+    `viewerChanged:${viewer.id}`, // watch
+    `viewerChanged:${viewer.id}`, // sub
+    `viewerChanged:${viewer.id}`, // unsub
+    `viewerClosed:${viewer.id}`,
+    "robotClosed:r1",
+  ]);
+});
+
+Deno.test("with a hub: rtc_stalled from a registered robot routes to it; refreshIce re-sends rtc_ice to every peer", () => {
+  const hub = new FakeHub();
+  const reg = new Registry(Date.now, hub);
+  const robot = new FakeRobot("r1", TRACK_SPECS);
+  reg.onRobotRtcStalled(robot, { t: "rtc_stalled", ch: "color_image" }); // unregistered: dropped
+  reg.registerRobot(robot);
+  reg.onRobotRtcStalled(robot, { t: "rtc_stalled", ch: "color_image" });
+  assertEquals(hub.events, ["robotStalled:r1:color_image"]);
+
+  const viewer = attach(reg, "r1", ["color_image"]);
+  const silent = new FakeViewer(); // never said hello
+  reg.addViewer(silent);
+  const robotBefore = robot.control.length;
+  const viewerBefore = viewer.pushed.length;
+  reg.refreshIce();
+  assertEquals(robot.control.slice(robotBefore), [{ t: "rtc_ice", iceServers: [] }]);
+  assertEquals(viewer.pushed.slice(viewerBefore), [{ t: "rtc_ice", iceServers: [] }]);
+  assertEquals(silent.pushed, []);
+});
+
+Deno.test("rtc_offer and rtc_answer route to the hub; without a hub they reply rtc_unavailable", () => {
+  const hub = new FakeHub();
+  const reg = new Registry(Date.now, hub);
+  const robot = new FakeRobot("r1", TRACK_SPECS);
+  reg.registerRobot(robot);
+  const viewer = attach(reg, "r1", []);
+  assertEquals(send(reg, viewer, { t: "rtc_offer", sdp: "v-offer" }), true);
+  assertEquals(send(reg, viewer, { t: "rtc_answer", sdp: "v-answer" }), true);
+  reg.onRobotRtcOffer(robot, {
+    t: "rtc_offer",
+    sdp: "r-offer",
+    tracks: [{ ch: "color_image", mid: "0" }],
+  });
+  // An unregistered (or superseded) peer's offer is ignored.
+  reg.onRobotRtcOffer(new FakeRobot("ghost"), { t: "rtc_offer", sdp: "ghost" });
+  assertEquals(hub.events.slice(1), [
+    `viewerOffer:${viewer.id}:v-offer`,
+    `viewerAnswer:${viewer.id}:v-answer`,
+    "robotOffer:r1:r-offer",
+  ]);
+
+  const plain = new Registry();
+  const robot2 = new FakeRobot("r1", SPECS);
+  plain.registerRobot(robot2);
+  const v2 = attach(plain, "r1", []);
+  assertEquals(send(plain, v2, { t: "rtc_offer", sdp: "v" }), true); // keeps the session
+  assertEquals(v2.replies.at(-1), {
+    t: "error",
+    code: "rtc_unavailable",
+    message: "this relay has no Cloudflare configuration (--rtc-file)",
+  });
+  plain.onRobotRtcOffer(robot2, { t: "rtc_offer", sdp: "r" }); // dropped, no throw
+});
+
+Deno.test("frames on a track channel are dropped and counted, never forwarded", async () => {
+  const hub = new FakeHub();
+  const reg = new Registry(Date.now, hub);
+  const robot = new FakeRobot("r1", TRACK_SPECS);
+  reg.registerRobot(robot);
+  const viewer = attach(reg, "r1", ["color_image", "odom"]);
+  reg.onRobotFrame(robot, frame("color_image", 1));
+  reg.onRobotFrame(robot, frame("odom", 1, "reliable"));
+  await tick();
+  assertEquals([...viewer.policies.keys()], ["odom"]);
+  assertEquals(viewer.sink.sent.length, 1);
+  const stats = reg.stats() as { rtc: { pulls: number; framesOnTrack: number } };
+  assertEquals(stats.rtc, { pulls: 0, framesOnTrack: 1 });
 });

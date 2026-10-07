@@ -25,16 +25,11 @@ import asyncio
 from pathlib import Path as FilePath
 import threading
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 import webbrowser
 
 from dimos_lcm.std_msgs import Bool
 from reactivex.disposable import Disposable
-import socketio  # type: ignore[import-untyped]
-from starlette.applications import Starlette
-from starlette.responses import FileResponse, RedirectResponse, Response
-from starlette.routing import Route
-import uvicorn
 
 from dimos.utils.data import get_data
 
@@ -62,6 +57,10 @@ from dimos.msgs.nav_msgs.Path import Path
 from dimos.utils.logging_config import setup_logger
 
 from .optimized_costmap import OptimizedCostmapEncoder
+
+if TYPE_CHECKING:
+    import socketio  # type: ignore[import-untyped]
+    import uvicorn
 
 logger = setup_logger()
 
@@ -152,10 +151,11 @@ class WebsocketVisModule(Module):
         super().start()
 
         self._create_server()
+        assert self._uvicorn_server is not None
 
         self._start_broadcast_loop()
 
-        self._uvicorn_server_thread = threading.Thread(target=self._run_uvicorn_server, daemon=True)
+        self._uvicorn_server_thread = threading.Thread(target=self._uvicorn_server.run, daemon=True)
         self._uvicorn_server_thread.start()
 
         # Only auto-open when the user chose web-based viewing.
@@ -230,6 +230,13 @@ class WebsocketVisModule(Module):
         self._emit("gps_travel_goal_points", json_points)
 
     def _create_server(self) -> None:
+        # socketio, starlette and uvicorn: a 0.35 s import, only needed once the server is built.
+        import socketio  # type: ignore[import-untyped]
+        from starlette.applications import Starlette
+        from starlette.responses import FileResponse, RedirectResponse, Response
+        from starlette.routing import Route
+        import uvicorn
+
         # Create SocketIO server
         self.sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins="*")
 
@@ -261,6 +268,13 @@ class WebsocketVisModule(Module):
         starlette_app = Starlette(routes=routes)
 
         self.app = socketio.ASGIApp(self.sio, starlette_app)
+        config = uvicorn.Config(
+            self.app,  # type: ignore[arg-type]
+            host=global_config.listen_host,
+            port=self.config.port,
+            log_level="error",  # Reduce verbosity
+        )
+        self._uvicorn_server = uvicorn.Server(config)
 
         # Register SocketIO event handlers
         @self.sio.event  # type: ignore[untyped-decorator]
@@ -351,16 +365,6 @@ class WebsocketVisModule(Module):
                     ),
                 )
                 self.movecmd_stamped.publish(twist_stamped)
-
-    def _run_uvicorn_server(self) -> None:
-        config = uvicorn.Config(
-            self.app,  # type: ignore[arg-type]
-            host=global_config.listen_host,
-            port=self.config.port,
-            log_level="error",  # Reduce verbosity
-        )
-        self._uvicorn_server = uvicorn.Server(config)
-        self._uvicorn_server.run()
 
     def _on_robot_pose(self, msg: PoseStamped) -> None:
         pose_data = {"type": "vector", "c": [msg.position.x, msg.position.y, msg.position.z]}

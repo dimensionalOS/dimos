@@ -166,7 +166,16 @@ class EvalRunner(Configurable):
                 )
                 started = time.monotonic()
                 try:
-                    trajectory = agent.run(case.inputs, env, case_dir, timeout_s=case.timeout_s)
+                    agent_artifacts = {
+                        name: env.artifacts[name]
+                        for name in case.environment.config.agent_artifacts
+                    }
+                    trajectory = agent.run(
+                        case.inputs,
+                        replace(env, artifacts=agent_artifacts),
+                        case_dir,
+                        timeout_s=case.timeout_s,
+                    )
                 finally:
                     agent_duration_s = time.monotonic() - started
                 _write_trajectory(case_dir, trajectory, tools)
