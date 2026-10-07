@@ -185,8 +185,8 @@ jobs:
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
       - name: Build native modules
         env:
-          # Runners have limited memory and can OOM with parallel builds.
-          BUILD_WORKERS: "1"
+          # A cold build at 4 peaks at 9.0 GB of 16 (Linux), 5.3 of 7 (macOS): run 37671850364.
+          BUILD_WORKERS: "4"
         run: python3 bin/build-native-modules
       - name: Lint native modules
         run: python3 bin/build-native-modules --lint
@@ -259,8 +259,8 @@ jobs:
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
       - name: Build native modules
         env:
-          # Runners have limited memory and can OOM with parallel builds.
-          BUILD_WORKERS: "1"
+          # A cold build at 4 peaks at 9.0 GB of 16 (Linux), 5.3 of 7 (macOS): run 37671850364.
+          BUILD_WORKERS: "4"
         run: python3 bin/build-native-modules
       - name: Verify Cachix holds the built paths
         env:
