@@ -19,7 +19,7 @@ from functools import partial
 import os
 from typing import Any
 
-from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
@@ -74,38 +74,52 @@ _mls_planner_motion = MLSPlannerNative.blueprint(
     ]
 )
 
+# GO2DDS's native process doubles as the robot's zenoh router.
+GO2_ROUTER_SESSION = ZenohConfig(mode="router", listen=["tcp/0.0.0.0:7447"], connect=[])
+
+
+def _go2_dds_lidar_off(session: ZenohConfig | None) -> Blueprint:
+    return GO2DDS.blueprint(
+        iface="enP8p1s0", session=session, lidar_on=False, tf_root="mid360_link"
+    )
+
+
 # The head L1 stays off and Point-LIO owns odom, so GO2DDS publishes no lidar, odometry or
 # odom tf edge. Its raw L1 cloud and body IMU move aside so only the MID-360 reaches
 # Point-LIO's inputs.
-go2_dds_mid360 = GO2DDS.blueprint(
-    iface="enP8p1s0",
-    session=ZenohConfig(mode="router", listen=["tcp/0.0.0.0:7447"], connect=[]),
-    lidar_on=False,
-    tf_root="mid360_link",
-).remappings(
-    [
-        (GO2DDS, "odometry", "go2_odometry_unused"),
-        (GO2DDS, "lidar", "go2_lidar_unused"),
-        (GO2DDS, "lidar_raw", "go2_lidar_raw_unused"),
-        (GO2DDS, "imu", "body_imu"),
-    ]
-)
+_MID360_REMAPPINGS: list[Any] = [
+    (GO2DDS, "odometry", "go2_odometry_unused"),
+    (GO2DDS, "lidar", "go2_lidar_unused"),
+    (GO2DDS, "lidar_raw", "go2_lidar_raw_unused"),
+    (GO2DDS, "imu", "body_imu"),
+]
+go2_dds_mid360 = _go2_dds_lidar_off(GO2_ROUTER_SESSION).remappings(_MID360_REMAPPINGS)
 
-# MLS stays global; its path becomes the carrot source (planner_path) for the local planner
-# over the raycaster's local map. GO2DDS's native process is the zenoh router (the Go2
-# forwards 7447 to the Jetson, so the viewer dials go22); every other process dials it on
-# loopback. Headless: go2-dds-mid360-viewer on another machine is the screen.
-go2_dds_nav = autoconnect(
-    go2_dds_mid360,
-    mid360_for_pointlio(lidar_ip="192.168.123.157", host_ip="192.168.123.5"),
-    RayTracingVoxelMap.blueprint(**ray_tracing_config.model_dump(exclude_unset=True)),
-    _mls_planner_motion,
-    LocalPlannerNative.blueprint(body_dilate_m=MOTION_BODY_DILATE_M),
-    TrajectoryFollowerNative.blueprint(),
-    MovementManager.blueprint(),
-    relocalization(republish_loaded_map=0.0),
-    PointLio.blueprint(),
-).global_config(
+
+def go2_nav_stack(session: ZenohConfig | None) -> Blueprint:
+    """The robot-side nav modules; ``session`` pins GO2DDS's own zenoh session.
+
+    MLS stays global; its path becomes the carrot source (planner_path) for the local
+    planner over the raycaster's local map.
+    """
+    go2_dds_mid360 = _go2_dds_lidar_off(session).remappings(_MID360_REMAPPINGS)
+    return autoconnect(
+        go2_dds_mid360,
+        mid360_for_pointlio(lidar_ip="192.168.123.157", host_ip="192.168.123.5"),
+        RayTracingVoxelMap.blueprint(**ray_tracing_config.model_dump(exclude_unset=True)),
+        _mls_planner_motion,
+        LocalPlannerNative.blueprint(body_dilate_m=MOTION_BODY_DILATE_M),
+        TrajectoryFollowerNative.blueprint(),
+        MovementManager.blueprint(),
+        relocalization(republish_loaded_map=0.0),
+        PointLio.blueprint(),
+    )
+
+
+# GO2DDS is the router (the Go2 forwards 7447 to the Jetson, so the viewer dials go22);
+# every other process dials it on loopback. Headless: go2-dds-mid360-viewer on another
+# machine is the screen.
+go2_dds_nav = autoconnect(go2_nav_stack(GO2_ROUTER_SESSION)).global_config(
     transport="zenoh",
     zenoh_connect="tcp/127.0.0.1:7447",
     n_workers=11,

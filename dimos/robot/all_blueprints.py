@@ -72,6 +72,7 @@ all_blueprints = {
     "go2-dds": "dimos.robot.unitree.go2.dds.blueprints:go2_dds",
     "go2-dds-mid360": "dimos.robot.unitree.go2.dds.blueprints:go2_dds_mid360",
     "go2-dds-nav": "dimos.robot.unitree.go2.dds.blueprints:go2_dds_nav",
+    "go2-dds-nav-hosted": "dimos.mapping.experimental.blueprints:go2_dds_nav_hosted",
     "go2-dds-nav-viewer": "dimos.robot.unitree.go2.dds.blueprints:go2_dds_nav_viewer",
     "go2-dds-nav-viewer-mesh": "dimos.mapping.experimental.blueprints:go2_dds_nav_viewer_mesh",
     "go2-localize-live": "dimos.perception.localize.demo_blueprints.go2_localize_live:go2_localize_live",

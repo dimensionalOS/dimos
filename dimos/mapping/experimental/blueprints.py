@@ -19,17 +19,27 @@ from dimos.navigation.global_planner.mls_planner.viz import SURFACE_MAP_ENTITY
 from dimos.robot.unitree.go2.dds.blueprints import (
     VIEW_Z_BAND,
     VIEWER_GLOBAL_CONFIG,
+    go2_nav_stack,
     nav_viewer,
 )
 from dimos.robot.unitree.go2.nav_3d_config import voxel_size
 
 # go2-dds-nav-viewer meshing map_regions on this machine's GPU; the mesh stands in for
 # the region cloud and surface map, which stay tickable.
-go2_dds_nav_viewer_mesh = autoconnect(
+_viewer_mesh = autoconnect(
     nav_viewer(
         extra_topics=("mesh",),
         visual_override={MESH_ENTITY: MeshColours(alpha=1.0)},
         hidden=(MAP_REGIONS_ENTITY, SURFACE_MAP_ENTITY),
     ),
     MeshModule.blueprint(voxel_size=voxel_size, z_band=VIEW_Z_BAND),
-).global_config(n_workers=4, **VIEWER_GLOBAL_CONFIG)
+)
+go2_dds_nav_viewer_mesh = _viewer_mesh.global_config(n_workers=4, **VIEWER_GLOBAL_CONFIG)
+
+# go2-dds-nav on the robot's Host plus the meshing viewer here, deployed by
+# `dimos host deploy go2-dds-nav-hosted`. Each Host's daemon is its zenoh router and every
+# process is its client, so mesh stays on this machine and only subscribed topics cross.
+go2_dds_nav_hosted = autoconnect(
+    go2_nav_stack(session=None).hosted(host="go2"),
+    _viewer_mesh,
+).global_config(transport="zenoh", n_workers=11, robot_model="unitree_go2")
