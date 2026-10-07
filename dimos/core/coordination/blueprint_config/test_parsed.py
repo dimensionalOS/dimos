@@ -21,7 +21,7 @@ import pytest
 
 from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
-from dimos.core.coordination.blueprints import TransportSpec
+from dimos.core.coordination.blueprints import TransportSpec, autoconnect
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Stream, Transport
 
@@ -38,6 +38,14 @@ class PrimaryConfig(ModuleConfig):
 
 class PrimaryModule(Module):
     config: PrimaryConfig
+
+
+class SecondaryConfig(ModuleConfig):
+    count: int = 1
+
+
+class SecondaryModule(Module):
+    config: SecondaryConfig
 
 
 @dataclass
@@ -206,3 +214,27 @@ def test_parsed_config_rejects_a_different_blueprint_identity() -> None:
     parsed.assert_matches(blueprint)
     with pytest.raises(BlueprintConfigError, match="different blueprint"):
         parsed.assert_matches(PrimaryModule.blueprint())
+
+
+def test_subset_binds_only_local_module_configuration() -> None:
+    blueprint = autoconnect(PrimaryModule.blueprint(), SecondaryModule.blueprint())
+    parsed = BlueprintConfigParser(blueprint).parse(
+        environ={},
+        overrides={
+            "primarymodule": {"labels": ["local"]},
+            "secondarymodule": {"count": 3},
+        },
+    )
+    local_blueprint = PrimaryModule.blueprint()
+
+    subset = parsed.subset_for(
+        local_blueprint,
+        global_overrides={"transport": "zenoh"},
+    )
+
+    subset.assert_matches(local_blueprint)
+    assert set(subset.module_configs) == {"primarymodule"}
+    assert subset.module_kwargs("primarymodule")["labels"] == ["local"]
+    assert subset.global_config["transport"] == "zenoh"
+    with pytest.raises(KeyError, match="secondarymodule"):
+        subset.module_kwargs("secondarymodule")
