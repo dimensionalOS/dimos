@@ -28,8 +28,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3, make_vector3
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.navigation.base import NavigationState
-from dimos.navigation.go2.replanning_a_star.spec import NavigationInterfaceSpec
+from dimos.navigation.spec import NavigationInterfaceSpec, NavigationState
 from dimos.perception.experimental.object_tracking_spec import ObjectTrackingSpec
 from dimos.perception.experimental.spatial_memory_spec import SpatialMemorySpec
 from dimos.types.robot_location import RobotLocation

@@ -30,13 +30,13 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.OccupancyGrid import CostValues, OccupancyGrid
 from dimos.msgs.nav_msgs.Path import Path
-from dimos.navigation.base import NavigationState
 from dimos.navigation.go2.replanning_a_star.goal_validator import find_safe_goal
 from dimos.navigation.go2.replanning_a_star.local_planner import LocalPlanner, StopMessage
 from dimos.navigation.go2.replanning_a_star.min_cost_astar import min_cost_astar
 from dimos.navigation.go2.replanning_a_star.navigation_map import NavigationMap
 from dimos.navigation.go2.replanning_a_star.position_tracker import PositionTracker
 from dimos.navigation.go2.replanning_a_star.replan_limiter import ReplanLimiter
+from dimos.navigation.spec import NavigationState
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.trigonometry import angle_diff
 

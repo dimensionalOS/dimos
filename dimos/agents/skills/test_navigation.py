@@ -22,7 +22,7 @@ from dimos.core.module import Module
 from dimos.core.stream import Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.navigation.base import NavigationState
+from dimos.navigation.spec import NavigationState
 from dimos.types.robot_location import RobotLocation
 
 

@@ -27,8 +27,8 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path
-from dimos.navigation.base import NavigationInterface, NavigationState
 from dimos.navigation.go2.replanning_a_star.global_planner import GlobalPlanner
+from dimos.navigation.spec import NavigationInterfaceSpec, NavigationState
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -39,7 +39,7 @@ class ReplanningAStarPlannerConfig(ModuleConfig):
     robot_rotation_diameter: float | None = None
 
 
-class ReplanningAStarPlanner(Module, NavigationInterface):
+class ReplanningAStarPlanner(Module, NavigationInterfaceSpec):
     config: ReplanningAStarPlannerConfig
 
     odom: In[PoseStamped]  # TODO: Use TF.

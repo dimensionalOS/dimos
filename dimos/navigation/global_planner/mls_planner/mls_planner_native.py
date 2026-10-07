@@ -32,7 +32,6 @@ from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation import spec
-from dimos.navigation.base import NavigationState
 
 # The planner keeps retrying an aborted goal, so it still holds one.
 _HOLDS_GOAL = frozenset({GoalStatus.PENDING, GoalStatus.ACTIVE, GoalStatus.ABORTED})
@@ -73,7 +72,7 @@ class MLSPlannerNativeConfig(NativeModuleConfig):
     worker_threads: int = 4
 
 
-class MLSPlannerNative(NativeModule, spec.GlobalPlanner):
+class MLSPlannerNative(NativeModule, spec.GlobalPlanner, spec.NavigationInterfaceSpec):
     """Rust-backed MLS planner.
 
     Feed either global_map, which rebuilds fully per message, or the local_map
@@ -147,10 +146,10 @@ class MLSPlannerNative(NativeModule, spec.GlobalPlanner):
         return held
 
     @rpc
-    def get_state(self) -> NavigationState:
+    def get_state(self) -> spec.NavigationState:
         if self._goal_status() in (GoalStatus.PENDING, GoalStatus.ACTIVE):
-            return NavigationState.FOLLOWING_PATH
-        return NavigationState.IDLE
+            return spec.NavigationState.FOLLOWING_PATH
+        return spec.NavigationState.IDLE
 
     @rpc
     def is_goal_reached(self) -> bool:

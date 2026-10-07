@@ -25,7 +25,7 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.navigation.go2.replanning_a_star.spec import NavigationInterfaceSpec
+from dimos.navigation.spec import NavigationInterfaceSpec
 
 # The planner retries a blocked goal on every map update, so a block only
 # counts once it has lasted this long.

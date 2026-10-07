@@ -29,9 +29,8 @@ from dimos.core.module import ModuleBase
 from dimos.core.stream import Stream, Transport
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.navigation.base import NavigationState
 from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPlannerNative
-from dimos.navigation.go2.replanning_a_star.spec import NavigationInterfaceSpec
+from dimos.navigation.spec import NavigationInterfaceSpec, NavigationState
 from dimos.robot.unitree.unitree_skill_container import UnitreeSkillContainer
 from dimos.spec.utils import spec_annotation_compliance
 

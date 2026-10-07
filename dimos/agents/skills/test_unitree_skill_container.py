@@ -24,7 +24,7 @@ from dimos.core.module import Module
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.navigation.base import NavigationState
+from dimos.navigation.spec import NavigationState
 from dimos.robot.unitree.unitree_skill_container import (
     _UNITREE_COMMANDS,
     UnitreeSkillContainer,
