@@ -282,21 +282,21 @@ class PlaneSnap:
             j = join & active[f1] & active[f2]
             root = _components(nf, f1[j], f2[j])
             size = torch.bincount(root, weights=active.float(), minlength=nf)
-            # only regions that can reach min_faces get a plane; the rest share label nc
+            # only regions that can reach min_faces get a plane; fit over just their faces
             label, nc = _compact(root, size >= self.min_faces)
-            inl = active & (label < nc)
+            sub = (label < nc).nonzero().squeeze(1)
+            ls, vs, ns = label[sub], v[f[sub]], n[sub]
+            inl = torch.ones_like(ls, dtype=torch.bool)
             for thr in (4 * self.tol, 2 * self.tol, self.tol):
-                mean, normal = _fit_planes(label, nc + 1, w * inl, c, n)
-                mean, normal = mean[label], normal[label]
-                d = ((v[f] - mean[:, None]) * normal[:, None]).sum(-1).abs().amax(1)
-                inl = active & (label < nc) & (d <= thr) & ((n * normal).sum(1) > self.min_cos)
-            inl &= (torch.bincount(label, weights=inl.float(), minlength=nc + 1) >= self.min_faces)[
-                label
-            ]
-            pm = torch.where(inl[:, None], mean, pm)
-            pn = torch.where(inl[:, None], normal, pn)
-            tag = torch.where(inl, peel * nf + label, tag)
-            active &= ~inl
+                mean, normal = _fit_planes(ls, nc, w[sub] * inl, c[sub], ns)
+                mean, normal = mean[ls], normal[ls]
+                d = ((vs - mean[:, None]) * normal[:, None]).sum(-1).abs().amax(1)
+                inl = (d <= thr) & ((ns * normal).sum(1) > self.min_cos)
+            inl &= (torch.bincount(ls, weights=inl.float(), minlength=nc) >= self.min_faces)[ls]
+            pm[sub] = torch.where(inl[:, None], mean, pm[sub])
+            pn[sub] = torch.where(inl[:, None], normal, pn[sub])
+            tag[sub] = torch.where(inl, peel * nf + ls, tag[sub])
+            active[sub] &= ~inl
         # neighbouring planes that agree become one plane, refit over all their faces
         on = tag >= 0
         same = on[f1] & on[f2]
