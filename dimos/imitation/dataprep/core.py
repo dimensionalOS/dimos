@@ -36,6 +36,8 @@ from numpy.typing import NDArray
 from pydantic import BaseModel, ConfigDict, Field
 
 from dimos.constants import STATE_DIR
+from dimos.imitation.collection.episode import EpisodeStatus
+from dimos.msgs.std_msgs.String import String
 from dimos.protocol.service.spec import BaseConfig
 
 if TYPE_CHECKING:
@@ -232,6 +234,8 @@ def inspect_episodes(store: SqliteStore, cfg: EpisodeExtractor) -> EpisodeReport
 
     for obs in events:
         ev = obs.data
+        if isinstance(ev, String):
+            ev = EpisodeStatus.from_json(ev.data)
         last_event = getattr(ev, "last_event", None)
         ts = obs.ts
         label = getattr(ev, "task_label", None)
