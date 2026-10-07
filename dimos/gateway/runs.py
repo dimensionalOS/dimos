@@ -117,7 +117,8 @@ def run_log_dir(blueprint: str, started_at: str, entry: dict[str, Any] | None) -
     from dimos.constants import LOG_DIR
 
     try:
-        since = datetime.fromisoformat(started_at).timestamp() - 1
+        # Python 3.10's fromisoformat refuses a trailing Z
+        since = datetime.fromisoformat(started_at.replace("Z", "+00:00")).timestamp() - 1
         candidates = [
             path
             for path in LOG_DIR.glob(f"*-{re.sub(r'[^a-zA-Z0-9_-]', '-', blueprint)}")
