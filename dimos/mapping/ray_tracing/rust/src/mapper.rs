@@ -20,8 +20,8 @@ use nalgebra::{Quaternion, UnitQuaternion, Vector3};
 
 use crate::voxel_ray_tracer::{
     batch_local_bounds, chunk_points, coarse_of_fine, emit_points, emit_points_fine,
-    emit_points_ungated, global_normal_fits, metric_voxel_keys, seed_points, seed_tile, update_map,
-    ChunkKey, Config, Cylinder, FrameHits, LocalBounds, VoxelMap,
+    emit_points_ungated, global_normal_fits, global_normals, metric_voxel_keys, seed_points,
+    seed_tile, update_map, ChunkKey, Config, Cylinder, FrameHits, LocalBounds, VoxelMap,
 };
 
 pub type Point = (f32, f32, f32);
@@ -92,9 +92,9 @@ impl Mapper {
         pool.install(|| seed_points(&mut self.map, points, &self.config))
     }
 
-    /// Make room for `additional` voxels ahead of a tiled seed load.
-    pub fn reserve_voxels(&mut self, additional: usize) {
-        self.map.reserve(additional);
+    /// Make room for `additional` chunks ahead of a tiled seed load.
+    pub fn reserve_chunks(&mut self, additional: usize) {
+        self.map.reserve_chunks(additional);
     }
 
     /// Seed one tile of a partitioned world-frame cloud. Returns how many
@@ -220,6 +220,13 @@ impl Mapper {
         }))
     }
 
+    /// Positions and normals of every healthy voxel, fitting stale normals for
+    /// the output. Visualization only.
+    pub fn normals(&self) -> (Vec<f32>, Vec<f32>) {
+        self.pool
+            .install(|| global_normals(&self.map, self.config.voxel_size))
+    }
+
     /// Positions, normals, and smallest eigenvalues from a fresh whole-map
     /// pooled fit. Visualization only.
     pub fn normal_fits(&self) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
@@ -301,6 +308,7 @@ mod tests {
             world_frame: "world".to_string(),
             tf_match_tolerance_s: 0.1,
             max_cloud_age_s: 0.0,
+            tf_wait_timeout_s: 0.05,
             worker_threads: 4,
             region_m: 4.0,
             viz_emit_every: 0,

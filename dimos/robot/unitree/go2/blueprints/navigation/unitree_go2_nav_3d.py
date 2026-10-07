@@ -15,8 +15,8 @@
 
 """3d navigation on Go2 with ray tracing and MLS planning.
 
-The Mid-360 driver defaults to the factory lidar IP. Set ``MID360__LIDAR_IP`` when
-the sensor lives elsewhere.
+The Mid-360 driver needs the sensor's address. Pass ``--lidar-ip`` or set
+``MID360__LIDAR_IP``.
 """
 
 from dimos.core.coordination.blueprints import autoconnect

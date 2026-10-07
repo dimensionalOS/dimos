@@ -53,7 +53,7 @@ from dimos.msgs.std_msgs.String import String
 from dimos.utils.testing.waiting import wait_until
 
 pytestmark = [
-    pytest.mark.skipif_macos,
+    pytest.mark.self_hosted,
     pytest.mark.skipif_aarch64,
     pytest.mark.skipif_no_turbojpeg,
 ]

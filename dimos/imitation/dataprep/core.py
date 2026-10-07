@@ -58,6 +58,7 @@ from dimos.imitation.dataprep.schema import (
 )
 from dimos.memory.store.mcap import McapStore
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.std_msgs.String import String
 
 if TYPE_CHECKING:
     from dimos.memory.store.base import Store
@@ -177,7 +178,9 @@ def inspect_episodes(store: Store, cfg: EpisodeExtractor) -> EpisodeReport:
         pending_label = None
 
     for obs in events:
-        ev = EpisodeStatus.from_json(obs.data.data)
+        ev = obs.data
+        if isinstance(ev, String):
+            ev = EpisodeStatus.from_json(ev.data)
         last_event = getattr(ev, "last_event", None)
         # MCAP stores all source timestamps as integer nanoseconds. Compare
         # episode boundaries at that same precision, including the final frame.
