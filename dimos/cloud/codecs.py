@@ -18,7 +18,6 @@ stored as the upload's `content_encoding`; decode is selected by that stamp."""
 
 from __future__ import annotations
 
-from collections.abc import Callable
 import importlib
 from pathlib import Path
 import shutil
@@ -38,19 +37,9 @@ def suffix(codec_id: str) -> str:
     return CODEC_LIBS[codec_id][1] if codec_id else ""
 
 
-def compress(
-    codec_id: str, src: Path, dst: Path, progress: Callable[[int], None] | None = None
-) -> None:
-    """`progress(bytes of src read so far)` after every MiB."""
+def compress(codec_id: str, src: Path, dst: Path) -> None:
     with src.open("rb") as i, _lib(codec_id).open(dst, "wb") as o:
-        if progress is None:
-            shutil.copyfileobj(i, o)
-            return
-        done = 0
-        while chunk := i.read(2**20):
-            o.write(chunk)
-            done += len(chunk)
-            progress(done)
+        shutil.copyfileobj(i, o)
 
 
 def decompress(codec_id: str, src: Path, dst: Path) -> None:

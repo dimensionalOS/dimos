@@ -15,23 +15,13 @@
 # limitations under the License.
 
 import base64
-import contextlib
 import json
 import os
 import pickle
 import signal
 import sys
 import time
-from types import SimpleNamespace
 from typing import Any
-
-# No display (a headless robot computer, an SSH-only box, a boot service): no viewer window, and the cameras render
-# offscreen through EGL. Must be decided before mujoco is imported, which picks its GL backend then.
-HEADLESS = sys.platform.startswith("linux") and not (
-    os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")
-)
-if HEADLESS:
-    os.environ.setdefault("MUJOCO_GL", "egl")
 
 import mujoco
 from mujoco import viewer
@@ -47,29 +37,13 @@ from dimos.simulation.mujoco.constants import (
     VIDEO_HEIGHT,
     VIDEO_WIDTH,
 )
-from dimos.simulation.mujoco.depth_camera import (
-    depth_image_to_point_cloud,
-    voxel_down_sample,
-)
+from dimos.simulation.mujoco.depth_camera import depth_image_to_point_cloud, voxel_down_sample
 from dimos.simulation.mujoco.model import load_model, load_scene_xml
 from dimos.simulation.mujoco.person_on_track import PersonPositionController
 from dimos.simulation.mujoco.shared_memory import ShmReader
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
-
-
-class _NoViewer:
-    """Stands in for the passive viewer when there's no display: always running, nothing to draw."""
-
-    def __init__(self) -> None:
-        self.cam = SimpleNamespace()
-
-    def is_running(self) -> bool:
-        return True
-
-    def sync(self) -> None:
-        pass
 
 
 class MockController:
@@ -173,16 +147,7 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
         model, mujoco.mjtObj.mjOBJ_CAMERA, "lidar_right_camera"
     )
 
-    if HEADLESS:
-        logger.info(
-            "No display: running MuJoCo without its viewer window (cameras render with EGL)"
-        )
-    window = (
-        contextlib.nullcontext(_NoViewer())
-        if HEADLESS
-        else viewer.launch_passive(model, data, show_left_ui=False, show_right_ui=False)
-    )
-    with window as m_viewer:
+    with viewer.launch_passive(model, data, show_left_ui=False, show_right_ui=False) as m_viewer:
         camera_size = (VIDEO_WIDTH, VIDEO_HEIGHT)
 
         # Create renderers

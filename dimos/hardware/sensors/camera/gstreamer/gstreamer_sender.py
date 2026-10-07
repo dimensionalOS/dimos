@@ -20,9 +20,9 @@ import signal
 import sys
 import time
 
-# Add system path for gi module if needed: last, so the venv's packages (PIL, numpy) aren't shadowed by the system's
+# Add system path for gi module if needed
 if "/usr/lib/python3/dist-packages" not in sys.path:
-    sys.path.append("/usr/lib/python3/dist-packages")
+    sys.path.insert(0, "/usr/lib/python3/dist-packages")
 
 import gi  # type: ignore[import-not-found,import-untyped]
 

@@ -42,8 +42,7 @@ from dimos.cloud.cloud_request import CloudRequest, HttpCloudRequest
 from dimos.constants import DOWNLOADS_DIR, RECORDINGS_DIR
 from dimos.core.global_config import global_config
 
-# (phase, done_bytes, total_bytes): compress / hash / upload while uploading, every MiB or so
-Progress = Callable[[str, int, int], None]
+Progress = Callable[[str, int, int], None]  # (phase, done_bytes, total_bytes)
 
 
 class DataApi:
@@ -74,10 +73,8 @@ class DataApi:
     def quota(self) -> dict[str, Any]:
         return self.t.request("GET", f"{self.PREFIX}/quota")
 
-    def put_part(
-        self, url: str, chunk: bytes, progress: Callable[[int], None] | None = None
-    ) -> None:
-        self.t.put(url, chunk, progress)
+    def put_part(self, url: str, chunk: bytes) -> None:
+        self.t.put(url, chunk)
 
     def fetch(
         self, url: str, dst: Path, progress: Callable[[int, int], None] | None = None
@@ -130,21 +127,17 @@ class MultipartBackend:
             # stamped, or pull would decompress bytes we never compressed.
             compress = bool(self.codec_id) and path.suffix != codecs.suffix(self.codec_id)
             if compress:
-                raw_size = path.stat().st_size
-                _require_space(Path(tmp), raw_size)
+                _require_space(Path(tmp), path.stat().st_size)
                 artifact = Path(tmp) / (path.name + codecs.suffix(self.codec_id))
-                tick("compress", 0, raw_size)
-                codecs.compress(
-                    self.codec_id, path, artifact, lambda d: tick("compress", d, raw_size)
-                )
+                tick("compress", 0, 0)
+                codecs.compress(self.codec_id, path, artifact)
             else:
                 artifact = path
             size = artifact.stat().st_size
-            tick("hash", 0, size)
             spec = dict(
                 filename=artifact.name,
                 size=size,
-                sha256=_sha256(artifact, lambda d: tick("hash", d, size)),
+                sha256=_sha256(artifact),
                 kind=kind,
                 content_encoding=self.codec_id if compress else None,
                 robot_id=robot_id,
@@ -166,14 +159,9 @@ class MultipartBackend:
                         continue
                     f.seek((n - 1) * ps)
                     chunk = f.read(ps)
-
-                    # within a part too: one part can be the whole file (server default 64 MB)
-                    def sent(d: int, base: int = done) -> None:
-                        tick("upload", base + d, size)
-
                     try:
                         self._retry(
-                            functools.partial(self.api.put_part, urls[n], chunk, sent), f"part {n}"
+                            functools.partial(self.api.put_part, urls[n], chunk), f"part {n}"
                         )
                     except RuntimeError as e:
                         if "403" not in str(e):
@@ -187,7 +175,7 @@ class MultipartBackend:
                             return {**fresh, "skipped": True}
                         urls = {p["part_number"]: p["url"] for p in fresh["part_urls"]}
                         self._retry(
-                            functools.partial(self.api.put_part, urls[n], chunk, sent), f"part {n}"
+                            functools.partial(self.api.put_part, urls[n], chunk), f"part {n}"
                         )
                     done += len(chunk)
                     tick("upload", done, size)
@@ -422,15 +410,12 @@ def _blueprint(path: Path) -> str | None:
     return m.group(1) if m else None
 
 
-def _sha256(path: Path, progress: Callable[[int], None] | None = None) -> str:
-    """`progress(bytes hashed so far)` after every MiB."""
+def _sha256(path: Path) -> str:
     with path.open("rb") as f:
-        if progress is None and sys.version_info >= (3, 11):
+        if sys.version_info >= (3, 11):
             return hashlib.file_digest(f, "sha256").hexdigest()
-        digest, done = hashlib.sha256(), 0
+        # TODO(PY311): drop this fallback for hashlib.file_digest.
+        digest = hashlib.sha256()
         while chunk := f.read(2**20):
             digest.update(chunk)
-            done += len(chunk)
-            if progress:
-                progress(done)
         return digest.hexdigest()
