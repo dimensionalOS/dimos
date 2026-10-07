@@ -740,7 +740,7 @@ def test_robots(client: TestClient, checkout: Path) -> None:
     answer = client.get("/dimos/robots").json()
     basic = answer["robots"]["go2"]["blueprints"]["unitree-go2-basic"]
     assert basic["robot"] == "go2" and basic["registered"] is True
-    assert answer["robots"]["go2"]["recommended"][0] == "unitree-go2-basic"
+    assert answer["robots"]["go2"]["recommended"][0] == "unitree-go2"
     pick, ip, recording = basic["recommended_config"]
     assert pick["kind"] == "pick" and [c["label"] for c in pick["choices"]] == [
         "Robot",
