@@ -174,6 +174,8 @@ def _pid() -> int | None:
 
 def start(run: Run = _systemctl, spawn: Callable[..., Any] = subprocess.Popen) -> str:
     if installed():
+        if (pid := _pid()) is not None:
+            return f"a detached Host runs (pid {pid}); `dimos host stop` it before the unit"
         result = run(["start", UNIT_NAME])
         return f"started {UNIT_NAME}" if result.returncode == 0 else result.stderr.strip()
     if (pid := _pid()) is not None:
@@ -192,7 +194,7 @@ def start(run: Run = _systemctl, spawn: Callable[..., Any] = subprocess.Popen) -
 
 
 def stop(run: Run = _systemctl, timeout: float = STOP_TIMEOUT) -> str:
-    if installed():
+    if installed() and _pid() is None:
         result = run(["stop", UNIT_NAME])
         return f"stopped {UNIT_NAME}" if result.returncode == 0 else result.stderr.strip()
     pid = _pid()

@@ -20,7 +20,7 @@ reaches a router whose zid some live Host descriptor names as its own.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Collection, Iterable, Sequence
 from dataclasses import dataclass
 import json
 import threading
@@ -52,9 +52,9 @@ def scouted_endpoints(
     scout_addr: str = DIMOS_SCOUT_ADDR,
     interface: str = "auto",
     timeout: float = DEFAULT_TIMEOUT,
-    exclude_zid: str = "",
+    exclude: Collection[str] = (),
 ) -> list[str]:
-    """Locators of the routers answering on the dimos scouting group, but ``exclude_zid``."""
+    """Locators of the routers answering on the dimos scouting group, but those in ``exclude``."""
     import zenoh
 
     config = zenoh.Config()
@@ -64,7 +64,7 @@ def scouted_endpoints(
     lock = threading.Lock()
 
     def on_hello(hello: zenoh.Hello) -> None:
-        if str(hello.zid) == exclude_zid:
+        if str(hello.zid) in exclude:
             return
         with lock:
             hellos.extend(str(locator) for locator in hello.locators)
@@ -91,7 +91,7 @@ def candidates(
     scout_addr: str = DIMOS_SCOUT_ADDR,
     scout_interface: str = "",
     timeout: float = DEFAULT_TIMEOUT,
-    exclude_zid: str = "",
+    exclude: Collection[str] = (),
 ) -> list[str]:
     """Seeds as given, then discovered endpoints off loopback, without duplicates.
 
@@ -101,7 +101,7 @@ def candidates(
     found: list[str] = []
     sources: list[Callable[[], list[str]]] = []
     if scout:
-        sources.append(lambda: scouted_endpoints(scout_addr, scout_interface, timeout, exclude_zid))
+        sources.append(lambda: scouted_endpoints(scout_addr, scout_interface, timeout, exclude))
     if go2:
         sources.append(lambda: go2_endpoints(timeout))
     for source in sources:

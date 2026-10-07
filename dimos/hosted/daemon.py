@@ -90,20 +90,29 @@ def split_csv(value: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
-def free_listen(endpoint: str, tries: int = 10) -> str:
-    """``endpoint`` if its port is free, else the same endpoint on the next free port up."""
+# Fallback ports start past 7448 (raw-robot-bridge) and 7449 (the scout group).
+FALLBACK_PORT = 7450
+
+
+def port_free(host: str, port: int) -> bool:
+    bind_host = host.strip("[]") or "0.0.0.0"
+    with socket.socket(socket.AF_INET6 if ":" in bind_host else socket.AF_INET) as probe:
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            probe.bind((bind_host, port))
+        except OSError:
+            return False
+    return True
+
+
+def free_listen(endpoint: str, fallback: int = FALLBACK_PORT, tries: int = 10) -> str:
+    """``endpoint`` if its port is free, else the same host on the first free fallback port."""
     protocol, _, address = endpoint.partition("/")
     host, _, port = address.rpartition(":")
-    bind_host = host.strip("[]") or "0.0.0.0"
-    for candidate in range(int(port), int(port) + tries):
-        with socket.socket(socket.AF_INET6 if ":" in bind_host else socket.AF_INET) as probe:
-            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            try:
-                probe.bind((bind_host, candidate))
-            except OSError:
-                continue
-        return f"{protocol}/{host}:{candidate}"
-    raise OSError(f"No free port in {port}..{int(port) + tries - 1} for {endpoint}")
+    for candidate in (int(port), *range(fallback, fallback + tries)):
+        if port_free(host, candidate):
+            return f"{protocol}/{host}:{candidate}"
+    raise OSError(f"No free port for {endpoint} in {port} or {fallback}..{fallback + tries - 1}")
 
 
 def code_revision() -> str:

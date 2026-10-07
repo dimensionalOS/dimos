@@ -237,16 +237,18 @@ def doctor(fix: bool = typer.Option(False, "--fix", help="Fix failing checks tha
 
     from dimos.hosted.doctor import run as run_doctors
 
-    ok_mark, bad_mark = ("\u2713", "\u2717") if sys.stdout.isatty() else ("ok", "FAIL")
+    tty = sys.stdout.isatty()
+    marks = {"ok": "\u2713", "fail": "\u2717", "warn": "!"} if tty else {}
     results = run_doctors(fix=fix)
     for result in results:
-        line = f"{ok_mark if result.ok else bad_mark}  {result.description}"
+        state = "ok" if result.ok else "warn" if result.warning else "fail"
+        line = f"{marks.get(state, state.upper()):<4}  {result.description}"
         if result.fix_note:
             line += f"  [{result.fix_note}]"
         if result.error and not result.ok:
             line += f"  ({result.error})"
         typer.echo(line)
-    if not all(result.ok for result in results):
+    if not all(result.ok or result.warning for result in results):
         raise typer.Exit(1)
 
 
@@ -263,14 +265,14 @@ def _autodiscover(
     warned: set[str] = set()
     while not (stop.is_set() or relink.is_set()):
         try:
+            linked = [str(zid) for zid in rpc.session.info.routers_zid()]
             probes = probe_all(
                 candidates(
                     scout_addr=daemon.scout_addr,
                     scout_interface=daemon.scout_interface,
-                    exclude_zid=daemon.router_zid,
+                    exclude={daemon.router_zid, *linked},
                 )
             )
-            linked = [str(zid) for zid in rpc.session.info.routers_zid()]
             new = endpoints_to_link(
                 probes, own_zid=daemon.router_zid, linked=linked, connect=daemon.connect
             )

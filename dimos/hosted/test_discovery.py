@@ -80,6 +80,5 @@ def test_free_listen_falls_back_past_a_taken_port() -> None:
         holder.bind(("127.0.0.1", 0))
         holder.listen()
         port = holder.getsockname()[1]
-        endpoint = free_listen(f"tcp/127.0.0.1:{port}")
-    assert endpoint != f"tcp/127.0.0.1:{port}"
-    assert int(endpoint.rpartition(":")[2]) > port
+        endpoint = free_listen(f"tcp/127.0.0.1:{port}", fallback=port)
+    assert endpoint == f"tcp/127.0.0.1:{port + 1}"

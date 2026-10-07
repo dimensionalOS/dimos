@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Host health checks. A doctor is a module in doctors/ with ``description``, ``check()`` and
-optionally ``fix()``."""
+"""Host health checks. A doctor is a module in doctors/ with ``description``, ``check()``,
+optionally ``fix()``, and ``warning = True`` when failing should not fail the run."""
 
 from __future__ import annotations
 
@@ -31,9 +31,12 @@ class Result:
     error: str | None = None
     # None: not attempted; otherwise what the fix did.
     fix_note: str | None = None
+    # A failing warning is reported but does not fail the doctor run.
+    warning: bool = False
 
 
 def doctors() -> list[ModuleType]:
+    """By file name, so service_installed fixes before service_running starts anything."""
     return load("dimos.hosted.doctors")
 
 
@@ -60,5 +63,7 @@ def run(fix: bool = False, modules: Iterable[ModuleType] | None = None) -> list[
                 except Exception as exc:
                     note = f"fix failed: {type(exc).__name__}: {exc}"
                 ok, error = _check(doctor)
-        results.append(Result(doctor.description, ok, error, note))
+        results.append(
+            Result(doctor.description, ok, error, note, bool(getattr(doctor, "warning", False)))
+        )
     return results

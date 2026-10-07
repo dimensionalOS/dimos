@@ -86,3 +86,15 @@ def test_without_unit_start_spawns_once_and_stop_signals(monkeypatch: pytest.Mon
     assert service.status() == "running (pid 12345)"
     assert service.stop() == "stopped (pid 12345)"
     assert service.status() == "not running"
+
+
+def test_unit_start_refuses_while_a_detached_host_runs(monkeypatch: pytest.MonkeyPatch) -> None:
+    service.unit_path().parent.mkdir(parents=True)
+    service.unit_path().write_text("x")
+    service.pid_file().write_text("4242")
+    monkeypatch.setattr(service, "_alive", lambda pid: pid == 4242)
+
+    def run(args: list[str]) -> subprocess.CompletedProcess[str]:
+        raise AssertionError("must not start the unit")
+
+    assert "dimos host stop" in service.start(run=run)

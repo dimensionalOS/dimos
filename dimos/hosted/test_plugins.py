@@ -82,5 +82,12 @@ def test_doctor_runner_without_fix_only_checks() -> None:
 
 def test_doctors_are_discovered_from_the_package() -> None:
     names = {m.__name__.rsplit(".", 1)[1] for m in doctor.doctors()}
-    assert names >= {"identity", "config", "revision", "running", "systemd"}
+    assert names >= {"identity", "config", "revision", "service_running", "service_installed"}
     assert all(isinstance(m.description, str) and callable(m.check) for m in doctor.doctors())
+
+
+def test_a_failing_warning_is_reported_not_fatal() -> None:
+    doctor = _doctor(lambda: False)
+    doctor.warning = True
+    (result,) = run(modules=[doctor])  # type: ignore[list-item]
+    assert not result.ok and result.warning
