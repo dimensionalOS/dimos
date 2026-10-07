@@ -250,13 +250,31 @@ function ratesSection() {
         null,
         true,
         ["Topic rates", h("span", { class: "count", id: "ratesCount" })],
-        // about six rows tall; the rest scroll
+        // six and a half rows tall; the rest scroll
         h("div", { class: "rates-scroll" }, h("table", {}, h("tbody", { id: "ratesBody" }))),
     )
     box.classList.add("rates")
     box.id = "rates"
     queueMicrotask(fillRates)
     return box
+}
+
+/** the hovered Topic rates row's type, at once beside its name (the title tooltip is slow) */
+function showTypeTip(cell, type) {
+    let tip = document.getElementById("typeTip")
+    if (!tip) {
+        tip = h("div", { id: "typeTip", class: "type-tip" })
+        document.body.append(tip)
+    }
+    const box = cell.getBoundingClientRect()
+    tip.textContent = type
+    tip.style.left = `${box.left}px`
+    tip.style.top = `${box.bottom + 4}px`
+    tip.hidden = false
+}
+function hideTypeTip() {
+    const tip = document.getElementById("typeTip")
+    if (tip) tip.hidden = true
 }
 
 /** how hot `value` is next to `max` (log scale) as a background: blue when cool, through red, to pink at the top */
@@ -323,6 +341,8 @@ function fillRates() {
                         class: "topic",
                         title: `${row.topic}\n${type || "unknown type"}\n${heardText(row)}`,
                         "--type": `var(--bv-${typeColor(type)})`,
+                        onmouseenter: (event) => showTypeTip(event.currentTarget, type || "unknown type"),
+                        onmouseleave: hideTypeTip,
                     },
                     row.topic,
                 ),

@@ -504,14 +504,34 @@ body.framed:not(.chrome) #bar {
 }
 /* six rows (19px each plus 2px between) show; the rest scroll */
 .rates-scroll {
-    max-height: calc(6 * 21px + 2px);
+    /* six and a half rows: the half row says it scrolls, so no scrollbar */
+    max-height: calc(6.5 * 21px + 2px);
     overflow-y: auto;
+    scrollbar-width: none;
+}
+.rates-scroll::-webkit-scrollbar {
+    display: none;
 }
 .rates .topic {
     color: var(--type, var(--fg));
     max-width: 150px;
     overflow: hidden;
     text-overflow: ellipsis;
+}
+/* the hovered topic's type (app.js showTypeTip) */
+.type-tip {
+    position: fixed;
+    z-index: 50;
+    padding: 3px 7px;
+    font: 11.5px var(--mono);
+    color: var(--fg);
+    background: var(--raised);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    pointer-events: none;
+}
+.type-tip[hidden] {
+    display: none;
 }
 /* Hz and throughput: the text stays the page's; its background says how hot (app.js heat()) */
 .rates .num {
