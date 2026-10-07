@@ -14,7 +14,9 @@
 
 from __future__ import annotations
 
+from contextlib import ExitStack
 import importlib.util
+import json
 import os
 from pathlib import Path
 import select
@@ -27,6 +29,7 @@ import uuid
 
 import numpy as np
 import pytest
+from reactivex.testing import TestScheduler
 
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.global_config import global_config
@@ -40,8 +43,15 @@ from dimos.experimental.memory.rust_recorder import (
     RustRecordingStoreConfig,
     RustSqliteStoreConfig,
 )
+from dimos.imitation.collection.episode import EpisodeStatus
+from dimos.imitation.collection.profile import CollectionProfile
+from dimos.imitation.collection.recorder import collection_recorder
+from dimos.imitation.collection.recording import RecordingSchema
+from dimos.imitation.dataprep.core import EpisodeExtractor, SyncConfig, extract_episodes
+from dimos.imitation.dataprep.schema import FeatureSpec
 from dimos.memory.codecs.lcm import LcmCodec
 from dimos.memory.codecs.lz4 import Lz4Codec
+from dimos.memory.replay_module import ReplayModule
 from dimos.memory.store.mcap import McapStore
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.type.observation import Observation
@@ -49,9 +59,11 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.Imu import Imu
+from dimos.msgs.std_msgs.String import String
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic
 from dimos.protocol.service.zenohservice import ZenohConfig, ZenohSessionPool
+from dimos.teleop.webxr.module import WebXRTeleopModule
 
 pytestmark = pytest.mark.self_hosted
 
@@ -66,6 +78,7 @@ _MCAP_AVAILABLE = importlib.util.find_spec("mcap") is not None
 
 
 class InteropRustRecorder(RustRecorder):
+    status: In[String]
     color_image: In[Image]
     imu: In[Imu]
 
@@ -145,6 +158,55 @@ def test_rust_artifact_is_readable_by_python_memory2(
     store_kind: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _capture_native_artifact(tmp_path, rust_recorder_executable, store_kind, monkeypatch)
+
+
+@pytest.mark.parametrize("store_kind", ["sqlite", "mcap"])
+def test_native_collection_directory_preserves_schema_and_messages(
+    tmp_path,
+    rust_recorder_executable,
+    store_kind,
+    monkeypatch,
+):
+    camera = FeatureSpec(
+        stream="color_image",
+        message_type=Image,
+        field="data",
+        dtype="video",
+        shape=(16, 16, 3),
+        names=["height", "width", "channels"],
+    )
+    state = FeatureSpec(
+        stream="imu",
+        message_type=Imu,
+        field="angular_velocity",
+        dtype="float32",
+        shape=(3,),
+        names=["x", "y", "z"],
+    )
+    profile = CollectionProfile(
+        name="native-test",
+        robot_type="test",
+        observations={"image": camera, "state": state},
+        actions={"action": state},
+        sync=SyncConfig(anchor="image", rate_hz=30, tolerance_ms=20),
+    )
+    artifact = _capture_native_artifact(
+        tmp_path, rust_recorder_executable, store_kind, monkeypatch, profile
+    )
+    schema = RecordingSchema.read(artifact.parent)
+    assert schema.payload == artifact.name
+    assert schema.observation["state"].stream == "imu"
+    assert schema.name == "native-test"
+
+
+def _capture_native_artifact(
+    tmp_path: Path,
+    rust_recorder_executable: Path,
+    store_kind: str,
+    monkeypatch: pytest.MonkeyPatch,
+    profile: CollectionProfile | None = None,
+) -> Path:
     suffix = ".db" if store_kind == "sqlite" else ".mcap"
     artifact = tmp_path / f"recording{suffix}"
     store: RustRecordingStoreConfig
@@ -162,7 +224,9 @@ def test_rust_artifact_is_readable_by_python_memory2(
         store=store,
         record_tf=False,
         encoding_threads=2,
-        stream_codecs={"imu": "lz4+lcm"},
+        stream_codecs={"imu": "lz4+lcm", "status": "json"},
+        stream_timestamp_fields={"status": "ts"},
+        stream_json_schemas={"status": EpisodeStatus.json_schema()},
         session=ZenohConfig(
             mode="peer",
             connect=[],
@@ -172,6 +236,24 @@ def test_rust_artifact_is_readable_by_python_memory2(
             connect_timeout=0,
         ),
     )
+    if profile is not None:
+        kwargs = {
+            "source_dir": None,
+            "build_command": None,
+            "executable": str(rust_recorder_executable),
+            "encoding_threads": 2,
+            "stream_codecs": {"imu": "lz4+lcm", "status": "json"},
+            "stream_timestamp_fields": {"status": "ts"},
+            "stream_json_schemas": {"status": EpisodeStatus.json_schema()},
+            "session": recorder.config.session,
+        }
+        recorder.stop()
+        atom = collection_recorder(
+            profile=profile, recording=tmp_path / "session", format=store_kind
+        ).active_blueprints[0]
+        recorder = atom.module(**atom.kwargs, **kwargs)
+        artifact = Path(recorder.config.store.path)
+        recorder.status.transport = FakeTransport("dimos/collection_status")
     session_pool = ZenohSessionPool()
     channel_suffix = uuid.uuid4().hex[:8]
     publisher: ZenohTransport[Imu] = ZenohTransport(
@@ -192,6 +274,16 @@ def test_rust_artifact_is_readable_by_python_memory2(
         gossip=False,
         connect_timeout=5,
     )
+    status_publisher: ZenohTransport[String] = ZenohTransport(
+        ZenohTopic(f"dimos/rr_status_{channel_suffix}", String),
+        session_pool=session_pool,
+        mode="client",
+        connect=[endpoint],
+        multicast=False,
+        gossip=False,
+        connect_timeout=5,
+    )
+    recorder.status.transport = FakeTransport(status_publisher.channel)
     imu_topic = publisher.channel
     image_topic = image_publisher.channel
     recorder.imu.transport = FakeTransport(imu_topic)  # type: ignore[assignment]
@@ -199,7 +291,7 @@ def test_rust_artifact_is_readable_by_python_memory2(
     specs = recorder._stream_specs()
     recorder._prepare_store(specs)
     recorder.config.streams = specs
-    launch = recorder._stdin_blob({"imu": imu_topic, "color_image": image_topic})
+    launch = recorder._stdin_blob(recorder._collect_topics())
 
     env = {
         **os.environ,
@@ -231,6 +323,21 @@ def test_rust_artifact_is_readable_by_python_memory2(
             frame_id="camera",
             ts=12.75,
         )
+        for ts, event, state in [(12.0, "start", "recording"), (13.0, "save", "idle")]:
+            status_publisher.broadcast(
+                None,
+                String(
+                    EpisodeStatus(
+                        ts=ts,
+                        state=state,
+                        episodes_saved=int(event == "save"),
+                        episodes_discarded=0,
+                        last_event=event,
+                        task_label="拿起积木",
+                    ).to_json()
+                ),
+            )
+            _wait_for_log(process, "memory recorder batch written")
         publisher.broadcast(None, expected)
         image_publisher.broadcast(None, expected_image)
         _wait_for_log(process, "memory recorder batch written")
@@ -238,6 +345,7 @@ def test_rust_artifact_is_readable_by_python_memory2(
         process.send_signal(signal.SIGTERM)
         assert process.wait(timeout=10.0) == 0
     finally:
+        status_publisher.stop()
         publisher.stop()
         image_publisher.stop()
         session_pool.close_all()
@@ -254,6 +362,11 @@ def test_rust_artifact_is_readable_by_python_memory2(
             codecs={"imu": Lz4Codec(LcmCodec(Imu))},
         )
     with memory:
+        episodes = extract_episodes(memory, EpisodeExtractor())
+        assert len(episodes) == 1
+        assert episodes[0].start_ts == 12.0
+        assert episodes[0].end_ts == 13.0
+        assert episodes[0].task_label == "拿起积木"
         observation = cast("Observation[Imu]", memory.stream("imu").first())
         assert observation.ts == 12.5
         assert observation.data.lcm_encode() == expected.lcm_encode()
@@ -267,6 +380,8 @@ def test_rust_artifact_is_readable_by_python_memory2(
             np.mean(np.abs(decoded_image.data.astype(float) - expected_image.data.astype(float)))
             < 5
         )
+
+    return artifact
 
 
 @pytest.mark.parametrize(
@@ -420,3 +535,36 @@ def test_tf_records_over_zenoh_and_replays_through_python(
             "base_link",
             "camera",
         ]
+
+
+@pytest.mark.parametrize("store_kind", ["sqlite", "mcap"])
+def test_native_json_events_replay_to_the_live_quest_hud(
+    tmp_path, rust_recorder_executable, store_kind, monkeypatch, mocker
+):
+    artifact = _capture_native_artifact(tmp_path, rust_recorder_executable, store_kind, monkeypatch)
+    received = []
+    scheduler = TestScheduler()
+    # Replay intentionally skips late subscribers. Keep its clock and scheduler
+    # together so host setup latency cannot skip the first status at 100x speed.
+    clock = mocker.patch("dimos.memory.replay.time")
+    clock.time.side_effect = lambda: scheduler.clock
+    mocker.patch("dimos.memory.replay.TimeoutScheduler", return_value=scheduler)
+    with ExitStack() as cleanup:
+        hud = WebXRTeleopModule()
+        cleanup.callback(hud.stop)
+        replay = ReplayModule(dataset=str(artifact), topics="status", speed=100.0)
+        cleanup.callback(replay.stop)
+
+        def broadcast(text):
+            received.append(json.loads(text))
+
+        mocker.patch.object(hud, "_broadcast_text", side_effect=broadcast)
+        subscription = replay.outputs["status"].subscribe(hud._on_episode_status)
+        cleanup.callback(subscription)
+        replay.start()
+        scheduler.advance_to(1.0)
+        assert [(p["ts"], p["last_event"]) for p in received] == [(12.0, "start"), (13.0, "save")]
+        assert received[-1]["type"] == "episode_status"
+        assert received[-1]["episodes_saved"] == 1
+        assert received[-1]["task_label"] == "拿起积木"
+        assert received[-1]["elapsed_s"] == 0.0
