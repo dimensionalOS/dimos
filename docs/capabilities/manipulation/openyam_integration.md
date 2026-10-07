@@ -194,10 +194,16 @@ dimos run dual-openyam-grasp-agent --left-can-port follower_l --right-can-port f
 dimos humancli
 ```
 
-Then talk to it: "scan for a soup can, a mustard bottle and a banana", "pick up
-the soup can with the right hand", "put it in the bin", "right arm go init".
-The agent passes the arm as `planning_group` on every motion skill and asks
-once when the arm is not stated.
+Then talk to it: "scan for a soup can, a mustard bottle and a banana", then
+"pick up the soup can with the right hand and put it in the bin". The agent
+calls `stage_pick_and_place`, which plans every leg of the job from the
+predicted end of the one before (approach, descend, grasp, lift, carry, lower,
+release, retreat, return home) without moving. Viser plays the whole motion as
+a ghost and Rerun draws the full tool path. The agent reports the legs, the
+seconds of motion and the grasp rank, then waits. Say "proceed" and it calls
+`proceed`, which runs the legs in order and stops at the first that fails; say
+"discard" and nothing moves. The agent passes the arm as `planning_group` on
+every motion skill and asks once when the arm is not stated.
 
 
 The recording lands under `recordings/<run-id>/`. `applied_joint_position_command`

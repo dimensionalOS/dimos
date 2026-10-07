@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Literal
 
 from pydantic import Field
@@ -35,12 +36,13 @@ from dimos.manipulation.grasp_verification import (
 )
 from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec
 from dimos.manipulation.manipulation_spec import ExecutionResult, ManipulationSpec, PlanResult
-from dimos.manipulation.planning.spec.models import PlanningGroupID
+from dimos.manipulation.planning.spec.models import GeneratedPlan, PlanningGroupID
 from dimos.msgs.geometry_msgs.PoseArray import PoseArray
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Header import Header
 from dimos.perception.experimental.object_scene_registration_spec import ObjectSceneRegistrationSpec
 
@@ -57,6 +59,41 @@ class PickAndPlaceModuleConfig(ModuleConfig):
     max_grasp_attempts: int = Field(default=5, gt=0)
     yaw_policy: Literal["generated", "preserve_current"] = "generated"
     grasp_verification: GraspVerificationConfig = Field(default_factory=GraspVerificationConfig)
+
+
+@dataclass
+class _StagedLeg:
+    """One step of a staged job: a planned motion, or a gripper action."""
+
+    label: str
+    plan: GeneratedPlan | None = None
+    gripper: Literal["open", "close", "release"] | None = None
+
+
+@dataclass
+class _StagedProgram:
+    object_id: str
+    planning_group: PlanningGroupID
+    grasp: PoseStamped
+    legs: list[_StagedLeg]
+    rank: int
+    score: float
+    candidates: int
+
+    @property
+    def motion_seconds(self) -> float:
+        return sum(leg.plan.trajectory.duration for leg in self.legs if leg.plan is not None)
+
+
+class _UnplannableLegError(Exception):
+    """A leg of a staged job could not be planned."""
+
+
+def _merge_joint_state(start: JointState, end: JointState) -> JointState:
+    """The full model state after a plan: *start* with the planned joints at *end*."""
+    positions = dict(zip(start.name, start.position, strict=True))
+    positions.update(zip(end.name, end.position, strict=True))
+    return JointState(name=list(positions), position=list(positions.values()))
 
 
 def _status(result: PlanResult | ExecutionResult) -> str:
@@ -95,6 +132,7 @@ class PickAndPlaceModule(Module):
         self._selected_object_id: str | None = None
         self._selected_grasp: PoseStamped | None = None
         self._holding_object = False
+        self._staged: _StagedProgram | None = None
 
     @skill
     def scan_objects(self, prompts: list[str]) -> SkillResult:
@@ -144,6 +182,7 @@ class PickAndPlaceModule(Module):
                 f"Still holding object {self._selected_object_id}; "
                 f"did not start a pick of object {object_id}. Use place_at to put it down first."
             )
+        self._staged = None
         self._clear_selection()
         if object_id not in self._objects:
             scanned = ", ".join(self._objects) or "none"
@@ -221,6 +260,218 @@ class PickAndPlaceModule(Module):
             f"for object {object_id}; last planner result {last_plan}."
         )
 
+    @skill
+    def stage_pick_and_place(
+        self,
+        object_id: str,
+        x: float,
+        y: float,
+        z: float,
+        planning_group: PlanningGroupID | None = None,
+    ) -> SkillResult:
+        """Plan a whole pick and place without moving: approach, grasp, lift,
+        carry, place, retreat and return home, each leg from the predicted end
+        of the one before. The viewer shows the full motion; nothing runs
+        until proceed is called.
+
+        Args:
+            object_id: Exact object ID returned by the latest scan_objects call.
+            x: Planning-frame X of the place pose in meters.
+            y: Planning-frame Y of the place pose in meters.
+            z: Planning-frame Z of the place pose in meters.
+            planning_group: Gripper-capable pose group; omitted only when unambiguous.
+        """
+        self._staged = None
+        if self._holding_object:
+            return SkillResult.ok(
+                f"Still holding object {self._selected_object_id}; put it down before staging "
+                f"a pick of object {object_id}."
+            )
+        if object_id not in self._objects:
+            scanned = ", ".join(self._objects) or "none"
+            return SkillResult.ok(
+                f"No object with id {object_id} in the latest scan. Scanned ids: {scanned}. "
+                "Use scan_objects to refresh the list."
+            )
+        pointcloud = self._scene.get_object_pointcloud_by_object_id(object_id)
+        if pointcloud is None:
+            return SkillResult.ok(
+                f"Object {object_id} has no point cloud in the latest scan. Use scan_objects again."
+            )
+        candidates = self._grasp_generator.propose_grasps(pointcloud)
+        self._grasp_candidates = candidates
+        self._manipulation.show_grasp_proposals(candidates)
+        self.grasp_candidates.publish(
+            PoseArray(
+                Header(candidates.header.timestamp, candidates.header.frame_id),
+                [candidate.pose for candidate in candidates.candidates],
+            )
+        )
+        if candidates.header.frame_id != self.config.planning_frame:
+            raise RuntimeError(
+                f"Grasp candidates are in frame {candidates.header.frame_id!r}; "
+                f"the planning frame is {self.config.planning_frame!r}"
+            )
+        if not candidates.candidates:
+            return SkillResult.ok(f"Generated 0 grasp candidates for object {object_id}.")
+        group = self._gripper_group(planning_group)
+        start = self._manipulation.get_current_joint_state()
+        if start is None:
+            return SkillResult.ok("No joint state yet; nothing was staged.")
+        place = Vector3(x, y, z)
+        last_failure = ""
+        for rank, candidate in enumerate(candidates.candidates[: self.config.max_grasp_attempts]):
+            grasp = self._apply_yaw_policy(
+                PoseStamped(
+                    ts=candidates.header.timestamp,
+                    frame_id=candidates.header.frame_id,
+                    position=candidate.pose.position,
+                    orientation=candidate.pose.orientation,
+                ),
+                group,
+            )
+            try:
+                legs = self._plan_program(start, group, grasp, place)
+            except _UnplannableLegError as exc:
+                last_failure = str(exc)
+                continue
+            program = _StagedProgram(
+                object_id=object_id,
+                planning_group=group,
+                grasp=grasp,
+                legs=legs,
+                rank=rank,
+                score=candidate.score,
+                candidates=len(candidates.candidates),
+            )
+            self.grasp_target.publish(grasp)
+            self._manipulation.preview_plans([leg.plan for leg in legs if leg.plan is not None])
+            self._staged = program
+            return SkillResult.ok(
+                f"Staged a pick of object {object_id} with {group} and a place at "
+                f"({x:.2f}, {y:.2f}, {z:.2f}): {len(legs)} legs, {program.motion_seconds:.1f} s "
+                f"of motion, grasp candidate {rank} of {program.candidates} "
+                f"(score {candidate.score:.2f}). The viewer is playing the full motion. "
+                "Nothing has moved; call proceed to run it or discard_staged to drop it.",
+                object_id=object_id,
+                planning_group=group,
+                legs=[leg.label for leg in legs],
+                motion_seconds=round(program.motion_seconds, 1),
+                rank=rank,
+            )
+        attempted = min(len(candidates.candidates), self.config.max_grasp_attempts)
+        return SkillResult.ok(
+            f"Could not stage a pick of object {object_id}: none of the {attempted} grasp "
+            f"candidate(s) tried plans all the way through; last failure: {last_failure}."
+        )
+
+    def _plan_program(
+        self,
+        start: JointState,
+        group: PlanningGroupID,
+        grasp: PoseStamped,
+        place_position: Vector3,
+    ) -> list[_StagedLeg]:
+        """Plan every leg of a pick and place from *start*, chaining predicted states."""
+        pregrasp = self._offset_pose(grasp, self._pregrasp_offset())
+        place = PoseStamped(
+            frame_id=self.config.planning_frame,
+            position=place_position,
+            orientation=grasp.orientation,
+        )
+        preplace = self._offset_pose(place, self._pregrasp_offset())
+        legs: list[_StagedLeg] = [_StagedLeg("open the gripper", gripper="open")]
+        state = start
+
+        def planned(label: str, result: PlanResult) -> None:
+            nonlocal state
+            if result.plan is None or not result.plan.path:
+                raise _UnplannableLegError(f"{label}: {_status(result)}")
+            legs.append(_StagedLeg(label, plan=result.plan))
+            state = _merge_joint_state(state, result.plan.path[-1])
+
+        def linear(label: str, a: PoseStamped, b: PoseStamped) -> None:
+            planned(
+                label,
+                self._manipulation.plan_linear(
+                    b.position.x - a.position.x,
+                    b.position.y - a.position.y,
+                    b.position.z - a.position.z,
+                    group,
+                    check_collision=False,
+                    start=state,
+                ),
+            )
+
+        planned(
+            "approach above the object",
+            self._manipulation.plan_to_poses({group: pregrasp}, start=state),
+        )
+        linear("descend to the grasp", pregrasp, grasp)
+        legs.append(_StagedLeg("close and verify the grasp", gripper="close"))
+        linear("lift", grasp, pregrasp)
+        planned(
+            "carry above the place",
+            self._manipulation.plan_to_poses({group: preplace}, start=state),
+        )
+        linear("lower to the place", preplace, place)
+        legs.append(_StagedLeg("release", gripper="release"))
+        linear("retreat", place, preplace)
+        group_state = self._manipulation.get_state().groups.get(group)
+        home = group_state.joint_presets.get("home") if group_state is not None else None
+        if home is not None:
+            planned("return home", self._manipulation.plan_to_joints({group: home}, start=state))
+        return legs
+
+    @skill(uses=[CAP_MOVEMENT])
+    def proceed(self) -> SkillResult:
+        """Run the staged pick and place leg by leg. Stops and reports at the
+        first leg that fails."""
+        program = self._staged
+        if program is None:
+            return SkillResult.ok("Nothing is staged. Use stage_pick_and_place first.")
+        self._staged = None
+        group = program.planning_group
+        for index, leg in enumerate(program.legs, 1):
+            if leg.gripper == "open":
+                if not_open := self._open_gripper(group, "before grasping"):
+                    return not_open
+            elif leg.gripper == "close":
+                if not_held := self._close_and_verify(group, program.object_id):
+                    return not_held
+                self._selected_object_id = program.object_id
+                self._selected_grasp = program.grasp
+                self._holding_object = True
+            elif leg.gripper == "release":
+                if not_open := self._open_gripper(group, "to release the object"):
+                    return SkillResult.ok(f"{not_open.message} The arm stayed at the place pose.")
+                self._holding_object = False
+                self._clear_selection()
+            elif leg.plan is not None:
+                execution = self._manipulation.execute_plan(leg.plan, blocking=True)
+                if not execution.succeeded:
+                    return self._stopped(
+                        f"Leg {index} of {len(program.legs)} ({leg.label}) of the staged "
+                        f"pick and place of object {program.object_id}",
+                        execution,
+                    )
+        return SkillResult.ok(
+            "Pick and place complete",
+            object_id=program.object_id,
+            legs=len(program.legs),
+            rank=program.rank,
+            score=program.score,
+        )
+
+    @skill
+    def discard_staged(self) -> SkillResult:
+        """Drop the staged pick and place without moving."""
+        if self._staged is None:
+            return SkillResult.ok("Nothing was staged.")
+        self._staged = None
+        self._manipulation.clear_planned_path()
+        return SkillResult.ok("Discarded the staged pick and place. Nothing moved.")
+
     @rpc
     def get_grasp_candidates(self) -> GraspCandidateArray:
         return self._grasp_candidates
@@ -246,6 +497,7 @@ class PickAndPlaceModule(Module):
             return SkillResult.ok(
                 f"Not holding any object; nothing was placed at {target}. Use pick_object first."
             )
+        self._staged = None
         group = self._gripper_group(planning_group)
         place = PoseStamped(
             frame_id=self.config.planning_frame,

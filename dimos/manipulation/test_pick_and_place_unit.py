@@ -477,3 +477,131 @@ def test_grasp_proposals_and_the_attempt_are_published_for_the_viewer(
     assert arrays[0].header.frame_id == "world"
     assert [target.frame_id for target in targets] == ["world"]
     assert targets[0].position.x == pytest.approx(0.1)
+
+
+def _fake_plan(label: str, seconds: float = 1.0) -> Any:
+    from dimos.manipulation.planning.spec.enums import PlanningStatus
+    from dimos.manipulation.planning.spec.models import GeneratedPlan
+    from dimos.msgs.sensor_msgs.JointState import JointState
+    from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+    from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
+
+    names = ["j1", "j2"]
+    end = JointState(name=names, position=[0.1, 0.2])
+    trajectory = JointTrajectory(
+        points=[
+            TrajectoryPoint(time_from_start=0.0, positions=[0.0, 0.0]),
+            TrajectoryPoint(time_from_start=seconds, positions=[0.1, 0.2]),
+        ],
+        joint_names=names,
+    )
+    return GeneratedPlan(
+        group_ids=("arm/tool",),
+        trajectory=trajectory,
+        path=[JointState(name=names, position=[0.0, 0.0]), end],
+        status=PlanningStatus.SUCCESS,
+        message=label,
+    )
+
+
+def _planned(label: str) -> PlanResult:
+    return PlanResult(PlanStatus.SUCCEEDED, label, _fake_plan(label))
+
+
+@pytest.fixture
+def staged(module: PickAndPlaceModule) -> PickAndPlaceModule:
+    from dimos.msgs.sensor_msgs.JointState import JointState
+
+    manipulation: Any = module._manipulation
+    manipulation.get_current_joint_state.return_value = JointState(
+        name=["j1", "j2"], position=[0.0, 0.0]
+    )
+    manipulation.plan_to_poses.side_effect = lambda targets, **kw: _planned("pose")
+    manipulation.plan_linear.side_effect = lambda *a, **kw: _planned("linear")
+    manipulation.plan_to_joints.side_effect = lambda targets, **kw: _planned("joints")
+    manipulation.get_state.return_value.groups["arm/tool"].joint_presets = {
+        "home": JointState(name=["j1", "j2"], position=[0.0, 0.0])
+    }
+    manipulation.execute_plan.return_value = COMPLETED
+    manipulation.preview_plans.return_value = ACCEPTED
+    return module
+
+
+def test_stage_plans_the_whole_job_from_predicted_states_without_moving(
+    staged: PickAndPlaceModule,
+) -> None:
+    manipulation: Any = staged._manipulation
+
+    result = staged.stage_pick_and_place("cup-1", 0.35, -0.02, 0.25)
+
+    assert result.message.startswith("Staged a pick of object cup-1")
+    assert result.metadata["legs"] == [
+        "open the gripper",
+        "approach above the object",
+        "descend to the grasp",
+        "close and verify the grasp",
+        "lift",
+        "carry above the place",
+        "lower to the place",
+        "release",
+        "retreat",
+        "return home",
+    ]
+    assert result.metadata["motion_seconds"] == pytest.approx(7.0)
+    # Every leg after the first planned from the predicted end of the one before.
+    starts = [call.kwargs["start"] for call in manipulation.plan_linear.call_args_list]
+    assert all(list(s.position) == [0.1, 0.2] for s in starts)
+    manipulation.preview_plans.assert_called_once()
+    assert len(manipulation.preview_plans.call_args.args[0]) == 7
+    manipulation.execute.assert_not_called()
+    manipulation.execute_plan.assert_not_called()
+    manipulation.set_gripper_position.assert_not_called()
+
+
+def test_proceed_runs_the_staged_legs_in_order_and_reports(staged: PickAndPlaceModule) -> None:
+    manipulation: Any = staged._manipulation
+    staged.stage_pick_and_place("cup-1", 0.35, -0.02, 0.25)
+
+    result = staged.proceed()
+
+    assert result.message == "Pick and place complete"
+    assert [c.args[0].message for c in manipulation.execute_plan.call_args_list] == [
+        "pose",
+        "linear",
+        "linear",
+        "pose",
+        "linear",
+        "linear",
+        "joints",
+    ]
+    # open before the grasp, close on it, open again to release
+    positions = [c.args[0] for c in manipulation.set_gripper_position.call_args_list]
+    assert positions[0] > 0.5 and positions[1] < 0.5 and positions[2] > 0.5
+    assert staged._holding_object is False
+    assert staged.proceed().message == "Nothing is staged. Use stage_pick_and_place first."
+
+
+def test_stage_moves_to_the_next_candidate_when_a_leg_cannot_be_planned(
+    staged: PickAndPlaceModule,
+) -> None:
+    manipulation: Any = staged._manipulation
+    staged._grasp_generator.propose_grasps.return_value = GraspCandidateArray(
+        Header(1.0, "world"), [_candidate(0.1, 0.9), _candidate(0.2, 0.8)]
+    )
+    calls = iter([NO_PATH, _planned("pose"), _planned("pose")])
+    manipulation.plan_to_poses.side_effect = lambda targets, **kw: next(calls)
+
+    result = staged.stage_pick_and_place("cup-1", 0.35, -0.02, 0.25)
+
+    assert result.metadata["rank"] == 1
+    assert staged._staged is not None and staged._staged.rank == 1
+
+
+def test_discard_drops_the_staged_job_and_clears_the_preview(staged: PickAndPlaceModule) -> None:
+    manipulation: Any = staged._manipulation
+    staged.stage_pick_and_place("cup-1", 0.35, -0.02, 0.25)
+
+    assert staged.discard_staged().message.startswith("Discarded")
+    manipulation.clear_planned_path.assert_called_once()
+    assert staged._staged is None
+    assert staged.discard_staged().message == "Nothing was staged."
