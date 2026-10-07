@@ -158,12 +158,12 @@ function render() {
     renderBar()
 }
 
-/** a collapsible section of the side panel, open or shut as last left (localStorage `key`) */
+/** a collapsible section of the side panel, open or shut as last left (localStorage `key`; none: always `openByDefault`) */
 function section(key, openByDefault, summary, ...children) {
     let open = openByDefault
     try {
-        const kept = localStorage.getItem(key)
-        open = kept === null ? openByDefault : kept === "1"
+        const kept = key && localStorage.getItem(key)
+        open = kept == null ? openByDefault : kept === "1"
     } catch {
         // storage unavailable
     }
@@ -172,7 +172,7 @@ function section(key, openByDefault, summary, ...children) {
         {
             ontoggle: (event) => {
                 try {
-                    localStorage.setItem(key, event.currentTarget.open ? "1" : "0")
+                    if (key) localStorage.setItem(key, event.currentTarget.open ? "1" : "0")
                 } catch {
                     // storage unavailable
                 }
@@ -245,8 +245,9 @@ function ioCounts(module) {
 // ── the side panel's Topic rates: every topic on the bus the gateway has heard (this blueprint's or not, quiet ones
 // too) and this blueprint's own topics, its Hz and throughput, collapsible ──
 function ratesSection() {
+    // opens expanded every time (no remembered state): its height is capped anyway
     const box = section(
-        "bp.ratesOpen",
+        null,
         true,
         ["Topic rates", h("span", { class: "count", id: "ratesCount" })],
         // about six rows tall; the rest scroll
