@@ -141,7 +141,9 @@ def _record_session(db_path: Path, executable: Path) -> dict[str, int]:
     atom = collection_recorder(
         profile=profile, recording=db_path.parent, format="sqlite"
     ).active_blueprints[0]
-    recorder = atom.module(**atom.kwargs, executable=str(executable))
+    recorder = atom.module(
+        **atom.kwargs, executable=str(executable), source_dir=None, build_command=None
+    )
     topic_prefix = f"dimos/test/collection-export/{uuid.uuid4().hex}"
     payload_types = {
         "color_image": Image,
