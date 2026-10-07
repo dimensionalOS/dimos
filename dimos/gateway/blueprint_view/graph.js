@@ -361,19 +361,18 @@ function side(node, after, vertical) {
     return vertical ? { x: node.x, y: node.y + (sign * node.h) / 2 } : { x: node.x + (sign * node.w) / 2, y: node.y }
 }
 
-/** a curve along the flow (left to right, or top to bottom) from `from`'s far side through the bends to `to`'s near
- * side (a reversed edge: the sides facing each other). One smooth spline through every bend (a long edge has one per
- * layer it crosses), leaving and arriving along the flow, so a long edge sweeps instead of wiggling at each layer. */
+/** a curve along the flow (left to right, or top to bottom): it always leaves `from` on its far side (right, or
+ * bottom) and arrives at `to` on its near side (left, or top), like dot's ports, a feedback edge looping back to do so.
+ * One smooth spline through every bend (a long edge has one per layer it crosses), so it sweeps instead of wiggling. */
 function flowPath(from, to, bends, vertical) {
-    const forward = vertical ? from.y < to.y : from.x < to.x
     const along = vertical ? "y" : "x"
-    const points = [side(from, forward, vertical), ...bends, side(to, !forward, vertical)]
-    // Catmull-Rom tangents; at the two ends, straight along the flow
+    const points = [side(from, true, vertical), ...bends, side(to, false, vertical)]
+    // Catmull-Rom tangents; at the two ends, straight along the flow (forward even for a feedback edge)
     const tangent = (i) => {
         const prev = points[Math.max(i - 1, 0)]
         const next = points[Math.min(i + 1, points.length - 1)]
         if (i === 0 || i === points.length - 1) {
-            const span = (points[points.length - 1][along] - points[0][along]) / (points.length - 1)
+            const span = Math.max(Math.abs(points[points.length - 1][along] - points[0][along]) / (points.length - 1), 40)
             return vertical ? { x: 0, y: span * 1.5 } : { x: span * 1.5, y: 0 }
         }
         return { x: (next.x - prev.x) / 2, y: (next.y - prev.y) / 2 }
