@@ -34,7 +34,7 @@ if TYPE_CHECKING:
     from dimos.protocol.rpc.zenohrpc import ZenohRPC
 
 host_app = typer.Typer(help="Run and inspect DimOS Hosts", no_args_is_help=True)
-DEFAULT_DISCOVERY_TIMEOUT = 2.0
+DEFAULT_DISCOVERY_TIMEOUT = 1.0
 logger = setup_logger()
 
 

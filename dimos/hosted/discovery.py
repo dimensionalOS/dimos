@@ -98,17 +98,28 @@ def candidates(
     Loopback is never discovered: another machine is never there, and other zenoh
     routers on this one are not ours to dial.
     """
-    found: list[str] = []
     sources: list[Callable[[], list[str]]] = []
     if scout:
         sources.append(lambda: scouted_endpoints(scout_addr, scout_interface, timeout, exclude))
     if go2:
         sources.append(lambda: go2_endpoints(timeout))
-    for source in sources:
+    results: list[list[str]] = [[] for _ in sources]
+
+    def collect(index: int) -> None:
         try:
-            found += [e for e in source() if not is_loopback(e)]
+            results[index] = [e for e in sources[index]() if not is_loopback(e)]
         except Exception:
             logger.warning("Host discovery source failed", exc_info=True)
+
+    # Sources run side by side: each waits out its own timeout.
+    threads = [
+        threading.Thread(target=collect, args=(i,), daemon=True) for i in range(len(sources))
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    found = [e for result in results for e in result]
     return list(dict.fromkeys([*seeds, *found]))
 
 
