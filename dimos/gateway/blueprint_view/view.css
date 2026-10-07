@@ -444,8 +444,8 @@ svg.graph.panning {
 .edge {
     fill: none;
     stroke: color-mix(in srgb, var(--type, var(--muted-fg)) 55%, var(--muted-fg));
-    stroke-width: 1.2;
-    opacity: 0.6;
+    stroke-width: 1.6;
+    opacity: 0.75;
 }
 .edge.live {
     opacity: 0.95;
@@ -460,57 +460,82 @@ svg.graph.panning {
 .node rect {
     stroke-width: 1;
 }
-.node.module rect {
+.node.module .box {
     fill: var(--surface);
     stroke: var(--border-strong);
     stroke-width: 1.5;
 }
+.node.module .bar {
+    fill: var(--primary);
+    stroke: none;
+}
 .node.module {
     cursor: pointer;
 }
-.node.module:hover rect,
-.node.module:focus-visible rect {
+.node.module:hover .box,
+.node.module:focus-visible .box {
     stroke: var(--primary);
     outline: none;
+}
+.node.module .tag {
+    fill: var(--primary);
+    font: 600 9.5px var(--sans);
+    letter-spacing: 0.18em;
+    dominant-baseline: central;
 }
 .node.module .name {
     fill: var(--fg);
     font: 600 15px var(--sans);
     dominant-baseline: central;
 }
-.node.topic rect {
-    fill: color-mix(in srgb, var(--type) 8%, var(--bg));
-    stroke: color-mix(in srgb, var(--type) 45%, transparent);
+.node.module .more {
+    fill: var(--muted-fg);
+    font: 16px var(--sans);
+    text-anchor: middle;
+    dominant-baseline: central;
 }
-.node.topic.extra rect {
-    stroke-dasharray: 3 3;
+.node.topic .box {
+    fill: var(--bg);
+    stroke: color-mix(in srgb, var(--type) 60%, transparent);
+    stroke-width: 1.3;
+}
+/* a topic only written or only read here: dashed until hovered */
+.node.topic.loose:not(:hover) .box,
+.node.topic.extra:not(:hover) .box {
+    stroke: var(--border-strong);
+    stroke-dasharray: 4 3;
 }
 .node.topic .name {
     fill: var(--fg);
-    font: 500 10.5px var(--mono);
+    font: 500 12px var(--mono);
     dominant-baseline: central;
 }
 .node.topic .sub {
     fill: var(--type);
-    font: 9.5px var(--mono);
+    font: 10px var(--mono);
     dominant-baseline: central;
+}
+.node .port {
+    fill: var(--bg);
+    stroke: var(--muted-fg);
+    stroke-width: 1;
 }
 svg.running .node.topic:not(.live) {
     opacity: 0.55;
 }
-.node.topic.live rect {
+.node.topic.live .box {
     stroke: var(--type);
 }
 svg.spot .node:not(.lit),
 svg.spot .edge:not(.lit) {
     opacity: 0.18;
 }
-.node.lit.module rect {
+.node.lit.module .box {
     stroke: var(--primary);
 }
 .edge.lit {
     opacity: 1;
-    stroke-width: 1.8;
+    stroke-width: 2.2;
 }
 
 /* other live topics (not wired here): a collapsed list, drawn only on request */

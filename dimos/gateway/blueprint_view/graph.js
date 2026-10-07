@@ -7,13 +7,18 @@
 import { layout, LAYOUTS, overlaps } from "./layout.js"
 
 const SVG = "http://www.w3.org/2000/svg"
-// modules are the big cards, topics the small pills between them
+// modules are the big cards (an accent bar on the left, "MOD", the name, a chevron), topics the small boxes between
+// them (the name only; the type is on hover, the rate shows while the blueprint runs). Every box has a port on each side.
 const MODULE_H = 46
-const MODULE_PAD_X = 20
-const TOPIC_H = 30
-const PAD_X = 16
-// a topic's second line may later read "<Type> · 999.9 Hz": its width is kept for that from the start
-const RATE_RESERVE = " · 99.9 Hz"
+const MODULE_BAR = 4
+const MODULE_PAD_X = 16
+const TAG_GAP = 10
+const CHEV_W = 22
+const TOPIC_H = 34
+const PAD_X = 14
+const PORT = 7
+// a topic's second line may later read "999.9 Hz": its width is kept for that from the start
+const RATE_RESERVE = "999.9 Hz"
 
 const el = (name, attrs = {}, parent) => {
     const node = document.createElementNS(SVG, name)
@@ -77,12 +82,14 @@ export class Graph {
         const topics = new Map()
         for (const module of modules) {
             const label = className(module)
+            const tagW = Math.ceil(textWidth("MOD", `600 9.5px ${sans}`) * 1.25)
             nodes.push({
                 id: `m:${module.name}`,
                 kind: "module",
                 name: module.name,
                 label,
-                w: Math.ceil(textWidth(label, `600 15px ${sans}`)) + MODULE_PAD_X * 2,
+                tagW,
+                w: MODULE_BAR + MODULE_PAD_X + tagW + TAG_GAP + Math.ceil(textWidth(label, `600 15px ${sans}`)) + CHEV_W,
                 h: MODULE_H,
             })
             for (const stream of module.streams) {
@@ -105,19 +112,19 @@ export class Graph {
                 topics.set(extra.topic, { type: extra.type ?? "", extra: true })
             }
         }
+        // a topic both written and read here is connected; one with only a writer or only a reader is drawn dashed
+        const written = new Set(edges.filter((e) => e.from.startsWith("m:")).map((e) => e.topic))
+        const read = new Set(edges.filter((e) => e.to.startsWith("m:")).map((e) => e.topic))
         for (const [topic, { type, extra }] of topics) {
-            const second = typeName(type) + RATE_RESERVE
-            const width = Math.max(
-                textWidth(`/${topic}`, `500 10.5px ${mono}`),
-                textWidth(second, `9.5px ${mono}`),
-            )
+            const width = Math.max(textWidth(topic, `500 12px ${mono}`), textWidth(RATE_RESERVE, `10px ${mono}`))
             nodes.push({
                 id: `t:${topic}`,
                 kind: "topic",
                 topic,
                 type,
                 extra,
-                label: `/${topic}`,
+                loose: !(written.has(topic) && read.has(topic)),
+                label: topic,
                 w: Math.ceil(width) + PAD_X * 2,
                 h: TOPIC_H,
             })
@@ -175,17 +182,29 @@ export class Graph {
                 tabindex: node.kind === "module" ? "0" : "-1",
                 "data-node": node.id,
             }, this.nodeLayer)
-            const round = node.kind === "topic" ? node.h / 2 : 0
-            el("rect", { width: node.w, height: node.h, rx: round, ry: round }, g)
+            el("rect", { class: "box", width: node.w, height: node.h }, g)
+            const title = el("title", {}, g)
             if (node.kind === "module") {
-                el("text", { x: MODULE_PAD_X, y: node.h / 2, class: "name" }, g).textContent = node.label
+                el("rect", { class: "bar", width: MODULE_BAR, height: node.h }, g)
+                const x = MODULE_BAR + MODULE_PAD_X
+                el("text", { x, y: node.h / 2, class: "tag" }, g).textContent = "MOD"
+                el("text", { x: x + node.tagW + TAG_GAP, y: node.h / 2, class: "name" }, g).textContent = node.label
+                el("text", { x: node.w - CHEV_W / 2 - 2, y: node.h / 2, class: "more" }, g).textContent = "›"
+                title.textContent = node.name
             } else {
                 g.style.setProperty("--type", `var(--bv-${typeColor(node.type)})`)
-                el("text", { x: PAD_X, y: 11, class: "name" }, g).textContent = node.label
-                node.sub = el("text", { x: PAD_X, y: 22, class: "sub" }, g)
-                node.sub.textContent = typeName(node.type)
-                const title = el("title", {}, g)
-                title.textContent = `${node.label}\n${node.type}${node.extra ? "\n(not wired in this blueprint)" : ""}`
+                if (node.loose) {
+                    g.classList.add("loose")
+                }
+                node.nameEl = el("text", { x: PAD_X, y: node.h / 2, class: "name" }, g)
+                node.nameEl.textContent = node.label
+                node.sub = el("text", { x: PAD_X, y: 25, class: "sub" }, g)
+                title.textContent = `/${node.topic}\n${node.type}${node.extra ? "\n(not wired in this blueprint)" : ""}` +
+                    (node.loose ? "\n(only written or only read here)" : "")
+            }
+            // a port on each side, where edges leave (right) and arrive (left)
+            for (const x of [0, node.w]) {
+                el("rect", { class: "port", x: x - PORT / 2, y: node.h / 2 - PORT / 2, width: PORT, height: PORT }, g)
             }
             node.el = g
         }
@@ -348,7 +367,9 @@ export class Graph {
             }
             const hz = running ? this.rates.get(node.topic) ?? 0 : null
             node.el.classList.toggle("live", !!hz)
-            node.sub.textContent = typeName(node.type) + (hz ? ` · ${hz >= 100 ? hz.toFixed(0) : hz.toFixed(1)} Hz` : "")
+            // the name sits in the middle, or above the rate while it has one
+            node.nameEl.setAttribute("y", hz ? 13 : node.h / 2)
+            node.sub.textContent = hz ? `${hz >= 100 ? hz.toFixed(0) : hz.toFixed(1)} Hz` : ""
         }
         for (const edge of this.edges) {
             edge.el?.classList.toggle("live", running && !!this.rates.get(edge.topic))
@@ -356,9 +377,11 @@ export class Graph {
     }
 }
 
+/** where an edge leaves (after) or arrives at (before) a node: just outside its port */
 function side(node, after, vertical) {
     const sign = after ? 1 : -1
-    return vertical ? { x: node.x, y: node.y + (sign * node.h) / 2 } : { x: node.x + (sign * node.w) / 2, y: node.y }
+    const reach = (vertical ? node.h : node.w) / 2 + PORT / 2
+    return vertical ? { x: node.x, y: node.y + sign * reach } : { x: node.x + sign * reach, y: node.y }
 }
 
 /** an edge along the flow (left to right, or top to bottom), drawn like dot: it leaves `from` on its far side (right,
@@ -379,7 +402,7 @@ function flowPath(from, to, bends, vertical) {
     const forward = b.u > a.u
     // how far along the flow each end's arc takes to reach the track
     const span = Math.abs(b.u - a.u)
-    const r = Math.max(24, Math.min(80, forward ? span / 3 : 60))
+    const r = Math.max(32, Math.min(110, forward ? span / 3 : 80))
     let d = `M${xy(a.u, a.v)}`
     if (forward) {
         // arc onto the track, straight along it, arc off into `to`
