@@ -27,7 +27,6 @@ import ast
 import importlib
 from importlib.machinery import SourceFileLoader
 from importlib.util import module_from_spec, spec_from_loader
-import inspect
 import json
 import os
 from pathlib import Path
@@ -70,7 +69,7 @@ class _ClassDef(NamedTuple):
     bases: tuple[str, ...]
     command: str | None  # build_command literal defined in this class body
     command_kind: str  # "absent" | "literal" | "opaque"
-    owns_cwd: bool = False
+    owns_source_dir: bool = False
 
 
 def _base_names(node: ast.ClassDef) -> tuple[str, ...]:
@@ -119,10 +118,15 @@ def _scan_all_config_classes() -> list[_ClassDef]:
             for node in ast.walk(ast.parse(path.read_text(), filename=rel)):
                 if isinstance(node, ast.ClassDef):
                     kind, command = _own_default(node, "build_command")
-                    cwd_kind, _ = _own_default(node, "cwd")
+                    source_kind, _ = _own_default(node, "source_dir")
                     classes.append(
                         _ClassDef(
-                            rel, node.name, _base_names(node), command, kind, cwd_kind != "absent"
+                            rel,
+                            node.name,
+                            _base_names(node),
+                            command,
+                            kind,
+                            source_kind != "absent",
                         )
                     )
     return classes
@@ -157,7 +161,7 @@ def _closure_nix_configs(classes: list[_ClassDef]) -> set[tuple[str, str]]:
                 for parent in by_name.get(base, []):
                     kind, command, owner = effective_command(parent, seen | {cls.name})
                     if kind != "absent":
-                        return kind, command, cls if cls.owns_cwd else owner
+                        return kind, command, cls if cls.owns_source_dir else owner
         return "absent", None, cls
 
     nix_configs = set()
@@ -206,7 +210,7 @@ def test_recorder_is_in_the_publish_manifest() -> None:
     assert _SCRIPT._flake_ref_of(recorder) == ".#dimos-memory-recorder"
 
 
-@pytest.mark.parametrize("override", [None, "build_command", "cwd"])
+@pytest.mark.parametrize("override", [None, "build_command", "source_dir"])
 def test_inherited_build_coverage_tracks_overrides(override: str | None) -> None:
     owner = _ClassDef(
         "owner.py", "Owner", ("NativeModuleConfig",), "nix build .#owner", "literal", True
@@ -217,7 +221,7 @@ def test_inherited_build_coverage_tracks_overrides(override: str | None) -> None
         ("Owner",),
         "nix build .#child" if override == "build_command" else None,
         "literal" if override == "build_command" else "absent",
-        override == "cwd",
+        override == "source_dir",
     )
     grandchild = _ClassDef("grandchild.py", "Grandchild", ("Child",), None, "absent")
     expected = {("owner.py", "Owner")}
@@ -229,8 +233,7 @@ def test_inherited_build_coverage_tracks_overrides(override: str | None) -> None
 def test_ast_extraction_matches_runtime() -> None:
     """The AST-read defaults must equal what pydantic resolves at runtime —
     this equivalence is what lets CI discover modules without installing dimos.
-    The build dir mirrors NativeModule's cwd resolution, which anchors on the
-    defining file: config classes must live beside their module class."""
+    Build directories are relative to the shared project root."""
     modules = _SCRIPT.discover()
     assert modules
     for module in modules:
@@ -238,9 +241,9 @@ def test_ast_extraction_matches_runtime() -> None:
         config_class = getattr(importlib.import_module(dotted), class_name)
         fields = config_class.model_fields
         assert fields["build_command"].default == module.build_command
-        cwd = fields["cwd"].default
-        base_dir = Path(inspect.getfile(config_class)).resolve().parent
-        runtime_dir = Path(os.path.normpath(base_dir if cwd is None else base_dir / cwd))
+        source_dir = fields["source_dir"].default
+        assert source_dir is not None
+        runtime_dir = DIMOS_PROJECT_ROOT / source_dir
         assert runtime_dir == (DIMOS_PROJECT_ROOT / module.build_dir).resolve()
 
 

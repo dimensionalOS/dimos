@@ -104,7 +104,8 @@ def test_hold_to_talk_ships_a_decodable_recording(
     mic.hover()
     fake_mic_page.mouse.down()
     expect(mic).to_have_attribute("data-state", "recording", timeout=15_000)
-    fake_mic_page.wait_for_timeout(1_500)
+    # 3 s, so a slow runner's late recorder start still leaves well over the 0.5 s asserted below.
+    fake_mic_page.wait_for_timeout(3_000)
     fake_mic_page.mouse.up()
     expect(mic).to_have_attribute("data-state", "idle", timeout=30_000)
 
@@ -120,7 +121,7 @@ def test_hold_to_talk_ships_a_decodable_recording(
     assert [chunk.seq for chunk in chunks] == list(range(len(chunks)))
     assert chunks[0].mime.startswith("audio/")
     audio = b"".join(chunk.data for chunk in chunks)
-    assert len(audio) > 1_000  # ~1.5 s of compressed audio, not an empty shell
+    assert len(audio) > 1_000  # ~3 s of compressed audio, not an empty shell
     # Whatever container this engine produced, the owned ffmpeg decode turns
     # it into the PCM shape the Whisper pipeline assumes.
     event = decode_audio_bytes(audio)

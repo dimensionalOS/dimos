@@ -185,8 +185,9 @@ def test_invalid_ports_fail_at_factory_boundary(stream, tmp_path):
 
 def test_native_collection_uses_the_recorder_build_directory(recorder):
     root = Path(__file__).parents[2] / "experimental" / "memory" / "rust"
-    assert Path(recorder.config.cwd) == root
-    assert Path(recorder.config.executable) == root / "result/bin/dimos-memory-recorder"
+    cwd, executable = recorder.config.resolve_paths()
+    assert Path(cwd) == root
+    assert Path(executable) == root / "result/bin/dimos-memory-recorder"
 
 
 @pytest.fixture
