@@ -304,6 +304,8 @@ def _stale_pin(manifest: Path, lock: Path) -> list[str]:
 
 def _missing_hashes(manifest: Path, lock: Path) -> list[str]:
     """Git dependencies crate-hashes.json does not cover; crate2nix would fetch every ref."""
+    if not manifest.with_name("flake.nix").is_file():
+        return []
     path = _hashes_file(manifest)
     hashes = json.loads(path.read_text()) if path.is_file() else {}
     return [
