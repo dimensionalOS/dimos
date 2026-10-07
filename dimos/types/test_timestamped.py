@@ -301,7 +301,8 @@ def test_timestamp_alignment(test_scheduler) -> None:
             "unitree_office_walk/video", autocast=lambda x: Image.from_numpy(x).to_rgb()
         )
         .stream(speed)
-        .pipe(ops.take(30))
+        # Long enough for several processed frames: with only ~2, losing the last one to completion fails >= 2.
+        .pipe(ops.take(150))
     )
 
     processed_frames = []
@@ -319,7 +320,7 @@ def test_timestamp_alignment(test_scheduler) -> None:
 
     aligned_frames = align_timestamped(fake_video_processor, video_raw).pipe(ops.to_list()).run()
 
-    assert len(raw_frames) == 30
+    assert len(raw_frames) == 150
     assert len(processed_frames) >= 2
     assert len(aligned_frames) >= 2
 
