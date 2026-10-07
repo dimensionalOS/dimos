@@ -45,10 +45,9 @@ def main(
     every: int = typer.Option(100, "--every", help="lidar frames per mesh update"),
     from_time: float | None = typer.Option(None, "--from-time"),
     to_time: float | None = typer.Option(None, "--to-time"),
-    simplify: str = typer.Option(
-        "planes,collapse",
-        "--simplify",
-        help="run in order, name[:tol][:knob=x]; empty turns it off",
+    simplify: bool = typer.Option(False, "--simplify", help="simplify the mesh with --chain"),
+    chain: str = typer.Option(
+        "planes,collapse", "--chain", help="simplifiers in order, name[:tol][:knob=x]"
     ),
     tol: float | None = typer.Option(
         None, "--tol", help="error bound for every simplifier, metres"
@@ -68,7 +67,7 @@ def main(
     import rerun as rr
 
     turbo = (matplotlib.colormaps["turbo"](np.linspace(0, 1, 256))[:, :3] * 255).astype(np.uint8)
-    simplifiers = parse_chain(simplify, tol)
+    simplifiers = parse_chain(chain, tol) if simplify else []
     albedo = [255, 255, 255, int(alpha * 255)]
     trail: list[tuple[float, float, float]] = []
 
