@@ -188,28 +188,21 @@ def stale_flake_inputs(lock: Path) -> list[str]:
 
 
 def relock_flake(lock: Path) -> tuple[Path, bool, list[str]]:
-    """Pin one lock's stale in-repo inputs, then lock any input it lacks. Returns (lock, changed, failures)."""
+    """Pin one lock's in-repo inputs to this commit's tree, then lock any input it lacks. Returns (lock, changed, failures)."""
     before = lock.read_text() if lock.is_file() else None
-    failures = []
+    failures, overrides = [], []
     if before is not None:
-        data = json.loads(before)
-        inputs = _in_repo_inputs(data["nodes"])
-        for name in stale_flake_inputs(lock):
-            subdir = inputs[name]["locked"]["dir"]
-            rev = pushed_revision_holding((subdir,))
+        stale = set(stale_flake_inputs(lock))
+        for name, node in _in_repo_inputs(json.loads(before)["nodes"]).items():
+            subdir = node["locked"]["dir"]
+            rev = pushed_revision_holding((subdir,)) if name in stale else node["locked"]["rev"]
             if rev is None:
                 failures.append(_unpushed(lock, subdir))
                 continue
-            fetched = prefetch(_tarball(rev, subdir))
-            # newer nix adds internal `__`-keys that `nix flake lock` then refuses to read
-            locked = {k: v for k, v in fetched["locked"].items() if not k.startswith("_")}
-            inputs[name]["locked"] = locked | {"narHash": fetched["hash"]}
-        text = json.dumps(data, indent=2, sort_keys=True) + "\n"
-        if text != before:
-            lock.write_text(text)
-    # adds the nodes of any input the lock lacks, and changes nothing otherwise
+            # an override re-reads the pinned flake, so inputs it gained since get locked too
+            overrides += ["--override-input", name, _tarball(rev, subdir)]
     proc = subprocess.run(
-        ["nix", "flake", "lock", f"path:{lock.parent}"],
+        ["nix", "flake", "lock", f"path:{lock.parent}", *overrides],
         cwd=lock.parent,
         capture_output=True,
         text=True,
