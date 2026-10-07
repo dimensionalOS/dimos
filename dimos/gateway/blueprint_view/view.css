@@ -463,7 +463,13 @@ body.framed:not(.chrome) #bar {
 }
 .rates td {
     padding: 2px 5px;
+    line-height: 15px;
     white-space: nowrap;
+}
+/* six rows (19px each plus 2px between) show; the rest scroll */
+.rates-scroll {
+    max-height: calc(6 * 21px + 2px);
+    overflow-y: auto;
 }
 .rates .topic {
     color: var(--type, var(--fg));

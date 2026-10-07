@@ -235,7 +235,8 @@ function ratesSection() {
         "bp.ratesOpen",
         true,
         ["Topic rates", h("span", { class: "count", id: "ratesCount" })],
-        h("table", {}, h("tbody", { id: "ratesBody" })),
+        // about six rows tall; the rest scroll
+        h("div", { class: "rates-scroll" }, h("table", {}, h("tbody", { id: "ratesBody" }))),
     )
     box.classList.add("rates")
     box.id = "rates"
