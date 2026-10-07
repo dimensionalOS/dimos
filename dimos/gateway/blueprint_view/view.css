@@ -457,13 +457,14 @@ svg.graph.panning {
     stroke: color-mix(in srgb, var(--type, var(--muted-fg)) 70%, var(--muted-fg));
 }
 .edge.live {
-    opacity: 0.95;
-    stroke-dasharray: 6 4;
+    opacity: 1;
+    stroke-width: 2.6;
+    stroke-dasharray: 7 5;
     animation: bv-flow 0.8s linear infinite;
 }
 @keyframes bv-flow {
     to {
-        stroke-dashoffset: -10;
+        stroke-dashoffset: -12;
     }
 }
 .node rect {

@@ -14,8 +14,8 @@ const MODULE_BAR = 4
 const MODULE_PAD_X = 16
 const TAG_GAP = 10
 const CHEV_W = 22
-const TOPIC_H = 34
-const PAD_X = 14
+const TOPIC_H = 30
+const PAD_X = 9
 const PORT = 7
 // a topic's second line may later read "999.9 Hz": its width is kept for that from the start
 const RATE_RESERVE = "999.9 Hz"
@@ -198,7 +198,7 @@ export class Graph {
                 }
                 node.nameEl = el("text", { x: PAD_X, y: node.h / 2, class: "name" }, g)
                 node.nameEl.textContent = node.label
-                node.sub = el("text", { x: PAD_X, y: 25, class: "sub" }, g)
+                node.sub = el("text", { x: PAD_X, y: 22, class: "sub" }, g)
                 title.textContent = `/${node.topic}\n${node.type}${node.extra ? "\n(not wired in this blueprint)" : ""}` +
                     (node.loose ? "\n(only written or only read here)" : "")
             }
@@ -408,7 +408,7 @@ export class Graph {
             const hz = running ? this.rates.get(node.topic) ?? 0 : null
             node.el.classList.toggle("live", !!hz)
             // the name sits in the middle, or above the rate while it has one
-            node.nameEl.setAttribute("y", hz ? 13 : node.h / 2)
+            node.nameEl.setAttribute("y", hz ? 11 : node.h / 2)
             node.sub.textContent = hz ? `${hz >= 100 ? hz.toFixed(0) : hz.toFixed(1)} Hz` : ""
         }
         for (const edge of this.edges) {
