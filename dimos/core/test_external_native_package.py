@@ -281,6 +281,7 @@ def test_installed_rust_and_cpp_packages_exchange_typed_messages(tmp_path):
                 "none",
                 "--n-workers",
                 "1",
+                "--no-serve-coordinator-rpc",
                 "run",
                 "dimos-package-rust.ping",
                 "dimos-package-cpp.pong",
@@ -292,7 +293,11 @@ def test_installed_rust_and_cpp_packages_exchange_typed_messages(tmp_path):
         )
         try:
             wait_until(
-                lambda: "echo received (rust)" in log_path.read_text() or proc.poll() is not None,
+                lambda: (
+                    "echo received (rust)" in log_path.read_text()
+                    and "serve_coordinator_rpc is off" in log_path.read_text()
+                )
+                or proc.poll() is not None,
                 timeout=45,
             )
             output = log_path.read_text()
