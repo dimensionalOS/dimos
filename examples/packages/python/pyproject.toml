@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=70", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dimos-package-python"
+version = "0.1.0"
+requires-python = ">=3.10,<3.13"
+dependencies = ["dimos==0.0.14", "packaging>=24"]
+
+[project.entry-points."dimos.blueprints"]
+observer = "dimos_package_python.module:PythonObserver"
+isolated = "dimos_package_python.module:IsolatedObserver"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+dimos_package_python = ["runtime/*.toml", "runtime/*.lock", "runtime/*.py"]

@@ -1,0 +1,8 @@
+[project]
+name = "dimos-package-python-runtime"
+version = "0.1.0"
+requires-python = ">=3.10,<3.13"
+dependencies = ["dimos==0.0.14", "dimos-package-python==0.1.0", "packaging==25.0"]
+
+[tool.uv]
+package = false
