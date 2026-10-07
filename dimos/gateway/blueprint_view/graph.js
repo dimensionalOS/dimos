@@ -361,29 +361,36 @@ function side(node, after, vertical) {
     return vertical ? { x: node.x, y: node.y + (sign * node.h) / 2 } : { x: node.x + (sign * node.w) / 2, y: node.y }
 }
 
-/** a curve along the flow (left to right, or top to bottom): it always leaves `from` on its far side (right, or
- * bottom) and arrives at `to` on its near side (left, or top), like dot's ports, a feedback edge looping back to do so.
- * One smooth spline through every bend (a long edge has one per layer it crosses), so it sweeps instead of wiggling. */
+/** an edge along the flow (left to right, or top to bottom), drawn like dot: it leaves `from` on its far side (right,
+ * or bottom) and arrives at `to` on its near side (left, or top). A long edge (it has bends: one per layer it crosses,
+ * all on one track) arcs onto its track, runs straight along it, and arcs off into `to`; a feedback edge does the same
+ * the other way. An edge between neighbouring layers is one S-curve. */
 function flowPath(from, to, bends, vertical) {
-    const along = vertical ? "y" : "x"
-    const points = [side(from, true, vertical), ...bends, side(to, false, vertical)]
-    // Catmull-Rom tangents; at the two ends, straight along the flow (forward even for a feedback edge)
-    const tangent = (i) => {
-        const prev = points[Math.max(i - 1, 0)]
-        const next = points[Math.min(i + 1, points.length - 1)]
-        if (i === 0 || i === points.length - 1) {
-            const span = Math.max(Math.abs(points[points.length - 1][along] - points[0][along]) / (points.length - 1), 40)
-            return vertical ? { x: 0, y: span * 1.5 } : { x: span * 1.5, y: 0 }
-        }
-        return { x: (next.x - prev.x) / 2, y: (next.y - prev.y) / 2 }
+    // work in (u along the flow, v across it), then map back
+    const uv = (p) => (vertical ? { u: p.y, v: p.x } : { u: p.x, v: p.y })
+    const xy = (u, v) => (vertical ? `${v} ${u}` : `${u} ${v}`)
+    const a = uv(side(from, true, vertical))
+    const b = uv(side(to, false, vertical))
+    if (!bends.length) {
+        const half = Math.max(Math.abs(b.u - a.u) / 2, 30)
+        return `M${xy(a.u, a.v)} C${xy(a.u + half, a.v)} ${xy(b.u - half, b.v)} ${xy(b.u, b.v)}`
     }
-    let d = `M${points[0].x} ${points[0].y}`
-    for (let i = 1; i < points.length; i++) {
-        const a = points[i - 1]
-        const b = points[i]
-        const ta = tangent(i - 1)
-        const tb = tangent(i)
-        d += ` C${a.x + ta.x / 3} ${a.y + ta.y / 3} ${b.x - tb.x / 3} ${b.y - tb.y / 3} ${b.x} ${b.y}`
+    const track = bends.map((p) => uv(p).v).sort((m, n) => m - n)[Math.floor(bends.length / 2)]
+    const forward = b.u > a.u
+    // how far along the flow each end's arc takes to reach the track
+    const span = Math.abs(b.u - a.u)
+    const r = Math.max(24, Math.min(80, forward ? span / 3 : 60))
+    let d = `M${xy(a.u, a.v)}`
+    if (forward) {
+        // arc onto the track, straight along it, arc off into `to`
+        d += ` C${xy(a.u + r / 2, a.v)} ${xy(a.u + r / 2, track)} ${xy(a.u + r, track)}`
+        d += ` L${xy(b.u - r, track)}`
+        d += ` C${xy(b.u - r / 2, track)} ${xy(b.u - r / 2, b.v)} ${xy(b.u, b.v)}`
+    } else {
+        // feedback: out of `from`'s far side and round onto the track, back along it, round into `to`'s near side
+        d += ` C${xy(a.u + r, a.v)} ${xy(a.u + r, track)} ${xy(a.u, track)}`
+        d += ` L${xy(b.u, track)}`
+        d += ` C${xy(b.u - r, track)} ${xy(b.u - r, b.v)} ${xy(b.u, b.v)}`
     }
     return d
 }
