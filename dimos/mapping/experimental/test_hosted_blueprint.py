@@ -19,8 +19,13 @@ from dimos.hosted.fragment_compiler import compile_fragments
 from dimos.mapping.experimental.blueprints import go2_dds_nav_hosted
 
 
-def test_go2_hosted_splits_robot_from_viewer() -> None:
-    go2 = HostDescriptor("go2-id", "e", "go2jetson", frozenset({"go2"}), {}, "available", ())
+def test_go2_hosted_splits_robot_mesher_and_viewer() -> None:
+    go2 = HostDescriptor(
+        "go2-id", "e", "go2jetson", {"go2": "", "gpu": "", "gpu_tflops": "2.4"}, {}, "available", ()
+    )
+    gpu = HostDescriptor(
+        "gpu-id", "e", "compute", {"gpu": "RTX 5080", "gpu_tflops": "66.4"}, {}, "available", ()
+    )
     config = BlueprintConfigParser(go2_dds_nav_hosted).parse(environ={})
     fragments = compile_fragments(
         go2_dds_nav_hosted,
@@ -29,14 +34,15 @@ def test_go2_hosted_splits_robot_from_viewer() -> None:
         generation=1,
         application_name="go2",
         application_revision="rev",
-        hosts=[go2],
+        hosts=[go2, gpu],
         local_host_id="laptop",
     )
 
     robot = fragments["go2-id"].load_payload()
     viewer = fragments["laptop"].load_payload()
+    mesher = fragments["gpu-id"].load_payload()
+    assert {a.name for a in mesher.blueprint.active_blueprints} == {"meshmodule"}
     assert {a.name for a in viewer.blueprint.active_blueprints} == {
-        "meshmodule",
         "rerunbridgemodule",
         "rerunwebsocketserver",
     }
