@@ -382,14 +382,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y portaudio19-dev
-      - name: Build and test PyO3 bindings
-        # The one rust artefact nix does not build: pytest imports the compiled
-        # .so, which has to match uv's interpreter rather than nixpkgs'.
-        run: |
-          uv sync --group tests --frozen
-          source .venv/bin/activate
-          python bin/pyo3-extensions --build
-          python bin/pyo3-extensions --test
+      - name: Install dependencies
+        run: uv sync --group tests --frozen
       - name: Bake e2e tests
         run: uv run pytest -m bake_e2e dimos/cli/bake/test_bake_e2e.py --no-cov
 
@@ -404,6 +398,44 @@ jobs:
             target
             !target/debug/incremental
           key: cargo-test-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/Cargo.lock') }}
+
+  # The PyO3 extensions, the one rust artefact nix does not build: pytest imports them, so they must
+  # match uv's interpreter. They are abi3, so one wheel per OS serves every Python in the tests matrix.
+  pyo3-wheels:
+    timeout-minutes: 30
+    strategy:
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      CARGO_INCREMENTAL: "0"
+    permissions:
+      contents: read  # For checkout
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Restore cargo build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target/pyo3
+          key: pyo3-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: pyo3-${{ runner.os }}-${{ runner.arch }}-
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.2.0
+      - name: Build the wheels
+        run: uv run --no-project --python 3.12 --with maturin python bin/pyo3-extensions --wheels pyo3-wheels
+      - name: Upload the wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: pyo3-wheels-${{ runner.os }}-${{ runner.arch }}
+          path: pyo3-wheels/*.whl
+          if-no-files-found: error
 
   md-babel:
     timeout-minutes: 15
@@ -576,8 +608,9 @@ jobs:
     if: |
       !cancelled() &&
       contains(fromJSON('["success", "skipped"]'), needs.cachix-build-check.result) &&
-      contains(fromJSON('["success", "skipped"]'), needs.cachix-build.result)
-    needs: [cachix-build-check, cachix-build]
+      contains(fromJSON('["success", "skipped"]'), needs.cachix-build.result) &&
+      needs.pyo3-wheels.result == 'success'
+    needs: [cachix-build-check, cachix-build, pyo3-wheels]
     timeout-minutes: 20
     strategy:
       matrix:
@@ -671,6 +704,13 @@ jobs:
         run: python3 bin/build-native-modules --link-results .cachix-marker/links.txt
       - name: Install dependencies
         run: uv sync --group tests --frozen
+      - name: Download the PyO3 wheels
+        uses: actions/download-artifact@v4
+        with:
+          name: pyo3-wheels-${{ runner.os }}-${{ runner.arch }}
+          path: pyo3-wheels
+      - name: Install the PyO3 wheels
+        run: uv pip install --no-deps pyo3-wheels/*.whl
       - name: Run tests
         run: uv run pytest --numprocesses=logical --cov=dimos/ --junitxml=junit.xml -m 'not (self_hosted or mujoco or self_hosted_large or web_browser or bake_e2e or native_e2e)'
       # Serial and after the parallel run: it binds the livox SDK's fixed ports.
@@ -1299,6 +1339,7 @@ jobs:
     - commit-messages
     - lint
     - rust
+    - pyo3-wheels
     - md-babel
     - web
     - tests

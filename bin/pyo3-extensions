@@ -1,28 +1,28 @@
 #!/usr/bin/env python3
-"""Find, build and test the PyO3 extension modules in this repository.
+"""Find and build the PyO3 extension modules in this repository.
 
 A PyO3 extension is the one rust artefact nix does not produce for us: pytest
 imports the compiled `.so`, and it must match the interpreter uv resolved, not
-nixpkgs'. So maturin builds these into the active virtualenv.
+nixpkgs'. Every one is abi3, so one build per OS serves every Python version.
 
 Discovery is by content, never by path. An extension is any tracked
 `pyproject.toml` whose build backend is maturin; its `[tool.maturin] module-name`
-is the name python imports. The tests that need one are the test files naming
-that module, found by grep -- adding a binding or a test for one needs no edit
-here or in CI.
+is the name python imports. Adding a binding needs no edit here or in CI.
 
-  --list     print `<manifest> <module-name>` per extension
-  --build    maturin develop each one into the active virtualenv, then import it
-  --test     run the test files that import any of them
+  --list         print `<manifest> <module-name>` per extension
+  --build        maturin develop each one into the active virtualenv, then import it
+  --wheels DIR   build a wheel of each into DIR (CI installs these in the test jobs)
 """
 
 import argparse
 from pathlib import Path
-import re
 import subprocess
 import sys
 
-import tomllib
+if sys.version_info >= (3, 11):
+    import tomllib
+else:
+    import tomli as tomllib
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -55,14 +55,15 @@ def extensions() -> list[tuple[Path, str]]:
     return sorted(found)
 
 
-def tests_importing(modules: list[str]) -> list[str]:
-    naming = re.compile(r"\b(" + "|".join(re.escape(m) for m in modules) + r")\b")
-    return sorted(
-        path
-        for path in _tracked("dimos")
-        if Path(path).name.startswith("test_")
-        and path.endswith(".py")
-        and naming.search((REPO_ROOT / path).read_text())
+def _maturin(command: str, manifest: Path, module: str, *extra: str) -> None:
+    # Own target dir: a crate another extension depends on is built there without its
+    # python feature, under the same output name, and maturin would install that copy.
+    target = REPO_ROOT / "target" / "pyo3" / module
+    # cargo reads .cargo/config.toml from its cwd (a crate's macOS link flags live there)
+    subprocess.run(
+        ["maturin", command, "-m", str(manifest), "--target-dir", str(target), *extra],
+        cwd=manifest.parent,
+        check=True,
     )
 
 
@@ -71,7 +72,7 @@ def main() -> None:
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--list", action="store_true")
     mode.add_argument("--build", action="store_true")
-    mode.add_argument("--test", action="store_true")
+    mode.add_argument("--wheels", type=Path, metavar="DIR")
     args = parser.parse_args()
 
     found = extensions()
@@ -83,40 +84,16 @@ def main() -> None:
             print(f"{manifest.relative_to(REPO_ROOT)} {module}")
         return
 
-    if args.build:
-        for manifest, _ in found:
-            # cargo reads .cargo/config.toml from its cwd (a crate's macOS link flags live there)
-            subprocess.run(
-                ["maturin", "develop", "-m", str(manifest)], cwd=manifest.parent, check=True
-            )
-        names = [module for _, module in found]
-        subprocess.run(
-            [sys.executable, "-c", "import " + ", ".join(names)], cwd=str(REPO_ROOT), check=True
-        )
+    if args.wheels:
+        for manifest, module in found:
+            _maturin("build", manifest, module, "--out", str(args.wheels.resolve()))
         return
 
-    files = tests_importing([module for _, module in found])
-    if not files:
-        sys.exit("no test files import the extensions; discovery is broken")
-    # A bare pytest: the repo's addopts assume a conftest and a coverage run.
+    for manifest, module in found:
+        _maturin("develop", manifest, module)
+    names = [module for _, module in found]
     subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "pytest",
-            "-c",
-            "/dev/null",
-            "--rootdir",
-            ".",
-            "--noconftest",
-            "--import-mode=importlib",
-            "-p",
-            "no:cacheprovider",
-            "-v",
-            *files,
-        ],
-        cwd=str(REPO_ROOT),
-        check=True,
+        [sys.executable, "-c", "import " + ", ".join(names)], cwd=str(REPO_ROOT), check=True
     )
 
 
