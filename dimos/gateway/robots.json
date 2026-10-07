@@ -2342,13 +2342,6 @@
           "description": "A Livox Mid-360's point cloud and IMU.",
           "tags": []
         },
-        "mid360-fastlio-ray-trace": {
-          "title": "Mid-360 FAST-LIO + ray-traced map",
-          "description": "FAST-LIO SLAM feeding a ray-traced voxel map.",
-          "tags": [
-            "map"
-          ]
-        },
         "mid360-fastlio-voxels": {
           "title": "Mid-360 FAST-LIO + voxel map",
           "description": "FAST-LIO SLAM feeding a voxel grid map.",
@@ -2366,6 +2359,13 @@
         "mid360-pointlio": {
           "title": "Mid-360 SLAM (Point-LIO)",
           "description": "Live Point-LIO SLAM from a Livox Mid-360.",
+          "tags": [
+            "map"
+          ]
+        },
+        "mid360-pointlio-ray-trace": {
+          "title": "Mid-360 Point-LIO + ray-traced map",
+          "description": "Point-LIO SLAM feeding a ray-traced voxel map.",
           "tags": [
             "map"
           ]

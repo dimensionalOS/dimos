@@ -52,7 +52,7 @@ Operations carry Desktop's extensions: `x-family: dimos`; `x-agent: true` for wh
 A launch's `steps` and `problems` are stable codes with data: clients own the wording. The gateway reads them from the
 run's structured log (`main.jsonl`), not from the console, and needs nothing added to dimos for it:
 
-- **Steps:** the messages dimos logs as it starts: `Starting DimOS`, `Building the blueprint`, `Starting the
+- **Steps:** the messages dimos logs as it starts: its startup line, `Building the blueprint`, `Starting the
   modules`, one `Deployed module.` per module and `Blueprint started` (`test_diagnose.py` checks dimos still logs
   each). dimos doesn't log how many modules it will start, so `starting_modules` counts only the deployed ones.
 - **Problems:** an exception is logged with its traceback; the gateway reads the exception classes and an errno or
