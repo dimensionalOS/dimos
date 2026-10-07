@@ -1,0 +1,18 @@
+[build-system]
+requires = ["scikit-build-core>=0.11,<2"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "dimos-package-cpp"
+version = "0.1.0"
+requires-python = ">=3.10,<3.13"
+dependencies = ["dimos==0.0.14"]
+
+[project.entry-points."dimos.blueprints"]
+pong = "dimos_package_cpp.module:CppPong"
+
+[tool.scikit-build]
+wheel.packages = ["src/dimos_package_cpp"]
+wheel.py-api = "py3"
+sdist.include = ["native/**", "CMakeLists.txt", "src/**"]
+install.components = ["python"]
