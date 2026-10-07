@@ -220,6 +220,14 @@ def stop(run: Run = _systemctl, timeout: float = STOP_TIMEOUT) -> str:
     return f"stopped (pid {pid})"
 
 
+def restart(run: Run = _systemctl) -> str:
+    if installed() and _pid() is None:
+        result = run(["restart", UNIT_NAME])
+        return f"restarted {UNIT_NAME}" if result.returncode == 0 else result.stderr.strip()
+    stop(run)
+    return start(run)
+
+
 def status(run: Run = _systemctl) -> str:
     if installed():
         return run(["is-active", UNIT_NAME]).stdout.strip() + f" ({UNIT_NAME})"

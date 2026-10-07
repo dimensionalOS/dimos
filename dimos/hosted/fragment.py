@@ -16,11 +16,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 import hashlib
 import pickle
 
 from dimos.core.coordination.blueprint_config.parsed import ParsedBlueprintConfig
+from dimos.core.coordination.blueprint_config.values import snapshot_mapping
 from dimos.core.coordination.blueprints import Blueprint, TransportSpec
 from dimos.core.module import ModuleBase
 from dimos.core.transport import ZenohTransport, pZenohTransport
@@ -154,6 +156,38 @@ class HostFragment:
         validate_boundary_streams(self.run_id, payload)
         validate_remote_module_references(self, payload)
         return payload
+
+
+def with_host_config(
+    blueprint: Blueprint,
+    config: ParsedBlueprintConfig,
+    environ: Mapping[str, str] | None = None,
+) -> ParsedBlueprintConfig:
+    """The controller's config, with what this Host's own env and .env set on top.
+
+    Device facts (a lidar mount, an interface, a key) live with the machine, so a
+    ``NAME__FIELD`` or global the Host's environment sets beats the controller's value.
+    """
+    from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
+    from dimos.core.coordination.blueprint_config.sources import configuration_environment
+
+    host_env = configuration_environment(environ)
+    parser = BlueprintConfigParser(blueprint)
+    host, baseline = parser.parse(environ=host_env), parser.parse(environ={})
+    modules = {}
+    for atom in blueprint.active_blueprints:
+        values = config.module_kwargs(atom.name)
+        host_values, base_values = host.module_kwargs(atom.name), baseline.module_kwargs(atom.name)
+        values.update({k: v for k, v in host_values.items() if base_values.get(k) != v})
+        modules[atom.name] = values
+    merged = ParsedBlueprintConfig(
+        _module_config_values=snapshot_mapping(modules),
+        _global_config_values=snapshot_mapping(config.global_config),
+        _global_explicit_values=snapshot_mapping(config.explicit_global_config_values()),
+        _transport_config_values=snapshot_mapping(config.transport_configs),
+        _blueprint=blueprint,
+    )
+    return merged.subset_for(blueprint, global_overrides=host.explicit_global_config_values())
 
 
 def validate_boundary_streams(run_id: str, payload: PythonFragmentPayload) -> None:

@@ -346,6 +346,7 @@ def test_run_fragment_passes_remote_module_targets_to_coordinator(
     mocker.patch("dimos.hosted.daemon.threading.Event", return_value=stop_requested)
     mocker.patch("dimos.hosted.daemon.signal.signal")
     mocker.patch("dimos.hosted.daemon.set_run_log_dir")
+    mocker.patch("dimos.hosted.daemon.with_host_config", side_effect=lambda _bp, c: c)
     ready = mocker.MagicMock()
 
     _run_fragment(fragment, tmp_path, ready)

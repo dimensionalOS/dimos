@@ -48,6 +48,7 @@ from dimos.hosted.fragment import (
     FRAGMENT_SCHEMA_VERSION,
     HostFragment,
     run_coordinator_rpc_name,
+    with_host_config,
 )
 from dimos.utils.logging_config import set_run_log_dir
 
@@ -491,7 +492,7 @@ def _run_fragment(
             )
             for reference in payload.remote_module_references
         }
-        config = payload.config
+        config = with_host_config(payload.blueprint, payload.config)
         if global_overrides:
             config = config.subset_for(payload.blueprint, global_overrides=global_overrides)
         coordinator = ModuleCoordinator.build(

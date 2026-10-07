@@ -107,3 +107,11 @@ def test_unit_start_refuses_while_a_detached_host_runs(monkeypatch: pytest.Monke
         raise AssertionError("must not start the unit")
 
     assert "dimos host stop" in service.start(run=run)
+
+
+def test_restart_uses_the_unit_when_installed() -> None:
+    service.unit_path().parent.mkdir(parents=True)
+    service.unit_path().write_text("x")
+    calls: list[list[str]] = []
+    service.restart(run=lambda a: (calls.append(a), _ok(a))[1])
+    assert calls == [["restart", service.UNIT_NAME]]
