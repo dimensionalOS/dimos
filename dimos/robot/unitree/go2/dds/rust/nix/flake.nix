@@ -2,7 +2,7 @@
   description = "Build shell for the dimos Go2 DDS native module";
 
   # Its own directory: a `path:` ref copies the whole tree into the store each time,
-  # and the crate root holds target/. Locked to the repo-root flake's nixpkgs rev.
+  # and the crate root holds target/. Locked to the module flakes' nixpkgs rev.
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
   outputs = { self, nixpkgs }:
@@ -23,6 +23,10 @@
             export CYCLONEDDS_INCLUDE_DIR="${pkgs.cyclonedds}/include"
           '';
         };
+      });
+      checks = forAll (pkgs: {
+        lint = pkgs.runCommand "go2-dds-lint" { } "mkdir $out";
+        tests = pkgs.runCommand "go2-dds-tests" { } "mkdir $out";
       });
     };
 }
