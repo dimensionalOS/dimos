@@ -2,6 +2,7 @@
   description = "depth2depth_cloud native module for DimOS: the depth2depth crate behind an LCM wrapper";
 
   inputs = {
+    nix-filter.url = "github:numtide/nix-filter";
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
     crate2nix.url = "github:nix-community/crate2nix";
@@ -13,7 +14,7 @@
 
   # packages.default: Metal on a Mac, CPU elsewhere (e.g. a Pi). packages.tensorrt (Linux): TensorRT on an NVIDIA GPU,
   # a Jetson (JetPack 6, CUDA 12.6) on aarch64 or a PC (CUDA 12.8, through the RTX 50-series) on x86_64.
-  outputs = { self, nixpkgs, flake-utils, crate2nix, depth2depth }:
+  outputs = { self, nix-filter, nixpkgs, flake-utils, crate2nix, depth2depth }:
     flake-utils.lib.eachSystem [ "aarch64-darwin" "aarch64-linux" "x86_64-linux" ] (system:
       let
         pkgs = import nixpkgs {
@@ -30,39 +31,34 @@
         };
         cudaPackages = if system == "aarch64-linux" then pkgs.cudaPackages_12_6 else pkgs.cudaPackages_12_8;
 
-        src = pkgs.runCommand "depth2depth-cloud-src" {} ''
-          mkdir -p $out/dimos/perception/depth2depth_cloud/rust
-          cp -r ${./src} $out/dimos/perception/depth2depth_cloud/rust/src
-          cp ${./Cargo.toml} $out/dimos/perception/depth2depth_cloud/rust/Cargo.toml
-          cp ${./Cargo.lock} $out/dimos/perception/depth2depth_cloud/rust/Cargo.lock
+        name = "dimos-depth2depth-cloud";
+        src = nix-filter.lib { root = ./.; exclude = [ "target" "build" "result" "__pycache__" ]; };
+        generated = crate2nix.tools.${system}.generatedCargoNix { inherit name src; };
 
-          mkdir -p $out/native/rust
-          cp -r ${../../../../native/rust/dimos-module} $out/native/rust/dimos-module
-          cp -r ${../../../../native/rust/dimos-module-macros} $out/native/rust/dimos-module-macros
-        '';
-
-        generatedCargoNix = crate2nix.tools.${system}.generatedCargoNix {
-          name = "depth2depth-cloud";
-          inherit src;
-          cargoToml = "dimos/perception/depth2depth_cloud/rust/Cargo.toml";
-        };
-
-        build = features: (import generatedCargoNix {
+        ours = [ name "dimos-module" "dimos-module-macros" ];
+        build = mode: features: (import generated {
           inherit pkgs;
           rootFeatures = [ "default" ] ++ features;
-          buildRustCrateForPkgs = cratePkgs: cratePkgs.buildRustCrate.override {
+          buildRustCrateForPkgs = cratePkgs: crate: (cratePkgs.buildRustCrate.override {
             defaultCrateOverrides = cratePkgs.defaultCrateOverrides // {
               # Builds libjpeg-turbo from source (the `cmake` feature).
               turbojpeg-sys = attrs: { nativeBuildInputs = (attrs.nativeBuildInputs or []) ++ [ pkgs.cmake pkgs.nasm ]; };
               # TensorRT references the driver's libraries (libcuda, and on a Jetson libnvdla_compiler), which the
               # sandbox lacks; they resolve at runtime from the host (see the wrapper below).
-              dimos-depth2depth-cloud = attrs: pkgs.lib.optionalAttrs (builtins.elem "tensorrt" (attrs.features or [])) {
+              ${name} = attrs: pkgs.lib.optionalAttrs (builtins.elem "tensorrt" (attrs.features or [])) {
                 extraRustcOpts = (attrs.extraRustcOpts or []) ++ [ "-C" "link-arg=-Wl,--allow-shlib-undefined" ];
               };
               # The model it embeds, and for TensorRT CUDA + TensorRT.
               depth2depth = depth2depth.lib.crateOverride { inherit pkgs cudaPackages; };
             };
-          };
+          }) (crate // pkgs.lib.optionalAttrs (mode != null && builtins.elem crate.crateName ours) ({
+            release = false;
+            extraRustcOpts = (crate.extraRustcOpts or [ ]) ++ [ "-C" "debuginfo=0" ];
+          } // pkgs.lib.optionalAttrs (mode == "lint") {
+            useClippy = true;
+            capLints = "forbid";
+            extraRustcOpts = (crate.extraRustcOpts or [ ]) ++ [ "-D" "warnings" "-C" "debuginfo=0" ];
+          }));
         }).rootCrate.build;
 
         # nix's glibc doesn't read ld.so.cache, so hand it the host's NVIDIA driver: JetPack's directories on a
@@ -78,9 +74,13 @@
         '';
       in {
         packages = {
-          default = build [ ];
+          default = build null [ ];
+          lint = (build "lint" [ ]).override { runTests = true; testCrateFlags = [ "--list" ]; };
+          tests = (build "test" [ ]).override { runTests = true; };
         } // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
-          tensorrt = withHostDriver (build [ "tensorrt" ]);
+          tensorrt = withHostDriver (build null [ "tensorrt" ]);
         };
+        checks.lint = self.packages.${system}.lint;
+        checks.tests = self.packages.${system}.tests;
       });
 }
