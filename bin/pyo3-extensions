@@ -85,8 +85,9 @@ def main() -> None:
 
     if args.build:
         for manifest, _ in found:
+            # cargo reads .cargo/config.toml from its cwd (a crate's macOS link flags live there)
             subprocess.run(
-                ["maturin", "develop", "-m", str(manifest)], cwd=str(REPO_ROOT), check=True
+                ["maturin", "develop", "-m", str(manifest)], cwd=manifest.parent, check=True
             )
         names = [module for _, module in found]
         subprocess.run(
