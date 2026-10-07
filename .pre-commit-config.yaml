@@ -96,13 +96,6 @@ repos:
         entry: bin/hooks/lfs_check
         language: script
 
-      - id: module-dir-guard
-        name: No untracked files in a native-module dir
-        always_run: true
-        pass_filenames: false
-        entry: bin/module-dir-guard
-        language: script
-
       - id: largefiles-check
         name: Large files check
         always_run: true
@@ -143,7 +136,15 @@ repos:
 
       - id: cargo-fmt
         name: cargo fmt
-        entry: bin/hooks/rust-module-foreach --shell native/rust fmt --all
+        entry: |
+          bash -c '
+            set -euo pipefail
+            git ls-files "*Cargo.toml" | while read -r m; do
+              cargo locate-project --manifest-path "$m" --workspace --message-format plain
+            done | sort -u | while read -r root; do
+              cargo fmt --manifest-path "$root" --all
+            done
+          '
         language: system
         types: [rust]
         pass_filenames: false

@@ -31,6 +31,7 @@ import json
 import os
 from pathlib import Path
 import re
+import subprocess
 from types import ModuleType
 from typing import NamedTuple
 
@@ -208,7 +209,7 @@ def test_recorder_is_in_the_publish_manifest() -> None:
         if module.qualname == "dimos.experimental.memory.rust_recorder.RustRecorderConfig"
     )
     assert recorder.build_dir == "dimos/experimental/memory/rust"
-    assert _SCRIPT._flake_ref_of(recorder) == ".#dimos-memory-recorder"
+    assert _SCRIPT._flake_ref_of(recorder) == "path:."
 
 
 @pytest.mark.parametrize("override", [None, "build_command", "source_dir"])
@@ -248,28 +249,16 @@ def test_ast_extraction_matches_runtime() -> None:
         assert runtime_dir == (DIMOS_PROJECT_ROOT / module.build_dir).resolve()
 
 
-def test_no_module_hashes_the_repo_root() -> None:
-    """A collected input of "." puts the whole-repo tree SHA in the marker key,
-    so it changes on every commit and the marker never matches."""
-    for module in _SCRIPT.discover():
-        assert "." not in _SCRIPT._collect_input_paths(module), (
-            f"{module.qualname}: input set includes the repo root — a fileset root anchor "
-            "is being hashed, which busts the publish marker on every commit"
-        )
-
-
-def test_every_module_flake_is_self_contained() -> None:
-    """A module flake may reach its own directory and nothing else.
-
-    This is what makes the publish gate's key correct: `--inputs-hash` hashes each
-    module's directory tree and nothing more, so a path literal or `path:` input
-    pointing outside it would let content change without changing the key, and the
-    module would be served from Cachix as already published. Anything shared has to
-    arrive as a remote input pinned in the module's own flake.lock, or be copied in.
-    """
+def test_every_module_builds_from_its_own_directory() -> None:
+    """`path:.` from the module dir, hashing nothing outside it: a root ref copies all of LFS, an outside input escapes the publish key."""
     modules = _SCRIPT.discover()
     assert modules
     for module in modules:
+        assert module.build_dir != ".", f"{module.qualname}: builds from the repository root"
+        ref = _SCRIPT._flake_ref_of(module)
+        assert ref == "path:." or ref.startswith("path:.#"), (
+            f"{module.qualname}: flake ref {ref!r} is not the `path:.#<package>` convention"
+        )
         inputs = _SCRIPT._collect_input_paths(module)
         assert inputs == {module.build_dir}, (
             f"{module.qualname}: hashed inputs {sorted(inputs)} are not just "
@@ -277,19 +266,39 @@ def test_every_module_flake_is_self_contained() -> None:
         )
 
 
-def test_no_module_reaches_the_repository_root() -> None:
-    """No `nix build` may resolve to the repo root.
+_GUARD_EXEMPT = re.compile(r"^(target|build|__pycache__|result.*|.*~|.*\.o|.*\.so|\.sw.)$")
 
-    A ref that walks up to `.git` copies the entire working tree into the store,
-    including every smudged git-lfs blob under `data/` — 16 GB per build, and a
-    source hash that differs between machines depending on what they have pulled.
-    """
-    for module in _SCRIPT.discover():
-        assert module.build_dir != ".", f"{module.qualname}: builds from the repository root"
-        ref = _SCRIPT._flake_ref_of(module)
-        assert ref == "path:." or ref.startswith(("path:.#", "github:")), (
-            f"{module.qualname}: flake ref {ref!r} is not the `path:.#<package>` convention"
-        )
+
+@pytest.mark.skipif(not _IN_GIT_CHECKOUT, reason="needs a git checkout to list untracked files")
+def test_module_dirs_hold_only_tracked_source() -> None:
+    """`path:.` copies untracked files too, so a stray `.DS_Store` changes the hash and misses Cachix."""
+    stray = []
+    for flake in _SCRIPT.flake_dirs():
+        listing = subprocess.run(
+            ["git", "status", "--porcelain", "--ignored=matching", "-z", "--", flake],
+            cwd=DIMOS_PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        for entry in filter(None, listing.split("\0")):
+            path = Path(entry[3:])
+            if entry[:2] in ("??", "!!") and not any(
+                _GUARD_EXEMPT.match(part) for part in path.relative_to(flake).parts
+            ):
+                stray.append(path.as_posix())
+    assert not stray, f"delete these, or commit them if they are source: {stray}"
+
+
+def test_a_flake_that_fails_to_evaluate_fails_the_gate(monkeypatch: pytest.MonkeyPatch) -> None:
+    def broken_eval(command, **kwargs):
+        raise subprocess.CalledProcessError(1, command, "", "error: syntax error")
+
+    monkeypatch.setattr(_SCRIPT.subprocess, "run", broken_eval)
+    _SCRIPT.current_system.cache_clear()
+    with pytest.raises(RuntimeError, match="syntax error"):
+        _SCRIPT._checks_of("native/rust")
+    _SCRIPT.current_system.cache_clear()
 
 
 _IN_REPO_INPUT = re.compile(r'url = "github:dimensionalOS/dimos\?(?P<query>[^"]*)"')
@@ -314,7 +323,6 @@ def _in_repo_input_refs() -> dict[str, list[str | None]]:
     return refs
 
 
-@pytest.mark.skipif(not _IN_GIT_CHECKOUT, reason="needs a git checkout to read refs")
 def _resolve(nodes: dict, node: str, name: str) -> str | None:
     """The node `name` refers to from `node`, resolving a `follows` path from root."""
     edge = nodes.get(node, {}).get("inputs", {}).get(name)

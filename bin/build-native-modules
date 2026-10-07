@@ -91,13 +91,27 @@ def current_system() -> str:
     Asked lazily, never at import: `--inputs-hash` runs on a runner that has no nix
     yet -- that is the whole point of the gate -- and must stay a git-only operation.
     """
-    proc = subprocess.run(
-        ["nix", "eval", "--raw", "--impure", "--expr", "builtins.currentSystem"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    return proc.stdout.strip()
+    return _run(
+        ["nix", "eval", "--raw", "--impure", "--expr", "builtins.currentSystem"]
+    ).stdout.strip()
+
+
+def _run(command: list[str] | str, cwd: Path = REPO_ROOT) -> subprocess.CompletedProcess[str]:
+    """Run `command`; a non-zero exit raises with everything it printed."""
+    try:
+        return subprocess.run(
+            command,
+            cwd=str(cwd),
+            shell=isinstance(command, str),
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except subprocess.CalledProcessError as error:
+        shown = command if isinstance(command, str) else " ".join(command)
+        raise RuntimeError(
+            f"`{shown}` in {cwd} exited {error.returncode}\n{error.stdout}{error.stderr}"
+        ) from None
 
 
 PACKAGE_DIR = REPO_ROOT / "dimos"
@@ -556,16 +570,7 @@ def flake_dirs() -> list[str]:
 
 
 def _checks_of(build_dir: str) -> frozenset[str] | None:
-    """The names under `checks.<system>`, or None if the flake does not build on this system.
-
-    `path:.#checks.<system>` cannot express this on its own: nix exits non-zero both for
-    a flake that has no such attribute and for one that fails to evaluate, so the old
-    "non-zero means no checks" read let an invalid flake, a broken lock input or a crate
-    that will not evaluate report as "declares no lint check" and pass the gate without
-    running it. `or {}` makes the expression total over the missing attribute instead,
-    which leaves a non-zero exit meaning only what it should — evaluation genuinely
-    failed — so we raise. A system the flake names nowhere is the one legitimate skip.
-    """
+    """The names under `checks.<system>`, or None if the flake does not build on this system; an eval failure raises."""
     directory = REPO_ROOT / build_dir
     system = current_system()
     expr = f"""
@@ -575,24 +580,9 @@ def _checks_of(build_dir: str) -> frozenset[str] | None:
          then builtins.attrNames ((flake.checks or {{}})."{system}" or {{}})
          else null
     """
-    proc = subprocess.run(
-        ["nix", "eval", "--impure", "--json", "--expr", expr],
-        cwd=str(directory),
-        capture_output=True,
-        text=True,
-        check=False,
+    names = json.loads(
+        _run(["nix", "eval", "--impure", "--json", "--expr", expr], directory).stdout
     )
-    body = (proc.stdout or "") + (proc.stderr or "")
-    if proc.returncode != 0:
-        raise RuntimeError(
-            f"evaluating checks.{system} in {build_dir} exited {proc.returncode}\n{body}"
-        )
-    try:
-        names = json.loads(proc.stdout)
-    except json.JSONDecodeError as error:
-        raise RuntimeError(
-            f"checks.{system} in {build_dir} did not evaluate to a list\n{body}"
-        ) from error
     return None if names is None else frozenset(names)
 
 
@@ -608,16 +598,7 @@ def check_one(build_dir: str, check: str) -> tuple[str, bool, str]:
         )
     attr = f"path:.#checks.{current_system()}.{check}"
     _log(f"START: {check} {build_dir}: {attr}")
-    proc = subprocess.run(
-        ["nix", "build", "-L", attr, "--no-link"],
-        cwd=str(REPO_ROOT / build_dir),
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    body = (proc.stdout or "") + (proc.stderr or "")
-    if proc.returncode != 0:
-        raise RuntimeError(f"{check} {build_dir} exited {proc.returncode}\n{body}")
+    _run(["nix", "build", "-L", attr, "--no-link"], REPO_ROOT / build_dir)
     return build_dir, False, f"DONE:  {check} {build_dir}"
 
 
@@ -629,17 +610,8 @@ def build_one(module: DiscoveredModule, dry_run: bool) -> tuple[str, bool, str]:
     if systems is not None and current_system() not in systems:
         return name, False, f"SKIP:  {name} declares no packages for {current_system()}"
     _log(f"START: {name} in {build_dir}: {command}")
-    proc = subprocess.run(
-        command,
-        shell=True,
-        cwd=str(build_dir),
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    body = (proc.stdout or "") + (proc.stderr or "")
-    if proc.returncode != 0:
-        raise RuntimeError(f"{name} exited {proc.returncode}\n{body}")
+    proc = _run(command, build_dir)
+    body = proc.stdout + proc.stderr
     # A dry run lists the derivations it would realise; saying nothing means every
     # output already substitutes, so a real run would push nothing new.
     return name, dry_run and "will be built" in body, f"DONE:  {name}\n{body}".rstrip()
