@@ -46,6 +46,7 @@ exclude = [
     "**/*.html",
     "**/*.css",
     "**/*.js",
+    "gateway/msgs/*.ts", # /dimos/msgs.ts: the generated TypeScript backends import
     "**/*.svg",
     "**/*.tcss",
     "**/*.pyi",
