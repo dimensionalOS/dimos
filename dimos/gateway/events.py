@@ -21,6 +21,7 @@ and, deprecated for one release, on the SSE stream /dimos/events (one per `data:
 {"type": "upload-removed", "id"}
 {"type": "uploads", "waitingForLogin", "cleared"?}   the upload queue as a whole
 {"type": "cloud-login", "login"}                     the device login's state
+{"type": "blueprints", "added", "removed"}           the blueprint list changed (blueprint_watch.py)
 """
 
 from __future__ import annotations

@@ -55,6 +55,7 @@ from dimos.gateway import (
     overrides as launch_overrides,
     runs,
 )
+from dimos.gateway.blueprint_watch import BlueprintWatch
 from dimos.gateway.discovery import Discovery
 from dimos.gateway.jobs import Jobs
 from dimos.gateway.openapi import document, operation_id, route_doc
@@ -120,6 +121,8 @@ class ServerState:
     zenoh_namespace: str | None = None
     # every topic heard on the bus (serve() starts it), None = not listening
     topics: TopicWatch | None = None
+    # re-lists the blueprints when dimos/robot or site-packages change (create_app makes it), None = no watching
+    watch: BlueprintWatch | None = None
 
 
 def default_state(dimos_dir: Path) -> ServerState:
@@ -140,6 +143,23 @@ def create_app(state: ServerState, background: bool = True) -> FastAPI:
         lambda event: state.bus.send(event), lambda key, payload: state.bus.publish(key, payload)
     )
 
+    async def list_in_child() -> list[dict[str, Any]]:
+        answer = await discovered.child_answer("list")
+        if "error" in answer:
+            raise RuntimeError(answer["error"])
+        return list(answer["blueprints"])
+
+    def blueprints_changed(_: list[dict[str, Any]], added: list[str], removed: list[str]) -> None:
+        state.cache.forget("list")
+        state.bus.send({"type": "blueprints", "added": added, "removed": removed})
+
+    watch = state.watch = state.watch or BlueprintWatch(
+        state.dimos_dir,
+        list_in_child,
+        blueprints_changed,
+        lambda: discovered.refresh("files changed"),
+    )
+
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         if background:
@@ -147,6 +167,7 @@ def create_app(state: ServerState, background: bool = True) -> FastAPI:
                 asyncio.create_task(events.watch_launch(state.bus)),
                 asyncio.create_task(state.uploads.work()),
                 asyncio.create_task(discovered.run()),
+                asyncio.create_task(watch.run()),
             ]
         yield
         state.uploads.shutdown()
@@ -310,7 +331,8 @@ def create_app(state: ServerState, background: bool = True) -> FastAPI:
             "blueprints",
             "Every blueprint dimos can run (name, builtin/external) and whether it imports",
             "What `dimos list` prints: built-in blueprints (without demo-*), then external ones from installed "
-            "packages. Cached for 60 s; `fresh` refills the cache first. No other side effects. `importable`, "
+            "packages. Cached for 60 s and re-listed (in a child) whenever dimos/robot or site-packages change, "
+            "with a `blueprints` event; `fresh` re-lists first. No other side effects. `importable`, "
             "`import_error` and `missing_module` come from the discovery cache (null until the scan reaches the "
             "blueprint: GET /dimos/discovery).",
             errors=(400, 500),
@@ -321,9 +343,14 @@ def create_app(state: ServerState, background: bool = True) -> FastAPI:
     async def blueprint_list(fresh: FreshQuery = False) -> dict[str, Any]:
         if fresh:
             s.cache.forget("list")
+            if s.watch and s.watch.listed is not None:
+                await s.watch.relist()
 
         async def compute() -> dict[str, Any]:
-            return {"blueprints": await asyncio.to_thread(blueprints.blueprint_list)}
+            # the watcher's listing comes from a child, so it follows edits to the registry; this process's own
+            # import of it can't
+            listed = s.watch.listed if s.watch else None
+            return {"blueprints": listed or await asyncio.to_thread(blueprints.blueprint_list)}
 
         result: dict[str, Any] = await s.cache.get("list", LIST_TTL_S, compute)
         return {"blueprints": [discovered.import_status(entry) for entry in result["blueprints"]]}

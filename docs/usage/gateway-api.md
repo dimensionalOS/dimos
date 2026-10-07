@@ -66,7 +66,7 @@ file it can read; after that it follows the run to `LOG_DIR/<run id>`.
 ## Events
 
 The gateway publishes its events on zenoh at `<ns>/dimos/events/<type>` (`<ns>` is Desktop's namespace): `launch`,
-`log`, `upload`, `uploads`, `upload-removed`, `cloud-login`, `discovery` and `job`. Each payload is a component schema in the document
+`log`, `upload`, `uploads`, `upload-removed`, `cloud-login`, `discovery`, `job` and `blueprints` (the blueprint list changed: `added`, `removed`; the gateway watches dimos/robot and site-packages itself). Each payload is a component schema in the document
 (`LaunchEvent`, ... ; `DimosEvent` is any of them) with its zenoh key in `x-zenoh-key`. `GET /dimos/events` streams
 the same events as server-sent events, and is deprecated.
 

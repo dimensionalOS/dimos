@@ -354,6 +354,7 @@ def test_events_are_documented_with_their_zenoh_keys(spec: dict[str, Any]) -> No
         "cloud-login",
         "discovery",
         "job",
+        "blueprints",
     }
     for event_type, ref in union["discriminator"]["mapping"].items():
         schema = schemas[ref.rsplit("/", 1)[1]]

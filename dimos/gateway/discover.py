@@ -18,6 +18,7 @@ Importing blueprints can hang, crash or print; in a child none of that reaches t
 MARKER + JSON (anything else on stdout is an import's noise):
 
     names      -> {"blueprints": [every registry and external blueprint], "modules": [every registry module]}
+    list       -> {"blueprints": [{name, kind}]}: what `dimos list` prints (blueprints.blueprint_list)
     scan       stdin {"blueprints": [names], "modules": [registry names], "known": [classes]} ->
                {"kind": "start", "name"} before each blueprint, then {"kind": "blueprint", ...}, and a
                {"kind": "module", ...} for each module class not in `known`; registry modules last
@@ -402,6 +403,10 @@ def main(argv: list[str]) -> None:
             emit({"kind": "end"})
         elif command == "packages":
             emit(packages())
+        elif command == "list":
+            from dimos.gateway.blueprints import blueprint_list
+
+            emit({"blueprints": blueprint_list()})
         else:
             emit({"error": f"unknown command {command!r}"})
     except BaseException as error:

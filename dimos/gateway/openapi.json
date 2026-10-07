@@ -426,6 +426,46 @@
         "title": "BlueprintName",
         "type": "object"
       },
+      "BlueprintsEvent": {
+        "additionalProperties": true,
+        "description": "The blueprint list changed (a file under dimos/robot or a package in site-packages, which the gateway watches): GET /dimos/blueprints for the new list",
+        "properties": {
+          "added": {
+            "description": "Blueprints that weren't listed before",
+            "examples": [
+              [
+                "unitree-g1"
+              ]
+            ],
+            "items": {
+              "type": "string"
+            },
+            "title": "Added",
+            "type": "array"
+          },
+          "removed": {
+            "description": "Blueprints no longer listed",
+            "items": {
+              "type": "string"
+            },
+            "title": "Removed",
+            "type": "array"
+          },
+          "type": {
+            "const": "blueprints",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "added",
+          "removed"
+        ],
+        "title": "BlueprintsEvent",
+        "type": "object",
+        "x-zenoh-key": "<ns>/dimos/events/blueprints"
+      },
       "Catalog": {
         "additionalProperties": true,
         "properties": {
@@ -979,6 +1019,7 @@
         "description": "Any of the gateway's events; `type` says which, and is the last chunk of its zenoh key",
         "discriminator": {
           "mapping": {
+            "blueprints": "#/components/schemas/BlueprintsEvent",
             "cloud-login": "#/components/schemas/CloudLoginEvent",
             "discovery": "#/components/schemas/DiscoveryEvent",
             "job": "#/components/schemas/JobEvent",
@@ -1014,6 +1055,9 @@
           },
           {
             "$ref": "#/components/schemas/JobEvent"
+          },
+          {
+            "$ref": "#/components/schemas/BlueprintsEvent"
           }
         ],
         "title": "DimosEvent"
@@ -5371,7 +5415,7 @@
     },
     "/dimos/blueprints": {
       "get": {
-        "description": "What `dimos list` prints: built-in blueprints (without demo-*), then external ones from installed packages. Cached for 60 s; `fresh` refills the cache first. No other side effects. `importable`, `import_error` and `missing_module` come from the discovery cache (null until the scan reaches the blueprint: GET /dimos/discovery).",
+        "description": "What `dimos list` prints: built-in blueprints (without demo-*), then external ones from installed packages. Cached for 60 s and re-listed (in a child) whenever dimos/robot or site-packages change, with a `blueprints` event; `fresh` re-lists first. No other side effects. `importable`, `import_error` and `missing_module` come from the discovery cache (null until the scan reaches the blueprint: GET /dimos/discovery).",
         "operationId": "get_dimos_blueprints",
         "parameters": [
           {

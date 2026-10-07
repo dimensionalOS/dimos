@@ -1346,6 +1346,19 @@ class JobEvent(ApiModel):
     kind: str = Field(description="What sort of job", examples=["extras"])
 
 
+class BlueprintsEvent(ApiModel):
+    model_config = _zenoh(
+        "blueprints",
+        "The blueprint list changed (a file under dimos/robot or a package in site-packages, which the gateway "
+        "watches): GET /dimos/blueprints for the new list",
+    )
+    type: Literal["blueprints"]
+    added: list[str] = Field(
+        description="Blueprints that weren't listed before", examples=[["unitree-g1"]]
+    )
+    removed: list[str] = Field(description="Blueprints no longer listed")
+
+
 EVENT_MODELS: tuple[type[ApiModel], ...] = (
     LaunchEvent,
     LogEvent,
@@ -1355,6 +1368,7 @@ EVENT_MODELS: tuple[type[ApiModel], ...] = (
     CloudLoginEvent,
     DiscoveryEvent,
     JobEvent,
+    BlueprintsEvent,
 )
 
 DimosEvent = Annotated[
@@ -1365,6 +1379,7 @@ DimosEvent = Annotated[
     | UploadRemovedEvent
     | CloudLoginEvent
     | DiscoveryEvent
-    | JobEvent,
+    | JobEvent
+    | BlueprintsEvent,
     Field(discriminator="type"),
 ]
