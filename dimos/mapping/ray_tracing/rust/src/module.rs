@@ -47,6 +47,10 @@ const JOB_QUEUE_CAPACITY: usize = 256;
 /// Tiles between seed load progress lines.
 const SEED_PROGRESS_TILES: usize = 100;
 
+/// How long a load may go without a tile, with live clouds keeping the
+/// worker busy, before it is reported as stalled.
+const SEED_STALL_WARN_AFTER: Duration = Duration::from_secs(5);
+
 #[derive(Module)]
 #[module(name = "ray_tracing", setup = spawn_worker, teardown = stop_worker)]
 pub struct RayTracingVoxelMap {
@@ -163,9 +167,42 @@ impl RayTracingVoxelMap {
     }
 }
 
+/// The live clouds handled while a seed load was in progress: how many were
+/// folded in or dropped, and how long they sat in the queue.
+#[derive(Default)]
+struct FrameStats {
+    applied: usize,
+    dropped: usize,
+    max_wait_ms: f64,
+    sum_wait_ms: f64,
+    sum_process_ms: f64,
+    max_backlog: usize,
+}
+
+impl FrameStats {
+    fn record(&mut self, applied: bool, wait_ms: f64, process_ms: f64, backlog: usize) {
+        if applied {
+            self.applied += 1;
+            self.sum_process_ms += process_ms;
+        } else {
+            self.dropped += 1;
+        }
+        self.max_wait_ms = self.max_wait_ms.max(wait_ms);
+        self.sum_wait_ms += wait_ms;
+        self.max_backlog = self.max_backlog.max(backlog);
+    }
+
+    fn mean_wait_ms(&self) -> f64 {
+        self.sum_wait_ms / (self.applied + self.dropped).max(1) as f64
+    }
+
+    fn mean_process_ms(&self) -> f64 {
+        self.sum_process_ms / self.applied.max(1) as f64
+    }
+}
+
 /// A seed load in progress, applied a tile at a time whenever no live work is
-/// queued and handed on region by region as each one completes. Counts the
-/// live frames folded in meanwhile and how long they waited behind seed work.
+/// queued and handed on region by region as each one completes.
 struct SeedLoad {
     regions: Vec<SeedRegion>,
     next_region: usize,
@@ -174,13 +211,10 @@ struct SeedLoad {
     tiles_done: usize,
     created: usize,
     started: Instant,
+    last_tile_at: Instant,
     max_tile_ms: f64,
     sum_tile_ms: f64,
-    frames: usize,
-    max_wait_ms: f64,
-    sum_wait_ms: f64,
-    sum_process_ms: f64,
-    max_backlog: usize,
+    frames: FrameStats,
 }
 
 impl SeedLoad {
@@ -193,35 +227,15 @@ impl SeedLoad {
             tiles_done: 0,
             created: 0,
             started: Instant::now(),
+            last_tile_at: Instant::now(),
             max_tile_ms: 0.0,
             sum_tile_ms: 0.0,
-            frames: 0,
-            max_wait_ms: 0.0,
-            sum_wait_ms: 0.0,
-            sum_process_ms: 0.0,
-            max_backlog: 0,
+            frames: FrameStats::default(),
         }
     }
 
     fn mean_tile_ms(&self) -> f64 {
         self.sum_tile_ms / self.tiles_done.max(1) as f64
-    }
-
-    fn mean_wait_ms(&self) -> f64 {
-        self.sum_wait_ms / self.frames.max(1) as f64
-    }
-
-    fn mean_process_ms(&self) -> f64 {
-        self.sum_process_ms / self.frames.max(1) as f64
-    }
-
-    /// Account a live frame folded in during this load.
-    fn record_frame(&mut self, wait_ms: f64, process_ms: f64, backlog: usize) {
-        self.frames += 1;
-        self.max_wait_ms = self.max_wait_ms.max(wait_ms);
-        self.sum_wait_ms += wait_ms;
-        self.sum_process_ms += process_ms;
-        self.max_backlog = self.max_backlog.max(backlog);
     }
 
     /// Apply the next tile. The region it completed, if any.
@@ -231,6 +245,7 @@ impl SeedLoad {
         let tile_start = Instant::now();
         self.created += tokio::task::block_in_place(|| mapper.seed_tile(tile));
         let tile_ms = tile_start.elapsed().as_secs_f64() * 1e3;
+        self.last_tile_at = Instant::now();
         self.tiles_done += 1;
         self.max_tile_ms = self.max_tile_ms.max(tile_ms);
         self.sum_tile_ms += tile_ms;
@@ -349,11 +364,26 @@ impl Worker {
                 let wait_ms = queued.elapsed().as_secs_f64() * 1e3;
                 let backlog = self.jobs.len();
                 let start = Instant::now();
-                self.ingest_frame(state, msg).await;
+                let applied = self.ingest_frame(state, msg).await;
                 let process_ms = start.elapsed().as_secs_f64() * 1e3;
-                debug!(wait_ms, process_ms, backlog, "lidar frame folded in");
+                if backlog > 0 {
+                    debug!(
+                        wait_ms,
+                        process_ms, backlog, "lidar frames waiting behind this one"
+                    );
+                }
                 if let SeedState::Loading(load) = &mut state.seed {
-                    load.record_frame(wait_ms, process_ms, backlog);
+                    load.frames.record(applied, wait_ms, process_ms, backlog);
+                    if load.last_tile_at.elapsed() >= SEED_STALL_WARN_AFTER {
+                        warn_throttled!(
+                            SEED_STALL_WARN_AFTER,
+                            tiles_done = load.tiles_done,
+                            tiles = load.tile_count,
+                            frames = load.frames.applied,
+                            max_backlog = load.frames.max_backlog,
+                            "Seed load is stalled: live clouds have kept the worker busy since the last tile.",
+                        );
+                    }
                 }
             }
             Job::ClearMask(msg) => self.apply_clear_mask(state, msg),
@@ -376,8 +406,9 @@ impl Worker {
         }
     }
 
-    /// Fold one lidar frame into the map and publish whatever is due.
-    async fn ingest_frame(&self, state: &mut State, msg: PointCloud2) {
+    /// Fold one lidar frame into the map and publish whatever is due. False
+    /// when the cloud was dropped.
+    async fn ingest_frame(&self, state: &mut State, msg: PointCloud2) -> bool {
         // Register with the transform nearest the cloud stamp, waiting briefly
         // for one still in flight rather than dropping the cloud.
         let stamp = time_secs(&msg.header.stamp);
@@ -393,7 +424,7 @@ impl Worker {
             .map(|latest| latest.ts);
         if is_stale(stamp, latest, self.config.max_cloud_age_s) {
             warn_throttled!(Duration::from_secs(5), cloud_frame = %msg.header.frame_id, "Skipped a cloud older than max_cloud_age_s: the map is behind and catching up.");
-            return;
+            return false;
         }
         let found = if transform_is_past(stamp, latest, tolerance) {
             lookup.get()
@@ -407,7 +438,7 @@ impl Worker {
                 cloud_frame = %msg.header.frame_id,
                 "No transform within tolerance of the cloud stamp, dropped a cloud.",
             );
-            return;
+            return false;
         };
         let points = match extract_xyz(&msg) {
             Ok(p) => p.into_iter().map(|[x, y, z]| (x, y, z)).collect::<Vec<_>>(),
@@ -417,11 +448,11 @@ impl Worker {
                     error = %e,
                     "Failed to get lidar points, dropped a cloud.",
                 );
-                return;
+                return false;
             }
         };
         if points.is_empty() {
-            return;
+            return false;
         }
 
         let mapper = &mut state.mapper;
@@ -465,6 +496,7 @@ impl Worker {
         if state.mapper.viz_due() {
             self.publish_map_regions(state, &stamp).await;
         }
+        true
     }
 
     /// Publish the map region cells due this viz tick, the cell in each
@@ -596,9 +628,9 @@ impl Worker {
                 regions = load.regions.len(),
                 max_tile_ms = load.max_tile_ms,
                 mean_tile_ms = load.mean_tile_ms(),
-                frames = load.frames,
-                max_wait_ms = load.max_wait_ms,
-                max_backlog = load.max_backlog,
+                frames = load.frames.applied,
+                max_wait_ms = load.frames.max_wait_ms,
+                max_backlog = load.frames.max_backlog,
                 "Seed load in progress."
             );
         }
@@ -617,11 +649,12 @@ impl Worker {
             load_s = load.started.elapsed().as_secs_f64(),
             max_tile_ms = load.max_tile_ms,
             mean_tile_ms = load.mean_tile_ms(),
-            frames = load.frames,
-            max_wait_ms = load.max_wait_ms,
-            mean_wait_ms = load.mean_wait_ms(),
-            mean_process_ms = load.mean_process_ms(),
-            max_backlog = load.max_backlog,
+            frames = load.frames.applied,
+            dropped = load.frames.dropped,
+            max_wait_ms = load.frames.max_wait_ms,
+            mean_wait_ms = load.frames.mean_wait_ms(),
+            mean_process_ms = load.frames.mean_process_ms(),
+            max_backlog = load.frames.max_backlog,
             "Seeded the voxel map from a loaded map cloud."
         );
         state.seed = SeedState::Done;
@@ -959,21 +992,22 @@ mod tests {
     }
 
     #[test]
-    fn seed_load_reports_the_frames_it_delayed() {
-        let mut load = SeedLoad::new(two_region_seed());
-        assert_eq!(
-            (load.frames, load.mean_wait_ms(), load.mean_process_ms()),
-            (0, 0.0, 0.0)
-        );
+    fn frame_stats_count_dropped_clouds_apart_from_applied_ones() {
+        let mut stats = FrameStats::default();
+        assert_eq!((stats.mean_wait_ms(), stats.mean_process_ms()), (0.0, 0.0));
 
-        load.record_frame(4.0, 30.0, 0);
-        load.record_frame(26.0, 50.0, 3);
-        load.record_frame(6.0, 40.0, 1);
-        assert_eq!(load.frames, 3);
-        assert_eq!(load.max_wait_ms, 26.0);
-        assert_eq!(load.mean_wait_ms(), 12.0);
-        assert_eq!(load.mean_process_ms(), 40.0);
-        assert_eq!(load.max_backlog, 3);
+        stats.record(true, 4.0, 30.0, 0);
+        stats.record(false, 26.0, 50.0, 3);
+        stats.record(true, 6.0, 40.0, 1);
+        assert_eq!((stats.applied, stats.dropped), (2, 1));
+        assert_eq!(stats.max_wait_ms, 26.0);
+        assert_eq!(stats.mean_wait_ms(), 12.0);
+        assert_eq!(
+            stats.mean_process_ms(),
+            35.0,
+            "dropped clouds do not dilute it"
+        );
+        assert_eq!(stats.max_backlog, 3);
     }
 
     #[test]
