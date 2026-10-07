@@ -242,6 +242,19 @@ button {
     flex-direction: column;
     gap: 14px;
 }
+/* the module's name, with Show code to its right */
+.module-view .title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+.module-view .title .names {
+    min-width: 0;
+}
+.module-view .title .btn {
+    flex: none;
+}
 .module-view .title h3 {
     display: inline;
     margin: 0;

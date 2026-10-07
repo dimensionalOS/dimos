@@ -353,10 +353,14 @@ function moduleView(module) {
         h(
             "div",
             { class: "title" },
-            h("h3", { title: module.class }, className(module)),
-            aliasOf(module) && h("span", { class: "alias" }, module.name),
+            h(
+                "div",
+                { class: "names" },
+                h("h3", { title: module.class }, className(module)),
+                aliasOf(module) && h("span", { class: "alias" }, module.name),
+            ),
+            module.file && codeButton({ file: module.file, line: module.line ?? 1 }, "data-bp-show-code"),
         ),
-        module.file && codeButton({ file: module.file, line: module.line ?? 1 }, "data-bp-show-code"),
         module.doc
             ? h("div", { class: "doc" }, module.doc)
             : h("div", { class: "none" }, known ? "No docstring." : "This dimos is too old to describe its modules."),
