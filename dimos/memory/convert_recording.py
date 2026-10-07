@@ -30,6 +30,7 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import sqlite3
 import tempfile
 from typing import Any
@@ -38,6 +39,8 @@ import lz4.frame
 from mcap.reader import make_reader
 from mcap.records import Attachment, Channel, Metadata, Schema
 from mcap.stream_reader import StreamReader
+import numpy as np
+import sqlite_vec
 
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.utils.validation import validate_identifier
@@ -91,6 +94,11 @@ LEGACY_TYPES = {
         f"lcm_msgs.{package}.{name}.{name}",
     )
 }
+GENERATED_TYPES = {
+    f"dimos_generated.{package}.msg.{name}": f"{package}/msg/{name}"
+    for package, names in TYPES.items()
+    for name in names
+}
 CODECS = {"lcm", "jpeg", "json", "cdr", "lz4+lcm", "lz4+jpeg", "lz4+json"}
 
 
@@ -120,6 +128,7 @@ class Row:
     sequence: int | None
     observation_ts: float
     metadata: dict[str, Any] = field(default_factory=dict)
+    embedding: bytes | None = None
 
 
 def _stream(name: str, payload: str, codec: str, schema: str = "", **metadata: Any) -> Stream:
@@ -215,7 +224,9 @@ def read_mcap(path: Path) -> Iterator[tuple[list[Stream], Iterator[Row]]]:
 
 
 @contextmanager
-def read_sqlite(path: Path) -> Iterator[tuple[list[Stream], Iterator[Row]]]:
+def read_sqlite(
+    path: Path, *, allow_vectors: bool = False
+) -> Iterator[tuple[list[Stream], Iterator[Row]]]:
     conn = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)
     try:
         conn.execute("PRAGMA trusted_schema=OFF")
@@ -234,13 +245,49 @@ def read_sqlite(path: Path) -> Iterator[tuple[list[Stream], Iterator[Row]]]:
                     or blob.get("config", {}).get("path") is not None
                 ):
                     raise ValueError(f"{name}: external/custom blob store is unsupported")
-                stream = _stream(name, config["payload_module"], config["codec_id"])
-                if conn.execute(
-                    "SELECT 1 FROM sqlite_master WHERE name=?", (name + "_vec",)
-                ).fetchone():
-                    raise ValueError(
-                        f"{name}: vector embeddings need a separate migration; refusing to discard them"
+                payload_type = config["payload_module"]
+                schema = ""
+                if config["codec_id"] == "cdr" and payload_type in GENERATED_TYPES:
+                    payload_type = GENERATED_TYPES[payload_type]
+                    message_type = resolve_msg_type(payload_type)
+                    if message_type is None:
+                        raise ValueError(f"{name}: generated type unavailable")
+                    schema = message_type.schema
+                stream = _stream(name, payload_type, config["codec_id"], schema=schema)
+                vector_schema = conn.execute(
+                    "SELECT sql FROM sqlite_master WHERE name=?", (name + "_vec",)
+                ).fetchone()
+                if vector_schema:
+                    if not allow_vectors:
+                        raise ValueError(
+                            f"{name}: vector embeddings require SQLite output (.db); MCAP is recording-only"
+                        )
+                    vector = config.get("vector_store", {})
+                    if (
+                        vector.get("class", "").replace("dimos.memory2.", "dimos.memory.")
+                        != "dimos.memory.vectorstore.sqlite.SqliteVectorStore"
+                        or vector.get("config", {}).get("path") is not None
+                    ):
+                        raise ValueError(f"{name}: external/custom vector store is unsupported")
+                    match = re.search(
+                        r"USING vec0\(embedding float\[(\d+)\] distance_metric=cosine\)$",
+                        vector_schema[0],
+                        re.IGNORECASE,
                     )
+                    if match is None:
+                        raise ValueError(f"{name}: unsupported vector schema")
+                    conn.enable_load_extension(True)
+                    try:
+                        sqlite_vec.load(conn)
+                    finally:
+                        conn.enable_load_extension(False)
+                    orphan = conn.execute(
+                        f'SELECT count(*) FROM "{name}_vec" v LEFT JOIN "{name}" m ON m.id=v.rowid WHERE m.id IS NULL'
+                    ).fetchone()[0]
+                    if orphan:
+                        raise ValueError(f"{name}: {orphan} orphan vectors")
+                    stream.metadata["vector_dimension"] = int(match[1])
+                    stream.metadata["vector_metric"] = "cosine"
                 stream_counts[name] = conn.execute(f'SELECT count(*) FROM "{name}"').fetchone()[0]
                 # Missing blobs must not disappear through an inner join.
                 missing = (
@@ -268,6 +315,18 @@ def read_sqlite(path: Path) -> Iterator[tuple[list[Stream], Iterator[Row]]]:
                     ident, ts, value, *rest = record
                     if not math.isfinite(ts) or ts < 0:
                         raise ValueError(f"{name}: invalid observation timestamp {ts}")
+                    embedding = None
+                    if "vector_dimension" in stream.metadata:
+                        vector_row = conn.execute(
+                            f'SELECT embedding FROM "{name}_vec" WHERE rowid=?', (ident,)
+                        ).fetchone()
+                        if vector_row is not None:
+                            embedding = bytes(vector_row[0])
+                            if (
+                                len(embedding) != 4 * stream.metadata["vector_dimension"]
+                                or not np.isfinite(np.frombuffer(embedding, dtype="<f4")).all()
+                            ):
+                                raise ValueError(f"{name}[{ident}]: invalid float32 embedding")
                     yield Row(
                         stream,
                         rest[-1],
@@ -281,6 +340,7 @@ def read_sqlite(path: Path) -> Iterator[tuple[list[Stream], Iterator[Row]]]:
                             "pose": rest[:7],
                             "tags": json.loads(rest[-2]),
                         },
+                        embedding,
                     )
 
         yield streams, rows()
@@ -367,8 +427,12 @@ def convert(source: Path, destination: Path) -> dict[str, Any]:
         raise ValueError(
             "Input must be a local MCAP or memory SQLite file; pickle directories are unsupported"
         )
-    reader = read_mcap if source.suffix == ".mcap" else read_sqlite
-    with reader(source) as (streams, rows):
+    reader = (
+        read_mcap(source)
+        if source.suffix == ".mcap"
+        else read_sqlite(source, allow_vectors=destination.suffix == ".db")
+    )
+    with reader as (streams, rows):
         if not streams:
             raise ValueError("Input contains no declared streams")
         for stream in streams:
@@ -456,15 +520,21 @@ def convert(source: Path, destination: Path) -> dict[str, Any]:
                             sequence=sequence,
                         )
                     else:
-                        writer.stream(row.stream.name).append(
+                        written = writer.stream(row.stream.name).append(
                             value,
                             ts=row.observation_ts,
                             pose=tuple(row.metadata["pose"])
                             if row.metadata.get("pose")
                             and all(v is not None for v in row.metadata["pose"])
                             else None,
-                            tags={"cdr_conversion": meta},
+                            embedding=importlib.import_module(
+                                "dimos.models.embedding.base"
+                            ).Embedding(np.frombuffer(row.embedding, dtype="<f4"))
+                            if row.embedding is not None
+                            else None,
+                            tags={**row.metadata.get("tags", {}), "cdr_conversion": meta},
                         )
+                        meta["output_sqlite_id"] = written.id
                     counts[row.stream.name] += 1
                     audit.write(json.dumps(meta) + "\n")
                 summary = {

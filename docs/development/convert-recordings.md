@@ -98,7 +98,7 @@ chunks. It is not LCM bytes relabeled as CDR. SQLite output uses the current
 refer to generated classes.
 
 This migrates message recordings, not arbitrary Python object databases. External
-blob stores, vector embeddings, MCAP attachments and pickle payloads are rejected instead of
+blob stores, MCAP attachments and pickle payloads are rejected instead of
 silently discarded. Keep the audit file with the converted recording.
 
 ## Validation
@@ -138,6 +138,56 @@ successful files remain, later files are marked not attempted, and the command
 fails. `migration-summary.json` records every candidate and result. Retain the
 originals; a successful conversion is not authorization to delete them.
 
+## Recording versus writable analysis
+
+MCAP is a cheap bus-recording format, not an embedding database. Convert a
+recording into the standard writable SQLite backend before analysis:
+
+```sh
+dimos mem convert converted.mcap analysis.db
+dimos mem summary analysis.db
+```
+
+Both filenames must be new when used as outputs. This uses the existing
+`SqliteStore`, not a new database format. MCAP integer timestamps and sequence
+are retained in `cdr_conversion` observation tags and the mandatory audit file;
+SQLite observation timestamps remain floating point.
+
+For historical SQLite recordings with embeddings, use SQLite output. This path
+uses the existing `Embedding` class and requires its PyTorch dependency (already
+present in the development environment); it does not load a model or weights:
+
+```sh
+uv pip install torch  # only if absent from a core-only environment
+dimos mem convert go2_short.db go2_short.cdr.db --dry-run &&
+dimos mem convert go2_short.db go2_short.cdr.db
+```
+
+In-file sqlite-vec float32/cosine vectors are copied through the existing vector
+store, linked to newly assigned observation IDs. The report records the old/new
+IDs. Payloads, poses and original tags remain associated with the observation.
+External/custom vector stores, unsupported vector schemas and orphaned vectors
+are rejected. DB-to-MCAP with vectors remains an error; there is no discard flag,
+embedding channel, attachment or automatic sidecar-vector export.
+
+Existing Python APIs remain `Stream.append(data, embedding=embedding)`,
+`stream.transform(EmbedImages(model)).save(destination).drain()` and
+`stream.search(query_embedding, k=10)`. The first two append new observations;
+they do not attach embeddings to an existing row. Search operates through the
+SQLite vector store. There is no embedding-analysis CLI and no MCAP vector search.
+Use the same model/preprocessing for queries as for stored vectors: historical
+vectors do not establish model identity merely from their dimension. Compressed
+images must be decoded to the input type expected by the chosen embedding model.
+No model weights are downloaded or embeddings recomputed by conversion. Realtime
+capture plus embedding analysis should write to the normal SQLite backend.
+
+Validation on Linux: the complete `go2_short.db` migration retained 2,546
+observations and all 108 stored 512-dimensional vectors, with exact vector bytes
+and verified old/new ID associations. Real stairs MCAP-to-SQLite conversion
+retained all 4,451 payloads and exact envelope metadata. A focused regression
+checks noncontiguous source IDs and ranked search after migration. This does not
+claim newly validated model inference, macOS execution or MCAP embedding support.
+
 ## Ivan's offline acceptance checklist
 
 Run from this proposal checkout with its prepared development environment activated
@@ -171,8 +221,8 @@ Expect 4,451 messages: `color_image` 855, `fastlio_lidar` 576,
 stream. Images become `sensor_msgs/msg/CompressedImage`, retaining the original
 JPEG bytes. Keep the original SQLite file and adjacent conversion audit report.
 
-Do not substitute `go2_short.db`: its `color_image_embedded` vector index is
-currently rejected to prevent data loss. `alfred_fusion_short.db` converts but
+`go2_short.db` includes a `color_image_embedded` vector index: migrate it to
+`.db`, not `.mcap`, to preserve embeddings. MCAP output rejects vectors explicitly. `alfred_fusion_short.db` converts but
 has no point clouds or images. Its current Rerun renderer logs only TF/odometry
 transforms, without explicit axes or visible geometry, and skips IMU; a populated
 entity tree therefore does not guarantee a visible 3D scene.

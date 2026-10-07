@@ -45,8 +45,12 @@ def inspect_recording(source: Path, output_format: str) -> dict[str, Any]:
             raise ValueError(
                 "LFS pointer, not recording bytes; materialize it with the project data loader first"
             )
-    reader = read_mcap if source.suffix == ".mcap" else read_sqlite
-    with reader(source) as (streams, rows):
+    reader = (
+        read_mcap(source)
+        if source.suffix == ".mcap"
+        else read_sqlite(source, allow_vectors=output_format == "db")
+    )
+    with reader as (streams, rows):
         if not streams:
             raise ValueError("Recording has no declared streams")
         counts: Counter[str] = Counter({stream.name: 0 for stream in streams})

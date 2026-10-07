@@ -23,12 +23,16 @@ from dimos_generated.std_msgs.msg import String
 import lz4.frame
 from mcap.reader import make_reader
 from mcap.writer import Writer
+import numpy as np
 import pytest
 from rosbags.typesys import Stores, get_types_from_msg, get_typestore
+import sqlite_vec
 
 from dimos.memory import convert_recording
 from dimos.memory.convert_recording import convert
+from dimos.memory.recording_migration import inspect_recording
 from dimos.memory.store.sqlite import SqliteStore
+from dimos.models.embedding.base import Embedding
 
 
 def write_mcap(path, streams):
@@ -342,3 +346,54 @@ def test_mcap_container_metadata_is_kept_and_attachments_rejected(tmp_path):
     with pytest.raises(ValueError, match="attachments"):
         convert(attached, tmp_path / "no.mcap")
     assert not (tmp_path / "no.mcap").exists()
+
+
+def test_sqlite_vectors_preserved_by_new_ids_and_rejected_for_mcap(tmp_path):
+    source, output = tmp_path / "source.db", tmp_path / "converted.db"
+    with SqliteStore(path=str(source)) as store:
+        stream = store.stream("images", String, codec="cdr")
+        stream.append(
+            String(data="first"), ts=1, embedding=Embedding(np.array([1.0, 0.0], dtype=np.float32))
+        )
+        stream.append(
+            String(data="second"), ts=2, embedding=Embedding(np.array([0.0, 1.0], dtype=np.float32))
+        )
+    with sqlite3.connect(source) as conn:
+        conn.enable_load_extension(True)
+        sqlite_vec.load(conn)
+        conn.execute("UPDATE images SET id=42 WHERE id=2")
+        conn.execute("UPDATE images_blob SET id=42 WHERE id=2")
+        vector = conn.execute("SELECT embedding FROM images_vec WHERE rowid=2").fetchone()[0]
+        conn.execute("DELETE FROM images_vec WHERE rowid=2")
+        conn.execute("INSERT INTO images_vec(rowid,embedding) VALUES(42,?)", (vector,))
+    assert inspect_recording(source, "db")["total"] == 2
+    with pytest.raises(ValueError, match="SQLite output"):
+        convert(source, tmp_path / "rejected.mcap")
+    convert(source, output)
+    with SqliteStore(path=str(output)) as store:
+        hits = (
+            store.stream("images")
+            .search(Embedding(np.array([0.0, 1.0], dtype=np.float32)), k=1)
+            .to_list()
+        )
+        assert hits[0].data.data == "second"
+        assert hits[0].similarity == pytest.approx(1)
+    with sqlite3.connect(output) as conn:
+        conn.enable_load_extension(True)
+        sqlite_vec.load(conn)
+        assert (
+            conn.execute("SELECT embedding FROM images_vec WHERE rowid=2").fetchone()[0] == vector
+        )
+    audit = [
+        json.loads(line)
+        for line in Path(str(output) + ".conversion.jsonl").read_text().splitlines()
+    ]
+    assert audit[2]["original"]["sqlite_id"] == 42
+    assert audit[2]["output_sqlite_id"] == 2
+    with sqlite3.connect(source) as conn:
+        conn.enable_load_extension(True)
+        sqlite_vec.load(conn)
+        conn.execute("INSERT INTO images_vec(rowid,embedding) VALUES(999,?)", (vector,))
+    with pytest.raises(ValueError, match="orphan vectors"):
+        convert(source, tmp_path / "orphan.db")
+    assert not (tmp_path / "orphan.db").exists()
