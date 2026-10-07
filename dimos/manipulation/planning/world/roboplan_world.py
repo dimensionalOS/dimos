@@ -539,6 +539,15 @@ class RoboPlanWorld:
             )
 
     def _add_obstacle_to_scene(self, obstacle: Obstacle, obstacle_id: str) -> None:
+        self._add_obstacle_geometry(obstacle, obstacle_id)
+        # RoboPlan counts two overlapping obstacles as a collision, which would
+        # reject every configuration. Obstacles never need to avoid each other.
+        scene = self._require_scene()
+        for other_id in self._obstacles:
+            if other_id != obstacle_id:
+                scene.setCollisions(obstacle_id, other_id, False)
+
+    def _add_obstacle_geometry(self, obstacle: Obstacle, obstacle_id: str) -> None:
         scene = self._require_scene()
         matrix = pose_to_matrix(obstacle.pose)
         color = np.asarray(obstacle.color, dtype=np.float64)
