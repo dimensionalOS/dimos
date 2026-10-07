@@ -555,7 +555,8 @@ def test_native_json_events_replay_to_the_live_quest_hud(
         replay = ReplayModule(dataset=str(artifact), topics="status", speed=100.0)
         cleanup.callback(replay.stop)
 
-        def broadcast(text):
+        def broadcast(text, exclude_ws=None):
+            assert exclude_ws is None
             received.append(json.loads(text))
 
         mocker.patch.object(hud, "_broadcast_text", side_effect=broadcast)
