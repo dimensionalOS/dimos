@@ -82,17 +82,20 @@ class SectorJson(TypedDict):
 
 class PointCloud2(Timestamped):
     msg_name = "sensor_msgs.PointCloud2"
+    seq: int = 0
 
     def __init__(
         self,
         pointcloud: o3d.geometry.PointCloud | o3d.t.geometry.PointCloud | None = None,
         frame_id: str = "world",
         ts: float | None = None,
+        seq: int = 0,
     ) -> None:
         import open3d as o3d  # type: ignore[import-untyped]
 
         self.ts = ts  # type: ignore[assignment]
         self.frame_id = frame_id
+        self.seq = seq
 
         # Store internally as tensor pointcloud for speed
         if pointcloud is None:
@@ -547,7 +550,7 @@ class PointCloud2(Timestamped):
 
         # Header
         msg.header = Header()
-        msg.header.seq = 0
+        msg.header.seq = self.seq
         msg.header.frame_id = frame_id or self.frame_id
 
         msg.header.stamp.sec = int(self.ts)
@@ -682,6 +685,7 @@ class PointCloud2(Timestamped):
                 ts=msg.header.stamp.sec + msg.header.stamp.nsec / 1e9
                 if hasattr(msg, "header") and msg.header.stamp.sec > 0
                 else None,
+                seq=msg.header.seq if hasattr(msg, "header") else 0,
             )
 
         # Parse field offsets. The message is self-describing; a known field is
@@ -822,6 +826,7 @@ class PointCloud2(Timestamped):
             ts=msg.header.stamp.sec + msg.header.stamp.nsec / 1e9
             if hasattr(msg, "header") and msg.header.stamp.sec > 0
             else None,
+            seq=msg.header.seq if hasattr(msg, "header") else 0,
         )
 
     def _create_xyz_fields(self) -> list:  # type: ignore[type-arg]

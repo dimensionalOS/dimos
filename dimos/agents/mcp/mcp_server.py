@@ -76,6 +76,11 @@ def _jsonrpc_result_text(req_id: Any, text: str) -> dict[str, Any]:
     return _jsonrpc_result(req_id, {"content": [{"type": "text", "text": text}]})
 
 
+def _jsonrpc_tool_error(req_id: Any, text: str) -> dict[str, Any]:
+    """Tool-call result flagged as failed (MCP ``isError``), with ``text`` as its content."""
+    return _jsonrpc_result(req_id, {"content": [{"type": "text", "text": text}], "isError": True})
+
+
 def _jsonrpc_error(req_id: Any, code: int, message: str) -> dict[str, Any]:
     return {"jsonrpc": "2.0", "id": req_id, "error": {"code": code, "message": message}}
 
@@ -201,7 +206,9 @@ async def _handle_tools_call(
             )
         except Exception as e:
             logger.exception("MCP tool error", tool=name, duration=f"{time.monotonic() - t0:.3f}s")
-            return _jsonrpc_result_text(req_id, f"Error running tool '{name}': {e}")
+            return _jsonrpc_tool_error(
+                req_id, f"Error running tool '{name}': {type(e).__name__}: {e}"
+            )
 
         if lifecycle == "background":
             # Hand ownership of the caps off to the tool-stream lifecycle.

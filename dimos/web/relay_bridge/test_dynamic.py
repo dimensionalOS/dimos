@@ -300,7 +300,6 @@ def test_module_init_constructs_runtime_streams(local_modules):
     assert module.config.relay_url is None
 
 
-@pytest.mark.skipif_macos_bug
 def test_forkserver_worker_predates_class_deploy_rpc_and_stream(
     worker_manager, deployed_proxies, ping_transport, retry_until
 ):
@@ -346,7 +345,6 @@ def test_forkserver_worker_predates_class_deploy_rpc_and_stream(
     assert received == [Vector3(1.0, 2.0, 3.0)]
 
 
-@pytest.mark.skipif_macos_bug
 def test_deploy_fresh_process_reconstructs_class(worker_manager, deployed_proxies):
     generated = make_relay_bridge_class([DynamicPortSpec("fresh_ping", Vector3, "rx")])
     # instance_name keeps the two deployments of the same class from serving
@@ -365,7 +363,6 @@ def test_deploy_fresh_process_reconstructs_class(worker_manager, deployed_proxie
     assert isinstance(fresh.peek_stream("no_such_stream", 0.1), PeekNotFound)
 
 
-@pytest.mark.skipif_macos_bug
 def test_two_shapes_deploy_to_one_worker(worker_manager, deployed_proxies):
     shape_a = make_relay_bridge_class([DynamicPortSpec("duo_feed_a", Vector3, "rx")])
     shape_b = make_relay_bridge_class([DynamicPortSpec("duo_feed_b", str, "tx")])
@@ -386,7 +383,6 @@ class _OpsNote:
     priority: int
 
 
-@pytest.mark.skipif_macos_bug
 def test_cockpit_channels_blueprint_deploys_through_forkserver(worker_manager, deployed_proxies):
     """W6: a cockpit(channels=)-compiled atom - generated class plus runtime
     specs carrying by-reference encoder callables in the kwargs - must
@@ -414,7 +410,6 @@ def test_cockpit_channels_blueprint_deploys_through_forkserver(worker_manager, d
     assert remote.type is PoseStamped
 
 
-@pytest.mark.skipif_macos_bug
 def test_stop_terminates_worker_processes_and_is_idempotent():
     # This test's subject is teardown itself, so it owns the manager inline.
     manager = WorkerManagerPython(g=GlobalConfig(n_workers=1))
