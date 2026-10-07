@@ -486,15 +486,19 @@ still settle on `odom`. The recording keeps color, camera info, joint state,
 `MODULE__FIELD` overrides to the launched dimos, which beat blueprint-pinned
 values, so a case can retune a module without a new blueprint. `scene` passes
 `--mujoco-scene`: a full MJCF, robot included, that `xarm-perception-sim` loads
-instead of its default `scene.xml`. The planner's base pose is
-`XARM7_SIM_BASE_POSE` in the xArm config, so a scene must keep the arm where
-`scene.xml` puts it, or that value must change to match.
+instead of its default `scene.xml`. `base_height` sets the planning model's
+existing `base_pose` to world `(0, 0, height)` with identity orientation. Without it,
+the robot's configured base pose is retained (0.12 m for the default xArm scene).
 `dimos.evals.suites.mujoco_xarm` is the xArm7 table scene with the perception
 modules disabled: pick up the cylinder, then put the red ball on top of it.
 
 `dimos.evals.suites.mujoco_xarm_pick` evaluates a cylinder lift in the default
 scene using plain robot commands and observations (see Raw robot topics). Run it
 with Pi and `--set no_dimos=true --set max_steps=120`.
+
+`dimos.evals.suites.robosuite` provides six manipulation cases using
+recorded body poses. See `data/robosuite/README.md` in the downloaded data
+package for tasks, scene setup and usage; use `--tags <scene>` to select a case.
 
 ## Running
 
