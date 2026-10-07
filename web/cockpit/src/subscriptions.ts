@@ -15,7 +15,7 @@ export const cockpitDecoders = createDecoderRegistry();
 
 // Encodings whose subscription costs real encode CPU and bandwidth;
 // subscribed only when a panel this build can render binds them.
-const PANEL_ONLY_ENCODINGS = new Set(["jpeg.v1", "costmap.zlib.v1"]);
+const PANEL_ONLY_ENCODINGS = new Set(["jpeg.v1", "costmap.zlib.v1", "voxels.zlib.v1"]);
 
 /** Channels only a panel may subscribe: the encodings above, and a *.lcm.v1
  * channel whose schema has a variable-length array (a point cloud, a scan, a

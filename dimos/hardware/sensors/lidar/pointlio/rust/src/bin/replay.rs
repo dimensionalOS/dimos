@@ -72,7 +72,8 @@ fn main() -> io::Result<()> {
         .map(|p| File::create(p).map(BufWriter::new))
         .transpose()?;
 
-    let mut source = PcapSource::from_file(pcap, LIDAR_POINT_PORT, LIDAR_IMU_PORT, None, stop)?;
+    let mut source =
+        PcapSource::from_file(pcap, LIDAR_POINT_PORT, LIDAR_IMU_PORT, None, 0.0, stop)?;
     let mut assembler = FrameAssembler::new(hz);
     let mut buf = [0u8; 4096];
     let mut frames = 0u32;
@@ -112,8 +113,8 @@ fn main() -> io::Result<()> {
         }
     };
 
-    while let Some(len) = source.recv(&mut buf) {
-        let Ok(packet) = DataPacket::parse(&buf[..len]) else {
+    while let Some(received) = source.recv(&mut buf) {
+        let Ok(packet) = DataPacket::parse(&buf[..received.len]) else {
             continue;
         };
         match packet.data_type {

@@ -77,8 +77,6 @@ assert len(R1PRO_UPPER_BODY_JOINTS) == _NUM_MOTORS
 
 # JPEG color streams: stream name → ROS topic.
 _COLOR_CAMERAS: dict[str, str] = {
-    "head_left_color": "/hdas/camera_head/left_raw/image_raw_color/compressed",
-    "head_right_color": "/hdas/camera_head/right_raw/image_raw_color/compressed",
     "wrist_left_color": "/hdas/camera_wrist_left/color/image_raw/compressed",
     "wrist_right_color": "/hdas/camera_wrist_right/color/image_raw/compressed",
 }
@@ -91,7 +89,7 @@ _WRIST_DEPTH_CAMERAS: dict[str, str] = {
 _HEAD_DEPTH_TOPIC = "/hdas/camera_head/depth/depth_registered"
 _LIDAR_TOPIC = "/hdas/lidar_chassis_left"
 # base_link -> lidar_chassis_left_link, the fixed joint origin in the vendor URDF.
-_LIDAR_MOUNT_XYZ = (0.15711, 0.26215, 0.29465)
+_LIDAR_MOUNT_XYZ = (0.15711, 0.21215, 0.29465)
 
 
 @dataclass
@@ -171,8 +169,6 @@ class R1ProConnection(Module):
     tf: Out[TFMessage]
 
     # Perception.
-    head_left_color: Out[CompressedImage]
-    head_right_color: Out[CompressedImage]
     head_depth: Out[Image]
     lidar: Out[PointCloud2]
     wrist_left_color: Out[CompressedImage]

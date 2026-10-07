@@ -120,7 +120,7 @@ class SourceConfig(BaseModel):
 
 
 class DimSlamConfig(NativeModuleConfig):
-    cwd: str | None = "rust"
+    source_dir: str | None = "dimos/mapping/dim_slam/rust"
     executable: str = "result/bin/dim_slam"
     # A literal so bin/build-native-modules can read it: CI builds `default`, which needs
     # no GPU. The variant this machine needs is chosen in model_post_init.

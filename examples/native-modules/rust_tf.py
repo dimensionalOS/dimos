@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import asyncio
 import math
-from pathlib import Path
 import time
 
 from dimos.core.coordination.blueprints import autoconnect
@@ -38,8 +37,6 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 
-_RUST_DIR = Path(__file__).parent / "rust"
-# The crate is a workspace member, so cargo builds into the repo-root target dir.
 _BUILD = "nix build -L path:.#dimos-native-module-examples"
 
 
@@ -86,7 +83,7 @@ class TfProducer(Module):
 class TfListenerConfig(NativeModuleConfig):
     executable: str = "result/bin/tf_listener"
     build_command: str = _BUILD
-    cwd: str = str(_RUST_DIR)
+    source_dir: str = "examples/native-modules/rust"
     stdin_config: bool = True
 
 
@@ -103,7 +100,7 @@ class TfListenerModule(NativeModule):
 class TfBroadcasterConfig(NativeModuleConfig):
     executable: str = "result/bin/tf_broadcaster"
     build_command: str = _BUILD
-    cwd: str = str(_RUST_DIR)
+    source_dir: str = "examples/native-modules/rust"
     stdin_config: bool = True
 
 

@@ -42,7 +42,9 @@ ZenohProcessMode: TypeAlias = Literal["peer", "client"]
 ENV_FILE = None if "PYTEST_VERSION" in os.environ else ".env"
 
 # Never expose these in config dumps or persist their CLI values in run metadata.
-SECRET_CONFIG_FIELDS = frozenset({"dimos_api_key", "relay_key", "unitree_aes_128_key"})
+SECRET_CONFIG_FIELDS = frozenset(
+    {"dimos_api_key", "relay_key", "unitree_aes_128_key", "typesafe_api_key"}
+)
 
 
 def _get_all_numbers(s: str) -> list[float]:
@@ -63,6 +65,8 @@ class GlobalConfig(BaseSettings):
     simulation: str = ""
     replay: bool = False
     replay_db: str = "go2_short"
+    # Exit once every subscribed replay stream finishes (with --replay).
+    replay_exit: bool = False
     record: Literal["", "sqlite", "mcap"] = ""
     record_engine: Literal["python", "rust"] = Field(default="python", validate_default=True)
     record_topics: str = "*"  # comma-separated globs on the topic slug (/a/b -> a_b)
@@ -85,7 +89,7 @@ class GlobalConfig(BaseSettings):
     zenoh_multicast: bool = True
     # Multicast group scouting joins, e.g. 224.0.0.224:7446. Empty takes zenoh's
     # own. Moving it walks a session onto a private discovery bus, which is how
-    # parallel sessions on one machine stay apart -- LCM_DEFAULT_URL's analog.
+    # parallel sessions on one machine stay apart (LCM_DEFAULT_URL's analog).
     zenoh_scout_addr: str = ""
     # Whether peers propagate the peers they already know over established links.
     # Unlike multicast scouting this reaches nothing new on the LAN, and zenoh
@@ -94,6 +98,8 @@ class GlobalConfig(BaseSettings):
     # Seconds ZenohService.start() blocks for the configured connect endpoints to
     # link before giving up and continuing. 0 disables the wait.
     zenoh_connect_timeout: float = Field(default=1.0, ge=0, le=86400)
+    # Off: share a zenoh bus with a stack that already owns the Coordinator name.
+    serve_coordinator_rpc: bool = True
     viewer: ViewerBackend = "rerun"
     rerun_open: RerunOpenOption = RERUN_OPEN_DEFAULT
     rerun_web: bool = RERUN_ENABLE_WEB
@@ -108,6 +114,10 @@ class GlobalConfig(BaseSettings):
     mujoco_global_map_from_pointcloud: str | None = None
     mujoco_start_pos: str = "-1.0, 1.0"
     mujoco_steps_per_frame: int = 7
+    # Shadow-mapping the office scene costs ~4x per offscreen render on
+    # integrated GPUs (e.g. Apple Silicon), dropping the sim below realtime.
+    # "auto" keeps shadows and turns them off if the sim falls behind realtime.
+    mujoco_shadows: Literal["auto", "on", "off"] = "auto"
     scene_package: str | None = None
     robot_model: str | None = None
     robot_id: str | None = None
@@ -134,6 +144,7 @@ class GlobalConfig(BaseSettings):
     dimsim_scene: str = "apartment"
     dimsim_port: int = 8090
     dimsim_headless: bool = True
+    mujoco_scene: str | None = None
     local_relay: bool = False
     relay_url: str | None = None
     """HTTP URL of a relay started elsewhere (e.g. http://localhost:7780); the
@@ -148,6 +159,9 @@ class GlobalConfig(BaseSettings):
     .env over the --relay-key flag, which shows in the process list."""
     dimos_cloud_url: str = "https://api.dimensional.org"
     dimos_api_key: str | None = None
+    typesafe_api_key: str | None = Field(
+        default=None, validation_alias=AliasChoices("TYPESAFE_API_KEY", "typesafe_api_key")
+    )
     dimos_upload_codec: str = "lz4"
     dimos_upload_retries: int = 2
     dimos_upload_chunk_mb: int | None = None

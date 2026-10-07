@@ -128,7 +128,7 @@ class DiscoveredModule:
     qualname: str  # dotted module path + class name
     source: str  # repo-relative path of the defining .py file
     build_command: str
-    build_dir: str  # repo-relative, source dir joined with the cwd default
+    build_dir: str  # repo-relative source directory
 
 
 def _literal_default(classdef: ast.ClassDef, field: str, source: str) -> str | None:
@@ -204,11 +204,15 @@ def discover() -> tuple[DiscoveredModule, ...]:
                 build_command = _literal_default(node, "build_command", source)
                 if not is_nix_build(build_command):
                     continue
-                cwd = _literal_default(node, "cwd", source)
-                build_dir = os.path.normpath(path.parent / (cwd or "."))
+                source_dir = _literal_default(node, "source_dir", source)
+                if source_dir is None:
+                    raise SystemExit(f"{source}: {node.name} requires source_dir")
+                build_dir = os.path.normpath(REPO_ROOT / source_dir)
                 build_rel = os.path.relpath(build_dir, REPO_ROOT)
                 if build_rel.startswith(".."):
-                    raise SystemExit(f"{source}: {node.name}.cwd escapes the repository: {cwd!r}")
+                    raise SystemExit(
+                        f"{source}: {node.name}.source_dir escapes the repository: {source_dir!r}"
+                    )
                 found.append(
                     DiscoveredModule(
                         qualname=qualname,

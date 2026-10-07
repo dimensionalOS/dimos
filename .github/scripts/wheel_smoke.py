@@ -25,7 +25,9 @@ import json
 from pathlib import Path
 import urllib.request
 
-from dimos.navigation.replanning_a_star.min_cost_astar_ext import min_cost_astar_cpp  # noqa: F401
+from dimos.navigation.go2.replanning_a_star.min_cost_astar_ext import (
+    min_cost_astar_cpp,  # noqa: F401
+)
 from dimos.web.relay_bridge import locate
 from dimos.web.relay_bridge.relay_process import RelayProcess
 

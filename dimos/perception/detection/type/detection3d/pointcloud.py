@@ -39,6 +39,30 @@ if TYPE_CHECKING:
     from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 
 
+def lattice_quantum(points: np.ndarray) -> float | None:
+    """The grid pitch when coordinates lie on a lattice; None for continuous scans.
+
+    Grid-quantized sources carry their pitch in the data itself; it sizes
+    merge cells and the projection splat. Quantization does not classify the
+    source - a mm-integer wire format grids a scan without making it a map.
+    """
+    sample = points[:2048]
+    x = np.unique(sample[:, 0])
+    if len(x) < 8:
+        return None
+    diffs = np.diff(x)
+    diffs = diffs[diffs > 1e-9]
+    if len(diffs) == 0:
+        return None
+    quantum = float(diffs.min())
+    if quantum < 1e-4:
+        return None
+    scaled = (sample - sample[0]) / quantum
+    if float(np.abs(scaled - np.round(scaled)).max()) > 0.01:
+        return None
+    return quantum
+
+
 @dataclass
 class Detection3DPC(Detection3D):
     pointcloud: PointCloud2 = field(default_factory=PointCloud2)
@@ -46,6 +70,28 @@ class Detection3DPC(Detection3D):
     @functools.cached_property
     def center(self) -> Vector3:
         return Vector3(*self.pointcloud.center)
+
+    def __add__(self, other: Detection3DPC) -> Detection3DPC:
+        """Union of two sightings of one object.
+
+        The cloud is the union of both; identity metadata follows the
+        higher-confidence sighting and time context follows the later one,
+        matching latest-pose semantics.
+        """
+        later = self if self.ts >= other.ts else other
+        stronger = self if self.confidence >= other.confidence else other
+        return Detection3DPC(
+            image=later.image,
+            bbox=later.bbox,
+            track_id=self.track_id,
+            class_id=stronger.class_id,
+            confidence=stronger.confidence,
+            name=stronger.name,
+            ts=later.ts,
+            pointcloud=self.pointcloud + other.pointcloud,
+            transform=later.transform,
+            frame_id=self.frame_id,
+        )
 
     @functools.cached_property
     def pose(self) -> PoseStamped:
@@ -198,52 +244,87 @@ class Detection3DPC(Detection3D):
             frame_id=detection_pc.frame_id,
         )
 
-    @classmethod
-    def from_2d(  # type: ignore[override]
-        cls,
-        det: Detection2DBBox,
+    @staticmethod
+    def project_pixels(points_camera: np.ndarray, camera_info: CameraInfo) -> np.ndarray:
+        """Pixel coordinates of camera-frame points under the camera's own model.
+
+        Applies the recorded distortion (equidistant fisheye or the radtan
+        family) so cloud pixels land where the image's pixels actually are;
+        an undistorted calibration falls through to the pinhole projection.
+        Points beyond the model's monotonic radius get out-of-image pixels.
+        """
+        fx, fy = camera_info.K[0], camera_info.K[4]
+        cx, cy = camera_info.K[2], camera_info.K[5]
+        coefficients = np.asarray(
+            camera_info.D if camera_info.D is not None else (), dtype=np.float64
+        )
+        xy = points_camera[:, :2] / points_camera[:, 2:3]
+        if coefficients.size == 0 or not np.any(coefficients):
+            return np.column_stack((xy[:, 0] * fx + cx, xy[:, 1] * fy + cy))
+
+        import cv2
+
+        fisheye = camera_info.distortion_model == "equidistant"
+        # The polynomial is calibrated only out to the image corner; beyond
+        # it the projection extrapolates or folds back into the image, so
+        # points past the corner's angle (or past the first fold) are
+        # unmappable.
+        corners = np.array(
+            [
+                [0, 0],
+                [camera_info.width, 0],
+                [0, camera_info.height],
+                [camera_info.width, camera_info.height],
+            ],
+            dtype=np.float64,
+        )
+        corner_limit = float(np.hypot((corners[:, 0] - cx) / fx, (corners[:, 1] - cy) / fy).max())
+        theta = np.linspace(0.0, np.pi / 2 * 0.99, 2048)
+        if fisheye:
+            k = np.zeros(4)
+            k[: min(4, coefficients.size)] = coefficients[:4]
+            distorted = theta * (
+                1 + k[0] * theta**2 + k[1] * theta**4 + k[2] * theta**6 + k[3] * theta**8
+            )
+            radius = np.tan(theta)
+        else:
+            k = np.zeros(3)
+            radial = coefficients[[0, 1]].tolist() + (
+                [coefficients[4]] if coefficients.size > 4 else []
+            )
+            k[: len(radial)] = radial
+            radius = np.tan(theta)
+            distorted = radius * (1 + k[0] * radius**2 + k[1] * radius**4 + k[2] * radius**6)
+        beyond = np.nonzero((np.diff(distorted) <= 0) | (distorted[1:] > corner_limit))[0]
+        r_max = radius[beyond[0]] if len(beyond) else radius[-1]
+
+        pixels = np.full((len(points_camera), 2), -1.0)
+        mappable = (xy**2).sum(axis=1) <= r_max**2
+        if mappable.any():
+            pts = np.ascontiguousarray(points_camera[mappable, :3], dtype=np.float64)
+            camera_matrix = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]], dtype=np.float64)
+            zero = np.zeros(3)
+            if fisheye:
+                projected, _ = cv2.fisheye.projectPoints(
+                    pts.reshape(-1, 1, 3), zero, zero, camera_matrix, coefficients[:4]
+                )
+            else:
+                projected, _ = cv2.projectPoints(pts, zero, zero, camera_matrix, coefficients)
+            pixels[mappable] = projected.reshape(-1, 2)
+        return pixels
+
+    @staticmethod
+    def project_cloud(
         world_pointcloud: PointCloud2,
         camera_info: CameraInfo,
         world_to_optical_transform: Transform,
-        # filters are to be adjusted based on the sensor noise characteristics if feeding
-        # sensor data directly
-        filters: list[PointCloudFilter] | None = None,
-    ) -> Detection3DPC | None:
-        """Create a Detection3D from a 2D detection by projecting world pointcloud.
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Project a world cloud through the camera once.
 
-        This method handles:
-        1. Projecting world pointcloud to camera frame
-        2. Filtering points within the 2D detection bounding box
-        3. Cleaning up the pointcloud (height filter, outlier removal)
-        4. Hidden point removal from camera perspective
-
-        Args:
-            det: The 2D detection
-            world_pointcloud: Full pointcloud in world frame
-            camera_info: Camera calibration info
-            world_to_camerlka_transform: Transform from world to camera frame
-            filters: List of functions to apply to the pointcloud for filtering
-        Returns:
-            Detection3D with filtered pointcloud, or None if no valid points
+        Returns the world points that land inside the image and their pixel
+        coordinates - the detection-independent half of ``from_2d``, shared
+        by every detection of one frame via ``from_projection``.
         """
-        # Set default filters if none provided
-        if filters is None:
-            filters = [
-                # height_filter(0.1),
-                raycast(),
-                radius_outlier(),
-                statistical(),
-            ]
-
-        # Extract camera parameters
-        fx, fy = camera_info.K[0], camera_info.K[4]
-        cx, cy = camera_info.K[2], camera_info.K[5]
-        image_width = camera_info.width
-        image_height = camera_info.height
-
-        camera_matrix = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]])
-
-        # Convert pointcloud to numpy array
         world_points, _ = world_pointcloud.as_numpy()
 
         # Project points to camera frame
@@ -257,21 +338,49 @@ class Detection3DPC(Detection3D):
         world_points = world_points[valid_mask]
 
         if len(world_points) == 0:
-            return None
+            return world_points, np.empty((0, 2))
 
-        # Project to 2D
-        points_2d_homogeneous = (camera_matrix @ points_camera[:, :3].T).T
-        points_2d = points_2d_homogeneous[:, :2] / points_2d_homogeneous[:, 2:3]
+        points_2d = Detection3DPC.project_pixels(points_camera, camera_info)
 
         # Filter points within image bounds
         in_image_mask = (
             (points_2d[:, 0] >= 0)
-            & (points_2d[:, 0] < image_width)
+            & (points_2d[:, 0] < camera_info.width)
             & (points_2d[:, 1] >= 0)
-            & (points_2d[:, 1] < image_height)
+            & (points_2d[:, 1] < camera_info.height)
         )
-        points_2d = points_2d[in_image_mask]
-        world_points = world_points[in_image_mask]
+        return world_points[in_image_mask], points_2d[in_image_mask]
+
+    @classmethod
+    def from_projection(
+        cls,
+        det: Detection2DBBox,
+        world_points: np.ndarray,
+        points_2d: np.ndarray,
+        camera_info: CameraInfo,
+        world_to_optical_transform: Transform,
+        frame_id: str,
+        timestamp: float,
+        filters: list[PointCloudFilter] | None = None,
+        splat_m: float | None = None,
+    ) -> Detection3DPC | None:
+        """Create a Detection3D by selecting from a shared frame projection.
+
+        ``world_points`` and ``points_2d`` come from ``project_cloud`` for
+        this detection's frame; only the mask selection and the per-detection
+        filters run here. ``splat_m`` is the half-size of a source cell: a
+        point then selects when any of its projected footprint touches the
+        mask, not only its center pixel - center-only sampling starves masks
+        a few cells wide.
+        """
+        # Set default filters if none provided
+        if filters is None:
+            filters = [
+                # height_filter(0.1),
+                raycast(),
+                radius_outlier(),
+                statistical(),
+            ]
 
         if len(world_points) == 0:
             return None
@@ -280,9 +389,23 @@ class Detection3DPC(Detection3D):
         # (Detection2DSeg), else bbox with a small margin
         seg_mask = getattr(det, "mask", None)
         if seg_mask is not None:
-            cols = np.minimum(points_2d[:, 0].astype(int), seg_mask.shape[1] - 1)
-            rows = np.minimum(points_2d[:, 1].astype(int), seg_mask.shape[0] - 1)
-            in_det_mask = seg_mask[rows, cols] > 0
+            height, width = seg_mask.shape[:2]
+
+            def mask_hit(cols_f: np.ndarray, rows_f: np.ndarray) -> np.ndarray:
+                cols = np.clip(cols_f.astype(int), 0, width - 1)
+                rows = np.clip(rows_f.astype(int), 0, height - 1)
+                hit: np.ndarray = seg_mask[rows, cols] > 0
+                return hit
+
+            in_det_mask = mask_hit(points_2d[:, 0], points_2d[:, 1])
+            if splat_m is not None:
+                camera = world_to_optical_transform.inverse().translation.to_numpy()
+                ranges = np.linalg.norm(world_points - camera, axis=1)
+                radius = splat_m * camera_info.K[0] / np.maximum(ranges, 1e-6)
+                for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                    in_det_mask |= mask_hit(
+                        points_2d[:, 0] + dx * radius, points_2d[:, 1] + dy * radius
+                    )
         else:
             x_min, y_min, x_max, y_max = det.bbox
             margin = 5  # pixels
@@ -296,14 +419,13 @@ class Detection3DPC(Detection3D):
         detection_points = world_points[in_det_mask]
 
         if detection_points.shape[0] == 0:
-            # print(f"No points found in detection bbox after projection. {det.name}")
             return None
 
         # Create initial pointcloud for this detection
         initial_pc = PointCloud2.from_numpy(
             detection_points,
-            frame_id=world_pointcloud.frame_id,
-            timestamp=world_pointcloud.ts,
+            frame_id=frame_id,
+            timestamp=timestamp,
         )
 
         # Apply filters - each filter gets all arguments
@@ -329,5 +451,40 @@ class Detection3DPC(Detection3D):
             ts=det.ts,
             pointcloud=detection_pc,
             transform=world_to_optical_transform,
-            frame_id=world_pointcloud.frame_id,
+            frame_id=frame_id,
+        )
+
+    @classmethod
+    def from_2d(  # type: ignore[override]
+        cls,
+        det: Detection2DBBox,
+        world_pointcloud: PointCloud2,
+        camera_info: CameraInfo,
+        world_to_optical_transform: Transform,
+        # filters are to be adjusted based on the sensor noise characteristics if feeding
+        # sensor data directly
+        filters: list[PointCloudFilter] | None = None,
+    ) -> Detection3DPC | None:
+        """Create a Detection3D from a 2D detection by projecting world pointcloud.
+
+        One-detection convenience over ``project_cloud`` + ``from_projection``;
+        callers lifting several detections of one frame should project once
+        and call ``from_projection`` per detection instead. The mask splat
+        radius comes from the cloud's own lattice pitch, so every caller
+        samples a grid-quantized source the same way.
+        """
+        world_points, points_2d = cls.project_cloud(
+            world_pointcloud, camera_info, world_to_optical_transform
+        )
+        quantum = lattice_quantum(world_points)
+        return cls.from_projection(
+            det,
+            world_points,
+            points_2d,
+            camera_info,
+            world_to_optical_transform,
+            world_pointcloud.frame_id,
+            world_pointcloud.ts,
+            filters,
+            splat_m=quantum / 2 if quantum is not None else None,
         )

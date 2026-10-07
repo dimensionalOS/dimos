@@ -16,9 +16,11 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+from typing import Any
+
 from pydantic import Field
 
-from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.native_module import LogFormat, NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -27,6 +29,20 @@ from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
+from dimos.simulation.habitat.server import HabitatProp
+
+
+def _default_scene_dataset_config(config: dict[str, Any]) -> str:
+    executable = Path(config["executable"])
+    if config["source_dir"] is None:
+        executable = executable.absolute()
+    # The installer places data next to habitat-native in both launch modes.
+    return str(
+        executable.parent
+        / "data/versioned_data/hm3d-0.2/hm3d/example"
+        / "hm3d_annotated_example_basis.scene_dataset_config.json"
+    )
 
 
 class HabitatConnectionConfig(NativeModuleConfig):
@@ -34,24 +50,14 @@ class HabitatConnectionConfig(NativeModuleConfig):
 
     # habitat-sim is python 3.9 conda-only, so it runs in its own env under
     # target/habitat (outside the package tree); the wrapper is the build sentinel.
-    cwd: str | None = "nix"
-    executable: str = str(DIMOS_PROJECT_ROOT / "target" / "habitat" / "habitat-native")
-    build_command: str | None = None
+    source_dir: str | None = "dimos/simulation/habitat/nix"
+    executable: str = "../../../../target/habitat/habitat-native"
+    build_command: str | None = "nix develop path:. -c ./install.sh"
     stdin_config: bool = True
     log_format: LogFormat = LogFormat.TEXT
 
     # Annotated HM3D house, no Matterport credentials needed.
-    scene_dataset_config: str = str(
-        DIMOS_PROJECT_ROOT
-        / "target"
-        / "habitat"
-        / "data"
-        / "versioned_data"
-        / "hm3d-0.2"
-        / "hm3d"
-        / "example"
-        / "hm3d_annotated_example_basis.scene_dataset_config.json"
-    )
+    scene_dataset_config: str = Field(default_factory=_default_scene_dataset_config)
     scene_id: str = "00861-GLAQ4DNUx5U"
     # ROS yaw, +left. 90 faces into the room in the default scene.
     start_yaw_deg: float = 90.0
@@ -71,6 +77,11 @@ class HabitatConnectionConfig(NativeModuleConfig):
     scan_stride: int = Field(default=2, ge=1)
     seed: int = 0
     publish_semantic: bool = False
+    # Visible annotated instances as world-frame boxes (semantic ids + depth).
+    publish_objects: bool = False
+    objects_hz: float = Field(default=1.0, gt=0.0)
+    # Static models placed in the scene.
+    props: tuple[HabitatProp, ...] = ()
     # Unprojection is the frame's main cost; off for teleop-only stacks.
     publish_scan: bool = True
     # "world" pre-registers the scan for VoxelGridMapper; "camera_optical" lets
@@ -92,3 +103,4 @@ class HabitatConnection(NativeModule):
     odometry: Out[Odometry]
     tf: Out[TFMessage]
     semantic_image: Out[Image]
+    objects: Out[Detection3DArray]

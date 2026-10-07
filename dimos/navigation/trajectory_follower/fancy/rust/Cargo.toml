@@ -1,0 +1,64 @@
+[package]
+name = "dimos-trajectory-follower"
+version = "0.1.0"
+edition = "2021"
+description = "The trajectory follower: the laws, and (feature module) the native module"
+license = "Apache-2.0"
+
+[lib]
+# Must match the #[pymodule] fn name in python.rs.
+name = "dimos_trajectory_follower"
+path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "trajectory_follower"
+path = "src/bin/trajectory_follower.rs"
+required-features = ["module"]
+
+[dependencies]
+# The body (`Emb`) the laws are parameterised from; python feature off, see adapter.
+dimos-local-planner = { path = "../../../local_planner/rust", default-features = false }
+serde = { version = "1", features = ["derive"], optional = true }
+dimos-module = { path = "../../../../../native/rust/dimos-module", optional = true }
+lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen", optional = true }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time"], optional = true }
+tracing = { version = "0.1", optional = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
+validator = { version = "0.21", features = ["derive"], optional = true }
+pyo3 = { version = "0.25", features = ["extension-module", "abi3-py310"], optional = true }
+numpy = { version = "0.25", optional = true }
+serde_json = { version = "1", features = ["float_roundtrip"], optional = true }
+
+[features]
+# `cargo test --no-default-features` runs the pure-Rust tests without linking
+# Python; maturin builds with defaults and gets the extension module.
+default = []
+python = ["dep:pyo3", "dep:numpy", "dep:serde_json"]
+module = ["dimos-local-planner/module", "dep:serde", "dep:dimos-module", "dep:lcm-msgs", "dep:tokio", "dep:tracing", "dep:tracing-subscriber", "dep:validator"]
+
+[dev-dependencies]
+dimos-local-planner = { path = "../../../local_planner/rust", default-features = false, features = ["test-bodies"] }
+dimos-trajectory-follower = { path = ".", features = ["module"] }
+serde_json = "1"
+
+[package.metadata.dimos.module.trajectory_follower]
+path = "dimos_trajectory_follower::module::follower::TrajectoryFollower"
+python = "dimos.navigation.trajectory_follower.fancy.native:TrajectoryFollowerNative"
+threads = 2
+
+[package.metadata.dimos.module.trajectory_follower.inputs]
+path = "nav_msgs.Path"
+tf = "tf2_msgs.TFMessage"
+
+[package.metadata.dimos.module.trajectory_follower.outputs]
+nav_cmd_vel = "geometry_msgs.Twist"
+goal_reached = "std_msgs.Bool"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
+# Not a member of the repo's top-level cargo workspace: this crate keeps its own
+# Cargo.lock, as it did before the workspace root existed.
+[workspace]

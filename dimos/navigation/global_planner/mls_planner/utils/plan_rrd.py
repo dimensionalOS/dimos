@@ -1,0 +1,741 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Replay a lidar .db through RayTraceMap and the MLS planner into rerun.
+
+Pass one or more --config clearance,buffer,weight to overlay each as a colored path.
+A loaded_map stream in the recording seeds the mapper at its timestamp, one region
+per frame, and each planner ingests every region as it lands.
+"""
+
+from __future__ import annotations
+
+from enum import Enum, auto
+from pathlib import Path as FsPath
+from time import perf_counter
+from typing import TYPE_CHECKING, Any, NamedTuple
+
+import numpy as np
+from numpy.typing import NDArray
+import typer
+
+from dimos.mapping.ray_tracing.module import TF_MATCH_TOLERANCE_S, RayTracingVoxelMapConfig
+from dimos.mapping.ray_tracing.transformer import RayTraceMap, pose_from_tf
+from dimos.mapping.ray_tracing.utils.loaded_map import (
+    LOADED_MAP_STREAM,
+    first_loaded_map,
+    place_loaded_map,
+)
+from dimos.mapping.ray_tracing.viz import log_loaded_map, voxel_map_points
+from dimos.memory.store.sqlite import SqliteStore
+from dimos.memory.tf import StreamTF, tf_stream
+from dimos.memory.type.observation import Observation
+from dimos.memory.vis.utils import DEFAULT_RENDER_VOXEL, default_render_voxel
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2, register_colormap_annotation
+from dimos.msgs.tf2_msgs.TFMessage import TfFrameTree, TFMessage
+from dimos.navigation.global_planner.mls_planner.mls_planner import MLSPlanner
+from dimos.navigation.global_planner.mls_planner.viz import graph_edges, graph_nodes, surface_points
+from dimos.navigation.global_planner.viz import (
+    PATH_COLOR,
+    goal_point,
+    path_strip,
+    robot_body_box,
+    robot_clearance,
+)
+from dimos.robot.unitree.go2.constants import (
+    BASE_LINK_HEIGHT,
+    ROBOT_HEIGHT,
+    ROBOT_LENGTH,
+    ROBOT_WIDTH,
+)
+from dimos.utils.data import resolve_named_path
+
+if TYPE_CHECKING:
+    import rerun.blueprint as rrb
+
+    from dimos.memory.stream import Stream
+
+TIMELINE = "ts"
+
+# --voxel-size default, and the render size --render-voxel scales from when unset.
+DEFAULT_VOXEL_SIZE = 0.08
+
+SENSOR_PATH_COLOR = [80, 160, 255]
+
+# Different colors for each path when running with multiple configs
+PATH_PALETTE: list[tuple[int, int, int]] = [
+    PATH_COLOR,
+    (255, 0, 255),
+    (0, 200, 255),
+    (255, 180, 0),
+    (255, 80, 80),
+    (160, 120, 255),
+    (120, 255, 200),
+    (255, 255, 120),
+]
+
+# Sampled from the turbo colormap, low to high. Shared across both metric plots
+# so a given color reads the same in either.
+TURBO_BLUE = [70, 102, 221]
+TURBO_GREEN = [121, 254, 89]
+TURBO_ORANGE = [245, 105, 24]
+TURBO_RED = [195, 37, 3]
+
+# Each series is (metric key, entity suffix, legend label, color). The suffix
+# sorts the legend top-to-bottom. The label overrides the displayed name.
+TIMING_SERIES = [
+    ("total_ms", "1_total", "total", TURBO_ORANGE),
+    ("update_ms", "2_update", "update", TURBO_GREEN),
+    ("plan_ms", "3_plan", "plan", TURBO_BLUE),
+]
+
+SIZE_SERIES = [
+    ("voxels", "1_voxels", "voxels", TURBO_RED),
+    ("surface_cells", "2_surfaces", "surfaces", TURBO_ORANGE),
+    ("edges", "3_edges", "edges", TURBO_GREEN),
+    ("nodes", "4_nodes", "nodes", TURBO_BLUE),
+]
+# Logged only on seeded runs.
+REGIONS_LEFT_SERIES = "metrics/size/5_regions"
+
+
+class LocalCrop(NamedTuple):
+    """Cylinder around the robot's feet that the close-up view shows."""
+
+    radius: float
+    above: float
+    below: float
+
+
+def _parse_configs(
+    specs: list[str] | None,
+    clearance: float,
+    buffer: float,
+    weight: float,
+) -> list[tuple[float, float, float]]:
+    """Each spec is 'clearance,buffer,weight'. Falls back to the single flags."""
+    if not specs:
+        return [(clearance, buffer, weight)]
+    out: list[tuple[float, float, float]] = []
+    for spec in specs:
+        parts = spec.replace(" ", "").split(",")
+        if len(parts) != 3:
+            raise typer.BadParameter(f"--config must be 'clearance,buffer,weight'; got {spec!r}")
+        c, b, w = (float(p) for p in parts)
+        out.append((c, b, w))
+    return out
+
+
+def _tf_over(store: SqliteStore, window: Stream[Any]) -> Stream[TFMessage] | None:
+    """The recorded tf stream clipped to another stream's span.
+
+    Absolute bounds: relative ones anchor on each stream's own first observation.
+    """
+    recorded = tf_stream(store)
+    if recorded is None:
+        print("no tf stream in the recording; skipping the tf tree")
+        return None
+    try:
+        first, last = window.first().ts, window.last().ts
+    except LookupError:
+        return None
+    return recorded.order_by("ts").time_range(first, last)
+
+
+class _TfSync:
+    """Logs a recorded tf stream up to a given timestamp, in step with another stream."""
+
+    def __init__(self, tf: Stream[TFMessage] | None) -> None:
+        self._pending = iter(tf) if tf is not None else iter(())
+        self._next = next(self._pending, None)
+        self._tree = TfFrameTree()
+
+    def up_to(self, ts: float) -> None:
+        import rerun as rr
+
+        while self._next is not None and self._next.ts <= ts:
+            rr.set_time(TIMELINE, timestamp=self._next.ts)
+            for path, archetype in self._next.data.to_rerun(self._tree):
+                rr.log(path, archetype)
+            self._next = next(self._pending, None)
+
+
+def _log_odometry(
+    pose: tuple[float, ...],
+    ts: float,
+    trail: list[tuple[float, float, float]],
+    base: Transform | None,
+) -> None:
+    """Trace the sensor moving throughout the scene."""
+    import rerun as rr
+
+    px, py, pz, *_ = pose
+    rr.set_time(TIMELINE, timestamp=ts)
+    trail.append((px, py, pz))
+    if len(trail) > 1:
+        rr.log(
+            "world/mid360_path", rr.LineStrips3D([trail], colors=[SENSOR_PATH_COLOR], radii=0.015)
+        )
+    if base is None:
+        return
+    rr.log(
+        "world/robot_body",
+        rr.Transform3D(
+            translation=[base.translation.x, base.translation.y, base.translation.z],
+            quaternion=rr.Quaternion(
+                xyzw=[base.rotation.x, base.rotation.y, base.rotation.z, base.rotation.w]
+            ),
+        ),
+    )
+
+
+def _log_local_map(
+    voxel_map: NDArray[np.float32],
+    ground: tuple[float, float, float],
+    crop: LocalCrop,
+    render_voxel: float,
+) -> None:
+    """Log the map cropped around the robot, in a frame parented to its feet.
+
+    The close-up view takes that frame as its origin, so it rides along with the
+    robot. Translation only: yaw would spin the view.
+    """
+    import rerun as rr
+
+    gx, gy, gz = ground
+    rr.log("world/local", rr.Transform3D(translation=[gx, gy, gz]))
+    rel = (
+        voxel_map - np.array([gx, gy, gz], dtype=np.float32)
+        if voxel_map.size
+        else np.empty((0, 3), dtype=np.float32)
+    )
+    keep = (
+        (rel[:, 0] ** 2 + rel[:, 1] ** 2 <= crop.radius**2)
+        & (rel[:, 2] >= -crop.below)
+        & (rel[:, 2] <= crop.above)
+    )
+    rr.log("world/local/voxel_map", voxel_map_points(rel[keep], render_voxel))
+
+
+def _log_shared(
+    start: tuple[float, float, float],
+    planner: MLSPlanner,
+    render_voxel: float,
+    clearance_clamp: float,
+    hard_clearance: float,
+    crop: LocalCrop,
+) -> tuple[NDArray[np.float32], NDArray[np.float32], NDArray[np.float32]]:
+    """Log the map artifacts shared by every config from a reference planner.
+
+    Returns (surface, nodes, edges) for metric sizing.
+    """
+    import rerun as rr
+
+    rr.log("world/start", rr.Points3D([start], colors=[[0, 255, 0]], radii=0.1))
+
+    voxel_map = planner.voxel_map()
+    if voxel_map.size:
+        rr.log("world/voxel_map", voxel_map_points(voxel_map, render_voxel))
+    _log_local_map(voxel_map, start, crop, render_voxel)
+
+    # Always log, even when empty: an unconditional update clears the prior
+    # frame's floor so a newly blocked region doesn't keep showing stale cells.
+    surface = planner.surface_clearance_map()
+    rr.log(
+        "world/surface_map",
+        surface_points(
+            surface[:, :3], surface[:, 3], render_voxel, hard_clearance, clearance_clamp
+        ),
+    )
+
+    nodes = planner.nodes()
+    if nodes.size:
+        rr.log("world/nodes", graph_nodes(nodes))
+
+    edges = planner.node_edges()
+    rr.log("world/node_edges", graph_edges(edges))
+    return surface, nodes, edges
+
+
+def _blueprint(crop: LocalCrop) -> rrb.Blueprint:
+    """Full map on the left; the robot-following crop and the metrics beside it."""
+    import rerun.blueprint as rrb
+
+    return rrb.Blueprint(
+        rrb.Horizontal(
+            rrb.Spatial3DView(
+                origin="world",
+                name="world",
+                contents=["+ $origin/**", "- $origin/local/**"],
+                # The graph buries the map it was built from.
+                overrides={
+                    "world/nodes": rrb.EntityBehavior(visible=False),
+                    "world/node_edges": rrb.EntityBehavior(visible=False),
+                },
+            ),
+            rrb.Vertical(
+                rrb.Spatial3DView(
+                    origin="world/local",
+                    name=f"local {crop.radius:g}m",
+                    contents=["+ $origin/**", "+ /world/paths/**", "+ /world/odom/**"],
+                ),
+                rrb.TimeSeriesView(origin="metrics/timing", name="timing"),
+                rrb.TimeSeriesView(origin="metrics/size", name="size"),
+                row_shares=[2, 1, 1],
+            ),
+            column_shares=[2, 1],
+        ),
+        collapse_panels=True,
+    )
+
+
+def _init_recording(db_path: FsPath, out: FsPath | None, live: bool, crop: LocalCrop) -> None:
+    import rerun as rr
+
+    rr.init("plan_rrd", recording_id=db_path.stem)
+    if out is not None and live:
+        # Generous viewer memory so the gRPC sink never backpressures the writer.
+        rr.spawn(connect=False, memory_limit="16GB", server_memory_limit="16GB")
+        rr.set_sinks(rr.GrpcSink(), rr.FileSink(str(out)))
+    elif out is not None:
+        rr.save(str(out))
+    else:
+        rr.spawn()
+    rr.send_blueprint(_blueprint(crop))
+    register_colormap_annotation("turbo")
+    for group, series in (("timing", TIMING_SERIES), ("size", SIZE_SERIES)):
+        for _key, suffix, name, color in series:
+            rr.log(
+                f"metrics/{group}/{suffix}",
+                rr.SeriesLines(colors=[color], names=[name]),
+                static=True,
+            )
+
+
+def _start_seed(
+    ray: RayTraceMap,
+    seed_pts: NDArray[np.float32],
+    start: tuple[float, float, float],
+) -> int:
+    """Partition the premap for a region-by-region seed. Returns the region count."""
+    regions = ray.mapper.start_seed(seed_pts, start)
+    log_loaded_map(seed_pts)
+    print(f"\nseeding {len(seed_pts)} premap points in {regions} regions")
+    return regions
+
+
+def _seed_next_region(ray: RayTraceMap, planners: list[MLSPlanner]) -> bool:
+    """Seed one region into the mapper and hand it to every planner, as the modules do."""
+    region = ray.mapper.seed_next_region()
+    if region is None:
+        return False
+    for p in planners:
+        p.update_seed_region(
+            region.points, region.center, region.radius, region.z_min, region.z_max
+        )
+    return True
+
+
+class SeedStage(Enum):
+    ABSENT = auto()
+    PENDING = auto()
+    LOADING = auto()
+    DONE = auto()
+
+
+class Seeding:
+    """The premap seed, landing one region per frame once the recording reaches it."""
+
+    def __init__(
+        self,
+        loaded_map: Observation[PointCloud2] | None,
+        ray: RayTraceMap,
+        planners: list[MLSPlanner],
+        tf_lookup: StreamTF,
+        world_frame: str,
+    ) -> None:
+        self.loaded_map = loaded_map
+        self.stage = SeedStage.ABSENT if loaded_map is None else SeedStage.PENDING
+        self.regions = 0
+        self.landed = 0
+        self._ray = ray
+        self._planners = planners
+        self._tf_lookup = tf_lookup
+        self._world_frame = world_frame
+
+    @property
+    def left(self) -> int:
+        return self.regions - self.landed
+
+    def step(self, ts: float, start: tuple[float, float, float]) -> None:
+        if self.stage is SeedStage.PENDING:
+            if self.loaded_map is None or ts < self.loaded_map.ts:
+                return
+            seed_pts = place_loaded_map(self.loaded_map, self._tf_lookup, self._world_frame, ts)
+            self.regions = _start_seed(self._ray, seed_pts, start)
+            self.stage = SeedStage.LOADING
+        elif self.stage is SeedStage.LOADING:
+            if _seed_next_region(self._ray, self._planners):
+                self.landed += 1
+            else:
+                self.stage = SeedStage.DONE
+                print("\nseed finished")
+
+
+def _build_planners(
+    configs: list[tuple[float, float, float]],
+    voxel_size: float,
+    robot_height: float,
+    max_overhead: float,
+    surface_closing_radius: float,
+    node_spacing: float,
+    step_height: float,
+    step_penalty_weight: float,
+) -> list[tuple[str, tuple[int, int, int], MLSPlanner]]:
+    planners: list[tuple[str, tuple[int, int, int], MLSPlanner]] = []
+    for i, (clr, buf, wgt) in enumerate(configs):
+        planner = MLSPlanner(
+            voxel_size=voxel_size,
+            robot_height=robot_height,
+            max_overhead_m=max_overhead,
+            surface_closing_radius=surface_closing_radius,
+            node_spacing_m=node_spacing,
+            wall_clearance_m=clr,
+            wall_buffer_m=buf,
+            wall_buffer_weight=wgt,
+            step_threshold_m=step_height,
+            step_penalty_weight=step_penalty_weight,
+        )
+        color = PATH_PALETTE[i % len(PATH_PALETTE)]
+        label = f"cfg{i}_c{clr:g}_b{buf:g}_w{wgt:g}"
+        planners.append((label, color, planner))
+        print(f"config {i}: clearance={clr} buffer={buf} weight={wgt} color={color} -> {label}")
+    return planners
+
+
+def _process_frame(
+    ray_obs: Observation[PointCloud2],
+    planners: list[tuple[str, tuple[int, int, int], MLSPlanner]],
+    goal: tuple[float, float, float],
+    start: tuple[float, float, float],
+    sensor_z: float,
+    render_voxel: float,
+    clearance_clamp: float,
+    hard_clearance: float,
+    crop: LocalCrop,
+) -> dict[str, float]:
+    """Plan every config for one frame, log paths/map/metrics, return the ref timing."""
+    import rerun as rr
+
+    bounds = ray_obs.tags["region_bounds"]
+    ox, oy, radius, z_min, z_max = bounds
+    pts = ray_obs.data.points_f32()
+    rr.set_time(TIMELINE, timestamp=ray_obs.ts)
+
+    ref_timing: dict[str, float] = {}
+    surface = nodes = edges = np.empty((0,), dtype=np.float32)
+    for j, (label, color, planner) in enumerate(planners):
+        t0 = perf_counter()
+        planner.update_region(pts, (ox, oy), radius, z_min, z_max, sensor_z)
+        t1 = perf_counter()
+        waypoints = planner.plan(start, goal)
+        t2 = perf_counter()
+        rr.log(f"world/paths/{label}", path_strip(waypoints, color))
+        if j == 0:
+            ref_timing = {
+                "update_ms": (t1 - t0) * 1000,
+                "plan_ms": (t2 - t1) * 1000,
+                "total_ms": (t2 - t0) * 1000,
+            }
+            surface, nodes, edges = _log_shared(
+                start, planner, render_voxel, clearance_clamp, hard_clearance, crop
+            )
+
+    for key, suffix, _name, _color in TIMING_SERIES:
+        rr.log(f"metrics/timing/{suffix}", rr.Scalars(ref_timing[key]))
+    sizes = {
+        "voxels": planners[0][2].voxel_count(),
+        "surface_cells": len(surface),
+        "nodes": len(nodes),
+        "edges": len(edges),
+    }
+    for key, suffix, _name, _color in SIZE_SERIES:
+        rr.log(f"metrics/size/{suffix}", rr.Scalars(sizes[key]))
+    return ref_timing
+
+
+def main(
+    dataset: str = typer.Argument(..., help="Dataset .db: bare name (cwd or data/) or path"),
+    out: FsPath | None = typer.Option(
+        None, "--out", help="Output .rrd path. If omitted, spawn rerun live."
+    ),
+    lidar_stream: str = typer.Option(
+        "pointlio_lidar", "--lidar-stream", help="Lidar stream in the recording"
+    ),
+    world_frame: str = typer.Option(
+        "odom", "--world-frame", help="Fixed frame clouds are registered and planning runs in"
+    ),
+    base_frame: str = typer.Option(
+        "base_link", "--base-frame", help="Frame whose tf pose is the planning start"
+    ),
+    start_z_offset: float = typer.Option(
+        BASE_LINK_HEIGHT,
+        "--start-z-offset",
+        help="Height of the base frame above the ground; subtracted from the start pose z",
+    ),
+    voxel_size: float = typer.Option(
+        DEFAULT_VOXEL_SIZE, "--voxel-size", help="Voxel edge length (m)"
+    ),
+    fine_divisor: int = typer.Option(
+        3, "--fine-divisor", help="Fine cells per voxel edge. Zero disables the fine layer"
+    ),
+    max_range: float = typer.Option(30.0, "--max-range", help="Max ray cast distance (m)"),
+    ray_subsample: int = typer.Option(1, "--ray-subsample", help="Keep every Nth ray"),
+    shadow_depth: float = typer.Option(
+        0.1, "--shadow-depth", help="Extend rays past the endpoint to clear shadows (m)"
+    ),
+    grace_depth: float = typer.Option(
+        0.2, "--grace-depth", help="Skip clearing for voxels within this range of a point (m)"
+    ),
+    emit_every: int = typer.Option(1, "--emit-every", help="Replan every N lidar frames"),
+    min_health: int = typer.Option(
+        -1,
+        "--min-health",
+        help="Voxel health floor; more negative needs more hits to appear and more misses to clear",
+    ),
+    max_health: int = typer.Option(5, "--max-health", help="Voxel health ceiling"),
+    support_min: int = typer.Option(
+        4,
+        "--support-min",
+        help="Min occupied neighbors a surface voxel needs to be emitted; "
+        "0 emits all, higher drops isolated returns",
+    ),
+    robot_height: float = typer.Option(
+        ROBOT_HEIGHT, "--robot-height", help="Robot height, ground to tallest point / lidar (m)"
+    ),
+    max_overhead: float = typer.Option(
+        2.0, "--max-overhead", help="Ignore surface more than this far above the sensor (m)"
+    ),
+    surface_closing_radius: float = typer.Option(
+        0.3,
+        "--surface-closing-radius",
+        help="Hole-fill radius (m); morphological closing fills holes up to twice this wide",
+    ),
+    node_spacing: float = typer.Option(1.0, "--node-spacing", help="Graph node spacing (m)"),
+    wall_clearance: float = typer.Option(
+        0.1,
+        "--wall-clearance",
+        help="Hard clearance; cells closer to a wall or edge are impassable (m)",
+    ),
+    wall_buffer: float = typer.Option(
+        0.75, "--wall-buffer", help="Width of the soft standoff zone beyond clearance (m)"
+    ),
+    wall_buffer_weight: float = typer.Option(
+        100.0, "--wall-buffer-weight", help="Peak soft wall penalty at the clearance edge"
+    ),
+    step_height: float = typer.Option(
+        0.16,
+        "--step-height",
+        help="Max traversable vertical step (m); taller steps are impassable",
+    ),
+    step_penalty_weight: float = typer.Option(
+        4.0, "--step-penalty-weight", help="Soft cost per meter of vertical climb"
+    ),
+    config: list[str] = typer.Option(
+        None,
+        "--config",
+        help="Repeatable 'clearance,buffer,weight' to overlay as colored paths; "
+        "overrides the single --wall-* flags",
+    ),
+    goal: tuple[float, float, float] = typer.Option(
+        (0.0, 0.0, 0.0), "--goal", help="Planner goal xyz; override per recording"
+    ),
+    loaded_map_stream: str = typer.Option(
+        LOADED_MAP_STREAM,
+        "--loaded-map-stream",
+        help="Stream holding a map cloud to seed at its timestamp, placed by tf, when present",
+    ),
+    region_m: float = typer.Option(
+        RayTracingVoxelMapConfig.model_fields["region_m"].default,
+        "--region-m",
+        help="Region size (m) the seeded map is handed to the planner in",
+    ),
+    live: bool = typer.Option(
+        False, "--live", help="Also spawn the rerun viewer when --out is set"
+    ),
+    render_voxel: float | None = typer.Option(
+        None,
+        "--render-voxel",
+        help="Rerun voxel render size (m); scales with --voxel-size when unset "
+        f"({DEFAULT_RENDER_VOXEL} at the default voxel size of {DEFAULT_VOXEL_SIZE})",
+    ),
+    local_radius: float = typer.Option(
+        5.0, "--local-radius", help="Close-up view: crop radius around the robot (m)"
+    ),
+    local_above: float = typer.Option(
+        1.0, "--local-above", help="Close-up view: crop this far above the robot's feet (m)"
+    ),
+    local_below: float = typer.Option(
+        2.0,
+        "--local-below",
+        help="Close-up view: crop this far below the robot's feet (m); "
+        "keeps stairs down but drops the floor below",
+    ),
+    clearance_clamp: float = typer.Option(
+        1.0, "--clearance-clamp", help="Max clearance (m) for the surface color scale"
+    ),
+    from_time: float | None = typer.Option(
+        None, "--from-time", help="Start timestamp (s); default is the stream start"
+    ),
+    to_time: float | None = typer.Option(
+        None, "--to-time", help="End timestamp (s); default is the stream end"
+    ),
+) -> None:
+    import rerun as rr
+
+    if render_voxel is None:
+        render_voxel = default_render_voxel(voxel_size, DEFAULT_VOXEL_SIZE)
+
+    db_path = resolve_named_path(dataset, ".db")
+    crop = LocalCrop(local_radius, local_above, local_below)
+    _init_recording(db_path, out, live, crop)
+
+    store = SqliteStore(path=str(db_path))
+    with store:
+        if lidar_stream not in store.list_streams():
+            raise typer.BadParameter(
+                f"{db_path} has no {lidar_stream!r} stream. Available: {store.list_streams()}",
+                param_hint="--lidar-stream",
+            )
+        lidar = store.stream(lidar_stream, PointCloud2).order_by("ts")
+        if from_time is not None:
+            lidar = lidar.from_time(from_time)
+        if to_time is not None:
+            lidar = lidar.to_time(to_time)
+        tf = _tf_over(store, lidar)
+        tf_lookup = StreamTF.from_store(store)
+        if tf_lookup is None:
+            raise typer.BadParameter(f"{db_path} has no tf stream to register clouds from")
+
+        pose_tagged = lidar.transform(pose_from_tf(tf_lookup, world_frame))
+        ray = RayTraceMap(
+            voxel_size=voxel_size,
+            fine_divisor=fine_divisor,
+            max_range=max_range,
+            ray_subsample=ray_subsample,
+            shadow_depth=shadow_depth,
+            grace_depth=grace_depth,
+            emit_every=emit_every,
+            min_health=min_health,
+            max_health=max_health,
+            support_min=support_min,
+            region_m=region_m,
+        )
+        ray_pipeline = pose_tagged.transform(ray)
+        tf_sync = _TfSync(tf)
+
+        configs = _parse_configs(config, wall_clearance, wall_buffer, wall_buffer_weight)
+        ref_clearance = configs[0][0]
+        planners = _build_planners(
+            configs,
+            voxel_size=voxel_size,
+            robot_height=robot_height,
+            max_overhead=max_overhead,
+            surface_closing_radius=surface_closing_radius,
+            node_spacing=node_spacing,
+            step_height=step_height,
+            step_penalty_weight=step_penalty_weight,
+        )
+
+        seeding = Seeding(
+            first_loaded_map(store, loaded_map_stream),
+            ray,
+            [p for _, _, p in planners],
+            tf_lookup,
+            world_frame,
+        )
+        if seeding.loaded_map is not None:
+            rr.log(
+                REGIONS_LEFT_SERIES,
+                rr.SeriesLines(colors=[[255, 255, 255]], names=["regions_left"]),
+                static=True,
+            )
+            print(f"loaded_map at ts={seeding.loaded_map.ts:.3f}; seeding when reached")
+
+        rr.log("world/goal", goal_point(goal), static=True)
+        rr.log(
+            "world/robot_body", robot_body_box(ROBOT_LENGTH, ROBOT_WIDTH, robot_height), static=True
+        )
+        rr.log(
+            "world/robot_body/clearance", robot_clearance(robot_height, wall_clearance), static=True
+        )
+        sensor_trail: list[tuple[float, float, float]] = []
+
+        try:
+            frame = 0
+            for ray_obs in ray_pipeline:
+                tf_sync.up_to(ray_obs.ts)
+                if ray_obs.pose_tuple is None:
+                    continue
+                # Small tolerance keeps this lookup's ensure window inside the
+                # pose lookups' cached span, avoiding a double reload. The
+                # buffer warns on every miss, so a skipped frame is never silent.
+                base = tf_lookup.get(
+                    world_frame,
+                    base_frame,
+                    time_point=ray_obs.ts,
+                    time_tolerance=TF_MATCH_TOLERANCE_S,
+                )
+                if base is None:
+                    continue
+                start = (
+                    float(base.translation.x),
+                    float(base.translation.y),
+                    float(base.translation.z) - start_z_offset,
+                )
+                sensor_z = float(base.translation.z)
+                ref_timing = _process_frame(
+                    ray_obs,
+                    planners,
+                    goal,
+                    start,
+                    sensor_z,
+                    render_voxel,
+                    clearance_clamp,
+                    ref_clearance,
+                    crop,
+                )
+                seeding.step(ray_obs.ts, start)
+                if seeding.stage is not SeedStage.ABSENT:
+                    rr.log(REGIONS_LEFT_SERIES, rr.Scalars(float(seeding.left)))
+                _log_odometry(ray_obs.pose_tuple, ray_obs.ts, sensor_trail, base)
+                frame += 1
+                print(
+                    f"frame={frame} configs={len(planners)} "
+                    f"rebuild(ref)={ref_timing['total_ms'] - ref_timing['plan_ms']:.1f}ms "
+                    f"plan(ref)={ref_timing['plan_ms']:.1f}ms",
+                    end="\r",
+                    flush=True,
+                )
+        except KeyboardInterrupt:
+            print("\ninterrupted")
+
+    if out is not None:
+        print(f"wrote {out}")
+        print(f"open with: rerun {out}")
+
+
+if __name__ == "__main__":
+    typer.run(main)
