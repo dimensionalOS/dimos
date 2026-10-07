@@ -45,12 +45,28 @@ class Server:
     url: str
 
 
+def _argv_port(argv: list[str]) -> str | None:
+    """`--mcp-port N` / `--mcp-port=N` in a run's command line (the registry's overrides miss flags given after
+    `run <blueprint>`)."""
+    port = None
+    for at, arg in enumerate(argv):
+        if arg in ("--mcp-port", "--mcp_port") and at + 1 < len(argv):
+            port = argv[at + 1]
+        elif arg.startswith(("--mcp-port=", "--mcp_port=")):
+            port = arg.split("=", 1)[1]
+    return port
+
+
 def mcp_url(entry: Any) -> str:
-    """Where a run's McpServer listens: its own `mcp_port` override, else GlobalConfig's (9990)."""
+    """Where a run's McpServer listens: its own `mcp_port` (override or command line), else GlobalConfig's (9990)."""
     from dimos.core.global_config import global_config
 
     overrides = getattr(entry, "config_overrides", None) or {}
-    port = overrides.get("mcp_port") or overrides.get("mcp-port") or global_config.mcp_port
+    port = (
+        overrides.get("mcp_port")
+        or _argv_port(list(getattr(entry, "original_argv", None) or []))
+        or global_config.mcp_port
+    )
     return f"http://localhost:{int(port)}/mcp"
 
 

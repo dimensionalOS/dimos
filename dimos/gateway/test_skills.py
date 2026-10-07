@@ -235,4 +235,11 @@ def test_the_mcp_server_has_two_fixed_tools(client: TestClient, fake_run: skills
 def test_a_runs_mcp_url_follows_its_port_override() -> None:
     entry = RunEntry("r", 1, "b", "t", "/tmp", config_overrides={"mcp_port": 9123})
     assert skills.mcp_url(entry) == "http://localhost:9123/mcp"
+    after_run = RunEntry(
+        "r", 1, "b", "t", "/tmp", original_argv=["dimos", "run", "b", "--mcp-port", "9991"]
+    )
+    assert skills.mcp_url(after_run) == "http://localhost:9991/mcp"
+    assert skills.mcp_url(
+        RunEntry("r", 1, "b", "t", "/tmp", original_argv=["--mcp-port=9992"])
+    ).endswith(":9992/mcp")
     assert skills.mcp_url(RunEntry("r", 1, "b", "t", "/tmp")).startswith("http://localhost:")
