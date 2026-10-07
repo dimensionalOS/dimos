@@ -133,7 +133,7 @@ unitree_g1_teleop = (
             visualization=ViserVisualizationConfig(host="0.0.0.0"),
         ),
         *_camera_if_real(),
-        EpisodeMonitorModule.blueprint(),  # default button_map: toggle=B, discard=Y
+        EpisodeMonitorModule.blueprint(task="Teleoperate the G1"),
         G1CollectionRecorder.blueprint(
             db_path=_session_db(),
             stream_codecs={"status": "json"},

@@ -22,8 +22,10 @@ import {
   RESERVED_CHANNEL_PREFIX,
   type RobotInfo,
   type RobotManifest,
+  type RtcOfferMsg,
+  type RtcStalledMsg,
 } from "@dimos/shared";
-import { MAX_MANIFEST_ID_LEN } from "@dimos/shared/manifest";
+import { MAX_MANIFEST_ID_LEN, TRACK_ENCODING } from "@dimos/shared/manifest";
 
 import type { CarrierStats } from "./carrier.ts";
 import {
@@ -86,6 +88,19 @@ export interface ViewerPeer {
   name: string | null;
   /** Push channel chosen at hello time (bidi stream or datagrams). */
   sendMsg(msg: Msg): void;
+}
+
+/** The WebRTC hub (rtc.ts), present only when Cloudflare is configured. */
+export interface RtcBroker {
+  iceMsg(): Msg;
+  robotOffer(peer: RobotPeer, msg: RtcOfferMsg): void;
+  robotStalled(peer: RobotPeer, ch: string): void;
+  robotClosed(peer: RobotPeer): void;
+  viewerOffer(viewer: ViewerPeer, sdp: string): void;
+  viewerAnswer(viewer: ViewerPeer, sdp: string): void;
+  viewerChanged(viewer: ViewerPeer): void;
+  viewerClosed(viewer: ViewerPeer): void;
+  stats(): Record<string, number>;
 }
 
 /** Dispose and drop every delivery policy of `viewer` (queued frames from the
@@ -176,12 +191,49 @@ export class Registry {
   #pubTimedOut = 0;
   #pubLateAcks = 0;
   #pubRejected: Record<string, number> = {};
+  #framesOnTrack = 0;
   readonly #now: () => number;
+  readonly #hub: RtcBroker | null;
 
   /** Clock injected so tests fabricate time (buckets and pending deadlines
-   * are the only time-dependent state beyond stats). */
-  constructor(now: () => number = Date.now) {
+   * are the only time-dependent state beyond stats). A null `hub` disables
+   * track channels. */
+  constructor(now: () => number = Date.now, hub: RtcBroker | null = null) {
     this.#now = now;
+    this.#hub = hub;
+  }
+
+  get rtcEnabled(): boolean {
+    return this.#hub !== null;
+  }
+
+  onRobotRtcOffer(peer: RobotPeer, msg: RtcOfferMsg): void {
+    const id = peer.info?.id;
+    const entry = id === undefined ? undefined : this.#robots.get(id);
+    if (entry === undefined || entry.peer !== peer) return;
+    if (this.#hub === null) {
+      console.log(`[relay] dropping rtc_offer from ${id}: no Cloudflare configuration`);
+      return;
+    }
+    this.#hub.robotOffer(peer, msg);
+  }
+
+  onRobotRtcStalled(peer: RobotPeer, msg: RtcStalledMsg): void {
+    const id = peer.info?.id;
+    const entry = id === undefined ? undefined : this.#robots.get(id);
+    if (entry === undefined || entry.peer !== peer) return;
+    this.#hub?.robotStalled(peer, msg.ch);
+  }
+
+  /** New TURN credentials at the hub: every peer gets the set (a peer's next
+   * peer connection uses the latest it received). */
+  refreshIce(): void {
+    if (this.#hub === null) return;
+    const msg = this.#hub.iceMsg();
+    for (const entry of this.#robots.values()) entry.peer.sendControl(msg);
+    for (const viewer of this.#viewers) {
+      if (viewer.greeted) viewer.sendMsg(msg);
+    }
   }
 
   /** A robot control carrier overflowed or failed a write; the session is
@@ -196,6 +248,7 @@ export class Registry {
 
   viewerClosed(viewer: ViewerPeer): void {
     if (!this.#viewers.delete(viewer)) return;
+    this.#hub?.viewerClosed(viewer);
     disposePolicies(viewer);
     // Release the viewer's pending publishes silently (there is nobody left
     // to route the ack to); the robot-side entries go with them.
@@ -247,6 +300,8 @@ export class Registry {
     // Forced: gives a fresh bridge its baseline and reattaches surviving
     // watchers after the old robot session has disconnected.
     this.#syncSubs(info.id, true);
+    // After the baseline: the carrier's first frame stays the subs snapshot.
+    if (this.#hub !== null) peer.sendControl(this.#hub.iceMsg());
     return true;
   }
 
@@ -257,6 +312,7 @@ export class Registry {
     const entry = this.#robots.get(id);
     if (entry === undefined || entry.peer !== peer) return;
     this.#robots.delete(id);
+    this.#hub?.robotClosed(peer);
     // Pending publishes cannot be acked any more; their viewers get an
     // outcome-"unknown" error (the bridge may have published before dying).
     for (const pending of entry.pubPending.values()) {
@@ -305,10 +361,11 @@ export class Registry {
           return false;
         }
         viewer.greeted = true;
-        // Repeat hellos repeat both replies: the Python viewer's control
+        // Repeat hellos repeat the replies: the Python viewer's control
         // channel is datagrams, so this is its loss-healing path.
         reply({ t: "welcome", v: PROTOCOL_VERSION });
         reply(this.robotsMsg());
+        if (this.#hub !== null) reply(this.#hub.iceMsg());
         break;
       }
       case "ping":
@@ -332,6 +389,7 @@ export class Registry {
         viewer.watched = msg.robotId;
         if (previous !== null && previous !== msg.robotId) this.#syncSubs(previous);
         this.#syncSubs(msg.robotId);
+        this.#hub?.viewerChanged(viewer);
         reply({
           t: "manifest",
           robotId: msg.robotId,
@@ -393,6 +451,22 @@ export class Registry {
           viewer.policies.delete(msg.ch);
         }
         this.#syncSubs(viewer.watched);
+        this.#hub?.viewerChanged(viewer);
+        break;
+      }
+      case "rtc_offer":
+      case "rtc_answer": {
+        // No watch needed: the hub reconciles pulls against the watch itself.
+        if (this.#hub === null) {
+          reply({
+            t: "error",
+            code: "rtc_unavailable",
+            message: "this relay has no Cloudflare configuration (--rtc-file)",
+          });
+          break;
+        }
+        if (msg.t === "rtc_offer") this.#hub.viewerOffer(viewer, msg.sdp);
+        else this.#hub.viewerAnswer(viewer, msg.sdp);
         break;
       }
       case "teleop_start": {
@@ -656,7 +730,13 @@ export class Registry {
       return;
     }
     const ch = header.ch;
-    const declared = entry.specs.get(ch)?.delivery;
+    const spec = entry.specs.get(ch);
+    if (spec?.encoding === TRACK_ENCODING) {
+      // Its media rides the SFU; a frame here is a misbehaving bridge.
+      this.#framesOnTrack++;
+      return;
+    }
+    const declared = spec?.delivery;
     // Manifest delivery wins; the header's is the undeclared-channel fallback.
     const delivery = declared ?? header.delivery;
 
@@ -742,6 +822,7 @@ export class Registry {
       teleopForwarded: this.#teleopForwarded,
       teleopDropped: this.#teleopDropped,
       carrierFailures: this.#carrierFailures,
+      rtc: this.#hub === null ? null : { ...this.#hub.stats(), framesOnTrack: this.#framesOnTrack },
       pub: {
         accepted: this.#pubAccepted,
         acked: this.#pubAcked,
