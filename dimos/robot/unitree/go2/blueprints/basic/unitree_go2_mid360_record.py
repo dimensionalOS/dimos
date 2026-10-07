@@ -30,9 +30,9 @@ for a timestamped ``recordings/`` folder::
 
 import os
 
+from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
-from dimos.core.global_config import global_config
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
 from dimos.hardware.sensors.lidar.virtual_mid360.recorder import Mid360PcapRecorder
@@ -90,6 +90,8 @@ if _RECORD_PCAP:
 
 
 if __name__ == "__main__":
-    global_config.obstacle_avoidance = False
-    coordinator = ModuleCoordinator.build(unitree_go2_mid360_record)
+    parsed_config = BlueprintConfigParser(unitree_go2_mid360_record).parse(
+        global_overrides={"obstacle_avoidance": False}
+    )
+    coordinator = ModuleCoordinator.build(unitree_go2_mid360_record, parsed_config)
     coordinator.loop()

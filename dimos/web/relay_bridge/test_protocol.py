@@ -26,8 +26,12 @@ from dimos.web.relay_bridge.protocol import (
     MAX_CONTROL_PAYLOAD_BYTES,
     MAX_DATA_FRAME_BYTES,
     MAX_HEADER_LEN,
+    MAX_MANIFEST_ID_LEN,
+    MAX_MID_LEN,
     MAX_PUB_DATA_BYTES,
     MAX_REQUEST_ID_LEN,
+    MAX_RTC_TRACKS,
+    MAX_SDP_LEN,
     MAX_TOKEN_LEN,
     PROTOCOL_VERSION,
     RESERVED_CHANNEL_PREFIX,
@@ -43,6 +47,10 @@ from dimos.web.relay_bridge.protocol import (
     Pub,
     RobotInfo,
     Robots,
+    RtcAnswer,
+    RtcIce,
+    RtcOffer,
+    RtcStalled,
     TeleopStop,
     decode_data_frame,
     decode_datagram,
@@ -73,10 +81,10 @@ def _header(d):
 
 
 def test_protocol_version():
-    # v5: the robot hello rides an @control data frame on a one-shot bidi
-    # stream instead of a datagram, and @-prefixed channel ids are reserved;
-    # a v4 peer must fail the handshake.
-    assert PROTOCOL_VERSION == 6
+    # v7: the WebRTC signaling messages (rtc_ice/rtc_offer/rtc_answer) and
+    # video.webrtc.v1 track channels; an older peer would drop the messages
+    # and show a video panel that never draws, so the handshake must fail.
+    assert PROTOCOL_VERSION == 7
 
 
 def test_control_hello_payload_is_the_datagram_encoding():
@@ -101,6 +109,62 @@ def test_control_subs_payload_is_the_datagram_encoding():
     subs = next(v for v in DATAGRAMS if v["name"] == "subs_snapshot")
     payload = base64.b64decode(control["payload_b64"])
     assert decode_datagram(payload) == msg_from_dict(subs["message"])
+
+
+@pytest.mark.parametrize(
+    ("frame_name", "datagram_name"),
+    [
+        ("control_rtc_offer", "rtc_offer_robot"),
+        ("control_rtc_answer", "rtc_answer"),
+        ("control_rtc_stalled", "rtc_stalled"),
+    ],
+)
+def test_control_rtc_payload_is_the_datagram_encoding(frame_name, datagram_name):
+    control = next(v for v in DATA if v["name"] == frame_name)
+    assert control["header"]["ch"] == CONTROL_CHANNEL
+    msg = next(v for v in DATAGRAMS if v["name"] == datagram_name)
+    payload = base64.b64decode(control["payload_b64"])
+    assert len(payload) <= MAX_CONTROL_PAYLOAD_BYTES
+    assert decode_datagram(payload) == msg_from_dict(msg["message"])
+
+
+def test_rtc_shape_validation():
+    # Mirrors protocol_test.ts; also pins the rtc bounds against the mirror.
+    assert (MAX_SDP_LEN, MAX_MID_LEN, MAX_RTC_TRACKS) == (48 * 1024, 16, 8)
+    ice = {
+        "t": "rtc_ice",
+        "iceServers": [
+            {"urls": ["stun:s"]},
+            {"urls": ["turn:t"], "username": "u", "credential": "c"},
+        ],
+    }
+    decoded = msg_from_dict(ice)
+    assert isinstance(decoded, RtcIce) and decoded.iceServers[1].credential == "c"
+    # Absent username/credential stay absent on the wire (exclude_none).
+    assert encode_datagram(decoded) == json.dumps(ice, separators=(",", ":")).encode()
+    offer = {"t": "rtc_offer", "sdp": "v=0\r\n", "tracks": [{"ch": "cam", "mid": "0"}]}
+    assert isinstance(msg_from_dict(offer), RtcOffer)
+    bare = msg_from_dict({"t": "rtc_offer", "sdp": "v=0\r\n"})
+    assert isinstance(bare, RtcOffer) and bare.tracks is None
+    assert encode_datagram(bare) == b'{"t":"rtc_offer","sdp":"v=0\\r\\n"}'
+    assert isinstance(msg_from_dict({"t": "rtc_answer", "sdp": "v=0\r\n"}), RtcAnswer)
+    assert isinstance(msg_from_dict({"t": "rtc_stalled", "ch": "cam"}), RtcStalled)
+    many = [{"ch": f"c{i}", "mid": str(i)} for i in range(MAX_RTC_TRACKS + 1)]
+    bad = [
+        {"t": "rtc_ice", "iceServers": [{"urls": []}]},
+        {"t": "rtc_ice", "iceServers": [{"urls": ["stun:s"], "username": None}]},
+        {"t": "rtc_offer", "sdp": "x" * (MAX_SDP_LEN + 1)},
+        {**offer, "tracks": None},
+        {**offer, "tracks": [{"ch": "cam", "mid": "m" * (MAX_MID_LEN + 1)}]},
+        {**offer, "tracks": many},
+        {**offer, "robotId": None},
+        {"t": "rtc_answer"},
+        {"t": "rtc_stalled", "ch": ""},
+        {"t": "rtc_stalled", "ch": "c" * (MAX_MANIFEST_ID_LEN + 1)},
+    ]
+    for data in bad:
+        with pytest.raises(ProtocolError):
+            msg_from_dict(data)
 
 
 def test_pub_tx_frame_payload_is_the_data_json():

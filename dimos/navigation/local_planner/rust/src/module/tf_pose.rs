@@ -13,7 +13,7 @@
 // limitations under the License.
 
 //! The base pose off tf per tick: rust twin of `dimos/navigation/tf_pose.py::TfPose`.
-//! tf carries `odom -> base_link` (GO2Zenoh publishes `odom -> mid360_link` plus the
+//! tf carries `odom -> base_link` (e.g. Point-LIO's `odom -> mid360_link` plus the
 //! static mounts). The deadman is on our clock, keyed by the edge's stamp.
 
 use std::time::Instant;
