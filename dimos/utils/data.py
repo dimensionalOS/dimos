@@ -25,6 +25,8 @@ import tempfile
 import time
 from typing import Any
 
+from filelock import FileLock
+
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.utils.logging_config import setup_logger
 
@@ -66,9 +68,8 @@ def get_project_root() -> Path:
         data_dir = _get_user_data_dir()
         data_dir.mkdir(parents=True, exist_ok=True)
         # Test if writable
-        test_file = data_dir / ".write_test"
-        test_file.touch()
-        test_file.unlink()
+        with tempfile.TemporaryFile(dir=data_dir):
+            pass
         logger.info(f"Using local user data directory at '{data_dir}'")
     except (OSError, PermissionError):
         # Fall back to temp dir if data dir not writable
@@ -78,32 +79,33 @@ def get_project_root() -> Path:
 
     repo_dir = data_dir / "repo"
 
-    # Clone if not already cloned
-    if not (repo_dir / ".git").exists():
-        try:
-            env = os.environ.copy()
-            env["GIT_LFS_SKIP_SMUDGE"] = "1"
-            subprocess.run(
-                [
-                    "git",
-                    "clone",
-                    "--depth",
-                    "1",
-                    "--branch",
-                    "main",
-                    "https://github.com/dimensionalOS/dimos.git",
-                    str(repo_dir),
-                ],
-                check=True,
-                capture_output=True,
-                text=True,
-                env=env,
-            )
-        except subprocess.CalledProcessError as e:
-            raise RuntimeError(
-                f"Failed to clone dimos repository: {e.stderr}\n"
-                f"Make sure you can access https://github.com/dimensionalOS/dimos.git"
-            )
+    with FileLock(data_dir / "repo.lock"):
+        # Clone if not already cloned
+        if not (repo_dir / ".git").exists():
+            try:
+                env = os.environ.copy()
+                env["GIT_LFS_SKIP_SMUDGE"] = "1"
+                subprocess.run(
+                    [
+                        "git",
+                        "clone",
+                        "--depth",
+                        "1",
+                        "--branch",
+                        "main",
+                        "https://github.com/dimensionalOS/dimos.git",
+                        str(repo_dir),
+                    ],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                )
+            except subprocess.CalledProcessError as e:
+                raise RuntimeError(
+                    f"Failed to clone dimos repository: {e.stderr}\n"
+                    f"Make sure you can access https://github.com/dimensionalOS/dimos.git"
+                )
 
     return repo_dir
 
@@ -116,19 +118,24 @@ def get_data_dir(extra_path: str | None = None) -> Path:
 
 
 def resolve_named_path(name: str | Path, suffix: str = "") -> Path:
+    """A path, a stem in the working directory or project root, or an LFS name to pull."""
     s = str(name)
-    p = Path(s)
-    if p.is_absolute() or p.exists():
-        return p
-    if (DIMOS_PROJECT_ROOT / p).exists():
-        return DIMOS_PROJECT_ROOT / p
-    if suffix and not s.endswith(suffix):
-        p = Path(s + suffix)
-        if p.is_absolute() or p.exists():
+    names = [s] if not suffix or s.endswith(suffix) else [s, s + suffix]
+    for candidate in names:
+        p = Path(candidate)
+        if p.exists():
             return p
         if (DIMOS_PROJECT_ROOT / p).exists():
             return DIMOS_PROJECT_ROOT / p
-    return get_data(p.name)
+    p = Path(names[-1])
+    if p.is_absolute():
+        return p
+    try:
+        return get_data(names[-1])
+    except FileNotFoundError:
+        if p.name == names[-1]:
+            raise
+        return get_data(p.name)
 
 
 def backup_file(path: str | Path, keep_last: int = 3) -> Path | None:

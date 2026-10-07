@@ -218,6 +218,8 @@ def _capture_native_artifact(
     endpoint = f"tcp/127.0.0.1:{_free_port()}"
     monkeypatch.setattr(global_config, "transport", "zenoh")
     recorder = InteropRustRecorder(
+        source_dir=None,
+        build_command=None,
         executable=str(rust_recorder_executable),
         store=store,
         record_tf=False,
@@ -400,8 +402,9 @@ def test_cli_recording_uses_existing_binary_for_both_formats(
     monkeypatch.setattr(global_config, "record_encoding_threads", 2)
     monkeypatch.setattr(global_config, "transport", "lcm")
     monkeypatch.setattr(global_config, "build_native", False)
-    monkeypatch.setattr(rust_cli_recorder, "_EXECUTABLE", rust_recorder_executable)
-    monkeypatch.setattr(rust_cli_recorder, "_RUST_DIR", _RUST_PACKAGE)
+    monkeypatch.setattr(
+        rust_cli_recorder, "prepare_rust_recorder", lambda: rust_recorder_executable
+    )
     monkeypatch.setattr(rust_cli_recorder, "recording_dir", lambda: tmp_path)
     channel = f"/rust-recorder-{uuid.uuid4().hex[:8]}"
     publisher: LCMTransport[Imu] = LCMTransport(channel, Imu, url=lcm_url)
@@ -442,6 +445,8 @@ def test_tf_records_over_zenoh_and_replays_through_python(
     endpoint = f"tcp/127.0.0.1:{_free_port()}"
     monkeypatch.setattr(global_config, "transport", "zenoh")
     recorder = RustRecorder(
+        source_dir=None,
+        build_command=None,
         executable=str(rust_recorder_executable),
         store=RustSqliteStoreConfig(path=str(artifact)),
         record_tf=True,
