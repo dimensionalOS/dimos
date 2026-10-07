@@ -597,176 +597,6 @@
             }
           ]
         },
-        "go2-dds-basic": {
-          "title": "Go2 over DDS (wired)",
-          "description": "Streams and driving over DDS, on the computer wired to the Go2.",
-          "recommended_config": [
-            {
-              "global": "robot_ip",
-              "label": "Robot IP",
-              "type": "string",
-              "nullable": true,
-              "default": null,
-              "kind": "text",
-              "placeholder": "192.168.12.1",
-              "required": true,
-              "docs": "https://docs.dimensional.org/platforms/quadruped/go2/setup/#first-time-setup-connecting-to-wifi-finding-robot-ip"
-            }
-          ]
-        },
-        "go2-dds-motion-pointlio": {
-          "title": "Go2 over DDS: Point-LIO motion",
-          "description": "DDS Go2 with a Mid-360 (Point-LIO), voxel map, MLS planner and local planner.",
-          "recommended_config": [
-            {
-              "global": "robot_ip",
-              "label": "Robot IP",
-              "type": "string",
-              "nullable": true,
-              "default": null,
-              "kind": "text",
-              "placeholder": "192.168.12.1",
-              "required": true,
-              "docs": "https://docs.dimensional.org/platforms/quadruped/go2/setup/#first-time-setup-connecting-to-wifi-finding-robot-ip"
-            }
-          ]
-        },
-        "go2-dds-motion-pointlio-relocalization": {
-          "title": "Go2 over DDS: motion in a saved map",
-          "description": "The DDS Point-LIO motion stack, relocalizing in a saved map; headless (use Go2 viewer).",
-          "recommended_config": [
-            {
-              "global": "robot_ip",
-              "label": "Robot IP",
-              "type": "string",
-              "nullable": true,
-              "default": null,
-              "kind": "text",
-              "placeholder": "192.168.12.1",
-              "required": true,
-              "docs": "https://docs.dimensional.org/platforms/quadruped/go2/setup/#first-time-setup-connecting-to-wifi-finding-robot-ip"
-            }
-          ]
-        },
-        "go2-viewer": {
-          "title": "Go2 viewer",
-          "description": "Only the viewer: watch a Go2 stack that runs on another machine.",
-          "recommended_config": [
-            {
-              "global": "robot_ip",
-              "label": "Robot IP",
-              "type": "string",
-              "nullable": true,
-              "default": null,
-              "kind": "text",
-              "placeholder": "192.168.12.1",
-              "required": true,
-              "docs": "https://docs.dimensional.org/platforms/quadruped/go2/setup/#first-time-setup-connecting-to-wifi-finding-robot-ip"
-            }
-          ]
-        },
-        "go2-zenoh-basic": {
-          "title": "Go2 over zenoh",
-          "description": "Streams and driving through the Go2's zenoh bridge (go2web).",
-          "recommended_config": [
-            {
-              "global": "robot_ip",
-              "label": "Robot IP",
-              "type": "string",
-              "nullable": true,
-              "default": null,
-              "kind": "text",
-              "placeholder": "192.168.12.1",
-              "required": true,
-              "docs": "https://docs.dimensional.org/platforms/quadruped/go2/setup/#first-time-setup-connecting-to-wifi-finding-robot-ip"
-            }
-          ]
-        },
-        "go2-zenoh-motion": {
-          "title": "Go2 over zenoh: motion",
-          "description": "Zenoh Go2 with a voxel map, MLS planner, local planner and trajectory follower.",
-          "recommended_config": [
-            {
-              "global": "robot_ip",
-              "label": "Robot IP",
-              "type": "string",
-              "nullable": true,
-              "default": null,
-              "kind": "text",
-              "placeholder": "192.168.12.1",
-              "required": true,
-              "docs": "https://docs.dimensional.org/platforms/quadruped/go2/setup/#first-time-setup-connecting-to-wifi-finding-robot-ip"
-            }
-          ]
-        },
-        "go2-zenoh-motion-pointlio": {
-          "title": "Go2 over zenoh: Point-LIO motion",
-          "description": "The zenoh motion stack with a Mid-360 on the Jetson (Point-LIO).",
-          "recommended_config": [
-            {
-              "global": "robot_ip",
-              "label": "Robot IP",
-              "type": "string",
-              "nullable": true,
-              "default": null,
-              "kind": "text",
-              "placeholder": "192.168.12.1",
-              "required": true,
-              "docs": "https://docs.dimensional.org/platforms/quadruped/go2/setup/#first-time-setup-connecting-to-wifi-finding-robot-ip"
-            }
-          ]
-        },
-        "go2-zenoh-nav": {
-          "title": "Go2 over zenoh: navigation",
-          "description": "Zenoh Go2 with a voxel map, MLS planner and path follower.",
-          "recommended_config": [
-            {
-              "global": "robot_ip",
-              "label": "Robot IP",
-              "type": "string",
-              "nullable": true,
-              "default": null,
-              "kind": "text",
-              "placeholder": "192.168.12.1",
-              "required": true,
-              "docs": "https://docs.dimensional.org/platforms/quadruped/go2/setup/#first-time-setup-connecting-to-wifi-finding-robot-ip"
-            }
-          ]
-        },
-        "go2-zenoh-nav-remote": {
-          "title": "Go2 over zenoh: remote navigation",
-          "description": "Follows paths planned by a `dimos bake` host on the robot.",
-          "recommended_config": [
-            {
-              "global": "robot_ip",
-              "label": "Robot IP",
-              "type": "string",
-              "nullable": true,
-              "default": null,
-              "kind": "text",
-              "placeholder": "192.168.12.1",
-              "required": true,
-              "docs": "https://docs.dimensional.org/platforms/quadruped/go2/setup/#first-time-setup-connecting-to-wifi-finding-robot-ip"
-            }
-          ]
-        },
-        "go2-zenoh-raycaster": {
-          "title": "Go2 over zenoh: ray-traced map",
-          "description": "Zenoh Go2 with only the ray-traced voxel map.",
-          "recommended_config": [
-            {
-              "global": "robot_ip",
-              "label": "Robot IP",
-              "type": "string",
-              "nullable": true,
-              "default": null,
-              "kind": "text",
-              "placeholder": "192.168.12.1",
-              "required": true,
-              "docs": "https://docs.dimensional.org/platforms/quadruped/go2/setup/#first-time-setup-connecting-to-wifi-finding-robot-ip"
-            }
-          ]
-        },
         "teleop-phone-go2-fleet": {
           "title": "Go2 fleet phone driving",
           "description": "Drive a fleet of Go2s from a phone: every command goes to all of them.",
@@ -866,6 +696,22 @@
               "docs": "https://docs.dimensional.org/platforms/quadruped/go2/setup/#first-time-setup-connecting-to-wifi-finding-robot-ip"
             }
           ]
+        },
+        "go2-dds": {
+          "title": "Go2 over DDS",
+          "description": "The Go2's own streams and driving over DDS, on the Jetson wired to it; also the zenoh router a viewer dials."
+        },
+        "go2-dds-mid360": {
+          "title": "Go2 over DDS + Mid-360",
+          "description": "DDS Go2 with a Mid-360: Point-LIO odometry in place of the head lidar's."
+        },
+        "go2-dds-nav": {
+          "title": "Go2 over DDS: navigation",
+          "description": "DDS Go2 with a Mid-360 (Point-LIO), MLS global planner and local planner; headless, watch it with the nav viewer."
+        },
+        "go2-dds-nav-viewer": {
+          "title": "Go2 over DDS: nav viewer",
+          "description": "The screen for go2-dds-nav on another machine: dials the Go2's zenoh router and shows its maps and plans."
         }
       }
     },
