@@ -67,9 +67,12 @@ from dimos.robot.manipulators.dual_openyam.config import (
 )
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 
-# Distance between the centres of the two base motors, tape-measured on the
-# rig and confirmed 2026-10-07; the URDF carries the ABC bench's 0.62 m.
-DUAL_OPENYAM_BASE_SPACING = 0.43
+# Distance between the two base motor axes. The URDF's 0.62 m (the ABC bench)
+# matches the rig: on 2026-10-07 the right arm closed on the banana's outer
+# end, 9.5 cm from its middle, which is exactly where the planned pose lands
+# if the model has 0.43 m but the arms stand 0.62 m apart. The 43 cm tape
+# reading was the gap between the two 21 cm mounting bases.
+DUAL_OPENYAM_BASE_SPACING = 0.62
 
 # Wrist camera: a D405 on a 6 cm bracket that leaves the top of the wrist tube
 # at 45 deg, leaning toward the wrist (sketch of 2026-10-06). It sits on the
