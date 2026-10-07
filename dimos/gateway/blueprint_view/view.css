@@ -672,6 +672,7 @@ body.framed:not(.chrome) #bar {
 }
 .module-view .doc {
     white-space: pre-wrap;
+    color: var(--muted-fg);
     font-size: 12.5px;
     max-height: 30vh;
     overflow-y: auto;
