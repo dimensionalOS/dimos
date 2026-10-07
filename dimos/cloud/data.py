@@ -37,10 +37,11 @@ import time
 from typing import Any
 
 from dimos.cli.cloud import api_key
-from dimos.cloud import codecs
+from dimos.cloud import codecs, preview
 from dimos.cloud.cloud_request import CloudRequest, HttpCloudRequest
 from dimos.constants import DOWNLOADS_DIR, RECORDINGS_DIR
 from dimos.core.global_config import global_config
+from dimos.memory.cli.dataset import open_store
 
 Progress = Callable[[str, int, int], None]  # (phase, done_bytes, total_bytes)
 
@@ -72,6 +73,9 @@ class DataApi:
 
     def quota(self) -> dict[str, Any]:
         return self.t.request("GET", f"{self.PREFIX}/quota")
+
+    def put_preview(self, upload_id: str, doc: dict[str, Any]) -> dict[str, Any]:
+        return self.t.request("PUT", f"{self.PREFIX}/uploads/{upload_id}/preview", doc)
 
     def put_part(self, url: str, chunk: bytes) -> None:
         self.t.put(url, chunk)
@@ -181,7 +185,29 @@ class MultipartBackend:
                     tick("upload", done, size)
             parts = sorted(self.status(uid)["parts"], key=lambda p: p["part_number"])
             done = self.api.complete(uid, parts)
-            return {**done, "upload_id": uid, "skipped": False}
+            return {
+                **done,
+                "upload_id": uid,
+                "skipped": False,
+                "preview": self._preview(uid, path, Path(tmp)) if manifest else None,
+            }
+
+    def _preview(self, upload_id: str, path: Path, tmp: Path) -> str:
+        """The console's spatial preview, built here while the recording is at hand.
+        Built from a copy: the store opens read-write (WAL), and the user's recording
+        must stay byte-identical to what was uploaded. Best effort: the upload stands
+        without it."""
+        try:
+            copy = tmp / "preview.db"
+            shutil.copyfile(path, copy)
+            with open_store(copy) as store:
+                doc = preview.build(store)
+            if doc is None:
+                return "none (no lidar, camera or pose stream)"
+            self.api.put_preview(upload_id, doc)
+            return "sent"
+        except Exception as e:
+            return f"failed: {e}"
 
     def pull(
         self,
