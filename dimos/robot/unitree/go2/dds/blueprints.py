@@ -23,7 +23,6 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
-from dimos.mapping.experimental.mesh import MESH_ENTITY, MeshModule, render_mesh_chunk
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.mapping.ray_tracing.viz import MAP_REGIONS_ENTITY, render_map_region
 from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPlannerNative
@@ -198,13 +197,12 @@ def _rerun_config(
 # The router is named, not scouted: behind wifi multicast scouting finds nothing
 # (docs/usage/transports/zenoh.md). --robot-ip still adds its endpoint alongside.
 GO2_ROUTER = os.environ.get("DIMOS_GO2_ROUTER", "tcp/go22:7447")
-# Ceiling cut for map_regions in odom: the origin is the lidar at start, ~0.5m above the floor.
-MAP_CEILING_M = 1.5
-# The storey the surface_map shows, in odom: the floor sits ~0.5m below the start pose.
-SURFACE_Z_BAND = (-0.5, MAP_CEILING_M)
+# The storey the viewer shows, in odom (origin: the lidar at start, ~0.5m above the floor):
+# map regions, surface map and mesh are all cut to it.
+VIEW_Z_BAND = (-0.5, 2.3)
 
 
-def _nav_viewer(
+def nav_viewer(
     extra_topics: tuple[str, ...] = (),
     visual_override: dict[str, Any] | None = None,
     hidden: tuple[str, ...] = (),
@@ -218,14 +216,14 @@ def _nav_viewer(
                         render_map_region,
                         voxel_size=voxel_size,
                         height_range=HEIGHT_RANGE,
-                        max_z=MAP_CEILING_M,
+                        z_band=VIEW_Z_BAND,
                     ),
                     SURFACE_MAP_ENTITY: partial(
                         render_surface_region,
                         voxel_size=voxel_size,
                         wall_clearance_m=wall_clearance_m,
                         clearance_clamp_m=1.0,
-                        z_band=SURFACE_Z_BAND,
+                        z_band=VIEW_Z_BAND,
                     ),
                     **(visual_override or {}),
                 },
@@ -253,7 +251,7 @@ def _nav_viewer(
     )
 
 
-_viewer_config = {
+VIEWER_GLOBAL_CONFIG = {
     "transport": "zenoh",
     # a client: the router forwards to clients only, never between peers
     "zenoh_mode": "client",
@@ -265,15 +263,4 @@ _viewer_config = {
     "robot_model": "unitree_go2",
 }
 
-go2_dds_nav_viewer = autoconnect(_nav_viewer()).global_config(n_workers=3, **_viewer_config)
-
-# The viewer meshing the robot's global_map on this machine's GPU; the mesh stands in
-# for the region point cloud, which stays tickable.
-go2_dds_nav_viewer_mesh = autoconnect(
-    _nav_viewer(
-        extra_topics=("mesh",),
-        visual_override={MESH_ENTITY: partial(render_mesh_chunk, height_range=HEIGHT_RANGE)},
-        hidden=(MAP_REGIONS_ENTITY,),
-    ),
-    MeshModule.blueprint(voxel_size=voxel_size, max_z=MAP_CEILING_M),
-).global_config(n_workers=4, **_viewer_config)
+go2_dds_nav_viewer = autoconnect(nav_viewer()).global_config(n_workers=3, **VIEWER_GLOBAL_CONFIG)
