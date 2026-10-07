@@ -418,6 +418,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
       # The SDK's own test suite is native/cpp's tests check, built with the others below.
+      # Before the disk cleanup, which leaves dpkg with a half-removed package.
+      - name: Install dependency for pyaudio
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y portaudio19-dev
       - name: Free runner disk space
         uses: BRAINSia/free-disk-space@v2.1.3
       - name: Install Nix
@@ -440,10 +445,6 @@ jobs:
         with:
           enable-cache: true
           prune-cache: true
-      - name: Install dependency for pyaudio
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y portaudio19-dev
       - name: Native module e2e tests
         run: |
           uv sync --group tests --frozen

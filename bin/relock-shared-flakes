@@ -40,7 +40,10 @@ import sys
 import threading
 from urllib.parse import parse_qs
 
-import tomllib
+if sys.version_info >= (3, 11):
+    import tomllib
+else:
+    import tomli as tomllib
 
 OWNER, NAME = "dimensionalOS", "dimos"
 GIT_URL = f"https://github.com/{OWNER}/{NAME}"
