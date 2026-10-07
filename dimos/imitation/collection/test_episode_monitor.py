@@ -34,6 +34,7 @@ from dimos.imitation.collection.episode import EpisodeStatus
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
 from dimos.teleop.webxr.controller_types import BUTTON_ALIASES, Buttons
+from dimos.teleop.webxr.module import WebXRTeleopModule
 
 
 @pytest.fixture
@@ -75,11 +76,57 @@ def _events(monitor: EpisodeMonitorModule) -> list[EpisodeStatus]:
 
 
 def _press(monitor: EpisodeMonitorModule, alias: str) -> None:
-    """Deliver one debounced WebXR button-press edge."""
+    """Deliver one raw WebXR button tap, including its release."""
     attr = BUTTON_ALIASES[alias]
     pressed = Buttons()
     pressed.set_attribute(attr, True)
     monitor._on_buttons(pressed)
+    monitor._on_buttons(Buttons())
+
+
+@pytest.mark.parametrize("duration", [0.03, 0.06])
+def test_webxr_taps_start_save_and_discard_without_repeating_while_held(
+    make_monitor: Callable[..., EpisodeMonitorModule],
+    mocker: pytest_mock.MockerFixture,
+    duration: float,
+) -> None:
+    monitor = make_monitor()
+    webxr = WebXRTeleopModule()
+    clock = mocker.patch("dimos.teleop.webxr.module.time.monotonic", return_value=0.0)
+    # Wire the monitor's declared input to the matching real WebXR output,
+    # as autoconnect does, replacing only the transport subscription boundary.
+    port = next(iter(monitor.inputs.values()))
+    mocker.patch.object(port, "subscribe", side_effect=getattr(webxr, port.name).subscribe)
+    mocker.patch("dimos.core.module.Module.start")
+    try:
+        monitor.start()
+        for offset, alias in enumerate(["B", "B", "B", "Y"]):
+            held = Buttons()
+            held.set_attribute(BUTTON_ALIASES[alias], True)
+            for timestamp, buttons in [
+                (float(offset), held),
+                (offset + duration / 2, held),
+                (offset + duration - 0.001, held),
+                (offset + duration, Buttons()),
+                (offset + duration + 0.06, Buttons()),
+            ]:
+                clock.return_value = timestamp
+                webxr._publish_buttons(buttons)
+
+        events = _events(monitor)
+        assert [event.last_event for event in events] == [
+            "init",
+            "start",
+            "save",
+            "start",
+            "discard",
+        ]
+        assert events[-1].episodes_saved == 1
+        assert events[-1].episodes_discarded == 1
+        assert events[-1].state == "idle"
+    finally:
+        monitor.stop()
+        webxr.stop()
 
 
 def test_toggle_starts_then_saves(make_monitor: Callable[..., EpisodeMonitorModule]) -> None:

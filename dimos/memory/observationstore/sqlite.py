@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from itertools import chain
 import json
 import re
 import sqlite3
@@ -33,7 +34,7 @@ from dimos.memory.type.filter import (
     TimeRangeFilter,
 )
 from dimos.memory.type.observation import _UNLOADED, Observation, PoseTuple
-from dimos.memory.utils.sqlite import open_disposable_sqlite_connection
+from dimos.memory.utils.sqlite import conn_lock, open_disposable_sqlite_connection
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -177,6 +178,20 @@ def _compile_query(
     return (sql, params, python_filters)
 
 
+def _locked_rows(lock: threading.RLock, cur: sqlite3.Cursor) -> Iterator[tuple[Any, ...]]:
+    """Yield rows lazily, holding ``lock`` only while fetching ``cur.arraysize`` rows."""
+
+    def fetch_page() -> list[tuple[Any, ...]]:
+        with lock:
+            return cur.fetchmany()
+
+    try:
+        yield from chain.from_iterable(iter(fetch_page, []))
+    finally:
+        with lock:
+            cur.close()
+
+
 def _compile_count(
     query: StreamQuery,
     table: str,
@@ -241,43 +256,52 @@ class SqliteObservationStore(ObservationStore[T]):
         self._codec = self.config.codec
         self._blob_store_conn_match = self.config.blob_store_conn_match
         self._page_size = self.config.page_size
-        self._lock = threading.Lock()
+        # Reentrant per-connection lock. Same RLock is shared with the
+        # SqliteBlobStore / SqliteVectorStore / RegistryStore that borrow
+        # the same connection, so cross-store conn access is also serialized.
+        self._lock = conn_lock(self._conn) if self._conn is not None else threading.RLock()
         self._tag_indexes: set[str] = set()
-        self._pending_python_filters: list[Any] = []
-        self._pending_query: StreamQuery | None = None
+        # Per-thread scratch for python-side post-filter handoff to Backend.
+        self._tls = threading.local()
 
     def start(self) -> None:
         if self._conn is None:
             assert self._path is not None
             disposable, self._conn = open_disposable_sqlite_connection(self._path)
             self.register_disposable(disposable)
+            self._lock = conn_lock(self._conn)
         self._ensure_tables()
 
     def _ensure_tables(self) -> None:
         """Create the metadata table and R*Tree index if they don't exist."""
-        self._conn.execute(
-            f'CREATE TABLE IF NOT EXISTS "{self._name}" ('
-            "    id      INTEGER PRIMARY KEY AUTOINCREMENT,"
-            "    ts      REAL    NOT NULL,"
-            "    value   NUMERIC,"
-            "    pose_x  REAL, pose_y REAL, pose_z REAL,"
-            "    pose_qx REAL, pose_qy REAL, pose_qz REAL, pose_qw REAL,"
-            "    tags    BLOB    DEFAULT (jsonb('{}'))"
-            ")"
-        )
-        self._conn.execute(
-            f'CREATE VIRTUAL TABLE IF NOT EXISTS "{self._name}_rtree" USING rtree('
-            "    id,"
-            "    x_min, x_max,"
-            "    y_min, y_max,"
-            "    z_min, z_max"
-            ")"
-        )
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute(
+                f'CREATE TABLE IF NOT EXISTS "{self._name}" ('
+                "    id      INTEGER PRIMARY KEY AUTOINCREMENT,"
+                "    ts      REAL    NOT NULL,"
+                "    value   NUMERIC,"
+                "    pose_x  REAL, pose_y REAL, pose_z REAL,"
+                "    pose_qx REAL, pose_qy REAL, pose_qz REAL, pose_qw REAL,"
+                "    tags    BLOB    DEFAULT (jsonb('{}'))"
+                ")"
+            )
+            self._conn.execute(
+                f'CREATE VIRTUAL TABLE IF NOT EXISTS "{self._name}_rtree" USING rtree('
+                "    id,"
+                "    x_min, x_max,"
+                "    y_min, y_max,"
+                "    z_min, z_max"
+                ")"
+            )
+            self._conn.commit()
 
     @property
     def name(self) -> str:
         return self._name
+
+    @property
+    def transaction_lock(self) -> threading.RLock:
+        return self._lock
 
     @property
     def _join_blobs(self) -> bool:
@@ -364,10 +388,20 @@ class SqliteObservationStore(ObservationStore[T]):
         return row_id
 
     def commit(self) -> None:
-        self._conn.commit()
+        with self._lock:
+            self._conn.commit()
 
     def rollback(self) -> None:
-        self._conn.rollback()
+        with self._lock:
+            self._conn.rollback()
+
+    @property
+    def _pending_python_filters(self) -> list[Any]:
+        return getattr(self._tls, "python_filters", [])
+
+    @property
+    def _pending_query(self) -> StreamQuery | None:
+        return getattr(self._tls, "query", None)
 
     def query(self, q: StreamQuery) -> Iterator[Observation[T]]:
         if q.search_text is not None:
@@ -376,15 +410,21 @@ class SqliteObservationStore(ObservationStore[T]):
         join = self._join_blobs
         sql, params, python_filters = _compile_query(q, self._name, join_blob=join)
 
-        cur = self._conn.execute(sql, params)
-        cur.arraysize = self._page_size
-        it: Iterator[Observation[T]] = (self._row_to_obs(r, has_blob=join) for r in cur)
+        # Every cursor step runs under the connection lock, so rows stream lazily
+        # without two threads stepping the shared connection at once.
+        with self._lock:
+            cur = self._conn.execute(sql, params)
+            # Joined rows carry blob bytes, so fetch them one at a time.
+            cur.arraysize = 1 if join else self._page_size
+        it: Iterator[Observation[T]] = (
+            self._row_to_obs(r, has_blob=join) for r in _locked_rows(self._lock, cur)
+        )
 
         # Don't apply python post-filters here — Backend._attach_loaders must
         # run first so that obs.data works for PredicateFilter etc.
-        # Store them so Backend can retrieve and apply after attaching loaders.
-        self._pending_python_filters = python_filters
-        self._pending_query = q
+        # Stored per-thread so concurrent query() calls don't clobber each other.
+        self._tls.python_filters = python_filters
+        self._tls.query = q
 
         return it
 
@@ -397,7 +437,8 @@ class SqliteObservationStore(ObservationStore[T]):
         if python_filters:
             return sum(1 for _ in self.query(q))
 
-        row = self._conn.execute(sql, params).fetchone()
+        with self._lock:
+            row = self._conn.execute(sql, params).fetchone()
         return int(row[0]) if row else 0
 
     def fetch_by_ids(self, ids: list[int]) -> list[Observation[T]]:
@@ -420,7 +461,8 @@ class SqliteObservationStore(ObservationStore[T]):
                 f'FROM "{self._name}" WHERE id IN ({placeholders})'
             )
 
-        rows = self._conn.execute(sql, ids).fetchall()
+        with self._lock:
+            rows = self._conn.execute(sql, ids).fetchall()
         return [self._row_to_obs(r, has_blob=join) for r in rows]
 
     def stop(self) -> None:
