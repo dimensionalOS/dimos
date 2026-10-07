@@ -190,8 +190,6 @@ jobs:
         run: python3 bin/build-native-modules
       - name: Lint native modules
         run: python3 bin/build-native-modules --lint
-      # Published so the `native` job substitutes them instead of compiling the
-      # test targets itself on every run.
       - name: Test rust native modules
         run: python3 bin/build-native-modules --tests
       - name: Verify Cachix holds the built paths
@@ -406,49 +404,6 @@ jobs:
             target
             !target/debug/incremental
           key: cargo-test-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/Cargo.lock') }}
-
-  native:
-    name: Native builds (C++ and Rust)
-    timeout-minutes: 30
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read  # For checkout
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-      # Before the disk cleanup, which leaves dpkg with a half-removed package.
-      - name: Install dependency for pyaudio
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y portaudio19-dev
-      # The SDK's own test suite is native/cpp's tests check, built with the others below.
-      - name: Free runner disk space
-        uses: BRAINSia/free-disk-space@v2.1.3
-      - name: Install Nix
-        # Substituting needs only the public key, so no auth token is used here
-        # and this stays safe on fork PRs.
-        env:
-          INPUT_EXTRA_NIX_CONFIG: |
-            http-connections = 50
-            extra-substituters = https://dimensionalos.cachix.org
-            extra-trusted-public-keys = dimensionalos.cachix.org-1:20ynj6TjpoD3qTxkdNoeHtgs2G2pNvgAq1EQYLTHJXI=
-          INPUT_SET_AS_TRUSTED_USER: "true"
-        run: bash docker/ros/install-nix.sh
-      # PCL, GTSAM and the SLAM cores come from each module's flake, not apt.
-      - name: Build native modules
-        run: python3 bin/build-native-modules
-      - name: Test rust native modules
-        run: python3 bin/build-native-modules --tests
-      - name: Install uv
-        uses: astral-sh/setup-uv@v10.2.0
-        with:
-          enable-cache: true
-          prune-cache: true
-      - name: Native module e2e tests
-        run: |
-          uv sync --group tests --frozen
-          uv run pytest -m native_e2e dimos/hardware/sensors/lidar/livox/test_e2e.py --no-cov
 
   md-babel:
     timeout-minutes: 15
@@ -718,6 +673,10 @@ jobs:
         run: uv sync --group tests --frozen
       - name: Run tests
         run: uv run pytest --numprocesses=logical --cov=dimos/ --junitxml=junit.xml -m 'not (self_hosted or mujoco or self_hosted_large or web_browser or bake_e2e or native_e2e)'
+      # Serial and after the parallel run: it binds the livox SDK's fixed ports.
+      - name: Native module e2e tests
+        if: steps.native-marker.outputs.cache-hit == 'true'
+        run: uv run pytest -m native_e2e dimos/hardware/sensors/lidar/livox/test_e2e.py --no-cov
       - name: Re-run the failing tests with maximum verbosity
         if: failure()
         env:
@@ -802,7 +761,7 @@ jobs:
           - os: macOS
             container: null  # run on host — `container:` is Linux-only
             # web_browser: the cockpit browser e2e that Linux runs in the `web` job.
-            # native_e2e: livox live loopback that Linux runs in the rust job.
+            # native_e2e: livox live loopback; hosted macOS has no nix-built binaries, Linux runs it in tests.
             markers: "self_hosted or web_browser or native_e2e"
             experimental: false
     runs-on:
@@ -1340,7 +1299,6 @@ jobs:
     - commit-messages
     - lint
     - rust
-    - native
     - md-babel
     - web
     - tests
