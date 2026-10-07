@@ -22,6 +22,7 @@ the recorded EpisodeStatus events offline — never raw operator input.
 
 from __future__ import annotations
 
+import math
 import threading
 import time
 from typing import Any, Literal, Protocol, TypeAlias
@@ -38,6 +39,7 @@ from dimos.imitation.collection.episode import (
     EpisodeStatus,
     RecordingState,
 )
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.String import String
 from dimos.spec.utils import Spec
 from dimos.teleop.webxr.controller_types import BUTTON_ALIASES, Buttons
@@ -62,6 +64,14 @@ def _default_button_map() -> dict[EpisodeCommand, str]:
 class EpisodeMonitorModuleConfig(ModuleConfig):
     button_map: dict[EpisodeCommand, str] = Field(default_factory=_default_button_map)
     task: str
+    required_action_joints: list[str] = Field(default_factory=list)
+
+    @field_validator("required_action_joints")
+    @classmethod
+    def _validate_required_joints(cls, names: list[str]) -> list[str]:
+        if any(not name.strip() for name in names) or len(names) != len(set(names)):
+            raise ValueError("required_action_joints must contain unique non-empty joint names")
+        return names
 
     @field_validator("task")
     @classmethod
@@ -93,6 +103,7 @@ class EpisodeMonitorModule(Module):
     config: EpisodeMonitorModuleConfig
 
     teleop_buttons: In[Buttons]
+    applied_joint_position_command: In[JointState]
     status: Out[String]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -104,6 +115,7 @@ class EpisodeMonitorModule(Module):
         self._lock = threading.Lock()
         self._transition_lock = threading.Lock()
         self._stopping = False
+        self._accepted_target_ts: dict[str, float] = {}
         self._last_buttons = 0
         self._input_subscriptions: list[DisposableBase] = []
 
@@ -114,6 +126,16 @@ class EpisodeMonitorModule(Module):
         self._input_subscriptions = [
             self.register_disposable(Disposable(self.teleop_buttons.subscribe(self._on_buttons))),
         ]
+        if self.config.required_action_joints:
+            self._input_subscriptions.append(
+                self.register_disposable(
+                    Disposable(
+                        self.applied_joint_position_command.subscribe(
+                            self._on_joint_position_command
+                        )
+                    )
+                )
+            )
         # Emit an initial idle status so subscribers (and recorders) have a
         # known starting point in the timeline.
         with self._lock:
@@ -149,7 +171,27 @@ class EpisodeMonitorModule(Module):
                 if pressed & (1 << Buttons.BITS[attr]):
                     fired.append(event_name)
         for event_name in fired:
-            self._transition(event_name, ts)
+            try:
+                self._transition(event_name, ts)
+            except ValueError as exc:
+                logger.warning("Episode command rejected", command=event_name, error=str(exc))
+
+    def _on_joint_position_command(self, msg: JointState) -> None:
+        """Track readiness from accepted targets, without inventing action values."""
+        if (
+            len(msg.name) != len(msg.position)
+            or len(msg.name) != len(set(msg.name))
+            or not math.isfinite(msg.ts)
+            or not all(math.isfinite(value) for value in msg.position)
+        ):
+            return
+        with self._lock:
+            if self._stopping:
+                return
+            for name in msg.name:
+                self._accepted_target_ts[name] = min(
+                    self._accepted_target_ts.get(name, msg.ts), msg.ts
+                )
 
     @rpc
     def command(self, event: EpisodeCommand) -> EpisodeStatus:
@@ -178,6 +220,15 @@ class EpisodeMonitorModule(Module):
                 if event == "toggle":
                     event = "save" if self._state == "recording" else "start"
                 if event == "start":
+                    missing = [
+                        name
+                        for name in self.config.required_action_joints
+                        if self._accepted_target_ts.get(name, math.inf) > ts
+                    ]
+                    if missing:
+                        raise ValueError(
+                            f"Cannot start episode: missing accepted targets for {missing}"
+                        )
                     # Auto-commit any in-progress episode (matches DataPrep extractor).
                     if self._state == "recording":
                         self._saved += 1
