@@ -292,6 +292,36 @@ body.framed:not(.chrome) #bar {
 .cfg-row .v select {
     width: 150px;
 }
+/* an enum or a pick with up to 4 choices: segmented buttons (Desktop's Launcher draws the same) */
+.seg {
+    display: inline-flex;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+}
+.seg button {
+    padding: 4px 10px;
+    border: 0;
+    border-left: 1px solid var(--border);
+    background: transparent;
+    color: var(--muted-fg);
+    font: 600 12px var(--sans);
+    cursor: pointer;
+}
+.seg button:first-child {
+    border-left: 0;
+}
+.seg button:hover {
+    background: var(--hover);
+    color: var(--fg);
+}
+.seg button.on {
+    background: var(--sel);
+    color: var(--primary);
+}
+.cfg-row.pick .v {
+    grid-column: 1 / -1;
+}
 .cfg-row .reset {
     width: 40px;
     border: 0;

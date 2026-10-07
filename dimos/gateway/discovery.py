@@ -658,7 +658,7 @@ def robots_doc(dimos_dir: Path) -> dict[str, Any] | None:
     try:
         from dimos.gateway import robots
 
-        return robots.load(dimos_dir / "dimos" / "server" / "robots.json")
+        return robots.load(dimos_dir / "dimos" / "gateway" / "robots.json")
     except Exception:
         return None
 

@@ -33,16 +33,18 @@ from dimos.robot.test_all_blueprints_generation import _scan_for_blueprints
 IP = {"global": "robot_ip", "label": "Robot IP", "required": True}
 
 
+RUN_ON = {
+    "label": "Run it on",
+    "choices": [
+        {"label": "Robot", "set": {"simulation": ""}},
+        {"label": "Simulator", "set": {"simulation": "mujoco"}},
+    ],
+}
+
+
 def sample() -> dict[str, Any]:
     return {
-        "tags": {
-            "drive": {"label": "Drive", "description": "drives"},
-            "replay": {"label": "Replay", "description": "from modes"},
-            "sim": {"label": "Sim", "description": "from modes"},
-        },
-        "modes": {"robot": {"label": "Robot", "description": "hardware"}},
-        "groups": {"arms": {"name": "Arms"}},
-        "args": {"robot_ip": IP},
+        "types": {"dog": {"label": "Dogs"}, "arm": {"label": "Arms"}},
         "robots": {
             "dog": {
                 "name": "Vendor Dog",
@@ -50,31 +52,23 @@ def sample() -> dict[str, Any]:
                 "type": "dog",
                 "manufacturer": "Vendor",
                 "dirs": ["dimos/robot/vendor/dog"],
-                "recommended_app": {
-                    "id": "dog-app",
-                    "title": "Dog Ctrl",
-                    "url": "https://github.com/x/dog-app",
-                },
                 "defaults": {
-                    "modes": {
-                        "robot": {"args": ["robot_ip"]},
-                        "sim": {"set": {"simulation": "mujoco"}},
-                    }
+                    "recommended_config": [
+                        RUN_ON,
+                        {**IP, "when": {"simulation": ""}},
+                    ]
                 },
                 "blueprints": {
                     "dog-basic": {
                         "title": "Dog",
                         "description": "walks",
-                        "tags": ["drive"],
                         "starter": 1,
                     },
                     "dog-test": {
                         "title": "Dog test",
                         "description": "tests",
-                        "tags": [],
                         "hidden": True,
-                        "modes": {"robot": {}},
-                        "recommended_app": None,
+                        "recommended_config": [dict(IP)],
                     },
                 },
             }
@@ -122,10 +116,7 @@ def test_a_blueprint_in_a_robot_dir_that_isnt_listed(root: Path) -> None:
     found = robots.problems(sample(), registry, root)
     assert len(found) == 1
     assert "blueprint dog-run" in found[0]
-    assert (
-        '"dog-run": {"title": ..., "description": ..., "tags": [...]} to robots.dog.blueprints'
-        in found[0]
-    )
+    assert '"dog-run": {"title": ..., "description": ...} to robots.dog.blueprints' in found[0]
 
 
 def test_a_blueprint_under_dimos_robot_that_no_robot_holds(root: Path) -> None:
@@ -158,43 +149,42 @@ def test_a_blueprint_listed_twice(root: Path) -> None:
         "type": None,
         "manufacturer": None,
         "dirs": [],
-        "blueprints": {"dog-basic": {"title": "x", "description": "y", "tags": []}},
+        "blueprints": {"dog-basic": {"title": "x", "description": "y"}},
     }
     found = robots.problems(doc, REGISTRY, root)
     assert "dog-basic is listed under several robots (dog, cat): keep one" in found
 
 
-def test_an_arg_that_isnt_a_global_config_field(root: Path) -> None:
+def test_a_setting_that_isnt_a_global_config_field(root: Path) -> None:
     doc = sample()
-    doc["args"]["robot_ip"] = {"global": "robot_ipp", "label": "IP"}
-    doc["args"]["unused"] = {"global": "robot_ips", "label": "IPs"}
-    doc["robots"]["dog"]["defaults"]["modes"]["sim"]["set"] = {"simulator": "mujoco"}
-    doc["robots"]["dog"]["blueprints"]["dog-test"]["modes"]["robot"]["args"] = ["robot_id"]
+    doc["robots"]["dog"]["defaults"]["recommended_config"] = [
+        {
+            "label": "Run it on",
+            "choices": [
+                {"label": "Robot", "set": {"simulator": ""}},
+                {"label": "Simulator", "set": {"simulator": "mujoco"}},
+            ],
+        },
+        {"global": "robot_ipp", "label": "IP"},
+    ]
     found = robots.problems(doc, REGISTRY, root)
-    assert (
-        "args.robot_ip: 'robot_ipp' is not a GlobalConfig field (did you mean robot_ip?)" in found
+    assert any(
+        "'robot_ipp' is not a GlobalConfig field (did you mean robot_ip?)" in p for p in found
     )
     assert any("sets 'simulator', which is not a GlobalConfig field" in p for p in found)
-    assert (
-        "robots.dog.blueprints.dog-test robot mode takes arg 'robot_id', which isn't defined in the top-level "
-        "`args` (did you mean robot_ip?)" in found
-    )
-    assert "args.unused is defined but no mode takes it: remove it" in found
 
 
 def test_a_module_arg_that_isnt_a_config_field() -> None:
     doc = sample()
-    doc["args"] = {
-        "a": {"module": "droneconnectionmodule", "field": "connection_strin", "label": "x"},
-        "b": {"module": "nosuchmodule", "field": "ip", "label": "y"},
-        "c": {"module": "droneconnectionmodule", "field": "connection_string", "label": "z"},
-    }
     doc["robots"]["dog"]["blueprints"] = {
         "drone-basic": {
             "title": "Drone",
             "description": "flies",
-            "tags": [],
-            "modes": {"robot": {"args": ["a", "b", "c"]}},
+            "recommended_config": [
+                {"module": "droneconnectionmodule", "field": "connection_strin", "label": "x"},
+                {"module": "nosuchmodule", "field": "ip", "label": "y"},
+                {"module": "droneconnectionmodule", "field": "connection_string", "label": "z"},
+            ],
         }
     }
     found = robots.module_arg_problems(doc)
@@ -208,24 +198,22 @@ def test_schema_violations(root: Path) -> None:
     doc = sample()
     doc["robots"]["dog"]["blueprints"]["dog-basic"]["colour"] = "brown"
     del doc["robots"]["dog"]["blueprints"]["dog-test"]["description"]
-    doc["args"]["both"] = {"global": "x", "module": "m", "field": "f", "label": "both"}
+    doc["robots"]["dog"]["blueprints"]["dog-basic"]["recommended_config"] = [
+        {"global": "x", "module": "m", "field": "f", "label": "both"}
+    ]
     found = robots.problems(doc, REGISTRY, root)
     assert any("'colour' was unexpected" in p for p in found)
     assert any("'description' is a required property" in p for p in found)
-    assert any("['args']['both']" in p for p in found)
+    assert any("['recommended_config'][0]" in p for p in found)
 
 
-def test_tags_groups_and_starter_ranks(root: Path) -> None:
+def test_types_and_starter_ranks(root: Path) -> None:
     doc = sample()
-    blueprints = doc["robots"]["dog"]["blueprints"]
-    blueprints["dog-basic"]["tags"] = ["drive", "sim", "fly"]
-    blueprints["dog-test"]["starter"] = 1
-    doc["robots"]["dog"]["group"] = "legs"
+    doc["robots"]["dog"]["blueprints"]["dog-test"]["starter"] = 1
+    doc["robots"]["dog"]["type"] = "boat"
     found = robots.problems(doc, REGISTRY, root)
-    assert any("drop the 'sim' tag, it comes from having a 'sim' mode" in p for p in found)
-    assert any("unknown tag 'fly'" in p for p in found)
     assert "dog-test and dog-basic both have starter rank 1: give each its own" in found
-    assert any("robots.dog.group is 'legs'" in p for p in found)
+    assert any("robots.dog.type is 'boat', not one of types: dog, arm" in p for p in found)
 
 
 def test_recommended_blueprints_are_the_robots_own(root: Path) -> None:
@@ -245,38 +233,47 @@ def test_recommended_blueprints_are_the_robots_own(root: Path) -> None:
     assert robots.resolved(doc)["robots"]["dog"]["recommended"] == []
 
 
-SIM_CHOICE = {
-    "global": "simulation",
-    "label": "Run it on",
-    "choices": [{"value": "", "label": "The dog"}, {"value": "mujoco", "label": "MuJoCo"}],
-    "default": "",
+DETECTION = {
+    "global": "detection_model",
+    "label": "Detection model",
+    "choices": [{"value": "moondream", "label": "Moondream"}, {"value": "qwen", "label": "Qwen"}],
+    "default": "moondream",
 }
 
 
 def test_recommended_settings_from_the_robot_or_the_blueprint(root: Path) -> None:
     doc = sample()
-    doc["robots"]["dog"]["defaults"]["recommended_config"] = [SIM_CHOICE, {"arg": "robot_ip"}]
+    doc["robots"]["dog"]["defaults"]["recommended_config"].append(DETECTION)
     doc["robots"]["dog"]["blueprints"]["dog-test"]["recommended_config"] = [
         {"module": "dogdriver", "field": "gait", "label": "Gait", "default": "trot"}
     ]
     assert robots.problems(doc, REGISTRY, root) == []
     out = robots.resolved(doc)["robots"]["dog"]["blueprints"]
-    sim, ip = out["dog-basic"]["recommended_config"]
-    assert (sim["id"], sim["key"], sim["scope"], sim["default"]) == (
-        "simulation",
-        "simulation",
-        "global",
-        "",
+    pick, ip, detection = out["dog-basic"]["recommended_config"]
+    # a pick sets several values at once; it starts on its first choice
+    assert (pick["id"], pick["key"], pick["kind"], pick["default"]) == (
+        "pick-0",
+        None,
+        "pick",
+        "Robot",
     )
-    assert [c["value"] for c in sim["choices"]] == ["", "mujoco"]
-    # an arg brings its label (and docs, placeholder) along
-    assert (ip["id"], ip["key"], ip["label"], ip["required"], ip["choices"]) == (
+    assert [c["set"] for c in pick["choices"]] == [{"simulation": ""}, {"simulation": "mujoco"}]
+    # an arg brings its label (and docs, placeholder) along, and shows only while its `when` holds
+    assert (ip["id"], ip["key"], ip["label"], ip["required"], ip["choices"], ip["when"]) == (
         "robot_ip",
         "robot_ip",
         "Robot IP",
         True,
         None,
+        {"simulation": ""},
     )
+    # any config value can be an enum
+    assert (detection["key"], detection["default"], detection["when"]) == (
+        "detection_model",
+        "moondream",
+        None,
+    )
+    assert [c["value"] for c in detection["choices"]] == ["moondream", "qwen"]
     # a blueprint's own list replaces the robot's; its module fields are checked like module args
     (gait,) = out["dog-test"]["recommended_config"]
     assert (gait["key"], gait["scope"]) == ("dogdriver.gait", "module")
@@ -286,17 +283,32 @@ def test_recommended_settings_from_the_robot_or_the_blueprint(root: Path) -> Non
 def test_recommended_settings_must_exist(root: Path) -> None:
     doc = sample()
     doc["robots"]["dog"]["defaults"]["recommended_config"] = [
-        {**SIM_CHOICE, "global": "simulaton"},
-        {**SIM_CHOICE, "default": "gazebo"},
-        {"arg": "robot_pi"},
+        {**DETECTION, "global": "detection_modle"},
+        {**DETECTION, "default": "gpt"},
+        {**IP, "when": {"replay": True}},
+        {
+            "label": "Run it on",
+            "choices": [
+                {"label": "A", "set": {"simulation": ""}},
+                {"label": "B", "set": {"replay": True}},
+            ],
+        },
+        {"label": "Mixed", "choices": [{"label": "A", "value": 1}, {"label": "B", "value": 2}]},
     ]
     found = robots.problems(doc, REGISTRY, root)
     assert any(
-        "'simulaton' is not a GlobalConfig field (did you mean simulation?)" in p for p in found
+        "'detection_modle' is not a GlobalConfig field (did you mean detection_model?)" in p
+        for p in found
     )
-    assert any("defaults to 'gazebo', which isn't one of its choices" in p for p in found)
-    assert any("names arg 'robot_pi', which isn't defined" in p for p in found)
-    doc["robots"]["dog"]["defaults"]["recommended_config"] = [{"arg": "robot_ip", "global": "x"}]
+    assert any("defaults to 'gpt', which isn't one of its choices" in p for p in found)
+    assert any("'Run it on''s choices set different keys" in p for p in found)
+    assert any("'Mixed' names no config value, so each choice needs a `set`" in p for p in found)
+    doc["robots"]["dog"]["defaults"]["recommended_config"] = [{**IP, "when": {"replay": True}}]
+    assert any(
+        "is shown when 'replay' is a value, but no entry in this list sets it" in p
+        for p in robots.problems(doc, REGISTRY, root)
+    )
+    doc["robots"]["dog"]["defaults"]["recommended_config"] = [{"global": "x", "module": "y"}]
     assert any("recommended_config" in p for p in robots.problems(doc, REGISTRY, root))
 
 
@@ -306,21 +318,19 @@ def test_resolved_applies_defaults() -> None:
     out = robots.resolved(doc, REGISTRY)
     assert doc == before
     basic = out["robots"]["dog"]["blueprints"]["dog-basic"]
-    assert list(basic["modes"]) == ["robot", "sim"]
-    assert basic["modes"]["robot"]["args"][0] == {
+    assert basic["recommended_config"][1] == {
         **IP,
         "id": "robot_ip",
         "key": "robot_ip",
         "scope": "global",
         "kind": "text",
         "docs": None,
+        "choices": None,
+        "when": {"simulation": ""},
     }
-    assert basic["modes"]["sim"] == {"set": {"simulation": "mujoco"}, "args": []}
-    assert basic["tags"] == ["drive", "sim"]
     assert basic["robot"] == "dog" and basic["registered"] and basic["hidden"] is False
-    assert basic["recommended_app"]["id"] == "dog-app"
     test = out["robots"]["dog"]["blueprints"]["dog-test"]
-    assert list(test["modes"]) == ["robot"] and test["recommended_app"] is None
+    assert [s["key"] for s in test["recommended_config"]] == ["robot_ip"]
     assert test["starter"] is None and test["hidden"] is True
     assert "defaults" not in out["robots"]["dog"] and "args" not in out and out["unlisted"] == []
 
@@ -337,11 +347,12 @@ def test_the_real_file_lists_every_robot_dir_blueprint() -> None:
     assert "go2" in doc["robots"] and "unitree-go2-basic" in doc["robots"]["go2"]["blueprints"]
     out = robots.resolved(doc)
     basic = out["robots"]["go2"]["blueprints"]["unitree-go2-basic"]
-    assert list(basic["modes"]) == ["robot", "replay", "sim"]
-    assert basic["recommended_app"]["id"] == "dim-go2-dash"
+    pick = basic["recommended_config"][0]
+    assert [c["label"] for c in pick["choices"]] == ["Robot", "Replay", "Simulator"]
     assert out["robots"]["go2"]["recommended"][0] == "unitree-go2-basic"
-    assert [s["key"] for s in basic["recommended_config"]] == ["simulation", "robot_ip"]
+    assert [s["key"] for s in basic["recommended_config"]] == [None, "robot_ip", "replay_db"]
     assert basic["recommended_config"][1]["docs"].startswith("https://")
+    assert list(doc["types"]) == ["dog", "humanoid", "wheeled", "arm", "drone"]
 
 
 def test_dimos_yaml_points_at_it() -> None:
@@ -396,7 +407,6 @@ def test_type_and_manufacturer_follow_the_code() -> None:
     assert any("Kit" in p and "doesn't start with it" in p for p in found)
     assert any("robots.kit" in p and "(DIY)" in p for p in found)
     assert any("dimos/robot/vendor (dog: 'Vendor', cat: 'Other')" in p for p in found)
-    assert any("robots.claw" in p and "arms group" in p for p in found)
     assert any("robots.cam.type" in p and "under dimos/robot" in p for p in found)
     assert robots.kind_problems(sample()) == []
 
@@ -410,7 +420,7 @@ def test_type_and_manufacturer_are_required(root: Path) -> None:
     assert any("manufacturer" in p for p in found)
     doc = sample()
     doc["robots"]["dog"]["type"] = "boat"
-    assert any("['type']" in p for p in robots.problems(doc, REGISTRY, root))
+    assert any("not one of types" in p for p in robots.problems(doc, REGISTRY, root))
 
 
 def test_vendor_dir() -> None:
@@ -456,15 +466,19 @@ def docs_server() -> Iterator[str]:
 
 def test_link_problems(docs_server: str) -> None:
     doc = sample()
-    doc["args"]["robot_ip"]["docs"] = f"{docs_server}/page#found"
-    doc["args"]["head"] = {"global": "x", "label": "x", "docs": f"{docs_server}/no-head"}
+    settings = doc["robots"]["dog"]["defaults"]["recommended_config"]
+    settings[1]["docs"] = f"{docs_server}/page#found"
+    settings.append({"global": "x", "label": "x", "docs": f"{docs_server}/no-head"})
     assert robots.link_problems(doc, timeout=5, attempts=1) == []
-    doc["args"]["missing"] = {"global": "y", "label": "y", "docs": f"{docs_server}/gone"}
-    doc["args"]["anchor"] = {"global": "z", "label": "z", "docs": f"{docs_server}/page#renamed"}
+    tests = doc["robots"]["dog"]["blueprints"]["dog-test"]["recommended_config"]
+    tests.append({"global": "y", "label": "y", "docs": f"{docs_server}/gone"})
+    tests.append({"global": "z", "label": "z", "docs": f"{docs_server}/page#renamed"})
     found = robots.link_problems(doc, timeout=5, attempts=1)
     assert len(found) == 2
-    assert any("args.missing.docs" in p and "HTTP 404" in p for p in found)
-    assert any("args.anchor.docs" in p and "no #renamed" in p for p in found)
+    assert any(
+        "robots.dog.blueprints.dog-test.recommended_config" in p and "HTTP 404" in p for p in found
+    )
+    assert any("no #renamed" in p for p in found)
 
 
 def test_link_problems_retries_a_host_that_doesnt_answer() -> None:
@@ -472,9 +486,109 @@ def test_link_problems_retries_a_host_that_doesnt_answer() -> None:
     port = server.server_address[1]
     server.server_close()  # nothing listens there now
     doc = sample()
-    doc["args"]["robot_ip"]["docs"] = f"http://127.0.0.1:{port}/page"
+    doc["robots"]["dog"]["defaults"]["recommended_config"][1]["docs"] = (
+        f"http://127.0.0.1:{port}/page"
+    )
     found = robots.link_problems(doc, timeout=2, attempts=2, backoff=0)
     assert len(found) == 1 and "doesn't resolve" in found[0]
+
+
+def test_generate_fills_in_global_config_by_reflection() -> None:
+    source = sample()
+    source["robots"]["dog"]["defaults"]["recommended_config"].append({"global": "detection_model"})
+    source["robots"]["dog"]["blueprints"]["dog-basic"]["recommended_config"] = [
+        {"global": "robot_ip", "placeholder": "10.0.0.2"}
+    ]
+    out = robots.generate(source)
+    pick, ip, detection = out["robots"]["dog"]["defaults"]["recommended_config"]
+    assert pick == RUN_ON
+    # reflection: type, nullable, default; the source's label, required and when on top
+    assert (ip["type"], ip["nullable"], ip["default"], ip["label"], ip["required"]) == (
+        "string",
+        True,
+        None,
+        "Robot IP",
+        True,
+    )
+    # a Literal is an enum by itself, labelled from its field name unless the source names it
+    assert detection["label"] == "Detection model"
+    assert {c["value"] for c in detection["choices"]} == {"qwen", "moondream"}
+    assert detection["default"] == "moondream"
+    # a blueprint's own entry inherits the robot defaults' entry for its key (not its `when`: this list has no pick)
+    (own,) = out["robots"]["dog"]["blueprints"]["dog-basic"]["recommended_config"]
+    assert (own["label"], own["placeholder"], own["required"]) == ("Robot IP", "10.0.0.2", True)
+    assert "when" not in own
+
+
+def test_robots_json_is_generated_from_its_source() -> None:
+    assert robots.stale_problems() == []
+
+
+YAML = """\
+# the robots (a hand comment)
+types:
+  dog:
+    label: Dogs
+robots:
+  dog:
+    name: Vendor Dog  # inline comment
+    description: a dog
+    type: dog
+    manufacturer: Vendor
+    dirs:
+    - dimos/robot/vendor/dog
+    blueprints:
+      dog-basic:
+        # why it is first
+        title: Dog
+        description: walks
+      dog-gone:
+        title: Gone
+        description: was removed from the code
+# what isn't a robot
+excluded:
+  dimos/robot/assets: shared assets
+"""
+
+
+def test_updated_source_adds_and_removes_blueprints_and_keeps_comments() -> None:
+    registry = {
+        "dog-basic": "dimos.robot.vendor.dog.blueprints:dog_basic",
+        "dog-new": "dimos.robot.vendor.dog.blueprints.new:dog_new",
+    }
+    out = robots.updated_source(YAML, registry)
+    # hand comments survive, the stale blueprint is gone, the new one is a TODO stub under its robot
+    for comment in [
+        "# the robots (a hand comment)",
+        "# inline comment",
+        "# why it is first",
+        "# what isn't a robot",
+    ]:
+        assert comment in out
+    assert "dog-gone" not in out
+    assert "      dog-new:\n        title: 'TODO: a short name for dog-new'" in out
+    head = out.split(robots.GENERATED_MARK)[0]
+    assert head.index("dog-new:") < head.index("excluded:")
+    # the GlobalConfig catalog is generated after the mark
+    import yaml
+
+    doc = yaml.safe_load(out)
+    assert doc["global_config"]["detection_model"]["default"] == "moondream"
+    assert list(doc["robots"]["dog"]["blueprints"]) == ["dog-basic", "dog-new"]
+    # idempotent: a second run changes nothing
+    assert robots.updated_source(out, registry) == out
+
+
+def test_robots_yaml_is_current() -> None:
+    """Like all_blueprints.py: locally `python -m dimos.gateway.robots --write` brings robots.yaml's generated parts
+    (new or removed blueprints, the GlobalConfig catalog) and robots.json current; in CI a stale file fails."""
+    import os
+
+    if "CI" not in os.environ:
+        robots.write()
+    found = robots.stale_problems()
+    if found:
+        pytest.fail("\n".join(found))
 
 
 def test_robots_json_is_current() -> None:

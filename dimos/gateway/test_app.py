@@ -741,19 +741,26 @@ def test_robots(client: TestClient, checkout: Path) -> None:
     basic = answer["robots"]["go2"]["blueprints"]["unitree-go2-basic"]
     assert basic["robot"] == "go2" and basic["registered"] is True
     assert answer["robots"]["go2"]["recommended"][0] == "unitree-go2-basic"
-    sim, ip = basic["recommended_config"]
-    assert sim["key"] == "simulation" and [c["value"] for c in sim["choices"]] == ["", "mujoco"]
-    assert ip["id"] == "go2_ip" and ip["choices"] is None
-    assert list(basic["modes"]) == ["robot", "replay", "sim"]
-    robot_ip = basic["modes"]["robot"]["args"][0]
-    assert (robot_ip["key"], robot_ip["scope"], robot_ip["global"]) == (
+    pick, ip, recording = basic["recommended_config"]
+    assert pick["kind"] == "pick" and [c["label"] for c in pick["choices"]] == [
+        "Robot",
+        "Replay",
+        "Simulator",
+    ]
+    assert pick["choices"][2]["set"] == {"replay": False, "simulation": "mujoco"}
+    assert ip["id"] == "robot_ip" and ip["choices"] is None
+    assert (ip["key"], ip["scope"], ip["global"], ip["when"]) == (
         "robot_ip",
         "global",
         "robot_ip",
+        {"replay": False, "simulation": ""},
     )
-    assert "replay" in basic["tags"] and "sim" in basic["tags"]
-    assert basic["recommended_app"]["id"] == "dim-go2-dash"
-    spot_ip = answer["robots"]["spot"]["blueprints"]["spot"]["modes"]["robot"]["args"][0]
+    assert recording["kind"] == "recording" and recording["when"] == {
+        "replay": True,
+        "simulation": "",
+    }
+    assert "tags" not in basic and "modes" not in basic and "recommended_app" not in basic
+    (spot_ip,) = answer["robots"]["spot"]["blueprints"]["spot"]["recommended_config"]
     assert (spot_ip["key"], spot_ip["scope"], spot_ip["module"]) == (
         "spothighlevel.ip",
         "module",
@@ -762,7 +769,7 @@ def test_robots(client: TestClient, checkout: Path) -> None:
     assert "global" not in spot_ip
     assert answer["unlisted"] == []
     # the checkout's own file wins
-    own = checkout / "dimos" / "server" / "robots.json"
+    own = checkout / "dimos" / "gateway" / "robots.json"
     own.parent.mkdir(parents=True, exist_ok=True)
     doc = json.loads((Path(__file__).parent / "robots.json").read_text())
     doc["robots"] = {"go2": {**doc["robots"]["go2"], "name": "My Go2"}}

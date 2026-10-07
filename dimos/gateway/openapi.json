@@ -3467,61 +3467,9 @@
         "title": "RankedModule",
         "type": "object"
       },
-      "RecommendedApp": {
-        "additionalProperties": true,
-        "description": "The app to install for a robot; Desktop's App Store installs it from `url`.",
-        "properties": {
-          "id": {
-            "description": "Its install name (its repo's name)",
-            "examples": [
-              "dim-go2-dash"
-            ],
-            "title": "Id",
-            "type": "string"
-          },
-          "ref": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "The branch or tag to install",
-            "examples": [
-              "main"
-            ],
-            "title": "Ref"
-          },
-          "title": {
-            "description": "Its name",
-            "examples": [
-              "Go2 Ctrl"
-            ],
-            "title": "Title",
-            "type": "string"
-          },
-          "url": {
-            "description": "Its git repository",
-            "examples": [
-              "https://github.com/jeff-hykin/dim-go2-dash"
-            ],
-            "title": "Url",
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "title",
-          "url"
-        ],
-        "title": "RecommendedApp",
-        "type": "object"
-      },
       "RecommendedSetting": {
         "additionalProperties": true,
-        "description": "A setting to decide before running a blueprint: an arg, with the values to pick from.",
+        "description": "A setting to decide before running a blueprint: one config value (an arg: `key`, `scope`, ...), or a pick\n(`kind` \"pick\") whose choices each set several values. Either may be an enum (`choices`) and shown only `when`\nsome config values hold.",
         "properties": {
           "choices": {
             "anyOf": [
@@ -3535,12 +3483,24 @@
                 "type": "null"
               }
             ],
-            "description": "The values to pick from (null: a free value)",
+            "description": "The options (an enum: buttons for up to 4, else a select); null: a free value",
             "title": "Choices"
           },
           "default": {
             "$ref": "#/components/schemas/JsonValue",
-            "description": "The value it starts with"
+            "description": "The value it starts with; for a pick, the label of the choice it starts on"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The GlobalConfig field's description",
+            "title": "Description"
           },
           "docs": {
             "anyOf": [
@@ -3585,38 +3545,48 @@
             "title": "Global"
           },
           "id": {
-            "description": "Its arg's id in robots.json's `args`, else its key",
+            "description": "Its key (a GlobalConfig field or <module>.<field>); pick-<n> for a pick",
             "examples": [
               "go2_ip",
-              "simulation"
+              "detection_model",
+              "pick-0"
             ],
             "title": "Id",
             "type": "string"
           },
           "key": {
-            "description": "The field, as dimos's options name it",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The config value, as dimos's options name it (null for a pick)",
             "examples": [
               "robot_ip",
               "spothighlevel.ip"
             ],
-            "title": "Key",
-            "type": "string"
+            "title": "Key"
           },
           "kind": {
-            "description": "text, number, bool, or recording (pick a dimos recording)",
+            "description": "text, number, bool, recording (pick a dimos recording), or pick (choose one of `choices`, each setting several values)",
             "enum": [
               "text",
               "number",
               "bool",
-              "recording"
+              "recording",
+              "pick"
             ],
             "title": "Kind",
             "type": "string"
           },
           "label": {
-            "description": "What to call it",
+            "description": "What to ask",
             "examples": [
-              "Robot IP"
+              "Robot IP",
+              "Run it on"
             ],
             "title": "Label",
             "type": "string"
@@ -3636,6 +3606,18 @@
             ],
             "title": "Module"
           },
+          "nullable": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The GlobalConfig field takes null",
+            "title": "Nullable"
+          },
           "placeholder": {
             "anyOf": [
               {
@@ -3652,18 +3634,25 @@
             "title": "Placeholder"
           },
           "required": {
-            "description": "The blueprint won't run without it",
+            "description": "The blueprint won't run without it (while it is shown)",
             "title": "Required",
             "type": "boolean"
           },
           "scope": {
-            "description": "GlobalConfig, or a module's config",
-            "enum": [
-              "global",
-              "module"
+            "anyOf": [
+              {
+                "enum": [
+                  "global",
+                  "module"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
             ],
-            "title": "Scope",
-            "type": "string"
+            "description": "GlobalConfig, or a module's config (null for a pick)",
+            "title": "Scope"
           },
           "streams": {
             "anyOf": [
@@ -3693,6 +3682,45 @@
               ]
             ],
             "title": "Streams"
+          },
+          "type": {
+            "anyOf": [
+              {
+                "enum": [
+                  "string",
+                  "boolean",
+                  "integer",
+                  "number",
+                  "json"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The GlobalConfig field's type (read from GlobalConfig; null for a module field)",
+            "title": "Type"
+          },
+          "when": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Show it only while these config values hold (null: always)",
+            "examples": [
+              {
+                "replay": true
+              }
+            ],
+            "title": "When"
           }
         },
         "required": [
@@ -3790,21 +3818,6 @@
             "title": "Dirs",
             "type": "array"
           },
-          "group": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "A key of `groups` it is shown under, or null",
-            "examples": [
-              "arms"
-            ],
-            "title": "Group"
-          },
           "manufacturer": {
             "anyOf": [
               {
@@ -3842,34 +3855,16 @@
             "title": "Recommended",
             "type": "array"
           },
-          "recommended_app": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/RecommendedApp"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "The app to install for it, or null"
-          },
           "type": {
             "anyOf": [
               {
-                "enum": [
-                  "dog",
-                  "wheeled",
-                  "humanoid",
-                  "arm",
-                  "drone"
-                ],
                 "type": "string"
               },
               {
                 "type": "null"
               }
             ],
-            "description": "What kind of robot: dog, wheeled, humanoid, arm or drone; null when it isn't a robot dimos drives (sensors, demos, simulators, coordinators)",
+            "description": "What kind of robot: a key of `types` (dog, humanoid, wheeled, arm, drone); null when it isn't a robot dimos drives (sensors, demos, simulators, coordinators)",
             "examples": [
               "dog"
             ],
@@ -3881,184 +3876,10 @@
           "description",
           "type",
           "manufacturer",
-          "group",
           "dirs",
-          "recommended_app",
           "blueprints"
         ],
         "title": "Robot",
-        "type": "object"
-      },
-      "RobotArg": {
-        "additionalProperties": true,
-        "description": "An essential arg: a GlobalConfig field (`--<key> value` before `run`) or a module's config field\n(`--<key> value` after the blueprint name).",
-        "properties": {
-          "default": {
-            "$ref": "#/components/schemas/JsonValue",
-            "description": "The value it starts with"
-          },
-          "docs": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "A page on how to find this value (null: none)",
-            "examples": [
-              "https://docs.dimensional.org/platforms/quadruped/go2/setup/"
-            ],
-            "title": "Docs"
-          },
-          "field": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "The module's config field (scope module)",
-            "examples": [
-              "ip"
-            ],
-            "title": "Field"
-          },
-          "global": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "The GlobalConfig field (scope global)",
-            "title": "Global"
-          },
-          "id": {
-            "description": "Its id in robots.json's `args`",
-            "examples": [
-              "go2_ip",
-              "spot_ip"
-            ],
-            "title": "Id",
-            "type": "string"
-          },
-          "key": {
-            "description": "The field, as dimos's options name it",
-            "examples": [
-              "robot_ip",
-              "spothighlevel.ip"
-            ],
-            "title": "Key",
-            "type": "string"
-          },
-          "kind": {
-            "description": "text, number, bool, or recording (pick a dimos recording)",
-            "enum": [
-              "text",
-              "number",
-              "bool",
-              "recording"
-            ],
-            "title": "Kind",
-            "type": "string"
-          },
-          "label": {
-            "description": "What to call it",
-            "examples": [
-              "Robot IP"
-            ],
-            "title": "Label",
-            "type": "string"
-          },
-          "module": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "The module's name in the blueprint (scope module)",
-            "examples": [
-              "spothighlevel"
-            ],
-            "title": "Module"
-          },
-          "placeholder": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "An example value",
-            "examples": [
-              "192.168.12.1"
-            ],
-            "title": "Placeholder"
-          },
-          "required": {
-            "description": "The blueprint won't run without it",
-            "title": "Required",
-            "type": "boolean"
-          },
-          "scope": {
-            "description": "GlobalConfig, or a module's config",
-            "enum": [
-              "global",
-              "module"
-            ],
-            "title": "Scope",
-            "type": "string"
-          },
-          "streams": {
-            "anyOf": [
-              {
-                "items": {
-                  "items": {
-                    "type": "string"
-                  },
-                  "type": "array"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "recording: the streams it must have, each a list of acceptable names",
-            "examples": [
-              [
-                [
-                  "go2_lidar",
-                  "lidar"
-                ],
-                [
-                  "color_image"
-                ]
-              ]
-            ],
-            "title": "Streams"
-          }
-        },
-        "required": [
-          "id",
-          "key",
-          "scope",
-          "label",
-          "kind",
-          "required"
-        ],
-        "title": "RobotArg",
         "type": "object"
       },
       "RobotBlueprint": {
@@ -4074,27 +3895,8 @@
             "title": "Hidden",
             "type": "boolean"
           },
-          "modes": {
-            "additionalProperties": {
-              "$ref": "#/components/schemas/RobotMode"
-            },
-            "description": "The modes it runs in (robot, replay, sim), in order",
-            "title": "Modes",
-            "type": "object"
-          },
-          "recommended_app": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/RecommendedApp"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "The app to install for it, or null"
-          },
           "recommended_config": {
-            "description": "The few settings to decide before running it, in order (its own, else its robot's): sim or the real robot, its IP, ...",
+            "description": "The settings to decide before running it, in order (its own, else its robot's): where it runs (robot, a recording, a simulator), its IP, ...",
             "items": {
               "$ref": "#/components/schemas/RecommendedSetting"
             },
@@ -4126,22 +3928,6 @@
             "description": "Its rank among the \"start here\" picks (1 first), or null",
             "title": "Starter"
           },
-          "tags": {
-            "description": "Keys of `tags`, including replay and sim when it has those modes",
-            "examples": [
-              [
-                "drive",
-                "map",
-                "replay",
-                "sim"
-              ]
-            ],
-            "items": {
-              "type": "string"
-            },
-            "title": "Tags",
-            "type": "array"
-          },
           "title": {
             "description": "A short name",
             "examples": [
@@ -4154,65 +3940,12 @@
         "required": [
           "title",
           "description",
-          "tags",
-          "modes",
           "starter",
           "hidden",
-          "recommended_app",
           "robot",
           "registered"
         ],
         "title": "RobotBlueprint",
-        "type": "object"
-      },
-      "RobotGroup": {
-        "additionalProperties": true,
-        "properties": {
-          "name": {
-            "description": "What to show for the robots in it",
-            "examples": [
-              "Arms"
-            ],
-            "title": "Name",
-            "type": "string"
-          }
-        },
-        "required": [
-          "name"
-        ],
-        "title": "RobotGroup",
-        "type": "object"
-      },
-      "RobotMode": {
-        "additionalProperties": true,
-        "properties": {
-          "args": {
-            "description": "What a person fills in, in order",
-            "items": {
-              "$ref": "#/components/schemas/RobotArg"
-            },
-            "title": "Args",
-            "type": "array"
-          },
-          "set": {
-            "additionalProperties": {
-              "$ref": "#/components/schemas/JsonValue"
-            },
-            "description": "GlobalConfig values this mode sets",
-            "examples": [
-              {
-                "simulation": "mujoco"
-              }
-            ],
-            "title": "Set",
-            "type": "object"
-          }
-        },
-        "required": [
-          "set",
-          "args"
-        ],
-        "title": "RobotMode",
         "type": "object"
       },
       "RobotModules": {
@@ -4266,28 +3999,22 @@
         "title": "RobotModules",
         "type": "object"
       },
-      "RobotTag": {
+      "RobotType": {
         "additionalProperties": true,
         "properties": {
-          "description": {
-            "description": "What it means, in a sentence",
-            "title": "Description",
-            "type": "string"
-          },
           "label": {
-            "description": "What to show",
+            "description": "The heading a launcher groups robots of this type under",
             "examples": [
-              "Drive"
+              "Dogs"
             ],
             "title": "Label",
             "type": "string"
           }
         },
         "required": [
-          "label",
-          "description"
+          "label"
         ],
-        "title": "RobotTag",
+        "title": "RobotType",
         "type": "object"
       },
       "Robots": {
@@ -4319,22 +4046,6 @@
             "title": "Excluded",
             "type": "object"
           },
-          "groups": {
-            "additionalProperties": {
-              "$ref": "#/components/schemas/RobotGroup"
-            },
-            "description": "Robots shown together under one name",
-            "title": "Groups",
-            "type": "object"
-          },
-          "modes": {
-            "additionalProperties": {
-              "$ref": "#/components/schemas/RobotTag"
-            },
-            "description": "The modes (robot, replay, sim), in display order",
-            "title": "Modes",
-            "type": "object"
-          },
           "robots": {
             "additionalProperties": {
               "$ref": "#/components/schemas/Robot"
@@ -4343,12 +4054,12 @@
             "title": "Robots",
             "type": "object"
           },
-          "tags": {
+          "types": {
             "additionalProperties": {
-              "$ref": "#/components/schemas/RobotTag"
+              "$ref": "#/components/schemas/RobotType"
             },
-            "description": "The tag vocabulary, in display order",
-            "title": "Tags",
+            "description": "The robot types, in the order a launcher groups robots by (robots without one come last)",
+            "title": "Types",
             "type": "object"
           },
           "unlisted": {
@@ -4366,9 +4077,7 @@
           }
         },
         "required": [
-          "tags",
-          "modes",
-          "groups",
+          "types",
           "robots",
           "excluded",
           "unlisted"
@@ -4489,21 +4198,42 @@
           "label": {
             "description": "What to call it",
             "examples": [
-              "The MuJoCo simulator"
+              "Simulator",
+              "Qwen"
             ],
             "title": "Label",
             "type": "string"
           },
+          "set": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The config values it sets together (a pick's choice): GlobalConfig field or <module>.<field> to its value",
+            "examples": [
+              {
+                "replay": false,
+                "simulation": "mujoco"
+              }
+            ],
+            "title": "Set"
+          },
           "value": {
             "$ref": "#/components/schemas/JsonValue",
-            "description": "The value it sets",
+            "description": "The value it sets (a config value's choice)",
             "examples": [
-              "mujoco"
+              "qwen"
             ]
           }
         },
         "required": [
-          "value",
           "label"
         ],
         "title": "SettingChoice",
@@ -6716,7 +6446,7 @@
     },
     "/dimos/robots": {
       "get": {
-        "description": "The checkout's dimos/gateway/robots.json (dimos.yaml's `robots:`, also readable per tag without a server) with its defaults applied: each blueprint's modes (robot, replay, sim) with the GlobalConfig values each sets and its args (`key`, `scope`: global args are `--key value` before `run`, module args after the blueprint name), its tags including replay and sim from its modes, its robot and recommended app; `registered` and `unlisted` compare it with the blueprint registry. CI keeps the file in step with the code (dimos/gateway/robots.py). Read from disk on every call; no side effects.",
+        "description": "The checkout's dimos/gateway/robots.json (dimos.yaml's `robots:`, also readable per tag without a server) with its defaults applied: each blueprint's recommended_config, every setting resolved: one config value (`key`, `scope`: global keys are `--key value` before `run`, module keys after the blueprint name) or a pick (`kind` pick: each choice `set`s several values, e.g. Robot / Replay / Simulator), either with `choices` (an enum) and `when` (shown only while those values hold); robots' `type` is a key of `types`, the order a launcher groups them in. `registered` and `unlisted` compare it with the blueprint registry. CI keeps the file in step with the code (dimos/gateway/robots.py). Read from disk on every call; no side effects.",
         "operationId": "get_dimos_robots",
         "responses": {
           "200": {
@@ -6727,7 +6457,7 @@
                 }
               }
             },
-            "description": "`{ about, tags, modes, groups, robots: { [id]: { name, description, group, dirs, recommended_app, blueprints: { [name]: { title, description, tags, modes, starter, hidden, recommended_app, robot, registered } } } }, excluded, unlisted }`"
+            "description": "`{ about, types, robots: { [id]: { name, description, type, manufacturer, dirs, recommended, blueprints: { [name]: { title, description, starter, hidden, recommended_config, robot, registered } } } }, excluded, unlisted }`"
           },
           "500": {
             "content": {
@@ -6740,7 +6470,7 @@
             "description": "The gateway couldn't do it: a child process, launch, stop or cloud call failed (the message says why)"
           }
         },
-        "summary": "Every robot dimos supports and its blueprints: title, description, tags, modes and their essential args, the app to install, starter picks, recommended blueprints and settings, hidden ones",
+        "summary": "Every robot dimos supports and its blueprints: title, description, the settings to decide before running each (recommended_config), starter picks, recommended blueprints, hidden ones",
         "tags": [
           "blueprints"
         ],

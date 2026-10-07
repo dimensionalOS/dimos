@@ -548,16 +548,18 @@ def create_app(state: ServerState, background: bool = True) -> FastAPI:
         response_model=models.Robots,
         **route_doc(
             "blueprints",
-            "Every robot dimos supports and its blueprints: title, description, tags, modes and their essential "
-            "args, the app to install, starter picks, recommended blueprints and settings, hidden ones",
+            "Every robot dimos supports and its blueprints: title, description, the settings to decide before "
+            "running each (recommended_config), starter picks, recommended blueprints, hidden ones",
             "The checkout's dimos/gateway/robots.json (dimos.yaml's `robots:`, also readable per tag without a "
-            "server) with its defaults applied: each blueprint's modes (robot, replay, sim) with the GlobalConfig "
-            "values each sets and its args (`key`, `scope`: global args are `--key value` before `run`, module args "
-            "after the blueprint name), its tags including replay and sim from its modes, its robot and recommended "
-            "app; `registered` and `unlisted` compare it with the blueprint registry. CI keeps the file in step "
-            "with the code (dimos/gateway/robots.py). Read from disk on every call; no side effects.",
+            "server) with its defaults applied: each blueprint's recommended_config, every setting resolved: one "
+            "config value (`key`, `scope`: global keys are `--key value` before `run`, module keys after the "
+            "blueprint name) or a pick (`kind` pick: each choice `set`s several values, e.g. Robot / Replay / "
+            "Simulator), either with `choices` (an enum) and `when` (shown only while those values hold); robots' "
+            "`type` is a key of `types`, the order a launcher groups them in. `registered` and `unlisted` compare it "
+            "with the blueprint registry. CI keeps the file in step with the code (dimos/gateway/robots.py). Read "
+            "from disk on every call; no side effects.",
             agent=True,
-            answer="`{ about, tags, modes, groups, robots: { [id]: { name, description, group, dirs, recommended_app, blueprints: { [name]: { title, description, tags, modes, starter, hidden, recommended_app, robot, registered } } } }, excluded, unlisted }`",
+            answer="`{ about, types, robots: { [id]: { name, description, type, manufacturer, dirs, recommended, blueprints: { [name]: { title, description, starter, hidden, recommended_config, robot, registered } } } }, excluded, unlisted }`",
         ),
     )
     async def robot_list() -> dict[str, Any]:
@@ -566,7 +568,7 @@ def create_app(state: ServerState, background: bool = True) -> FastAPI:
         def compute() -> dict[str, Any]:
             from dimos.robot.all_blueprints import all_blueprints
 
-            path = s.dimos_dir / "dimos" / "server" / "robots.json"
+            path = s.dimos_dir / "dimos" / "gateway" / "robots.json"
             return robots.resolved(
                 robots.load(path if path.exists() else robots.ROBOTS_FILE), all_blueprints
             )

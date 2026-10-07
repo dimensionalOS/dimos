@@ -1,5 +1,7 @@
 // Configure: the blueprint's saved config as typed inputs, in a modal over the view. The blueprint's recommended
-// settings first (robots.json's `recommended_config`, from GET /dimos/robots), then each module's fields (GET/PUT
+// settings first (robots.json's `recommended_config`, from GET /dimos/robots: one config value each, or a pick whose
+// choices each set several; an enum shows as buttons for up to 4 choices, else a select; an entry with `when` shows
+// only while those values hold; Desktop's Launcher draws the same), then each module's fields (GET/PUT
 // /dimos/blueprints/{name}/config), then dimos's global config (GET/PUT /dimos/global-config). Each change is saved at
 // once and applies to every later launch of this blueprint (Relaunch to apply it to the running one).
 
@@ -133,32 +135,6 @@ export function moduleFields(config) {
     )
 }
 
-/** the blueprint's recommended settings (robots.json) as the fields they name, with their labels and choices */
-function recommendedFields(settings, fields) {
-    return settings.flatMap((setting) => {
-        const field = fields.find((spec) => spec.id === setting.key && spec.scope === setting.scope)
-        if (!field) {
-            return []
-        }
-        const choices = setting.choices ?? null
-        return [{
-            ...field,
-            group: "recommended",
-            label: setting.label,
-            placeholder: setting.placeholder,
-            docs: setting.docs,
-            ...(choices
-                ? {
-                    kind: "enum",
-                    options: choices.map((choice) => choice.value),
-                    optionLabels: choices.map((choice) => choice.label),
-                    nullable: false,
-                }
-                : {}),
-        }]
-    })
-}
-
 const asText = (value) => value === null || value === undefined ? "" : typeof value === "string" ? value : JSON.stringify(value)
 
 export const valueText = (value) =>
@@ -280,8 +256,9 @@ export function openConfig({ name, h, getJson, send, onSaved, onClose }) {
             fail(caught)
         }
     }
-    const withModule = (spec, value) => {
-        const next = JSON.parse(JSON.stringify(savedModules()))
+    const withModule = (spec, value) => withModuleIn(savedModules(), spec, value)
+    const withModuleIn = (overrides, spec, value) => {
+        const next = JSON.parse(JSON.stringify(overrides))
         next[spec.module] ??= {}
         if (value === undefined) {
             delete next[spec.module][spec.name]
@@ -418,6 +395,113 @@ export function openConfig({ name, h, getJson, send, onSaved, onClose }) {
         )
     }
 
+    /** a config value by key (a GlobalConfig field, or <module>.<field>): saved, else its default */
+    const keyValue = (key, mFields) => {
+        if (key.includes(".")) {
+            const [module, fieldName] = [key.slice(0, key.lastIndexOf(".")), key.slice(key.lastIndexOf(".") + 1)]
+            const saved = savedModules()[module]
+            if (saved && fieldName in saved) {
+                return saved[fieldName]
+            }
+            return mFields.find((spec) => spec.module === module && spec.name === fieldName)?.base
+        }
+        return key in savedGlobal() ? savedGlobal()[key] : global?.defaults?.[key]
+    }
+    /** save several values at once (a pick's choice): GlobalConfig fields and module fields */
+    const setMany = (values, mFields) =>
+        save(async () => {
+            const globals = { ...savedGlobal() }
+            let moduleNext = savedModules()
+            for (const [key, value] of Object.entries(values)) {
+                if (key.includes(".")) {
+                    const spec = mFields.find((one) => `${one.module}.${one.name}` === key)
+                    if (spec) {
+                        moduleNext = withModuleIn(moduleNext, spec, same(value, spec.base) ? undefined : value)
+                    }
+                } else if (same(value, global?.defaults?.[key])) {
+                    delete globals[key]
+                } else {
+                    globals[key] = value
+                }
+            }
+            if (!same(moduleNext, savedModules())) {
+                await saveModules(moduleNext)
+            }
+            if (!same(globals, savedGlobal())) {
+                await saveGlobal(globals)
+            }
+        })
+    const shown = (setting, mFields) =>
+        !setting.when || Object.entries(setting.when).every(([key, value]) => same(keyValue(key, mFields), value))
+
+    /** buttons for up to 4 options, else a select; `current` is the picked index (-1: none) */
+    const choose = (labels, current, pick, name) =>
+        labels.length <= 4
+            ? h(
+                "span",
+                { class: "seg", role: "radiogroup", "aria-label": name },
+                labels.map((text, index) =>
+                    h("button", {
+                        type: "button",
+                        role: "radio",
+                        class: index === current ? "on" : "",
+                        "aria-checked": String(index === current),
+                        onclick: () => index !== current && pick(index),
+                    }, text)
+                ),
+            )
+            : (() => {
+                const select = h(
+                    "select",
+                    { "aria-label": name, onchange: (event) => pick(Number(event.target.value)) },
+                    current < 0 && h("option", { value: "-1" }, "—"),
+                    labels.map((text, index) => h("option", { value: String(index) }, text)),
+                )
+                select.value = String(current)
+                return select
+            })()
+
+    /** one recommended setting as a row: a pick, an enum, or the field it names */
+    function recommendedRow(setting, fields, mFields) {
+        if (setting.kind === "pick") {
+            const current = setting.choices.findIndex((choice) =>
+                Object.entries(choice.set ?? {}).every(([key, value]) => same(keyValue(key, mFields), value))
+            )
+            return h(
+                "div",
+                { class: "cfg-row pick", "data-field": setting.id },
+                h("span", { class: "k" }, h("span", { class: "n" }, setting.label)),
+                h("span", { class: "v" }, choose(setting.choices.map((c) => c.label), current, (index) => setMany(setting.choices[index].set, mFields), setting.label)),
+            )
+        }
+        const spec = fields.find((one) => one.id === setting.key && one.scope === setting.scope) ??
+            fields.find((one) => setting.scope === "module" && `${one.module}.${one.name}` === setting.key)
+        if (!spec) {
+            return null
+        }
+        const labelled = { ...spec, label: setting.label, placeholder: setting.placeholder ?? spec.placeholder, docs: setting.docs }
+        if (!setting.choices) {
+            return field(labelled, true)
+        }
+        const value = valueOf(spec)
+        const current = setting.choices.findIndex((choice) => same(choice.value, value))
+        const set = isSaved(spec)
+        return h(
+            "div",
+            { class: `cfg-row${set ? " set" : ""}`, "data-field": setting.id },
+            h("span", { class: "k" }, h("span", { class: "n" }, setting.label), set && h("span", { class: "mark" }, "saved")),
+            h(
+                "span",
+                { class: "v" },
+                choose(setting.choices.map((c) => c.label), current, (index) => setField(spec, setting.choices[index].value), setting.label),
+                set
+                    ? h("button", { type: "button", class: "reset", title: `back to ${valueText(spec.base)}`, onclick: () => resetField(spec) }, "reset")
+                    : h("span", { class: "reset-gap" }),
+            ),
+            setting.docs && h("a", { class: "docs", href: setting.docs, target: "_blank", rel: "noopener noreferrer" }, "How do I find this?"),
+        )
+    }
+
     function list(fields, heading) {
         const needle = query.trim().toLowerCase().replaceAll(" ", "_")
         const shown = fields.filter((spec) =>
@@ -448,7 +532,9 @@ export function openConfig({ name, h, getJson, send, onSaved, onClose }) {
     function draw() {
         const gFields = global ? globalFields(global) : []
         const mFields = modules ? moduleFields(modules) : []
-        const rFields = recommendedFields(recommended, [...mFields, ...gFields])
+        const rRows = global && modules
+            ? recommended.filter((setting) => shown(setting, mFields)).map((setting) => recommendedRow(setting, [...mFields, ...gFields], mFields)).filter(Boolean)
+            : []
         const count = Object.keys(savedGlobal()).length +
             Object.values(savedModules()).reduce((sum, fields) => sum + Object.keys(fields).length, 0)
         status.textContent = count ? `${count} set` : "dimOS defaults"
@@ -456,12 +542,12 @@ export function openConfig({ name, h, getJson, send, onSaved, onClose }) {
             fail(error)
         }
         body.replaceChildren(...[
-            rFields.length > 0 && h(
+            rRows.length > 0 && h(
                 "section",
                 { class: "cfg-sec recommended" },
                 h("div", { class: "cfg-sh" }, "Recommended settings"),
                 h("p", { class: "hint" }, "Decide these first: the rest can stay at dimOS's defaults."),
-                rFields.map((spec) => field(spec, true)),
+                rRows,
             ),
             h(
                 "section",

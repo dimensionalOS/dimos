@@ -369,38 +369,41 @@ class Catalog(ApiModel):
 # robots (dimos/gateway/robots.json, resolved)
 
 
-class RobotTag(ApiModel):
-    label: str = Field(description="What to show", examples=["Drive"])
-    description: str = Field(description="What it means, in a sentence")
-
-
-class RobotGroup(ApiModel):
-    name: str = Field(description="What to show for the robots in it", examples=["Arms"])
-
-
-class RecommendedApp(ApiModel):
-    """The app to install for a robot; Desktop's App Store installs it from `url`."""
-
-    id: str = Field(description="Its install name (its repo's name)", examples=["dim-go2-dash"])
-    title: str = Field(description="Its name", examples=["Go2 Ctrl"])
-    url: str = Field(
-        description="Its git repository", examples=["https://github.com/jeff-hykin/dim-go2-dash"]
-    )
-    ref: str | None = Field(
-        default=None, description="The branch or tag to install", examples=["main"]
+class RobotType(ApiModel):
+    label: str = Field(
+        description="The heading a launcher groups robots of this type under", examples=["Dogs"]
     )
 
 
-class RobotArg(ApiModel):
-    """An essential arg: a GlobalConfig field (`--<key> value` before `run`) or a module's config field
-    (`--<key> value` after the blueprint name)."""
+class SettingChoice(ApiModel):
+    label: str = Field(description="What to call it", examples=["Simulator", "Qwen"])
+    value: JsonValue = Field(
+        default=None, description="The value it sets (a config value's choice)", examples=["qwen"]
+    )
+    set: dict[str, JsonValue] | None = Field(
+        default=None,
+        description="The config values it sets together (a pick's choice): GlobalConfig field or <module>.<field> to "
+        "its value",
+        examples=[{"replay": False, "simulation": "mujoco"}],
+    )
 
-    id: str = Field(description="Its id in robots.json's `args`", examples=["go2_ip", "spot_ip"])
-    key: str = Field(
-        description="The field, as dimos's options name it",
+
+class RecommendedSetting(ApiModel):
+    """A setting to decide before running a blueprint: one config value (an arg: `key`, `scope`, ...), or a pick
+    (`kind` "pick") whose choices each set several values. Either may be an enum (`choices`) and shown only `when`
+    some config values hold."""
+
+    id: str = Field(
+        description="Its key (a GlobalConfig field or <module>.<field>); pick-<n> for a pick",
+        examples=["go2_ip", "detection_model", "pick-0"],
+    )
+    key: str | None = Field(
+        description="The config value, as dimos's options name it (null for a pick)",
         examples=["robot_ip", "spothighlevel.ip"],
     )
-    scope: Literal["global", "module"] = Field(description="GlobalConfig, or a module's config")
+    scope: Literal["global", "module"] | None = Field(
+        description="GlobalConfig, or a module's config (null for a pick)"
+    )
     global_: str | None = Field(
         default=None, alias="global", description="The GlobalConfig field (scope global)"
     )
@@ -412,15 +415,27 @@ class RobotArg(ApiModel):
     field: str | None = Field(
         default=None, description="The module's config field (scope module)", examples=["ip"]
     )
-    label: str = Field(description="What to call it", examples=["Robot IP"])
-    kind: Literal["text", "number", "bool", "recording"] = Field(
-        description="text, number, bool, or recording (pick a dimos recording)"
+    label: str = Field(description="What to ask", examples=["Robot IP", "Run it on"])
+    kind: Literal["text", "number", "bool", "recording", "pick"] = Field(
+        description="text, number, bool, recording (pick a dimos recording), or pick (choose one of `choices`, "
+        "each setting several values)"
     )
     placeholder: str | None = Field(
         default=None, description="An example value", examples=["192.168.12.1"]
     )
-    default: JsonValue = Field(default=None, description="The value it starts with")
-    required: bool = Field(description="The blueprint won't run without it")
+    default: JsonValue = Field(
+        default=None,
+        description="The value it starts with; for a pick, the label of the choice it starts on",
+    )
+    required: bool = Field(description="The blueprint won't run without it (while it is shown)")
+    type: Literal["string", "boolean", "integer", "number", "json"] | None = Field(
+        default=None,
+        description="The GlobalConfig field's type (read from GlobalConfig; null for a module field)",
+    )
+    nullable: bool | None = Field(default=None, description="The GlobalConfig field takes null")
+    description: str | None = Field(
+        default=None, description="The GlobalConfig field's description"
+    )
     streams: list[list[str]] | None = Field(
         default=None,
         description="recording: the streams it must have, each a list of acceptable names",
@@ -431,53 +446,30 @@ class RobotArg(ApiModel):
         description="A page on how to find this value (null: none)",
         examples=["https://docs.dimensional.org/platforms/quadruped/go2/setup/"],
     )
-
-
-class SettingChoice(ApiModel):
-    value: JsonValue = Field(description="The value it sets", examples=["mujoco"])
-    label: str = Field(description="What to call it", examples=["The MuJoCo simulator"])
-
-
-class RecommendedSetting(RobotArg):
-    """A setting to decide before running a blueprint: an arg, with the values to pick from."""
-
-    id: str = Field(
-        description="Its arg's id in robots.json's `args`, else its key",
-        examples=["go2_ip", "simulation"],
-    )
     choices: list[SettingChoice] | None = Field(
-        default=None, description="The values to pick from (null: a free value)"
+        default=None,
+        description="The options (an enum: buttons for up to 4, else a select); null: a free value",
     )
-
-
-class RobotMode(ApiModel):
-    set: dict[str, JsonValue] = Field(
-        description="GlobalConfig values this mode sets", examples=[{"simulation": "mujoco"}]
+    when: dict[str, JsonValue] | None = Field(
+        default=None,
+        description="Show it only while these config values hold (null: always)",
+        examples=[{"replay": True}],
     )
-    args: list[RobotArg] = Field(description="What a person fills in, in order")
 
 
 class RobotBlueprint(ApiModel):
     title: str = Field(description="A short name", examples=["Go2 basic"])
     description: str = Field(description="What it does and what it needs, plainly")
-    tags: list[str] = Field(
-        description="Keys of `tags`, including replay and sim when it has those modes",
-        examples=[["drive", "map", "replay", "sim"]],
-    )
-    modes: dict[str, RobotMode] = Field(
-        description="The modes it runs in (robot, replay, sim), in order"
-    )
     starter: int | None = Field(
         description='Its rank among the "start here" picks (1 first), or null'
     )
     hidden: bool = Field(
         description="A test, benchmark, mock or building block: list it only on request"
     )
-    recommended_app: RecommendedApp | None = Field(description="The app to install for it, or null")
     recommended_config: list[RecommendedSetting] = Field(
         default_factory=list,
-        description="The few settings to decide before running it, in order (its own, else its robot's): "
-        "sim or the real robot, its IP, ...",
+        description="The settings to decide before running it, in order (its own, else its robot's): where it runs "
+        "(robot, a recording, a simulator), its IP, ...",
     )
     robot: str = Field(description="Its robot's id", examples=["go2"])
     registered: bool = Field(description="dimos's blueprint registry has it")
@@ -486,22 +478,18 @@ class RobotBlueprint(ApiModel):
 class Robot(ApiModel):
     name: str = Field(description="Its name", examples=["Unitree Go2"])
     description: str = Field(description="What it is, in a sentence")
-    type: Literal["dog", "wheeled", "humanoid", "arm", "drone"] | None = Field(
-        description="What kind of robot: dog, wheeled, humanoid, arm or drone; null when it isn't a robot dimos drives "
-        "(sensors, demos, simulators, coordinators)",
+    type: str | None = Field(
+        description="What kind of robot: a key of `types` (dog, humanoid, wheeled, arm, drone); null when it isn't a "
+        "robot dimos drives (sensors, demos, simulators, coordinators)",
         examples=["dog"],
     )
     manufacturer: str | None = Field(
         description="Who makes it (how its name starts), or null (DIY, open-source, generic, not a robot)",
         examples=["Unitree"],
     )
-    group: str | None = Field(
-        description="A key of `groups` it is shown under, or null", examples=["arms"]
-    )
     dirs: list[str] = Field(
         description="Its code directories in the checkout", examples=[["dimos/robot/unitree/go2"]]
     )
-    recommended_app: RecommendedApp | None = Field(description="The app to install for it, or null")
     recommended: list[str] = Field(
         default_factory=list,
         description="The blueprints to suggest first for it, best first (each one of its `blueprints`); empty "
@@ -515,11 +503,9 @@ class Robots(ApiModel):
     """dimos/gateway/robots.json with its defaults applied."""
 
     about: str | None = Field(default=None, description="What the file is")
-    tags: dict[str, RobotTag] = Field(description="The tag vocabulary, in display order")
-    modes: dict[str, RobotTag] = Field(
-        description="The modes (robot, replay, sim), in display order"
+    types: dict[str, RobotType] = Field(
+        description="The robot types, in the order a launcher groups robots by (robots without one come last)"
     )
-    groups: dict[str, RobotGroup] = Field(description="Robots shown together under one name")
     robots: dict[str, Robot] = Field(description="Every robot by id, in display order")
     excluded: dict[str, str] = Field(
         description="Directories under dimos/robot that aren't robots, and why",
