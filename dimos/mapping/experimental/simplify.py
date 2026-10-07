@@ -264,16 +264,22 @@ class PlaneSnap:
         for peel in range(self.peels):
             # regrow regions over the faces no plane has claimed, fit, keep the inliers
             j = join & active[f1] & active[f2]
-            label = _components(nf, f1[j], f2[j])
-            nc = int(label.max()) + 1
-            inl = active.clone()
+            root = _components(nf, f1[j], f2[j])
+            size = torch.bincount(root, weights=active.float(), minlength=nf)
+            # only regions that can reach min_faces get a plane; the rest share label nc
+            label, nc = _compact(root, size >= self.min_faces)
+            inl = active & (label < nc)
             for thr in (4 * self.tol, 2 * self.tol, self.tol):
-                mean, normal = _fit_planes(label, nc, w * inl, c, n)
-                d = ((v[f] - mean[label][:, None]) * normal[label][:, None]).sum(-1).abs().amax(1)
-                inl = active & (d <= thr) & ((n * normal[label]).sum(1) > self.min_cos)
-            inl &= (torch.bincount(label[inl], minlength=nc) >= self.min_faces)[label]
-            pm[inl], pn[inl] = mean[label[inl]], normal[label[inl]]
-            tag[inl] = peel * nf + label[inl]
+                mean, normal = _fit_planes(label, nc + 1, w * inl, c, n)
+                mean, normal = mean[label], normal[label]
+                d = ((v[f] - mean[:, None]) * normal[:, None]).sum(-1).abs().amax(1)
+                inl = active & (label < nc) & (d <= thr) & ((n * normal).sum(1) > self.min_cos)
+            inl &= (torch.bincount(label, weights=inl.float(), minlength=nc + 1) >= self.min_faces)[
+                label
+            ]
+            pm = torch.where(inl[:, None], mean, pm)
+            pn = torch.where(inl[:, None], normal, pn)
+            tag = torch.where(inl, peel * nf + label, tag)
             active &= ~inl
         # neighbouring planes that agree become one plane, refit over all their faces
         on = tag >= 0
@@ -283,8 +289,9 @@ class PlaneSnap:
             ((pn[a] * pn[b]).sum(1) > self.merge_cos)
             & (((pm[b] - pm[a]) * pn[a]).sum(1).abs() <= self.tol)
         )
-        label = _components(nf, a[coplanar], b[coplanar])
-        mean, normal = _fit_planes(label, int(label.max()) + 1, w * on, c, n)
+        root = _components(nf, a[coplanar], b[coplanar])
+        label, nc = _compact(root, torch.bincount(root, weights=on.float(), minlength=nf) > 0)
+        mean, normal = _fit_planes(label, nc + 1, w * on, c, n)
         pm, pn = mean[label], normal[label]
         # the merged plane must still hold its faces, facing its way
         d = ((v[f] - pm[:, None]) * pn[:, None]).sum(-1).abs().amax(1)
@@ -321,7 +328,7 @@ def _face_pairs(f: Tensor, nv: int) -> tuple[Tensor, Tensor]:
 
 
 def _components(n: int, a: Tensor, b: Tensor) -> Tensor:
-    """Connected component labels 0..k-1 over n nodes joined by edges a-b."""
+    """Connected components over n nodes joined by edges a-b: each node's smallest node."""
     label = torch.arange(n, device=a.device)
     while True:
         # hook both nodes and their roots onto the smaller label, then jump pointers
@@ -332,9 +339,15 @@ def _components(n: int, a: Tensor, b: Tensor) -> Tensor:
             new.scatter_reduce_(0, i, lo, "amin")
         new = new[new][new]
         if torch.equal(new, label):
-            inv: Tensor = torch.unique(label, return_inverse=True)[1]
-            return inv
+            return label
         label = new
+
+
+def _compact(label: Tensor, keep: Tensor) -> tuple[Tensor, int]:
+    """Renumber the labels flagged in ``keep`` (indexed by label) 0..k-1, the rest k."""
+    new = torch.cumsum(keep, 0) - 1
+    k = int(new[-1]) + 1
+    return torch.where(keep[label], new[label], k), k
 
 
 def _fit_planes(label: Tensor, nc: int, w: Tensor, c: Tensor, n: Tensor) -> tuple[Tensor, Tensor]:
