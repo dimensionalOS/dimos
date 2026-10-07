@@ -5024,7 +5024,7 @@
   "info": {
     "description": "The dimos gateway's HTTP API: blueprints, global config, runs and their logs, events, Dimensional cloud uploads,\ndiscovery (blueprints, modules, message types), docs, extras and jobs.\n\ndimOS Desktop starts the gateway (`python -m dimos.gateway`, on a unix socket) and forwards `/dimos/...` to it unchanged.\nEvery answer is JSON unless the operation says otherwise; every error is `{\"error\": \"<message>\"}` (ErrorResponse).\nState is HTTP; changes are events, published on zenoh at `<ns>/dimos/events/<type>` (the `events` tag).\n\nExtensions: `x-family: dimos` on every operation; `x-agent: true` marks what Desktop's agent finds through\nsearch_endpoints; `x-mcp-tool` names an MCP tool that does the same; `x-zenoh-key` on an event schema is its key.\n",
     "title": "dimos gateway",
-    "version": "1.11.0"
+    "version": "1.12.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -6407,6 +6407,74 @@
           "discovery"
         ],
         "x-agent": true,
+        "x-family": "dimos"
+      }
+    },
+    "/dimos/msgs.js": {
+      "get": {
+        "description": "An ES module (no build step): msgs.ts bundled to JS. Import it from a page: `import { decodeMessage, geometry_msgs } from \"../../dimos/msgs.js\"`. It exports decode(bytes) (by the frame's fingerprint), decodeChannel(channelOrKey, bytes) (the `#<pkg>.<Type>` of an LCM channel or the last segment of a zenoh key `dimos/<topic>/<pkg>.<Type>` wins over the fingerprint), decodeMessage(message) for a zenoh-gateway client Message ({key, bytes}), getTypeNames(), getMissingTypes() (dimos messages with no LCM schema), register(name, fingerprint, decode, encode?) for those or an app's own, and a namespace per package: geometry_msgs.Twist.decode(bytes), .encode(value), .zenohKey(topic), .lcmChannel(topic). Generated from dimos/msgs/ by `python -m dimos.gateway.msgs --write`. Answered with an ETag (the content's sha256) and `Cache-Control: no-cache`: If-None-Match with the current one answers 304. No side effects.",
+        "operationId": "get_dimos_msgs.js",
+        "responses": {
+          "200": {
+            "content": {
+              "text/javascript": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "the JS module"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "No such thing (the message names it)"
+          }
+        },
+        "summary": "Every dimos message's LCM decoder and encoder, as a plain JS module for pages",
+        "tags": [
+          "discovery"
+        ],
+        "x-agent": false,
+        "x-family": "dimos"
+      }
+    },
+    "/dimos/msgs.ts": {
+      "get": {
+        "description": "The TypeScript source of GET /dimos/msgs.js, for Deno and TypeScript (an interface per message, `geometry_msgs.PoseStamped` both a type and its codec). 404 where dimos is installed from a wheel (only the .js ships). Import it from a page: `import { decodeMessage, geometry_msgs } from \"../../dimos/msgs.js\"`. It exports decode(bytes) (by the frame's fingerprint), decodeChannel(channelOrKey, bytes) (the `#<pkg>.<Type>` of an LCM channel or the last segment of a zenoh key `dimos/<topic>/<pkg>.<Type>` wins over the fingerprint), decodeMessage(message) for a zenoh-gateway client Message ({key, bytes}), getTypeNames(), getMissingTypes() (dimos messages with no LCM schema), register(name, fingerprint, decode, encode?) for those or an app's own, and a namespace per package: geometry_msgs.Twist.decode(bytes), .encode(value), .zenohKey(topic), .lcmChannel(topic). Generated from dimos/msgs/ by `python -m dimos.gateway.msgs --write`. Answered with an ETag (the content's sha256) and `Cache-Control: no-cache`: If-None-Match with the current one answers 304. No side effects.",
+        "operationId": "get_dimos_msgs.ts",
+        "responses": {
+          "200": {
+            "content": {
+              "application/typescript": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "the TypeScript module"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "No such thing (the message names it)"
+          }
+        },
+        "summary": "Every dimos message's LCM decoder and encoder, as TypeScript with each message's type",
+        "tags": [
+          "discovery"
+        ],
+        "x-agent": false,
         "x-family": "dimos"
       }
     },
