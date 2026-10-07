@@ -384,6 +384,7 @@ jobs:
           sudo apt-get install -y portaudio19-dev
       - name: Install dependencies
         run: uv sync --group tests --frozen
+      # Needs Python and Rust: `dimos bake` is Python that writes a Rust program and compiles it, and the tests jobs have no Rust.
       - name: Bake e2e tests
         run: uv run pytest -m bake_e2e dimos/cli/bake/test_bake_e2e.py --no-cov
 
