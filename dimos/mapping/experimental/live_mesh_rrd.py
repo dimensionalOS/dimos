@@ -16,6 +16,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+import itertools
+
 import numpy as np
 import typer
 
@@ -27,6 +30,7 @@ from dimos.memory.tf import StreamTF
 from dimos.memory.transform import FnTransformer
 from dimos.memory.type.observation import Observation
 from dimos.memory.utils.progress import progress
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.utils.data import get_data
 
@@ -54,8 +58,11 @@ def main(
     ),
     alpha: float = typer.Option(1.0, "--alpha", help="mesh opacity, 0 to 1"),
     show_lidar: bool = typer.Option(False, "--lidar", help="also log every lidar scan"),
-    z_min: float = typer.Option(-2.0, "--z-min", help="turbo colormap bottom"),
-    z_max: float = typer.Option(4.0, "--z-max", help="turbo colormap top"),
+    camera_stream: str = typer.Option(
+        "color_image", "--camera-stream", help="shown beside the 3D view when present"
+    ),
+    z_min: float = typer.Option(-1.0, "--z-min", help="turbo colormap bottom"),
+    z_max: float = typer.Option(6.0, "--z-max", help="turbo colormap top"),
 ) -> None:
     import matplotlib
     import rerun as rr
@@ -105,12 +112,37 @@ def main(
         lidar = (
             store.stream(lidar_stream, PointCloud2).order_by("ts").range_time(from_time, to_time)
         )
+        camera: Iterator[Observation[Image]] = iter(())
+        if camera_stream in store.list_streams():
+            import rerun.blueprint as rrb
+
+            camera = iter(
+                store.stream(camera_stream, Image).order_by("ts").range_time(from_time, to_time)
+            )
+            rr.send_blueprint(
+                rrb.Horizontal(
+                    rrb.Spatial3DView(origin="world"), rrb.Spatial2DView(origin="camera")
+                )
+            )
+        pending: list[Observation[Image]] = []
+
+        def log_camera(obs: Observation[PointCloud2]) -> None:
+            # images up to this scan's time, so both streams stay in step
+            for img in itertools.chain(pending, camera):
+                if img.ts > obs.ts:
+                    pending[:] = [img]
+                    return
+                rr.set_time("time", timestamp=img.ts)
+                rr.log("camera/image", img.data.to_rerun())
+            pending.clear()
+
         global_map: FnTransformer[PointCloud2, PointCloud2] = FnTransformer(
             lambda o: o.derive(data=PointCloud2.from_numpy(ray.mapper.global_map()))
         )
         with progress(lidar.count(), "meshing") as bar:
             meshes = (
                 lidar.tap(bar)
+                .tap(log_camera)
                 .transform(pose_from_tf(tf, world_frame))
                 .tap(log_odom)
                 .transform(ray)
@@ -130,6 +162,8 @@ def main(
                         rr.Mesh3D.from_fields(vertex_colors=turbo[idx], albedo_factor=albedo),
                         static=static,
                     )
+        # a half-read cursor must not outlive the store
+        getattr(camera, "close", lambda: None)()
     if out is not None:
         print(f"-> {out}")
 
