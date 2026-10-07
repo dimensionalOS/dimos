@@ -29,6 +29,8 @@ import tempfile
 import time
 from typing import Any
 
+from filelock import FileLock
+
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.utils.logging_config import setup_logger
 
@@ -70,9 +72,8 @@ def get_project_root() -> Path:
         data_dir = _get_user_data_dir()
         data_dir.mkdir(parents=True, exist_ok=True)
         # Test if writable
-        test_file = data_dir / ".write_test"
-        test_file.touch()
-        test_file.unlink()
+        with tempfile.TemporaryFile(dir=data_dir):
+            pass
         logger.info(f"Using local user data directory at '{data_dir}'")
     except (OSError, PermissionError):
         # Fall back to temp dir if data dir not writable
@@ -82,32 +83,33 @@ def get_project_root() -> Path:
 
     repo_dir = data_dir / "repo"
 
-    # Clone if not already cloned
-    if not (repo_dir / ".git").exists():
-        try:
-            env = os.environ.copy()
-            env["GIT_LFS_SKIP_SMUDGE"] = "1"
-            subprocess.run(
-                [
-                    "git",
-                    "clone",
-                    "--depth",
-                    "1",
-                    "--branch",
-                    "main",
-                    "https://github.com/dimensionalOS/dimos.git",
-                    str(repo_dir),
-                ],
-                check=True,
-                capture_output=True,
-                text=True,
-                env=env,
-            )
-        except subprocess.CalledProcessError as e:
-            raise RuntimeError(
-                f"Failed to clone dimos repository: {e.stderr}\n"
-                f"Make sure you can access https://github.com/dimensionalOS/dimos.git"
-            )
+    with FileLock(data_dir / "repo.lock"):
+        # Clone if not already cloned
+        if not (repo_dir / ".git").exists():
+            try:
+                env = os.environ.copy()
+                env["GIT_LFS_SKIP_SMUDGE"] = "1"
+                subprocess.run(
+                    [
+                        "git",
+                        "clone",
+                        "--depth",
+                        "1",
+                        "--branch",
+                        "main",
+                        "https://github.com/dimensionalOS/dimos.git",
+                        str(repo_dir),
+                    ],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                )
+            except subprocess.CalledProcessError as e:
+                raise RuntimeError(
+                    f"Failed to clone dimos repository: {e.stderr}\n"
+                    f"Make sure you can access https://github.com/dimensionalOS/dimos.git"
+                )
 
     return repo_dir
 

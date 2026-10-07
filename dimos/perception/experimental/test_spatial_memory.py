@@ -19,10 +19,11 @@ import time
 
 import numpy as np
 import pytest
-from reactivex import operators as ops
+from reactivex import of, operators as ops
 from reactivex.scheduler import ThreadPoolScheduler
 
 from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.perception.experimental.spatial_perception import SpatialMemory
 from dimos.stream.video_provider import VideoProvider
 
@@ -42,7 +43,6 @@ class TestSpatialMemory:
         # Create a single SpatialMemory instance to be reused across all tests
         memory = SpatialMemory(
             collection_name="test_collection",
-            embedding_model="clip",
             new_memory=True,
             db_path=os.path.join(temp_dir, "chroma_db"),
             visual_memory_path=os.path.join(temp_dir, "visual_memory.pkl"),
@@ -58,7 +58,6 @@ class TestSpatialMemory:
         """Test SpatialMemory initializes correctly with CLIP model."""
         # Use the shared spatial_memory fixture
         assert spatial_memory is not None
-        assert spatial_memory.embedding_model == "clip"
         assert spatial_memory.embedding_provider is not None
 
     def test_image_embedding(self, spatial_memory) -> None:
@@ -74,7 +73,7 @@ class TestSpatialMemory:
         # Check embedding shape and characteristics
         assert embedding is not None
         assert isinstance(embedding, np.ndarray)
-        assert embedding.shape[0] == spatial_memory.embedding_dimensions
+        assert embedding.shape[0] == 512
 
         # Check that embedding is normalized (unit vector)
         assert np.isclose(np.linalg.norm(embedding), 1.0, atol=1e-5)
@@ -83,7 +82,7 @@ class TestSpatialMemory:
         text_embedding = spatial_memory.embedding_provider.get_text_embedding("a blue square")
         assert text_embedding is not None
         assert isinstance(text_embedding, np.ndarray)
-        assert text_embedding.shape[0] == spatial_memory.embedding_dimensions
+        assert text_embedding.shape[0] == 512
         assert np.isclose(np.linalg.norm(text_embedding), 1.0, atol=1e-5)
 
     def test_spatial_memory_processing(self, spatial_memory, temp_dir) -> None:
@@ -201,3 +200,32 @@ class TestSpatialMemory:
         finally:
             video_provider.dispose_all()
             test_scheduler.executor.shutdown(wait=True)
+
+    def test_processing_skips_failed_embedding(self, spatial_memory, monkeypatch) -> None:
+        """A failed embedding must not end the stream: later frames are still stored."""
+        real_get_embedding = spatial_memory.embedding_provider.get_embedding
+        calls = 0
+
+        def flaky_get_embedding(image):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise RuntimeError("inference failed")
+            return real_get_embedding(image)
+
+        monkeypatch.setattr(spatial_memory.embedding_provider, "get_embedding", flaky_get_embedding)
+        frame = np.zeros((224, 224, 3), dtype=np.uint8)
+        stored_before = spatial_memory.stored_frame_count
+        results = []
+        errors = []
+
+        spatial_memory.process_stream(
+            of(
+                {"frame": frame, "position": Vector3(1000, 0, 0), "rotation": Vector3()},
+                {"frame": frame, "position": Vector3(1001, 0, 0), "rotation": Vector3()},
+            )
+        ).subscribe(on_next=results.append, on_error=errors.append)
+
+        assert errors == []
+        assert [r["position"] for r in results] == [(1001, 0, 0)]
+        assert spatial_memory.stored_frame_count == stored_before + 1

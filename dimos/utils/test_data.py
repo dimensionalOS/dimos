@@ -19,10 +19,12 @@ import os
 from pathlib import Path
 import subprocess
 import tarfile
+from threading import Barrier
 import time
 from typing import Any
 from unittest.mock import call
 
+from filelock import FileLock, Timeout
 from pydantic import TypeAdapter
 import pytest
 from pytest_mock import MockerFixture
@@ -614,3 +616,25 @@ def test_get_data_concurrent_extraction(tmp_path: Path, monkeypatch: pytest.Monk
 
     assert counts == [200] * 8
     assert len(pulls) == 1
+
+
+def test_project_root_serializes_concurrent_clone(tmp_path, mocker):
+    data_dir = tmp_path / "data"
+    barrier = Barrier(4)
+    mocker.patch.object(data, "DIMOS_PROJECT_ROOT", tmp_path / "installed")
+
+    def user_data_dir():
+        barrier.wait(timeout=5)
+        return data_dir
+
+    def clone(*args, **kwargs):
+        with pytest.raises(Timeout), FileLock(data_dir / "repo.lock", timeout=0):
+            pass
+        (data_dir / "repo" / ".git").mkdir(parents=True)
+
+    mocker.patch.object(data, "_get_user_data_dir", side_effect=user_data_dir)
+    run = mocker.patch.object(data.subprocess, "run", side_effect=clone)
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = list(pool.map(lambda _: data.get_project_root.__wrapped__(), range(4)))
+    assert results == [data_dir / "repo"] * 4
+    run.assert_called_once()
