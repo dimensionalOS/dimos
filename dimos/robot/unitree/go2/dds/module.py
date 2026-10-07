@@ -16,8 +16,7 @@
 
 The rust binary (``rust/``) terminates ``cmd_vel`` as sport ``Move`` and ``command`` verbs
 as sport requests, and streams the robot's own odometry (``odom -> base_link``, with the
-tf edge), the mount tree, the head L1 cloud, the front camera and its intrinsics. Same
-profile as :class:`GO2Zenoh`, so a blueprint written against one runs against the other.
+tf edge), the mount tree, the head L1 cloud, the front camera and its intrinsics.
 """
 
 from __future__ import annotations

@@ -150,8 +150,15 @@ class LidarWindowRelocalization(CloudRelocalization):
         )
 
 
+class LocalMapConfig(LidarConfig):
+    # The carved map around the robot: under this it is too small a patch to match.
+    min_local_points: int = 20_000
+
+
 class LocalMapRelocalization(CloudRelocalization):
     """Matches the ray-tracing mapper's local map, a window in space, already carved."""
+
+    config: LocalMapConfig
 
     local_map: In[PointCloud2]
 
