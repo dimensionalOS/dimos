@@ -21,9 +21,14 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from dimos.core.core import rpc
+from dimos.core.module import ModuleConfig
+from dimos.core.stream import In, Out
+from dimos.memory.module import StreamModule
 from dimos.memory.transform import Transformer
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.shape_msgs.TriangleMesh import TriangleMesh
+from dimos.visualization.rerun.bridge import RerunEntry, keyed_by_seq
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -31,7 +36,9 @@ if TYPE_CHECKING:
     import torch
 
     from dimos.mapping.experimental.simplify import Simplifier
+    from dimos.memory.stream import Stream
     from dimos.memory.type.observation import Observation
+    from dimos.visualization.rerun.bridge import RerunMulti
 
 C = 32  # chunk edge, voxels
 Key = tuple[int, int, int]
@@ -182,16 +189,19 @@ class Mesh(Transformer[PointCloud2, TriangleMesh]):
     def __init__(
         self,
         *,
-        voxel_size: float = 0.08,
+        voxel_size: float = 0.05,
         # iso on the [1,2,1]/4 blurred occupancy, where a 1-voxel wall peaks at 0.5
         iso: float = 0.2,
         # run in order over the changed chunks, see simplify.py
         simplify: Sequence[Simplifier] = (),
+        # drop points above this height, to see in under a ceiling
+        max_z: float | None = None,
         device: str = "cuda",
     ) -> None:
         self.voxel_size = voxel_size
         self.iso = iso
         self.simplify = simplify
+        self.max_z = max_z
         self.device = device
         self._mesher: OccupancyMesher | None = None
 
@@ -201,5 +211,72 @@ class Mesh(Transformer[PointCloud2, TriangleMesh]):
         if self._mesher is None:
             self._mesher = OccupancyMesher(self.voxel_size, self.iso, self.device, self.simplify)
         for obs in upstream:
-            for key, v, n, f in self._mesher.mesh(obs.data.points_f32()):
+            points = obs.data.points_f32()
+            if self.max_z is not None:
+                points = points[points[:, 2] < self.max_z]
+            for key, v, n, f in self._mesher.mesh(points):
                 yield obs.derive(data=TriangleMesh(v, f, n, key, obs.ts))
+
+
+class MeshModuleConfig(ModuleConfig):
+    voxel_size: float = 0.05
+    iso: float = 0.2
+    # simplifiers in order, see simplify.parse_chain; empty keeps the raw mesh
+    chain: str = "planes,collapse"
+    max_z: float | None = None
+    device: str = "cuda"
+
+
+class MeshModule(StreamModule[PointCloud2, TriangleMesh]):
+    """Meshes the latest ``global_map``; stale maps are dropped while it works."""
+
+    config: MeshModuleConfig
+
+    global_map: In[PointCloud2]
+    mesh: Out[TriangleMesh]
+
+    def pipeline(self, stream: Stream[PointCloud2]) -> Stream[TriangleMesh]:
+        from dimos.mapping.experimental.simplify import parse_chain
+
+        cfg = self.config
+        return stream.transform(
+            Mesh(
+                voxel_size=cfg.voxel_size,
+                iso=cfg.iso,
+                simplify=parse_chain(cfg.chain),
+                max_z=cfg.max_z,
+                device=cfg.device,
+            )
+        )
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+
+    @rpc
+    def stop(self) -> None:
+        super().stop()
+
+
+MESH_ENTITY = "world/mesh"
+
+
+@keyed_by_seq
+def render_mesh_chunk(msg: TriangleMesh, height_range: tuple[float, float]) -> RerunMulti:
+    """Each chunk on its own static entity, turbo by height; an emptied chunk clears."""
+    import matplotlib
+    import rerun as rr
+
+    path = f"{MESH_ENTITY}/{msg.key[0]}_{msg.key[1]}_{msg.key[2]}"
+    if len(msg.faces) == 0:
+        return [RerunEntry(path, msg.to_rerun(), static=True)]
+    lo, hi = height_range
+    t = np.clip((msg.vertices[:, 2] - lo) / (hi - lo), 0, 1)
+    colors = (matplotlib.colormaps["turbo"](t)[:, :3] * 255).astype(np.uint8)
+    mesh = rr.Mesh3D(
+        vertex_positions=msg.vertices,
+        vertex_normals=msg.normals,
+        triangle_indices=msg.faces,
+        vertex_colors=colors,
+    )
+    return [RerunEntry(path, mesh, static=True)]

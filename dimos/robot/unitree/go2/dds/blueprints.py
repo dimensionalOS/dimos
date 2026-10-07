@@ -23,6 +23,7 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
+from dimos.mapping.experimental.mesh import MESH_ENTITY, MeshModule, render_mesh_chunk
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.mapping.ray_tracing.viz import MAP_REGIONS_ENTITY, render_map_region
 from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPlannerNative
@@ -133,7 +134,7 @@ def _image_to_camera(image: Any) -> Any:
     return [(CAMERA_ENTITY, image.to_rerun())]
 
 
-def _rerun_blueprint() -> Any:
+def _rerun_blueprint(hidden: tuple[str, ...] = ()) -> Any:
     """Split layout: camera feed + 3D world, as the WebRTC go2 blueprint has."""
     import rerun as rr
     import rerun.blueprint as rrb
@@ -153,6 +154,7 @@ def _rerun_blueprint() -> Any:
                     "world/lidar": rrb.EntityBehavior(visible=False),
                     "world/nodes": rrb.EntityBehavior(visible=False),
                     "world/node_edges": rrb.EntityBehavior(visible=False),
+                    **{path: rrb.EntityBehavior(visible=False) for path in hidden},
                 },
             ),
             column_shares=[1, 2],
@@ -166,10 +168,12 @@ def _render_map(msg: Any) -> Any:
     return msg.to_rerun(voxel_size=0.01)
 
 
-def _rerun_config(visual_override: dict[str, Any] | None = None) -> dict[str, Any]:
+def _rerun_config(
+    visual_override: dict[str, Any] | None = None, hidden: tuple[str, ...] = ()
+) -> dict[str, Any]:
     """The bridge's own view, plus whatever the layer above it adds."""
     return {
-        "blueprint": _rerun_blueprint,
+        "blueprint": partial(_rerun_blueprint, hidden),
         "tf_axes": 0.5,
         # The robot box hangs off base_link on its own entity: a static transform
         # under world/tf would override the live one.
@@ -199,8 +203,13 @@ MAP_CEILING_M = 1.5
 # The storey the surface_map shows, in odom: the floor sits ~0.5m below the start pose.
 SURFACE_Z_BAND = (-0.5, MAP_CEILING_M)
 
-go2_dds_nav_viewer = autoconnect(
-    vis_module(
+
+def _nav_viewer(
+    extra_topics: tuple[str, ...] = (),
+    visual_override: dict[str, Any] | None = None,
+    hidden: tuple[str, ...] = (),
+) -> Any:
+    return vis_module(
         viewer_backend=global_config.viewer,
         rerun_config={
             **_rerun_config(
@@ -218,7 +227,9 @@ go2_dds_nav_viewer = autoconnect(
                         clearance_clamp_m=1.0,
                         z_band=SURFACE_Z_BAND,
                     ),
-                }
+                    **(visual_override or {}),
+                },
+                hidden,
             ),
             "topics": [
                 "tf",
@@ -236,18 +247,33 @@ go2_dds_nav_viewer = autoconnect(
                 "video",
                 "image",
                 "camera_info",
+                *extra_topics,
             ],
         },
-    ),
-).global_config(
-    transport="zenoh",
+    )
+
+
+_viewer_config = {
+    "transport": "zenoh",
     # a client: the router forwards to clients only, never between peers
-    zenoh_mode="client",
-    zenoh_connect=GO2_ROUTER,
+    "zenoh_mode": "client",
+    "zenoh_connect": GO2_ROUTER,
     # the router appears well after the robot's dimos run, keep dialing until it does
-    zenoh_connect_timeout=120.0,
+    "zenoh_connect_timeout": 120.0,
     # the robot's stack owns the bus-wide `Coordinator` name; this one only watches
-    serve_coordinator_rpc=False,
-    n_workers=3,
-    robot_model="unitree_go2",
-)
+    "serve_coordinator_rpc": False,
+    "robot_model": "unitree_go2",
+}
+
+go2_dds_nav_viewer = autoconnect(_nav_viewer()).global_config(n_workers=3, **_viewer_config)
+
+# The viewer meshing the robot's global_map on this machine's GPU; the mesh stands in
+# for the region point cloud, which stays tickable.
+go2_dds_nav_viewer_mesh = autoconnect(
+    _nav_viewer(
+        extra_topics=("mesh",),
+        visual_override={MESH_ENTITY: partial(render_mesh_chunk, height_range=HEIGHT_RANGE)},
+        hidden=(MAP_REGIONS_ENTITY,),
+    ),
+    MeshModule.blueprint(voxel_size=voxel_size, max_z=MAP_CEILING_M),
+).global_config(n_workers=4, **_viewer_config)
