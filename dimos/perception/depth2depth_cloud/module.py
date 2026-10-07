@@ -35,7 +35,7 @@ def has_nvidia_gpu() -> bool:
 
 
 class Depth2DepthCloudConfig(NativeModuleConfig):
-    cwd: str | None = "rust"
+    source_dir: str | None = "dimos/perception/depth2depth_cloud/rust"
     executable: str = "result/bin/depth2depth_cloud"
     # "." in a git checkout enters the whole repo, so the flake can read ../../../../native/rust (tracked files only).
     # This builds for the CPU (Metal on a Mac); with an NVIDIA GPU it becomes .#tensorrt (see below).
