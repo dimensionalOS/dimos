@@ -524,7 +524,7 @@ export function openConfig({ name, h, getJson, send, onSaved, onClose }) {
         return groups.map((group) =>
             h(
                 "div",
-                { class: `cfg-group${group.fields[0]?.scope === "module" ? " module" : ""}`, "data-group": group.id },
+                { class: `cfg-group${group.fields[0]?.scope === "module" ? " cfg-module" : ""}`, "data-group": group.id },
                 h(
                     "div",
                     { class: "cfg-gh" },
