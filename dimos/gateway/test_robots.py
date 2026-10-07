@@ -349,7 +349,7 @@ def test_the_real_file_lists_every_robot_dir_blueprint() -> None:
     basic = out["robots"]["go2"]["blueprints"]["unitree-go2-basic"]
     pick = basic["recommended_config"][0]
     assert [c["label"] for c in pick["choices"]] == ["Robot", "Replay", "Simulator"]
-    assert out["robots"]["go2"]["recommended"][0] == "unitree-go2-basic"
+    assert out["robots"]["go2"]["recommended"][0] == "unitree-go2"
     assert [s["key"] for s in basic["recommended_config"]] == [None, "robot_ip", "replay_db"]
     assert basic["recommended_config"][1]["docs"].startswith("https://")
     assert list(doc["types"]) == ["dog", "humanoid", "wheeled", "arm", "drone"]

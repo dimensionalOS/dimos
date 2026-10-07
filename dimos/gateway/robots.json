@@ -28,10 +28,10 @@
         "dimos/robot/unitree/go2"
       ],
       "recommended": [
-        "unitree-go2-basic",
         "unitree-go2",
         "unitree-go2-agentic",
-        "unitree-go2-webrtc-keyboard-teleop"
+        "unitree-go2-basic",
+        "teleop-phone-go2"
       ],
       "defaults": {
         "recommended_config": [
@@ -207,8 +207,7 @@
         },
         "unitree-go2-webrtc-keyboard-teleop": {
           "title": "Go2 keyboard driving",
-          "description": "Drive a Go2 with this computer's keyboard, over WebRTC.",
-          "starter": 4
+          "description": "Drive a Go2 with this computer's keyboard, over WebRTC."
         },
         "unitree-go2-detection": {
           "title": "Go2 with 3D detection",
