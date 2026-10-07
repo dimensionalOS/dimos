@@ -90,7 +90,7 @@ def test_rest_and_home_poses_are_collision_free(module: ManipulationModule) -> N
 
 
 def test_the_table_and_the_bin_are_in_the_world(module: ManipulationModule) -> None:
-    assert {"table", "bin"} <= set(module.get_obstacles())
+    assert {"table", "bin", "camera_post", "overhead_camera"} <= set(module.get_obstacles())
 
 
 def test_fingertips_in_the_bin_or_under_the_table_collide(module: ManipulationModule) -> None:
