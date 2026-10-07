@@ -42,7 +42,9 @@ def main(
     from_time: float | None = typer.Option(None, "--from-time"),
     to_time: float | None = typer.Option(None, "--to-time"),
     simplify: str = typer.Option(
-        "", "--simplify", help="run in order, name[:tol][:knob=x]: e.g. planes,collapse"
+        "planes,collapse",
+        "--simplify",
+        help="run in order, name[:tol][:knob=x]; empty turns it off",
     ),
     tol: float | None = typer.Option(
         None, "--tol", help="error bound for every simplifier, metres"
