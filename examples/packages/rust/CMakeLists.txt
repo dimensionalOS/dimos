@@ -3,12 +3,16 @@
 cmake_minimum_required(VERSION 3.15)
 project(dimos_package_rust LANGUAGES NONE)
 find_program(CARGO cargo REQUIRED)
-set(artifact "${CMAKE_CURRENT_BINARY_DIR}/cargo/release/package_ping")
+set(cargo_target_dir "$ENV{CARGO_TARGET_DIR}")
+if(NOT cargo_target_dir)
+  set(cargo_target_dir "${CMAKE_CURRENT_BINARY_DIR}/cargo")
+endif()
+set(artifact "${cargo_target_dir}/release/package_ping")
 add_custom_command(
   OUTPUT "${artifact}"
   COMMAND "${CARGO}" build --release --locked
           --manifest-path "${CMAKE_CURRENT_SOURCE_DIR}/native/Cargo.toml"
-          --target-dir "${CMAKE_CURRENT_BINARY_DIR}/cargo"
+          --target-dir "${cargo_target_dir}"
   DEPENDS native/Cargo.toml native/Cargo.lock native/src/main.rs
   VERBATIM
 )
