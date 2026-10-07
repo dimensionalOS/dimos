@@ -182,7 +182,7 @@ DUAL_OPENYAM_RECORD_TOPICS = ",".join(
         *(
             f"{side}_wrist_{stream}"
             for side in DUAL_OPENYAM_SIDES
-            for stream in ("color_image", "depth_image", "camera_info", "tf")
+            for stream in ("color_image", "camera_info", "tf")
         ),
     ]
 )
@@ -367,12 +367,16 @@ def dual_openyam_wrist_camera(side: str) -> Blueprint:
         raise ValueError(f"side must be 'left' or 'right', got {side!r}")
     name = f"{side}_wrist_camera"
     # 640x480 at 30 fps is what the OpenArm ACT datasets were collected at.
+    # Colour only: all three D405s share USB 2 hubs, and with depth on the
+    # right wrist dropped one frame in eight (run of 2026-10-07).
     camera = RealSenseCamera.blueprint(
         instance_name=name,
         frame_id_prefix=f"{side}_wrist",
         width=640,
         height=480,
         fps=30,
+        enable_depth=False,
+        align_depth_to_color=False,
         enable_pointcloud=False,
         serial_number=DUAL_OPENYAM_WRIST_CAMERA_SERIALS[side],
     )
@@ -410,7 +414,9 @@ def dual_openyam_grasp_modules(*, graspgen: bool) -> tuple[Blueprint, ...]:
             segmentation_backend="edgetam",
             detect_on_request=True,
             distance_threshold=0.08,
-            min_detections_for_permanent=3,
+            # One explicit scan is the observation. Only permanent objects reach
+            # detections_3d, the planner's obstacles and the viewer's boxes.
+            min_detections_for_permanent=1,
             max_distance=1.5,
             use_aabb=True,
             max_obstacle_width=0.06,

@@ -49,20 +49,22 @@ RIGHT_TCP_BELOW_TABLE = [0.0] * 6 + [-1.2, 0.0, 0.0, -1.6, 0.0, 0.0]
 RIGHT_TCP_FREE = [0.0] * 6 + [-1.2, 1.4, 0.5, 0.98, 0.0, 0.0]
 
 
-@pytest.fixture
-def module() -> Iterator[ManipulationModule]:
+@pytest.fixture(params=["roboplan", "drake"])
+def module(request: pytest.FixtureRequest) -> Iterator[ManipulationModule]:
+    """The blueprint runs RoboPlan; Drake is the second opinion."""
     coordinator = MagicMock(spec=ControlCoordinator)
     coordinator.get_joint_positions.return_value = {}
     coordinator.task_invoke.return_value = TrajectoryStatus(state=TrajectoryState.COMPLETED)
+    planner = {"drake": RRTConnectPlannerConfig()}
     mod = ManipulationModule(
         model=dual_openyam_grasp_model_config(),
         planning_timeout=15.0,
-        world_backend="drake",
-        planner=RRTConnectPlannerConfig(),
+        world_backend=request.param,
         kinematics=DUAL_OPENYAM_GRASP_PINK,
         visualization={"backend": "none"},
         static_boxes=DUAL_OPENYAM_STATIC_BOXES,
         world_frame="world",
+        **({"planner": planner[request.param]} if request.param in planner else {}),
     )
     mod._control_coordinator = coordinator
     mod.coordinator_joint_state = None  # type: ignore[assignment]

@@ -130,9 +130,7 @@ def test_every_run_records_the_policy_training_streams() -> None:
         "depth_image",
         "camera_info",
         "left_wrist_color_image",
-        "left_wrist_depth_image",
         "right_wrist_color_image",
-        "right_wrist_depth_image",
         "tf",
     ):
         assert required in recorded, required
