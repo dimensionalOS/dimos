@@ -16,7 +16,6 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from datetime import datetime
-import enum
 import inspect
 import os
 from pathlib import Path
@@ -35,6 +34,7 @@ from dimos.core.stream import In
 from dimos.memory.store.null import NullStore
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.stream import Stream
+from dimos.memory.type.recording import OnExisting
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.data import backup_file
 from dimos.utils.logging_config import setup_logger
@@ -206,13 +206,6 @@ class MemoryModule(Module):
         )
         self._store.start()
         return self._store
-
-
-class OnExisting(str, enum.Enum):
-    OVERWRITE = "overwrite"
-    ERROR = "error"
-    BACKUP = "backup"
-    APPEND = "append"
 
 
 class RecorderConfig(MemoryModuleConfig):

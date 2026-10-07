@@ -99,6 +99,7 @@ classifiers = [
 ]
 
 dependencies = [
+    "matplotlib>=3.7.1", # Rerun initializes point-cloud colormaps for all streams.
     # Transport Protocols
     "dimos-lcm>=0.1.4",
     "eclipse-zenoh>=1.10.1,<2.0",
@@ -292,7 +293,6 @@ planning = [
     "pycollada",
     "viser[urdf]>=1.0.29",
     "yourdfpy>=0.0.60",
-    "matplotlib>=3.7.1",
     "pyyaml>=6.0",
 ]
 
