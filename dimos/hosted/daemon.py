@@ -16,7 +16,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator, Sequence
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
+from importlib.metadata import version as package_version
 import multiprocessing
 from multiprocessing.connection import Connection
 from multiprocessing.process import BaseProcess
@@ -24,11 +27,12 @@ import os
 from pathlib import Path
 import signal
 import socket
+import subprocess
 import threading
-from typing import Literal
+from typing import TYPE_CHECKING, Any, Literal
 import uuid
 
-from dimos.constants import STATE_DIR
+from dimos.constants import DIMOS_PROJECT_ROOT, STATE_DIR
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.coordination.process_lifecycle import DIMOS_RUN_ID_ENV, kill_run_processes
 from dimos.hosted.fragment import (
@@ -39,6 +43,9 @@ from dimos.hosted.fragment import (
 )
 from dimos.utils.logging_config import set_run_log_dir
 
+if TYPE_CHECKING:
+    from dimos.protocol.rpc.zenohrpc import ZenohRPC
+
 HostState = Literal["available", "starting", "running", "stopping", "failed"]
 
 HOST_PROTOCOL_VERSION = 2
@@ -47,6 +54,21 @@ HOST_CONTROL_RPC_NAME = "hosts/{host_id}"
 DEFAULT_STARTUP_TIMEOUT = 60.0
 DEFAULT_STOP_TIMEOUT = 5.0
 DEFAULT_LOG_ROOT = STATE_DIR / "hosted" / "runs"
+# The daemon is its machine's zenoh router, on zenoh's own port.
+DEFAULT_LISTEN = "tcp/0.0.0.0:7447"
+
+
+def code_revision() -> str:
+    """Commit of the dimos checkout this process runs, else the installed package version."""
+    try:
+        return subprocess.run(
+            ["git", "-C", str(DIMOS_PROJECT_ROOT), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return package_version("dimos")
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,8 +114,14 @@ class HostDaemon:
         log_root: Path = DEFAULT_LOG_ROOT,
         startup_timeout: float = DEFAULT_STARTUP_TIMEOUT,
         stop_timeout: float = DEFAULT_STOP_TIMEOUT,
+        listen: Sequence[str] = (DEFAULT_LISTEN,),
+        connect: Sequence[str] = (),
     ) -> None:
+        if not listen:
+            raise ValueError("HostDaemon is a zenoh router and needs a listen endpoint")
         self._host_id = host_id
+        self.listen = list(listen)
+        self.connect = list(connect)
         self._name = name or socket.gethostname()
         self._tags = frozenset(tags)
         self._versions = dict(versions or {})
@@ -104,6 +132,59 @@ class HostDaemon:
         self._epoch = uuid.uuid4().hex
         self._deployments: dict[str, _Deployment] = {}
         self._lock = threading.RLock()
+
+    @property
+    def client_endpoint(self) -> str:
+        """The locator this daemon's fragments dial, its first listener on loopback."""
+        protocol, _, address = self.listen[0].partition("/")
+        host, _, port = address.rpartition(":")
+        if not port or port == "0":
+            raise ValueError(f"Listen endpoint {self.listen[0]!r} needs a fixed port")
+        if host in ("0.0.0.0", "[::]", ""):
+            host = "127.0.0.1"
+        return f"{protocol}/{host}:{port}"
+
+    def fragment_global_overrides(self) -> dict[str, Any]:
+        """Run every fragment's sessions as zenoh clients of this daemon's router."""
+        return {
+            "zenoh_mode": "client",
+            "zenoh_connect": self.client_endpoint,
+            "zenoh_multicast": False,
+            "zenoh_scouting": False,
+        }
+
+    @contextmanager
+    def serve(self) -> Iterator[ZenohRPC]:
+        """Open this machine's zenoh router and serve the Host control plane on it."""
+        from dimos.protocol.rpc.zenohrpc import ZenohRPC
+        from dimos.protocol.service.zenohservice import ZenohSessionPool
+
+        pool = ZenohSessionPool()
+        # connect_timeout 0: zenoh keeps redialing absent routers in the background.
+        rpc = ZenohRPC(
+            session_pool=pool,
+            mode="router",
+            listen=self.listen,
+            connect=self.connect,
+            multicast=False,
+            connect_timeout=0,
+            adminspace=True,
+        )
+        with ExitStack() as cleanup:
+            cleanup.callback(pool.close_all)
+            cleanup.callback(self.shutdown)
+            rpc.start()
+            cleanup.callback(rpc.stop)
+            control_name = HOST_CONTROL_RPC_NAME.format(host_id=self._host_id)
+            rpc.serve_rpc(self.describe, f"{control_name}/describe")  # type: ignore[arg-type]
+            rpc.serve_rpc(self.start, f"{control_name}/start")  # type: ignore[arg-type]
+            rpc.serve_rpc(self.status, f"{control_name}/status")  # type: ignore[arg-type]
+            rpc.serve_rpc(self.stop, f"{control_name}/stop")  # type: ignore[arg-type]
+            token = rpc.session.liveliness().declare_token(
+                HOST_LIVELINESS_KEY.format(host_id=self._host_id)
+            )
+            cleanup.callback(token.undeclare)
+            yield rpc
 
     def describe(self) -> HostDescriptor:
         with self._lock:
@@ -140,7 +221,7 @@ class HostDaemon:
             receive_ready, send_ready = self._process_context.Pipe(duplex=False)
             process = self._process_context.Process(
                 target=_run_fragment,
-                args=(fragment, log_dir, send_ready),
+                args=(fragment, log_dir, send_ready, self.fragment_global_overrides()),
                 daemon=False,
             )
             deployment = _Deployment(fragment, "starting", log_dir, process)
@@ -296,7 +377,12 @@ def _terminate(process: BaseProcess, timeout: float) -> None:
         process.join(timeout=timeout)
 
 
-def _run_fragment(fragment: HostFragment, log_dir: Path, ready: Connection) -> None:
+def _run_fragment(
+    fragment: HostFragment,
+    log_dir: Path,
+    ready: Connection,
+    global_overrides: dict[str, Any] | None = None,
+) -> None:
     os.environ[DIMOS_RUN_ID_ENV] = fragment.run_id
     set_run_log_dir(log_dir)
     stop_requested = threading.Event()
@@ -316,9 +402,12 @@ def _run_fragment(fragment: HostFragment, log_dir: Path, ready: Connection) -> N
             )
             for reference in payload.remote_module_references
         }
+        config = payload.config
+        if global_overrides:
+            config = config.subset_for(payload.blueprint, global_overrides=global_overrides)
         coordinator = ModuleCoordinator.build(
             payload.blueprint,
-            payload.config,
+            config,
             remote_module_refs=remote_module_refs,
         )
         coordinator.start_rpc_service(

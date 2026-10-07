@@ -21,6 +21,7 @@ from contextlib import ExitStack, contextmanager
 from importlib.metadata import version as package_version
 import json
 from pathlib import Path
+import socket
 import threading
 from typing import TYPE_CHECKING, Any, NoReturn
 import uuid
@@ -29,7 +30,6 @@ from filelock import FileLock, Timeout
 import typer
 
 from dimos.constants import STATE_DIR
-from dimos.core.global_config import global_config
 
 if TYPE_CHECKING:
     from dimos.hosted.daemon import HostDescriptor
@@ -38,7 +38,6 @@ if TYPE_CHECKING:
 host_app = typer.Typer(help="Run and inspect DimOS Hosts", no_args_is_help=True)
 HOST_ID_PATH = STATE_DIR / "hosted" / "host_id"
 HOST_LOCK_PATH = STATE_DIR / "hosted" / "host.lock"
-DISCOVERY_KEY = "dimos/hosts/*/live"
 DEFAULT_DISCOVERY_TIMEOUT = 2.0
 
 
@@ -58,63 +57,25 @@ def _load_host_id(path: Path) -> str:
     return host_id
 
 
-def _zenoh_kwargs() -> dict[str, Any]:
-    return {
-        "mode": global_config.zenoh_mode,
-        "connect": [
-            item.strip() for item in global_config.zenoh_connect.split(",") if item.strip()
-        ],
-        "scouting": global_config.zenoh_scouting,
-        "scouting_interface": global_config.zenoh_interface,
-        "multicast": global_config.zenoh_multicast,
-        "gossip": global_config.zenoh_gossip,
-        "connect_timeout": global_config.zenoh_connect_timeout,
-    }
+# Where host commands find the fabric: this machine's daemon, the local router.
+DEFAULT_ROUTER = "tcp/127.0.0.1:7447"
+ConnectOption = typer.Option(
+    [DEFAULT_ROUTER], "--connect", "-c", help="Router to join as a client; repeatable"
+)
 
 
 @contextmanager
-def _host_rpc() -> Iterator[ZenohRPC]:
+def _host_rpc(connect: list[str]) -> Iterator[ZenohRPC]:
     from dimos.protocol.rpc.zenohrpc import ZenohRPC
     from dimos.protocol.service.zenohservice import ZenohSessionPool
 
     pool = ZenohSessionPool()
-    rpc = ZenohRPC(session_pool=pool, **_zenoh_kwargs())
+    rpc = ZenohRPC(session_pool=pool, mode="client", connect=connect, multicast=False)
     with ExitStack() as cleanup:
         cleanup.callback(pool.close_all)
         rpc.start()
         cleanup.callback(rpc.stop)
         yield rpc
-
-
-def _discover_host_ids(rpc: ZenohRPC, timeout: float) -> list[str]:
-    replies = rpc.session.liveliness().get(DISCOVERY_KEY, timeout=timeout)
-    host_ids: set[str] = set()
-    for reply in replies:
-        sample = reply.ok
-        if sample is None:
-            continue
-        key = str(sample.key_expr)
-        parts = key.split("/")
-        if len(parts) == 4 and parts[:2] == ["dimos", "hosts"] and parts[3] == "live":
-            host_ids.add(parts[2])
-    return sorted(host_ids)
-
-
-def _get_descriptor(rpc: ZenohRPC, host_id: str, timeout: float) -> HostDescriptor:
-    from dimos.hosted.daemon import HOST_CONTROL_RPC_NAME, HostDescriptor
-
-    control_name = HOST_CONTROL_RPC_NAME.format(host_id=host_id)
-    result, unsubscribe = rpc.call_sync(
-        f"{control_name}/describe",
-        ([], {}),
-        rpc_timeout=timeout,
-    )
-    try:
-        if not isinstance(result, HostDescriptor):
-            raise TypeError(f"Host {host_id} returned an invalid descriptor")
-        return result
-    finally:
-        unsubscribe()
 
 
 def _descriptor_dict(descriptor: HostDescriptor) -> dict[str, Any]:
@@ -169,15 +130,18 @@ def list_hosts(
         min=0.1,
         help="Discovery and RPC timeout in seconds",
     ),
+    connect: list[str] = ConnectOption,
 ) -> None:
     """List Hosts currently visible through Zenoh liveliness."""
+    from dimos.hosted.client import discover_host_ids, get_host_descriptor
+
     try:
-        with _host_rpc() as rpc:
-            host_ids = _discover_host_ids(rpc, timeout)
+        with _host_rpc(connect) as rpc:
+            host_ids = discover_host_ids(rpc, timeout)
             descriptors: list[HostDescriptor | dict[str, str]] = []
             for discovered_id in host_ids:
                 try:
-                    descriptors.append(_get_descriptor(rpc, discovered_id, timeout))
+                    descriptors.append(get_host_descriptor(rpc, discovered_id, timeout))
                 except Exception as exc:
                     descriptors.append({"host_id": discovered_id, "error": str(exc)})
     except Exception as exc:
@@ -221,17 +185,20 @@ def describe(
         min=0.1,
         help="Discovery and RPC timeout in seconds",
     ),
+    connect: list[str] = ConnectOption,
 ) -> None:
     """Describe one online Host by ID or unique exact name."""
+    from dimos.hosted.client import discover_host_ids, get_host_descriptor
+
     try:
-        with _host_rpc() as rpc:
-            host_ids = _discover_host_ids(rpc, timeout)
+        with _host_rpc(connect) as rpc:
+            host_ids = discover_host_ids(rpc, timeout)
             if host in host_ids:
-                descriptor = _get_descriptor(rpc, host, timeout)
+                descriptor = get_host_descriptor(rpc, host, timeout)
             else:
                 matches = []
                 for discovered_id in host_ids:
-                    item = _get_descriptor(rpc, discovered_id, timeout)
+                    item = get_host_descriptor(rpc, discovered_id, timeout)
                     if item.name == host:
                         matches.append(item)
                 if not matches:
@@ -258,31 +225,21 @@ def describe(
         typer.echo(f"  {name}: {value}")
 
 
-def _zenoh_config_detail() -> str:
-    from dimos.protocol.service.zenohservice import ZenohConfig
-
-    config = ZenohConfig(**_zenoh_kwargs())
-    endpoints = ",".join(config.connect) or "none"
-    return (
-        f"mode={config.mode}, connect={endpoints}, "
-        f"scouting={config.scouting}, multicast={config.multicast}"
-    )
-
-
-def _check_zenoh_connection() -> str:
-    with _host_rpc() as rpc:
-        link_count = len(list(rpc.session.info.links()))
-    return f"session opened ({link_count} link(s))"
-
-
 @host_app.command()
-def doctor() -> None:
-    """Check the local Host identity, Zenoh configuration, connection, and version."""
+def doctor(connect: list[str] = ConnectOption) -> None:
+    """Check the local Host identity, the router connection, and the code revision."""
+    from dimos.hosted.daemon import code_revision
+
+    def check_connection() -> str:
+        with _host_rpc(connect) as rpc:
+            link_count = len(list(rpc.session.info.links()))
+        return f"joined {','.join(connect)} ({link_count} link(s))"
+
     checks: list[tuple[str, Callable[[], str]]] = [
         ("Host ID", lambda: _load_host_id(HOST_ID_PATH)),
-        ("Zenoh config", _zenoh_config_detail),
-        ("Zenoh connection", _check_zenoh_connection),
+        ("Zenoh connection", check_connection),
         ("DimOS version", lambda: package_version("dimos")),
+        ("Code revision", code_revision),
     ]
     failures = 0
     for name, check in checks:
@@ -303,17 +260,16 @@ def doctor() -> None:
 def serve(
     name: str | None = typer.Option(None, "--name", help="Human-readable Host name"),
     tags: list[str] = typer.Option([], "--tag", "-t", help="Placement tag; repeatable"),
+    listen: list[str] = typer.Option(
+        ["tcp/0.0.0.0:7447"], "--listen", "-l", help="Router listen endpoint; repeatable"
+    ),
+    connect: list[str] = typer.Option(
+        [], "--connect", "-c", help="Another Host's router to link to; repeatable"
+    ),
 ) -> None:
-    """Serve one Host over the configured Zenoh fabric."""
-    from dimos.hosted.daemon import (
-        HOST_CONTROL_RPC_NAME,
-        HOST_LIVELINESS_KEY,
-        HOST_PROTOCOL_VERSION,
-        HostDaemon,
-    )
+    """Serve this machine's Host: its zenoh router plus the fragment supervisor."""
+    from dimos.hosted.daemon import HOST_PROTOCOL_VERSION, HostDaemon, code_revision
     from dimos.hosted.fragment import FRAGMENT_SCHEMA_VERSION
-    from dimos.protocol.rpc.zenohrpc import ZenohRPC
-    from dimos.protocol.service.zenohservice import ZenohSessionPool
 
     with ExitStack() as cleanup:
         try:
@@ -332,24 +288,50 @@ def serve(
                 "protocol": HOST_PROTOCOL_VERSION,
                 "fragment_schema": FRAGMENT_SCHEMA_VERSION,
                 "dimos": package_version("dimos"),
+                "application_revision": code_revision(),
             },
+            listen=listen,
+            connect=connect,
         )
-        pool = ZenohSessionPool()
-        rpc = ZenohRPC(session_pool=pool, **_zenoh_kwargs())
-        cleanup.callback(pool.close_all)
-        cleanup.callback(daemon.shutdown)
-        rpc.start()
-        cleanup.callback(rpc.stop)
-        control_name = HOST_CONTROL_RPC_NAME.format(host_id=host_id)
-        rpc.serve_rpc(daemon.describe, f"{control_name}/describe")  # type: ignore[arg-type]
-        rpc.serve_rpc(daemon.start, f"{control_name}/start")  # type: ignore[arg-type]
-        rpc.serve_rpc(daemon.status, f"{control_name}/status")  # type: ignore[arg-type]
-        rpc.serve_rpc(daemon.stop, f"{control_name}/stop")  # type: ignore[arg-type]
-        token = rpc.session.liveliness().declare_token(HOST_LIVELINESS_KEY.format(host_id=host_id))
-        cleanup.callback(token.undeclare)
+        cleanup.enter_context(daemon.serve())
         descriptor = daemon.describe()
-        typer.echo(f"Host {descriptor.name} ({host_id}) is available")
+        typer.echo(
+            f"Host {descriptor.name} ({host_id}) is available, routing on {','.join(listen)}"
+            + (f", linked to {','.join(connect)}" if connect else "")
+        )
         try:
             threading.Event().wait()
         except KeyboardInterrupt:
             pass
+
+
+@host_app.command()
+def deploy(
+    blueprint: str = typer.Argument(..., help="Blueprint name"),
+    local_host: str = typer.Option(
+        socket.gethostname(), "--local-host", help="Host that runs unplaced modules"
+    ),
+    connect: list[str] = ConnectOption,
+    timeout: float = typer.Option(30.0, "--timeout", min=0.1, help="Host discovery timeout"),
+) -> None:
+    """Place a hosted blueprint on live Hosts and run it until Ctrl-C."""
+    from dimos.hosted.deploy import deployed, wait_for_hosts
+    from dimos.robot.get_all_blueprints import get_by_name_or_exit
+
+    app = get_by_name_or_exit(blueprint)
+    named = {p.host for p in app.hosted_placements if isinstance(p.host, str)} | {local_host}
+    try:
+        with _host_rpc(connect) as rpc:
+            descriptors = wait_for_hosts(rpc, named, timeout)
+            with deployed(
+                app, rpc, local_host=local_host, application_name=blueprint, descriptors=descriptors
+            ) as placement:
+                for module, host in sorted(placement.items()):
+                    typer.echo(f"{host:>16}  {module}")
+                typer.echo("Running; Ctrl-C stops every fragment")
+                try:
+                    threading.Event().wait()
+                except KeyboardInterrupt:
+                    pass
+    except (RuntimeError, TimeoutError, ValueError) as exc:
+        _fail(str(exc))
