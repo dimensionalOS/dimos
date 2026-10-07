@@ -73,6 +73,18 @@ impl McapRecordingStore {
 impl RecordingStore for McapRecordingStore {
     fn write_batch(&mut self, observations: &[Observation]) -> Result<()> {
         for observation in observations {
+            let log_time = timestamp_ns(observation.reception_ts).with_context(|| {
+                format!(
+                    "invalid MCAP reception time for stream {:?}",
+                    observation.stream.name
+                )
+            })?;
+            let publish_time = timestamp_ns(observation.source_ts).with_context(|| {
+                format!(
+                    "invalid MCAP source time for stream {:?}",
+                    observation.stream.name
+                )
+            })?;
             let channel_id = self.channels[&observation.stream.name];
             let sequence = self
                 .sequences
@@ -82,8 +94,8 @@ impl RecordingStore for McapRecordingStore {
                 &MessageHeader {
                     channel_id,
                     sequence: *sequence,
-                    log_time: timestamp_ns(observation.reception_ts),
-                    publish_time: timestamp_ns(observation.source_ts),
+                    log_time,
+                    publish_time,
                 },
                 &observation.data,
             )?;
@@ -98,12 +110,116 @@ impl RecordingStore for McapRecordingStore {
     }
 }
 
-fn timestamp_ns(timestamp: f64) -> u64 {
-    if !timestamp.is_finite() || timestamp <= 0.0 {
-        return 0;
-    }
-    Duration::from_secs_f64(timestamp)
+fn timestamp_ns(timestamp: f64) -> Result<u64> {
+    Duration::try_from_secs_f64(timestamp)
+        .context("MCAP time must be finite and nonnegative")?
         .as_nanos()
         .try_into()
-        .unwrap_or(u64::MAX)
+        .context("MCAP time exceeds the unsigned 64-bit nanosecond range")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Codec;
+    use std::sync::Arc;
+    use tempfile::NamedTempFile;
+
+    #[test]
+    fn timestamp_conversion_rejects_unrepresentable_times_without_panicking() {
+        for timestamp in [
+            -12.5,
+            f64::NAN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::MAX,
+            u64::MAX as f64 / 1_000_000_000.0,
+        ] {
+            assert!(timestamp_ns(timestamp).is_err(), "accepted {timestamp}");
+        }
+        assert_eq!(timestamp_ns(0.0).unwrap(), 0);
+        assert_eq!(timestamp_ns(12.5).unwrap(), 12_500_000_000);
+    }
+
+    #[test]
+    fn mcap_rejects_negative_source_time_instead_of_writing_zero() {
+        let file = NamedTempFile::new().unwrap();
+        let stream = Arc::new(StreamConfig {
+            port: "events".into(),
+            name: "events".into(),
+            payload_type: "dimos.msgs.std_msgs.String.String".into(),
+            codec: Codec::Json,
+            timestamp_field: Some("ts".into()),
+            json_schema: None,
+        });
+        let mut store =
+            McapRecordingStore::open(file.path().to_str().unwrap(), &[(*stream).clone()], 1)
+                .unwrap();
+        let observation = Observation {
+            stream,
+            source_ts: -12.5,
+            reception_ts: 100.0,
+            data: br#"{"ts":-12.5}"#.to_vec(),
+        };
+        assert!(store
+            .write_batch(std::slice::from_ref(&observation))
+            .is_err());
+        store.finish().unwrap();
+        let bytes = std::fs::read(file.path()).unwrap();
+        assert_eq!(mcap::MessageStream::new(&bytes).unwrap().count(), 0);
+
+        let sqlite_file = NamedTempFile::new().unwrap();
+        let mut sqlite = super::super::open(
+            &super::super::RecordingStoreConfig::Sqlite {
+                path: sqlite_file.path().to_str().unwrap().into(),
+            },
+            std::slice::from_ref(observation.stream.as_ref()),
+            1,
+        )
+        .unwrap();
+        sqlite.write_batch(&[observation]).unwrap();
+        sqlite.finish().unwrap();
+        let connection = rusqlite::Connection::open(sqlite_file.path()).unwrap();
+        let source_ts: f64 = connection
+            .query_row("SELECT ts FROM events", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(source_ts, -12.5);
+    }
+
+    #[test]
+    fn mcap_preserves_zero_source_time_and_rejects_invalid_reception_time() {
+        let file = NamedTempFile::new().unwrap();
+        let stream = Arc::new(StreamConfig {
+            port: "events".into(),
+            name: "events".into(),
+            payload_type: "dimos.msgs.std_msgs.String.String".into(),
+            codec: Codec::Json,
+            timestamp_field: Some("ts".into()),
+            json_schema: None,
+        });
+        let mut store =
+            McapRecordingStore::open(file.path().to_str().unwrap(), &[(*stream).clone()], 1)
+                .unwrap();
+        let mut observation = Observation {
+            stream,
+            source_ts: 0.0,
+            reception_ts: -1.0,
+            data: br#"{"ts":0}"#.to_vec(),
+        };
+        assert!(store
+            .write_batch(std::slice::from_ref(&observation))
+            .is_err());
+        observation.reception_ts = 12.5;
+        store.write_batch(&[observation]).unwrap();
+        store.finish().unwrap();
+        let bytes = std::fs::read(file.path()).unwrap();
+        let messages = mcap::MessageStream::new(&bytes)
+            .unwrap()
+            .collect::<mcap::McapResult<Vec<_>>>()
+            .unwrap();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].publish_time, 0);
+        assert_eq!(messages[0].log_time, 12_500_000_000);
+        assert_eq!(messages[0].sequence, 0);
+    }
 }

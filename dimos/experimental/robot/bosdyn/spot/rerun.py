@@ -88,7 +88,7 @@ def _camera_entity(origin: str) -> str:
 def _tf_to_rerun(tf_message: TFMessage) -> RerunData:
     """Log tf as usual, and keep a copy for the camera pose lookups."""
     _tf_buffer.receive_tfmessage(tf_message)
-    return tf_message.to_rerun()
+    return list(tf_message.to_rerun())
 
 
 def _camera_info_pinhole(camera_info: CameraInfo, origin: Callable[[str], str]) -> RerunData | None:

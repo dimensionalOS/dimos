@@ -81,6 +81,28 @@ Open `https://dimos-relay.example.com/`. The [cockpit](/docs/web/cockpit.md) ask
 curl -H "Authorization: Bearer <token>" https://dimos-relay.example.com/api/stats
 ```
 
+## Video through Cloudflare
+
+Over the internet the JPEG video path is the slow part: every frame crosses the robot's uplink and the relay at full size. With a Cloudflare Realtime SFU behind the relay, `jpeg.v1` video channels become H.264 WebRTC tracks instead. The robot encodes once, Cloudflare fans the track out from its nearest edge, and the relay only brokers the signaling. Everything else (odom, map, chat, teleop) stays on WebTransport through the relay as before.
+
+1. In the Cloudflare dashboard create a Realtime SFU app (Realtime -> SFU -> Create) and note its app id and secret. Optionally create a TURN key (Realtime -> TURN) for robots and browsers on networks that block UDP.
+2. Write `config/rtc.json` next to `auth.json`, with the same ownership and mode. Leave out the two TURN fields to run with STUN only:
+
+```json
+{
+  "appId": "<app id>",
+  "appSecret": "<app secret>",
+  "turnKeyId": "<turn key id>",
+  "turnToken": "<turn api token>"
+}
+```
+
+3. Add the flag. In the compose file set `command:` to the image's file flags plus `--rtc-file /etc/relay/rtc.json` (the commented example in [`compose.yaml`](/docker/relay/compose.yaml#L14)), or append the flag to the systemd `ExecStart` in [Without Docker](#without-docker). Restart the relay.
+
+`/api/info` now answers `"rtc": true` and the log says `WebRTC video through the Cloudflare Realtime SFU: on`. A robot needs the `webrtc` extra (`uv sync --extra webrtc`, or `pip install 'dimos[webrtc]'`, which brings aiortc). Without it the bridge logs once and keeps sending JPEG. `--rtc false` on the robot keeps JPEG on purpose (a comparison, or a robot without the CPU for H.264). A track channel sends nothing through the relay: `/api/stats` lists the SFU sessions and pulls under `rtc`, and the per-channel counters of `color_image` stay at zero. Cloudflare bills egress past 1 TB a month. The relay's own traffic drops to control messages.
+
+Troubleshooting: `rtc_failed` in the cockpit status bar names the failing Cloudflare call (the relay log has the full line, for example `HTTP 401` for a wrong app secret). The robot log says `WebRTC video failed ... re-offering` while the relay never answers its offer, and again whenever its peer connection to Cloudflare drops (it offers again by itself). With no TURN key both ends must reach Cloudflare over UDP.
+
 ## Without Docker
 
 The same relay under systemd: the pinned Deno, a checkout owned by a service user, the built bundles, and the right to bind 443.
@@ -160,3 +182,4 @@ What a hosted relay is verified with. Repeat it after changes to the relay, the 
 - [ ] The deploy hook by hand: the relay restarts with the installed files, and `sudo certbot renew --dry-run` passes.
 - [ ] `/api/stats`: 401 without the token, 200 with it.
 - [ ] The LAN recipe: the robot registers with `--relay-ca`, Firefox with the pref connects, Chromium without its developer switch loads the page and never connects.
+- [ ] [Video through Cloudflare](#video-through-cloudflare) with `rtc.json` installed: the video panel plays a WebRTC track in Chromium and Firefox (`/api/stats` shows one `rtc.pulls` per viewer, zero `color_image` frames through the relay), and a robot without aiortc stays on JPEG.

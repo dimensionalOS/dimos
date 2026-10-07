@@ -138,6 +138,28 @@ my_robot = ControlCoordinator.blueprint(
 | `execute_trajectory(traj)` | Execute through the sole trajectory task |
 | `cancel_trajectory()` | Cancel the sole trajectory task |
 
+## Operator Hold
+
+`operator_hold` (priority 100) freezes every joint where it is and waits for a
+person. It is not an e-stop: the e-stop cuts motion; the hold keeps position
+(zero velocity for a base). Add it with `operator_hold_task()` from
+`dimos/control/tasks/operator_hold_task/operator_hold_task.py`.
+
+```python
+coordinator.task_invoke("operator_hold", "request", {"route": "manual", "reason": "arm stuck"})
+coordinator.task_invoke("operator_hold", "acknowledge")
+```
+
+`route` is who asked: `manual`, `failsafe` or `agent`. While on, a running
+trajectory is preempted, and a trajectory sent during the hold is accepted
+and then aborted by preemption on the next tick, so the arm stays put.
+Stopping a running policy is the policy's job, not the coordinator's.
+`get_status` answers with an `OperatorHoldStatus` (on, route, reason, start
+time, unheld joints); the task also hands the same status to whatever
+`set_status_publisher()` was given, once a second while on and once more on
+acknowledge. After acknowledge nothing resumes by itself: the next task to
+command a joint takes it.
+
 ## Control Modes
 
 Tasks output commands in one of three modes:

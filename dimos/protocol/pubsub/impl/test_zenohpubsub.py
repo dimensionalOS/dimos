@@ -28,6 +28,7 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.protocol.pubsub.impl.lcmpubsub import Topic as LCMTopic
 from dimos.protocol.pubsub.impl.zenohpubsub import (
+    UNCONFLATED_QUEUE_LEN,
     Topic,
     ZenohPubSubBase,
     ZenohQoS,
@@ -202,6 +203,65 @@ class TestZenohPubSubBase:
         pubsub.subscribe_all(callback)
         retry_until(event, lambda: pubsub.publish(topic, b"wildcard"))
         assert b"wildcard" in received
+
+    def test_subscribe_all_keeps_every_message_of_an_unconflated_channel(
+        self, pubsub, retry_until, wait_until
+    ) -> None:
+        keyed = Topic("dimos/test/unconflated/keyed")
+        plain = Topic("dimos/test/unconflated/plain")
+        probe = Topic("dimos/test/unconflated/probe")
+        got: dict[str, list[bytes]] = {keyed.topic: [], plain.topic: []}
+        live = threading.Event()
+
+        def callback(msg: bytes, t: Topic) -> None:
+            if t.topic == probe.topic:
+                live.set()
+            elif t.topic in got:
+                got[t.topic].append(msg)
+
+        pubsub.subscribe_all(callback, unconflated=("test/unconflated/keyed",))
+        retry_until(live, lambda: pubsub.publish(probe, b"probe"))
+        sent = [bytes([i]) for i in range(30)]
+        for msg in sent:
+            pubsub.publish(keyed, msg)
+            pubsub.publish(plain, msg)
+        wait_until(lambda: len(got[keyed.topic]) == len(sent), timeout=5.0, interval=0.01)
+        wait_until(lambda: got[plain.topic][-1:] == sent[-1:], timeout=5.0, interval=0.01)
+
+        assert got[keyed.topic] == sent
+        assert pubsub.unconflated_dropped == 0
+
+    def test_subscribe_all_sheds_the_oldest_of_a_full_unconflated_queue(
+        self, pubsub, retry_until, wait_until
+    ) -> None:
+        keyed = Topic("dimos/test/shed/keyed")
+        probe = Topic("dimos/test/shed/probe")
+        got: list[bytes] = []
+        blocked = threading.Event()
+        release = threading.Event()
+
+        def callback(msg: bytes, t: Topic) -> None:
+            if t.topic == probe.topic:
+                # Hold the drain here so the keyed queue fills behind it.
+                blocked.set()
+                release.wait(timeout=10.0)
+            elif t.topic == keyed.topic:
+                got.append(msg)
+
+        pubsub.subscribe_all(callback, unconflated=("test/shed/keyed",))
+        retry_until(blocked, lambda: pubsub.publish(probe, b"probe"))
+        overflow = 5
+        sent = [i.to_bytes(2, "big") for i in range(UNCONFLATED_QUEUE_LEN + overflow)]
+        try:
+            for msg in sent:
+                pubsub.publish(keyed, msg)
+            wait_until(lambda: pubsub.unconflated_dropped == overflow, timeout=5.0, interval=0.01)
+        finally:
+            release.set()
+        wait_until(lambda: len(got) == UNCONFLATED_QUEUE_LEN, timeout=5.0, interval=0.01)
+
+        assert got == sent[overflow:]
+        assert pubsub.unconflated_dropped == overflow
 
     def test_subscribe_after_stop_does_not_track(self, pubsub) -> None:
         # Models the declare/stop race: once stopped, a newly declared subscriber
