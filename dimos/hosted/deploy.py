@@ -16,15 +16,16 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager
 import time
+from typing import Any
 import uuid
 
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.hosted.client import HostClient, discover_hosts
-from dimos.hosted.daemon import HostDescriptor, code_revision
+from dimos.hosted.daemon import RUN_LOG_KEY, HostDescriptor, code_revision
 from dimos.hosted.fragment import HostFragment
 from dimos.hosted.fragment_compiler import compile_fragments
 from dimos.protocol.rpc.zenohrpc import ZenohRPC
@@ -78,10 +79,12 @@ def deployed(
     application_name: str,
     descriptors: tuple[HostDescriptor, ...],
     rpc_timeout: float = DEFAULT_RPC_TIMEOUT,
+    on_log: Callable[[str, str], None] | None = None,
 ) -> Iterator[Mapping[str, str]]:
     """Start one fragment per placed Host; yield module -> Host name; stop them on exit.
 
-    Unplaced modules go to ``local_host``, the daemon serving this machine.
+    Unplaced modules go to ``local_host``, the daemon serving this machine. ``on_log``
+    gets (host name, line) for every output line of this run's fragments.
     """
     local = _local_descriptor(descriptors, local_host)
     remote = tuple(d for d in descriptors if d.host_id != local.host_id)
@@ -107,6 +110,17 @@ def deployed(
 
     clients = {d.host_id: HostClient(rpc, d, timeout=rpc_timeout) for d in (local, *remote)}
     started: list[tuple[HostClient, HostFragment]] = []
+    subscriber = None
+    if on_log is not None:
+        log = on_log
+
+        def deliver(sample: Any) -> None:
+            host = str(sample.key_expr).rsplit("/", 1)[1]
+            log(host, sample.payload.to_bytes().decode("utf-8", "replace").rstrip("\n"))
+
+        subscriber = rpc.session.declare_subscriber(
+            RUN_LOG_KEY.format(run_id=run_id, host="*"), deliver
+        )
     try:
         for host_id, fragment in fragments.items():
             status = clients[host_id].start(fragment)
@@ -120,3 +134,5 @@ def deployed(
                 client.stop(fragment)
             except Exception:
                 logger.error("Failed to stop fragment", host=client.descriptor.name, exc_info=True)
+        if subscriber is not None:
+            subscriber.undeclare()

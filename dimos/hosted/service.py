@@ -122,8 +122,10 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-ExecStart={executable} host run
+ExecStart={executable} host start --foreground
 WorkingDirectory={working_directory}
+# The venv's tools (dimos-viewer, rerun) are spawned by name.
+Environment=PATH={Path(executable).parent}:/usr/local/bin:/usr/bin:/bin
 Restart=on-failure
 RestartSec=3
 KillSignal=SIGINT
@@ -141,12 +143,19 @@ def _systemctl(args: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(["systemctl", "--user", *args], capture_output=True, text=True)
 
 
+def unit_current() -> bool:
+    """Whether the installed unit is what ``install`` would write now."""
+    return unit_path().read_text() == render_unit(dimos_executable(), DIMOS_PROJECT_ROOT)
+
+
 def install(run: Run = _systemctl) -> Path:
     path = unit_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(render_unit(dimos_executable(), DIMOS_PROJECT_ROOT))
     run(["daemon-reload"])
     run(["enable", UNIT_NAME])
+    if run(["is-active", UNIT_NAME]).returncode == 0:
+        run(["restart", UNIT_NAME])
     return path
 
 
@@ -182,7 +191,7 @@ def start(run: Run = _systemctl, spawn: Callable[..., Any] = subprocess.Popen) -
         return f"already running (pid {pid})"
     with log_file().open("ab") as log:
         process = spawn(
-            [dimos_executable(), "host", "run"],
+            [dimos_executable(), "host", "start", "--foreground"],
             cwd=DIMOS_PROJECT_ROOT,
             stdin=subprocess.DEVNULL,
             stdout=log,

@@ -181,8 +181,14 @@ def test_cross_host_stream_arrives_and_same_host_stream_stays_local(
     ).global_config(n_workers=1)
 
     descriptors = wait_for_hosts(controller, {"edge", "base"}, timeout=20.0)
+    logs: list[tuple[str, str]] = []
     with deployed(
-        app, controller, local_host="base", application_name="routing", descriptors=descriptors
+        app,
+        controller,
+        local_host="base",
+        application_name="routing",
+        descriptors=descriptors,
+        on_log=lambda host, line: logs.append((host, line)),
     ) as placement:
         assert placement == {"source": "edge", "relay": "edge", "sink": "base"}
 
@@ -207,6 +213,8 @@ def test_cross_host_stream_arrives_and_same_host_stream_stays_local(
         time.sleep(2.0)
         bytes_after, local_after = _received_on(src, dst), _local_bytes(result, 1.0)
 
+    # The edge fragment's worker output reached the controller, tagged with its Host.
+    assert any(host == "edge" and "Deployed module" in line for host, line in logs), logs[:20]
     carried_locally = local_after - local_before
     crossed = bytes_after - bytes_before
     assert carried_locally > 20 * PAYLOAD_BYTES

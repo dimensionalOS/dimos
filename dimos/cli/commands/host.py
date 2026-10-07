@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import ExitStack, contextmanager
 from importlib.metadata import version as package_version
 import json
@@ -291,17 +291,28 @@ def _autodiscover(
 
 
 @host_app.command()
-def run(
+def start(
+    foreground: bool = typer.Option(
+        False, "--foreground", "-f", help="Run the daemon here instead of in the background"
+    ),
     name: str | None = typer.Option(None, "--name", help="Human-readable Host name"),
     tags: list[str] = typer.Option([], "--tag", "-t", help="Placement tag; repeatable"),
     listen: list[str] = typer.Option([], "--listen", "-l", help="Router listen endpoint"),
     connect: list[str] = typer.Option([], "--connect", "-c", help="Router to always link to"),
     autodiscovery: bool | None = typer.Option(None, help="Find and link other Hosts"),
 ) -> None:
-    """Run this machine's Host in the foreground: its zenoh router and fragment supervisor.
+    """Start this machine's Host: its zenoh router and fragment supervisor.
 
-    Unset options come from HOST__<FIELD> in the environment or .env.
+    In the background via the systemd unit if installed, else detached; --foreground runs
+    it here, as the unit does. Unset options come from HOST__<FIELD> in the environment or
+    .env, and apply with --foreground only.
     """
+    if not foreground:
+        from dimos.hosted import service
+
+        typer.echo(service.start())
+        return
+
     from dimos.hosted.daemon import (
         DEFAULT_LISTEN,
         HOST_PROTOCOL_VERSION,
@@ -379,11 +390,29 @@ def run(
                     stop.set()
 
 
-host_app.command("serve", hidden=True)(run)
+HOST_COLOURS = (36, 33, 35, 32, 34, 31)
+
+
+def _log_printer() -> Callable[[str, str], None]:
+    """Print each fragment line behind its Host's name, a colour per Host on a tty."""
+    import sys
+
+    colours: dict[str, int] = {}
+    lock = threading.Lock()
+
+    def emit(host: str, line: str) -> None:
+        tag = f"{host:>12} |"
+        if sys.stdout.isatty():
+            colour = colours.setdefault(host, HOST_COLOURS[len(colours) % len(HOST_COLOURS)])
+            tag = f"\x1b[{colour}m{tag}\x1b[0m"
+        with lock:
+            print(f"{tag} {line}", flush=True)
+
+    return emit
 
 
 @host_app.command()
-def deploy(
+def run(
     blueprint: str = typer.Argument(..., help="Blueprint name"),
     local_host: str | None = typer.Option(
         None, "--local-host", help="Host that runs unplaced modules; default: the local Host"
@@ -391,7 +420,7 @@ def deploy(
     connect: list[str] | None = ConnectOption,
     timeout: float = typer.Option(30.0, "--timeout", min=0.1, help="Host discovery timeout"),
 ) -> None:
-    """Place a hosted blueprint on live Hosts and run it until Ctrl-C."""
+    """Run a hosted blueprint across the live Hosts until Ctrl-C, streaming their logs."""
     from dimos.hosted.deploy import deployed, wait_for_hosts
     from dimos.hosted.service import local_host as running_local_host
     from dimos.robot.get_all_blueprints import get_by_name_or_exit
@@ -408,7 +437,12 @@ def deploy(
             tag_sets = [p.tags for p in app.hosted_placements if p.tags]
             descriptors = wait_for_hosts(rpc, named, timeout, tag_sets)
             with deployed(
-                app, rpc, local_host=local_host, application_name=blueprint, descriptors=descriptors
+                app,
+                rpc,
+                local_host=local_host,
+                application_name=blueprint,
+                descriptors=descriptors,
+                on_log=_log_printer(),
             ) as placement:
                 for module, host in sorted(placement.items()):
                     typer.echo(f"{host:>16}  {module}")
@@ -419,6 +453,9 @@ def deploy(
                     pass
     except (RuntimeError, TimeoutError, ValueError) as exc:
         _fail(str(exc))
+
+
+host_app.command("deploy", hidden=True)(run)
 
 
 @host_app.command()
@@ -438,14 +475,6 @@ def uninstall() -> None:
 
     service.uninstall()
     typer.echo(f"Removed {service.unit_path()}")
-
-
-@host_app.command()
-def start() -> None:
-    """Start the Host: via its systemd unit if installed, else detached in the background."""
-    from dimos.hosted import service
-
-    typer.echo(service.start())
 
 
 @host_app.command()

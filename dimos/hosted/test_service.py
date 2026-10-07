@@ -35,8 +35,9 @@ def _ok(args: list[str]) -> subprocess.CompletedProcess[str]:
 
 def test_unit_runs_host_run_from_the_checkout() -> None:
     unit = service.render_unit("/venv/bin/dimos", Path("/repo"))
-    assert "ExecStart=/venv/bin/dimos host run" in unit
+    assert "ExecStart=/venv/bin/dimos host start --foreground" in unit
     assert "WorkingDirectory=/repo" in unit
+    assert "Environment=PATH=/venv/bin:" in unit
     assert "KillSignal=SIGINT" in unit and "Restart=on-failure" in unit
 
 
@@ -44,7 +45,15 @@ def test_install_writes_reloads_and_enables() -> None:
     calls: list[list[str]] = []
     path = service.install(run=lambda a: (calls.append(a), _ok(a))[1])
     assert path.exists() and service.installed()
-    assert calls == [["daemon-reload"], ["enable", service.UNIT_NAME]]
+    assert calls == [
+        ["daemon-reload"],
+        ["enable", service.UNIT_NAME],
+        ["is-active", service.UNIT_NAME],
+        ["restart", service.UNIT_NAME],
+    ]
+    assert service.unit_current()
+    service.unit_path().write_text("[Service]\nExecStart=/old/dimos host run\n")
+    assert not service.unit_current()
 
 
 def test_installed_unit_drives_systemctl() -> None:
@@ -82,7 +91,7 @@ def test_without_unit_start_spawns_once_and_stop_signals(monkeypatch: pytest.Mon
     monkeypatch.setattr(service.os, "kill", kill)
     assert service.start(spawn=spawn).startswith("started (pid 12345)")
     assert service.start(spawn=spawn) == "already running (pid 12345)"
-    assert spawned == [[service.dimos_executable(), "host", "run"]]
+    assert spawned == [[service.dimos_executable(), "host", "start", "--foreground"]]
     assert service.status() == "running (pid 12345)"
     assert service.stop() == "stopped (pid 12345)"
     assert service.status() == "not running"

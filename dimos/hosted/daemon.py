@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
+import contextlib
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from importlib.metadata import version as package_version
@@ -28,7 +29,10 @@ from pathlib import Path
 import signal
 import socket
 import subprocess
+import sys
 import threading
+import time
+import traceback
 from typing import TYPE_CHECKING, Any, Literal
 import uuid
 
@@ -55,6 +59,8 @@ HostState = Literal["available", "starting", "running", "stopping", "failed"]
 HOST_PROTOCOL_VERSION = 2
 HOST_LIVELINESS_KEY = "dimos/hosts/{host_id}/live"
 HOST_CONTROL_RPC_NAME = "hosts/{host_id}"
+# Every output line of a fragment, published while its run's controller listens.
+RUN_LOG_KEY = "dimos/runs/{run_id}/logs/{host}"
 DEFAULT_STARTUP_TIMEOUT = 60.0
 DEFAULT_STOP_TIMEOUT = 5.0
 DEFAULT_LOG_ROOT = STATE_DIR / "hosted" / "runs"
@@ -295,7 +301,13 @@ class HostDaemon:
             receive_ready, send_ready = self._process_context.Pipe(duplex=False)
             process = self._process_context.Process(
                 target=_run_fragment,
-                args=(fragment, log_dir, send_ready, self.fragment_global_overrides()),
+                args=(
+                    fragment,
+                    log_dir,
+                    send_ready,
+                    self.fragment_global_overrides(),
+                    RUN_LOG_KEY.format(run_id=fragment.run_id, host=self._name),
+                ),
                 daemon=False,
             )
             deployment = _Deployment(fragment, "starting", log_dir, process)
@@ -456,8 +468,11 @@ def _run_fragment(
     log_dir: Path,
     ready: Connection,
     global_overrides: dict[str, Any] | None = None,
+    log_key: str | None = None,
 ) -> None:
     os.environ[DIMOS_RUN_ID_ENV] = fragment.run_id
+    if log_key is not None and global_overrides:
+        _publish_output(log_key, str(global_overrides["zenoh_connect"]))
     set_run_log_dir(log_dir)
     stop_requested = threading.Event()
     coordinator: ModuleCoordinator | None = None
@@ -492,6 +507,7 @@ def _run_fragment(
         ready.send((True, None))
         stop_requested.wait()
     except Exception as exc:
+        traceback.print_exc()
         try:
             ready.send((False, str(exc)))
         except (BrokenPipeError, OSError):
@@ -500,3 +516,39 @@ def _run_fragment(
         ready.close()
         if coordinator is not None:
             coordinator.stop()
+        sys.stdout.flush()
+        sys.stderr.flush()
+        # ponytail: fixed grace for the tee thread to publish the last lines.
+        time.sleep(0.3)
+
+
+def _publish_output(key: str, router: str) -> None:
+    """Tee this process's stdout and stderr, inherited by every worker, onto ``key``.
+
+    Runs before any worker exists, so the forkserver and its workers write into the pipe.
+    The original output (journal or log file) still gets every line.
+    """
+    from dimos.protocol.service.zenohservice import ZenohConfig, default_session_pool
+
+    session = default_session_pool.acquire(
+        ZenohConfig(mode="client", connect=[router], multicast=False, scouting=False)
+    )
+    publisher = session.declare_publisher(key)
+    original = os.dup(1)
+    read_end, write_end = os.pipe()
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os.dup2(write_end, 1)
+    os.dup2(write_end, 2)
+    os.close(write_end)
+    sys.stdout.reconfigure(line_buffering=True)  # type: ignore[union-attr]
+    sys.stderr.reconfigure(line_buffering=True)  # type: ignore[union-attr]
+
+    def tee() -> None:
+        with os.fdopen(read_end, "rb") as lines:
+            for line in lines:
+                os.write(original, line)
+                with contextlib.suppress(Exception):
+                    publisher.put(line)
+
+    threading.Thread(target=tee, name="fragment-log-tee", daemon=True).start()
