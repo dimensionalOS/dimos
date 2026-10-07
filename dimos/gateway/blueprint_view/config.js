@@ -129,6 +129,8 @@ export function moduleFields(config) {
                 description: arg.description,
                 base: "value" in arg ? arg.value : arg.default,
                 group: module.module,
+                // the header shows its class name as written (PascalCase)
+                groupLabel: module.class ? module.class.split(".").pop() : undefined,
                 secret: arg.secret ?? false,
             }
         })
@@ -522,8 +524,13 @@ export function openConfig({ name, h, getJson, send, onSaved, onClose }) {
         return groups.map((group) =>
             h(
                 "div",
-                { class: "cfg-group", "data-group": group.id },
-                h("div", { class: "cfg-gh" }, heading(group.id), h("span", { class: "n" }, String(group.fields.filter(isSaved).length || ""))),
+                { class: `cfg-group${group.fields[0]?.scope === "module" ? " module" : ""}`, "data-group": group.id },
+                h(
+                    "div",
+                    { class: "cfg-gh" },
+                    group.fields[0]?.groupLabel ?? heading(group.id),
+                    h("span", { class: "n" }, String(group.fields.filter(isSaved).length || "")),
+                ),
                 group.fields.map((spec) => field(spec, true)),
             )
         )

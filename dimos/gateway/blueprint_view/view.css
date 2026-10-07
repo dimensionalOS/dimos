@@ -264,6 +264,12 @@ body.framed:not(.chrome) #bar {
 .cfg-gh .n {
     color: var(--primary);
 }
+/* a module's group: its class name as written, with a touch of the accent */
+.cfg-group.module > .cfg-gh {
+    border-left: 3px solid var(--primary);
+    background: color-mix(in srgb, var(--primary) 9%, transparent);
+    color: color-mix(in srgb, var(--primary) 70%, var(--fg));
+}
 .cfg-row {
     display: grid;
     grid-template-columns: 1fr auto;
