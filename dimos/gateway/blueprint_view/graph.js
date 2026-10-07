@@ -6,9 +6,11 @@
 import { layout, LAYOUTS, overlaps } from "./layout.js"
 
 const SVG = "http://www.w3.org/2000/svg"
-const MODULE_H = 34
-const TOPIC_H = 36
-const PAD_X = 14
+// modules are the big cards, topics the small pills between them
+const MODULE_H = 46
+const MODULE_PAD_X = 20
+const TOPIC_H = 30
+const PAD_X = 16
 // a topic's second line may later read "<Type> · 999.9 Hz": its width is kept for that from the start
 const RATE_RESERVE = " · 99.9 Hz"
 
@@ -79,7 +81,7 @@ export class Graph {
                 kind: "module",
                 name: module.name,
                 label,
-                w: Math.ceil(textWidth(label, `600 12px ${sans}`)) + PAD_X * 2,
+                w: Math.ceil(textWidth(label, `600 15px ${sans}`)) + MODULE_PAD_X * 2,
                 h: MODULE_H,
             })
             for (const stream of module.streams) {
@@ -105,8 +107,8 @@ export class Graph {
         for (const [topic, { type, extra }] of topics) {
             const second = typeName(type) + RATE_RESERVE
             const width = Math.max(
-                textWidth(`/${topic}`, `500 11.5px ${mono}`),
-                textWidth(second, `10.5px ${mono}`),
+                textWidth(`/${topic}`, `500 10.5px ${mono}`),
+                textWidth(second, `9.5px ${mono}`),
             )
             nodes.push({
                 id: `t:${topic}`,
@@ -178,13 +180,14 @@ export class Graph {
                 tabindex: node.kind === "module" ? "0" : "-1",
                 "data-node": node.id,
             }, this.nodeLayer)
-            el("rect", { width: node.w, height: node.h }, g)
+            const round = node.kind === "topic" ? node.h / 2 : 0
+            el("rect", { width: node.w, height: node.h, rx: round, ry: round }, g)
             if (node.kind === "module") {
-                el("text", { x: PAD_X, y: node.h / 2, class: "name" }, g).textContent = node.label
+                el("text", { x: MODULE_PAD_X, y: node.h / 2, class: "name" }, g).textContent = node.label
             } else {
                 g.style.setProperty("--type", `var(--bv-${typeColor(node.type)})`)
-                el("text", { x: PAD_X, y: 14, class: "name" }, g).textContent = node.label
-                node.sub = el("text", { x: PAD_X, y: 28, class: "sub" }, g)
+                el("text", { x: PAD_X, y: 11, class: "name" }, g).textContent = node.label
+                node.sub = el("text", { x: PAD_X, y: 22, class: "sub" }, g)
                 node.sub.textContent = typeName(node.type)
                 const title = el("title", {}, g)
                 title.textContent = `${node.label}\n${node.type}${node.extra ? "\n(not wired in this blueprint)" : ""}`

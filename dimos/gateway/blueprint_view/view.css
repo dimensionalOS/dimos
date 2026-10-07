@@ -417,6 +417,7 @@ svg.graph.panning {
 .node.module rect {
     fill: var(--surface);
     stroke: var(--border-strong);
+    stroke-width: 1.5;
 }
 .node.module {
     cursor: pointer;
@@ -428,7 +429,7 @@ svg.graph.panning {
 }
 .node.module .name {
     fill: var(--fg);
-    font: 600 12px var(--sans);
+    font: 600 15px var(--sans);
     dominant-baseline: central;
 }
 .node.topic rect {
@@ -440,12 +441,12 @@ svg.graph.panning {
 }
 .node.topic .name {
     fill: var(--fg);
-    font: 500 11.5px var(--mono);
+    font: 500 10.5px var(--mono);
     dominant-baseline: central;
 }
 .node.topic .sub {
     fill: var(--type);
-    font: 10.5px var(--mono);
+    font: 9.5px var(--mono);
     dominant-baseline: central;
 }
 svg.running .node.topic:not(.live) {
