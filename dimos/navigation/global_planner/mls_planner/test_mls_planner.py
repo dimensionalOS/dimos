@@ -88,3 +88,18 @@ def test_clear_drops_graph() -> None:
     planner.clear()
     assert len(planner.nodes()) == 0
     assert planner.plan((-2.0, -2.0, 0.0), (2.0, 2.0, 0.0)) is None
+
+
+def test_seed_regions_match_full_rebuild() -> None:
+    floor = flat_floor()
+    planner = make_planner()
+    for cx in (-1.5, 1.5):
+        for cy in (-1.5, 1.5):
+            planner.update_seed_region(floor, (cx, cy), 2.5, -0.5, 0.5)
+
+    rebuilt = make_planner()
+    rebuilt.update_global_map(floor)
+    np.testing.assert_array_equal(
+        np.unique(planner.surface_map(), axis=0), np.unique(rebuilt.surface_map(), axis=0)
+    )
+    assert planner.voxel_count() == rebuilt.voxel_count()
