@@ -40,6 +40,6 @@ go2_dds_nav_viewer_mesh = _viewer_mesh.global_config(n_workers=4, **VIEWER_GLOBA
 # `dimos host deploy go2-dds-nav-hosted`. Each Host's daemon is its zenoh router and every
 # process is its client, so mesh stays on this machine and only subscribed topics cross.
 go2_dds_nav_hosted = autoconnect(
-    go2_nav_stack(session=None).hosted(host="go2"),
+    go2_nav_stack(session=None).hosted(tags={"go2"}),
     _viewer_mesh,
 ).global_config(transport="zenoh", n_workers=11, robot_model="unitree_go2")
