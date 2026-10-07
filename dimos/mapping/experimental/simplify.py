@@ -32,18 +32,19 @@ Simplifier = Callable[[Tensor, Tensor], tuple[Tensor, Tensor]]
 _INF = torch.iinfo(torch.int64).max
 
 
-def _edges(f: Tensor, nv: int) -> tuple[Tensor, Tensor, Tensor]:
-    """Unique undirected edges (E,2), faces per edge (E,), and the edge of each face side (3F,)."""
+def _sides(f: Tensor, nv: int) -> Tensor:
+    """Undirected edge code lo * nv + hi of every face side, (3F,)."""
     e = torch.cat([f[:, [0, 1]], f[:, [1, 2]], f[:, [2, 0]]]).sort(1).values
-    codes, inv, cnt = torch.unique(e[:, 0] * nv + e[:, 1], return_inverse=True, return_counts=True)
-    return torch.stack([codes // nv, codes % nv], 1), cnt, inv
+    return e[:, 0] * nv + e[:, 1]
 
 
 def boundary(f: Tensor, nv: int) -> Tensor:
     """Vertices on an open or non-manifold edge."""
-    edges, cnt, _ = _edges(f, nv)
+    code, cnt = torch.unique(_sides(f, nv), return_counts=True)
     locked = torch.zeros(nv, dtype=torch.bool, device=f.device)
-    locked[edges[cnt != 2].reshape(-1)] = True
+    edge = code[cnt != 2]
+    locked[edge // nv] = True
+    locked[edge % nv] = True
     return locked
 
 
@@ -80,19 +81,24 @@ class EdgeCollapse:
         )
         blocked = torch.zeros(0, dtype=torch.int64, device=dev)
         for _ in range(self.max_rounds):
-            edges, cnt, _ = _edges(f, nv)
-            a, b = edges[:, 0], edges[:, 1]
+            code, cnt = torch.unique(_sides(f, nv), return_counts=True)
+            a, b = code // nv, code % nv
             p, keep_a, cost = self._best(v, q, a, b, locked[a], locked[b])
-            ok = (cost <= self.tol**2) & (cnt <= 2) & ~_member(a * nv + b, blocked)
+            ok = (cost <= self.tol**2) & (cnt <= 2) & ~_member(code, blocked)
             # coarse cost buckets, random within: cheap first but many winners per round
             key = (cost / self.tol**2 * 8).floor().clamp_max(8) + torch.rand_like(cost)
             sel = self._independent(f, nv, a, b, key, ok)
-            if not sel.any():
+            # masks over all edges, no compaction: each sync stalls the queue
+            idx = torch.where(sel, torch.arange(len(a), device=dev), -1)
+            at_a = torch.full((nv,), -1, device=dev).scatter_reduce_(0, a, idx, "amax")
+            at = at_a.clone().scatter_reduce_(0, b, idx, "amax")
+            good = sel & self._no_flip(v, f, a, b, p, at) & self._link(code, nv, b, cnt, at_a)
+            bad = code[sel & ~good]
+            g = good.nonzero().squeeze(1)
+            if len(g) == 0 and len(bad) == 0:
                 break
-            a, b, p, keep_a, cnt = a[sel], b[sel], p[sel], keep_a[sel], cnt[sel]
-            good = self._no_flip(v, f, nv, a, b, p) & self._link(edges, nv, a, b, cnt)
-            blocked = torch.cat([blocked, (a * nv + b)[~good]]).sort().values
-            a, b, p, keep_a = a[good], b[good], p[good], keep_a[good]
+            blocked = torch.cat([blocked, bad]).sort().values
+            a, b, p, keep_a = a[g], b[g], p[g], keep_a[g]
             keep, gone = torch.where(keep_a, a, b), torch.where(keep_a, b, a)
             v[keep] = p
             q[keep] += q[gone]
@@ -109,7 +115,7 @@ class EdgeCollapse:
         cands = torch.stack([v[a], v[b], (v[a] + v[b]) / 2])
         h = torch.cat([cands, torch.ones_like(cands[..., :1])], -1)
         qe = q[a] + q[b]
-        cost = torch.einsum("kei,eij,kej->ke", h, qe, h).clamp_min(0)
+        cost = (h[..., :, None] * qe * h[..., None, :]).sum((-1, -2)).clamp_min(0)
         allowed = torch.stack([~lb, ~la, ~la & ~lb])
         cost = torch.where(allowed, cost, torch.inf)
         cost, k = cost.min(0)
@@ -125,7 +131,7 @@ class EdgeCollapse:
         rank[torch.argsort(key)] = torch.arange(len(a), device=a.device)
         fv = f.reshape(-1)
         sel, cand = torch.zeros_like(ok), ok
-        for _ in range(passes):
+        for i in range(passes):
             r = torch.where(cand, rank, _INF)
             rv = torch.full((nv,), _INF, device=f.device)
             rv.scatter_reduce_(0, a, r, "amin").scatter_reduce_(0, b, r, "amin")
@@ -133,6 +139,8 @@ class EdgeCollapse:
             m.scatter_reduce_(0, fv, rv[f].amin(1).repeat_interleave(3), "amin")
             win = cand & (m[a] == r) & (m[b] == r)
             sel = sel | win
+            if i == passes - 1:
+                break
             # drop every edge whose 1-ring touches a winner
             w = torch.zeros(nv, dtype=torch.int64, device=f.device)
             w.scatter_reduce_(0, a, win.long(), "amax").scatter_reduce_(0, b, win.long(), "amax")
@@ -141,43 +149,31 @@ class EdgeCollapse:
             cand = cand & (near[a] == 0) & (near[b] == 0)
         return sel
 
-    def _no_flip(self, v: Tensor, f: Tensor, nv: int, a: Tensor, b: Tensor, p: Tensor) -> Tensor:
-        """Moving a and b to p turns no surviving face past min_cos."""
-        sel = torch.full((nv,), -1, device=f.device)
-        idx = torch.arange(len(a), device=f.device)
-        sel[a], sel[b] = idx, idx
-        fs = sel[f].max(1).values
-        hit = fs >= 0
-        fh, eh = f[hit], fs[hit]
-        moved = (fh == a[eh, None]) | (fh == b[eh, None])
-        keep = moved.sum(1) == 1  # faces on the edge itself vanish
-        fh, eh, moved = fh[keep], eh[keep], moved[keep]
-        old = v[fh]
-        new = torch.where(moved[..., None], p[eh, None, :], old)
+    def _no_flip(self, v: Tensor, f: Tensor, a: Tensor, b: Tensor, p: Tensor, at: Tensor) -> Tensor:
+        """Moving a and b to p turns no surviving face past min_cos; ``at`` maps vertex to edge."""
+        fs = at[f].amax(1)
+        e = fs.clamp_min(0)
+        moved = (f == a[e, None]) | (f == b[e, None])
+        live = (fs >= 0) & (moved.sum(1) == 1)  # faces on the edge itself vanish
+        old = v[f]
+        new = torch.where(moved[..., None], p[e, None, :], old)
         n0 = torch.cross(old[:, 1] - old[:, 0], old[:, 2] - old[:, 0], dim=1)
         n1 = torch.cross(new[:, 1] - new[:, 0], new[:, 2] - new[:, 0], dim=1)
         cos = (n0 * n1).sum(1) / (n0.norm(dim=1) * n1.norm(dim=1)).clamp_min(1e-12)
-        bad = torch.zeros(len(a), dtype=torch.bool, device=f.device)
-        bad[eh[cos < self.min_cos]] = True
-        return ~bad
+        flip = (live & (cos < self.min_cos)).long()
+        return torch.zeros_like(a).scatter_reduce_(0, e, flip, "amax") == 0
 
     @staticmethod
-    def _link(edges: Tensor, nv: int, a: Tensor, b: Tensor, cnt: Tensor) -> Tensor:
+    def _link(code: Tensor, nv: int, b: Tensor, cnt: Tensor, at_a: Tensor) -> Tensor:
         """Link condition: a and b share exactly the neighbours of their faces."""
-        both = torch.cat([edges, edges.flip(1)])
-        codes = (both[:, 0] * nv + both[:, 1]).sort().values
-        src = codes // nv
-        start = torch.searchsorted(src, a)
-        deg = torch.searchsorted(src, a, right=True) - start
-        e = torch.repeat_interleave(torch.arange(len(a), device=a.device), deg)
-        off = torch.arange(len(e), device=a.device) - torch.repeat_interleave(
-            torch.cumsum(deg, 0) - deg, deg
-        )
-        c = codes[start[e] + off] % nv
-        look = b[e] * nv + c
-        pos = torch.searchsorted(codes, look).clamp_max(len(codes) - 1)
-        common = torch.zeros(len(a), dtype=torch.int64, device=a.device)
-        common.index_add_(0, e, (codes[pos] == look).long())
+        # every neighbour c of a selected edge's a, looked up as edge (b, c)
+        x, c = torch.cat([code // nv, code % nv]), torch.cat([code % nv, code // nv])
+        e = at_a[x]
+        be = b[e.clamp_min(0)]
+        look = torch.minimum(be, c) * nv + torch.maximum(be, c)
+        pos = torch.searchsorted(code, look).clamp_max(len(code) - 1)
+        hit = ((e >= 0) & (code[pos] == look)).long()
+        common = torch.zeros_like(cnt).index_add_(0, e.clamp_min(0), hit)
         return common == cnt
 
 
@@ -316,7 +312,7 @@ def _rings_from(seed: Tensor, f: Tensor, k: int) -> Tensor:
 
 def _face_pairs(f: Tensor, nv: int) -> tuple[Tensor, Tensor]:
     """The two faces of every manifold edge."""
-    _, cnt, inv = _edges(f, nv)
+    _, inv, cnt = torch.unique(_sides(f, nv), return_inverse=True, return_counts=True)
     face = torch.arange(len(f), device=f.device).repeat(3)
     order = torch.argsort(inv, stable=True)
     si, sf = inv[order], face[order]
