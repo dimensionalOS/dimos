@@ -654,11 +654,11 @@ class Discovery:
 
 
 def robots_doc(dimos_dir: Path) -> dict[str, Any] | None:
-    """The checkout's dimos/robot/robots.json (None when it has none or it doesn't parse)."""
+    """The checkout's dimos/server/robots.json (None when it has none or it doesn't parse)."""
     try:
-        from dimos.robot import robots
+        from dimos.server import robots
 
-        return robots.load(dimos_dir / "dimos" / "robot" / "robots.json")
+        return robots.load(dimos_dir / "dimos" / "server" / "robots.json")
     except Exception:
         return None
 
@@ -669,7 +669,7 @@ def with_robots(dimos_dir: Path, records: list[dict[str, Any]]) -> list[dict[str
     doc = robots_doc(dimos_dir)
     if doc is None:
         return records
-    from dimos.robot.robots import blueprint_file, owner_of
+    from dimos.server.robots import blueprint_file, owner_of
 
     listed = {
         name: robot_id

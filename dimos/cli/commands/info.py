@@ -29,22 +29,17 @@ def show_config() -> None:
         typer.echo(f"{field_name}: {value}")
 
 
-def builtin_blueprint_names() -> list[str]:
-    """The built-in blueprints `dimos list` shows, sorted (demo-* ones still run, but aren't listed)."""
-    from dimos.robot.all_blueprints import all_blueprints
-
-    return sorted(name for name in all_blueprints if not name.startswith("demo-"))
-
-
 def list_blueprints() -> None:
     """List all available blueprints."""
+    from dimos.robot.all_blueprints import all_blueprints
     from dimos.robot.external_blueprints import (
         ExternalBlueprintError,
         list_external_blueprint_names,
     )
 
+    blueprints = [name for name in all_blueprints.keys() if not name.startswith("demo-")]
     typer.echo("Built-in blueprints:")
-    for blueprint_name in builtin_blueprint_names():
+    for blueprint_name in sorted(blueprints):
         typer.echo(f"  {blueprint_name}")
 
     try:

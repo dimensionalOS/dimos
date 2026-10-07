@@ -49,21 +49,19 @@ Operations carry Desktop's extensions: `x-family: dimos`; `x-agent: true` for wh
 
 ## Launch diagnostics
 
-A launch's `steps` and `problems` are stable codes with data, never words: clients own the wording. The server reads
-them from the run's structured log (`main.jsonl`), not from the console:
+A launch's `steps` and `problems` are stable codes with data: clients own the wording. The server reads them from the
+run's structured log (`main.jsonl`), not from the console, and needs nothing added to dimos for it:
 
-- **Steps:** dimos logs a `stage` field as it starts: `starting`, `run_log` (where the run's log goes on, with
-  `run_id` and `log_dir`), `building`, `starting_modules` (with `modules`, how many), `module_deployed`, and
-  `started`.
-- **Problems:** a refusal dimos knows logs a `problem` field (`bad_arguments`, `unknown_blueprint`,
-  `requirement_unmet`). An exception is logged with `exception_chain` (every exception class behind it),
-  `exception_code` (an errno or SQLite error name) and `missing_module` (`exception_fields` in
-  [`dimos/utils/logging_config.py`](/dimos/utils/logging_config.py)). The server maps a class or code to a problem
-  code in [`dimos/server/diagnose.py`](/dimos/server/diagnose.py).
+- **Steps:** the messages dimos logs as it starts: `Starting DimOS`, `Building the blueprint`, `Starting the
+  modules`, one `Deployed module.` per module and `Blueprint started` (`test_diagnose.py` checks dimos still logs
+  each). dimos doesn't log how many modules it will start, so `starting_modules` counts only the deployed ones.
+- **Problems:** an exception is logged with its traceback; the server reads the exception classes and an errno or
+  SQLite "can't open" from it and maps them to a problem code in
+  [`dimos/server/diagnose.py`](/dimos/server/diagnose.py). Refusals dimos only prints (bad arguments, an unknown
+  blueprint, an unmet requirement) have no record: the launch's `error` is then its output's last line.
 
-To make a new failure recognizable, raise a dedicated exception class (like `MissingRobotIpError`) or log a `problem`
-field, then add its code to `diagnose.py`. Don't match on message text. The server starts `dimos run` with
-`DIMOS_RUN_LOG_DIR` set, so even the records from before the run has an id are in a file it can read.
+The server starts `dimos run` with `DIMOS_RUN_LOG_DIR` set, so even the records from before the run has an id are in a
+file it can read; after that it follows the run to `LOG_DIR/<run id>`.
 
 ## Events
 
@@ -92,4 +90,4 @@ score = (robot's blueprints using the module / robot's blueprints) * ln(robots /
 ```
 
 so the robot's own connection module comes first and a module every robot uses scores 0. Robots are
-[`dimos/robot/robots.json`](/dimos/robot/robots.json)'s, and only blueprints that import count.
+[`dimos/server/robots.json`](/dimos/server/robots.json)'s, and only blueprints that import count.

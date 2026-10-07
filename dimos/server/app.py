@@ -497,23 +497,23 @@ def create_app(state: ServerState, background: bool = True) -> FastAPI:
             "blueprints",
             "Every robot dimos supports and its blueprints: title, description, tags, modes and their essential "
             "args, the app to install, starter picks, recommended blueprints and settings, hidden ones",
-            "The checkout's dimos/robot/robots.json (dimos.yaml's `robots:`, also readable per tag without a "
+            "The checkout's dimos/server/robots.json (dimos.yaml's `robots:`, also readable per tag without a "
             "server) with its defaults applied: each blueprint's modes (robot, replay, sim) with the GlobalConfig "
             "values each sets and its args (`key`, `scope`: global args are `--key value` before `run`, module args "
             "after the blueprint name), its tags including replay and sim from its modes, its robot and recommended "
             "app; `registered` and `unlisted` compare it with the blueprint registry. CI keeps the file in step "
-            "with the code (dimos/robot/robots.py). Read from disk on every call; no side effects.",
+            "with the code (dimos/server/robots.py). Read from disk on every call; no side effects.",
             agent=True,
             answer="`{ about, tags, modes, groups, robots: { [id]: { name, description, group, dirs, recommended_app, blueprints: { [name]: { title, description, tags, modes, starter, hidden, recommended_app, robot, registered } } } }, excluded, unlisted }`",
         ),
     )
     async def robot_list() -> dict[str, Any]:
-        from dimos.robot import robots
+        from dimos.server import robots
 
         def compute() -> dict[str, Any]:
             from dimos.robot.all_blueprints import all_blueprints
 
-            path = s.dimos_dir / "dimos" / "robot" / "robots.json"
+            path = s.dimos_dir / "dimos" / "server" / "robots.json"
             return robots.resolved(
                 robots.load(path if path.exists() else robots.ROBOTS_FILE), all_blueprints
             )

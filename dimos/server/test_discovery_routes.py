@@ -674,8 +674,8 @@ def test_robots_come_from_robots_json(client: TestClient, repo: Path) -> None:
             "arm": {"dirs": [], "blueprints": {"xarm-basic": {}}},
         }
     }
-    (repo / "dimos" / "robot").mkdir(parents=True)
-    (repo / "dimos" / "robot" / "robots.json").write_text(__import__("json").dumps(doc))
+    (repo / "dimos" / "server").mkdir(parents=True, exist_ok=True)
+    (repo / "dimos" / "server" / "robots.json").write_text(__import__("json").dumps(doc))
     found = {
         b["name"]: b["robot"]
         for b in client.get("/dimos/discovery/blueprints").json()["blueprints"]

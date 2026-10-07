@@ -31,10 +31,6 @@ _LIDAR_RATE = 100
 _DIMSIM_DIR = DIMOS_PROJECT_ROOT / "misc" / "DimSim"
 
 
-class LfsStubError(RuntimeError):
-    """Asset files are Git LFS pointer stubs: the data isn't downloaded yet."""
-
-
 class DimSimProcess:
     def __init__(self, global_config: GlobalConfig) -> None:
         self.global_config = global_config
@@ -137,7 +133,7 @@ def _check_lfs_stubs(scene: str) -> None:
     if stubs:
         shown = "\n".join(f"  {p.relative_to(DIMOS_PROJECT_ROOT)}" for p in stubs[:5])
         more = f"\n  ... and {len(stubs) - 5} more" if len(stubs) > 5 else ""
-        raise LfsStubError(
+        raise RuntimeError(
             f"{len(stubs)} DimSim asset file(s) are Git LFS pointer stubs, not real content:\n"
             f"{shown}{more}\n"
             'Fetch them with: git lfs pull --include="misc/DimSim/**"'

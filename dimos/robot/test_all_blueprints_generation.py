@@ -22,7 +22,6 @@ import subprocess
 import pytest
 
 from dimos.constants import DIMOS_PROJECT_ROOT
-from dimos.robot import robots
 from dimos.robot.get_all_blueprints import class_name_to_registry_key
 
 IGNORED_FILES: set[str] = {
@@ -87,28 +86,6 @@ def test_all_blueprints_is_current() -> None:
                 "all_blueprints.py was updated and has uncommitted changes. "
                 "Please commit the changes."
             )
-
-
-def test_robots_json_is_current() -> None:
-    """robots.json (what each robot's blueprints are for) matches the blueprints scanned from the code: see
-    dimos/robot/robots.py for every rule. Each failure says what to add or fix."""
-    root = DIMOS_PROJECT_ROOT / "dimos"
-    scanned, _ = _scan_for_blueprints(root)
-    doc = robots.load()
-    found = robots.problems(doc, scanned, DIMOS_PROJECT_ROOT)
-    if not found:
-        found = robots.module_arg_problems(doc)
-    if found:
-        pytest.fail(
-            "dimos/robot/robots.json is out of date with the code:\n  - " + "\n  - ".join(found)
-        )
-
-
-def test_robots_json_docs_links_resolve() -> None:
-    """Every `docs` link in robots.json (a page on how to find an arg's value) loads, its #anchor too."""
-    found = robots.link_problems(robots.load())
-    if found:
-        pytest.fail("dimos/robot/robots.json has broken docs links:\n  - " + "\n  - ".join(found))
 
 
 def _get_base_class_names(node: ast.ClassDef) -> list[str]:

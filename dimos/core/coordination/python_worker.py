@@ -37,7 +37,7 @@ from dimos.core.coordination.worker_messages import (
 )
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.protocol.pubsub.impl.webrtc.providers.spec import shutdown_all_providers
-from dimos.utils.logging_config import exception_fields, setup_logger
+from dimos.utils.logging_config import setup_logger
 from dimos.utils.sequential_ids import SequentialIds
 
 if TYPE_CHECKING:
@@ -251,7 +251,6 @@ class PythonWorker:
             self._modules[module_id] = actor
             logger.info(
                 "Deployed module.",
-                stage="module_deployed",
                 module=module_class.__name__,
                 worker_id=self._worker_id,
                 module_id=module_id,
@@ -435,21 +434,6 @@ def _worker_loop(conn: Connection, state: _WorkerState) -> None:
         try:
             response = _handle_request(request, state)
         except Exception as e:
-            if isinstance(request, DeployModuleRequest | CallMethodRequest):
-                # the coordinator only gets the text: the exception itself is logged here, where it happened
-                module = (
-                    request.module_class
-                    if isinstance(request, DeployModuleRequest)
-                    else type(state.instances.get(request.module_id))
-                )
-                logger.error(
-                    "Worker request failed",
-                    worker_id=state.worker_id,
-                    module=module.__name__,
-                    method=getattr(request, "name", None),
-                    exc_info=True,
-                    **exception_fields(e),
-                )
             response = WorkerResponse(
                 error=f"{e.__class__.__name__}: {e}\n{traceback.format_exc()}"
             )

@@ -25,10 +25,6 @@ import urllib.error
 import urllib.request
 
 
-class NotLoggedInError(RuntimeError):
-    """No cloud key, or the cloud refused it (401: invalid or revoked)."""
-
-
 class CloudRequest(Protocol):
     def request(
         self, method: str, path: str, body: dict[str, Any] | None = None
@@ -58,7 +54,7 @@ class HttpCloudRequest:
                 return cast("dict[str, Any]", json.load(r))
         except urllib.error.HTTPError as e:
             if e.code == 401:
-                raise NotLoggedInError("API key invalid or revoked — run `dimos login`") from e
+                raise RuntimeError("API key invalid or revoked — run `dimos login`") from e
             raise RuntimeError(f"{method} {path}: {e.code} {e.read().decode()[:300]}") from e
         except (urllib.error.URLError, TimeoutError) as e:
             raise RuntimeError(f"{method} {path}: {e}") from e

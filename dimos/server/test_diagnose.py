@@ -20,13 +20,13 @@ import errno
 import importlib
 from pathlib import Path
 import sqlite3
+import traceback
 from typing import Any
 
 import pytest
 
 from dimos.server import diagnose
 from dimos.server.diagnose import problems, steps
-from dimos.utils.logging_config import exception_fields
 
 ROOT = Path(__file__).parents[1]
 
@@ -43,17 +43,16 @@ def record(level: str = "info", event: str = "x", **extra: Any) -> dict[str, Any
 
 
 def failure(error: BaseException) -> dict[str, Any]:
-    """What dimos logs for an exception (the worker's `Worker request failed`, the uncaught-exception hook)."""
-    return record("error", "Worker request failed", **exception_fields(error))
+    """What dimos logs for an exception: structlog's format_exc_info puts the traceback in `exception`."""
+    return record("error", "Error", exception="".join(traceback.format_exception(error)))
 
 
 START = [
-    record(stage="starting"),
-    record(stage="run_log", run_id="r", log_dir="/d"),
-    record(stage="building"),
-    record(stage="starting_modules", modules=5),
-    record(stage="module_deployed", module="A"),
-    record(stage="module_deployed", module="B"),
+    record(event="Starting DimOS"),
+    record(event="Building the blueprint"),
+    record(event="Starting the modules"),
+    record(event="Deployed module.", module="A"),
+    record(event="Deployed module.", module="B"),
 ]
 
 
@@ -70,12 +69,12 @@ def test_steps_follow_the_stages() -> None:
         "running",
     ]
     assert states(starting) == ["done", "done", "now", "todo"]
-    assert starting[2]["data"] == {"deployed": 2, "total": 5}
+    assert starting[2]["data"] == {"deployed": 2, "total": None}
     assert states(steps(START, "running")) == ["done", "done", "done", "done"]
     assert steps(START, "stopped")[3]["code"] == "stopped"
     assert states(steps([], "starting")) == ["now", "todo", "todo", "todo"]
     assert states(steps([], "failed")) == ["failed", "todo", "todo", "todo"]
-    assert states(steps(START[:3], "failed")) == ["done", "failed", "todo", "todo"]
+    assert states(steps(START[:2], "failed")) == ["done", "failed", "todo", "todo"]
 
 
 def raised(error: BaseException, cause: BaseException | None = None) -> BaseException:
@@ -119,21 +118,12 @@ def test_a_missing_package_says_which() -> None:
     assert found["data"]["missing_module"] == "x" and found["message"] == "No module named 'x'"
 
 
-def test_dimos_own_errors_and_refusals_get_their_code() -> None:
-    from dimos.core.global_config import GlobalConfig
-
-    with pytest.raises(ValueError) as caught:
-        GlobalConfig(robot_ips="").processed_robot_ips  # noqa: B018
-    assert problems([failure(caught.value)])[0]["code"] == "robot_ip_missing"
-    refused = record("error", "Run refused", problem="bad_arguments", error="bad --robot-ip")
-    assert problems([refused])[0] | {"data": None} == {
-        "code": "bad_arguments",
-        "level": "error",
-        "message": "bad --robot-ip",
-        "data": None,
-        "timestamp": "t",
-        "logger": "l",
-    }
+def test_a_refusal_dimos_only_prints_is_the_output_last_line() -> None:
+    """Bad arguments, an unknown blueprint, an unmet requirement: dimos prints them and logs nothing."""
+    assert problems([]) == []
+    assert diagnose.error_text([], "$ dimos run nope\nUnknown blueprint or module: nope\n") == (
+        "Unknown blueprint or module: nope"
+    )
 
 
 def test_a_sqlite_file_that_cant_open() -> None:
@@ -162,38 +152,33 @@ def test_exception_classes_it_names_exist() -> None:
         try:
             kind = getattr(importlib.import_module(module), attribute)
         except ModuleNotFoundError:
-            if module.startswith("dimos."):
-                raise
             continue  # a third-party package that isn't installed here (torch, unitree_webrtc_connect)
-        # how exception_fields names a class
+        # how a traceback names a class
         assert f"{kind.__module__}.{kind.__qualname__}" == name, name
 
 
-def logged_fields() -> dict[str, set[str]]:
-    """Every `stage=` and `problem=` value passed to a logger call in dimos's own code."""
-    found: dict[str, set[str]] = {"stage": set(), "problem": set()}
+def logged_events() -> set[str]:
+    """Every message passed to a logger call in dimos's own code."""
+    found: set[str] = set()
     for file in ROOT.rglob("*.py"):
         if "/server/" in str(file) or file.name.startswith("test_"):
             continue
         text = file.read_text()
-        if "stage=" not in text and "problem=" not in text:
+        if not any(event in text for event in diagnose.STAGE_EVENTS):
             continue
         for node in ast.walk(ast.parse(text)):
-            if isinstance(node, ast.Call) and getattr(node.func, "attr", None) in (
-                "info",
-                "error",
-                "warning",
+            if (
+                isinstance(node, ast.Call)
+                and getattr(node.func, "attr", None) in ("info", "error", "warning")
+                and node.args
+                and isinstance(node.args[0], ast.Constant)
             ):
-                for keyword in node.keywords:
-                    if keyword.arg in found and isinstance(keyword.value, ast.Constant):
-                        found[keyword.arg].add(keyword.value.value)
+                found.add(node.args[0].value)
     return found
 
 
-def test_dimos_logs_the_stages_and_problems_read_here() -> None:
-    logged = logged_fields()
-    assert {*diagnose.STAGES, "run_log", "module_deployed"} <= logged["stage"]
-    assert set(diagnose.PROBLEM_FIELDS) <= logged["problem"]
+def test_dimos_logs_the_stage_messages_read_here() -> None:
+    assert set(diagnose.STAGE_EVENTS) <= logged_events()
 
 
 def test_error_text() -> None:

@@ -340,7 +340,7 @@ class Catalog(ApiModel):
     )
 
 
-# robots (dimos/robot/robots.json, resolved)
+# robots (dimos/server/robots.json, resolved)
 
 
 class RobotTag(ApiModel):
@@ -486,7 +486,7 @@ class Robot(ApiModel):
 
 
 class Robots(ApiModel):
-    """dimos/robot/robots.json with its defaults applied."""
+    """dimos/server/robots.json with its defaults applied."""
 
     about: str | None = Field(default=None, description="What the file is")
     tags: dict[str, RobotTag] = Field(description="The tag vocabulary, in display order")

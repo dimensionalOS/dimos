@@ -69,7 +69,6 @@ from dimos.cli.shell import shell
 from dimos.cli.vqa import app as vqa_app
 from dimos.core.global_config import ENV_FILE
 from dimos.robot.unitree.go2.cli.go2tool import app as go2tool_app
-from dimos.server.main import server
 
 main = typer.Typer(
     help="Dimensional CLI",
@@ -158,7 +157,6 @@ main.add_typer(evals_app, name="evals")
 main.command()(cameracalibrate)
 main.command()(apriltag)
 main.command(name="rerun-bridge")(rerun_bridge_cmd)
-main.command()(server)
 
 
 if __name__ == "__main__":

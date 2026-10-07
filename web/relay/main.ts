@@ -30,25 +30,17 @@ if (host !== "127.0.0.1" && host !== "localhost" && !tls) {
   );
 }
 
-// startRelay installs a guard that ignores unhandled rejections (deno#28406), which would also swallow a failed start
-// here and exit 0 with no ready line: a failed start says why on stderr and exits 1.
-let relay: Awaited<ReturnType<typeof startRelay>>;
-try {
-  relay = await startRelay({
-    port: Number(args.port),
-    host,
-    cockpitDir: args["cockpit-dir"],
-    sdkDir: args["sdk-dir"],
-    serveDir: args["serve-dir"],
-    unsafeNonLoopback: args["unsafe-non-loopback"],
-    cert: args.cert === undefined ? undefined : await Deno.readTextFile(args.cert),
-    key: args.key === undefined ? undefined : await Deno.readTextFile(args.key),
-    auth: args["auth-file"] === undefined ? undefined : await loadAuthFile(args["auth-file"]),
-  });
-} catch (e) {
-  console.error(`[relay] failed to start: ${(e as Error)?.message ?? e}`);
-  Deno.exit(1);
-}
+const relay = await startRelay({
+  port: Number(args.port),
+  host,
+  cockpitDir: args["cockpit-dir"],
+  sdkDir: args["sdk-dir"],
+  serveDir: args["serve-dir"],
+  unsafeNonLoopback: args["unsafe-non-loopback"],
+  cert: args.cert === undefined ? undefined : await Deno.readTextFile(args.cert),
+  key: args.key === undefined ? undefined : await Deno.readTextFile(args.key),
+  auth: args["auth-file"] === undefined ? undefined : await loadAuthFile(args["auth-file"]),
+});
 
 console.log(JSON.stringify({
   event: "ready",

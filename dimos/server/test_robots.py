@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""robots.py's checks catch each way robots.json can drift from the code (the real file is checked by
-test_all_blueprints_generation.py), and `resolved` applies the defaults."""
+"""robots.py's checks catch each way robots.json can drift from the code (the real file is checked at the end, against
+the blueprints test_all_blueprints_generation.py scans), and `resolved` applies the defaults."""
 
 from __future__ import annotations
 
@@ -26,7 +26,9 @@ from typing import Any
 
 import pytest
 
-from dimos.robot import robots
+from dimos.constants import DIMOS_PROJECT_ROOT
+from dimos.robot.test_all_blueprints_generation import _scan_for_blueprints
+from dimos.server import robots
 
 IP = {"global": "robot_ip", "label": "Robot IP", "required": True}
 
@@ -330,7 +332,7 @@ def test_module_args_resolve_to_their_option() -> None:
 
 
 def test_the_real_file_lists_every_robot_dir_blueprint() -> None:
-    """Spot checks on the real file; test_all_blueprints_generation.py runs every rule on it."""
+    """Spot checks on the real file; test_robots_json_is_current runs every rule on it."""
     doc = robots.load()
     assert "go2" in doc["robots"] and "unitree-go2-basic" in doc["robots"]["go2"]["blueprints"]
     out = robots.resolved(doc)
@@ -473,3 +475,24 @@ def test_link_problems_retries_a_host_that_doesnt_answer() -> None:
     doc["args"]["robot_ip"]["docs"] = f"http://127.0.0.1:{port}/page"
     found = robots.link_problems(doc, timeout=2, attempts=2, backoff=0)
     assert len(found) == 1 and "doesn't resolve" in found[0]
+
+
+def test_robots_json_is_current() -> None:
+    """robots.json (what each robot's blueprints are for) matches the blueprints scanned from the code: see
+    dimos/server/robots.py for every rule. Each failure says what to add or fix."""
+    scanned, _ = _scan_for_blueprints(DIMOS_PROJECT_ROOT / "dimos")
+    doc = robots.load()
+    found = robots.problems(doc, scanned, DIMOS_PROJECT_ROOT)
+    if not found:
+        found = robots.module_arg_problems(doc)
+    if found:
+        pytest.fail(
+            "dimos/server/robots.json is out of date with the code:\n  - " + "\n  - ".join(found)
+        )
+
+
+def test_robots_json_docs_links_resolve() -> None:
+    """Every `docs` link in robots.json (a page on how to find an arg's value) loads, its #anchor too."""
+    found = robots.link_problems(robots.load())
+    if found:
+        pytest.fail("dimos/server/robots.json has broken docs links:\n  - " + "\n  - ".join(found))

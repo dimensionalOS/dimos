@@ -23,9 +23,11 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
+from datetime import datetime
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import signal
 import subprocess
@@ -74,18 +76,22 @@ def launch_log() -> Path:
 
 def launch_records_dir() -> Path:
     """Where the launch's structured log starts (DIMOS_RUN_LOG_DIR): dimos logs there until it knows its run id, then
-    says where it goes on (a `stage: run_log` record) and moves to the run's own log dir."""
+    moves to the run's own log dir (LOG_DIR/<run id>, found by run_log_dir)."""
     return config.server_dir() / "launch"
 
 
-# the records a launch's diagnosis needs (a stage, a problem, an error) carry one of these; the rest of a log, which
+# the records a launch's diagnosis needs (a stage's message, an error) carry one of these; the rest of a log, which
 # can be megabytes, is skipped without parsing it
-_WANTED = (b'"stage"', b'"problem"', b'"level": "error"', b'"level": "critical"')
+_WANTED = (
+    *(json.dumps(event).encode() for event in diagnose.STAGE_EVENTS),
+    b'"level": "error"',
+    b'"level": "critical"',
+)
 _records_cache: dict[Path, tuple[tuple[int, int], list[dict[str, Any]]]] = {}
 
 
 def _records(file: Path) -> list[dict[str, Any]]:
-    """`file`'s stage, problem and error records (its last 4 MB), cached while the file is unchanged."""
+    """`file`'s stage and error records (its last 4 MB), cached while the file is unchanged."""
     try:
         stat = file.stat()
     except OSError:
@@ -103,14 +109,30 @@ def _records(file: Path) -> list[dict[str, Any]]:
     return records
 
 
-def launch_records() -> list[dict[str, Any]]:
+def run_log_dir(blueprint: str, started_at: str, entry: dict[str, Any] | None) -> Path | None:
+    """The launch's own log dir: its registry entry's once dimos registered it, before that the newest
+    LOG_DIR/<run id> for this blueprint made since the launch (dimos names it `<YYYYmmdd-HHMMSS>-<blueprint>`)."""
+    if entry and entry.get("log_dir"):
+        return Path(str(entry["log_dir"]))
+    from dimos.constants import LOG_DIR
+
+    try:
+        since = datetime.fromisoformat(started_at).timestamp() - 1
+        candidates = [
+            path
+            for path in LOG_DIR.glob(f"*-{re.sub(r'[^a-zA-Z0-9_-]', '-', blueprint)}")
+            if path.is_dir() and path.stat().st_mtime >= since
+        ]
+    except (OSError, ValueError):
+        return None
+    return max(candidates, key=lambda path: path.stat().st_mtime, default=None)
+
+
+def launch_records(moved: Path | None) -> list[dict[str, Any]]:
     """The current launch's records: from before it had a run id, then from its run's main.jsonl."""
     records = _records(launch_records_dir() / "main.jsonl")
-    moved = next(
-        (r["extra"].get("log_dir") for r in records if r["extra"].get("stage") == "run_log"), None
-    )
-    if isinstance(moved, str):
-        records = records + _records(Path(moved) / "main.jsonl")
+    if moved is not None:
+        records = records + _records(moved / "main.jsonl")
     return records
 
 
@@ -167,7 +189,7 @@ def current_launch() -> dict[str, Any] | None:
         phase = "stopped"
     else:
         phase = "failed"
-    records = launch_records()
+    records = launch_records(run_log_dir(blueprint, started_at, entry))
     problems = diagnose.problems(records)
     error = diagnose.error_text(problems, output) if phase == "failed" else None
     overrides = record.get("overrides")

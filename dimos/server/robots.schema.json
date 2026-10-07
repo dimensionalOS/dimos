@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/dimensionalOS/dimos/blob/main/dimos/robot/robots.schema.json",
+  "$id": "https://github.com/dimensionalOS/dimos/blob/main/dimos/server/robots.schema.json",
   "title": "dimos robots",
-  "description": "robots.json: every robot dimos supports and what each of its blueprints is for. dimos/robot/robots.py checks it against the code (every robot dir covered, every blueprint listed, every arg a real config field).",
+  "description": "robots.json: every robot dimos supports and what each of its blueprints is for. dimos/server/robots.py checks it against the code (every robot dir covered, every blueprint listed, every arg a real config field).",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -396,7 +396,7 @@
           }
         },
         "docs": {
-          "description": "A page on how to find this value (where a robot's IP comes from); the Launcher links it beside the field. test_all_blueprints_generation.py checks it resolves.",
+          "description": "A page on how to find this value (where a robot's IP comes from); the Launcher links it beside the field. dimos/server/test_robots.py checks it resolves.",
           "type": "string",
           "pattern": "^https://"
         }
@@ -520,7 +520,7 @@
           "type": "string"
         },
         "docs": {
-          "description": "A page on how to find this value (where a robot's IP comes from); the Launcher links it beside the field. test_all_blueprints_generation.py checks it resolves.",
+          "description": "A page on how to find this value (where a robot's IP comes from); the Launcher links it beside the field. dimos/server/test_robots.py checks it resolves.",
           "type": "string",
           "pattern": "^https://"
         },

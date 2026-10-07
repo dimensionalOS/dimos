@@ -222,14 +222,10 @@ class GlobalConfig(BaseSettings):
     def processed_robot_ips(self) -> tuple[str, ...]:
         ips = [x.strip() for x in (self.robot_ips or "").split(",") if x.strip()]
         if not ips:
-            raise MissingRobotIpError(
+            raise ValueError(
                 "No robot IPs specified. Set ROBOT_IPS or --robot-ips to at least one IP."
             )
         return tuple(ips)
-
-
-class MissingRobotIpError(ValueError):
-    """A blueprint that talks to a robot was given no robot IP."""
 
 
 global_config = GlobalConfig()

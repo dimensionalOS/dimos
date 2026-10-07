@@ -29,7 +29,7 @@ from reactivex.observable import Observable
 from dimos.agents.annotation import skill
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
-from dimos.core.global_config import GlobalConfig, MissingRobotIpError
+from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.resource import CompositeResource
 from dimos.core.stream import In, Out
@@ -56,10 +56,6 @@ else:
     from typing import TypeVar
 
 logger = setup_logger()
-
-
-class MissingReplayStreamError(KeyError):
-    """The replay recording has none of the streams this connection replays."""
 
 
 class Go2Mode(str, Enum):
@@ -158,8 +154,7 @@ def make_connection(
 
         return DimSimConnection(cfg)
     elif connection_type == "webrtc":
-        if not ip:
-            raise MissingRobotIpError("IP address must be provided")
+        assert ip is not None, "IP address must be provided"
         return UnitreeWebRTCConnection(
             ip,
             aes_128_key=aes_128_key,
@@ -242,9 +237,7 @@ class ReplayConnection(CompositeResource):
         for name in names:
             if name in available:
                 return name
-        raise MissingReplayStreamError(
-            f"None of {names!r} in dataset {self.dataset!r}; available: {available}"
-        )
+        raise KeyError(f"None of {names!r} in dataset {self.dataset!r}; available: {available}")
 
     def _tracked(self, source: Observable[_T]) -> Observable[_T]:
         """With exit_on_complete, count every subscription to a replay stream

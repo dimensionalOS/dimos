@@ -27,8 +27,8 @@ api:
   openapi: dimos/server/openapi.json
 # Every robot dimos supports and what each blueprint is for (title, description, tags, modes and their essential args,
 # the app to install): read per tag like the OpenAPI document. CI keeps it in step with the code
-# (dimos/robot/robots.py); the server serves it resolved at GET /dimos/robots.
-robots: dimos/robot/robots.json
+# (dimos/server/robots.py); the server serves it resolved at GET /dimos/robots.
+robots: dimos/server/robots.json
 # The dimos server (blueprints, runs, logs, events, global config, cloud uploads at /dimos/): dimos/server/, in
 # Python. Before it, Desktop's Rust served the same API: "$DESKTOP_BIN" dimos-server --detach --dimos-dir ... --socket ...
 # env: DESKTOP_BIN, DIMOS_DIR, DIMOS_SERVER_SOCKET, DIMOS_ZENOH_NAMESPACE (Desktop's <ns>), ZENOH_CONNECT,

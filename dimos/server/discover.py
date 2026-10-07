@@ -41,6 +41,7 @@ from dimos.server.introspect import (
     annotation_name,
     first_line,
     jsonable,
+    module_class_by_name,
     robot_of,
     type_name,
 )
@@ -284,7 +285,6 @@ def scan(request: dict[str, Any]) -> None:
     from dimos.robot.get_all_blueprints import (
         OptionalDependencyError,
         get_by_name,
-        get_module_class_by_name,
         load_blueprint,
     )
 
@@ -335,7 +335,7 @@ def scan(request: dict[str, Any]) -> None:
     for name in request.get("modules", []):
         emit({"kind": "start", "name": f"module:{name}"})
         try:
-            module_seen(get_module_class_by_name(name))
+            module_seen(module_class_by_name(name))
         except BaseException as error:
             emit(
                 {

@@ -14,7 +14,6 @@
 
 from collections.abc import Mapping
 from datetime import datetime
-import errno
 import logging
 import logging.handlers
 import os
@@ -124,7 +123,6 @@ def _configure_structlog() -> Path:
                 CallsiteParameter.LINENO,
             ]
         ),
-        _add_exception_fields,
         structlog.processors.format_exc_info,  # Add this to format exception info
     ]
 
@@ -202,9 +200,6 @@ def _compact_console_processor(logger: Any, method_name: str, event_dict: Mappin
         "exc_info",
         "exception_type",
         "exception_message",
-        "exception_chain",
-        "exception_code",
-        "missing_module",
         "traceback_lines",
         "_record",
         "_from_structlog",
@@ -302,59 +297,6 @@ def setup_logger(*, level: int | None = None) -> Any:
     return structlog.wrap_logger(stdlib_logger, wrapper_class=structlog.stdlib.BoundLogger)
 
 
-def exception_fields(error: BaseException) -> dict[str, Any]:
-    """An exception as log fields a program can read: its type and message, `exception_chain` (the qualified class
-    of it and of every exception behind it: causes, contexts, an exception group's members), `exception_code` (the
-    first errno name or SQLite error name among them, e.g. EADDRINUSE) and `missing_module` (a ModuleNotFoundError's
-    module)."""
-    chain: list[str] = []
-    code: str | None = None
-    missing: str | None = None
-    pending: list[BaseException] = [error]
-    seen: set[int] = set()
-    while pending:
-        current = pending.pop(0)
-        if id(current) in seen:
-            continue
-        seen.add(id(current))
-        kind = type(current)
-        chain.append(f"{kind.__module__}.{kind.__qualname__}".removeprefix("builtins."))
-        errno_value = getattr(current, "errno", None)
-        if code is None and isinstance(errno_value, int):
-            code = errno.errorcode.get(errno_value)
-        if code is None and isinstance(getattr(current, "sqlite_errorname", None), str):
-            code = current.sqlite_errorname  # type: ignore[attr-defined]
-        if missing is None and isinstance(current, ModuleNotFoundError):
-            missing = current.name
-        pending += [e for e in getattr(current, "exceptions", ()) if isinstance(e, BaseException)]
-        pending += [e for e in (current.__cause__, current.__context__) if e is not None]
-    return {
-        "exception_type": type(error).__name__,
-        "exception_message": str(error),
-        "exception_chain": chain,
-        "exception_code": code,
-        "missing_module": missing,
-    }
-
-
-def _add_exception_fields(
-    logger: Any, method_name: str, event_dict: dict[str, Any]
-) -> dict[str, Any]:
-    """Every record logged with an exception (`logger.exception`, `exc_info=`) gets exception_fields, so a reader
-    (the dimos server's launch diagnosis) knows it by its class and errno, not its wording; fields the call set win."""
-    exc_info = event_dict.get("exc_info")
-    if exc_info is True:
-        error = sys.exc_info()[1]
-    elif isinstance(exc_info, tuple) and len(exc_info) == 3:
-        error = exc_info[1]
-    else:
-        error = exc_info if isinstance(exc_info, BaseException) else None
-    if error is not None:
-        for key, value in exception_fields(error).items():
-            event_dict.setdefault(key, value)
-    return event_dict
-
-
 def setup_exception_handler() -> None:
     def handle_exception(
         exc_type: type[BaseException],
@@ -373,7 +315,8 @@ def setup_exception_handler() -> None:
         logger.error(
             "Uncaught exception occurred",
             exc_info=(exc_type, exc_value, exc_traceback),
-            **exception_fields(exc_value),
+            exception_type=exc_type.__name__,
+            exception_message=str(exc_value),
             traceback_lines=traceback.format_exception(exc_type, exc_value, exc_traceback),
         )
 

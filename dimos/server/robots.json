@@ -1,6 +1,6 @@
 {
   "$schema": "./robots.schema.json",
-  "about": "What each robot dimos supports can run, for dimOS Desktop's Launcher and anyone else who wants it. Checked against the code by test_all_blueprints_generation.py (dimos/robot/robots.py says how); served by the dimos server at GET /dimos/robots.",
+  "about": "What each robot dimos supports can run, for dimOS Desktop's Launcher and anyone else who wants it. Checked against the code by dimos/server/test_robots.py (dimos/server/robots.py says how); served by the dimos server at GET /dimos/robots.",
   "tags": {
     "drive": {
       "label": "Drive",

@@ -327,7 +327,7 @@ def config(name: str) -> dict[str, Any]:
 def robot_of(ref: str, name: str | None = None) -> str | None:
     """The robot a blueprint is for, from robots.json: the robot that lists it, else the one whose `dirs` hold its file
     (dimos.robot.unitree.go2.blueprints.basic:x -> "go2"); None for one no robot claims (a demo)."""
-    from dimos.robot import robots
+    from dimos.server import robots
 
     doc = _robots()
     if name is not None:
@@ -339,7 +339,7 @@ def robot_of(ref: str, name: str | None = None) -> str | None:
 
 @functools.cache
 def _robots() -> dict[str, Any]:
-    from dimos.robot import robots
+    from dimos.server import robots
 
     return robots.load()
 
@@ -370,7 +370,7 @@ def params(fn: Any) -> list[dict[str, Any]]:
 def catalog() -> dict[str, Any]:
     """Every blueprint, module and skill (for a launcher); one that fails to import is listed in `errors`."""
     from dimos.robot.all_blueprints import all_blueprints, all_modules
-    from dimos.robot.get_all_blueprints import get_blueprint_by_name, get_module_class_by_name
+    from dimos.robot.get_all_blueprints import get_blueprint_by_name
 
     errors: list[str] = []
     classes: dict[str, tuple[str, Any]] = {}
@@ -382,7 +382,7 @@ def catalog() -> dict[str, Any]:
         per_file[ref.split(":")[0]] = per_file.get(ref.split(":")[0], 0) + 1
     for name in sorted(all_modules):
         try:
-            cls = get_module_class_by_name(name)
+            cls = module_class_by_name(name)
             classes[f"{cls.__module__}.{cls.__qualname__}"] = (name, cls)
         except Exception as error:
             errors.append(f"module {name}: {type(error).__name__}: {error}")
@@ -451,3 +451,11 @@ def main(argv: list[str]) -> None:
 
 if __name__ == "__main__":
     main(sys.argv[1:])
+
+
+def module_class_by_name(name: str) -> Any:
+    """A registered module's class (all_modules' dotted path), imported; KeyError for a name it doesn't have."""
+    from dimos.robot.all_blueprints import all_modules
+
+    module_path, class_name = all_modules[name].rsplit(".", 1)
+    return getattr(importlib.import_module(module_path), class_name)

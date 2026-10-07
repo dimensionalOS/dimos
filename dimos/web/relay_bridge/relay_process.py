@@ -370,9 +370,6 @@ class RelayProcess:
                 code = self._process.poll()
                 if code is None:
                     continue
-                # its last output may still be in the pipes: let the readers finish it
-                for thread in self._threads:
-                    thread.join(timeout=2.0)
                 self.stop()
                 stderr = "\n".join(self._stderr_tail)
                 raise RuntimeError(

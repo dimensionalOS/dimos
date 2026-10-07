@@ -14,7 +14,8 @@
 
 
 """Dimensional cloud for the dimos server, run in a child process (`python -m dimos.server.cloud_worker ...`) so a
-cancel is a kill. It only calls dimos's own code (dimos.cli.cloud for the login, dimos.cloud.data for uploads).
+cancel is a kill. It only calls dimos's own code (dimos.cli.cloud's key store and endpoints for the login,
+dimos.cloud.data for uploads), unmodified: what `dimos login` prints and waits for, it does step by step here.
 Every result is a line MARKER + JSON on stdout (importing dimos can print); a traceback goes to stderr.
 
     account                         -> {"loggedIn", "email", "scopes", "source", "cloudUrl", "error"}
@@ -57,12 +58,14 @@ def http_status(chain: list[BaseException]) -> int | None:
     return next((e.code for e in chain if isinstance(e, urllib.error.HTTPError)), None)
 
 
+class NotLoggedInError(RuntimeError):
+    """No key: checked here before any cloud call, so it's never read from dimos's wording."""
+
+
 def classify(error: BaseException) -> tuple[str, str]:
     """(code, readable message) for an exception from dimos's cloud code, by its type and HTTP status (never its
     wording, which dimos is free to change)."""
     import urllib.error
-
-    from dimos.cloud.cloud_request import NotLoggedInError
 
     text = str(error)
     chain = list(causes(error))
@@ -107,7 +110,7 @@ def account() -> dict[str, Any]:
         return result
     result["source"] = "env" if global_config.dimos_api_key else "stored"
     try:
-        who = cloud.whoami_info(key)
+        who = whoami(key)
         result.update(loggedIn=True, email=who.get("email"), scopes=who.get("scopes"))
     except urllib.error.HTTPError as error:
         if error.code == 401:
@@ -120,10 +123,29 @@ def account() -> dict[str, Any]:
     return result
 
 
+def whoami(key: str) -> dict[str, Any]:
+    """The account `key` belongs to (`email`, `scopes`); urllib's HTTPError on a refusal (401: invalid or revoked).
+    The request `dimos whoami` makes."""
+    import urllib.request
+
+    from dimos.cli import cloud
+    from dimos.core.global_config import global_config
+
+    request = urllib.request.Request(
+        f"{cloud._base()}/auth/whoami", headers={"Authorization": f"Bearer {key}"}
+    )
+    with urllib.request.urlopen(request, timeout=global_config.dimos_http_timeout) as response:
+        answer: dict[str, Any] = json.load(response)
+        return answer
+
+
 def login() -> dict[str, Any]:
+    """`dimos login`'s device flow, through its own endpoints and key store, with the code emitted instead of printed."""
+    import socket
+
     from dimos.cli import cloud
 
-    device = cloud.start_device_login()
+    device = cloud._post("/auth/device", label=socket.gethostname())
     emit(
         {
             "event": "code",
@@ -134,20 +156,40 @@ def login() -> dict[str, Any]:
             "interval": device["interval"],
         }
     )
-    outcome = cloud.finish_device_login(device)
-    return {"event": "done", "status": outcome["status"], "email": outcome.get("email")}
+    deadline = time.time() + device["expires_in"]
+    while time.time() < deadline:
+        time.sleep(device["interval"])
+        answer = cloud._post("/auth/token", device_code=device["device_code"])
+        if answer["status"] == "ok":
+            cloud._store(answer["api_key"])
+            return {"event": "done", "status": "ok", "email": answer.get("email")}
+        if answer["status"] in ("denied", "expired"):
+            return {"event": "done", "status": answer["status"], "email": None}
+    return {"event": "done", "status": "expired", "email": None}
 
 
 def logout() -> dict[str, Any]:
     from dimos.cli import cloud
 
-    return {"loggedOut": cloud.forget()}
+    return {"loggedOut": cloud._forget()}
+
+
+def console_datasets_url() -> str | None:
+    """The web console's page listing the account's datasets: dimos_cloud_url's api.X -> console.X (None for a cloud
+    URL without an api. host). The console has no per-dataset URL yet."""
+    from dimos.core.global_config import global_config
+
+    base = global_config.dimos_cloud_url.rstrip("/")
+    if "://api." not in base:
+        return None
+    return base.replace("://api.", "://console.", 1) + "/console/data"
 
 
 def upload(path: str, robot_id: str | None = None, kind: str | None = None) -> dict[str, Any]:
     from pathlib import Path
 
-    from dimos.cloud.data import CloudData, console_datasets_url
+    from dimos.cli import cloud
+    from dimos.cloud.data import CloudData
 
     last: list[Any] = [0.0, None]
 
@@ -160,6 +202,8 @@ def upload(path: str, robot_id: str | None = None, kind: str | None = None) -> d
 
     if not Path(path).is_file():
         raise FileNotFoundError(2, "No such file", path)
+    if not cloud.api_key():
+        raise NotLoggedInError("not logged in")
     tick("preparing", 0, 0)
     result = CloudData().upload(
         Path(path), robot_id=robot_id or None, kind=kind or None, progress=tick

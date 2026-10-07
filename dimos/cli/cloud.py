@@ -107,61 +107,29 @@ def api_key() -> str | None:
     return _load()
 
 
-def start_device_login() -> dict[str, Any]:
-    """A device code to approve: verification_uri(_complete), user_code, device_code, expires_in, interval."""
-    return _post("/auth/device", label=socket.gethostname())
-
-
-def finish_device_login(device: dict[str, Any]) -> dict[str, Any]:
-    """Polls until `device` is approved, denied or expires; an approved key is stored.
-    `{"status": "ok", "email", "key_id", "stored_in"}` or `{"status": "denied"|"expired"}`."""
-    deadline = time.time() + device["expires_in"]
-    while time.time() < deadline:
-        time.sleep(device["interval"])
-        r = _post("/auth/token", device_code=device["device_code"])
-        if r["status"] == "ok":
-            where = _store(r["api_key"])
-            return {
-                "status": "ok",
-                "email": r.get("email"),
-                "key_id": r.get("key_id"),
-                "stored_in": where,
-            }
-        if r["status"] in ("denied", "expired"):
-            return {"status": r["status"]}
-    return {"status": "expired"}
-
-
-def whoami_info(key: str) -> dict[str, Any]:
-    """The account `key` belongs to (`email`, `scopes`); urllib's HTTPError on a refusal (401: invalid or revoked)."""
-    req = urllib.request.Request(
-        f"{_base()}/auth/whoami", headers={"Authorization": f"Bearer {key}"}
-    )
-    with urllib.request.urlopen(req, timeout=global_config.dimos_http_timeout) as r:
-        return cast("dict[str, Any]", json.load(r))
-
-
-def forget() -> bool:
-    """Forgets the stored key; whether there was one."""
-    return _forget()
-
-
 def login() -> None:
     """Sign this machine in to Dimensional cloud."""
-    d = start_device_login()
+    d = _post("/auth/device", label=socket.gethostname())
     typer.echo(f"\n  Open        {d['verification_uri']}")
     typer.echo(f"  Enter code  {d['user_code']}\n")
-    r = finish_device_login(d)
-    if r["status"] == "ok":
-        typer.echo(f"Logged in as {r['email']} (key {r['key_id']}…, stored in {r['stored_in']})")
-        return
-    typer.echo(f"Login {r['status']}.", err=True)
+    deadline = time.time() + d["expires_in"]
+    while time.time() < deadline:
+        time.sleep(d["interval"])
+        r = _post("/auth/token", device_code=d["device_code"])
+        if r["status"] == "ok":
+            where = _store(r["api_key"])
+            typer.echo(f"Logged in as {r['email']} (key {r['key_id']}…, stored in {where})")
+            return
+        if r["status"] in ("denied", "expired"):
+            typer.echo(f"Login {r['status']}.", err=True)
+            raise typer.Exit(1)
+    typer.echo("Login timed out.", err=True)
     raise typer.Exit(1)
 
 
 def logout() -> None:
     """Forget the stored key. The key itself stays valid until revoked in the console."""
-    if forget():
+    if _forget():
         typer.echo("Logged out. The key stays valid until you revoke it in the console.")
     else:
         typer.echo("Not logged in.")
@@ -173,8 +141,12 @@ def whoami() -> None:
     if not key:
         typer.echo("Not logged in — run `dimos login`.", err=True)
         raise typer.Exit(1)
+    req = urllib.request.Request(
+        f"{_base()}/auth/whoami", headers={"Authorization": f"Bearer {key}"}
+    )
     try:
-        who = whoami_info(key)
+        with urllib.request.urlopen(req, timeout=global_config.dimos_http_timeout) as r:
+            who = json.load(r)
     except urllib.error.HTTPError as e:
         typer.echo(
             "Key invalid or revoked — run `dimos login`."

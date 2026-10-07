@@ -426,23 +426,22 @@ def test_a_launch_event_goes_out_once_per_change() -> None:
     assert [e["launch"] and e["launch"]["phase"] for e in sent] == ["starting", "running", None]
 
 
-# a `dimos run` that logs as the real one does (dimos's own logger, to DIMOS_RUN_LOG_DIR, then to its run's dir) and
-# fails deploying a module that needs a package that isn't installed
+# a `dimos run` that logs as the real one does (dimos's own logger, to DIMOS_RUN_LOG_DIR, then to its run's dir,
+# LOG_DIR/<YYYYmmdd-HHMMSS>-<blueprint>) and fails deploying a module that needs a package that isn't installed
 FAILING_DIMOS = """
-import os, sys
-from dimos.utils.logging_config import exception_fields, set_run_log_dir, setup_logger
+import os, sys, time
+from dimos.utils.logging_config import set_run_log_dir, setup_logger
 logger = setup_logger()
-logger.info("Starting DimOS", stage="starting")
-run_dir = os.path.join(os.environ["FAKE_RUN_LOGS"], "r1")
-logger.info("Run log", stage="run_log", run_id="r1", log_dir=run_dir)
+logger.info("Starting DimOS")
+run_dir = os.path.join(os.environ["FAKE_RUN_LOGS"], time.strftime("%Y%m%d-%H%M%S") + "-unitree-g1")
 set_run_log_dir(run_dir)
-logger.info("Building the blueprint", stage="building")
-logger.info("Starting the modules", stage="starting_modules", modules=2)
-logger.info("Deployed module.", stage="module_deployed", module="A")
+logger.info("Building the blueprint")
+logger.info("Starting the modules")
+logger.info("Deployed module.", module="A")
 try:
     import not_a_real_package_xyz
-except ModuleNotFoundError as error:
-    logger.error("Worker request failed", module="B", method=None, exc_info=True, **exception_fields(error))
+except ModuleNotFoundError:
+    logger.error("Failed to deploy module", module="B", exc_info=True)
 print("\\x1b[31mError: it broke\\x1b[0m", file=sys.stderr)
 sys.exit(1)
 """
@@ -453,6 +452,7 @@ def test_a_failed_launch_says_how_far_it_got_and_why(
 ) -> None:
     (checkout / ".venv" / "bin" / "dimos").write_text(f"#!{sys.executable}\n{FAILING_DIMOS}")
     monkeypatch.setenv("FAKE_RUN_LOGS", str(tmp_path / "run_logs"))
+    monkeypatch.setattr("dimos.constants.LOG_DIR", tmp_path / "run_logs")
     client.post("/dimos/runs", json={"blueprint": "unitree-g1"})
     for _ in range(200):
         launch = client.get("/dimos/runs").json()["launch"]
@@ -466,7 +466,7 @@ def test_a_failed_launch_says_how_far_it_got_and_why(
         ("starting_modules", "failed"),
         ("running", "todo"),
     ]
-    assert launch["steps"][2]["data"] == {"deployed": 1, "total": 2}
+    assert launch["steps"][2]["data"] == {"deployed": 1, "total": None}
     [problem] = launch["problems"]
     assert (problem["code"], problem["data"]["missing_module"], problem["data"]["module"]) == (
         "missing_python_package",
@@ -762,9 +762,9 @@ def test_robots(client: TestClient, checkout: Path) -> None:
     assert "global" not in spot_ip
     assert answer["unlisted"] == []
     # the checkout's own file wins
-    own = checkout / "dimos" / "robot" / "robots.json"
+    own = checkout / "dimos" / "server" / "robots.json"
     own.parent.mkdir(parents=True, exist_ok=True)
-    doc = json.loads((Path(__file__).parents[1] / "robot" / "robots.json").read_text())
+    doc = json.loads((Path(__file__).parent / "robots.json").read_text())
     doc["robots"] = {"go2": {**doc["robots"]["go2"], "name": "My Go2"}}
     own.write_text(json.dumps(doc))
     answer = client.get("/dimos/robots").json()

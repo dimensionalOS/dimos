@@ -172,46 +172,6 @@ export function installUnhandledRejectionGuard(): void {
   });
 }
 
-/** Attempts at a port free for both TCP and UDP when a shared port is picked by the OS (--port 0 with a cert). */
-export const SHARED_PORT_ATTEMPTS = 20;
-
-/**
- * Binds the HTTP server, then the QUIC endpoint: on the same port with a real certificate (`shared`), else on an
- * ephemeral one. With `port` 0 and a shared port the OS picks the TCP port only, and that number can already be taken
- * for UDP (another relay's ephemeral QUIC port): then it lets that port go and lets the OS pick again. A port asked
- * for by number either binds on both or fails.
- */
-export async function bindPorts<
-  Server extends { addr: Deno.Addr; shutdown(): Promise<void> },
-  Endpoint,
->(
-  port: number,
-  shared: boolean,
-  serve: (port: number) => Server,
-  quic: (port: number) => Endpoint,
-): Promise<{ httpServer: Server; endpoint: Endpoint }> {
-  const attempts = shared && port === 0 ? SHARED_PORT_ATTEMPTS : 1;
-  let lastError: unknown;
-  for (let attempt = 0; attempt < attempts; attempt++) {
-    const httpServer = serve(port);
-    const httpPort = (httpServer.addr as Deno.NetAddr).port;
-    try {
-      return { httpServer, endpoint: quic(shared ? httpPort : 0) };
-    } catch (e) {
-      await httpServer.shutdown();
-      lastError = e;
-      if (!(e instanceof Deno.errors.AddrInUse)) break;
-    }
-  }
-  const reason = (lastError as Error)?.message ?? lastError;
-  throw new Error(
-    shared
-      ? `QUIC cannot bind UDP port ${port || "(any of " + attempts + " the OS picked)"} ` +
-        `(with --cert/--key it shares --port): ${reason}`
-      : `QUIC cannot bind a UDP port: ${reason}`,
-  );
-}
-
 export async function startRelay(options: RelayOptions = {}): Promise<RelayHandle> {
   installUnhandledRejectionGuard();
   const host = options.host ?? "127.0.0.1";
@@ -262,17 +222,27 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
   // QUIC binds an ephemeral port that clients discover via the ready line or
   // /api/info, so --port stays a single HTTP-facing knob. Nothing awaits
   // between this bind and the consts handleHttp closes over.
-  const { httpServer, endpoint } = await bindPorts(
-    options.port ?? 7780,
-    tls,
-    (port) =>
-      Deno.serve(
-        { hostname: host, port, onListen: () => {}, cert: options.cert, key: options.key },
-        handleHttp,
-      ),
-    (port) => new Deno.QuicEndpoint({ hostname: host, port }),
+  const httpServer = Deno.serve(
+    {
+      hostname: host,
+      port: options.port ?? 7780,
+      onListen: () => {},
+      cert: options.cert,
+      key: options.key,
+    },
+    handleHttp,
   );
   const httpPort = (httpServer.addr as Deno.NetAddr).port;
+  let endpoint: Deno.QuicEndpoint;
+  try {
+    endpoint = new Deno.QuicEndpoint({ hostname: host, port: tls ? httpPort : 0 });
+  } catch (e) {
+    await httpServer.shutdown();
+    throw new Error(
+      `QUIC cannot bind UDP port ${httpPort} (with --cert/--key it shares --port): ` +
+        ((e as Error)?.message ?? e),
+    );
+  }
   const listener = endpoint.listen({
     cert: cert.certPem,
     key: cert.keyPem,

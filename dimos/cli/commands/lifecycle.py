@@ -76,12 +76,6 @@ def _with_relay_bridge(blueprint: Blueprint) -> Blueprint:
     return with_relay_bridge(blueprint)
 
 
-def _refuse(message: str) -> None:
-    """A run refused for its arguments or config: on the terminal, and as a record a program can read."""
-    logger.error("Run refused", problem="bad_arguments", error=message)
-    typer.echo(f"Error: {message}", err=True)
-
-
 @cache_usage_locked
 def run(
     ctx: typer.Context,
@@ -112,7 +106,7 @@ def run(
     """Start a robot blueprint"""
 
     # Log this at the start so that people get immediate feedback that the program has started.
-    logger.info("Starting DimOS", stage="starting")
+    logger.info("Starting DimOS")
 
     if config_path == DEFAULT_CONFIG_PATH:
         _reject_legacy_config()
@@ -141,7 +135,7 @@ def run(
     try:
         blueprint_names, config_tokens = split_run_arguments(robot_types)
     except BlueprintConfigError as error:
-        _refuse(str(error))
+        typer.echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
 
     global_option_overrides: dict[str, Any] = dict(ctx.obj or {})
@@ -167,14 +161,14 @@ def run(
             global_overrides=global_option_overrides,
         )
     except BlueprintConfigError as error:
-        _refuse(str(error))
+        typer.echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
     # Some blueprint modules select their composition at import time, so all
     # global sources must be visible before resolving the requested names.
     try:
         global_config.update(**preparsed_global_config)
     except ValidationError as error:
-        _refuse(error.errors()[0]["msg"])
+        typer.echo(f"Error: {error.errors()[0]['msg']}", err=True)
         raise typer.Exit(2) from error
 
     blueprint = autoconnect(*map(get_by_name_or_exit, blueprint_names))
@@ -190,7 +184,7 @@ def run(
         try:
             check_topics(global_config.record_topics, {n for n, _ in stream_name_types(blueprint)})
         except ValueError as error:
-            _refuse(str(error))
+            typer.echo(f"Error: {error}", err=True)
             raise typer.Exit(2) from error
     parser = BlueprintConfigParser(blueprint)
 
@@ -217,7 +211,7 @@ def run(
             global_overrides=global_option_overrides,
         )
     except BlueprintConfigError as error:
-        _refuse(str(error))
+        typer.echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
 
     # Clean stale registry entries only after the full command has validated.
@@ -232,9 +226,6 @@ def run(
     # Tag every descendant with the run id so the watchdog and stale-run
     # cleanup can identify them via os.environ after main dies.
     os.environ[DIMOS_RUN_ID_ENV] = run_id
-
-    # the last record before the switch: whoever reads this log (e.g. the dimos server) follows on there
-    logger.info("Run log", stage="run_log", run_id=run_id, log_dir=str(log_dir))
 
     # Route structured logs (main.jsonl) to the per-run directory.
     # Workers inherit DIMOS_RUN_LOG_DIR env var via forkserver.

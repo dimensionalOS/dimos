@@ -71,34 +71,3 @@ def test_module_key_leads_the_kv_tail(monkeypatch: pytest.MonkeyPatch) -> None:
         },
     )
     assert line.endswith("tick module=planner alpha=1")
-
-
-def test_every_logged_exception_gets_its_fields(monkeypatch, tmp_path):
-    """A bind failure logged by `logger.exception` or `exc_info=` carries its errno name, like an uncaught one."""
-    monkeypatch.setenv("DIMOS_RUN_LOG_DIR", str(tmp_path))
-    subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            """
-import errno
-from dimos.utils.logging_config import setup_logger
-logger = setup_logger()
-error = OSError(errno.EADDRINUSE, "address already in use")
-try:
-    raise error
-except OSError:
-    logger.exception("bind failed")
-logger.error("task failed", exc_info=error)
-logger.error("its own code", exc_info=error, exception_code="MINE")
-logger.error("no exception")
-""",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=20,
-        check=True,
-    )
-    records = [json.loads(line) for line in (tmp_path / "main.jsonl").read_text().splitlines()]
-    assert [r.get("exception_code") for r in records] == ["EADDRINUSE", "EADDRINUSE", "MINE", None]
-    assert records[0]["exception_chain"] == ["OSError"]

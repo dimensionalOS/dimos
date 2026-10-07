@@ -19,14 +19,12 @@ from typing import NoReturn
 import typer
 
 from dimos.core.coordination.blueprints import Blueprint
-from dimos.core.module import ModuleBase
 from dimos.robot.all_blueprints import all_blueprints, all_modules
 from dimos.robot.external_blueprints import (
     ExternalBlueprintError,
     is_namespaced_blueprint_name,
     resolve_external_blueprint_by_name,
 )
-from dimos.utils.logging_config import setup_logger
 
 all_names = sorted(set(all_blueprints.keys()) | set(all_modules.keys()))
 
@@ -83,16 +81,12 @@ def load_blueprint(name: str) -> Blueprint:
         raise
 
 
-def get_module_class_by_name(name: str) -> type[ModuleBase]:
+def get_module_by_name(name: str) -> Blueprint:
     if name not in all_modules:
         _raise_unknown(name, list(all_modules.keys()))
     module_path, class_name = all_modules[name].rsplit(".", 1)
     python_module = __import__(module_path, fromlist=[class_name])
-    return getattr(python_module, class_name)  # type: ignore[no-any-return]
-
-
-def get_module_by_name(name: str) -> Blueprint:
-    return get_module_class_by_name(name).blueprint()
+    return getattr(python_module, class_name).blueprint()  # type: ignore[no-any-return]
 
 
 def get_by_name(name: str) -> Blueprint:
@@ -106,11 +100,7 @@ def get_by_name(name: str) -> Blueprint:
         _raise_unknown(name, all_names)
 
 
-logger = setup_logger()
-
-
 def _fail_or_exit(name: str, candidates: list[str]) -> NoReturn:
-    logger.error("Unknown blueprint or module", problem="unknown_blueprint", name=name)
     typer.echo(typer.style(f"Unknown blueprint or module: {name}", fg=typer.colors.RED), err=True)
     suggestions = difflib.get_close_matches(name, candidates, n=5, cutoff=0.4)
     if suggestions:

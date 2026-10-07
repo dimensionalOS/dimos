@@ -27,7 +27,7 @@ import pytest
 
 from dimos.cli import cloud
 from dimos.cloud.cloud_request import HttpCloudRequest
-from dimos.cloud.data import CloudData, DataApi, MultipartBackend
+from dimos.cloud.data import DataApi, MultipartBackend
 from dimos.core.global_config import global_config
 from dimos.server import cloud_worker
 
@@ -60,7 +60,10 @@ def backend() -> MultipartBackend:
 def test_errors_are_classified_by_what_dimos_raises(
     no_login: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    assert cloud_worker.classify(raised(CloudData))[0] == "not_logged_in"
+    # no key: refused before dimos is called (its own refusal has only words to tell it by)
+    with pytest.raises(cloud_worker.NotLoggedInError) as refused:
+        cloud_worker.upload(str(Path(__file__)))
+    assert cloud_worker.classify(refused.value)[0] == "not_logged_in"
     for status, code in [(401, "not_logged_in"), (413, "quota"), (500, "failed")]:
         monkeypatch.setattr(urllib.request, "urlopen", refuse(status))
         assert cloud_worker.classify(raised(backend().quota))[0] == code, status

@@ -32,7 +32,6 @@ from datetime import datetime, timedelta, timezone
 from ipaddress import IPv4Address
 import json
 from pathlib import Path
-import socket
 import subprocess
 import sys
 import threading
@@ -726,20 +725,6 @@ def test_external_relay_with_real_certificate(tmp_path: Path) -> None:
             assert _session_live(bridge)
         finally:
             stop_module(bridge)
-
-
-def test_relay_that_cannot_start_says_why(tmp_path: Path) -> None:
-    # With a real certificate QUIC shares --port. A port already taken for UDP fails the start with exit 1 and the
-    # reason on stderr (the relay's unhandled-rejection guard once turned this into a silent exit 0).
-    cert, key = _self_signed_cert(tmp_path)
-    taken = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    taken.bind(("127.0.0.1", 0))
-    try:
-        port = taken.getsockname()[1]
-        with pytest.raises(RuntimeError, match=r"exited with 1(.|\n)*QUIC cannot bind UDP port"):
-            RelayProcess(cert=cert, key=key, port=port).start()
-    finally:
-        taken.close()
 
 
 def test_external_relay_with_auth(tmp_path: Path) -> None:

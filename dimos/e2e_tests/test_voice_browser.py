@@ -104,20 +104,8 @@ def test_hold_to_talk_ships_a_decodable_recording(
     mic.hover()
     fake_mic_page.mouse.down()
     expect(mic).to_have_attribute("data-state", "recording", timeout=15_000)
-    # Hold until the bytes already received decode to over a second of audio (at least 1.5 s), not for a wall time:
-    # Firefox's fake device on the null audio backend (media.cubeb.force_null_context, above) records slower than
-    # real time - 1.5, 3 and 5 s held decode to 0.73, 1.45 and 2.37 s (1.15, 3.45, 5.15 s without the pref) - and a
-    # loaded runner slows it further (a 1.5 s hold once gave 0.45 s), so the hold waits for the audio, not the clock.
-    held = time.monotonic()
-    deadline = held + 30.0
-    while time.monotonic() < deadline:
-        fake_mic_page.wait_for_timeout(250)
-        if time.monotonic() - held < 1.5:
-            continue
-        received = b"".join(chunk.data for chunk in list(chunks))
-        so_far = decode_audio_bytes(received) if len(received) > 1_000 else None
-        if so_far is not None and so_far.data.shape[0] > 16_000:
-            break
+    # 3 s, so a slow runner's late recorder start still leaves well over the 0.5 s asserted below.
+    fake_mic_page.wait_for_timeout(3_000)
     fake_mic_page.mouse.up()
     expect(mic).to_have_attribute("data-state", "idle", timeout=30_000)
 
@@ -133,7 +121,7 @@ def test_hold_to_talk_ships_a_decodable_recording(
     assert [chunk.seq for chunk in chunks] == list(range(len(chunks)))
     assert chunks[0].mime.startswith("audio/")
     audio = b"".join(chunk.data for chunk in chunks)
-    assert len(audio) > 1_000  # ~1.5 s of compressed audio, not an empty shell
+    assert len(audio) > 1_000  # ~3 s of compressed audio, not an empty shell
     # Whatever container this engine produced, the owned ffmpeg decode turns
     # it into the PCM shape the Whisper pipeline assumes.
     event = decode_audio_bytes(audio)

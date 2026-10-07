@@ -2,7 +2,7 @@
 // both robot and viewer. Deno's client CAN receive relay-initiated uni
 // streams (verified; the 2.6.10 incoming-uni bug is server-side receive
 // only), so this covers the full forwarding path without a browser.
-import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
+import { assert, assertEquals, assertRejects } from "@std/assert";
 import { fileURLToPath } from "node:url";
 import {
   CONTROL_CHANNEL,
@@ -21,7 +21,7 @@ import {
 } from "@dimos/shared";
 import { parseAuthFile } from "./auth.ts";
 import { makeEphemeralCert } from "./cert.ts";
-import { bindPorts, startRelay } from "./server.ts";
+import { startRelay } from "./server.ts";
 
 const ROBOT: RobotInfo = { id: "deno-bot", name: "Deno Bot", model: "test" };
 // Raw (un-normalized) on purpose: the relay must forward it verbatim.
@@ -1445,56 +1445,4 @@ Deno.test("--serve-dir is refused on a non-loopback host, unsafe override or not
     Error,
     "--serve-dir is refused on non-loopback host 0.0.0.0",
   );
-});
-
-Deno.test("bindPorts: with a shared port the OS picked, a port taken for UDP is let go and another picked", async () => {
-  let next = 50000;
-  const closed: number[] = [];
-  const serve = (port: number) => {
-    const picked = port === 0 ? next++ : port;
-    return {
-      addr: { transport: "tcp", hostname: "127.0.0.1", port: picked } as Deno.NetAddr,
-      shutdown: () => {
-        closed.push(picked);
-        return Promise.resolve();
-      },
-    };
-  };
-  const takenForUdp = new Set([50000, 50001]);
-  const quic = (port: number) => {
-    if (takenForUdp.has(port)) {
-      throw new Deno.errors.AddrInUse("Address already in use (os error 48)");
-    }
-    return { port };
-  };
-  const bound = await bindPorts(0, true, serve, quic);
-  assertEquals((bound.httpServer.addr as Deno.NetAddr).port, 50002);
-  assertEquals(bound.endpoint, { port: 50002 });
-  assertEquals(closed, [50000, 50001]);
-
-  // a port asked for by number binds on both or fails, at once
-  closed.length = 0;
-  await assertRejects(
-    () => bindPorts(50000, true, serve, quic),
-    Error,
-    "QUIC cannot bind UDP port 50000",
-  );
-  assertEquals(closed, [50000]);
-  // without a shared port QUIC takes an ephemeral one
-  assertEquals((await bindPorts(0, false, serve, quic)).endpoint, { port: 0 });
-});
-
-Deno.test({
-  name: "bindPorts: a real UDP port in use is Deno.errors.AddrInUse",
-  fn() {
-    const taken = new Deno.QuicEndpoint({ hostname: "127.0.0.1", port: 0 });
-    try {
-      assertThrows(
-        () => new Deno.QuicEndpoint({ hostname: "127.0.0.1", port: taken.addr.port }),
-        Deno.errors.AddrInUse,
-      );
-    } finally {
-      taken.close();
-    }
-  },
 });

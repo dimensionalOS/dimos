@@ -14,14 +14,17 @@
 
 """How far a launch got and what went wrong, as stable codes with data, read from its structured log records.
 
-dimos marks its startup with a `stage` field (`starting`, `run_log`, `building`, `starting_modules`,
-`module_deployed`, `started`), marks refusals it knows with a `problem` field, and logs exceptions with
-`exception_chain` / `exception_code` / `missing_module` (logging_config.exception_fields). Nothing here reads the
-wording of a message. The words (and the fixes) are Desktop's, per code.
+dimos, unmodified, logs its startup as `Starting DimOS`, `Building the blueprint`, `Starting the modules`, one
+`Deployed module.` per module and `Blueprint started`; those messages are the stages here (test_diagnose checks dimos
+still logs each one). An exception is logged with its traceback (`exception`, or `traceback_lines` from the
+uncaught-exception hook): its classes and errno are read from that text, by their type names, never the message's
+wording. Refusals dimos only prints (bad arguments, an unknown blueprint, an unmet requirement) have no record: they
+reach the launch as its output's last line. The words (and the fixes) are Desktop's, per code.
 """
 
 from __future__ import annotations
 
+import errno
 import re
 import subprocess
 import time
@@ -53,19 +56,18 @@ ProblemCode = Literal[
 # the startup stages a step stands for, in order (the last, running, is dimos's run registry entry)
 STAGES: tuple[StepCode, ...] = ("starting", "building", "starting_modules")
 
-# a `problem` field dimos logs -> its code
-PROBLEM_FIELDS: dict[str, ProblemCode] = {
-    "bad_arguments": "bad_arguments",
-    "unknown_blueprint": "unknown_blueprint",
-    "requirement_unmet": "requirement_unmet",
+# the message dimos logs at each stage -> the stage (module_deployed and started aren't steps of their own)
+STAGE_EVENTS: dict[str, str] = {
+    "Starting DimOS": "starting",
+    "Building the blueprint": "building",
+    "Starting the modules": "starting_modules",
+    "Deployed module.": "module_deployed",
+    "Blueprint started": "started",
 }
 
-# an exception class in a record's exception_chain -> its code (test_diagnose checks each dimos class still exists)
+# an exception class in a record's traceback -> its code
 EXCEPTION_CODES: dict[str, ProblemCode] = {
     "ModuleNotFoundError": "missing_python_package",
-    "dimos.core.global_config.MissingRobotIpError": "robot_ip_missing",
-    "dimos.robot.unitree.go2.connection.MissingReplayStreamError": "replay_streams_missing",
-    "dimos.simulation.dimsim.dimsim_process.LfsStubError": "lfs_data_missing",
     "unitree_webrtc_connect.unitree_auth.LocalSignalingPortError": "robot_unreachable",
     "ConnectionRefusedError": "connection_refused",
     "TimeoutError": "timed_out",
@@ -73,7 +75,7 @@ EXCEPTION_CODES: dict[str, ProblemCode] = {
     "torch.OutOfMemoryError": "gpu_out_of_memory",
 }
 
-# a record's exception_code (an errno name or a SQLite error name) -> its code
+# an errno name an OSError's text carries (`[Errno 48] ...`), or SQLite's "can't open" -> its code
 ERROR_CODES: dict[str, ProblemCode] = {
     "EADDRINUSE": "port_in_use",
     "EHOSTUNREACH": "host_unreachable",
@@ -89,31 +91,68 @@ NOT_DATA = {
     "lineno",
     "exception",
     "traceback_lines",
-    "problem",
-    "stage",
-    "exception_chain",
     "exception_type",
     "exception_message",
 }
 
+# a traceback's exception line: `module.Class: message` or `Class` (Python's own format, not dimos's)
+EXCEPTION_LINE = re.compile(
+    r"^([A-Za-z_][\w.]*(?:Error|Exception|Exit|Interrupt|Warning)\w*)(?::\s?(.*))?$"
+)
+ERRNO = re.compile(r"\[Errno (\d+)\]")
+MISSING_MODULE = re.compile(r"No module named '([^']+)'")
+
+
+def exception_info(extra: dict[str, Any]) -> dict[str, Any]:
+    """From a record's traceback text: `chain` (the exception classes, outermost last, as Python prints them),
+    `message` (the last one's), `exception_code` (an errno name, or SQLITE_CANTOPEN) and `missing_module`."""
+    text = extra.get("exception")
+    if not isinstance(text, str):
+        lines = extra.get("traceback_lines")
+        text = "".join(lines) if isinstance(lines, list) else ""
+    chain: list[str] = []
+    message = None
+    code = None
+    missing = None
+    for line in text.splitlines():
+        found = EXCEPTION_LINE.match(line)
+        if not found:
+            continue
+        chain.append(found.group(1))
+        message = found.group(2) or ""
+        number = ERRNO.search(message)
+        if number and int(number.group(1)) in errno.errorcode:
+            code = errno.errorcode[int(number.group(1))]
+        if (
+            found.group(1).endswith("OperationalError")
+            and "unable to open database file" in message
+        ):
+            code = "SQLITE_CANTOPEN"
+        module = MISSING_MODULE.search(message)
+        if found.group(1) == "ModuleNotFoundError" and module:
+            missing = module.group(1)
+    if extra.get("exception_type") and not chain:
+        chain = [str(extra["exception_type"])]
+        message = extra.get("exception_message")
+    return {"chain": chain, "message": message, "exception_code": code, "missing_module": missing}
+
+
 ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
 
-def stage(record: dict[str, Any]) -> Any:
-    return record["extra"].get("stage")
+def stage(record: dict[str, Any]) -> str | None:
+    return STAGE_EVENTS.get(str(record["event"]))
 
 
 def steps(records: list[dict[str, Any]], phase: str) -> list[dict[str, Any]]:
-    """starting, building, starting_modules (with how many modules started of how many), then running or stopped;
-    each done, now, todo or failed."""
+    """starting, building, starting_modules (with how many modules started; dimos doesn't log how many it will
+    start), then running or stopped; each done, now, todo or failed."""
     reached: int | None = None
     deployed, total = 0, None
     for record in records:
         found = stage(record)
         if found in STAGES:
             reached = max(reached or 0, STAGES.index(found))
-        if found == "starting_modules" and isinstance(record["extra"].get("modules"), int):
-            total = record["extra"]["modules"]
         if found == "module_deployed":
             deployed += 1
     result = []
@@ -141,14 +180,11 @@ def steps(records: list[dict[str, Any]], phase: str) -> list[dict[str, Any]]:
     return result
 
 
-def classify(extra: dict[str, Any]) -> ProblemCode:
-    if extra.get("problem") in PROBLEM_FIELDS:
-        return PROBLEM_FIELDS[extra["problem"]]
-    chain = extra.get("exception_chain")
-    for name in chain if isinstance(chain, list) else []:
+def classify(info: dict[str, Any]) -> ProblemCode:
+    for name in info["chain"]:
         if name in EXCEPTION_CODES:
             return EXCEPTION_CODES[name]
-    return ERROR_CODES.get(str(extra.get("exception_code")), "error")
+    return ERROR_CODES.get(str(info["exception_code"]), "error")
 
 
 # the address an OSError names, `('127.0.0.1', 3030)` (asyncio's and socket's bind errors print the address tuple)
@@ -214,11 +250,20 @@ def port_holder(port: int) -> dict[str, Any]:
 
 def problem(record: dict[str, Any]) -> dict[str, Any]:
     extra = record["extra"]
-    message = extra.get("exception_message") or extra.get("error") or record["event"]
-    code = classify(extra)
+    info = exception_info(extra)
+    message = info["message"] or extra.get("error") or record["event"]
+    code = classify(info)
     data = {key: value for key, value in extra.items() if key not in NOT_DATA}
+    data.update(
+        {
+            "exception_chain": info["chain"] or None,
+            "exception_code": info["exception_code"],
+            "missing_module": info["missing_module"],
+        }
+    )
+    data = {key: value for key, value in data.items() if value is not None}
     if code == "port_in_use":
-        port = port_of(extra.get("exception_message"), extra.get("error"), record["event"])
+        port = port_of(info["message"], extra.get("error"), record["event"])
         if port is not None:
             data["port"] = port
             data.update(port_holder(port))
@@ -235,11 +280,7 @@ def problem(record: dict[str, Any]) -> dict[str, Any]:
 def problems(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Every error record as a problem, the ones with a known code first; when none has one, the last three
     distinct errors (the last is usually the one that ended it)."""
-    found = [
-        problem(record)
-        for record in records
-        if record["level"] in ("error", "critical") or "problem" in record["extra"]
-    ]
+    found = [problem(record) for record in records if record["level"] in ("error", "critical")]
     distinct: list[dict[str, Any]] = []
     for item in found:
         if not any((p["code"], p["message"]) == (item["code"], item["message"]) for p in distinct):

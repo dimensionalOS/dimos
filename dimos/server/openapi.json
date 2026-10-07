@@ -4248,7 +4248,7 @@
       },
       "Robots": {
         "additionalProperties": true,
-        "description": "dimos/robot/robots.json with its defaults applied.",
+        "description": "dimos/server/robots.json with its defaults applied.",
         "properties": {
           "about": {
             "anyOf": [
@@ -6569,7 +6569,7 @@
     },
     "/dimos/robots": {
       "get": {
-        "description": "The checkout's dimos/robot/robots.json (dimos.yaml's `robots:`, also readable per tag without a server) with its defaults applied: each blueprint's modes (robot, replay, sim) with the GlobalConfig values each sets and its args (`key`, `scope`: global args are `--key value` before `run`, module args after the blueprint name), its tags including replay and sim from its modes, its robot and recommended app; `registered` and `unlisted` compare it with the blueprint registry. CI keeps the file in step with the code (dimos/robot/robots.py). Read from disk on every call; no side effects.",
+        "description": "The checkout's dimos/server/robots.json (dimos.yaml's `robots:`, also readable per tag without a server) with its defaults applied: each blueprint's modes (robot, replay, sim) with the GlobalConfig values each sets and its args (`key`, `scope`: global args are `--key value` before `run`, module args after the blueprint name), its tags including replay and sim from its modes, its robot and recommended app; `registered` and `unlisted` compare it with the blueprint registry. CI keeps the file in step with the code (dimos/server/robots.py). Read from disk on every call; no side effects.",
         "operationId": "get_dimos_robots",
         "responses": {
           "200": {

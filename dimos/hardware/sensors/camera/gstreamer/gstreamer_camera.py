@@ -29,9 +29,9 @@ from dimos.core.stream import Out
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.utils.logging_config import setup_logger
 
-# Add system path for gi module if needed: last, so the venv's packages (PIL, numpy) aren't shadowed by the system's
+# Add system path for gi module if needed
 if "/usr/lib/python3/dist-packages" not in sys.path:
-    sys.path.append("/usr/lib/python3/dist-packages")
+    sys.path.insert(0, "/usr/lib/python3/dist-packages")
 
 import gi  # type: ignore[import-not-found,import-untyped]
 
