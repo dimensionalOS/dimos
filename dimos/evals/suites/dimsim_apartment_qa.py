@@ -37,6 +37,7 @@ wins at both 0.05 m and 0.025 m grid resolution; distances are approximate.
 from collections.abc import Callable
 from typing import TypeVar
 
+from dimos.evals.constants import RAW_README
 from dimos.evals.environments.dimsim import DimSimEnvironment
 from dimos.evals.scorers import choice, exact, first_number, numeric, rank_order, ranking, yes_no
 from dimos.evals.types import EvalCase, Outcome, Suite
@@ -76,6 +77,7 @@ def _environment() -> DimSimEnvironment:
         disable=("wavefront-frontier-explorer", "patrolling-module"),
         scene="apartment",
         raw_bridge=True,  # agents without dimOS get the robot as plain topics
+        raw_guide=RAW_README,
     )
 
 

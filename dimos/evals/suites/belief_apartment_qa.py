@@ -24,6 +24,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TypeVar
 
+from dimos.evals.constants import RAW_README
 from dimos.evals.environments.dimsim import DimSimEnvironment
 from dimos.evals.scorers import choice, exact, first_number, numeric, yes_no
 from dimos.evals.types import EvalCase, Outcome, Suite
@@ -64,6 +65,7 @@ def _environment() -> DimSimEnvironment:
         disable=("wavefront-frontier-explorer", "patrolling-module"),
         scene="apartment",
         raw_bridge=True,
+        raw_guide=RAW_README,
     )
 
 

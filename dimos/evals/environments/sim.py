@@ -45,6 +45,8 @@ class SimConfig(EnvironmentConfig):
     disable: tuple[str, ...] = ()
     # Also expose the robot as plain Zenoh topics (raw-robot-bridge) for agents without dimOS.
     raw_bridge: bool = False
+    # ROBOT.md template describing this robot's raw topics; required with raw_bridge.
+    raw_guide: str | None = None
     attach: bool = False
     launch_timeout_s: float = 1200.0
     at_rest_m: float = 0.05
@@ -67,6 +69,10 @@ class Sim(Environment):
     @property
     def provides_raw_robot(self) -> bool:
         return self.config.raw_bridge
+
+    @property
+    def raw_guide(self) -> str | None:
+        return self.config.raw_guide
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -158,6 +164,7 @@ class Sim(Environment):
             streams=(),
             artifacts=artifacts,
             raw_endpoint=self._raw_endpoint if self.config.raw_bridge else None,
+            raw_guide=self.config.raw_guide,
         )
 
     def _wait_recording(self, deadline: float, pid: int | None) -> Path:

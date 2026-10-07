@@ -43,6 +43,7 @@ from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
 from dimos.evals.agents.mcp_client_adapter import McpClientAdapter
 from dimos.evals.agents.question_answer import QuestionAnswer
 from dimos.evals.cli import load_agent
+from dimos.evals.constants import RAW_README
 from dimos.evals.environments.base import Environment
 from dimos.evals.environments.dataset import Dataset
 from dimos.evals.environments.dimsim import DimSimEnvironment
@@ -973,7 +974,9 @@ def test_failed_agent_run_keeps_its_duration(dataset: str, tmp_path: Path) -> No
 def test_attach_with_raw_bridge_needs_a_listening_bridge() -> None:
     from dimos.evals.environments.dimsim import DimSimEnvironment
 
-    env = DimSimEnvironment(blueprint=["unitree-go2"], attach=True, raw_bridge=True)
+    env = DimSimEnvironment(
+        blueprint=["unitree-go2"], attach=True, raw_bridge=True, raw_guide=RAW_README
+    )
     env.config.launch_timeout_s = 1.0
     with pytest.raises(RuntimeError, match="raw-robot-bridge"):
         env.start(())

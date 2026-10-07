@@ -20,6 +20,7 @@ import numpy as np
 import pytest
 
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall
+from dimos.evals.constants import RAW_ARM_README, RAW_README
 from dimos.evals.environments.mujoco_sim import MujocoEnvironment
 from dimos.memory.store.memory import MemoryStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -99,6 +100,55 @@ def test_latest_pose_needs_odom():
             env.latest_pose(store)
         store.stream("odom", PoseStamped).append(PoseStamped(ts=5, frame_id="world"))
         assert env.latest_pose(store).ts == 5
+
+
+def test_raw_manipulation_uses_the_shared_bridge_and_suite_owned_interface():
+    from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
+    from dimos.robot.manipulators.xarm.blueprints.simulation import xarm_sim
+
+    env = MujocoEnvironment(
+        blueprint=["xarm-sim", "mcp-server"], raw_bridge=True, raw_guide=RAW_ARM_README
+    )
+    assert env.provides_raw_robot
+    parsed = BlueprintConfigParser(xarm_sim).parse(environ={})
+    tasks = parsed.module_kwargs("ControlCoordinator")["tasks"]
+    twist = next(task for task in tasks if task["type"] == "eef_twist")
+    assert twist["params"]["robot_model"] is not None
+
+
+def test_suite_guide_becomes_robot_md(tmp_path):
+    from dimos.evals.agents.pi import PiAdapter
+    from dimos.evals.suites.mujoco_xarm_pick import SUITE
+    from dimos.evals.types import RunningEnvironment
+
+    env = RunningEnvironment(
+        mcp_url="unused",
+        streams=(),
+        artifacts={},
+        raw_endpoint="tcp/127.0.0.1:12345",
+        raw_guide=SUITE[0].environment.config.raw_guide,
+    )
+    guide = PiAdapter(no_dimos=True)._no_dimos_files(env, tmp_path)["robot"].read_text()
+    assert "tcp/127.0.0.1:12345" in guide
+    assert "robot/arm/twist/json" in guide and "cmd_vel/json" not in guide
+    assert "0.1 m/s" in guide and "0.5 rad/s" in guide  # limits filled in
+    assert "xArm7" in guide  # suite notes appended
+
+
+def test_no_dimos_run_without_a_guide_is_refused_before_launch():
+    from dimos.evals.agents.pi import PiAdapter
+
+    unguided = MujocoEnvironment(blueprint=["xarm-sim"], raw_bridge=True)
+    with pytest.raises(ValueError, match="raw_guide"):
+        PiAdapter(no_dimos=True).preflight(unguided)
+
+
+def test_navigation_suites_keep_the_go2_guide():
+    from dimos.evals.suites.belief_apartment_qa import SUITE as BELIEF
+    from dimos.evals.suites.dimsim_apartment_qa import SUITE as DIMSIM
+
+    for suite in (DIMSIM, BELIEF):
+        assert {case.environment.config.raw_guide for case in suite} == {RAW_README}
 
 
 def test_ready_needs_fresh_streams_and_tracked_body_poses():
