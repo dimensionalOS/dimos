@@ -1,8 +1,8 @@
 // Graph layouts for the blueprint view: nodes with real sizes ({id, w, h}) and directed edges ({from, to}) in, a center
 // per node ({x, y}) and, for Hierarchy, each edge's bend points out. Every layout ends with no two nodes overlapping.
 
-const LAYER_GAP = 48
-const NODE_GAP = 14
+const LAYER_GAP = 90
+const NODE_GAP = 22
 const MARGIN = 10
 
 export const LAYOUTS = [
@@ -207,6 +207,28 @@ export function layered(nodes, edges) {
                 const others = [...up.get(id), ...down.get(id)]
                 return others.length ? others.reduce((sum, other) => sum + y.get(other), 0) / others.length : y.get(id)
             })
+            placeInOrder(ids, wanted, ids.map((id) => dims.get(id).h)).forEach((value, i) => y.set(ids[i], value))
+        }
+    }
+    // straighten long edges (as dot does): every bend of one edge wants a single track, so the edge runs straight
+    // between its layers and curves only near its ends; the nodes stay where they are, and order and gaps still hold
+    const chainOf = new Map()
+    for (const { chain } of chains.values()) {
+        if (chain.length > 1) {
+            chain.forEach((id) => chainOf.set(id, chain))
+        }
+    }
+    const median = (values) => {
+        const sorted = [...values].sort((a, b) => a - b)
+        return sorted[Math.floor(sorted.length / 2)]
+    }
+    for (let pass = 0; pass < 8; pass++) {
+        const track = new Map()
+        for (const chain of new Set(chainOf.values())) {
+            track.set(chain, median(chain.map((id) => y.get(id))))
+        }
+        for (const ids of layers) {
+            const wanted = ids.map((id) => chainOf.has(id) ? track.get(chainOf.get(id)) : y.get(id))
             placeInOrder(ids, wanted, ids.map((id) => dims.get(id).h)).forEach((value, i) => y.set(ids[i], value))
         }
     }
