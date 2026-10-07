@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Live mesh of a voxel map: occupancy, blurred, marching cubes on the GPU, emitted per chunk."""
+"""GPU mesh of a voxel map: blurred occupancy, marching cubes, one mesh per chunk."""
 
 from __future__ import annotations
 
@@ -78,7 +78,7 @@ class OccupancyMesher:
     def mesh(self, points: np.ndarray) -> list[Chunk]:
         """(chunk key, world vertices, normals, faces) for every chunk that changed."""
         ijk = np.floor(points / self.vox).astype(np.int64)
-        # every (block, local) a voxel lands in, its own chunk's block and the neighbours' pads
+        # each voxel lands in its own block and in the pads of its neighbours
         ck = ijk // C
         blocks, locals_ = [], []
         for off in _OFFSETS:
@@ -172,7 +172,7 @@ class OccupancyMesher:
         return out
 
 
-class LiveMesh(Transformer[PointCloud2, TriangleMesh]):
+class Mesh(Transformer[PointCloud2, TriangleMesh]):
     """Voxel map clouds in, one TriangleMesh per changed chunk out.
 
     Each cloud is a whole map; chunks it no longer covers come out empty. A reused
@@ -183,7 +183,7 @@ class LiveMesh(Transformer[PointCloud2, TriangleMesh]):
         self,
         *,
         voxel_size: float = 0.08,
-        # iso on the [1,2,1]/4 blurred occupancy: a 1-voxel wall peaks at 0.5, a lone voxel at 0.125
+        # iso on the [1,2,1]/4 blurred occupancy, where a 1-voxel wall peaks at 0.5
         iso: float = 0.2,
         # run in order over the changed chunks, see simplify.py
         simplify: Sequence[Simplifier] = (),

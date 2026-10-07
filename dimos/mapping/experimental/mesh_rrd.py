@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Replay lidar through the ray-traced voxel map and LiveMesh, faster than realtime, into an .rrd."""
+"""Replay lidar through the ray-traced voxel map and Mesh into rerun, faster than realtime."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ import itertools
 import numpy as np
 import typer
 
-from dimos.mapping.experimental.live_mesh import LiveMesh
+from dimos.mapping.experimental.mesh import Mesh
 from dimos.mapping.experimental.simplify import parse_chain
 from dimos.mapping.ray_tracing.transformer import RayTraceMap, pose_from_tf
 from dimos.memory.store.sqlite import SqliteStore
@@ -98,7 +98,7 @@ def main(
             )
 
     db = dataset if dataset.endswith(".db") else str(get_data(f"{dataset}.db"))
-    rr.init("live_mesh")
+    rr.init("mesh")
     if out is not None and live:
         rr.spawn(connect=False)
         rr.set_sinks(rr.GrpcSink(), rr.FileSink(out))
@@ -131,7 +131,7 @@ def main(
         pending: list[Observation[Image]] = []
 
         def log_camera(obs: Observation[PointCloud2]) -> None:
-            # images up to this scan's time, so both streams stay in step
+            # log images up to this scan's time
             for img in itertools.chain(pending, camera):
                 if img.ts > obs.ts:
                     pending[:] = [img]
@@ -158,10 +158,9 @@ def main(
                 .tap(log_odom)
                 .transform(ray)
                 .transform(global_map)
-                .transform(LiveMesh(voxel_size=voxel_size, simplify=simplifiers))
+                .transform(Mesh(voxel_size=voxel_size, simplify=simplifiers))
             )
-            # colours follow the map's height range; when it moves, every chunk is
-            # re-coloured (colours only, geometry stays)
+            # recolour every chunk when the map's height range moves
             heights: dict[tuple[int, int, int], np.ndarray] = {}
             col_lo, col_hi = 0.0, 0.0
 
@@ -192,7 +191,7 @@ def main(
                         colour(f"world/mesh/{k[0]}_{k[1]}_{k[2]}", z)
                 else:
                     colour(path, heights[m.key])
-        # a half-read cursor must not outlive the store
+        # close the camera cursor before the store
         getattr(camera, "close", lambda: None)()
     if out is not None:
         print(f"-> {out}")

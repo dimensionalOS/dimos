@@ -12,12 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""GPU mesh simplifiers: (vertices, faces) -> (vertices, faces), torch tensors.
+"""GPU mesh simplifiers, (vertices, faces) -> (vertices, faces) on torch tensors in metres.
 
-LiveMesh hands them block-local metres, so every ``tol`` is in metres.
-
-Open boundary vertices never move, so chunks simplified apart still meet. Faces only
-ever drop; vertices are never renumbered, so callers can keep per-vertex tags.
+Open boundary vertices never move, so separately simplified chunks still meet.
+Vertices are never renumbered; faces only drop.
 """
 
 from __future__ import annotations
@@ -101,17 +99,17 @@ class EdgeCollapse:
             a, b = code // nv, code % nv
             p, keep_a, cost = self._best(v, q, a, b, locked[a], locked[b])
             ok = (cost <= self.tol**2) & (cnt <= 2) & ~_member(code, blocked)
-            # coarse cost buckets, random within: cheap first but many winners per round
+            # coarse cost buckets, random within: cheap first, many winners per round
             key = (cost / self.tol**2 * 8).floor().clamp_max(8) + torch.rand_like(cost)
             sel = self._independent(f, nv, a, b, key, ok)
-            # masks over all edges, no compaction: each sync stalls the queue
+            # masks rather than compaction, to avoid host syncs
             idx = torch.where(sel, torch.arange(len(a), device=dev), -1)
             at_a = torch.full((nv,), -1, device=dev).scatter_reduce_(0, a, idx, "amax")
             at = at_a.clone().scatter_reduce_(0, b, idx, "amax")
             good = sel & self._no_flip(v, f, a, b, p, at) & self._link(code, nv, b, cnt, at_a)
             bad = code[sel & ~good]
             g = good.nonzero().squeeze(1)
-            # the last rounds trickle a few collapses each: stop under 0.01% of the faces
+            # stop once a round collapses under 0.01% of the faces
             if max(len(g), len(bad)) <= 1e-4 * len(f):
                 break
             blocked = torch.cat([blocked, bad]).sort().values
@@ -193,16 +191,12 @@ class EdgeCollapse:
 
 
 class PlaneSnap:
-    """Snap vertices inside planar regions exactly onto the region's fitted plane.
+    """Flatten planar regions onto fitted planes; run before EdgeCollapse.
 
-    Regions grow across edges whose smoothed normals differ by under ``max_angle``; the
-    smoothing averages out marching cubes ripple. Each region's plane is refit on its
-    inliers with a shrinking threshold down to ``tol``, so a region that leaked over an
-    edge keeps its dominant plane; the faces left over regrow and fit again, ``peels``
-    times. Neighbouring planes within ``merge_angle`` and ``tol`` merge. A vertex
-    moves when at least ``rim`` of its faces lie on one plane and none on another, so
-    edges between planes stay put; the snap fades in over ``feather`` rings from the
-    locked border. Run it before EdgeCollapse.
+    Regions grow over smoothed normals within ``max_angle``, planes are fit robustly down
+    to ``tol`` and peeled ``peels`` times, coplanar neighbours merge. A vertex snaps when
+    at least ``rim`` of its faces are on one plane and none on another, fading in over
+    ``feather`` rings from the locked border.
     """
 
     def __init__(
@@ -221,7 +215,6 @@ class PlaneSnap:
         self.merge_cos = math.cos(math.radians(merge_angle))
         self.rim = rim
         self.tol = tol
-        self.stop = 0.0
         self.min_cos = math.cos(math.radians(max_angle))
         self.smooth = int(smooth)
         self.min_faces = int(min_faces)
@@ -231,7 +224,7 @@ class PlaneSnap:
             return v, f
         nv, dev = len(v), v.device
         tag, pm, pn = self.assign(v, f)
-        # a vertex moves if its plane faces are all one plane and at least ``rim`` of its faces
+        # vertices whose plane faces share one plane and make up at least ``rim`` of them
         on = tag >= 0
         fv = f.reshape(-1)
         t3 = tag.repeat_interleave(3)
@@ -246,12 +239,11 @@ class PlaneSnap:
         hits = torch.bincount(fv[on3], minlength=nv)
         locked = boundary(f, nv)
         move = (lo == hi) & (hi >= 0) & (hits >= self.rim * deg) & ~locked
-        # the plane comes from any of the vertex's plane faces
         owner = torch.full((nv,), -1, device=dev)
         owner[fv[on3]] = torch.arange(len(f), device=dev).repeat_interleave(3)[on3]
         o = owner[move]
         off = ((v[move] - pm[o]) * pn[o]).sum(1, keepdim=True)
-        # fade in over ``feather`` rings from the locked border, so no crease at chunk seams
+        # fade in from the locked border so chunk seams don't crease
         fade = torch.ones(nv, device=dev)
         if self.feather:
             fade = _rings_from(locked, f, self.feather).float() / self.feather
@@ -273,16 +265,16 @@ class PlaneSnap:
         join = (n[f1] * n[f2]).sum(1) > self.min_cos
         w = raw.norm(dim=1) / 2
         c = v[f].mean(1)
-        # per face: its plane (point, normal) and region tag; -1 - face id while unassigned
+        # per face: plane point, normal and tag; unassigned faces get -1 - face id
         pm, pn = torch.zeros_like(c), torch.zeros_like(c)
         tag = -1 - torch.arange(nf, device=dev)
         active = torch.ones(nf, dtype=torch.bool, device=dev)
         for peel in range(self.peels):
-            # regrow regions over the faces no plane has claimed, fit, keep the inliers
+            # grow regions over unclaimed faces, fit, keep the inliers
             j = join & active[f1] & active[f2]
             root = _components(nf, f1[j], f2[j])
             size = torch.bincount(root, weights=active.float(), minlength=nf)
-            # only regions that can reach min_faces get a plane; fit over just their faces
+            # only regions that can reach min_faces are fit
             label, nc = _compact(root, size >= self.min_faces)
             sub = (label < nc).nonzero().squeeze(1)
             ls, vs, ns = label[sub], v[f[sub]], n[sub]
@@ -297,7 +289,7 @@ class PlaneSnap:
             pn[sub] = torch.where(inl[:, None], normal, pn[sub])
             tag[sub] = torch.where(inl, peel * nf + ls, tag[sub])
             active[sub] &= ~inl
-        # neighbouring planes that agree become one plane, refit over all their faces
+        # merge neighbouring coplanar planes and refit
         on = tag >= 0
         same = on[f1] & on[f2]
         a, b = f1[same], f2[same]
@@ -309,7 +301,7 @@ class PlaneSnap:
         label, nc = _compact(root, torch.bincount(root, weights=on.float(), minlength=nf) > 0)
         mean, normal = _fit_planes(label, nc + 1, w * on, c, n)
         pm, pn = mean[label], normal[label]
-        # the merged plane must still hold its faces, facing its way
+        # faces must still lie on, and face along, the merged plane
         d = ((v[f] - pm[:, None]) * pn[:, None]).sum(-1).abs().amax(1)
         on &= (d <= self.tol) & ((n * pn).sum(1) > self.min_cos)
         tag = torch.where(on, label, -1 - torch.arange(nf, device=dev))
@@ -347,7 +339,7 @@ def _components(n: int, a: Tensor, b: Tensor) -> Tensor:
     """Connected components over n nodes joined by edges a-b: each node's smallest node."""
     label = torch.arange(n, device=a.device)
     while True:
-        # hook both nodes and their roots onto the smaller label, then jump pointers
+        # hook nodes and their roots onto the smaller label, then jump pointers
         la, lb = label[a], label[b]
         lo = torch.minimum(la, lb)
         new = label.clone()
