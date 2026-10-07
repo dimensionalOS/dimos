@@ -284,6 +284,10 @@ export class Graph {
 
     applyView() {
         this.view.setAttribute("transform", `translate(${this.at.x} ${this.at.y}) scale(${this.at.k})`)
+        // the dot grid moves with the graph: one dot every 22 graph units
+        const grid = 22 * this.at.k
+        this.pane.style.backgroundSize = `${grid}px ${grid}px`
+        this.pane.style.backgroundPosition = `${this.at.x}px ${this.at.y}px`
     }
 
     listen() {

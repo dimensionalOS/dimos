@@ -402,12 +402,15 @@ button {
 }
 
 /* the graph pane */
+/* a dot grid behind the graph, panned and zoomed with it (graph.js sets its size and offset) */
 #graph {
     position: relative;
     min-width: 0;
     min-height: 0;
     overflow: hidden;
-    background: var(--bg);
+    background-color: var(--bg);
+    background-image: radial-gradient(circle, color-mix(in srgb, var(--muted-fg) 35%, transparent) 1.1px, transparent 1.4px);
+    background-size: 22px 22px;
 }
 svg.graph {
     position: absolute;
@@ -442,11 +445,16 @@ svg.graph.panning {
 .graph-head .live[hidden] {
     display: none;
 }
+/* edges are grey; a live one (its topic flowing) or a lit one (hovered, picked) takes its type's color */
 .edge {
     fill: none;
-    stroke: color-mix(in srgb, var(--type, var(--muted-fg)) 55%, var(--muted-fg));
+    stroke: color-mix(in srgb, var(--muted-fg) 88%, var(--fg));
     stroke-width: 1.6;
-    opacity: 0.75;
+    opacity: 0.8;
+}
+.edge.live,
+.edge.lit {
+    stroke: color-mix(in srgb, var(--type, var(--muted-fg)) 70%, var(--muted-fg));
 }
 .edge.live {
     opacity: 0.95;
@@ -522,14 +530,14 @@ svg.graph.panning {
     stroke-width: 1;
 }
 svg.running .node.topic:not(.live) {
-    opacity: 0.55;
+    opacity: 0.85;
 }
 .node.topic.live .box {
     stroke: var(--type);
 }
 svg.spot .node:not(.lit),
 svg.spot .edge:not(.lit) {
-    opacity: 0.18;
+    opacity: 0.5;
 }
 .node.lit.module .box {
     stroke: var(--primary);
