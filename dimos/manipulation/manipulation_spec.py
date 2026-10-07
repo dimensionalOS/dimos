@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Protocol
@@ -230,13 +230,36 @@ class ManipulationSpec(Spec, Protocol):
         self,
         targets: Mapping[PlanningGroupID, JointState],
         speed_scale: float | None = None,
+        start: JointState | None = None,
     ) -> PlanResult: ...
 
     def plan_to_poses(
         self,
         targets: Mapping[PlanningGroupID, PoseStamped],
         speed_scale: float | None = None,
+        start: JointState | None = None,
     ) -> PlanResult: ...
+
+    def plan_linear(
+        self,
+        dx: float = 0.0,
+        dy: float = 0.0,
+        dz: float = 0.0,
+        planning_group: PlanningGroupID | None = None,
+        check_collision: bool = False,
+        speed_scale: float | None = None,
+        start: JointState | None = None,
+    ) -> PlanResult: ...
+
+    def execute_plan(
+        self, plan: GeneratedPlan, blocking: bool = True, timeout: float | None = None
+    ) -> ExecutionResult: ...
+
+    def preview_plans(
+        self, plans: Sequence[GeneratedPlan], duration: float | None = None
+    ) -> CommandResult: ...
+
+    def get_current_joint_state(self) -> JointState | None: ...
 
     def preview_plan(
         self, plan: GeneratedPlan | None = None, duration: float | None = None

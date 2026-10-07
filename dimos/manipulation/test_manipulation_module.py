@@ -324,3 +324,41 @@ def _executed(coordinator):
         if invocation.args[1] == "execute":
             return invocation.args[2]["trajectory"]
     return None
+
+
+@pytest.mark.skipif(not _drake_available(), reason="Drake not installed")
+class TestStagedPlanning:
+    def test_plan_from_a_given_start_state(self, module, joint_state_zeros):
+        module._on_joint_state(joint_state_zeros)
+        start = JointState(name=joint_state_zeros.name, position=[0.3] * 7)
+
+        result = module.plan_to_joints(
+            {"manipulator": JointState(position=[0.35] * 7)}, start=start
+        )
+
+        assert result.succeeded, result.message
+        assert result.plan.path[0].position == pytest.approx([0.3] * 7)
+
+    def test_execute_plan_runs_a_given_plan(self, module, joint_state_zeros):
+        module._on_joint_state(joint_state_zeros)
+        plan = module.plan_to_joints({"manipulator": JointState(position=[0.05] * 7)}).plan
+        module.clear_planned_path()
+
+        result = module.execute_plan(plan)
+
+        assert result.status is ExecutionStatus.COMPLETED
+        assert _executed(module._control_coordinator) is plan.trajectory
+
+    def test_preview_plans_publishes_one_path_for_all_legs(self, module, joint_state_zeros):
+        module._on_joint_state(joint_state_zeros)
+        first = module.plan_to_joints({"manipulator": JointState(position=[0.05] * 7)}).plan
+        second = module.plan_to_joints(
+            {"manipulator": JointState(position=[0.1] * 7)}, start=first.path[-1]
+        ).plan
+        paths = []
+        module.planned_tool_path.subscribe(paths.append)
+
+        result = module.preview_plans([first, second])
+
+        assert result.succeeded, result.message
+        assert len(paths[-1].poses) == len(first.path) + len(second.path)

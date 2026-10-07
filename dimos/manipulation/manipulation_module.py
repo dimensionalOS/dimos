@@ -101,6 +101,7 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.perception.experimental.object import Object as DetObject
 from dimos.utils.logging_config import setup_logger
 
@@ -616,12 +617,16 @@ class ManipulationModule(Module):
         self,
         group_ids: tuple[PlanningGroupID, ...],
         planning_epoch: int,
+        start: JointState | None = None,
     ) -> tuple[PlanningGroupSelection, JointState] | None:
-        """Resolve an ordered group selection and its authoritative start state."""
+        """Resolve an ordered group selection and its start state: the live
+        model state, or *start* when a caller chains plans from a predicted one."""
         assert self._world_monitor is not None
         try:
             selection = self._world_monitor.planning_groups.select(group_ids)
-            current = self._world_monitor.current_model_joint_state()
+            current = (
+                start if start is not None else self._world_monitor.current_model_joint_state()
+            )
             start = filter_joint_state_to_selected_joints(current, selection.joint_names)
         except Exception as exc:
             self._fail_planning_epoch(planning_epoch, f"Failed to resolve planning groups: {exc}")
@@ -661,14 +666,17 @@ class ManipulationModule(Module):
 
     def _publish_planned_tool_path(self, plan: GeneratedPlan) -> None:
         """Forward kinematics of the first planned group's tip along the plan."""
-        if self._world_monitor is None or not plan.path or not plan.group_ids:
+        if plan.path and plan.group_ids:
+            self._publish_tool_path(plan.group_ids[0], plan.path)
+
+    def _publish_tool_path(self, group_id: PlanningGroupID, path: Sequence[JointState]) -> None:
+        if self._world_monitor is None or not path:
             return
         world = self._world_monitor.world
-        group_id = plan.group_ids[0]
         poses: list[PoseStamped] = []
         try:
             with world.scratch_context() as ctx:
-                for joint_state in plan.path:
+                for joint_state in path:
                     world.set_joint_state(ctx, joint_state)
                     poses.append(world.get_group_ee_pose(ctx, group_id))
         except Exception as exc:
@@ -793,12 +801,17 @@ class ManipulationModule(Module):
         self,
         targets: Mapping[PlanningGroupID, JointState],
         speed_scale: float | None = None,
+        start: JointState | None = None,
     ) -> PlanResult:
-        """Plan one synchronized joint target set without moving hardware."""
+        """Plan one synchronized joint target set without moving hardware.
+
+        *start* plans from that full model state instead of the live one, so a
+        caller can chain the legs of a longer job before any of them runs.
+        """
         self._clear_pending_plan()
         if not targets:
             return PlanResult(PlanStatus.INVALID_TARGET, "At least one target is required")
-        plan = self.generate_plan_to_joint_targets(targets, speed_scale=speed_scale)
+        plan = self.generate_plan_to_joint_targets(targets, speed_scale=speed_scale, start=start)
         if plan is None:
             return PlanResult(PlanStatus.FAILED, self._error_message or "Planning failed")
         return PlanResult(PlanStatus.SUCCEEDED, plan.message, plan)
@@ -808,12 +821,16 @@ class ManipulationModule(Module):
         self,
         targets: Mapping[PlanningGroupID, PoseStamped],
         speed_scale: float | None = None,
+        start: JointState | None = None,
     ) -> PlanResult:
-        """Plan one synchronized pose target set without moving hardware."""
+        """Plan one synchronized pose target set without moving hardware.
+
+        *start* plans from that full model state instead of the live one.
+        """
         self._clear_pending_plan()
         if not targets:
             return PlanResult(PlanStatus.INVALID_TARGET, "At least one target is required")
-        plan = self.generate_plan_to_pose_targets(targets, speed_scale=speed_scale)
+        plan = self.generate_plan_to_pose_targets(targets, speed_scale=speed_scale, start=start)
         if plan is None:
             return PlanResult(PlanStatus.FAILED, self._error_message or "Planning failed")
         return PlanResult(PlanStatus.SUCCEEDED, plan.message, plan)
@@ -822,6 +839,7 @@ class ManipulationModule(Module):
         self,
         joint_targets: Mapping[PlanningGroupID, JointState],
         speed_scale: float | None = None,
+        start: JointState | None = None,
     ) -> GeneratedPlan | None:
         """Plan to joint targets and return the exact stored GeneratedPlan."""
         if self._world_monitor is None or self._planner is None:
@@ -836,7 +854,7 @@ class ManipulationModule(Module):
             return None
         planning_epoch, resolved_speed_scale = planning
 
-        resolved = self._resolve_group_plan_start(group_ids, planning_epoch)
+        resolved = self._resolve_group_plan_start(group_ids, planning_epoch, start)
         if resolved is None:
             return None
         _selection, start = resolved
@@ -864,6 +882,7 @@ class ManipulationModule(Module):
         pose_targets: Mapping[PlanningGroupID, Pose],
         auxiliary_groups: Sequence[PlanningGroupID] = (),
         speed_scale: float | None = None,
+        start: JointState | None = None,
     ) -> GeneratedPlan | None:
         """Plan to pose targets and return the exact stored GeneratedPlan."""
         if self._world_monitor is None or self._kinematics is None:
@@ -885,7 +904,7 @@ class ManipulationModule(Module):
         if planning is None:
             return None
         planning_epoch, resolved_speed_scale = planning
-        resolved = self._resolve_group_plan_start(group_ids, planning_epoch)
+        resolved = self._resolve_group_plan_start(group_ids, planning_epoch, start)
         if resolved is None:
             return None
         _selection, start = resolved
@@ -910,6 +929,7 @@ class ManipulationModule(Module):
         auxiliary_groups: Sequence[PlanningGroupID] = (),
         speed_scale: float | None = None,
         check_collision: bool = True,
+        start: JointState | None = None,
     ) -> GeneratedPlan | None:
         """Generate and store a timed Cartesian plan through PlannerSpec."""
         if self._world_monitor is None or self._planner is None:
@@ -923,7 +943,7 @@ class ManipulationModule(Module):
         if planning is None:
             return None
         planning_epoch, resolved_speed_scale = planning
-        resolved = self._resolve_group_plan_start(group_ids, planning_epoch)
+        resolved = self._resolve_group_plan_start(group_ids, planning_epoch, start)
         if resolved is None:
             return None
         selection, start = resolved
@@ -951,6 +971,46 @@ class ManipulationModule(Module):
         return self._store_generated_plan(group_ids, result, planning_epoch, resolved_speed_scale)
 
     @rpc
+    def plan_linear(
+        self,
+        dx: float = 0.0,
+        dy: float = 0.0,
+        dz: float = 0.0,
+        planning_group: PlanningGroupID | None = None,
+        check_collision: bool = False,
+        speed_scale: float | None = None,
+        start: JointState | None = None,
+    ) -> PlanResult:
+        """Plan a world-frame translation of one end effector without moving.
+
+        *start* plans from that full model state instead of the live one.
+        """
+        delta = (float(dx), float(dy), float(dz))
+        self._clear_pending_plan()
+        if not all(math.isfinite(value) for value in delta):
+            return PlanResult(PlanStatus.INVALID_TARGET, "delta must be finite")
+        if delta == (0.0, 0.0, 0.0):
+            return PlanResult(PlanStatus.NO_MOTION, "Linear displacement is zero")
+        group = self._resolve_pose_group(planning_group)
+        if isinstance(group, CommandResult):
+            return PlanResult(PlanStatus.AMBIGUOUS_GROUP, group.message)
+        resolved_speed = self.config.linear_speed_scale if speed_scale is None else speed_scale
+        relative = Transform(
+            translation=Vector3(*delta),
+            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+        )
+        plan = self.generate_cartesian_plan(
+            {group.id: (Transform.identity(), relative)},
+            CartesianPathConfig(),
+            speed_scale=resolved_speed,
+            check_collision=check_collision,
+            start=start,
+        )
+        if plan is None:
+            return PlanResult(PlanStatus.FAILED, self._error_message or "Planning failed")
+        return PlanResult(PlanStatus.SUCCEEDED, plan.message, plan)
+
+    @rpc
     def move_linear(
         self,
         dx: float = 0.0,
@@ -964,34 +1024,66 @@ class ManipulationModule(Module):
     ) -> MoveResult:
         """Move one end effector by a world-frame translation."""
         delta = (float(dx), float(dy), float(dz))
-        self._clear_pending_plan()
-        if not all(math.isfinite(value) for value in delta):
-            plan_result = PlanResult(PlanStatus.INVALID_TARGET, "delta must be finite")
-            return MoveResult(plan_result, None, delta, check_collision)
-        if delta == (0.0, 0.0, 0.0):
-            plan_result = PlanResult(PlanStatus.NO_MOTION, "Linear displacement is zero")
-            return MoveResult(plan_result, None, delta, check_collision)
-        group = self._resolve_pose_group(planning_group)
-        if isinstance(group, CommandResult):
-            plan_result = PlanResult(PlanStatus.AMBIGUOUS_GROUP, group.message)
-            return MoveResult(plan_result, None, delta, check_collision)
-        resolved_speed = self.config.linear_speed_scale if speed_scale is None else speed_scale
-        relative = Transform(
-            translation=Vector3(*delta),
-            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+        plan_result = self.plan_linear(
+            dx, dy, dz, planning_group, check_collision=check_collision, speed_scale=speed_scale
         )
-        plan = self.generate_cartesian_plan(
-            {group.id: (Transform.identity(), relative)},
-            CartesianPathConfig(),
-            speed_scale=resolved_speed,
-            check_collision=check_collision,
-        )
-        if plan is None:
-            plan_result = PlanResult(PlanStatus.FAILED, self._error_message or "Planning failed")
+        if plan_result.plan is None:
             return MoveResult(plan_result, None, delta, check_collision)
-        plan_result = PlanResult(PlanStatus.SUCCEEDED, plan.message, plan)
-        execution = self.execute(blocking=blocking, timeout=timeout, plan_id=plan.plan_id)
+        execution = self.execute(
+            blocking=blocking, timeout=timeout, plan_id=plan_result.plan.plan_id
+        )
         return MoveResult(plan_result, execution, delta, check_collision)
+
+    @rpc
+    def execute_plan(
+        self, plan: GeneratedPlan, blocking: bool = True, timeout: float | None = None
+    ) -> ExecutionResult:
+        """Execute a plan this module generated earlier, such as one leg of a
+        staged job, instead of the pending one."""
+        with self._lock:
+            if self._state not in (ManipulationState.IDLE, ManipulationState.COMPLETED):
+                return ExecutionResult(
+                    ExecutionStatus.REJECTED, f"Cannot execute in state {self._state.name}"
+                )
+            self._last_plan = plan
+            self._state = ManipulationState.COMPLETED
+        return self.execute(blocking=blocking, timeout=timeout, plan_id=plan.plan_id)
+
+    @rpc
+    def preview_plans(
+        self, plans: Sequence[GeneratedPlan], duration: float | None = None
+    ) -> CommandResult:
+        """Preview several legs as one motion: the ghost plays them back to back
+        and the tool path covers the whole job."""
+        plans = [plan for plan in plans if plan.path and plan.trajectory.points]
+        if not plans:
+            return CommandResult(CommandStatus.REJECTED, "No generated plans to preview")
+        if self._world_monitor is None:
+            return CommandResult(CommandStatus.FAILED, "Planning not initialized")
+        names = list(plans[0].trajectory.joint_names)
+        if any(list(plan.trajectory.joint_names) != names for plan in plans):
+            return CommandResult(CommandStatus.REJECTED, "Plans must share joint names")
+        points: list[TrajectoryPoint] = []
+        offset = 0.0
+        for plan in plans:
+            for point in plan.trajectory.points:
+                points.append(
+                    TrajectoryPoint(
+                        time_from_start=offset + point.time_from_start,
+                        positions=list(point.positions),
+                        velocities=list(point.velocities) if point.velocities else None,
+                    )
+                )
+            offset += plan.trajectory.duration
+        self._world_monitor.animate_trajectory(
+            JointTrajectory(points=points, joint_names=names), duration
+        )
+        self._publish_tool_path(
+            plans[0].group_ids[0], [state for plan in plans for state in plan.path]
+        )
+        return CommandResult(
+            CommandStatus.SUCCEEDED, f"Previewing {len(plans)} legs, {offset:.1f} s"
+        )
 
     @rpc
     def preview_plan(
@@ -1088,6 +1180,7 @@ class ManipulationModule(Module):
         )
         return float(values[0]) if values else None
 
+    @rpc
     def get_current_joint_state(self) -> JointState | None:
         """Return the complete canonical model joint state."""
         if self._world_monitor is None:
