@@ -215,5 +215,6 @@ def test_planning_model_carries_collision_geometry_cameras_and_measured_spacing(
         assert xyz is not None
         assert float(xyz.split()[1]) == pytest.approx(expected)
 
+    assert config.home_joints == [0.0, 0.02, 0.0, 0.0, 0.0, 0.0] * 2
     assert ("left_tip_left", "left_tip_right") in config.collision_exclusion_pairs
     assert ("right_link4", "right_gripper") in config.collision_exclusion_pairs

@@ -105,6 +105,11 @@ DUAL_OPENYAM_STATIC_BOXES = [
     {"name": "overhead_camera", "size": (0.10, 0.10, 0.08), "xyz": (0.016, -0.006, 0.47)},
 ]
 
+# Home is the pose the arms rest in on their supports, which is the URDF zero
+# with joint 2 held one degree above its hard stop. go_home and go_init then
+# agree, and a session ends where it started.
+DUAL_OPENYAM_REST_PER_ARM = [0.0, 0.02, 0.0, 0.0, 0.0, 0.0]
+
 # {side}_grasp_frame is 10 cm below the gripper link on its axis. The finger
 # pads (tip_left.stl, tip_right.stl at the URDF's closed zero position) meet on
 # that axis from 12.7 to 14.7 cm below the gripper link; plan to the pad centre.
@@ -213,6 +218,7 @@ def dual_openyam_grasp_model_config() -> RobotModelConfig:
             f"{side}_tcp", f"{side}_grasp_frame", xyz=DUAL_OPENYAM_TCP_OFFSET
         )
     config.model = model
+    config.home_joints = [*DUAL_OPENYAM_REST_PER_ARM, *DUAL_OPENYAM_REST_PER_ARM]
     # The pads meet at the URDF's closed zero position, so the two fingertip
     # hulls always touch, and the wrist assembly nests inside the gripper body
     # so their hulls overlap by 6 cm at every pose; both pairs are rigidly
