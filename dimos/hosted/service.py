@@ -54,7 +54,9 @@ def load_host_id(path: Path = HOST_ID_PATH) -> str:
 
 def runtime_dir() -> Path:
     """Where the running daemon leaves its endpoint, pid and log; never /tmp."""
-    base = os.environ.get("XDG_RUNTIME_DIR")
+    # A plain `ssh host cmd` has no XDG_RUNTIME_DIR, but the unit writes under /run/user.
+    user_run = Path(f"/run/user/{os.getuid()}")
+    base = os.environ.get("XDG_RUNTIME_DIR") or (str(user_run) if user_run.is_dir() else None)
     path = Path(base) / "dimos" if base else Path.home() / ".local" / "state" / "dimos"
     path.mkdir(parents=True, exist_ok=True)
     return path
