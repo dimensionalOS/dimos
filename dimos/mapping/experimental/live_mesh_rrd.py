@@ -38,14 +38,16 @@ from dimos.utils.data import get_data
 def main(
     dataset: str = typer.Argument("mid360_athens_stairs", help="recording name in data/ or a .db"),
     out: str | None = typer.Option(None, "--out", help=".rrd to write; without it a viewer opens"),
-    live: bool = typer.Option(False, "--live", help="open a viewer as well as writing --out"),
+    live: bool = typer.Option(
+        True, "--live/--no-live", help="open a viewer as well as writing --out"
+    ),
     lidar_stream: str = typer.Option("pointlio_lidar", "--lidar-stream"),
     world_frame: str = typer.Option("odom", "--world-frame"),
     voxel_size: float = typer.Option(0.05, "--voxel-size"),
     every: int = typer.Option(100, "--every", help="lidar frames per mesh update"),
     from_time: float | None = typer.Option(None, "--from-time"),
     to_time: float | None = typer.Option(None, "--to-time"),
-    simplify: bool = typer.Option(False, "--simplify", help="simplify the mesh with --chain"),
+    simplify: bool = typer.Option(True, "--simplify/--no-simplify", help="simplify with --chain"),
     chain: str = typer.Option(
         "planes,collapse", "--chain", help="simplifiers in order, name[:tol][:knob=x]"
     ),
@@ -55,7 +57,7 @@ def main(
     static: bool = typer.Option(
         True, "--static/--timeline", help="keep only the latest mesh, or every version to scrub"
     ),
-    alpha: float = typer.Option(1.0, "--alpha", help="mesh opacity, 0 to 1"),
+    alpha: float = typer.Option(0.4, "--alpha", help="mesh opacity, 0 to 1"),
     show_lidar: bool = typer.Option(False, "--lidar", help="also log every lidar scan"),
     camera_stream: str = typer.Option(
         "color_image", "--camera-stream", help="shown beside the 3D view when present"
