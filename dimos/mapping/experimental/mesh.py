@@ -244,13 +244,68 @@ class MeshModuleConfig(ModuleConfig):
     device: str = "cuda"
 
 
-class MeshModule(Module):
-    """Meshes the voxel map that ``map_regions`` streams, region by region.
+class ChunkQueue:
+    """The voxel map as regions, and which chunks changed enough to remesh.
 
-    Every region message is kept and marks the voxels it changed per chunk; a voxel that
-    flips back cancels out. A worker meshes chunks that changed enough, most recently
-    changed first, a batch at a time.
+    Each chunk keeps the set of voxels changed since it was last taken, so a voxel that
+    flips back cancels out. A chunk is due once that set reaches ``min_fraction`` of its
+    voxels and at least ``min_change``.
     """
+
+    def __init__(self, voxel_size: float, min_change: int, min_fraction: float) -> None:
+        self.vox = voxel_size
+        self.min_change = min_change
+        self.min_fraction = min_fraction
+        self._regions: dict[int, np.ndarray] = {}
+        self._codes: dict[int, np.ndarray] = {}
+        # chunk code -> (block-local voxels changed since taken, last change time)
+        self._pending: dict[int, tuple[set[int], float]] = {}
+        # chunk code -> voxels it holds
+        self._size: dict[int, int] = {}
+
+    def update(self, seq: int, points: np.ndarray, now: float) -> bool:
+        """Replace region ``seq``; whether any chunk it touched is now due."""
+        codes = np.unique(_code(np.floor(points / self.vox)))
+        changed = np.setxor1d(self._codes.get(seq, codes[:0]), codes, assume_unique=True)
+        if len(points):
+            self._regions[seq], self._codes[seq] = points, codes
+        else:
+            self._regions.pop(seq, None)
+            self._codes.pop(seq, None)
+        ijk = _decode(changed)
+        own, inv = np.unique(_code(ijk // C), return_inverse=True)
+        grow = np.bincount(inv, weights=np.where(np.isin(changed, codes), 1, -1))
+        for c, d in zip(own.tolist(), grow.tolist(), strict=True):
+            self._size[c] = self._size.get(c, 0) + int(d)
+        blocks, local = _place(ijk)
+        packed = (local[:, 0] * P + local[:, 1]) * P + local[:, 2]
+        touched = np.unique(blocks).tolist()
+        for c in touched:
+            vox = self._pending.get(c, (set(), 0.0))[0]
+            vox ^= set(packed[blocks == c].tolist())
+            self._pending[c] = (vox, now)
+        return any(self._due(c) for c in touched)
+
+    def take(self, n: int = MAX_BATCH) -> tuple[list[int], bool]:
+        """Up to n due chunks, most recently changed first, and whether more are due."""
+        due = [c for c in self._pending if self._due(c)]
+        due.sort(key=lambda c: self._pending[c][1], reverse=True)
+        for c in due[:n]:
+            del self._pending[c]
+        return due[:n], len(due) > n
+
+    def points(self) -> np.ndarray:
+        parts = list(self._regions.values())
+        return np.concatenate(parts) if parts else np.zeros((0, 3), np.float32)
+
+    def _due(self, c: int) -> bool:
+        n = len(self._pending[c][0])
+        return n >= self.min_change and n >= self.min_fraction * self._size.get(c, 0)
+
+
+class MeshModule(Module):
+    """Meshes the voxel map that ``map_regions`` streams, chunks that changed most
+    recently first, a batch at a time, always from the current map."""
 
     config: MeshModuleConfig
 
@@ -259,12 +314,8 @@ class MeshModule(Module):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self._regions: dict[int, np.ndarray] = {}
-        self._codes: dict[int, np.ndarray] = {}
-        # chunk code -> (block-local voxels changed since its last mesh, last change time)
-        self._pending: dict[int, tuple[set[int], float]] = {}
-        # chunk code -> voxels it holds
-        self._size: dict[int, int] = {}
+        cfg = self.config
+        self._queue = ChunkQueue(cfg.voxel_size, cfg.min_change, cfg.min_fraction)
         self._lock = threading.Lock()
         self._dirty = threading.Event()
         self._stopping = False
@@ -283,47 +334,9 @@ class MeshModule(Module):
         super().stop()
 
     def _on_region(self, msg: PointCloud2) -> None:
-        points = msg.points_f32()
-        codes = np.unique(_code(np.floor(points / self.config.voxel_size)))
-        now = time.time()
         with self._lock:
-            old = self._codes.get(msg.seq, codes[:0])
-            changed = np.setxor1d(old, codes, assume_unique=True)
-            if len(points):
-                self._regions[msg.seq], self._codes[msg.seq] = points, codes
-            else:
-                self._regions.pop(msg.seq, None)
-                self._codes.pop(msg.seq, None)
-            ijk = _decode(changed)
-            # each chunk's size follows the voxels added to and removed from it
-            own, inv = np.unique(_code(ijk // C), return_inverse=True)
-            grow = np.bincount(inv, weights=np.where(np.isin(changed, codes), 1, -1))
-            for c, d in zip(own.tolist(), grow.tolist(), strict=True):
-                self._size[c] = self._size.get(c, 0) + int(d)
-            # changed voxels toggle in their chunks' pending sets, so flips cancel
-            blocks, local = _place(ijk)
-            packed = (local[:, 0] * P + local[:, 1]) * P + local[:, 2]
-            touched = np.unique(blocks).tolist()
-            for c in touched:
-                vox = self._pending.get(c, (set(), 0.0))[0]
-                vox ^= set(packed[blocks == c].tolist())
-                self._pending[c] = (vox, now)
-            if any(self._due(c) for c in touched):
+            if self._queue.update(msg.seq, msg.points_f32(), time.time()):
                 self._dirty.set()
-
-    def _due(self, c: int) -> bool:
-        n = len(self._pending[c][0])
-        return n >= self.config.min_change and n >= self.config.min_fraction * self._size.get(c, 0)
-
-    def _take(self) -> list[int]:
-        """Due chunks, most recently changed first, one batch; wakes again if more are due."""
-        due = [c for c in self._pending if self._due(c)]
-        due.sort(key=lambda c: self._pending[c][1], reverse=True)
-        for c in due[:MAX_BATCH]:
-            del self._pending[c]
-        if len(due) > MAX_BATCH:
-            self._dirty.set()
-        return due[:MAX_BATCH]
 
     def _run(self) -> None:
         from dimos.mapping.experimental.simplify import parse_chain
@@ -336,11 +349,12 @@ class MeshModule(Module):
                 return
             self._dirty.clear()
             with self._lock:
-                chunks = self._take()
-                parts = list(self._regions.values())
-            if not chunks or not parts:
+                chunks, more = self._queue.take()
+                points = self._queue.points()
+            if more:
+                self._dirty.set()
+            if not chunks:
                 continue
-            points = np.concatenate(parts)
             if cfg.z_band is not None:
                 lo, hi = cfg.z_band
                 points = points[(points[:, 2] >= lo) & (points[:, 2] < hi)]

@@ -12,56 +12,42 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import threading
-
 import numpy as np
 
-from dimos.mapping.experimental.mesh import MeshModule, MeshModuleConfig, _code
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.mapping.experimental.mesh import ChunkQueue, _code
 
 
-def _region(lo: int, hi: int, seq: int = 7) -> PointCloud2:
+def _region(lo: int, hi: int) -> np.ndarray:
     """Voxels lo..hi-1 along x, mid-chunk on y and z so they count toward one chunk row."""
     i = np.arange(lo, hi)
-    pts = ((np.stack([i, i * 0 + 16, i * 0 + 16], 1) + 0.5) * 0.05).astype(np.float32)
-    msg = PointCloud2.from_numpy(pts)
-    msg.seq = seq
-    return msg
+    return ((np.stack([i, i * 0 + 16, i * 0 + 16], 1) + 0.5) * 0.05).astype(np.float32)
 
 
-def _module(min_change: int = 20) -> MeshModule:
-    m = object.__new__(MeshModule)
-    m.config = MeshModuleConfig(voxel_size=0.05, min_change=min_change)
-    m._regions, m._codes, m._pending, m._size = {}, {}, {}, {}
-    m._lock, m._dirty = threading.Lock(), threading.Event()
-    return m
+def _queue(min_change: int = 20) -> ChunkQueue:
+    return ChunkQueue(voxel_size=0.05, min_change=min_change, min_fraction=0.1)
 
 
 def test_jiggle_waits_until_a_chunk_changed_enough() -> None:
-    m = _module()
+    q = _queue()
     for hi in range(131, 150):  # one voxel at a time inside chunk 4: 19 changes
-        m._on_region(_region(130, hi))
-    assert not m._dirty.is_set()
-    m._on_region(_region(130, 150))
-    assert m._dirty.is_set()
+        assert not q.update(7, _region(130, hi), 0.0)
+    assert q.update(7, _region(130, 150), 0.0)
 
 
 def test_flipping_voxels_cancel_out() -> None:
-    m = _module()
-    m._on_region(_region(130, 150))
-    m._take()
-    m._dirty.clear()
+    q = _queue()
+    q.update(7, _region(130, 150), 0.0)
+    q.take()
     for _ in range(20):  # one voxel off and back on, 40 changes, no net change
-        m._on_region(_region(130, 149))
-        m._on_region(_region(130, 150))
-    assert not m._dirty.is_set()
+        assert not q.update(7, _region(130, 149), 0.0)
+        assert not q.update(7, _region(130, 150), 0.0)
 
 
 def test_most_recently_changed_chunk_goes_first() -> None:
-    m = _module(min_change=1)
-    m._on_region(_region(130, 140, seq=1))  # chunk 4
-    m._on_region(_region(200, 210, seq=2))  # chunk 6, later
-    assert m._take()[0] == _code(np.array([[6, 0, 0]]))[0]
+    q = _queue(min_change=1)
+    q.update(1, _region(130, 140), 1.0)  # chunk 4
+    q.update(2, _region(200, 210), 2.0)  # chunk 6, later
+    assert q.take()[0][0] == _code(np.array([[6, 0, 0]]))[0]
 
 
 def test_colours_recolour_every_chunk_once_the_range_moves() -> None:
