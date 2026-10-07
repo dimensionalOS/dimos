@@ -674,7 +674,8 @@ body.framed:not(.chrome) #bar {
     white-space: pre-wrap;
     color: var(--muted-fg);
     font-size: 12.5px;
-    max-height: 30vh;
+    line-height: 1.45;
+    max-height: calc(6 * 1.45em); /* six lines, then it scrolls */
     overflow-y: auto;
 }
 .module-view .io {
