@@ -513,7 +513,7 @@ body.framed:not(.chrome) #bar {
     font-weight: 600;
     overflow-wrap: anywhere;
 }
-/* a module row's stream counts: green Inputs, blue Outputs */
+/* a module row's stream counts: plain text in a dim green (Inputs) or dim blue (Outputs) border */
 .module .io {
     display: flex;
     gap: 6px;
@@ -523,17 +523,14 @@ body.framed:not(.chrome) #bar {
     padding: 1px 6px;
     border: 1px solid;
     border-radius: var(--radius-sm);
+    color: var(--muted-fg);
     font: 600 10.5px var(--mono);
 }
 .module .io-in {
-    color: var(--bv-ok);
-    border-color: color-mix(in srgb, var(--bv-ok) 45%, transparent);
-    background: color-mix(in srgb, var(--bv-ok) 12%, transparent);
+    border-color: color-mix(in srgb, var(--bv-ok) 35%, transparent);
 }
 .module .io-out {
-    color: var(--bv-info);
-    border-color: color-mix(in srgb, var(--bv-info) 45%, transparent);
-    background: color-mix(in srgb, var(--bv-info) 12%, transparent);
+    border-color: color-mix(in srgb, var(--bv-info) 35%, transparent);
 }
 .module .summary {
     color: var(--muted-fg);
