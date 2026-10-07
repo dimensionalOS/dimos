@@ -44,7 +44,6 @@ import tomllib
 
 OWNER, NAME = "dimensionalOS", "dimos"
 GIT_URL = f"https://github.com/{OWNER}/{NAME}"
-CRATE_ROOT = "native/rust"
 
 REPO_ROOT = Path(
     subprocess.run(
@@ -54,7 +53,7 @@ REPO_ROOT = Path(
 
 # dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "<sha>" }
 _GIT_DEP = re.compile(
-    rf'^(?P<name>[\w-]+) = \{{ git = "{re.escape(GIT_URL)}", rev = "(?P<rev>[0-9a-f]{{40}})" \}}$',
+    rf'^(?P<name>[\w-]+) = \{{ git = "{re.escape(GIT_URL)}", rev = "(?P<rev>[0-9a-f]{{40}})"(?P<rest>[^}}\n]*)\}}$',
     re.MULTILINE,
 )
 _LOCK_SOURCE = f"git+{GIT_URL}?"
@@ -157,7 +156,10 @@ def _unpushed(path: Path, what: str) -> str:
 
 
 def flake_locks() -> list[Path]:
-    return [REPO_ROOT / p for p in _git("ls-files", "*flake.lock").splitlines()]
+    """The flake.lock beside every tracked flake.nix, whether or not it exists yet."""
+    return [
+        (REPO_ROOT / p).with_name("flake.lock") for p in _git("ls-files", "*flake.nix").splitlines()
+    ]
 
 
 def _in_repo_inputs(nodes: dict) -> dict[str, dict]:
@@ -174,6 +176,8 @@ def _in_repo_inputs(nodes: dict) -> dict[str, dict]:
 
 def stale_flake_inputs(lock: Path) -> list[str]:
     """In-repo inputs whose pinned tree is not the tree in this commit."""
+    if not lock.is_file():
+        return []
     stale = []
     for name, node in _in_repo_inputs(json.loads(lock.read_text()).get("nodes", {})).items():
         subdir = node["locked"]["dir"]
@@ -184,28 +188,37 @@ def stale_flake_inputs(lock: Path) -> list[str]:
 
 
 def relock_flake(lock: Path) -> tuple[Path, bool, list[str]]:
-    """Pin one lock's stale in-repo inputs. Returns (lock, changed, failures)."""
-    data = json.loads(lock.read_text())
-    inputs = _in_repo_inputs(data["nodes"])
+    """Pin one lock's stale in-repo inputs, then lock any input it lacks. Returns (lock, changed, failures)."""
+    before = lock.read_text() if lock.is_file() else None
     failures = []
-    for name in stale_flake_inputs(lock):
-        subdir = inputs[name]["locked"]["dir"]
-        rev = pushed_revision_holding((subdir,))
-        if rev is None:
-            failures.append(_unpushed(lock, subdir))
-            continue
-        inputs[name]["locked"] = prefetch(_tarball(rev, subdir))["locked"]
-    before = lock.read_text()
-    text = json.dumps(data, indent=2, sort_keys=True) + "\n"
-    if text != before:
-        lock.write_text(text)
-        # the moved flake may declare inputs the old one did not; only nix can add those nodes
-        proc = subprocess.run(
-            ["nix", "flake", "lock"], cwd=lock.parent, capture_output=True, text=True, check=False
-        )
-        if proc.returncode != 0:
-            failures.append(f"{_rel(lock)}: nix flake lock\n{proc.stderr}")
-    return lock, lock.read_text() != before, failures
+    if before is not None:
+        data = json.loads(before)
+        inputs = _in_repo_inputs(data["nodes"])
+        for name in stale_flake_inputs(lock):
+            subdir = inputs[name]["locked"]["dir"]
+            rev = pushed_revision_holding((subdir,))
+            if rev is None:
+                failures.append(_unpushed(lock, subdir))
+                continue
+            fetched = prefetch(_tarball(rev, subdir))
+            # newer nix adds internal `__`-keys that `nix flake lock` then refuses to read
+            locked = {k: v for k, v in fetched["locked"].items() if not k.startswith("_")}
+            inputs[name]["locked"] = locked | {"narHash": fetched["hash"]}
+        text = json.dumps(data, indent=2, sort_keys=True) + "\n"
+        if text != before:
+            lock.write_text(text)
+    # adds the nodes of any input the lock lacks, and changes nothing otherwise
+    proc = subprocess.run(
+        ["nix", "flake", "lock", f"path:{lock.parent}"],
+        cwd=lock.parent,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        failures.append(f"{_rel(lock)}: nix flake lock\n{proc.stderr}")
+    after = lock.read_text() if lock.is_file() else None
+    return lock, after != before, failures
 
 
 # --- Cargo.lock: the rust modules' dimos-module dependency ----------------------
@@ -219,9 +232,9 @@ def cargo_manifests() -> list[Path]:
 
 @cache
 def _crate_dirs() -> dict[str, str]:
-    """Crate name -> its repo-relative directory, for the crates under native/rust."""
+    """Crate name -> its repo-relative directory, for every crate in this repository."""
     dirs = {}
-    for p in _git("ls-files", f"{CRATE_ROOT}/*/Cargo.toml").splitlines():
+    for p in _git("ls-files", "*Cargo.toml").splitlines():
         name = tomllib.loads((REPO_ROOT / p).read_text()).get("package", {}).get("name")
         if name:
             dirs[name] = Path(p).parent.as_posix()
@@ -325,7 +338,7 @@ def relock_cargo(manifest: Path) -> tuple[Path, bool, list[str]]:
             return manifest, False, [_unpushed(manifest, " and ".join(subdirs))]
         manifest.write_text(
             _GIT_DEP.sub(
-                lambda m: f'{m.group("name")} = {{ git = "{GIT_URL}", rev = "{rev}" }}',
+                lambda m: f'{m.group("name")} = {{ git = "{GIT_URL}", rev = "{rev}"{m.group("rest")}}}',
                 before[manifest],
             )
         )

@@ -31,13 +31,13 @@ jobs:
       - name: uv lock
         run: uv lock
 
-      - name: Did native/ change?
+      - name: Did native/ or a module's flake or Cargo files change?
         id: shared
         run: |
           set -euo pipefail
           base=${{ github.event.pull_request.base.sha }}
           git fetch --quiet --depth 1 origin "$base"
-          if git diff --quiet "$base" HEAD -- native; then
+          if git diff --quiet "$base" HEAD -- native '*flake.nix' '*flake.lock' '*Cargo.toml' '*Cargo.lock'; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
@@ -49,6 +49,5 @@ jobs:
         if: steps.shared.outputs.changed == 'true'
         run: python3 bin/relock-shared-flakes
 
-      # Unguarded: it commits the ruff and uv fixes too, which every PR may need.
       - name: autofix.ci
         uses: autofix-ci/action@v1

@@ -185,17 +185,14 @@ jobs:
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
       - name: Build native modules
         env:
-          BUILD_WORKERS: "4"
+          # Runners have limited memory and can OOM with parallel builds.
+          BUILD_WORKERS: "1"
         run: python3 bin/build-native-modules
       - name: Lint native modules
-        env:
-          BUILD_WORKERS: "4"
         run: python3 bin/build-native-modules --lint
       # Published so the `native` job substitutes them instead of compiling the
       # test targets itself on every run.
       - name: Test rust native modules
-        env:
-          BUILD_WORKERS: "4"
         run: python3 bin/build-native-modules --tests
       - name: Verify Cachix holds the built paths
         env:
@@ -264,7 +261,8 @@ jobs:
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
       - name: Build native modules
         env:
-          BUILD_WORKERS: "4"
+          # Runners have limited memory and can OOM with parallel builds.
+          BUILD_WORKERS: "1"
         run: python3 bin/build-native-modules
       - name: Verify Cachix holds the built paths
         env:
@@ -334,18 +332,10 @@ jobs:
           deno-version: ${{ steps.deno-version.outputs.version }}
           cache: true
 
-      - name: Install Nix
-        env:
-          INPUT_EXTRA_NIX_CONFIG: |
-            http-connections = 50
-            extra-substituters = https://dimensionalos.cachix.org
-            extra-trusted-public-keys = dimensionalos.cachix.org-1:20ynj6TjpoD3qTxkdNoeHtgs2G2pNvgAq1EQYLTHJXI=
-          INPUT_SET_AS_TRUSTED_USER: "true"
-        run: bash docker/ros/install-nix.sh
-
       - name: Run pre-commit
         env:
-          SKIP: native-module-lint
+          # fmt is checked in the rust job, lint in cachix-build
+          SKIP: cargo-fmt,native-module-lint
         uses: pre-commit/action@v3.0.1
         with:
           extra_args: --all-files --verbose
@@ -366,6 +356,13 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      - name: cargo fmt
+        run: |
+          git ls-files "*Cargo.toml" | while read -r m; do
+            cargo locate-project --manifest-path "$m" --workspace --message-format plain
+          done | sort -u | while read -r root; do
+            cargo fmt --manifest-path "$root" --all -- --check
+          done
       - name: Restore cargo build cache
         uses: actions/cache/restore@v4
         with:
@@ -410,41 +407,6 @@ jobs:
             !target/debug/incremental
           key: cargo-test-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/Cargo.lock') }}
 
-  flake-locks-current:
-    timeout-minutes: 30
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read  # For checkout
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-      - name: Install Nix
-        env:
-          INPUT_EXTRA_NIX_CONFIG: |
-            http-connections = 50
-            extra-substituters = https://dimensionalos.cachix.org
-            extra-trusted-public-keys = dimensionalos.cachix.org-1:20ynj6TjpoD3qTxkdNoeHtgs2G2pNvgAq1EQYLTHJXI=
-          INPUT_SET_AS_TRUSTED_USER: "true"
-        run: bash docker/ros/install-nix.sh
-      - name: Every flake.lock is current
-        run: |
-          set -u
-          git ls-files '*flake.nix' | sed 's|/flake.nix$||;s|^flake.nix$|.|' | sort -u > /tmp/flakes
-          : > /tmp/stale
-          while read -r dir; do
-            echo "::group::$dir"
-            nix flake lock --no-update-lock-file "path:$dir" || echo "$dir" >> /tmp/stale
-            echo "::endgroup::"
-          done < /tmp/flakes
-          if [ -s /tmp/stale ]; then
-            while read -r dir; do
-              echo "::error::flake.lock is stale or incomplete in $dir -- run 'nix flake lock' there and commit it"
-            done < /tmp/stale
-            exit 1
-          fi
-          echo "$(wc -l < /tmp/flakes) flake locks are current"
-
   native:
     name: Native builds (C++ and Rust)
     timeout-minutes: 30
@@ -472,11 +434,9 @@ jobs:
       - name: Build native modules
         run: python3 bin/build-native-modules
       - name: Test rust native modules
-        env:
-          BUILD_WORKERS: "4"
         run: python3 bin/build-native-modules --tests
       - name: Install uv
-        uses: astral-sh/setup-uv@v10.0.1
+        uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
           prune-cache: true
@@ -978,17 +938,6 @@ jobs:
                 sudo ln -sfn "$p" "/nix/var/nix/gcroots/dimos-native/$(basename "$p")"
               done
           fi
-      - name: Point cargo at a persistent cache on the workspace mount
-        if: contains(matrix.markers, 'self_hosted')
-        run: |
-          echo "RUSTUP_HOME=$(dirname "$RUNNER_WORKSPACE")/rustup" >> "$GITHUB_ENV"
-          echo "CARGO_HOME=$(dirname "$RUNNER_WORKSPACE")/cargo" >> "$GITHUB_ENV"
-      - name: Install Rust toolchain
-        if: contains(matrix.markers, 'self_hosted')
-        uses: dtolnay/rust-toolchain@stable
-      - name: Build rust native modules
-        if: contains(matrix.markers, 'self_hosted')
-        run: python3 bin/build-native-modules
       - name: Run tests
         run: uv run pytest --cov=dimos/ --junitxml=junit.xml -m '(${{ matrix.markers }}) and not mujoco'
       - name: Re-run the failing tests with maximum verbosity
@@ -1387,7 +1336,6 @@ jobs:
     - lint
     - rust
     - native
-    - flake-locks-current
     - md-babel
     - web
     - tests
