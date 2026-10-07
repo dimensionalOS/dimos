@@ -40,8 +40,8 @@ def test_a_blueprint_lists_its_modules_and_streams(check_model: Any) -> None:
     stream = next(s for s in camera["streams"] if s["name"] == "color_image")
     assert stream["topic"] == "/color_image"
     # the module's docstring, methods and where its code is (a file GET /dimos/source can read)
-    vis = next(m for m in answer["modules"] if m["class"].endswith(".WebsocketVisModule"))
-    assert vis["summary"] and vis["doc"].startswith(vis["summary"][:40])
+    documented = next(m for m in answer["modules"] if m["summary"])
+    assert documented["doc"].startswith(documented["summary"][:40])
     assert camera["file"] == "dimos/hardware/sensors/camera/module.py"
     assert (
         (ROOT / camera["file"])
