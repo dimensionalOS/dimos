@@ -36,7 +36,9 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 POLL_S = 1.0
-SETTLE_S = 1.5
+SETTLE_S = 3.0
+# at least this long between re-listings (each imports the registry in a child): changes in between wait for the next
+MIN_GAP_S = 10.0
 
 
 def relevant(name: str) -> bool:
@@ -89,6 +91,7 @@ class BlueprintWatch:
         touched: Callable[[], None],
         poll: float = POLL_S,
         settle: float = SETTLE_S,
+        min_gap: float = MIN_GAP_S,
     ) -> None:
         self.dimos_dir = dimos_dir
         self.list_blueprints = list_blueprints
@@ -96,6 +99,7 @@ class BlueprintWatch:
         self.touched = touched
         self.poll = poll
         self.settle = settle
+        self.min_gap = min_gap
         self.names: list[str] | None = None
         # the latest listing from a child: fresher than this process's import of the registry
         self.listed: list[dict[str, Any]] | None = None
@@ -118,18 +122,25 @@ class BlueprintWatch:
         """Forever: list once, then re-list after each settled change."""
         await self.relist()
         seen = await asyncio.to_thread(snapshot, self.dimos_dir)
+        last = asyncio.get_running_loop().time()
         while True:
             await asyncio.sleep(self.poll)
             now = await asyncio.to_thread(snapshot, self.dimos_dir)
             if now == seen:
                 continue
-            # let a burst (a checkout, an install) settle first
+            # debounce: a burst (a checkout, a pip install flooding site-packages) re-lists once, after it has been
+            # quiet for `settle` s; throttle: never sooner than `min_gap` s after the last re-listing
             while True:
                 await asyncio.sleep(self.settle)
                 later = await asyncio.to_thread(snapshot, self.dimos_dir)
                 if later == now:
                     break
                 now = later
+            wait = last + self.min_gap - asyncio.get_running_loop().time()
+            if wait > 0:
+                await asyncio.sleep(wait)
+                now = await asyncio.to_thread(snapshot, self.dimos_dir)
             seen = now
             self.touched()
             await self.relist()
+            last = asyncio.get_running_loop().time()

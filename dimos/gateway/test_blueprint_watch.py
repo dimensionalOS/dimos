@@ -58,6 +58,7 @@ async def test_a_registry_change_sends_the_difference(tmp_path: Path) -> None:
         lambda: touched.append(True),
         poll=0.05,
         settle=0.05,
+        min_gap=0,
     )
     task = asyncio.create_task(watch.run())
     try:
