@@ -175,6 +175,7 @@ DUAL_OPENYAM_RECORD_TOPICS = ",".join(
         "depth_image",
         "camera_info",
         "tf",
+        "detections_2d",
         "detections_3d",
         "grasp_candidates",
         "grasp_target",
@@ -281,12 +282,24 @@ DUAL_OPENYAM_VIEW_TOPICS = [
     "left_wrist_color_image",
     "right_wrist_color_image",
     "pointcloud",
+    "detections_2d",
     "detections_3d",
     "grasp_candidates",
     "grasp_target",
     "planned_tool_path",
     "tf",
 ]
+
+
+def dual_openyam_entity_path(topic: Any) -> str:
+    """Rerun entity for a stream: the 2D detections go under the overhead image
+    so they draw on its tile; everything else keeps the bridge's default."""
+    raw = getattr(topic, "topic", None) or getattr(topic, "name", None) or str(topic)
+    name = str(raw).split("#")[0].removeprefix("dimos/").lstrip("/")
+    if name == "detections_2d":
+        return "world/color_image/detections_2d"
+    return f"world/{name}"
+
 
 # Jaw glyph in the TCP frame: pads 9.4 cm apart along Y, the approach along
 # -Z, a stem up toward the wrist.
@@ -346,6 +359,7 @@ def dual_openyam_grasp_rerun() -> Blueprint:
     return RerunBridgeModule.blueprint(
         blueprint=dual_openyam_grasp_view,
         topics=DUAL_OPENYAM_VIEW_TOPICS,
+        topic_to_entity=dual_openyam_entity_path,
         visual_override={
             "world/grasp_candidates": grasp_candidates_to_rerun,
             "world/grasp_target": grasp_target_to_rerun,

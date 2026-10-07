@@ -218,3 +218,20 @@ def test_planning_model_carries_collision_geometry_cameras_and_measured_spacing(
     assert config.home_joints == [0.0, 0.02, 0.0, 0.0, 0.0, 0.0] * 2
     assert ("left_tip_left", "left_tip_right") in config.collision_exclusion_pairs
     assert ("right_link4", "right_gripper") in config.collision_exclusion_pairs
+
+
+def test_two_d_detections_draw_on_the_overhead_tile() -> None:
+    from types import SimpleNamespace
+
+    from dimos.robot.manipulators.dual_openyam.blueprints.grasp import dual_openyam_entity_path
+
+    assert dual_openyam_entity_path(SimpleNamespace(topic="detections_2d")) == (
+        "world/color_image/detections_2d"
+    )
+    assert dual_openyam_entity_path("dimos/color_image#sensor_msgs.Image") == "world/color_image"
+    assert dual_openyam_entity_path(SimpleNamespace(topic="left_wrist_color_image")) == (
+        "world/left_wrist_color_image"
+    )
+    bridge = _atom(dual_openyam_grasp, RerunBridgeModule).kwargs
+    assert bridge["topic_to_entity"] is dual_openyam_entity_path
+    assert "detections_2d" in bridge["topics"]
