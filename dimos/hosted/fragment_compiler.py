@@ -43,6 +43,7 @@ from dimos.hosted.fragment import (
     run_stream_base_topic,
     run_stream_key,
 )
+from dimos.hosted.tags import missing
 from dimos.spec.utils import is_spec, spec_annotation_compliance, spec_structural_compliance
 
 HOSTED_GLOBAL_OVERRIDES: Mapping[str, Any] = MappingProxyType({"transport": "zenoh"})
@@ -359,8 +360,8 @@ def _host_rejection_reasons(
     reasons: list[str] = []
     if descriptor.state not in _SCHEDULABLE_HOST_STATES:
         reasons.append(f"state is {descriptor.state}")
-    if missing_tags := required_tags - descriptor.tags:
-        reasons.append(f"missing tags {sorted(missing_tags)}")
+    if missing_tags := missing(descriptor.tags, required_tags):
+        reasons.append(f"missing tags {missing_tags}")
     host_revision = descriptor.versions.get(
         "application_revision", descriptor.versions.get("dimos")
     )

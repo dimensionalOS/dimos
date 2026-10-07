@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 import contextlib
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
@@ -50,6 +50,7 @@ from dimos.hosted.fragment import (
     run_coordinator_rpc_name,
     with_host_config,
 )
+from dimos.hosted.tags import as_tags
 from dimos.utils.logging_config import set_run_log_dir
 
 if TYPE_CHECKING:
@@ -79,7 +80,7 @@ class HostConfig(BaseSettings):
     )
 
     name: str = Field(default_factory=socket.gethostname)
-    # Comma-separated placement tags, added to the auto-detected ones.
+    # Comma-separated tags, key or key=value, added to the auto-detected ones.
     tags: str = ""
     # Taken: the next free port up is used instead.
     listen: str = DEFAULT_LISTEN
@@ -140,7 +141,8 @@ class HostDescriptor:
     host_id: str
     epoch: str
     name: str
-    tags: frozenset[str]
+    # Key/value facts; a bare tag has an empty value.
+    tags: Mapping[str, str]
     versions: dict[str, str | int]
     state: HostState
     active_run_ids: tuple[str, ...]
@@ -176,7 +178,7 @@ class HostDaemon:
         host_id: str,
         *,
         name: str | None = None,
-        tags: set[str] | frozenset[str] = frozenset(),
+        tags: Mapping[str, str] | Iterable[str] = (),
         versions: dict[str, str | int] | None = None,
         log_root: Path = DEFAULT_LOG_ROOT,
         startup_timeout: float = DEFAULT_STARTUP_TIMEOUT,
@@ -197,7 +199,7 @@ class HostDaemon:
         self.scout_interface = scout_interface
         self.router_zid = ""
         self._name = name or socket.gethostname()
-        self._tags = frozenset(tags)
+        self._tags = as_tags(tags)
         self._versions = dict(versions or {})
         self._log_root = log_root
         self._startup_timeout = startup_timeout
@@ -272,7 +274,7 @@ class HostDaemon:
                 host_id=self._host_id,
                 epoch=self._epoch,
                 name=self._name,
-                tags=self._tags,
+                tags=dict(self._tags),
                 versions=dict(self._versions),
                 state=self._host_state_locked(),
                 active_run_ids=tuple(sorted(self._deployments)),

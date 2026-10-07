@@ -21,26 +21,40 @@ import pytest
 from dimos.hosted import doctor
 from dimos.hosted.doctor import run
 from dimos.hosted.taggers import gpu
-from dimos.hosted.tags import auto_tags, taggers
+from dimos.hosted.tags import as_tags, auto_tags, format_tags, missing, taggers
 
 
-def test_auto_tags_combines_and_skips_a_failing_tagger() -> None:
+def test_auto_tags_merges_and_skips_a_failing_tagger() -> None:
     def broken() -> set[str]:
         raise RuntimeError("no sysfs")
 
-    assert auto_tags([lambda: {"a"}, broken, lambda: None, lambda: {"b", "a"}]) == {"a", "b"}
+    assert auto_tags([lambda: {"a"}, broken, lambda: None, lambda: {"gpu": "rtx", "b": ""}]) == {
+        "a": "",
+        "gpu": "rtx",
+        "b": "",
+    }
+
+
+def test_tag_requirements_match_keys_or_exact_values() -> None:
+    tags = as_tags(["go2", "gpu=rtx", "site=athens"])
+    assert tags == {"go2": "", "gpu": "rtx", "site": "athens"}
+    assert missing(tags, ["go2", "gpu", "site=athens"]) == []
+    assert missing(tags, ["site=sf", "jetson"]) == ["jetson", "site=sf"]
+    assert missing(frozenset({"go2"}), ["go2"]) == []
+    assert format_tags(tags) == "go2,gpu=rtx,site=athens"
 
 
 def test_taggers_are_discovered_from_the_package() -> None:
-    assert {fn.__module__.rsplit(".", 1)[1] for fn in taggers()} >= {"jetson", "gpu"}
+    assert {fn.__module__.rsplit(".", 1)[1] for fn in taggers()} >= {"jetson", "gpu", "system"}
 
 
 @pytest.mark.parametrize("node", ["/dev/nvidia0", "/dev/nvgpu", "/dev/nvhost-gpu"])
 def test_gpu_tagger_reads_device_nodes(node: str, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(Path, "exists", lambda self: str(self) == node)
-    assert gpu.tags() == {"gpu"}
+    monkeypatch.setattr(gpu.shutil, "which", lambda _: None)
+    assert gpu.tags() == {"gpu": ""}
     monkeypatch.setattr(Path, "exists", lambda self: False)
-    assert gpu.tags() == set()
+    assert gpu.tags() == {}
 
 
 def _doctor(check: Any, fix: Any = None) -> SimpleNamespace:

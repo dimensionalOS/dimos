@@ -89,7 +89,7 @@ def test_describe_reports_available_host(host_setup: dict[str, Any]) -> None:
     descriptor = host_setup["daemon"].describe()
 
     assert descriptor.host_id == "host-1"
-    assert descriptor.tags == frozenset({"gpu"})
+    assert descriptor.tags == {"gpu": ""}
     assert descriptor.versions == {"protocol": 1}
     assert descriptor.state == "available"
     assert descriptor.active_run_ids == ()

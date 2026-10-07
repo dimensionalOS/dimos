@@ -27,6 +27,7 @@ from filelock import FileLock, Timeout
 import typer
 
 from dimos.hosted.service import HOST_LOCK_PATH, load_host_id
+from dimos.hosted.tags import as_tags, format_tags
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -74,7 +75,7 @@ def _descriptor_dict(descriptor: HostDescriptor) -> dict[str, Any]:
         "host_id": descriptor.host_id,
         "epoch": descriptor.epoch,
         "name": descriptor.name,
-        "tags": sorted(descriptor.tags),
+        "tags": dict(as_tags(descriptor.tags)),
         "versions": descriptor.versions,
         "state": descriptor.state,
         "active_run_ids": list(descriptor.active_run_ids),
@@ -123,7 +124,7 @@ def _host_rows(
         rows.append(
             (
                 host.name,
-                ",".join(sorted(host.tags)) or "-",
+                format_tags(host.tags) or "-",
                 ",".join(endpoints or host.listen) or "-",
                 host_revision[:10],
                 "yes" if host_revision == revision else "NO",
@@ -222,7 +223,7 @@ def describe(
     typer.echo(f"Host ID:       {descriptor.host_id}")
     typer.echo(f"Epoch:         {descriptor.epoch}")
     typer.echo(f"Name:          {descriptor.name}")
-    typer.echo(f"Tags:          {','.join(sorted(descriptor.tags)) or '-'}")
+    typer.echo(f"Tags:          {format_tags(descriptor.tags) or '-'}")
     typer.echo(f"State:         {descriptor.state}")
     typer.echo(f"Active run IDs: {','.join(descriptor.active_run_ids) or '-'}")
     typer.echo("Versions:")
@@ -296,7 +297,7 @@ def start(
         False, "--foreground", "-f", help="Run the daemon here instead of in the background"
     ),
     name: str | None = typer.Option(None, "--name", help="Human-readable Host name"),
-    tags: list[str] = typer.Option([], "--tag", "-t", help="Placement tag; repeatable"),
+    tags: list[str] = typer.Option([], "--tag", "-t", help="Tag, key or key=value; repeatable"),
     listen: list[str] = typer.Option([], "--listen", "-l", help="Router listen endpoint"),
     connect: list[str] = typer.Option([], "--connect", "-c", help="Router to always link to"),
     autodiscovery: bool | None = typer.Option(None, help="Find and link other Hosts"),
@@ -331,7 +332,7 @@ def start(
         listen = [free_listen(DEFAULT_LISTEN) if config.listen == DEFAULT_LISTEN else config.listen]
         if listen[0] != config.listen:
             logger.warning("Default Host port is taken, listening elsewhere", listen=listen[0])
-    all_tags = auto_tags() | set(split_csv(config.tags)) | set(tags)
+    all_tags = {**auto_tags(), **as_tags(split_csv(config.tags)), **as_tags(tags)}
 
     with ExitStack() as cleanup:
         try:
@@ -373,7 +374,7 @@ def start(
                     }
                 )
                 typer.echo(
-                    f"Host {descriptor.name} ({host_id}) tags={sorted(descriptor.tags)} "
+                    f"Host {descriptor.name} ({host_id}) tags={format_tags(descriptor.tags)} "
                     f"routing on {','.join(daemon.listen)}"
                     + (f", linked to {','.join(daemon.connect)}" if daemon.connect else "")
                 )

@@ -28,6 +28,7 @@ from dimos.hosted.client import HostClient, discover_hosts
 from dimos.hosted.daemon import RUN_LOG_KEY, HostDescriptor, code_revision
 from dimos.hosted.fragment import HostFragment
 from dimos.hosted.fragment_compiler import compile_fragments
+from dimos.hosted.tags import format_tags, missing
 from dimos.protocol.rpc.zenohrpc import ZenohRPC
 from dimos.utils.logging_config import setup_logger
 
@@ -61,11 +62,11 @@ def wait_for_hosts(
         except TimeoutError:
             descriptors = ()
         named = names <= {d.name for d in descriptors} | {d.host_id for d in descriptors}
-        tagged = all(any(tags <= d.tags for d in descriptors) for tags in tag_sets)
+        tagged = all(any(not missing(d.tags, tags) for d in descriptors) for tags in tag_sets)
         if named and tagged:
             return descriptors
         time.sleep(poll)
-    found = ", ".join(sorted(f"{d.name}{sorted(d.tags)}" for d in descriptors)) or "none"
+    found = ", ".join(sorted(f"{d.name}[{format_tags(d.tags)}]" for d in descriptors)) or "none"
     wanted = [*sorted(names), *(sorted(tags) for tags in tag_sets)]
     raise TimeoutError(f"Hosts {wanted} not all live; found: {found}")
 

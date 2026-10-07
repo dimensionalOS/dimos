@@ -12,11 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from pathlib import Path
+import os
+import platform
+
+import psutil
 
 
 def tags() -> dict[str, str]:
-    if not Path("/etc/nv_tegra_release").exists():
-        return {}
-    model = Path("/proc/device-tree/model")
-    return {"jetson": model.read_text().strip("\x00\n ") if model.exists() else ""}
+    return {
+        "arch": platform.machine(),
+        "cpus": str(os.cpu_count() or 0),
+        "ram_gb": str(round(psutil.virtual_memory().total / 2**30)),
+    }
