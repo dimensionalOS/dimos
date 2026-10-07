@@ -99,7 +99,7 @@ class FakeTransport:
             "quota": {"state": "ok"},
         }
 
-    def put(self, url: str, body: bytes, progress: Callable[[int], None] | None = None) -> None:
+    def put(self, url: str, body: bytes) -> None:
         path, _, epoch = url.partition("?e=")
         uid, n = path.split("/")
         if self.expire_at and len(self.parts[uid]) + 1 == self.expire_at:
@@ -110,9 +110,6 @@ class FakeTransport:
         if self.fail_at and len(self.parts[uid]) + 1 == self.fail_at:
             self.fail_at = 0
             raise OSError("link dropped")
-        if progress:
-            progress(len(body) // 2)
-            progress(len(body))
         self.parts[uid][int(n)] = body
 
     def download(
@@ -177,9 +174,9 @@ def test_resume_sends_only_missing_parts(tmp_path: Path, monkeypatch: pytest.Mon
     sent: list[int] = []
     real_put = t.put
 
-    def spying_put(url: str, body: bytes, progress: Callable[[int], None] | None = None) -> None:
+    def spying_put(url: str, body: bytes) -> None:
         sent.append(int(url.split("/")[1].partition("?")[0]))
-        real_put(url, body, progress)
+        real_put(url, body)
 
     monkeypatch.setattr(t, "put", spying_put)
     assert cloud.upload(db)["state"] == "complete"
@@ -452,55 +449,3 @@ def test_matching_suffix_uploads_raw_and_unstamped(
     assert t.uploads[r["upload_id"]]["content_encoding"] is None
     out = cloud.pull(r["upload_id"], dest=db.parent / "artifact.back.lz4")
     assert out.read_bytes() == raw.read_bytes()
-
-
-def test_progress_covers_every_phase(env: tuple[CloudData, FakeTransport, Path]) -> None:
-    """compress and hash report bytes (not a bare spinner), and upload moves within a part,
-    so a file smaller than one part still shows a moving bar."""
-    cloud, t, db = env
-    t.part_size = 64 * 2**20  # one part holds the whole file, like the server default
-    ticks: list[tuple[str, int, int]] = []
-    cloud.upload(db, progress=lambda ph, d, tot: ticks.append((ph, d, tot)))
-    phases = [p for p, _, _ in ticks]
-    assert phases.index("compress") < phases.index("hash") < phases.index("upload")
-    for phase in ("compress", "hash", "upload"):
-        mine = [(d, tot) for p, d, tot in ticks if p == phase]
-        assert all(tot > 0 for _, tot in mine), phase
-        assert [d for d, _ in mine] == sorted(d for d, _ in mine), phase
-        assert mine[-1][0] == mine[-1][1], phase
-    uploads = [d for p, d, tot in ticks if p == "upload"]
-    assert any(0 < d < uploads[-1] for d in uploads), "progress inside the single part"
-
-
-def test_http_put_streams_with_a_length() -> None:
-    """A progress-reporting PUT still sends Content-Length (S3 refuses chunked bodies)."""
-    from http.server import BaseHTTPRequestHandler, HTTPServer
-    import threading
-
-    from dimos.cloud.cloud_request import HttpCloudRequest
-
-    got: dict[str, Any] = {}
-
-    class Handler(BaseHTTPRequestHandler):
-        def do_PUT(self) -> None:
-            got["length"] = self.headers.get("Content-Length")
-            got["chunked"] = self.headers.get("Transfer-Encoding")
-            got["body"] = self.rfile.read(int(self.headers["Content-Length"]))
-            self.send_response(200)
-            self.end_headers()
-
-        def log_message(self, *a: Any) -> None:
-            pass
-
-    server = HTTPServer(("127.0.0.1", 0), Handler)
-    threading.Thread(target=server.handle_request, daemon=True).start()
-    body = os.urandom(100_000)
-    sent: list[int] = []
-    try:
-        HttpCloudRequest("http://unused", "k", timeout=5).put(
-            f"http://127.0.0.1:{server.server_port}/part", body, sent.append
-        )
-    finally:
-        server.server_close()
-    assert got == {"length": str(len(body)), "chunked": None, "body": body}
-    assert len(sent) > 1 and sent == sorted(sent) and sent[-1] == len(body)

@@ -33,7 +33,7 @@ class CloudRequest(Protocol):
     def request(
         self, method: str, path: str, body: dict[str, Any] | None = None
     ) -> dict[str, Any]: ...
-    def put(self, url: str, body: bytes, progress: Callable[[int], None] | None = None) -> None: ...
+    def put(self, url: str, body: bytes) -> None: ...
     def download(
         self, url: str, dst: Path, progress: Callable[[int, int], None] | None = None
     ) -> None: ...
@@ -63,14 +63,10 @@ class HttpCloudRequest:
         except (urllib.error.URLError, TimeoutError) as e:
             raise RuntimeError(f"{method} {path}: {e}") from e
 
-    def put(self, url: str, body: bytes, progress: Callable[[int], None] | None = None) -> None:
-        """`progress(bytes of body sent so far)` as http.client streams it out."""
-        data: bytes | _Counted = body if progress is None else _Counted(body, progress)
-        # an explicit length: a file-like body would otherwise go out chunked, which S3 refuses
-        req = urllib.request.Request(
-            url, data=data, method="PUT", headers={"Content-Length": str(len(body))}
-        )
-        with urllib.request.urlopen(req, timeout=self.timeout):
+    def put(self, url: str, body: bytes) -> None:
+        with urllib.request.urlopen(
+            urllib.request.Request(url, data=body, method="PUT"), timeout=self.timeout
+        ):
             pass
 
     def download(
@@ -86,18 +82,3 @@ class HttpCloudRequest:
                 f.write(chunk)
                 done += len(chunk)
                 progress(done, total)
-
-
-class _Counted:
-    """A bytes body http.client reads block by block, reporting how much has gone out."""
-
-    def __init__(self, body: bytes, progress: Callable[[int], None]) -> None:
-        self.view, self.sent, self.progress = memoryview(body), 0, progress
-
-    def read(self, n: int = -1) -> bytes:
-        end = len(self.view) if n < 0 else self.sent + n
-        chunk = bytes(self.view[self.sent : end])
-        if chunk:
-            self.sent += len(chunk)
-            self.progress(self.sent)
-        return chunk
