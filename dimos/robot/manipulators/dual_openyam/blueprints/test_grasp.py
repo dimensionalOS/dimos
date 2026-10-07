@@ -67,7 +67,9 @@ def test_grasp_blueprint_composes_both_gripper_tasks_and_the_yam_grasp_settings(
         "left_arm_gripper",
         "right_arm_gripper",
     }
-    assert _atom(dual_openyam_grasp, PickAndPlaceModule).kwargs["pregrasp_along_tool_z"] is True
+    pick = _atom(dual_openyam_grasp, PickAndPlaceModule).kwargs
+    assert pick["pregrasp_along_tool_z"] is True
+    assert pick["preplace_offset"] == 0.05
     assert _atom(dual_openyam_grasp, HeuristicGraspModule).kwargs["yaw_candidates"] == 8
     manipulation = _atom(dual_openyam_grasp, ManipulationModule).kwargs
     assert manipulation["world_frame"] == "world"

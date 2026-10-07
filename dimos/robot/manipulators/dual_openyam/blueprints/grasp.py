@@ -396,7 +396,11 @@ def dual_openyam_grasp_modules(*, graspgen: bool) -> tuple[Blueprint, ...]:
             world_frame="world",
         ),
         ManipulationSkills.blueprint(),
-        PickAndPlaceModule.blueprint(planning_frame="world", pregrasp_along_tool_z=True),
+        # Fingers down, this arm reaches nothing over the bin above about 20 cm,
+        # so the pre-place lift is short.
+        PickAndPlaceModule.blueprint(
+            planning_frame="world", pregrasp_along_tool_z=True, preplace_offset=0.05
+        ),
         dual_openyam_grasp_provider(graspgen),
         RealSenseCamera.blueprint(
             width=640,

@@ -60,9 +60,12 @@ Skills:
 - reset: Clear a FAULT state after a failed motion, before planning again.
 
 World frame (meters): origin on the table midway between the arm bases,
-X forward (away from the arms), Y toward the left arm, Z up. Objects sit at
-Z 0.00 to 0.15. The yellow bin is centred near X=0.35, Y=-0.02; to drop an
-object into it, place_at X=0.35 Y=-0.02 Z=0.25 with the holding arm.
+X forward (away from the arms), Y toward the left arm, Z up. The table top is
+at Z=-0.03, so objects sit between Z=-0.03 and Z=0.10. The yellow bin spans
+X 0.20 to 0.49 and Y -0.14 to +0.09, rim at Z=0.08. Each arm drops on its own
+side of the bin, 6 cm above the rim: right arm X=0.33 Y=-0.10 Z=0.14, left
+arm X=0.33 Y=+0.06 Z=0.14. Fingers down, an arm reaches nothing above about
+Z=0.20 over the bin, so never ask for a higher drop.
 
 Rules:
 1. scan_objects first. For "pick X and put it in the bin" call

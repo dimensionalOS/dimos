@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 from typing import Any, Literal
 
 from pydantic import Field
@@ -54,6 +55,9 @@ class PickAndPlaceModuleConfig(ModuleConfig):
     # points Z out of the back of the palm need +Z, or the approach starts
     # underneath the object.
     pregrasp_along_tool_z: bool = False
+    # Lift above the place pose before lowering; None reuses pregrasp_offset. A
+    # short arm dropping into a bin needs less headroom than it needs over a grasp.
+    preplace_offset: float | None = Field(default=None, gt=0.0)
     # A learned provider returns a ranked spread whose best-scoring pose is not
     # always kinematically reachable; a single-candidate provider is unaffected.
     max_grasp_attempts: int = Field(default=5, gt=0)
@@ -87,6 +91,10 @@ class _StagedProgram:
 
 class _UnplannableLegError(Exception):
     """A leg of a staged job could not be planned."""
+
+
+# Wrist turns about vertical tried for the place pose, the grasp's own heading first.
+_PLACE_YAW_DELTAS = (0.0, math.pi / 2, -math.pi / 2, math.pi, math.pi / 4, -math.pi / 4)
 
 
 def _merge_joint_state(start: JointState, end: JointState) -> JointState:
@@ -374,12 +382,6 @@ class PickAndPlaceModule(Module):
     ) -> list[_StagedLeg]:
         """Plan every leg of a pick and place from *start*, chaining predicted states."""
         pregrasp = self._offset_pose(grasp, self._pregrasp_offset())
-        place = PoseStamped(
-            frame_id=self.config.planning_frame,
-            position=place_position,
-            orientation=grasp.orientation,
-        )
-        preplace = self._offset_pose(place, self._pregrasp_offset())
         legs: list[_StagedLeg] = [_StagedLeg("open the gripper", gripper="open")]
         state = start
 
@@ -410,11 +412,30 @@ class PickAndPlaceModule(Module):
         linear("descend to the grasp", pregrasp, grasp)
         legs.append(_StagedLeg("close and verify the grasp", gripper="close"))
         linear("lift", grasp, pregrasp)
-        planned(
-            "carry above the place",
-            self._manipulation.plan_to_poses({group: preplace}, start=state),
-        )
-        linear("lower to the place", preplace, place)
+        # The object's heading does not matter for a drop, so the wrist may turn
+        # about vertical until the carry and the lowering both plan.
+        checkpoint = (len(legs), state)
+        failures: list[str] = []
+        for delta in _PLACE_YAW_DELTAS:
+            place = PoseStamped(
+                frame_id=self.config.planning_frame,
+                position=place_position,
+                orientation=Quaternion.from_euler(Vector3(0.0, 0.0, delta)) * grasp.orientation,
+            )
+            preplace = self._offset_pose(place, self._preplace_offset())
+            try:
+                planned(
+                    "carry above the place",
+                    self._manipulation.plan_to_poses({group: preplace}, start=state),
+                )
+                linear("lower to the place", preplace, place)
+                break
+            except _UnplannableLegError as exc:
+                failures.append(f"yaw {delta:+.2f}: {exc}")
+                del legs[checkpoint[0] :]
+                state = checkpoint[1]
+        else:
+            raise _UnplannableLegError("; ".join(failures[-2:]))
         legs.append(_StagedLeg("release", gripper="release"))
         linear("retreat", place, preplace)
         group_state = self._manipulation.get_state().groups.get(group)
@@ -504,7 +525,7 @@ class PickAndPlaceModule(Module):
             position=Vector3(x, y, z),
             orientation=self._selected_grasp.orientation,
         )
-        preplace = self._offset_pose(place, self._pregrasp_offset())
+        preplace = self._offset_pose(place, self._preplace_offset())
         if blocked := self._move(preplace, group):
             return self._stopped(f"Move to the pre-place pose above {target}", blocked)
         if blocked := self._servo(preplace, place, group):
@@ -579,6 +600,12 @@ class PickAndPlaceModule(Module):
 
     def _pregrasp_offset(self) -> float:
         offset = self.config.pregrasp_offset
+        return -offset if self.config.pregrasp_along_tool_z else offset
+
+    def _preplace_offset(self) -> float:
+        offset = self.config.preplace_offset
+        if offset is None:
+            return self._pregrasp_offset()
         return -offset if self.config.pregrasp_along_tool_z else offset
 
     @staticmethod

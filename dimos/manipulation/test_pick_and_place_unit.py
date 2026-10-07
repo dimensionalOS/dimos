@@ -605,3 +605,54 @@ def test_discard_drops_the_staged_job_and_clears_the_preview(staged: PickAndPlac
     manipulation.clear_planned_path.assert_called_once()
     assert staged._staged is None
     assert staged.discard_staged().message == "Nothing was staged."
+
+
+def test_stage_turns_the_wrist_for_the_place_when_the_grasp_heading_cannot_reach(
+    staged: PickAndPlaceModule,
+) -> None:
+    manipulation: Any = staged._manipulation
+    poses_tried: list[Any] = []
+
+    def plan_to_poses(targets: dict[str, PoseStamped], **kw: Any) -> PlanResult:
+        pose = next(iter(targets.values()))
+        poses_tried.append(pose)
+        # approach plans; the first carry attempt (grasp heading) does not
+        if len(poses_tried) == 2:
+            return NO_PATH
+        return _planned("pose")
+
+    manipulation.plan_to_poses.side_effect = plan_to_poses
+
+    result = staged.stage_pick_and_place("cup-1", 0.33, -0.10, 0.14)
+
+    assert result.message.startswith("Staged a pick of object cup-1")
+    assert [leg for leg in result.metadata["legs"]].count("carry above the place") == 1
+    assert len(poses_tried) == 3
+    first_carry, second_carry = poses_tried[1], poses_tried[2]
+    assert first_carry.position.x == pytest.approx(second_carry.position.x)
+    assert first_carry.orientation != second_carry.orientation
+
+
+def test_preplace_offset_shortens_the_lift_over_the_place(module: PickAndPlaceModule) -> None:
+    from dimos.msgs.sensor_msgs.JointState import JointState
+
+    module.config.preplace_offset = 0.05
+    module.config.pregrasp_along_tool_z = True
+    manipulation: Any = module._manipulation
+    manipulation.get_current_joint_state.return_value = JointState(
+        name=["j1", "j2"], position=[0, 0]
+    )
+    manipulation.plan_to_poses.side_effect = lambda targets, **kw: _planned("pose")
+    manipulation.plan_to_joints.side_effect = lambda targets, **kw: _planned("joints")
+    manipulation.get_state.return_value.groups["arm/tool"].joint_presets = {}
+    deltas: list[tuple[float, float, float]] = []
+
+    def plan_linear(dx: float, dy: float, dz: float, *a: Any, **kw: Any) -> PlanResult:
+        deltas.append((dx, dy, dz))
+        return _planned("linear")
+
+    manipulation.plan_linear.side_effect = plan_linear
+    assert module.stage_pick_and_place("cup-1", 0.33, -0.10, 0.14).message.startswith("Staged")
+
+    # descend 10 cm to the grasp, lift 10 cm, lower 5 cm to the place, retreat 5 cm
+    assert [round(abs(d[2]), 3) for d in deltas] == [0.1, 0.1, 0.05, 0.05]
