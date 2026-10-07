@@ -28,6 +28,7 @@ from torch import Tensor
 
 Simplifier = Callable[[Tensor, Tensor], tuple[Tensor, Tensor]]
 _INF = torch.iinfo(torch.int64).max
+_FIXED = float(1 << 32)
 # a quadric as the 10 unique (i, j) entries of its symmetric 4x4
 _QI = [0, 1, 2, 3, 0, 0, 0, 1, 1, 2]
 _QJ = [0, 1, 2, 3, 1, 2, 3, 2, 3, 3]
@@ -62,6 +63,19 @@ def _qcost(q: Tensor, p: Tensor) -> Tensor:
     )
 
 
+def _hash01(p: Tensor) -> Tensor:
+    """A stable pseudo-random value in [0, 1) per point."""
+    x = (p * torch.tensor([12.9898, 78.233, 37.719], device=p.device)).sum(1)
+    return torch.frac(torch.sin(x * 100.0) * 43758.5453).abs()
+
+
+def _sum(n: int, index: Tensor, values: Tensor) -> Tensor:
+    """index_add_ into n rows in fixed point: the same sum in any order, so runs repeat."""
+    fixed = (values.double() * _FIXED).round().long()
+    out = torch.zeros((n, *values.shape[1:]), dtype=torch.int64, device=values.device)
+    return (out.index_add_(0, index, fixed).double() / _FIXED).to(values.dtype)
+
+
 def _normals(v: Tensor, f: Tensor) -> Tensor:
     a, b, c = v[f[:, 0]], v[f[:, 1]], v[f[:, 2]]
     return torch.cross(b - a, c - a, dim=1)
@@ -90,17 +104,16 @@ class EdgeCollapse:
         locked = boundary(f, nv)
         n = torch.nn.functional.normalize(_normals(v, f), dim=1)
         plane = torch.cat([n, -(n * v[f[:, 0]]).sum(1, keepdim=True)], 1)
-        q = torch.zeros(nv, 10, device=dev).index_add_(
-            0, f.reshape(-1), (plane[:, _QI] * plane[:, _QJ]).repeat_interleave(3, 0)
-        )
+        q = _sum(nv, f.reshape(-1), (plane[:, _QI] * plane[:, _QJ]).repeat_interleave(3, 0))
         blocked = torch.zeros(0, dtype=torch.int64, device=dev)
         for _ in range(self.max_rounds):
             code, cnt = torch.unique(_sides(f, nv), return_counts=True)
             a, b = code // nv, code % nv
             p, keep_a, cost = self._best(v, q, a, b, locked[a], locked[b])
             ok = (cost <= self.tol**2) & (cnt <= 2) & ~_member(code, blocked)
-            # coarse cost buckets, random within: cheap first, many winners per round
-            key = (cost / self.tol**2 * 8).floor().clamp_max(8) + torch.rand_like(cost)
+            # coarse cost buckets, hashed order within: cheap first, many winners per
+            # round, and the same mesh in gives the same mesh out
+            key = (cost / self.tol**2 * 8).floor().clamp_max(8) + _hash01(v[a] + v[b])
             sel = self._independent(f, nv, a, b, key, ok)
             # masks rather than compaction, to avoid host syncs
             idx = torch.where(sel, torch.arange(len(a), device=dev), -1)
@@ -257,9 +270,7 @@ class PlaneSnap:
         raw = _normals(v, f)
         n = torch.nn.functional.normalize(raw, dim=1)
         for _ in range(self.smooth):
-            vn = torch.zeros(nv, 3, device=dev).index_add_(
-                0, f.reshape(-1), n.repeat_interleave(3, 0)
-            )
+            vn = _sum(nv, f.reshape(-1), n.repeat_interleave(3, 0))
             n = torch.nn.functional.normalize(vn[f].sum(1), dim=1)
         f1, f2 = _face_pairs(f, nv)
         join = (n[f1] * n[f2]).sum(1) > self.min_cos
@@ -360,16 +371,13 @@ def _compact(label: Tensor, keep: Tensor) -> tuple[Tensor, int]:
 
 def _fit_planes(label: Tensor, nc: int, w: Tensor, c: Tensor, n: Tensor) -> tuple[Tensor, Tensor]:
     """Weighted least-squares plane per label: (point on plane, unit normal facing like n)."""
-    dev = c.device
-    sw = torch.zeros(nc, device=dev).index_add_(0, label, w)
-    mean = torch.zeros(nc, 3, device=dev).index_add_(0, label, w[:, None] * c)
+    sw = _sum(nc, label, w)
+    mean = _sum(nc, label, w[:, None] * c)
     mean = mean / sw.clamp_min(1e-12)[:, None]
     d = c - mean[label]
-    cov = torch.zeros(nc, 3, 3, device=dev).index_add_(
-        0, label, w[:, None, None] * d[:, :, None] * d[:, None, :]
-    )
+    cov = _sum(nc, label, w[:, None, None] * d[:, :, None] * d[:, None, :])
     normal = torch.linalg.eigh(cov).eigenvectors[:, :, 0]
-    facing = torch.zeros(nc, 3, device=dev).index_add_(0, label, w[:, None] * n)
+    facing = _sum(nc, label, w[:, None] * n)
     return mean, normal * torch.where((normal * facing).sum(1) < 0, -1.0, 1.0)[:, None]
 
 
