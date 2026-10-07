@@ -85,15 +85,16 @@ impl SeedProgress {
         self.sum_region_ms / self.applied.max(1) as f64
     }
 
-    /// Count one region. True when a progress line is due.
-    fn record(&mut self, applied: bool, points: usize, region_ms: f64) -> bool {
+    /// Count one region by the points it applied. True when a progress line
+    /// is due.
+    fn record(&mut self, applied: Option<usize>, region_ms: f64) -> bool {
         let now = Instant::now();
         self.started.get_or_insert(now);
         self.last_at = Some(now);
-        if !applied {
+        let Some(points) = applied else {
             self.unusable += 1;
             return false;
-        }
+        };
         self.applied += 1;
         self.points += points;
         self.max_region_ms = self.max_region_ms.max(region_ms);
@@ -390,15 +391,14 @@ impl Worker {
                 let Some(seed) = seed else {
                     break;
                 };
-                let points = seed.cloud.width as usize * seed.cloud.height as usize;
                 let region_start = Instant::now();
                 let applied =
                     tokio::task::block_in_place(|| self.ingest_seed(&mut planner, seed, &mut viz));
                 let region_ms = region_start.elapsed().as_secs_f64() * 1e3;
-                if seed_progress.record(applied, points, region_ms) {
+                if seed_progress.record(applied, region_ms) {
                     seed_progress.log_progress(queued);
                 }
-                if applied {
+                if applied.is_some() {
                     self.publish_viz_if_due(&planner, &mut viz, &mut last_viz_at)
                         .await;
                 }
@@ -485,6 +485,7 @@ impl Worker {
                 };
                 let region = region_bounds(&bounds).capped_at(sensor_z, self.config.max_overhead_m);
                 self.apply_region(planner, &cloud, &region, viz, "local region processed")
+                    .is_some()
             }
             MapUpdate::Global { cloud } => {
                 let points = match extract_xyz(&cloud) {
@@ -510,14 +511,21 @@ impl Worker {
     }
 
     /// Apply one seed region through the region pipeline. Its bounds are the
-    /// premap's own, so no sensor ceiling applies. False if unusable.
-    fn ingest_seed(&self, planner: &mut Planner, seed: SeedRegion, viz: &mut RegionViz) -> bool {
+    /// premap's own, so no sensor ceiling applies. The points applied, or
+    /// None if unusable.
+    fn ingest_seed(
+        &self,
+        planner: &mut Planner,
+        seed: SeedRegion,
+        viz: &mut RegionViz,
+    ) -> Option<usize> {
         let region = region_bounds(&seed.bounds);
         self.apply_region(planner, &seed.cloud, &region, viz, "seed region processed")
     }
 
     /// Replace the voxels in a region and repair the graph around them,
-    /// marking the rewritten window for the viz. False if the cloud was unusable.
+    /// marking the rewritten window for the viz. The points applied, or None
+    /// if the cloud was unusable.
     fn apply_region(
         &self,
         planner: &mut Planner,
@@ -525,7 +533,7 @@ impl Worker {
         region: &RegionBounds,
         viz: &mut RegionViz,
         label: &'static str,
-    ) -> bool {
+    ) -> Option<usize> {
         let points = match extract_xyz(cloud) {
             Ok(p) => p,
             Err(e) => {
@@ -535,7 +543,7 @@ impl Worker {
                     label,
                     "Failed to extract region points, dropped it.",
                 );
-                return false;
+                return None;
             }
         };
         let update_start = Instant::now();
@@ -547,7 +555,7 @@ impl Worker {
             points = points.len(),
             "{label}"
         );
-        true
+        Some(points.len())
     }
 
     /// The base frame position in the world frame, from the latest tf.
@@ -1019,15 +1027,15 @@ mod tests {
         let mut progress = SeedProgress::default();
         assert!(!progress.in_flight());
         assert!(
-            !progress.record(false, 500, 1.0),
+            !progress.record(None, 1.0),
             "unusable regions never trigger a line"
         );
         assert!(progress.in_flight());
         for i in 1..SEED_PROGRESS_REGIONS {
-            assert!(!progress.record(true, 100, i as f64), "region {i}");
+            assert!(!progress.record(Some(100), i as f64), "region {i}");
         }
         assert!(
-            progress.record(true, 100, 0.5),
+            progress.record(Some(100), 0.5),
             "the batch's last region is due"
         );
         assert_eq!(progress.applied, SEED_PROGRESS_REGIONS);

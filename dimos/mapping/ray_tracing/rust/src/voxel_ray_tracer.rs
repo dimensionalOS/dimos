@@ -778,7 +778,11 @@ where
     let chunk_edge = CHUNK_EDGE as f32 * voxel_size;
     let chunks: Vec<ChunkRef> = match bounds {
         Some(b) => chunks_in_bounds(map, b, voxel_size),
-        None => map.voxels.chunks().collect(),
+        None => map
+            .voxels
+            .chunks()
+            .filter(|c| c.healthy_len() > 0)
+            .collect(),
     };
     par_scan_chunks(&chunks, extra_points, |chunk, part| {
         let chunk_inside = match bounds {
