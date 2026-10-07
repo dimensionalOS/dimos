@@ -67,8 +67,8 @@ from dimos.robot.manipulators.dual_openyam.config import (
 )
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 
-# Arm base spacing measured on the rig with a tape, centre to centre
-# (2026-10-03); the URDF carries the ABC bench's 0.62 m.
+# Distance between the centres of the two base motors, tape-measured on the
+# rig and confirmed 2026-10-07; the URDF carries the ABC bench's 0.62 m.
 DUAL_OPENYAM_BASE_SPACING = 0.43
 
 # Wrist camera: a D405 on a 6 cm bracket that leaves the top of the wrist tube
