@@ -106,16 +106,12 @@ def test_specs_use_native_defaults_remapping_and_configured_workers(
             "name": "color_image",
             "payload_type": "dimos.msgs.sensor_msgs.Image.Image",
             "codec": "lz4+lcm",
-            "timestamp_field": None,
-            "json_schema": None,
         },
         {
             "port": "odometry",
             "name": "pose",
             "payload_type": "dimos.msgs.geometry_msgs.PoseStamped.PoseStamped",
             "codec": "lcm",
-            "timestamp_field": None,
-            "json_schema": None,
         },
     ]
     assert set(config) == {"encoding_threads", "store", "streams"}
