@@ -28,12 +28,15 @@ from dimos.msgs.shape_msgs.TriangleMesh import TriangleMesh
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
+    import torch
+
     from dimos.mapping.experimental.simplify import Simplifier
     from dimos.memory.type.observation import Observation
 
 C = 32  # chunk edge, voxels
 Key = tuple[int, int, int]
 Chunk = tuple[Key, np.ndarray, np.ndarray, np.ndarray]
+Part = tuple["torch.Tensor", "torch.Tensor", "torch.Tensor"]
 
 
 PAD = 2  # block overlap: the blur reaches 1 voxel, marching cubes 1 more
@@ -96,20 +99,23 @@ class OccupancyMesher:
         self.hashes = hashes
         sel = np.isin(code, changed)
         code, local = code[sel], local[sel]
-        out = []
+        # marching cubes in bounded batches, then the simplifiers once over every batch
+        parts = []
         for i in range(0, len(changed), MAX_BATCH):
             batch = np.array(changed[i : i + MAX_BATCH], np.int64)
             m = (code >= batch[0]) & (code <= batch[-1])
             b = np.searchsorted(batch, code[m])
-            out += self._mesh_blocks(batch, b, local[m])
-        return out
+            parts.append(self._surface(len(batch), b, local[m], i))
+        return self._finish(np.array(changed, np.int64), parts)
 
-    def _mesh_blocks(self, batch: np.ndarray, b: np.ndarray, local: np.ndarray) -> list[Chunk]:
-        """Blocks laid side by side along x, one marching cubes over all of them."""
+    def _surface(self, B: int, b: np.ndarray, local: np.ndarray, first: int) -> Part:
+        """Blocks laid side by side along x, one marching cubes over all of them.
+
+        Vertices in block-local voxels, the faces each block owns, each vertex's block.
+        """
         import torch
         import warp as wp
 
-        B = len(batch)
         occ = torch.zeros(B * P, P, P, device=self.dev)
         idx = torch.from_numpy(local + np.stack([b * P, 0 * b, 0 * b], 1)).to(self.dev)
         occ[idx[:, 0], idx[:, 1], idx[:, 2]] = 1.0
@@ -124,32 +130,40 @@ class OccupancyMesher:
         f = wp.to_torch(self.mc.indices).view(-1, 3).long()[:, [0, 2, 1]]
         # a face belongs to the block whose own C^3 holds its centroid; drops pads and seams
         cen = v[f].mean(1)
-        blk = (cen[:, 0] // P).long()
-        cen[:, 0] -= blk * P
-        own = ((cen >= PAD) & (cen < PAD + C)).all(1)
-        f, blk = f[own], blk[own]
+        cen[:, 0] -= (cen[:, 0] // P) * P
+        f = f[((cen >= PAD) & (cen < PAD + C)).all(1)]
         vb = (v[:, 0] // P).long().clamp(0, B - 1)
+        v = v.clone()
+        v[:, 0] -= vb * P
+        return v, f, vb + first
+
+    def _finish(self, changed: np.ndarray, parts: list[Part]) -> list[Chunk]:
+        import torch
+
+        if not parts:
+            return []
+        offs = np.cumsum([0] + [len(v) for v, _, _ in parts[:-1]])
+        v = torch.cat([v for v, _, _ in parts])
+        f = torch.cat([f + int(o) for (_, f, _), o in zip(parts, offs, strict=True)])
+        vb = torch.cat([vb for _, _, vb in parts])
         if self.simplify:
             # block-local metres: small coordinates keep float32 quadrics exact
-            shift = torch.zeros_like(v)
-            shift[:, 0] = vb * P
-            m = (v - shift) * self.vox
+            m = v * self.vox
             for s in self.simplify:
                 m, f = s(m, f)
-            v = m / self.vox + shift
-            blk = vb[f[:, 0]]
+            v = m / self.vox
+        blk = vb[f[:, 0]]
         a, bb, c = v[f[:, 0]], v[f[:, 1]], v[f[:, 2]]
         n = torch.zeros_like(v).index_add_(
             0, f.reshape(-1), torch.cross(bb - a, c - a, dim=1).repeat_interleave(3, 0)
         )
         normals = torch.nn.functional.normalize(n, dim=1).cpu().numpy()
-        keys = np.array([_key(int(c)) for c in batch])
+        keys = np.array([_key(int(c)) for c in changed]).reshape(-1, 3)
         origin = torch.from_numpy(keys * C - PAD).to(v)[vb]
-        origin[:, 0] -= vb * P
         world = ((v + origin + 0.5) * self.vox).cpu().numpy()
         f_np, blk_np = f.cpu().numpy(), blk.cpu().numpy()
         order = np.argsort(blk_np, kind="stable")
-        groups = np.split(f_np[order], np.cumsum(np.bincount(blk_np, minlength=B))[:-1])
+        groups = np.split(f_np[order], np.cumsum(np.bincount(blk_np, minlength=len(keys)))[:-1])
         out: list[Chunk] = []
         for key, g in zip(keys, groups, strict=True):
             used, li = np.unique(g, return_inverse=True)
