@@ -185,7 +185,7 @@ class LiveMesh(Transformer[PointCloud2, TriangleMesh]):
         voxel_size: float = 0.08,
         # iso on the [1,2,1]/4 blurred occupancy: a 1-voxel wall peaks at 0.5, a lone voxel at 0.125
         iso: float = 0.2,
-        # run in order on each marching cubes batch, see simplify.py
+        # run in order over the changed chunks, see simplify.py
         simplify: Sequence[Simplifier] = (),
         device: str = "cuda",
     ) -> None:
