@@ -383,11 +383,19 @@ def autoconnect(*blueprints: Blueprint) -> Blueprint:
 
 def _eliminate_duplicates(blueprints: list[BlueprintAtom]) -> list[BlueprintAtom]:
     # The duplicates are eliminated in reverse so that newer blueprints override older ones.
-    seen = set()
+    seen: dict[str, type[ModuleBase]] = {}
     unique_blueprints = []
     for bp in reversed(blueprints):
-        if bp.name not in seen:
-            seen.add(bp.name)
+        previous = seen.get(bp.name)
+        if previous is not None and previous is not bp.module:
+            raise ValueError(
+                f"Module instance name {bp.name!r} is shared by "
+                f"{previous.__module__}.{previous.__qualname__} and "
+                f"{bp.module.__module__}.{bp.module.__qualname__}; "
+                "use distinct instance_name values or namespace() each blueprint"
+            )
+        if previous is None:
+            seen[bp.name] = bp.module
             unique_blueprints.append(bp)
     return list(reversed(unique_blueprints))
 
