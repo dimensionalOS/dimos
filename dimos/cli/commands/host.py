@@ -18,7 +18,6 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import ExitStack, contextmanager
-from dataclasses import replace
 from importlib.metadata import version as package_version
 import json
 import threading
@@ -145,11 +144,8 @@ def _tags_text(tags: Any) -> Any:
 def _print_hosts(
     found: Sequence[tuple[HostDescriptor, tuple[str, ...]]],
     revision: str,
-    last_seen: dict[str, float] | None = None,
     ping_ms: dict[str, float] | None = None,
 ) -> None:
-    import time
-
     from rich.console import Console
     from rich.table import Table
 
@@ -159,16 +155,13 @@ def _print_hosts(
     for host, endpoints in found:
         host_revision = str(host.versions.get("application_revision", ""))
         rev_style = "green" if host_revision == revision else "red"
-        state: str = host.state
-        if state == "unreachable" and last_seen and host.host_id in last_seen:
-            state += f" ({int(time.time() - last_seen[host.host_id])}s ago)"
         table.add_row(
             host.name,
             _tags_text(host.tags),
             "\n".join(endpoints or host.listen) or "-",
             f"{ping_ms[host.host_id]:.0f} ms" if ping_ms and host.host_id in ping_ms else "-",
             f"[{rev_style}]{host_revision[:10] or '-'}[/]",
-            f"[{STATE_STYLES.get(host.state, 'red')}]{state}[/]",
+            f"[{STATE_STYLES.get(host.state, 'red')}]{host.state}[/]",
             ",".join(host.active_run_ids) or "-",
         )
     Console().print(table)
@@ -183,17 +176,14 @@ def ls(
     connect: list[str] = typer.Option([], "--connect", "-c", help="Extra router to probe"),
     scan: bool = typer.Option(True, help="Scout and run the Go2 LAN probe"),
 ) -> None:
-    """List dimos Hosts: local, seeds, scouted, Go2-probed, and known ones not found now."""
-    import time
-
-    from dimos.hosted.daemon import HostConfig, HostDescriptor, code_revision, split_csv
+    """List dimos Hosts: local, seeds, scouted and Go2-probed."""
+    from dimos.hosted.daemon import HostConfig, code_revision, split_csv
     from dimos.hosted.discovery import candidates, merge, probe_all, rtts
-    from dimos.hosted.service import load_known_hosts, local_host, save_known_hosts
+    from dimos.hosted.service import local_host
 
     _quiet_logs()
     config = HostConfig()
     local = local_host()
-    known = load_known_hosts()
     seeds = [
         *([str(local["client_endpoint"])] if local else []),
         *connect,
@@ -207,33 +197,8 @@ def ls(
         scout_interface=config.scout_interface,
         timeout=timeout,
     )
-    tried = {e for g in groups for e in g}
-    groups += [tuple(h["endpoints"]) for h in known.values() if not tried & set(h["endpoints"])]
     probes = probe_all([g for g in groups if g], timeout)
     found = merge(probes)
-
-    now = time.time()
-    seen = {h.host_id for h, _ in found}
-    for host, endpoints in found:
-        old = known.get(host.host_id, {})
-        known[host.host_id] = {
-            "name": old.get("name", host.name) if host.state == "unresponsive" else host.name,
-            "endpoints": list(endpoints) or old.get("endpoints", []),
-            "last_seen": now,
-        }
-    found = [
-        (replace(h, name=known[h.host_id]["name"]), e) if h.state == "unresponsive" else (h, e)
-        for h, e in found
-    ] + [
-        (
-            HostDescriptor(host_id, "", info["name"], {}, {}, "unreachable", ()),
-            tuple(info["endpoints"]),
-        )
-        for host_id, info in known.items()
-        if host_id not in seen
-    ]
-    save_known_hosts(known)
-    last_seen = {host_id: info["last_seen"] for host_id, info in known.items()}
     if json_output:
         ping = rtts(probes)
         output = [
@@ -245,7 +210,7 @@ def ls(
     if not found:
         typer.echo(f"No dimos Hosts answered (tried {len(groups)} router(s))")
         return
-    _print_hosts(found, code_revision(), last_seen, rtts(probes))
+    _print_hosts(found, code_revision(), rtts(probes))
 
 
 host_app.command("list", hidden=True)(ls)
