@@ -24,6 +24,8 @@ const state = {
     running: false,
     extras: [],
     showExtras: false,
+    // every live topic's rate row from Desktop (GET /api/topics/rates), for the side panel's Topic rates
+    rateRows: [],
 }
 
 // ── theme: Desktop's skin (localStorage portal.theme on Desktop's origin), live ──
@@ -167,6 +169,71 @@ function moduleList() {
                 )
             ),
         ),
+        ratesSection(),
+    )
+}
+
+// ── the side panel's Topic rates: every live topic's Hz and bandwidth while this blueprint runs, collapsible ──
+const RATES_OPEN = "bp.ratesOpen"
+function ratesSection() {
+    let open = false
+    try {
+        open = localStorage.getItem(RATES_OPEN) === "1"
+    } catch {
+        // storage unavailable
+    }
+    const box = h(
+        "details",
+        {
+            class: "rates",
+            id: "rates",
+            ontoggle: (event) => {
+                try {
+                    localStorage.setItem(RATES_OPEN, event.currentTarget.open ? "1" : "0")
+                } catch {
+                    // storage unavailable
+                }
+            },
+        },
+        h("summary", { class: "label" }, "Topic rates", h("span", { class: "count", id: "ratesCount" })),
+        h("table", {}, h("tbody", { id: "ratesBody" })),
+    )
+    box.open = open
+    queueMicrotask(fillRates)
+    return box
+}
+
+function bandwidth(bytesPerSecond) {
+    const units = ["B/s", "KB/s", "MB/s", "GB/s"]
+    let value = bytesPerSecond
+    let unit = 0
+    while (value >= 1000 && unit < units.length - 1) {
+        value /= 1000
+        unit += 1
+    }
+    return `${value.toFixed(value < 10 && unit > 0 ? 1 : 0)} ${units[unit]}`
+}
+
+function fillRates() {
+    const body = $("#ratesBody")
+    if (!body) {
+        return
+    }
+    const rows = state.running ? state.rateRows : []
+    $("#ratesCount").textContent = rows.length ? ` · ${rows.filter((row) => row.hz > 0).length}/${rows.length} live` : ""
+    body.replaceChildren(
+        ...rows.map((row) =>
+            h(
+                "tr",
+                { class: row.hz > 0 ? "" : "quiet" },
+                h("td", { class: "topic", title: `${row.topic} (${row.type ?? ""})` }, row.topic),
+                h("td", { class: "num" }, `${(row.hz ?? 0).toFixed(1)} Hz`),
+                h("td", { class: "num" }, bandwidth(row.bps ?? 0)),
+            )
+        ),
+        ...(rows.length ? [] : [
+            h("tr", {}, h("td", { class: "empty", colspan: "3" }, state.running ? "listening…" : "shown while it runs")),
+        ]),
     )
 }
 
@@ -517,6 +584,8 @@ async function pollRuns() {
     if (!state.running) {
         graph.setRates(null)
         extrasBox.hidden = true
+        state.rateRows = []
+        fillRates()
     }
 }
 
@@ -531,6 +600,8 @@ async function pollRates() {
         // not inside Desktop (or no rates there): the graph stays static
         return
     }
+    state.rateRows = answer.topics ?? []
+    fillRates()
     const rates = new Map()
     for (const row of answer.topics ?? []) {
         const topic = String(row.topic).replace(/^\/+/, "")

@@ -34,6 +34,7 @@ def test_no_layout_overlaps_nodes() -> None:
         check=True,
     ).stdout
     results = json.loads(out)
-    assert len(results) == 40
-    assert any(r["vertical"] for r in results)
+    assert len(results) == 25
+    # Hierarchy always runs left to right; only Vertical runs top to bottom
+    assert all(r["vertical"] == (r["layout"] == "vertical") for r in results)
     assert [r for r in results if r["overlaps"]] == []

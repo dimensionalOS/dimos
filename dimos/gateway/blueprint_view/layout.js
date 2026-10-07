@@ -7,14 +7,15 @@ const MARGIN = 10
 
 export const LAYOUTS = [
     { id: "hierarchy", label: "Hierarchy" },
+    { id: "vertical", label: "Vertical" },
     { id: "force", label: "Force" },
     { id: "radial", label: "Radial" },
     { id: "circular", label: "Circular" },
 ]
 
-/** `{positions: Map<id, {x, y}>, routes: Map<edgeIndex, {x, y}[]>, vertical }` for the layout `id`, in a pane of
- * `aspect` (width / height): Hierarchy runs left to right or top to bottom, whichever fills the pane bigger */
-export function layout(id, nodes, edges, aspect = 1.5) {
+/** `{positions: Map<id, {x, y}>, routes: Map<edgeIndex, {x, y}[]>, vertical }` for the layout `id`. Hierarchy always
+ * runs left to right (a wide graph scrolls); Vertical is the same layers top to bottom, where long edges wave */
+export function layout(id, nodes, edges) {
     if (id === "force") {
         return { positions: separate(nodes, force(nodes, edges)), routes: new Map() }
     }
@@ -24,22 +25,15 @@ export function layout(id, nodes, edges, aspect = 1.5) {
     if (id === "circular") {
         return { positions: separate(nodes, circular(nodes, edges)), routes: new Map() }
     }
-    const across = layered(nodes, edges)
-    const down = layered(nodes.map((node) => ({ ...node, w: node.h, h: node.w })), edges)
-    const flip = (point) => ({ x: point.y, y: point.x })
-    down.positions = new Map([...down.positions].map(([id, point]) => [id, flip(point)]))
-    down.routes = new Map([...down.routes].map(([index, points]) => [index, points.map(flip)]))
-    down.vertical = true
-    return fitScale(nodes, down.positions, aspect) > fitScale(nodes, across.positions, aspect) * 1.1 ? down : across
-}
-
-/** how big the layout shows in a pane of this aspect (relative: a pane 1 tall) */
-function fitScale(nodes, positions, aspect) {
-    const xs = nodes.flatMap((node) => [positions.get(node.id).x - node.w / 2, positions.get(node.id).x + node.w / 2])
-    const ys = nodes.flatMap((node) => [positions.get(node.id).y - node.h / 2, positions.get(node.id).y + node.h / 2])
-    const width = Math.max(...xs) - Math.min(...xs) || 1
-    const height = Math.max(...ys) - Math.min(...ys) || 1
-    return Math.min(aspect / width, 1 / height)
+    if (id === "vertical") {
+        const down = layered(nodes.map((node) => ({ ...node, w: node.h, h: node.w })), edges)
+        const flip = (point) => ({ x: point.y, y: point.x })
+        down.positions = new Map([...down.positions].map(([id, point]) => [id, flip(point)]))
+        down.routes = new Map([...down.routes].map(([index, points]) => [index, points.map(flip)]))
+        down.vertical = true
+        return down
+    }
+    return layered(nodes, edges)
 }
 
 /** Layered, left to right (Sugiyama): cycles broken, longest-path layers, dummy nodes on long edges, barycenter

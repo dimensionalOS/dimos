@@ -88,6 +88,52 @@ button {
     margin: 0;
     padding: 0;
 }
+/* Topic rates, under the modules: collapsible, every live topic's rate and bandwidth while the blueprint runs */
+.rates {
+    margin-top: 18px;
+}
+.rates summary {
+    cursor: pointer;
+    list-style: none;
+}
+.rates summary::-webkit-details-marker {
+    display: none;
+}
+.rates summary::before {
+    content: "▸ ";
+}
+.rates[open] summary::before {
+    content: "▾ ";
+}
+.rates .count {
+    color: var(--muted-fg);
+    text-transform: none;
+    letter-spacing: 0;
+}
+.rates table {
+    width: 100%;
+    margin-top: 6px;
+    border-collapse: collapse;
+    font: 11.5px var(--mono);
+}
+.rates td {
+    padding: 3px 4px;
+    border-bottom: 1px solid var(--hair);
+    white-space: nowrap;
+}
+.rates .topic {
+    max-width: 150px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.rates .num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+.rates tr.quiet td,
+.rates .empty {
+    color: var(--muted-fg);
+}
 .module {
     position: relative;
     width: 100%;

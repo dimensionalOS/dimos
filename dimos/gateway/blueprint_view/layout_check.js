@@ -35,11 +35,8 @@ const results = []
 for (const [modules, extras] of [[4, 0], [4, 20], [24, 0], [24, 20], [60, 20]]) {
     const { nodes, edges } = crowded(modules, extras)
     for (const { id } of LAYOUTS) {
-        // a wide pane and a tall one (Hierarchy turns top to bottom for the tall one)
-        for (const aspect of [2.5, 0.6]) {
-            const { positions, vertical } = layout(id, nodes, edges, aspect)
-            results.push({ modules, extras, layout: id, aspect, vertical: !!vertical, overlaps: overlaps(nodes, positions) })
-        }
+        const { positions, vertical } = layout(id, nodes, edges)
+        results.push({ modules, extras, layout: id, vertical: !!vertical, overlaps: overlaps(nodes, positions) })
     }
 }
 console.log(JSON.stringify(results))

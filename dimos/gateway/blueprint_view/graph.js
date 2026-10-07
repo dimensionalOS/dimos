@@ -1,7 +1,8 @@
 // The module graph: SVG modules (cards) and topics (pills, tinted by message type), edges publisher → topic →
 // reader. Laid out from the blueprint's wiring with each node's real size (layout.js), so nothing overlaps and no label
 // is cut; any change to the node set (a live topic outside the blueprint appearing or going) lays the whole graph out
-// again. Pan by dragging, zoom with the wheel; it fits the pane on load, on a new layout and on resize (until panned).
+// again. Pan by dragging or scrolling sideways, zoom with the wheel; it fits the pane on load, on a new layout and on
+// resize (until panned), except that a wide Hierarchy keeps a readable size and scrolls instead of shrinking.
 
 import { layout, LAYOUTS, overlaps } from "./layout.js"
 
@@ -137,13 +138,7 @@ export class Graph {
     }
 
     relayout() {
-        const box = this.pane.getBoundingClientRect()
-        const { positions, routes, vertical } = layout(
-            this.layoutId,
-            this.nodes,
-            this.edges,
-            box.height > 40 ? box.width / (box.height - 100) : 1.5,
-        )
+        const { positions, routes, vertical } = layout(this.layoutId, this.nodes, this.edges)
         this.vertical = !!vertical
         for (const node of this.nodes) {
             Object.assign(node, positions.get(node.id))
@@ -165,7 +160,7 @@ export class Graph {
             const to = byId.get(edge.to)
             const path = el("path", {
                 class: "edge",
-                d: this.layoutId === "hierarchy"
+                d: ["hierarchy", "vertical"].includes(this.layoutId)
                     ? flowPath(from, to, this.routes.get(index) ?? [], this.vertical)
                     : straightPath(from, to),
                 "marker-end": "url(#bv-arrow)",
@@ -210,14 +205,16 @@ export class Graph {
         const bottom = Math.max(...this.nodes.map((n) => n.y + n.h / 2))
         // room for the title above and the layout tabs below
         const pad = { x: 24, top: 52, bottom: 60 }
-        const k = Math.min(
-            1.4,
-            (box.width - pad.x * 2) / (right - left || 1),
-            (box.height - pad.top - pad.bottom) / (bottom - top || 1),
-        )
+        const fitHeight = Math.min(1.4, (box.height - pad.top - pad.bottom) / (bottom - top || 1))
+        let k = Math.min(fitHeight, (box.width - pad.x * 2) / (right - left || 1))
+        // a wide Hierarchy stays readable and scrolls sideways (from its left end) instead of shrinking to fit
+        if (this.layoutId === "hierarchy") {
+            k = Math.max(k, Math.min(fitHeight, 0.8))
+        }
+        const spare = box.width - pad.x * 2 - (right - left) * k
         this.at = {
             k,
-            x: pad.x + (box.width - pad.x * 2 - (right - left) * k) / 2 - left * k,
+            x: pad.x + Math.max(spare, 0) / 2 - left * k,
             y: pad.top + (box.height - pad.top - pad.bottom - (bottom - top) * k) / 2 - top * k,
         }
         this.applyView()
@@ -240,6 +237,14 @@ export class Graph {
     listen() {
         this.svg.addEventListener("wheel", (event) => {
             event.preventDefault()
+            // sideways (a trackpad swipe, or shift + wheel) scrolls; up and down zooms
+            const sideways = event.shiftKey ? event.deltaY || event.deltaX : event.deltaX
+            if (Math.abs(sideways) > Math.abs(event.shiftKey ? 0 : event.deltaY)) {
+                this.at = { ...this.at, x: this.at.x - sideways }
+                this.moved = true
+                this.applyView()
+                return
+            }
             const box = this.pane.getBoundingClientRect()
             this.zoom(Math.exp(-event.deltaY * 0.0016), event.clientX - box.left, event.clientY - box.top)
         }, { passive: false })
