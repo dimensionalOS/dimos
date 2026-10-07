@@ -1,0 +1,2660 @@
+{
+  "$schema": "./robots.schema.json",
+  "about": "What each robot dimos supports can run, for dimOS Desktop's Launcher and anyone else who wants it. Checked against the code by dimos/gateway/test_robots.py (dimos/gateway/robots.py says how); served by the dimos gateway at GET /dimos/robots.",
+  "tags": {
+    "drive": {
+      "label": "Drive",
+      "description": "Something in it takes velocity commands (cmd_vel): drive it from an app, the keyboard, a phone or clicks."
+    },
+    "map": {
+      "label": "Map",
+      "description": "Builds a map (SLAM, a voxel map or a costmap)."
+    },
+    "navigate": {
+      "label": "Navigate",
+      "description": "Plans and follows paths to a goal, or explores."
+    },
+    "perceive": {
+      "label": "Perceive",
+      "description": "Cameras plus detection, tracking, memory or a vision-language model."
+    },
+    "agent": {
+      "label": "Agent",
+      "description": "An AI agent (MCP skills) you can talk to."
+    },
+    "teleop": {
+      "label": "Teleop",
+      "description": "Driven by a person: keyboard, phone, VR headset, remote broker."
+    },
+    "arm": {
+      "label": "Arm",
+      "description": "Moves a manipulator arm."
+    },
+    "record": {
+      "label": "Record",
+      "description": "Records what it sees for later replay or training."
+    },
+    "replay": {
+      "label": "Replay",
+      "description": "Runs on a recording, no hardware (the blueprint has a replay mode)."
+    },
+    "sim": {
+      "label": "Sim",
+      "description": "Runs in a simulator, no hardware (the blueprint has a sim mode)."
+    },
+    "test": {
+      "label": "Test",
+      "description": "A test, benchmark or mock: for developers."
+    }
+  },
+  "modes": {
+    "robot": {
+      "label": "Robot",
+      "description": "On the real hardware."
+    },
+    "replay": {
+      "label": "Replay",
+      "description": "On a recording."
+    },
+    "sim": {
+      "label": "Simulator",
+      "description": "In a simulator."
+    }
+  },
+  "groups": {
+    "arms": {
+      "name": "Arms"
+    }
+  },
+  "args": {
+    "go2_ip": {
+      "global": "robot_ip",
+      "label": "Robot IP",
+      "placeholder": "192.168.12.1",
+      "required": true,
+      "docs": "https://docs.dimensional.org/platforms/quadruped/go2/setup/#first-time-setup-connecting-to-wifi-finding-robot-ip"
+    },
+    "g1_ip": {
+      "global": "robot_ip",
+      "label": "Robot IP",
+      "placeholder": "192.168.123.164",
+      "required": true,
+      "docs": "https://docs.dimensional.org/platforms/humanoid/g1/#1-get-ssh-access"
+    },
+    "go2_recording": {
+      "global": "replay_db",
+      "label": "Recording",
+      "kind": "recording",
+      "default": "go2_short",
+      "streams": [
+        [
+          "go2_lidar",
+          "lidar"
+        ],
+        [
+          "go2_odom",
+          "odom"
+        ],
+        [
+          "color_image"
+        ]
+      ]
+    },
+    "robot_ips": {
+      "global": "robot_ips",
+      "label": "Robot IPs",
+      "placeholder": "192.168.12.1,192.168.12.2",
+      "required": true,
+      "docs": "https://docs.dimensional.org/platforms/quadruped/go2/setup/#first-time-setup-connecting-to-wifi-finding-robot-ip"
+    },
+    "spot_ip": {
+      "module": "spothighlevel",
+      "field": "ip",
+      "label": "Spot IP",
+      "placeholder": "found automatically"
+    },
+    "spot_recording": {
+      "module": "spotreplay",
+      "field": "db_path",
+      "label": "Recording",
+      "placeholder": "the latest Spot recording"
+    },
+    "drone_connection": {
+      "module": "droneconnectionmodule",
+      "field": "connection_string",
+      "label": "MAVLink connection",
+      "placeholder": "udp:0.0.0.0:14550"
+    },
+    "m20_host": {
+      "module": "m20connection",
+      "field": "basic_server_host",
+      "label": "M20 control host",
+      "placeholder": "10.21.31.103"
+    },
+    "alfred_address": {
+      "module": "alfredhighlevel",
+      "field": "address",
+      "label": "Alfred address"
+    },
+    "xarm7_ip": {
+      "global": "xarm7_ip",
+      "label": "xArm7 IP",
+      "placeholder": "192.168.1.185",
+      "required": false
+    },
+    "xarm6_ip": {
+      "global": "xarm6_ip",
+      "label": "xArm6 IP",
+      "placeholder": "192.168.1.185",
+      "required": false
+    },
+    "lite6_ip": {
+      "global": "lite6_ip",
+      "label": "Lite6 IP",
+      "placeholder": "192.168.1.185",
+      "required": false
+    },
+    "can_port": {
+      "global": "can_port",
+      "label": "CAN port",
+      "placeholder": "can0"
+    },
+    "device_path": {
+      "global": "device_path",
+      "label": "Device",
+      "placeholder": "/dev/ttyUSB0"
+    },
+    "recording": {
+      "global": "replay_db",
+      "label": "Recording",
+      "kind": "recording"
+    }
+  },
+  "robots": {
+    "go2": {
+      "name": "Unitree Go2",
+      "description": "Unitree's quadruped: camera, lidar, WebRTC, DDS or a zenoh bridge.",
+      "type": "dog",
+      "manufacturer": "Unitree",
+      "dirs": [
+        "dimos/robot/unitree/go2"
+      ],
+      "recommended_app": {
+        "id": "dim-go2-dash",
+        "title": "Go2 Ctrl",
+        "url": "https://github.com/jeff-hykin/dim-go2-dash",
+        "ref": "main"
+      },
+      "recommended": [
+        "unitree-go2-basic",
+        "unitree-go2",
+        "unitree-go2-agentic",
+        "unitree-go2-webrtc-keyboard-teleop"
+      ],
+      "defaults": {
+        "recommended_config": [
+          {
+            "global": "simulation",
+            "label": "Run it on",
+            "choices": [
+              {
+                "value": "",
+                "label": "The real Go2"
+              },
+              {
+                "value": "mujoco",
+                "label": "The MuJoCo simulator"
+              }
+            ],
+            "default": ""
+          },
+          {
+            "arg": "go2_ip"
+          }
+        ],
+        "modes": {
+          "robot": {
+            "args": [
+              "go2_ip"
+            ]
+          },
+          "replay": {
+            "set": {
+              "replay": true
+            },
+            "args": [
+              "go2_recording"
+            ]
+          },
+          "sim": {
+            "set": {
+              "simulation": "mujoco"
+            }
+          }
+        }
+      },
+      "blueprints": {
+        "unitree-go2-basic": {
+          "title": "Go2 basic",
+          "description": "Connects to a Go2 and streams its camera, lidar and pose. The simplest way to get a Go2 going: drive it from Controller.",
+          "tags": [
+            "drive"
+          ],
+          "starter": 1
+        },
+        "unitree-go2": {
+          "title": "Go2 with map + navigation",
+          "description": "Builds a 3D map and a costmap as it walks; click a spot to send it there, or let it explore on its own.",
+          "tags": [
+            "drive",
+            "map",
+            "navigate"
+          ],
+          "starter": 2
+        },
+        "unitree-go2-agentic": {
+          "title": "Go2 with an agent",
+          "description": "Map and navigation plus an AI agent you can talk to (over MCP), with a memory of what it has seen.",
+          "tags": [
+            "drive",
+            "map",
+            "navigate",
+            "perceive",
+            "agent"
+          ],
+          "starter": 3
+        },
+        "unitree-go2-webrtc-keyboard-teleop": {
+          "title": "Go2 keyboard driving",
+          "description": "Drive a Go2 with this computer's keyboard, over WebRTC.",
+          "tags": [
+            "drive",
+            "teleop"
+          ],
+          "starter": 4
+        },
+        "unitree-go2-detection": {
+          "title": "Go2 with 3D detection",
+          "description": "Map and navigation plus 3D object detection on its camera.",
+          "tags": [
+            "drive",
+            "map",
+            "navigate",
+            "perceive"
+          ],
+          "starter": 5
+        },
+        "teleop-phone-go2": {
+          "title": "Go2 phone driving",
+          "description": "Drive a Go2 from a phone's touch controls.",
+          "tags": [
+            "drive",
+            "teleop"
+          ],
+          "modes": {
+            "robot": {
+              "args": [
+                "go2_ip"
+              ]
+            }
+          },
+          "starter": 6
+        },
+        "unitree-go2-agentic-cockpit": {
+          "title": "Go2 agent with a cockpit",
+          "description": "The Go2 agent with an authored cockpit: video over the 3D voxel map.",
+          "tags": [
+            "drive",
+            "map",
+            "navigate",
+            "perceive",
+            "agent"
+          ]
+        },
+        "unitree-go2-agentic-huggingface": {
+          "title": "Go2 agent (Hugging Face model)",
+          "description": "The Go2 agent with its language model served from Hugging Face.",
+          "tags": [
+            "drive",
+            "map",
+            "navigate",
+            "perceive",
+            "agent"
+          ]
+        },
+        "unitree-go2-agentic-ollama": {
+          "title": "Go2 agent (Ollama model)",
+          "description": "The Go2 agent with a local language model served by Ollama.",
+          "tags": [
+            "drive",
+            "map",
+            "navigate",
+            "perceive",
+            "agent"
+          ]
+        },
+        "unitree-go2-cockpit": {
+          "title": "Go2 with a cockpit",
+          "description": "Map and navigation with an authored cockpit: video over the 3D voxel map.",
+          "tags": [
+            "drive",
+            "map",
+            "navigate"
+          ]
+        },
+        "unitree-go2-coordinator": {
+          "title": "Go2 control coordinator",
+          "description": "A Go2 behind dimos's ControlCoordinator (the base for controller experiments).",
+          "tags": [
+            "drive"
+          ],
+          "modes": {
+            "robot": {
+              "args": [
+                "go2_ip"
+              ]
+            }
+          }
+        },
+        "unitree-go2-fleet": {
+          "title": "Go2 fleet",
+          "description": "Several Go2s driven together: every command goes to all of them.",
+          "tags": [
+            "drive"
+          ],
+          "modes": {
+            "robot": {
+              "args": [
+                "robot_ips"
+              ]
+            }
+          }
+        },
+        "unitree-go2-holonomic-benchmark": {
+          "title": "Go2 holonomic benchmark",
+          "description": "Benchmarks the holonomic full-pose controller on a Go2.",
+          "tags": [
+            "drive",
+            "test"
+          ],
+          "modes": {
+            "robot": {
+              "args": [
+                "go2_ip"
+              ]
+            }
+          },
+          "hidden": true
+        },
+        "unitree-go2-holonomic-controller": {
+          "title": "Go2 holonomic controller",
+          "description": "A standalone holonomic full-pose controller for a Go2, with keyboard driving.",
+          "tags": [
+            "drive",
+            "teleop"
+          ],
+          "modes": {
+            "robot": {
+              "args": [
+                "go2_ip"
+              ]
+            }
+          }
+        },
+        "unitree-go2-keyboard-teleop": {
+          "title": "Go2 keyboard driving (DDS)",
+          "description": "Drive a Go2 with the keyboard through the ControlCoordinator over DDS (SDK2).",
+          "tags": [
+            "drive",
+            "teleop"
+          ],
+          "modes": {
+            "robot": {
+              "args": [
+                "go2_ip"
+              ]
+            }
+          }
+        },
+        "unitree-go2-markers": {
+          "title": "Go2 with marker detection",
+          "description": "Map and navigation plus fiducial marker detection mirrored into TF.",
+          "tags": [
+            "drive",
+            "map",
+            "navigate",
+            "perceive"
+          ]
+        },
+        "unitree-go2-memory": {
+          "title": "Go2 with memory",
+          "description": "Map and navigation, recording everything it sees into dimos memory.",
+          "tags": [
+            "drive",
+            "map",
+            "navigate",
+            "record"
+          ]
+        },
+        "unitree-go2-mid360-record": {
+          "title": "Go2 + Mid-360 recording",
+          "description": "Drive a Go2 carrying a Livox Mid-360 and record the lidar, the robot and its pose.",
+          "tags": [
+            "drive",
+            "teleop",
+            "record"
+          ],
+          "modes": {
+            "robot": {
+              "args": [
+                "go2_ip"
+              ]
+            }
+          }
+        },
+        "unitree-go2-mls-htc": {
+          "title": "Go2 3D navigation (MLS + holonomic)",
+          "description": "3D navigation: a voxel map, MLS planning and a holonomic controller.",
+          "tags": [
+            "drive",
+            "map",
+            "navigate"
+          ],
+          "modes": {
+            "robot": {
+              "args": [
+                "go2_ip"
+              ]
+            }
+          }
+        },
+        "unitree-go2-multi": {
+          "title": "Several Go2s",
+          "description": "Several independent Go2s on one coordinator.",
+          "tags": [
+            "drive"
+          ],
+          "modes": {
+            "robot": {
+              "args": [
+                "robot_ips"
+              ]
+            }
+          }
+        },
+        "unitree-go2-multi-teleop": {
+          "title": "Several Go2s, keyboard driving",
+          "description": "Several Go2s, with a keyboard driving window per robot.",
+          "tags": [
+            "drive",
+            "teleop"
+          ],
+          "modes": {
+            "robot": {
+              "args": [
+                "robot_ips"
+              ]
+            }
+          }
+        },
+        "unitree-go2-nav-3d": {
+          "title": "Go2 3D navigation (Mid-360)",
+          "description": "3D navigation with a Livox Mid-360 on the Go2: ray-traced voxel map and MLS planning.",
+          "tags": [
+            "drive",
+            "map",
+            "navigate"
+          ],
+          "modes": {
+            "robot": {
+              "args": [
+                "go2_ip"
+              ]
+            }
+          }
+        },
+        "unitree-go2-nav-3d-relocalization": {
+          "title": "Go2 3D navigation in a saved map",
+          "description": "3D navigation (Mid-360) that relocalizes in a map you made before.",
+          "tags": [
+            "drive",
+            "map",
+            "navigate"
+          ],
+          "modes": {
+            "robot": {
+              "args": [
+                "go2_ip"
+              ]
+            }
+          }
+        },
+        "unitree-go2-nav-3d-relocalization-replay": {
+          "title": "Go2 3D navigation in a saved map (replay)",
+          "description": "The relocalized 3D navigation stack driven by a recording instead of a robot.",
+          "tags": [
+            "map",
+            "navigate"
+          ],
+          "modes": {
+            "replay": {}
+          }
+        },
+        "unitree-go2-pgo": {
+          "title": "Go2 with loop closure",
+          "description": "Map and navigation with live loop closure (pose-graph optimization).",
+          "tags": [
+            "drive",
+            "map",
+            "navigate"
+          ]
+        },
+        "unitree-go2-relocalization": {
+          "title": "Go2 relocalization",
+          "description": "Map and navigation that relocalizes in a saved map.",
+          "tags": [
+            "drive",
+            "map",
+            "navigate"
+          ]
+        },
+        "unitree-go2-ros": {
+          "title": "Go2 with ROS",
+          "description": "Map and navigation, bridged to ROS.",
+          "tags": [
+            "drive",
+            "map",
+            "navigate"
+          ]
+        },
+        "unitree-go2-rpp-benchmark": {
+          "title": "Go2 RPP benchmark",
+          "description": "Benchmarks the regulated pure pursuit path follower on a Go2.",
+          "tags": [
+            "drive",
+            "test"
+          ],
+          "modes": {
+            "robot": {
+              "args": [
+                "go2_ip"
+              ]
+            }
+          },
+          "hidden": true
+        },
+        "unitree-go2-rpp-controller": {
+          "title": "Go2 RPP controller",
+          "description": "A standalone regulated pure pursuit path-following controller for a Go2.",
+          "tags": [
+            "drive",
+            "teleop"
+          ],
+          "modes": {
+            "robot": {
+              "args": [
+                "go2_ip"
+              ]
+            }
+          }
+        },
+        "unitree-go2-security": {
+          "title": "Go2 security patrol",
+          "description": "An agent that patrols with the Go2 and watches for people.",
+          "tags": [
+            "drive",
+            "map",
+            "navigate",
+            "perceive",
+            "agent"
+          ]
+        },
+        "unitree-go2-spatial": {
+          "title": "Go2 with spatial memory",
+          "description": "Map and navigation plus a spatial memory of what it has seen.",
+          "tags": [
+            "drive",
+            "map",
+            "navigate",
+            "perceive"
+          ]
+        },
+        "unitree-go2-temporal-memory": {
+          "title": "Go2 agent with temporal memory",
+          "description": "The Go2 agent with a memory of when it saw things.",
+          "tags": [
+            "drive",
+            "map",
+            "navigate",
+            "perceive",
+            "agent"
+          ]
+        },
+        "unitree-go2-typesafe": {
+          "title": "Go2 go-to-object",
+          "description": "Say `go to the <object>`: the Go2 finds it with 2D detection and walks there.",
+          "tags": [
+            "drive",
+            "perceive",
+            "agent"
+          ]
+        },
+        "unitree-go2-vlm-stream-test": {
+          "title": "Go2 VLM stream test",
+          "description": "Tests a vision-language model on the Go2's camera stream.",
+          "tags": [
+            "perceive",
+            "test"
+          ],
+          "hidden": true
+        },
+        "unitree-go2-webrtc-rage-keyboard-teleop": {
+          "title": "Go2 keyboard driving (rage mode)",
+          "description": "Keyboard driving over WebRTC with the Go2's rage mode (faster gaits) on.",
+          "tags": [
+            "drive",
+            "teleop"
+          ],
+          "modes": {
+            "robot": {
+              "args": [
+                "go2_ip"
+              ]
+            }
+          }
+        },
+        "teleop-webxr-go2": {
+          "title": "Go2 VR driving",
+          "description": "Drive a Go2 from a VR headset's thumbsticks, with its camera in the headset.",
+          "tags": [
+            "drive",
+            "teleop"
+          ],
+          "modes": {
+            "robot": {
+              "args": [
+                "go2_ip"
+              ]
+            }
+          }
+        },
+        "go2-dds-basic": {
+          "title": "Go2 over DDS (wired)",
+          "description": "Streams and driving over DDS, on the computer wired to the Go2.",
+          "tags": [
+            "drive"
+          ],
+          "modes": {
+            "robot": {}
+          }
+        },
+        "go2-dds-motion-pointlio": {
+          "title": "Go2 over DDS: Point-LIO motion",
+          "description": "DDS Go2 with a Mid-360 (Point-LIO), voxel map, MLS planner and local planner.",
+          "tags": [
+            "drive",
+            "map",
+            "navigate"
+          ],
+          "modes": {
+            "robot": {}
+          }
+        },
+        "go2-dds-motion-pointlio-relocalization": {
+          "title": "Go2 over DDS: motion in a saved map",
+          "description": "The DDS Point-LIO motion stack, relocalizing in a saved map; headless (use Go2 viewer).",
+          "tags": [
+            "drive",
+            "map",
+            "navigate"
+          ],
+          "modes": {
+            "robot": {}
+          }
+        },
+        "go2-viewer": {
+          "title": "Go2 viewer",
+          "description": "Only the viewer: watch a Go2 stack that runs on another machine.",
+          "tags": [],
+          "modes": {
+            "robot": {}
+          }
+        },
+        "go2-zenoh-basic": {
+          "title": "Go2 over zenoh",
+          "description": "Streams and driving through the Go2's zenoh bridge (go2web).",
+          "tags": [
+            "drive"
+          ],
+          "modes": {
+            "robot": {
+              "args": [
+                "go2_ip"
+              ]
+            }
+          }
+        },
+        "go2-zenoh-motion": {
+          "title": "Go2 over zenoh: motion",
+          "description": "Zenoh Go2 with a voxel map, MLS planner, local planner and trajectory follower.",
+          "tags": [
+            "drive",
+            "map",
+            "navigate"
+          ],
+          "modes": {
+            "robot": {
+              "args": [
+                "go2_ip"
+              ]
+            }
+          }
+        },
+        "go2-zenoh-motion-pointlio": {
+          "title": "Go2 over zenoh: Point-LIO motion",
+          "description": "The zenoh motion stack with a Mid-360 on the Jetson (Point-LIO).",
+          "tags": [
+            "drive",
+            "map",
+            "navigate"
+          ],
+          "modes": {
+            "robot": {
+              "args": [
+                "go2_ip"
+              ]
+            }
+          }
+        },
+        "go2-zenoh-nav": {
+          "title": "Go2 over zenoh: navigation",
+          "description": "Zenoh Go2 with a voxel map, MLS planner and path follower.",
+          "tags": [
+            "drive",
+            "map",
+            "navigate"
+          ],
+          "modes": {
+            "robot": {
+              "args": [
+                "go2_ip"
+              ]
+            }
+          }
+        },
+        "go2-zenoh-nav-remote": {
+          "title": "Go2 over zenoh: remote navigation",
+          "description": "Follows paths planned by a `dimos bake` host on the robot.",
+          "tags": [
+            "drive",
+            "navigate"
+          ],
+          "modes": {
+            "robot": {
+              "args": [
+                "go2_ip"
+              ]
+            }
+          }
+        },
+        "go2-zenoh-raycaster": {
+          "title": "Go2 over zenoh: ray-traced map",
+          "description": "Zenoh Go2 with only the ray-traced voxel map.",
+          "tags": [
+            "drive",
+            "map"
+          ],
+          "modes": {
+            "robot": {
+              "args": [
+                "go2_ip"
+              ]
+            }
+          }
+        },
+        "teleop-phone-go2-fleet": {
+          "title": "Go2 fleet phone driving",
+          "description": "Drive a fleet of Go2s from a phone: every command goes to all of them.",
+          "tags": [
+            "drive",
+            "teleop"
+          ],
+          "modes": {
+            "robot": {
+              "args": [
+                "robot_ips"
+              ]
+            }
+          }
+        },
+        "teleop-hosted-go2-multicam": {
+          "title": "Go2 remote driving (two cameras)",
+          "description": "Drive a Go2 from anywhere through the hosted (Cloudflare) teleop broker, with a RealSense as a second camera.",
+          "tags": [
+            "drive",
+            "teleop",
+            "map",
+            "navigate"
+          ],
+          "modes": {
+            "robot": {
+              "args": [
+                "go2_ip"
+              ]
+            }
+          }
+        },
+        "teleop-hosted-go2-transport": {
+          "title": "Go2 remote driving",
+          "description": "Drive a Go2 from anywhere through the hosted (Cloudflare) teleop broker.",
+          "tags": [
+            "drive",
+            "teleop",
+            "map",
+            "navigate"
+          ],
+          "modes": {
+            "robot": {
+              "args": [
+                "go2_ip"
+              ]
+            }
+          }
+        },
+        "go2-localize-live": {
+          "title": "Go2 localize (recording)",
+          "description": "A Go2 recording looped as a live feed, with localization behind an agent skill.",
+          "tags": [
+            "map",
+            "agent"
+          ],
+          "modes": {
+            "replay": {
+              "args": [
+                "go2_recording"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "g1": {
+      "name": "Unitree G1",
+      "description": "Unitree's humanoid.",
+      "type": "humanoid",
+      "manufacturer": "Unitree",
+      "dirs": [
+        "dimos/robot/unitree/g1"
+      ],
+      "recommended_app": {
+        "id": "dim-g1-dash",
+        "title": "G1 Ctrl",
+        "url": "https://github.com/jeff-hykin/dim-g1-dash",
+        "ref": "master"
+      },
+      "defaults": {
+        "modes": {
+          "robot": {
+            "args": [
+              "g1_ip"
+            ]
+          }
+        }
+      },
+      "blueprints": {
+        "unitree-g1-basic": {
+          "title": "G1 basic",
+          "description": "A G1's camera, a voxel map and a costmap, with frontier exploration. Needs the robot on this network.",
+          "tags": [
+            "drive",
+            "map",
+            "navigate"
+          ],
+          "starter": 7
+        },
+        "unitree-g1-basic-sim": {
+          "title": "G1 in simulation",
+          "description": "The basic G1 stack against a simulated G1: no robot needed.",
+          "tags": [
+            "drive",
+            "map",
+            "navigate"
+          ],
+          "modes": {
+            "sim": {}
+          },
+          "starter": 8
+        },
+        "unitree-g1": {
+          "title": "G1 with perception + memory",
+          "description": "The basic G1 stack plus spatial memory and object tracking.",
+          "tags": [
+            "drive",
+            "map",
+            "navigate",
+            "perceive"
+          ],
+          "starter": 9
+        },
+        "unitree-g1-agentic": {
+          "title": "G1 with an agent",
+          "description": "G1 with perception and memory, plus an AI agent with G1 skills (move, observe, speak).",
+          "tags": [
+            "drive",
+            "map",
+            "navigate",
+            "perceive",
+            "agent"
+          ],
+          "starter": 10
+        },
+        "unitree-g1-agentic-sim": {
+          "title": "G1 agent in simulation",
+          "description": "The G1 agent against a simulated G1: no robot needed.",
+          "tags": [
+            "drive",
+            "map",
+            "navigate",
+            "perceive",
+            "agent"
+          ],
+          "modes": {
+            "sim": {}
+          }
+        },
+        "unitree-g1-sim": {
+          "title": "G1 perception in simulation",
+          "description": "G1 perception and memory against a simulated G1.",
+          "tags": [
+            "drive",
+            "map",
+            "navigate",
+            "perceive"
+          ],
+          "modes": {
+            "sim": {}
+          }
+        },
+        "unitree-g1-coordinator": {
+          "title": "G1 control coordinator",
+          "description": "The G1's whole-body connection behind a ControlCoordinator servo task.",
+          "tags": [
+            "drive"
+          ]
+        },
+        "unitree-g1-detection": {
+          "title": "G1 with 3D detection",
+          "description": "The basic G1 stack plus person tracking and 3D detection.",
+          "tags": [
+            "drive",
+            "map",
+            "navigate",
+            "perceive"
+          ]
+        },
+        "unitree-g1-full": {
+          "title": "G1 full",
+          "description": "Everything: perception, memory, the agent with G1 skills, and keyboard driving.",
+          "tags": [
+            "drive",
+            "map",
+            "navigate",
+            "perceive",
+            "agent",
+            "teleop"
+          ]
+        },
+        "unitree-g1-groot-wbc": {
+          "title": "G1 GR00T whole-body control",
+          "description": "GR00T whole-body control with a Mid-360, costmap and A* navigation; on the robot or in MuJoCo.",
+          "tags": [
+            "drive",
+            "map",
+            "navigate"
+          ],
+          "modes": {
+            "robot": {
+              "args": [
+                "g1_ip"
+              ]
+            },
+            "sim": {
+              "set": {
+                "simulation": "mujoco"
+              }
+            }
+          }
+        },
+        "unitree-g1-joystick": {
+          "title": "G1 keyboard driving",
+          "description": "The basic G1 stack plus keyboard driving.",
+          "tags": [
+            "drive",
+            "map",
+            "navigate",
+            "teleop"
+          ]
+        },
+        "unitree-g1-nav-simple": {
+          "title": "G1 simple navigation",
+          "description": "Onboard sensors, a ray-traced costmap and A* replanning (needs the Unitree SDK).",
+          "tags": [
+            "drive",
+            "map",
+            "navigate"
+          ]
+        },
+        "unitree-g1-primitive-no-nav": {
+          "title": "G1 primitive (building block)",
+          "description": "The minimal G1 stack without navigation that bigger G1 blueprints build on.",
+          "tags": [
+            "map"
+          ],
+          "hidden": true
+        },
+        "unitree-g1-record": {
+          "title": "G1 recording",
+          "description": "Drive a G1 and record what it sees (needs the Unitree SDK).",
+          "tags": [
+            "drive",
+            "teleop",
+            "record"
+          ]
+        },
+        "unitree-g1-shm": {
+          "title": "G1 over shared memory",
+          "description": "G1 perception and memory with images moved over shared memory.",
+          "tags": [
+            "drive",
+            "map",
+            "navigate",
+            "perceive"
+          ]
+        },
+        "unitree-g1-teleop": {
+          "title": "G1 VR teleop + recording",
+          "description": "GR00T whole-body control, WebXR arm teleop, manipulation and episode recording.",
+          "tags": [
+            "teleop",
+            "arm",
+            "record"
+          ]
+        }
+      }
+    },
+    "r1pro": {
+      "name": "Galaxea R1 Pro",
+      "description": "Galaxea's wheeled two-arm robot, over ROS.",
+      "type": "wheeled",
+      "manufacturer": "Galaxea",
+      "dirs": [
+        "dimos/robot/galaxea/r1pro"
+      ],
+      "recommended_app": {
+        "id": "dim-controller",
+        "title": "Controller",
+        "url": "https://github.com/jeff-hykin/dim-controller",
+        "ref": "main"
+      },
+      "blueprints": {
+        "r1pro-nav": {
+          "title": "R1 Pro click-to-drive",
+          "description": "Ray-traced costmap and A* replanning: click where the R1 Pro should go.",
+          "tags": [
+            "drive",
+            "map",
+            "navigate"
+          ],
+          "starter": 11
+        },
+        "r1pro-teleop": {
+          "title": "R1 Pro driving",
+          "description": "Drive the R1 Pro's base from the viewer.",
+          "tags": [
+            "drive",
+            "teleop"
+          ],
+          "starter": 12
+        },
+        "r1pro-coordinator": {
+          "title": "R1 Pro control coordinator",
+          "description": "The R1 Pro's ROS connection behind a ControlCoordinator.",
+          "tags": [
+            "drive"
+          ]
+        },
+        "r1pro-manipulation": {
+          "title": "R1 Pro manipulation (experimental)",
+          "description": "Upper-body manipulation planning on the R1 Pro.",
+          "tags": [
+            "arm"
+          ]
+        },
+        "r1pro-planar-preview": {
+          "title": "R1 Pro planning preview",
+          "description": "Whole-body planning and execution on mock hardware: no robot needed.",
+          "tags": [
+            "arm",
+            "test"
+          ],
+          "hidden": true
+        }
+      }
+    },
+    "spot": {
+      "name": "Boston Dynamics Spot",
+      "description": "Boston Dynamics' quadruped (experimental support).",
+      "type": "dog",
+      "manufacturer": "Boston Dynamics",
+      "dirs": [
+        "dimos/experimental/robot/bosdyn/spot"
+      ],
+      "recommended_app": {
+        "id": "dim-controller",
+        "title": "Controller",
+        "url": "https://github.com/jeff-hykin/dim-controller",
+        "ref": "main"
+      },
+      "defaults": {
+        "modes": {
+          "robot": {
+            "args": [
+              "spot_ip"
+            ]
+          }
+        }
+      },
+      "blueprints": {
+        "spot": {
+          "title": "Spot",
+          "description": "Drive a Boston Dynamics Spot (click or teleop) while it streams every sensor to Rerun.",
+          "tags": [
+            "drive",
+            "teleop"
+          ],
+          "starter": 13
+        },
+        "spot-replay": {
+          "title": "Spot replay",
+          "description": "Replays the latest Spot recording into Rerun: no robot needed.",
+          "tags": [],
+          "modes": {
+            "replay": {
+              "args": [
+                "spot_recording"
+              ]
+            }
+          },
+          "starter": 14
+        },
+        "spot-record": {
+          "title": "Spot recording",
+          "description": "Drive Spot from the Rerun web UI while recording every data stream.",
+          "tags": [
+            "drive",
+            "teleop",
+            "record"
+          ]
+        }
+      }
+    },
+    "drone": {
+      "name": "Drone",
+      "description": "A MAVLink drone (PX4 or ArduPilot) with a video stream.",
+      "type": "drone",
+      "manufacturer": null,
+      "dirs": [
+        "dimos/robot/drone"
+      ],
+      "recommended_app": {
+        "id": "dim-controller",
+        "title": "Controller",
+        "url": "https://github.com/jeff-hykin/dim-controller",
+        "ref": "main"
+      },
+      "defaults": {
+        "modes": {
+          "robot": {
+            "args": [
+              "drone_connection"
+            ]
+          },
+          "replay": {
+            "set": {
+              "replay": true
+            }
+          }
+        }
+      },
+      "blueprints": {
+        "drone-basic": {
+          "title": "Drone basic",
+          "description": "A drone's connection, camera and visualization.",
+          "tags": [
+            "drive"
+          ],
+          "starter": 15
+        },
+        "drone-agentic": {
+          "title": "Drone with an agent",
+          "description": "An autonomous drone you can talk to: maps, places and object tracking skills.",
+          "tags": [
+            "drive",
+            "perceive",
+            "agent"
+          ],
+          "starter": 16
+        }
+      }
+    },
+    "m20": {
+      "name": "DeepRobotics M20",
+      "description": "DeepRobotics' wheel-legged quadruped; dimos runs on the robot.",
+      "type": "dog",
+      "manufacturer": "DeepRobotics",
+      "dirs": [
+        "dimos/robot/deeprobotics/m20"
+      ],
+      "recommended_app": {
+        "id": "dim-controller",
+        "title": "Controller",
+        "url": "https://github.com/jeff-hykin/dim-controller",
+        "ref": "main"
+      },
+      "blueprints": {
+        "deeprobotics-m20-kronknav-control": {
+          "title": "M20 3D navigation",
+          "description": "Runs on the M20: ray-traced voxel map, MLS planning and holonomic control.",
+          "tags": [
+            "drive",
+            "map",
+            "navigate"
+          ],
+          "modes": {
+            "robot": {
+              "args": [
+                "m20_host"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "alfred": {
+      "name": "Alfred",
+      "description": "A DIY mobile base with a Mid-360 and a RealSense mast.",
+      "type": "wheeled",
+      "manufacturer": null,
+      "dirs": [
+        "dimos/robot/diy/alfred"
+      ],
+      "recommended_app": {
+        "id": "dim-controller",
+        "title": "Controller",
+        "url": "https://github.com/jeff-hykin/dim-controller",
+        "ref": "main"
+      },
+      "defaults": {
+        "modes": {
+          "robot": {
+            "args": [
+              "alfred_address"
+            ]
+          }
+        }
+      },
+      "blueprints": {
+        "alfred-keyboard-teleop": {
+          "title": "Alfred keyboard driving",
+          "description": "Alfred with the Mid-360 (Point-LIO) and the mast D455, driven from the keyboard; no navigation.",
+          "tags": [
+            "drive",
+            "teleop"
+          ]
+        },
+        "alfred-mls-nav": {
+          "title": "Alfred navigation (camera only)",
+          "description": "MLS planning off the D455 alone, with no Mid-360.",
+          "tags": [
+            "drive",
+            "map",
+            "navigate"
+          ]
+        },
+        "alfred-mls-nav-lidar": {
+          "title": "Alfred navigation (lidar)",
+          "description": "MLS planning off the Mid-360, with both IMUs feeding dimSLAM.",
+          "tags": [
+            "drive",
+            "map",
+            "navigate"
+          ]
+        }
+      }
+    },
+    "xarm": {
+      "name": "UFactory xArm",
+      "description": "UFactory xArm6, xArm7 and Lite6 arms.",
+      "type": "arm",
+      "manufacturer": "UFactory",
+      "group": "arms",
+      "dirs": [
+        "dimos/robot/manipulators/xarm"
+      ],
+      "recommended_app": {
+        "id": "dim-rerun",
+        "title": "Rerun",
+        "url": "https://github.com/jeff-hykin/dim-rerun",
+        "ref": "master"
+      },
+      "defaults": {
+        "modes": {
+          "robot": {
+            "args": [
+              "xarm7_ip"
+            ]
+          },
+          "sim": {
+            "set": {
+              "simulation": "mujoco"
+            }
+          }
+        }
+      },
+      "blueprints": {
+        "xarm-perception-sim": {
+          "title": "xArm pick and place (sim)",
+          "description": "Perception, grasping and pick-and-place on a simulated xArm: no robot needed.",
+          "tags": [
+            "arm",
+            "perceive"
+          ],
+          "modes": {
+            "sim": {}
+          },
+          "starter": 17
+        },
+        "xarm-grasp": {
+          "title": "xArm pick and place",
+          "description": "Perception, grasping and pick-and-place on a real xArm with a RealSense.",
+          "tags": [
+            "arm",
+            "perceive"
+          ],
+          "starter": 18
+        },
+        "keyboard-teleop-xarm7": {
+          "title": "xArm7 keyboard driving",
+          "description": "Move an xArm7 with this computer's keyboard.",
+          "tags": [
+            "arm",
+            "teleop"
+          ],
+          "starter": 19
+        },
+        "keyboard-teleop-xarm6": {
+          "title": "xArm6 keyboard driving",
+          "description": "Move an xArm6 with this computer's keyboard.",
+          "tags": [
+            "arm",
+            "teleop"
+          ],
+          "modes": {
+            "robot": {
+              "args": [
+                "xarm6_ip"
+              ]
+            },
+            "sim": {
+              "set": {
+                "simulation": "mujoco"
+              }
+            }
+          }
+        },
+        "keyboard-teleop-lite6": {
+          "title": "Lite6 keyboard driving",
+          "description": "Move a UFactory Lite6 with this computer's keyboard.",
+          "tags": [
+            "arm",
+            "teleop"
+          ],
+          "modes": {
+            "robot": {
+              "args": [
+                "lite6_ip"
+              ]
+            },
+            "sim": {
+              "set": {
+                "simulation": "mujoco"
+              }
+            }
+          }
+        },
+        "xarm-perception-sim-agent": {
+          "title": "xArm pick and place agent (sim)",
+          "description": "The simulated pick-and-place stack plus an AI agent with manipulation skills.",
+          "tags": [
+            "arm",
+            "perceive",
+            "agent"
+          ],
+          "modes": {
+            "sim": {}
+          }
+        },
+        "xarm-grasp-agent": {
+          "title": "xArm pick and place agent",
+          "description": "Pick-and-place on a real xArm plus an AI agent with manipulation skills.",
+          "tags": [
+            "arm",
+            "perceive",
+            "agent"
+          ]
+        },
+        "xarm-grasp-graspgenx": {
+          "title": "xArm pick and place (GraspGenX)",
+          "description": "The xArm grasping stack with GraspGenX grasp generation.",
+          "tags": [
+            "arm",
+            "perceive"
+          ]
+        },
+        "xarm-grasp-graspgenx-agent": {
+          "title": "xArm GraspGenX agent",
+          "description": "GraspGenX grasping plus an AI agent with manipulation skills.",
+          "tags": [
+            "arm",
+            "perceive",
+            "agent"
+          ]
+        },
+        "xarm7-planner-coordinator": {
+          "title": "xArm7 motion planning",
+          "description": "Motion planning and execution for an xArm7.",
+          "tags": [
+            "arm"
+          ]
+        },
+        "xarm7-planner-coordinator-agent": {
+          "title": "xArm7 planning agent",
+          "description": "xArm7 motion planning plus an AI agent with manipulation skills.",
+          "tags": [
+            "arm",
+            "agent"
+          ]
+        },
+        "lite6-planner-coordinator": {
+          "title": "Lite6 motion planning",
+          "description": "Motion planning and execution for a Lite6.",
+          "tags": [
+            "arm"
+          ],
+          "modes": {
+            "robot": {
+              "args": [
+                "lite6_ip"
+              ]
+            },
+            "sim": {
+              "set": {
+                "simulation": "mujoco"
+              }
+            }
+          }
+        },
+        "dual-xarm6-planner-coordinator": {
+          "title": "Dual xArm6 motion planning",
+          "description": "Motion planning for two xArm6 arms.",
+          "tags": [
+            "arm"
+          ],
+          "modes": {
+            "robot": {},
+            "sim": {
+              "set": {
+                "simulation": "mujoco"
+              }
+            }
+          }
+        },
+        "coordinator-xarm7": {
+          "title": "xArm7 coordinator",
+          "description": "An xArm7 behind a ControlCoordinator (a building block).",
+          "tags": [
+            "arm"
+          ],
+          "hidden": true
+        },
+        "coordinator-xarm6": {
+          "title": "xArm6 coordinator",
+          "description": "An xArm6 behind a ControlCoordinator (a building block).",
+          "tags": [
+            "arm"
+          ],
+          "modes": {
+            "robot": {
+              "args": [
+                "xarm6_ip"
+              ]
+            },
+            "sim": {
+              "set": {
+                "simulation": "mujoco"
+              }
+            }
+          },
+          "hidden": true
+        },
+        "coordinator-lite6": {
+          "title": "Lite6 coordinator",
+          "description": "A Lite6 behind a ControlCoordinator (a building block).",
+          "tags": [
+            "arm"
+          ],
+          "modes": {
+            "robot": {
+              "args": [
+                "lite6_ip"
+              ]
+            },
+            "sim": {
+              "set": {
+                "simulation": "mujoco"
+              }
+            }
+          },
+          "hidden": true
+        },
+        "coordinator-dual-xarm": {
+          "title": "Dual xArm coordinator",
+          "description": "Two xArms behind one ControlCoordinator (a building block).",
+          "tags": [
+            "arm"
+          ],
+          "modes": {
+            "robot": {},
+            "sim": {
+              "set": {
+                "simulation": "mujoco"
+              }
+            }
+          },
+          "hidden": true
+        },
+        "coordinator-combined-xarm6": {
+          "title": "xArm6 combined coordinator",
+          "description": "xArm6 with trajectory and velocity tasks in one coordinator (a building block).",
+          "tags": [
+            "arm"
+          ],
+          "modes": {
+            "robot": {
+              "args": [
+                "xarm6_ip"
+              ]
+            },
+            "sim": {
+              "set": {
+                "simulation": "mujoco"
+              }
+            }
+          },
+          "hidden": true
+        },
+        "coordinator-teleop-xarm6": {
+          "title": "xArm6 teleop coordinator",
+          "description": "The xArm6 teleop coordinator (a building block).",
+          "tags": [
+            "arm",
+            "teleop"
+          ],
+          "modes": {
+            "robot": {
+              "args": [
+                "xarm6_ip"
+              ]
+            },
+            "sim": {
+              "set": {
+                "simulation": "mujoco"
+              }
+            }
+          },
+          "hidden": true
+        },
+        "coordinator-teleop-xarm7": {
+          "title": "xArm7 teleop coordinator",
+          "description": "The xArm7 teleop coordinator (a building block).",
+          "tags": [
+            "arm",
+            "teleop"
+          ],
+          "hidden": true
+        },
+        "coordinator-trajectory-xarm6": {
+          "title": "xArm6 trajectory coordinator",
+          "description": "xArm6 with a trajectory task (a building block).",
+          "tags": [
+            "arm"
+          ],
+          "modes": {
+            "robot": {
+              "args": [
+                "xarm6_ip"
+              ]
+            },
+            "sim": {
+              "set": {
+                "simulation": "mujoco"
+              }
+            }
+          },
+          "hidden": true
+        },
+        "coordinator-velocity-xarm6": {
+          "title": "xArm6 velocity coordinator",
+          "description": "xArm6 with a velocity task (a building block).",
+          "tags": [
+            "arm"
+          ],
+          "modes": {
+            "robot": {
+              "args": [
+                "xarm6_ip"
+              ]
+            },
+            "sim": {
+              "set": {
+                "simulation": "mujoco"
+              }
+            }
+          },
+          "hidden": true
+        },
+        "teleop-webxr-xarm7": {
+          "title": "xArm7 VR teleop",
+          "description": "Move an xArm7 with a VR headset's right controller (simulated with the simulator).",
+          "tags": [
+            "arm",
+            "teleop"
+          ]
+        },
+        "teleop-webxr-xarm6": {
+          "title": "xArm6 VR teleop",
+          "description": "Move an xArm6 with a VR headset's right controller (simulated with the simulator).",
+          "tags": [
+            "arm",
+            "teleop"
+          ],
+          "modes": {
+            "robot": {
+              "args": [
+                "xarm6_ip"
+              ]
+            },
+            "sim": {
+              "set": {
+                "simulation": "mujoco"
+              }
+            }
+          }
+        },
+        "teleop-webxr-hand-xarm7": {
+          "title": "xArm7 VR hand teleop",
+          "description": "Move an xArm7 with your hand in VR: pinch to start and stop tracking.",
+          "tags": [
+            "arm",
+            "teleop"
+          ]
+        },
+        "teleop-webxr-xarm7-video": {
+          "title": "xArm7 VR teleop with video",
+          "description": "xArm7 VR teleop with a camera panel in the headset.",
+          "tags": [
+            "arm",
+            "teleop"
+          ]
+        },
+        "teleop-hosted-xarm6": {
+          "title": "xArm6 remote teleop",
+          "description": "Move an xArm6 from anywhere through the hosted (Cloudflare) teleop broker.",
+          "tags": [
+            "arm",
+            "teleop"
+          ],
+          "modes": {
+            "robot": {
+              "args": [
+                "xarm6_ip"
+              ]
+            }
+          }
+        },
+        "teleop-hosted-xarm7": {
+          "title": "xArm7 remote teleop",
+          "description": "Move an xArm7 from anywhere through the hosted (Cloudflare) teleop broker.",
+          "tags": [
+            "arm",
+            "teleop"
+          ],
+          "modes": {
+            "robot": {
+              "args": [
+                "xarm7_ip"
+              ]
+            }
+          }
+        },
+        "learning-collect-webxr-xarm7": {
+          "title": "xArm7 demonstration recording",
+          "description": "Teleoperate an xArm7 in VR and record episodes for imitation learning.",
+          "tags": [
+            "arm",
+            "teleop",
+            "record"
+          ],
+          "modes": {
+            "robot": {
+              "args": [
+                "xarm7_ip"
+              ]
+            }
+          }
+        },
+        "xarm-feed": {
+          "title": "xArm camera feed (recording)",
+          "description": "A depth-camera recording published at wall-clock pace, as if live.",
+          "tags": [],
+          "modes": {
+            "replay": {}
+          }
+        },
+        "xarm-localize-live": {
+          "title": "xArm live object memory",
+          "description": "Live object memory on a depth-camera rig, behind an agent skill.",
+          "tags": [
+            "perceive",
+            "agent"
+          ],
+          "modes": {
+            "robot": {}
+          }
+        },
+        "xarm6-worldbelief": {
+          "title": "xArm6 world belief",
+          "description": "xArm6 with a RealSense building a world belief (what is where) for an agent.",
+          "tags": [
+            "arm",
+            "perceive",
+            "agent",
+            "record"
+          ],
+          "modes": {
+            "robot": {
+              "args": [
+                "xarm6_ip"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "piper": {
+      "name": "AgileX Piper",
+      "description": "AgileX's 6-axis arm, over CAN.",
+      "type": "arm",
+      "manufacturer": "AgileX",
+      "group": "arms",
+      "dirs": [
+        "dimos/robot/manipulators/piper"
+      ],
+      "recommended_app": {
+        "id": "dim-rerun",
+        "title": "Rerun",
+        "url": "https://github.com/jeff-hykin/dim-rerun",
+        "ref": "master"
+      },
+      "defaults": {
+        "modes": {
+          "robot": {
+            "args": [
+              "can_port"
+            ]
+          },
+          "sim": {
+            "set": {
+              "simulation": "mujoco"
+            }
+          }
+        }
+      },
+      "blueprints": {
+        "keyboard-teleop-piper": {
+          "title": "Piper keyboard driving",
+          "description": "Move an AgileX Piper with this computer's keyboard.",
+          "tags": [
+            "arm",
+            "teleop"
+          ]
+        },
+        "coordinator-piper": {
+          "title": "Piper coordinator",
+          "description": "A Piper behind a ControlCoordinator (a building block).",
+          "tags": [
+            "arm"
+          ],
+          "hidden": true
+        },
+        "coordinator-teleop-piper": {
+          "title": "Piper teleop coordinator",
+          "description": "The Piper teleop coordinator (a building block).",
+          "tags": [
+            "arm",
+            "teleop"
+          ],
+          "hidden": true
+        },
+        "coordinator-cartesian-ik-piper": {
+          "title": "Piper Cartesian IK",
+          "description": "Cartesian pose control of a Piper through IK.",
+          "tags": [
+            "arm"
+          ],
+          "hidden": true
+        },
+        "coordinator-cartesian-ik-mock": {
+          "title": "Cartesian IK (mock arm)",
+          "description": "Cartesian IK on a mock Piper: no robot needed.",
+          "tags": [
+            "arm",
+            "test"
+          ],
+          "hidden": true,
+          "modes": {
+            "robot": {}
+          }
+        },
+        "teleop-webxr-piper": {
+          "title": "Piper VR teleop",
+          "description": "Move a Piper with a VR headset's left controller (simulated with the simulator).",
+          "tags": [
+            "arm",
+            "teleop"
+          ]
+        },
+        "learning-collect-webxr-piper": {
+          "title": "Piper demonstration recording",
+          "description": "Teleoperate a Piper in VR and record episodes for imitation learning.",
+          "tags": [
+            "arm",
+            "teleop",
+            "record"
+          ],
+          "modes": {
+            "robot": {
+              "args": [
+                "can_port"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "openyam": {
+      "name": "OpenYAM",
+      "description": "The OpenYAM arm, over CAN.",
+      "type": "arm",
+      "manufacturer": null,
+      "group": "arms",
+      "dirs": [
+        "dimos/robot/manipulators/openyam"
+      ],
+      "recommended_app": {
+        "id": "dim-rerun",
+        "title": "Rerun",
+        "url": "https://github.com/jeff-hykin/dim-rerun",
+        "ref": "master"
+      },
+      "defaults": {
+        "modes": {
+          "robot": {
+            "args": [
+              "can_port"
+            ]
+          },
+          "sim": {
+            "set": {
+              "simulation": "mujoco"
+            }
+          }
+        }
+      },
+      "blueprints": {
+        "keyboard-teleop-openyam": {
+          "title": "OpenYAM keyboard driving",
+          "description": "Move an OpenYAM arm with this computer's keyboard.",
+          "tags": [
+            "arm",
+            "teleop"
+          ]
+        },
+        "keyboard-teleop-openyam-planner": {
+          "title": "OpenYAM keyboard + planner",
+          "description": "Keyboard driving of an OpenYAM arm through the motion planner.",
+          "tags": [
+            "arm",
+            "teleop"
+          ]
+        },
+        "openyam-planner-coordinator": {
+          "title": "OpenYAM motion planning",
+          "description": "Motion planning and execution for an OpenYAM arm.",
+          "tags": [
+            "arm"
+          ]
+        },
+        "coordinator-openyam": {
+          "title": "OpenYAM coordinator",
+          "description": "An OpenYAM arm behind a ControlCoordinator (a building block).",
+          "tags": [
+            "arm"
+          ],
+          "hidden": true
+        },
+        "teleop-webxr-openyam": {
+          "title": "OpenYAM VR teleop",
+          "description": "Move an OpenYAM arm with a VR headset's right controller.",
+          "tags": [
+            "arm",
+            "teleop"
+          ]
+        }
+      }
+    },
+    "dual_openyam": {
+      "name": "Dual OpenYAM",
+      "description": "Two OpenYAM arms as one robot.",
+      "type": "arm",
+      "manufacturer": null,
+      "group": "arms",
+      "dirs": [
+        "dimos/robot/manipulators/dual_openyam"
+      ],
+      "recommended_app": {
+        "id": "dim-rerun",
+        "title": "Rerun",
+        "url": "https://github.com/jeff-hykin/dim-rerun",
+        "ref": "master"
+      },
+      "blueprints": {
+        "dual-openyam-planner-coordinator": {
+          "title": "Dual OpenYAM motion planning",
+          "description": "Motion planning for the two-arm OpenYAM.",
+          "tags": [
+            "arm"
+          ]
+        },
+        "coordinator-dual-openyam": {
+          "title": "Dual OpenYAM coordinator",
+          "description": "Both OpenYAM arms behind one coordinator (a building block).",
+          "tags": [
+            "arm"
+          ],
+          "hidden": true
+        },
+        "teleop-webxr-dual-openyam": {
+          "title": "Dual OpenYAM VR teleop",
+          "description": "Coupled VR teleoperation of both OpenYAM arms.",
+          "tags": [
+            "arm",
+            "teleop"
+          ]
+        }
+      }
+    },
+    "openarm": {
+      "name": "OpenArm",
+      "description": "The bimanual OpenArm, over CAN.",
+      "type": "arm",
+      "manufacturer": null,
+      "group": "arms",
+      "dirs": [
+        "dimos/robot/manipulators/openarm"
+      ],
+      "recommended_app": {
+        "id": "dim-rerun",
+        "title": "Rerun",
+        "url": "https://github.com/jeff-hykin/dim-rerun",
+        "ref": "master"
+      },
+      "blueprints": {
+        "openarm-planner-coordinator": {
+          "title": "OpenArm motion planning",
+          "description": "Motion planning and execution for the bimanual OpenArm.",
+          "tags": [
+            "arm"
+          ]
+        },
+        "coordinator-openarm": {
+          "title": "OpenArm coordinator",
+          "description": "The OpenArm behind a ControlCoordinator (a building block).",
+          "tags": [
+            "arm"
+          ],
+          "hidden": true
+        },
+        "teleop-webxr-openarm": {
+          "title": "OpenArm VR teleop",
+          "description": "Both VR controllers drive the bimanual OpenArm (in-memory hardware unless both CAN ports are set).",
+          "tags": [
+            "arm",
+            "teleop"
+          ]
+        }
+      }
+    },
+    "a1z": {
+      "name": "Galaxea A1Z",
+      "description": "Galaxea's A1Z arm, over CAN.",
+      "type": "arm",
+      "manufacturer": "Galaxea",
+      "group": "arms",
+      "dirs": [
+        "dimos/robot/manipulators/a1z"
+      ],
+      "recommended_app": {
+        "id": "dim-rerun",
+        "title": "Rerun",
+        "url": "https://github.com/jeff-hykin/dim-rerun",
+        "ref": "master"
+      },
+      "defaults": {
+        "modes": {
+          "robot": {
+            "args": [
+              "can_port"
+            ]
+          },
+          "sim": {
+            "set": {
+              "simulation": "mujoco"
+            }
+          }
+        }
+      },
+      "blueprints": {
+        "keyboard-teleop-a1z": {
+          "title": "A1Z keyboard driving",
+          "description": "Move a Galaxea A1Z arm with this computer's keyboard.",
+          "tags": [
+            "arm",
+            "teleop"
+          ]
+        },
+        "a1z-planner-coordinator": {
+          "title": "A1Z motion planning",
+          "description": "Motion planning and execution for a Galaxea A1Z arm.",
+          "tags": [
+            "arm"
+          ]
+        },
+        "coordinator-a1z": {
+          "title": "A1Z coordinator",
+          "description": "An A1Z behind a ControlCoordinator (a building block).",
+          "tags": [
+            "arm"
+          ],
+          "hidden": true
+        },
+        "coordinator-teleop-a1z": {
+          "title": "A1Z teleop coordinator",
+          "description": "The A1Z teleop coordinator (a building block).",
+          "tags": [
+            "arm",
+            "teleop"
+          ],
+          "hidden": true
+        },
+        "teleop-webxr-a1z": {
+          "title": "A1Z VR teleop",
+          "description": "Move an A1Z with a VR headset's left controller.",
+          "tags": [
+            "arm",
+            "teleop"
+          ]
+        }
+      }
+    },
+    "a750": {
+      "name": "A-750",
+      "description": "The A-750 arm, over a serial port.",
+      "type": "arm",
+      "manufacturer": null,
+      "group": "arms",
+      "dirs": [
+        "dimos/robot/manipulators/a750"
+      ],
+      "recommended_app": {
+        "id": "dim-rerun",
+        "title": "Rerun",
+        "url": "https://github.com/jeff-hykin/dim-rerun",
+        "ref": "master"
+      },
+      "blueprints": {
+        "keyboard-teleop-a750": {
+          "title": "A-750 keyboard driving",
+          "description": "Move an A-750 arm with this computer's keyboard.",
+          "tags": [
+            "arm",
+            "teleop"
+          ],
+          "modes": {
+            "robot": {
+              "args": [
+                "device_path"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "coordinators": {
+      "name": "Coordinators and mocks",
+      "description": "Arm combinations, mobile bases and mock hardware behind dimos's ControlCoordinator.",
+      "type": null,
+      "manufacturer": null,
+      "group": "arms",
+      "dirs": [
+        "dimos/robot/manipulators/common",
+        "dimos/control/blueprints"
+      ],
+      "blueprints": {
+        "coordinator-piper-xarm": {
+          "title": "Piper + xArm6 coordinator",
+          "description": "A Piper and an xArm6 behind one coordinator.",
+          "tags": [
+            "arm"
+          ],
+          "modes": {
+            "robot": {
+              "args": [
+                "xarm6_ip",
+                "can_port"
+              ]
+            },
+            "sim": {
+              "set": {
+                "simulation": "mujoco"
+              }
+            }
+          },
+          "hidden": true
+        },
+        "coordinator-teleop-dual": {
+          "title": "Dual-arm teleop coordinator",
+          "description": "Teleop coordinator for a Piper and an xArm6 together (a building block).",
+          "tags": [
+            "arm",
+            "teleop"
+          ],
+          "modes": {
+            "robot": {
+              "args": [
+                "xarm6_ip",
+                "can_port"
+              ]
+            },
+            "sim": {
+              "set": {
+                "simulation": "mujoco"
+              }
+            }
+          },
+          "hidden": true
+        },
+        "teleop-webxr-dual": {
+          "title": "Piper + xArm6 VR teleop",
+          "description": "VR teleop of two arms: right controller to a Piper, left to an xArm6.",
+          "tags": [
+            "arm",
+            "teleop"
+          ],
+          "modes": {
+            "robot": {
+              "args": [
+                "xarm6_ip",
+                "can_port"
+              ]
+            },
+            "sim": {
+              "set": {
+                "simulation": "mujoco"
+              }
+            }
+          }
+        },
+        "coordinator-mock": {
+          "title": "Mock arm coordinator",
+          "description": "A ControlCoordinator on a mock arm: no robot needed.",
+          "tags": [
+            "arm",
+            "test"
+          ],
+          "hidden": true
+        },
+        "coordinator-dual-mock": {
+          "title": "Dual mock arm coordinator",
+          "description": "Two mock arms behind one coordinator: no robot needed.",
+          "tags": [
+            "arm",
+            "test"
+          ],
+          "hidden": true
+        },
+        "coordinator-basic": {
+          "title": "Basic coordinator",
+          "description": "A bare ControlCoordinator with no hardware.",
+          "tags": [
+            "test"
+          ],
+          "hidden": true
+        },
+        "coordinator-mock-twist-base": {
+          "title": "Mock mobile base coordinator",
+          "description": "A ControlCoordinator on a mock holonomic base.",
+          "tags": [
+            "drive",
+            "test"
+          ],
+          "hidden": true
+        },
+        "coordinator-mobile-manip-mock": {
+          "title": "Mock mobile manipulator",
+          "description": "A ControlCoordinator on a mock base with an arm.",
+          "tags": [
+            "drive",
+            "arm",
+            "test"
+          ],
+          "hidden": true
+        },
+        "coordinator-flowbase": {
+          "title": "FlowBase coordinator",
+          "description": "A FlowBase holonomic base (vx, vy, wz) over Portal RPC, behind a ControlCoordinator.",
+          "tags": [
+            "drive"
+          ]
+        },
+        "coordinator-flowbase-keyboard-teleop": {
+          "title": "FlowBase keyboard driving",
+          "description": "Drive a FlowBase holonomic base with this computer's keyboard.",
+          "tags": [
+            "drive",
+            "teleop"
+          ]
+        }
+      }
+    },
+    "sensors": {
+      "name": "Sensors",
+      "description": "Sensors on their own: Livox Mid-360 lidars, RealSense and other cameras, and the rigs that carry them.",
+      "type": null,
+      "manufacturer": null,
+      "dirs": [
+        "dimos/robot/assembly",
+        "dimos/hardware/sensors"
+      ],
+      "recommended_app": {
+        "id": "dim-controller",
+        "title": "Controller",
+        "url": "https://github.com/jeff-hykin/dim-controller",
+        "ref": "main"
+      },
+      "blueprints": {
+        "mid360-fastlio": {
+          "title": "Mid-360 SLAM (FAST-LIO)",
+          "description": "Live SLAM from a Livox Mid-360 lidar.",
+          "tags": [
+            "map"
+          ],
+          "starter": 20
+        },
+        "real-sense-camera-vis": {
+          "title": "RealSense viewer",
+          "description": "A RealSense's color, depth and RGBD cloud in Rerun.",
+          "tags": [
+            "perceive"
+          ],
+          "starter": 21
+        },
+        "demo-camera": {
+          "title": "Webcam demo",
+          "description": "This computer's camera as a dimos stream: the smallest blueprint there is.",
+          "tags": [
+            "perceive"
+          ],
+          "starter": 22
+        },
+        "mid360": {
+          "title": "Mid-360 lidar",
+          "description": "A Livox Mid-360's point cloud and IMU.",
+          "tags": []
+        },
+        "mid360-fastlio-ray-trace": {
+          "title": "Mid-360 FAST-LIO + ray-traced map",
+          "description": "FAST-LIO SLAM feeding a ray-traced voxel map.",
+          "tags": [
+            "map"
+          ]
+        },
+        "mid360-fastlio-voxels": {
+          "title": "Mid-360 FAST-LIO + voxel map",
+          "description": "FAST-LIO SLAM feeding a voxel grid map.",
+          "tags": [
+            "map"
+          ]
+        },
+        "mid360-fastlio-voxels-native": {
+          "title": "Mid-360 FAST-LIO voxels (native)",
+          "description": "FAST-LIO with its own native voxel map.",
+          "tags": [
+            "map"
+          ]
+        },
+        "mid360-pointlio": {
+          "title": "Mid-360 SLAM (Point-LIO)",
+          "description": "Live Point-LIO SLAM from a Livox Mid-360.",
+          "tags": [
+            "map"
+          ]
+        },
+        "mid360-pointlio-voxels": {
+          "title": "Mid-360 Point-LIO + voxel map",
+          "description": "Point-LIO SLAM feeding a voxel grid map.",
+          "tags": [
+            "map"
+          ]
+        },
+        "mid360-pointlio-replay": {
+          "title": "Mid-360 Point-LIO (pcap replay)",
+          "description": "Point-LIO on a Mid-360 capture (DIMOS_MID360_PCAP names the .pcap).",
+          "tags": [
+            "map"
+          ],
+          "modes": {
+            "replay": {}
+          }
+        },
+        "demo-mid360-pcap-replay": {
+          "title": "Mid-360 pcap replay",
+          "description": "Replays a Mid-360 capture (DIMOS_MID360_PCAP names the .pcap) through the live driver.",
+          "tags": [],
+          "modes": {
+            "replay": {}
+          }
+        },
+        "demo-virtual-mid360-fastlio": {
+          "title": "Virtual Mid-360 + FAST-LIO",
+          "description": "FAST-LIO fed by a virtual Mid-360 replaying a capture.",
+          "tags": [
+            "map"
+          ],
+          "modes": {
+            "replay": {}
+          }
+        },
+        "demo-virtual-mid360-pointlio": {
+          "title": "Virtual Mid-360 + Point-LIO",
+          "description": "Point-LIO fed by a virtual Mid-360 replaying a capture.",
+          "tags": [
+            "map"
+          ],
+          "modes": {
+            "replay": {}
+          }
+        },
+        "mid360-realsense-record": {
+          "title": "Mid-360 + RealSense recording",
+          "description": "The RealSense D435i + Mid-360 rig: record both, with their mount frames.",
+          "tags": [
+            "map",
+            "record"
+          ]
+        },
+        "mid360-realsense-record-with-pcap": {
+          "title": "Mid-360 + RealSense recording (+ pcap)",
+          "description": "The same rig, also capturing the Mid-360's raw packets to a .pcap.",
+          "tags": [
+            "map",
+            "record"
+          ]
+        },
+        "relocalize-mid360": {
+          "title": "Mid-360 relocalization (recording)",
+          "description": "Relocalization against a saved map, driven by a recording instead of a robot.",
+          "tags": [
+            "map"
+          ],
+          "modes": {
+            "replay": {
+              "args": [
+                "recording"
+              ]
+            }
+          }
+        },
+        "demo-dim-slam-realsense": {
+          "title": "dimSLAM on a RealSense",
+          "description": "dimSLAM visual SLAM on a RealSense stereo camera.",
+          "tags": [
+            "map"
+          ]
+        },
+        "desk-marker-tf": {
+          "title": "Desk marker tracking",
+          "description": "A desk webcam that detects fiducial markers and mirrors them into TF.",
+          "tags": [
+            "perceive"
+          ]
+        }
+      }
+    },
+    "habitat": {
+      "name": "Habitat simulator",
+      "description": "A simulated robot in Meta's Habitat scenes: no hardware.",
+      "type": null,
+      "manufacturer": null,
+      "dirs": [
+        "dimos/simulation/habitat"
+      ],
+      "recommended_app": {
+        "id": "dim-controller",
+        "title": "Controller",
+        "url": "https://github.com/jeff-hykin/dim-controller",
+        "ref": "main"
+      },
+      "defaults": {
+        "modes": {
+          "sim": {}
+        }
+      },
+      "blueprints": {
+        "habitat-nav": {
+          "title": "Habitat navigation",
+          "description": "Click the floor in a Habitat scene to send the simulated robot there.",
+          "tags": [
+            "drive",
+            "map",
+            "navigate"
+          ]
+        },
+        "habitat-teleop": {
+          "title": "Habitat driving",
+          "description": "Drive a simulated robot through a Habitat scene.",
+          "tags": [
+            "drive",
+            "teleop"
+          ]
+        },
+        "habitat-raycaster": {
+          "title": "Habitat ray-traced map",
+          "description": "A simulated robot in Habitat building a ray-traced voxel map.",
+          "tags": [
+            "drive",
+            "map"
+          ]
+        },
+        "habitat-voxel": {
+          "title": "Habitat voxel map",
+          "description": "A simulated robot in Habitat building a voxel grid map.",
+          "tags": [
+            "drive",
+            "map"
+          ]
+        },
+        "habitat-typesafe": {
+          "title": "Habitat go-to-object",
+          "description": "Say `go to the chair`: the simulated robot finds it and walks there.",
+          "tags": [
+            "drive",
+            "perceive",
+            "agent"
+          ]
+        }
+      }
+    },
+    "demos": {
+      "name": "Demos",
+      "description": "No robot needed: agents, skills and tools to try dimos.",
+      "type": null,
+      "manufacturer": null,
+      "dirs": [],
+      "blueprints": {
+        "demo-agent": {
+          "title": "Agent demo",
+          "description": "An AI agent with no robot: try MCP skills and the chat.",
+          "tags": [
+            "agent"
+          ],
+          "starter": 23
+        },
+        "demo-agent-camera": {
+          "title": "Agent with a camera",
+          "description": "An AI agent that can look through this computer's camera.",
+          "tags": [
+            "agent",
+            "perceive"
+          ]
+        },
+        "demo-capabilities": {
+          "title": "Capabilities demo",
+          "description": "A pretend robot's sensors, actions and monitoring, behind an agent.",
+          "tags": [
+            "agent"
+          ]
+        },
+        "demo-skill": {
+          "title": "Skill demo",
+          "description": "An agent with a calculator skill: the smallest skill example.",
+          "tags": [
+            "agent"
+          ]
+        },
+        "demo-google-maps-skill": {
+          "title": "Google Maps skill demo",
+          "description": "An agent on a pretend robot with a Google Maps skill.",
+          "tags": [
+            "agent"
+          ]
+        },
+        "demo-gps-nav": {
+          "title": "GPS navigation demo",
+          "description": "An agent on a pretend robot with GPS navigation skills.",
+          "tags": [
+            "agent",
+            "navigate"
+          ]
+        },
+        "demo-osm": {
+          "title": "OpenStreetMap skill demo",
+          "description": "An agent on a pretend robot with an OpenStreetMap skill.",
+          "tags": [
+            "agent"
+          ]
+        },
+        "teleop-phone": {
+          "title": "Phone driving",
+          "description": "Drive from a phone's touch controls: publishes cmd_vel for any robot.",
+          "tags": [
+            "drive",
+            "teleop"
+          ]
+        },
+        "teleop-webxr-rerun": {
+          "title": "VR arm teleop (viewer only)",
+          "description": "Press-and-hold VR arm teleop shown in Rerun: no arm needed.",
+          "tags": [
+            "arm",
+            "teleop"
+          ]
+        },
+        "demo-pico-body-tracking": {
+          "title": "PICO body tracking test",
+          "description": "Checks a PICO 4 Ultra's WebXR body tracking (joint poses in the debug log).",
+          "tags": [
+            "teleop",
+            "test"
+          ],
+          "hidden": true
+        },
+        "replay": {
+          "title": "Replay a recording",
+          "description": "Plays every stream of a dimos recording back onto the bus, with the viewer.",
+          "tags": [],
+          "modes": {
+            "replay": {
+              "args": [
+                "recording"
+              ]
+            }
+          }
+        },
+        "demo-mcp-stress-test": {
+          "title": "MCP stress test",
+          "description": "Stresses the MCP server with a test module.",
+          "tags": [
+            "agent",
+            "test"
+          ],
+          "hidden": true
+        },
+        "demo-error-on-name-conflicts": {
+          "title": "Name conflict error demo",
+          "description": "Shows the error dimos gives when two modules' streams collide.",
+          "tags": [
+            "test"
+          ],
+          "hidden": true
+        },
+        "demo-object-scene-registration": {
+          "title": "Object scene registration demo",
+          "description": "Registers objects into a scene from a ZED camera (needs the ZED SDK).",
+          "tags": [
+            "perceive"
+          ],
+          "hidden": true
+        }
+      }
+    }
+  },
+  "excluded": {
+    "dimos/robot/assets": "robot model assets and their loaders (URDF/xacro), shared by every robot",
+    "dimos/robot/unitree/b1": "the Unitree B1's connection code: no blueprint yet",
+    "dimos/robot/unitree/params": "parameter files shared by the Unitree robots",
+    "dimos/robot/unitree/testing": "test tools for the Unitree robots",
+    "dimos/robot/unitree/type": "message types shared by the Unitree robots",
+    "dimos/robot/unitree_webrtc": "legacy Unitree WebRTC types, kept for old imports"
+  }
+}
