@@ -121,9 +121,11 @@ def test_a_missing_package_says_which() -> None:
 def test_a_refusal_dimos_only_prints_is_the_output_last_line() -> None:
     """Bad arguments, an unknown blueprint, an unmet requirement: dimos prints them and logs nothing."""
     assert problems([]) == []
-    assert diagnose.error_text([], "$ dimos run nope\nUnknown blueprint or module: nope\n") == (
-        "Unknown blueprint or module: nope"
+    output = (
+        "$ dimos run nope\n14:56:51.285 [inf][imos/cli/commands/lifecycle.py] Starting DimOS\n"
+        "Unknown blueprint or module: nope\nDid you mean one of these?\n  spot-replay\n"
     )
+    assert diagnose.error_text([], output) == "Unknown blueprint or module: nope"
 
 
 def test_a_sqlite_file_that_cant_open() -> None:

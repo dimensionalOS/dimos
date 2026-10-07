@@ -297,9 +297,19 @@ def problems(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return list(known.values()) or distinct[-3:]
 
 
+# a console log line dimos prints (`14:56:51.285 [inf][...] ...`), as opposed to what it says on its own
+LOG_LINE = re.compile(r"^\d\d:\d\d:\d\d\.\d+ \[")
+
+
 def error_text(problems_found: list[dict[str, Any]], output: str) -> str:
-    """One line saying why a launch failed: its first problem, else its output's last line."""
+    """One line saying why a launch failed: its first problem, else what dimos said on its own after its last log
+    line (a refusal it only prints, e.g. an unknown blueprint and its suggestions: the first line of that), else its
+    output's last line."""
     if problems_found:
         return str(problems_found[0]["message"])
-    lines = [ANSI.sub("", line).strip() for line in output.splitlines()[1:]]
-    return next((line for line in reversed(lines) if line), "dimos exited during startup")
+    lines = [ANSI.sub("", line).rstrip() for line in output.splitlines()[1:]]
+    last_log = max((i for i, line in enumerate(lines) if LOG_LINE.match(line)), default=-1)
+    said = next((line.strip() for line in lines[last_log + 1 :] if line.strip()), None)
+    return said or next(
+        (line.strip() for line in reversed(lines) if line.strip()), "dimos exited during startup"
+    )
