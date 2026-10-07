@@ -35,7 +35,7 @@ crc = "3"
 etherparse = "0.21.0"
 pcap-parser = "0.17.0"
 pointlio-core = { git = "https://github.com/dimensionalOS/dimos-module-pointlio.git", rev = "22a5403f827d030b248ae473c2808b5d405b3d55" }
-dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "7050d56a44efa6c6c2a59e3d3f6eec41387e529a" }
+dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "87c0c26b40e8a5aeb9d9d346104b49d5fb02696a" }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

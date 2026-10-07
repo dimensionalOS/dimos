@@ -1,7 +1,7 @@
 {
   "git+https://github.com/dimensionalOS/dimos-lcm.git?branch=rust-codegen#dimos-lcm@0.1.0": "sha256-GGkx4Mn6NYP6KZecmoRLKGWIih/+y8OgNn12DeXX6n8=",
   "git+https://github.com/dimensionalOS/dimos-lcm.git?branch=rust-codegen#lcm-msgs@0.1.0": "sha256-GGkx4Mn6NYP6KZecmoRLKGWIih/+y8OgNn12DeXX6n8=",
-  "git+https://github.com/dimensionalOS/dimos-module-pointlio.git?rev=3c1dcf8b9dfe6402aaf141e116f4caef6c5c8088#pointlio-core@0.1.0": "sha256-iC7nDbEipfi3cViK7fqKiy2hT9ENGi4Ge7L6Wt1W01Q=",
-  "git+https://github.com/dimensionalOS/dimos?rev=7050d56a44efa6c6c2a59e3d3f6eec41387e529a#dimos-module-macros@0.1.0": "sha256-AhuWKrOp5PyoMi78NTzzNXw2nwcsYOhVzylmZpS6LDw=",
-  "git+https://github.com/dimensionalOS/dimos?rev=7050d56a44efa6c6c2a59e3d3f6eec41387e529a#dimos-module@0.1.0": "sha256-AhuWKrOp5PyoMi78NTzzNXw2nwcsYOhVzylmZpS6LDw="
+  "git+https://github.com/dimensionalOS/dimos-module-pointlio.git?rev=22a5403f827d030b248ae473c2808b5d405b3d55#pointlio-core@0.1.0": "sha256-FjUcsZVI8nTcmKw8WhdxBuHelBjOCeJmyEsyqRxDvX0=",
+  "git+https://github.com/dimensionalOS/dimos?rev=87c0c26b40e8a5aeb9d9d346104b49d5fb02696a#dimos-module-macros@0.1.0": "sha256-MeVxI5e13wh7jQ0g2tnaLpiyDaQQMfqEAC7qrXopHY4=",
+  "git+https://github.com/dimensionalOS/dimos?rev=87c0c26b40e8a5aeb9d9d346104b49d5fb02696a#dimos-module@0.1.0": "sha256-MeVxI5e13wh7jQ0g2tnaLpiyDaQQMfqEAC7qrXopHY4="
 }

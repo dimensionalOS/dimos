@@ -12,7 +12,7 @@ path = "src/main.rs"
 crc = "3"
 etherparse = "0.21.0"
 pcap-parser = "0.17.0"
-dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "7050d56a44efa6c6c2a59e3d3f6eec41387e529a" }
+dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "87c0c26b40e8a5aeb9d9d346104b49d5fb02696a" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "net", "sync"] }
 serde = { version = "1", features = ["derive"] }
 socket2 = "0.6"
