@@ -70,8 +70,8 @@ any Zenoh client works, e.g. `pip install eclipse-zenoh`.
 There is no other interface to this robot.
 """
 
-RAW_XARM7_README = """\
-Robot interface: an xArm7 with a parallel gripper and a wrist RGB-D camera, as a Zenoh peer
+RAW_ARM_README = """\
+Robot interface: a robot arm with a parallel gripper and a wrist RGB-D camera, as a Zenoh peer
 at {endpoint}. Connect to it directly in peer mode with multicast and gossip scouting off,
 e.g. `uv venv .clientenv && uv pip install --python .clientenv/bin/python eclipse-zenoh numpy pillow`.
 Close the session before your script exits. Subscribe before commanding.
@@ -98,14 +98,10 @@ Commands get no acknowledgement. Twists are clamped to the limits above; a gripp
 outside 0..1 or a malformed packet is dropped.
 
 Motion is local IK tracking without collision checking. Distance is velocity x time and
-only approximate, so check ee_pose and the cameras after every move. The robot base is
-0.12 m above world with the same axes. At the start pose the wrist camera looks straight
-down: image right = world -Y, image up = world +X. Depth pixel (u, v) back-projects as
-z = depth[v, u], x = (u - cx) z / fx, y = (v - cy) z / fy, then camera_pose takes it to world.
-
-Gripper: the TCP is 0.172 m along the gripper axis from its root; the finger pads sit
-11-48 mm behind the TCP. The jaw gap runs from about 1.6 mm (closed) to 88.9 mm (open).
-A gripper blocked by an object holds its target; judge a grasp from object motion.
+only approximate, so check ee_pose and the cameras after every move. Depth pixel (u, v)
+back-projects as z = depth[v, u], x = (u - cx) z / fx, y = (v - cy) z / fy, then camera_pose
+takes it to world. A gripper blocked by an object holds its target; judge a grasp from
+object motion.
 
 There is no other interface to this robot.
 """

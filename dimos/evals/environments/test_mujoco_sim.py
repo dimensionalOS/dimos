@@ -20,7 +20,7 @@ import numpy as np
 import pytest
 
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall
-from dimos.evals.constants import RAW_README, RAW_XARM7_README
+from dimos.evals.constants import RAW_ARM_README, RAW_README
 from dimos.evals.environments.mujoco_sim import MujocoEnvironment
 from dimos.memory.store.memory import MemoryStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -107,7 +107,7 @@ def test_raw_manipulation_uses_the_shared_bridge_and_suite_owned_interface():
     from dimos.robot.manipulators.xarm.blueprints.simulation import xarm_sim
 
     env = MujocoEnvironment(
-        blueprint=["xarm-sim", "mcp-server"], raw_bridge=True, raw_guide=RAW_XARM7_README
+        blueprint=["xarm-sim", "mcp-server"], raw_bridge=True, raw_guide=RAW_ARM_README
     )
     assert env.provides_raw_robot
     parsed = BlueprintConfigParser(xarm_sim).parse(environ={})
@@ -118,7 +118,7 @@ def test_raw_manipulation_uses_the_shared_bridge_and_suite_owned_interface():
 
 def test_suite_guide_becomes_robot_md(tmp_path):
     from dimos.evals.agents.pi import PiAdapter
-    from dimos.evals.suites.mujoco_xarm_raw import SUITE
+    from dimos.evals.suites.mujoco_xarm_pick import SUITE
     from dimos.evals.types import RunningEnvironment
 
     env = RunningEnvironment(
@@ -132,6 +132,7 @@ def test_suite_guide_becomes_robot_md(tmp_path):
     assert "tcp/127.0.0.1:12345" in guide
     assert "robot/arm/twist/json" in guide and "cmd_vel/json" not in guide
     assert "0.1 m/s" in guide and "0.5 rad/s" in guide  # limits filled in
+    assert "xArm7" in guide  # suite notes appended
 
 
 def test_no_dimos_run_without_a_guide_is_refused_before_launch():

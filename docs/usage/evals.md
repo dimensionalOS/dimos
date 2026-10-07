@@ -132,7 +132,7 @@ range) come from the suite's `module_env`; `xarm-sim` gets its TCP pose from the
 (`publish_frame_poses`).
 
 Every suite with `raw_bridge=True` names its `ROBOT.md` template as `raw_guide`: `RAW_README`
-for the Go2, `RAW_XARM7_README` for the xArm7.
+for the Go2, `RAW_ARM_README` for arms; a suite appends its robot facts (`XARM7_NOTES`).
 
 That is the surface a vendor SDK exposes: sensors out, body velocity with a deadman in. Nothing
 above the connection (map, costmap, planner, `move_to`, memory) and nothing beneath it (simulator
@@ -483,7 +483,7 @@ instead of its default `scene.xml`. The planner's base pose is
 `dimos.evals.suites.mujoco_xarm` is the xArm7 table scene with the perception
 modules disabled: pick up the cylinder, then put the red ball on top of it.
 
-`dimos.evals.suites.mujoco_xarm_raw` evaluates a cylinder lift in the default
+`dimos.evals.suites.mujoco_xarm_pick` evaluates a cylinder lift in the default
 scene using plain robot commands and observations (see Raw robot topics). Run it
 with Pi and `--set no_dimos=true --set max_steps=120`.
 
