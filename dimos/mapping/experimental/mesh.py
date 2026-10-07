@@ -17,18 +17,20 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import TYPE_CHECKING
+import threading
+import time
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
+from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
-from dimos.core.module import ModuleConfig
+from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.memory.module import StreamModule
 from dimos.memory.transform import Transformer
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.shape_msgs.TriangleMesh import TriangleMesh
-from dimos.visualization.rerun.bridge import RerunEntry, keyed_by_seq
+from dimos.visualization.rerun.bridge import RerunEntry
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -36,9 +38,7 @@ if TYPE_CHECKING:
     import torch
 
     from dimos.mapping.experimental.simplify import Simplifier
-    from dimos.memory.stream import Stream
     from dimos.memory.type.observation import Observation
-    from dimos.visualization.rerun.bridge import RerunMulti
 
 C = 32  # chunk edge, voxels
 Key = tuple[int, int, int]
@@ -56,6 +56,23 @@ _BIAS = 1 << 20
 def _code(k: np.ndarray) -> np.ndarray:
     k = k.astype(np.int64) + _BIAS
     return (k[:, 0] << 42) | (k[:, 1] << 21) | k[:, 2]
+
+
+def _decode(code: np.ndarray) -> np.ndarray:
+    m = (1 << 21) - 1
+    return np.stack([(code >> 42) - _BIAS, ((code >> 21) & m) - _BIAS, (code & m) - _BIAS], 1)
+
+
+def _place(ijk: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Every (block code, block-local voxel) a voxel lands in: its own block and its neighbours' pads."""
+    blocks, locals_ = [], []
+    for off in _OFFSETS:
+        bk = ijk // C + off
+        local = ijk - bk * C + PAD
+        ok = ((local >= 0) & (local < P)).all(1)
+        blocks.append(_code(bk[ok]))
+        locals_.append(local[ok])
+    return np.concatenate(blocks), np.concatenate(locals_)
 
 
 def _key(code: int) -> Key:
@@ -84,18 +101,7 @@ class OccupancyMesher:
 
     def mesh(self, points: np.ndarray) -> list[Chunk]:
         """(chunk key, world vertices, normals, faces) for every chunk that changed."""
-        ijk = np.floor(points / self.vox).astype(np.int64)
-        # each voxel lands in its own block and in the pads of its neighbours
-        ck = ijk // C
-        blocks, locals_ = [], []
-        for off in _OFFSETS:
-            bk = ck + off
-            local = ijk - bk * C + PAD
-            ok = ((local >= 0) & (local < P)).all(1)
-            blocks.append(_code(bk[ok]))
-            locals_.append(local[ok])
-        code = np.concatenate(blocks)
-        local = np.concatenate(locals_)
+        code, local = _place(np.floor(points / self.vox).astype(np.int64))
         h = ((local[:, 0] * P + local[:, 1]) * P + local[:, 2]) * 2654435761 % (1 << 31)
         codes, inv = np.unique(code, return_inverse=True)
         sums = np.bincount(inv, weights=h.astype(np.float64), minlength=len(codes))
@@ -104,16 +110,27 @@ class OccupancyMesher:
             c for c in hashes.keys() | self.hashes.keys() if hashes.get(c) != self.hashes.get(c)
         )
         self.hashes = hashes
-        sel = np.isin(code, changed)
+        return self._mesh_codes(code, local, np.array(changed, np.int64))
+
+    def mesh_chunks(self, points: np.ndarray, chunks: np.ndarray) -> list[Chunk]:
+        """Mesh just these chunk codes from the voxel map ``points``."""
+        ijk = np.floor(points / self.vox).astype(np.int64)
+        # only voxels in or next to the chunks can reach them
+        near = np.unique(np.concatenate([_code(_decode(chunks) + off) for off in _OFFSETS]))
+        code, local = _place(ijk[np.isin(_code(ijk // C), near)])
+        return self._mesh_codes(code, local, np.sort(chunks))
+
+    def _mesh_codes(self, code: np.ndarray, local: np.ndarray, chunks: np.ndarray) -> list[Chunk]:
+        sel = np.isin(code, chunks)
         code, local = code[sel], local[sel]
         # marching cubes in bounded batches, then the simplifiers once over every batch
         parts = []
-        for i in range(0, len(changed), MAX_BATCH):
-            batch = np.array(changed[i : i + MAX_BATCH], np.int64)
+        for i in range(0, len(chunks), MAX_BATCH):
+            batch = chunks[i : i + MAX_BATCH]
             m = (code >= batch[0]) & (code <= batch[-1])
             b = np.searchsorted(batch, code[m])
             parts.append(self._surface(len(batch), b, local[m], i))
-        return self._finish(np.array(changed, np.int64), parts)
+        return self._finish(chunks, parts)
 
     def _surface(self, B: int, b: np.ndarray, local: np.ndarray, first: int) -> Part:
         """Blocks laid side by side along x, one marching cubes over all of them.
@@ -194,14 +211,11 @@ class Mesh(Transformer[PointCloud2, TriangleMesh]):
         iso: float = 0.2,
         # run in order over the changed chunks, see simplify.py
         simplify: Sequence[Simplifier] = (),
-        # drop points above this height, to see in under a ceiling
-        max_z: float | None = None,
         device: str = "cuda",
     ) -> None:
         self.voxel_size = voxel_size
         self.iso = iso
         self.simplify = simplify
-        self.max_z = max_z
         self.device = device
         self._mesher: OccupancyMesher | None = None
 
@@ -211,10 +225,7 @@ class Mesh(Transformer[PointCloud2, TriangleMesh]):
         if self._mesher is None:
             self._mesher = OccupancyMesher(self.voxel_size, self.iso, self.device, self.simplify)
         for obs in upstream:
-            points = obs.data.points_f32()
-            if self.max_z is not None:
-                points = points[points[:, 2] < self.max_z]
-            for key, v, n, f in self._mesher.mesh(points):
+            for key, v, n, f in self._mesher.mesh(obs.data.points_f32()):
                 yield obs.derive(data=TriangleMesh(v, f, n, key, obs.ts))
 
 
@@ -222,61 +233,179 @@ class MeshModuleConfig(ModuleConfig):
     voxel_size: float = 0.05
     iso: float = 0.2
     # simplifiers in order, see simplify.parse_chain; empty keeps the raw mesh
-    chain: str = "planes,collapse"
-    max_z: float | None = None
+    # chain: str = "planes,collapse"
+    chain: str = ""
+    # only points in this height band are meshed, e.g. one storey
+    z_band: tuple[float, float] | None = None
+    # a chunk is remeshed once its net voxel change since its last mesh reaches
+    # min_fraction of its voxels, and at least min_change
+    min_change: int = 20
+    min_fraction: float = 0.1
     device: str = "cuda"
 
 
-class MeshModule(StreamModule[PointCloud2, TriangleMesh]):
-    """Meshes the latest ``global_map``; stale maps are dropped while it works."""
+class MeshModule(Module):
+    """Meshes the voxel map that ``map_regions`` streams, region by region.
+
+    Every region message is kept and marks the voxels it changed per chunk; a voxel that
+    flips back cancels out. A worker meshes chunks that changed enough, most recently
+    changed first, a batch at a time.
+    """
 
     config: MeshModuleConfig
 
-    global_map: In[PointCloud2]
+    map_regions: In[PointCloud2]
     mesh: Out[TriangleMesh]
 
-    def pipeline(self, stream: Stream[PointCloud2]) -> Stream[TriangleMesh]:
-        from dimos.mapping.experimental.simplify import parse_chain
-
-        cfg = self.config
-        return stream.transform(
-            Mesh(
-                voxel_size=cfg.voxel_size,
-                iso=cfg.iso,
-                simplify=parse_chain(cfg.chain),
-                max_z=cfg.max_z,
-                device=cfg.device,
-            )
-        )
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._regions: dict[int, np.ndarray] = {}
+        self._codes: dict[int, np.ndarray] = {}
+        # chunk code -> (block-local voxels changed since its last mesh, last change time)
+        self._pending: dict[int, tuple[set[int], float]] = {}
+        # chunk code -> voxels it holds
+        self._size: dict[int, int] = {}
+        self._lock = threading.Lock()
+        self._dirty = threading.Event()
+        self._stopping = False
+        self._worker = threading.Thread(target=self._run, name="mesh", daemon=True)
 
     @rpc
     def start(self) -> None:
         super().start()
+        self.register_disposable(Disposable(self.map_regions.subscribe(self._on_region)))
+        self._worker.start()
 
     @rpc
     def stop(self) -> None:
+        self._stopping = True
+        self._dirty.set()
         super().stop()
+
+    def _on_region(self, msg: PointCloud2) -> None:
+        points = msg.points_f32()
+        codes = np.unique(_code(np.floor(points / self.config.voxel_size)))
+        now = time.time()
+        with self._lock:
+            old = self._codes.get(msg.seq, codes[:0])
+            changed = np.setxor1d(old, codes, assume_unique=True)
+            if len(points):
+                self._regions[msg.seq], self._codes[msg.seq] = points, codes
+            else:
+                self._regions.pop(msg.seq, None)
+                self._codes.pop(msg.seq, None)
+            ijk = _decode(changed)
+            # each chunk's size follows the voxels added to and removed from it
+            own, inv = np.unique(_code(ijk // C), return_inverse=True)
+            grow = np.bincount(inv, weights=np.where(np.isin(changed, codes), 1, -1))
+            for c, d in zip(own.tolist(), grow.tolist(), strict=True):
+                self._size[c] = self._size.get(c, 0) + int(d)
+            # changed voxels toggle in their chunks' pending sets, so flips cancel
+            blocks, local = _place(ijk)
+            packed = (local[:, 0] * P + local[:, 1]) * P + local[:, 2]
+            touched = np.unique(blocks).tolist()
+            for c in touched:
+                vox = self._pending.get(c, (set(), 0.0))[0]
+                vox ^= set(packed[blocks == c].tolist())
+                self._pending[c] = (vox, now)
+            if any(self._due(c) for c in touched):
+                self._dirty.set()
+
+    def _due(self, c: int) -> bool:
+        n = len(self._pending[c][0])
+        return n >= self.config.min_change and n >= self.config.min_fraction * self._size.get(c, 0)
+
+    def _take(self) -> list[int]:
+        """Due chunks, most recently changed first, one batch; wakes again if more are due."""
+        due = [c for c in self._pending if self._due(c)]
+        due.sort(key=lambda c: self._pending[c][1], reverse=True)
+        for c in due[:MAX_BATCH]:
+            del self._pending[c]
+        if len(due) > MAX_BATCH:
+            self._dirty.set()
+        return due[:MAX_BATCH]
+
+    def _run(self) -> None:
+        from dimos.mapping.experimental.simplify import parse_chain
+
+        cfg = self.config
+        mesher = OccupancyMesher(cfg.voxel_size, cfg.iso, cfg.device, parse_chain(cfg.chain))
+        while True:
+            self._dirty.wait()
+            if self._stopping:
+                return
+            self._dirty.clear()
+            with self._lock:
+                chunks = self._take()
+                parts = list(self._regions.values())
+            if not chunks or not parts:
+                continue
+            points = np.concatenate(parts)
+            if cfg.z_band is not None:
+                lo, hi = cfg.z_band
+                points = points[(points[:, 2] >= lo) & (points[:, 2] < hi)]
+            ts = time.time()
+            for key, v, n, f in mesher.mesh_chunks(points, np.array(chunks, np.int64)):
+                self.mesh.publish(TriangleMesh(v, f, n, key, ts))
 
 
 MESH_ENTITY = "world/mesh"
 
 
-@keyed_by_seq
-def render_mesh_chunk(msg: TriangleMesh, height_range: tuple[float, float]) -> RerunMulti:
-    """Each chunk on its own static entity, turbo by height; an emptied chunk clears."""
-    import matplotlib
-    import rerun as rr
+class MeshColours:
+    """Rerun entries for each mesh chunk, turbo by height over the mesh's own range.
 
-    path = f"{MESH_ENTITY}/{msg.key[0]}_{msg.key[1]}_{msg.key[2]}"
-    if len(msg.faces) == 0:
-        return [RerunEntry(path, msg.to_rerun(), static=True)]
-    lo, hi = height_range
-    t = np.clip((msg.vertices[:, 2] - lo) / (hi - lo), 0, 1)
-    colors = (matplotlib.colormaps["turbo"](t)[:, :3] * 255).astype(np.uint8)
-    mesh = rr.Mesh3D(
-        vertex_positions=msg.vertices,
-        vertex_normals=msg.normals,
-        triangle_indices=msg.faces,
-        vertex_colors=colors,
-    )
-    return [RerunEntry(path, mesh, static=True)]
+    Once the range moves ``recolour_m``, every chunk is recoloured (colours only).
+    ``z_range`` pins it. Works as a keyed rerun bridge renderer and in replays.
+    """
+
+    keyed_by_seq = True
+
+    def __init__(
+        self,
+        alpha: float = 0.4,
+        z_range: tuple[float, float] | None = None,
+        recolour_m: float = 0.5,
+        static: bool = True,
+    ) -> None:
+        self.alpha = alpha
+        self.z_range = z_range
+        self.recolour_m = recolour_m
+        self.static = static
+        self._heights: dict[Key, np.ndarray] = {}
+        self._range: tuple[float, float] | None = None
+
+    def __call__(self, msg: TriangleMesh) -> list[RerunEntry]:
+        out = [RerunEntry(_chunk_path(msg.key), msg.to_rerun(), self.static)]
+        if len(msg.faces) == 0:
+            self._heights.pop(msg.key, None)
+            return out
+        self._heights[msg.key] = msg.vertices[:, 2].copy()
+        lo, hi = self.z_range or np.percentile(
+            np.concatenate(list(self._heights.values())), [2, 98]
+        )
+        keys = [msg.key]
+        if (
+            self._range is None
+            or max(abs(lo - self._range[0]), abs(hi - self._range[1])) > self.recolour_m
+        ):
+            self._range = (float(lo), float(hi))
+            keys = list(self._heights)
+        return out + [
+            RerunEntry(_chunk_path(k), self._colours(self._heights[k]), self.static) for k in keys
+        ]
+
+    def _colours(self, z: np.ndarray) -> Any:
+        import matplotlib
+        import rerun as rr
+
+        assert self._range is not None
+        lo, hi = self._range
+        t = np.clip((z - lo) / max(hi - lo, 1e-6), 0, 1)
+        colors = (matplotlib.colormaps["turbo"](t)[:, :3] * 255).astype(np.uint8)
+        alpha = int(self.alpha * 255)
+        return rr.Mesh3D.from_fields(vertex_colors=colors, albedo_factor=[255, 255, 255, alpha])
+
+
+def _chunk_path(key: Key) -> str:
+    return f"{MESH_ENTITY}/{key[0]}_{key[1]}_{key[2]}"

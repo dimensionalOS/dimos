@@ -19,10 +19,9 @@ from __future__ import annotations
 from collections.abc import Iterator
 import itertools
 
-import numpy as np
 import typer
 
-from dimos.mapping.experimental.mesh import Mesh
+from dimos.mapping.experimental.mesh import Mesh, MeshColours
 from dimos.mapping.experimental.simplify import parse_chain
 from dimos.mapping.ray_tracing.transformer import RayTraceMap, pose_from_tf
 from dimos.memory.store.sqlite import SqliteStore
@@ -33,8 +32,6 @@ from dimos.memory.utils.progress import progress
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.utils.data import get_data
-
-RECOLOUR_M = 0.5  # re-colour every chunk once the height range moves this much
 
 
 def main(
@@ -65,15 +62,14 @@ def main(
     camera_stream: str = typer.Option(
         "color_image", "--camera-stream", help="shown beside the 3D view when present"
     ),
-    z_min: float | None = typer.Option(None, "--z-min", help="fix the turbo bottom, metres"),
-    z_max: float | None = typer.Option(None, "--z-max", help="fix the turbo top, metres"),
+    z_min: float | None = typer.Option(None, "--z-min", help="pin the turbo bottom, metres"),
+    z_max: float | None = typer.Option(None, "--z-max", help="pin the turbo top, metres"),
 ) -> None:
-    import matplotlib
     import rerun as rr
 
-    turbo = (matplotlib.colormaps["turbo"](np.linspace(0, 1, 256))[:, :3] * 255).astype(np.uint8)
     simplifiers = parse_chain(chain, tol) if simplify else []
-    albedo = [255, 255, 255, int(alpha * 255)]
+    z_range = (z_min, z_max) if z_min is not None and z_max is not None else None
+    colours = MeshColours(alpha=alpha, z_range=z_range, static=static)
     trail: list[tuple[float, float, float]] = []
 
     def log_odom(obs: Observation[PointCloud2]) -> None:
@@ -140,16 +136,9 @@ def main(
                 rr.log("camera/image", img.data.to_rerun())
             pending.clear()
 
-        map_z: list[float] = [0.0, 1.0]
-
-        def to_global_map(o: Observation[PointCloud2]) -> Observation[PointCloud2]:
-            points = ray.mapper.global_map()
-            if len(points):
-                # turbo over the bulk of the map's height, not its outliers
-                map_z[:] = np.percentile(points[:, 2], [2, 98]).tolist()
-            return o.derive(data=PointCloud2.from_numpy(points))
-
-        global_map: FnTransformer[PointCloud2, PointCloud2] = FnTransformer(to_global_map)
+        global_map: FnTransformer[PointCloud2, PointCloud2] = FnTransformer(
+            lambda o: o.derive(data=PointCloud2.from_numpy(ray.mapper.global_map()))
+        )
         with progress(lidar.count(), "meshing") as bar:
             meshes = (
                 lidar.tap(bar)
@@ -160,37 +149,10 @@ def main(
                 .transform(global_map)
                 .transform(Mesh(voxel_size=voxel_size, simplify=simplifiers))
             )
-            # recolour every chunk when the map's height range moves
-            heights: dict[tuple[int, int, int], np.ndarray] = {}
-            col_lo, col_hi = 0.0, 0.0
-
-            def colour(path: str, z: np.ndarray) -> None:
-                t = np.clip((z - col_lo) / max(col_hi - col_lo, 1e-6), 0, 1)
-                rr.log(
-                    path,
-                    rr.Mesh3D.from_fields(
-                        vertex_colors=turbo[(t * 255).astype(int)], albedo_factor=albedo
-                    ),
-                    static=static,
-                )
-
             for obs in meshes:
-                m = obs.data
                 rr.set_time("time", timestamp=obs.ts)
-                path = f"world/mesh/{m.key[0]}_{m.key[1]}_{m.key[2]}"
-                rr.log(path, m.to_rerun(), static=static)
-                if not len(m.faces):
-                    heights.pop(m.key, None)
-                    continue
-                heights[m.key] = m.vertices[:, 2].copy()
-                lo = z_min if z_min is not None else map_z[0]
-                hi = z_max if z_max is not None else map_z[1]
-                if abs(lo - col_lo) > RECOLOUR_M or abs(hi - col_hi) > RECOLOUR_M:
-                    col_lo, col_hi = lo, hi
-                    for k, z in heights.items():
-                        colour(f"world/mesh/{k[0]}_{k[1]}_{k[2]}", z)
-                else:
-                    colour(path, heights[m.key])
+                for entry in colours(obs.data):
+                    rr.log(entry.path, entry.archetype, static=entry.static)
         # close the camera cursor before the store
         getattr(camera, "close", lambda: None)()
     if out is not None:
