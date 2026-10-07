@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791395840970,
+  "lastUpdate": 1791404299386,
   "repoUrl": "https://github.com/dimensionalOS/dimos",
   "entries": {
     "go2 replay realtime (arm64)": [
@@ -1566,6 +1566,60 @@ window.BENCHMARK_DATA = {
             "value": 112.22,
             "unit": "G",
             "extra": "cpu: Neoverse-N2; delivered: odom 1122/1122, lidar 461/461, color_image 854/855; perf counted 100.0%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "jeff.hykin@gmail.com",
+            "name": "Jeff Hykin",
+            "username": "jeff-hykin"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a017963b9372711763e705dfea6acd6542008075",
+          "message": "depth2depth: Depth Anything cloud calibrated per pixel to the lidar (#4330)",
+          "timestamp": "2026-10-07T20:14:45Z",
+          "tree_id": "484e6f084ec4655bd485426b92a884456f15e84f",
+          "url": "https://github.com/dimensionalOS/dimos/commit/a017963b9372711763e705dfea6acd6542008075"
+        },
+        "date": 1791404298704,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "peak memory",
+            "value": 1484.125,
+            "unit": "MB",
+            "extra": "cpu: Neoverse-N2; delivered: odom 1122/1122, lidar 461/461, color_image 855/855; perf counted 100.0%"
+          },
+          {
+            "name": "peak threads",
+            "value": 344,
+            "unit": "threads",
+            "extra": "cpu: Neoverse-N2; delivered: odom 1122/1122, lidar 461/461, color_image 855/855; perf counted 100.0%"
+          },
+          {
+            "name": "network (transport)",
+            "value": 2729.954,
+            "unit": "MB",
+            "extra": "cpu: Neoverse-N2; delivered: odom 1122/1122, lidar 461/461, color_image 855/855; perf counted 100.0%"
+          },
+          {
+            "name": "disk write",
+            "value": 1.363,
+            "unit": "MB",
+            "extra": "cpu: Neoverse-N2; delivered: odom 1122/1122, lidar 461/461, color_image 855/855; perf counted 100.0%"
+          },
+          {
+            "name": "instructions",
+            "value": 112.307,
+            "unit": "G",
+            "extra": "cpu: Neoverse-N2; delivered: odom 1122/1122, lidar 461/461, color_image 855/855; perf counted 100.0%"
           }
         ]
       }
