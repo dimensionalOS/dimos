@@ -107,3 +107,39 @@ Relaunch, Stop, Configure, Show code, Logs, close), Topic rates, the modules and
 in `dimos/gateway/blueprint_view/`, so it changes with the dimos checkout, not with Desktop. Framed by Desktop, it posts
 `dimos:chrome`; a Desktop that then shows only the frame answers `dimos:chrome-ok` and the page shows its bar (an older
 Desktop keeps its own bar, so there's never two).
+
+## Decoding messages in a page
+
+`GET /dimos/msgs.js` is an ES module that decodes and encodes every dimos message, for pages and apps with no build
+step; `GET /dimos/msgs.ts` is the same module as TypeScript (an interface per message), for Deno and TypeScript. Both
+are generated from the message classes under dimos/msgs and their dimos_lcm schemas
+([`dimos/gateway/msgs/__init__.py`](/dimos/gateway/msgs/__init__.py)), and a test fails while they're stale:
+
+```sh
+python -m dimos.gateway.msgs           # check, and list the messages without a schema
+python -m dimos.gateway.msgs --write   # regenerate msgs.ts, and msgs.js from it (needs deno)
+```
+
+With the [zenoh-gateway](https://github.com/jeff-hykin/zenoh-gateway) browser client, where dimos publishes each
+topic on the zenoh key `dimos/<topic>/<package>.<Type>`:
+
+```js
+import { connect } from "./zenoh_gateway.js" // zenoh-gateway's client/zenoh_gateway.ts, however your app ships it
+import { decodeMessage, geometry_msgs } from "../../dimos/msgs.js"
+
+const z = await connect(url)
+// the type in the key picks the decoder
+z.subscribe("dimos/odom/**", {}, (message) => console.log(decodeMessage(message).pose.position))
+// publish a Twist: fields left out are zero
+await z.put(geometry_msgs.Twist.zenohKey("dimos/cmd_vel"), geometry_msgs.Twist.encode({ linear: { x: 0.3 } }))
+```
+
+- `decode(bytes)` decodes by the frame's 8-byte fingerprint; `decodeChannel(channelOrKey, bytes)` lets the type an
+  LCM channel (`/odom#nav_msgs.Odometry`) or zenoh key names win over it; `decodeMessage(message)` does that for a
+  zenoh-gateway message (`undefined` for a delete).
+- `geometry_msgs.PoseStamped` and the like: `.decode(bytes)`, `.encode(value)`, `.zenohKey(topic)`,
+  `.lcmChannel(topic)`. `getTypeNames()` lists them. Values are plain objects in wire order; `int64_t` is a bigint and
+  `byte[]` a view into the frame.
+- A few dimos messages are hand-written, with no LCM schema (`sensor_msgs.JointCommand`, `trajectory_msgs.JointTrajectory`
+  and others: `getMissingTypes()`, and the warnings the check prints). Decoding one throws until a page adds it with
+  `register(name, fingerprint, decode, encode?)`.

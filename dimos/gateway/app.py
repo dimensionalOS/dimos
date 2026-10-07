@@ -58,6 +58,7 @@ from dimos.gateway import (
 from dimos.gateway.blueprint_watch import BlueprintWatch
 from dimos.gateway.discovery import Discovery
 from dimos.gateway.jobs import Jobs
+from dimos.gateway.msgs import routes as msgs_routes
 from dimos.gateway.openapi import document, operation_id, route_doc
 from dimos.gateway.topic_rates import TopicWatch
 from dimos.gateway.uploads import Uploads
@@ -1071,6 +1072,7 @@ def create_app(state: ServerState, background: bool = True) -> FastAPI:
             raise ApiError(409, str(error))
 
     discovery_routes.add(app, state)
+    msgs_routes.add(app)
 
     def openapi() -> dict[str, Any]:
         if app.openapi_schema is None:
