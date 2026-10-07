@@ -249,6 +249,39 @@ export class Graph {
         this.applyView()
     }
 
+    /** pan (keeping the zoom) so node `id` is in view, if it isn't already: a module picked in the side panel */
+    reveal(id) {
+        const node = this.nodes.find((n) => n.id === id)
+        const box = this.pane.getBoundingClientRect()
+        if (!node || box.width < 10) {
+            return
+        }
+        const { k } = this.at
+        // room for the title above and the layout tabs below, as in fit()
+        const margin = { x: 40, top: 60, bottom: 70 }
+        const left = this.at.x + (node.x - node.w / 2) * k
+        const right = this.at.x + (node.x + node.w / 2) * k
+        const top = this.at.y + (node.y - node.h / 2) * k
+        const bottom = this.at.y + (node.y + node.h / 2) * k
+        if (left >= margin.x && right <= box.width - margin.x && top >= margin.top && bottom <= box.height - margin.bottom) {
+            return
+        }
+        const from = { ...this.at }
+        const to = { k, x: box.width / 2 - node.x * k, y: (box.height + margin.top - margin.bottom) / 2 - node.y * k }
+        const start = performance.now()
+        const step = (now) => {
+            const t = Math.min((now - start) / 260, 1)
+            const ease = 1 - (1 - t) ** 3
+            this.at = { k, x: from.x + (to.x - from.x) * ease, y: from.y + (to.y - from.y) * ease }
+            this.applyView()
+            if (t < 1) {
+                requestAnimationFrame(step)
+            }
+        }
+        this.moved = true
+        requestAnimationFrame(step)
+    }
+
     applyView() {
         this.view.setAttribute("transform", `translate(${this.at.x} ${this.at.y}) scale(${this.at.k})`)
     }

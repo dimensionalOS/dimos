@@ -78,7 +78,9 @@ async function getJson(url) {
     const response = await fetch(url)
     const data = await response.json().catch(() => null)
     if (!response.ok) {
-        throw new Error(data?.error ?? `${response.status} ${response.statusText}`)
+        throw Object.assign(new Error(data?.error ?? `${response.status} ${response.statusText}`), {
+            status: response.status,
+        })
     }
     return data
 }
@@ -315,6 +317,7 @@ function open(name) {
     $("#flyout").hidden = true
     render()
     $("#side").scrollTo(0, 0)
+    graph.reveal(`m:${name}`)
 }
 
 function codeButton(where, marker) {
@@ -619,11 +622,15 @@ async function pollRuns() {
 async function pollRates() {
     // Topic rates lists every topic on the bus (this blueprint's or not) whenever Desktop is there; the graph only
     // annotates while this blueprint runs
+    if (state.noDesktop) {
+        return
+    }
     let answer
     try {
         answer = await getJson("../api/topics/rates")
-    } catch {
-        // not inside Desktop (or no rates there): the graph stays static
+    } catch (error) {
+        // not inside Desktop (no such route): stop asking; anything else (Desktop restarting) is tried again
+        state.noDesktop = error?.status === 404
         return
     }
     state.rateRows = answer.topics ?? []
