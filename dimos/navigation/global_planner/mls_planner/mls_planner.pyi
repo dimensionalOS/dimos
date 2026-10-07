@@ -52,6 +52,20 @@ class MLSPlanner:
         """
         ...
 
+    def update_seed_region(
+        self,
+        points: NDArray[np.float32],
+        origin: tuple[float, float],
+        radius: float,
+        z_min: float,
+        z_max: float,
+    ) -> None:
+        """Apply one region of a seeded map through the region pipeline.
+
+        Points are (N, 3) float32. The z band is the premap's own, uncapped.
+        """
+        ...
+
     def surface_map(self) -> NDArray[np.float32]:
         """Standable surface cells as (M, 3) float32 centers."""
         ...

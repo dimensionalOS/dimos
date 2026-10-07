@@ -149,8 +149,6 @@ async def test_spatial_memory_module_with_replay(dimos, tmp_path):
     spatial_memory = dimos.deploy(
         SpatialMemory,
         collection_name="test_spatial_memory",
-        embedding_model="clip",
-        embedding_dimensions=512,
         min_distance_threshold=0.5,  # 0.5m for test
         min_time_threshold=1.0,  # 1 second
         db_path=str(tmp_path / "chroma_db"),

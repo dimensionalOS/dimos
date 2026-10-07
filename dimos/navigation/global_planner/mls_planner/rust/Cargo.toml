@@ -25,6 +25,8 @@ threads = 2
 global_map = "sensor_msgs.PointCloud2"
 local_map = "sensor_msgs.PointCloud2"
 region_bounds = "geometry_msgs.PoseStamped"
+seed_map = "sensor_msgs.PointCloud2"
+seed_bounds = "geometry_msgs.PoseStamped"
 goal = "geometry_msgs.PointStamped"
 tf = "tf2_msgs.TFMessage"
 
@@ -37,7 +39,7 @@ path = "nav_msgs.Path"
 [dependencies]
 dimos-module = { path = "../../../../../native/rust/dimos-module" }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time"] }
 serde = { version = "1", features = ["derive"] }
 ahash = "0.8"
 tracing = "0.1"

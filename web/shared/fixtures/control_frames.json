@@ -4,7 +4,7 @@
       "name": "hello_robot",
       "message": {
         "t": "hello",
-        "v": 6,
+        "v": 7,
         "role": "robot",
         "robot": {
           "id": "go2-lab",
@@ -56,34 +56,34 @@
           "pages": []
         }
       },
-      "b64": "MwIAAHsidCI6ImhlbGxvIiwidiI6Niwicm9sZSI6InJvYm90Iiwicm9ib3QiOnsiaWQiOiJnbzItbGFiIiwibmFtZSI6IkdvMiBMYWJvcmF0b3IgzrIiLCJtb2RlbCI6InVuaXRyZWUtZ28yIn0sIm1hbmlmZXN0Ijp7InZlcnNpb24iOjEsImNoYW5uZWxzIjpbeyJjaCI6ImNvbG9yX2ltYWdlIiwiZGlyIjoicngiLCJlbmNvZGluZyI6ImpwZWcudjEiLCJkZWxpdmVyeSI6ImxhdGVzdCIsIm1heEh6IjoxNS41LCJwYXJhbXMiOnsicXVhbGl0eSI6NzUuNX0sInB1Ymxpc2giOiJub25lIiwicmVxdWlyZWRTY29wZSI6bnVsbH0seyJjaCI6Im9kb20iLCJkaXIiOiJyeCIsImVuY29kaW5nIjoicG9zZS5qc29uLnYxIiwiZGVsaXZlcnkiOiJyZWxpYWJsZSIsIm1heEh6IjoyMC41LCJwYXJhbXMiOnt9LCJwdWJsaXNoIjoibm9uZSIsInJlcXVpcmVkU2NvcGUiOm51bGx9XSwicGFuZWxzIjpbeyJpZCI6InAwIiwia2luZCI6InZpZGVvIiwidGl0bGUiOiJDYW1lcmEgzrIiLCJjaGFubmVscyI6WyJjb2xvcl9pbWFnZSJdLCJwYXJhbXMiOnt9fV0sImxheW91dCI6eyJyb3ciOlsicDAiXX0sInBhZ2VzIjpbXX19"
+      "b64": "MwIAAHsidCI6ImhlbGxvIiwidiI6Nywicm9sZSI6InJvYm90Iiwicm9ib3QiOnsiaWQiOiJnbzItbGFiIiwibmFtZSI6IkdvMiBMYWJvcmF0b3IgzrIiLCJtb2RlbCI6InVuaXRyZWUtZ28yIn0sIm1hbmlmZXN0Ijp7InZlcnNpb24iOjEsImNoYW5uZWxzIjpbeyJjaCI6ImNvbG9yX2ltYWdlIiwiZGlyIjoicngiLCJlbmNvZGluZyI6ImpwZWcudjEiLCJkZWxpdmVyeSI6ImxhdGVzdCIsIm1heEh6IjoxNS41LCJwYXJhbXMiOnsicXVhbGl0eSI6NzUuNX0sInB1Ymxpc2giOiJub25lIiwicmVxdWlyZWRTY29wZSI6bnVsbH0seyJjaCI6Im9kb20iLCJkaXIiOiJyeCIsImVuY29kaW5nIjoicG9zZS5qc29uLnYxIiwiZGVsaXZlcnkiOiJyZWxpYWJsZSIsIm1heEh6IjoyMC41LCJwYXJhbXMiOnt9LCJwdWJsaXNoIjoibm9uZSIsInJlcXVpcmVkU2NvcGUiOm51bGx9XSwicGFuZWxzIjpbeyJpZCI6InAwIiwia2luZCI6InZpZGVvIiwidGl0bGUiOiJDYW1lcmEgzrIiLCJjaGFubmVscyI6WyJjb2xvcl9pbWFnZSJdLCJwYXJhbXMiOnt9fV0sImxheW91dCI6eyJyb3ciOlsicDAiXX0sInBhZ2VzIjpbXX19"
     },
     {
       "name": "hello_viewer",
       "message": {
         "t": "hello",
-        "v": 6,
+        "v": 7,
         "role": "viewer"
       },
-      "b64": "IwAAAHsidCI6ImhlbGxvIiwidiI6Niwicm9sZSI6InZpZXdlciJ9"
+      "b64": "IwAAAHsidCI6ImhlbGxvIiwidiI6Nywicm9sZSI6InZpZXdlciJ9"
     },
     {
       "name": "hello_viewer_token",
       "message": {
         "t": "hello",
-        "v": 6,
+        "v": 7,
         "role": "viewer",
         "token": "viewer-token-fixture-0123456789abcdef"
       },
-      "b64": "UwAAAHsidCI6ImhlbGxvIiwidiI6Niwicm9sZSI6InZpZXdlciIsInRva2VuIjoidmlld2VyLXRva2VuLWZpeHR1cmUtMDEyMzQ1Njc4OWFiY2RlZiJ9"
+      "b64": "UwAAAHsidCI6ImhlbGxvIiwidiI6Nywicm9sZSI6InZpZXdlciIsInRva2VuIjoidmlld2VyLXRva2VuLWZpeHR1cmUtMDEyMzQ1Njc4OWFiY2RlZiJ9"
     },
     {
       "name": "welcome",
       "message": {
         "t": "welcome",
-        "v": 6
+        "v": 7
       },
-      "b64": "FQAAAHsidCI6IndlbGNvbWUiLCJ2Ijo2fQ=="
+      "b64": "FQAAAHsidCI6IndlbGNvbWUiLCJ2Ijo3fQ=="
     },
     {
       "name": "ping",
@@ -108,9 +108,9 @@
       "message": {
         "t": "error",
         "code": "version_mismatch",
-        "message": "protocol v6 required, versiune neacceptată"
+        "message": "protocol v7 required, versiune neacceptată"
       },
-      "b64": "XwAAAHsidCI6ImVycm9yIiwiY29kZSI6InZlcnNpb25fbWlzbWF0Y2giLCJtZXNzYWdlIjoicHJvdG9jb2wgdjYgcmVxdWlyZWQsIHZlcnNpdW5lIG5lYWNjZXB0YXTEgyJ9"
+      "b64": "XwAAAHsidCI6ImVycm9yIiwiY29kZSI6InZlcnNpb25fbWlzbWF0Y2giLCJtZXNzYWdlIjoicHJvdG9jb2wgdjcgcmVxdWlyZWQsIHZlcnNpdW5lIG5lYWNjZXB0YXTEgyJ9"
     },
     {
       "name": "robots_two",
@@ -311,6 +311,85 @@
         "requestId": "s7k2β-1"
       },
       "b64": "XwAAAHsidCI6ImVycm9yIiwiY29kZSI6InJhdGVfbGltaXRlZCIsIm1lc3NhZ2UiOiJwdWJsaXNoIHBlc3RlIGxpbWl0xIMgzrIiLCJyZXF1ZXN0SWQiOiJzN2syzrItMSJ9"
+    },
+    {
+      "name": "rtc_ice",
+      "message": {
+        "t": "rtc_ice",
+        "iceServers": [
+          {
+            "urls": [
+              "stun:stun.cloudflare.com:3478"
+            ]
+          },
+          {
+            "urls": [
+              "turn:turn.cloudflare.com:3478?transport=udp",
+              "turns:turn.cloudflare.com:443?transport=tcp"
+            ],
+            "username": "utilizator-β",
+            "credential": "parolă-fixture"
+          }
+        ]
+      },
+      "b64": "6gAAAHsidCI6InJ0Y19pY2UiLCJpY2VTZXJ2ZXJzIjpbeyJ1cmxzIjpbInN0dW46c3R1bi5jbG91ZGZsYXJlLmNvbTozNDc4Il19LHsidXJscyI6WyJ0dXJuOnR1cm4uY2xvdWRmbGFyZS5jb206MzQ3OD90cmFuc3BvcnQ9dWRwIiwidHVybnM6dHVybi5jbG91ZGZsYXJlLmNvbTo0NDM/dHJhbnNwb3J0PXRjcCJdLCJ1c2VybmFtZSI6InV0aWxpemF0b3ItzrIiLCJjcmVkZW50aWFsIjoicGFyb2zEgy1maXh0dXJlIn1dfQ=="
+    },
+    {
+      "name": "rtc_offer_robot",
+      "message": {
+        "t": "rtc_offer",
+        "sdp": "v=0\r\no=- 4611731400430051336 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0 1\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\nc=IN IP4 0.0.0.0\r\na=mid:0\r\na=sendonly\r\na=rtpmap:96 H264/90000\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\nc=IN IP4 0.0.0.0\r\na=mid:1\r\na=sendonly\r\na=rtpmap:96 H264/90000\r\n",
+        "tracks": [
+          {
+            "ch": "color_image",
+            "mid": "0"
+          },
+          {
+            "ch": "rear_camera",
+            "mid": "1"
+          }
+        ]
+      },
+      "b64": "kAEAAHsidCI6InJ0Y19vZmZlciIsInNkcCI6InY9MFxyXG5vPS0gNDYxMTczMTQwMDQzMDA1MTMzNiAyIElOIElQNCAxMjcuMC4wLjFcclxucz0tXHJcbnQ9MCAwXHJcbmE9Z3JvdXA6QlVORExFIDAgMVxyXG5tPXZpZGVvIDkgVURQL1RMUy9SVFAvU0FWUEYgOTZcclxuYz1JTiBJUDQgMC4wLjAuMFxyXG5hPW1pZDowXHJcbmE9c2VuZG9ubHlcclxuYT1ydHBtYXA6OTYgSDI2NC85MDAwMFxyXG5tPXZpZGVvIDkgVURQL1RMUy9SVFAvU0FWUEYgOTZcclxuYz1JTiBJUDQgMC4wLjAuMFxyXG5hPW1pZDoxXHJcbmE9c2VuZG9ubHlcclxuYT1ydHBtYXA6OTYgSDI2NC85MDAwMFxyXG4iLCJ0cmFja3MiOlt7ImNoIjoiY29sb3JfaW1hZ2UiLCJtaWQiOiIwIn0seyJjaCI6InJlYXJfY2FtZXJhIiwibWlkIjoiMSJ9XX0="
+    },
+    {
+      "name": "rtc_offer_viewer",
+      "message": {
+        "t": "rtc_offer",
+        "sdp": "v=0\r\no=- 4611731400430051336 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0 1\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\nc=IN IP4 0.0.0.0\r\na=mid:0\r\na=sendonly\r\na=rtpmap:96 H264/90000\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\nc=IN IP4 0.0.0.0\r\na=mid:1\r\na=sendonly\r\na=rtpmap:96 H264/90000\r\n"
+      },
+      "b64": "RwEAAHsidCI6InJ0Y19vZmZlciIsInNkcCI6InY9MFxyXG5vPS0gNDYxMTczMTQwMDQzMDA1MTMzNiAyIElOIElQNCAxMjcuMC4wLjFcclxucz0tXHJcbnQ9MCAwXHJcbmE9Z3JvdXA6QlVORExFIDAgMVxyXG5tPXZpZGVvIDkgVURQL1RMUy9SVFAvU0FWUEYgOTZcclxuYz1JTiBJUDQgMC4wLjAuMFxyXG5hPW1pZDowXHJcbmE9c2VuZG9ubHlcclxuYT1ydHBtYXA6OTYgSDI2NC85MDAwMFxyXG5tPXZpZGVvIDkgVURQL1RMUy9SVFAvU0FWUEYgOTZcclxuYz1JTiBJUDQgMC4wLjAuMFxyXG5hPW1pZDoxXHJcbmE9c2VuZG9ubHlcclxuYT1ydHBtYXA6OTYgSDI2NC85MDAwMFxyXG4ifQ=="
+    },
+    {
+      "name": "rtc_offer_pull",
+      "message": {
+        "t": "rtc_offer",
+        "sdp": "v=0\r\no=- 4611731400430051336 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0 1\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\nc=IN IP4 0.0.0.0\r\na=mid:0\r\na=sendonly\r\na=rtpmap:96 H264/90000\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\nc=IN IP4 0.0.0.0\r\na=mid:1\r\na=sendonly\r\na=rtpmap:96 H264/90000\r\n",
+        "tracks": [
+          {
+            "ch": "color_image",
+            "mid": "3"
+          }
+        ],
+        "robotId": "go2-lab"
+      },
+      "b64": "hQEAAHsidCI6InJ0Y19vZmZlciIsInNkcCI6InY9MFxyXG5vPS0gNDYxMTczMTQwMDQzMDA1MTMzNiAyIElOIElQNCAxMjcuMC4wLjFcclxucz0tXHJcbnQ9MCAwXHJcbmE9Z3JvdXA6QlVORExFIDAgMVxyXG5tPXZpZGVvIDkgVURQL1RMUy9SVFAvU0FWUEYgOTZcclxuYz1JTiBJUDQgMC4wLjAuMFxyXG5hPW1pZDowXHJcbmE9c2VuZG9ubHlcclxuYT1ydHBtYXA6OTYgSDI2NC85MDAwMFxyXG5tPXZpZGVvIDkgVURQL1RMUy9SVFAvU0FWUEYgOTZcclxuYz1JTiBJUDQgMC4wLjAuMFxyXG5hPW1pZDoxXHJcbmE9c2VuZG9ubHlcclxuYT1ydHBtYXA6OTYgSDI2NC85MDAwMFxyXG4iLCJ0cmFja3MiOlt7ImNoIjoiY29sb3JfaW1hZ2UiLCJtaWQiOiIzIn1dLCJyb2JvdElkIjoiZ28yLWxhYiJ9"
+    },
+    {
+      "name": "rtc_answer",
+      "message": {
+        "t": "rtc_answer",
+        "sdp": "v=0\r\no=- 7 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0 1\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\nc=IN IP4 0.0.0.0\r\na=mid:0\r\na=recvonly\r\na=rtpmap:96 H264/90000\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\nc=IN IP4 0.0.0.0\r\na=mid:1\r\na=recvonly\r\na=rtpmap:96 H264/90000\r\n"
+      },
+      "b64": "NgEAAHsidCI6InJ0Y19hbnN3ZXIiLCJzZHAiOiJ2PTBcclxubz0tIDcgMiBJTiBJUDQgMTI3LjAuMC4xXHJcbnM9LVxyXG50PTAgMFxyXG5hPWdyb3VwOkJVTkRMRSAwIDFcclxubT12aWRlbyA5IFVEUC9UTFMvUlRQL1NBVlBGIDk2XHJcbmM9SU4gSVA0IDAuMC4wLjBcclxuYT1taWQ6MFxyXG5hPXJlY3Zvbmx5XHJcbmE9cnRwbWFwOjk2IEgyNjQvOTAwMDBcclxubT12aWRlbyA5IFVEUC9UTFMvUlRQL1NBVlBGIDk2XHJcbmM9SU4gSVA0IDAuMC4wLjBcclxuYT1taWQ6MVxyXG5hPXJlY3Zvbmx5XHJcbmE9cnRwbWFwOjk2IEgyNjQvOTAwMDBcclxuIn0="
+    },
+    {
+      "name": "rtc_stalled",
+      "message": {
+        "t": "rtc_stalled",
+        "ch": "color_image"
+      },
+      "b64": "JgAAAHsidCI6InJ0Y19zdGFsbGVkIiwiY2giOiJjb2xvcl9pbWFnZSJ9"
     }
   ]
 }

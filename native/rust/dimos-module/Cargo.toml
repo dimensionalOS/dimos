@@ -21,7 +21,7 @@ tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 url = "2"
 validator = { version = "0.21", features = ["derive"] }
 # Default features pull in ring via QUIC/TLS, which breaks static musl cross-linking.
-zenoh = { version = "=1.10.0", default-features = false, features = ["transport_tcp", "transport_udp", "unstable", "shared-memory"] }
+zenoh = { version = "=1.10.1", default-features = false, features = ["transport_tcp", "transport_udp", "unstable", "shared-memory"] }
 
 [dev-dependencies]
 tracing-test = "0.2"
