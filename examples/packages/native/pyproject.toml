@@ -1,0 +1,18 @@
+[build-system]
+requires = ["scikit-build-core>=0.11,<2"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "dimos-external-native"
+version = "0.1.0"
+description = "An independently installed DimOS native module"
+requires-python = ">=3.10,<3.13"
+dependencies = ["dimos>=0.0.14,<0.1"]
+
+[project.entry-points."dimos.blueprints"]
+probe = "dimos_external_native.module:PackageProbe"
+
+[tool.scikit-build]
+wheel.packages = ["src/dimos_external_native"]
+wheel.py-api = "py3"
+sdist.include = ["native/probe.cpp", "CMakeLists.txt", "src/**"]
