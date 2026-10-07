@@ -41,6 +41,7 @@ from dimos.manipulation.manipulation_spec import ExecutionStatus
 from dimos.manipulation.planning.planners.config import RRTConnectPlannerConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -377,3 +378,37 @@ class TestHomeCapture:
         after = module.get_state().groups["manipulator"].joint_presets["home"]
         assert list(after.position) == pytest.approx([0.2] * 7)
         assert before is None or list(before.position) != list(after.position)
+
+
+@pytest.mark.skipif(not _drake_available(), reason="Drake not installed")
+class TestIKFallbackSeeds:
+    def test_pose_planning_retries_ik_from_the_home_posture(
+        self, module, joint_state_zeros, monkeypatch
+    ):
+        from dimos.manipulation.planning.spec.enums import IKStatus
+        from dimos.manipulation.planning.spec.models import IKResult
+
+        module._on_joint_state(joint_state_zeros)
+        # a pose the arm reaches from zeros, so only the forced failure matters
+        target = module.get_state().groups["manipulator"].end_effector_pose
+        target = PoseStamped(
+            frame_id="world",
+            position=(target.position.x, target.position.y, target.position.z + 0.05),
+            orientation=target.orientation,
+        )
+        real_ik = module.inverse_kinematics
+        seeds_used = []
+
+        def flaky_ik(*args, **kwargs):
+            seeds_used.append(list(kwargs["seed"].position))
+            if len(seeds_used) == 1:
+                return IKResult(status=IKStatus.JOINT_LIMITS, message="forced")
+            return real_ik(*args, **kwargs)
+
+        monkeypatch.setattr(module, "inverse_kinematics", flaky_ik)
+
+        result = module.plan_to_poses({"manipulator": target})
+
+        assert result.succeeded, result.message
+        assert len(seeds_used) == 2
+        assert seeds_used[1] == pytest.approx(module.config.model.home_joints)

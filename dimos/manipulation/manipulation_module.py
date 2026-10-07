@@ -916,6 +916,17 @@ class ManipulationModule(Module):
             seed=start,
         )
         if not ik.is_success() or ik.joint_state is None:
+            # Differential IK from a folded rest pose tends to run into a joint
+            # limit; the configured postures are good second starting points.
+            for name, seed in self._fallback_ik_seeds(group_ids, start):
+                retry = self.inverse_kinematics(
+                    pose_targets=stamped_targets, auxiliary_group_ids=auxiliary_ids, seed=seed
+                )
+                if retry.is_success() and retry.joint_state is not None:
+                    logger.info("IK solved from a fallback seed", seed=name)
+                    ik = retry
+                    break
+        if not ik.is_success() or ik.joint_state is None:
             detail = f": {ik.message}" if ik.message else ""
             self._fail_planning_epoch(planning_epoch, f"IK failed: {ik.status.name}{detail}")
             return None
@@ -1149,6 +1160,28 @@ class ManipulationModule(Module):
             )
             for group in self._world_monitor.planning_groups.list()
         )
+
+    def _fallback_ik_seeds(
+        self, group_ids: tuple[PlanningGroupID, ...], start: JointState
+    ) -> list[tuple[str, JointState]]:
+        """The configured postures (home, then init) laid over *start*, as IK seeds."""
+        assert self._world_monitor is not None
+        seeds: list[tuple[str, JointState]] = []
+        for name in ("home", "init"):
+            positions = dict(zip(start.name, start.position, strict=True))
+            found = False
+            for group_id in group_ids:
+                preset = self._group_joint_presets(
+                    self._world_monitor.planning_groups.get(group_id)
+                ).get(name)
+                if preset is not None:
+                    positions.update(zip(preset.name, preset.position, strict=True))
+                    found = True
+            if found:
+                seeds.append(
+                    (name, JointState(name=list(positions), position=list(positions.values())))
+                )
+        return seeds
 
     def _group_joint_presets(self, group: PlanningGroup) -> dict[str, JointState]:
         config = self.config.model
