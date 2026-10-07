@@ -362,21 +362,29 @@ function side(node, after, vertical) {
 }
 
 /** a curve along the flow (left to right, or top to bottom) from `from`'s far side through the bends to `to`'s near
- * side (a reversed edge: the sides facing each other) */
+ * side (a reversed edge: the sides facing each other). One smooth spline through every bend (a long edge has one per
+ * layer it crosses), leaving and arriving along the flow, so a long edge sweeps instead of wiggling at each layer. */
 function flowPath(from, to, bends, vertical) {
     const forward = vertical ? from.y < to.y : from.x < to.x
+    const along = vertical ? "y" : "x"
     const points = [side(from, forward, vertical), ...bends, side(to, !forward, vertical)]
+    // Catmull-Rom tangents; at the two ends, straight along the flow
+    const tangent = (i) => {
+        const prev = points[Math.max(i - 1, 0)]
+        const next = points[Math.min(i + 1, points.length - 1)]
+        if (i === 0 || i === points.length - 1) {
+            const span = (points[points.length - 1][along] - points[0][along]) / (points.length - 1)
+            return vertical ? { x: 0, y: span * 1.5 } : { x: span * 1.5, y: 0 }
+        }
+        return { x: (next.x - prev.x) / 2, y: (next.y - prev.y) / 2 }
+    }
     let d = `M${points[0].x} ${points[0].y}`
     for (let i = 1; i < points.length; i++) {
         const a = points[i - 1]
         const b = points[i]
-        if (vertical) {
-            const dy = (b.y - a.y) / 2
-            d += ` C${a.x} ${a.y + dy} ${b.x} ${b.y - dy} ${b.x} ${b.y}`
-        } else {
-            const dx = (b.x - a.x) / 2
-            d += ` C${a.x + dx} ${a.y} ${b.x - dx} ${b.y} ${b.x} ${b.y}`
-        }
+        const ta = tangent(i - 1)
+        const tb = tangent(i)
+        d += ` C${a.x + ta.x / 3} ${a.y + ta.y / 3} ${b.x - tb.x / 3} ${b.y - tb.y / 3} ${b.x} ${b.y}`
     }
     return d
 }
