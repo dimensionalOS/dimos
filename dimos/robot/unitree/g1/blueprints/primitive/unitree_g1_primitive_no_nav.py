@@ -23,7 +23,7 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera.module import CameraModule
-from dimos.hardware.sensors.camera.webcam import Webcam
+from dimos.hardware.sensors.camera.webcam import WebcamConfig
 from dimos.hardware.sensors.camera.zed import compat as zed
 from dimos.mapping.costmapper import CostMapper
 from dimos.mapping.voxels.module import VoxelGridMapper
@@ -97,15 +97,6 @@ rerun_config = {
 _with_vis = vis_module(viewer_backend=global_config.viewer, rerun_config=rerun_config)
 
 
-def _create_webcam() -> Webcam:
-    return Webcam(
-        camera_index=0,
-        fps=15,
-        stereo_slice="left",
-        camera_info=zed.CameraInfo.SingleWebcam,
-    )
-
-
 _camera = (
     autoconnect(
         CameraModule.blueprint(
@@ -115,7 +106,12 @@ _camera = (
                 frame_id="sensor",
                 child_frame_id="camera_link",
             ),
-            hardware=_create_webcam,
+            hardware=WebcamConfig(
+                camera_index=0,
+                fps=15,
+                stereo_slice="left",
+                camera_info=zed.CameraInfo.SingleWebcam,
+            ),
         ),
     )
     if not global_config.simulation
