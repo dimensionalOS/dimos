@@ -246,7 +246,7 @@ def test_hosts_scout_each_other_and_answer_probes(tmp_path: Path) -> None:
         assert [str(z) for z in two.session.info.routers_zid()] == [daemons[0].router_zid]
 
         scouted = scouted_endpoints(group, "lo", timeout=1.0)
-        assert set(scouted) >= {d.listen[0] for d in daemons}
+        assert {e for group in scouted for e in group} >= {d.listen[0] for d in daemons}
         found = merge(probe_all([daemons[0].listen[0], daemons[1].listen[0]], timeout=2.0))
         assert [(h.name, e) for h, e in found] == [
             ("one", (daemons[0].listen[0],)),

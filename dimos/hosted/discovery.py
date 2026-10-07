@@ -23,11 +23,16 @@ from __future__ import annotations
 from collections.abc import Callable, Collection, Iterable, Sequence
 from dataclasses import dataclass
 import json
+import socket
 import threading
+from typing import TYPE_CHECKING
 
 from dimos.hosted.daemon import DIMOS_SCOUT_ADDR, HostDescriptor
 from dimos.protocol.service.zenohservice import ROBOT_ZENOH_PORT
 from dimos.utils.logging_config import setup_logger
+
+if TYPE_CHECKING:
+    from dimos.protocol.rpc.zenohrpc import ZenohRPC
 
 logger = setup_logger()
 
@@ -48,32 +53,57 @@ def is_loopback(endpoint: str) -> bool:
     return host.startswith("127.") or host in ("::1", "localhost")
 
 
+def _local_prefixes() -> set[str]:
+    """The /24 prefixes of this machine's IPv4 addresses."""
+    import psutil
+
+    return {
+        a.address.rsplit(".", 1)[0]
+        for addrs in psutil.net_if_addrs().values()
+        for a in addrs
+        if a.family == socket.AF_INET and not a.address.startswith("127.")
+    }
+
+
+def _nearest_first(locators: Iterable[str]) -> tuple[str, ...]:
+    """Locators on one of our /24s first: a router also advertises bridges we cannot reach."""
+    prefixes = _local_prefixes()
+
+    def far(locator: str) -> bool:
+        host = locator.partition("/")[2].rpartition(":")[0]
+        return host.rsplit(".", 1)[0] not in prefixes
+
+    return tuple(sorted(locators, key=far))
+
+
 def scouted_endpoints(
     scout_addr: str = DIMOS_SCOUT_ADDR,
     interface: str = "auto",
     timeout: float = DEFAULT_TIMEOUT,
     exclude: Collection[str] = (),
-) -> list[str]:
-    """Locators of the routers answering on the dimos scouting group, but those in ``exclude``."""
+) -> list[tuple[str, ...]]:
+    """Each router answering on the dimos scouting group, but those in ``exclude``, as its
+    locators nearest first."""
     import zenoh
 
     config = zenoh.Config()
     config.insert_json5("scouting/multicast/address", json.dumps(scout_addr))
     config.insert_json5("scouting/multicast/interface", json.dumps(interface or "auto"))
-    hellos: list[str] = []
+    routers: dict[str, list[str]] = {}
     lock = threading.Lock()
 
     def on_hello(hello: zenoh.Hello) -> None:
         if str(hello.zid) in exclude:
             return
         with lock:
-            hellos.extend(str(locator) for locator in hello.locators)
+            seen = routers.setdefault(str(hello.zid), [])
+            seen += [str(loc) for loc in hello.locators if str(loc) not in seen]
 
     scout = zenoh.scout(on_hello, what="router", config=config)  # type: ignore[arg-type]
     threading.Event().wait(timeout)
     scout.stop()
     with lock:
-        return list(dict.fromkeys(hellos))
+        return [_nearest_first(locators) for locators in routers.values()]
 
 
 def go2_endpoints(timeout: float = DEFAULT_TIMEOUT) -> list[str]:
@@ -81,6 +111,11 @@ def go2_endpoints(timeout: float = DEFAULT_TIMEOUT) -> list[str]:
     from dimos.robot.unitree.go2.cli.landiscovery import discover
 
     return [f"tcp/{device.ip}:{ROBOT_ZENOH_PORT}" for device in discover(timeout=timeout)]
+
+
+Group = tuple[str, ...]
+# The Go2 answers its LAN probe slower than routers answer a scout.
+GO2_PROBE_TIMEOUT = 2.0
 
 
 def candidates(
@@ -92,22 +127,23 @@ def candidates(
     scout_interface: str = "",
     timeout: float = DEFAULT_TIMEOUT,
     exclude: Collection[str] = (),
-) -> list[str]:
-    """Seeds as given, then discovered endpoints off loopback, without duplicates.
+) -> list[Group]:
+    """Endpoint groups to probe, one per router: a group's endpoints are alternatives.
 
-    Loopback is never discovered: another machine is never there, and other zenoh
-    routers on this one are not ours to dial.
+    Seeds come as given, discovered endpoints only off loopback: another machine is never
+    there, and other zenoh routers on this one are not ours to dial.
     """
-    sources: list[Callable[[], list[str]]] = []
+    sources: list[Callable[[], list[Group]]] = []
     if scout:
         sources.append(lambda: scouted_endpoints(scout_addr, scout_interface, timeout, exclude))
     if go2:
-        sources.append(lambda: go2_endpoints(timeout))
-    results: list[list[str]] = [[] for _ in sources]
+        sources.append(lambda: [(e,) for e in go2_endpoints(max(timeout, GO2_PROBE_TIMEOUT))])
+    results: list[list[Group]] = [[] for _ in sources]
 
     def collect(index: int) -> None:
         try:
-            results[index] = [e for e in sources[index]() if not is_loopback(e)]
+            groups = (tuple(e for e in g if not is_loopback(e)) for g in sources[index]())
+            results[index] = [g for g in groups if g]
         except Exception:
             logger.warning("Host discovery source failed", exc_info=True)
 
@@ -119,13 +155,19 @@ def candidates(
         t.start()
     for t in threads:
         t.join()
-    found = [e for result in results for e in result]
-    return list(dict.fromkeys([*seeds, *found]))
+    groups: list[Group] = [(seed,) for seed in dict.fromkeys(seeds)]
+    seen = set(seeds)
+    for group in (g for result in results for g in result):
+        fresh = tuple(e for e in group if e not in seen)
+        seen.update(fresh)
+        if fresh:
+            groups.append(fresh)
+    return groups
 
 
 def probe(endpoint: str, timeout: float = DEFAULT_TIMEOUT) -> Probe | None:
     """Join ``endpoint`` as a client; the Probe if a dimos Host's router answers there."""
-    from dimos.hosted.client import discover_hosts
+    from dimos.hosted.client import discover_host_ids
     from dimos.protocol.rpc.zenohrpc import ZenohRPC
     from dimos.protocol.service.zenohservice import ZenohSessionPool
 
@@ -142,7 +184,9 @@ def probe(endpoint: str, timeout: float = DEFAULT_TIMEOUT) -> Probe | None:
         routers = [str(zid) for zid in rpc.session.info.routers_zid()]
         if not routers:
             return None
-        hosts = discover_hosts(rpc, timeout)
+        hosts = tuple(
+            _describe(rpc, host_id, timeout) for host_id in discover_host_ids(rpc, timeout)
+        )
     except Exception:
         return None
     finally:
@@ -150,22 +194,43 @@ def probe(endpoint: str, timeout: float = DEFAULT_TIMEOUT) -> Probe | None:
             rpc.stop()
         finally:
             pool.close_all()
-    if not any(h.router_zid == routers[0] for h in hosts):
+    # A router whose own Host is too busy to describe itself still counts as a dimos Host.
+    if not any(h.router_zid in (routers[0], "") for h in hosts):
         return None
     return Probe(endpoint, routers[0], hosts)
 
 
-def probe_all(endpoints: Iterable[str], timeout: float = DEFAULT_TIMEOUT) -> list[Probe]:
-    results: list[Probe | None] = []
+def _describe(rpc: ZenohRPC, host_id: str, timeout: float) -> HostDescriptor:
+    """The Host's descriptor, or a stand-in saying it is live but did not answer."""
+    from dimos.hosted.client import get_host_descriptor
+
+    try:
+        return get_host_descriptor(rpc, host_id, timeout)
+    except Exception:
+        return HostDescriptor(host_id, "", host_id[:12], {}, {}, "unresponsive", ())
+
+
+def probe_all(
+    groups: Iterable[str | Sequence[str]], timeout: float = DEFAULT_TIMEOUT
+) -> list[Probe]:
+    """Probe groups side by side; within a group, endpoints in order until one answers."""
+    results: list[Probe] = []
+
+    def first(group: Sequence[str]) -> None:
+        for endpoint in group:
+            if (found := probe(endpoint, timeout)) is not None:
+                results.append(found)
+                return
+
     threads = [
-        threading.Thread(target=lambda e=e: results.append(probe(e, timeout)), daemon=True)
-        for e in endpoints
+        threading.Thread(target=first, args=((g,) if isinstance(g, str) else g,), daemon=True)
+        for g in groups
     ]
     for t in threads:
         t.start()
     for t in threads:
-        t.join(timeout * 4 + 5)
-    return [p for p in results if p is not None]
+        t.join(timeout * 8 + 5)
+    return results
 
 
 def merge(probes: Iterable[Probe]) -> list[tuple[HostDescriptor, tuple[str, ...]]]:
@@ -174,7 +239,8 @@ def merge(probes: Iterable[Probe]) -> list[tuple[HostDescriptor, tuple[str, ...]
     endpoints: dict[str, list[str]] = {}
     for p in probes:
         for host in p.hosts:
-            hosts.setdefault(host.host_id, host)
+            if hosts.get(host.host_id, host).state == "unresponsive" or host.host_id not in hosts:
+                hosts[host.host_id] = host
             mine = endpoints.setdefault(host.host_id, [])
             if host.router_zid == p.router_zid and p.endpoint not in mine:
                 mine.append(p.endpoint)

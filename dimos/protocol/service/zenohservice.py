@@ -31,7 +31,11 @@ from dimos.core.global_config import TransportBackend, ZenohMode, global_config
 from dimos.protocol.service.spec import Service, SessionConfig
 from dimos.utils.logging_config import setup_logger
 
-zenoh.init_log_from_env_or("warn,zenoh_shm::watchdog::periodic_task=error")
+# The orchestrator warns on every failed dial of a connect endpoint, which a router
+# redialing an absent peer repeats forever; _await_connect reports a missing link once.
+zenoh.init_log_from_env_or(
+    "warn,zenoh_shm::watchdog::periodic_task=error,zenoh::net::runtime::orchestrator=error"
+)
 
 logger = setup_logger()
 

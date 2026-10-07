@@ -29,10 +29,12 @@ def test_candidates_keep_seeds_and_drop_discovered_loopback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        discovery, "scouted_endpoints", lambda *_: ["tcp/127.0.0.1:7447", "tcp/10.0.0.2:7447"]
+        discovery,
+        "scouted_endpoints",
+        lambda *_: [("tcp/127.0.0.1:7447", "tcp/10.0.0.2:7447"), ("tcp/127.0.0.1:7449",)],
     )
     monkeypatch.setattr(discovery, "go2_endpoints", lambda *_: ["tcp/10.0.0.2:7447"])
-    assert candidates(["tcp/127.0.0.1:7448"]) == ["tcp/127.0.0.1:7448", "tcp/10.0.0.2:7447"]
+    assert candidates(["tcp/127.0.0.1:7448"]) == [("tcp/127.0.0.1:7448",), ("tcp/10.0.0.2:7447",)]
 
 
 def test_candidates_survive_a_failing_source(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -41,7 +43,7 @@ def test_candidates_survive_a_failing_source(monkeypatch: pytest.MonkeyPatch) ->
 
     monkeypatch.setattr(discovery, "scouted_endpoints", broken)
     monkeypatch.setattr(discovery, "go2_endpoints", lambda *_: ["tcp/10.0.0.9:7447"])
-    assert candidates() == ["tcp/10.0.0.9:7447"]
+    assert candidates() == [("tcp/10.0.0.9:7447",)]
 
 
 def test_is_loopback() -> None:

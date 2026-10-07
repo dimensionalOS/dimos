@@ -56,7 +56,10 @@ from dimos.utils.logging_config import set_run_log_dir
 if TYPE_CHECKING:
     from dimos.protocol.rpc.zenohrpc import ZenohRPC
 
-HostState = Literal["available", "starting", "running", "stopping", "failed"]
+# unresponsive: live but did not describe itself in time; unreachable: known, not found now.
+HostState = Literal[
+    "available", "starting", "running", "stopping", "failed", "unresponsive", "unreachable"
+]
 
 HOST_PROTOCOL_VERSION = 2
 HOST_LIVELINESS_KEY = "dimos/hosts/{host_id}/live"

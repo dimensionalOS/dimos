@@ -52,6 +52,27 @@ def load_host_id(path: Path = HOST_ID_PATH) -> str:
     return host_id
 
 
+KNOWN_HOSTS_PATH = STATE_DIR / "hosted" / "known_hosts.json"
+# A Host unseen this long drops off `ls`.
+KNOWN_HOST_TTL = 7 * 24 * 3600.0
+
+
+def load_known_hosts(path: Path = KNOWN_HOSTS_PATH) -> dict[str, dict[str, Any]]:
+    """Hosts `ls` has seen: host_id -> name, endpoints, last_seen."""
+    try:
+        known: dict[str, dict[str, Any]] = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return {}
+    cutoff = time.time() - KNOWN_HOST_TTL
+    return {k: v for k, v in known.items() if v.get("last_seen", 0) >= cutoff}
+
+
+def save_known_hosts(known: dict[str, dict[str, Any]], path: Path = KNOWN_HOSTS_PATH) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.with_suffix(".tmp").write_text(json.dumps(known, indent=1, sort_keys=True))
+    path.with_suffix(".tmp").replace(path)
+
+
 def runtime_dir() -> Path:
     """Where the running daemon leaves its endpoint, pid and log; never /tmp."""
     base = os.environ.get("XDG_RUNTIME_DIR")

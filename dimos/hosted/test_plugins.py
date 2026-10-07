@@ -51,8 +51,8 @@ def test_taggers_are_discovered_from_the_package() -> None:
 @pytest.mark.parametrize("node", ["/dev/nvidia0", "/dev/nvgpu", "/dev/nvhost-gpu"])
 def test_gpu_tagger_reads_device_nodes(node: str, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(Path, "exists", lambda self: str(self) == node)
-    monkeypatch.setattr(gpu.shutil, "which", lambda _: None)
-    assert gpu.tags() == {"gpu": ""}
+    monkeypatch.setattr(gpu, "nvml_gpus", lambda: [])
+    assert gpu.tags() == {"gpu": "", "gpu_count": "1"}
     monkeypatch.setattr(Path, "exists", lambda self: False)
     assert gpu.tags() == {}
 

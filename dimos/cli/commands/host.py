@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import ExitStack, contextmanager
+from dataclasses import replace
 from importlib.metadata import version as package_version
 import json
 import threading
@@ -115,27 +116,60 @@ def host_id() -> None:
         _fail(str(exc))
 
 
-def _host_rows(
-    found: Sequence[tuple[HostDescriptor, tuple[str, ...]]], revision: str
-) -> list[tuple[str, ...]]:
-    rows: list[tuple[str, ...]] = []
+STATE_STYLES = {"available": "green", "running": "cyan", "starting": "yellow"}
+
+
+def _quiet_logs() -> None:
+    """Keep zenoh's session chatter out of a command whose stdout is a table."""
+    import logging
+
+    logging.getLogger("dimos/protocol/service/zenohservice.py").setLevel(logging.WARNING)
+
+
+def _tags_text(tags: Any) -> Any:
+    from rich.text import Text
+
+    from dimos.hosted.tags import as_tags
+
+    text = Text()
+    for i, (key, value) in enumerate(sorted(as_tags(tags).items())):
+        if i:
+            text.append(" ")
+        text.append(key, style="yellow")
+        if value:
+            text.append("=", style="dim")
+            text.append(value, style="green")
+    return text
+
+
+def _print_hosts(
+    found: Sequence[tuple[HostDescriptor, tuple[str, ...]]],
+    revision: str,
+    last_seen: dict[str, float] | None = None,
+) -> None:
+    import time
+
+    from rich.console import Console
+    from rich.table import Table
+
+    table = Table(box=None, header_style="bold", pad_edge=False)
+    for header in ("NAME", "TAGS", "ADDRESSES", "REVISION", "STATE", "RUNS"):
+        table.add_column(header, overflow="fold")
     for host, endpoints in found:
-        host_revision = str(host.versions.get("application_revision", "-"))
-        rows.append(
-            (
-                host.name,
-                format_tags(host.tags) or "-",
-                ",".join(endpoints or host.listen) or "-",
-                host_revision[:10],
-                "yes" if host_revision == revision else "NO",
-                host.state,
-                ",".join(host.active_run_ids) or "-",
-            )
+        host_revision = str(host.versions.get("application_revision", ""))
+        rev_style = "green" if host_revision == revision else "red"
+        state: str = host.state
+        if state == "unreachable" and last_seen and host.host_id in last_seen:
+            state += f" ({int(time.time() - last_seen[host.host_id])}s ago)"
+        table.add_row(
+            host.name,
+            _tags_text(host.tags),
+            "\n".join(endpoints or host.listen) or "-",
+            f"[{rev_style}]{host_revision[:10] or '-'}[/]",
+            f"[{STATE_STYLES.get(host.state, 'red')}]{state}[/]",
+            ",".join(host.active_run_ids) or "-",
         )
-    return rows
-
-
-HOST_HEADERS = ("NAME", "TAGS", "ADDRESSES", "REVISION", "MATCH", "STATE", "RUNS")
+    Console().print(table)
 
 
 @host_app.command("ls")
@@ -147,19 +181,23 @@ def ls(
     connect: list[str] = typer.Option([], "--connect", "-c", help="Extra router to probe"),
     scan: bool = typer.Option(True, help="Scout and run the Go2 LAN probe"),
 ) -> None:
-    """List the dimos Hosts reachable from here: local, seeds, scouted and Go2-probed."""
-    from dimos.hosted.daemon import HostConfig, code_revision, split_csv
-    from dimos.hosted.discovery import candidates, merge, probe_all
-    from dimos.hosted.service import local_host
+    """List dimos Hosts: local, seeds, scouted, Go2-probed, and known ones not found now."""
+    import time
 
+    from dimos.hosted.daemon import HostConfig, HostDescriptor, code_revision, split_csv
+    from dimos.hosted.discovery import candidates, merge, probe_all
+    from dimos.hosted.service import load_known_hosts, local_host, save_known_hosts
+
+    _quiet_logs()
     config = HostConfig()
     local = local_host()
+    known = load_known_hosts()
     seeds = [
         *([str(local["client_endpoint"])] if local else []),
         *connect,
         *split_csv(config.connect),
     ]
-    endpoints = candidates(
+    groups = candidates(
         seeds,
         scout=scan,
         go2=scan,
@@ -167,15 +205,40 @@ def ls(
         scout_interface=config.scout_interface,
         timeout=timeout,
     )
-    found = merge(probe_all(endpoints, timeout))
+    tried = {e for g in groups for e in g}
+    groups += [tuple(h["endpoints"]) for h in known.values() if not tried & set(h["endpoints"])]
+    found = merge(probe_all([g for g in groups if g], timeout))
+
+    now = time.time()
+    seen = {h.host_id for h, _ in found}
+    for host, endpoints in found:
+        old = known.get(host.host_id, {})
+        known[host.host_id] = {
+            "name": old.get("name", host.name) if host.state == "unresponsive" else host.name,
+            "endpoints": list(endpoints) or old.get("endpoints", []),
+            "last_seen": now,
+        }
+    found = [
+        (replace(h, name=known[h.host_id]["name"]), e) if h.state == "unresponsive" else (h, e)
+        for h, e in found
+    ] + [
+        (
+            HostDescriptor(host_id, "", info["name"], {}, {}, "unreachable", ()),
+            tuple(info["endpoints"]),
+        )
+        for host_id, info in known.items()
+        if host_id not in seen
+    ]
+    save_known_hosts(known)
+    last_seen = {host_id: info["last_seen"] for host_id, info in known.items()}
     if json_output:
         output = [{**_descriptor_dict(h), "endpoints": list(e)} for h, e in found]
         typer.echo(json.dumps(output, indent=2, sort_keys=True))
         return
     if not found:
-        typer.echo(f"No dimos Hosts answered (tried {len(endpoints)} endpoint(s))")
+        typer.echo(f"No dimos Hosts answered (tried {len(groups)} router(s))")
         return
-    typer.echo(_format_table(HOST_HEADERS, _host_rows(found, code_revision())))
+    _print_hosts(found, code_revision(), last_seen)
 
 
 host_app.command("list", hidden=True)(ls)
@@ -194,6 +257,7 @@ def describe(
     connect: list[str] = ConnectOption,
 ) -> None:
     """Describe one online Host by ID or unique exact name."""
+    _quiet_logs()
     from dimos.hosted.client import discover_host_ids, get_host_descriptor
 
     try:
@@ -234,6 +298,7 @@ def describe(
 @host_app.command()
 def doctor(fix: bool = typer.Option(False, "--fix", help="Fix failing checks that can be")) -> None:
     """Check this machine's Host setup, one line per check."""
+    _quiet_logs()
     import sys
 
     from dimos.hosted.doctor import run as run_doctors
@@ -493,6 +558,7 @@ def status() -> None:
     from dimos.hosted.daemon import code_revision
     from dimos.hosted.discovery import merge, probe
 
+    _quiet_logs()
     typer.echo(service.status())
     local = service.local_host()
     if local is None:
@@ -500,4 +566,4 @@ def status() -> None:
     result = probe(str(local["client_endpoint"]), DEFAULT_DISCOVERY_TIMEOUT)
     found = [row for row in merge([result] if result else []) if row[0].host_id == local["host_id"]]
     if found:
-        typer.echo(_format_table(HOST_HEADERS, _host_rows(found, code_revision())))
+        _print_hosts(found, code_revision())
