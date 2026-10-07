@@ -43,6 +43,7 @@ def test_config_dict_is_the_wire_config() -> None:
     assert set(wire) == _wire_fields()
     # Nones cross as nulls, never as missing keys.
     assert wire["host_ip"] is None
+    assert wire["lidar_ip"] is None
     assert wire["pcap"] is None
     assert wire["replay_rate"] is None
     assert wire["multicast_ip"] is None
@@ -71,7 +72,13 @@ def test_pcap_mode_skips_host_ip_resolution(monkeypatch: pytest.MonkeyPatch) -> 
         lambda lidar_ip, host_ip, label: "10.0.0.1",
     )
     assert _resolved_host_ip(Mid360Config(pcap="capture.pcap", host_ip=None)) is None
-    assert _resolved_host_ip(Mid360Config(host_ip=None)) == "10.0.0.1"
+    assert _resolved_host_ip(Mid360Config(host_ip=None, lidar_ip="10.0.0.2")) == "10.0.0.1"
+
+
+@pytest.mark.parametrize("lidar_ip", [None, ""])
+def test_live_mode_requires_lidar_ip(lidar_ip: str | None) -> None:
+    with pytest.raises(RuntimeError, match="MID360__LIDAR_IP"):
+        _resolved_host_ip(Mid360Config(lidar_ip=lidar_ip))
 
 
 def test_ports_match_registry() -> None:

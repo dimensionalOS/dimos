@@ -18,14 +18,20 @@ This module provides a shared ThreadPoolExecutor exposed through a
 ReactiveX scheduler, ensuring consistent thread management across the application.
 """
 
+from collections.abc import Callable
+from concurrent.futures import Future
 import multiprocessing
 import os
+from threading import Thread
+from typing import TypeVar
 
 from reactivex.scheduler import ThreadPoolScheduler
 
 from .logging_config import setup_logger
 
 logger = setup_logger()
+
+T = TypeVar("T")
 
 
 def get_max_workers() -> int:
@@ -72,6 +78,21 @@ def make_single_thread_scheduler() -> ThreadPoolScheduler:
         ThreadPoolScheduler: A scheduler instance with a single worker thread.
     """
     return ThreadPoolScheduler(max_workers=1)
+
+
+def run_in_thread(fn: Callable[[], T], name: str) -> Future[T]:
+    """Run fn on a daemon thread; the Future holds its result or exception."""
+    future: Future[T] = Future()
+
+    def run() -> None:
+        try:
+            future.set_result(fn())
+        except BaseException as e:
+            logger.exception("Background task failed", task=name)
+            future.set_exception(e)
+
+    Thread(target=run, name=name, daemon=True).start()
+    return future
 
 
 # Example usage:

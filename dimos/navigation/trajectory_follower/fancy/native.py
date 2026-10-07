@@ -44,7 +44,7 @@ def _default(field: str) -> Any:
 
 
 class TrajectoryFollowerNativeConfig(NativeModuleConfig):
-    cwd: str | None = "rust"
+    source_dir: str | None = "dimos/navigation/trajectory_follower/fancy/rust"
     executable: str = "target/release/trajectory_follower"
     build_command: str | None = "cargo build --release --features module"
     stdin_config: bool = True
