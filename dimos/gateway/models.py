@@ -109,6 +109,35 @@ class Paths(ApiModel):
     server: ServerProgram = Field(description="What this gateway runs")
 
 
+class PythonCommand(ApiModel):
+    """The python that runs dimos, for an agent to use dimos's python API."""
+
+    python: str = Field(
+        description="Absolute path of the interpreter dimos runs with (not symlink-resolved: a venv's python)",
+        examples=["/home/me/dimos/.venv/bin/python"],
+    )
+    command: list[str] = Field(
+        description="The argv to start it, before your own arguments",
+        examples=[["/home/me/dimos/.venv/bin/python"]],
+    )
+    dimosDir: str = Field(
+        description="The checkout it imports dimos from", examples=["/home/me/dimos"]
+    )
+    version: str = Field(description="Its python version", examples=["3.12.11"])
+    dimosVersion: str | None = Field(
+        description="The checkout's pyproject version (null: none found)", examples=["0.0.14"]
+    )
+    env: dict[str, str] = Field(
+        description="Environment variables to set for `import dimos` to find the checkout; usually empty (the "
+        "checkout is installed in its venv), else `PYTHONPATH`",
+        examples=[{}],
+    )
+    example: str = Field(
+        description="A shell command that runs it, with `env`",
+        examples=["/home/me/dimos/.venv/bin/python -c 'import dimos; print(dimos.__file__)'"],
+    )
+
+
 class ServerProgram(ApiModel):
     exe: str | None = Field(
         description="The program this gateway runs (for this gateway, its python)",

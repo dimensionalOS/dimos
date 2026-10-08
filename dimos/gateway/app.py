@@ -53,6 +53,7 @@ from dimos.gateway import (
     logs,
     models,
     overrides as launch_overrides,
+    python_env,
     runs,
     skills_routes,
 )
@@ -308,6 +309,27 @@ def create_app(state: ServerState, background: bool = True) -> FastAPI:
                 "zenohNamespace": s.zenoh_namespace,
             },
         }
+
+    @app.get(
+        "/dimos/python",
+        response_model=models.PythonCommand,
+        **route_doc(
+            "server",
+            "The python dimos runs with, for an agent to run scripts with dimos's python API",
+            "The interpreter's absolute path (the gateway's own python when it is the checkout's venv, else the "
+            "checkout's `.venv/bin/python`, else the gateway's), checked once by running `import dimos` in it from "
+            "another folder, then cached. `env` is what to set for that import to find the checkout (empty when it "
+            "is installed there, else `PYTHONPATH`). 500 when no python imports the checkout's dimos. No side "
+            "effects.",
+            agent=True,
+            answer="`{ python, command, dimosDir, version, dimosVersion, env, example }`",
+        ),
+    )
+    async def python_command() -> dict[str, Any]:
+        try:
+            return await asyncio.to_thread(python_env.python_command, s.dimos_dir)
+        except python_env.NoPythonError as error:
+            raise ApiError(500, str(error))
 
     @app.post(
         "/dimos/server/stop",

@@ -3413,6 +3413,94 @@
         "title": "Port",
         "type": "object"
       },
+      "PythonCommand": {
+        "additionalProperties": true,
+        "description": "The python that runs dimos, for an agent to use dimos's python API.",
+        "properties": {
+          "command": {
+            "description": "The argv to start it, before your own arguments",
+            "examples": [
+              [
+                "/home/me/dimos/.venv/bin/python"
+              ]
+            ],
+            "items": {
+              "type": "string"
+            },
+            "title": "Command",
+            "type": "array"
+          },
+          "dimosDir": {
+            "description": "The checkout it imports dimos from",
+            "examples": [
+              "/home/me/dimos"
+            ],
+            "title": "Dimosdir",
+            "type": "string"
+          },
+          "dimosVersion": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The checkout's pyproject version (null: none found)",
+            "examples": [
+              "0.0.14"
+            ],
+            "title": "Dimosversion"
+          },
+          "env": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Environment variables to set for `import dimos` to find the checkout; usually empty (the checkout is installed in its venv), else `PYTHONPATH`",
+            "examples": [
+              {}
+            ],
+            "title": "Env",
+            "type": "object"
+          },
+          "example": {
+            "description": "A shell command that runs it, with `env`",
+            "examples": [
+              "/home/me/dimos/.venv/bin/python -c 'import dimos; print(dimos.__file__)'"
+            ],
+            "title": "Example",
+            "type": "string"
+          },
+          "python": {
+            "description": "Absolute path of the interpreter dimos runs with (not symlink-resolved: a venv's python)",
+            "examples": [
+              "/home/me/dimos/.venv/bin/python"
+            ],
+            "title": "Python",
+            "type": "string"
+          },
+          "version": {
+            "description": "Its python version",
+            "examples": [
+              "3.12.11"
+            ],
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "python",
+          "command",
+          "dimosDir",
+          "version",
+          "dimosVersion",
+          "env",
+          "example"
+        ],
+        "title": "PythonCommand",
+        "type": "object"
+      },
       "RankedModule": {
         "additionalProperties": true,
         "properties": {
@@ -5354,7 +5442,7 @@
   "info": {
     "description": "The dimos gateway's HTTP API: blueprints, global config, runs and their logs, events, Dimensional cloud uploads,\ndiscovery (blueprints, modules, message types), docs, extras and jobs.\n\ndimOS Desktop starts the gateway (`python -m dimos.gateway`, on a unix socket) and forwards `/dimos/...` to it unchanged.\nEvery answer is JSON unless the operation says otherwise; every error is `{\"error\": \"<message>\"}` (ErrorResponse).\nState is HTTP; changes are events, published on zenoh at `<ns>/dimos/events/<type>` (the `events` tag).\n\nExtensions: `x-family: dimos` on every operation; `x-agent: true` marks what Desktop's agent finds through\nsearch_endpoints; `x-mcp-tool` names an MCP tool that does the same; `x-zenoh-key` on an event schema is its key.\n",
     "title": "dimos gateway",
-    "version": "1.14.1"
+    "version": "1.15.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -6941,6 +7029,40 @@
           "server"
         ],
         "x-agent": false,
+        "x-family": "dimos"
+      }
+    },
+    "/dimos/python": {
+      "get": {
+        "description": "The interpreter's absolute path (the gateway's own python when it is the checkout's venv, else the checkout's `.venv/bin/python`, else the gateway's), checked once by running `import dimos` in it from another folder, then cached. `env` is what to set for that import to find the checkout (empty when it is installed there, else `PYTHONPATH`). 500 when no python imports the checkout's dimos. No side effects.",
+        "operationId": "get_dimos_python",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PythonCommand"
+                }
+              }
+            },
+            "description": "`{ python, command, dimosDir, version, dimosVersion, env, example }`"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The gateway couldn't do it: a child process, launch, stop or cloud call failed (the message says why)"
+          }
+        },
+        "summary": "The python dimos runs with, for an agent to run scripts with dimos's python API",
+        "tags": [
+          "server"
+        ],
+        "x-agent": true,
         "x-family": "dimos"
       }
     },

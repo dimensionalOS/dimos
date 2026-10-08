@@ -120,6 +120,19 @@ curl -s -X POST localhost:5555/dimos/skills/call -H 'content-type: application/j
 for an agent: they don't change with what runs, so a session that connected before the blueprint started still reaches
 its skills. dimcode's `dimcode desktop --mcp-url <Desktop>/mcp` connects it too, as the MCP endpoint `skills`.
 
+## Dimos's python, for an agent
+
+`GET /dimos/python` says which python dimos runs with, so an agent (dimcode) can use dimos's python API: `python`
+(absolute, usually `<checkout>/.venv/bin/python`), `command` (the argv to start it), `env` (what to set for `import
+dimos` to find the checkout; usually empty, else `PYTHONPATH`), `dimosDir`, `version`, `dimosVersion` and a runnable
+`example`. The gateway checks it once, by running `import dimos` in it from another folder, and caches the answer.
+Run one-liners as `<python> -c '...'` and scripts as `<python> script.py`, with `env` set:
+
+```sh
+py=$(curl -s localhost:5557/dimos/python | jq -r .python)
+"$py" -c 'import dimos; print(dimos.__file__)'
+```
+
 ## The blueprint view
 
 `GET /dimos/blueprint_view?name=<blueprint>` is dimOS Desktop's whole blueprint Details modal: its top bar (phase,
