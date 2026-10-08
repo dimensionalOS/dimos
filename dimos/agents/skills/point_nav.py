@@ -17,12 +17,11 @@ from collections.abc import AsyncIterator
 import math
 
 from dimos_lcm.actionlib_msgs import GoalStatus
-from dimos_lcm.std_msgs import Bool
 
 from dimos.agents.annotation import skill
 from dimos.agents.capabilities import CAP_MOVEMENT
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.stream import In, Out
+from dimos.core.stream import In
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation.spec import NavigationInterfaceSpec, goal_id
@@ -50,8 +49,6 @@ class PointNavSkillContainer(Module):
 
     tf: In[TFMessage]
     nav_status: In[GoalStatus]
-
-    stop_movement: Out[Bool]
 
     _timeout: asyncio.TimerHandle | None = None
     """Set while a go_to is under way; fires when it runs out of time."""
@@ -139,9 +136,6 @@ class PointNavSkillContainer(Module):
         if self._blocked is not None:
             self._blocked.cancel()
             self._blocked = None
-        if cancel:
-            # Tell the BasicPathFollower to stop
-            self.stop_movement.publish(Bool(True))
         pose = self._pose()
         if pose is None:
             where = "robot position unknown"
