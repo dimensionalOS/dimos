@@ -47,6 +47,7 @@ from dimos.cloud.constants import (
     TIMELAPSE_MAX_S,
     WORLD_FRAMES,
 )
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -85,56 +86,63 @@ def _pack(pc: PointCloud2, origin: np.ndarray) -> str:
 
 
 def build(store: Store) -> dict[str, Any] | None:
-    """`dimos-spatial-preview-v2`, or None for a recording without LiDAR."""
-    lidar, camera = _stream(store, PointCloud2), _stream(store, Image)
-    if lidar is None:
-        return None
-    shown = _evenly(lidar.count(), PREVIEW_FRAMES)
-    merged = shown | _evenly(lidar.count(), PREVIEW_MAP_SCANS)
-    poses, scans, world, last = [], [], None, 0.0
-    for i, obs in enumerate(lidar):  # payloads are lazy: only merged scans are decoded
-        last = obs.ts
-        if obs.pose is not None:
-            poses.append((obs.ts, obs.pose))
-        if i not in merged:
-            continue
-        pc = obs.data
-        if pc.frame_id not in WORLD_FRAMES:  # sensor frame: place it with its own pose
-            if obs.pose is None:
+    """`dimos-spatial-preview-v2`, or None for a recording without LiDAR, camera or poses."""
+    lidar, camera, odom = _stream(store, PointCloud2), _stream(store, Image), _stream(store, Pose)
+    poses, scans, world, ends = [], [], None, []
+    if lidar is not None:
+        shown = _evenly(lidar.count(), PREVIEW_FRAMES)
+        merged = shown | _evenly(lidar.count(), PREVIEW_MAP_SCANS)
+        for i, obs in enumerate(lidar):  # payloads are lazy: only merged scans are decoded
+            ends.append(obs.ts)
+            if obs.pose is not None:
+                poses.append((obs.ts, obs.pose))
+            if i not in merged:
                 continue
-            pc = pc.transform(Transform.from_pose(WORLD_FRAMES[0], obs.pose))
-        pc = pc.voxel_downsample(PREVIEW_MAP_VOXEL)
-        if i in shown:
-            scans.append((obs.ts, pc))
-        world = pc if world is None else (world + pc).voxel_downsample(PREVIEW_MAP_VOXEL)
-    if world is None:
-        return None
-
-    z = float(np.median([p.position.z for _, p in poses])) if poses else 0.0
-    lo, hi = z + PREVIEW_BAND[0], z + PREVIEW_BAND[1]
-    world = _fit(world.filter_by_height(lo, hi), PREVIEW_MAP_POINTS)
-    scans = [(t, _fit(pc.filter_by_height(lo, hi), PREVIEW_SCAN_POINTS)) for t, pc in scans]
-
+            pc = obs.data
+            if pc.frame_id not in WORLD_FRAMES:  # sensor frame: place it with its own pose
+                if obs.pose is None:
+                    continue
+                pc = pc.transform(Transform.from_pose(WORLD_FRAMES[0], obs.pose))
+            pc = pc.voxel_downsample(PREVIEW_MAP_VOXEL)
+            if i in shown:
+                scans.append((obs.ts, pc))
+            world = pc if world is None else (world + pc).voxel_downsample(PREVIEW_MAP_VOXEL)
+        ends = ends[:1] + ends[-1:]
+    if not poses and odom is not None:  # no LiDAR (or unposed LiDAR): the path from odometry
+        poses = [(o.ts, o.data) for o in odom]
     shots = []
     if camera is not None:
         picked = _evenly(camera.count(), PREVIEW_FRAMES)
         shots = [o for i, o in enumerate(camera) if i in picked]
-    t0 = min([lidar.first().ts] + [o.ts for o in shots[:1]])
-    t1 = max([last] + [o.ts for o in shots[-1:]])
+    ends += [t for t, _ in poses[:1] + poses[-1:]] + [o.ts for o in shots[:1] + shots[-1:]]
+    if not ends:
+        return None
+
+    z = float(np.median([p.position.z for _, p in poses])) if poses else 0.0
+    lo, hi = z + PREVIEW_BAND[0], z + PREVIEW_BAND[1]
+    if world is not None:
+        world = _fit(world.filter_by_height(lo, hi), PREVIEW_MAP_POINTS)
+    scans = [(t, _fit(pc.filter_by_height(lo, hi), PREVIEW_SCAN_POINTS)) for t, pc in scans]
+
+    t0, t1 = min(ends), max(ends)
     traj = [[t - t0, p.position.x, p.position.y, p.position.z, p.yaw] for t, p in poses]
     traj = [traj[i] for i in sorted(_evenly(len(traj), 3000))]
-    pts = world.points_f32().astype(np.float64)
+    pts = world.points_f32().astype(np.float64) if world is not None else np.zeros((0, 3))
+    if not len(pts):  # no map: frame the path
+        pts = np.array([r[1:4] for r in traj] or [[0.0, 0.0, z]])
     origin = np.round(pts.mean(axis=0), 2)
-    streams = {"lidar": lidar, **({"camera": camera} if camera is not None else {})}
+    streams = {"lidar": lidar, "camera": camera, "odom": odom if lidar is None else None}
     return {
         "format": PREVIEW_FORMAT,
         "duration_s": round(t1 - t0, 3),
         "origin": origin.tolist(),
         "scale": PREVIEW_SCALE,
         "bounds": [np.round(pts.min(axis=0), 2).tolist(), np.round(pts.max(axis=0), 2).tolist()],
-        "streams": {k: {"name": s.name, "count": s.count()} for k, s in streams.items()},
+        "streams": {
+            k: {"name": s.name, "count": s.count()} for k, s in streams.items() if s is not None
+        },
         "trajectory": np.round(traj, 3).tolist(),
-        "map": _pack(world, origin),
+        "map": _pack(world, origin) if world is not None else "",
         "scans": [{"t": round(t - t0, 3), "points": _pack(pc, origin)} for t, pc in scans],
         "camera": [
             {
