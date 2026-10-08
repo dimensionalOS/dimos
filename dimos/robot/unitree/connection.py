@@ -31,6 +31,7 @@ from unitree_webrtc_connect.constants import (
     SPORT_CMD,
     VUI_COLOR,
 )
+from unitree_webrtc_connect.unitree_auth import AesKeyRequiredError
 from unitree_webrtc_connect.webrtc_driver import (
     UnitreeWebRTCConnection as LegionConnection,
     WebRTCConnectionMethod,
@@ -96,6 +97,15 @@ class SerializableVideoFrame:
         return self.data
 
 
+_AES_KEY_HELP = """\
+Robot at {ip} runs firmware that needs its per-device AES-128 key (Go2 >= 1.1.15, G1 >= 1.5.1).
+Fetch the key from the Unitree account the robot is bound to (installed with dimos[unitree]):
+    unitree-fetch-aes-key --email <unitree account email> --sn <robot serial>
+Then pass it:
+    dimos --unitree-aes-128-key <32 hex chars> run unitree-go2
+or set unitree_aes_128_key in GlobalConfig."""
+
+
 class UnitreeWebRTCConnection(Resource):
     _SPORT_API_ID_RAGEMODE: int = 2059
 
@@ -141,7 +151,7 @@ class UnitreeWebRTCConnection(Resource):
         # Blocks until connected; re-raises connect failures (e.g. missing AES key).
         try:
             asyncio.run_coroutine_threadsafe(async_connect(), self.loop).result()
-        except Exception:
+        except Exception as e:
             # Best-effort disconnect — don't leave a half-open peer on the dog.
             try:
                 asyncio.run_coroutine_threadsafe(self.conn.disconnect(), self.loop).result(
@@ -151,6 +161,8 @@ class UnitreeWebRTCConnection(Resource):
                 logger.warning("best-effort disconnect on connect failure failed", exc_info=True)
             self.loop.call_soon_threadsafe(self.loop.stop)
             self.thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+            if isinstance(e, AesKeyRequiredError):
+                raise RuntimeError(_AES_KEY_HELP.format(ip=self.ip)) from e
             raise
 
     def start(self) -> None:
