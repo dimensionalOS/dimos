@@ -75,14 +75,8 @@ _FEEDBACK_DISCOVERY_TIMEOUT_S = 5.0
 R1PRO_UPPER_BODY_JOINTS: list[str] = [coordinator_name(j) for j in UPPER_BODY_JOINTS]
 assert len(R1PRO_UPPER_BODY_JOINTS) == _NUM_MOTORS
 
-# JPEG color streams: stream name → ROS topic.
-_HEAD_COLOR_CAMERAS: dict[str, str] = {
-    "head_left_color": "/hdas/camera_head/left_raw/image_raw_color/compressed",
-    "head_right_color": "/hdas/camera_head/right_raw/image_raw_color/compressed",
-}
-
-# Color streams gated by config.enable_wrist_color.
-_WRIST_COLOR_CAMERAS: dict[str, str] = {
+# JPEG color streams gated by config.enable_wrist_color: stream name → ROS topic.
+_COLOR_CAMERAS: dict[str, str] = {
     "wrist_left_color": "/hdas/camera_wrist_left/color/image_raw/compressed",
     "wrist_right_color": "/hdas/camera_wrist_right/color/image_raw/compressed",
 }
@@ -177,8 +171,6 @@ class R1ProConnection(Module):
     tf: Out[TFMessage]
 
     # Perception.
-    head_left_color: Out[CompressedImage]
-    head_right_color: Out[CompressedImage]
     head_depth: Out[Image]
     lidar: Out[PointCloud2]
     wrist_left_color: Out[CompressedImage]
@@ -408,11 +400,9 @@ class R1ProConnection(Module):
                 Thread(target=worker, args=(stream, q, *args), daemon=True, name=f"r1pro-{stream}")
             )
 
-        cameras = dict(_HEAD_COLOR_CAMERAS)
         if self.config.enable_wrist_color:
-            cameras.update(_WRIST_COLOR_CAMERAS)
-        for stream, topic in cameras.items():
-            add_stream(stream, topic, RosCompressedImage, self._compressed_image_loop)
+            for stream, topic in _COLOR_CAMERAS.items():
+                add_stream(stream, topic, RosCompressedImage, self._compressed_image_loop)
 
         add_stream("head_depth", _HEAD_DEPTH_TOPIC, RosImage, self._convert_loop, Image)
         add_stream("lidar", _LIDAR_TOPIC, RosPointCloud2, self._convert_loop, PointCloud2)
