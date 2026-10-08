@@ -31,12 +31,13 @@ from dimos.navigation.global_planner.mls_planner.viz import (
 from dimos.navigation.global_planner.viz import HEIGHT_RANGE
 from dimos.protocol.service.zenohservice import ZenohConfig
 from dimos.robot.unitree.go2.blueprints.navigation.go2_nav import (
+    WALL_CLEARANCE_M,
     _go2_nav,
     go2_nav_overrides,
     go2_nav_static,
 )
 from dimos.robot.unitree.go2.dds.module import GO2DDS
-from dimos.robot.unitree.go2.nav_3d_config import relocalization, voxel_size, wall_clearance_m
+from dimos.robot.unitree.go2.nav_3d_config import relocalization, voxel_size
 from dimos.visualization.vis_module import vis_module
 
 # GO2DDS doubles as a zenoh router
@@ -176,7 +177,7 @@ go2_dds_nav_viewer = autoconnect(
                     SURFACE_MAP_ENTITY: partial(
                         render_surface_region,
                         voxel_size=voxel_size,
-                        wall_clearance_m=wall_clearance_m,
+                        wall_clearance_m=WALL_CLEARANCE_M,
                         clearance_clamp_m=1.0,
                         z_band=SURFACE_Z_BAND,
                     ),

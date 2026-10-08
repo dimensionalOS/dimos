@@ -20,10 +20,15 @@ from dimos.core.coordination.blueprints import Blueprint, BlueprintAtom
 from dimos.core.module import ModuleBase
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.robot.unitree.go2.blueprints.basic.go2_sim import go2_sim
-from dimos.robot.unitree.go2.blueprints.navigation.go2_nav import _go2_nav
+from dimos.robot.unitree.go2.blueprints.navigation.go2_nav import (
+    _go2_nav,
+    go2_nav_overrides,
+    go2_nav_static,
+)
 from dimos.robot.unitree.go2.blueprints.navigation.go2_sim_nav import go2_sim_nav
 from dimos.robot.unitree.go2.dds.blueprints import go2_dds_nav
 from dimos.spec.utils import Spec
+from dimos.visualization.rerun.bridge import RerunBridgeModule
 
 
 def _atoms(blueprint: Blueprint) -> dict[str, BlueprintAtom]:
@@ -45,6 +50,12 @@ def test_sim_composes_the_navigation_the_robot_runs() -> None:
 
 def test_one_movement_manager() -> None:
     assert [a.module for a in go2_sim_nav.active_blueprints].count(MovementManager) == 1
+
+
+def test_viewer_gets_the_navigation_config() -> None:
+    (bridge,) = (a for a in go2_sim_nav.active_blueprints if a.module is RerunBridgeModule)
+    assert go2_nav_overrides().keys() <= bridge.kwargs["visual_override"].keys()
+    assert go2_nav_static().keys() <= bridge.kwargs["static"].keys()
 
 
 @pytest.mark.parametrize("blueprint", [go2_sim, go2_sim_nav])

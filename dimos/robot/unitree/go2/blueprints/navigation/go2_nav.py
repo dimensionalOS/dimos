@@ -29,7 +29,7 @@ from dimos.navigation.local_planner.viz import motion_visual_override
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.trajectory_follower.fancy.native import TrajectoryFollowerNative
 from dimos.robot.unitree.go2.constants import ROBOT_HEIGHT, ROBOT_LENGTH, ROBOT_WIDTH
-from dimos.robot.unitree.go2.nav_3d_config import ray_tracing_config, voxel_size, wall_clearance_m
+from dimos.robot.unitree.go2.nav_3d_config import ray_tracing_config, voxel_size
 
 if TYPE_CHECKING:
     from rerun._baseclasses import Archetype
@@ -40,13 +40,14 @@ if TYPE_CHECKING:
 # edges. Drives both its publishing and the rerun overrides.
 planner_viz_hz = 2.0
 BODY_DILATE_M = -0.03
+WALL_CLEARANCE_M = 0.05
 
 _mls_planner = MLSPlannerNative.blueprint(
     world_frame="odom",
     voxel_size=voxel_size,
     robot_height=0.4,
     surface_closing_radius=0.4,
-    wall_clearance_m=0.05,
+    wall_clearance_m=WALL_CLEARANCE_M,
     wall_buffer_m=0.2,
     wall_buffer_weight=20.0,
     step_threshold_m=0.16,
@@ -72,12 +73,12 @@ _go2_nav = autoconnect(
 
 def go2_nav_static() -> dict[str, Callable[[ModuleType], list[Archetype]]]:
     """Bridge static entities for navigation: the body box and clearance cylinder on base_link."""
-    return nav_static(ROBOT_LENGTH, ROBOT_WIDTH, ROBOT_HEIGHT, wall_clearance_m)
+    return nav_static(ROBOT_LENGTH, ROBOT_WIDTH, ROBOT_HEIGHT, WALL_CLEARANCE_M)
 
 
 def go2_nav_overrides() -> dict[str, VisualOverride]:
     """Bridge overrides for the navigation maps, paths, goal and planner debug entities."""
     return {
-        **nav_visual_override(planner_viz_hz, voxel_size, wall_clearance_m),
+        **nav_visual_override(planner_viz_hz, voxel_size, WALL_CLEARANCE_M),
         **motion_visual_override(body_dilate_m=BODY_DILATE_M),
     }
