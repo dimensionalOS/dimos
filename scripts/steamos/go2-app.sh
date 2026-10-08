@@ -76,6 +76,8 @@ user_pref("termsofuse.acceptedVersion", 4);
 user_pref("termsofuse.acceptedDate", "1759900000000");
 user_pref("browser.startup.homepage_override.mstone", "ignore");
 user_pref("browser.sessionstore.resume_from_crash", false);
+user_pref("browser.startup.page", 0);
+user_pref("browser.sessionstore.resume_from_crash", false);
 user_pref("browser.tabs.warnOnClose", false);
 user_pref("network.captive-portal-service.enabled", false);
 user_pref("network.connectivity-service.enabled", false);
