@@ -22,14 +22,9 @@ from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_joystick_record import
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 
 
-def test_nothing_in_the_blueprint_grows_with_distance() -> None:
+def test_only_raw_inputs_and_display() -> None:
     modules = sorted(a.module.__name__ for a in unitree_go2_joystick_record.active_blueprints)
-    assert modules == [
-        "GO2Connection",
-        "MovementManager",
-        "RerunBridgeModule",
-        "RerunWebSocketServer",
-    ]
+    assert modules == ["GO2Connection", "KeyboardTeleop", "RerunBridgeModule"]
 
 
 def test_viewer_uses_the_record_window_with_a_fixed_memory_limit() -> None:
@@ -46,7 +41,6 @@ def test_the_window_has_a_plot_per_command_stream() -> None:
     assert [(v.name, str(v.origin)) for v in column.contents] == [
         ("Camera", "world/color_image"),
         ("odom", "plots/odom"),
-        ("tele_cmd_vel", "plots/tele_cmd_vel"),
         ("cmd_vel", "plots/cmd_vel"),
     ]
 
