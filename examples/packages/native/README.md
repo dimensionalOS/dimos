@@ -58,3 +58,7 @@ Stop the foreground run before uninstalling with
 `uv pip uninstall --python "$VIRTUAL_ENV/bin/python" dimos-external-native`.
 This removes the example's executable, resource and entry point; it leaves DimOS,
 the virtual environment, your report and normal build caches in place.
+
+For installation without compilation and per-module builds on first use, see the
+[source-only Rust package](../lazy-native/README.md). This prebuilt example keeps
+its original platform-wheel behavior.

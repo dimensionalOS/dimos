@@ -59,6 +59,7 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
+from dimos.core.native_package import prepare_package_source
 from dimos.core.transport_factory import session_config
 from dimos.protocol.service.lcmservice import LCMConfig
 from dimos.protocol.service.spec import SessionConfig
@@ -133,6 +134,8 @@ class NativeModuleConfig(ModuleConfig):
 
     executable: str
     source_dir: str | None = None
+    # When set, source_dir belongs to this package and is built in a writable cache.
+    source_package: str | None = None
     build_command: str | None = None
     extra_args: list[str] = Field(default_factory=list)
     extra_env: dict[str, str] = Field(default_factory=dict)
@@ -159,16 +162,25 @@ class NativeModuleConfig(ModuleConfig):
 
     @model_validator(mode="after")
     def _validate_source_paths(self) -> NativeModuleConfig:
+        if self.source_package is not None:
+            if not all(part.isidentifier() for part in self.source_package.split(".")):
+                raise ValueError("source_package must be a Python import package name")
+            if self.source_dir is None or not self.build_command:
+                raise ValueError("source_package requires source_dir and build_command")
+            if ".." in Path(self.executable).parts:
+                raise ValueError("Package executable must stay inside its cached source directory")
         if self.build_command and self.source_dir is None:
             raise ValueError("Source builds require source_dir relative to the project checkout")
         if self.source_dir is not None:
             source = Path(self.source_dir)
             if not self.source_dir or source.is_absolute() or ".." in source.parts:
-                raise ValueError("source_dir must stay relative to the project checkout")
+                raise ValueError(
+                    "source_dir must be a non-empty relative directory without parent traversal"
+                )
             if not self.executable or Path(self.executable).is_absolute():
                 raise ValueError(
                     "Source builds require a relative executable; "
-                    "for an external binary set source_dir=None and build_command=None"
+                    "for a prebuilt binary unset source_package, source_dir and build_command"
                 )
             artifact = os.path.normpath(source / self.executable)
             if artifact == ".." or artifact.startswith("../"):
@@ -177,6 +189,8 @@ class NativeModuleConfig(ModuleConfig):
 
     def resolve_paths(self) -> tuple[str | None, str]:
         """Resolve source builds once; external binary paths do not fetch sources."""
+        if self.source_package is not None:
+            raise ValueError("Package source paths are resolved during native preparation")
         if self.source_dir is not None:
             root = get_project_root()
             build_cwd = root / self.source_dir
@@ -284,11 +298,31 @@ class NativeModule(Module):
     def _prepare_native(self, *, force: bool = False) -> None:
         if self._prepared and not force:
             return
+        if self.config.source_package is not None:
+            assert self.config.source_dir is not None
+            assert self.config.build_command is not None
+            self._prepared = False
+            self._cwd, self._executable = prepare_package_source(
+                self.config.source_package,
+                self.config.source_dir,
+                self.config.executable,
+                self.config.build_command,
+                self.config.extra_env,
+                self._build_package_source,
+                rebuild=self.config.auto_build or self.config.g.build_native,
+            )
+            self._prepared = True
+            return
         if not self._executable:
             self._cwd, self._executable = self.config.resolve_paths()
         self._prepared = False
         self._maybe_build()
         self._prepared = True
+
+    def _build_package_source(self, directory: Path, executable: Path) -> None:
+        self._cwd, self._executable = str(directory), str(executable)
+        # A snapshot may include an artifact; an incomplete cache must still build.
+        self._maybe_build(force=True)
 
     def _spawn_env(self) -> dict[str, str]:
         env = {**os.environ, **self.config.extra_env}
@@ -521,7 +555,7 @@ class NativeModule(Module):
             default_log_fn(line, module=self._module_label, pid=pid)
         stream.close()
 
-    def _maybe_build(self) -> None:
+    def _maybe_build(self, *, force: bool = False) -> None:
         exe = Path(self._executable)
 
         if self.config.build_command is None:
@@ -532,7 +566,12 @@ class NativeModule(Module):
                 )
             return
 
-        if exe.exists() and not self.config.auto_build and not self.config.g.build_native:
+        if (
+            exe.exists()
+            and not force
+            and not self.config.auto_build
+            and not self.config.g.build_native
+        ):
             return
 
         logger.info(
