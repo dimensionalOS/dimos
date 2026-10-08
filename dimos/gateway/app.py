@@ -756,7 +756,7 @@ def create_app(state: ServerState, background: bool = True) -> FastAPI:
             agent=True,
             mcp_tool="run_blueprint",
             answer="`Launch`: `{ blueprint, phase, startedAt, pid, output, runId, logDir, error, overrides, steps: [{ "
-            "label, state: done|now|todo|failed, detail }], problems: [{ level, text, fix, line }] }`",
+            "code, state: done|now|todo|failed, data }], problems: [{ level, text, fix, line }] }`",
         ),
     )
     async def launch(request: models.LaunchRequest) -> dict[str, Any]:

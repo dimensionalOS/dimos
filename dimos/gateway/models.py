@@ -611,13 +611,16 @@ class LaunchStep(ApiModel):
     """A startup step, from the `stage` records dimos logs as it starts. The words for it are the client's."""
 
     code: StepCode = Field(
-        description="starting (dimos began), building (the blueprint), starting_modules, then running (in the run "
-        "registry) or stopped",
+        description="starting (dimos began), building (the blueprint), downloading_data (git LFS, only when the "
+        "launch downloads: a replay's recording, the sim's models on first use), starting_modules, then running (in "
+        "the run registry) or stopped",
         examples=["starting_modules"],
     )
     state: Literal["done", "now", "todo", "failed"] = Field(description="How far it got")
     data: dict[str, JsonValue] = Field(
-        description="For starting_modules: `deployed` (modules started so far) and `total` (null until known)",
+        description="For starting_modules: `deployed` (modules started so far) and `total` (null until known). For "
+        "downloading_data: `percent`, `files`, `totalFiles`, `bytes` (so far) and `bytesPerSecond`, each null when "
+        "not known",
         examples=[{"deployed": 3, "total": 7}],
     )
 
@@ -693,7 +696,8 @@ class Launch(ApiModel):
         description="What the launch request itself set, as sent (nulls kept, `replay` added); secrets as •••"
     )
     steps: list[LaunchStep] = Field(
-        description="starting, building, starting_modules, then running or stopped: how far startup got"
+        description="starting, building, downloading_data (only when it downloads), starting_modules, then running "
+        "or stopped: how far startup got"
     )
     problems: list[LaunchProblem] = Field(
         description="What went wrong: the errors of a known kind, else the last three errors"

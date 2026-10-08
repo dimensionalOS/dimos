@@ -77,6 +77,45 @@ def test_steps_follow_the_stages() -> None:
     assert states(steps(START[:2], "failed")) == ["done", "failed", "todo", "todo"]
 
 
+LFS = "Downloading LFS objects:  50% (1/2), 42 MB | 10 MB/s\rDownloading LFS objects:  75% (1/2), 63 MB | 10 MB/s"
+
+
+def test_a_download_in_the_output_is_a_step() -> None:
+    starting = steps(START, "starting", f"some output\n{LFS}")
+    assert [step["code"] for step in starting] == [
+        "starting",
+        "building",
+        "downloading_data",
+        "starting_modules",
+        "running",
+    ]
+    # the download holds up starting the modules
+    assert states(starting) == ["done", "done", "now", "todo", "todo"]
+    assert starting[2]["data"] == {
+        "percent": 75,
+        "files": 1,
+        "totalFiles": 2,
+        "bytes": 63_000_000,
+        "bytesPerSecond": 10_000_000,
+    }
+    finished = f"{LFS}\rDownloading LFS objects: 100% (2/2), 84 MB | 10 MB/s, done.\n"
+    assert states(steps(START, "starting", finished)) == ["done", "done", "done", "now", "todo"]
+    assert states(steps(START, "running", LFS)) == ["done"] * 5
+    assert states(steps(START, "failed", LFS)) == ["done", "done", "failed", "todo", "todo"]
+    assert states(steps(START, "failed", finished)) == ["done", "done", "done", "failed", "todo"]
+    assert [step["code"] for step in steps(START, "starting", "no download")] == [
+        "starting",
+        "building",
+        "starting_modules",
+        "running",
+    ]
+
+
+def test_dimos_prints_its_lfs_progress() -> None:
+    """The download step reads git lfs's progress, which git only prints to a terminal unless forced."""
+    assert "GIT_LFS_FORCE_PROGRESS" in (ROOT / "utils" / "data.py").read_text()
+
+
 def raised(error: BaseException, cause: BaseException | None = None) -> BaseException:
     try:
         try:

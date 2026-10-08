@@ -2440,7 +2440,7 @@
             "type": "string"
           },
           "steps": {
-            "description": "starting, building, starting_modules, then running or stopped: how far startup got",
+            "description": "starting, building, downloading_data (only when it downloads), starting_modules, then running or stopped: how far startup got",
             "items": {
               "$ref": "#/components/schemas/LaunchStep"
             },
@@ -2690,10 +2690,11 @@
         "description": "A startup step, from the `stage` records dimos logs as it starts. The words for it are the client's.",
         "properties": {
           "code": {
-            "description": "starting (dimos began), building (the blueprint), starting_modules, then running (in the run registry) or stopped",
+            "description": "starting (dimos began), building (the blueprint), downloading_data (git LFS, only when the launch downloads: a replay's recording, the sim's models on first use), starting_modules, then running (in the run registry) or stopped",
             "enum": [
               "starting",
               "building",
+              "downloading_data",
               "starting_modules",
               "running",
               "stopped"
@@ -2708,7 +2709,7 @@
             "additionalProperties": {
               "$ref": "#/components/schemas/JsonValue"
             },
-            "description": "For starting_modules: `deployed` (modules started so far) and `total` (null until known)",
+            "description": "For starting_modules: `deployed` (modules started so far) and `total` (null until known). For downloading_data: `percent`, `files`, `totalFiles`, `bytes` (so far) and `bytesPerSecond`, each null when not known",
             "examples": [
               {
                 "deployed": 3,
@@ -7253,7 +7254,7 @@
                 }
               }
             },
-            "description": "`Launch`: `{ blueprint, phase, startedAt, pid, output, runId, logDir, error, overrides, steps: [{ label, state: done|now|todo|failed, detail }], problems: [{ level, text, fix, line }] }`"
+            "description": "`Launch`: `{ blueprint, phase, startedAt, pid, output, runId, logDir, error, overrides, steps: [{ code, state: done|now|todo|failed, data }], problems: [{ level, text, fix, line }] }`"
           },
           "400": {
             "content": {

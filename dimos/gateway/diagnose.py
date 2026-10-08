@@ -19,7 +19,8 @@ dimos, unmodified, logs its startup as `Starting DimOS`, `Building the blueprint
 still logs each one). An exception is logged with its traceback (`exception`, or `traceback_lines` from the
 uncaught-exception hook): its classes and errno are read from that text, by their type names, never the message's
 wording. Refusals dimos only prints (bad arguments, an unknown blueprint, an unmet requirement) have no record: they
-reach the launch as its output's last line. The words (and the fixes) are Desktop's, per code.
+reach the launch as its output's last line. A data download (git LFS, which prints its progress to the output) is
+read from the output too, so no client parses it. The words (and the fixes) are Desktop's, per code.
 """
 
 from __future__ import annotations
@@ -32,7 +33,9 @@ from typing import Any, Literal
 
 import psutil
 
-StepCode = Literal["starting", "building", "starting_modules", "running", "stopped"]
+StepCode = Literal[
+    "starting", "building", "downloading_data", "starting_modules", "running", "stopped"
+]
 StepState = Literal["done", "now", "todo", "failed"]
 ProblemCode = Literal[
     "bad_arguments",
@@ -144,9 +147,10 @@ def stage(record: dict[str, Any]) -> str | None:
     return STAGE_EVENTS.get(str(record["event"]))
 
 
-def steps(records: list[dict[str, Any]], phase: str) -> list[dict[str, Any]]:
-    """starting, building, starting_modules (with how many modules started; dimos doesn't log how many it will
-    start), then running or stopped; each done, now, todo or failed."""
+def steps(records: list[dict[str, Any]], phase: str, output: str = "") -> list[dict[str, Any]]:
+    """starting, building, downloading_data (only when the output shows a download), starting_modules (with how many
+    modules started; dimos doesn't log how many it will start), then running or stopped; each done, now, todo or
+    failed."""
     reached: int | None = None
     deployed, total = 0, None
     for record in records:
@@ -177,7 +181,67 @@ def steps(records: list[dict[str, Any]], phase: str) -> list[dict[str, Any]]:
             "data": {},
         }
     )
+    found_download = download(output, phase)
+    if found_download is not None:
+        # modules fetch their data as they start (a replay's recording, the sim's models), so it holds that step up
+        at = STAGES.index("starting_modules")
+        if found_download["state"] in ("now", "failed"):
+            for step in result[at:]:
+                if step["state"] in ("now", "failed"):
+                    step["state"] = "todo"
+        result.insert(at, found_download)
     return result
+
+
+# git lfs's progress line (dimos sets GIT_LFS_FORCE_PROGRESS): `Downloading LFS objects:  50% (1/2), 42 MB | 10 MB/s`
+LFS_PROGRESS = re.compile(
+    r"Downloading LFS objects:?\s*(?:(\d+)%)?\s*(?:\((\d+)/(\d+)\))?,?\s*"
+    r"(?:([\d.]+)\s*([KMGT]?i?B))?\s*(?:\|\s*([\d.]+)\s*([KMGT]?i?B)/s)?\s*(,\s*done)?"
+)
+UNITS = {
+    "B": 1,
+    "KB": 1e3,
+    "MB": 1e6,
+    "GB": 1e9,
+    "TB": 1e12,
+    "KiB": 2**10,
+    "MiB": 2**20,
+    "GiB": 2**30,
+    "TiB": 2**40,
+}
+
+
+def download(output: str, phase: str) -> dict[str, Any] | None:
+    """The downloading_data step a git LFS pull in the launch's output stands for (its last progress line: `percent`,
+    `files`, `totalFiles`, `bytes`, `bytesPerSecond`, each null when git didn't print it), or None without one."""
+    found = None
+    for line in re.split(r"[\r\n]+", output):
+        if "Downloading LFS objects" in line:
+            found = LFS_PROGRESS.search(ANSI.sub("", line))
+    if found is None:
+        return None
+    percent, files, total_files, size, unit, rate, rate_unit, done = found.groups()
+    finished = percent == "100" or done is not None
+    state: StepState = (
+        "done"
+        if finished or phase in ("running", "stopping", "stopped")
+        else "failed"
+        if phase == "failed"
+        else "now"
+    )
+    return {
+        "code": "downloading_data",
+        "state": state,
+        "data": {
+            "percent": int(percent) if percent else None,
+            "files": int(files) if files else None,
+            "totalFiles": int(total_files) if total_files else None,
+            "bytes": round(float(size) * UNITS[unit]) if size and unit in UNITS else None,
+            "bytesPerSecond": round(float(rate) * UNITS[rate_unit])
+            if rate and rate_unit in UNITS
+            else None,
+        },
+    }
 
 
 def classify(info: dict[str, Any]) -> ProblemCode:

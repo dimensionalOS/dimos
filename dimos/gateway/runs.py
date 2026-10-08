@@ -237,7 +237,7 @@ def current_launch() -> dict[str, Any] | None:
         "overrides": overrides if isinstance(overrides, dict) else {},
         "modules": record.get("modules") if isinstance(record.get("modules"), dict) else {},
         "oneOff": LaunchOverrides.from_json(record.get("one_off")).to_json(),
-        "steps": diagnose.steps(records, phase),
+        "steps": diagnose.steps(records, phase, output),
         "problems": problems,
     }
 
