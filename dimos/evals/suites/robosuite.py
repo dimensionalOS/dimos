@@ -21,7 +21,15 @@ from dimos.evals.types import EvalCase, Suite
 from dimos.utils.data import LfsPath
 
 GUIDANCE = (
-    "Locate the objects with the wrist camera and use the robot's manipulation skills. "
+    "The robot is an xArm7 arm with a two-finger parallel gripper, mounted at the edge of the "
+    "table. Positions are in the world frame, in metres: the arm's base is at (0, 0, 0.912), "
+    "+x points from the base out across the table, +y to the robot's left and +z up. "
+    "Two cameras are connected. The wrist camera is mounted on the gripper and moves with "
+    "it: observe returns its image, and localize finds named objects in its images and "
+    "returns their world positions. The workspace camera is fixed in front of the table, "
+    "off to the robot's right, looking back at the robot and down at the table: "
+    "observe_workspace returns its image, so use it to see the arm and the objects from "
+    "outside. Use the robot's manipulation skills to move. "
     "Read the current robot pose; preserve its orientation for top-down moves. "
     "Keep the final result steady for at least two seconds before finishing."
 )
@@ -29,11 +37,23 @@ GUIDANCE = (
 
 def environment(scene: str, bodies: tuple[str, ...]) -> MujocoEnvironment:
     return MujocoEnvironment(
-        blueprint=["xarm-perception-sim", "mcp-server", "observe-skill"],
+        blueprint=[
+            "xarm-perception-sim",
+            "mcp-server",
+            "observe-skill",
+            "observe-workspace-skill",
+            "live-localize-module",
+        ],
         disable=PERCEPTION_MODULES,
         scene=LfsPath(f"robosuite/{scene}/scene.xml"),
         base_height=0.912,
         tracked_bodies=bodies,
+        module_env={
+            # The wrist camera starts parked; confirm objects from one view.
+            "LIVELOCALIZEMODULE__POLICY": '{"min_views": 1}',
+            # Every exported scene has this fixed camera; it feeds observe_workspace.
+            "MUJOCOSIMMODULE__OVERVIEW_CAMERA_NAME": "env_camera",
+        },
     )
 
 
