@@ -45,6 +45,7 @@ OVERHEAD_CLEARANCE_M = 1.9
 MAX_STEP_HEIGHT_M = 0.03
 
 VOXEL_SIZE_M = 0.07
+WALL_CLEARANCE_M = 0.3
 PLANNER_VIZ_HZ = 0.0
 
 # Head depth kept only in the band from the floor to just above the lidar's plane, what the lidar sees worst;
@@ -116,7 +117,7 @@ _rerun_config = {
         "world/region_bounds": None,
         "world/planner_path": _render_path,
         "world/path": None,
-        **planner_visual_override(PLANNER_VIZ_HZ),
+        **planner_visual_override(PLANNER_VIZ_HZ, VOXEL_SIZE_M, WALL_CLEARANCE_M),
     },
 }
 
@@ -151,7 +152,7 @@ r1pro_nav_lio = autoconnect(
         voxel_size=VOXEL_SIZE_M,
         robot_height=OVERHEAD_CLEARANCE_M,
         start_z_offset_m=0.0,
-        wall_clearance_m=0.3,
+        wall_clearance_m=WALL_CLEARANCE_M,
         wall_buffer_m=CHASSIS_WIDTH_M,
         wall_buffer_weight=100.0,
         step_threshold_m=MAX_STEP_HEIGHT_M,

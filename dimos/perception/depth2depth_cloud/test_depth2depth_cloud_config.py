@@ -24,7 +24,6 @@ import pytest
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.perception.depth2depth_cloud.module import Depth2DepthCloudConfig
 
-WEIGHTS = dict(weights_dir="/weights")
 RUST_MODULE = DIMOS_PROJECT_ROOT / "dimos/perception/depth2depth_cloud/rust/src/module.rs"
 
 
@@ -32,13 +31,13 @@ def test_every_field_the_rust_config_requires_is_sent():
     # The Rust config has no defaults and rejects unknown keys, so the two field lists must match exactly.
     rust_config = RUST_MODULE.read_text().split("pub struct Config {")[1].split("\n}")[0]
     rust_fields = set(re.findall(r"^\s+(\w+):", rust_config, re.MULTILINE))
-    assert set(Depth2DepthCloudConfig(**WEIGHTS).to_config_dict()) == rust_fields
+    assert set(Depth2DepthCloudConfig().to_config_dict()) == rust_fields
 
 
 @pytest.mark.parametrize("size", [100, 50, 1050])
 def test_a_model_size_off_the_patch_grid_is_refused(size):
     with pytest.raises(ValidationError, match="multiple of 14"):
-        Depth2DepthCloudConfig(**WEIGHTS, model_width=size)
+        Depth2DepthCloudConfig(model_width=size)
 
 
 def test_the_python_bounds_are_the_rust_bounds():
@@ -56,4 +55,14 @@ def test_the_python_bounds_are_the_rust_bounds():
 def test_a_jpeg_scale_the_decoder_cannot_do_is_refused():
     # The Rust decoder would silently fall back to full size, three times the undistort work.
     with pytest.raises(ValidationError, match="1, 2, 4 or 8"):
-        Depth2DepthCloudConfig(**WEIGHTS, decode_scale=3)
+        Depth2DepthCloudConfig(decode_scale=3)
+
+
+def test_an_nvidia_gpu_builds_tensorrt_and_anything_else_the_cpu_build(monkeypatch):
+    from dimos.perception.depth2depth_cloud import module
+
+    monkeypatch.setattr(module, "has_nvidia_gpu", lambda: False)
+    assert Depth2DepthCloudConfig().build_command == "nix build -L ."
+    monkeypatch.setattr(module, "has_nvidia_gpu", lambda: True)
+    assert Depth2DepthCloudConfig().build_command == "nix build -L .#tensorrt"
+    assert Depth2DepthCloudConfig(build_command="custom").build_command == "custom"

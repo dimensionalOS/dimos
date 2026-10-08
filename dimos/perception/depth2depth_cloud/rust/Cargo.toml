@@ -13,6 +13,10 @@ path = "src/lib.rs"
 name = "depth2depth_cloud"
 path = "src/bin/depth2depth_cloud.rs"
 
+# Not a root-workspace member: its candle/TensorRT dependency tree would otherwise land in the root
+# Cargo.lock and every flake that builds from it.
+[workspace]
+
 # Bake registry entry, cross-checked at compile time by the module macro.
 [package.metadata.dimos.module.depth2depth_cloud]
 path = "dimos_depth2depth_cloud::module::Depth2DepthCloud"
@@ -38,12 +42,16 @@ nalgebra = "0.35.0"
 rayon = "1"
 turbojpeg = { version = "1.5.1", default-features = false, features = ["cmake"] }
 
-# The model runs on the GPU each platform has: TensorRT on a Jetson, Metal on a Mac.
-[target.'cfg(all(target_os = "linux", target_arch = "aarch64"))'.dependencies]
-depth2depth = { git = "https://github.com/jeff-hykin/depth2depth.git", rev = "77b22b8", features = ["tensorrt"] }
+# The model's backend: Metal on a Mac, TensorRT with the `tensorrt` feature (Jetsons, NVIDIA PCs), else CPU (e.g. a Pi).
+# The flake builds one package per backend and module.py picks by hardware.
+depth2depth = "=0.4.0"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-depth2depth = { git = "https://github.com/jeff-hykin/depth2depth.git", rev = "77b22b8", features = ["metal"] }
+depth2depth = { version = "=0.4.0", features = ["metal"] }
 
-[target.'cfg(not(any(target_os = "macos", all(target_os = "linux", target_arch = "aarch64"))))'.dependencies]
-depth2depth = { git = "https://github.com/jeff-hykin/depth2depth.git", rev = "77b22b8" }
+[features]
+tensorrt = ["depth2depth/tensorrt"]
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

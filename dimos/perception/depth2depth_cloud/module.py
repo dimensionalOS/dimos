@@ -19,37 +19,34 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
-from dimos.constants import DIMOS_PROJECT_ROOT
-from dimos.core.core import rpc
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.utils.data import get_data
+
+
+def has_nvidia_gpu() -> bool:
+    """A Jetson (JetPack), or a PC with the NVIDIA driver loaded."""
+    return Path("/etc/nv_tegra_release").exists() or Path("/proc/driver/nvidia/version").exists()
 
 
 class Depth2DepthCloudConfig(NativeModuleConfig):
-    cwd: str | None = "rust"
-    executable: str = str(DIMOS_PROJECT_ROOT / "target" / "release" / "depth2depth_cloud")
-    build_command: str | None = "cargo build --release"
+    source_dir: str | None = "dimos/perception/depth2depth_cloud/rust"
+    executable: str = "result/bin/depth2depth_cloud"
+    # "." in a git checkout enters the whole repo, so the flake can read ../../../../native/rust (tracked files only).
+    # This builds for the CPU (Metal on a Mac); with an NVIDIA GPU it becomes .#tensorrt (see below).
+    build_command: str | None = "nix build -L ."
     stdin_config: bool = True
     # frame_id is also a NativeModuleConfig field; listed so it still crosses to the Rust config.
     base_fields: frozenset[str] = frozenset({"frame_id"})
 
-    # Depth Anything V2 small, metric (Hypersim), as the depth2depth crate's two safetensors files; empty fetches
-    # the bundled ones (184 MB) when the module starts, not whenever a config is built.
-    weights_dir: str = ""
-    # On a Jetson the model runs through TensorRT from this ONNX export (fixed 364x448 input); the engine is
-    # built on first run (minutes) and cached per machine.
-    onnx_file: str = "da2_metric_hypersim_vits_364x448.onnx"
-    engine_cache_dir: str = str(Path.home() / ".cache" / "dimos" / "depth2depth_cloud")
-    # Model input for candle (Mac, CPU); multiples of 14, smaller is faster.
-    model_height: int = 364
-    model_width: int = 448
+    # Model input; multiples of 14, smaller is faster. TensorRT builds an engine per size (minutes, once).
+    model_height: int = 448
+    model_width: int = 560
     # JPEG decoded at 1/decode_scale of full size, then resampled to this pinhole image for the model;
     # 0 takes the decoded size and the CameraInfo's focal length at that scale.
     decode_scale: int = Field(default=2, ge=1, le=8)
@@ -93,6 +90,12 @@ class Depth2DepthCloudConfig(NativeModuleConfig):
             )
         return size
 
+    @model_validator(mode="after")
+    def _tensorrt_on_nvidia(self) -> Depth2DepthCloudConfig:
+        if self.build_command == "nix build -L ." and has_nvidia_gpu():
+            self.build_command = "nix build -L .#tensorrt"
+        return self
+
     @field_validator("decode_scale")
     @classmethod
     def _jpeg_scale(cls, scale: int) -> int:
@@ -111,12 +114,6 @@ class Depth2DepthCloud(NativeModule):
     lidar: In[PointCloud2]
     tf: In[TFMessage]
     depth_cloud: Out[PointCloud2]
-
-    @rpc
-    def start(self) -> None:
-        if not self.config.weights_dir:
-            self.config.weights_dir = str(get_data("depth2depth_vits_hypersim"))
-        super().start()
 
 
 if TYPE_CHECKING:

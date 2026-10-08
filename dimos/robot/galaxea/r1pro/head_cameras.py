@@ -38,9 +38,9 @@ from typing import Any
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
+from dimos.hardware.sensors.camera.utils.fsync_trigger import trigger_gmsl_cameras
 from dimos.hardware.sensors.camera.v4l2.module import V4L2Camera, V4L2CameraConfig
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.robot.galaxea.r1pro.head_trigger import trigger_head_cameras
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -56,6 +56,8 @@ HEAD_HEIGHT = 1536
 # The rate the ISX031 runs at, free or hardware-triggered.
 HEAD_FPS = 30.0
 HEAD_FOURCC = "UYVY"
+# Every link on the head's deserializer: a mask of only the two head links stops them streaming.
+HEAD_TRIGGER_LINKS = 0x0F
 
 # The vendor URDF's optical frames for each eye.
 HEAD_LEFT_FRAME = "camera_head_left_link"
@@ -85,7 +87,7 @@ class HeadLeftCamera(V4L2Camera):
 
     @rpc
     def start(self) -> None:
-        trigger_head_cameras(int(HEAD_FPS))
+        trigger_gmsl_cameras(int(HEAD_FPS), HEAD_TRIGGER_LINKS)
         super().start()
 
 
@@ -94,7 +96,7 @@ class HeadRightCamera(V4L2Camera):
 
     @rpc
     def start(self) -> None:
-        trigger_head_cameras(int(HEAD_FPS))
+        trigger_gmsl_cameras(int(HEAD_FPS), HEAD_TRIGGER_LINKS)
         super().start()
 
 
