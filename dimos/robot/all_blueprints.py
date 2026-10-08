@@ -160,6 +160,7 @@ all_blueprints = {
     "unitree-go2-fleet": "dimos.robot.unitree.go2.blueprints.basic.unitree_go2_fleet:unitree_go2_fleet",
     "unitree-go2-holonomic-benchmark": "dimos.robot.unitree.go2.blueprints.basic.unitree_go2_holonomic_benchmark:unitree_go2_holonomic_benchmark",
     "unitree-go2-holonomic-controller": "dimos.robot.unitree.go2.blueprints.basic.unitree_go2_holonomic_controller:unitree_go2_holonomic_controller",
+    "unitree-go2-joystick-record": "dimos.robot.unitree.go2.blueprints.basic.unitree_go2_joystick_record:unitree_go2_joystick_record",
     "unitree-go2-keyboard-teleop": "dimos.robot.unitree.go2.blueprints.basic.unitree_go2_keyboard_teleop:unitree_go2_keyboard_teleop",
     "unitree-go2-markers": "dimos.robot.unitree.go2.blueprints.smart.unitree_go2:unitree_go2_markers",
     "unitree-go2-memory": "dimos.robot.unitree.go2.blueprints.smart.unitree_go2:unitree_go2_memory",
