@@ -56,11 +56,7 @@ from dimos.robot.galaxea.r1pro.head_cameras import (
     HeadLeftCamera,
     HeadRightCamera,
 )
-from dimos.robot.galaxea.r1pro.lio import (
-    R1ProLioMountTf,
-    R1ProLioMountTfConfig,
-    R1ProLioOdomPose,
-)
+from dimos.robot.galaxea.r1pro.lio import R1ProLio, R1ProLioConfig
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 
@@ -296,7 +292,7 @@ def r1pro_control(
 # that runs the connection's sensor threads.
 def r1pro_lidar_odometry() -> Blueprint:
     """Our Mid-360 driver (per-point times, its own IMU) into Point-LIO, plus the mount tf."""
-    lidar_frame = R1ProLioMountTfConfig.model_fields["lidar_frame"].default
+    lidar_frame = R1ProLioConfig.model_fields["lidar_frame"].default
     return autoconnect(
         mid360_for_pointlio(
             frame_id=lidar_frame,
@@ -306,13 +302,12 @@ def r1pro_lidar_odometry() -> Blueprint:
         PointLio.blueprint(sensor_frame_id=lidar_frame).remappings(
             [(PointLio, "odometry", "pointlio_odometry")]
         ),
-        R1ProLioMountTf.blueprint(),
-        R1ProLioOdomPose.blueprint(),
+        R1ProLio.blueprint(),
     ).remappings(
         [
-            (R1ProLioOdomPose, "odometry", "pointlio_odometry"),
+            (R1ProLio, "odometry", "pointlio_odometry"),
             # The name the planners already read.
-            (R1ProLioOdomPose, "pose", "chassis_odom"),
+            (R1ProLio, "pose", "chassis_odom"),
         ]
     )
 
