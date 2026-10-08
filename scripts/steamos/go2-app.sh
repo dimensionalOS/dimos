@@ -11,7 +11,7 @@ exec >> ~/go2-app.log 2>&1
 echo "=== $(date) mode=$mode"
 APP="Go2 Cockpit"
 say() { notify-send -a "$APP" -i input-gaming "$APP" "$1"; echo "$1"; }
-in_dimos() { distrobox enter dimos -- bash -c "cd ~/dimos/dimensional-applications && source .venv/bin/activate && $1"; }
+in_dimos() { distrobox enter dimos -- bash -c "cd ~/dimos/dimensional-applications && source .venv/bin/activate && $1" 9>&-; }
 
 # The built-in sticks reach apps only through Steam Input (hid_lenovo_go_s exposes a Valve HID
 # device that only Steam reads); the desktop layout was installed by the setup script.
