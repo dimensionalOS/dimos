@@ -68,8 +68,9 @@ def test_world_frame_recording() -> None:
         (100.0 + i, Image.from_numpy(np.full((48, 64, 3), 25 * i, np.uint8)), None)
         for i in range(10)
     ]
-    doc = preview.build(store(lidar=lidar, color_image=frames))
-    assert doc is not None and doc["duration_s"] == 9
+    mapper = [(99.0, cloud(99.0, (50, 50, 0.5)), None)]  # listed first, not a scan
+    doc = preview.build(store(global_map=mapper, lidar=lidar, color_image=frames))
+    assert doc is not None and doc["duration_s"] == 9 and doc["streams"]["lidar"]["name"] == "lidar"
     assert doc["trajectory"][3][:2] == [3.0, 1.5] and len(doc["trajectory"]) == 10
     m = points(doc, doc["map"])
     assert np.abs(m[:, 2] - 0.5).max() < 0.02  # the 9 m "ceiling" is cut, the rest round-trips
@@ -96,18 +97,20 @@ def test_timelapse(tmp_path: Path) -> None:
         (100.0 + i, Image.from_numpy(np.full((48, 64, 3), 8 * i, np.uint8)), None)
         for i in range(30)
     ]
-    meta = preview.timelapse(store(color_image=frames), tmp_path / "t.mp4")
+    depth = [(100.0, Image.from_numpy(np.zeros((48, 64), np.uint16)), None)]  # listed first
+    meta = preview.timelapse(store(depth_image=depth, color_image=frames), tmp_path / "t.mp4")
     assert (
         meta is not None and meta["speed"] == 1.0 and meta["duration_s"] == 29
     )  # under a minute: real time
     assert (tmp_path / "t.mp4").read_bytes()[4:8] == b"ftyp"  # MP4
 
 
-def test_recording_without_lidar() -> None:
+def test_path_from_denser_odometry() -> None:
     odom = [
         (100.0 + i, PoseStamped(position=[i, 2, 0.3], frame_id="world"), None) for i in range(5)
     ]
     frames = [(101.0, Image.from_numpy(np.zeros((48, 64, 3), np.uint8)), None)]
-    doc = preview.build(store(color_image=frames, odom=odom))
-    assert doc is not None and doc["map"] == "" and doc["scans"] == [] and doc["duration_s"] == 4
+    lidar = [(102.0, cloud(102.0, (0, 0, 0.3)), Pose(9, 9, 0.3))]  # one posed scan: odom is denser
+    doc = preview.build(store(color_image=frames, odom=odom, lidar=lidar))
+    assert doc is not None and len(doc["scans"]) == 1 and doc["duration_s"] == 4
     assert [r[1] for r in doc["trajectory"]] == [0, 1, 2, 3, 4] and len(doc["camera"]) == 1

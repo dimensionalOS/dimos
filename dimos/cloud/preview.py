@@ -56,9 +56,10 @@ if TYPE_CHECKING:
     from dimos.memory.store.base import Store
 
 
-def _stream(store: Store, payload: type) -> Any:
-    """The first stream carrying this dimos type."""
-    for name in store.list_streams():
+def _stream(store: Store, payload: type, prefer: str) -> Any:
+    """The first stream carrying this dimos type, named like *prefer* first: a mapper's
+    `global_map` is a PointCloud2 too, `goal_request` a Pose and `depth_image` an Image."""
+    for name in sorted(store.list_streams(), key=lambda n: prefer not in n):
         try:
             if isinstance(store.streams[name].first().data, payload):
                 return store.streams[name]
@@ -87,7 +88,8 @@ def _pack(pc: PointCloud2, origin: np.ndarray) -> str:
 
 def build(store: Store) -> dict[str, Any] | None:
     """`dimos-spatial-preview-v2`, or None for a recording without LiDAR, camera or poses."""
-    lidar, camera, odom = _stream(store, PointCloud2), _stream(store, Image), _stream(store, Pose)
+    lidar, camera = _stream(store, PointCloud2, "lidar"), _stream(store, Image, "color")
+    odom = _stream(store, Pose, "odom")
     poses, scans, world, ends = [], [], None, []
     if lidar is not None:
         shown = _evenly(lidar.count(), PREVIEW_FRAMES)
@@ -108,7 +110,9 @@ def build(store: Store) -> dict[str, Any] | None:
                 scans.append((obs.ts, pc))
             world = pc if world is None else (world + pc).voxel_downsample(PREVIEW_MAP_VOXEL)
         ends = ends[:1] + ends[-1:]
-    if not poses and odom is not None:  # no LiDAR (or unposed LiDAR): the path from odometry
+    if odom is not None and odom.count() > len(
+        poses
+    ):  # denser than the LiDAR poses, or the only path
         poses = [(o.ts, o.data) for o in odom]
     shots = []
     if camera is not None:
@@ -160,7 +164,7 @@ def build(store: Store) -> dict[str, Any] | None:
 def timelapse(store: Store, out: Path) -> dict[str, Any] | None:
     """H.264 MP4 of the first camera stream: real time up to TIMELAPSE_MAX_S, sped up to fit
     beyond. Returns {duration_s, speed, bytes, type}, or None without a camera or PyAV."""
-    camera = _stream(store, Image) if HAS_AV else None
+    camera = _stream(store, Image, "color") if HAS_AV else None
     if camera is None:
         return None
     ts = np.array([o.ts for o in camera])
