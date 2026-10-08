@@ -36,7 +36,6 @@ from dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_coordinator import (
 from dimos.robot.galaxea.r1pro.head_cameras import HeadLeftCameraConfig
 from dimos.robot.galaxea.r1pro.head_depth import r1pro_head_depth
 from dimos.robot.galaxea.r1pro.lio import R1ProLioMountTfConfig
-from dimos.robot.galaxea.r1pro.vendor_stack import R1ProVendorStack
 from dimos.visualization.vis_module import vis_module
 
 # First-pass R1 Pro clearances; tune on the robot.
@@ -127,9 +126,8 @@ _rerun_config = {
 
 r1pro_nav = autoconnect(
     vis_module(viewer_backend=global_config.viewer, rerun_config=_rerun_config),
-    R1ProVendorStack.blueprint(stop_vendor_lidar=True),
     # Point-LIO owns odom -> base_link, so the connection's wheel odometry stays off tf.
-    r1pro_control(publish_odom_tf=False, enable_wrist_color=False),
+    r1pro_control(publish_odom_tf=False, enable_wrist_color=False, stop_vendor_lidar=True),
     r1pro_lidar_odometry(),
     r1pro_head_depth(
         min_height_m=HEAD_CLOUD_MIN_HEIGHT_M,

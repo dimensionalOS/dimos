@@ -21,8 +21,6 @@ from pathlib import Path
 import subprocess
 import time
 
-from dimos.core.core import rpc
-from dimos.core.module import Module, ModuleConfig
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -51,32 +49,29 @@ def running_tmux_sessions() -> set[str]:
     return set(result.stdout.split()) if result.returncode == 0 else set()
 
 
-class R1ProVendorStackConfig(ModuleConfig):
-    enabled: bool = True
-    startup_script: str = VENDOR_STARTUP_SCRIPT
-    profile: str = VENDOR_PROFILE
-    # Close the vendor lidar driver, for blueprints that run dimos's own Mid-360 driver.
-    stop_vendor_lidar: bool = False
+def boot_command(startup_script: str, profile: str, running: set[str]) -> list[str] | None:
+    """The vendor boot command, or None when already up or not installed."""
+    if set(VENDOR_SESSIONS) <= running:
+        return None
+    script = Path(startup_script).expanduser()
+    if not script.exists():
+        logger.warning("R1 vendor stack not running and %s does not exist", script)
+        return None
+    # The script resolves the profile relative to its own directory.
+    return ["bash", str(script), "boot", profile]
 
 
-class R1ProVendorStack(Module):
-    """Boots the vendor stack if its tmux sessions are missing, before any module starts."""
-
-    config: R1ProVendorStackConfig
-
-    @rpc
-    def build(self) -> None:
-        super().build()
-        command = boot_command(self.config, running_tmux_sessions())
-        if command is not None:
-            logger.info("R1 vendor stack not running; booting %s", self.config.profile)
-            subprocess.run(command, cwd=Path(command[1]).parent, check=True)
-        if self.config.enabled and self.config.stop_vendor_lidar:
-            # Before our driver's handshake, so the Livox streams to us, not the vendor.
-            subprocess.run(["tmux", "kill-window", "-t", VENDOR_LIDAR_WINDOW], check=False)
-        if self.config.enabled:
-            # A freshly booted profile starts it a few seconds later.
-            stop_vendor_head_cameras(appear_timeout_s=30.0 if command is not None else 0.0)
+def prepare_vendor_stack(startup_script: str, profile: str, stop_vendor_lidar: bool) -> None:
+    """Boot the vendor stack if needed, then free what our own drivers take from it."""
+    command = boot_command(startup_script, profile, running_tmux_sessions())
+    if command is not None:
+        logger.info("R1 vendor stack not running; booting %s", profile)
+        subprocess.run(command, cwd=Path(command[1]).parent, check=True)
+    if stop_vendor_lidar:
+        # Before our driver's handshake, so the Livox streams to us, not the vendor.
+        subprocess.run(["tmux", "kill-window", "-t", VENDOR_LIDAR_WINDOW], check=False)
+    # A freshly booted profile starts it a few seconds later.
+    stop_vendor_head_cameras(appear_timeout_s=30.0 if command is not None else 0.0)
 
 
 def _vendor_head_camera_running() -> bool:
@@ -101,15 +96,3 @@ def stop_vendor_head_cameras(appear_timeout_s: float) -> None:
         time.sleep(2.0)
     if _vendor_head_camera_running():
         logger.warning("The vendor head camera node is still running; the head cameras cannot open")
-
-
-def boot_command(config: R1ProVendorStackConfig, running: set[str]) -> list[str] | None:
-    """The vendor boot command, or None when disabled, already up, or not installed."""
-    if not config.enabled or set(VENDOR_SESSIONS) <= running:
-        return None
-    script = Path(config.startup_script).expanduser()
-    if not script.exists():
-        logger.warning("R1 vendor stack not running and %s does not exist", script)
-        return None
-    # The script resolves the profile relative to its own directory.
-    return ["bash", str(script), "boot", config.profile]
