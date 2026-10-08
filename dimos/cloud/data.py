@@ -80,8 +80,10 @@ class DataApi:
     def confirm_video(self, upload_id: str) -> dict[str, Any]:
         return self.t.request("POST", f"{self.PREFIX}/uploads/{upload_id}/preview/video")
 
-    def put_part(self, url: str, chunk: bytes) -> None:
-        self.t.put(url, chunk)
+    def put_part(
+        self, url: str, chunk: bytes, progress: Callable[[int, int], None] | None = None
+    ) -> None:
+        self.t.put(url, chunk, progress)
 
     def fetch(
         self, url: str, dst: Path, progress: Callable[[int, int], None] | None = None
@@ -174,9 +176,14 @@ class MultipartBackend:
                         continue
                     f.seek((n - 1) * ps)
                     chunk = f.read(ps)
+
+                    def within(sent: int, _total: int, base: int = done) -> None:
+                        tick("upload", base + sent, size)
+
                     try:
                         self._retry(
-                            functools.partial(self.api.put_part, urls[n], chunk), f"part {n}"
+                            functools.partial(self.api.put_part, urls[n], chunk, within),
+                            f"part {n}",
                         )
                     except RuntimeError as e:
                         if "403" not in str(e):
@@ -190,7 +197,8 @@ class MultipartBackend:
                             return {**fresh, "skipped": True}
                         urls = {p["part_number"]: p["url"] for p in fresh["part_urls"]}
                         self._retry(
-                            functools.partial(self.api.put_part, urls[n], chunk), f"part {n}"
+                            functools.partial(self.api.put_part, urls[n], chunk, within),
+                            f"part {n}",
                         )
                     done += len(chunk)
                     tick("upload", done, size)

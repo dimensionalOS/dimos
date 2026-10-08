@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 import json
 from pathlib import Path
 import shutil
@@ -24,12 +24,27 @@ from typing import Any, Protocol, cast
 import urllib.error
 import urllib.request
 
+PUT_PIECE = 1 << 20
+
+
+def body_pieces(body: bytes, progress: Callable[[int, int], None]) -> Iterator[bytes]:
+    """`body` in PUT_PIECE slices, reporting (sent, total) after each one."""
+    total = len(body)
+    for start in range(0, total, PUT_PIECE):
+        piece = body[start : start + PUT_PIECE]
+        yield piece
+        progress(start + len(piece), total)
+    if total == 0:
+        progress(0, 0)
+
 
 class CloudRequest(Protocol):
     def request(
         self, method: str, path: str, body: dict[str, Any] | None = None
     ) -> dict[str, Any]: ...
-    def put(self, url: str, body: bytes) -> None: ...
+    def put(
+        self, url: str, body: bytes, progress: Callable[[int, int], None] | None = None
+    ) -> None: ...
     def download(
         self, url: str, dst: Path, progress: Callable[[int, int], None] | None = None
     ) -> None: ...
@@ -59,12 +74,16 @@ class HttpCloudRequest:
         except (urllib.error.URLError, TimeoutError) as e:
             raise RuntimeError(f"{method} {path}: {e}") from e
 
-    def put(self, url: str, body: bytes) -> None:
+    def put(
+        self, url: str, body: bytes, progress: Callable[[int, int], None] | None = None
+    ) -> None:
+        # urllib's default form content-type makes some S3-compatible servers parse the body.
+        # With a progress callback the body streams in pieces so the caller sees bytes move
+        # inside a part; urllib needs the length up front for an iterable body.
+        headers = {"Content-Type": "application/octet-stream", "Content-Length": str(len(body))}
+        data: Any = body if progress is None else body_pieces(body, progress)
         with urllib.request.urlopen(
-            # urllib's default form content-type makes some S3-compatible servers parse the body
-            urllib.request.Request(
-                url, data=body, method="PUT", headers={"Content-Type": "application/octet-stream"}
-            ),
+            urllib.request.Request(url, data=data, method="PUT", headers=headers),
             timeout=self.timeout,
         ):
             pass
