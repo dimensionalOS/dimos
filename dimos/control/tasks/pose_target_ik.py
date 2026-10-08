@@ -30,6 +30,7 @@ import numpy as np
 import pink
 from pydantic import Field
 
+from dimos.control.joint_command_envelope import bound_joint_command
 from dimos.control.task import (
     BaseControlTask,
     ControlMode,
@@ -631,7 +632,9 @@ class PinkPoseTargetSolver(_PinkSolverCore):
         if invalid.size:
             joint_name = context.mapping.dimos_joint_names[int(invalid[0])]
             raise ValueError(f"Pink streaming command envelope is empty for '{joint_name}'")
-        return np.clip(candidate, lower, upper)
+        return bound_joint_command(
+            candidate, previous, measured, lower, upper, velocity_limits, dt, max_tracking_error
+        )
 
     def _validate_streaming_limit_margin(
         self,

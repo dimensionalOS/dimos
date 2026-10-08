@@ -104,3 +104,6 @@ site/
 
 # Optuna study store, written by the relocalization eval (see lidar/eval.md)
 optuna.db
+
+# Local vendor robot-description evidence; not redistributed.
+.sew-local/

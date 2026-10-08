@@ -1,7 +1,7 @@
 // Global error handler
 window.onerror = (msg, url, line, col, error) => {
     console.error(`[ERROR] ${msg} at ${url}:${line}:${col}`, error);
-    document.getElementById('status').textContent = `Error: ${msg}`;
+    setStatus(`Error: ${msg}`);
 };
 
 import { geometry_msgs, std_msgs, sensor_msgs } from "https://esm.sh/jsr/@dimos/msgs@0.1.4";
@@ -17,6 +17,30 @@ let gl = null;
 let lastSendTime = 0;
 const sendInterval = 1000 / 80; // ~80Hz target
 let webXRClientConfig = null;
+let sewStatus = null;
+let clientStatus = '';
+window.addEventListener('unhandledrejection', event => {
+    setStatus(`Error: ${event.reason?.message || String(event.reason)}`);
+});
+let sewStatusTimer = null;
+async function pollSewStatus() {
+    try {
+        const response = await fetch(webXRClientConfig.sew_status_url, {signal: AbortSignal.timeout(1500)});
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        sewStatus = await response.json();
+    } catch (error) {
+        sewStatus = {state: "OFFLINE", reason: String(error)};
+    }
+    let panel = document.getElementById("sew-status");
+    if (!panel) {
+        panel = document.createElement("pre");
+        panel.id = "sew-status";
+        document.body.appendChild(panel);
+    }
+    panel.textContent = JSON.stringify(sewStatus, null, 2);
+    hudDirty = true;
+}
+
 const sessionModeSupport = new Map();
 const handSelectActive = new Map();
 const GRIPPER_PINCH_DISTANCE_METERS = 0.04;
@@ -68,6 +92,8 @@ const canvas = document.getElementById('canvas');
 
 function setStatus(msg) {
     statusEl.textContent = msg;
+    clientStatus = msg;
+    hudDirty = true;
 }
 
 async function loadWebXRClientConfig() {
@@ -387,6 +413,42 @@ function formatElapsed(seconds) {
 }
 
 function updateHudTexture() {
+    if (sewStatus && hudContext) {
+        if (!hudDirty) return;
+        hudDirty = false;
+        hudContext.fillStyle = '#102030';
+        hudContext.fillRect(0, 0, HUD_WIDTH_PX, HUD_HEIGHT_PX);
+        hudContext.fillStyle = '#ffffff';
+        hudContext.font = 'bold 32px sans-serif';
+        const errors = sewStatus.arm_error_deg || {};
+        const lines = [
+            `R1 FAKE / ${sewStatus.state}: ${sewStatus.reason || ''} / ${clientStatus}`,
+            `Left upper/lower/hand: ${(errors.left || []).map(v => v.toFixed(1)).join(' / ')} deg`,
+            `Right upper/lower/hand: ${(errors.right || []).map(v => v.toFixed(1)).join(' / ')} deg`,
+            `Chest ${(sewStatus.chest_error_deg || 0).toFixed(1)} deg / height ${(sewStatus.height_error_m || 0).toFixed(3)} m; roll ignored`,
+            'Fake gate: 8 deg orientation / 10 deg joints / 25 mm height / 0.3 s. Release then grip.'
+        ];
+        lines.forEach((line, i) => hudContext.fillText(line, 25, 40 + i * 42, HUD_WIDTH_PX * 0.70));
+        const skeleton = sewStatus.skeleton_front || {};
+        for (const [label, arms] of Object.entries(skeleton)) {
+            hudContext.strokeStyle = label === "target" ? "#00ffff" : "#ffffff";
+            hudContext.lineWidth = 8;
+            for (const points of Object.values(arms)) {
+                hudContext.beginPath();
+                points.forEach(([y, z], i) => {
+                    const px = HUD_WIDTH_PX * 0.86 - y * 240;
+                    const py = HUD_HEIGHT_PX * 0.5 - (z - 1.15) * 240;
+                    if (i === 0) hudContext.moveTo(px, py); else hudContext.lineTo(px, py);
+                });
+                hudContext.stroke();
+            }
+        }
+        hudContext.font = "30px sans-serif";
+        hudContext.fillText("White: robot / Cyan: target", HUD_WIDTH_PX * 0.72, HUD_HEIGHT_PX - 15);
+        gl.bindTexture(gl.TEXTURE_2D, hudTexture);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, hudCanvas);
+        return;
+    }
     if (!episodeStatus || !hudContext) return;
     const elapsed = collectionElapsedSeconds();
     if (!hudDirty && elapsed === hudElapsedSecond) return;
@@ -435,7 +497,7 @@ function updateHudTexture() {
 }
 
 function renderCollectionHud(view, viewport) {
-    if (!episodeStatus || !hudPlaced) return;
+    if ((!episodeStatus && !sewStatus) || !hudPlaced) return;
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     renderTexturedQuad(
@@ -760,6 +822,10 @@ window.addEventListener('load', async () => {
 
     try {
         webXRClientConfig = await loadWebXRClientConfig();
+        if (webXRClientConfig.sew_status_url && !sewStatusTimer) {
+            pollSewStatus();
+            sewStatusTimer = setInterval(pollSewStatus, 250);
+        }
         await Promise.all(webXRClientConfig.session_modes.map(async (mode) => {
             const supported = await navigator.xr.isSessionSupported(mode).catch(() => false);
             sessionModeSupport.set(mode, supported);

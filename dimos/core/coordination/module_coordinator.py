@@ -891,6 +891,8 @@ def _verify_no_conflicts_with_existing(
 
 
 def _run_configurators(blueprint: Blueprint) -> None:
+    if global_config.skip_system_configuration:
+        return
     from dimos.protocol.service.system_configurator.base import configure_system
     from dimos.protocol.service.system_configurator.lcm_config import lcm_configurators
     from dimos.protocol.service.system_configurator.zenoh_config import zenoh_configurators

@@ -95,6 +95,9 @@ class GlobalConfig(BaseSettings):
     # Unlike multicast scouting this reaches nothing new on the LAN, and zenoh
     # needs it to resolve the key expressions a linked peer sends.
     zenoh_gossip: bool | None = True
+    # Offline diagnostics may opt out of host configuration side effects.
+    skip_system_configuration: bool = False
+
     # Seconds ZenohService.start() blocks for the configured connect endpoints to
     # link before giving up and continuing. 0 disables the wait.
     zenoh_connect_timeout: float = Field(default=1.0, ge=0, le=86400)
