@@ -151,7 +151,7 @@ Desktop keeps its own bar, so there's never two).
 `GET /dimos/msgs.js` is an ES module that decodes and encodes every dimos message, for pages and apps with no build
 step; `GET /dimos/msgs.ts` is the same module as TypeScript (an interface per message), for Deno and TypeScript. Both
 are generated from the message classes under dimos/msgs and their dimos_lcm schemas
-([`dimos/gateway/msgs/__init__.py`](/dimos/gateway/msgs/__init__.py)), and a test fails while they're stale:
+([`dimos/gateway/msgs/codegen.py`](/dimos/gateway/msgs/codegen.py)), and a test fails while they're stale:
 
 ```sh
 python -m dimos.gateway.msgs           # check, and list the messages without a schema

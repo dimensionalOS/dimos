@@ -22,7 +22,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request, Response
 
-from dimos.gateway.msgs import JS_FILE, TS_FILE
+from dimos.gateway.msgs.codegen import JS_FILE, TS_FILE
 from dimos.gateway.openapi import route_doc
 
 USAGE = (

@@ -25,9 +25,9 @@ import sys
 from fastapi.testclient import TestClient
 import pytest
 
-from dimos.gateway import msgs
 from dimos.gateway.app import ServerState, create_app
 from dimos.gateway.events import Bus
+from dimos.gateway.msgs import codegen as msgs
 from dimos.gateway.uploads import Uploads
 
 REPO = Path(__file__).parents[2]

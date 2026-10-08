@@ -16,7 +16,7 @@
 
 import sys
 
-from dimos.gateway import msgs
+from dimos.gateway.msgs import codegen as msgs
 
 found = msgs.scan()
 for line in msgs.warnings(found):

@@ -24,6 +24,7 @@ import asyncio
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
+import functools
 import json
 import os
 from pathlib import Path
@@ -416,10 +417,12 @@ def coordinator_on_bus() -> bool:
     """Whether a dimos run (from any checkout, terminal or Desktop) answers on this machine's RPC bus."""
     from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
     from dimos.core.transport_factory import rpc_backend
+    from dimos.protocol.rpc.spec import RPCSpec
+    from dimos.protocol.rpc.zenohrpc import ZenohRPC
 
     backend = rpc_backend()
     # zenoh gossip reaches other machines' runs through any local peer that scouts the LAN; only this machine's count
-    probe = backend(gossip=False, connect=[]) if backend.__name__ == "ZenohRPC" else backend()
+    probe: RPCSpec = ZenohRPC(gossip=False, connect=[]) if backend is ZenohRPC else backend()
     probe.start()
     try:
         probe.call_sync(f"{CoordinatorRPC.NAME}/ping", ([], {}), rpc_timeout=0.5)
@@ -473,6 +476,10 @@ def listening(processes: list[psutil.Process]) -> dict[tuple[str, int], psutil.P
         except (psutil.Error, OSError):
             continue
     return found
+
+
+def all_ports_free(addresses: list[tuple[str, int]]) -> bool:
+    return all(map(port_free, addresses))
 
 
 def port_free(address: tuple[str, int]) -> bool:
@@ -551,7 +558,7 @@ async def stop(run_id: str | None, marked: Callable[[], None] | None = None) -> 
             # only the old run's own processes, never whatever else took the port since
             if run_id and holder.is_running() and holder in run_processes(None, run_id):
                 holder.send_signal(signum)
-        await _until(lambda held=held: all(map(port_free, held)), PORT_WAIT / 2)
+        await _until(functools.partial(all_ports_free, held), PORT_WAIT / 2)
         held = [address for address in held if not port_free(address)]
     if held:
         taken = ", ".join(f"{host}:{port}" for host, port in held)
