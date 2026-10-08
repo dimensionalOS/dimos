@@ -126,7 +126,8 @@ geometry, so the grasp blueprint builds its own planning model
   adjacent is filtered;
 - the arm bases stand at the measured `DUAL_OPENYAM_BASE_SPACING`;
 - the table top and the bin are static obstacles (`DUAL_OPENYAM_STATIC_BOXES`,
-  table top 3 cm below the base plates, bin at the far edge).
+  table top 4.5 cm below the base plates, bin at the far edge of the 130 x 80 cm
+  table, centred).
 
 Detected objects and, with a voxel map, unknown clutter are added on top by the
 world monitor. Viser's "Robot display" switch shows the collision bodies. The

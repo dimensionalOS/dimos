@@ -67,12 +67,11 @@ from dimos.robot.manipulators.dual_openyam.config import (
 )
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 
-# Distance between the two base motor axes. The URDF's 0.62 m (the ABC bench)
-# matches the rig: on 2026-10-07 the right arm closed on the banana's outer
-# end, 9.5 cm from its middle, which is exactly where the planned pose lands
-# if the model has 0.43 m but the arms stand 0.62 m apart. The 43 cm tape
-# reading was the gap between the two 21 cm mounting bases.
-DUAL_OPENYAM_BASE_SPACING = 0.62
+# Distance between the two base motor axes: 43 cm by tape, J1 motor cap
+# centre to centre (2026-10-08). The URDF's 0.62 m is the ABC bench. The
+# 2026-10-07 reading that favoured 0.62 was confounded by the old camera pose,
+# which sat 4.5 cm too high and 3 cm too far forward.
+DUAL_OPENYAM_BASE_SPACING = 0.43
 
 # Wrist camera: a D405 on a 6 cm bracket that leaves the top of the wrist tube
 # at 45 deg, leaning toward the wrist (sketch of 2026-10-06). It sits on the
@@ -86,26 +85,28 @@ DUAL_OPENYAM_WRIST_CAMERA_BOXES = [
     ("wrist_camera", (0.072, 0.072, 0.073), (-0.090, 0.0, 0.058)),
 ]
 
-# The workcell in the world frame: the table top is 3 cm below the arm base
-# plates; the bin stands at the far edge, 20.5 cm ahead of the origin; the
-# centre post carries the overhead camera 46 cm up, midway between the arms.
-# Bin 28.4 x 21.1 x 11 cm and post 3 x 3 cm measured, 1 cm margin on each
-# face. The 21 cm mounting base under the arm flanges sits behind and below
-# the bases where the arms do not reach, so it is not modelled.
-DUAL_OPENYAM_TABLE_TOP_Z = -0.03
+# The workcell in the world frame, table of 2026-10-08: 130 x 80 cm, its top
+# 4.5 cm below the arm mounting plates (tape), its near
+# edge at the back of the 21.6 cm deep base frame, so it runs from 11.1 cm
+# behind the origin to 68.9 cm ahead; the bin stands at the far edge centred
+# on the table, 40.5 to 68.9 cm ahead; the centre post carries the overhead
+# camera 40 cm up, midway between the arms. Bin 28.4 x 21.1 x 11 cm and post
+# 3 x 3 cm measured, 1 cm margin on each face. The base frame sits behind and
+# below the arm bases where the arms do not reach, so it is not modelled.
+DUAL_OPENYAM_TABLE_TOP_Z = -0.045
 DUAL_OPENYAM_STATIC_BOXES = [
     {
         "name": "table",
-        "size": (0.60, 1.00, 0.10),
-        "xyz": (0.185, 0.0, DUAL_OPENYAM_TABLE_TOP_Z - 0.055),
+        "size": (0.80, 1.30, 0.10),
+        "xyz": (0.289, 0.0, DUAL_OPENYAM_TABLE_TOP_Z - 0.055),
     },
     {
         "name": "bin",
         "size": (0.304, 0.231, 0.12),
-        "xyz": (0.347, -0.024, DUAL_OPENYAM_TABLE_TOP_Z + 0.06),
+        "xyz": (0.547, 0.0, DUAL_OPENYAM_TABLE_TOP_Z + 0.06),
     },
-    {"name": "camera_post", "size": (0.05, 0.05, 0.50), "xyz": (0.0, 0.0, 0.22)},
-    {"name": "overhead_camera", "size": (0.10, 0.10, 0.08), "xyz": (0.016, -0.006, 0.47)},
+    {"name": "camera_post", "size": (0.05, 0.05, 0.44), "xyz": (0.0, 0.0, 0.19)},
+    {"name": "overhead_camera", "size": (0.10, 0.10, 0.08), "xyz": (-0.016, 0.001, 0.41)},
 ]
 
 # Home is the pose the arms rest in on their supports, which is the URDF zero
@@ -150,11 +151,13 @@ DUAL_OPENYAM_GRASP_PINK = PinkKinematicsConfig(
 )
 
 # Fixed camera on the centre post, in the frame midway between the arm bases
-# (x forward, y toward the left arm, z up). Solved from four 60 mm AprilTags
-# taped to the table at tape-measured positions, 3.7 px reprojection RMS.
+# (x forward, y toward the left arm, z up). Solved on 2026-10-08 from four
+# 10 cm AprilTags (ids 20 to 23) at tape-measured positions on the table,
+# 1.2 px reprojection RMS over 16 corners; a tape from the table top to the
+# camera centre (46 cm) agrees within 1.5 cm.
 DUAL_OPENYAM_CAMERA_TRANSFORM = Transform(
-    translation=Vector3(x=0.0160, y=-0.0057, z=0.4598),
-    rotation=Quaternion(-0.00254, 0.51604, 0.00190, 0.85656),  # xyzw, pitched 62 deg down
+    translation=Vector3(x=-0.0163, y=0.0008, z=0.4020),
+    rotation=Quaternion(-0.01366, 0.48119, -0.00881, 0.87647),  # xyzw, pitched 57.6 deg down
     frame_id="world",
     child_frame_id="camera_link",
 )

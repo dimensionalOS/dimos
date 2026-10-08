@@ -44,9 +44,9 @@ pytestmark = [
 REST = JointState(name=list(DUAL_OPENYAM_ARM_JOINTS), position=[0.0] * 12)
 HOME = [0.0, 1.047, 1.047, 0.0, 0.0, 0.0] * 2
 # Right-arm configurations found by sweeping joints 1 to 4 (left arm at rest).
-RIGHT_TCP_IN_BIN = [0.0] * 6 + [0.5, 1.8, 0.75, 0.47, 0.0, 0.0]
-RIGHT_TCP_BELOW_TABLE = [0.0] * 6 + [-0.2, 0.0, 0.0, -1.6, 0.0, 0.0]
-RIGHT_TCP_FREE = [0.0] * 6 + [-0.2, 0.0, 0.0, -0.05, 0.0, 0.0]
+RIGHT_TCP_IN_BIN = [0.0] * 6 + [0.3, 1.8, 0.75, 0.4, 0.0, 0.0]
+RIGHT_TCP_BELOW_TABLE = [0.0] * 6 + [-0.6, 0.0, 0.0, -1.4, 0.0, 0.0]
+RIGHT_TCP_FREE = [0.0] * 6 + [-0.6, 0.0, 0.0, 0.0, 0.0, 0.0]
 
 
 @pytest.fixture(params=["roboplan", "drake"])
@@ -97,7 +97,7 @@ def test_the_table_and_the_bin_are_in_the_world(module: ManipulationModule) -> N
 
 def test_fingertips_in_the_bin_or_under_the_table_collide(module: ManipulationModule) -> None:
     in_bin = _tcp(module, RIGHT_TCP_IN_BIN).position
-    assert 0.20 < in_bin.x < 0.49 and -0.13 < in_bin.y < 0.08 and in_bin.z < 0.10
+    assert 0.40 < in_bin.x < 0.69 and -0.12 < in_bin.y < 0.12 and in_bin.z < 0.065
     assert not module.is_collision_free(RIGHT_TCP_IN_BIN)
 
     below = _tcp(module, RIGHT_TCP_BELOW_TABLE).position
