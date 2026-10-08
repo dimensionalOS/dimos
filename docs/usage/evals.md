@@ -492,6 +492,11 @@ existing `base_pose` to world `(0, 0, height)` with identity orientation. Withou
 the robot's configured base pose is retained (0.12 m for the default xArm scene).
 `dimos.evals.suites.mujoco_xarm` is the xArm7 table scene with the perception
 modules disabled: pick up the cylinder, then put the red ball on top of it.
+`dimos.evals.suites.mujoco_xarm_tidy` reuses the xArm7 table: a raw case
+(`Move the cup to the middle of the table`), a cleaning-arm duty pair
+(messy vs already centered), and a fallen-cup duty (`stand upright` in the
+middle). Credit ramps from 1 at the table center to 0 at 0.10 m; the fallen
+case also requires an upright orientation.
 
 `dimos.evals.suites.mujoco_xarm_pick` evaluates a cylinder lift in the default
 scene using plain robot commands and observations (see Raw robot topics). Run it
