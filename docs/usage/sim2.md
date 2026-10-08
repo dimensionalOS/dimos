@@ -131,7 +131,7 @@ range/incidence-dependent noise and grazing-angle dropout response. Set
 this does not select a different scanner. Noise is seeded per scan, so a
 missed scan does not shift later samples. Two rotor rates were fitted on one
 G1 capture and validated on a separate recording, with the shape coefficients
-unchanged. See the [hardware comparison](/experiments/mid360/README.md)
+unchanged. See the [archived hardware comparison](https://github.com/dimensionalOS/dimos/blob/8ef292d4fc426c715b8d15a7b2f89bfc215a05f1/experiments/mid360/README.md)
 for method, angular residuals and limitations. This is not a claim that every
 Mid360 has identical calibration.
 
@@ -373,7 +373,7 @@ and point clouds are zero-copy end to end. Real-time pacing is not lockstep
 determinism or a faster-than-real-time training scheduler. The ideal lidar
 does not establish MID360 timing/noise or Point-LIO fidelity.
 
-The [matched G1 benchmark](/experiments/sim2_timing/README.md) now measures
+The [archived matched G1 benchmark](https://github.com/dimensionalOS/dimos/blob/8ef292d4fc426c715b8d15a7b2f89bfc215a05f1/experiments/sim2_timing/README.md) measured
 the old engine, current sim2 and a benchmark-only two-worker sim2 arrangement
 on an M4 Max. Under sensor load both sim2 arrangements maintained about 200 Hz
 physics while the old inline-sensor loop slowed down. Compact placement had

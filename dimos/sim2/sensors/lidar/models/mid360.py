@@ -15,7 +15,7 @@
 """Continuous four-channel Mid360 firing and approximate range response.
 
 Fourier geometry adapted from Andrew's PR #4441. Hardware comparison and
-calibration provenance: experiments/mid360/README.md.
+calibration provenance: experiments/mid360/README.md at commit 8ef292d4f.
 """
 
 from dataclasses import dataclass

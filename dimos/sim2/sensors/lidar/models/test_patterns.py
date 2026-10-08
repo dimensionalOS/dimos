@@ -15,7 +15,34 @@
 import numpy as np
 import pytest
 
+from dimos.sim2.demo_mid360_pattern import angular_points
+from dimos.sim2.sensors.lidar.models.fibonacci import Fibonacci
 from dimos.sim2.sensors.lidar.models.mid360 import Mid360, _FiringPattern
+
+
+def test_rays_are_unit_length_and_evenly_spaced_in_solid_angle():
+    rays = Fibonacci(ray_count=4, elevation_min=-90, elevation_max=90).directions()
+
+    assert np.linalg.norm(rays, axis=1) == pytest.approx(np.ones(4))
+    assert rays[:, 2] == pytest.approx([-0.75, -0.25, 0.25, 0.75])
+    azimuth = np.arange(4) * np.pi * (3 - np.sqrt(5))
+    assert rays[:, :2] == pytest.approx(
+        np.sqrt(1 - rays[:, 2, None] ** 2) * np.column_stack((np.cos(azimuth), np.sin(azimuth)))
+    )
+
+
+def test_angles_use_laser_axes_and_ignore_range():
+    points = np.array([[3, 0, 0], [0, 7, 0], [0, -2, 0], [2, 0, 2]], dtype=float)
+
+    angles = angular_points(points)
+
+    np.testing.assert_allclose(angles, [[0, 0], [90, 0], [-90, 0], [0, 45]])
+
+
+@pytest.mark.parametrize("points", [[[0, 0, 0]], [[np.nan, 0, 1]], [[0, 1]], []])
+def test_invalid_returns_cannot_be_plotted_as_firing_directions(points):
+    with pytest.raises(ValueError):
+        angular_points(np.asarray(points, dtype=float))
 
 
 def test_return_noise_is_seeded_per_scan_and_rejects_grazing_misses():
