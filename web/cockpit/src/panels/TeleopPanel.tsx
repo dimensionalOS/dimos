@@ -3,10 +3,11 @@
 // typing anywhere else can never drive the robot. All safety logic lives in
 // the machine; this component is listeners + visuals.
 
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { FocusEvent, KeyboardEvent } from "react";
 import {
   HANDLED_CODES,
+  stickFromGamepad,
   teleopConfigFromChannel,
   TeleopMachine,
   type TeleopSnapshot,
@@ -31,6 +32,23 @@ const KEY_ROWS: { code: string; label: string }[][] = [
 
 function pressedClass(snap: TeleopSnapshot, code: string): string {
   return snap.pressed.has(code) ? styles.keyDown : styles.key;
+}
+
+/** Standard-mapping buttons the panel acts on: A arms (by focusing the
+ * pad), B is the e-stop. Sticks and the right trigger go to the machine. */
+const PAD_A = 0;
+const PAD_B = 1;
+const PAD_POLL_HZ = 30;
+
+/** The pad that changed most recently. Steam Input exposes several virtual
+ * pads at once and only one of them carries the operator's input. */
+function activeGamepad(): Gamepad | null {
+  if (typeof navigator === "undefined" || typeof navigator.getGamepads !== "function") return null;
+  let best: Gamepad | null = null;
+  for (const pad of navigator.getGamepads()) {
+    if (pad !== null && (best === null || pad.timestamp > best.timestamp)) best = pad;
+  }
+  return best;
 }
 
 export function TeleopPanel({ spec, teleop }: PanelProps) {
@@ -82,6 +100,34 @@ function TeleopControls({ spec, teleop, ch }: {
     };
   }, [machine]);
 
+  // Gamepad: polled, since the Gamepad API has no input events. A focuses
+  // the pad (arming through the same focus path as a click), B e-stops,
+  // the sticks feed the machine; everything else keeps the keyboard rules.
+  const padRef = useRef<HTMLDivElement>(null);
+  const [padName, setPadName] = useState<string | null>(null);
+  useEffect(() => {
+    let prevA = false;
+    let prevB = false;
+    let lastName: string | null = null;
+    const timer = setInterval(() => {
+      const pad = activeGamepad();
+      const name = pad?.id ?? null;
+      if (name !== lastName) {
+        lastName = name;
+        setPadName(name);
+      }
+      if (pad === null) return;
+      const a = pad.buttons[PAD_A]?.pressed ?? false;
+      const b = pad.buttons[PAD_B]?.pressed ?? false;
+      if (a && !prevA) padRef.current?.focus();
+      if (b && !prevB) machine.estop();
+      prevA = a;
+      prevB = b;
+      machine.stick(stickFromGamepad(pad.axes, pad.buttons, pad.mapping));
+    }, 1000 / PAD_POLL_HZ);
+    return () => clearInterval(timer);
+  }, [machine]);
+
   // Arm from focus AND click: after teleop_held or a reconnect the pad can
   // still hold focus, and clicking an already-focused element fires no focus
   // event. arm() no-ops unless disarmed, so the pair never double-sends.
@@ -120,11 +166,18 @@ function TeleopControls({ spec, teleop, ch }: {
   } else if (state === "arming") {
     banner = <span className={styles.hint}>requesting teleop...</span>;
   } else if (state === "armed") {
-    banner = <span className={styles.armed}>armed - WASD drive, QE strafe, Space stop</span>;
+    banner = (
+      <span className={styles.armed}>
+        {padName === null
+          ? "armed - WASD drive, QE strafe, Space stop"
+          : "armed - sticks drive, RT boost, B stop"}
+      </span>
+    );
   } else {
     banner = (
       <span className={styles.hint}>
-        click to arm{snap.reason !== null ? ` (${snap.reason})` : ""}
+        {padName === null ? "click to arm" : "click or press A to arm"}
+        {snap.reason !== null ? ` (${snap.reason})` : ""}
       </span>
     );
   }
@@ -132,6 +185,7 @@ function TeleopControls({ spec, teleop, ch }: {
   return (
     <PanelFrame spec={spec}>
       <div
+        ref={padRef}
         tabIndex={0}
         role="application"
         aria-label={`keyboard teleop ${ch}`}
@@ -166,6 +220,7 @@ function TeleopControls({ spec, teleop, ch }: {
           <span>vy {snap.vy.toFixed(2)}</span>
           <span>wz {snap.wz.toFixed(2)}</span>
           {snap.boosted && <span className={styles.boost}>boost</span>}
+          {padName !== null && <span data-testid={`teleop-${ch}-pad`}>pad: {padName}</span>}
         </div>
       </div>
     </PanelFrame>

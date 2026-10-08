@@ -144,7 +144,9 @@ def make_connection(
     connection_type = cfg.unitree_connection_type.lower()
 
     if ip in ("fake", "mock", "replay") or connection_type == "replay":
-        return ReplayConnection(dataset=cfg.replay_db, exit_on_complete=cfg.replay_exit)
+        return ReplayConnection(
+            dataset=cfg.replay_db, loop=cfg.replay_loop, exit_on_complete=cfg.replay_exit
+        )
     elif ip == "mujoco" or connection_type in ("mujoco", "true"):
         from dimos.robot.unitree.mujoco_connection import MujocoConnection
 
