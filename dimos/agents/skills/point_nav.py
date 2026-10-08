@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import asyncio
 from collections.abc import AsyncIterator
 import math
 
@@ -46,12 +45,10 @@ class PointNavSkillContainer(Module):
     tf: In[TFMessage]
     nav_status: In[GoalStatus]
 
-    _timeout: asyncio.TimerHandle | None = None
-    """Set while a go_to is under way; fires when it runs out of time."""
     _target: tuple[float, float] = (0.0, 0.0)
     """The x, y of the go_to under way."""
     _goal: PoseStamped | None = None
-    """The goal of the go_to under way."""
+    """The goal of the go_to under way. None when there is none."""
 
     async def main(self) -> AsyncIterator[None]:
         # Subscribe to tf now so the first go_to already has a pose.
@@ -60,7 +57,7 @@ class PointNavSkillContainer(Module):
         self._finish("Cancelled, module stopping")
 
     async def handle_nav_status(self, msg: GoalStatus) -> None:
-        if self._timeout is None or self._goal is None:
+        if self._goal is None:
             return
         ended = goal_ended(self._goal, msg)
         if ended is None:
@@ -79,7 +76,7 @@ class PointNavSkillContainer(Module):
         return self.tfbuffer.get_pose(self.config.world_frame, self.config.base_frame)
 
     @skill(uses=[CAP_MOVEMENT], lifecycle="background")
-    async def go_to(self, x: float, y: float, timeout_s: float = 90.0) -> str:
+    async def go_to(self, x: float, y: float) -> str:
         """Start driving to a point in the world frame and return immediately.
 
         A tool update reports where the robot is and how far from the point when it stops,
@@ -88,11 +85,10 @@ class PointNavSkillContainer(Module):
         Args:
             x: target x in metres, world frame.
             y: target y in metres, world frame.
-            timeout_s: seconds allowed before the goal is cancelled and the robot stops.
         """
         # Opened before any return so the movement claim always has a stream to release it.
         self.start_tool("go_to")
-        if self._timeout is not None:
+        if self._goal is not None:
             return "Already navigating. Call stop_navigation first."
 
         pose = self._pose()
@@ -106,17 +102,13 @@ class PointNavSkillContainer(Module):
         floor_z = pose.z - self.config.base_height_m
         self._target = (x, y)
         self._goal = PoseStamped(position=(x, y, floor_z), frame_id=self.config.world_frame)
-        self._timeout = asyncio.get_running_loop().call_later(
-            timeout_s, self._finish, f"Gave up after {timeout_s:g}s"
-        )
         self._navigation.set_goal(self._goal)
         return "Navigating. A tool update reports the robot's position when it stops."
 
     def _finish(self, outcome: str, *, cancel: bool = True) -> None:
-        if self._timeout is None:
+        if self._goal is None:
             return
-        self._timeout.cancel()
-        self._timeout = None
+        self._goal = None
         pose = self._pose()
         if pose is None:
             where = "robot position unknown"

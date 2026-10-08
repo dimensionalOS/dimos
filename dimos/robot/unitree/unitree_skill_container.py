@@ -17,8 +17,10 @@ from __future__ import annotations
 import datetime
 import difflib
 import math
+import queue
 import time
 
+from dimos_lcm.actionlib_msgs import GoalStatus
 from unitree_webrtc_connect.constants import RTC_TOPIC
 
 from dimos.agents.annotation import skill
@@ -29,7 +31,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.navigation.spec import NavigationInterfaceSpec, NavigationState
+from dimos.navigation.spec import NavigationInterfaceSpec, goal_ended
 from dimos.robot.unitree.go2.connection_spec import GO2ConnectionSpec
 from dimos.utils.logging_config import setup_logger
 
@@ -219,6 +221,7 @@ class UnitreeSkillContainer(Module):
     _connection: GO2ConnectionSpec
 
     tf: In[TFMessage]
+    nav_status: In[GoalStatus]
 
     @rpc
     def stop(self) -> None:
@@ -256,40 +259,35 @@ class UnitreeSkillContainer(Module):
             return "Failed to get the position of the robot."
 
         goal = _goal_pose(tf.to_pose(), x, y, degrees, relative)
-        self._navigation.set_goal(goal)
-        outcome = self._wait_for_goal()
+        outcome = self._navigate(goal)
 
         tf = self.tfbuffer.get("world", "base_link")
         now = "unknown" if tf is None else _pose_text(tf.to_pose())
         return f"{outcome}. Robot is at {now}; goal was {_pose_text(goal)}."
 
-    def _wait_for_goal(self, timeout: float = 100.0, settle: float = 2.0) -> str:
-        """Block until the planner arrives, gives up, or `timeout` passes.
+    def _navigate(self, goal: PoseStamped) -> str:
+        """Send the goal and block until the planner reports it over."""
+        ended: queue.Queue[GoalStatus] = queue.Queue()
 
-        The planner drops out of FOLLOWING_PATH for a moment every time it
-        replans, so a pause only counts as the end once it has lasted `settle`
-        seconds without the goal being reached. A goal that did not arrive is
-        cancelled, since a planner can keep retrying one it reported failed.
-        """
-        # TODO: Improve this. This is not a nice way to do it. I should
-        # subscribe to arrival/cancellation events instead.
-        time.sleep(1.0)
+        def on_status(msg: GoalStatus) -> None:
+            report = goal_ended(goal, msg)
+            if report is not None:
+                ended.put(report)
 
-        deadline = time.monotonic() + timeout
-        idle_since: float | None = None
-        while time.monotonic() < deadline:
-            if self._navigation.is_goal_reached():
-                return "Navigation goal reached"
-            if self._navigation.get_state() == NavigationState.FOLLOWING_PATH:
-                idle_since = None
-            elif idle_since is None:
-                idle_since = time.monotonic()
-            elif time.monotonic() - idle_since > settle:
-                self._navigation.cancel_goal()
-                return "Navigation was cancelled or failed"
-            time.sleep(0.1)
-        self._navigation.cancel_goal()
-        return "Navigation timed out"
+        unsubscribe = self.nav_status.subscribe(on_status)
+        try:
+            self._navigation.set_goal(goal)
+            report = ended.get()
+        finally:
+            unsubscribe()
+
+        if report.status == GoalStatus.SUCCEEDED:
+            return "Navigation goal reached"
+        if report.status == GoalStatus.PREEMPTED:
+            if report.text == "replaced":
+                return "Navigation was replaced by another goal"
+            return "Navigation was canceled"
+        return f"Navigation failed: {report.text}"
 
     @skill
     def wait(self, seconds: float) -> str:
