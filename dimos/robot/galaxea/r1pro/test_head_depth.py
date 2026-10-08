@@ -16,7 +16,7 @@
 
 from dimos.perception.depth2depth_cloud.module import Depth2DepthCloud
 from dimos.robot.galaxea.r1pro.head_depth import r1pro_head_depth
-from dimos.robot.galaxea.r1pro.lio import R1ProLioMountTfConfig
+from dimos.robot.galaxea.r1pro.lio import R1ProLioConfig
 
 
 def _kwargs(blueprint):
@@ -28,7 +28,7 @@ def _kwargs(blueprint):
 def test_a_height_band_is_measured_from_base_link() -> None:
     kwargs = _kwargs(r1pro_head_depth(min_height_m=-0.15, max_height_m=0.35))
     assert (kwargs["height_frame"], kwargs["min_height_m"], kwargs["max_height_m"]) == (
-        R1ProLioMountTfConfig.model_fields["base_frame"].default,
+        R1ProLioConfig.model_fields["base_frame"].default,
         -0.15,
         0.35,
     )

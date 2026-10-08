@@ -34,9 +34,8 @@ from dimos.robot.galaxea.r1pro.config import (
 )
 from dimos.robot.galaxea.r1pro.connection import R1ProConnection
 from dimos.robot.galaxea.r1pro.lio import (
-    R1ProLioMountTf,
-    R1ProLioMountTfConfig,
-    R1ProLioOdomPose,
+    R1ProLio,
+    R1ProLioConfig,
 )
 
 
@@ -45,7 +44,7 @@ def _atoms(blueprint):
     return {atom.name: atom for atom in blueprint.active_blueprints}
 
 
-LIDAR_FRAME = R1ProLioMountTfConfig.model_fields["lidar_frame"].default
+LIDAR_FRAME = R1ProLioConfig.model_fields["lidar_frame"].default
 key = r1pro_nav._instance_key
 
 
@@ -63,10 +62,10 @@ def test_base_link_has_one_parent_and_it_is_pointlio() -> None:
         "host_ip": R1PRO_CHASSIS_LIDAR_HOST_IP,
         "point_format": "full",
     }
-    assert key(R1ProLioMountTf) in atoms
+    assert key(R1ProLio) in atoms
     # And the planners read Point-LIO's pose under the name they always did.
     remaps = r1pro_nav.remapping_map
-    assert remaps[(key(R1ProLioOdomPose), "pose")] == "chassis_odom"
+    assert remaps[(key(R1ProLio), "pose")] == "chassis_odom"
     assert remaps[(key(DanLocalPlanner), "odom")] == "chassis_odom"
     assert remaps[(key(DanHolonomicTC), "odom")] == "chassis_odom"
 

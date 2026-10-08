@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.perception.depth2depth_cloud.module import Depth2DepthCloud
-from dimos.robot.galaxea.r1pro.lio import R1ProLioMountTfConfig
+from dimos.robot.galaxea.r1pro.lio import R1ProLioConfig
 
 # Past this the per-pixel calibration has few lidar anchors to lean on.
 MAX_RANGE_M = 6.0
@@ -42,7 +42,7 @@ def r1pro_head_depth(
     """
     options: dict[str, object] = dict(cloud)
     if min_height_m is not None or max_height_m is not None:
-        options["height_frame"] = R1ProLioMountTfConfig.model_fields["base_frame"].default
+        options["height_frame"] = R1ProLioConfig.model_fields["base_frame"].default
     if min_height_m is not None:
         options["min_height_m"] = min_height_m
     if max_height_m is not None:

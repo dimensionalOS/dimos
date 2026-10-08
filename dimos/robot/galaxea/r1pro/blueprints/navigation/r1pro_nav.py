@@ -35,7 +35,7 @@ from dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_coordinator import (
 )
 from dimos.robot.galaxea.r1pro.head_cameras import HeadLeftCameraConfig
 from dimos.robot.galaxea.r1pro.head_depth import r1pro_head_depth
-from dimos.robot.galaxea.r1pro.lio import R1ProLioMountTfConfig
+from dimos.robot.galaxea.r1pro.lio import R1ProLioConfig
 from dimos.visualization.vis_module import vis_module
 
 # First-pass R1 Pro clearances; tune on the robot.
@@ -78,7 +78,7 @@ def _render_cloud(msg: Any) -> Any:
     path = f"world/lidar/{frame_id}"
     xyz = msg.points_f32()
     head_frame = HeadLeftCameraConfig.model_fields["frame_id"].default
-    lidar_frame = R1ProLioMountTfConfig.model_fields["lidar_frame"].default
+    lidar_frame = R1ProLioConfig.model_fields["lidar_frame"].default
     if frame_id in (head_frame, lidar_frame) and len(xyz):
         # Rainbow by the frame's own up axis (the optical frame's is -y), inverted so dark blue is never on black.
         up = -xyz[:, 1] if frame_id == head_frame else xyz[:, 2]
