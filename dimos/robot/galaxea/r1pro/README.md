@@ -63,18 +63,14 @@ The Mid-360 driver and Point-LIO are native binaries built on first run, so
 holds LCM's default port, so set
 `LCM_DEFAULT_URL=udpm://239.255.76.67:7767?ttl=0`.
 
-**The lidar.** Our Mid-360 driver takes the sensor from the vendor's
-`livox_ros_driver2` (a Livox streams to whoever asked last), and
-`/hdas/lidar_chassis_left` goes silent until the vendor driver is restarted. To
-give it back, restart it in its tmux session `hdas` (kill by PID; `pkill -f`
-over ssh matches your own ssh command):
-
-```bash
-pgrep -a livox_ros_driver2      # note the pid
-kill <pid>
-cd ~/galaxea-dimos/install/startup_config/share/startup_config/script/boot/modules/hdas
-tmux send-keys -t hdas './start_livox_lidar.sh' Enter
-```
+**The vendor stack.** `R1ProConnection` boots the vendor stack when it is not
+running, with the `DimOS` session profile
+(`~/galaxea-dimos/install/startup_config/share/startup_config/sessions.d/DimOS/R1PROBody.d`):
+the stock `ATCStandard` profile minus the vendor head camera node and Livox
+driver, since dimos opens those devices itself. Pick another profile with
+`--r1proconnection.vendor-profile`; with one that starts those drivers, the head
+cameras retry until the device is free and our Mid-360 driver competes with the
+vendor's for the sensor.
 
 The lidar and host addresses are `R1PRO_CHASSIS_LIDAR_IP` /
 `R1PRO_CHASSIS_LIDAR_HOST_IP` in `config.py` (`--mid360.lidar_ip` /
