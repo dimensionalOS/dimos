@@ -151,7 +151,7 @@ repos:
 
       - id: native-module-lint
         name: lint (nix)
-        entry: python3 bin/build-native-modules --lint
+        entry: python3 bin/native-modules --lint
         language: system
         types: [rust]
         pass_filenames: false

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Guard rails for bin/build-native-modules.
+"""Guard rails for bin/native-modules.
 
 That script's AST discovery and flake-reference parsing feed the CI inputs
 hash that gates the Cachix publish job: a class or path it misses would let a
@@ -39,7 +39,7 @@ import pytest
 
 from dimos.constants import DIMOS_PROJECT_ROOT
 
-_SCRIPT_PATH = DIMOS_PROJECT_ROOT / "bin" / "build-native-modules"
+_SCRIPT_PATH = DIMOS_PROJECT_ROOT / "bin" / "native-modules"
 if not _SCRIPT_PATH.is_file():
     pytest.skip("dimos is not running from a source checkout", allow_module_level=True)
 
@@ -53,7 +53,7 @@ def _load_script(path: Path, name: str) -> ModuleType:
     return module
 
 
-_SCRIPT = _load_script(_SCRIPT_PATH, "build_native_modules")
+_SCRIPT = _load_script(_SCRIPT_PATH, "native_modules")
 _RELOCK = _load_script(DIMOS_PROJECT_ROOT / "bin" / "relock-shared-flakes", "relock_shared_flakes")
 _IN_GIT_CHECKOUT = (DIMOS_PROJECT_ROOT / ".git").exists()
 
@@ -166,7 +166,7 @@ def _closure_nix_configs(classes: list[_ClassDef]) -> set[tuple[str, str]]:
         kind, command, owner = effective_command(cls, frozenset())
         assert kind != "opaque", (
             f"{cls.file}: {cls.name}.build_command must default to a plain string literal "
-            "so bin/build-native-modules can read it without importing dimos"
+            "so bin/native-modules can read it without importing dimos"
         )
         # Deliberately independent of the production command parser: options
         # before `build` must not silently remove a config from both scans.
@@ -440,7 +440,7 @@ def test_flake_refs_resolve_and_are_covered() -> None:
                     continue  # comment/string noise; real broken refs fail discovery loudly
                 assert any(target == c or target.startswith(c + "/") for c in covered), (
                     f"{flake}: reference {token!r} resolves to {target!r}, outside the hashed "
-                    "input set — teach bin/build-native-modules._FLAKE_REF the new form"
+                    "input set — teach bin/native-modules._FLAKE_REF the new form"
                 )
 
 
@@ -550,7 +550,7 @@ def _rust_flake_dirs() -> list[Path]:
 def test_every_rust_flake_offers_a_tests_check() -> None:
     """Rust tests are derivations, so a flake without the check is silently untested.
 
-    CI runs `bin/build-native-modules --tests`, which skips a flake declaring no
+    CI runs `bin/native-modules --test`, which skips a flake declaring no
     `checks.<system>.tests` rather than failing -- that is what lets the C++ flakes
     through. A rust crate that loses the attribute would be skipped just as quietly.
     """

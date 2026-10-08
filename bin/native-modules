@@ -6,9 +6,9 @@ Walks the whole `dimos` package for any `NativeModuleConfig` subclass whose
 store path to publish, so it stays outside the gate). Discovery is pure AST (stdlib only, no dimos import),
 so this script runs on a bare `python3` with nothing installed.
 
-Modes:
+Modes (exactly one):
 
-  (default)      Run every discovered module's `nix build`. Nix content-hashes
+  --build        Run every discovered module's `nix build`. Nix content-hashes
                  all inputs and the Cachix substituter makes an unchanged
                  closure near-instant, so builds run unconditionally.
   --dry-run      Report which modules would actually be realised rather than
@@ -32,7 +32,7 @@ Modes:
                  first-party crates are compiled; the attribute is named for
                  what it does, not for the tool, so a C++ flake can offer one
                  too. Flakes declaring no such check skip.
-  --tests        Build every flake's `checks.<system>.tests`: the same crate
+  --test         Build every flake's `checks.<system>.tests`: the same crate
                  graph with the test targets compiled and run inside the
                  derivation. Flakes declaring no such check skip. Both check
                  modes discover flakes with `git ls-files`, not module classes,
@@ -418,7 +418,7 @@ def build_manifest(modules: tuple[DiscoveredModule, ...]) -> str:
             top.append(path)
     lines = [
         f"salt {MARKER_SALT}",
-        f"script {_git_object_hash('bin/build-native-modules')}",
+        f"script {_git_object_hash('bin/native-modules')}",
         f"cachix {os.environ.get('CACHIX_CACHE_NAME', '')}",
         *(f"module {m.qualname} dir={m.build_dir} cmd={m.build_command}" for m in modules),
         *(f"path {path} {_git_object_hash(path)}" for path in top),
@@ -433,7 +433,7 @@ def _in_cachix_cache(cache: str, store_path: str) -> bool:
         url,
         method="HEAD",
         # The CDN rejects urllib's default Python-urllib agent with a 403.
-        headers={"User-Agent": "nix/2.28 (dimos bin/build-native-modules)"},
+        headers={"User-Agent": "nix/2.28 (dimos bin/native-modules)"},
     )
     try:
         with urllib.request.urlopen(request, timeout=10) as response:
@@ -600,7 +600,8 @@ def build_one(module: DiscoveredModule, dry_run: bool) -> tuple[str, bool, str]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    mode = parser.add_mutually_exclusive_group()
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--build", action="store_true", help="nix build every discovered module")
     mode.add_argument("--dry-run", action="store_true", help="report what a build would realise")
     mode.add_argument(
         "--inputs-hash", action="store_true", help="print the publish-marker key material hash"
@@ -616,7 +617,7 @@ def main() -> None:
         help="build every flake's checks.<system>.lint instead of the module packages",
     )
     mode.add_argument(
-        "--tests",
+        "--test",
         action="store_true",
         help="build every flake's checks.<system>.tests, which compiles and runs its tests",
     )
@@ -655,7 +656,7 @@ def main() -> None:
     failed = 0
     pending: list[str] = []
     workers = int(os.environ.get("BUILD_WORKERS") or os.cpu_count() or 2)
-    check = "lint" if args.lint else "tests" if args.tests else None
+    check = "lint" if args.lint else "tests" if args.test else None
     targets: list[str] = flake_dirs() if check else [m.qualname for m in modules]
     verb = check.capitalize() if check else "Checking" if args.dry_run else "Building"
     _log(f"{verb}: {len(targets)} target(s) with up to {workers} workers")

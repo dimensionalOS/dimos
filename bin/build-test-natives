@@ -45,7 +45,7 @@ fi
 # Nix-built native modules (lidar drivers, voxel ray tracing, …). Nix
 # content-hashes all inputs, so unchanged modules rebuild near-instantly.
 if command -v nix &>/dev/null; then
-  bin/build-native-modules
+  bin/native-modules --build
 else
   echo "warning: nix not found; skipping nix native-module builds, their tests will skip." >&2
   echo "         Install Nix via https://nixos.org/download. Cold builds are slow; see" >&2
