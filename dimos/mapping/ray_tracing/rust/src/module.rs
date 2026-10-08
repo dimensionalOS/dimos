@@ -21,18 +21,20 @@ use crate::voxel_ray_tracer::{
     partition_seed, region_of, Cell, ChunkKey, Config, Cylinder, SeedPartition, SeedRegion,
 };
 use dimos_module::pointcloud::extract_xyz;
-use dimos_module::{error_throttled, warn_throttled, Input, Module, Output, Tf, Transform};
+use dimos_module::{
+    debug_throttled, error_throttled, warn_throttled, Input, Module, Output, Tf, Transform,
+};
 use lcm_msgs::geometry_msgs::{Point, Pose as PoseMsg, PoseStamped, Quaternion};
 use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
 use lcm_msgs::std_msgs::{Header, Time};
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TryRecvError;
 use tokio::task::JoinHandle;
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 /// Messages queued to the worker in arrival order.
 enum Job {
-    Lidar(PointCloud2),
+    Lidar(PointCloud2, Instant),
     ClearMask(PointCloud2),
     LoadedMap(PointCloud2),
     /// A loaded map placed in the world and split into tiles, or None when
@@ -42,9 +44,6 @@ enum Job {
 
 /// Messages the handlers can queue ahead of the worker before they wait.
 const JOB_QUEUE_CAPACITY: usize = 256;
-
-/// Tiles between seed load progress lines.
-const SEED_PROGRESS_TILES: usize = 400;
 
 /// How long one worker pass may spend on seed tiles before it returns to the
 /// job queue.
@@ -142,7 +141,7 @@ impl RayTracingVoxelMap {
     }
 
     async fn on_lidar(&mut self, msg: PointCloud2) {
-        self.enqueue(Job::Lidar(msg)).await;
+        self.enqueue(Job::Lidar(msg, Instant::now())).await;
     }
 
     async fn on_voxel_clear_mask(&mut self, msg: PointCloud2) {
@@ -178,6 +177,7 @@ struct SeedLoad {
     started: Instant,
     max_tile_ms: f64,
     sum_tile_ms: f64,
+    max_live_wait_ms: f64,
 }
 
 impl SeedLoad {
@@ -192,6 +192,7 @@ impl SeedLoad {
             started: Instant::now(),
             max_tile_ms: 0.0,
             sum_tile_ms: 0.0,
+            max_live_wait_ms: 0.0,
         }
     }
 
@@ -307,10 +308,6 @@ impl Worker {
                 }
             };
             if let Some(job) = job {
-                let backlog = self.jobs.len();
-                if backlog > 1 && matches!(job, Job::Lidar(_)) {
-                    debug!(backlog, "lidar frames waiting behind this one");
-                }
                 self.handle(&mut state, job).await;
             }
             self.seed_step(&mut state).await;
@@ -322,7 +319,7 @@ impl Worker {
 
     async fn handle(&self, state: &mut State, job: Job) {
         match job {
-            Job::Lidar(msg) => self.ingest_frame(state, msg).await,
+            Job::Lidar(msg, received) => self.ingest_frame(state, msg, received).await,
             Job::ClearMask(msg) => self.apply_clear_mask(state, msg),
             Job::LoadedMap(msg) => self.place_loaded_map(state, msg).await,
             Job::SeedPrepared(partition) => {
@@ -331,7 +328,7 @@ impl Worker {
                         regions = part.regions.len(),
                         tiles = part.tile_count(),
                         voxels = part.voxels,
-                        "Seed load started."
+                        "Premap load started."
                     );
                     let mapper = &mut state.mapper;
                     tokio::task::block_in_place(|| mapper.reserve_chunks(part.tile_count()));
@@ -342,7 +339,7 @@ impl Worker {
     }
 
     /// Fold one lidar frame into the map and publish whatever is due.
-    async fn ingest_frame(&self, state: &mut State, msg: PointCloud2) {
+    async fn ingest_frame(&self, state: &mut State, msg: PointCloud2, received: Instant) {
         // Register with the transform nearest the cloud stamp, waiting briefly
         // for one still in flight rather than dropping the cloud.
         let stamp = time_secs(&msg.header.stamp);
@@ -393,6 +390,7 @@ impl Worker {
 
         let mapper = &mut state.mapper;
         let emit_fine = self.config.emit_fine;
+        let process_start = Instant::now();
         let (region, global_points, local_points, fine_points) =
             tokio::task::block_in_place(|| {
                 mapper.add_frame(points, tf_to_pose(&tf_pose));
@@ -405,6 +403,11 @@ impl Worker {
                     .flatten();
                 (region, global_points, local_points, fine_points)
             });
+        let process_ms = process_start.elapsed().as_secs_f64() * 1e3;
+        let wait_ms = process_start.duration_since(received).as_secs_f64() * 1e3;
+        if let SeedState::Loading(load) = &mut state.seed {
+            load.max_live_wait_ms = load.max_live_wait_ms.max(wait_ms);
+        }
 
         let out_frame_id = self.config.world_frame.as_str();
         let stamp = msg.header.stamp;
@@ -432,12 +435,17 @@ impl Worker {
         if state.mapper.viz_due() {
             self.publish_map_regions(state, &stamp).await;
         }
+        debug_throttled!(
+            Duration::from_secs(5),
+            process_ms,
+            wait_ms,
+            "lidar frame processed"
+        );
     }
 
     /// Publish the map region cells due this viz tick, the cell in each
     /// header seq.
     async fn publish_map_regions(&self, state: &mut State, stamp: &Time) {
-        let tick_start = Instant::now();
         let due = tokio::task::block_in_place(|| {
             map_regions_due(
                 &mut state.mapper,
@@ -447,16 +455,11 @@ impl Worker {
                 self.config.viz_sweep_regions as usize,
             )
         });
-        let tick_ms = tick_start.elapsed().as_secs_f64() * 1e3;
-        let regions = due.len();
-        let mut bytes = 0usize;
         for (cell, points) in due {
             let mut cloud = points_to_cloud(&points, &self.config.world_frame, stamp.clone());
             cloud.header.seq = pack_cell(cell);
-            bytes += cloud.data.len();
             publish_cloud(&self.map_regions, &cloud).await;
         }
-        debug!(regions, tick_ms, bytes, "map regions published");
     }
 
     /// Delete the voxels covering a cloud of world-frame points a sensor knows
@@ -558,17 +561,17 @@ impl Worker {
         let pass_start = Instant::now();
         while !load.finished() {
             let completed = load.step(&mut state.mapper);
-            if load.tiles_done % SEED_PROGRESS_TILES == 0 {
-                info!(
-                    tiles_done = load.tiles_done,
-                    tiles = load.tile_count,
-                    regions_done = load.next_region,
-                    regions = load.regions.len(),
-                    max_tile_ms = load.max_tile_ms,
-                    mean_tile_ms = load.mean_tile_ms(),
-                    "Seed load in progress."
-                );
-            }
+            debug_throttled!(
+                Duration::from_millis(500),
+                tiles_done = load.tiles_done,
+                tiles = load.tile_count,
+                regions_done = load.next_region,
+                regions = load.regions.len(),
+                max_tile_ms = load.max_tile_ms,
+                mean_tile_ms = load.mean_tile_ms(),
+                max_live_wait_ms = load.max_live_wait_ms,
+                "Premap load in progress."
+            );
             if let Some(cylinder) = completed {
                 let seq = load.next_region as i32;
                 self.publish_seed_region(&state.mapper, &cylinder, seq, &state.last_frame_stamp)
@@ -591,7 +594,8 @@ impl Worker {
             load_s = load.started.elapsed().as_secs_f64(),
             max_tile_ms = load.max_tile_ms,
             mean_tile_ms = load.mean_tile_ms(),
-            "Seeded the voxel map from a loaded map cloud."
+            max_live_wait_ms = load.max_live_wait_ms,
+            "Premap load finished."
         );
         state.seed = SeedState::Done;
     }
