@@ -19,7 +19,6 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import subprocess
-import time
 
 from dimos.utils.logging_config import setup_logger
 
@@ -30,13 +29,10 @@ VENDOR_STARTUP_SCRIPT = os.path.join(
     os.environ.get("HOME", ""),
     "galaxea-dimos/install/startup_config/share/startup_config/script/robot_startup.sh",
 )
-VENDOR_PROFILE = "../sessions.d/ATCStandard/R1PROBody.d/"
+# ATCStandard minus the vendor head camera and Livox drivers, whose devices dimos opens itself.
+VENDOR_PROFILE = "../sessions.d/DimOS/R1PROBody.d/"
 # tmux sessions the profile creates; all present means the stack is already up.
 VENDOR_SESSIONS: tuple[str, ...] = ("hdas", "mobiman")
-# The vendor livox_ros_driver2 window; it takes the Mid-360 from our own driver.
-VENDOR_LIDAR_WINDOW = "hdas:livox"
-# The vendor head camera node (process name, truncated by the kernel); it holds the head eyes our V4L2 cameras open.
-VENDOR_HEAD_CAMERA_PROCESS = "signal_camera_n"
 
 
 def running_tmux_sessions() -> set[str]:
@@ -58,41 +54,15 @@ def boot_command(startup_script: str, profile: str, running: set[str]) -> list[s
         logger.warning("R1 vendor stack not running and %s does not exist", script)
         return None
     # The script resolves the profile relative to its own directory.
+    if not (script.parent / profile).is_dir():
+        logger.warning("R1 vendor stack not running and profile %s is not installed", profile)
+        return None
     return ["bash", str(script), "boot", profile]
 
 
-def prepare_vendor_stack(startup_script: str, profile: str, stop_vendor_lidar: bool) -> None:
-    """Boot the vendor stack if needed, then free what our own drivers take from it."""
+def boot_vendor_stack(startup_script: str, profile: str) -> None:
+    """Boot the vendor stack with ``profile`` unless it is already running."""
     command = boot_command(startup_script, profile, running_tmux_sessions())
     if command is not None:
         logger.info("R1 vendor stack not running; booting %s", profile)
         subprocess.run(command, cwd=Path(command[1]).parent, check=True)
-    if stop_vendor_lidar:
-        # Before our driver's handshake, so the Livox streams to us, not the vendor.
-        subprocess.run(["tmux", "kill-window", "-t", VENDOR_LIDAR_WINDOW], check=False)
-    # A freshly booted profile starts it a few seconds later.
-    stop_vendor_head_cameras(appear_timeout_s=30.0 if command is not None else 0.0)
-
-
-def _vendor_head_camera_running() -> bool:
-    return (
-        subprocess.run(["pgrep", "-x", VENDOR_HEAD_CAMERA_PROCESS], capture_output=True).returncode
-        == 0
-    )
-
-
-def stop_vendor_head_cameras(appear_timeout_s: float) -> None:
-    """SIGINT the vendor head camera node, so it shuts down cleanly, and wait for it to exit."""
-    deadline = time.monotonic() + appear_timeout_s
-    while not _vendor_head_camera_running() and time.monotonic() < deadline:
-        time.sleep(0.5)
-    if not _vendor_head_camera_running():
-        return
-    logger.info("Stopping the vendor head camera node")
-    # It ignores a SIGINT while still starting up, so keep asking.
-    deadline = time.monotonic() + 30.0
-    while _vendor_head_camera_running() and time.monotonic() < deadline:
-        subprocess.run(["pkill", "-INT", "-x", VENDOR_HEAD_CAMERA_PROCESS], check=False)
-        time.sleep(2.0)
-    if _vendor_head_camera_running():
-        logger.warning("The vendor head camera node is still running; the head cameras cannot open")
