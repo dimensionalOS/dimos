@@ -30,3 +30,12 @@ def validate_blueprints(names: Sequence[str]) -> None:
 
     for name in names:
         get_by_name(name)
+
+
+def composes_module(names: Sequence[str], module: str) -> bool:
+    """Whether any of the registry names already composes the named module."""
+    from dimos.robot.get_all_blueprints import get_by_name
+
+    return any(
+        atom.module.__name__ == module for name in names for atom in get_by_name(name).blueprints
+    )

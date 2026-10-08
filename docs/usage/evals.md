@@ -128,8 +128,9 @@ same module serves an arm when its blueprint provides them: joint state (with th
 pose and a 0-1 gripper opening) on `robot/arm/state/json`, wrist depth and camera pose, and
 `robot/arm/twist/json` / `robot/arm/gripper/json` commands that drive the coordinator's
 `eef_twist` and gripper tasks. Robot-specific settings (camera and TCP frames, gripper joint and
-range) come from the suite's `module_env`; `xarm-sim` gets its TCP pose from the coordinator
-(`publish_frame_poses`).
+range) live in the robot's blueprint: `xarm-sim` composes a configured bridge and gets its TCP
+pose from the coordinator (`publish_frame_poses`). With `raw_bridge=True` the harness adds a
+default `raw-robot-bridge` only when the blueprint has none.
 
 Every suite with `raw_bridge=True` names its `ROBOT.md` template as `raw_guide`: `RAW_README`
 for the Go2, `RAW_ARM_README` for arms; a suite appends its robot facts (`XARM7_NOTES`).

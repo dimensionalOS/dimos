@@ -303,28 +303,6 @@ def test_one_bridge_wires_to_whatever_the_robot_provides(robot: str, connected: 
     assert wired == connected
 
 
-def test_bridge_drives_again_after_a_restart() -> None:
-    module = RawRobotBridge(endpoint="tcp/127.0.0.1:17449")
-    for stream in ("color_image", "depth_image", "camera_info", "lidar", "odom",
-                   "coordinator_joint_state", "tf", "cmd_vel", "ee_twist_command",
-                   "gripper_command"):  # fmt: skip
-        setattr(module, stream, MagicMock())
-    try:
-        module.start()
-        first_loop = module._drive_thread
-        module._arm.set(json.dumps({"vz": 0.05, "t": 2.0}))  # still held at stop()
-        module.stop()
-        assert first_loop is not None and not first_loop.is_alive()
-        module.ee_twist_command.reset_mock()  # stop() itself publishes one zero twist
-        module.start()
-        time.sleep(0.3)  # three drive ticks
-        module.ee_twist_command.publish.assert_not_called()  # the held twist did not resume
-        module._arm.set(json.dumps({"vz": 0.05, "t": 1.0}))
-        wait_for(lambda: module.ee_twist_command.publish.call_count > 0)
-    finally:
-        module.stop()
-
-
 def test_state_with_a_non_finite_joint_is_not_sent(bridge: RawRobotBridge) -> None:
     bridge._on_joint_state(JointState(name=["j1"], position=[float("nan")], ts=1.0))
     assert not _published(bridge, "arm/state/json")

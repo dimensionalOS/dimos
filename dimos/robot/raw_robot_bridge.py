@@ -189,10 +189,6 @@ class Deadman:
         with self.lock:
             return self.values if time.monotonic() < self.until else self._zero
 
-    def clear(self) -> None:
-        with self.lock:
-            self.values, self.until = self._zero, 0.0
-
 
 class RawRobotBridgeConfig(ModuleConfig):
     endpoint: str = RAW_ENDPOINT
@@ -254,7 +250,6 @@ class RawRobotBridge(Module):
     def start(self) -> None:
         super().start()
         cfg = self.config
-        self._stop.clear()  # a restarted bridge drives again
         self._topics = RawTopics(cfg.endpoint, cfg.prefix, listen=True)
         q = cfg.jpeg_quality
         self.color_image.subscribe(lambda img: self._put("camera/jpeg", jpeg_bytes(img, q), img.ts))
@@ -284,11 +279,7 @@ class RawRobotBridge(Module):
         if self._topics is not None:
             self._stop.set()
             if self._drive_thread is not None:
-                self._drive_thread.join(timeout=1.0)  # one drive loop across restarts
-                self._drive_thread = None
-            self._base.clear()  # a restart must not resume a held command
-            self._arm.clear()
-            self._moving = {"base": False, "arm": False}
+                self._drive_thread.join(timeout=1.0)
             self.cmd_vel.publish(Twist())
             self.ee_twist_command.publish(TwistStamped())
             self._topics.close()

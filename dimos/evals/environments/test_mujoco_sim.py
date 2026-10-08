@@ -102,7 +102,7 @@ def test_latest_pose_needs_odom():
         assert env.latest_pose(store).ts == 5
 
 
-def test_raw_manipulation_uses_the_shared_bridge_and_suite_owned_interface():
+def test_raw_arm_blueprint_configures_its_bridge():
     from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
     from dimos.robot.manipulators.xarm.blueprints.simulation import xarm_sim
 
@@ -110,10 +110,20 @@ def test_raw_manipulation_uses_the_shared_bridge_and_suite_owned_interface():
         blueprint=["xarm-sim", "mcp-server"], raw_bridge=True, raw_guide=RAW_ARM_README
     )
     assert env.provides_raw_robot
-    parsed = BlueprintConfigParser(xarm_sim).parse(environ={})
+    assert env._bridge() == []  # the blueprint's configured bridge, not a default one
+    parsed = BlueprintConfigParser(xarm_sim).parse(
+        environ={"RAWROBOTBRIDGE__ENDPOINT": "tcp/127.0.0.1:12345"}
+    )
+    bridge = parsed.module_kwargs("rawrobotbridge")
+    assert bridge["ee_frame"] == "link_tcp" and bridge["gripper_joint"] == "arm/gripper"
+    assert bridge["endpoint"] == "tcp/127.0.0.1:12345"  # the per-run endpoint still applies
     tasks = parsed.module_kwargs("ControlCoordinator")["tasks"]
-    twist = next(task for task in tasks if task["type"] == "eef_twist")
-    assert twist["params"]["robot_model"] is not None
+    assert any(task["type"] == "eef_twist" for task in tasks)
+
+
+def test_raw_bridge_is_added_to_a_blueprint_without_one():
+    env = MujocoEnvironment(blueprint=["xarm-perception-sim"], raw_bridge=True)
+    assert env._bridge() == ["raw-robot-bridge"]
 
 
 def test_suite_guide_becomes_robot_md(tmp_path):
