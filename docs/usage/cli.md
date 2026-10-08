@@ -290,7 +290,7 @@ dimos log                    # last 50 lines, human-readable
 dimos log -f                 # follow in real time
 dimos log -n 100             # last 100 lines
 dimos log --json | jq .event # raw JSONL, extract events
-dimos log -r 20260306-143022-unitree-go2  # specific run
+dimos log -r 20260306-143022-a3f1-unitree-go2  # specific run
 ```
 
 All processes (main + workers) write to the same `main.jsonl`. Filter by module:
