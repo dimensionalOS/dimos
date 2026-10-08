@@ -199,3 +199,16 @@ def test_independent_processes_share_one_completed_build(package_source, tmp_pat
                 process.kill()
                 process.communicate(timeout=10)
     assert Path(config["extra_env"]["COUNTER"]).read_text() == "build\n"
+
+
+def test_copied_artifact_does_not_skip_an_uncompleted_build(package_source, module_factory):
+    source, config = package_source
+    artifact = source / "bin/probe"
+    artifact.parent.mkdir()
+    artifact.write_text("stale shipped artifact")
+    artifact.chmod(0o755)
+    module = module_factory(**config)
+    module._prepare_native()
+    assert Path(module._executable).read_text() == "first"
+    assert artifact.read_text() == "stale shipped artifact"
+    assert Path(config["extra_env"]["COUNTER"]).read_text() == "build\n"

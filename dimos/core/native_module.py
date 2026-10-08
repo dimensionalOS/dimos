@@ -321,8 +321,9 @@ class NativeModule(Module):
 
     def _build_package_source(self, directory: Path, executable: Path) -> None:
         self._cwd, self._executable = str(directory), str(executable)
-        # A snapshot may include an artifact; an incomplete cache must still build.
-        self._maybe_build(force=True)
+        # A copied artifact is not a completed build for this cache recipe.
+        executable.unlink(missing_ok=True)
+        self._maybe_build()
 
     def _spawn_env(self) -> dict[str, str]:
         env = {**os.environ, **self.config.extra_env}
@@ -555,7 +556,7 @@ class NativeModule(Module):
             default_log_fn(line, module=self._module_label, pid=pid)
         stream.close()
 
-    def _maybe_build(self, *, force: bool = False) -> None:
+    def _maybe_build(self) -> None:
         exe = Path(self._executable)
 
         if self.config.build_command is None:
@@ -566,12 +567,7 @@ class NativeModule(Module):
                 )
             return
 
-        if (
-            exe.exists()
-            and not force
-            and not self.config.auto_build
-            and not self.config.g.build_native
-        ):
+        if exe.exists() and not self.config.auto_build and not self.config.g.build_native:
             return
 
         logger.info(
