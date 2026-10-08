@@ -20,7 +20,3 @@ export PYTHONPATH="$PWD/build/message-codegen/demo/python${PYTHONPATH:+:$PYTHONP
   | tee build/message-codegen/demo/evidence/conformance.txt
 .venv/bin/python examples/message-codegen/demo_buffers.py --functional-only \
   | tee build/message-codegen/demo/evidence/buffers.txt
-cargo test -p dimos-lcm-transport
-cargo build -p dimos-lcm-transport --example interop
-.venv/bin/python examples/message-codegen/demo_transport.py --executable target/debug/examples/interop \
-  | tee build/message-codegen/demo/evidence/transport.txt

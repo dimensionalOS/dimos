@@ -31,7 +31,6 @@
             ../../../../Cargo.toml
             ../../../../dimos/experimental/memory/rust
             ../../../../native/rust/dimos-module
-            ../../../../native/rust/dimos-lcm-transport
             ../../../../native/rust/dimos-module-macros
             ../../../../dimos/mapping/ray_tracing/rust
             ../../../../dimos/mapping/ray_tracing/rust/py
