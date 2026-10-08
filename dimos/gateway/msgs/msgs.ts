@@ -12,6 +12,7 @@
 //   sensor_msgs.JointCommand (dimos/msgs/sensor_msgs/JointCommand.py:JointCommand): hand-written, no dimos_lcm.sensor_msgs.JointCommand class
 //   sensor_msgs.MotorCommandArray (dimos/msgs/sensor_msgs/MotorCommandArray.py:MotorCommandArray): hand-written, no dimos_lcm.sensor_msgs.MotorCommandArray class
 //   sensor_msgs.RobotState (dimos/msgs/sensor_msgs/RobotState.py:RobotState): hand-written, no dimos_lcm.sensor_msgs.RobotState class
+//   sim_msgs.Contacts (dimos/msgs/sim_msgs/Contacts.py:Contacts): hand-written, no dimos_lcm.sim_msgs.Contacts class
 //   trajectory_msgs.JointTrajectory (dimos/msgs/trajectory_msgs/JointTrajectory.py:JointTrajectory): hand-written, its own fingerprint 2b3c4d5e6f708192 (dimos_lcm.trajectory_msgs.JointTrajectory is another message of the same name, fingerprint ae3a209832c6d386)
 //   trajectory_msgs.TrajectoryPoint (dimos/msgs/trajectory_msgs/TrajectoryPoint.py:TrajectoryPoint): hand-written, no dimos_lcm.trajectory_msgs.TrajectoryPoint class
 //   trajectory_msgs.TrajectoryStatus (dimos/msgs/trajectory_msgs/TrajectoryStatus.py:TrajectoryStatus): hand-written, no dimos_lcm.trajectory_msgs.TrajectoryStatus class
@@ -545,6 +546,7 @@ const MISSING: Record<string, string> = {
     "sensor_msgs.JointCommand": "hand-written, no dimos_lcm.sensor_msgs.JointCommand class [dimos/msgs/sensor_msgs/JointCommand.py:JointCommand]",
     "sensor_msgs.MotorCommandArray": "hand-written, no dimos_lcm.sensor_msgs.MotorCommandArray class [dimos/msgs/sensor_msgs/MotorCommandArray.py:MotorCommandArray]",
     "sensor_msgs.RobotState": "hand-written, no dimos_lcm.sensor_msgs.RobotState class [dimos/msgs/sensor_msgs/RobotState.py:RobotState]",
+    "sim_msgs.Contacts": "hand-written, no dimos_lcm.sim_msgs.Contacts class [dimos/msgs/sim_msgs/Contacts.py:Contacts]",
     "trajectory_msgs.JointTrajectory": "hand-written, its own fingerprint 2b3c4d5e6f708192 (dimos_lcm.trajectory_msgs.JointTrajectory is another message of the same name, fingerprint ae3a209832c6d386) [dimos/msgs/trajectory_msgs/JointTrajectory.py:JointTrajectory]",
     "trajectory_msgs.TrajectoryPoint": "hand-written, no dimos_lcm.trajectory_msgs.TrajectoryPoint class [dimos/msgs/trajectory_msgs/TrajectoryPoint.py:TrajectoryPoint]",
     "trajectory_msgs.TrajectoryStatus": "hand-written, no dimos_lcm.trajectory_msgs.TrajectoryStatus class [dimos/msgs/trajectory_msgs/TrajectoryStatus.py:TrajectoryStatus]",
