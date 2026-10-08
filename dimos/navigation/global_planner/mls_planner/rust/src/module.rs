@@ -21,7 +21,7 @@ use crate::mls_planner::{Config, Planner, RegionBounds};
 use crate::region_viz::{pack_cell, Cell, RegionContent, RegionViz};
 use crate::voxel::{surface_point_xyz, VoxelKey};
 use dimos_module::time::now;
-use dimos_module::{error_throttled, warn_throttled, Input, Module, Output, Tf};
+use dimos_module::{debug_throttled, error_throttled, warn_throttled, Input, Module, Output, Tf};
 use lcm_msgs::geometry_msgs::{Point, PointStamped, Pose, PoseStamped, Quaternion};
 use lcm_msgs::nav_msgs::Path;
 use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
@@ -69,7 +69,6 @@ struct QueuedSeed {
 struct VizBatch {
     regions: Vec<(Cell, RegionContent)>,
     node_points: Vec<Xyz>,
-    tick_ms: f64,
 }
 
 /// Viz batches the publisher may hold while the worker moves on. A full
@@ -78,9 +77,6 @@ const VIZ_QUEUE: usize = 2;
 
 /// How long half a seed region waits for its counterpart before it is dropped.
 const SEED_PAIR_TIMEOUT: Duration = Duration::from_secs(10);
-
-/// Seed regions between progress lines.
-const SEED_PROGRESS_REGIONS: usize = 20;
 
 /// A seed queue quiet this long is taken as a finished load.
 const SEED_SETTLE: Duration = Duration::from_secs(2);
@@ -99,11 +95,16 @@ struct SeedProgress {
     points: usize,
     max_region_ms: f64,
     sum_region_ms: f64,
+    max_live_wait_ms: f64,
 }
 
 impl SeedProgress {
     fn in_flight(&self) -> bool {
         self.started.is_some()
+    }
+
+    fn settled(&self) -> bool {
+        self.last_at.is_some_and(|at| at.elapsed() >= SEED_SETTLE)
     }
 
     fn mean_region_ms(&self) -> f64 {
@@ -116,32 +117,39 @@ impl SeedProgress {
             .is_some_and(|at| at.elapsed() >= SEED_STARVED_WARN_AFTER)
     }
 
-    /// Count one region by the points it applied. True when a progress line
-    /// is due.
-    fn record(&mut self, applied: Option<usize>, region_ms: f64) -> bool {
+    /// Count one region by the points it applied.
+    fn record(&mut self, applied: Option<usize>, region_ms: f64) {
         let now = Instant::now();
         self.started.get_or_insert(now);
         self.last_at = Some(now);
         let Some(points) = applied else {
             self.unusable += 1;
-            return false;
+            return;
         };
         self.applied += 1;
         self.points += points;
         self.max_region_ms = self.max_region_ms.max(region_ms);
         self.sum_region_ms += region_ms;
-        self.applied.is_multiple_of(SEED_PROGRESS_REGIONS)
+    }
+
+    /// Track the longest a live region waited while seed regions load.
+    fn record_live_wait(&mut self, wait_ms: f64) {
+        if self.in_flight() {
+            self.max_live_wait_ms = self.max_live_wait_ms.max(wait_ms);
+        }
     }
 
     fn log_progress(&self, queued: usize) {
-        info!(
+        debug_throttled!(
+            Duration::from_millis(500),
             regions_done = self.applied,
             queued,
             unusable = self.unusable,
             points = self.points,
             max_region_ms = self.max_region_ms,
             mean_region_ms = self.mean_region_ms(),
-            "Seed regions in progress."
+            max_live_wait_ms = self.max_live_wait_ms,
+            "Premap load in progress."
         );
     }
 
@@ -155,7 +163,8 @@ impl SeedProgress {
                 load_s = last_at.duration_since(started).as_secs_f64(),
                 max_region_ms = self.max_region_ms,
                 mean_region_ms = self.mean_region_ms(),
-                "Applied the seed regions to the graph."
+                max_live_wait_ms = self.max_live_wait_ms,
+                "Premap load finished."
             );
         }
         *self = Self::default();
@@ -420,26 +429,15 @@ impl VizPublisher {
     async fn run(mut self) {
         while let Some(batch) = self.batches.recv().await {
             let stamp = now();
-            let regions = batch.regions.len();
-            let (mut surface_bytes, mut edge_segments) = (0usize, 0usize);
             for (cell, content) in batch.regions {
-                edge_segments += content.segments.len();
                 let (surface, edges) = tokio::task::block_in_place(|| {
                     region_messages(cell, content, self.voxel_size, &self.frame, stamp.clone())
                 });
-                surface_bytes += surface.data.len();
                 publish_cloud(&self.surface_map, &surface).await;
                 publish_path(&self.node_edges, &edges).await;
             }
             let node_cloud = build_pc2_xyz(&batch.node_points, &self.frame, stamp);
             publish_cloud(&self.nodes, &node_cloud).await;
-            debug!(
-                regions,
-                tick_ms = batch.tick_ms,
-                surface_bytes,
-                edge_segments,
-                "viz published"
-            );
         }
     }
 }
@@ -461,11 +459,9 @@ impl Worker {
             let goal_changed = self.goal_changed.swap(false, Ordering::SeqCst);
             let update = self.pending.lock().expect("pending mutex").take();
             if update.is_some() || goal_changed {
-                let work_start = Instant::now();
-                let received = match &update {
-                    Some(MapUpdate::Region { received, .. }) => Some(*received),
-                    _ => None,
-                };
+                if let Some(MapUpdate::Region { received, .. }) = &update {
+                    seed_progress.record_live_wait(received.elapsed().as_secs_f64() * 1e3);
+                }
                 let live_update = match update {
                     Some(update) => {
                         self.apply_update(&mut planner, update, &mut viz, &mut last_viz_at)
@@ -476,13 +472,6 @@ impl Worker {
                 if replan_due(goal_changed, live_update) {
                     self.maybe_replan(&mut planner, &mut last_path_at).await;
                 }
-                if let Some(received) = received {
-                    debug!(
-                        wait_ms = work_start.duration_since(received).as_secs_f64() * 1e3,
-                        work_ms = work_start.elapsed().as_secs_f64() * 1e3,
-                        "live update done"
-                    );
-                }
                 self.warn_if_seeds_starved(&seed_progress);
                 continue;
             }
@@ -492,13 +481,15 @@ impl Worker {
                 (queue.pop_front(), queue.len())
             };
             if let Some(seed) = seed {
+                if !seed_progress.in_flight() {
+                    info!("Premap load started.");
+                }
                 let region_start = Instant::now();
                 let applied =
                     tokio::task::block_in_place(|| self.ingest_seed(&mut planner, seed, &mut viz));
                 let region_ms = region_start.elapsed().as_secs_f64() * 1e3;
-                if seed_progress.record(applied, region_ms) {
-                    seed_progress.log_progress(queued);
-                }
+                seed_progress.record(applied, region_ms);
+                seed_progress.log_progress(queued);
                 if applied.is_some() {
                     self.publish_viz_if_due(&planner, &mut viz, &mut last_viz_at)
                         .await;
@@ -509,8 +500,8 @@ impl Worker {
 
             // A seed whose queue stays quiet has finished.
             if seed_progress.in_flight() {
-                let woke = tokio::time::timeout(SEED_SETTLE, self.wake.notified()).await;
-                if woke.is_err() {
+                let _ = tokio::time::timeout(SEED_SETTLE, self.wake.notified()).await;
+                if seed_progress.settled() {
                     seed_progress.finish();
                 }
             } else {
@@ -530,7 +521,7 @@ impl Worker {
                 SEED_STARVED_WARN_AFTER,
                 queued,
                 regions_done = progress.applied,
-                "Seed regions are starved: live updates have kept the worker busy.",
+                "Premap load is starved: live updates have kept the worker busy.",
             );
         }
     }
@@ -574,15 +565,14 @@ impl Worker {
             let node_points: Vec<Xyz> = planner.graph().nodes.iter().map(|n| n.pos).collect();
             (regions, node_points)
         });
-        let tick_ms = tick_at.elapsed().as_secs_f64() * 1e3;
         *last_viz_at = Some(tick_at);
         let batch = VizBatch {
             regions,
             node_points,
-            tick_ms,
         };
         if let Err(e) = self.viz.try_send(batch) {
-            debug!(
+            debug_throttled!(
+                Duration::from_secs(5),
                 regions = e.into_inner().regions.len(),
                 "viz tick dropped, the publisher is behind"
             );
@@ -592,7 +582,11 @@ impl Worker {
     /// Mutate the graph from a map update. False if the cloud was unusable.
     fn ingest(&self, planner: &mut Planner, update: MapUpdate, viz: &mut RegionViz) -> bool {
         match update {
-            MapUpdate::Region { points, bounds, .. } => {
+            MapUpdate::Region {
+                points,
+                bounds,
+                received,
+            } => {
                 let Some((_, _, sensor_z)) = self.base_position() else {
                     warn!(
                         world_frame = %self.config.world_frame,
@@ -602,8 +596,18 @@ impl Worker {
                     return false;
                 };
                 let region = region_bounds(&bounds).capped_at(sensor_z, self.config.max_overhead_m);
-                self.apply_region(planner, &points, &region, viz, "local region processed")
-                    .is_some()
+                let process_start = Instant::now();
+                let applied = self.apply_region(planner, &points, &region, viz);
+                if let Some(points) = applied {
+                    debug_throttled!(
+                        Duration::from_secs(5),
+                        process_ms = process_start.elapsed().as_secs_f64() * 1e3,
+                        wait_ms = process_start.duration_since(received).as_secs_f64() * 1e3,
+                        points,
+                        "local region processed"
+                    );
+                }
+                applied.is_some()
             }
             MapUpdate::Global { points } => {
                 if points.is_empty() {
@@ -627,7 +631,7 @@ impl Worker {
         viz: &mut RegionViz,
     ) -> Option<usize> {
         let region = region_bounds(&seed.bounds);
-        self.apply_region(planner, &seed.points, &region, viz, "seed region processed")
+        self.apply_region(planner, &seed.points, &region, viz)
     }
 
     /// Replace the voxels in a region and repair the graph around them,
@@ -638,17 +642,10 @@ impl Worker {
         points: &[Xyz],
         region: &RegionBounds,
         viz: &mut RegionViz,
-        label: &'static str,
     ) -> Option<usize> {
-        let update_start = Instant::now();
         if let Some(window) = planner.update_region(points, region, &self.config) {
             viz.mark_window(window);
         }
-        debug!(
-            update_ms = update_start.elapsed().as_secs_f64() * 1e3,
-            points = points.len(),
-            "{label}"
-        );
         Some(points.len())
     }
 
@@ -694,9 +691,12 @@ impl Worker {
 
         let stamp = now();
         let path_msg = build_path_from_waypoints(&waypoints, &self.config.world_frame, stamp);
-        debug!(
+        debug_throttled!(
+            Duration::from_secs(5),
             waypoints = waypoints.len(),
-            plan_ms, since_last_ms, "path planned"
+            plan_ms,
+            since_last_ms,
+            "path planned"
         );
         publish_path(&self.path, &path_msg).await;
     }
@@ -1133,27 +1133,22 @@ mod tests {
     }
 
     #[test]
-    fn seed_progress_counts_applied_regions_and_is_due_every_batch() {
+    fn seed_progress_counts_applied_regions() {
+        const REGIONS: usize = 20;
         let mut progress = SeedProgress::default();
         assert!(!progress.in_flight());
-        assert!(
-            !progress.record(None, 1.0),
-            "unusable regions never trigger a line"
-        );
+        progress.record(None, 1.0);
         assert!(progress.in_flight());
-        for i in 1..SEED_PROGRESS_REGIONS {
-            assert!(!progress.record(Some(100), i as f64), "region {i}");
+        for i in 1..REGIONS {
+            progress.record(Some(100), i as f64);
         }
-        assert!(
-            progress.record(Some(100), 0.5),
-            "the batch's last region is due"
-        );
-        assert_eq!(progress.applied, SEED_PROGRESS_REGIONS);
+        progress.record(Some(100), 0.5);
+        assert_eq!(progress.applied, REGIONS);
         assert_eq!(progress.unusable, 1);
-        assert_eq!(progress.points, 100 * SEED_PROGRESS_REGIONS);
-        assert_eq!(progress.max_region_ms, (SEED_PROGRESS_REGIONS - 1) as f64);
-        let sum: f64 = (1..SEED_PROGRESS_REGIONS).map(|i| i as f64).sum::<f64>() + 0.5;
-        assert!((progress.mean_region_ms() - sum / SEED_PROGRESS_REGIONS as f64).abs() < 1e-9);
+        assert_eq!(progress.points, 100 * REGIONS);
+        assert_eq!(progress.max_region_ms, (REGIONS - 1) as f64);
+        let sum: f64 = (1..REGIONS).map(|i| i as f64).sum::<f64>() + 0.5;
+        assert!((progress.mean_region_ms() - sum / REGIONS as f64).abs() < 1e-9);
 
         progress.finish();
         assert!(!progress.in_flight());

@@ -104,3 +104,6 @@ site/
 
 # Optuna study store, written by the relocalization eval (see lidar/eval.md)
 optuna.db
+
+# policy blobs are loaded from outside the repository
+*.bin
