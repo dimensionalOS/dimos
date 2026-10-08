@@ -27,9 +27,6 @@ export LD_LIBRARY_PATH="$prefix/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export CARGO_TARGET_DIR="$workspace/target"
 # SDK sources do not consume the monorepo's recordings or other LFS assets.
 export GIT_LFS_SKIP_SMUDGE=1
-# Tests may run git-lfs install and restore filter-process. Keep the existing
-# CI download guard on its supported smudge path, with its size cap unchanged.
-git config --global --unset-all filter.lfs.process || true
 
 uv pip install --python .venv/bin/python 'build>=1,<2' 'scikit-build-core>=0.11,<2' \
   'setuptools>=70' wheel 'pybind11>=2.12'

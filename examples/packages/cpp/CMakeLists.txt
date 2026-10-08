@@ -7,6 +7,8 @@ include(FetchContent)
 FetchContent_Declare(dimos_sdk
   GIT_REPOSITORY https://github.com/dimensionalOS/dimos.git
   GIT_TAG dbb630f8e298218e9862e03dc24d6ba47080d20c
+  # This SDK-only checkout needs source files, never monorepo LFS assets.
+  GIT_CONFIG filter.lfs.process= filter.lfs.smudge= filter.lfs.required=false
   SOURCE_SUBDIR native/cpp
 )
 FetchContent_Declare(dimos_messages
