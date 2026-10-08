@@ -78,3 +78,7 @@ retain their own build requirements.
 Native C++ applications still require explicit Fast CDR toolchain setup. The
 standalone conformance CI builds this dependency for native consumer tests;
 normal Python checkout installation does not.
+
+This layer supplies the complete bundled message catalog and distributable
+generated packages. The preceding generator layer uses only explicit fixture
+roots; transport integration belongs to the runtime layer.

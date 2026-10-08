@@ -9,7 +9,6 @@ on:
       - packages/dimos-generated/**
       - docs/development/messages*.md
       - docs/development/message-reference.md
-      - native/rust/dimos-lcm-transport/**
       - scripts/*message*codegen*
       - scripts/test_message_packages.sh
       - scripts/package_messages.sh
