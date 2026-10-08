@@ -422,7 +422,9 @@ def create_app(state: ServerState, background: bool = True) -> FastAPI:
             'iframe it posts to its parent, on its own origin: {type:"dimos:chrome"} (it can draw the top bar; a '
             'parent that then shows only the page answers {type:"dimos:chrome-ok"}, and only then does the bar show), '
             '{type:"dimos:open-in-editor", file, line} (the parent answers {type:"dimos:open-in-editor-result", ok, '
-            'text}) and {type:"dimos:close"} (its close button, or Escape). 404 for a blueprint dimos doesn\'t list. '
+            'text}) and {type:"dimos:close"} (its close button, or Escape). `view=logs` opens it on the Logs of '
+            "`run` (else the blueprint's last run, even one that failed or stopped): Desktop's failed-run "
+            "notification opens it so. 404 for a blueprint dimos doesn't list. "
             "The page itself has no side effects; its buttons do what the routes they call say.",
             errors=(400, 404),
             ok={"content": {"text/html": {"schema": {"type": "string"}}}},
@@ -436,8 +438,23 @@ def create_app(state: ServerState, background: bool = True) -> FastAPI:
                 description="blueprint name, e.g. unitree-go2-basic", examples=["unitree-go2-basic"]
             ),
         ],
+        view: Annotated[
+            str | None,
+            Query(description="logs: open on the Logs view", examples=["logs"]),
+        ] = None,
+        run: Annotated[
+            str | None,
+            Query(
+                description="with view=logs: the run whose log to show (GET /dimos/runs/{runId}/log)",
+                examples=["20260101-120000-unitree-go2"],
+            ),
+        ] = None,
     ) -> str:
         check_name(name)
+        if view not in (None, "logs"):
+            raise ApiError(400, f"view {view} isn't logs")
+        if run is not None and not re.fullmatch(r"[A-Za-z0-9_.-]+", run):
+            raise ApiError(400, f"not a run id: {run}")
         listed = await blueprint_list()
         if not any(entry["name"] == name for entry in listed["blueprints"]):
             raise ApiError(404, f"no such blueprint: {name}")

@@ -5354,13 +5354,13 @@
   "info": {
     "description": "The dimos gateway's HTTP API: blueprints, global config, runs and their logs, events, Dimensional cloud uploads,\ndiscovery (blueprints, modules, message types), docs, extras and jobs.\n\ndimOS Desktop starts the gateway (`python -m dimos.gateway`, on a unix socket) and forwards `/dimos/...` to it unchanged.\nEvery answer is JSON unless the operation says otherwise; every error is `{\"error\": \"<message>\"}` (ErrorResponse).\nState is HTTP; changes are events, published on zenoh at `<ns>/dimos/events/<type>` (the `events` tag).\n\nExtensions: `x-family: dimos` on every operation; `x-agent: true` marks what Desktop's agent finds through\nsearch_endpoints; `x-mcp-tool` names an MCP tool that does the same; `x-zenoh-key` on an event schema is its key.\n",
     "title": "dimos gateway",
-    "version": "1.13.0"
+    "version": "1.14.0"
   },
   "openapi": "3.1.0",
   "paths": {
     "/dimos/blueprint_view": {
       "get": {
-        "description": "An HTML page (plain JS and CSS, its files at /dimos/blueprint_view/{file}): dimOS Desktop's whole blueprint Details modal. A top bar (the blueprint and its phase from GET /dimos/runs; Relaunch: POST /dimos/runs/restart; Stop: POST /dimos/runs/stop; Configure: GET/PUT /dimos/blueprints/{name}/config and /dimos/global-config, recommended settings from GET /dimos/robots; Show code; Logs: GET /dimos/runs/{runId}/log), a side panel (Topic rates from GET /dimos/topics/rates; the modules, rarest first by GET /dimos/catalog) and the module graph drawn from the blueprint's wiring, live rates on its topics while it runs. It styles itself with Desktop's /theme.css and skin (Portal off Desktop). In an iframe it posts to its parent, on its own origin: {type:\"dimos:chrome\"} (it can draw the top bar; a parent that then shows only the page answers {type:\"dimos:chrome-ok\"}, and only then does the bar show), {type:\"dimos:open-in-editor\", file, line} (the parent answers {type:\"dimos:open-in-editor-result\", ok, text}) and {type:\"dimos:close\"} (its close button, or Escape). 404 for a blueprint dimos doesn't list. The page itself has no side effects; its buttons do what the routes they call say.",
+        "description": "An HTML page (plain JS and CSS, its files at /dimos/blueprint_view/{file}): dimOS Desktop's whole blueprint Details modal. A top bar (the blueprint and its phase from GET /dimos/runs; Relaunch: POST /dimos/runs/restart; Stop: POST /dimos/runs/stop; Configure: GET/PUT /dimos/blueprints/{name}/config and /dimos/global-config, recommended settings from GET /dimos/robots; Show code; Logs: GET /dimos/runs/{runId}/log), a side panel (Topic rates from GET /dimos/topics/rates; the modules, rarest first by GET /dimos/catalog) and the module graph drawn from the blueprint's wiring, live rates on its topics while it runs. It styles itself with Desktop's /theme.css and skin (Portal off Desktop). In an iframe it posts to its parent, on its own origin: {type:\"dimos:chrome\"} (it can draw the top bar; a parent that then shows only the page answers {type:\"dimos:chrome-ok\"}, and only then does the bar show), {type:\"dimos:open-in-editor\", file, line} (the parent answers {type:\"dimos:open-in-editor-result\", ok, text}) and {type:\"dimos:close\"} (its close button, or Escape). `view=logs` opens it on the Logs of `run` (else the blueprint's last run, even one that failed or stopped): Desktop's failed-run notification opens it so. 404 for a blueprint dimos doesn't list. The page itself has no side effects; its buttons do what the routes they call say.",
         "operationId": "get_dimos_blueprint_view",
         "parameters": [
           {
@@ -5375,6 +5375,48 @@
               ],
               "title": "Name",
               "type": "string"
+            }
+          },
+          {
+            "description": "logs: open on the Logs view",
+            "in": "query",
+            "name": "view",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "logs: open on the Logs view",
+              "examples": [
+                "logs"
+              ],
+              "title": "View"
+            }
+          },
+          {
+            "description": "with view=logs: the run whose log to show (GET /dimos/runs/{runId}/log)",
+            "in": "query",
+            "name": "run",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "with view=logs: the run whose log to show (GET /dimos/runs/{runId}/log)",
+              "examples": [
+                "20260101-120000-unitree-go2"
+              ],
+              "title": "Run"
             }
           }
         ],

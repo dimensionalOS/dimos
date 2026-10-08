@@ -360,7 +360,9 @@ def test_launch_log_and_stop(
     )
     # out of the registry while its process still exits: stopping, never starting again
     monkeypatch.setattr(runs, "registry_runs", lambda: [])
-    assert client.get("/dimos/runs").json()["launch"]["phase"] == "stopping"
+    stopping = client.get("/dimos/runs").json()["launch"]
+    # its run id outlives its registry entry, so its log stays reachable (Logs, view=logs)
+    assert (stopping["phase"], stopping["runId"], stopping["logDir"]) == ("stopping", "r1", "d")
 
     stopped = client.post("/dimos/runs/stop")
     assert stopped.json() == {"output": f"stopped unitree-go2 (pid {launched['pid']})"}
@@ -474,6 +476,9 @@ def test_a_failed_launch_says_how_far_it_got_and_why(
         "B",
     )
     assert launch["error"] == "No module named 'not_a_real_package_xyz'"
+    # never registered, yet its log dir names its run, so Logs can show it
+    [run_dir] = (tmp_path / "run_logs").iterdir()
+    assert (launch["runId"], launch["logDir"]) == (run_dir.name, str(run_dir))
 
 
 GO2_CONFIG = {
@@ -790,6 +795,10 @@ def test_blueprint_view_serves_its_page_and_only_its_own_files(client: TestClien
     )
     assert client.get("/dimos/blueprint_view", params={"name": "-rf"}).status_code == 400
     assert client.get("/dimos/blueprint_view").status_code == 400
+    logs = {"name": "unitree-go2-basic", "view": "logs", "run": "20260101-120000-unitree-go2"}
+    assert client.get("/dimos/blueprint_view", params=logs).status_code == 200
+    assert client.get("/dimos/blueprint_view", params={**logs, "view": "graph"}).status_code == 400
+    assert client.get("/dimos/blueprint_view", params={**logs, "run": "../x y"}).status_code == 400
     for name, media in (
         ("app.js", "text/javascript"),
         ("graph.js", "text/javascript"),

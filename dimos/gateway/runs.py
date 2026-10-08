@@ -173,9 +173,9 @@ def current_launch() -> dict[str, Any] | None:
     except (OSError, ValueError, KeyError, TypeError):
         return None
     entry = next((run for run in registry_runs() if run["pid"] == pid), None)
-    if entry and not record.get("ever_ran"):
-        # dimos registers a run once every module is built: from then on it "ran"
-        record["ever_ran"] = True
+    if entry and not (record.get("ever_ran") and record.get("run_id")):
+        # dimos registers a run once every module is built: from then on it "ran"; its run id outlives the entry
+        record.update(ever_ran=True, run_id=entry["run_id"], log_dir=entry["log_dir"])
         config.write_atomic(launch_file(), json.dumps(record))
     output = _tail(launch_log(), 200_000)
     alive = is_pid_alive(pid)
@@ -190,7 +190,10 @@ def current_launch() -> dict[str, Any] | None:
         phase = "stopped"
     else:
         phase = "failed"
-    records = launch_records(run_log_dir(blueprint, started_at, entry))
+    if entry is None and record.get("run_id"):
+        entry = {"run_id": record["run_id"], "log_dir": record.get("log_dir")}
+    log_dir = run_log_dir(blueprint, started_at, entry)
+    records = launch_records(log_dir)
     problems = diagnose.problems(records)
     error = diagnose.error_text(problems, output) if phase == "failed" else None
     overrides = record.get("overrides")
@@ -200,8 +203,9 @@ def current_launch() -> dict[str, Any] | None:
         "startedAt": started_at,
         "pid": pid,
         "output": output,
-        "runId": entry["run_id"] if entry else None,
-        "logDir": entry["log_dir"] if entry else None,
+        # after the run exits (a failed one never registered): its log dir's, so its log stays reachable
+        "runId": entry["run_id"] if entry else log_dir.name if log_dir else None,
+        "logDir": entry["log_dir"] if entry else str(log_dir) if log_dir else None,
         "error": error,
         "overrides": overrides if isinstance(overrides, dict) else {},
         "modules": record.get("modules") if isinstance(record.get("modules"), dict) else {},

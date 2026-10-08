@@ -1,4 +1,4 @@
-// The blueprint view (GET /dimos/blueprint_view?name=<blueprint>): the whole of dimOS Desktop's blueprint Details
+// The blueprint view (GET /dimos/blueprint_view?name=<blueprint>[&view=logs[&run=<runId>]]): the whole of dimOS Desktop's blueprint Details
 // modal. A top bar (the blueprint and its phase, Relaunch, Stop, Configure, Show code, Logs, close), then the side panel
 // (Topic rates: every topic on the bus, GET /dimos/topics/rates; the blueprint's modules, rarest first) beside its
 // module graph. A module row shows its docstring's first line and, on hover, its streams; a click (in the list or the
@@ -18,7 +18,11 @@ import { openConfig, same } from "./config.js"
 import { className, Graph, LAYOUTS, topicOf, typeColor, typeName } from "./graph.js"
 import { openLogs } from "./logs.js"
 
-const NAME = new URLSearchParams(location.search).get("name") ?? ""
+const PARAMS = new URLSearchParams(location.search)
+const NAME = PARAMS.get("name") ?? ""
+// ?view=logs opens on the Logs of ?run=<runId> (else this blueprint's last run), even one that has ended
+const RUN = PARAMS.get("run") || null
+const VIEW = PARAMS.get("view")
 const FRAMED = parent !== window
 const $ = (selector) => document.querySelector(selector)
 
@@ -699,6 +703,13 @@ $("#extrasToggle").addEventListener("change", (event) => {
     graph.setModel(state.modules ?? [], state.showExtras ? state.extras : [])
 })
 
+/** the run whose log Logs shows: the one the page was opened for, else this blueprint's last run */
+const logsRun = () => RUN ?? state.launch?.runId ?? null
+
+function showLogs() {
+    openLogs({ runId: logsRun(), title: NAME, h, getJson })
+}
+
 async function pollRuns() {
     try {
         const { launch } = await getJson("runs")
@@ -859,10 +870,10 @@ function renderBar() {
         h("button", {
             type: "button",
             class: "btn",
-            disabled: !launch?.runId,
-            title: launch?.runId ? `${NAME}'s log` : "no log yet",
+            disabled: !logsRun(),
+            title: logsRun() ? `${NAME}'s log` : "no log yet",
             "data-bp-logs": true,
-            onclick: () => openLogs({ runId: launch.runId, title: NAME, h, getJson }),
+            onclick: showLogs,
         }, "Logs"),
         FRAMED && h("button", {
             type: "button",
@@ -926,7 +937,11 @@ if (FRAMED) {
 }
 load()
 loadSaved()
-pollRuns()
+pollRuns().then(() => {
+    if (VIEW === "logs" && logsRun()) {
+        showLogs()
+    }
+})
 pollRates()
 setInterval(pollRuns, 3000)
 setInterval(pollRates, 2000)
