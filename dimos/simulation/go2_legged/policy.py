@@ -178,7 +178,7 @@ FREE_OBS = 45
 
 
 class FreePolicy:
-    """A go2web "FREE" v1 blob: speed-banded HIMLoco experts with their normalization and gains."""
+    """A "FREE" v1 blob:speed-banded HIMLoco experts with their normalization and gains."""
 
     joint_names = tuple(
         f"{leg}_{part}_joint"
