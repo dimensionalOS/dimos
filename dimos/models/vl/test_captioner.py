@@ -23,6 +23,8 @@ from dimos.models.vl.moondream import MoondreamVlModel
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.utils.data import get_data
 
+pytestmark = pytest.mark.self_hosted_serial
+
 
 class CaptionerModel(Protocol):
     """Intersection of Captioner and Resource for testing."""
@@ -58,7 +60,6 @@ def florence2_model(request: pytest.FixtureRequest) -> Generator[Florence2Model,
     yield from generic_model_fixture(request.param)
 
 
-@pytest.mark.self_hosted
 @pytest.mark.skipif_in_ci
 def test_captioner(captioner_model: CaptionerModel, test_image: Image) -> None:
     """Test captioning functionality across different model types."""
@@ -87,7 +88,6 @@ def test_captioner(captioner_model: CaptionerModel, test_image: Image) -> None:
     assert all(isinstance(c, str) and len(c) > 0 for c in captions)
 
 
-@pytest.mark.self_hosted
 @pytest.mark.skipif_in_ci
 def test_florence2_detail_levels(florence2_model: Florence2Model, test_image: Image) -> None:
     """Test Florence-2 different detail levels."""

@@ -92,7 +92,7 @@ def test_classmethods() -> None:
     nav._close_module()
 
 
-@pytest.mark.self_hosted
+@pytest.mark.self_hosted_serial
 def test_basic_deployment(dimos) -> None:
     robot = dimos.deploy(MockRobotClient)
 

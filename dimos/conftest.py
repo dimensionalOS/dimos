@@ -189,6 +189,11 @@ def pytest_configure(config):
     )
     config.addinivalue_line(
         "markers",
+        "self_hosted_serial: self_hosted tests that must not run concurrently with other tests"
+        " (GPU, exclusive hardware/display)",
+    )
+    config.addinivalue_line(
+        "markers",
         "web_browser: cockpit browser e2e (playwright chromium + firefox); "
         "runs in the CI web job and the macOS self-hosted-tests job",
     )

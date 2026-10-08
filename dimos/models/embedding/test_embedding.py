@@ -24,6 +24,8 @@ from dimos.models.embedding.treid import TorchReIDModel
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.utils.data import get_data
 
+pytestmark = pytest.mark.self_hosted_serial
+
 
 @pytest.mark.parametrize(
     "model_class,model_name,supports_text",
@@ -34,7 +36,6 @@ from dimos.utils.data import get_data
     ],
     ids=["clip", "mobileclip", "treid"],
 )
-@pytest.mark.self_hosted
 @pytest.mark.skipif_in_ci
 def test_embedding_model(model_class: type, model_name: str, supports_text: bool) -> None:
     """Test embedding functionality across different model types."""
@@ -109,7 +110,6 @@ def test_embedding_model(model_class: type, model_name: str, supports_text: bool
     ],
     ids=["clip", "mobileclip"],
 )
-@pytest.mark.self_hosted
 @pytest.mark.skipif_in_ci
 def test_text_image_retrieval(model_class: type, model_name: str) -> None:
     """Test text-to-image retrieval using embedding similarity."""
@@ -142,7 +142,6 @@ def test_text_image_retrieval(model_class: type, model_name: str) -> None:
     print(f"\n{model_name} retrieval test passed!")
 
 
-@pytest.mark.self_hosted
 @pytest.mark.skipif_in_ci
 def test_embedding_device_transfer() -> None:
     """Test embedding device transfer operations."""

@@ -413,7 +413,7 @@ async def test_async_iterator(
         assert received_messages == messages_to_send
 
 
-@pytest.mark.self_hosted
+@pytest.mark.self_hosted_serial
 @pytest.mark.parametrize("pubsub_context, topic, values", testdata)
 def test_high_volume_messages(
     pubsub_context: Callable[[], Any], topic: Any, values: list[Any]
