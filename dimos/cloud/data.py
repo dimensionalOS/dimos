@@ -40,8 +40,8 @@ from dimos.cloud import codecs, preview
 from dimos.cloud.cloud_request import CloudRequest, HttpCloudRequest
 from dimos.constants import DOWNLOADS_DIR, RECORDINGS_DIR
 from dimos.core.global_config import global_config
-from dimos.memory.cli.dataset import open_store
 from dimos.core.run_registry import blueprint_from_run_id
+from dimos.memory.cli.dataset import open_store
 
 Progress = Callable[[str, int, int], None]  # (phase, done_bytes, total_bytes)
 
