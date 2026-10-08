@@ -1,5 +1,7 @@
 # The dimos gateway's HTTP API
 
+How do I launch a blueprint, read its logs, call a skill...? See [gateway-how-to.md](/docs/usage/gateway-how-to.md).
+
 `python -m dimos.gateway` serves the `/dimos` HTTP API that dimOS Desktop uses: blueprints, global config, runs and
 their logs, events, and Dimensional cloud uploads. Desktop starts it on a unix socket and forwards `/dimos/...` to it
 unchanged (`--port 8123` also serves it on `127.0.0.1:8123`).
