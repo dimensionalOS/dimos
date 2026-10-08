@@ -1,0 +1,9 @@
+session_name: tools
+start_directory: ${START_DIR}/modules/tools
+windows:
+- window_name: thread_monitor
+  layout: even-horizontal
+  panes:
+  - shell_command:
+      - sleep 10
+      #- ./start_thread_monitor.sh

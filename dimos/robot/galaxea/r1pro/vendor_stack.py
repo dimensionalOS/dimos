@@ -30,7 +30,7 @@ VENDOR_STARTUP_SCRIPT = os.path.join(
     "galaxea-dimos/install/startup_config/share/startup_config/script/robot_startup.sh",
 )
 # ATCStandard minus the vendor head camera and Livox drivers, whose devices dimos opens itself.
-VENDOR_PROFILE = "../sessions.d/DimOS/R1PROBody.d/"
+VENDOR_PROFILE = str(Path(__file__).parent / "vendor_profile" / "R1PROBody.d")
 # tmux sessions the profile creates; all present means the stack is already up.
 VENDOR_SESSIONS: tuple[str, ...] = ("hdas", "mobiman")
 
@@ -53,11 +53,13 @@ def boot_command(startup_script: str, profile: str, running: set[str]) -> list[s
     if not script.exists():
         logger.warning("R1 vendor stack not running and %s does not exist", script)
         return None
-    # The script resolves the profile relative to its own directory.
-    if not (script.parent / profile).is_dir():
-        logger.warning("R1 vendor stack not running and profile %s is not installed", profile)
+    # A relative profile is under the script's directory, e.g. ../sessions.d/ATCStandard/R1PROBody.d/
+    profile_dir = script.parent / Path(profile).expanduser()
+    if not profile_dir.is_dir():
+        logger.warning("R1 vendor stack not running and profile %s does not exist", profile_dir)
         return None
-    return ["bash", str(script), "boot", profile]
+    # The script only takes a path relative to its own directory.
+    return ["bash", str(script), "boot", os.path.relpath(profile_dir, script.parent)]
 
 
 def boot_vendor_stack(startup_script: str, profile: str) -> None:
