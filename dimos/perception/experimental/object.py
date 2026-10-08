@@ -34,6 +34,9 @@ from dimos.msgs.vision_msgs.Detection3D import Detection3D as ROSDetection3D
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.detection.type.detection2d.seg import Detection2DSeg
 from dimos.perception.detection.type.detection3d.base import Detection3D
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 if TYPE_CHECKING:
     from dimos_lcm.sensor_msgs import CameraInfo
@@ -301,6 +304,17 @@ class Object(Detection3D):
             )
 
             if len(pcd_filtered.points) < 10:
+                # Say why a detection yields no object: an empty mask, no depth
+                # under it, or too few points left after filtering.
+                logger.warning(
+                    "Detection %s dropped: mask %d px, depth under mask %d px, "
+                    "%d points after downsample, %d after outlier removal",
+                    getattr(det, "name", "?"),
+                    int(np.count_nonzero(mask)),
+                    int(np.count_nonzero(depth_masked)),
+                    len(pc0.pointcloud.points),
+                    len(pcd_filtered.points),
+                )
                 continue
 
             pc = PointCloud2(
