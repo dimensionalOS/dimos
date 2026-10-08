@@ -30,10 +30,10 @@ api:
 # (dimos/gateway/robots.py); the gateway serves it resolved at GET /dimos/robots.
 robots: dimos/gateway/robots.json
 # The dimos gateway (blueprints, runs, logs, events, global config, cloud uploads at /dimos/): dimos/gateway/, in
-# Python. Before it, Desktop's Rust served the same API: "$DESKTOP_BIN" dimos-server --detach --dimos-dir ... --port ...
-# It listens on 127.0.0.1:$DIMOS_GATEWAY_PORT only (no login: Desktop's proxy is the door from other machines); Desktop
-# picks that port once and keeps it in its config.yaml as `dimos_gateway.port`.
-# env: DESKTOP_BIN, DIMOS_DIR, DIMOS_GATEWAY_PORT, DIMOS_ZENOH_NAMESPACE (Desktop's <ns>), ZENOH_CONNECT,
-# DIMOS_RECORDINGS_DIR (Desktop's recordings folder). Desktop reads start: from the checkout in dimos.dir.
+# Python. Before it, Desktop's Rust served the same API: "$DESKTOP_BIN" dimos-server --detach --dimos-dir ... --socket ...
+# env: DESKTOP_BIN, DIMOS_DIR, DIMOS_SERVER_SOCKET, DIMOS_ZENOH_NAMESPACE (Desktop's <ns>), ZENOH_CONNECT,
+# DIMOS_RECORDINGS_DIR (Desktop's recordings folder). Desktop reads start:/socket: from the checkout in dimos.dir.
 start: |
-  "$DIMOS_DIR/.venv/bin/python" -m dimos.gateway --detach --dimos-dir "$DIMOS_DIR" --port "$DIMOS_GATEWAY_PORT"
+  "$DIMOS_DIR/.venv/bin/python" -m dimos.gateway --detach --dimos-dir "$DIMOS_DIR" --socket "$DIMOS_SERVER_SOCKET"
+socket: |
+  echo "$DIMOS_SERVER_SOCKET"

@@ -41,8 +41,7 @@ DESCRIPTION = """\
 The dimos gateway's HTTP API: blueprints, global config, runs and their logs, events, Dimensional cloud uploads,
 discovery (blueprints, modules, message types), docs, extras and jobs.
 
-dimOS Desktop starts the gateway (`python -m dimos.gateway --port N`, on 127.0.0.1 only) and forwards `/dimos/...` to it
-unchanged.
+dimOS Desktop starts the gateway (`python -m dimos.gateway`, on a unix socket) and forwards `/dimos/...` to it unchanged.
 Every answer is JSON unless the operation says otherwise; every error is `{"error": "<message>"}` (ErrorResponse).
 State is HTTP; changes are events, published on zenoh at `<ns>/dimos/events/<type>` (the `events` tag).
 
