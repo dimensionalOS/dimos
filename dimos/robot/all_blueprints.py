@@ -325,7 +325,6 @@ all_modules = {
     "point-nav-skill-container": "dimos.agents.skills.point_nav.PointNavSkillContainer",
     "pointlio-recorder": "dimos.hardware.sensors.lidar.pointlio.recorder.PointlioRecorder",
     "r1-pro-connection": "dimos.robot.galaxea.r1pro.connection.R1ProConnection",
-    "r1-pro-vendor-stack": "dimos.robot.galaxea.r1pro.vendor_stack.R1ProVendorStack",
     "raw-robot-bridge": "dimos.robot.raw_robot_bridge.RawRobotBridge",
     "ray-tracing-voxel-map": "dimos.mapping.ray_tracing.module.RayTracingVoxelMap",
     "real-sense-camera": "dimos.hardware.sensors.camera.realsense.camera.RealSenseCamera",
