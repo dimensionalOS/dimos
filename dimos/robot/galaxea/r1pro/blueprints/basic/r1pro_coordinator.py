@@ -324,10 +324,17 @@ def r1pro_lidar_odometry() -> Blueprint:
     )
 
 
-r1pro_coordinator = autoconnect(
-    R1ProVendorStack.blueprint(stop_vendor_lidar=True),
-    r1pro_visualization(),
-    # Off, so base_link has exactly one parent: Point-LIO's, through the mount.
-    r1pro_control(publish_odom=False),
-    r1pro_lidar_odometry(),
-).global_config(n_workers=4)
+r1pro_coordinator = (
+    autoconnect(
+        R1ProVendorStack.blueprint(stop_vendor_lidar=True),
+        r1pro_visualization(),
+        # Off, so base_link has exactly one parent: Point-LIO's, through the mount.
+        r1pro_control(publish_odom=False),
+        r1pro_lidar_odometry(),
+    )
+    .remappings(
+        # Viewer WASD drives the chassis.
+        [(RerunWebSocketServer, "tele_cmd_vel", "twist_command")]
+    )
+    .global_config(n_workers=4)
+)
