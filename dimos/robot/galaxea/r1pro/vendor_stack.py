@@ -16,8 +16,10 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import subprocess
+import time
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
@@ -26,14 +28,17 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 # The vendor's startup script, and the session profile the R1 Pro boots with.
-VENDOR_STARTUP_SCRIPT = (
-    "~/galaxea-dimos/install/startup_config/share/startup_config/script/robot_startup.sh"
+VENDOR_STARTUP_SCRIPT = os.path.join(
+    os.environ.get("HOME", ""),
+    "galaxea-dimos/install/startup_config/share/startup_config/script/robot_startup.sh",
 )
 VENDOR_PROFILE = "../sessions.d/ATCStandard/R1PROBody.d/"
 # tmux sessions the profile creates; all present means the stack is already up.
 VENDOR_SESSIONS: tuple[str, ...] = ("hdas", "mobiman")
 # The vendor livox_ros_driver2 window; it takes the Mid-360 from our own driver.
 VENDOR_LIDAR_WINDOW = "hdas:livox"
+# The vendor head camera node (process name, truncated by the kernel); it holds the head eyes our V4L2 cameras open.
+VENDOR_HEAD_CAMERA_PROCESS = "signal_camera_n"
 
 
 def running_tmux_sessions() -> set[str]:
@@ -69,6 +74,30 @@ class R1ProVendorStack(Module):
         if self.config.enabled and self.config.stop_vendor_lidar:
             # Before our driver's handshake, so the Livox streams to us, not the vendor.
             subprocess.run(["tmux", "kill-window", "-t", VENDOR_LIDAR_WINDOW], check=False)
+        if self.config.enabled:
+            # A freshly booted profile starts it a few seconds later.
+            stop_vendor_head_cameras(appear_timeout_s=30.0 if command is not None else 0.0)
+
+
+def _vendor_head_camera_running() -> bool:
+    return (
+        subprocess.run(["pgrep", "-x", VENDOR_HEAD_CAMERA_PROCESS], capture_output=True).returncode
+        == 0
+    )
+
+
+def stop_vendor_head_cameras(appear_timeout_s: float) -> None:
+    """SIGINT the vendor head camera node, so it shuts down cleanly, and wait for it to exit."""
+    deadline = time.monotonic() + appear_timeout_s
+    while not _vendor_head_camera_running() and time.monotonic() < deadline:
+        time.sleep(0.5)
+    if not _vendor_head_camera_running():
+        return
+    logger.info("Stopping the vendor head camera node")
+    subprocess.run(["pkill", "-INT", "-x", VENDOR_HEAD_CAMERA_PROCESS], check=False)
+    deadline = time.monotonic() + 10.0
+    while _vendor_head_camera_running() and time.monotonic() < deadline:
+        time.sleep(0.5)
 
 
 def boot_command(config: R1ProVendorStackConfig, running: set[str]) -> list[str] | None:
