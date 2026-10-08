@@ -123,7 +123,7 @@ class FakeEnvironment(Environment):
     """A frozen recording that records lifecycle calls."""
 
     def __init__(self, path: Path, calls: list[str]) -> None:
-        super().__init__()
+        super().__init__(agent_artifacts=("recording",))
         self.path = path
         self.calls = calls
         self.settled_budget: float | None = None
@@ -457,6 +457,21 @@ def test_runner_uses_unique_directory_when_timestamps_match(
     assert second.run_dir.name.startswith("run-20260831-120000-")
 
 
+@pytest.mark.parametrize(("open_output", "mode"), [(None, 0o700), ("1", 0o777)])
+def test_run_dir_is_private_unless_opened(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, open_output: str | None, mode: int
+) -> None:
+    if open_output is None:
+        monkeypatch.delenv("DIMOS_EVALS_OPEN_OUTPUT", raising=False)
+    else:
+        monkeypatch.setenv("DIMOS_EVALS_OPEN_OUTPUT", open_output)
+    runner = EvalRunner(out_dir=tmp_path)
+
+    runner.run([], FakeAgent())
+
+    assert runner.run_dir.stat().st_mode & 0o777 == mode
+
+
 def test_runner_end_to_end_offline(dataset: str, tmp_path: Path) -> None:
     calls: list[str] = []
     env = FakeEnvironment(Path(dataset), calls)
@@ -659,6 +674,31 @@ def test_runner_missing_artifact_is_an_error(tmp_path: Path) -> None:
     case = EvalCase(id="c", inputs="x", environment=env, grade=grade)
     result = EvalRunner(out_dir=tmp_path).run([case], FakeAgent(answer="ok"))[0]
     assert result.error == "missing artifacts: ['recording']" and not graded
+
+
+def test_runner_gives_the_agent_only_agent_artifacts(tmp_path: Path) -> None:
+    seen: dict[str, set[str]] = {}
+
+    class WithAnswers(FakeEnvironment):
+        def start(self, modules: Sequence[str]) -> RunningEnvironment:
+            return RunningEnvironment(
+                mcp_url="", streams=(), artifacts={"recording": self.path, "answers": self.path}
+            )
+
+    class Looking(FakeAgent):
+        def run(
+            self, inputs: str, env: RunningEnvironment, run_dir: Path, *, timeout_s: float
+        ) -> Trajectory:
+            seen["agent"] = set(env.artifacts)
+            return super().run(inputs, env, run_dir, timeout_s=timeout_s)
+
+    def grade(outcome: Outcome) -> float:
+        seen["grader"] = set(outcome.artifacts)
+        return 1.0
+
+    case = EvalCase(id="c", inputs="x", environment=WithAnswers(tmp_path, []), grade=grade)
+    EvalRunner(out_dir=tmp_path).run([case], Looking(answer="ok"))
+    assert seen == {"agent": {"recording"}, "grader": {"recording", "answers"}}
 
 
 def test_recording_helper_opens_the_artifact(dataset: str) -> None:

@@ -21,15 +21,22 @@ from collections.abc import Sequence
 from contextlib import ExitStack
 from typing import TYPE_CHECKING, Any
 
-from dimos.protocol.service.spec import Configurable
+from dimos.protocol.service.spec import BaseConfig, Configurable
 
 if TYPE_CHECKING:
     from dimos.evals.agents.base import Agent
     from dimos.evals.types import RunningEnvironment
 
 
+class EnvironmentConfig(BaseConfig):
+    agent_artifacts: tuple[str, ...] = ()
+    """Names of the artifacts the agent is given. The grader gets all of them."""
+
+
 class Environment(Configurable, ABC):
     """What exists for a case, including ownership of the resources it starts."""
+
+    config: EnvironmentConfig
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)

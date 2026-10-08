@@ -23,7 +23,7 @@ budget is mostly spent on client setup and observation, so give it room to re-ob
 
 from dimos.evals.constants import RAW_ARM_README
 from dimos.evals.environments.mujoco_sim import MujocoEnvironment
-from dimos.evals.suites.mujoco_xarm import lifted
+from dimos.evals.scorers import lifted
 from dimos.evals.types import EvalCase, Suite
 from dimos.utils.data import LfsPath
 

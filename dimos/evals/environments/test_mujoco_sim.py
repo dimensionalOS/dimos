@@ -22,6 +22,7 @@ import pytest
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall
 from dimos.evals.constants import RAW_ARM_README, RAW_README
 from dimos.evals.environments.mujoco_sim import MujocoEnvironment
+from dimos.manipulation.manipulation_module import ManipulationModuleConfig
 from dimos.memory.store.memory import MemoryStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -62,6 +63,14 @@ def test_launch_flags(monkeypatch):
     environment(scene=Path("scenes/table.xml")).configure_launch(proc)
     assert proc.global_args[-2:] == ["--mujoco-scene", str(Path("scenes/table.xml").resolve())]
 
+    proc = DimosCliCall()
+    environment(base_height=0.912).configure_launch(proc)
+    assert json.loads(proc.extra_env["MANIPULATIONMODULE__MODEL__BASE_POSE"]) == {
+        "frame_id": "world",
+        "position": [0.0, 0.0, 0.912],
+    }
+    assert "--xarm7-sim-base-height" not in proc.global_args
+
     monkeypatch.setenv("MUJOCOSIMMODULE__HEADLESS", "false")
     proc = DimosCliCall()
     environment(
@@ -79,6 +88,7 @@ def test_module_env_reaches_blueprint_parser(monkeypatch):
     proc = DimosCliCall()
     environment(
         tracked_bodies=("apple", "cup"),
+        base_height=0.912,
         module_env={
             "OBJECTSCENEREGISTRATIONMODULE__DETECTOR_BACKEND": "owlv2",
             "OBJECTSCENEREGISTRATIONMODULE__SEGMENTATION_BACKEND": "yolo",
@@ -91,6 +101,14 @@ def test_module_env_reaches_blueprint_parser(monkeypatch):
     sim = parsed.module_kwargs("mujocosimmodule")
     assert sim["headless"] is True
     assert sim["tracked_bodies"] == ["apple", "cup"]
+
+    mounted = ManipulationModuleConfig(**parsed.module_kwargs("manipulationmodule"))
+    assert mounted.model.base_pose.position.z == pytest.approx(0.912)
+    defaults = BlueprintConfigParser(xarm_perception_sim).parse(environ={})
+    default = ManipulationModuleConfig(**defaults.module_kwargs("manipulationmodule"))
+    assert default.model.base_pose.position.z == pytest.approx(0.12)
+    assert mounted.model.joint_names == default.model.joint_names
+    assert mounted.model.base_pose.orientation == default.model.base_pose.orientation
 
 
 def test_latest_pose_needs_odom():
