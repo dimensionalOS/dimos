@@ -28,7 +28,6 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import re
 import shutil
 import sqlite3
 import sys
@@ -41,6 +40,7 @@ from dimos.cloud import codecs
 from dimos.cloud.cloud_request import CloudRequest, HttpCloudRequest
 from dimos.constants import DOWNLOADS_DIR, RECORDINGS_DIR
 from dimos.core.global_config import global_config
+from dimos.core.run_registry import blueprint_from_run_id
 
 Progress = Callable[[str, int, int], None]  # (phase, done_bytes, total_bytes)
 
@@ -405,9 +405,8 @@ def _tag(row: dict[str, Any]) -> str:
 
 
 def _blueprint(path: Path) -> str | None:
-    """Run dirs are named <stamp>-<blueprint> (generate_run_id)."""
-    m = re.fullmatch(r"\d{8}-\d{6}-(.+)", path.parent.name)
-    return m.group(1) if m else None
+    """Run dirs are named after their run ID (generate_run_id)."""
+    return blueprint_from_run_id(path.parent.name)
 
 
 def _sha256(path: Path) -> str:

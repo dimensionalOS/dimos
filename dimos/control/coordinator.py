@@ -67,6 +67,7 @@ from dimos.hardware.whole_body.spec import WholeBodyAdapter
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Float32 import Float32
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.utils.logging_config import setup_logger
 
@@ -97,6 +98,8 @@ class ControlCoordinatorConfig(ModuleConfig):
     # Transitional: goes away once every consumer reads per-robot streams.
     publish_robot_joint_states: bool = False
     joint_state_frame_id: str = "coordinator"
+    publish_frame_poses: bool = False
+    frame_pose_hz: float = 30.0
     log_ticks: bool = False
     hardware: list[HardwareComponent] = field(default_factory=lambda: [])
     tasks: list[TaskConfig] = field(default_factory=lambda: [])
@@ -299,6 +302,15 @@ class ControlCoordinator(Module):
         from dimos.control.tasks.registry import control_task_registry
 
         return control_task_registry.create(cfg.type, cfg, hardware=self._hardware)
+
+    def _frame_pose_port(self) -> Out[TFMessage]:
+        port = getattr(self, "tf", None)
+        if isinstance(port, Out):
+            return port
+        raise ValueError(
+            "publish_frame_poses is on but the coordinator has no tf output — "
+            "add `tf: Out[TFMessage]` to your coordinator subclass"
+        )
 
     def _robot_joint_port(self, hardware_id: HardwareId) -> Out[JointState]:
         name = f"{hardware_id}_joints"
@@ -904,6 +916,10 @@ class ControlCoordinator(Module):
             joint_to_hardware=self._joint_to_hardware,
             publish_callback=publish_cb,
             publish_robot_callback=publish_robot_cb,
+            publish_tf_callback=self._frame_pose_port().publish
+            if self.config.publish_frame_poses
+            else None,
+            frame_pose_hz=self.config.frame_pose_hz,
             frame_id=self.config.joint_state_frame_id,
             log_ticks=self.config.log_ticks,
         )
