@@ -17,7 +17,8 @@
 Owns all ROS 2 traffic for the R1 Pro and exposes it as dimos streams:
 whole-body joint control (18 DOF: torso 4 + left arm 7 + right arm 7) for
 the whole-body adapter, chassis ``cmd_vel``/``odom`` for the twist-base
-adapter, plus cameras, lidar, and IMUs.
+adapter, plus cameras and IMUs. The chassis lidar is ours, not the vendor's:
+see ``r1pro_lidar_odometry``.
 
 Sensors run on a second RawROS node. Conversion happens on per-stream workers
 behind latest-wins queues.
@@ -57,7 +58,6 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.galaxea.r1pro.joints import UPPER_BODY_JOINTS, coordinator_name
 from dimos.robot.galaxea.r1pro.vendor_stack import (
@@ -92,9 +92,6 @@ _WRIST_DEPTH_CAMERAS: dict[str, str] = {
     "wrist_right_depth": "/hdas/camera_wrist_right/aligned_depth_to_color/image_raw",
 }
 _HEAD_DEPTH_TOPIC = "/hdas/camera_head/depth/depth_registered"
-_LIDAR_TOPIC = "/hdas/lidar_chassis_left"
-# base_link -> lidar_chassis_left_link, the fixed joint origin in the vendor URDF.
-_LIDAR_MOUNT_XYZ = (0.15711, 0.21215, 0.29465)
 
 
 @dataclass
@@ -139,10 +136,10 @@ class R1ProConnectionConfig(ModuleConfig):
     publish_rate_hz: float = Field(default=100.0)
     # rad/s used when MotorCommand.dq is the VEL_STOP sentinel or 0.
     tracking_speed: float = Field(default=0.5)
-    publish_odom: bool = Field(default=True)
+    # Wheel odometry always goes out on `odometry`; this gates its odom -> base_link tf and the `odom` pose.
+    publish_odom_tf: bool = Field(default=True)
     frame_id: str = Field(default="base_link")
     odom_frame_id: str = Field(default="odom")
-    lidar_frame_id: str = Field(default="lidar_chassis_left_link")
     # Seconds between per-stream sensor-stats log lines (0 disables).
     sensor_stats_interval_s: float = Field(default=10.0)
     # Wrist depth is raw 16-bit at up to 30 Hz per wrist — too heavy for the
@@ -182,7 +179,6 @@ class R1ProConnection(Module):
 
     # Perception.
     head_depth: Out[Image]
-    lidar: Out[PointCloud2]
     wrist_left_color: Out[CompressedImage]
     wrist_left_depth: Out[Image]
     wrist_right_color: Out[CompressedImage]
@@ -368,14 +364,13 @@ class R1ProConnection(Module):
         ):
             self._control_unsubs.append(self._ros.subscribe(topic, cb))
 
-        if self.config.publish_odom:
-            # Executed chassis speed — integrated into wheel odometry.
-            self._control_unsubs.append(
-                self._ros.subscribe(
-                    RawROSTopic("/motion_control/chassis_speed", TwistStamped, qos=qos),
-                    self._on_chassis_speed,
-                )
+        # Executed chassis speed — integrated into wheel odometry.
+        self._control_unsubs.append(
+            self._ros.subscribe(
+                RawROSTopic("/motion_control/chassis_speed", TwistStamped, qos=qos),
+                self._on_chassis_speed,
             )
+        )
 
     # Sensor streams (isolated RawROS + per-stream decode workers)
 
@@ -385,7 +380,6 @@ class R1ProConnection(Module):
                 CompressedImage as RosCompressedImage,
                 Image as RosImage,
                 Imu as RosImu,
-                PointCloud2 as RosPointCloud2,
             )
         except ImportError:
             logger.warning("sensor_msgs not available — sensor streams disabled")
@@ -422,7 +416,6 @@ class R1ProConnection(Module):
                 add_stream(stream, topic, RosCompressedImage, self._compressed_image_loop)
 
         add_stream("head_depth", _HEAD_DEPTH_TOPIC, RosImage, self._convert_loop, Image)
-        add_stream("lidar", _LIDAR_TOPIC, RosPointCloud2, self._convert_loop, PointCloud2)
 
         if self.config.enable_wrist_depth:
             for stream, topic in _WRIST_DEPTH_CAMERAS.items():
@@ -640,7 +633,6 @@ class R1ProConnection(Module):
         frame_id = self.config.odom_frame_id
         base = self.config.frame_id
         pose = PoseStamped(ts=now, frame_id=frame_id, position=position, orientation=orientation)
-        self.odom.publish(pose)
         self.odometry.publish(
             Odometry(
                 ts=now,
@@ -650,19 +642,9 @@ class R1ProConnection(Module):
                 twist=Twist(Vector3(vx, vy, 0.0), Vector3(0.0, 0.0, wz)),
             )
         )
-        # Both edges at the odom stamp: the voxel map matches each against the
-        # cloud stamp independently
-        self.tf.publish(
-            TFMessage(
-                Transform.from_pose(base, pose),
-                Transform(
-                    translation=Vector3(*_LIDAR_MOUNT_XYZ),
-                    frame_id=base,
-                    child_frame_id=self.config.lidar_frame_id,
-                    ts=now,
-                ),
-            )
-        )
+        if self.config.publish_odom_tf:
+            self.odom.publish(pose)
+            self.tf.publish(TFMessage(Transform.from_pose(base, pose)))
 
     # Aggregated motor_states publish loop
 
@@ -761,7 +743,7 @@ class R1ProConnection(Module):
                 logger.exception(f"R1Pro {stream} conversion error")
 
     def _convert_loop(self, stream: str, q: queue.Queue[Any], dimos_type: type) -> None:
-        """ros_to_dimos passthrough worker (depth images, lidar)."""
+        """ros_to_dimos passthrough worker (depth images)."""
         from dimos.protocol.pubsub.impl.rospubsub_conversion import ros_to_dimos
 
         out: Out[Any] = getattr(self, stream)
