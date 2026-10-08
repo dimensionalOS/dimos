@@ -28,15 +28,15 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.imitation.dataprep._lerobot_protocol import (
+from dimos.imitation.dataprep.build import run_dataprep
+from dimos.imitation.dataprep.core import OutputConfig, Sample, summarize_lengths
+from dimos.imitation.dataprep.formats.lerobot.protocol import (
     REQUEST_ADAPTER,
     BuildRequest,
     BuildResult,
     InspectRequest,
     InspectResult,
 )
-from dimos.imitation.dataprep.build import run_dataprep
-from dimos.imitation.dataprep.core import OutputConfig, Sample, summarize_lengths
 
 
 class _WritableDataset(Protocol):

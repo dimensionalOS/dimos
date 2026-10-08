@@ -20,7 +20,7 @@ import pytest
 import pytest_mock
 
 from dimos.imitation.dataprep.core import DataPrepConfig, OutputConfig
-from dimos.imitation.dataprep.lerobot import (
+from dimos.imitation.dataprep.formats.lerobot.adapter import (
     inspect_lerobot_dataset,
     lerobot_project,
     run_lerobot_dataprep,
@@ -40,7 +40,7 @@ def test_conversion_runs_module_in_checkout_policy_project(
         },
     )
     run = mocker.patch(
-        "dimos.imitation.dataprep.lerobot.subprocess.run",
+        "dimos.imitation.dataprep.formats.lerobot.adapter.subprocess.run",
         return_value=subprocess.CompletedProcess(
             [],
             0,
@@ -77,7 +77,7 @@ def test_conversion_runs_module_in_checkout_policy_project(
 
 def test_conversion_reports_missing_uv(tmp_path: Path, mocker: pytest_mock.MockerFixture) -> None:
     mocker.patch(
-        "dimos.imitation.dataprep.lerobot.subprocess.run",
+        "dimos.imitation.dataprep.formats.lerobot.adapter.subprocess.run",
         side_effect=FileNotFoundError("uv"),
     )
     config = DataPrepConfig(
@@ -93,7 +93,7 @@ def test_conversion_reports_child_process_diagnostics(
     tmp_path: Path, mocker: pytest_mock.MockerFixture
 ) -> None:
     mocker.patch(
-        "dimos.imitation.dataprep.lerobot.subprocess.run",
+        "dimos.imitation.dataprep.formats.lerobot.adapter.subprocess.run",
         return_value=subprocess.CompletedProcess(
             [], 9, stdout="partial output", stderr="bad config"
         ),
@@ -112,7 +112,7 @@ def test_inspection_uses_the_same_isolated_entrypoint(
 ) -> None:
     monkeypatch.chdir(tmp_path)
     run = mocker.patch(
-        "dimos.imitation.dataprep.lerobot.subprocess.run",
+        "dimos.imitation.dataprep.formats.lerobot.adapter.subprocess.run",
         return_value=subprocess.CompletedProcess(
             [], 0, stdout='{"command":"inspect","info":{"format":"lerobot"}}', stderr=""
         ),

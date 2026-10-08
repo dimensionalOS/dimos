@@ -24,8 +24,8 @@ import numpy as np
 import pytest
 import pytest_mock
 
-from dimos.imitation.dataprep._lerobot_protocol import BuildRequest, BuildResult
 from dimos.imitation.dataprep.core import DataPrepConfig, OutputConfig, Sample
+from dimos.imitation.dataprep.formats.lerobot.protocol import BuildRequest, BuildResult
 
 JOINTS = [f"arm/joint{index}" for index in range(1, 7)] + ["arm/gripper"]
 
