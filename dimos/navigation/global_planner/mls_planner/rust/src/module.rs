@@ -64,6 +64,10 @@ const SEED_PROGRESS_REGIONS: usize = 20;
 /// A seed queue quiet this long is taken as a finished load.
 const SEED_SETTLE: Duration = Duration::from_secs(2);
 
+/// How long queued seed regions may go unapplied, with live work filling
+/// every pass, before the worker says so.
+const SEED_STARVED_WARN_AFTER: Duration = Duration::from_secs(2);
+
 /// The seed regions applied since the queue was last quiet, for the log.
 #[derive(Default)]
 struct SeedProgress {
@@ -83,6 +87,12 @@ impl SeedProgress {
 
     fn mean_region_ms(&self) -> f64 {
         self.sum_region_ms / self.applied.max(1) as f64
+    }
+
+    /// Whether no region has been applied for SEED_STARVED_WARN_AFTER.
+    fn starved(&self) -> bool {
+        self.last_at
+            .is_some_and(|at| at.elapsed() >= SEED_STARVED_WARN_AFTER)
     }
 
     /// Count one region by the points it applied. True when a progress line
@@ -360,19 +370,12 @@ impl Worker {
             self.config.viz_sweep_regions as usize,
         );
         let mut seed_progress = SeedProgress::default();
+        // One unit of work per pass: a live update or goal first, else one
+        // seed region, else wait.
         loop {
-            if seed_progress.in_flight() {
-                let woke = tokio::time::timeout(SEED_SETTLE, self.wake.notified()).await;
-                if woke.is_err() {
-                    seed_progress.finish();
-                    continue;
-                }
-            } else {
-                self.wake.notified().await;
-            }
-            loop {
-                let goal_changed = self.goal_changed.swap(false, Ordering::SeqCst);
-                let update = self.pending.lock().expect("pending mutex").take();
+            let goal_changed = self.goal_changed.swap(false, Ordering::SeqCst);
+            let update = self.pending.lock().expect("pending mutex").take();
+            if update.is_some() || goal_changed {
                 let live_update = match update {
                     Some(update) => {
                         self.apply_update(&mut planner, update, &mut viz, &mut last_viz_at)
@@ -383,14 +386,15 @@ impl Worker {
                 if replan_due(goal_changed, live_update) {
                     self.maybe_replan(&mut planner, &mut last_path_at).await;
                 }
-                // Live updates apply first, then one seed region per pass.
-                let (seed, queued) = {
-                    let mut queue = self.seed_regions.lock().expect("seed mutex");
-                    (queue.pop_front(), queue.len())
-                };
-                let Some(seed) = seed else {
-                    break;
-                };
+                self.warn_if_seeds_starved(&seed_progress);
+                continue;
+            }
+
+            let (seed, queued) = {
+                let mut queue = self.seed_regions.lock().expect("seed mutex");
+                (queue.pop_front(), queue.len())
+            };
+            if let Some(seed) = seed {
                 let region_start = Instant::now();
                 let applied =
                     tokio::task::block_in_place(|| self.ingest_seed(&mut planner, seed, &mut viz));
@@ -403,7 +407,34 @@ impl Worker {
                         .await;
                 }
                 tokio::task::yield_now().await;
+                continue;
             }
+
+            // A seed whose queue stays quiet has finished.
+            if seed_progress.in_flight() {
+                let woke = tokio::time::timeout(SEED_SETTLE, self.wake.notified()).await;
+                if woke.is_err() {
+                    seed_progress.finish();
+                }
+            } else {
+                self.wake.notified().await;
+            }
+        }
+    }
+
+    /// Live work has kept seed regions queued and unapplied for too long.
+    fn warn_if_seeds_starved(&self, progress: &SeedProgress) {
+        if !progress.starved() {
+            return;
+        }
+        let queued = self.seed_regions.lock().expect("seed mutex").len();
+        if queued > 0 {
+            warn_throttled!(
+                SEED_STARVED_WARN_AFTER,
+                queued,
+                regions_done = progress.applied,
+                "Seed regions are starved: live updates have kept the worker busy.",
+            );
         }
     }
 
