@@ -15,6 +15,7 @@
 //! Config and the owned-state Planner that builds and queries the MLS graph.
 
 use std::sync::Arc;
+use std::time::Instant;
 
 use ahash::{AHashMap, AHashSet};
 use dimos_module::{native_config, worker_pool};
@@ -32,6 +33,7 @@ use crate::surfaces::{
     ColumnMask,
 };
 use crate::voxel::{voxelize, VoxelKey};
+use tracing::debug;
 
 #[native_config]
 #[derive(Clone)]
@@ -150,6 +152,10 @@ impl Config {
 /// Inclusive column window, as x0, x1, y0, y1.
 pub type ColumnWindow = (i32, i32, i32, i32);
 
+fn ms_since(start: Instant) -> f64 {
+    start.elapsed().as_secs_f64() * 1e3
+}
+
 /// Cylindrical region the planner re-derives from a local map slice.
 #[derive(Clone, Copy)]
 pub struct RegionBounds {
@@ -259,23 +265,43 @@ impl Planner {
             let pad = (2 * config.closing_passes()) as i32;
 
             // No voxel changed, so surfaces and the graph are untouched.
+            let stage = Instant::now();
             let changed = self.replace_region_voxels(local_points, bounds, voxel_size);
+            let diff_ms = ms_since(stage);
             if changed.is_empty() {
                 return None;
             }
 
             // A changed column shifts surfaces only within pad of it, and
             // the extraction reads one more pad around that.
-            let mut footprint = ColumnMask::new(bounds.column_bbox(voxel_size), 2 * pad);
+            let bbox = bounds.column_bbox(voxel_size);
+            let mut footprint = ColumnMask::new(bbox, 2 * pad);
             for &col in &changed {
                 footprint.set(col);
             }
             let write = footprint.dilated(pad);
+            let stage = Instant::now();
             let new_cells =
                 extract_surfaces_region(&self.by_col, clearance, config.closing_passes(), &write);
+            let extract_ms = ms_since(stage);
+            let stage = Instant::now();
             let (added, removed) = self.replace_surface_region(&write, &new_cells);
+            let replace_ms = ms_since(stage);
+            let (cells_added, cells_removed) = (added.len(), removed.len());
 
+            let stage = Instant::now();
             self.rebuild_region_graph(added, removed, config);
+            debug!(
+                diff_ms,
+                extract_ms,
+                replace_ms,
+                graph_ms = ms_since(stage),
+                bbox_columns = (bbox.1 - bbox.0 + 1) as i64 * (bbox.3 - bbox.2 + 1) as i64,
+                changed_columns = changed.len(),
+                cells_added,
+                cells_removed,
+                "region update stages"
+            );
             write.bounds()
         })
     }
