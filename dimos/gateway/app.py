@@ -14,10 +14,9 @@
 
 """The dimos gateway's HTTP API, `/dimos/...`: blueprints, global config, runs and their logs, events, cloud uploads.
 
-dimOS Desktop proxies `/dimos/` to it. Each route's docs, request and answer models (models.py) make its OpenAPI
-document (openapi.py), served at /dimos/openapi.json and checked in as openapi.json. fixtures/ holds Desktop's own
-document of these paths; test_contract.py and test_openapi.py check this gateway matches it. An error is
-`{"error": "<message>"}`.
+dimOS Desktop proxies `/dimos/` to it. Each route's summary is its line in dimos.yaml's `provides:` (provides.py).
+fixtures/ holds Desktop's own OpenAPI document of these paths; test_contract.py and test_openapi.py check this gateway
+matches it. An error is `{"error": "<message>"}`.
 """
 
 from __future__ import annotations
@@ -61,7 +60,7 @@ from dimos.gateway.blueprint_watch import BlueprintWatch
 from dimos.gateway.discovery import Discovery
 from dimos.gateway.jobs import Jobs
 from dimos.gateway.msgs import routes as msgs_routes
-from dimos.gateway.openapi import document, operation_id, route_doc
+from dimos.gateway.provides import route_doc
 from dimos.gateway.topic_rates import TopicWatch
 from dimos.gateway.uploads import Uploads
 
@@ -177,15 +176,13 @@ def create_app(state: ServerState, background: bool = True) -> FastAPI:
         for task in state.background:
             task.cancel()
 
-    # no Swagger UI: it loads its scripts from a CDN (a robot is often offline) and Desktop already browses and
-    # searches the API; /dimos/openapi.json is the one source
+    # no OpenAPI or Swagger: dimos.yaml's `provides:` describes the API
     app = FastAPI(
         title="dimos gateway",
         lifespan=lifespan,
-        openapi_url="/dimos/openapi.json",
+        openapi_url=None,
         docs_url=None,
         redoc_url=None,
-        generate_unique_id_function=operation_id,
         separate_input_output_schemas=False,
     )
     app.state.server = state
@@ -255,7 +252,6 @@ def create_app(state: ServerState, background: bool = True) -> FastAPI:
             "Reads the checkout's pyproject.toml and whether its `.venv/bin/dimos` exists, and checks the version "
             "against the range Desktop supports ($DESKTOP_DIMOS_RANGE). A launch is refused while `inRange` is "
             "false. No side effects.",
-            agent=True,
             answer="`{ dir, found, installed, version, range, inRange }`",
         ),
     )
@@ -321,7 +317,6 @@ def create_app(state: ServerState, background: bool = True) -> FastAPI:
             "another folder, then cached. `env` is what to set for that import to find the checkout (empty when it "
             "is installed there, else `PYTHONPATH`). 500 when no python imports the checkout's dimos. No side "
             "effects.",
-            agent=True,
             answer="`{ python, command, dimosDir, version, dimosVersion, env, example }`",
         ),
     )
@@ -360,7 +355,6 @@ def create_app(state: ServerState, background: bool = True) -> FastAPI:
             "`import_error` and `missing_module` come from the discovery cache (null until the scan reaches the "
             "blueprint: GET /dimos/discovery).",
             errors=(400, 500),
-            agent=True,
             answer='`{ blueprints: [{ name, kind: "builtin"|"external", importable, import_error, missing_module }] }`',
         ),
     )
@@ -392,7 +386,6 @@ def create_app(state: ServerState, background: bool = True) -> FastAPI:
             "is defined (`file`, `line`; GET /dimos/source reads the file). 400 for a name that can't be one, 500 "
             "when the blueprint can't be found or imported.",
             errors=(400, 500),
-            agent=True,
             answer="`{ name, modules: [{ name, class, doc, summary, file, line, rpcs, skills, streams: [{ name, "
             "type, direction, topic }] }] }`",
         ),
@@ -527,7 +520,6 @@ def create_app(state: ServerState, background: bool = True) -> FastAPI:
             "required or inherited from ModuleConfig, its choices (Enum/Literal) and the blueprint's value. A module "
             "whose config can't be read has `error` instead of failing the whole answer.",
             errors=(400, 500),
-            agent=True,
             answer="`{ name, modules: [{ module, class, args: [{ name, type, default, description, required, base, choices?, value? }], error? }] }`",
         ),
     )
@@ -599,7 +591,6 @@ def create_app(state: ServerState, background: bool = True) -> FastAPI:
             "`type` is a key of `types`, the order a launcher groups them in. `registered` and `unlisted` compare it "
             "with the blueprint registry. CI keeps the file in step with the code (dimos/gateway/robots.py). Read "
             "from disk on every call; no side effects.",
-            agent=True,
             answer="`{ about, types, robots: { [id]: { name, description, type, manufacturer, dirs, recommended, blueprints: { [name]: { title, description, starter, hidden, recommended_config, robot, registered } } } }, excluded, unlisted }`",
         ),
     )
@@ -638,7 +629,6 @@ def create_app(state: ServerState, background: bool = True) -> FastAPI:
             "dimos GlobalConfig: JSON schema, defaults, Desktop's overrides",
             "GlobalConfig's JSON Schema and defaults (cached 10 min) and Desktop's saved overrides from config.yaml "
             "`dimos.global_config`. No side effects.",
-            agent=True,
             answer="`{ schema, defaults, overrides }`",
         ),
     )
@@ -683,7 +673,6 @@ def create_app(state: ServerState, background: bool = True) -> FastAPI:
             "Running blueprints (run id, blueprint, pid, log_dir) and the launch this gateway started",
             "Live runs from dimos's run registry (pid alive; also runs started from a terminal), newest first, and "
             "this gateway's last launch with its phase. No side effects.",
-            agent=True,
             answer="`{ runs: [{ run_id, pid, blueprint, started_at, log_dir }], launch: Launch | null }`",
         ),
     )
@@ -753,8 +742,6 @@ def create_app(state: ServerState, background: bool = True) -> FastAPI:
             "two runs share module RPC names, so one's start and stop calls reach the other's modules); 500 when dimos isn't "
             "installed or won't start.",
             errors=(400, 500),
-            agent=True,
-            mcp_tool="run_blueprint",
             answer="`Launch`: `{ blueprint, phase, startedAt, pid, output, runId, logDir, error, overrides, steps: [{ "
             "label, state: done|now|todo|failed, detail }], problems: [{ level, text, fix, line }] }`",
         ),
@@ -794,7 +781,6 @@ def create_app(state: ServerState, background: bool = True) -> FastAPI:
             "would, with Desktop's saved global and module config as saved now (a config change since applies). "
             "Takes no body. 400 when nothing was launched yet; 500 when it won't stop or won't start.",
             errors=(400, 500),
-            agent=True,
             answer="`Launch` (as POST /dimos/runs)",
         ),
     )
@@ -825,8 +811,6 @@ def create_app(state: ServerState, background: bool = True) -> FastAPI:
             "on is free again (a leftover of the run's own still holding one gets SIGTERM, then SIGKILL). Stops `runId` (any live run in the registry) or else this gateway's launch; the body is "
             "optional. 500 when there's nothing running to stop, it won't stop, or a port it held is still taken.",
             errors=(400, 500),
-            agent=True,
-            mcp_tool="stop_blueprint",
             answer="`{ output }`",
         ),
     )
@@ -854,7 +838,6 @@ def create_app(state: ServerState, background: bool = True) -> FastAPI:
             "last 4 MB at most). Without `after`: the last `limit` matching records; with `after`: every matching "
             "record past that byte offset (tailing). An unknown run answers no records. No side effects.",
             errors=(400, 500),
-            agent=True,
             answer="`{ runId, records: [{ timestamp, level, logger, event, extra, raw }], offset, loggers }`",
         ),
     )
@@ -920,7 +903,6 @@ def create_app(state: ServerState, background: bool = True) -> FastAPI:
             "timeout). Cached for 20 s; `fresh` asks again. A logged-in answer restarts an upload queue that was "
             "waiting for a login.",
             errors=(400, 500),
-            agent=True,
             answer="`{ loggedIn, email, scopes, source, cloudUrl, error }`",
         ),
     )
@@ -935,7 +917,6 @@ def create_app(state: ServerState, background: bool = True) -> FastAPI:
             "The cloud login in progress: state (idle, starting, pending, approved, denied, expired, failed), url, "
             "code",
             "The device login's state; a pending one past its expiry turns expired. No other side effects.",
-            agent=True,
             answer="`Login`: `{ state, url, urlComplete, code, expiresAt, email, error }`",
         ),
     )
@@ -952,7 +933,6 @@ def create_app(state: ServerState, background: bool = True) -> FastAPI:
             "Starts dimos's device login in a child process (or returns the one already waiting) and answers once "
             "the code is known (pending), within 30 s. Show the URL and code; `cloud-login` events (or GET "
             "/dimos/cloud/login) follow it. Once approved, dimos stores the key and a waiting upload queue goes on.",
-            agent=True,
             answer="`Login`",
         ),
     )
@@ -1016,7 +996,6 @@ def create_app(state: ServerState, background: bool = True) -> FastAPI:
             "uploads",
             "The Dimensional cloud upload queue: each upload's state, progress, speed, time left and error",
             "The queue in order, and whether it waits for a cloud login. No side effects.",
-            agent=True,
             answer="`{ uploads: [Upload], waitingForLogin }`",
         ),
     )
@@ -1033,7 +1012,6 @@ def create_app(state: ServerState, background: bool = True) -> FastAPI:
             "queued; one already queued or uploading for that path is answered instead. Needs a cloud login: "
             "without one it waits. 400 when the path isn't an absolute path to an existing dimos recording (an .mcap, or a .db dimos recorded).",
             errors=(400, 500),
-            agent=True,
             answer="`Upload`",
         ),
     )
@@ -1067,7 +1045,6 @@ def create_app(state: ServerState, background: bool = True) -> FastAPI:
             "Without `path`: `{byPath}` for every recording uploaded from here. With `path`: that one's entry, or "
             "null when it isn't uploaded. `changed` says the file differs from what was uploaded. No side effects.",
             errors=(400, 500),
-            agent=True,
             answer="`{ byPath: { [path]: Uploaded } }`, or with `?path=` that one `Uploaded` or null",
         ),
     )
@@ -1085,7 +1062,6 @@ def create_app(state: ServerState, background: bool = True) -> FastAPI:
             "A queued upload turns cancelled; a running one's worker is killed and it turns cancelled; a finished "
             "one is removed (an `upload-removed` event). 404 for an unknown id.",
             errors=(404, 500),
-            agent=True,
             answer="`{ ok: true }`",
         ),
     )
@@ -1105,7 +1081,6 @@ def create_app(state: ServerState, background: bool = True) -> FastAPI:
             "Moves a finished (done, failed or cancelled) upload to the back of the queue, reset, and answers it. "
             "404 for an unknown id; 409 while it's still queued or uploading.",
             errors=(404, 409, 500),
-            agent=True,
             answer="`Upload`, queued",
         ),
     )
@@ -1121,10 +1096,4 @@ def create_app(state: ServerState, background: bool = True) -> FastAPI:
     msgs_routes.add(app)
     skills_routes.add(app)
 
-    def openapi() -> dict[str, Any]:
-        if app.openapi_schema is None:
-            app.openapi_schema = document(app)
-        return app.openapi_schema
-
-    app.openapi = openapi  # type: ignore[method-assign]
     return app

@@ -19,6 +19,7 @@ whichever one runs later. A skill is called only when a person or agent asks for
 from __future__ import annotations
 
 import asyncio
+from importlib.metadata import PackageNotFoundError, version
 import json
 from typing import Any
 
@@ -26,9 +27,17 @@ from fastapi import Body, FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 
 from dimos.gateway import models, skills
-from dimos.gateway.openapi import API_VERSION, route_doc
+from dimos.gateway.provides import route_doc
 
 MCP_PROTOCOL = "2025-06-18"
+
+
+def dimos_version() -> str:
+    try:
+        return version("dimos")
+    except PackageNotFoundError:
+        return "unknown"
+
 
 MCP_TOOLS: list[dict[str, Any]] = [
     {
@@ -93,7 +102,6 @@ def add(app: FastAPI) -> None:
             "module RPC, `Coordinator/list_modules` then each module's `get_skills` (the JSON schema McpServer gives "
             "an agent). Empty `skills` and null `run` when nothing runs; `errors` names a module that didn't answer. "
             "No side effects.",
-            agent=True,
             answer="`{ skills: [{ name, module, description, params, required, lifecycle, uses, runId, blueprint }], "
             "run: { runId, blueprint } | null, errors: [{ module, error }] }`",
         ),
@@ -115,7 +123,6 @@ def add(app: FastAPI) -> None:
             "share without `module`, 404 when the running blueprint has no such skill (or `runId` isn't it), 409 when "
             "nothing runs, 500 when the MCP call failed or it didn't answer in time.",
             errors=(400, 404, 409, 500),
-            agent=True,
             answer="`{ skill, module, runId, blueprint, via, ok, text, content }`",
         ),
     )
@@ -199,7 +206,7 @@ def add(app: FastAPI) -> None:
                 {
                     "protocolVersion": params.get("protocolVersion") or MCP_PROTOCOL,
                     "capabilities": {"tools": {}},
-                    "serverInfo": {"name": "dimos-skills", "version": API_VERSION},
+                    "serverInfo": {"name": "dimos-skills", "version": dimos_version()},
                     "instructions": "The robot's skills: list_skills, then call_skill.",
                 }
             )

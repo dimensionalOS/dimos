@@ -4,35 +4,39 @@ How do I launch a blueprint, read its logs, call a skill...? See [gateway-how-to
 
 `python -m dimos.gateway` serves the `/dimos` HTTP API that dimOS Desktop uses: blueprints, global config, runs and
 their logs, events, and Dimensional cloud uploads. Desktop starts it on a unix socket and forwards `/dimos/...` to it
-unchanged (`--port 8123` also serves it on `127.0.0.1:8123`).
+unchanged.
 
-## The OpenAPI document
+## Starting it: `DIMOS_GATEWAY`
 
-Every endpoint is described in an OpenAPI 3.1 document: summaries and descriptions, request and response schemas
-with examples, parameters, error answers (always `{"error": "<message>"}`), and each event's payload.
+Desktop runs [`dimos.yaml`](/dimos.yaml#L89)'s `start:` (`.venv/bin/python -m dimos.gateway --detach`) in the checkout with
+one variable, `DIMOS_GATEWAY`, a JSON object; every field is optional:
 
-- **Live:** `GET /dimos/openapi.json` from a running gateway. `info.version` is the API's version, and
-  `info.x-dimos-version` is the version of dimos serving it.
-- **Checked in:** [`dimos/gateway/openapi.json`](/dimos/gateway/openapi.json), which [`dimos.yaml`](/dimos.yaml) names
-  under `api:`, next to the API's version. Desktop reads it per tag over HTTP without running anything.
-- **Regenerate** the checked-in file after changing an endpoint or a model in
-  [`dimos/gateway/models.py`](/dimos/gateway/models.py):
+| Field             | What                                                                                     |
+| ----------------- | ---------------------------------------------------------------------------------------- |
+| `socket`          | the unix socket to serve on (default `<dimos state>/gateway/dimos-gateway.sock`)         |
+| `dimosDir`        | the checkout runs are launched from (default: the one this code is in)                   |
+| `zenoh.namespace` | Desktop's `<ns>`: events go on `<ns>/dimos/events/<type>`                                |
+| `zenoh.connect`   | the zenoh endpoints to dial, a list (default: dimos's `zenoh_connect`)                   |
+| `desktopUrl`      | where Desktop answers (its shell tool runs extras installs)                              |
+| `recordingsDir`   | the recordings folder Desktop gives its apps                                             |
+| `dimosRange`      | the dimos versions Desktop works with (`/dimos/info`'s `inRange`; launches outside fail) |
 
-  ```sh
-  python -m dimos.gateway --write-openapi
-  ```
+`socket:` (`--print-socket`) prints where it serves. `--no-zenoh` keeps events on SSE only.
 
-  A test fails while it's stale. The API is versioned with semver (`API_VERSION` in
-  [`dimos/gateway/openapi.py`](/dimos/gateway/openapi.py#L18), and `api.version` in `dimos.yaml`): a breaking change is a
-  major bump.
+## What it offers: `provides:`
 
-There is no Swagger page (`/docs`): it would load its scripts from a CDN, and robots are often offline. Load the JSON
-into any OpenAPI viewer instead.
+[`dimos.yaml`](/dimos.yaml#L27)'s `provides:` lists every endpoint, the way an app declares its own: method, path
+relative to `/dimos/` and a one-line description. Desktop reads it per tag to check apps' `uses: "@dimos-gateway"`.
+It's generated from the routes (each `route_doc` summary is its description): after adding or changing a route, run
 
-Operations carry Desktop's extensions: `x-family: dimos`; `x-agent: true` for what Desktop's agent can find; and
-`x-mcp-tool` for an operation an MCP tool also does.
+```sh skip
+python -m dimos.gateway --write-provides
+```
 
-## Groups (tags)
+A test fails while it's stale. Request and answer models live in [`dimos/gateway/models.py`](/dimos/gateway/models.py);
+the gateway serves no OpenAPI document or Swagger page.
+
+## Groups
 
 | Tag             | What                                                                                 |
 | --------------- | ------------------------------------------------------------------------------------ |
@@ -116,7 +120,7 @@ returns (`via: rpc`). A skill that holds a capability goes through the run's Mcp
 skill only when asked to.
 
 ```sh skip
-sock=$DIMOS_SERVER_SOCKET # the gateway's --socket
+sock=$(.venv/bin/python -m dimos.gateway --print-socket)
 curl -s --unix-socket "$sock" http://gateway/dimos/skills | jq '.skills[] | {name, module}'
 curl -s --unix-socket "$sock" -X POST http://gateway/dimos/skills/call -H 'content-type: application/json' \
     -d '{"skill": "execute_sport_command", "args": {"command_name": "FrontJump"}}'
@@ -135,7 +139,7 @@ dimos` to find the checkout; usually empty, else `PYTHONPATH`), `dimosDir`, `ver
 Run one-liners as `<python> -c '...'` and scripts as `<python> script.py`, with `env` set:
 
 ```sh skip
-py=$(curl -s --unix-socket "$DIMOS_SERVER_SOCKET" http://gateway/dimos/python | jq -r .python)
+py=$(curl -s --unix-socket "$sock" http://gateway/dimos/python | jq -r .python)
 "$py" -c 'import dimos; print(dimos.__file__)'
 ```
 
