@@ -14,8 +14,9 @@
 
 """The navigation stack, as ports: a stream in, a stream out, and tf.
 
-``NavigationInterfaceSpec`` is the one RPC contract, the goal calls skills make on
-whichever global planner the blueprint holds.
+``NavigationInterfaceSpec`` is the one goal contract: the calls skills make on
+whichever global planner the blueprint holds, and the ``nav_status`` stream that
+planner reports each goal on.
 
 A local planner is blind or map-aware; both hand the follower the same ``path``.
 
@@ -28,6 +29,9 @@ whose native only reads it.
 
 from enum import Enum
 from typing import Protocol
+
+from dimos_lcm.actionlib_msgs import GoalID, GoalStatus
+from dimos_lcm.std_msgs import Time
 
 from dimos.core.stream import IO, In, Out
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
@@ -51,6 +55,16 @@ def goal_id(goal: Timestamped) -> str:
     return f"{sec}.{nsec:09d}"
 
 
+def goal_status(goal: Timestamped, status: int, text: str) -> GoalStatus:
+    """A nav_status report for a goal."""
+    sec, nsec = goal.ros_timestamp()
+    return GoalStatus(
+        goal_id=GoalID(stamp=Time(sec=sec, nsec=nsec), id=goal_id(goal)),
+        status=status,
+        text=text,
+    )
+
+
 class GlobalPlanner(Protocol):
     tf: In[TFMessage]
     goal: In[PointStamped]
@@ -59,7 +73,10 @@ class GlobalPlanner(Protocol):
 
 
 class NavigationInterfaceSpec(Spec, Protocol):
-    """The goal RPCs of a global planner."""
+    """The goal RPCs of a global planner and the stream it reports goals on."""
+
+    nav_status: Out[GoalStatus]
+    """Each goal's status, under the id of the message that set it."""
 
     def set_goal(self, goal: PoseStamped) -> bool:
         """Set a new goal without blocking. True if it was accepted.

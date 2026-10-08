@@ -15,6 +15,7 @@
 import os
 from typing import Any
 
+from dimos_lcm.actionlib_msgs import GoalStatus
 from dimos_lcm.std_msgs import Bool, String
 from reactivex.disposable import Disposable
 
@@ -29,7 +30,7 @@ from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.navigation.go2.replanning_a_star.global_planner import GlobalPlanner
 from dimos.navigation.go2.replanning_a_star.module_spec import ReplanningAStarPlannerSpec
-from dimos.navigation.spec import NavigationState
+from dimos.navigation.spec import NavigationState, goal_id, goal_status
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -52,6 +53,7 @@ class ReplanningAStarPlanner(Module, ReplanningAStarPlannerSpec):
     stop_movement: In[Bool]
 
     goal_reached: Out[Bool]
+    nav_status: Out[GoalStatus]
     navigation_state: Out[String]  # TODO: set it
     nav_cmd_vel: Out[Twist]
     path: Out[Path]
@@ -73,6 +75,7 @@ class ReplanningAStarPlanner(Module, ReplanningAStarPlannerSpec):
             self.config.g.model_copy(update=overrides) if overrides else self.config.g
         )
         self._planner = GlobalPlanner(effective_global_config)
+        self._goal: PoseStamped | None = None
 
     @rpc
     def start(self) -> None:
@@ -89,19 +92,11 @@ class ReplanningAStarPlanner(Module, ReplanningAStarPlannerSpec):
         self.register_disposable(
             Disposable(self.global_costmap.subscribe(self._planner.handle_global_costmap))
         )
-        self.register_disposable(
-            Disposable(self.goal_request.subscribe(self._planner.handle_goal_request))
-        )
-        self.register_disposable(
-            Disposable(self.target.subscribe(self._planner.handle_goal_request))
-        )
+        self.register_disposable(Disposable(self.goal_request.subscribe(self._on_goal)))
+        self.register_disposable(Disposable(self.target.subscribe(self._on_goal)))
 
         self.register_disposable(
-            Disposable(
-                self.clicked_point.subscribe(
-                    lambda pt: self._planner.handle_goal_request(pt.to_pose_stamped())
-                )
-            )
+            Disposable(self.clicked_point.subscribe(lambda pt: self._on_goal(pt.to_pose_stamped())))
         )
 
         if self.stop_movement.transport is not None:
@@ -114,6 +109,7 @@ class ReplanningAStarPlanner(Module, ReplanningAStarPlannerSpec):
         self.register_disposable(self._planner.cmd_vel.subscribe(self.nav_cmd_vel.publish))
 
         self.register_disposable(self._planner.goal_reached.subscribe(self.goal_reached.publish))
+        self.register_disposable(self._planner.goal_reached.subscribe(self._on_goal_reached))
 
         if "DEBUG_NAVIGATION" in os.environ:
             self.register_disposable(
@@ -133,9 +129,26 @@ class ReplanningAStarPlanner(Module, ReplanningAStarPlannerSpec):
         if msg.data:
             self.cancel_goal()
 
+    def _on_goal(self, goal: PoseStamped) -> None:
+        held, self._goal = self._goal, goal
+        # A goal sent again keeps its id, so it is not preempted.
+        if held is not None and goal_id(held) != goal_id(goal):
+            self.nav_status.publish(goal_status(held, GoalStatus.PREEMPTED, "replaced"))
+        self.nav_status.publish(goal_status(goal, GoalStatus.ACTIVE, "navigating"))
+        self._planner.handle_goal_request(goal)
+
+    def _on_goal_reached(self, msg: Bool) -> None:
+        goal, self._goal = self._goal, None
+        if goal is None:
+            return
+        if msg.data:
+            self.nav_status.publish(goal_status(goal, GoalStatus.SUCCEEDED, "reached"))
+        else:
+            self.nav_status.publish(goal_status(goal, GoalStatus.ABORTED, "navigation failed"))
+
     @rpc
     def set_goal(self, goal: PoseStamped) -> bool:
-        self._planner.handle_goal_request(goal)
+        self._on_goal(goal)
         return True
 
     @rpc
@@ -148,6 +161,9 @@ class ReplanningAStarPlanner(Module, ReplanningAStarPlannerSpec):
 
     @rpc
     def cancel_goal(self) -> bool:
+        goal, self._goal = self._goal, None
+        if goal is not None:
+            self.nav_status.publish(goal_status(goal, GoalStatus.PREEMPTED, "canceled"))
         self._planner.cancel_goal()
         return True
 

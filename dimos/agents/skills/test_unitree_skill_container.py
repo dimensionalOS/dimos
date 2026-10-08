@@ -16,11 +16,13 @@ import difflib
 import math
 from typing import Any
 
+from dimos_lcm.actionlib_msgs import GoalStatus
 from langchain_core.messages import HumanMessage
 import pytest
 
 from dimos.core.core import rpc
 from dimos.core.module import Module
+from dimos.core.stream import Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -33,6 +35,8 @@ from dimos.robot.unitree.unitree_skill_container import (
 
 
 class StubNavigation(Module):
+    nav_status: Out[GoalStatus]
+
     @rpc
     def set_goal(self, goal: PoseStamped) -> bool:
         return True

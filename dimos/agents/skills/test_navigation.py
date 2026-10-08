@@ -14,6 +14,7 @@
 
 from typing import Any
 
+from dimos_lcm.actionlib_msgs import GoalStatus
 from langchain_core.messages import HumanMessage
 
 from dimos.agents.skills.navigation import NavigationSkillContainer
@@ -49,6 +50,8 @@ class StubSpatialMemory(Module):
 
 
 class StubNavigation(Module):
+    nav_status: Out[GoalStatus]
+
     @rpc
     def set_goal(self, goal: PoseStamped) -> bool:
         return True
