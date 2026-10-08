@@ -169,7 +169,7 @@ assert "message_type" not in schema.model_dump_json()
 
 For a real directory, use `RecordingSchema.read(directory)` first, then pass its
 config to `run_lerobot_dataprep` in
-[dataprep/lerobot.py](/dimos/imitation/dataprep/lerobot.py), or to `run_dataprep`
+[formats/lerobot/adapter.py](/dimos/imitation/dataprep/formats/lerobot/adapter.py), or to `run_dataprep`
 in [dataprep/build.py](/dimos/imitation/dataprep/build.py) for HDF5.
 `inspect_recording(..., config=config)` uses the same interpretation for quality
 inspection. These APIs are available at this layer; the later imitation CLI

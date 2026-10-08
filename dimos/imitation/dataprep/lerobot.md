@@ -7,7 +7,7 @@ HDF5 output continues to use the host writer.
 
 ## Host and runtime boundary
 
-The host API in [lerobot.py](/dimos/imitation/dataprep/lerobot.py) provides
+The host API in [adapter.py](/dimos/imitation/dataprep/formats/lerobot/adapter.py) provides
 `run_lerobot_dataprep(config)` and `inspect_lerobot_dataset(path)`. Input and
 output paths become absolute before entering the child process, whose working
 directory is the isolated project.
@@ -21,7 +21,7 @@ may need to provision those dependencies; a host-side LeRobot installation is
 not a substitute for that environment.
 
 The private subprocess protocol uses Pydantic build/inspect request and result
-models from [_lerobot_protocol.py](/dimos/imitation/dataprep/_lerobot_protocol.py).
+models from [protocol.py](/dimos/imitation/dataprep/formats/lerobot/protocol.py).
 One JSON request is sent on stdin. A discriminated `command` identifies the
 request; the result must have the matching command. Diagnostic output goes to
 stderr, leaving the result on stdout. Missing `uv`, a nonzero child exit status,
@@ -33,7 +33,7 @@ This executable example validates a build request without starting the runtime:
 ```python no-result
 from pathlib import Path
 
-from dimos.imitation.dataprep._lerobot_protocol import BuildRequest, REQUEST_ADAPTER
+from dimos.imitation.dataprep.formats.lerobot.protocol import BuildRequest, REQUEST_ADAPTER
 from dimos.imitation.dataprep.core import DataPrepConfig
 
 config = DataPrepConfig.model_validate_json(
