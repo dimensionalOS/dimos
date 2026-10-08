@@ -12,14 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Physical constants for the Unitree Go2."""
+from __future__ import annotations
 
-# Robot footprint in meters. Length is forward x, width is left y.
-ROBOT_LENGTH = 0.6858
-ROBOT_WIDTH = 0.3175
-# Ground to the tallest point.
-ROBOT_HEIGHT = 0.45
-# Ground to the base_link origin while standing.
-BASE_LINK_HEIGHT = 0.287
-# Seconds without a cmd_vel before the robot is told to stop.
-CMD_VEL_TIMEOUT = 0.2
+from dimos.msgs.sim_msgs.Contacts import Contact, Contacts
+
+
+def test_round_trip_keeps_contacts_and_stamp() -> None:
+    msg = Contacts([Contact("foot", "floor"), Contact("trunk", "wall")], ts=12.5)
+    back = Contacts.lcm_decode(msg.lcm_encode())
+    assert back.contacts == msg.contacts
+    assert back.ts == 12.5
+
+
+def test_empty_set_round_trips() -> None:
+    back = Contacts.lcm_decode(Contacts(ts=1.0).lcm_encode())
+    assert back.contacts == []
+    assert back.ts == 1.0
