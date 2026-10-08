@@ -31,7 +31,7 @@ odometry = "nav_msgs.Odometry"
 
 [dependencies]
 dimos-livox = { path = "../../livox/rust" }
-pointlio-core = { git = "https://github.com/dimensionalOS/dimos-module-pointlio.git", rev = "3c1dcf8b9dfe6402aaf141e116f4caef6c5c8088" }
+pointlio-core = { git = "https://github.com/dimensionalOS/dimos-module-pointlio.git", rev = "22a5403f827d030b248ae473c2808b5d405b3d55" }
 dimos-module = { path = "../../../../../../native/rust/dimos-module" }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
 serde = { version = "1", features = ["derive"] }

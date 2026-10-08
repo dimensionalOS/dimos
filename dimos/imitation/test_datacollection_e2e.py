@@ -28,7 +28,7 @@ import pyarrow.parquet as pq
 import pytest
 
 from dimos.core.stream import Stream, Transport
-from dimos.imitation.collection.episode_monitor import (
+from dimos.imitation.collection.episode import (
     EpisodeEvent,
     EpisodeStatus,
     RecordingState,
@@ -46,10 +46,11 @@ from dimos.imitation.dataprep.core import (
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.std_msgs.String import String
 from dimos.utils.testing.waiting import wait_until
 
 pytestmark = [
-    pytest.mark.skipif_macos,
+    pytest.mark.self_hosted,
     pytest.mark.skipif_aarch64,
     pytest.mark.skipif_no_turbojpeg,
 ]
@@ -134,6 +135,8 @@ def _record_session(db_path: Path) -> None:
     counts = {name: 0 for name in transports}
 
     def publish(name: str, message: Any) -> None:
+        if name == "status":
+            message = String(message.to_json())
         counts[name] += 1
         transports[name].publish(message)
         wait_until(

@@ -198,7 +198,8 @@ def pytest_configure(config):
     )
     config.addinivalue_line(
         "markers",
-        "native_e2e: native module e2e (builds rust); runs in the CI rust job",
+        "native_e2e: native module e2e (builds rust); "
+        "runs in the CI rust job and the macOS self-hosted-tests job",
     )
     config.addinivalue_line("markers", "skipif_in_ci: skip when CI env var is set")
     config.addinivalue_line("markers", "skipif_no_openai: skip when OPENAI_API_KEY is not set")
