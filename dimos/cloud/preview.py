@@ -58,7 +58,7 @@ if TYPE_CHECKING:
 
 def _stream(store: Store, payload: type, prefer: str) -> Any:
     """The first stream carrying this dimos type, named like *prefer* first: a mapper's
-    `global_map` is a PointCloud2 too, and `goal_request` a Pose."""
+    `global_map` is a PointCloud2 too, `goal_request` a Pose and `depth_image` an Image."""
     for name in sorted(store.list_streams(), key=lambda n: prefer not in n):
         try:
             if isinstance(store.streams[name].first().data, payload):
@@ -88,7 +88,7 @@ def _pack(pc: PointCloud2, origin: np.ndarray) -> str:
 
 def build(store: Store) -> dict[str, Any] | None:
     """`dimos-spatial-preview-v2`, or None for a recording without LiDAR, camera or poses."""
-    lidar, camera = _stream(store, PointCloud2, "lidar"), _stream(store, Image, "image")
+    lidar, camera = _stream(store, PointCloud2, "lidar"), _stream(store, Image, "color")
     odom = _stream(store, Pose, "odom")
     poses, scans, world, ends = [], [], None, []
     if lidar is not None:
@@ -162,7 +162,7 @@ def build(store: Store) -> dict[str, Any] | None:
 def timelapse(store: Store, out: Path) -> dict[str, Any] | None:
     """H.264 MP4 of the first camera stream: real time up to TIMELAPSE_MAX_S, sped up to fit
     beyond. Returns {duration_s, speed, bytes, type}, or None without a camera or PyAV."""
-    camera = _stream(store, Image, "image") if HAS_AV else None
+    camera = _stream(store, Image, "color") if HAS_AV else None
     if camera is None:
         return None
     ts = np.array([o.ts for o in camera])

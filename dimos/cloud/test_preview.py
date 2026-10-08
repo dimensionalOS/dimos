@@ -97,7 +97,8 @@ def test_timelapse(tmp_path: Path) -> None:
         (100.0 + i, Image.from_numpy(np.full((48, 64, 3), 8 * i, np.uint8)), None)
         for i in range(30)
     ]
-    meta = preview.timelapse(store(color_image=frames), tmp_path / "t.mp4")
+    depth = [(100.0, Image.from_numpy(np.zeros((48, 64), np.uint16)), None)]  # listed first
+    meta = preview.timelapse(store(depth_image=depth, color_image=frames), tmp_path / "t.mp4")
     assert (
         meta is not None and meta["speed"] == 1.0 and meta["duration_s"] == 29
     )  # under a minute: real time

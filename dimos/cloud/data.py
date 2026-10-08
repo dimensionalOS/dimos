@@ -211,16 +211,20 @@ class MultipartBackend:
         try:
             copy, clip = tmp / "preview.db", tmp / "timelapse.mp4"
             shutil.copyfile(path, copy)
+            note = ""
             with open_store(copy) as store:
                 doc = preview.build(store)
-                video = preview.timelapse(store, clip) if doc is not None else None
+                try:  # the preview stands without its clip
+                    video = preview.timelapse(store, clip) if doc is not None else None
+                except Exception as e:
+                    video, note = None, f" (no timelapse: {e})"
             if doc is None:
                 return "none (no lidar, camera or odometry)"
             if video:
                 doc["video"] = video
             sent = self.api.put_preview(upload_id, doc)
             if not (video and sent.get("video_url")):
-                return "sent"
+                return "sent" + note
             self.api.put_part(sent["video_url"], clip.read_bytes())
             self.api.confirm_video(upload_id)  # the console links the clip only after this
             return f"sent (+ {video['duration_s']:.0f} s timelapse, {video['bytes'] / 1e6:.1f} MB)"
