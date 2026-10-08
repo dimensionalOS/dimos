@@ -1,0 +1,9 @@
+session_name: ros_discovery
+start_directory: ${START_DIR}/modules/system
+windows:
+- window_name: ros2_discovery
+  layout: even-horizontal
+  panes:
+  - shell_command:
+      - sleep 1
+      - ./start_discover_server.sh

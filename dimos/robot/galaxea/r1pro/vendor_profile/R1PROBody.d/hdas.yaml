@@ -1,0 +1,16 @@
+session_name: hdas
+start_directory: ${START_DIR}/modules/hdas
+# ATCStandard's hdas minus signal_camera and livox: dimos opens the head cameras and Mid-360 itself.
+windows:
+- window_name: HDAS|zed|realsense
+  layout: even-horizontal
+  panes:
+  - shell_command:
+      - sleep 1
+      - ./start_hdas_r1pro.sh
+  - shell_command:
+      - sleep 1
+      - ./start_zed_camera.sh
+  - shell_command:
+      - sleep 1
+      - ./start_realsense_camera_r1pro.sh
