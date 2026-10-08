@@ -17,7 +17,7 @@
 The ports are the wire contract (``dimos/<port>/<msg.NAME>`` on zenoh), so remap in the
 blueprint rather than renaming. The verbs are the ``command`` vocabulary the robot side
 resolves (``topics::sport_id`` in go2web and in ``go2/dds/rust``). The mount and camera
-calibration are config: GO2DDS publishes them natively, GO2Zenoh from python.
+calibration are config, published natively by GO2DDS.
 """
 
 from __future__ import annotations

@@ -20,12 +20,7 @@ import rerun as rr
 
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
-from dimos.robot.unitree.go2.zenoh.blueprints import (
-    CAMERA_ENTITY,
-    go2_dds_motion_pointlio,
-    go2_viewer,
-    go2_zenoh_basic,
-)
+from dimos.robot.unitree.go2.dds.blueprints import CAMERA_ENTITY, go2_dds_nav_viewer
 
 
 def _rerun_kwargs(blueprint: Any) -> dict[str, Any]:
@@ -34,18 +29,17 @@ def _rerun_kwargs(blueprint: Any) -> dict[str, Any]:
 
 
 def test_both_encodings_land_on_the_pane() -> None:
-    for blueprint in (go2_zenoh_basic, go2_dds_motion_pointlio, go2_viewer):
-        kwargs = _rerun_kwargs(blueprint)
-        overrides = kwargs["visual_override"]
-        assert kwargs["blueprint"]().root_container is not None
-        info = CameraInfo(width=640, height=480, frame_id="camera_optical")
-        [(pinhole_path, _)] = overrides["world/camera_info"](info)
-        jpeg = CompressedImage(data=b"\xff\xd8", format="jpeg", frame_id="camera_optical")
-        [(image_path, archetype)] = overrides["world/image"](jpeg)
-        assert pinhole_path == image_path == CAMERA_ENTITY
-        assert isinstance(archetype, rr.EncodedImage)
+    kwargs = _rerun_kwargs(go2_dds_nav_viewer)
+    overrides = kwargs["visual_override"]
+    assert kwargs["blueprint"]().root_container is not None
+    info = CameraInfo(width=640, height=480, frame_id="camera_optical")
+    [(pinhole_path, _)] = overrides["world/camera_info"](info)
+    jpeg = CompressedImage(data=b"\xff\xd8", format="jpeg", frame_id="camera_optical")
+    [(image_path, archetype)] = overrides["world/image"](jpeg)
+    assert pinhole_path == image_path == CAMERA_ENTITY
+    assert isinstance(archetype, rr.EncodedImage)
 
 
 def test_viewer_subscribes_both_encodings() -> None:
-    topics = _rerun_kwargs(go2_viewer)["topics"]
+    topics = _rerun_kwargs(go2_dds_nav_viewer)["topics"]
     assert {"video", "image", "camera_info"} <= set(topics)
