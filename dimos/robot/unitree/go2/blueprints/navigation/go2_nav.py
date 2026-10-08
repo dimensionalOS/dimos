@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The Go2 motion stack: ray tracer, MLS planner, local planner, follower and movement manager.
+"""Go2 navigation: ray tracer, MLS planner, local planner, follower and movement manager.
 
 Composed onto whatever publishes lidar, odometry and the odom tf edge, on the robot or in
 the simulator. Nothing here is robot-side.
@@ -65,7 +65,7 @@ _mls_planner_motion = MLSPlannerNative.blueprint(
 
 # MLS stays global; its path becomes the carrot source (planner_path) for the local planner
 # over the raycaster's local map.
-_go2_motion_stack = autoconnect(
+_go2_nav = autoconnect(
     RayTracingVoxelMap.blueprint(**ray_tracing_config.model_dump(exclude_unset=True)),
     _mls_planner_motion,
     LocalPlannerNative.blueprint(body_dilate_m=MOTION_BODY_DILATE_M),
@@ -74,13 +74,13 @@ _go2_motion_stack = autoconnect(
 )
 
 
-def motion_static() -> dict[str, Callable[[ModuleType], list[Archetype]]]:
-    """Bridge static entities for the stack: the body box and clearance cylinder on base_link."""
+def go2_nav_static() -> dict[str, Callable[[ModuleType], list[Archetype]]]:
+    """Bridge static entities for navigation: the body box and clearance cylinder on base_link."""
     return nav_static(ROBOT_LENGTH, ROBOT_WIDTH, ROBOT_HEIGHT, wall_clearance_m)
 
 
-def motion_overrides() -> dict[str, VisualOverride]:
-    """Bridge overrides for the stack's maps, paths, goal and planner debug entities.
+def go2_nav_overrides() -> dict[str, VisualOverride]:
+    """Bridge overrides for the navigation maps, paths, goal and planner debug entities.
 
     The local plan's body poses land on world/path/body, colored by the stamped precision
     (green room, amber in the ramp, red at the floor).

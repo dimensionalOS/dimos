@@ -75,7 +75,7 @@ all_blueprints = {
     "go2-dds-nav-viewer": "dimos.robot.unitree.go2.dds.blueprints:go2_dds_nav_viewer",
     "go2-localize-live": "dimos.perception.localize.demo_blueprints.go2_localize_live:go2_localize_live",
     "go2-sim": "dimos.robot.unitree.go2.blueprints.basic.go2_sim:go2_sim",
-    "go2-sim-motion": "dimos.robot.unitree.go2.blueprints.navigation.go2_sim_motion:go2_sim_motion",
+    "go2-sim-nav": "dimos.robot.unitree.go2.blueprints.navigation.go2_sim_nav:go2_sim_nav",
     "habitat-nav": "dimos.simulation.habitat.blueprints:habitat_nav",
     "habitat-raycaster": "dimos.simulation.habitat.blueprints:habitat_raycaster",
     "habitat-teleop": "dimos.simulation.habitat.blueprints:habitat_teleop",

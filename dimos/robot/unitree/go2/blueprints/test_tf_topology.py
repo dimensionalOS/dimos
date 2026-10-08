@@ -31,7 +31,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_mid360_record import (
     unitree_go2_mid360_record,
 )
-from dimos.robot.unitree.go2.blueprints.navigation.go2_sim_motion import go2_sim_motion
+from dimos.robot.unitree.go2.blueprints.navigation.go2_sim_nav import go2_sim_nav
 from dimos.robot.unitree.go2.blueprints.navigation.unitree_go2_nav_3d import (
     unitree_go2_nav_3d,
     unitree_go2_nav_3d_relocalization,
@@ -51,7 +51,7 @@ BLUEPRINTS = [
     unitree_go2_nav_3d_relocalization,
     unitree_go2_nav_3d_relocalization_replay,
     unitree_go2_mid360_record,
-    go2_sim_motion,
+    go2_sim_nav,
 ]
 
 

@@ -30,10 +30,10 @@ from dimos.navigation.global_planner.mls_planner.viz import (
 )
 from dimos.navigation.global_planner.viz import HEIGHT_RANGE
 from dimos.protocol.service.zenohservice import ZenohConfig
-from dimos.robot.unitree.go2.blueprints.navigation.go2_motion_stack import (
-    _go2_motion_stack,
-    motion_overrides,
-    motion_static,
+from dimos.robot.unitree.go2.blueprints.navigation.go2_nav import (
+    _go2_nav,
+    go2_nav_overrides,
+    go2_nav_static,
 )
 from dimos.robot.unitree.go2.dds.module import GO2DDS
 from dimos.robot.unitree.go2.nav_3d_config import relocalization, voxel_size, wall_clearance_m
@@ -68,7 +68,7 @@ go2_dds_mid360 = GO2DDS.blueprint(
 go2_dds_nav = autoconnect(
     go2_dds_mid360,
     mid360_for_pointlio(),
-    _go2_motion_stack,
+    _go2_nav,
     relocalization(republish_loaded_map=0.0),
     PointLio.blueprint(),
 ).global_config(
@@ -138,13 +138,13 @@ def _rerun_config(visual_override: dict[str, Any] | None = None) -> dict[str, An
         "tf_axes": 0.5,
         # The robot box hangs off base_link on its own entity: a static transform
         # under world/tf would override the live one.
-        "static": motion_static(),
+        "static": go2_nav_static(),
         "visual_override": {
             "world/camera_info": _camera_info_to_pinhole,
             "world/image": _image_to_camera,
             "world/pointlio_map": _render_map,
             "world/lidar": _render_map,
-            **motion_overrides(),
+            **go2_nav_overrides(),
             **(visual_override or {}),
         },
     }
