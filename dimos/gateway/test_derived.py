@@ -38,7 +38,9 @@ ROOT = Path(__file__).parents[2]
 
 def test_a_registry_run_is_a_run_entry() -> None:
     entry_fields = {field.name for field in dataclasses.fields(RunEntry)}
-    assert set(models.RegistryRun.model_fields) <= entry_fields
+    # where a run on this computer came from and whether it can be stopped: the gateway's, not the registry's
+    found_here = {"registry", "owner", "command", "ours", "stoppable", "whyNot"}
+    assert set(models.RegistryRun.model_fields) - found_here <= entry_fields
 
 
 def test_stream_directions_are_dimos_own() -> None:

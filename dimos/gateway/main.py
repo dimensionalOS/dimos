@@ -98,7 +98,8 @@ def serve(
             state.zenoh_namespace = namespace
             print(f"dimos gateway events -> zenoh {namespace}/dimos/events/<type>", flush=True)
             # every topic on the bus from now on (GET /dimos/topics/rates), on the same pooled session
-            state.topics = zenoh_events.topic_watch(zenoh_events.resolve_connect(zenoh_connect))
+            state.zenoh_connect = zenoh_events.resolve_connect(zenoh_connect)
+            state.topics = zenoh_events.topic_watch(state.zenoh_connect)
             state.topics.start()
         except Exception as error:
             print(f"dimos gateway: no zenoh session, events are on SSE only ({error})", flush=True)

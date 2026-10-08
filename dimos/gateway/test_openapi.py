@@ -58,6 +58,12 @@ KNOWN_DIFFERENCES = {
     "post /dimos/runs: field only here: args",
     "post /dimos/runs/restart: field only here: args",
     "post /dimos/runs: body fields ['args', 'blueprint', 'overrides', 'replay'] != ['blueprint', 'overrides', 'replay']",
+    # every run on this computer, whoever started it, and runs heard only on the bus, new here in 1.18
+    *(
+        f"get /dimos/runs.runs[]: field only here: {field}"
+        for field in ("command", "ours", "owner", "registry", "stoppable", "whyNot")
+    ),
+    "get /dimos/runs: field only here: seenOnBus",
 }
 
 

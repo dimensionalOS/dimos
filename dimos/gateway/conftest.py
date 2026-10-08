@@ -73,6 +73,9 @@ def server_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr(runs, "registry_runs", lambda: [])
     # nor a real dimos run's coordinator on this machine's bus
     monkeypatch.setattr(runs, "coordinator_on_bus", lambda: False)
+    # nor another DIMOS_HOME's run, or one heard on the bus
+    monkeypatch.setattr(runs, "other_runs", lambda: [])
+    monkeypatch.setattr(runs, "seen_on_bus", lambda local, connect: [])
     return tmp_path
 
 

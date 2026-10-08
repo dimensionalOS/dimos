@@ -125,6 +125,8 @@ class ServerState:
     zenoh_namespace: str | None = None
     # every topic heard on the bus (serve() starts it), None = not listening
     topics: TopicWatch | None = None
+    # the zenoh endpoints the gateway dials (serve() sets them): where a run on another machine is heard
+    zenoh_connect: list[str] = field(default_factory=list)
     # re-lists the blueprints when dimos/robot or site-packages change (create_app makes it), None = no watching
     watch: BlueprintWatch | None = None
 
@@ -709,16 +711,25 @@ def create_app(state: ServerState, background: bool = True) -> FastAPI:
         **route_doc(
             "runs",
             "Running blueprints (run id, blueprint, pid, log_dir) and the launch this gateway started",
-            "Live runs from dimos's run registry (pid alive; also runs started from a terminal), newest first, and "
-            "this gateway's last launch with its phase. No side effects.",
+            "Every live run on this computer, newest first, whoever started it: dimos's run registry (pid alive), "
+            "plus runs in other registries (another DIMOS_HOME or XDG_STATE_HOME: a test Desktop, an agent, a "
+            "terminal) and `dimos run` processes not registered yet; each says where it came from (`registry`, "
+            "`owner`, `command`, `ours`) and whether POST /dimos/runs/stop can stop it (`stoppable`, `whyNot`). "
+            "A registry entry whose pid now belongs to a newer process is stale and left out. `seenOnBus`: a dimos "
+            "run answering on the bus that no listed run accounts for (on another machine through the zenoh "
+            "connection, or a process this gateway can't see), probed in the background every 10 s; it can't be "
+            "stopped from here. Also this gateway's last launch with its phase. No side effects.",
             agent=True,
-            answer="`{ runs: [{ run_id, pid, blueprint, started_at, log_dir }], launch: Launch | null }`",
+            answer="`{ runs: [{ run_id, pid, blueprint, started_at, log_dir, registry, owner, command, ours, "
+            "stoppable, whyNot }], launch: Launch | null, seenOnBus: [{ where, peer, note }] }`",
         ),
     )
     async def run_list() -> dict[str, Any]:
+        local = await asyncio.to_thread(runs.local_runs)
         return {
-            "runs": await asyncio.to_thread(runs.registry_runs),
+            "runs": local,
             "launch": await asyncio.to_thread(runs.current_launch),
+            "seenOnBus": runs.seen_on_bus(local, s.zenoh_connect),
         }
 
     async def launch_config_of(request: models.LaunchRequest) -> runs.LaunchConfig:
@@ -863,8 +874,9 @@ def create_app(state: ServerState, background: bool = True) -> FastAPI:
             "Stop the blueprint this gateway launched (or runId)",
             "Sends the run's process group SIGINT, then SIGTERM after 20 s, then SIGKILL after 10 more, and answers "
             "once no process of it is left (its whole process group: workers, MuJoCo, rerun) and every port it listened "
-            "on is free again (a leftover of the run's own still holding one gets SIGTERM, then SIGKILL). Stops `runId` (any live run in the registry) or else this gateway's launch; the body is "
-            "optional. 500 when there's nothing running to stop, it won't stop, or a port it held is still taken.",
+            "on is free again (a leftover of the run's own still holding one gets SIGTERM, then SIGKILL). Stops `runId` (any live run on this computer that GET /dimos/runs lists as "
+            "`stoppable`, whoever started it) or else this gateway's launch; the body is optional. 500 when there's "
+            "nothing running to stop, it isn't this user's to stop, it won't stop, or a port it held is still taken.",
             errors=(400, 500),
             agent=True,
             mcp_tool="stop_blueprint",
@@ -923,6 +935,13 @@ def create_app(state: ServerState, background: bool = True) -> FastAPI:
         ] = None,
     ) -> dict[str, Any]:
         filter = logs.Filter(query=q or None, min_level=level or None)
+        # a run from another registry or checkout logs where its own log_dir says
+        other = await asyncio.to_thread(runs.find_local_run, run_id) if run_id != "latest" else None
+        if other and other.get("log_dir") and not other.get("ours"):
+            file = Path(str(other["log_dir"])) / "main.jsonl"
+            return await asyncio.to_thread(
+                logs.read_file, file, run_id, after, limit or 1000, filter
+            )
         return await asyncio.to_thread(logs.read, s.dimos_dir, run_id, after, limit or 1000, filter)
 
     @app.get(

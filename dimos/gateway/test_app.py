@@ -322,7 +322,7 @@ def test_launch_log_and_stop(
         "STOP_WAITS",
         ((runs.signal.SIGINT, 2.0), (runs.signal.SIGTERM, 10.0), (runs.signal.SIGKILL, 5.0)),
     )
-    assert client.get("/dimos/runs").json() == {"runs": [], "launch": None}
+    assert client.get("/dimos/runs").json() == {"runs": [], "launch": None, "seenOnBus": []}
     nothing_yet = client.post("/dimos/runs/restart")
     assert (
         nothing_yet.status_code == 400 and "hasn't launched anything" in nothing_yet.json()["error"]
@@ -360,7 +360,9 @@ def test_launch_log_and_stop(
     }
     monkeypatch.setattr(runs, "registry_runs", lambda: [entry])
     listed = client.get("/dimos/runs").json()
-    assert listed["runs"] == [entry] and (listed["launch"]["phase"], listed["launch"]["runId"]) == (
+    assert [{key: run[key] for key in entry} for run in listed["runs"]] == [entry]
+    assert listed["runs"][0]["ours"] and listed["runs"][0]["stoppable"]
+    assert (listed["launch"]["phase"], listed["launch"]["runId"]) == (
         "running",
         "r1",
     )
