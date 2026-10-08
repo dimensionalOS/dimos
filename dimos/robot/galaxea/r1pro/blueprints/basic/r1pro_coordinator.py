@@ -61,7 +61,6 @@ from dimos.robot.galaxea.r1pro.lio import (
     R1ProLioMountTfConfig,
     R1ProLioOdomPose,
 )
-from dimos.robot.galaxea.r1pro.vendor_stack import R1ProVendorStack
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 
@@ -183,14 +182,13 @@ def _head_cameras() -> list[Blueprint]:
 def r1pro_control(
     *,
     tasks: Sequence[TaskConfig] | None = None,
-    publish_odom_tf: bool | None = None,
-    enable_wrist_color: bool | None = None,
+    **connection: Any,
 ) -> Blueprint:
     """R1ProConnection, ControlCoordinator and the head cameras.
 
     ``tasks`` overrides the default task set (whole-body trajectory + chassis
     velocity); transports and remappings stay identical either way.
-    The other keyword args override the matching ``R1ProConnectionConfig`` fields.
+    Other keyword args are ``R1ProConnectionConfig`` fields.
     """
     resolved_tasks = (
         list(tasks)
@@ -208,12 +206,7 @@ def r1pro_control(
 
     return (
         autoconnect(
-            R1ProConnection.blueprint(
-                **({} if publish_odom_tf is None else {"publish_odom_tf": publish_odom_tf}),
-                **(
-                    {} if enable_wrist_color is None else {"enable_wrist_color": enable_wrist_color}
-                ),
-            ),
+            R1ProConnection.blueprint(**connection),
             *_head_cameras(),
             ControlCoordinator.blueprint(
                 tick_rate=100,
@@ -325,9 +318,8 @@ def r1pro_lidar_odometry() -> Blueprint:
 
 
 r1pro_coordinator = autoconnect(
-    R1ProVendorStack.blueprint(stop_vendor_lidar=True),
     r1pro_visualization(),
     # Off, so base_link has exactly one parent: Point-LIO's, through the mount.
-    r1pro_control(publish_odom_tf=False),
+    r1pro_control(publish_odom_tf=False, stop_vendor_lidar=True),
     r1pro_lidar_odometry(),
 ).global_config(n_workers=4)
