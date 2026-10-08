@@ -285,7 +285,7 @@ def call_skill(
             result = the_bus.call(f"{target['module']}/{skill}", [], args, CALL_TIMEOUT_S)
             content, ok = _content(result), True
         except TimeoutError:
-            raise SkillError(504, f"{skill} didn't answer within {int(CALL_TIMEOUT_S)} s")
+            raise SkillError(500, f"{skill} didn't answer within {int(CALL_TIMEOUT_S)} s")
         except Exception as error:
             # the skill raised: the module RPC hands its exception back
             content = [

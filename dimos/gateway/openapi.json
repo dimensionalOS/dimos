@@ -7597,7 +7597,7 @@
     },
     "/dimos/skills/call": {
       "post": {
-        "description": "Calls `<module>/<skill>` over dimos's module RPC, as the coordinator calls a module's start. A skill that holds a capability (`uses`) goes through the run's McpServer instead when one answers (`via: mcp`), so its agent's capability locks cover it: it waits or is refused while another skill holds one. A background skill answers at once. This acts on the robot. Waits up to 300 s. `ok` false when the skill itself failed. 400 for a missing or unknown argument (checked against `params`) or a name two modules share without `module`, 404 when the running blueprint has no such skill (or `runId` isn't it), 409 when nothing runs, 500 when the MCP call failed, 504 when it didn't answer in time.",
+        "description": "Calls `<module>/<skill>` over dimos's module RPC, as the coordinator calls a module's start. A skill that holds a capability (`uses`) goes through the run's McpServer instead when one answers (`via: mcp`), so its agent's capability locks cover it: it waits or is refused while another skill holds one. A background skill answers at once. This acts on the robot. Waits up to 300 s. `ok` false when the skill itself failed. 400 for a missing or unknown argument (checked against `params`) or a name two modules share without `module`, 404 when the running blueprint has no such skill (or `runId` isn't it), 409 when nothing runs, 500 when the MCP call failed or it didn't answer in time.",
         "operationId": "post_dimos_skills_call",
         "requestBody": {
           "content": {
@@ -7659,16 +7659,6 @@
               }
             },
             "description": "The gateway couldn't do it: a child process, launch, stop or cloud call failed (the message says why)"
-          },
-          "504": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "What the gateway waited on (a skill) didn't answer in time"
           }
         },
         "summary": "Call a skill of the running blueprint and wait for its answer",

@@ -139,7 +139,6 @@ ERRORS = {
     404: "No such thing (the message names it)",
     409: "Conflict with the current state (the message says what it is)",
     500: "The gateway couldn't do it: a child process, launch, stop or cloud call failed (the message says why)",
-    504: "What the gateway waited on (a skill) didn't answer in time",
 }
 
 

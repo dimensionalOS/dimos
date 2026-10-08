@@ -113,8 +113,8 @@ def add(app: FastAPI) -> None:
             "background skill answers at once. This acts on the robot. Waits up to 300 s. `ok` false when the skill "
             "itself failed. 400 for a missing or unknown argument (checked against `params`) or a name two modules "
             "share without `module`, 404 when the running blueprint has no such skill (or `runId` isn't it), 409 when "
-            "nothing runs, 500 when the MCP call failed, 504 when it didn't answer in time.",
-            errors=(400, 404, 409, 500, 504),
+            "nothing runs, 500 when the MCP call failed or it didn't answer in time.",
+            errors=(400, 404, 409, 500),
             agent=True,
             answer="`{ skill, module, runId, blueprint, via, ok, text, content }`",
         ),
