@@ -77,6 +77,9 @@ class DataApi:
     def put_preview(self, upload_id: str, doc: dict[str, Any]) -> dict[str, Any]:
         return self.t.request("PUT", f"{self.PREFIX}/uploads/{upload_id}/preview", doc)
 
+    def confirm_video(self, upload_id: str) -> dict[str, Any]:
+        return self.t.request("POST", f"{self.PREFIX}/uploads/{upload_id}/preview/video")
+
     def put_part(self, url: str, chunk: bytes) -> None:
         self.t.put(url, chunk)
 
@@ -219,6 +222,7 @@ class MultipartBackend:
             if not (video and sent.get("video_url")):
                 return "sent"
             self.api.put_part(sent["video_url"], clip.read_bytes())
+            self.api.confirm_video(upload_id)  # the console links the clip only after this
             return f"sent (+ {video['duration_s']:.0f} s timelapse, {video['bytes'] / 1e6:.1f} MB)"
         except Exception as e:
             return f"failed: {e}"
