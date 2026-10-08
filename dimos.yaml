@@ -24,7 +24,7 @@ install: |
 # which Desktop can read per tag without running anything. Regenerate it with `python -m dimos.gateway --write-openapi`.
 # Desktop links into it too: a failed run's notification opens GET /dimos/blueprint_view?name=<bp>&view=logs&run=<runId>.
 api:
-  version: "1.17.0"
+  version: "1.18.0"
   openapi: dimos/gateway/openapi.json
 # Every robot dimos supports and what each blueprint is for (title, description, tags, modes and their essential args,
 # the app to install): read per tag like the OpenAPI document. CI keeps it in step with the code
