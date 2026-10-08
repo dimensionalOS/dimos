@@ -242,34 +242,47 @@ class PerceptionLocalize(Module):
 
     @skill
     def localize(
-        self, objects: str, start: float = -10.0, duration: float = 10.0, params: str = ""
+        self,
+        objects: str | list[str],
+        start: float = -10.0,
+        duration: float = 10.0,
+        policy: str = "",
     ) -> str:
         """Locate objects in a window of the robot's memory.
 
-        ``objects`` is one label, or several separated by commas.
+        ``objects`` is one label, several separated by commas, or a list of labels.
+        Labels that describe how an object looks (colour and shape, e.g. "brown square
+        object") match better than object names.
 
         ``start`` and ``duration`` are seconds and name the window. A positive
         ``start`` counts forward from the beginning of the feed; a negative one
         counts back from the newest frame, so the default reads the last ten
         seconds. What earlier calls proved is remembered and still answered.
 
-        ``params`` is a JSON object of LocalizeParams field overrides for this
-        call only, e.g. '{"accept_score": 0.45, "verify_radius_m": 2.0}'.
-        The next call without ``params`` is back on the module's params.
-
-        Usage guide: dimos/perception/localize/SKILL.md.
+        ``policy`` is optional: a JSON object of LocalizePolicy field overrides,
+        e.g. '{"accept_score": 0.4, "verify_radius_m": 2.0}'. Leave it empty for the defaults.
         """
         if not self._ready.is_set():
             return f"localize cannot answer yet: {self._stage}. Poll state() until it reads ready."
 
-        queries = [q.strip() for q in objects.split(",") if q.strip()]
+        labels = objects.split(",") if isinstance(objects, str) else objects
+        queries = [q.strip() for q in labels if q.strip()]
+        try:
+            overrides = json.loads(policy) if policy else {}
+            if not isinstance(overrides, dict):
+                raise ValueError
+            tuning = self.detector.policy({**self.config.policy, **overrides})
+        except (ValueError, TypeError):
+            return (
+                f"policy {policy!r} is not a JSON object of LocalizePolicy fields; "
+                "pass e.g. '{\"min_views\": 1}', or leave it empty for the defaults."
+            )
         first, head = self.index.get_time_range()
         lo = max(first, head + start if start < 0 else first + start)
         index = self.index.time_range(lo, lo + duration)
         rig = self.rig
         if rig.lidar is not None:
             rig = replace(rig, lidar=rig.lidar.time_range(lo, lo + duration))
-        overrides = json.loads(params) if params.strip() else None
         results = self.detector.localize(
             queries,
             index=index,
