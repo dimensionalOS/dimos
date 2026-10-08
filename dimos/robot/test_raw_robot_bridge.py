@@ -22,10 +22,12 @@ import numpy as np
 from PIL import Image as PILImage
 import pytest
 
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -330,3 +332,11 @@ def test_overview_camera_has_its_own_topics(bridge: RawRobotBridge) -> None:
     (pose,) = _published(bridge, "overview/camera_pose/json")
     assert pose["xyz"] == [1.7, -0.7, 0.8] and pose["t"] == 2.0
     assert not _published(bridge, "camera_pose/json")
+
+
+def test_nav_odometry_is_published_as_odom(bridge: RawRobotBridge) -> None:
+    bridge._on_odometry(
+        Odometry(ts=4.0, pose=Pose(position=(1.0, 2.0, 0.0), orientation=(0, 0, 0, 1)))
+    )
+    (odom,) = _published(bridge, "odom/json")
+    assert (odom["t"], odom["x"], odom["y"], odom["qw"]) == (4.0, 1.0, 2.0, 1.0)

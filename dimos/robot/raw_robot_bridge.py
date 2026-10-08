@@ -58,6 +58,7 @@ from dimos.evals.constants import (
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -221,6 +222,7 @@ class RawRobotBridge(Module):
     overview_camera_info: In[CameraInfo]
     lidar: In[PointCloud2]
     odom: In[PoseStamped]
+    odometry: In[Odometry]  # robots that publish nav_msgs odometry instead of a pose
     coordinator_joint_state: In[JointState]
     tf: In[TFMessage]
     cmd_vel: Out[Twist]
@@ -269,6 +271,7 @@ class RawRobotBridge(Module):
         )
         self.lidar.subscribe(lambda cloud: self._put("lidar/xyz_f32", xyz_f32(cloud), cloud.ts))
         self.odom.subscribe(lambda pose: self._put("odom/json", odom_json(pose)))
+        self.odometry.subscribe(self._on_odometry)
         self.camera_info.subscribe(
             lambda info: self._put(
                 "camera_info/json",
@@ -337,6 +340,10 @@ class RawRobotBridge(Module):
             elif moving["arm"]:
                 self.ee_twist_command.publish(TwistStamped())
                 moving["arm"] = False
+
+    def _on_odometry(self, odom: Odometry) -> None:
+        pose = PoseStamped(ts=odom.ts, position=odom.position, orientation=odom.orientation)
+        self._put("odom/json", odom_json(pose))
 
     def _on_depth(self, image: Image) -> None:
         try:
