@@ -430,10 +430,11 @@ For Habitat, select a downloaded dataset and its scene handle on the environment
 
 ```python session=evals ansi=false no-result
 from dimos.evals.environments.habitat import HabitatEnvironment
+from dimos.simulation.habitat.constants import HM3D_EXAMPLE_DATASET_CONFIG
 
 habitat_environment = HabitatEnvironment(
     blueprint=["habitat-nav", "mcp-server", "observe-skill"],
-    scene_dataset_config="target/habitat/data/versioned_data/hm3d-0.2/hm3d/example/hm3d_annotated_example_basis.scene_dataset_config.json",
+    scene_dataset_config=str(HM3D_EXAMPLE_DATASET_CONFIG),
     scene_id="00861-GLAQ4DNUx5U",
     seed=0,
 )
