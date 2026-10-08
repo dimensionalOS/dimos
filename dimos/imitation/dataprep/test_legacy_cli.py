@@ -38,7 +38,7 @@ def test_legacy_inspect_preserves_automatic_and_explicit_formats(
     autodetect = mocker.patch("dimos.imitation.dataprep.build.inspect_dataset", return_value=result)
     explicit = mocker.Mock(return_value=result)
     target = (
-        "dimos.imitation.dataprep.lerobot.inspect_lerobot_dataset"
+        "dimos.imitation.dataprep.formats.lerobot.adapter.inspect_lerobot_dataset"
         if format_name == "lerobot"
         else "dimos.imitation.dataprep.formats.hdf5.reader.inspect"
     )
