@@ -20,9 +20,3 @@ install: |
   fi
   bash "$script" --mode dev --branch "$REF" --project-dir "$DIMOS_DIR" --skip-tests ${NON_INTERACTIVE:+--non-interactive}
   "$DIMOS_DIR/.venv/bin/python" -c "import dimos" && echo "dimos is installed in $DIMOS_DIR"
-# The dimos server (blueprints, runs, logs, global config at /dimos/). For now Desktop ships it; it moves here later.
-# env: DESKTOP_BIN, DIMOS_DIR, DIMOS_SERVER_SOCKET
-start: |
-  "$DESKTOP_BIN" dimos-server --detach --dimos-dir "$DIMOS_DIR" --socket "$DIMOS_SERVER_SOCKET"
-socket: |
-  echo "$DIMOS_SERVER_SOCKET"
