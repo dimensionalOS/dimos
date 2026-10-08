@@ -116,8 +116,9 @@ returns (`via: rpc`). A skill that holds a capability goes through the run's Mcp
 skill only when asked to.
 
 ```sh
-curl -s localhost:5555/dimos/skills | jq '.skills[] | {name, module}'
-curl -s -X POST localhost:5555/dimos/skills/call -H 'content-type: application/json' \
+sock=$DIMOS_SERVER_SOCKET # the gateway's --socket
+curl -s --unix-socket "$sock" http://gateway/dimos/skills | jq '.skills[] | {name, module}'
+curl -s --unix-socket "$sock" -X POST http://gateway/dimos/skills/call -H 'content-type: application/json' \
     -d '{"skill": "execute_sport_command", "args": {"command_name": "FrontJump"}}'
 ```
 
@@ -134,7 +135,7 @@ dimos` to find the checkout; usually empty, else `PYTHONPATH`), `dimosDir`, `ver
 Run one-liners as `<python> -c '...'` and scripts as `<python> script.py`, with `env` set:
 
 ```sh
-py=$(curl -s localhost:5557/dimos/python | jq -r .python)
+py=$(curl -s --unix-socket "$DIMOS_SERVER_SOCKET" http://gateway/dimos/python | jq -r .python)
 "$py" -c 'import dimos; print(dimos.__file__)'
 ```
 
