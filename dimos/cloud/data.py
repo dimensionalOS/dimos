@@ -206,14 +206,20 @@ class MultipartBackend:
         must stay byte-identical to what was uploaded. Best effort: the upload stands
         without it."""
         try:
-            copy = tmp / "preview.db"
+            copy, clip = tmp / "preview.db", tmp / "timelapse.mp4"
             shutil.copyfile(path, copy)
             with open_store(copy) as store:
                 doc = preview.build(store)
+                video = preview.timelapse(store, clip) if doc is not None else None
             if doc is None:
                 return "none (no lidar, camera or pose stream)"
-            self.api.put_preview(upload_id, doc)
-            return "sent"
+            if video:
+                doc["video"] = video
+            sent = self.api.put_preview(upload_id, doc)
+            if not (video and sent.get("video_url")):
+                return "sent"
+            self.api.put_part(sent["video_url"], clip.read_bytes())
+            return f"sent (+ {video['duration_s']:.0f} s timelapse, {video['bytes'] / 1e6:.1f} MB)"
         except Exception as e:
             return f"failed: {e}"
 

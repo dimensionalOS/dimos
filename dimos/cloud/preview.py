@@ -23,9 +23,18 @@ base64 little-endian int16 triplets in units of ``scale`` metres around ``origin
 from __future__ import annotations
 
 import base64
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import cv2
 import numpy as np
+
+try:  # PyAV ships with the web/WebRTC extras; without it the preview has no timelapse
+    import av
+
+    HAS_AV = True
+except ImportError:  # pragma: no cover
+    HAS_AV = False
 
 if TYPE_CHECKING:
     from dimos.memory.store.base import Store
@@ -33,6 +42,7 @@ if TYPE_CHECKING:
 FORMAT = "dimos-spatial-preview-v2"
 SCALE = 0.02  # metres per int16 step: +-655 m around the origin
 WORLD_FRAMES = {"world", "map", "odom"}
+TIMELAPSE_S = 60.0  # longest timelapse; shorter recordings play in real time
 
 
 def _kind(stream: Any) -> str | None:
@@ -236,4 +246,61 @@ def build(
         "scans": [{"t": round(t - t0, 3), "points": _pack(p, origin)} for t, p in scans],
         "camera": shots,
         "thumb": int(np.argmax(light)) if light else None,  # brightest frame: the card image
+    }
+
+
+def timelapse(
+    store: Store, out: Path, *, max_seconds: float = TIMELAPSE_S, fps: int = 10, height: int = 480
+) -> dict[str, Any] | None:
+    """H.264 timelapse of the first camera stream: real time up to ``max_seconds``,
+    sped up to fit beyond that (a few MB for any recording length). Returns its
+    ``{duration_s, speed, fps, width, height, bytes}``, or None without a camera or PyAV."""
+    if not HAS_AV:
+        return None
+    cam = next(
+        (store.streams[n] for n in store.list_streams() if _kind(store.streams[n]) == "camera"),
+        None,
+    )
+    if cam is None:
+        return None
+    ts = np.array([o.ts for o in cam])  # lazy payloads: timestamps only
+    if len(ts) == 0:
+        return None
+    span = float(ts[-1] - ts[0])
+    speed = max(1.0, span / max_seconds)
+    n = max(1, int(min(span, max_seconds) * fps))
+    wanted = np.clip(
+        np.searchsorted(ts, ts[0] + np.arange(n) * speed / fps, side="right") - 1, 0, len(ts) - 1
+    )
+    repeats = np.bincount(wanted, minlength=len(ts))  # frames each source image covers
+    container = av.open(str(out), "w", options={"movflags": "faststart"})
+    stream: Any = None
+    try:
+        for i, obs in enumerate(cam):
+            if not repeats[i]:
+                continue
+            frame = np.ascontiguousarray(np.asarray(obs.data.to_bgr().as_numpy())[:, :, :3])
+            if stream is None:
+                width = max(2, round(frame.shape[1] * height / frame.shape[0] / 2) * 2)
+                stream = container.add_stream("libx264", rate=fps)
+                stream.width, stream.height, stream.pix_fmt = width, height, "yuv420p"
+                stream.options = {"crf": "28", "preset": "veryfast"}
+            frame = np.asarray(
+                cv2.resize(frame, (stream.width, stream.height), interpolation=cv2.INTER_AREA),
+                dtype=np.uint8,
+            )
+            for _ in range(repeats[i]):
+                for packet in stream.encode(av.VideoFrame.from_ndarray(frame, format="bgr24")):
+                    container.mux(packet)
+        for packet in stream.encode():
+            container.mux(packet)
+    finally:
+        container.close()
+    return {
+        "duration_s": round(n / fps, 3),
+        "speed": round(speed, 3),
+        "fps": fps,
+        "width": stream.width,
+        "height": stream.height,
+        "bytes": out.stat().st_size,
     }

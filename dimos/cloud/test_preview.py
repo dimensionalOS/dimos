@@ -18,6 +18,7 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
+import pytest
 
 from dimos.cloud import preview
 
@@ -53,6 +54,9 @@ class Image:
 
     def resize_to_fit(self, w: int, h: int) -> tuple["Image", float]:
         return self, 1.0
+
+    def to_bgr(self) -> "Image":
+        return self
 
 
 @dataclass
@@ -168,13 +172,29 @@ def test_scans_without_a_pose_are_skipped_not_mixed() -> None:
 
 def test_tall_images_are_resized_too() -> None:
     sized: list[tuple[int, int]] = []
-    tall = Image(level=50)
-    tall.width = 240  # narrower than the thumbnail, but (say) 640 tall
 
-    def fit(w: int, h: int) -> tuple[Image, float]:
+    def fit(self: Image, w: int, h: int) -> tuple[Image, float]:
         sized.append((w, h))
-        return tall, 0.5
+        return self, 0.5
 
-    tall.resize_to_fit = fit
-    assert build(Store(Stream("color_image", [Obs(0.0, tall)]))) is not None
+    tall_type = type("Image", (Image,), {"width": 240, "resize_to_fit": fit})  # narrow but tall
+    assert build(Store(Stream("color_image", [Obs(0.0, tall_type(level=50))]))) is not None
     assert sized == [(320, 320)]
+
+
+def test_timelapse_fits_long_recordings_into_max_seconds(tmp_path: Any) -> None:
+    if not preview.HAS_AV:
+        pytest.skip("PyAV not installed")
+    cam = Stream("color_image", [Obs(100.0 + i, Image(level=i * 8)) for i in range(30)])  # 29 s
+    meta = preview.timelapse(
+        cast("RealStore", Store(cam)), tmp_path / "t.mp4", max_seconds=10, height=64
+    )
+    assert meta is not None
+    assert meta["speed"] == 2.9 and meta["duration_s"] == 10 and meta["height"] == 64
+    data = (tmp_path / "t.mp4").read_bytes()
+    assert data[4:8] == b"ftyp" and meta["bytes"] == len(data)
+    short = preview.timelapse(
+        cast("RealStore", Store(cam)), tmp_path / "s.mp4", max_seconds=60, height=64
+    )
+    assert short is not None and short["speed"] == 1.0  # shorter than the cap: real time
+    assert preview.timelapse(cast("RealStore", Store(Stream("empty"))), tmp_path / "n.mp4") is None
