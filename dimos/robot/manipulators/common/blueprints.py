@@ -153,6 +153,7 @@ def coordinator(
     cls: type[ControlCoordinator] = ControlCoordinator,
     instance_name: str | None = None,
     publish_robot_joint_states: bool = False,
+    publish_frame_poses: bool = False,
 ) -> Blueprint:
     """*cls* is the subclass declaring the `{hardware_id}_joints` outputs; pass
     instance_name="ControlCoordinator" with it so RPC clients still find it."""
@@ -160,6 +161,7 @@ def coordinator(
         tick_rate=tick_rate,
         publish_joint_state=publish_joint_state,
         publish_robot_joint_states=publish_robot_joint_states,
+        publish_frame_poses=publish_frame_poses,
         joint_state_frame_id=joint_state_frame_id,
         instance_name=instance_name,
         hardware=list(hardware),
