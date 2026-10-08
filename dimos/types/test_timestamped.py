@@ -30,6 +30,7 @@ from dimos.types.timestamped import (
 from dimos.utils.data import get_data
 from dimos.utils.reactive import backpressure
 from dimos.utils.testing.legacy_pickle import LegacyPickleStore
+from dimos.utils.testing.replay import timed_playback
 from dimos.utils.timeseries.inmemory import InMemoryStore
 
 
@@ -295,14 +296,15 @@ def test_timestamp_alignment(test_scheduler) -> None:
         print(image.ts)
         return image
 
-    # sensor reply of raw video frames
-    video_raw = (
-        LegacyPickleStore(
-            "unitree_office_walk/video", autocast=lambda x: Image.from_numpy(x).to_rgb()
-        )
-        .stream(speed)
-        .pipe(ops.take(30))
-    )
+    # sensor reply of raw video frames, stamped with their recorded time (not decode time) so the
+    # two subscriptions below agree on every frame's ts however unevenly a busy runner decodes them
+    store = LegacyPickleStore("unitree_office_walk/video")
+    video_raw = timed_playback(
+        lambda: (
+            (ts, Image.from_numpy(frame, ts=ts).to_rgb()) for ts, frame in store.iterate_items()
+        ),
+        speed=speed,
+    ).pipe(ops.take(30))
 
     processed_frames = []
 
