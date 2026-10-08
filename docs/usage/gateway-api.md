@@ -115,7 +115,7 @@ returns (`via: rpc`). A skill that holds a capability goes through the run's Mcp
 (`via: mcp`), so the capability locks its agent goes by cover the call too. It acts on the robot: the gateway calls a
 skill only when asked to.
 
-```sh
+```sh skip
 sock=$DIMOS_SERVER_SOCKET # the gateway's --socket
 curl -s --unix-socket "$sock" http://gateway/dimos/skills | jq '.skills[] | {name, module}'
 curl -s --unix-socket "$sock" -X POST http://gateway/dimos/skills/call -H 'content-type: application/json' \
@@ -134,7 +134,7 @@ dimos` to find the checkout; usually empty, else `PYTHONPATH`), `dimosDir`, `ver
 `example`. The gateway checks it once, by running `import dimos` in it from another folder, and caches the answer.
 Run one-liners as `<python> -c '...'` and scripts as `<python> script.py`, with `env` set:
 
-```sh
+```sh skip
 py=$(curl -s --unix-socket "$DIMOS_SERVER_SOCKET" http://gateway/dimos/python | jq -r .python)
 "$py" -c 'import dimos; print(dimos.__file__)'
 ```
@@ -154,7 +154,7 @@ step; `GET /dimos/msgs.ts` is the same module as TypeScript (an interface per me
 are generated from the message classes under dimos/msgs and their dimos_lcm schemas
 ([`dimos/gateway/msgs/codegen.py`](/dimos/gateway/msgs/codegen.py)), and a test fails while they're stale:
 
-```sh
+```sh skip
 python -m dimos.gateway.msgs           # check, and list the messages without a schema
 python -m dimos.gateway.msgs --write   # regenerate msgs.ts, and msgs.js from it (needs deno)
 ```
