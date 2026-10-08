@@ -38,8 +38,13 @@ _web = cockpit(
             # the dog's own accumulated local cloud, voxelized around its pose
             Map3D(cloud="lidar", pose="odom", res=0.1, max_hz=2.0, title="lidar"),
         ),
-        # a strip: two sticks and the speed
-        Teleop(max_linear=0.5, max_angular=0.8, joystick="joystick", title="drive"),
+        Row(
+            # a strip: two sticks and the speed
+            Teleop(max_linear=0.5, max_angular=0.8, joystick="joystick", title="drive"),
+            # the same panel as the Battery page; this short, it shows charge and time left
+            Battery(title="battery"),
+            shares=[4, 1],
+        ),
         shares=[5, 1],
     ),
     # charge over the run and the time left, from the firmware's lowstate
