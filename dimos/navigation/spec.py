@@ -65,6 +65,16 @@ def goal_status(goal: Timestamped, status: int, text: str) -> GoalStatus:
     )
 
 
+def goal_ended(goal: Timestamped, msg: GoalStatus) -> GoalStatus | None:
+    """The report that ended a goal, or None when this one does not show it over."""
+    if msg.goal_id.id == goal_id(goal):
+        return None if msg.status in (GoalStatus.PENDING, GoalStatus.ACTIVE) else msg
+    # A newer goal means the report that ended this one was missed.
+    if [msg.goal_id.stamp.sec, msg.goal_id.stamp.nsec] > goal.ros_timestamp():
+        return goal_status(goal, GoalStatus.PREEMPTED, "replaced")
+    return None
+
+
 class GlobalPlanner(Protocol):
     tf: In[TFMessage]
     goal: In[PointStamped]
