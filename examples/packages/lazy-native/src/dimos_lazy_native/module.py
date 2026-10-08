@@ -19,6 +19,10 @@ from pathlib import Path
 from dimos.core.native_module import LogFormat, NativeModule, NativeModuleConfig
 
 
+if "source_package" not in NativeModuleConfig.model_fields:
+    raise ImportError("This source-only example requires a dimOS host with source_package support")
+
+
 class PackageProbeConfig(NativeModuleConfig):
     source_package: str | None = "dimos_lazy_native"
     source_dir: str | None = "native"
