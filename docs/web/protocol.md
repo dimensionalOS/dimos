@@ -1,6 +1,6 @@
 # Wire protocol
 
-One protocol connects the bridge, the relay and the browser. It is defined once in [`web/shared/protocol.ts`](/web/shared/protocol.ts), mirrored in [`dimos/web/relay_bridge/protocol.py`](/dimos/web/relay_bridge/protocol.py), and pinned by golden fixtures in `web/shared/fixtures/` that both test suites check. The version is 6, and there is no compatibility mode: a client with another version gets `version_mismatch` and is closed. Nothing on this page is needed to use the cockpit or the SDK. It is for people changing the relay, the bridge or the SDK, and it records why the transport looks the way it does.
+One protocol connects the bridge, the relay and the browser. It is defined once in [`web/shared/protocol.ts`](/web/shared/protocol.ts), mirrored in [`dimos/web/relay_bridge/protocol.py`](/dimos/web/relay_bridge/protocol.py), and pinned by golden fixtures in `web/shared/fixtures/` that both test suites check. The version is 7, and there is no compatibility mode: a client with another version gets `version_mismatch` and is closed. Nothing on this page is needed to use the cockpit or the SDK. It is for people changing the relay, the bridge or the SDK, and it records why the transport looks the way it does.
 
 ## Framing
 
@@ -49,7 +49,7 @@ odom 7 b'payload'
 
 A robot connects to `/robot`, a viewer to `/viewer`. Both start with `hello`, which carries the protocol version and the role (and a token when the relay has an auth file). The relay answers `welcome` or an `error` and closes.
 
-The robot's `hello` also carries its `{id, name, model}` and its manifest. It is sent as an `@control` data frame on a one-shot bidirectional stream, and the bridge resends it until the relay's `welcome` datagram arrives. The relay then opens the carrier: one persistent reliable unidirectional stream to each registered robot. Everything else the relay says to the robot is a datagram (`welcome`, `error`, `pong`, `teleop_start {gen}`, `teleop_stop {gen}`, `twist`, `stop`). The carrier carries `subs {chs, n}` snapshots (the set of channels some viewer wants, numbered so a stale one is ignored) and the viewers' published values as tx data frames. Channel data from the robot is sent on one-shot bidirectional streams, one per frame, and the bridge's `pub_ack` and `pub_nack` are `@control` frames sent the same way. The robot pings with datagrams.
+The robot's `hello` also carries its `{id, name, model}` and its manifest. It is sent as an `@control` data frame on a one-shot bidirectional stream, and the bridge resends it until the relay's `welcome` datagram arrives. The relay then opens the carrier: one persistent reliable unidirectional stream to each registered robot. Everything else the relay says to the robot is a datagram (`welcome`, `error`, `pong`, `teleop_start {gen}`, `teleop_stop {gen}`, `twist`, `stop`). The carrier carries `subs {chs, n}` snapshots (the set of channels some viewer wants, numbered so a stale one is ignored) and the viewers' published values as tx data frames. Channel data from the robot is sent on one-shot bidirectional streams, one per frame, and the bridge's `pub_ack` and `pub_nack` are `@control` frames sent the same way, as are its `rtc_offer` and `rtc_stalled` (v7). The relay's `rtc_ice` and `rtc_answer` ride the carrier. The robot pings with datagrams.
 
 A viewer opens one bidirectional control stream and sends length-prefixed JSON on it:
 
@@ -63,8 +63,9 @@ A viewer opens one bidirectional control stream and sends length-prefixed JSON o
 | `teleop_stop` | nothing (idempotent) |
 | `twist {vx, vy, wz, seq, ts}`, `stop {seq, ts}` (datagrams) | forwarded to the robot with the lease generation when the sender holds the lease, dropped otherwise |
 | `pub {id, ch, data, clientTs?}` | `pub_ack {id, ch, relayTs, bridgeTs}`, or `error {code, message, requestId}` |
+| `rtc_offer {sdp}` (v7, after the relay's `rtc_ice {iceServers}`) | `rtc_answer {sdp}`. Every later pull arrives as a relay `rtc_offer {sdp, tracks, robotId}` that the viewer answers with `rtc_answer {sdp}`. See [WebRTC video](#webrtc-video) |
 
-Error codes: `hello_required`, `version_mismatch`, `role_mismatch`, `missing_robot_id`, `auth_failed`, `invalid_manifest`, `hello_mismatch` (a repeated hello changed identity or manifest), `robot_id_conflict`, `invalid_control`, `control_too_large`, `carrier_failed`, `unknown_robot`, `unknown_channel`, `no_watch`, `teleop_held`, `duplicate_request`, `publish_too_large`, `not_publishable`, `pending_limit`, `rate_limited`, `publish_timeout`, `robot_disconnected`. `auth_failed` is terminal on both sides. An invalid message is dropped, and corrupt framing kills only its stream.
+Error codes: `hello_required`, `version_mismatch`, `role_mismatch`, `missing_robot_id`, `auth_failed`, `invalid_manifest`, `rtc_unavailable` (a track channel on a relay without `--rtc-file`), `hello_mismatch` (a repeated hello changed identity or manifest), `robot_id_conflict`, `invalid_control`, `control_too_large`, `carrier_failed`, `unknown_robot`, `unknown_channel`, `no_watch`, `teleop_held`, `duplicate_request`, `publish_too_large`, `not_publishable`, `pending_limit`, `rate_limited`, `publish_timeout`, `robot_disconnected`, `rtc_failed`, `rtc_session_gone`. `auth_failed` is terminal on both sides. An invalid message is dropped, and corrupt framing kills only its stream.
 
 ## Delivery modes
 
@@ -80,7 +81,7 @@ Manifest version 1 is `{version, channels, panels, layout, pages}`:
 - A panel is `{id, kind, title, channels, params}`. Panel channels are indexes into the channel list by id.
 - A layout node is a panel id, `{row: [...], shares?}` or `{col: [...], shares?}`. `pages` is a list of panel ids.
 
-Panel kinds are validated by their channels: `video` (one `jpeg.v1` latest rx), `map2d` (a `costmap.zlib.v1` latest rx and optionally a `pose.json.v1` rx), `map3d` (the same with a `voxels.zlib.v1` latest rx), `teleop` (one `twist.json.v1` latest tx), `chat` (four, in order: `text.json.v1` reliable shared tx, `chat.json.v1` reliable rx, `json.v1` latest rx, `audio.json.v1` reliable shared tx), `stats` (one `stats.json.v1` latest rx). Unknown kinds pass through, and the cockpit renders them as unknown panels. The robot's `{id, name, model}` is not part of the manifest. It travels in `hello`. An unsupported manifest version makes the SDK report `manifestUnsupported`.
+Panel kinds are validated by their channels: `video` (one `jpeg.v1` or `video.webrtc.v1` latest rx), `map2d` (a `costmap.zlib.v1` latest rx and optionally a `pose.json.v1` rx), `map3d` (the same with a `voxels.zlib.v1` latest rx), `teleop` (one `twist.json.v1` latest tx), `chat` (four, in order: `text.json.v1` reliable shared tx, `chat.json.v1` reliable rx, `json.v1` latest rx, `audio.json.v1` reliable shared tx), `stats` (one `stats.json.v1` latest rx). Unknown kinds pass through, and the cockpit renders them as unknown panels. The robot's `{id, name, model}` is not part of the manifest. It travels in `hello`. An unsupported manifest version makes the SDK report `manifestUnsupported`.
 
 ## Transport per leg
 
@@ -96,6 +97,9 @@ The transport is deliberately asymmetric. The numbered workarounds below explain
 | viewer to relay | control | viewer-opened bidirectional control stream (browser and SDK), or datagrams (the Python test viewer) |
 | relay to viewer | control replies and pushes | the same control stream, or datagrams |
 | relay to viewer | channel data | relay-opened unidirectional streams: per frame for latest, one persistent per reliable channel |
+| robot to relay | rtc_offer, rtc_stalled (v7) | `@control` data frame on a one-shot bidirectional stream, like hello |
+| relay to robot | rtc_ice, rtc_answer (v7) | `@control` frames on the carrier |
+| viewer and relay | rtc_ice, rtc_offer, rtc_answer (v7) | the viewer's control stream (the SFU carries the media itself) |
 
 Relay-opened unidirectional streams are the proven direction on both legs. Deno's server-to-client unidirectional delivery works to browsers, to Deno's own client and to aioquic alike. Only client-to-Deno-server unidirectional receive is broken (workaround 1).
 
@@ -130,6 +134,10 @@ Verified on Deno 2.6.10 and aioquic 1.3. Code comments cite these by number, so 
     The wedged send: the one send still stuck in `createUnidirectionalStream` is never reset, since resets do not replenish stream credit while the viewer's application is not reading (a frozen tab behaves the same). Instead, newer offers supersede its payload in place (the payload binds only when the write starts), so a resuming viewer receives the newest frame with no stream churn. Once a write has started the payload can no longer change, so a newer offer resets a write-wedged stream once it is 500 ms old and resends the newest on a fresh stream, bounded to one reset per stale window. Once stream credit runs out the wedge moves back to creation, where superseding is churn-free.
 
     In `/api/stats`, `aborted` counts these backpressure resets and `expired` counts routine end-of-life resets. Receivers dispatch frames on byte count (item 2) and treat the reset as end-of-stream.
+
+## WebRTC video
+
+Protocol v7 adds `rtc_ice`, `rtc_offer` and `rtc_answer` for `video.webrtc.v1` track channels. A relay started with `--rtc-file` (a Cloudflare Realtime SFU app id and secret, plus an optional TURN key) brokers one SFU session per peer and never touches media. It hands each peer its ICE servers in `rtc_ice` right after `welcome`, and again after every TURN credential refresh (hourly, half the credentials' lifetime): a peer's next peer connection uses the latest set it received, so a connection that dies when its TURN allocation expires with its credentials comes back with fresh ones. The robot offers once, with its sendonly video transceivers and a `tracks` list saying which mid carries which channel, and the relay answers. The viewer offers once with a recvonly transceiver and the relay answers. Every later pull of a subscribed track channel arrives as a relay-sent `rtc_offer` carrying the pulled tracks and the robot they belong to (`robotId`), which the viewer answers; a viewer that switched robots meanwhile answers it but ignores the tracks. The SFU collects a track after 30 s without media, across every session pulling it, so a bridge whose track carried no media that long sends `rtc_stalled {ch}` when its video resumes; the relay closes that track's pulls, declares it again and pulls it onto its viewers, who receive it as a new `rtc_offer`. An SDP is at most `MAX_SDP_LEN` (48 KiB) and an offer names at most `MAX_RTC_TRACKS` (8) tracks. A frame a bridge sends on a track channel anyway is dropped and counted (`rtc.framesOnTrack` in `/api/stats`), never forwarded. A relay without Cloudflare rejects a robot that declares a track channel (`rtc_unavailable`). A failed Cloudflare call surfaces to the viewer as the non-terminal `rtc_failed` error and the relay retries it with backoff; `rtc_session_gone` means the viewer's SFU session no longer exists and the viewer must send a new `rtc_offer`.
 
 ## Golden fixtures
 

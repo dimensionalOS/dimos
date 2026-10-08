@@ -78,18 +78,26 @@ def render_surface_region(
     voxel_size: float,
     wall_clearance_m: float,
     clearance_clamp_m: float,
+    z_band: tuple[float, float] | None = None,
 ) -> RerunMulti:
     """One cell of the surface on its own static entity, empty when the cell emptied.
 
-    Clearance rides the intensity channel, flat blue without it.
+    Clearance rides the intensity channel, flat blue without it. Points outside z_band
+    (world frame) are dropped, to show one storey of a multi-storey map.
     """
+    seq = msg.seq
     pts = msg.points_f32()
     clearance = msg.intensities_f32()
     if clearance is None or len(clearance) != len(pts):
+        if z_band is not None:
+            msg = msg.filter_by_height(min_height=z_band[0], max_height=z_band[1])
         cell = msg.to_rerun(voxel_size=voxel_size, colors=[40, 75, 130])
     else:
+        if z_band is not None:
+            keep = (pts[:, 2] >= z_band[0]) & (pts[:, 2] <= z_band[1])
+            pts, clearance = pts[keep], clearance[keep]
         cell = surface_points(pts, clearance, voxel_size, wall_clearance_m, clearance_clamp_m)
-    return [RerunEntry(region_entity(SURFACE_MAP_ENTITY, msg.seq), cell, static=True)]
+    return [RerunEntry(region_entity(SURFACE_MAP_ENTITY, seq), cell, static=True)]
 
 
 def graph_nodes(pts: NDArray[np.float32]) -> Archetype:

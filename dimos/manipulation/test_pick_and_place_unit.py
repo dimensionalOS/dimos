@@ -110,7 +110,7 @@ def test_scan_objects_uses_latest_scan_ids(module: PickAndPlaceModule) -> None:
 
     result = module.scan_objects([" cup "])
 
-    assert result.is_success()
+    assert result.message == "Detected 1 object(s)"
     assert module.get_object("cup-1") == {"object_id": "cup-1", "name": "cup"}
     scene.scan_scene.assert_called_once_with(text=["cup"])
 
@@ -126,7 +126,7 @@ def test_pick_object_uses_first_provider_candidate(
 
     result = module.pick_object("cup-1")
 
-    assert result.is_success()
+    assert result.message == "Pick complete"
     assert module.get_grasp_candidates().candidates == [first, second]
     assert module._selected_grasp is not None
     assert module._selected_grasp.position.x == pytest.approx(0.1)
@@ -236,7 +236,7 @@ def test_pick_preserves_current_yaw_when_configured(module: PickAndPlaceModule) 
 
     result = module.pick_object("cup-1")
 
-    assert result.is_success()
+    assert result.message == "Pick complete"
     assert module._selected_grasp is not None
     assert module._selected_grasp.orientation.to_euler().z == pytest.approx(0.7)
     assert module._holding_object
@@ -252,7 +252,7 @@ def test_place_uses_local_axis_and_clears_held_state(module: PickAndPlaceModule)
 
     result = module.place_at(0.4, 0.0, 0.2)
 
-    assert result.is_success()
+    assert result.message == "Place complete"
     preplace = manipulation.plan_to_poses.call_args_list[0].args[0]["arm/tool"]
     assert preplace.position.z == pytest.approx(0.3)
     assert not module._holding_object

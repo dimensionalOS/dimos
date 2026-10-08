@@ -64,7 +64,8 @@ _rerun_config = {
     },
 }
 
-_vis = vis_module(global_config.viewer, rerun_config=_rerun_config)
+# The web command center sends the GPS goals.
+_vis = vis_module(global_config.viewer, rerun_config=_rerun_config, websocket_vis=True)
 
 # Determine connection string based on replay flag
 connection_string = "udp:0.0.0.0:14550"
