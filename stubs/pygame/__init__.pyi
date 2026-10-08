@@ -4,12 +4,24 @@ from typing import Any
 
 # --- Surface / Rect ---------------------------------------------------
 
+class Rect:
+    x: int
+    y: int
+    width: int
+    bottom: int
+    centerx: int
+    centery: int
+    center: tuple[int, int]
+    def __init__(self, left: int, top: int, width: int, height: int) -> None: ...
+
 class Surface:
+    def get_rect(self, *, center: tuple[int, int] = ...) -> Rect: ...
+    def get_width(self) -> int: ...
     def fill(self, color: tuple[int, int, int]) -> None: ...
     def blit(
         self,
         source: Surface,
-        dest: tuple[int, int] | tuple[float, float],
+        dest: Rect | tuple[int, int] | tuple[float, float],
         area: Any | None = ...,
     ) -> None: ...
     def get_size(self) -> tuple[int, int]: ...
@@ -54,6 +66,8 @@ K_t: int
 K_w: int
 K_y: int
 K_SPACE: int
+KMOD_SHIFT: int
+KMOD_CTRL: int
 K_ESCAPE: int
 K_RETURN: int
 K_BACKSPACE: int
