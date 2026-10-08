@@ -18,7 +18,8 @@
 teleop panel takes a gamepad (Steam Deck, Legion Go, any pad the browser sees) or WASD,
 and the bridge's ``tele_cmd_vel`` feeds the Go2's ``cmd_vel`` directly; the raw pad state
 (continuous axes, buttons) goes out as ``joystick: Joy``. No mapper or navigation, so
-nothing grows with the distance covered. ``--record`` keeps the raw streams, the commands
+nothing grows with the distance covered, and the dog's own obstacle avoidance is off so the
+sticks are obeyed as given. ``--record`` keeps the raw streams, the commands
 the dog received and the operator's sticks.
 
 Usage:
@@ -43,4 +44,4 @@ _bridge = _web.blueprints[0].module
 unitree_go2_gamepad_cockpit = autoconnect(
     GO2Connection.blueprint(),
     _web.remappings([(_bridge, "tele_cmd_vel", "cmd_vel")]),
-).global_config(n_workers=2, robot_model="unitree_go2")
+).global_config(n_workers=2, robot_model="unitree_go2", obstacle_avoidance=False)
