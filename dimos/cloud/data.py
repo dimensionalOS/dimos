@@ -36,11 +36,12 @@ import time
 from typing import Any
 
 from dimos.cli.cloud import api_key
-from dimos.cloud import codecs
+from dimos.cloud import codecs, preview
 from dimos.cloud.cloud_request import CloudRequest, HttpCloudRequest
 from dimos.constants import DOWNLOADS_DIR, RECORDINGS_DIR
 from dimos.core.global_config import global_config
 from dimos.core.run_registry import blueprint_from_run_id
+from dimos.memory.cli.dataset import open_store
 
 Progress = Callable[[str, int, int], None]  # (phase, done_bytes, total_bytes)
 
@@ -72,6 +73,12 @@ class DataApi:
 
     def quota(self) -> dict[str, Any]:
         return self.t.request("GET", f"{self.PREFIX}/quota")
+
+    def put_preview(self, upload_id: str, doc: dict[str, Any]) -> dict[str, Any]:
+        return self.t.request("PUT", f"{self.PREFIX}/uploads/{upload_id}/preview", doc)
+
+    def confirm_video(self, upload_id: str) -> dict[str, Any]:
+        return self.t.request("POST", f"{self.PREFIX}/uploads/{upload_id}/preview/video")
 
     def put_part(self, url: str, chunk: bytes) -> None:
         self.t.put(url, chunk)
@@ -146,7 +153,15 @@ class MultipartBackend:
             )
             create = self.api.create(**spec)
             if create["state"] == "complete":
-                return {**create, "skipped": True}
+                # already uploaded: (re)send the preview, so a failed send is repaired
+                # by simply running the upload again
+                return {
+                    **create,
+                    "skipped": True,
+                    "preview": self._preview(create["upload_id"], path, Path(tmp))
+                    if manifest
+                    else None,
+                }
             uid = create["upload_id"]
             have = {p["part_number"] for p in self.status(uid)["parts"]}
             ps = create["part_size"]
@@ -181,7 +196,36 @@ class MultipartBackend:
                     tick("upload", done, size)
             parts = sorted(self.status(uid)["parts"], key=lambda p: p["part_number"])
             done = self.api.complete(uid, parts)
-            return {**done, "upload_id": uid, "skipped": False}
+            return {
+                **done,
+                "upload_id": uid,
+                "skipped": False,
+                "preview": self._preview(uid, path, Path(tmp)) if manifest else None,
+            }
+
+    def _preview(self, upload_id: str, path: Path, tmp: Path) -> str:
+        """The console's spatial preview, built here while the recording is at hand.
+        Built from a copy: the store opens read-write (WAL), and the user's recording
+        must stay byte-identical to what was uploaded. Best effort: the upload stands
+        without it."""
+        try:
+            copy, clip = tmp / "preview.db", tmp / "timelapse.mp4"
+            shutil.copyfile(path, copy)
+            with open_store(copy) as store:
+                doc = preview.build(store)
+                video = preview.timelapse(store, clip) if doc is not None else None
+            if doc is None:
+                return "none (no lidar, camera or odometry)"
+            if video:
+                doc["video"] = video
+            sent = self.api.put_preview(upload_id, doc)
+            if not (video and sent.get("video_url")):
+                return "sent"
+            self.api.put_part(sent["video_url"], clip.read_bytes())
+            self.api.confirm_video(upload_id)  # the console links the clip only after this
+            return f"sent (+ {video['duration_s']:.0f} s timelapse, {video['bytes'] / 1e6:.1f} MB)"
+        except Exception as e:
+            return f"failed: {e}"
 
     def pull(
         self,
