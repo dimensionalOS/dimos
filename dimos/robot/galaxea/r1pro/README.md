@@ -49,7 +49,6 @@ dimos run r1pro-teleop          # + chassis teleop from the viewer
 dimos run r1pro-nav             # + 3D nav: lidar + head depth, MLS planner
 dimos run r1pro-manipulation    # + dual-arm planning (experimental)
 dimos run r1pro-planar-preview   # planar-base planning preview with fake hardware
-dimos run r1pro-head-depth --g.transport lcm # + head depth anchored on the lidar
 ```
 
 ## Point-LIO and head depth
@@ -57,7 +56,7 @@ dimos run r1pro-head-depth --g.transport lcm # + head depth anchored on the lida
 Every blueprint built on `r1pro-coordinator` places `base_link` by Point-LIO on
 the chassis Mid-360 instead of wheel odometry; `chassis_odom` keeps its name.
 `r1pro-manipulation` builds on `r1pro_control` alone and keeps wheel odometry.
-`r1pro-head-depth` adds a
+`r1pro-nav` adds a
 dense cloud from the left head camera: Depth Anything, calibrated per pixel to
 the last two seconds of Point-LIO scans (`Depth2DepthCloud`).
 The Mid-360 driver, Point-LIO and the head depth are native binaries built on
