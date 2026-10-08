@@ -24,6 +24,7 @@ from dimos.cloud import preview
 from dimos.cloud.constants import PREVIEW_SCALE
 from dimos.memory.store.base import Store
 from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
@@ -100,3 +101,13 @@ def test_timelapse(tmp_path: Path) -> None:
         meta is not None and meta["speed"] == 1.0 and meta["duration_s"] == 29
     )  # under a minute: real time
     assert (tmp_path / "t.mp4").read_bytes()[4:8] == b"ftyp"  # MP4
+
+
+def test_recording_without_lidar() -> None:
+    odom = [
+        (100.0 + i, PoseStamped(position=[i, 2, 0.3], frame_id="world"), None) for i in range(5)
+    ]
+    frames = [(101.0, Image.from_numpy(np.zeros((48, 64, 3), np.uint8)), None)]
+    doc = preview.build(store(color_image=frames, odom=odom))
+    assert doc is not None and doc["map"] == "" and doc["scans"] == [] and doc["duration_s"] == 4
+    assert [r[1] for r in doc["trajectory"]] == [0, 1, 2, 3, 4] and len(doc["camera"]) == 1

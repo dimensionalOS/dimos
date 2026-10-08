@@ -215,7 +215,7 @@ class MultipartBackend:
                 doc = preview.build(store)
                 video = preview.timelapse(store, clip) if doc is not None else None
             if doc is None:
-                return "none (no lidar, camera or pose stream)"
+                return "none (no lidar, camera or odometry)"
             if video:
                 doc["video"] = video
             sent = self.api.put_preview(upload_id, doc)
