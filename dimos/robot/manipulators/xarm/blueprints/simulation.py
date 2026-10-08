@@ -82,6 +82,7 @@ xarm_sim = autoconnect(
         **{
             **_xarm7_sim_kwargs,
             "base_frame_id": "world",
+            "overview_camera_name": "env_camera",
         }
     ),
     coordinator(
@@ -106,6 +107,7 @@ xarm_sim = autoconnect(
     ),
     RawRobotBridge.blueprint(
         camera_frame="wrist_camera_color_optical_frame",
+        overview_frame="env_camera_color_optical_frame",
         ee_frame="link_tcp",
         gripper_joint="arm/gripper",
         gripper_range=(0.0, 0.85),

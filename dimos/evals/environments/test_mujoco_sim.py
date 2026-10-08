@@ -52,7 +52,7 @@ def test_launch_flags(monkeypatch):
     assert json.loads(proc.extra_env["MUJOCOSIMMODULE__TRACKED_BODIES"]) == ["apple", "cup"]
     assert proc.global_args == [
         "--record-topics",
-        "color_image,camera_info,coordinator_joint_state,tf,odom",
+        "color_image,camera_info,coordinator_joint_state,tf,odom,overview_image,overview_camera_info",
     ]
 
     proc = DimosCliCall()
@@ -133,6 +133,7 @@ def test_raw_arm_blueprint_configures_its_bridge():
     )
     bridge = parsed.module_kwargs("rawrobotbridge")
     assert bridge["ee_frame"] == "link_tcp" and bridge["gripper_joint"] == "arm/gripper"
+    assert bridge["overview_frame"] == "env_camera_color_optical_frame"
     assert bridge["endpoint"] == "tcp/127.0.0.1:12345"  # the per-run endpoint still applies
     tasks = parsed.module_kwargs("ControlCoordinator")["tasks"]
     assert any(task["type"] == "eef_twist" for task in tasks)

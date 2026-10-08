@@ -45,7 +45,7 @@ SUITE: Suite = [
             blueprint=["xarm-sim", "mcp-server"],
             raw_bridge=True,
             raw_guide=RAW_ARM_README + XARM7_NOTES,
-            ready_streams=("color_image", "coordinator_joint_state"),
+            ready_streams=("color_image", "overview_image", "coordinator_joint_state"),
             scene=LfsPath("xarm7/scene.xml"),
             tracked_bodies=("cup",),
         ),

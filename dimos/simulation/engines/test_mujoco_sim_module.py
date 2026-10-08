@@ -25,7 +25,7 @@ import numpy as np
 import pytest
 
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.simulation.engines.mujoco_engine import CameraFrame, MujocoEngine
+from dimos.simulation.engines.mujoco_engine import CameraConfig, CameraFrame, MujocoEngine
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule, MujocoSimModuleConfig
 
 
@@ -604,5 +604,133 @@ def test_publish_loop_pacing_is_independent_of_frame_timestamp_magnitude(base_ts
         _run_publish_loop(module, frame_ts)
         elapsed = time.monotonic() - start
         assert elapsed >= (len(frame_ts) - 1) / fps
+    finally:
+        module.stop()
+
+
+def test_engine_renders_wrist_depth_but_overview_rgb_only(monkeypatch):
+    engine = object.__new__(MujocoEngine)
+    engine._camera_configs = [
+        CameraConfig(name="wrist_camera", width=3, height=2),
+        CameraConfig(name="env_camera", width=3, height=2, render_depth=False),
+    ]
+    engine._model = MagicMock()
+    engine._model.cam_fovy = np.array([60.0, 45.0])
+    engine._data = MagicMock()
+    engine._data.cam_xpos = np.array([[0, 0, 1], [2, 0, 2]])
+    engine._data.cam_xmat = np.array([np.eye(3).ravel(), np.eye(3).ravel()])
+    engine._camera_lock = threading.Lock()
+    engine._camera_frames = {}
+    monkeypatch.setattr(engine, "_camera_id", lambda name: 0 if name == "wrist_camera" else 1)
+    wrist_rgb, wrist_depth, overview_rgb = MagicMock(), MagicMock(), MagicMock()
+    wrist_rgb.render.return_value = np.full((2, 3, 3), 10, dtype=np.uint8)
+    wrist_depth.render.return_value = np.full((2, 3), 0.25, dtype=np.float32)
+    overview_rgb.render.return_value = np.full((2, 3, 3), 200, dtype=np.uint8)
+    renderer = MagicMock(side_effect=[wrist_rgb, wrist_depth, overview_rgb])
+    monkeypatch.setattr("dimos.simulation.engines.mujoco_engine.mujoco.Renderer", renderer)
+    states = engine._init_cameras()
+    try:
+        engine._render_cameras(10.0, states)
+        assert renderer.call_count == 3  # two wrist renderers, one overview renderer
+        wrist = engine.read_camera("wrist_camera")
+        overview = engine.read_camera("env_camera")
+        assert np.all(wrist.depth == 0.25)
+        assert overview.depth is None
+        assert np.all(wrist.rgb == 10) and np.all(overview.rgb == 200)
+        assert wrist.timestamp == overview.timestamp == 10.0
+        overview_rgb.enable_depth_rendering.assert_not_called()
+    finally:
+        engine._close_cam_renderers(states)
+    for instance in (wrist_rgb, wrist_depth, overview_rgb):
+        instance.close.assert_called_once()
+
+
+def test_overview_has_own_intrinsics_and_capture_time_world_optical_pose():
+    module = MujocoSimModule(overview_camera_name="env_camera")
+    color, info, poses, depth = [], [], [], []
+    module.overview_image.subscribe(color.append)
+    module.overview_camera_info.subscribe(info.append)
+    module.tf.subscribe(poses.append)
+    module.depth_image.subscribe(depth.append)
+    try:
+        frame = CameraFrame(
+            rgb=np.zeros((2, 3, 3), dtype=np.uint8),
+            depth=None,
+            cam_pos=np.array([1.7, -0.9, 1.8]),
+            cam_mat=np.eye(3),
+            fovy=90.0,
+            timestamp=42.0,
+        )
+        module._publish_overview(frame)
+        optical, camera_link = poses[0].transforms
+        assert color[0].frame_id == "env_camera_color_optical_frame"
+        assert color[0].ts == info[0].ts == optical.ts == camera_link.ts == 42.0
+        np.testing.assert_allclose(info[0].K, [1, 0, 1.5, 0, 1, 1, 0, 0, 1])
+        assert optical.frame_id == camera_link.frame_id == "world"
+        assert optical.child_frame_id == "env_camera_color_optical_frame"
+        assert camera_link.child_frame_id == "env_camera_link"
+        np.testing.assert_allclose(optical.translation.to_numpy(), frame.cam_pos)
+        # Identity MuJoCo camera axes become optical +Z forward, +Y down.
+        np.testing.assert_allclose(np.abs(optical.rotation.to_numpy()), [1, 0, 0, 0], atol=1e-12)
+        assert not depth
+    finally:
+        module.stop()
+
+
+def test_overview_publication_does_not_require_a_primary_frame():
+    module = MujocoSimModule(overview_camera_name="env_camera", fps=1000)
+    timestamps = iter([1.0, 1.0, 2.0])
+    images = []
+    module.overview_image.subscribe(images.append)
+
+    class Engine:
+        connected = True
+
+        def read_camera(self, name):
+            if name != "env_camera":
+                return None
+            timestamp = next(timestamps, None)
+            if timestamp is None:
+                module._stop_event.set()
+                return None
+            return CameraFrame(
+                rgb=np.zeros((2, 3, 3), dtype=np.uint8),
+                depth=None,
+                cam_pos=np.zeros(3),
+                cam_mat=np.eye(3),
+                fovy=45.0,
+                timestamp=timestamp,
+            )
+
+        def disconnect(self):
+            pass
+
+    module._engine = Engine()
+    try:
+        module._publish_loop()
+        assert [image.ts for image in images] == [1.0, 2.0]
+    finally:
+        module.stop()
+
+
+@pytest.mark.mujoco
+@pytest.mark.parametrize(
+    "missing,present",
+    [
+        ("wrist_camera", "env_camera"),
+        ("env_camera", "wrist_camera"),
+    ],
+)
+def test_missing_required_camera_fails_before_starting_physics(tmp_path, missing, present):
+    path = tmp_path / "scene.xml"
+    path.write_text(
+        f'<mujoco><worldbody><camera name="{present}" pos="0 0 1"/></worldbody></mujoco>'
+    )
+    module = MujocoSimModule(address=path, headless=True, overview_camera_name="env_camera")
+    try:
+        with pytest.raises(ValueError, match=missing):
+            module.start()
+        assert module._engine is not None
+        assert not module._engine.connected
     finally:
         module.stop()
