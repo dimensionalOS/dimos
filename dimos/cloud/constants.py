@@ -26,5 +26,6 @@ PREVIEW_BAND = (-0.5, 2.0)  # metres around the robot's height; ceilings hide th
 WORLD_FRAMES = ("world", "map", "odom")
 
 TIMELAPSE_MAX_S = 60.0  # longer recordings are sped up to fit
-TIMELAPSE_FPS = 10
-TIMELAPSE_HEIGHT = 360  # VP8 WebM through OpenCV (no bitrate control): ~10 MB per minute
+TIMELAPSE_FPS = 24  # smooth playback
+TIMELAPSE_HEIGHT = 240
+TIMELAPSE_CRF = 30  # H.264 quality: ~1.5 MB per minute at 240p

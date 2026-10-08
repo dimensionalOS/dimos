@@ -14,7 +14,7 @@
 
 """Console preview of a recording, built by `dimos data upload` while the recording is at hand:
 LiDAR map and timed scans with the robot's path (from the poses the store keeps with every
-LiDAR observation), timed camera thumbnails, and a WebM timelapse."""
+LiDAR observation), timed camera thumbnails, and an H.264 timelapse."""
 
 from __future__ import annotations
 
@@ -22,8 +22,14 @@ import base64
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import cv2
 import numpy as np
+
+try:  # PyAV comes with dimos[unitree] / dimos[webrtc] (aiortc), not the bare base install,
+    import av  # where the preview simply has no timelapse
+
+    HAS_AV = True
+except ImportError:  # pragma: no cover
+    HAS_AV = False
 
 from dimos.cloud.constants import (
     PREVIEW_BAND,
@@ -35,6 +41,7 @@ from dimos.cloud.constants import (
     PREVIEW_SCALE,
     PREVIEW_SCAN_POINTS,
     PREVIEW_THUMB_PX,
+    TIMELAPSE_CRF,
     TIMELAPSE_FPS,
     TIMELAPSE_HEIGHT,
     TIMELAPSE_MAX_S,
@@ -143,9 +150,9 @@ def build(store: Store) -> dict[str, Any] | None:
 
 
 def timelapse(store: Store, out: Path) -> dict[str, Any] | None:
-    """VP8 WebM of the first camera stream: real time up to TIMELAPSE_MAX_S, sped up to fit
-    beyond. Returns {duration_s, speed, bytes}, or None without a camera."""
-    camera = _stream(store, Image)
+    """H.264 MP4 of the first camera stream: real time up to TIMELAPSE_MAX_S, sped up to fit
+    beyond. Returns {duration_s, speed, bytes, type}, or None without a camera or PyAV."""
+    camera = _stream(store, Image) if HAS_AV else None
     if camera is None:
         return None
     ts = np.array([o.ts for o in camera])
@@ -155,21 +162,30 @@ def timelapse(store: Store, out: Path) -> dict[str, Any] | None:
     # video frames each recorded image covers (repeats when the camera is slower than the video)
     at = np.searchsorted(ts, ts[0] + np.arange(n) * speed / TIMELAPSE_FPS, "right") - 1
     repeats = np.bincount(at, minlength=len(ts))
-    writer = None
+    container = av.open(str(out), "w", options={"movflags": "faststart"})  # plays while downloading
+    video: Any = None
     for i, obs in enumerate(camera):
         if not repeats[i]:
             continue
         img = obs.data
-        size = (round(img.width * TIMELAPSE_HEIGHT / img.height / 2) * 2, TIMELAPSE_HEIGHT)
-        if writer is None:
-            writer = cv2.VideoWriter(str(out), cv2.VideoWriter.fourcc(*"VP80"), TIMELAPSE_FPS, size)
-        frame = np.ascontiguousarray(img.resize(*size).to_bgr().as_numpy()[:, :, :3])
+        if video is None:
+            video = container.add_stream("libx264", rate=TIMELAPSE_FPS)
+            video.width = round(img.width * TIMELAPSE_HEIGHT / img.height / 2) * 2
+            video.height, video.pix_fmt = TIMELAPSE_HEIGHT, "yuv420p"
+            video.options = {"crf": str(TIMELAPSE_CRF), "preset": "veryfast"}
+        frame = av.VideoFrame.from_ndarray(
+            np.ascontiguousarray(
+                img.resize(video.width, video.height).to_bgr().as_numpy()[:, :, :3]
+            ),
+            format="bgr24",
+        )
         for _ in range(repeats[i]):
-            writer.write(frame)
-    if writer is not None:
-        writer.release()
+            container.mux(video.encode(frame))
+    container.mux(video.encode())
+    container.close()
     return {
         "duration_s": round(n / TIMELAPSE_FPS, 3),
         "speed": round(speed, 3),
         "bytes": out.stat().st_size,
+        "type": "video/mp4",
     }

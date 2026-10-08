@@ -95,8 +95,8 @@ def test_timelapse(tmp_path: Path) -> None:
         (100.0 + i, Image.from_numpy(np.full((48, 64, 3), 8 * i, np.uint8)), None)
         for i in range(30)
     ]
-    meta = preview.timelapse(store(color_image=frames), tmp_path / "t.webm")
+    meta = preview.timelapse(store(color_image=frames), tmp_path / "t.mp4")
     assert (
         meta is not None and meta["speed"] == 1.0 and meta["duration_s"] == 29
     )  # under a minute: real time
-    assert (tmp_path / "t.webm").read_bytes()[:4] == b"\x1a\x45\xdf\xa3"  # WebM (EBML) header
+    assert (tmp_path / "t.mp4").read_bytes()[4:8] == b"ftyp"  # MP4
