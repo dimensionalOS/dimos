@@ -330,9 +330,10 @@ class SimGo2World(Module):
             sim.model, sim.data, show_left_ui=False, show_right_ui=False
         )
         viewer.opt.geomgroup[CEILING_GROUP] = 0
-        viewer.cam.type = mujoco.mjtCamera.mjCAMERA_TRACKING
-        viewer.cam.trackbodyid = sim.robot.trunk
-        # above the walls, looking down over the robot's shoulder
+        # a free camera, so the mouse can pan away from the robot. Starts above the walls,
+        # looking down over the robot's shoulder.
+        viewer.cam.type = mujoco.mjtCamera.mjCAMERA_FREE
+        viewer.cam.lookat[:] = sim.base_pose()[0]
         viewer.cam.distance = 4.0
         viewer.cam.elevation = -55
         viewer.cam.azimuth = 135
