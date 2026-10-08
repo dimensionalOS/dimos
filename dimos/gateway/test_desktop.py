@@ -25,7 +25,7 @@ from typing import Any
 
 import pytest
 
-from dimos.gateway import config, desktop
+from dimos.gateway import desktop
 
 
 @pytest.fixture
@@ -56,8 +56,7 @@ def fake_desktop(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[Any]]:
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    url = f"http://127.0.0.1:{server.server_address[1]}/"
-    monkeypatch.setenv(config.GATEWAY_ENV, json.dumps({"desktopUrl": url}))
+    monkeypatch.setenv("DESKTOP_URL", f"http://127.0.0.1:{server.server_address[1]}/")
     yield seen
     server.shutdown()
 
@@ -76,6 +75,6 @@ def test_asks_desktop_then_waits_for_the_end(fake_desktop: list[Any]) -> None:
 
 
 def test_no_desktop_is_its_own_error() -> None:
-    # conftest points desktopUrl at a port that refuses
+    # conftest points DESKTOP_URL at a port that refuses
     with pytest.raises(desktop.DesktopUnavailableError):
         asyncio.run(desktop.request_shell("t", "", [{"run": "true"}]))

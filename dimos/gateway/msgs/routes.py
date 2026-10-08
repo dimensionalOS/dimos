@@ -23,7 +23,7 @@ from pathlib import Path
 from fastapi import FastAPI, Request, Response
 
 from dimos.gateway.msgs.codegen import JS_FILE, TS_FILE
-from dimos.gateway.provides import route_doc
+from dimos.gateway.openapi import route_doc
 
 USAGE = (
     'Import it from a page: `import { decodeMessage, geometry_msgs } from "../../dimos/msgs.js"`. It exports '

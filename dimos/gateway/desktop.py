@@ -15,18 +15,20 @@
 """Running shell commands through dimOS Desktop (its `POST /api/desktop/shell`, Desktop's docs/shell.md): Desktop shows
 them over the asking app with a note for each, nothing runs until the user presses Run, they run in one terminal (sudo
 asks once), and when one fails the user or Desktop's agent fixes it there and retries it. The gateway finds Desktop at
-$DIMOS_GATEWAY's `desktopUrl`, else at config.yaml's `desktop.port` on this machine."""
+$DESKTOP_URL (Desktop sets it when it starts the gateway), else at config.yaml's `desktop.port` on this machine."""
 
 from __future__ import annotations
 
 import asyncio
 import json
+import os
 from typing import Any
 import urllib.error
 import urllib.request
 
 from dimos.gateway import config
 
+URL_ENV = "DESKTOP_URL"
 DEFAULT_PORT = 5555
 FINISHED = ("succeeded", "failed", "cancelled")
 
@@ -36,7 +38,7 @@ class DesktopUnavailableError(Exception):
 
 
 def desktop_url() -> str:
-    given = str(config.gateway_env().get("desktopUrl") or "").strip().rstrip("/")
+    given = os.environ.get(URL_ENV, "").strip().rstrip("/")
     if given:
         return given
     desktop = config.load_desktop_config().get("desktop")

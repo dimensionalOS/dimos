@@ -15,7 +15,7 @@
 
 """The /dimos routes, with fakes: a temporary DIMOS_HOME and state, a fake `dimos` and cloud worker, no network."""
 
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 import json
 from pathlib import Path
 import sys
@@ -45,7 +45,7 @@ def client(state: ServerState) -> Iterator[TestClient]:
 
 
 def test_health_info_and_paths(
-    client: TestClient, checkout: Path, given_gateway: Callable[..., None]
+    client: TestClient, checkout: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     assert client.get("/healthz").text == "ok"
     assert client.get("/dimos/healthz").text == "ok"
@@ -58,11 +58,11 @@ def test_health_info_and_paths(
         "range": "",
         "inRange": True,
     }
-    given_gateway(dimosRange=">=0.0.14b1 <0.1")
+    monkeypatch.setenv(config.RANGE_ENV, ">=0.0.14b1 <0.1")
     assert client.get("/dimos/info").json()["inRange"] is True
-    given_gateway(dimosRange=">=0.1")
+    monkeypatch.setenv(config.RANGE_ENV, ">=0.1")
     assert client.get("/dimos/info").json()["inRange"] is False
-    given_gateway()
+    monkeypatch.delenv("DIMOS_RECORDINGS_DIR", raising=False)
     paths = client.get("/dimos/paths").json()
     assert paths["dimosDir"] == str(checkout)
     # no recordings.dir in config.yaml and no Desktop: where dimos itself records
@@ -74,7 +74,7 @@ def test_health_info_and_paths(
     # no zenoh publisher: SSE only, so Desktop relays
     assert server["zenohNamespace"] is None
     # started by Desktop: the folder it gives its apps
-    given_gateway(recordingsDir=str(checkout / "desktop_recordings"))
+    monkeypatch.setenv("DIMOS_RECORDINGS_DIR", str(checkout / "desktop_recordings"))
     assert client.get("/dimos/paths").json()["recordingsDir"] == str(
         checkout / "desktop_recordings"
     )
@@ -764,9 +764,9 @@ def test_a_launch_with_its_own_global_and_module_config_and_a_secret(
 
 
 def test_launch_refuses_a_version_outside_desktops_range(
-    client: TestClient, given_gateway: Callable[..., None]
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    given_gateway(dimosRange=">=0.1")
+    monkeypatch.setenv(config.RANGE_ENV, ">=0.1")
     refused = client.post("/dimos/runs", json={"blueprint": "unitree-go2"})
     assert refused.status_code == 400 and "outside the range" in refused.json()["error"]
 
@@ -925,7 +925,7 @@ def test_blueprint_view_serves_its_page_and_only_its_own_files(client: TestClien
         "nope.js",
         "..%2Fapp.py",
         "..%2F..%2Fserver%2Fapp.py",
-        "%2E%2E%2Frobots.json",
+        "%2E%2E%2Fopenapi.json",
         "app.py",
         "../app.py",
     ):

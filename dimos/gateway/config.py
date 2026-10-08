@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import json
 import os
 from pathlib import Path
 import shutil
@@ -31,17 +30,8 @@ if sys.version_info >= (3, 11):
 else:
     import tomli as tomllib
 
-# the one variable Desktop starts the gateway with, a JSON object (dimos.yaml's `start:` documents its fields)
-GATEWAY_ENV = "DIMOS_GATEWAY"
-
-
-def gateway_env() -> dict[str, Any]:
-    """$DIMOS_GATEWAY's object, {} when unset: `socket`, `dimosDir`, `zenoh: {namespace, connect: [endpoints]}`,
-    `desktopUrl`, `recordingsDir` and `dimosRange` (what Desktop's dimos.yaml requires of dimos), each optional."""
-    value = json.loads(os.environ.get(GATEWAY_ENV) or "{}")
-    if not isinstance(value, dict):
-        raise ValueError(f"${GATEWAY_ENV} is a JSON object, not {value!r}")
-    return value
+# what Desktop's dimos.yaml `requires.dimos` says, when Desktop passes it (else every version is in range)
+RANGE_ENV = "DESKTOP_DIMOS_RANGE"
 
 
 def dimos_home() -> Path:
@@ -169,13 +159,13 @@ def ignore_version_range() -> bool:
 
 
 def recordings_dir() -> Path:
-    """config.yaml's `recordings.dir`, else the folder Desktop gives its apps ($DIMOS_GATEWAY's `recordingsDir`), else
-    where dimos itself records (its RECORDINGS_DIR: the checkout's recordings/, or <state>/dimos/recordings for a
-    library install)."""
+    """config.yaml's `recordings.dir`, else the folder Desktop gives its apps ($DIMOS_RECORDINGS_DIR, set when Desktop
+    starts this gateway), else where dimos itself records (its RECORDINGS_DIR: the checkout's recordings/, or
+    <state>/dimos/recordings for a library install)."""
     from dimos.constants import RECORDINGS_DIR
 
-    configured = _section(load_desktop_config(), "recordings").get("dir") or gateway_env().get(
-        "recordingsDir"
+    configured = _section(load_desktop_config(), "recordings").get("dir") or os.environ.get(
+        "DIMOS_RECORDINGS_DIR"
     )
     return expand(configured) if configured else RECORDINGS_DIR
 
@@ -235,7 +225,7 @@ def satisfies(version: str, range_text: str) -> bool:
 
 def info(dimos_dir: Path) -> Info:
     found, version = checkout_version(dimos_dir)
-    range_text = str(gateway_env().get("dimosRange") or "")
+    range_text = os.environ.get(RANGE_ENV, "")
     in_range = version is not None and (not range_text or satisfies(version, range_text))
     return Info(
         dir=str(dimos_dir),

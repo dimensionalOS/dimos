@@ -16,8 +16,8 @@
 """Every /dimos path and method in dimOS Desktop's OpenAPI (fixtures/desktop_openapi_dimos.json; where it was copied
 from is its `info.x-copied-from`) is served here, so Desktop can switch to this gateway unchanged.
 
-The fixture is a copy and goes stale on Desktop's side; it stays because it's the only parity check there is with
-Desktop's built-in gateway."""
+The fixture is a copy and goes stale on Desktop's side; it stays because it's the only parity check there is. Once
+Desktop's CI compares its own doc against dimos's dimos/gateway/openapi.json (Desktop reads that per tag), drop it."""
 
 import json
 from pathlib import Path

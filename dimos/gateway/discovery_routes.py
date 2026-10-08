@@ -27,7 +27,7 @@ from packaging.markers import default_environment
 from dimos.gateway import config, desktop, docs, extras, models
 from dimos.gateway.discovery import python_for
 from dimos.gateway.jobs import MissingForJobError
-from dimos.gateway.provides import route_doc
+from dimos.gateway.openapi import route_doc
 
 if TYPE_CHECKING:
     from dimos.gateway.app import ServerState
@@ -72,6 +72,7 @@ def add(app: FastAPI, state: ServerState) -> None:
             "installed packages answers from the disk cache at once (no scan); a change is noticed within 30 s and "
             "rescanned (the old answer is served meanwhile, `stale: true`). `discovery` events follow it. No side "
             "effects.",
+            agent=True,
             answer="`DiscoveryStatus`: `{ state, reason, key, stale, blueprints_total, blueprints_done, importable, "
             "not_importable, modules_total, modules_done, current, errors, ... }`",
         ),
@@ -105,6 +106,7 @@ def add(app: FastAPI, state: ServerState) -> None:
             "their streams with topics",
             "Answers from the cache (no import): every blueprint scanned so far, in registry order, with "
             "`suggested_extras` for one that's missing a package. No side effects.",
+            agent=True,
             answer="`{ stale, blueprints: [{ name, ref, robot, importable, import_error, missing_module, "
             "suggested_extras, modules: [{ name, class, module, streams: [{ name, type, direction, topic }] }] }] }`",
         ),
@@ -127,6 +129,7 @@ def add(app: FastAPI, state: ServerState) -> None:
             "Every module from the discovery cache: streams in and out, skills, and how many blueprints use it",
             "Answers from the cache (no import): the registry's modules and every module a blueprint uses, with "
             "`blueprint_count` (importable blueprints using it) and `robots`. No side effects.",
+            agent=True,
             answer="`{ stale, modules: [{ name, class, doc, inputs, outputs, skills, blueprint_count, robots }] }`",
         ),
     )
@@ -145,6 +148,7 @@ def add(app: FastAPI, state: ServerState) -> None:
             "`json_compatible` (a class, a callable, an array) can't be set from a form: leave it out. 404 for a "
             "module that isn't in the registry or any blueprint; 500 when it can't be imported.",
             errors=(404, 500),
+            agent=True,
             answer="`{ module, class, fields: [{ name, type, default, description, required, base, enum, "
             "json_compatible, reason }], error }`",
         ),
@@ -171,6 +175,7 @@ def add(app: FastAPI, state: ServerState) -> None:
             "discovery",
             "Every message type on a module's stream, with the modules that publish and read it",
             "Answers from the discovery cache. No side effects.",
+            agent=True,
             answer="`{ types: [{ type, publishers, subscribers }] }`",
         ),
     )
@@ -189,6 +194,7 @@ def add(app: FastAPI, state: ServerState) -> None:
             "/dimos/robots); a blueprint belongs to the robot that lists it or whose dirs hold its file. "
             "From the discovery cache; 404 for a robot with no blueprint.",
             errors=(404,),
+            agent=True,
             answer="`{ robot, blueprints, blueprints_importable, robots_total, formula, modules: [{ name, class, "
             "score, in_robot_blueprints, robot_blueprints, robots_using, blueprint_count }] }`",
         ),
@@ -215,6 +221,7 @@ def add(app: FastAPI, state: ServerState) -> None:
             "here with markdown-it (raw HTML in the markdown is escaped), so a page can show it as is; `markdown` is "
             "there for a page that renders it itself. 404 when the checkout has no such page.",
             errors=(404,),
+            agent=True,
             answer="`{ title, markdown, html, source_path, url, others }`",
         ),
     )
@@ -232,6 +239,7 @@ def add(app: FastAPI, state: ServerState) -> None:
             "Links into dimos's published docs: configuring a robot, adding one, blueprints, modules, install",
             "Each link is the docs-site URL of the checkout's page by that name (docs/**/configuration.md, ...); "
             "null when there's no such page. No side effects.",
+            agent=True,
             answer="`{ site, repo, configure_robot, custom_robot, blueprints, modules, installation, quickstart, "
             "cli }`",
         ),
@@ -248,6 +256,7 @@ def add(app: FastAPI, state: ServerState) -> None:
             "Extras from the checkout's pyproject.toml (else the installed dimos's metadata); installed packages "
             "are asked of the checkout's python in a child process (cached 10 s). `download_bytes` is an upper-bound "
             "hint from uv.lock. No side effects.",
+            agent=True,
             answer="`{ mode, python, extras: [{ name, installed, applicable, requires, includes, missing, "
             "download_bytes }] }`",
         ),
@@ -278,13 +287,14 @@ def add(app: FastAPI, state: ServerState) -> None:
             "from source (unitree-dds, dds: it has wheels for python 3.10 only), it first gets the CycloneDDS C "
             "library it builds against: $CYCLONEDDS_HOME, else `nix build <flake.lock's nixpkgs>#cyclonedds` (an "
             "out-link in the venv), else Homebrew's; none = 400 with `code: cyclonedds_missing`. With Desktop "
-            "($DIMOS_GATEWAY's `desktopUrl`) the commands go to its `POST /api/desktop/shell` for the asking app (default "
+            "(`$DESKTOP_URL`) the commands go to its `POST /api/desktop/shell` for the asking app (default "
             "`launcher`): it shows them over that app, nothing runs until the user presses Run, a failure can be fixed "
             "in its terminal (by the user or Desktop's agent) and retried; the answer is `{ shell }`, the session to "
             "follow with Desktop's `GET /api/desktop/shell/{id}?wait=`. The gateway waits for it and rescans. Without "
             "Desktop it runs as a job (`{ job }`: follow `<ns>/dimos/jobs/<job>` or GET /dimos/jobs/{job}/log). "
             "400 for an unknown extra; 409 while another install runs; 500 when uv isn't found.",
             errors=(400, 409, 500),
+            agent=True,
             answer="`{ shell, job, command }` (one of shell / job)",
         ),
     )
@@ -397,6 +407,7 @@ def add(app: FastAPI, state: ServerState) -> None:
             "`<ns>/dimos/jobs/<job>` first, then fetch this, then apply live lines with `n` >= `next`. 404 for an "
             "unknown (or expired) job.",
             errors=(404,),
+            agent=True,
             answer="`{ job, title, kind, command, lines, next, done, ok, error, failure, started_at, finished_at }`",
         ),
     )

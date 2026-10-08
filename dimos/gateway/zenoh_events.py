@@ -14,9 +14,10 @@
 
 """The gateway's events on zenoh, at `<ns>/dimos/events/<type>` (Desktop's docs/events.md), one JSON object a sample.
 
-`<ns>` is Desktop's namespace: $DIMOS_GATEWAY's `zenoh.namespace`, else Desktop's config.yaml `desktop.namespace`,
-else Desktop's own default, `dimos-desktop/<host>-<desktop.port>`. The endpoints to dial: $DIMOS_GATEWAY's
-`zenoh.connect`, else dimos's GlobalConfig `zenoh_connect` (empty = a peer on the local network).
+`<ns>` is Desktop's namespace. The gateway learns it from, first to last: `--zenoh-namespace`, `DIMOS_ZENOH_NAMESPACE`,
+`DIMOS_APP`'s `zenohNamespace`, Desktop's config.yaml `desktop.namespace`, and else Desktop's own default,
+`dimos-desktop/<host>-<desktop.port>`. The endpoint to dial: `--zenoh-connect`, `DIMOS_APP`'s `zenohConnect`, then
+dimos's GlobalConfig `zenoh_connect` (which reads `ZENOH_CONNECT`; empty = a peer on the local network).
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 import json
+import os
 import re
 import socket
 from typing import TYPE_CHECKING, Any
@@ -34,13 +36,17 @@ if TYPE_CHECKING:
     from dimos.gateway.topic_rates import TopicWatch
     from dimos.protocol.service.zenohservice import ZenohSessionPool
 
+NAMESPACE_ENV = "DIMOS_ZENOH_NAMESPACE"
 # Desktop's own default port (its config.rs DEFAULT_PORT)
 DESKTOP_DEFAULT_PORT = 5555
 
 
-def given_zenoh() -> dict[str, Any]:
-    """$DIMOS_GATEWAY's `zenoh` object, or {}."""
-    value = config.gateway_env().get("zenoh")
+def dimos_app() -> dict[str, Any]:
+    """The `DIMOS_APP` JSON object Desktop passes its servers, or {}."""
+    try:
+        value = json.loads(os.environ.get("DIMOS_APP") or "{}")
+    except json.JSONDecodeError:
+        return {}
     return value if isinstance(value, dict) else {}
 
 
@@ -68,19 +74,25 @@ def desktop_namespace() -> str:
     return f"dimos-desktop/{host_chunk(socket.gethostname())}-{desktop.get('port') or DESKTOP_DEFAULT_PORT}"
 
 
-def resolve_namespace() -> str:
-    return check_namespace(str(given_zenoh().get("namespace") or desktop_namespace()))
+def resolve_namespace(given: str | None = None) -> str:
+    namespace = (
+        given
+        or os.environ.get(NAMESPACE_ENV)
+        or dimos_app().get("zenohNamespace")
+        or desktop_namespace()
+    )
+    return check_namespace(str(namespace))
 
 
-def resolve_connect() -> list[str]:
+def resolve_connect(given: str | None = None) -> list[str]:
     from dimos.core.global_config import global_config
 
-    given = given_zenoh().get("connect")
-    if given is not None:
-        return [str(item) for item in given]
-    return [
-        item.strip() for item in str(global_config.zenoh_connect or "").split(",") if item.strip()
-    ]
+    value = (
+        given
+        if given is not None
+        else dimos_app().get("zenohConnect") or global_config.zenoh_connect
+    )
+    return [item.strip() for item in str(value or "").split(",") if item.strip()]
 
 
 def event_key(namespace: str, event: dict[str, Any]) -> str:

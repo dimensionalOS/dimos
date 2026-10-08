@@ -28,7 +28,6 @@ import pytest
 from dimos.gateway.app import ServerState, create_app
 from dimos.gateway.events import Bus
 from dimos.gateway.msgs import codegen as msgs
-from dimos.gateway.provides import provides
 from dimos.gateway.uploads import Uploads
 
 REPO = Path(__file__).parents[2]
@@ -106,8 +105,7 @@ def test_served_with_an_etag(tmp_path: Path) -> None:
         ts = client.get("/dimos/msgs.ts")
         assert ts.headers["content-type"].startswith("application/typescript")
         assert ts.headers["etag"] != etag
-    offered = {(e["method"], e["path"]) for e in provides(app)["endpoints"]}
-    assert {("GET", "msgs.js"), ("GET", "msgs.ts")} <= offered
+        assert "/dimos/msgs.js" in client.get("/dimos/openapi.json").json()["paths"]
 
 
 ROUND_TRIP = """

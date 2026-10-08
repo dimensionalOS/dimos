@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Callable
 import json
 from pathlib import Path
 import socket
@@ -29,8 +28,9 @@ from dimos.protocol.service.zenohservice import ZenohSessionPool
 
 
 @pytest.fixture
-def no_namespace_env(given_gateway: Callable[..., None]) -> None:
-    given_gateway()
+def no_namespace_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in (zenoh_events.NAMESPACE_ENV, "DIMOS_APP"):
+        monkeypatch.delenv(name, raising=False)
 
 
 def write_desktop_config(server_home: Path, text: str) -> None:
@@ -62,27 +62,28 @@ def test_namespace_default_is_desktops(
 
 
 def test_namespace_order(
-    server_home: Path, no_namespace_env: None, given_gateway: Callable[..., None]
+    server_home: Path, no_namespace_env: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     write_desktop_config(server_home, "desktop:\n  namespace: from/config\n")
-    assert zenoh_events.resolve_namespace() == "from/config"
-    given_gateway(zenoh={"namespace": "from/desktop"})
-    assert zenoh_events.resolve_namespace() == "from/desktop"
+    monkeypatch.setenv("DIMOS_APP", json.dumps({"zenohNamespace": "from/app"}))
+    assert zenoh_events.resolve_namespace() == "from/app"
+    monkeypatch.setenv(zenoh_events.NAMESPACE_ENV, "from/env")
+    assert zenoh_events.resolve_namespace() == "from/env"
+    assert zenoh_events.resolve_namespace("from/flag") == "from/flag"
     write_desktop_config(server_home, "desktop:\n  namespace: bad/*\n")
-    given_gateway()
+    monkeypatch.delenv(zenoh_events.NAMESPACE_ENV)
+    monkeypatch.delenv("DIMOS_APP")
     with pytest.raises(ValueError):
         zenoh_events.resolve_namespace()
 
 
-def test_connect_order(
-    no_namespace_env: None, given_gateway: Callable[..., None], monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_connect_order(no_namespace_env: None, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(global_config, "zenoh_connect", "tcp/a:1, tcp/b:2")
     assert zenoh_events.resolve_connect() == ["tcp/a:1", "tcp/b:2"]
-    given_gateway(zenoh={"connect": ["tcp/10.0.0.2:7447"]})
+    monkeypatch.setenv("DIMOS_APP", json.dumps({"zenohConnect": "tcp/10.0.0.2:7447"}))
     assert zenoh_events.resolve_connect() == ["tcp/10.0.0.2:7447"]
-    given_gateway(zenoh={"connect": []})
-    assert zenoh_events.resolve_connect() == []
+    assert zenoh_events.resolve_connect("tcp/flag:3") == ["tcp/flag:3"]
+    assert zenoh_events.resolve_connect("") == []
 
 
 def test_every_bus_event_reaches_its_key() -> None:

@@ -13,7 +13,7 @@
 # limitations under the License.
 # ruff: noqa: N815  (field names are the wire format's, camelCase as Desktop's)
 
-"""The /dimos API's request bodies, answers and events, as pydantic models: each route's answer model.
+"""The /dimos API's request bodies, answers and events, as pydantic models: what openapi.json is generated from.
 
 The gateway builds its answers as plain dicts; FastAPI validates each against the route's model. Models allow extra
 fields (an answer never loses one), and the tests check no answer carries one the model doesn't declare.

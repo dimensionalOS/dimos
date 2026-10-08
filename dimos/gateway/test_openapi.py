@@ -12,8 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The gateway's answers have the same shapes as Desktop's own OpenAPI document of these paths (fixtures/), and every
-route and model is documented: compared through an OpenAPI document generated here (the gateway serves none)."""
+"""The gateway's OpenAPI: complete, the same shapes as Desktop's (fixtures/), and the checked-in openapi.json current."""
 
 from __future__ import annotations
 
@@ -22,14 +21,17 @@ from pathlib import Path
 import re
 from typing import Any
 
-from fastapi.openapi.utils import get_openapi
-from pydantic import TypeAdapter
+from fastapi.testclient import TestClient
 import pytest
+import yaml
 
-from dimos.gateway.models import DimosEvent
-from dimos.gateway.provides import gateway_app
+from dimos.gateway import openapi
+from dimos.gateway.app import ServerState, create_app
+from dimos.gateway.events import Bus
+from dimos.gateway.uploads import Uploads
 
 FIXTURE = Path(__file__).parent / "fixtures" / "desktop_openapi_dimos.json"
+DIMOS_YAML = Path(__file__).parents[2] / "dimos.yaml"
 
 # where this gateway knowingly differs from Desktop's doc, and why
 KNOWN_DIFFERENCES = {
@@ -54,37 +56,9 @@ KNOWN_DIFFERENCES = {
 }
 
 
-def document() -> dict[str, Any]:
-    """The routes' OpenAPI document, errors and events in the shapes the gateway sends them."""
-    app = gateway_app()
-    doc = get_openapi(
-        title=app.title, version="0", routes=app.routes, separate_input_output_schemas=False
-    )
-    # a bad request is a 400 ErrorResponse here, never FastAPI's 422
-    for methods in doc["paths"].values():
-        for operation in methods.values():
-            responses = operation["responses"]
-            responses.pop("422", None)
-            for code, response in responses.items():
-                content = response.get("content", {})
-                if code != "200" and "application/json" not in content:
-                    # an error is JSON even where the answer isn't (text, HTML, SSE)
-                    response["content"] = {"application/json": next(iter(content.values()))}
-                for media in content.values():
-                    if "$ref" in media.get("schema", {}):
-                        media["schema"].pop("type", None)
-    schemas = doc["components"]["schemas"]
-    for name in ("HTTPValidationError", "ValidationError"):
-        schemas.pop(name, None)
-    events = TypeAdapter(DimosEvent).json_schema(ref_template="#/components/schemas/{model}")
-    schemas.update(events.pop("$defs", {}))
-    schemas["DimosEvent"] = {**events, "title": "DimosEvent"}
-    return doc
-
-
 @pytest.fixture(scope="module")
 def spec() -> dict[str, Any]:
-    return document()
+    return openapi.document(openapi.spec_app())
 
 
 def operations(doc: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -252,6 +226,15 @@ def mismatches(spec: dict[str, Any], contract: dict[str, Any]) -> list[str]:
         mine = ours.get(key)
         if mine is None:
             continue
+        for extension in ("x-agent", "x-mcp-tool", "x-family"):
+            if mine.get(extension) != desktop.get(extension):
+                problems.append(
+                    f"{key}: {extension} {mine.get(extension)!r} != Desktop's {desktop.get(extension)!r}"
+                )
+        if mine["operationId"] != desktop["operationId"]:
+            problems.append(
+                f"{key}: operationId {mine['operationId']} != Desktop's {desktop['operationId']}"
+            )
         # parameters: name, place, required, type
         params = {(p["name"], p["in"]): p for p in mine.get("parameters", [])}
         others = {(p["name"], p["in"]): p for p in desktop.get("parameters", [])}
@@ -316,7 +299,8 @@ def test_the_comparison_catches_a_difference(spec: dict[str, Any]) -> None:
 
 
 def test_every_operation_is_documented(spec: dict[str, Any]) -> None:
-    tags = {
+    tags = {tag["name"] for tag in spec["tags"]}
+    assert tags == {
         "blueprints",
         "runs",
         "logs",
@@ -336,6 +320,7 @@ def test_every_operation_is_documented(spec: dict[str, Any]) -> None:
     for key, operation in found.items():
         assert operation["summary"] and operation["description"], key
         assert len(operation["tags"]) == 1 and operation["tags"][0] in tags, key
+        assert operation["x-family"] == "dimos" and isinstance(operation["x-agent"], bool), key
         ok = operation["responses"]["200"]
         assert ok["description"] and ok["content"], key
         for media in ok["content"].values():
@@ -381,3 +366,31 @@ def test_events_are_documented_with_their_zenoh_keys(spec: dict[str, Any]) -> No
     assert stream["responses"]["200"]["content"]["text/event-stream"]["schema"] == {
         "$ref": "#/components/schemas/DimosEvent"
     }
+
+
+def test_served_with_the_dimos_version(tmp_path: Path) -> None:
+    bus = Bus()
+    app = create_app(
+        ServerState(tmp_path, bus, Uploads(tmp_path, bus, None, tmp_path / "log")), background=False
+    )
+    with TestClient(app) as client:
+        served = client.get("/dimos/openapi.json").json()
+        assert client.get("/dimos/docs").status_code == 404
+    assert served["info"]["version"] == openapi.API_VERSION
+    assert "x-dimos-version" in served["info"]
+    del served["info"]["x-dimos-version"]
+    assert served == json.loads(openapi.text(openapi.document(app, runtime=False)))
+
+
+def test_checked_in_openapi_is_current(spec: dict[str, Any]) -> None:
+    generated = openapi.text(openapi.document(openapi.spec_app(), runtime=False))
+    assert openapi.SPEC_FILE.read_text() == generated, (
+        "dimos/gateway/openapi.json is stale: run `python -m dimos.gateway --write-openapi`"
+    )
+
+
+def test_dimos_yaml_points_at_it() -> None:
+    api = yaml.safe_load(DIMOS_YAML.read_text())["api"]
+    assert api["version"] == openapi.API_VERSION
+    assert (DIMOS_YAML.parent / api["openapi"]).resolve() == openapi.SPEC_FILE.resolve()
+    assert json.loads(openapi.SPEC_FILE.read_text())["info"]["version"] == api["version"]

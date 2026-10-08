@@ -20,76 +20,20 @@ install: |
   fi
   bash "$script" --mode dev --branch "$REF" --project-dir "$DIMOS_DIR" --skip-tests ${NON_INTERACTIVE:+--non-interactive}
   "$DIMOS_DIR/.venv/bin/python" -c "import dimos" && echo "dimos is installed in $DIMOS_DIR"
-# The /dimos HTTP API the dimos gateway serves, declared like an app's (paths relative to /dimos/): Desktop reads it per
-# tag to check apps' `uses: "@dimos-gateway"`. Generated from the gateway's routes by
-# `python -m dimos.gateway --write-provides`; a test fails while it's stale.
+# The /dimos HTTP API the dimos gateway serves: its semver (a breaking change is a major bump) and its OpenAPI document,
+# which Desktop can read per tag without running anything. Regenerate it with `python -m dimos.gateway --write-openapi`.
 # Desktop links into it too: a failed run's notification opens GET /dimos/blueprint_view?name=<bp>&view=logs&run=<runId>.
-provides:
-  description: "The dimos gateway: blueprints, global config, runs and their logs, events, Dimensional cloud uploads, discovery (blueprints, modules, message types), docs, extras, jobs and the running blueprint's skills"
-  endpoints:
-    - {method: GET, path: "healthz", description: "The dimos gateway's liveness: `ok`"}
-    - {method: GET, path: "info", description: "The dimos checkout this gateway drives: dir, version, installed"}
-    - {method: GET, path: "topics/rates", description: "Every topic on the bus the gateway has heard since it started: rate, throughput, messages, last heard"}
-    - {method: GET, path: "paths", description: "Where dimos keeps its things: the checkout, run registry, log folders, recordings folder"}
-    - {method: GET, path: "python", description: "The python dimos runs with, for an agent to run scripts with dimos's python API"}
-    - {method: POST, path: "server/stop", description: "Make the dimos gateway exit (Desktop starts it again when needed)"}
-    - {method: GET, path: "blueprints", description: "Every blueprint dimos can run (name, builtin/external) and whether it imports"}
-    - {method: GET, path: "blueprints/{name}", description: "A blueprint's modules and each module's streams (topics, types, in/out), docstring, RPC methods, skills and source location"}
-    - {method: GET, path: "source", description: "A Python file of the dimos checkout, as text (a module's code)"}
-    - {method: GET, path: "blueprint_view", description: "A page showing a blueprint: its modules (rarest first) beside its module graph, each module's streams, skills, RPC methods and code"}
-    - {method: GET, path: "blueprint_view/{file}", description: "One of the blueprint view page's own files (its scripts and styles)"}
-    - {method: GET, path: "blueprints/{name}/config", description: "A blueprint's configurable args per module: name, type, default, description, and the value the blueprint sets (a module that can't be read carries its own error)"}
-    - {method: PUT, path: "blueprints/{name}/config", description: "Save Desktop's module config for a blueprint; it becomes `--<module>.<field>=value` on every launch of it"}
-    - {method: GET, path: "catalog", description: "Every blueprint, module and skill (imports them all, in a child process: slow the first time)"}
-    - {method: GET, path: "robots", description: "Every robot dimos supports and its blueprints: title, description, the settings to decide before running each (recommended_config), starter picks, recommended blueprints, hidden ones"}
-    - {method: GET, path: "global-config", description: "dimos GlobalConfig: JSON schema, defaults, Desktop's overrides"}
-    - {method: PUT, path: "global-config", description: "Save Desktop's GlobalConfig overrides (null removes one); they become `--key=value` on every launch"}
-    - {method: GET, path: "runs", description: "Running blueprints (run id, blueprint, pid, log_dir) and the launch this gateway started"}
-    - {method: POST, path: "runs", description: "Launch a blueprint (stops nothing; check /dimos/runs first)"}
-    - {method: POST, path: "runs/restart", description: "Stop the blueprint this gateway launched (if it still runs) and launch it again: its own values on top of the config saved now"}
-    - {method: POST, path: "runs/stop", description: "Stop the blueprint this gateway launched (or runId)"}
-    - {method: GET, path: "runs/{runId}/log", description: "A run's structured log (main.jsonl): records with level, logger, event"}
-    - {method: GET, path: "events", description: "The dimos gateway's live events (SSE): launch phases, warning+ log records, uploads, the cloud login"}
-    - {method: GET, path: "cloud/account", description: "Whether this machine is logged in to Dimensional cloud, and as whom"}
-    - {method: GET, path: "cloud/login", description: "The cloud login in progress: state (idle, starting, pending, approved, denied, expired, failed), url, code"}
-    - {method: POST, path: "cloud/login", description: "Start logging this machine in to Dimensional cloud: returns a URL and a code the user approves in any signed-in browser"}
-    - {method: DELETE, path: "cloud/login", description: "Cancel the pending cloud login"}
-    - {method: GET, path: "cloud/login/page", description: "A small HTML page for an app's iframe that runs the cloud login and posts {type:\"dimos-cloud-login\", state, email} to its parent"}
-    - {method: POST, path: "cloud/logout", description: "Log this machine out of Dimensional cloud"}
-    - {method: GET, path: "uploads", description: "The Dimensional cloud upload queue: each upload's state, progress, speed, time left and error"}
-    - {method: POST, path: "uploads", description: "Upload a recording (.mcap or .db) to Dimensional cloud: it joins the queue (one at a time)"}
-    - {method: DELETE, path: "uploads", description: "Clear the finished uploads (done, failed, cancelled) from the list"}
-    - {method: GET, path: "uploads/uploaded", description: "Which recordings are already in Dimensional cloud (uploaded from this machine), by path, with a console link; ?path= for one"}
-    - {method: DELETE, path: "uploads/{id}", description: "Cancel a queued or running upload, or remove a finished one from the list"}
-    - {method: POST, path: "uploads/{id}/retry", description: "Queue a failed or cancelled upload again"}
-    - {method: GET, path: "discovery", description: "Where the discovery scan (every blueprint and module imported once, cached) is: progress, errors"}
-    - {method: POST, path: "discovery/refresh", description: "Check the checkout and packages again now, and rescan what changed (or everything, `full`)"}
-    - {method: GET, path: "discovery/blueprints", description: "Every blueprint from the discovery cache: whether it imports (and why not), its robot, its modules and their streams with topics"}
-    - {method: GET, path: "modules", description: "Every module from the discovery cache: streams in and out, skills, and how many blueprints use it"}
-    - {method: GET, path: "modules/{module}/config", description: "A module's config fields and defaults: name, type, default, description, enum values, and whether it converts to and from JSON"}
-    - {method: GET, path: "message-types", description: "Every message type on a module's stream, with the modules that publish and read it"}
-    - {method: GET, path: "robots/{robot}/modules", description: "The modules a robot's blueprints use, most specific to that robot first (TF-IDF style)"}
-    - {method: GET, path: "docs/custom-robot", description: "dimos's guide to adding a robot of your own: markdown and HTML, with absolute links"}
-    - {method: GET, path: "docs/links", description: "Links into dimos's published docs: configuring a robot, adding one, blueprints, modules, install"}
-    - {method: GET, path: "extras", description: "dimos's optional extras (`dimos[sim]`, ...): which are installed, what's missing, a download-size hint"}
-    - {method: POST, path: "extras/install", description: "Install dimos extras through Desktop's shell tool (the user sees the commands and presses Run); discovery rescans when it ends"}
-    - {method: GET, path: "jobs", description: "The dimos gateway's jobs (extras installs): running, and finished in the last 30 minutes"}
-    - {method: GET, path: "jobs/{job}/log", description: "A job's output so far, and how it ended (`error`, and `failure`: its last lines)"}
-    - {method: DELETE, path: "jobs/{job}", description: "Cancel a running job"}
-    - {method: GET, path: "msgs.js", description: "Every dimos message's LCM decoder and encoder, as a plain JS module for pages"}
-    - {method: GET, path: "msgs.ts", description: "Every dimos message's LCM decoder and encoder, as TypeScript with each message's type"}
-    - {method: GET, path: "skills", description: "The running blueprint's skills: name, module, description, params"}
-    - {method: POST, path: "skills/call", description: "Call a skill of the running blueprint and wait for its answer"}
-    - {method: POST, path: "mcp", description: "An MCP server (Streamable HTTP, JSON answers) with two tools: list_skills and call_skill"}
+api:
+  version: "1.16.0"
+  openapi: dimos/gateway/openapi.json
 # Every robot dimos supports and what each blueprint is for (title, description, tags, modes and their essential args,
-# the app to install): read per tag like provides:. CI keeps it in step with the code
+# the app to install): read per tag like the OpenAPI document. CI keeps it in step with the code
 # (dimos/gateway/robots.py); the gateway serves it resolved at GET /dimos/robots.
 robots: dimos/gateway/robots.json
 # The dimos gateway (blueprints, runs, logs, events, global config, cloud uploads at /dimos/): dimos/gateway/, in Python.
-# Desktop runs start: and socket: in the checkout in dimos.dir with one variable, DIMOS_GATEWAY, a JSON object:
-# {"socket": "/abs/gateway.sock", "dimosDir": "/abs/checkout", "zenoh": {"namespace": "<ns>", "connect": ["tcp/..."]},
-#  "desktopUrl": "http://127.0.0.1:5555", "recordingsDir": "/abs/recordings", "dimosRange": ">=0.0.14 <0.1"}
+# env: DIMOS_DIR, DIMOS_SERVER_SOCKET, DIMOS_ZENOH_NAMESPACE (Desktop's <ns>), ZENOH_CONNECT,
+# DIMOS_RECORDINGS_DIR (Desktop's recordings folder). Desktop reads start:/socket: from the checkout in dimos.dir.
 start: |
-  .venv/bin/python -m dimos.gateway --detach
+  "$DIMOS_DIR/.venv/bin/python" -m dimos.gateway --detach --dimos-dir "$DIMOS_DIR" --socket "$DIMOS_SERVER_SOCKET"
 socket: |
-  .venv/bin/python -m dimos.gateway --print-socket
+  echo "$DIMOS_SERVER_SOCKET"
