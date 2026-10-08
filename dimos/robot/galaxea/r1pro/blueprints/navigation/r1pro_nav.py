@@ -33,8 +33,9 @@ from dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_coordinator import (
     r1pro_control,
     r1pro_lidar_odometry,
 )
-from dimos.robot.galaxea.r1pro.head_depth import HEAD_CAMERA_FRAME, r1pro_head_depth
-from dimos.robot.galaxea.r1pro.lio import BASE_FRAME, LIDAR_FRAME, ODOM_FRAME
+from dimos.robot.galaxea.r1pro.head_cameras import HeadLeftCameraConfig
+from dimos.robot.galaxea.r1pro.head_depth import r1pro_head_depth
+from dimos.robot.galaxea.r1pro.lio import R1ProLioMountTfConfig
 from dimos.robot.galaxea.r1pro.vendor_stack import R1ProVendorStack
 from dimos.visualization.vis_module import vis_module
 
@@ -77,9 +78,11 @@ def _render_cloud(msg: Any) -> Any:
     frame_id = getattr(msg, "frame_id", "") or "unknown"
     path = f"world/lidar/{frame_id}"
     xyz = msg.points_f32()
-    if frame_id in (HEAD_CAMERA_FRAME, LIDAR_FRAME) and len(xyz):
+    head_frame = HeadLeftCameraConfig.model_fields["frame_id"].default
+    lidar_frame = R1ProLioMountTfConfig.model_fields["lidar_frame"].default
+    if frame_id in (head_frame, lidar_frame) and len(xyz):
         # Rainbow by the frame's own up axis (the optical frame's is -y), inverted so dark blue is never on black.
-        up = -xyz[:, 1] if frame_id == HEAD_CAMERA_FRAME else xyz[:, 2]
+        up = -xyz[:, 1] if frame_id == head_frame else xyz[:, 2]
         level = 1.0 - np.clip((up - up.min()) / max(float(np.ptp(up)), 1e-3), 0.0, 1.0)
         colors = np.stack(
             [255 * level, 255 * (1 - np.abs(2 * level - 1)), 255 * (1 - level)], axis=1
@@ -125,8 +128,8 @@ _rerun_config = {
 r1pro_nav = autoconnect(
     vis_module(viewer_backend=global_config.viewer, rerun_config=_rerun_config),
     R1ProVendorStack.blueprint(stop_vendor_lidar=True),
-    # Point-LIO owns odom -> base_link, so the connection's wheel odometry is off.
-    r1pro_control(publish_odom=False, enable_wrist_color=False),
+    # Point-LIO owns odom -> base_link, so the connection's wheel odometry stays off tf.
+    r1pro_control(publish_odom_tf=False, enable_wrist_color=False),
     r1pro_lidar_odometry(),
     r1pro_head_depth(
         min_height_m=HEAD_CLOUD_MIN_HEIGHT_M,
@@ -141,14 +144,11 @@ r1pro_nav = autoconnect(
         emit_every=1,
         global_emit_every=50,
         support_min=4,
-        world_frame=ODOM_FRAME,
         worker_threads=3,
         # The Livox cloud arrives ~0.11 s behind its stamp; 0.1 dropped clouds on jitter.
         tf_match_tolerance_s=0.25,
     ),
     MLSPlannerNative.blueprint(
-        world_frame=ODOM_FRAME,
-        base_frame=BASE_FRAME,
         voxel_size=VOXEL_SIZE_M,
         robot_height=OVERHEAD_CLEARANCE_M,
         start_z_offset_m=0.0,

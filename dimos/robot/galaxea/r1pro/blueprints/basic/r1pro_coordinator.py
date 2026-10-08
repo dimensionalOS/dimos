@@ -57,9 +57,8 @@ from dimos.robot.galaxea.r1pro.head_cameras import (
     HeadRightCamera,
 )
 from dimos.robot.galaxea.r1pro.lio import (
-    LIDAR_FRAME,
-    ODOM_FRAME,
     R1ProLioMountTf,
+    R1ProLioMountTfConfig,
     R1ProLioOdomPose,
 )
 from dimos.robot.galaxea.r1pro.vendor_stack import R1ProVendorStack
@@ -184,7 +183,7 @@ def _head_cameras() -> list[Blueprint]:
 def r1pro_control(
     *,
     tasks: Sequence[TaskConfig] | None = None,
-    publish_odom: bool | None = None,
+    publish_odom_tf: bool | None = None,
     enable_wrist_color: bool | None = None,
 ) -> Blueprint:
     """R1ProConnection, ControlCoordinator and the head cameras.
@@ -210,7 +209,7 @@ def r1pro_control(
     return (
         autoconnect(
             R1ProConnection.blueprint(
-                **({} if publish_odom is None else {"publish_odom": publish_odom}),
+                **({} if publish_odom_tf is None else {"publish_odom_tf": publish_odom_tf}),
                 **(
                     {} if enable_wrist_color is None else {"enable_wrist_color": enable_wrist_color}
                 ),
@@ -304,13 +303,14 @@ def r1pro_control(
 # that runs the connection's sensor threads.
 def r1pro_lidar_odometry() -> Blueprint:
     """Our Mid-360 driver (per-point times, its own IMU) into Point-LIO, plus the mount tf."""
+    lidar_frame = R1ProLioMountTfConfig.model_fields["lidar_frame"].default
     return autoconnect(
         mid360_for_pointlio(
-            frame_id=LIDAR_FRAME,
+            frame_id=lidar_frame,
             lidar_ip=R1PRO_CHASSIS_LIDAR_IP,
             host_ip=R1PRO_CHASSIS_LIDAR_HOST_IP,
         ),
-        PointLio.blueprint(frame_id=ODOM_FRAME, sensor_frame_id=LIDAR_FRAME).remappings(
+        PointLio.blueprint(sensor_frame_id=lidar_frame).remappings(
             [(PointLio, "odometry", "pointlio_odometry")]
         ),
         R1ProLioMountTf.blueprint(),
@@ -329,7 +329,7 @@ r1pro_coordinator = (
         R1ProVendorStack.blueprint(stop_vendor_lidar=True),
         r1pro_visualization(),
         # Off, so base_link has exactly one parent: Point-LIO's, through the mount.
-        r1pro_control(publish_odom=False),
+        r1pro_control(publish_odom_tf=False),
         r1pro_lidar_odometry(),
     )
     .remappings(

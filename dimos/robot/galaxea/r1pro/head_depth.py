@@ -18,10 +18,7 @@ from __future__ import annotations
 
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.perception.depth2depth_cloud.module import Depth2DepthCloud
-from dimos.robot.galaxea.r1pro.lio import BASE_FRAME, ODOM_FRAME
-
-# The head's left eye; already an optical frame in the vendor URDF.
-HEAD_CAMERA_FRAME = "camera_head_left_link"
+from dimos.robot.galaxea.r1pro.lio import R1ProLioMountTfConfig
 
 # Past this the per-pixel calibration has few lidar anchors to lean on.
 MAX_RANGE_M = 6.0
@@ -45,18 +42,16 @@ def r1pro_head_depth(
     """
     options: dict[str, object] = dict(cloud)
     if min_height_m is not None or max_height_m is not None:
-        options["height_frame"] = BASE_FRAME
+        options["height_frame"] = R1ProLioMountTfConfig.model_fields["base_frame"].default
     if min_height_m is not None:
         options["min_height_m"] = min_height_m
     if max_height_m is not None:
         options["max_height_m"] = max_height_m
 
     return Depth2DepthCloud.blueprint(
-        world_frame=ODOM_FRAME,
         max_range_m=MAX_RANGE_M,
         tf_tolerance_s=TF_TOLERANCE_S,
         lidar_history_s=lidar_history_s,
-        frame_id=HEAD_CAMERA_FRAME,
         **options,
     ).remappings(
         [

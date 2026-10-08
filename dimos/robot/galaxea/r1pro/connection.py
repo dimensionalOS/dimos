@@ -203,7 +203,8 @@ class R1ProConnectionConfig(ModuleConfig):
     publish_rate_hz: float = Field(default=100.0)
     # rad/s used when MotorCommand.dq is the VEL_STOP sentinel or 0.
     tracking_speed: float = Field(default=0.5)
-    publish_odom: bool = Field(default=True)
+    # Wheel odometry always goes out on `odometry`; this gates its odom -> base_link tf and the `odom` pose.
+    publish_odom_tf: bool = Field(default=True)
     frame_id: str = Field(default="base_link")
     odom_frame_id: str = Field(default="odom")
     # Seconds between per-stream sensor-stats log lines (0 disables).
@@ -428,14 +429,13 @@ class R1ProConnection(Module):
         ):
             self._control_unsubs.append(self._ros.subscribe(topic, cb))
 
-        if self.config.publish_odom:
-            # Executed chassis speed — integrated into wheel odometry.
-            self._control_unsubs.append(
-                self._ros.subscribe(
-                    RawROSTopic("/motion_control/chassis_speed", TwistStamped, qos=qos),
-                    self._on_chassis_speed,
-                )
+        # Executed chassis speed — integrated into wheel odometry.
+        self._control_unsubs.append(
+            self._ros.subscribe(
+                RawROSTopic("/motion_control/chassis_speed", TwistStamped, qos=qos),
+                self._on_chassis_speed,
             )
+        )
 
     # Sensor streams (isolated RawROS + per-stream decode workers)
 
@@ -696,7 +696,6 @@ class R1ProConnection(Module):
         frame_id = self.config.odom_frame_id
         base = self.config.frame_id
         pose = PoseStamped(ts=now, frame_id=frame_id, position=position, orientation=orientation)
-        self.odom.publish(pose)
         self.odometry.publish(
             Odometry(
                 ts=now,
@@ -706,7 +705,9 @@ class R1ProConnection(Module):
                 twist=Twist(Vector3(vx, vy, 0.0), Vector3(0.0, 0.0, wz)),
             )
         )
-        self.tf.publish(TFMessage(Transform.from_pose(base, pose)))
+        if self.config.publish_odom_tf:
+            self.odom.publish(pose)
+            self.tf.publish(TFMessage(Transform.from_pose(base, pose)))
 
     # Aggregated motor_states publish loop
 

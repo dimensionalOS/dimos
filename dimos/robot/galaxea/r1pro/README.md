@@ -44,26 +44,33 @@ cd ~/galaxea-dimos/install/startup_config/share/startup_config/script
 ## Blueprints
 
 ```bash
-dimos run r1pro-coordinator     # connection + coordinator + Point-LIO + viewer (WASD drives)
-dimos run r1pro-nav             # + 3D nav: lidar + head depth, MLS planner
-dimos run r1pro-manipulation    # + dual-arm planning (experimental)
-dimos run r1pro-planar-preview   # planar-base planning preview with fake hardware
+dimos run r1pro-coordinator      # the base: connection, head cameras, Mid-360 + Point-LIO, viewer (WASD drives)
+dimos run r1pro-nav              # base + head depth + 3D ray-traced map + MLS planner (click a goal)
+dimos run r1pro-manipulation     # dual-arm planning (experimental)
+dimos run r1pro-planar-preview   # planar-base planning preview on mock hardware
 ```
+
+`r1pro-coordinator` is the one standard R1 blueprint: `R1ProConnection` (chassis
+`cmd_vel`, joints, wrist cameras, wheel odometry), the head cameras (V4L2,
+hardware-synced), our Mid-360 driver into Point-LIO, and the vendor stack, booted
+if it is not already running. `r1pro-nav` builds on the same pieces.
 
 ## Point-LIO and head depth
 
-Every blueprint built on `r1pro-coordinator` places `base_link` by Point-LIO on
-the chassis Mid-360 instead of wheel odometry; `chassis_odom` keeps its name.
-`r1pro-manipulation` builds on `r1pro_control` alone and keeps wheel odometry.
-`r1pro-nav` adds a
-dense cloud from the left head camera: Depth Anything, calibrated per pixel to
-the last two seconds of Point-LIO scans (`Depth2DepthCloud`).
+`base_link` is placed by Point-LIO on the chassis Mid-360, not by wheel odometry.
+The connection still publishes wheel odometry on `odometry`, just not on tf.
+`r1pro-manipulation` builds on `r1pro_control` alone and keeps wheel odometry on tf.
+`r1pro-nav` adds a dense cloud from the left head camera: Depth Anything,
+calibrated per pixel to the last few seconds of Point-LIO scans (`Depth2DepthCloud`).
 The Mid-360 driver, Point-LIO and the head depth are native binaries built on
 first run, so `cargo` (and on an Orin, `nvcc` for CUDA) must be on the path.
 
-**Transport.** Run with `--g.transport lcm`. The vendor's `realsense2_camera`
-holds LCM's default port, so set
+**Transport.** The blueprints run on zenoh. On LCM, the vendor's
+`realsense2_camera` holds LCM's default port, so set
 `LCM_DEFAULT_URL=udpm://239.255.76.67:7767?ttl=0`.
+
+**The head cameras.** The vendor's `signal_camera` node holds both head eyes; the
+vendor stack module stops it (SIGINT) so our V4L2 cameras can open them.
 
 **The lidar.** Our Mid-360 driver takes the sensor from the vendor's
 `livox_ros_driver2` (a Livox streams to whoever asked last), and

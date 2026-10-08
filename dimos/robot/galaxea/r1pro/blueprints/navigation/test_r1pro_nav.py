@@ -34,9 +34,8 @@ from dimos.robot.galaxea.r1pro.config import (
 )
 from dimos.robot.galaxea.r1pro.connection import R1ProConnection
 from dimos.robot.galaxea.r1pro.lio import (
-    LIDAR_FRAME,
-    ODOM_FRAME,
     R1ProLioMountTf,
+    R1ProLioMountTfConfig,
     R1ProLioOdomPose,
 )
 
@@ -46,16 +45,16 @@ def _atoms(blueprint):
     return {atom.name: atom for atom in blueprint.active_blueprints}
 
 
+LIDAR_FRAME = R1ProLioMountTfConfig.model_fields["lidar_frame"].default
 key = r1pro_nav._instance_key
 
 
 def test_base_link_has_one_parent_and_it_is_pointlio() -> None:
     atoms = _atoms(r1pro_nav)
     # The connection's wheel odometry, and its odom -> base_link edge, are off.
-    assert atoms[key(R1ProConnection)].kwargs["publish_odom"] is False
+    assert atoms[key(R1ProConnection)].kwargs["publish_odom_tf"] is False
     # Point-LIO publishes odom -> lidar_pointlio_link and the mount tf hangs base_link under it.
     assert atoms[key(PointLio)].kwargs == {
-        "frame_id": ODOM_FRAME,
         "sensor_frame_id": LIDAR_FRAME,
     }
     assert atoms[key(Mid360)].kwargs == {
@@ -85,7 +84,6 @@ def test_both_clouds_land_on_the_lidar_bus_and_the_head_is_cut_to_the_lidars_bli
     # The lidar sits 0.29 m up; the band stops just above it and no higher.
     assert 0.29 < HEAD_CLOUD_MAX_HEIGHT_M < 0.5
     assert HEAD_CLOUD_MIN_HEIGHT_M < 0.0
-    assert atoms[RayTracingVoxelMap.name].kwargs["world_frame"] == ODOM_FRAME
 
 
 def test_the_stack_is_map_planner_local_planner_controller() -> None:
@@ -100,7 +98,6 @@ def test_the_stack_is_map_planner_local_planner_controller() -> None:
         assert name in atoms, name
     remaps = r1pro_nav.remapping_map
     assert remaps[(key(MLSPlannerNative), "path")] == "planner_path"
-    assert atoms[key(MLSPlannerNative)].kwargs["base_frame"] == "base_link"
 
 
 def test_every_remapping_names_a_real_port_and_the_config_parses() -> None:
