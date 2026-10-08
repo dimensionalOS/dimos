@@ -111,7 +111,7 @@ misconfigured extension. Invalid trials count as errors in the summary; report t
 
 ### Raw robot topics
 
-`Sim(raw_bridge=True)` adds the `raw-robot-bridge` module to the launch. It republishes the
+A suite composes the `raw-robot-bridge` module and sets `Sim(raw_bridge=True)`. The bridge republishes the
 robot connection's streams as plain Zenoh topics on a per-run loopback port (an attached dimos
 uses `tcp/127.0.0.1:7448`), a peer with multicast and gossip scouting off, so a subscriber sees these keys and none of dimOS's own bus:
 
@@ -128,8 +128,9 @@ same module serves an arm when its blueprint provides them: joint state (with th
 pose and a 0-1 gripper opening) on `robot/arm/state/json`, wrist depth and camera pose, and
 `robot/arm/twist/json` / `robot/arm/gripper/json` commands that drive the coordinator's
 `eef_twist` and gripper tasks. Robot-specific settings (camera and TCP frames, gripper joint and
-range) come from the suite's `module_env`; `xarm-sim` gets its TCP pose from the coordinator
-(`publish_frame_poses`).
+range) live in the robot's blueprint: `xarm-sim` composes a configured bridge and gets its TCP
+pose from the coordinator (`publish_frame_poses`); the Go2 suites list `raw-robot-bridge` with its
+defaults.
 
 Every suite with `raw_bridge=True` names its `ROBOT.md` template as `raw_guide`: `RAW_README`
 for the Go2, `RAW_ARM_README` for arms; a suite appends its robot facts (`XARM7_NOTES`).
@@ -503,6 +504,10 @@ package for tasks, scene setup and usage; use `--tags <scene>` to select a case.
 ## Running
 
 - **CLI**: `dimos evals run <dotted.suite> --agent <agent-module> [--set model=gpt-4o] [--tags nav] [--limit 5]`
+- **Docker**: add `--docker` to run that eval in a fresh, detached container
+  from the eval image, one per invocation, any number side by side on one
+  host; setup, GPU rendering and an EC2 runbook are in
+  [`evals-docker.md`](/docs/usage/evals-docker.md).
 - **Python**: `EvalRunner().run(SUITE, agent, tags=frozenset({"encoding"}))`
 - **pytest**: suites are importable lists. Use
   `@pytest.mark.parametrize("case", SUITE)` and assert on `passed`

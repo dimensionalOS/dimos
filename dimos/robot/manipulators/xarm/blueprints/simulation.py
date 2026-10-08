@@ -36,6 +36,7 @@ from dimos.robot.manipulators.xarm.config import (
     make_xarm7_sim_module_kwargs,
     make_xarm7_sim_robot_config,
 )
+from dimos.robot.raw_robot_bridge import RawRobotBridge
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 
@@ -75,7 +76,7 @@ xarm_perception_sim = autoconnect(
     RerunBridgeModule.blueprint(),
 )
 
-# Robot-only stack: low-level control and sensors, reusable with any transport.
+# Robot-only stack: control and sensors, exposed as plain Zenoh topics for agents without dimOS.
 xarm_sim = autoconnect(
     MujocoSimModule.blueprint(
         **{
@@ -103,5 +104,12 @@ xarm_sim = autoconnect(
         cls=ArmTwistCoordinator,
         instance_name="ControlCoordinator",
         publish_frame_poses=True,
+    ),
+    RawRobotBridge.blueprint(
+        camera_frame="wrist_camera_color_optical_frame",
+        overview_frame="env_camera_color_optical_frame",
+        ee_frame="link_tcp",
+        gripper_joint="arm/gripper",
+        gripper_range=(0.0, 0.85),
     ),
 )

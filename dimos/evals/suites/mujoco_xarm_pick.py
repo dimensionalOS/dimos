@@ -23,7 +23,7 @@ budget is mostly spent on client setup and observation, so give it room to re-ob
 
 from dimos.evals.constants import RAW_ARM_README
 from dimos.evals.environments.mujoco_sim import MujocoEnvironment
-from dimos.evals.suites.mujoco_xarm import lifted
+from dimos.evals.scorers import lifted
 from dimos.evals.types import EvalCase, Suite
 from dimos.utils.data import LfsPath
 
@@ -45,13 +45,6 @@ SUITE: Suite = [
             blueprint=["xarm-sim", "mcp-server"],
             raw_bridge=True,
             raw_guide=RAW_ARM_README + XARM7_NOTES,
-            module_env={
-                "RAWROBOTBRIDGE__CAMERA_FRAME": "wrist_camera_color_optical_frame",
-                "RAWROBOTBRIDGE__OVERVIEW_FRAME": "env_camera_color_optical_frame",
-                "RAWROBOTBRIDGE__EE_FRAME": "link_tcp",
-                "RAWROBOTBRIDGE__GRIPPER_JOINT": "arm/gripper",
-                "RAWROBOTBRIDGE__GRIPPER_RANGE": "[0.0, 0.85]",
-            },
             ready_streams=("color_image", "overview_image", "coordinator_joint_state"),
             scene=LfsPath("xarm7/scene.xml"),
             tracked_bodies=("cup",),

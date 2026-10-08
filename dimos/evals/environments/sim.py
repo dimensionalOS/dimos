@@ -43,7 +43,7 @@ class SimConfig(EnvironmentConfig):
     blueprint: list[str]
     # Module registry names to disable in the composed blueprint.
     disable: tuple[str, ...] = ()
-    # Also expose the robot as plain Zenoh topics (raw-robot-bridge) for agents without dimOS.
+    # The blueprint composes raw-robot-bridge; agents without dimOS get its per-run endpoint.
     raw_bridge: bool = False
     # ROBOT.md template describing this robot's raw topics; required with raw_bridge.
     raw_guide: str | None = None
@@ -105,10 +105,7 @@ class Sim(Environment):
             if not McpAdapter(mcp_url).wait_for_ready(timeout=2.0):
                 raise RuntimeError(f"attach needs a running dimos at {mcp_url}")
             return
-        bridge = ["raw-robot-bridge"] if self.config.raw_bridge else []
-        validate_blueprints(
-            (*self.config.blueprint, *agent.config.modules, *bridge, *self.config.disable)
-        )
+        validate_blueprints((*self.config.blueprint, *agent.config.modules, *self.config.disable))
 
     def start(self, modules: Sequence[str]) -> RunningEnvironment:
         # SQLite memory codecs are only needed for a running simulator.
@@ -126,11 +123,10 @@ class Sim(Environment):
             self.configure_launch(proc)
             proc.global_args.append("--record")
             disabled = [arg for name in self.config.disable for arg in ("--disable", name)]
-            bridge = ["raw-robot-bridge"] if self.config.raw_bridge else []
             if self.config.raw_bridge:
                 self._raw_endpoint = f"tcp/127.0.0.1:{_free_port()}"  # one bridge per run
                 proc.extra_env["RAWROBOTBRIDGE__ENDPOINT"] = self._raw_endpoint
-            proc.demo_args = ["run", *self.config.blueprint, *modules, *bridge, *disabled]
+            proc.demo_args = ["run", *self.config.blueprint, *modules, *disabled]
             self._resources.callback(proc.stop)
             proc.start()
             assert proc.process is not None

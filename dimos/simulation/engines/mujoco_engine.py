@@ -493,7 +493,8 @@ class MujocoEngine(SimulationEngine):
         lidar_states: dict[str, _RaycastLidarState],
     ) -> None:
         """Raycast lidar frames from MuJoCo cameras. Must be called from sim thread."""
-        bodyexclude = self._robot_binding.root_body_id if self._robot_binding is not None else -1
+        root_body = self._robot_binding.root_body_id if self._robot_binding is not None else None
+        bodyexclude = -1 if root_body is None else root_body
         for state in lidar_states.values():
             if now - state.last_cast_time < state.interval:
                 continue
@@ -505,7 +506,7 @@ class MujocoEngine(SimulationEngine):
             n_rays = directions_world.shape[0]
             geom_ids = np.full(n_rays, -1, dtype=np.int32)
             distances = np.full(n_rays, -1.0, dtype=np.float64)
-            mujoco.mj_multiRay(  # type: ignore[attr-defined]
+            mujoco.mj_multiRay(
                 self._model,
                 self._data,
                 origin,

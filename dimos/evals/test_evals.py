@@ -457,6 +457,21 @@ def test_runner_uses_unique_directory_when_timestamps_match(
     assert second.run_dir.name.startswith("run-20260831-120000-")
 
 
+@pytest.mark.parametrize(("open_output", "mode"), [(None, 0o700), ("1", 0o777)])
+def test_run_dir_is_private_unless_opened(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, open_output: str | None, mode: int
+) -> None:
+    if open_output is None:
+        monkeypatch.delenv("DIMOS_EVALS_OPEN_OUTPUT", raising=False)
+    else:
+        monkeypatch.setenv("DIMOS_EVALS_OPEN_OUTPUT", open_output)
+    runner = EvalRunner(out_dir=tmp_path)
+
+    runner.run([], FakeAgent())
+
+    assert runner.run_dir.stat().st_mode & 0o777 == mode
+
+
 def test_runner_end_to_end_offline(dataset: str, tmp_path: Path) -> None:
     calls: list[str] = []
     env = FakeEnvironment(Path(dataset), calls)
