@@ -27,7 +27,6 @@ GUIDANCE = (
     "One camera is connected: the wrist camera, mounted on the gripper and moving with it. "
     "observe returns its image, and localize finds named objects in its images and returns "
     "their world positions. Use the robot's manipulation skills to move. "
-    "Read the current robot pose; preserve its orientation for top-down moves. "
     "Keep the final result steady for at least two seconds before finishing."
 )
 
