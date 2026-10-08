@@ -16,13 +16,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import json
 from pathlib import Path
 
 import pytest
 
 from dimos.constants import DIMOS_PROJECT_ROOT
-from dimos.gateway import config, desktop, main
+from dimos.gateway import config, desktop, main, runs
 
 
 def test_everything_comes_from_dimos_gateway(
@@ -49,3 +50,12 @@ def test_print_socket(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFix
     monkeypatch.setenv(config.GATEWAY_ENV, json.dumps({"socket": "/s/g.sock"}))
     main.gateway(detach_=False, print_socket=True, zenoh=True, write_provides=False)
     assert capsys.readouterr().out == "/s/g.sock\n"
+
+
+def test_a_run_dials_desktops_zenoh(given_gateway: Callable[..., None]) -> None:
+    given_gateway()
+    assert runs.zenoh_env() == {}
+    given_gateway(zenoh={"namespace": "n", "connect": ["tcp/a:1", "tcp/b:2"]})
+    assert runs.zenoh_env() == {"ZENOH_CONNECT": "tcp/a:1,tcp/b:2"}
+    given_gateway(zenoh={"connect": []})
+    assert runs.zenoh_env() == {"ZENOH_CONNECT": ""}

@@ -16,7 +16,7 @@ one variable, `DIMOS_GATEWAY`, a JSON object; every field is optional:
 | `socket`          | the unix socket to serve on (default `<dimos state>/gateway/dimos-gateway.sock`)         |
 | `dimosDir`        | the checkout runs are launched from (default: the one this code is in)                   |
 | `zenoh.namespace` | Desktop's `<ns>`: events go on `<ns>/dimos/events/<type>`                                |
-| `zenoh.connect`   | the zenoh endpoints to dial, a list (default: dimos's `zenoh_connect`)                   |
+| `zenoh.connect`   | the zenoh endpoints it and the runs it launches dial, a list (default: `zenoh_connect`)  |
 | `desktopUrl`      | where Desktop answers (its shell tool runs extras installs)                              |
 | `recordingsDir`   | the recordings folder Desktop gives its apps                                             |
 | `dimosRange`      | the dimos versions Desktop works with (`/dimos/info`'s `inRange`; launches outside fail) |

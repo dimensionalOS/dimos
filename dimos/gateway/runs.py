@@ -295,6 +295,15 @@ def run_args(blueprint: str, launch: LaunchConfig) -> list[str]:
     ]
 
 
+def zenoh_env() -> dict[str, str]:
+    """A run dials the zenoh endpoints Desktop gave the gateway ($DIMOS_GATEWAY's `zenoh.connect`), as GlobalConfig's
+    ZENOH_CONNECT."""
+    zenoh = config.gateway_env().get("zenoh")
+    if not isinstance(zenoh, dict) or zenoh.get("connect") is None:
+        return {}
+    return {"ZENOH_CONNECT": ",".join(str(e) for e in zenoh["connect"])}
+
+
 def run_env(launch: LaunchConfig) -> dict[str, str]:
     return overrides_.secret_env(launch.global_, launch.modules, launch.secrets())
 
@@ -363,6 +372,7 @@ def start(dimos_dir: Path, blueprint: str, launch_config: LaunchConfig) -> dict[
         "NO_COLOR": "1",
         # its structured log starts here, so even what it logs before it has a run id can be read
         "DIMOS_RUN_LOG_DIR": str(launch_records_dir()),
+        **zenoh_env(),
         **secret_env,
     }
     with launch_log().open("a") as log:
