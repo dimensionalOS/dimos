@@ -27,37 +27,43 @@ from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.protocol.tf.static_tf_publisher import (
     FrameSpec,
     StaticTfPublisher,
+    StaticTfPublisherConfig,
     frames_to_edge_transforms,
 )
 from dimos.robot.galaxea.r1pro.config import R1PRO_MODEL
 
-ODOM_FRAME = "odom"
-LIDAR_FRAME = "lidar_pointlio_link"
-BASE_FRAME = "base_link"
-CHASSIS_LIDAR_FRAME = "lidar_chassis_left_link"
 _lidar_joint = R1PRO_MODEL.load().get_joint("lidar_chassis_left_joint")
 assert _lidar_joint is not None
 LIDAR_MOUNT_XYZ = _lidar_joint.origin_xyz
 
-FRAMES: list[FrameSpec] = [
-    (BASE_FRAME, None, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
-    # Same spot as the URDF's lidar frame; only the parent differs.
-    (LIDAR_FRAME, BASE_FRAME, LIDAR_MOUNT_XYZ, (0.0, 0.0, 0.0)),
-    (CHASSIS_LIDAR_FRAME, BASE_FRAME, LIDAR_MOUNT_XYZ, (0.0, 0.0, 0.0)),
-]
+
+class R1ProLioMountTfConfig(StaticTfPublisherConfig):
+    base_frame: str = "base_link"
+    # Point-LIO's moving sensor frame (its sensor_frame_id).
+    lidar_frame: str = "lidar_pointlio_link"
+    # The URDF's name for the same lidar.
+    chassis_lidar_frame: str = "lidar_chassis_left_link"
 
 
-def mount_transforms() -> list[Transform]:
+def mount_transforms(config: R1ProLioMountTfConfig) -> list[Transform]:
     """Rooted at Point-LIO's frame, plus the URDF's chassis-lidar edge."""
-    edges = {t.child_frame_id: t for t in frames_to_edge_transforms(FRAMES)}
-    return [-edges[LIDAR_FRAME], edges[CHASSIS_LIDAR_FRAME]]
+    frames: list[FrameSpec] = [
+        (config.base_frame, None, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+        # Same spot as the URDF's lidar frame; only the parent differs.
+        (config.lidar_frame, config.base_frame, LIDAR_MOUNT_XYZ, (0.0, 0.0, 0.0)),
+        (config.chassis_lidar_frame, config.base_frame, LIDAR_MOUNT_XYZ, (0.0, 0.0, 0.0)),
+    ]
+    edges = {t.child_frame_id: t for t in frames_to_edge_transforms(frames)}
+    return [-edges[config.lidar_frame], edges[config.chassis_lidar_frame]]
 
 
 class R1ProLioMountTf(StaticTfPublisher):
     """Publishes the mount tree under Point-LIO on a fixed interval."""
 
+    config: R1ProLioMountTfConfig
+
     def transforms(self) -> list[Transform]:
-        return mount_transforms()
+        return mount_transforms(self.config)
 
 
 class R1ProLioOdomPose(Module):
