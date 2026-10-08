@@ -59,6 +59,8 @@ VideoMessage: TypeAlias = NDArray[np.uint8]  # Shape: (height, width, 3)
 
 logger = setup_logger()
 
+REQUEST_TIMEOUT_S = 15.0
+
 
 _T = TypeVar("_T", bound=Timestamped)
 
@@ -276,7 +278,13 @@ class UnitreeWebRTCConnection(Resource):
         future = asyncio.run_coroutine_threadsafe(
             self.conn.datachannel.pub_sub.publish_request_new(topic, data), self.loop
         )
-        return future.result()
+        try:
+            return future.result(timeout=REQUEST_TIMEOUT_S)
+        except TimeoutError:
+            future.cancel()
+            raise TimeoutError(
+                f"no reply from the robot for {topic} after {REQUEST_TIMEOUT_S:.0f}s"
+            ) from None
 
     @simple_mcache
     def raw_lidar_stream(self) -> Observable[RawLidarMsg]:
