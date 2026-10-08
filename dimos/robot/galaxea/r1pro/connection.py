@@ -66,7 +66,7 @@ from dimos.robot.galaxea.r1pro.joints import UPPER_BODY_JOINTS, coordinator_name
 from dimos.robot.galaxea.r1pro.vendor_stack import (
     VENDOR_PROFILE,
     VENDOR_STARTUP_SCRIPT,
-    prepare_vendor_stack,
+    boot_vendor_stack,
 )
 from dimos.utils.logging_config import setup_logger
 
@@ -228,9 +228,8 @@ class R1ProConnectionConfig(ModuleConfig):
     # Boot the vendor stack (HDAS, mobiman) if it is not running; it serves every ROS topic used here.
     boot_vendor_stack: bool = Field(default=True)
     vendor_startup_script: str = Field(default=VENDOR_STARTUP_SCRIPT)
+    # A session profile under the startup script's sessions.d, e.g. ../sessions.d/ATCStandard/R1PROBody.d/
     vendor_profile: str = Field(default=VENDOR_PROFILE)
-    # Close the vendor lidar driver, for blueprints that run dimos's own Mid-360 driver.
-    stop_vendor_lidar: bool = Field(default=False)
 
 
 class R1ProConnection(Module):
@@ -318,13 +317,9 @@ class R1ProConnection(Module):
     @rpc
     def build(self) -> None:
         super().build()
-        # In build, so the vendor stack is up (and its head camera node gone) before any module starts.
+        # In build, so the vendor stack is up before any module starts.
         if self.config.boot_vendor_stack:
-            prepare_vendor_stack(
-                self.config.vendor_startup_script,
-                self.config.vendor_profile,
-                self.config.stop_vendor_lidar,
-            )
+            boot_vendor_stack(self.config.vendor_startup_script, self.config.vendor_profile)
 
     @rpc
     def start(self) -> None:

@@ -316,7 +316,7 @@ r1pro_coordinator = (
     autoconnect(
         r1pro_visualization(),
         # Off, so base_link has exactly one parent: Point-LIO's, through the mount.
-        r1pro_control(publish_odom_tf=False, stop_vendor_lidar=True),
+        r1pro_control(publish_odom_tf=False),
         r1pro_lidar_odometry(),
     )
     .remappings(
