@@ -161,12 +161,12 @@ def test_a_cancel_with_no_goal_held_keeps_the_last_status(
     assert module.is_goal_reached()
 
 
-def test_cancel_goal_reports_a_goal_the_planner_keeps_retrying(
+def test_cancel_goal_holds_no_goal_once_the_planner_aborted_it(
     planner: tuple[MLSPlannerNative, list[PointStamped]],
 ) -> None:
     module, _ = planner
     module._on_nav_status(_status("1", GoalStatus.ABORTED))
-    assert module.cancel_goal()
+    assert not module.cancel_goal()
 
 
 def test_the_planner_exposes_no_skills(

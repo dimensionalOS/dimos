@@ -34,8 +34,7 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation import spec
 
-# The planner keeps retrying an aborted goal, so it still holds one.
-_HOLDS_GOAL = frozenset({GoalStatus.PENDING, GoalStatus.ACTIVE, GoalStatus.ABORTED})
+_HOLDS_GOAL = frozenset({GoalStatus.PENDING, GoalStatus.ACTIVE})
 
 
 class _Unanswered(NamedTuple):
@@ -78,6 +77,8 @@ class MLSPlannerNativeConfig(NativeModuleConfig):
     step_penalty_weight: float = 4.0
     goal_tolerance: float = 0.3
     goal_z_tolerance: float = 0.5
+    # Seconds a goal may go without a safe path before the planner aborts it.
+    blocked_timeout_s: float = 2.0
     viz_publish_hz: float = 2.0
     # The surface and edge viz publish by square cells of this edge, only the
     # changed ones each tick, plus this many unchanged ones round robin.
@@ -172,7 +173,7 @@ class MLSPlannerNative(NativeModule, spec.GlobalPlanner, spec.NavigationInterfac
 
     @rpc
     def get_state(self) -> spec.NavigationState:
-        if self._goal_status() in (GoalStatus.PENDING, GoalStatus.ACTIVE):
+        if self._goal_status() in _HOLDS_GOAL:
             return spec.NavigationState.FOLLOWING_PATH
         return spec.NavigationState.IDLE
 
