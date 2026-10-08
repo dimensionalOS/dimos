@@ -489,6 +489,27 @@ def test_json_mode_missing_level_falls_back_to_stream_default() -> None:
     assert calls[0][1] == "no level here"
 
 
+def _spawn_env(extra_env: dict[str, str] | None = None) -> dict[str, str]:
+    fixture = SimpleNamespace(config=SimpleNamespace(extra_env=extra_env or {}))
+    return NativeModule._spawn_env(fixture)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(("dimos_level", "rust_level"), [("DEBUG", "debug"), ("INFO", "info")])
+def test_derived_rust_log_keeps_zenoh_quiet(monkeypatch, dimos_level: str, rust_level: str) -> None:
+    monkeypatch.delenv("RUST_LOG", raising=False)
+    monkeypatch.setenv("DIMOS_LOG_LEVEL", dimos_level)
+    assert _spawn_env()["RUST_LOG"] == (
+        f"{rust_level},zenoh=warn,zenoh_shm::watchdog::periodic_task=error"
+    )
+
+
+def test_rust_log_always_follows_dimos_log_level(monkeypatch) -> None:
+    monkeypatch.setenv("RUST_LOG", "trace,zenoh=debug")
+    monkeypatch.setenv("DIMOS_LOG_LEVEL", "WARNING")
+    env = _spawn_env({"RUST_LOG": "trace"})
+    assert env["RUST_LOG"] == "warn,zenoh=warn,zenoh_shm::watchdog::periodic_task=error"
+
+
 def test_json_mode_malformed_falls_back_to_plain_text() -> None:
     calls = _capture_logs(
         LogFormat.JSON,

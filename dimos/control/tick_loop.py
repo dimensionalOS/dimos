@@ -39,7 +39,9 @@ from dimos.control.task import (
     JointStateSnapshot,
     ResourceClaim,
 )
+from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -49,6 +51,7 @@ if TYPE_CHECKING:
     from dimos.control.hardware_interface import ConnectedHardware
     from dimos.hardware.manipulators.spec import ControlMode
     from dimos.hardware.whole_body.spec import IMUState
+    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 logger = setup_logger()
 
@@ -83,6 +86,8 @@ class TickLoop:
         joint_to_hardware: Dict mapping joint_name -> hardware_id
         publish_callback: Optional callback to publish the merged JointState
         publish_robot_callback: Optional callback, called with (hardware_id, msg)
+        publish_tf_callback: Optional callback publishing tasks' measured frame poses as TF
+        frame_pose_hz: Maximum rate for publish_tf_callback
         frame_id: Frame ID for published JointState
         log_ticks: Whether to log tick information
     """
@@ -97,6 +102,8 @@ class TickLoop:
         joint_to_hardware: dict[JointName, HardwareId],
         publish_callback: Callable[[JointState], None] | None = None,
         publish_robot_callback: Callable[[HardwareId, JointState], None] | None = None,
+        publish_tf_callback: Callable[[TFMessage], None] | None = None,
+        frame_pose_hz: float = 30.0,
         frame_id: str = "coordinator",
         log_ticks: bool = False,
     ) -> None:
@@ -108,6 +115,9 @@ class TickLoop:
         self._joint_to_hardware = joint_to_hardware
         self._publish_callback = publish_callback
         self._publish_robot_callback = publish_robot_callback
+        self._publish_tf_callback = publish_tf_callback
+        self._frame_pose_period = 1.0 / frame_pose_hz if publish_tf_callback else 0.0
+        self._last_frame_pose_time = float("-inf")
         self._frame_id = frame_id
         self._log_ticks = log_ticks
 
@@ -199,6 +209,13 @@ class TickLoop:
 
         if self._publish_robot_callback:
             self._publish_robot_joint_states(per_hardware, joint_states.timestamp)
+
+        if (
+            self._publish_tf_callback
+            and t_now - self._last_frame_pose_time >= self._frame_pose_period
+        ):
+            self._last_frame_pose_time = t_now
+            self._publish_frame_poses(state)
 
         # Optional logging
         if self._log_ticks:
@@ -440,6 +457,33 @@ class TickLoop:
         )
         if self._publish_callback:
             self._publish_callback(msg)
+
+    def _publish_frame_poses(self, state: CoordinatorState) -> None:
+        """Publish each task's measured frame poses (FK on this tick's joints) as TF."""
+        with self._task_lock:
+            tasks = list(self._tasks.values())
+        poses: dict[str, PoseStamped] = {}
+        for task in tasks:
+            poses.update(task.measured_frame_poses(state))
+        if not poses or self._publish_tf_callback is None:
+            return
+        ts = state.joints.timestamp
+        self._publish_tf_callback(
+            TFMessage(
+                *(
+                    Transform(
+                        translation=pose.position,
+                        rotation=pose.orientation,
+                        # IK solvers return world coordinates (base pose applied), but
+                        # stamp them with the base link's name.
+                        frame_id="world",
+                        child_frame_id=frame,
+                        ts=ts,
+                    )
+                    for frame, pose in poses.items()
+                )
+            )
+        )
 
     def _publish_robot_joint_states(
         self,

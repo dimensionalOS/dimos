@@ -1,0 +1,31 @@
+# The eval worker `dimos evals run --docker` starts, one per eval; see docs/usage/evals-docker.md.
+services:
+  worker:
+    image: ${EVALS_IMAGE:-dimensional/evals:latest}
+    build:
+      context: ../..
+      dockerfile: docker/evals/Dockerfile
+    init: true
+    # Chromium outgrows Docker's 64 MB /dev/shm.
+    shm_size: 2g
+    # Zenoh's shared-memory pool needs more than Docker's 8 MB.
+    ulimits:
+      memlock: -1
+    # dimos enables multicast on lo at startup.
+    cap_add:
+      - NET_ADMIN
+    environment:
+      # DimSim's bridge speaks LCM only; Habitat needs DIMOS_TRANSPORT=zenoh.
+      DIMOS_TRANSPORT: ${DIMOS_TRANSPORT:-lcm}
+      DIMSIM_RENDER: ${DIMSIM_RENDER:-cpu}
+      VIEWER: rerun
+      RERUN_OPEN: none
+      RERUN_SAVE: ${RERUN_SAVE:-1}
+      DIMOS_EVALS_OPEN_OUTPUT: "1"
+      TYPESAFE_API_KEY: ${TYPESAFE_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    volumes:
+      - ${EVAL_RUNS_DIR:-./eval-runs}:/state
+      # Private per container: a shared pid-keyed registry deletes others' live runs.
+      - /state/dimos/runs
