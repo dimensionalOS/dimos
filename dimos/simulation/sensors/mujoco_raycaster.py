@@ -20,17 +20,17 @@ import mujoco
 import numpy as np
 from numpy.typing import NDArray
 
-# Groups 0 and 1 are scene geometry and group 2 is robot visual meshes. Collision primitives
-# are left out.
-SCENE_AND_VISUAL_GROUPS = np.array((1, 1, 1, 0, 0, 0), dtype=np.uint8)
 INCLUDE_STATIC = 1
 NO_BODY_EXCLUDED = -1
 
 
 class MujocoRaycaster:
-    def __init__(self, model: mujoco.MjModel, data: mujoco.MjData) -> None:
+    def __init__(
+        self, model: mujoco.MjModel, data: mujoco.MjData, geom_groups: NDArray[np.uint8]
+    ) -> None:
         self.model = model
         self.data = data
+        self.geom_groups = geom_groups
 
     def cast(
         self, origin: NDArray[np.float64], directions: NDArray[np.float64], max_range: float
@@ -44,7 +44,7 @@ class MujocoRaycaster:
             self.data,
             np.asarray(origin, dtype=np.float64),
             np.ascontiguousarray(directions, dtype=np.float64).ravel(),
-            SCENE_AND_VISUAL_GROUPS,
+            self.geom_groups,
             INCLUDE_STATIC,
             NO_BODY_EXCLUDED,
             geom,

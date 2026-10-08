@@ -65,9 +65,15 @@ logger = setup_logger()
 FRAME_DT = 0.1
 TICKS_PER_FRAME = round(FRAME_DT / CONTROL_DT)
 LIDAR_HALF_EXTENTS = (0.0325, 0.0325, 0.03)
-COLLISION_GROUP = 3
-# Drawn by nothing but the lidar: the viewer switches this group off so the room stays visible.
+SCENE_GROUP = 0
+# Seen by the lidar only. The viewer switches this group off so the room stays visible.
 CEILING_GROUP = 1
+ROBOT_VISUAL_GROUP = 2
+COLLISION_GROUP = 3
+# Collision primitives are left out.
+LIDAR_GROUPS = np.isin(np.arange(6), (SCENE_GROUP, CEILING_GROUP, ROBOT_VISUAL_GROUP)).astype(
+    np.uint8
+)
 # Looks only. The lidar and the contacts never read color or light.
 BOX_RGBA = {
     "wall": (0.86, 0.84, 0.78, 1.0),
@@ -215,7 +221,7 @@ class Go2Sim:
         self.model = build_model(scene)
         self.data = mujoco.MjData(self.model)
         self.robot = LeggedGo2(self.model, self.data, policy)
-        self.lidar = SimMid360.go2(MujocoRaycaster(self.model, self.data), seed)
+        self.lidar = SimMid360.go2(MujocoRaycaster(self.model, self.data, LIDAR_GROUPS), seed)
         self.lio = GroundTruthLio()
         self.t = 0.0
         self._tick = 0

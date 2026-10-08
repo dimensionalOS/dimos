@@ -25,6 +25,7 @@ from dimos.simulation.go2_legged.robot import CONTROL_DT
 from dimos.simulation.go2_sim.world import (
     CEILING_GROUP,
     FRAME_DT,
+    LIDAR_GROUPS,
     MOUNT_R,
     TICKS_PER_FRAME,
     Go2Sim,
@@ -132,12 +133,15 @@ def test_sensor_velocity_matches_the_motion(sim: Go2Sim) -> None:
 
 
 def test_ceiling_is_hidden_from_the_viewer_but_not_the_lidar(sim: Go2Sim) -> None:
-    ceiling = next(box for box in sim.scene.boxes if box.kind == "ceiling")
+    index, ceiling = next(
+        (i, box) for i, box in enumerate(sim.scene.boxes) if box.kind == "ceiling"
+    )
     underside = ceiling.center[2] - ceiling.half[2]
     position, _ = sim.sensor_pose()
-    dist, _ = MujocoRaycaster(sim.model, sim.data).cast(position, np.array([[0.0, 0.0, 1.0]]), 10.0)
+    raycaster = MujocoRaycaster(sim.model, sim.data, LIDAR_GROUPS)
+    dist, _ = raycaster.cast(position, np.array([[0.0, 0.0, 1.0]]), 10.0)
     assert abs(dist[0] - (underside - position[2])) < 0.01
-    geom = mujoco.mj_name2id(sim.model, mujoco.mjtObj.mjOBJ_GEOM, "ceiling_5")
+    geom = mujoco.mj_name2id(sim.model, mujoco.mjtObj.mjOBJ_GEOM, f"ceiling_{index}")
     assert sim.model.geom_group[geom] == CEILING_GROUP
 
 

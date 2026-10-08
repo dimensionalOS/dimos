@@ -12,11 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Go2 navigation: ray tracer, MLS planner, local planner, follower and movement manager.
-
-Composed onto whatever publishes lidar, odometry and the odom tf edge, on the robot or in
-the simulator. Nothing here is robot-side.
-"""
+"""Go2 navigation, composed onto any source of lidar, odometry and the odom tf edge."""
 
 from __future__ import annotations
 
@@ -40,12 +36,12 @@ if TYPE_CHECKING:
 
     from dimos.visualization.rerun.bridge import VisualOverride
 
-# Raise above 0 (2.0 works) to draw what the planner searched over: surface, nodes and
-# cost-colored edges. Drives both its publishing and the rerun overrides.
+# Raise above 0 to draw what the planner searched over: surface, nodes and cost-colored
+# edges. Drives both its publishing and the rerun overrides.
 planner_viz_hz = 2.0
-MOTION_BODY_DILATE_M = -0.03
+BODY_DILATE_M = -0.03
 
-_mls_planner_motion = MLSPlannerNative.blueprint(
+_mls_planner = MLSPlannerNative.blueprint(
     world_frame="odom",
     voxel_size=voxel_size,
     robot_height=0.4,
@@ -63,12 +59,12 @@ _mls_planner_motion = MLSPlannerNative.blueprint(
     ]
 )
 
-# MLS stays global; its path becomes the carrot source (planner_path) for the local planner
-# over the raycaster's local map.
+# MLS stays global. Its path is remapped to planner_path, the carrot source for the local
+# planner over the raycaster's local map.
 _go2_nav = autoconnect(
     RayTracingVoxelMap.blueprint(**ray_tracing_config.model_dump(exclude_unset=True)),
-    _mls_planner_motion,
-    LocalPlannerNative.blueprint(body_dilate_m=MOTION_BODY_DILATE_M),
+    _mls_planner,
+    LocalPlannerNative.blueprint(body_dilate_m=BODY_DILATE_M),
     TrajectoryFollowerNative.blueprint(),
     MovementManager.blueprint(),
 )
@@ -80,12 +76,8 @@ def go2_nav_static() -> dict[str, Callable[[ModuleType], list[Archetype]]]:
 
 
 def go2_nav_overrides() -> dict[str, VisualOverride]:
-    """Bridge overrides for the navigation maps, paths, goal and planner debug entities.
-
-    The local plan's body poses land on world/path/body, colored by the stamped precision
-    (green room, amber in the ramp, red at the floor).
-    """
+    """Bridge overrides for the navigation maps, paths, goal and planner debug entities."""
     return {
         **nav_visual_override(planner_viz_hz, voxel_size, wall_clearance_m),
-        **motion_visual_override(body_dilate_m=MOTION_BODY_DILATE_M),
+        **motion_visual_override(body_dilate_m=BODY_DILATE_M),
     }

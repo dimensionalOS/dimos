@@ -49,7 +49,7 @@ class MjSpec:
     def compile(self) -> MjModel: ...
 
 class MjvOption:
-    geomgroup: Any
+    geomgroup: NDArray[np.uint8]
     def __init__(self) -> None: ...
 
 class Renderer:

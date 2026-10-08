@@ -14,18 +14,25 @@
 
 """The simulator runs the navigation the robot runs, unmodified."""
 
+import pytest
+
 from dimos.core.coordination.blueprints import Blueprint, BlueprintAtom
+from dimos.core.module import ModuleBase
 from dimos.navigation.movement_manager.movement_manager import MovementManager
+from dimos.robot.unitree.go2.blueprints.basic.go2_sim import go2_sim
 from dimos.robot.unitree.go2.blueprints.navigation.go2_nav import _go2_nav
 from dimos.robot.unitree.go2.blueprints.navigation.go2_sim_nav import go2_sim_nav
 from dimos.robot.unitree.go2.dds.blueprints import go2_dds_nav
+from dimos.spec.utils import Spec
 
 
 def _atoms(blueprint: Blueprint) -> dict[str, BlueprintAtom]:
     return {atom.name: atom for atom in blueprint.active_blueprints}
 
 
-def _remappings(blueprint: Blueprint, name: str) -> dict[tuple[str, str], object]:
+def _remappings(
+    blueprint: Blueprint, name: str
+) -> dict[tuple[str, str], str | type[ModuleBase] | type[Spec]]:
     return {key: target for key, target in blueprint.remapping_map.items() if key[0] == name}
 
 
@@ -40,7 +47,8 @@ def test_one_movement_manager() -> None:
     assert [a.module for a in go2_sim_nav.active_blueprints].count(MovementManager) == 1
 
 
-def test_one_worker_per_module_with_gossip_off() -> None:
-    overrides = go2_sim_nav.global_config_overrides
-    assert overrides["n_workers"] == len(go2_sim_nav.active_blueprints)
+@pytest.mark.parametrize("blueprint", [go2_sim, go2_sim_nav])
+def test_one_worker_per_module_with_gossip_off(blueprint: Blueprint) -> None:
+    overrides = blueprint.global_config_overrides
+    assert overrides["n_workers"] == len(blueprint.active_blueprints)
     assert overrides["zenoh_gossip"] is False
