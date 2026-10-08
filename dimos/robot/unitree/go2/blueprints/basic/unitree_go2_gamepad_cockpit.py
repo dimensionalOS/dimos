@@ -29,11 +29,15 @@ Usage:
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.unitree.go2.connection import GO2Connection
-from dimos.web.cockpit import Row, Teleop, Video, cockpit
+from dimos.web.cockpit import Col, Map3D, Row, Teleop, Video, cockpit
 
 _web = cockpit(
     layout=Row(
-        Video("color_image", title="camera"),
+        Col(
+            Video("color_image", title="camera"),
+            # the dog's own accumulated local cloud, voxelized around its pose
+            Map3D(cloud="lidar", pose="odom", res=0.1, max_hz=2.0, title="lidar"),
+        ),
         Teleop(max_linear=0.5, max_angular=0.8, joystick="joystick", title="drive"),
         shares=[3, 1],
     )
