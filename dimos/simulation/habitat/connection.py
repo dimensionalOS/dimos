@@ -82,6 +82,8 @@ class HabitatConnectionConfig(NativeModuleConfig):
     objects_hz: float = Field(default=1.0, gt=0.0)
     # Static models placed in the scene.
     props: tuple[HabitatProp, ...] = ()
+    # Template names of scene objects to take out.
+    removed_objects: tuple[str, ...] = ()
     # Unprojection is the frame's main cost; off for teleop-only stacks.
     publish_scan: bool = True
     # "world" pre-registers the scan for VoxelGridMapper; "camera_optical" lets

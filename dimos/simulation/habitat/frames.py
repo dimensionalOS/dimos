@@ -60,6 +60,13 @@ def quat_to_ros(q_hab_wxyz: npt.ArrayLike) -> npt.NDArray[np.float64]:
     return np.array([v[0], v[1], v[2], w])
 
 
+def quat_to_habitat(q_ros_xyzw: npt.ArrayLike) -> npt.NDArray[np.float64]:
+    """ROS (x, y, z, w) to habitat (w, x, y, z): the inverse of quat_to_ros."""
+    q = np.asarray(q_ros_xyzw, dtype=np.float64)
+    v, w = R_ROS_HAB.T @ q[:3], q[3]
+    return np.array([w, v[0], v[1], v[2]])
+
+
 def yaw_from_habitat_quat(q_hab_wxyz: npt.ArrayLike) -> float:
     """ROS yaw (about +z) from a habitat yaw-only quaternion."""
     q = np.asarray(q_hab_wxyz, dtype=np.float64)

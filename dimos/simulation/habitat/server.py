@@ -321,6 +321,8 @@ class HabitatProp(NamedTuple):
     """World position of the model's origin."""
     motion_type: MotionType
     """STATIC props are carved out of the navmesh; KINEMATIC ones are not."""
+    orientation_ros: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 1.0)
+    """World rotation of the model, (x, y, z, w)."""
 
 
 class HabitatHost:
@@ -371,17 +373,27 @@ class HabitatHost:
             self._sim.close()
         self._sim = hs.Simulator(hs.Configuration(backend, [agent_cfg]))
         self._agent = self._sim.initialize_agent(0)
-        self._add_props([HabitatProp(*prop) for prop in self.cfg.get("props", [])])
+        self._change_objects(
+            self.cfg.get("removed_objects", []),
+            [HabitatProp(*prop) for prop in self.cfg.get("props", [])],
+        )
         self.labels = [
             o.category.name() if o is not None and o.category is not None else ""
             for o in self._sim.semantic_scene.objects
         ]
         self.reset_pose()
 
-    def _add_props(self, props: list[HabitatProp]) -> None:
-        """Add props and rebuild the navmesh around the STATIC ones."""
+    def _change_objects(self, removed: list[str], props: list[HabitatProp]) -> None:
+        """Take scene objects out, add props, and rebuild the navmesh around the change."""
+        common = self.hs.utils.common
         templates = self._sim.get_object_template_manager()
         objects = self._sim.get_rigid_object_manager()
+        for name in removed:
+            handles = objects.get_object_handles(name)
+            if not handles:
+                raise ValueError(f"No scene object is named: {name}")
+            for handle in handles:
+                objects.remove_object_by_handle(handle)
         for prop in props:
             template = templates.create_new_template(prop.glb_path)
             template.compute_COM_from_shape = False
@@ -390,12 +402,14 @@ class HabitatHost:
                 raise FileNotFoundError(f"Could not load prop: {prop.glb_path}")
             # Static objects cannot be moved, so place first.
             obj.translation = frames.position_to_habitat(prop.position_ros)
+            w, x, y, z = frames.quat_to_habitat(prop.orientation_ros)
+            obj.rotation = common.quat_to_magnum(common.quat_from_coeffs([x, y, z, w]))
             obj.motion_type = getattr(
                 self.hs.physics.MotionType, MotionType(prop.motion_type).value
             )
         # Scenes that ship without a navmesh get one either way.
         static = [prop for prop in props if prop.motion_type == MotionType.STATIC]
-        if not static and self._sim.pathfinder.is_loaded:
+        if not static and not removed and self._sim.pathfinder.is_loaded:
             return
         settings = self.hs.NavMeshSettings()
         settings.include_static_objects = True
