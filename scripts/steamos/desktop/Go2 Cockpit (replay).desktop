@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Go2 Cockpit (replay)
+Comment=Cockpit on a recorded Go2 session
+Exec=/home/deck/go2-app.sh replay
+Icon=media-playback-start
+Terminal=false
+Categories=Game;

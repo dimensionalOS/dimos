@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Go2 Cockpit
+Comment=Find the Go2 on this WiFi, drive it with the sticks, record, upload
+Exec=/home/deck/go2-app.sh
+Icon=input-gaming
+Terminal=false
+Categories=Game;

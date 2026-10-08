@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Upload recordings
+Comment=Send any recordings not yet uploaded to Dimensional
+Exec=/home/deck/go2-upload-ui.sh
+Icon=cloud-upload
+Terminal=false
+Categories=Game;
