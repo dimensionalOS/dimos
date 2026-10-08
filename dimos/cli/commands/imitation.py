@@ -31,7 +31,7 @@ from dimos.experimental.isolated_python.module import (
 from dimos.imitation.collection.recording import RecordingSchema
 from dimos.imitation.dataprep.build import inspect_dataset, inspect_recording
 from dimos.imitation.dataprep.core import OutputConfig
-from dimos.imitation.dataprep.lerobot import lerobot_project, run_lerobot_dataprep
+from dimos.imitation.dataprep.formats.lerobot.adapter import lerobot_project, run_lerobot_dataprep
 from dimos.imitation.tui import CollectionApp, CollectionSession, RolloutApp, RolloutSession
 from dimos.porcelain.dimos import Dimos
 from dimos.utils.cache import cache_usage_guard
