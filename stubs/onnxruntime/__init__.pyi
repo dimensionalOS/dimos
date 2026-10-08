@@ -9,11 +9,16 @@ class NodeArg:
     type: str
     shape: list[int | str | None]
 
+class SessionOptions:
+    intra_op_num_threads: int
+    inter_op_num_threads: int
+    def __init__(self) -> None: ...
+
 class InferenceSession:
     def __init__(
         self,
         path_or_bytes: str | bytes,
-        sess_options: Any | None = ...,
+        sess_options: SessionOptions | None = ...,
         providers: list[str] | None = ...,
         provider_options: list[dict[str, Any]] | None = ...,
         **kwargs: Any,

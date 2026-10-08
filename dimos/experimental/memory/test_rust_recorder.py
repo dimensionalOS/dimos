@@ -19,6 +19,8 @@ from typing import Any, TypeVar
 
 import pytest
 
+from dimos.core.global_config import GlobalConfig
+from dimos.core.module import Module
 from dimos.core.stream import In
 from dimos.experimental.memory.rust_recorder import (
     RustMcapStoreConfig,
@@ -27,8 +29,8 @@ from dimos.experimental.memory.rust_recorder import (
     RustSqliteStoreConfig,
     RustStreamSpec,
 )
-from dimos.memory.module import OnExisting
 from dimos.memory.store.sqlite import SqliteStore
+from dimos.memory.type.recording import OnExisting
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
 
@@ -224,14 +226,6 @@ def test_default_store_path_is_resolved_from_the_project_root() -> None:
     assert Path(config.store.path).name == "recording.db"
 
 
-def test_native_recorder_is_built_and_run_from_the_nix_package() -> None:
-    config = RustRecorderConfig()
-
-    assert Path(config.cwd) == Path(__file__).with_name("rust")
-    assert config.build_command == ("nix build -L .#dimos-memory-recorder")
-    assert config.executable == "result/bin/dimos-memory-recorder"
-
-
 def test_invalid_codec_fails_during_preflight(tmp_path: Path, make_recorder: Any) -> None:
     recorder = make_recorder(
         SampleRustRecorder,
@@ -324,7 +318,7 @@ def test_recorder_launches_without_duplicate_topic_cli_args(
         store=RustSqliteStoreConfig(path=str(tmp_path / "recording.db")),
     )
 
-    assert recorder._argv({"odometry": "/odom"}) == [recorder.config.executable]
+    assert recorder._argv({"odometry": "/odom"}) == [recorder._executable]
 
 
 def test_recorder_rejects_native_cli_arguments() -> None:
@@ -345,3 +339,25 @@ def test_duplicate_remapped_stream_names_fail_before_launch(
 
     with pytest.raises(ValueError, match="Duplicate recorded stream names"):
         recorder._stream_specs()
+
+
+def test_replay_never_prepares_native_sources_or_process(tmp_path, make_recorder, mocker):
+    fetch = mocker.patch(
+        "dimos.core.native_module.get_project_root", side_effect=AssertionError("fetch")
+    )
+    spawn = mocker.patch(
+        "dimos.core.native_module.subprocess.Popen", side_effect=AssertionError("spawn")
+    )
+    start = mocker.patch.object(Module, "start")
+    path = tmp_path / "replay.db"
+    recorder = make_recorder(
+        SampleRustRecorder,
+        g=GlobalConfig(replay=True),
+        store=RustSqliteStoreConfig(path=str(path)),
+    )
+    recorder.build()
+    recorder.start()
+    fetch.assert_not_called()
+    spawn.assert_not_called()
+    start.assert_called_once_with(recorder)
+    assert not path.exists()
