@@ -137,7 +137,8 @@ class MujocoConnection:
             # It needs libpython on the dylib search path; uv-installed Pythons
             # use @rpath which doesn't always resolve inside venvs, so we
             # point DYLD_LIBRARY_PATH at the real libpython directory.
-            executable = sys.executable if sys.platform != "darwin" else "mjpython"
+            needs_mjpython = sys.platform == "darwin" and not self.global_config.mujoco_headless
+            executable = "mjpython" if needs_mjpython else sys.executable
             env = os.environ.copy()
             if sys.platform == "darwin":
                 # on some systems mujoco looks in the wrong place for shared libraries. So we force it look in the right place
