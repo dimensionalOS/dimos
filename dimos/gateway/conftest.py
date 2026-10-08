@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+import json
 from pathlib import Path
 import sys
 import textwrap
@@ -62,7 +63,6 @@ FAKE_WORKER = textwrap.dedent(
 def server_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """DIMOS_HOME, the gateway's state and dimos's logs all under tmp_path; no live run registry."""
     monkeypatch.setenv("DIMOS_HOME", str(tmp_path / "home"))
-    monkeypatch.delenv(config.RANGE_ENV, raising=False)
     monkeypatch.setattr(config, "gateway_dir", lambda: tmp_path / "state" / "server")
     monkeypatch.setattr(logs, "LOG_DIR", tmp_path / "state" / "logs")
     from dimos.core import run_registry
@@ -129,16 +129,29 @@ def check_model() -> Any:
     return strictly
 
 
+NO_DESKTOP = "http://127.0.0.1:9"
+
+
 @pytest.fixture(autouse=True)
 def no_desktop(monkeypatch: pytest.MonkeyPatch) -> None:
     """Tests never reach a real Desktop (port 9 refuses): the ones that want one fake it."""
-    monkeypatch.setenv("DESKTOP_URL", "http://127.0.0.1:9")
+    monkeypatch.setenv(config.GATEWAY_ENV, json.dumps({"desktopUrl": NO_DESKTOP}))
+
+
+@pytest.fixture
+def given_gateway(monkeypatch: pytest.MonkeyPatch) -> Callable[..., None]:
+    """Sets $DIMOS_GATEWAY to these fields (camelCase), still pointing at no Desktop unless one is given."""
+
+    def given(**fields: Any) -> None:
+        monkeypatch.setenv(config.GATEWAY_ENV, json.dumps({"desktopUrl": NO_DESKTOP, **fields}))
+
+    return given
 
 
 @pytest.fixture(autouse=True)
 def strict_answers(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Every answer a test gets matches its route's response model, and every event the DimosEvent schema, exactly:
-    no missing, mistyped or undeclared field (so openapi.json describes what the gateway really sends)."""
+    no missing, mistyped or undeclared field (so the models describe what the gateway really sends)."""
     serialize = fastapi.routing.serialize_response
 
     async def checked(**kwargs: Any) -> Any:

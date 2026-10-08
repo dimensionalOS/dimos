@@ -745,8 +745,6 @@ ignore = [
     "uv.lock",
     # an evolved planner: one generated rust file, not hand-edited source
     "dimos/navigation/local_planner/rust/src/planner.rs",
-    # the dimos gateway's OpenAPI document, generated (`python -m dimos.gateway --write-openapi`)
-    "dimos/gateway/openapi.json",
     # every robot and blueprint, described: grows with each blueprint (checked by dimos/gateway/robots.py)
     "dimos/gateway/robots.json",
     "*/uv.lock",
