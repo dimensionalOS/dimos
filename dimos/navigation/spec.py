@@ -37,11 +37,18 @@ from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.spec.utils import Spec
+from dimos.types.timestamped import Timestamped
 
 
 class NavigationState(Enum):
     IDLE = "idle"
     FOLLOWING_PATH = "following_path"
+
+
+def goal_id(goal: Timestamped) -> str:
+    """The id nav_status reports carry for a goal, which is its stamp."""
+    sec, nsec = goal.ros_timestamp()
+    return f"{sec}.{nsec:09d}"
 
 
 class GlobalPlanner(Protocol):
@@ -55,7 +62,10 @@ class NavigationInterfaceSpec(Spec, Protocol):
     """The goal RPCs of a global planner."""
 
     def set_goal(self, goal: PoseStamped) -> bool:
-        """Set a new goal without blocking. True if it was accepted."""
+        """Set a new goal without blocking. True if it was accepted.
+
+        The goal's stamp identifies it, so stamp each goal afresh.
+        """
 
     def get_state(self) -> NavigationState:
         """Whether the planner is following a path or idle."""

@@ -17,6 +17,8 @@
 from __future__ import annotations
 
 import math
+import threading
+from typing import NamedTuple
 
 from dimos_lcm.actionlib_msgs import GoalStatus
 from reactivex.disposable import Disposable
@@ -34,6 +36,20 @@ from dimos.navigation import spec
 
 # The planner keeps retrying an aborted goal, so it still holds one.
 _HOLDS_GOAL = frozenset({GoalStatus.PENDING, GoalStatus.ACTIVE, GoalStatus.ABORTED})
+
+
+class _Unanswered(NamedTuple):
+    """A sent goal message the planner has not reported on yet."""
+
+    goal_id: str
+    """The goal a set sent, or the goal a cancel ends."""
+    assumed: int
+    """The status to assume until the planner answers."""
+
+    def answered_by(self, msg: GoalStatus) -> bool:
+        if self.assumed == GoalStatus.PENDING:
+            return bool(msg.goal_id.id == self.goal_id)
+        return msg.goal_id.id != self.goal_id or msg.status not in _HOLDS_GOAL
 
 
 class MLSPlannerNativeConfig(NativeModuleConfig):
@@ -97,9 +113,11 @@ class MLSPlannerNative(NativeModule, spec.GlobalPlanner, spec.NavigationInterfac
     node_edges: Out[LineSegments3D]
 
     _status: GoalStatus | None = None
-    # The goal id a sent message is newer than, and the status to assume
-    # until the planner answers it.
-    _unanswered: tuple[int, int] | None = None
+    _unanswered: _Unanswered | None = None
+
+    def __init__(self, **kwargs: object) -> None:
+        super().__init__(**kwargs)
+        self._status_lock = threading.Lock()
 
     @rpc
     def start(self) -> None:
@@ -109,23 +127,27 @@ class MLSPlannerNative(NativeModule, spec.GlobalPlanner, spec.NavigationInterfac
         )
 
     def _on_nav_status(self, msg: GoalStatus) -> None:
-        self._status = msg
+        with self._status_lock:
+            self._status = msg
+            if self._unanswered is not None and self._unanswered.answered_by(msg):
+                self._unanswered = None
+
+    def _goal(self) -> tuple[str, int] | None:
+        """Id and status of the newest goal, assumed while a sent message is unanswered."""
+        with self._status_lock:
+            if self._unanswered is not None:
+                return self._unanswered.goal_id, self._unanswered.assumed
+            if self._status is None:
+                return None
+            return self._status.goal_id.id, int(self._status.status)
 
     def _goal_status(self) -> int | None:
-        """Status of the newest goal, assumed while a sent message is unanswered."""
-        status = self._status
-        unanswered = self._unanswered
-        if unanswered is None:
-            return None if status is None else int(status.status)
-        after_id, assumed = unanswered
-        if status is not None and int(status.goal_id.id) > after_id:
-            return int(status.status)
-        return assumed
+        goal = self._goal()
+        return None if goal is None else goal[1]
 
-    def _send(self, point: PointStamped, assumed: int) -> None:
-        """Publish a goal message and assume its status until the planner answers."""
-        status = self._status
-        self._unanswered = (0 if status is None else int(status.goal_id.id), assumed)
+    def _send(self, point: PointStamped, unanswered: _Unanswered) -> None:
+        with self._status_lock:
+            self._unanswered = unanswered
         self.goal.transport.publish(point)
 
     @rpc
@@ -133,16 +155,20 @@ class MLSPlannerNative(NativeModule, spec.GlobalPlanner, spec.NavigationInterfac
         """Send the pose's position as the goal. The planner has no goal heading."""
         self._send(
             PointStamped(goal.x, goal.y, goal.z, ts=goal.ts, frame_id=goal.frame_id),
-            GoalStatus.PENDING,
+            _Unanswered(spec.goal_id(goal), GoalStatus.PENDING),
         )
         return True
 
     @rpc
     def cancel_goal(self) -> bool:
         """Cancel the goal. False when the planner held none."""
-        held = self._goal_status() in _HOLDS_GOAL
-        self._send(PointStamped(math.nan, math.nan, math.nan), GoalStatus.PREEMPTED)
-        return held
+        cancel = PointStamped(math.nan, math.nan, math.nan)
+        goal = self._goal()
+        if goal is None or goal[1] not in _HOLDS_GOAL:
+            self.goal.transport.publish(cancel)
+            return False
+        self._send(cancel, _Unanswered(goal[0], GoalStatus.PREEMPTED))
+        return True
 
     @rpc
     def get_state(self) -> spec.NavigationState:

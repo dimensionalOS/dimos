@@ -25,7 +25,7 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.navigation.spec import NavigationInterfaceSpec
+from dimos.navigation.spec import NavigationInterfaceSpec, goal_id
 
 # The planner retries a blocked goal on every map update, so a block only
 # counts once it has lasted this long.
@@ -59,12 +59,8 @@ class PointNavSkillContainer(Module):
     """Set while the planner reports the goal blocked. Fires if it stays blocked."""
     _target: tuple[float, float] = (0.0, 0.0)
     """The x, y of the go_to under way."""
-    _latest_goal_id: int = 0
-    """The newest goal id seen on nav_status."""
-    _sent_after: int = 0
-    """The newest goal id seen when the go_to under way sent its goal."""
-    _goal_id: int | None = None
-    """The planner's id for the go_to under way, once it has answered."""
+    _goal: PoseStamped | None = None
+    """The goal of the go_to under way."""
 
     async def main(self) -> AsyncIterator[None]:
         # Subscribe to tf now so the first go_to already has a pose.
@@ -73,19 +69,18 @@ class PointNavSkillContainer(Module):
         self._finish("Cancelled, module stopping")
 
     async def handle_nav_status(self, msg: GoalStatus) -> None:
-        goal_id = int(msg.goal_id.id)
-        self._latest_goal_id = max(self._latest_goal_id, goal_id)
-        if self._timeout is None or goal_id <= self._sent_after:
+        goal = self._goal
+        if self._timeout is None or goal is None:
             return
-        if self._goal_id is None:
-            # A cancel takes an id of its own, so this one was sent before the goal.
-            if msg.status == GoalStatus.PREEMPTED:
-                return
-            self._goal_id = goal_id
+        if msg.goal_id.id != goal_id(goal):
+            # A newer goal means the report that ended this one was missed.
+            if [msg.goal_id.stamp.sec, msg.goal_id.stamp.nsec] > goal.ros_timestamp():
+                self._finish("Replaced by another goal", cancel=False)
+            return
 
-        if goal_id != self._goal_id:
-            cancelled = msg.status == GoalStatus.PREEMPTED
-            self._finish("Cancelled" if cancelled else "Replaced by another goal", cancel=False)
+        if msg.status == GoalStatus.PREEMPTED:
+            replaced = msg.text == "replaced"
+            self._finish("Replaced by another goal" if replaced else "Cancelled", cancel=False)
         elif msg.status == GoalStatus.SUCCEEDED:
             self._finish("Reached the target", cancel=False)
         elif msg.status == GoalStatus.REJECTED:
@@ -129,14 +124,11 @@ class PointNavSkillContainer(Module):
         # the robot.
         floor_z = pose.z - self.config.base_height_m
         self._target = (x, y)
-        self._sent_after = self._latest_goal_id
-        self._goal_id = None
+        self._goal = PoseStamped(position=(x, y, floor_z), frame_id=self.config.world_frame)
         self._timeout = asyncio.get_running_loop().call_later(
             timeout_s, self._finish, f"Gave up after {timeout_s:g}s"
         )
-        self._navigation.set_goal(
-            PoseStamped(position=(x, y, floor_z), frame_id=self.config.world_frame)
-        )
+        self._navigation.set_goal(self._goal)
         return "Navigating. A tool update reports the robot's position when it stops."
 
     def _finish(self, outcome: str, *, cancel: bool = True) -> None:

@@ -62,10 +62,26 @@ struct SeedRegion {
 /// How often the latest goal status repeats between transitions.
 const STATUS_HEARTBEAT: Duration = Duration::from_secs(1);
 
+/// Names a goal in its status reports.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct GoalId {
+    /// Stamp of the message that set the goal. Senders match reports on it.
+    sec: i32,
+    nsec: i32,
+    /// Arrival order, which tells a displaced goal from the one after it.
+    arrival: u64,
+}
+
+impl GoalId {
+    fn same_stamp(&self, other: &GoalId) -> bool {
+        (self.sec, self.nsec) == (other.sec, other.nsec)
+    }
+}
+
 /// The active goal and the id its status reports carry.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Goal {
-    id: u64,
+    id: GoalId,
     position: Xyz,
 }
 
@@ -262,7 +278,7 @@ pub struct MlsPlanner {
     wake: Arc<Notify>,
     latest_status: LatestStatus,
 
-    // Counts every goal message that gets a status of its own.
+    // Counts goal messages in arrival order.
     goal_count: u64,
 
     worker: Option<tokio::task::JoinHandle<()>>,
@@ -358,27 +374,32 @@ impl MlsPlanner {
         self.wake.notify_one();
     }
 
-    /// Set, cancel or reject the active goal, then wake the worker.
+    /// Set, cancel or reject the active goal, then wake the worker. A goal
+    /// this displaces is reported preempted under its own id.
     async fn on_goal(&mut self, msg: PointStamped) {
         match goal_request(&msg.point) {
             GoalRequest::Set(position) => {
-                let id = self.next_goal_id();
+                let id = self.next_goal_id(&msg.header.stamp);
+                let held = *self.active_goal.lock().expect("goal mutex");
+                // A goal sent again keeps its id, so it is not preempted.
+                if let Some(held) = held.filter(|held| !held.id.same_stamp(&id)) {
+                    self.preempt(held, "replaced").await;
+                }
                 self.status()
                     .report(Report::new(id, GoalStatus::PENDING, "planning"))
                     .await;
                 self.set_active_goal(Some(Goal { id, position }));
             }
             GoalRequest::Cancel => {
-                if self.set_active_goal(None).is_some() {
-                    let id = self.next_goal_id();
-                    self.status()
-                        .report(Report::new(id, GoalStatus::PREEMPTED, "canceled"))
-                        .await;
+                if let Some(held) = self.set_active_goal(None) {
+                    self.preempt(held, "canceled").await;
                 }
             }
             GoalRequest::Invalid => {
-                self.set_active_goal(None);
-                let id = self.next_goal_id();
+                if let Some(held) = self.set_active_goal(None) {
+                    self.preempt(held, "replaced").await;
+                }
+                let id = self.next_goal_id(&msg.header.stamp);
                 self.status()
                     .report(Report::new(id, GoalStatus::REJECTED, "goal is not finite"))
                     .await;
@@ -388,9 +409,19 @@ impl MlsPlanner {
         self.wake.notify_one();
     }
 
-    fn next_goal_id(&mut self) -> u64 {
+    async fn preempt(&self, goal: Goal, reason: &'static str) {
+        self.status()
+            .report(Report::new(goal.id, GoalStatus::PREEMPTED, reason))
+            .await;
+    }
+
+    fn next_goal_id(&mut self, stamp: &Time) -> GoalId {
         self.goal_count += 1;
-        self.goal_count
+        GoalId {
+            sec: stamp.sec,
+            nsec: stamp.nsec,
+            arrival: self.goal_count,
+        }
     }
 
     /// Replace the active goal, returning the one it displaced.
@@ -402,14 +433,14 @@ impl MlsPlanner {
 /// One goal's state as nav_status carries it.
 #[derive(Clone, Debug, PartialEq)]
 struct Report {
-    id: u64,
+    id: GoalId,
     status: u8,
     reason: &'static str,
     remaining_m: Option<f32>,
 }
 
 impl Report {
-    fn new(id: u64, status: i8, reason: &'static str) -> Self {
+    fn new(id: GoalId, status: i8, reason: &'static str) -> Self {
         Self {
             id,
             status: status as u8,
@@ -430,6 +461,16 @@ impl Report {
         })
     }
 
+    /// Whether the goal is over. An aborted goal is still retried.
+    fn is_terminal(&self) -> bool {
+        [
+            GoalStatus::SUCCEEDED,
+            GoalStatus::PREEMPTED,
+            GoalStatus::REJECTED,
+        ]
+        .contains(&(self.status as i8))
+    }
+
     fn message(&self) -> GoalStatus {
         let text = match self.remaining_m {
             Some(remaining_m) => format!("{}, {remaining_m:.2} m from the goal", self.reason),
@@ -437,8 +478,11 @@ impl Report {
         };
         GoalStatus {
             goal_id: GoalID {
-                stamp: now(),
-                id: self.id.to_string(),
+                stamp: Time {
+                    sec: self.id.sec,
+                    nsec: self.id.nsec,
+                },
+                id: format!("{}.{:09}", self.id.sec, self.id.nsec),
             },
             status: self.status,
             text,
@@ -447,9 +491,14 @@ impl Report {
 }
 
 /// Record a report as the latest. True when it is a transition to publish
-/// now. A report for a goal older than the latest is dropped.
+/// now. A report for a goal older than the latest is dropped, and so is one
+/// for a goal that is already over.
 fn record(latest: &mut Option<Report>, report: &Report) -> bool {
-    if latest.as_ref().is_some_and(|last| last.id > report.id) {
+    let stale = latest.as_ref().is_some_and(|last| {
+        last.id.arrival > report.id.arrival
+            || (last.id.arrival == report.id.arrival && last.is_terminal())
+    });
+    if stale {
         return false;
     }
     let transition = report.is_transition_from(latest.as_ref());
@@ -1374,13 +1423,22 @@ mod tests {
     #[test]
     fn a_pass_stops_the_follower_only_when_a_goal_message_leaves_no_goal() {
         let goal = Goal {
-            id: 1,
+            id: goal_id(1),
             position: (1.0, 0.0, 0.0),
         };
         assert!(stop_due(true, None));
         assert!(!stop_due(true, Some(goal)));
         // The worker clearing a reached goal is not a goal message.
         assert!(!stop_due(false, None));
+    }
+
+    /// The id of the goal that arrived in this order, stamped at that second.
+    fn goal_id(arrival: u64) -> GoalId {
+        GoalId {
+            sec: arrival as i32,
+            nsec: 5,
+            arrival,
+        }
     }
 
     fn point(x: f64, y: f64, z: f64) -> Point {
@@ -1425,34 +1483,60 @@ mod tests {
     #[test]
     fn a_report_publishes_on_a_transition_and_not_on_a_distance_change() {
         let mut latest = None;
-        let active = Report::new(1, GoalStatus::ACTIVE, "following the path");
+        let active = Report::new(goal_id(1), GoalStatus::ACTIVE, "following the path");
         assert!(record(&mut latest, &active.clone().with_remaining(4.0)));
         assert!(!record(&mut latest, &active.clone().with_remaining(3.0)));
         assert_eq!(latest.as_ref().and_then(|r| r.remaining_m), Some(3.0));
         assert!(record(
             &mut latest,
-            &Report::new(1, GoalStatus::SUCCEEDED, "reached")
+            &Report::new(goal_id(1), GoalStatus::SUCCEEDED, "reached")
         ));
     }
 
     #[test]
     fn a_report_for_an_older_goal_is_dropped() {
         let mut latest = None;
-        let pending = Report::new(2, GoalStatus::PENDING, "planning");
+        let pending = Report::new(goal_id(2), GoalStatus::PENDING, "planning");
         assert!(record(&mut latest, &pending));
         assert!(!record(
             &mut latest,
-            &Report::new(1, GoalStatus::ACTIVE, "following the path")
+            &Report::new(goal_id(1), GoalStatus::ACTIVE, "following the path")
         ));
         assert_eq!(latest, Some(pending));
     }
 
     #[test]
+    fn a_report_for_a_goal_that_is_over_is_dropped() {
+        let mut latest = None;
+        let preempted = Report::new(goal_id(1), GoalStatus::PREEMPTED, "canceled");
+        assert!(record(&mut latest, &preempted));
+        assert!(!record(
+            &mut latest,
+            &Report::new(goal_id(1), GoalStatus::ACTIVE, "following the path")
+        ));
+        assert_eq!(latest, Some(preempted));
+    }
+
+    #[test]
+    fn an_aborted_goal_can_still_report() {
+        let mut latest = None;
+        assert!(record(
+            &mut latest,
+            &Report::new(goal_id(1), GoalStatus::ABORTED, "no safe path")
+        ));
+        assert!(record(
+            &mut latest,
+            &Report::new(goal_id(1), GoalStatus::ACTIVE, "following the path")
+        ));
+    }
+
+    #[test]
     fn a_report_message_carries_the_id_status_reason_and_distance() {
-        let msg = Report::new(7, GoalStatus::ABORTED, "no safe path")
+        let msg = Report::new(goal_id(7), GoalStatus::ABORTED, "no safe path")
             .with_remaining(1.5)
             .message();
-        assert_eq!(msg.goal_id.id, "7");
+        assert_eq!(msg.goal_id.id, "7.000000005");
+        assert_eq!((msg.goal_id.stamp.sec, msg.goal_id.stamp.nsec), (7, 5));
         assert_eq!(msg.status, GoalStatus::ABORTED as u8);
         assert_eq!(msg.text, "no safe path, 1.50 m from the goal");
     }
