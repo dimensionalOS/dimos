@@ -103,12 +103,15 @@ nothing has published yet.
 
 ## Skills
 
-`GET /dimos/skills` lists the skills (a module's `@skill` methods) of every live run: name, module, docstring, params
-as JSON Schema, `lifecycle` and the capabilities it `uses`. The gateway asks each run's own MCP server (an agentic
-blueprint's `McpServer`, at the run's `mcp_port`, default 9990) with dimos's `McpAdapter`; a run without one is in
-`runs` with `up: false`, and nothing running is an empty list. `POST /dimos/skills/call {skill, args, module?, runId?}`
-calls one through that server's `tools/call`, exactly as the blueprint's own agent does (capability locks, background
-skills), and answers with its text once it returns. It acts on the robot.
+`GET /dimos/skills` lists the skills (a module's `@skill` methods) of the running blueprint, agent or no agent: name,
+module, docstring, params as JSON Schema (the one McpServer gives an agent), `lifecycle` and the capabilities it
+`uses`. The gateway reads them over dimos's module RPC, as `dimos.porcelain` does: `Coordinator/list_modules`, then
+each module's `get_skills`; a module that doesn't answer is in `errors`, and nothing running is an empty list with
+`run: null`. `POST /dimos/skills/call {skill, args, module?, runId?}` checks `args` against `params`, calls
+`<module>/<skill>` over the same RPC (as the coordinator calls a module's `start`), and answers with its text once it
+returns (`via: rpc`). A skill that holds a capability goes through the run's McpServer instead when one answers
+(`via: mcp`), so the capability locks its agent goes by cover the call too. It acts on the robot: the gateway calls a
+skill only when asked to.
 
 ```sh
 curl -s localhost:5555/dimos/skills | jq '.skills[] | {name, module}'

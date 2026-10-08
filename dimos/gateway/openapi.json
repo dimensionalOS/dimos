@@ -4331,12 +4331,19 @@
         "additionalProperties": true,
         "properties": {
           "blueprint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "description": "That run's blueprint",
             "examples": [
-              "unitree-go2-agentic"
+              "unitree-go2"
             ],
-            "title": "Blueprint",
-            "type": "string"
+            "title": "Blueprint"
           },
           "description": {
             "description": "Its docstring",
@@ -4355,19 +4362,12 @@
             "type": "string"
           },
           "module": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "The module (class) it belongs to; null when the run's MCP server can't say",
+            "description": "The module it belongs to: its RPC name (the class name, or the instance name a blueprint gave it)",
             "examples": [
               "UnitreeSkillContainer"
             ],
-            "title": "Module"
+            "title": "Module",
+            "type": "string"
           },
           "name": {
             "description": "The skill (the module's method name)",
@@ -4379,7 +4379,7 @@
           },
           "params": {
             "additionalProperties": true,
-            "description": "Its arguments as a JSON Schema object (`properties`, `required`)",
+            "description": "Its arguments as a JSON Schema object (`properties`, `required`), as McpServer gives an agent",
             "examples": [
               {
                 "properties": {
@@ -4410,12 +4410,19 @@
             "type": "array"
           },
           "runId": {
-            "description": "The run it belongs to",
-            "examples": [
-              "20260101-120000-unitree-go2-agentic"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
             ],
-            "title": "Runid",
-            "type": "string"
+            "description": "The run it belongs to (null: a coordinator not started by `dimos run`)",
+            "examples": [
+              "20260101-120000-unitree-go2"
+            ],
+            "title": "Runid"
           },
           "uses": {
             "description": "Capabilities it holds while it runs (another skill using one waits or is refused)",
@@ -4480,7 +4487,7 @@
                 "type": "null"
               }
             ],
-            "description": "Only this run's (default: the newest run that has it)",
+            "description": "Refuse unless this is the running run (default: whichever runs)",
             "title": "Runid"
           },
           "skill": {
@@ -4502,12 +4509,19 @@
         "additionalProperties": true,
         "properties": {
           "blueprint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "description": "That run's blueprint",
             "examples": [
-              "unitree-go2-agentic"
+              "unitree-go2"
             ],
-            "title": "Blueprint",
-            "type": "string"
+            "title": "Blueprint"
           },
           "content": {
             "description": "Its whole answer as MCP content blocks (`{type: text, text}`, `{type: image, data, mimeType}`)",
@@ -4519,6 +4533,19 @@
             "type": "array"
           },
           "module": {
+            "description": "Its module",
+            "examples": [
+              "UnitreeSkillContainer"
+            ],
+            "title": "Module",
+            "type": "string"
+          },
+          "ok": {
+            "description": "False when the skill failed (`text` says why)",
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "runId": {
             "anyOf": [
               {
                 "type": "string"
@@ -4527,24 +4554,11 @@
                 "type": "null"
               }
             ],
-            "description": "Its module",
-            "examples": [
-              "UnitreeSkillContainer"
-            ],
-            "title": "Module"
-          },
-          "ok": {
-            "description": "False when the skill failed (`text` says why)",
-            "title": "Ok",
-            "type": "boolean"
-          },
-          "runId": {
             "description": "The run it ran in",
             "examples": [
-              "20260101-120000-unitree-go2-agentic"
+              "20260101-120000-unitree-go2"
             ],
-            "title": "Runid",
-            "type": "string"
+            "title": "Runid"
           },
           "skill": {
             "description": "The skill called",
@@ -4561,6 +4575,14 @@
             ],
             "title": "Text",
             "type": "string"
+          },
+          "via": {
+            "description": "`rpc` (dimos's module RPC) or `mcp` (the run's McpServer, for a skill that holds a capability)",
+            "examples": [
+              "rpc"
+            ],
+            "title": "Via",
+            "type": "string"
           }
         },
         "required": [
@@ -4568,6 +4590,7 @@
           "module",
           "runId",
           "blueprint",
+          "via",
           "ok",
           "text",
           "content"
@@ -4578,16 +4601,27 @@
       "SkillList": {
         "additionalProperties": true,
         "properties": {
-          "runs": {
-            "description": "Each live run's MCP server and whether it answered",
+          "errors": {
+            "description": "Modules whose skills couldn't be read (their skills aren't listed)",
             "items": {
-              "$ref": "#/components/schemas/SkillServer"
+              "$ref": "#/components/schemas/SkillModuleError"
             },
-            "title": "Runs",
+            "title": "Errors",
             "type": "array"
           },
+          "run": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SkillRun"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What runs; null when nothing answers on the RPC bus"
+          },
           "skills": {
-            "description": "Every skill of every live run, newest run first; empty when none runs",
+            "description": "Every skill of the running blueprint's modules, by name; empty when none runs",
             "items": {
               "$ref": "#/components/schemas/Skill"
             },
@@ -4597,9 +4631,37 @@
         },
         "required": [
           "skills",
-          "runs"
+          "run",
+          "errors"
         ],
         "title": "SkillList",
+        "type": "object"
+      },
+      "SkillModuleError": {
+        "additionalProperties": true,
+        "properties": {
+          "error": {
+            "description": "Why",
+            "examples": [
+              "TimeoutError: RPC call timed out after 3.0 seconds"
+            ],
+            "title": "Error",
+            "type": "string"
+          },
+          "module": {
+            "description": "A module that didn't list its skills",
+            "examples": [
+              "NativeSlam"
+            ],
+            "title": "Module",
+            "type": "string"
+          }
+        },
+        "required": [
+          "module",
+          "error"
+        ],
+        "title": "SkillModuleError",
         "type": "object"
       },
       "SkillParam": {
@@ -4652,18 +4714,10 @@
         "title": "SkillParam",
         "type": "object"
       },
-      "SkillServer": {
+      "SkillRun": {
         "additionalProperties": true,
         "properties": {
           "blueprint": {
-            "description": "Its blueprint",
-            "examples": [
-              "unitree-go2-agentic"
-            ],
-            "title": "Blueprint",
-            "type": "string"
-          },
-          "error": {
             "anyOf": [
               {
                 "type": "string"
@@ -4672,39 +4726,33 @@
                 "type": "null"
               }
             ],
-            "description": "Why it didn't (null: it did)",
-            "title": "Error"
-          },
-          "mcpUrl": {
-            "description": "Where its MCP server listens",
+            "description": "Its blueprint",
             "examples": [
-              "http://localhost:9990/mcp"
+              "unitree-go2"
             ],
-            "title": "Mcpurl",
-            "type": "string"
+            "title": "Blueprint"
           },
           "runId": {
-            "description": "A live run",
-            "examples": [
-              "20260101-120000-unitree-go2-agentic"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
             ],
-            "title": "Runid",
-            "type": "string"
-          },
-          "up": {
-            "description": "Its MCP server answered",
-            "title": "Up",
-            "type": "boolean"
+            "description": "The running blueprint's run (null: a coordinator not started by `dimos run`)",
+            "examples": [
+              "20260101-120000-unitree-go2"
+            ],
+            "title": "Runid"
           }
         },
         "required": [
           "runId",
-          "blueprint",
-          "mcpUrl",
-          "up",
-          "error"
+          "blueprint"
         ],
-        "title": "SkillServer",
+        "title": "SkillRun",
         "type": "object"
       },
       "SourceFile": {
@@ -5442,7 +5490,7 @@
   "info": {
     "description": "The dimos gateway's HTTP API: blueprints, global config, runs and their logs, events, Dimensional cloud uploads,\ndiscovery (blueprints, modules, message types), docs, extras and jobs.\n\ndimOS Desktop starts the gateway (`python -m dimos.gateway`, on a unix socket) and forwards `/dimos/...` to it unchanged.\nEvery answer is JSON unless the operation says otherwise; every error is `{\"error\": \"<message>\"}` (ErrorResponse).\nState is HTTP; changes are events, published on zenoh at `<ns>/dimos/events/<type>` (the `events` tag).\n\nExtensions: `x-family: dimos` on every operation; `x-agent: true` marks what Desktop's agent finds through\nsearch_endpoints; `x-mcp-tool` names an MCP tool that does the same; `x-zenoh-key` on an event schema is its key.\n",
     "title": "dimos gateway",
-    "version": "1.15.0"
+    "version": "1.16.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -7515,7 +7563,7 @@
     },
     "/dimos/skills": {
       "get": {
-        "description": "Asks each live run's MCP server (an agentic blueprint's McpServer, at its `mcp_port`, default 9990) for its tools and which module has each. Empty `skills` when nothing runs; a run without an MCP server is in `runs` with `up: false`. No side effects.",
+        "description": "Every `@skill` method of the running blueprint's modules, whether or not it has an agent: over dimos's module RPC, `Coordinator/list_modules` then each module's `get_skills` (the JSON schema McpServer gives an agent). Empty `skills` and null `run` when nothing runs; `errors` names a module that didn't answer. No side effects.",
         "operationId": "get_dimos_skills",
         "responses": {
           "200": {
@@ -7526,7 +7574,7 @@
                 }
               }
             },
-            "description": "`{ skills: [{ name, module, description, params, required, lifecycle, uses, runId, blueprint }], runs: [{ runId, blueprint, mcpUrl, up, error }] }`"
+            "description": "`{ skills: [{ name, module, description, params, required, lifecycle, uses, runId, blueprint }], run: { runId, blueprint } | null, errors: [{ module, error }] }`"
           },
           "500": {
             "content": {
@@ -7539,7 +7587,7 @@
             "description": "The gateway couldn't do it: a child process, launch, stop or cloud call failed (the message says why)"
           }
         },
-        "summary": "The running blueprints' skills (what their agent can call): name, module, description, params",
+        "summary": "The running blueprint's skills: name, module, description, params",
         "tags": [
           "skills"
         ],
@@ -7549,7 +7597,7 @@
     },
     "/dimos/skills/call": {
       "post": {
-        "description": "Calls it through the run's MCP server (`tools/call`, as the blueprint's own agent does: a skill whose capability another holds waits or is refused, a background skill answers at once). This acts on the robot. Waits up to 300 s. `ok` false when the skill itself failed. 404 when no running blueprint has the skill (or `runId` isn't live), 409 when nothing runs, 500 when the call failed.",
+        "description": "Calls `<module>/<skill>` over dimos's module RPC, as the coordinator calls a module's start. A skill that holds a capability (`uses`) goes through the run's McpServer instead when one answers (`via: mcp`), so its agent's capability locks cover it: it waits or is refused while another skill holds one. A background skill answers at once. This acts on the robot. Waits up to 300 s. `ok` false when the skill itself failed. 400 for a missing or unknown argument (checked against `params`) or a name two modules share without `module`, 404 when the running blueprint has no such skill (or `runId` isn't it), 409 when nothing runs, 500 when the MCP call failed, 504 when it didn't answer in time.",
         "operationId": "post_dimos_skills_call",
         "requestBody": {
           "content": {
@@ -7570,7 +7618,7 @@
                 }
               }
             },
-            "description": "`{ skill, module, runId, blueprint, ok, text, content }`"
+            "description": "`{ skill, module, runId, blueprint, via, ok, text, content }`"
           },
           "400": {
             "content": {
@@ -7611,6 +7659,16 @@
               }
             },
             "description": "The gateway couldn't do it: a child process, launch, stop or cloud call failed (the message says why)"
+          },
+          "504": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "What the gateway waited on (a skill) didn't answer in time"
           }
         },
         "summary": "Call a skill of the running blueprint and wait for its answer",
@@ -8082,7 +8140,7 @@
       "name": "jobs"
     },
     {
-      "description": "The running blueprints' skills (a module's `@skill` methods, what their agent calls), read and called through each run's own MCP server (an agentic blueprint's McpServer) with dimos's McpAdapter. `POST /dimos/mcp` offers the same to an agent as two MCP tools that don't change with what runs.",
+      "description": "The running blueprint's skills (a module's `@skill` methods), read and called over dimos's module RPC (`<module>/get_skills`, `<module>/<skill>`), with or without an agent in the blueprint. `POST /dimos/mcp` offers the same to an agent as two MCP tools that don't change with what runs.",
       "name": "skills"
     },
     {

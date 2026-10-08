@@ -765,15 +765,16 @@ class Skill(ApiModel):
     name: str = Field(
         description="The skill (the module's method name)", examples=["execute_sport_command"]
     )
-    module: str | None = Field(
-        description="The module (class) it belongs to; null when the run's MCP server can't say",
+    module: str = Field(
+        description="The module it belongs to: its RPC name (the class name, or the instance name a blueprint gave "
+        "it)",
         examples=["UnitreeSkillContainer"],
     )
     description: str = Field(
         description="Its docstring", examples=["Execute a Unitree sport command."]
     )
     params: dict[str, Any] = Field(
-        description="Its arguments as a JSON Schema object (`properties`, `required`)",
+        description="Its arguments as a JSON Schema object (`properties`, `required`), as McpServer gives an agent",
         examples=[
             {
                 "type": "object",
@@ -794,28 +795,35 @@ class Skill(ApiModel):
         description="Capabilities it holds while it runs (another skill using one waits or is refused)",
         examples=[["locomotion"]],
     )
-    runId: str = Field(
-        description="The run it belongs to", examples=["20260101-120000-unitree-go2-agentic"]
+    runId: str | None = Field(
+        description="The run it belongs to (null: a coordinator not started by `dimos run`)",
+        examples=["20260101-120000-unitree-go2"],
     )
-    blueprint: str = Field(description="That run's blueprint", examples=["unitree-go2-agentic"])
+    blueprint: str | None = Field(description="That run's blueprint", examples=["unitree-go2"])
 
 
-class SkillServer(ApiModel):
-    runId: str = Field(description="A live run", examples=["20260101-120000-unitree-go2-agentic"])
-    blueprint: str = Field(description="Its blueprint", examples=["unitree-go2-agentic"])
-    mcpUrl: str = Field(
-        description="Where its MCP server listens", examples=["http://localhost:9990/mcp"]
+class SkillRun(ApiModel):
+    runId: str | None = Field(
+        description="The running blueprint's run (null: a coordinator not started by `dimos run`)",
+        examples=["20260101-120000-unitree-go2"],
     )
-    up: bool = Field(description="Its MCP server answered")
-    error: str | None = Field(description="Why it didn't (null: it did)")
+    blueprint: str | None = Field(description="Its blueprint", examples=["unitree-go2"])
+
+
+class SkillModuleError(ApiModel):
+    module: str = Field(description="A module that didn't list its skills", examples=["NativeSlam"])
+    error: str = Field(
+        description="Why", examples=["TimeoutError: RPC call timed out after 3.0 seconds"]
+    )
 
 
 class SkillList(ApiModel):
     skills: list[Skill] = Field(
-        description="Every skill of every live run, newest run first; empty when none runs"
+        description="Every skill of the running blueprint's modules, by name; empty when none runs"
     )
-    runs: list[SkillServer] = Field(
-        description="Each live run's MCP server and whether it answered"
+    run: SkillRun | None = Field(description="What runs; null when nothing answers on the RPC bus")
+    errors: list[SkillModuleError] = Field(
+        description="Modules whose skills couldn't be read (their skills aren't listed)"
     )
 
 
@@ -831,17 +839,21 @@ class SkillCallRequest(ApiModel):
     )
     module: str | None = Field(default=None, description="Only this module's skill of that name")
     runId: str | None = Field(
-        default=None, description="Only this run's (default: the newest run that has it)"
+        default=None, description="Refuse unless this is the running run (default: whichever runs)"
     )
 
 
 class SkillCallResult(ApiModel):
     skill: str = Field(description="The skill called", examples=["execute_sport_command"])
-    module: str | None = Field(description="Its module", examples=["UnitreeSkillContainer"])
-    runId: str = Field(
-        description="The run it ran in", examples=["20260101-120000-unitree-go2-agentic"]
+    module: str = Field(description="Its module", examples=["UnitreeSkillContainer"])
+    runId: str | None = Field(
+        description="The run it ran in", examples=["20260101-120000-unitree-go2"]
     )
-    blueprint: str = Field(description="That run's blueprint", examples=["unitree-go2-agentic"])
+    blueprint: str | None = Field(description="That run's blueprint", examples=["unitree-go2"])
+    via: str = Field(
+        description="`rpc` (dimos's module RPC) or `mcp` (the run's McpServer, for a skill that holds a capability)",
+        examples=["rpc"],
+    )
     ok: bool = Field(description="False when the skill failed (`text` says why)")
     text: str = Field(
         description="Its answer's text", examples=["'FrontJump' command executed successfully."]

@@ -14,7 +14,7 @@
 
 """The skills routes: GET /dimos/skills, POST /dimos/skills/call, and POST /dimos/mcp, an MCP server with two fixed
 tools (list_skills, call_skill) so an agent that connects once, before any blueprint runs, can still call the skills of
-whichever one runs later."""
+whichever one runs later. A skill is called only when a person or agent asks for it here."""
 
 from __future__ import annotations
 
@@ -35,8 +35,7 @@ MCP_TOOLS: list[dict[str, Any]] = [
         "name": "list_skills",
         "description": "The skills of the robot's running dimos blueprint (a module's @skill methods: moving, sport "
         "commands such as jump or sit, speaking, navigating, ...): name, module, description and JSON-schema "
-        "params. Empty when no blueprint runs; only agentic blueprints (with an MCP server) have skills. Call this "
-        "before call_skill: a skill such as Go2's execute_sport_command takes the command (FrontJump, Sit, ...) as "
+        "params. Empty when no blueprint runs. Call this before call_skill: a skill such as Go2's execute_sport_command takes the command (FrontJump, Sit, ...) as "
         "an argument.",
         "inputSchema": {
             "type": "object",
@@ -77,27 +76,26 @@ def add(app: FastAPI) -> None:
     from dimos.gateway.app import ApiError
 
     async def listed() -> dict[str, Any]:
-        servers = await asyncio.to_thread(skills.live_servers)
-        return await asyncio.to_thread(skills.list_skills, servers)
+        return await asyncio.to_thread(skills.list_skills)
 
     async def called(
         skill: str, args: dict[str, Any], module: str | None, run_id: str | None
     ) -> dict[str, Any]:
-        servers = await asyncio.to_thread(skills.live_servers)
-        return await asyncio.to_thread(skills.call_skill, servers, skill, args, module, run_id)
+        return await asyncio.to_thread(skills.call_skill, skill, args, module, run_id)
 
     @app.get(
         "/dimos/skills",
         response_model=models.SkillList,
         **route_doc(
             "skills",
-            "The running blueprints' skills (what their agent can call): name, module, description, params",
-            "Asks each live run's MCP server (an agentic blueprint's McpServer, at its `mcp_port`, default 9990) for "
-            "its tools and which module has each. Empty `skills` when nothing runs; a run without an MCP server is in "
-            "`runs` with `up: false`. No side effects.",
+            "The running blueprint's skills: name, module, description, params",
+            "Every `@skill` method of the running blueprint's modules, whether or not it has an agent: over dimos's "
+            "module RPC, `Coordinator/list_modules` then each module's `get_skills` (the JSON schema McpServer gives "
+            "an agent). Empty `skills` and null `run` when nothing runs; `errors` names a module that didn't answer. "
+            "No side effects.",
             agent=True,
             answer="`{ skills: [{ name, module, description, params, required, lifecycle, uses, runId, blueprint }], "
-            "runs: [{ runId, blueprint, mcpUrl, up, error }] }`",
+            "run: { runId, blueprint } | null, errors: [{ module, error }] }`",
         ),
     )
     async def skill_list() -> dict[str, Any]:
@@ -109,13 +107,16 @@ def add(app: FastAPI) -> None:
         **route_doc(
             "skills",
             "Call a skill of the running blueprint and wait for its answer",
-            "Calls it through the run's MCP server (`tools/call`, as the blueprint's own agent does: a skill whose "
-            "capability another holds waits or is refused, a background skill answers at once). This acts on the "
-            "robot. Waits up to 300 s. `ok` false when the skill itself failed. 404 when no running blueprint has "
-            "the skill (or `runId` isn't live), 409 when nothing runs, 500 when the call failed.",
-            errors=(400, 404, 409, 500),
+            "Calls `<module>/<skill>` over dimos's module RPC, as the coordinator calls a module's start. A skill that "
+            "holds a capability (`uses`) goes through the run's McpServer instead when one answers (`via: mcp`), so "
+            "its agent's capability locks cover it: it waits or is refused while another skill holds one. A "
+            "background skill answers at once. This acts on the robot. Waits up to 300 s. `ok` false when the skill "
+            "itself failed. 400 for a missing or unknown argument (checked against `params`) or a name two modules "
+            "share without `module`, 404 when the running blueprint has no such skill (or `runId` isn't it), 409 when "
+            "nothing runs, 500 when the MCP call failed, 504 when it didn't answer in time.",
+            errors=(400, 404, 409, 500, 504),
             agent=True,
-            answer="`{ skill, module, runId, blueprint, ok, text, content }`",
+            answer="`{ skill, module, runId, blueprint, via, ok, text, content }`",
         ),
     )
     async def skill_call(request: models.SkillCallRequest) -> dict[str, Any]:
@@ -136,13 +137,10 @@ def add(app: FastAPI) -> None:
                 for s in answer["skills"]
                 if _matches(s, query)
             ]
-            down = [run["error"] for run in answer["runs"] if not run["up"]]
-            if not found and not answer["runs"]:
-                return (
-                    "No blueprint is running, so there are no skills. Launch an agentic one first.",
-                    False,
-                )
-            return json.dumps({"skills": found, "problems": down}), False
+            if answer["run"] is None:
+                return "No blueprint is running, so there are no skills. Launch one first.", False
+            problems = [f"{e['module']}: {e['error']}" for e in answer["errors"]]
+            return json.dumps({"skills": found, "problems": problems}), False
         if name == "call_skill":
             skill = arguments.get("skill")
             args = arguments.get("args") or {}

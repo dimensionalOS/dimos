@@ -34,7 +34,7 @@ from dimos.gateway.models import DimosEvent, ErrorResponse
 if TYPE_CHECKING:
     from fastapi import FastAPI
 
-API_VERSION = "1.15.0"
+API_VERSION = "1.16.0"
 SPEC_FILE = Path(__file__).parent / "openapi.json"
 
 DESCRIPTION = """\
@@ -120,8 +120,8 @@ TAGS: list[dict[str, Any]] = [
     },
     {
         "name": "skills",
-        "description": "The running blueprints' skills (a module's `@skill` methods, what their agent calls), read "
-        "and called through each run's own MCP server (an agentic blueprint's McpServer) with dimos's McpAdapter. "
+        "description": "The running blueprint's skills (a module's `@skill` methods), read and called over dimos's "
+        "module RPC (`<module>/get_skills`, `<module>/<skill>`), with or without an agent in the blueprint. "
         "`POST /dimos/mcp` offers the same to an agent as two MCP tools that don't change with what runs.",
     },
     {
@@ -139,6 +139,7 @@ ERRORS = {
     404: "No such thing (the message names it)",
     409: "Conflict with the current state (the message says what it is)",
     500: "The gateway couldn't do it: a child process, launch, stop or cloud call failed (the message says why)",
+    504: "What the gateway waited on (a skill) didn't answer in time",
 }
 
 
