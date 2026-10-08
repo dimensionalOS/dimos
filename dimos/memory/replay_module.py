@@ -156,7 +156,9 @@ class ReplayModule(Module):
                     interval(1.0).subscribe(partial(_republish, port, stream.first()))
                 )
                 continue
-            timed: Observable[DimosMsg] = stream.observable()
+            # the time spent setting up since pin_anchor is not lateness: start every stream at its
+            # first frame (a busy machine otherwise dropped odom's first one)
+            timed: Observable[DimosMsg] = stream.observable(skip_late=False)
             self.register_disposable(timed.subscribe(port.publish))
 
     @rpc
