@@ -319,10 +319,11 @@ def parse_manifest(data: Any) -> Manifest:
         if map_encoding is not None:
             _check_map_panel(panel, ch_ids, map_encoding)
         if panel.kind == "teleop":
-            if len(panel.channels) != 1:
+            # the twist command, plus optionally the raw gamepad state as Joy
+            if len(panel.channels) not in (1, 2):
                 raise ManifestError(
                     "invalid_teleop_panel",
-                    f"teleop panel {panel.id} must bind exactly one channel",
+                    f"teleop panel {panel.id} must bind one or two channels",
                 )
             cmd = ch_ids[panel.channels[0]]
             if cmd.encoding != "twist.json.v1" or cmd.delivery != "latest" or cmd.dir != "tx":
@@ -330,6 +331,13 @@ def parse_manifest(data: Any) -> Manifest:
                     "invalid_teleop_panel",
                     f"teleop panel {panel.id} needs a twist.json.v1 latest tx channel",
                 )
+            if len(panel.channels) == 2:
+                joy = ch_ids[panel.channels[1]]
+                if joy.encoding != "joy.json.v1" or joy.dir != "tx" or joy.publish != "shared":
+                    raise ManifestError(
+                        "invalid_teleop_panel",
+                        f"teleop panel {panel.id} joystick needs a joy.json.v1 shared tx channel",
+                    )
         if panel.kind == "chat":
             # channels: the text input (publish tx), the messages, the idle
             # flag, the push-to-talk audio (publish tx).

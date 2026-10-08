@@ -51,7 +51,7 @@ function activeGamepad(): Gamepad | null {
   return best;
 }
 
-export function TeleopPanel({ spec, teleop }: PanelProps) {
+export function TeleopPanel({ spec, teleop, session }: PanelProps) {
   const ch = spec.channels[0] as string | undefined;
   if (ch === undefined || teleop === undefined) {
     // No channel is a bridge authoring mistake; no teleop hooks means a
@@ -62,14 +62,26 @@ export function TeleopPanel({ spec, teleop }: PanelProps) {
       </PanelFrame>
     );
   }
-  return <TeleopControls spec={spec} teleop={teleop} ch={ch} />;
+  return <TeleopControls spec={spec} teleop={teleop} ch={ch} session={session} />;
 }
 
-function TeleopControls({ spec, teleop, ch }: {
+/** Raw pad state for the optional joystick channel: axes to three decimals,
+ * buttons as 0/1. Equal samples publish nothing. */
+function joySample(pad: Gamepad): { axes: number[]; buttons: number[] } {
+  return {
+    axes: pad.axes.map((a) => Math.round(a * 1000) / 1000),
+    buttons: pad.buttons.map((b) => (b.pressed ? 1 : 0)),
+  };
+}
+
+function TeleopControls({ spec, teleop, ch, session }: {
   spec: PanelProps["spec"];
   teleop: NonNullable<PanelProps["teleop"]>;
   ch: string;
+  session: PanelProps["session"];
 }) {
+  // Second channel, when the blueprint asked for it: the raw gamepad state.
+  const joyCh = spec.channels[1] as string | undefined;
   const status = useStatus(teleop);
   const connected = status.transport.phase === "connected";
   // Config is read once per mount: a manifest edit changes the channel
@@ -109,6 +121,9 @@ function TeleopControls({ spec, teleop, ch }: {
     let prevA = false;
     let prevB = false;
     let lastName: string | null = null;
+    let lastJoy = "";
+    let lastJoyAt = 0;
+    const joyMinMs = 1000 / machine.config.publishHz;
     const timer = setInterval(() => {
       const pad = activeGamepad();
       const name = pad?.id ?? null;
@@ -124,9 +139,20 @@ function TeleopControls({ spec, teleop, ch }: {
       prevA = a;
       prevB = b;
       machine.stick(stickFromGamepad(pad.axes, pad.buttons, pad.mapping));
+      if (joyCh !== undefined && session !== undefined) {
+        const sample = joySample(pad);
+        const key = JSON.stringify(sample);
+        const now = performance.now();
+        if (key !== lastJoy && now - lastJoyAt >= joyMinMs) {
+          lastJoy = key;
+          lastJoyAt = now;
+          // Fire-and-forget: a dropped sample is replaced by the next change.
+          session.publish(joyCh, sample).catch(() => {});
+        }
+      }
     }, 1000 / PAD_POLL_HZ);
     return () => clearInterval(timer);
-  }, [machine]);
+  }, [machine, joyCh, session]);
 
   // Arm from focus AND click: after teleop_held or a reconnect the pad can
   // still hold focus, and clicking an already-focused element fires no focus

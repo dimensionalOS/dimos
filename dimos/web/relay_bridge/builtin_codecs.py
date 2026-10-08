@@ -36,6 +36,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid, block_max_reduce
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.Joy import Joy
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.utils.generic import finite_number
 from dimos.web.codecs import EncodedPayload, web_decoder, web_encoder
@@ -97,6 +98,26 @@ def decode_point(msg: dict[str, Any]) -> PointStamped:
         raise ValueError(f"point.json.v1 wants an object, got {type(msg).__name__}")
     return PointStamped(
         finite_number(msg.get("x"), "x"), finite_number(msg.get("y"), "y"), frame_id="world"
+    )
+
+
+# Raw gamepad state from the browser's Gamepad API: axes -1..1, buttons 0/1.
+_JOY_MAX_FIELDS = 32
+
+
+@web_decoder("joy.json.v1")
+def decode_joy(msg: dict[str, Any]) -> Joy:
+    if not isinstance(msg, dict):
+        raise ValueError(f"joy.json.v1 wants an object, got {type(msg).__name__}")
+    axes = msg.get("axes", [])
+    buttons = msg.get("buttons", [])
+    if not isinstance(axes, list) or not isinstance(buttons, list):
+        raise ValueError("joy.json.v1 wants axes and buttons lists")
+    if len(axes) > _JOY_MAX_FIELDS or len(buttons) > _JOY_MAX_FIELDS:
+        raise ValueError("joy.json.v1 axes/buttons too long")
+    return Joy(
+        axes=[max(-1.0, min(1.0, finite_number(a, "axes"))) for a in axes],
+        buttons=[1 if b else 0 for b in buttons],
     )
 
 

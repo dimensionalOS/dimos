@@ -16,9 +16,10 @@
 
 ``unitree-go2-joystick-record`` with the web cockpit in place of pygame and Rerun. The
 teleop panel takes a gamepad (Steam Deck, Legion Go, any pad the browser sees) or WASD,
-and the bridge's ``tele_cmd_vel`` feeds the Go2's ``cmd_vel`` directly. No mapper or
-navigation, so nothing grows with the distance covered. ``--record`` keeps the raw streams
-and the commands the dog received.
+and the bridge's ``tele_cmd_vel`` feeds the Go2's ``cmd_vel`` directly; the raw pad state
+(continuous axes, buttons) goes out as ``joystick: Joy``. No mapper or navigation, so
+nothing grows with the distance covered. ``--record`` keeps the raw streams, the commands
+the dog received and the operator's sticks.
 
 Usage:
     dimos --record run unitree-go2-gamepad-cockpit --robot-ip 192.168.12.1 --local-relay
@@ -28,15 +29,18 @@ Usage:
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.web.cockpit import Row, Teleop, Video, cockpit
-from dimos.web.relay_bridge.relay_bridge_module import RelayBridgeModule
+
+_web = cockpit(
+    layout=Row(
+        Video("color_image", title="camera"),
+        Teleop(max_linear=0.5, max_angular=0.8, joystick="joystick", title="drive"),
+        shares=[3, 1],
+    )
+)
+# The joystick channel makes cockpit() generate a bridge subclass; remap by that class.
+_bridge = _web.blueprints[0].module
 
 unitree_go2_gamepad_cockpit = autoconnect(
     GO2Connection.blueprint(),
-    cockpit(
-        layout=Row(
-            Video("color_image", title="camera"),
-            Teleop(max_linear=0.5, max_angular=0.8, title="drive"),
-            shares=[3, 1],
-        )
-    ).remappings([(RelayBridgeModule, "tele_cmd_vel", "cmd_vel")]),
+    _web.remappings([(_bridge, "tele_cmd_vel", "cmd_vel")]),
 ).global_config(n_workers=2, robot_model="unitree_go2")

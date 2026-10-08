@@ -1057,3 +1057,21 @@ def test_import_stays_light() -> None:
         "assert 'langchain_core' not in sys.modules"
     )
     subprocess.run([sys.executable, "-c", code], check=True)
+
+
+def test_teleop_joystick_adds_a_shared_joy_tx_channel() -> None:
+    from dimos.msgs.sensor_msgs.Joy import Joy
+
+    blueprint = cockpit(layout=Teleop(joystick="joystick"))
+    manifest = blueprint.blueprints[0].kwargs["manifest"]
+    (panel,) = manifest["panels"]
+    assert panel["channels"] == ["tele_cmd_vel", "joystick"]
+    joy = next(c for c in manifest["channels"] if c["ch"] == "joystick")
+    assert (joy["dir"], joy["encoding"], joy["publish"]) == ("tx", "joy.json.v1", "shared")
+    spec = next(c for c in blueprint.blueprints[0].kwargs["channels"] if c.ch == "joystick")
+    assert spec.message_type is Joy
+
+
+def test_teleop_without_joystick_binds_one_channel() -> None:
+    manifest = cockpit(layout=Teleop()).blueprints[0].kwargs["manifest"]
+    assert manifest["panels"][0]["channels"] == ["tele_cmd_vel"]

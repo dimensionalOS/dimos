@@ -50,6 +50,7 @@ from dimos_lcm.std_msgs import Bool
 
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.nav_msgs.Path import Path
+from dimos.msgs.sensor_msgs.Joy import Joy
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.web.codecs import is_generic_lcm_encoding
 from dimos.web.lcm_codec import default_encoding, export_schema, schema_class_for
@@ -495,10 +496,15 @@ class Teleop(Panel):
     boost: float = field(default=2.0, kw_only=True)
     publish_hz: float = field(default=15.0, kw_only=True)
     watchdog_ms: float = field(default=300.0, kw_only=True)
+    # Also publish the raw gamepad state (axes -1..1, buttons 0/1) as Joy on
+    # this stream, for recordings that want the operator's actual input.
+    joystick: str | None = field(default=None, kw_only=True)
     title: str = field(default="", kw_only=True)
 
     def __post_init__(self) -> None:
         _check_stream("stream", self.stream)
+        if self.joystick is not None:
+            _check_stream("joystick", self.joystick)
         _check_rate("max_linear", self.max_linear)
         _check_rate("max_angular", self.max_angular)
         _check_rate("boost", self.boost)
@@ -506,19 +512,32 @@ class Teleop(Panel):
         _check_rate("watchdog_ms", self.watchdog_ms)
 
     def _channel_requests(self) -> tuple[ChannelRequest, ...]:
+        twist = ChannelRequest(
+            self.stream,
+            "tx",
+            "twist.json.v1",
+            self.publish_hz,
+            {
+                "maxLinear": self.max_linear,
+                "maxAngular": self.max_angular,
+                "boost": self.boost,
+                "watchdogMs": self.watchdog_ms,
+            },
+            delivery="latest",
+        )
+        return (twist, *(_request_of(channel) for channel in self._channels()))
+
+    def _channels(self) -> tuple[Channel, ...]:
+        if self.joystick is None:
+            return ()
         return (
-            ChannelRequest(
-                self.stream,
-                "tx",
-                "twist.json.v1",
-                self.publish_hz,
-                {
-                    "maxLinear": self.max_linear,
-                    "maxAngular": self.max_angular,
-                    "boost": self.boost,
-                    "watchdogMs": self.watchdog_ms,
-                },
-                delivery="latest",
+            Channel(
+                self.joystick,
+                Joy,
+                dir="tx",
+                encoding="joy.json.v1",
+                publish="shared",
+                max_hz=self.publish_hz,
             ),
         )
 
