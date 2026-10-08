@@ -28,7 +28,6 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from pathlib import Path
-import threading
 import time
 from typing import Any, Generic, TypeVar, cast
 
@@ -129,8 +128,6 @@ def timed_playback(
             return disp
 
         prev_ts = first_ts
-        schedule_lock = threading.Lock()
-        scheduled = [0]
 
         def schedule_emission(message: tuple[float, T]) -> None:
             nonlocal next_message, start_local_time, start_replay_time, prev_ts
@@ -163,16 +160,7 @@ def timed_playback(
                     observer.on_completed()
                 return None
 
-            # With ~0 delay (a busy machine running behind) the timer can fire on its own thread
-            # and schedule the next frame before schedule_relative returns; assigning this older
-            # handle afterwards would dispose that newer timer and stall the replay for good.
-            with schedule_lock:
-                scheduled[0] += 1
-                mine = scheduled[0]
-            handle = sched.schedule_relative(delay, emit)
-            with schedule_lock:
-                if scheduled[0] == mine:
-                    disp.disposable = handle
+            disp.disposable = sched.schedule_relative(delay, emit)
 
         if next_message is not None:
             schedule_emission(next_message)

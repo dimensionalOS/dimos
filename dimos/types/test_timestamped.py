@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from datetime import datetime, timezone
-import threading
 import time
 
 import pytest
@@ -285,15 +284,7 @@ def test_time_window_collection() -> None:
 
 @pytest.mark.self_hosted
 def test_timestamp_alignment(test_scheduler) -> None:
-    # Wall-clock playback, so two things must not depend on how fast the runner is:
-    # - one playback feeds both sides (as one sensor would). Two subscriptions to the cold
-    #   replay each started their own clock, the first one late by the store's first decode
-    #   (~0.1 s, more on a busy runner), putting the secondary that much further ahead.
-    # - the buffer outlasts the processor's latency. It is in recorded time, so at `speed` 1 s
-    #   is 1/speed s of wall time, while the 0.5 s processor is 0.5/speed s plus timer slop
-    #   (macOS stretches a 0.1 s sleep to ~0.17 s): a frame processed after the secondary's copy
-    #   left the buffer could never be matched. The whole clip (~2 s) fits in 5 s.
-    speed = 2.0
+    speed = 5.0
 
     # ensure that lfs package is downloaded
     get_data("unitree_office_walk")
@@ -305,14 +296,15 @@ def test_timestamp_alignment(test_scheduler) -> None:
         print(image.ts)
         return image
 
-    # sensor reply of raw video frames, stamped with their recorded time (not decode time)
+    # sensor reply of raw video frames, stamped with their recorded time (not decode time) so the
+    # two subscriptions below agree on every frame's ts however unevenly a busy runner decodes them
     store = LegacyPickleStore("unitree_office_walk/video")
     video_raw = timed_playback(
         lambda: (
             (ts, Image.from_numpy(frame, ts=ts).to_rgb()) for ts, frame in store.iterate_items()
         ),
         speed=speed,
-    ).pipe(ops.take(30), ops.publish())
+    ).pipe(ops.take(30))
 
     processed_frames = []
 
@@ -327,20 +319,13 @@ def test_timestamp_alignment(test_scheduler) -> None:
         video_raw.pipe(ops.map(spy)), scheduler=test_scheduler
     ).pipe(ops.map(process_video_frame))
 
-    done = threading.Event()
-    aligned_frames: list = []
-    align_timestamped(fake_video_processor, video_raw, buffer_size=5.0).pipe(
-        ops.to_list()
-    ).subscribe(on_next=aligned_frames.extend, on_completed=done.set, on_error=lambda _: done.set())
-    # both sides subscribed: start the one playback
-    video_raw.connect()
-    assert done.wait(30)
+    aligned_frames = align_timestamped(fake_video_processor, video_raw).pipe(ops.to_list()).run()
 
     assert len(raw_frames) == 30
     assert len(processed_frames) >= 2
     assert len(aligned_frames) >= 2
 
-    # a frame still being processed when the clip ends is not aligned
+    # Due to async processing, the last frame might not be aligned before completion
     assert len(aligned_frames) >= len(processed_frames) - 1
 
     for value in aligned_frames:
