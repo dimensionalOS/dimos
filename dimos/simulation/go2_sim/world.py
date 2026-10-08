@@ -68,6 +68,13 @@ LIDAR_HALF_EXTENTS = (0.0325, 0.0325, 0.03)
 COLLISION_GROUP = 3
 # Drawn by nothing but the lidar: the viewer switches this group off so the room stays visible.
 CEILING_GROUP = 1
+# Looks only. The lidar and the contacts never read color or light.
+BOX_RGBA = {
+    "wall": (0.86, 0.84, 0.78, 1.0),
+    "ceiling": (0.95, 0.95, 0.95, 1.0),
+    "clutter": (0.45, 0.55, 0.70, 1.0),
+}
+FLOOR_CHECKER = ((0.62, 0.60, 0.56), (0.70, 0.68, 0.64))
 SCENE_PUBLISH_DT = 2.0
 ODOM_FRAME_ID = "odom"
 SENSOR_FRAME_ID = "mid360_link"
@@ -138,15 +145,45 @@ class GroundTruthLio:
         self._world = []
 
 
+def _dress(spec: mujoco.MjSpec) -> None:
+    """A checkered floor material and a sun, since the Go2 model brings no light of its own."""
+    texture = spec.add_texture()
+    texture.name = "floor"
+    texture.type = mujoco.mjtTexture.mjTEXTURE_2D
+    texture.builtin = mujoco.mjtBuiltin.mjBUILTIN_CHECKER
+    texture.rgb1, texture.rgb2 = FLOOR_CHECKER
+    texture.width = texture.height = 256
+    material = spec.add_material()
+    material.name = "floor"
+    material.textures[mujoco.mjtTextureRole.mjTEXROLE_RGB] = "floor"
+    material.texrepeat = (1.0, 1.0)
+    material.texuniform = True
+    material.reflectance = 0.1
+    light = spec.worldbody.add_light()
+    light.type = mujoco.mjtLightType.mjLIGHT_DIRECTIONAL
+    light.pos = (0.0, 0.0, 10.0)
+    light.dir = (0.3, 0.2, -1.0)
+    light.castshadow = True
+    light.diffuse = (0.6, 0.6, 0.6)
+    light.specular = (0.1, 0.1, 0.1)
+    spec.visual.headlight.ambient = (0.35, 0.35, 0.35)
+    spec.visual.headlight.diffuse = (0.3, 0.3, 0.3)
+
+
 def build_model(scene: Scene) -> mujoco.MjModel:
     """The scene's boxes, the Go2 and the Mid-360 housing as a contact box, in one model."""
     spec = go2_spec()
+    _dress(spec)
     for i, box in enumerate(scene.boxes):
         geom = spec.worldbody.add_geom()
         geom.type = mujoco.mjtGeom.mjGEOM_BOX
         geom.name = f"{box.kind}_{i}"
         geom.pos = box.center
         geom.size = box.half
+        if box.kind == "floor":
+            geom.material = "floor"
+        else:
+            geom.rgba = BOX_RGBA[box.kind]
         if box.kind == "ceiling":
             geom.group = CEILING_GROUP
     lidar = spec.body("base").add_geom()
@@ -336,7 +373,7 @@ class SimGo2World(Module):
         viewer.cam.lookat[:] = sim.base_pose()[0]
         viewer.cam.distance = 4.0
         viewer.cam.elevation = -55
-        viewer.cam.azimuth = 135
+        viewer.cam.azimuth = 225
         return viewer
 
     def _run(self) -> None:

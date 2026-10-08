@@ -115,6 +115,18 @@ class mjtGeom:
     mjGEOM_BOX: int
     mjGEOM_MESH: int
 
+class mjtTexture:
+    mjTEXTURE_2D: int
+
+class mjtBuiltin:
+    mjBUILTIN_CHECKER: int
+
+class mjtTextureRole:
+    mjTEXROLE_RGB: int
+
+class mjtLightType:
+    mjLIGHT_DIRECTIONAL: int
+
 class mjtJoint:
     mjJNT_HINGE: int
     mjJNT_SLIDE: int
