@@ -52,6 +52,11 @@ class Environment(Configurable, ABC):
         """Whether the robot is also exposed as plain topics for agents without dimOS."""
         return False
 
+    @property
+    def raw_guide(self) -> str | None:
+        """ROBOT.md template describing the raw topics, when provides_raw_robot."""
+        return None
+
     def preflight(self, agent: Agent) -> None:
         """Check compatibility before any environment starts."""
         return None
