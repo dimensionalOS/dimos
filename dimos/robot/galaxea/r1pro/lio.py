@@ -19,7 +19,6 @@ from __future__ import annotations
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
-from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -37,7 +36,7 @@ assert _lidar_joint is not None
 LIDAR_MOUNT_XYZ = _lidar_joint.origin_xyz
 
 
-class R1ProLioMountTfConfig(StaticTfPublisherConfig):
+class R1ProLioConfig(StaticTfPublisherConfig):
     base_frame: str = "base_link"
     # Point-LIO's moving sensor frame (its sensor_frame_id).
     lidar_frame: str = "lidar_pointlio_link"
@@ -45,7 +44,7 @@ class R1ProLioMountTfConfig(StaticTfPublisherConfig):
     chassis_lidar_frame: str = "lidar_chassis_left_link"
 
 
-def mount_transforms(config: R1ProLioMountTfConfig) -> list[Transform]:
+def mount_transforms(config: R1ProLioConfig) -> list[Transform]:
     """Rooted at Point-LIO's frame, plus the URDF's chassis-lidar edge."""
     frames: list[FrameSpec] = [
         (config.base_frame, None, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
@@ -57,32 +56,39 @@ def mount_transforms(config: R1ProLioMountTfConfig) -> list[Transform]:
     return [-edges[config.lidar_frame], edges[config.chassis_lidar_frame]]
 
 
-class R1ProLioMountTf(StaticTfPublisher):
-    """Publishes the mount tree under Point-LIO on a fixed interval."""
+def base_pose(odometry: Odometry, lidar_to_base: Transform) -> PoseStamped:
+    """Point-LIO's lidar pose carried through the mount to base_link."""
+    odom_to_lidar = Transform(
+        translation=odometry.pose.position,
+        rotation=odometry.pose.orientation,
+        frame_id=odometry.frame_id,
+        ts=odometry.ts,
+    )
+    odom_to_base = odom_to_lidar + lidar_to_base
+    return PoseStamped(
+        ts=odometry.ts,
+        frame_id=odometry.frame_id,
+        position=odom_to_base.translation,
+        orientation=odom_to_base.rotation,
+    )
 
-    config: R1ProLioMountTfConfig
 
-    def transforms(self) -> list[Transform]:
-        return mount_transforms(self.config)
+class R1ProLio(StaticTfPublisher):
+    """Hangs base_link under Point-LIO's lidar frame, and publishes base_link's pose from Point-LIO's odometry."""
 
-
-class R1ProLioOdomPose(Module):
-    """Re-publish Point-LIO's ``Odometry`` as the ``PoseStamped`` the planners read."""
+    config: R1ProLioConfig
 
     odometry: In[Odometry]
     pose: Out[PoseStamped]
 
+    def transforms(self) -> list[Transform]:
+        return mount_transforms(self.config)
+
     @rpc
     def start(self) -> None:
         super().start()
+        self._lidar_to_base = mount_transforms(self.config)[0]
         self.register_disposable(Disposable(self.odometry.subscribe(self._on_odometry)))
 
     def _on_odometry(self, msg: Odometry) -> None:
-        self.pose.publish(
-            PoseStamped(
-                ts=msg.ts,
-                frame_id=msg.frame_id,
-                position=msg.pose.position,
-                orientation=msg.pose.orientation,
-            )
-        )
+        self.pose.publish(base_pose(msg, self._lidar_to_base))
