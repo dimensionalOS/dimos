@@ -111,7 +111,7 @@ misconfigured extension. Invalid trials count as errors in the summary; report t
 
 ### Raw robot topics
 
-`Sim(raw_bridge=True)` adds the `raw-robot-bridge` module to the launch. It republishes the
+A suite composes the `raw-robot-bridge` module and sets `Sim(raw_bridge=True)`. The bridge republishes the
 robot connection's streams as plain Zenoh topics on a per-run loopback port (an attached dimos
 uses `tcp/127.0.0.1:7448`), a peer with multicast and gossip scouting off, so a subscriber sees these keys and none of dimOS's own bus:
 
@@ -122,6 +122,18 @@ robot/odom/json          {"t","x","y","z","qx","qy","qz","qw"}, base_link in the
 robot/camera_info/json   {"width","height","K"}, republished periodically
 robot/cmd_vel/json       subscribed: {"vx","vy","wz","t"}; clamped to 1.0 m/s and 1.5 rad/s, held for t seconds (max 2), then stop
 ```
+
+These are the topics a Go2 produces. Every stream the bridge understands is optional, so the
+same module serves an arm when its blueprint provides them: joint state (with the measured TCP
+pose and a 0-1 gripper opening) on `robot/arm/state/json`, wrist depth and camera pose, and
+`robot/arm/twist/json` / `robot/arm/gripper/json` commands that drive the coordinator's
+`eef_twist` and gripper tasks. Robot-specific settings (camera and TCP frames, gripper joint and
+range) live in the robot's blueprint: `xarm-sim` composes a configured bridge and gets its TCP
+pose from the coordinator (`publish_frame_poses`); the Go2 suites list `raw-robot-bridge` with its
+defaults.
+
+Every suite with `raw_bridge=True` names its `ROBOT.md` template as `raw_guide`: `RAW_README`
+for the Go2, `RAW_ARM_README` for arms; a suite appends its robot facts (`XARM7_NOTES`).
 
 That is the surface a vendor SDK exposes: sensors out, body velocity with a deadman in. Nothing
 above the connection (map, costmap, planner, `move_to`, memory) and nothing beneath it (simulator
@@ -480,6 +492,10 @@ existing `base_pose` to world `(0, 0, height)` with identity orientation. Withou
 the robot's configured base pose is retained (0.12 m for the default xArm scene).
 `dimos.evals.suites.mujoco_xarm` is the xArm7 table scene with the perception
 modules disabled: pick up the cylinder, then put the red ball on top of it.
+
+`dimos.evals.suites.mujoco_xarm_pick` evaluates a cylinder lift in the default
+scene using plain robot commands and observations (see Raw robot topics). Run it
+with Pi and `--set no_dimos=true --set max_steps=120`.
 
 `dimos.evals.suites.robosuite` provides six manipulation cases using
 recorded body poses. See `data/robosuite/README.md` in the downloaded data
