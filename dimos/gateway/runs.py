@@ -22,13 +22,14 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime
 import functools
 import json
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import signal
 import socket
@@ -63,6 +64,8 @@ class LaunchConfig:
     global_: dict[str, Any] = field(default_factory=dict)
     modules: ModuleValues = field(default_factory=dict)
     one_off: LaunchOverrides = field(default_factory=LaunchOverrides)
+    # the request's own `dimos run` arguments, last on the command line
+    args: list[str] = field(default_factory=list)
 
     def secrets(self) -> list[str]:
         return overrides_.secret_paths(self.global_, self.modules, self.one_off.secrets)
@@ -237,6 +240,7 @@ def current_launch() -> dict[str, Any] | None:
         "overrides": overrides if isinstance(overrides, dict) else {},
         "modules": record.get("modules") if isinstance(record.get("modules"), dict) else {},
         "oneOff": LaunchOverrides.from_json(record.get("one_off")).to_json(),
+        **({"args": record["args"]} if isinstance(record.get("args"), list) else {}),
         "steps": diagnose.steps(records, phase),
         "problems": problems,
     }
@@ -251,10 +255,15 @@ def last_launch_args() -> tuple[str, LaunchConfig] | None:
     except (OSError, ValueError, KeyError, TypeError):
         return None
     try:
-        real = json.loads(secrets_file().read_text()) if record.get("secret") else {}
+        real = (
+            json.loads(secrets_file().read_text())
+            if record.get("secret") or record.get("args")
+            else {}
+        )
     except (OSError, ValueError):
         real = {}
     one_off = LaunchOverrides.from_json(record.get("one_off"))
+    args = real.get("args") if isinstance(real.get("args"), list) else record.get("args")
 
     def restored(values: Any, saved: Any) -> dict[str, Any]:
         values = dict(values) if isinstance(values, dict) else {}
@@ -276,6 +285,7 @@ def last_launch_args() -> tuple[str, LaunchConfig] | None:
             restored_modules(one_off.modules, real.get("one_off_modules")),
             one_off.secrets,
         ),
+        [str(arg) for arg in args] if isinstance(args, list) else [],
     )
 
 
@@ -285,14 +295,43 @@ def now_iso() -> str:
 
 def run_args(blueprint: str, launch: LaunchConfig) -> list[str]:
     """`[--key=value ...] run <blueprint> [--<module>.<field>=value ...]`, without the secrets (they go in the
-    environment, see run_env)."""
+    environment, see run_env). With the request's own `args`, every flag goes after `run <blueprint>` and the args
+    last: dimos's parser lets the last of a key win there, while a flag before `run` would beat them."""
     global_, modules = overrides_.without(launch.global_, launch.modules, launch.secrets())
+    if launch.args:
+        return [
+            "run",
+            blueprint,
+            *config.global_config_flags(global_, explicit_bools=True),
+            *overrides_.module_flags(modules),
+            *launch.args,
+        ]
     return [
         *config.global_config_flags(global_),
         "run",
         blueprint,
         *overrides_.module_flags(modules),
     ]
+
+
+def shown_args(args: list[str]) -> list[str]:
+    """`args` with a secret-named option's value as ••• (`--api-key=•••`, or the item after `--api-key`)."""
+    shown: list[str] = []
+    hide_next = False
+    for arg in args:
+        if hide_next and not arg.startswith("-"):
+            shown.append(overrides_.HIDDEN)
+            hide_next = False
+            continue
+        hide_next = False
+        option, separator, _ = arg.partition("=")
+        secret = arg.startswith("--") and overrides_.is_secret_name(option[2:].replace("-", "_"))
+        if secret and separator:
+            shown.append(f"{option}={overrides_.HIDDEN}")
+        else:
+            shown.append(arg)
+            hide_next = secret
+    return shown
 
 
 def run_env(launch: LaunchConfig) -> dict[str, str]:
@@ -305,7 +344,8 @@ def write_secrets(launch: LaunchConfig) -> None:
     paths = launch.secrets() + overrides_.secret_paths(
         launch.one_off.global_, launch.one_off.modules, launch.one_off.secrets
     )
-    if not paths:
+    secret_args = shown_args(launch.args) != launch.args
+    if not paths and not secret_args:
         return
 
     def only(values: dict[str, Any]) -> dict[str, Any]:
@@ -323,6 +363,7 @@ def write_secrets(launch: LaunchConfig) -> None:
                 "modules": only_modules(launch.modules),
                 "one_off_global": only(launch.one_off.global_),
                 "one_off_modules": only_modules(launch.one_off.modules),
+                **({"args": launch.args} if secret_args else {}),
             },
             handle,
         )
@@ -351,7 +392,8 @@ def start(dimos_dir: Path, blueprint: str, launch_config: LaunchConfig) -> dict[
     secret_env = run_env(launch_config)
     shown_env = "".join(f"{name}={overrides_.HIDDEN} " for name in secret_env)
     launch_log().parent.mkdir(parents=True, exist_ok=True)
-    launch_log().write_text(f"$ {shown_env}dimos {' '.join(args)}\n")
+    shown_line = run_args(blueprint, replace(launch_config, args=shown_args(launch_config.args)))
+    launch_log().write_text(f"$ {shown_env}dimos {shlex.join(shown_line)}\n")
     shutil.rmtree(launch_records_dir(), ignore_errors=True)
     venv = config.venv_dir(dimos_dir)
     env = {
@@ -395,6 +437,7 @@ def start(dimos_dir: Path, blueprint: str, launch_config: LaunchConfig) -> dict[
         "modules": modules,
         "one_off": LaunchOverrides(one_off_global, one_off_modules, one_off.secrets).to_json(),
         "secret": sorted(set(paths) | set(one_off_paths)),
+        **({"args": shown_args(launch_config.args)} if launch_config.args else {}),
     }
     config.write_atomic(launch_file(), json.dumps(record))
     launch = current_launch()

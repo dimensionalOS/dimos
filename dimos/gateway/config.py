@@ -265,9 +265,10 @@ def check_overrides(overrides: dict[str, Any]) -> None:
         raise ValueError(f"bad GlobalConfig value: {problems}") from error
 
 
-def global_config_flags(overrides: dict[str, Any]) -> list[str]:
+def global_config_flags(overrides: dict[str, Any], explicit_bools: bool = False) -> list[str]:
     """dimos's root flags for GlobalConfig `overrides` (`--key=value`, `--flag`/`--no-flag`), as its typer callback
-    reads them; `=` keeps a value from being read as a flag's optional value (`--simulation` alone means mujoco)."""
+    reads them; `=` keeps a value from being read as a flag's optional value (`--simulation` alone means mujoco).
+    `explicit_bools`: `--flag=true` (after `run`, a bare flag would take the next item as its true/false)."""
     import json
 
     flags: list[str] = []
@@ -276,7 +277,7 @@ def global_config_flags(overrides: dict[str, Any]) -> list[str]:
         if value is None:
             continue
         if value is True:
-            flags.append(flag)
+            flags.append(f"{flag}=true" if explicit_bools else flag)
         elif value is False:
             flags.append("--no-" + key.replace("_", "-"))
         else:

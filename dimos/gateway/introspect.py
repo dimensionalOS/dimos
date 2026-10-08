@@ -433,10 +433,145 @@ def catalog() -> dict[str, Any]:
     return {"blueprints": blueprints, "modules": modules, "skills": skills, "errors": errors}
 
 
+# `dimos run`'s own options (typer's, not the blueprint's config): those taking a value, and those Desktop's launch
+# can't take (it runs dimos in the foreground of its own session and reads its output)
+RUN_VALUE_OPTIONS = {"--disable", "--config", "-c", "--relay-url", "--relay-ca"}
+RUN_SWITCHES = {"--local-relay", "--no-local-relay"}
+RUN_REFUSED = {
+    "--daemon": "the gateway runs dimos itself (its log and Stop need it in the foreground)",
+    "-d": "the gateway runs dimos itself (its log and Stop need it in the foreground)",
+    "--help": "a launch can't show help: try `dimos run <blueprint> --help` in a terminal",
+}
+
+
+def check_args(name: str, raw: str) -> dict[str, Any]:
+    """What `dimos run <name> <args>` makes of `args` (a JSON list of argv strings), each option on its own: the
+    tokens it took, what it sets (`g.<key>`, `<module>.<field>`, a transport's, or `run --<option>`) and dimos's own
+    error for it. Read with dimos's blueprint config parser, so it accepts exactly what the CLI does."""
+    from collections import defaultdict
+    import difflib
+    from pathlib import Path
+
+    from pydantic import TypeAdapter, ValidationError
+
+    from dimos.cli.dimos import normalize_argv
+    from dimos.core.coordination.blueprint_config.merging import _resolve_target, merge_cli
+    from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
+    from dimos.core.coordination.blueprint_config.schema import normalize_option_name
+    from dimos.core.coordination.blueprint_config.sources import (
+        global_schema_defaults,
+        validate_global_values,
+    )
+    from dimos.robot.all_blueprints import all_modules
+    from dimos.robot.get_all_blueprints import get_by_name
+
+    args = json.loads(raw)
+    if not isinstance(args, list) or not all(isinstance(arg, str) for arg in args):
+        raise ValueError("args must be a list of strings")
+    tokens = normalize_argv(list(args))
+    schema = BlueprintConfigParser(get_by_name(name))._get_schema()
+
+    def target_of(token: str) -> Any:
+        option = normalize_option_name(token[2:].partition("=")[0])
+        target = _resolve_target(option, schema)
+        if target is None and option.startswith("no_"):
+            positive = _resolve_target(option.removeprefix("no_"), schema)
+            if positive is not None and positive.section == "global" and positive.is_bool:
+                return positive, True
+        return target, False
+
+    checked: list[dict[str, Any]] = []
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        option = token.partition("=")[0]
+        group = [token]
+        entry: dict[str, Any] = {"tokens": group, "target": None, "error": None}
+        checked.append(entry)
+        index += 1
+        if option in RUN_REFUSED:
+            entry["error"] = f"{option} isn't for a launch: {RUN_REFUSED[option]}"
+            continue
+        if option in RUN_VALUE_OPTIONS:
+            entry["target"] = f"run {option}"
+            if "=" not in token:
+                if index >= len(tokens) or tokens[index].startswith("-"):
+                    entry["error"] = f"{option} needs a value"
+                    continue
+                group.append(tokens[index])
+                index += 1
+            given = token.partition("=")[2] if "=" in token else group[-1]
+            if option == "--disable" and given not in all_modules:
+                close = difflib.get_close_matches(given, list(all_modules), n=3)
+                entry["error"] = f"--disable: no module {given!r}" + (
+                    f" (did you mean {', '.join(close)}?)" if close else ""
+                )
+            elif option in ("--config", "-c") and not Path(given).expanduser().is_file():
+                entry["error"] = (
+                    f"{option}: no file {given} (relative paths are from the dimos checkout)"
+                )
+            continue
+        if option in RUN_SWITCHES:
+            entry["target"] = f"run {option}"
+            continue
+        if (
+            not token.startswith("--")
+            or token in ("-o", "--option")
+            or token.startswith(("-o=", "--option="))
+        ):
+            try:
+                merge_cli(defaultdict(dict), {}, {}, (token,), schema)
+                entry["error"] = f"unexpected {token!r}"
+            except Exception as error:
+                entry["error"] = (
+                    f"{token!r}: one blueprint per launch, and options start with '--'"
+                    if not token.startswith("-")
+                    else str(error)
+                )
+            continue
+        try:
+            target, negated = target_of(token)
+        except Exception as error:
+            target, negated = None, False
+            entry["error"] = str(error)
+        # the same arity as dimos's merge_cli: `--key=value`, `--no-flag`, a global flag with an optional true/false,
+        # else `--key value` (an option dimos doesn't know takes its value along, so only it is flagged)
+        if "=" not in token and not negated and index < len(tokens):
+            if not tokens[index].startswith("--") and (
+                target is not None or not tokens[index].startswith("-")
+            ):
+                group.append(tokens[index])
+                index += 1
+        if entry["error"]:
+            continue
+        modules: dict[str, dict[str, Any]] = defaultdict(dict)
+        global_values: dict[str, Any] = {}
+        transports: dict[str, Any] = {}
+        try:
+            merge_cli(modules, global_values, transports, tuple(group), schema)
+            assert target is not None
+            entry["target"] = target.qualified_name
+            if target.section == "global":
+                validate_global_values({**global_schema_defaults(), **global_values})
+            elif target.section == "module":
+                value: Any = modules[target.root]
+                for part in target.path:
+                    value = value[part]
+                TypeAdapter(target.annotations[0]).validate_python(value)
+        except ValidationError as error:
+            entry["error"] = f"--{target.relative_name}: {error.errors()[0]['msg']}"
+        except Exception as error:
+            entry["error"] = (
+                str(error).strip().splitlines()[0] if str(error).strip() else type(error).__name__
+            )
+    return {"name": name, "args": checked}
+
+
 COMMANDS: dict[str, Callable[..., dict[str, Any]]] = {
     "blueprint": blueprint,
     "config": config,
     "catalog": catalog,
+    "args": check_args,
 }
 
 

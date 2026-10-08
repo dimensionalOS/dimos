@@ -26,6 +26,7 @@ import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+import json
 import os
 from pathlib import Path
 import re
@@ -569,6 +570,33 @@ def create_app(state: ServerState, background: bool = True) -> FastAPI:
         config.set_module_config(name, launch_overrides.merge_modules({}, values))
         return blueprints.shown_config(name, value)
 
+    async def checked_args(name: str, args: list[str]) -> dict[str, Any]:
+        text = json.dumps(args)
+        checked: dict[str, Any] = await introspected(f"args:{name}:{text}", ["args", name, text])
+        return checked
+
+    @app.post(
+        "/dimos/blueprints/{name}/args",
+        response_model=models.ArgsCheck,
+        **route_doc(
+            "blueprints",
+            "Check `dimos run <name>` arguments without running anything: what each one sets, or why dimos won't "
+            "take it",
+            "Reads `args` (argv items, never a shell string) with dimos's own blueprint config parser, in a child "
+            "process that imports the blueprint (cached 10 min per blueprint and args): each option on its own, "
+            "with the items it took, what it sets (`g.<key>`, `<module>.<field>`, `run --<option>`) and dimos's "
+            "error for it. `--daemon` and `--help` are refused (a launch runs in the foreground), and so is anything "
+            "but options (one blueprint per launch). POST /dimos/runs checks its `args` the same way. No side "
+            "effects. New in API 1.17.",
+            errors=(400, 500),
+            agent=True,
+            answer="`{ name, args: [{ tokens, target, error }] }`",
+        ),
+    )
+    async def check_blueprint_args(name: BlueprintParam, request: models.ArgsCheckRequest) -> Any:
+        check_name(name)
+        return await checked_args(name, request.args)
+
     @app.get(
         "/dimos/catalog",
         response_model=models.Catalog,
@@ -722,9 +750,21 @@ def create_app(state: ServerState, background: bool = True) -> FastAPI:
                 )
         except ValueError as error:
             raise ApiError(400, str(error))
-        return with_saved(request.blueprint, one_off)
+        args = list(request.args or [])
+        if args:
+            checked = await checked_args(request.blueprint, args)
+            refused = [
+                f"{' '.join(arg['tokens'])}: {arg['error']}"
+                for arg in checked["args"]
+                if arg["error"]
+            ]
+            if refused:
+                raise ApiError(400, "dimos wouldn't take these args: " + "; ".join(refused))
+        return with_saved(request.blueprint, one_off, args)
 
-    def with_saved(blueprint: str, one_off: launch_overrides.LaunchOverrides) -> runs.LaunchConfig:
+    def with_saved(
+        blueprint: str, one_off: launch_overrides.LaunchOverrides, args: list[str] | None = None
+    ) -> runs.LaunchConfig:
         """A launch's own values on top of Desktop's saved global config and the blueprint's saved module config, as
         saved now."""
         effective = launch_overrides.merge(
@@ -736,6 +776,7 @@ def create_app(state: ServerState, background: bool = True) -> FastAPI:
             effective,
             launch_overrides.merge_modules(config.module_config(blueprint), one_off.modules),
             one_off,
+            list(args or []),
         )
 
     @app.post(
@@ -803,7 +844,7 @@ def create_app(state: ServerState, background: bool = True) -> FastAPI:
         if last is None:
             raise ApiError(400, "the dimos gateway hasn't launched anything yet")
         blueprint, last_config = last
-        launch_config = with_saved(blueprint, last_config.one_off)
+        launch_config = with_saved(blueprint, last_config.one_off, last_config.args)
         current = await asyncio.to_thread(runs.current_launch)
         try:
             if current and current["phase"] in ("starting", "running", "stopping"):

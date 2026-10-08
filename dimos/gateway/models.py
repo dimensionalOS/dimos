@@ -692,6 +692,12 @@ class Launch(ApiModel):
     oneOff: LaunchOneOff = Field(
         description="What the launch request itself set, as sent (nulls kept, `replay` added); secrets as •••"
     )
+    args: list[str] | None = Field(
+        default=None,
+        description="The launch's own `dimos run` arguments (POST /dimos/runs `args`), after everything else on the "
+        "command line; a secret-named option's value as •••. Absent when it had none.",
+        examples=[["--simulation=mujoco"]],
+    )
     steps: list[LaunchStep] = Field(
         description="starting, building, starting_modules, then running or stopped: how far startup got"
     )
@@ -742,6 +748,44 @@ class LaunchRequest(ApiModel):
             {"simulation": "mujoco"},
         ],
     )
+    args: list[str] | None = Field(
+        default=None,
+        description="`dimos run <blueprint>` arguments, exactly as on its command line (one argv item each, never a "
+        "shell string): GlobalConfig flags (`--simulation=mujoco`, `--robot-ip 10.0.0.2`, `--no-rerun-web`), module "
+        "fields (`--voxel-size=0.1`, `--go2connection.lidar=false`), `--disable <module>`, `--config <file>`. They "
+        "go last, so they win over Desktop's saved config, `overrides` and `replay`. Checked first as POST "
+        "/dimos/blueprints/{name}/args does: 400 naming each one dimos wouldn't take (`--daemon` and `--help` "
+        "included). Kept for POST /dimos/runs/restart. New in API 1.17.",
+        examples=[["--simulation=mujoco"]],
+    )
+
+
+class ArgsCheckRequest(ApiModel):
+    args: list[str] = Field(
+        description="`dimos run <name>` arguments, one argv item each",
+        examples=[["--simulation=mujoco"]],
+    )
+
+
+class ArgCheck(ApiModel):
+    tokens: list[str] = Field(
+        description="The argv items this option took (itself and its value, when given apart)",
+        examples=[["--robot-ip", "10.0.0.2"]],
+    )
+    target: str | None = Field(
+        description="What it sets: `g.<key>` (GlobalConfig), `<module>.<field>`, `transports.<...>`, or `run "
+        "--<option>` (one of `dimos run`'s own); null when dimos doesn't know it",
+        examples=["g.robot-ip"],
+    )
+    error: str | None = Field(
+        description="Why dimos wouldn't take it (its own message), else null",
+        examples=["Unknown blueprint configuration option --bogus."],
+    )
+
+
+class ArgsCheck(ApiModel):
+    name: str = Field(description="The blueprint", examples=["unitree-go2"])
+    args: list[ArgCheck] = Field(description="Each option, in order")
 
 
 class StopRequest(ApiModel):

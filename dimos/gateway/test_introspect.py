@@ -15,6 +15,7 @@
 """introspect.py on real blueprints and modules, its answers checked against the API's models: a change to how dimos
 describes blueprints, modules, streams or skills fails here instead of on a Launcher page."""
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -119,6 +120,48 @@ def test_a_blueprints_config_and_a_modules_own(check_model: Any) -> None:
             assert "error" not in module, module
             names = {arg["name"] for arg in module["args"]}
             assert SHOWN <= names and not names & introspect.INTERNAL_FIELDS
+
+
+def test_run_args_are_read_as_dimos_run_reads_them(check_model: Any) -> None:
+    args = [
+        "--simulation=mujoco",
+        "--n-workers",
+        "2",
+        "--no-rerun-web",
+        "--rerun-web",
+        "false",
+        "--cameramodule.frame-id=cam",
+        "--simulation",
+        "--frame-id",
+        "x",
+        "--n-workers=many",
+        "--frame-idd",
+        "1",
+        "-o",
+        "--daemon",
+        "other",
+        "--disable",
+        "NoSuchModule",
+    ]
+    answer = introspect.check_args("demo-camera", json.dumps(args))
+    check_model(models.ArgsCheck, answer, "an args check")
+    got = [(a["tokens"], a["target"], (a["error"] or "")[:30]) for a in answer["args"]]
+    assert got == [
+        (["--simulation=mujoco"], "g.simulation", ""),
+        (["--n-workers", "2"], "g.n-workers", ""),
+        (["--no-rerun-web"], "g.rerun-web", ""),
+        (["--rerun-web", "false"], "g.rerun-web", ""),
+        (["--cameramodule.frame-id=cam"], "cameramodule.frame-id", ""),
+        # dimos's own: a bare --simulation means mujoco
+        (["--simulation", "mujoco"], "g.simulation", ""),
+        (["--frame-id", "x"], None, "Option --frame-id is ambiguous"),
+        (["--n-workers=many"], "g.n-workers", "Invalid blueprint configuratio"),
+        (["--frame-idd", "1"], None, "Unknown blueprint configuratio"),
+        (["-o"], None, "The legacy -o/--option syntax "),
+        (["--daemon"], None, "--daemon isn't for a launch: t"),
+        (["other"], None, "'other': one blueprint per lau"),
+        (["--disable", "NoSuchModule"], "run --disable", "--disable: no module 'NoSuchMo"),
+    ]
 
 
 def test_every_module_config_field_is_hidden_or_shown_on_purpose() -> None:

@@ -763,6 +763,86 @@ def test_a_launch_with_its_own_global_and_module_config_and_a_secret(
     client.post("/dimos/runs/stop")
 
 
+def test_a_launch_with_its_own_dimos_run_args(
+    client: TestClient, checkout: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    asked: list[list[str]] = []
+
+    async def fake(dimos_dir: Path, args: list[str], **_: Any) -> dict[str, Any]:
+        asked.append(args)
+        if args[0] != "args":
+            return GO2_CONFIG
+        return {
+            "name": args[1],
+            "args": [
+                {"tokens": [arg], "target": None, "error": "nope" if arg == "--bogus" else None}
+                for arg in json.loads(args[2])
+                if arg != "s3cret"
+            ],
+        }
+
+    monkeypatch.setattr(blueprints, "introspect", fake)
+    (checkout / ".venv" / "bin" / "dimos").write_text(f"#!{sys.executable}\n{ECHO_DIMOS}")
+    seen_file = tmp_path / "seen.json"
+    monkeypatch.setenv("FAKE_SEEN", str(seen_file))
+
+    checked = client.post("/dimos/blueprints/unitree-go2/args", json={"args": ["--bogus"]})
+    assert checked.json() == {
+        "name": "unitree-go2",
+        "args": [{"tokens": ["--bogus"], "target": None, "error": "nope"}],
+    }
+    assert asked[-1] == ["args", "unitree-go2", '["--bogus"]']
+    refused = client.post("/dimos/runs", json={"blueprint": "unitree-go2", "args": ["--bogus"]})
+    assert refused.status_code == 400
+    assert refused.json()["error"] == "dimos wouldn't take these args: --bogus: nope"
+
+    # Desktop's defaults, then the request's overrides, then its args: all after `run`, so the last one wins
+    args = ["--simulation=mujoco", "--api-key", "s3cret", "--x.y=a b"]
+    launched = client.post(
+        "/dimos/runs",
+        json={"blueprint": "unitree-go2", "overrides": {"simulation": "dimsim"}, "args": args},
+    ).json()
+    for _ in range(200):
+        if seen_file.exists() and seen_file.read_text():
+            break
+        time.sleep(0.05)
+    seen = json.loads(seen_file.read_text())
+    assert seen["argv"] == [
+        "run",
+        "unitree-go2",
+        "--rerun-open=none",
+        "--rerun-web=true",
+        "--simulation=dimsim",
+        *args,
+    ]
+    # copyable, and a secret-named option's value hidden
+    assert launched["output"].startswith(
+        "$ dimos run unitree-go2 --rerun-open=none --rerun-web=true --simulation=dimsim --simulation=mujoco "
+        "--api-key '•••' '--x.y=a b'\n"
+    )
+    assert launched["args"] == ["--simulation=mujoco", "--api-key", "•••", "--x.y=a b"]
+    for leaked in (runs.launch_file(), runs.launch_log()):
+        assert "s3cret" not in leaked.read_text()
+
+    # a restart passes the same args, the secret included
+    seen_file.unlink()
+    restarted = client.post("/dimos/runs/restart").json()
+    assert restarted["args"] == launched["args"]
+    for _ in range(200):
+        if seen_file.exists() and seen_file.read_text():
+            break
+        time.sleep(0.05)
+    assert json.loads(seen_file.read_text()) == seen
+    client.post("/dimos/runs/stop")
+
+    # without args, the command line is as it always was
+    seen_file.unlink()
+    plain = client.post("/dimos/runs", json={"blueprint": "unitree-go2"}).json()
+    assert "args" not in plain
+    assert plain["output"].startswith("$ dimos --rerun-open=none --rerun-web run unitree-go2\n")
+    client.post("/dimos/runs/stop")
+
+
 def test_launch_refuses_a_version_outside_desktops_range(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:

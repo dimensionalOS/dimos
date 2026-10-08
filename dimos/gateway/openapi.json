@@ -96,6 +96,112 @@
         "title": "Account",
         "type": "object"
       },
+      "ArgCheck": {
+        "additionalProperties": true,
+        "properties": {
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why dimos wouldn't take it (its own message), else null",
+            "examples": [
+              "Unknown blueprint configuration option --bogus."
+            ],
+            "title": "Error"
+          },
+          "target": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What it sets: `g.<key>` (GlobalConfig), `<module>.<field>`, `transports.<...>`, or `run --<option>` (one of `dimos run`'s own); null when dimos doesn't know it",
+            "examples": [
+              "g.robot-ip"
+            ],
+            "title": "Target"
+          },
+          "tokens": {
+            "description": "The argv items this option took (itself and its value, when given apart)",
+            "examples": [
+              [
+                "--robot-ip",
+                "10.0.0.2"
+              ]
+            ],
+            "items": {
+              "type": "string"
+            },
+            "title": "Tokens",
+            "type": "array"
+          }
+        },
+        "required": [
+          "tokens",
+          "target",
+          "error"
+        ],
+        "title": "ArgCheck",
+        "type": "object"
+      },
+      "ArgsCheck": {
+        "additionalProperties": true,
+        "properties": {
+          "args": {
+            "description": "Each option, in order",
+            "items": {
+              "$ref": "#/components/schemas/ArgCheck"
+            },
+            "title": "Args",
+            "type": "array"
+          },
+          "name": {
+            "description": "The blueprint",
+            "examples": [
+              "unitree-go2"
+            ],
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "args"
+        ],
+        "title": "ArgsCheck",
+        "type": "object"
+      },
+      "ArgsCheckRequest": {
+        "additionalProperties": true,
+        "properties": {
+          "args": {
+            "description": "`dimos run <name>` arguments, one argv item each",
+            "examples": [
+              [
+                "--simulation=mujoco"
+              ]
+            ],
+            "items": {
+              "type": "string"
+            },
+            "title": "Args",
+            "type": "array"
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "title": "ArgsCheckRequest",
+        "type": "object"
+      },
       "Blueprint": {
         "additionalProperties": true,
         "properties": {
@@ -2315,6 +2421,27 @@
         "additionalProperties": true,
         "description": "The last launch this gateway started; its phase is worked out from disk on every call.",
         "properties": {
+          "args": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The launch's own `dimos run` arguments (POST /dimos/runs `args`), after everything else on the command line; a secret-named option's value as \u2022\u2022\u2022. Absent when it had none.",
+            "examples": [
+              [
+                "--simulation=mujoco"
+              ]
+            ],
+            "title": "Args"
+          },
           "blueprint": {
             "description": "What was launched",
             "examples": [
@@ -2628,6 +2755,26 @@
       "LaunchRequest": {
         "additionalProperties": true,
         "properties": {
+          "args": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "`dimos run <blueprint>` arguments, exactly as on its command line (one argv item each, never a shell string): GlobalConfig flags (`--simulation=mujoco`, `--robot-ip 10.0.0.2`, `--no-rerun-web`), module fields (`--voxel-size=0.1`, `--go2connection.lidar=false`), `--disable <module>`, `--config <file>`. They go last, so they win over Desktop's saved config, `overrides` and `replay`. Checked first as POST /dimos/blueprints/{name}/args does: 400 naming each one dimos wouldn't take (`--daemon` and `--help` included). Kept for POST /dimos/runs/restart. New in API 1.17.",
+            "examples": [
+              [
+                "--simulation=mujoco"
+              ]
+            ],
+            "title": "Args"
+          },
           "blueprint": {
             "description": "blueprint name",
             "examples": [
@@ -5490,7 +5637,7 @@
   "info": {
     "description": "The dimos gateway's HTTP API: blueprints, global config, runs and their logs, events, Dimensional cloud uploads,\ndiscovery (blueprints, modules, message types), docs, extras and jobs.\n\ndimOS Desktop starts the gateway (`python -m dimos.gateway`, on a unix socket) and forwards `/dimos/...` to it unchanged.\nEvery answer is JSON unless the operation says otherwise; every error is `{\"error\": \"<message>\"}` (ErrorResponse).\nState is HTTP; changes are events, published on zenoh at `<ns>/dimos/events/<type>` (the `events` tag).\n\nExtensions: `x-family: dimos` on every operation; `x-agent: true` marks what Desktop's agent finds through\nsearch_endpoints; `x-mcp-tool` names an MCP tool that does the same; `x-zenoh-key` on an event schema is its key.\n",
     "title": "dimos gateway",
-    "version": "1.16.0"
+    "version": "1.17.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -5762,6 +5909,76 @@
           }
         },
         "summary": "A blueprint's modules and each module's streams (topics, types, in/out), docstring, RPC methods, skills and source location",
+        "tags": [
+          "blueprints"
+        ],
+        "x-agent": true,
+        "x-family": "dimos"
+      }
+    },
+    "/dimos/blueprints/{name}/args": {
+      "post": {
+        "description": "Reads `args` (argv items, never a shell string) with dimos's own blueprint config parser, in a child process that imports the blueprint (cached 10 min per blueprint and args): each option on its own, with the items it took, what it sets (`g.<key>`, `<module>.<field>`, `run --<option>`) and dimos's error for it. `--daemon` and `--help` are refused (a launch runs in the foreground), and so is anything but options (one blueprint per launch). POST /dimos/runs checks its `args` the same way. No side effects. New in API 1.17.",
+        "operationId": "post_dimos_blueprints_name_args",
+        "parameters": [
+          {
+            "description": "blueprint name, e.g. unitree-go2-basic",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "description": "blueprint name, e.g. unitree-go2-basic",
+              "examples": [
+                "unitree-go2-basic"
+              ],
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ArgsCheckRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArgsCheck"
+                }
+              }
+            },
+            "description": "`{ name, args: [{ tokens, target, error }] }`"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad request: a missing or malformed body or parameter, or a value the gateway refuses (the message says which)"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The gateway couldn't do it: a child process, launch, stop or cloud call failed (the message says why)"
+          }
+        },
+        "summary": "Check `dimos run <name>` arguments without running anything: what each one sets, or why dimos won't take it",
         "tags": [
           "blueprints"
         ],

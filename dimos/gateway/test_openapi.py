@@ -53,6 +53,11 @@ KNOWN_DIFFERENCES = {
     # where the blueprint itself is defined, new here in 1.8
     "get /dimos/blueprints/{}: field only here: file",
     "get /dimos/blueprints/{}: field only here: line",
+    # a launch's own `dimos run` arguments (POST /dimos/runs `args`), new here in 1.17
+    "get /dimos/runs.launch: field only here: args",
+    "post /dimos/runs: field only here: args",
+    "post /dimos/runs/restart: field only here: args",
+    "post /dimos/runs: body fields ['args', 'blueprint', 'overrides', 'replay'] != ['blueprint', 'overrides', 'replay']",
 }
 
 
