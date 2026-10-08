@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from datetime import datetime, timezone
+import threading
 import time
 
 import pytest
@@ -30,6 +31,7 @@ from dimos.types.timestamped import (
 from dimos.utils.data import get_data
 from dimos.utils.reactive import backpressure
 from dimos.utils.testing.legacy_pickle import LegacyPickleStore
+from dimos.utils.testing.replay import timed_playback
 from dimos.utils.timeseries.inmemory import InMemoryStore
 
 
@@ -283,7 +285,19 @@ def test_time_window_collection() -> None:
 
 @pytest.mark.self_hosted
 def test_timestamp_alignment(test_scheduler) -> None:
-    speed = 5.0
+    # Wall-clock playback, so two things must not depend on how fast the runner is:
+    # - one playback feeds both sides (as one sensor would). Two subscriptions to the cold
+    #   replay each started their own clock, the first one late by the store's first decode
+    #   (~0.1 s, more on a busy runner), putting the secondary that much further ahead.
+    # - the buffer outlasts the processor's latency. It is in recorded time, so at `speed` 1 s
+    #   is 1/speed s of wall time, while the 0.5 s processor is 0.5/speed s plus timer slop
+    #   (macOS stretches a 0.1 s sleep to ~0.17 s): a frame processed after the secondary's copy
+    #   left the buffer could never be matched.
+    # - the clip is long enough for the processor to finish several frames: ~6 s of recording
+    #   lets the 0.5 s processor finish ~12, so a runner a few times slower still yields the
+    #   >=2 aligned pairs asserted below (30 frames gave ~4, and a 2x slowdown failed it).
+    speed = 2.0
+    frame_count = 90
 
     # ensure that lfs package is downloaded
     get_data("unitree_office_walk")
@@ -295,14 +309,14 @@ def test_timestamp_alignment(test_scheduler) -> None:
         print(image.ts)
         return image
 
-    # sensor reply of raw video frames
-    video_raw = (
-        LegacyPickleStore(
-            "unitree_office_walk/video", autocast=lambda x: Image.from_numpy(x).to_rgb()
-        )
-        .stream(speed)
-        .pipe(ops.take(30))
-    )
+    # sensor reply of raw video frames, stamped with their recorded time (not decode time)
+    store = LegacyPickleStore("unitree_office_walk/video")
+    video_raw = timed_playback(
+        lambda: (
+            (ts, Image.from_numpy(frame, ts=ts).to_rgb()) for ts, frame in store.iterate_items()
+        ),
+        speed=speed,
+    ).pipe(ops.take(frame_count), ops.publish())
 
     processed_frames = []
 
@@ -317,13 +331,20 @@ def test_timestamp_alignment(test_scheduler) -> None:
         video_raw.pipe(ops.map(spy)), scheduler=test_scheduler
     ).pipe(ops.map(process_video_frame))
 
-    aligned_frames = align_timestamped(fake_video_processor, video_raw).pipe(ops.to_list()).run()
+    done = threading.Event()
+    aligned_frames: list = []
+    align_timestamped(fake_video_processor, video_raw, buffer_size=5.0).pipe(
+        ops.to_list()
+    ).subscribe(on_next=aligned_frames.extend, on_completed=done.set, on_error=lambda _: done.set())
+    # both sides subscribed: start the one playback
+    video_raw.connect()
+    assert done.wait(30)
 
-    assert len(raw_frames) == 30
+    assert len(raw_frames) == frame_count
     assert len(processed_frames) >= 2
     assert len(aligned_frames) >= 2
 
-    # Due to async processing, the last frame might not be aligned before completion
+    # a frame still being processed when the clip ends is not aligned
     assert len(aligned_frames) >= len(processed_frames) - 1
 
     for value in aligned_frames:
