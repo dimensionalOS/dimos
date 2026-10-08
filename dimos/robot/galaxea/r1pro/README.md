@@ -51,9 +51,9 @@ dimos run r1pro-planar-preview   # planar-base planning preview on mock hardware
 ```
 
 `r1pro-coordinator` is the one standard R1 blueprint: `R1ProConnection` (chassis
-`cmd_vel`, joints, wrist cameras, wheel odometry), the head cameras (V4L2,
-hardware-synced), our Mid-360 driver into Point-LIO, and the vendor stack, booted
-if it is not already running. `r1pro-nav` builds on the same pieces.
+`cmd_vel`, joints, wrist cameras, wheel odometry; it boots the vendor stack if it
+is not already running), the head cameras (V4L2, hardware-synced), and our
+Mid-360 driver into Point-LIO. `r1pro-nav` builds on the same pieces.
 
 ## Point-LIO and head depth
 
@@ -70,7 +70,7 @@ first run, so `cargo` (and on an Orin, `nvcc` for CUDA) must be on the path.
 `LCM_DEFAULT_URL=udpm://239.255.76.67:7767?ttl=0`.
 
 **The head cameras.** The vendor's `signal_camera` node holds both head eyes; the
-vendor stack module stops it (SIGINT) so our V4L2 cameras can open them.
+connection stops it (SIGINT) before anything starts, so our V4L2 cameras can open them.
 
 **The lidar.** Our Mid-360 driver takes the sensor from the vendor's
 `livox_ros_driver2` (a Livox streams to whoever asked last), and
