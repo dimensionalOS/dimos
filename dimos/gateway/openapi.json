@@ -3361,6 +3361,117 @@
         "title": "ModuleMethod",
         "type": "object"
       },
+      "ModuleRpc": {
+        "additionalProperties": true,
+        "properties": {
+          "blueprint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "That run's blueprint",
+            "examples": [
+              "unitree-go2"
+            ],
+            "title": "Blueprint"
+          },
+          "class": {
+            "description": "The module's Python class",
+            "examples": [
+              "dimos.robot.unitree.go2.GO2Connection"
+            ],
+            "title": "Class",
+            "type": "string"
+          },
+          "doc": {
+            "description": "Its whole docstring (empty when it has none)",
+            "title": "Doc",
+            "type": "string"
+          },
+          "known": {
+            "description": "False when its class didn't import in the gateway: no signature, and its args go unchecked",
+            "title": "Known",
+            "type": "boolean"
+          },
+          "method": {
+            "description": "The RPC method",
+            "examples": [
+              "get_battery_soc"
+            ],
+            "title": "Method",
+            "type": "string"
+          },
+          "module": {
+            "description": "The module's RPC name (the class name, or the instance name a blueprint gave it)",
+            "examples": [
+              "GO2Connection"
+            ],
+            "title": "Module",
+            "type": "string"
+          },
+          "params": {
+            "description": "Its parameters (self left out)",
+            "items": {
+              "$ref": "#/components/schemas/RpcParam"
+            },
+            "title": "Params",
+            "type": "array"
+          },
+          "return_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Its return annotation, if any",
+            "examples": [
+              "float"
+            ],
+            "title": "Return Type"
+          },
+          "runId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The run it belongs to",
+            "examples": [
+              "20260101-120000-unitree-go2"
+            ],
+            "title": "Runid"
+          },
+          "skill": {
+            "description": "True when it's also a skill (GET /dimos/skills lists it)",
+            "title": "Skill",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "module",
+          "method",
+          "class",
+          "known",
+          "params",
+          "return_type",
+          "doc",
+          "skill",
+          "runId",
+          "blueprint"
+        ],
+        "title": "ModuleRpc",
+        "type": "object"
+      },
       "ModuleSummary": {
         "additionalProperties": true,
         "properties": {
@@ -4318,6 +4429,224 @@
           "unlisted"
         ],
         "title": "Robots",
+        "type": "object"
+      },
+      "RpcCallRequest": {
+        "additionalProperties": true,
+        "properties": {
+          "args": {
+            "anyOf": [
+              {
+                "items": {},
+                "type": "array"
+              },
+              {
+                "additionalProperties": true,
+                "type": "object"
+              }
+            ],
+            "description": "Its arguments: an object (by name) or an array (by position), checked against its `params`",
+            "examples": [
+              {}
+            ],
+            "title": "Args"
+          },
+          "method": {
+            "description": "The method",
+            "examples": [
+              "get_battery_soc"
+            ],
+            "title": "Method",
+            "type": "string"
+          },
+          "module": {
+            "description": "The module, as GET /dimos/rpc lists it",
+            "examples": [
+              "GO2Connection"
+            ],
+            "title": "Module",
+            "type": "string"
+          }
+        },
+        "required": [
+          "module",
+          "method"
+        ],
+        "title": "RpcCallRequest",
+        "type": "object"
+      },
+      "RpcCallResult": {
+        "additionalProperties": true,
+        "properties": {
+          "blueprint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "That run's blueprint",
+            "examples": [
+              "unitree-go2"
+            ],
+            "title": "Blueprint"
+          },
+          "method": {
+            "description": "The method called",
+            "examples": [
+              "get_battery_soc"
+            ],
+            "title": "Method",
+            "type": "string"
+          },
+          "module": {
+            "description": "The module called",
+            "examples": [
+              "GO2Connection"
+            ],
+            "title": "Module",
+            "type": "string"
+          },
+          "ok": {
+            "description": "False when the method raised (`text` says what)",
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "result": {
+            "description": "Its return value (repr() of one that isn't JSON; null when it raised)",
+            "title": "Result"
+          },
+          "runId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The run it ran in",
+            "examples": [
+              "20260101-120000-unitree-go2"
+            ],
+            "title": "Runid"
+          },
+          "text": {
+            "description": "Its return value as text, or the error it raised",
+            "examples": [
+              "87"
+            ],
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "module",
+          "method",
+          "runId",
+          "blueprint",
+          "ok",
+          "result",
+          "text"
+        ],
+        "title": "RpcCallResult",
+        "type": "object"
+      },
+      "RpcList": {
+        "additionalProperties": true,
+        "properties": {
+          "rpcs": {
+            "description": "Every RPC method of the running blueprint's modules, by module then method, but the lifecycle ones (start, stop, build, set_transport, set_module_ref); empty when none runs",
+            "items": {
+              "$ref": "#/components/schemas/ModuleRpc"
+            },
+            "title": "Rpcs",
+            "type": "array"
+          },
+          "run": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SkillRun"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What runs; null when nothing answers on the RPC bus"
+          }
+        },
+        "required": [
+          "rpcs",
+          "run"
+        ],
+        "title": "RpcList",
+        "type": "object"
+      },
+      "RpcParam": {
+        "additionalProperties": true,
+        "properties": {
+          "default": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "repr() of its default (null: none)",
+            "examples": [
+              "1.0"
+            ],
+            "title": "Default"
+          },
+          "kind": {
+            "description": "`positional_or_keyword`, `positional_only`, `keyword_only`, `var_positional` or `var_keyword`",
+            "examples": [
+              "positional_or_keyword"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "description": "The parameter",
+            "examples": [
+              "distance"
+            ],
+            "title": "Name",
+            "type": "string"
+          },
+          "required": {
+            "description": "True when it has no default (and isn't *args/**kwargs)",
+            "title": "Required",
+            "type": "boolean"
+          },
+          "type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Its annotation, if any",
+            "examples": [
+              "float"
+            ],
+            "title": "Type"
+          }
+        },
+        "required": [
+          "name",
+          "type",
+          "default",
+          "required",
+          "kind"
+        ],
+        "title": "RpcParam",
         "type": "object"
       },
       "RunList": {
@@ -7410,6 +7739,114 @@
         "summary": "The modules a robot's blueprints use, most specific to that robot first (TF-IDF style)",
         "tags": [
           "discovery"
+        ],
+        "x-agent": true,
+        "x-family": "dimos"
+      }
+    },
+    "/dimos/rpc": {
+      "get": {
+        "description": "Every `@rpc` method of the running blueprint's modules (`Coordinator/list_modules`), skills included, with its signature and docstring when its class imports in the gateway. The lifecycle methods (start, stop, build, set_transport, set_module_ref) are left out. Empty `rpcs` and null `run` when nothing runs. No side effects.",
+        "operationId": "get_dimos_rpc",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RpcList"
+                }
+              }
+            },
+            "description": "`{ rpcs: [{ module, method, class, known, params: [{ name, type, default, required, kind }], return_type, doc, skill, runId, blueprint }], run: { runId, blueprint } | null }`"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The gateway couldn't do it: a child process, launch, stop or cloud call failed (the message says why)"
+          }
+        },
+        "summary": "The running blueprint's module RPC methods: module, method, params, docstring",
+        "tags": [
+          "skills"
+        ],
+        "x-agent": true,
+        "x-family": "dimos"
+      }
+    },
+    "/dimos/rpc/call": {
+      "post": {
+        "description": "Calls `<module>/<method>` over dimos's module RPC. `args` is an object (by name) or an array (by position), checked against its `params`. This can act on the robot. Waits up to 300 s. `ok` false when the method raised. 400 for start or stop (or another lifecycle method: the coordinator runs those) and for a missing, extra or unknown argument, 404 when the running blueprint has no such module or method, 409 when nothing runs, 500 when it didn't answer in time.",
+        "operationId": "post_dimos_rpc_call",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RpcCallRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RpcCallResult"
+                }
+              }
+            },
+            "description": "`{ module, method, runId, blueprint, ok, result, text }`"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad request: a missing or malformed body or parameter, or a value the gateway refuses (the message says which)"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "No such thing (the message names it)"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict with the current state (the message says what it is)"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The gateway couldn't do it: a child process, launch, stop or cloud call failed (the message says why)"
+          }
+        },
+        "summary": "Call a module's RPC method and wait for its answer",
+        "tags": [
+          "skills"
         ],
         "x-agent": true,
         "x-family": "dimos"

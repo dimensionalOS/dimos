@@ -303,3 +303,174 @@ def call_skill(
         "text": text,
         "content": content,
     }
+
+
+# Module RPC methods (any `@rpc`, skills included). `start` and `stop` are refused: the coordinator runs a module's
+# lifecycle, and stopping one by hand leaves the run half up. `build`, `set_transport` and `set_module_ref` are the
+# coordinator's wiring, refused too.
+LIFECYCLE_RPCS = frozenset({"start", "stop", "build", "set_transport", "set_module_ref"})
+
+
+def _signature(qualified_path: str, method: str) -> dict[str, Any] | None:
+    """A method's params (name, type, default, required), return type and docstring, from its class imported here;
+    None when it can't be imported (its args then go unchecked)."""
+    import importlib
+    import inspect
+
+    from dimos.gateway.introspect import return_type
+
+    path, _, attr = qualified_path.rpartition(".")
+    try:
+        fn = dict(getattr(importlib.import_module(path), attr).rpcs)[method]
+        signature = inspect.signature(fn)
+    except Exception:
+        return None
+    params: list[dict[str, Any]] = []
+    for name, param in signature.parameters.items():
+        if name in ("self", "cls"):
+            continue
+        params.append(
+            {
+                "name": name,
+                "type": None
+                if param.annotation is inspect.Parameter.empty
+                else str(getattr(param.annotation, "__name__", param.annotation)).replace(
+                    "typing.", ""
+                ),
+                "default": None
+                if param.default is inspect.Parameter.empty
+                else repr(param.default),
+                "required": param.default is inspect.Parameter.empty
+                and param.kind not in (param.VAR_POSITIONAL, param.VAR_KEYWORD),
+                "kind": param.kind.name.lower(),
+            }
+        )
+    return {
+        "params": params,
+        "return_type": return_type(fn),
+        "doc": inspect.getdoc(fn) or "",
+        "skill": bool(getattr(fn, "__skill__", False)),
+    }
+
+
+def list_rpcs(the_bus: Bus | None = None, run: Run | None = None) -> dict[str, Any]:
+    """Every RPC method of the running blueprint's modules but the lifecycle ones, each with its signature when its
+    class imports here."""
+    the_bus = the_bus or bus
+    run = run or live_run()
+    modules = _modules(the_bus)
+    if modules is None:
+        return {"rpcs": [], "run": None}
+    rpcs: list[dict[str, Any]] = []
+    for descriptor in modules:
+        module = descriptor.rpc_name or descriptor.class_name
+        for method in descriptor.rpc_names:
+            if method in LIFECYCLE_RPCS:
+                continue
+            found = _signature(descriptor.qualified_path, method)
+            rpcs.append(
+                {
+                    "module": module,
+                    "method": method,
+                    "class": descriptor.qualified_path,
+                    "known": found is not None,
+                    **(found or {"params": [], "return_type": None, "doc": "", "skill": False}),
+                    "runId": run.run_id,
+                    "blueprint": run.blueprint,
+                }
+            )
+    return {
+        "rpcs": sorted(rpcs, key=lambda r: (r["module"], r["method"])),
+        "run": {"runId": run.run_id, "blueprint": run.blueprint},
+    }
+
+
+def _check_rpc_args(target: dict[str, Any], args: list[Any] | dict[str, Any]) -> None:
+    """Too many, missing or unknown arguments are refused before anything reaches the module."""
+    if not target["known"]:
+        return
+    params = target["params"]
+    name = f"{target['module']}.{target['method']}"
+    takes = ", ".join(p["name"] for p in params) or "no arguments"
+    if isinstance(args, list):
+        positional = [
+            p for p in params if p["kind"] in ("positional_only", "positional_or_keyword")
+        ]
+        if len(args) > len(positional) and not any(p["kind"] == "var_positional" for p in params):
+            raise SkillError(
+                400, f"{name}: {len(args)} arguments, it takes at most {len(positional)} ({takes})"
+            )
+        given = {p["name"] for p in positional[: len(args)]}
+    else:
+        named = {p["name"] for p in params if p["kind"] != "positional_only"}
+        unknown = [key for key in args if key not in named]
+        if unknown and not any(p["kind"] == "var_keyword" for p in params):
+            raise SkillError(400, f"{name}: doesn't take {', '.join(unknown)} (it takes {takes})")
+        given = set(args)
+    missing = [p["name"] for p in params if p["required"] and p["name"] not in given]
+    if missing:
+        raise SkillError(400, f"{name}: missing {', '.join(missing)} (it takes {takes})")
+
+
+def _json_safe(value: Any) -> Any:
+    try:
+        json.dumps(value)
+        return value
+    except (TypeError, ValueError):
+        return repr(value)
+
+
+def call_rpc(
+    module: str,
+    method: str,
+    args: list[Any] | dict[str, Any] | None = None,
+    the_bus: Bus | None = None,
+    run: Run | None = None,
+) -> dict[str, Any]:
+    """Calls `<module>/<method>` over module RPC and waits for its answer. Only on a person's explicit request."""
+    args = args if args is not None else {}
+    if method in LIFECYCLE_RPCS:
+        raise SkillError(
+            400,
+            f"{method} is a module lifecycle method: the coordinator runs it, it can't be called here (stop or "
+            "relaunch the blueprint instead)",
+        )
+    the_bus = the_bus or bus
+    run = run or live_run()
+    listed = list_rpcs(the_bus, run)
+    if listed["run"] is None:
+        raise SkillError(409, "no blueprint is running, so there are no RPC methods to call")
+    target = next(
+        (r for r in listed["rpcs"] if r["module"] == module and r["method"] == method), None
+    )
+    if target is None:
+        if not any(r["module"] == module for r in listed["rpcs"]):
+            modules = sorted({r["module"] for r in listed["rpcs"]})
+            raise SkillError(
+                404,
+                f"the running blueprint has no module {module}; its modules: {', '.join(modules)}",
+            )
+        methods = sorted(r["method"] for r in listed["rpcs"] if r["module"] == module)
+        raise SkillError(
+            404, f"{module} has no RPC method {method}; its methods: {', '.join(methods)}"
+        )
+    _check_rpc_args(target, args)
+    positional, named = (args, {}) if isinstance(args, list) else ([], args)
+    try:
+        result = the_bus.call(f"{module}/{method}", positional, named, CALL_TIMEOUT_S)
+        ok, error = True, None
+    except TimeoutError:
+        raise SkillError(500, f"{module}.{method} didn't answer within {int(CALL_TIMEOUT_S)} s")
+    except Exception as raised:
+        result, ok, error = None, False, f"{type(raised).__name__}: {raised}"
+    return {
+        "module": module,
+        "method": method,
+        "runId": run.run_id,
+        "blueprint": run.blueprint,
+        "ok": ok,
+        "result": _json_safe(result) if ok else None,
+        "text": error
+        if error
+        else (result if isinstance(result, str) else json.dumps(_json_safe(result))),
+    }
