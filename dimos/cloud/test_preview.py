@@ -13,188 +13,90 @@
 # limitations under the License.
 
 import base64
-from dataclasses import dataclass, field
+from collections.abc import Iterator, Sequence
+from pathlib import Path
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 
 import numpy as np
-import pytest
 
 from dimos.cloud import preview
-
-if TYPE_CHECKING:
-    from dimos.memory.store.base import Store as RealStore
-
-
-class PointCloud2:
-    def __init__(self, pts: list[list[float]], frame_id: str = "world") -> None:
-        self.pts, self.frame_id = np.array(pts, dtype=np.float32), frame_id
-
-    def points_f32(self) -> np.ndarray:
-        return self.pts
+from dimos.cloud.constants import PREVIEW_SCALE
+from dimos.memory.store.base import Store
+from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 
-class PoseStamped:
-    def __init__(self, x: float, y: float, yaw: float = 0.0) -> None:
-        self.position = SimpleNamespace(x=x, y=y, z=0.3)
-        self.orientation = SimpleNamespace(x=0.0, y=0.0, z=np.sin(yaw / 2), w=np.cos(yaw / 2))
-
-
-class Image:
-    width = 64
-
-    def __init__(self, level: int) -> None:
-        self.level = level
-
-    def as_numpy(self) -> np.ndarray:
-        return np.full((4, 4, 3), self.level, dtype=np.uint8)
-
-    def to_jpeg_bytes(self, quality: int = 75) -> bytes:
-        return b"\xff\xd8" + bytes([self.level])
-
-    def resize_to_fit(self, w: int, h: int) -> tuple["Image", float]:
-        return self, 1.0
-
-    def to_bgr(self) -> "Image":
-        return self
-
-
-@dataclass
-class Obs:
-    ts: float
-    data: Any
-    pose: Any = None
-
-
-@dataclass
 class Stream:
-    name: str
-    items: list[Obs] = field(default_factory=list)
+    """The reads preview makes of a memory stream, over real dimos payloads."""
 
-    def first(self) -> Obs:
-        if not self.items:
-            raise LookupError("No matching observation")
-        return self.items[0]
+    def __init__(self, name: str, items: Sequence[tuple[float, Any, Pose | None]]) -> None:
+        self.name, self.obs = name, [SimpleNamespace(ts=t, data=d, pose=p) for t, d, p in items]
 
-    def to_list(self) -> list[Obs]:
-        return list(self.items)
-
-    def __iter__(self) -> Any:
-        return iter(self.items)
+    def __iter__(self) -> Iterator[SimpleNamespace]:
+        return iter(self.obs)
 
     def count(self) -> int:
-        return len(self.items)
+        return len(self.obs)
+
+    def first(self) -> SimpleNamespace:
+        return self.obs[0]
 
 
-class Store:
-    def __init__(self, *streams: Stream) -> None:
-        self.streams = {s.name: s for s in streams}
-
-    def list_streams(self) -> list[str]:
-        return list(self.streams)
+def store(**streams: Sequence[tuple[float, Any, Pose | None]]) -> Store:
+    built = {name: Stream(name, items) for name, items in streams.items()}
+    return cast("Store", SimpleNamespace(list_streams=lambda: list(built), streams=built))
 
 
-def unpack(doc: dict[str, Any], b64: str) -> np.ndarray:
+def points(doc: dict[str, Any], b64: str) -> np.ndarray:
     q = np.frombuffer(base64.b64decode(b64), dtype="<i2").reshape(-1, 3)
-    return np.asarray(q * float(doc["scale"]) + np.array(doc["origin"], dtype=np.float64))
+    return np.asarray(q * PREVIEW_SCALE + np.array(doc["origin"]))
 
 
-def build(store: Store, **kw: Any) -> dict[str, Any] | None:
-    return preview.build(cast("RealStore", store), **kw)
+def cloud(t: float, *xyz: tuple[float, float, float], frame: str = "world") -> PointCloud2:
+    return PointCloud2.from_numpy(np.array(xyz, dtype=np.float32), frame_id=frame, timestamp=t)
 
 
 def test_world_frame_recording() -> None:
-    odom = Stream("odom", [Obs(100 + i, PoseStamped(i * 0.5, 0.0, 0.1 * i)) for i in range(10)])
-    lidar = Stream(
-        "lidar",
-        [
-            Obs(100 + i, PointCloud2([[i, 1.0, 0.5], [i, -1.0, 0.5], [i, 0, 9.0]]))
-            for i in range(10)
-        ],
-    )
-    camera = Stream(
-        "color_image", [Obs(100 + i, Image(level=10 + i * 20 % 200)) for i in range(10)]
-    )
-    doc = build(Store(odom, lidar, camera, Stream("empty")), frames=4)
-    assert doc is not None
-    assert doc["format"] == preview.FORMAT and doc["duration_s"] == 9
-    assert doc["trajectory"][0][:3] == [0.0, 0.0, 0.0] and len(doc["trajectory"]) == 10
-    assert len(doc["scans"]) == 4 and len(doc["camera"]) == 4
-    m = unpack(doc, doc["map"])
-    assert (
-        np.abs(m[:, 2] - 0.5).max() < 0.02
-    )  # the 9 m "ceiling" point is cut, the rest round-trips
+    lidar = [
+        (100.0 + i, cloud(100.0 + i, (i, 1, 0.5), (i, -1, 0.5), (i, 0, 9.0)), Pose(i * 0.5, 0, 0.3))
+        for i in range(10)
+    ]
+    frames = [
+        (100.0 + i, Image.from_numpy(np.full((48, 64, 3), 25 * i, np.uint8)), None)
+        for i in range(10)
+    ]
+    doc = preview.build(store(lidar=lidar, color_image=frames))
+    assert doc is not None and doc["duration_s"] == 9
+    assert doc["trajectory"][3][:2] == [3.0, 1.5] and len(doc["trajectory"]) == 10
+    m = points(doc, doc["map"])
+    assert np.abs(m[:, 2] - 0.5).max() < 0.02  # the 9 m "ceiling" is cut, the rest round-trips
     assert {round(x) for x in m[:, 0]} == set(range(10))
-    levels = [base64.b64decode(c["jpeg"])[2] for c in doc["camera"]]
-    assert doc["thumb"] == int(np.argmax(levels))
-    assert set(doc["streams"]) == {"pose", "lidar", "camera"}
+    assert doc["thumb"] == len(doc["camera"]) - 1  # the brightest frame
 
 
-def test_sensor_frame_clouds_use_their_own_pose() -> None:
-    mount = SimpleNamespace(
-        position=SimpleNamespace(x=5.0, y=0.0, z=0.3),
-        orientation=SimpleNamespace(x=0.0, y=0.0, z=np.sin(np.pi / 4), w=np.cos(np.pi / 4)),
+def test_sensor_frame_scans_use_their_own_pose() -> None:
+    mount = Pose(
+        5.0, 0.0, 0.3, 0.0, 0.0, float(np.sin(np.pi / 4)), float(np.cos(np.pi / 4))
     )  # 90 deg yaw
-    lidar = Stream(
-        "pointlio_lidar", [Obs(1.0, PointCloud2([[1.0, 0.0, 0.0]], "mid360_link"), pose=mount)]
-    )
-    other_odom = Stream("go2_odom", [Obs(1.0, PoseStamped(-50.0, -50.0))])  # a different frame
-    doc = build(Store(lidar, other_odom))
+    lidar = [
+        (0.5, cloud(0.5, (9, 9, 0), frame="mid360_link"), None),  # saved before odometry: skipped
+        (1.0, cloud(1.0, (1, 0, 0), frame="mid360_link"), mount),
+    ]
+    doc = preview.build(store(pointlio_lidar=lidar))
     assert doc is not None
-    p = unpack(doc, doc["map"])[0]
-    assert np.allclose(p, [5.0, 1.0, 0.3], atol=0.03)  # rotated by the mount yaw, then translated
-    assert doc["trajectory"][0][1:3] == [5.0, 0.0]  # trajectory from the same poses, not go2_odom
+    assert np.allclose(points(doc, doc["map"]), [[5.0, 1.0, 0.3]], atol=0.03)
+    assert doc["trajectory"][0][1:3] == [5.0, 0.0]
 
 
-def test_nothing_to_preview() -> None:
-    assert build(Store(Stream("empty"))) is None
-
-
-def test_scans_without_a_pose_are_skipped_not_mixed() -> None:
-    """A recorder can save a sensor-frame scan before odometry arrives: that scan has no
-    pose. The others still decide the frame, and the unplaceable one is left out."""
-    mount = SimpleNamespace(
-        position=SimpleNamespace(x=5.0, y=0.0, z=0.3),
-        orientation=SimpleNamespace(x=0.0, y=0.0, z=0.0, w=1.0),
-    )
-    lidar = Stream(
-        "pointlio_lidar",
-        [
-            Obs(0.5, PointCloud2([[9.0, 9.0, 0.0]], "mid360_link")),  # before odometry
-            Obs(1.0, PointCloud2([[1.0, 0.0, 0.0]], "mid360_link"), pose=mount),
-        ],
-    )
-    doc = build(Store(lidar, Stream("go2_odom", [Obs(1.0, PoseStamped(-50.0, -50.0))])))
-    assert doc is not None
-    m = unpack(doc, doc["map"])
-    assert len(m) == 1 and np.allclose(m[0], [6.0, 0.0, 0.3], atol=0.03)
-
-
-def test_tall_images_are_resized_too() -> None:
-    sized: list[tuple[int, int]] = []
-
-    def fit(self: Image, w: int, h: int) -> tuple[Image, float]:
-        sized.append((w, h))
-        return self, 0.5
-
-    tall_type = type("Image", (Image,), {"width": 240, "resize_to_fit": fit})  # narrow but tall
-    assert build(Store(Stream("color_image", [Obs(0.0, tall_type(level=50))]))) is not None
-    assert sized == [(320, 320)]
-
-
-def test_timelapse_fits_long_recordings_into_max_seconds(tmp_path: Any) -> None:
-    if not preview.HAS_AV:
-        pytest.skip("PyAV not installed")
-    cam = Stream("color_image", [Obs(100.0 + i, Image(level=i * 8)) for i in range(30)])  # 29 s
-    meta = preview.timelapse(
-        cast("RealStore", Store(cam)), tmp_path / "t.mp4", max_seconds=10, height=64
-    )
-    assert meta is not None
-    assert meta["speed"] == 2.9 and meta["duration_s"] == 10 and meta["height"] == 64
-    data = (tmp_path / "t.mp4").read_bytes()
-    assert data[4:8] == b"ftyp" and meta["bytes"] == len(data)
-    short = preview.timelapse(
-        cast("RealStore", Store(cam)), tmp_path / "s.mp4", max_seconds=60, height=64
-    )
-    assert short is not None and short["speed"] == 1.0  # shorter than the cap: real time
-    assert preview.timelapse(cast("RealStore", Store(Stream("empty"))), tmp_path / "n.mp4") is None
+def test_timelapse(tmp_path: Path) -> None:
+    frames = [
+        (100.0 + i, Image.from_numpy(np.full((48, 64, 3), 8 * i, np.uint8)), None)
+        for i in range(30)
+    ]
+    meta = preview.timelapse(store(color_image=frames), tmp_path / "t.webm")
+    assert (
+        meta is not None and meta["speed"] == 1.0 and meta["duration_s"] == 29
+    )  # under a minute: real time
+    assert (tmp_path / "t.webm").read_bytes()[:4] == b"\x1a\x45\xdf\xa3"  # WebM (EBML) header

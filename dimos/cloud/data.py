@@ -209,7 +209,7 @@ class MultipartBackend:
         must stay byte-identical to what was uploaded. Best effort: the upload stands
         without it."""
         try:
-            copy, clip = tmp / "preview.db", tmp / "timelapse.mp4"
+            copy, clip = tmp / "preview.db", tmp / "timelapse.webm"
             shutil.copyfile(path, copy)
             with open_store(copy) as store:
                 doc = preview.build(store)
