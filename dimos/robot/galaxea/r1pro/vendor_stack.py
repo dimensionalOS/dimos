@@ -94,10 +94,13 @@ def stop_vendor_head_cameras(appear_timeout_s: float) -> None:
     if not _vendor_head_camera_running():
         return
     logger.info("Stopping the vendor head camera node")
-    subprocess.run(["pkill", "-INT", "-x", VENDOR_HEAD_CAMERA_PROCESS], check=False)
-    deadline = time.monotonic() + 10.0
+    # It ignores a SIGINT while still starting up, so keep asking.
+    deadline = time.monotonic() + 30.0
     while _vendor_head_camera_running() and time.monotonic() < deadline:
-        time.sleep(0.5)
+        subprocess.run(["pkill", "-INT", "-x", VENDOR_HEAD_CAMERA_PROCESS], check=False)
+        time.sleep(2.0)
+    if _vendor_head_camera_running():
+        logger.warning("The vendor head camera node is still running; the head cameras cannot open")
 
 
 def boot_command(config: R1ProVendorStackConfig, running: set[str]) -> list[str] | None:
