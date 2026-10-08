@@ -15,6 +15,7 @@
 import pytest
 
 from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.sensor_msgs.Joy import Joy
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_joystick_record import (
     record_rerun_config,
     unitree_go2_joystick_record,
@@ -42,6 +43,7 @@ def test_the_window_has_a_plot_per_command_stream() -> None:
         ("Camera", "world/color_image"),
         ("odom", "plots/odom"),
         ("cmd_vel", "plots/cmd_vel"),
+        ("keys", "logs/keys"),
     ]
 
 
@@ -51,3 +53,16 @@ def test_converters_plot_forward_strafe_and_turn() -> None:
     assert [path for path, _ in cmd_vel] == ["plots/cmd_vel"]
     for _, scalars in cmd_vel:
         assert scalars.scalars.as_arrow_array().to_pylist() == pytest.approx([0.5, 0.1, 0.8])
+
+
+def test_keys_text_logs_each_change_once() -> None:
+    keys = record_rerun_config["visual_override"]["world/joystick"]
+    w_shift = Joy(buttons=[1, 0, 0, 0, 0, 0, 1, 0, 0])
+    lines = [keys(w_shift), keys(w_shift), keys(Joy(buttons=[0] * 9))]
+    assert [
+        [entry.text.as_arrow_array().to_pylist()[0] for _, entry in line] for line in lines
+    ] == [
+        ["W + SHIFT"],
+        [],
+        ["(released)"],
+    ]

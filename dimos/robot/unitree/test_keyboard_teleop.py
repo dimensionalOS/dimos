@@ -27,7 +27,7 @@ class _Pressed:
         return key in self.keys
 
 
-def test_joystick_publishes_held_keys_on_change(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_joystick_publishes_while_held_and_once_on_release(monkeypatch: pytest.MonkeyPatch) -> None:
     teleop = KeyboardTeleop.__new__(KeyboardTeleop)
     teleop._last_buttons = None
     sent: list[Joy] = []
@@ -48,9 +48,11 @@ def test_joystick_publishes_held_keys_on_change(monkeypatch: pytest.MonkeyPatch)
     held.clear()
     mods["value"] = 0
     teleop._publish_joystick()
+    teleop._publish_joystick()
 
     assert [j.buttons for j in sent] == [
         [0, 0, 0, 0, 0, 0, 0, 0, 0],
+        [1, 0, 0, 0, 0, 0, 0, 0, 0],
         [1, 0, 0, 0, 0, 0, 0, 0, 0],
         [1, 0, 0, 0, 0, 0, 1, 0, 0],
         [0, 0, 0, 0, 0, 0, 0, 0, 0],

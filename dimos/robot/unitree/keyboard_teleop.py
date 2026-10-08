@@ -85,7 +85,7 @@ class KeyboardTeleop(Module):
     dedicated_worker = True
 
     cmd_vel: Out[Twist]
-    # Held keys as Joy.buttons in JOY_BUTTONS order, published on every change.
+    # Held keys as Joy.buttons in JOY_BUTTONS order: every tick while any is held, once on release.
     joystick: Out[Joy]
     operator_command: Out[Int8]
     # Reference-governor corridor half-width (m). Number keys 0-9 map
@@ -272,7 +272,7 @@ class KeyboardTeleop(Module):
             int(bool(mods & pygame.KMOD_CTRL)),
             int(pressed[pygame.K_SPACE]),
         ]
-        if buttons != self._last_buttons:
+        if any(buttons) or buttons != self._last_buttons:
             self.joystick.publish(Joy(buttons=buttons))
             self._last_buttons = buttons
 

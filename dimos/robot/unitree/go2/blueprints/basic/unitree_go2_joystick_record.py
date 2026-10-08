@@ -32,7 +32,7 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import rerun_config
 from dimos.robot.unitree.go2.connection import GO2Connection
-from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
+from dimos.robot.unitree.keyboard_teleop import JOY_BUTTONS, KeyboardTeleop
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 from dimos.visualization.vis_module import vis_module
 
@@ -45,6 +45,23 @@ def _plot_twist(name: str, twist: Any) -> Any:
     import rerun as rr
 
     return [(f"plots/{name}", rr.Scalars([twist.linear.x, twist.linear.y, twist.angular.z]))]
+
+
+class _KeysText:
+    """Joystick -> one text line per key change, e.g. ``W + SHIFT``."""
+
+    def __init__(self) -> None:
+        self._last: list[int] | None = None
+
+    def __call__(self, joy: Any) -> Any:
+        import rerun as rr
+
+        buttons = list(joy.buttons)
+        if buttons == self._last:
+            return []
+        self._last = buttons
+        held = [name.upper() for name, on in zip(JOY_BUTTONS, buttons, strict=False) if on]
+        return [("logs/keys", rr.TextLog(" + ".join(held) or "(released)"))]
 
 
 def _velocity_series(rr: Any) -> Any:
@@ -66,7 +83,8 @@ def _record_rerun_blueprint() -> Any:
                 rrb.Spatial2DView(origin="world/color_image", name="Camera"),
                 rrb.TimeSeriesView(origin="plots/odom", name="odom"),
                 rrb.TimeSeriesView(origin="plots/cmd_vel", name="cmd_vel"),
-                row_shares=[3, 1, 1],
+                rrb.TextLogView(origin="logs/keys", name="keys"),
+                row_shares=[3, 1, 1, 1],
             ),
             rrb.Spatial3DView(
                 origin="world",
@@ -89,6 +107,7 @@ record_rerun_config: dict[str, Any] = {
     "visual_override": {
         **rerun_config["visual_override"],
         "world/cmd_vel": partial(_plot_twist, "cmd_vel"),
+        "world/joystick": _KeysText(),
     },
     "static": {
         **rerun_config["static"],
