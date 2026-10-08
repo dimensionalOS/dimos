@@ -233,46 +233,47 @@ pub fn build_node_edges_region(
     let window_bbox = chain_bbox(window.iter().map(|&c| cells.coord(c)));
 
     // Corridors clear of the update window are provably untouched and keep
-    // their cost. Touched ones are re-priced, or dropped when broken.
-    let mut merged: AHashMap<(NodeId, NodeId), NodeEdge> = AHashMap::new();
-    for e in out_edges.drain(..) {
+    // their cost. Touched ones are re-priced in place, or dropped when broken.
+    out_edges.retain_mut(|e| {
         if !live_node.contains(&e.a) || !live_node.contains(&e.b) {
-            continue;
+            return false;
         }
         if !bbox_intersects(e.bbox, window_bbox) {
-            if endpoints_match(cells, &e) {
-                merged.insert((e.a, e.b), e);
-            }
-            continue;
+            return endpoints_match(cells, e);
         }
-        let Some(cost) = corridor_cost(cells, &e) else {
-            continue;
-        };
-        let mut e = e;
-        e.cost = cost;
-        merged.insert((e.a, e.b), e);
-    }
+        match corridor_cost(cells, e) {
+            Some(cost) => {
+                e.cost = cost;
+                true
+            }
+            None => false,
+        }
+    });
+    let by_pair: AHashMap<(NodeId, NodeId), usize> = out_edges
+        .iter()
+        .enumerate()
+        .map(|(i, e)| ((e.a, e.b), i))
+        .collect();
 
     let mut new_edges = boundary_edge_map(cells, state, window);
     new_edges.retain(|_, e| live_node.contains(&e.a) && live_node.contains(&e.b));
     for ((a, b), mut e) in new_edges {
-        match merged.entry((a, b)) {
-            Entry::Occupied(mut o) => {
-                if e.cost < CORRIDOR_ADOPT_FRAC * o.get().cost
+        match by_pair.get(&(a, b)) {
+            Some(&i) => {
+                if e.cost < CORRIDOR_ADOPT_FRAC * out_edges[i].cost
                     && capture_chain(cells, state, &mut e)
                 {
-                    o.insert(e);
+                    out_edges[i] = e;
                 }
             }
-            Entry::Vacant(v) => {
+            None => {
                 if capture_chain(cells, state, &mut e) {
-                    v.insert(e);
+                    out_edges.push(e);
                 }
             }
         }
     }
 
-    out_edges.extend(merged.into_values());
     out_edges.par_sort_unstable_by_key(|e| (e.a, e.b));
     rebuild_node_adj(out_edges, out_adj);
 }
