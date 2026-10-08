@@ -30,7 +30,7 @@ def write_message(root: Path, name: str, text: str) -> Path:
 def test_resolves_standard_dependencies_without_ros(tmp_path):
     write_message(tmp_path, "example_msgs/msg/Telemetry", "sensor_msgs/Image image\nstring label\n")
 
-    definitions = Definitions([tmp_path])
+    definitions = Definitions([Path(__file__).parents[2] / "examples/message-codegen", tmp_path])
     closure = definitions.resolve(["example_msgs/msg/Telemetry"])
 
     assert [message.name for message in closure] == [
@@ -137,15 +137,3 @@ def test_invalid_field_reports_source_line(tmp_path):
         parse_message(source)
 
     assert f"{source}:3:" in str(error.value)
-
-
-def test_all_bundled_schemas_resolve():
-    closure = Definitions([]).resolve()
-
-    assert "sensor_msgs/msg/PointCloud2" in {message.name for message in closure}
-    assert "visualization_msgs/msg/MarkerArray" in {message.name for message in closure}
-    assert all(
-        dependency in {item.name for item in closure}
-        for message in closure
-        for dependency in message.dependencies
-    )

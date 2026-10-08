@@ -37,7 +37,11 @@ def test_all_generated_types_match_independent_codec():
         for value in vars(package.msg).values()
         if isinstance(value, type) and hasattr(value, "msg_name")
     ]
-    assert len(message_types) >= 142
+    assert {
+        "demo_msgs/msg/Telemetry",
+        "sensor_msgs/msg/Image",
+        "std_msgs/msg/UInt32MultiArray",
+    } <= {item.msg_name for item in message_types}
     for message_type in message_types:
         reference.register(get_types_from_msg(message_type.schema, message_type.msg_name))
         for little_endian in (True, False):

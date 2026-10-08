@@ -142,7 +142,7 @@ def parse_message(path: Path) -> Message:
 class Definitions:
     """A closed set of local definitions with dependency-first resolution."""
 
-    def __init__(self, roots: Iterable[Path], *, bundled: bool = True) -> None:
+    def __init__(self, roots: Iterable[Path], *, bundled: bool = False) -> None:
         self._messages: dict[str, Message] = {}
         for root in ([BUNDLED_SCHEMAS] if bundled else []) + list(roots):
             if not root.is_dir():

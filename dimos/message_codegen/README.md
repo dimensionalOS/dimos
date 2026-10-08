@@ -2,8 +2,7 @@
 
 This package reads ROS2 `.msg` files without importing or installing ROS. A pinned
 upstream `rosidl_adapter` parser validates syntax. DimOS resolves package names and
-dependencies, then emits C++ value types and Fast CDR customizations, Python
-bindings to those types, and native Rust types using Serde and `re_cdr`.
+dependencies, then emits C++ value types and Fast CDR customizations, ordinary Python source values, and native Rust types using Serde and `re_cdr`.
 
 ```bash
 python -m dimos.message_codegen.generate \
@@ -32,9 +31,9 @@ emit plain CDR/XCDR1 with its standard four-byte encapsulation.
 ## Upstream sources and licenses
 
 `sources.json` records immutable revisions and SHA-256 hashes for the vendored
-files. `schemas/*/package.xml` retains upstream authorship and declared licenses.
-`schemas/licenses/` contains upstream license texts, including the Apache 2.0
-license shared by the standard interface packages and parser. The parser's
+files. The full standard definition collection, licenses and generated message packages
+belong to the following message-package layer. This layer contains only small
+self-contained test definitions under `examples/message-codegen`. The parser's
 original copyright header is preserved. `rosidl_parser.pyi` is DimOS's type stub;
 the upstream implementation has one documented patch replacing an ambiguous
 constant-name regex with its linear-time equivalent. `sources.json` records both
@@ -48,3 +47,8 @@ Applications and builds never run the maintenance downloader.
 This work is being delivered through the `replace-lcm-message-encoding` OpenSpec
 change. The generated pipeline is under development; the old runtime message APIs
 have not yet been replaced.
+
+Generation resolves only explicitly supplied roots by default in this layer.
+The following package layer provides bundled standard definitions. Raw LCM bus
+interop belongs to the runtime layer; this layer tests CDR bytes independently
+of transport.
