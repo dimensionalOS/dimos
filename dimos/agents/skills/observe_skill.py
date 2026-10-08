@@ -39,25 +39,3 @@ class ObserveSkill(Module):
                 f"No camera frame received within {self._frame_timeout} seconds; "
                 "the camera may not be running."
             ) from exc
-
-
-class ObserveWorkspaceSkill(Module):
-    """Gives a robot agent the view of a fixed camera that sees the whole workspace."""
-
-    overview_image: In[Image]
-
-    _frame_timeout: float = 5.0
-
-    @skill
-    def observe_workspace(self) -> Image:
-        """Returns the current frame from the fixed workspace camera, which sees the robot, the table and the objects on it from outside. Use it to check the arm and the objects, for example after a move or a grasp.
-
-        Raises TimeoutError when no frame arrives within the frame timeout.
-        """
-        try:
-            return self.overview_image.get_next(timeout=self._frame_timeout)
-        except Exception as exc:
-            raise TimeoutError(
-                f"No workspace camera frame received within {self._frame_timeout} seconds; "
-                "the workspace camera may not be enabled."
-            ) from exc
