@@ -717,7 +717,7 @@ async function pollRuns() {
         const { launch } = await getJson("runs")
         state.launch = launch?.blueprint === NAME ? launch : null
         state.running = !!state.launch && (launch.phase === "running" || launch.phase === "starting")
-        // a relaunch reads "Starting…" until its new run is past starting
+        // a relaunch reads its new run's steps until that run is past starting
         if (state.relaunching === "starting" && state.launch?.pid !== state.relaunchedPid && state.launch?.phase !== "starting") {
             state.relaunching = false
         }
@@ -823,14 +823,40 @@ async function act(action) {
     await pollRuns()
 }
 
-/** "Stopping…" while the run is stopping (a relaunch's old run included), "Starting…" while its successor starts */
+// a launch step's words, as Desktop's launcher (launchText.ts) words them
+const STEP_LABELS = {
+    starting: "Starting dimOS",
+    building: "Building the blueprint",
+    starting_modules: "Starting modules",
+    downloading_data: "Downloading the recording",
+}
+
+/** the step a starting run is on (GET /dimos/runs' launch.steps), with a download of its data (git LFS, which no
+ * step reports) from its output, as the launcher shows them */
+function startingStep() {
+    const launch = state.launch
+    // a relaunch's new run hasn't replaced the old one yet
+    if (!launch || state.relaunching && launch.pid === state.relaunchedPid) {
+        return STEP_LABELS.starting
+    }
+    const download = (launch.output ?? "").split(/[\r\n]+/).filter((line) => line.includes("Downloading LFS objects")).at(-1)
+    if (download && !/\b100%|\bdone\b/i.test(download)) {
+        return STEP_LABELS.downloading_data
+    }
+    const step = (launch.steps ?? []).find((each) => each.state === "now")
+    const deployed = step?.code === "starting_modules" ? step.data?.deployed : undefined
+    const label = STEP_LABELS[step?.code] ?? STEP_LABELS.starting
+    return typeof deployed === "number" && deployed ? `${label} (${deployed} started)` : label
+}
+
+/** "Stopping…" while the run is stopping (a relaunch's old run included), then the step its successor is on */
 function relaunchLabel(stale) {
     const phase = state.launch?.phase
     if (state.relaunching === "stopping" && state.launch?.pid === state.relaunchedPid || !state.relaunching && phase === "stopping") {
         return "Stopping…"
     }
     if (state.relaunching || phase === "starting") {
-        return "Starting…"
+        return `${startingStep()}…`
     }
     return stale ? "Relaunch to apply" : "Relaunch"
 }
@@ -968,5 +994,12 @@ pollRuns().then(() => {
     }
 })
 pollRates()
-setInterval(pollRuns, 3000)
+// every second while a run starts or stops, so the Relaunch button keeps up with its steps; every 3 otherwise
+let pollTick = 0
+setInterval(() => {
+    pollTick += 1
+    if (state.relaunching || state.launch?.phase === "starting" || state.launch?.phase === "stopping" || pollTick % 3 === 0) {
+        pollRuns()
+    }
+}, 1000)
 setInterval(pollRates, 2000)
