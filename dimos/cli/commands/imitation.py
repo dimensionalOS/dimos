@@ -32,7 +32,7 @@ from dimos.imitation.collection.prompts import CollectionSpeech
 from dimos.imitation.collection.recording import RecordingSchema
 from dimos.imitation.dataprep.build import inspect_dataset, inspect_recording
 from dimos.imitation.dataprep.core import OutputConfig
-from dimos.imitation.dataprep.lerobot import lerobot_project, run_lerobot_dataprep
+from dimos.imitation.dataprep.formats.lerobot.adapter import lerobot_project, run_lerobot_dataprep
 from dimos.imitation.tui import CollectionApp, CollectionSession, RolloutApp, RolloutSession
 from dimos.porcelain.dimos import Dimos
 from dimos.stream.audio.tts.kokoro import KokoroTTSConfig
