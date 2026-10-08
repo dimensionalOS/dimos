@@ -1,0 +1,25 @@
+session_name: mobiman
+start_directory: ${START_DIR}/modules/mobiman
+# DIMENSIONAL: standalone mobiman stack instead of moca (moca refuses external
+# chassis commands on V2.3.0). Chassis node is launched with /controller ->
+# /controller_unused; the chassis_gatekeeper pane holds mode=5 there + brake=False
+# + acc_limit so an external /motion_target/target_speed_chassis drives smoothly.
+windows:
+- window_name: mobiman_chassis|mobiman_joint|mobiman_gripper|mobiman_r1pro_eepose|chassis_gatekeeper
+  layout: even-horizontal
+  panes:
+  - shell_command:
+      - sleep 10
+      - ./start_mobiman_r1pro_chassis.sh
+  - shell_command:
+      - sleep 10
+      - ./start_mobiman_r1pro_joint_pid.sh
+  - shell_command:
+      - sleep 10
+      - ./start_mobiman_r1_gripper_controller.sh R1PRO
+  - shell_command:
+      - sleep 3
+      - ./start_mobiman_r1pro_pose_ee.sh
+  - shell_command:
+      - sleep 14
+      - ./start_chassis_gatekeeper.sh

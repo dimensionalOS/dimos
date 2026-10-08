@@ -21,6 +21,10 @@ cd ~/galaxea-dimos/install/startup_config/share/startup_config/script
 ./robot_startup.sh boot ../sessions.d/ATCStandard/R1PROBody.d/
 ```
 
+`R1ProConnection` boots it for you when it is not running, with
+`vendor_profile/R1PROBody.d/` from this folder (ATCStandard without the vendor head
+camera and Livox drivers); pick another with `--r1proconnection.vendor-profile`.
+
 ## Environment
 
 - `ROS_DOMAIN_ID=1` (new-gen V2.3.0), `RMW_IMPLEMENTATION=rmw_fastrtps_cpp`.

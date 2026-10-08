@@ -155,7 +155,7 @@ class R1ProConnectionConfig(ModuleConfig):
     # Boot the vendor stack (HDAS, mobiman) if it is not running; it serves every ROS topic used here.
     boot_vendor_stack: bool = Field(default=True)
     vendor_startup_script: str = Field(default=VENDOR_STARTUP_SCRIPT)
-    # A session profile under the startup script's sessions.d, e.g. ../sessions.d/ATCStandard/R1PROBody.d/
+    # Session profile dir; absolute, or relative to the startup script, e.g. ../sessions.d/ATCStandard/R1PROBody.d/
     vendor_profile: str = Field(default=VENDOR_PROFILE)
 
 
