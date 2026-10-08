@@ -726,7 +726,9 @@ def create_app(state: ServerState, background: bool = True) -> FastAPI:
             "saved GlobalConfig overrides, then the body's, then `--replay` if asked. Answers at once with phase "
             "`starting`; `launch` events (or GET /dimos/runs) follow it to running, stopped or failed. 400 when the "
             "checkout's dimos is outside Desktop's range (unless config.yaml `dimos.ignore_version_range`), the "
-            "name is bad, an override (saved or given) isn't a GlobalConfig flag or valid value, and while the last launch is still starting or running (one at a time); 500 when dimos isn't "
+            "name is bad, an override (saved or given) isn't a GlobalConfig flag or valid value, while the last launch is still starting, running or stopping (any process of it left), and while any "
+            "other dimos run is on this machine (one in dimos's run registry, or a coordinator answering on the bus: "
+            "two runs share module RPC names, so one's start and stop calls reach the other's modules); 500 when dimos isn't "
             "installed or won't start.",
             errors=(400, 500),
             agent=True,
@@ -747,7 +749,9 @@ def create_app(state: ServerState, background: bool = True) -> FastAPI:
             raise ApiError(400, "bad blueprint name")
         launch_config = await launch_config_of(request)
         try:
-            started = runs.start(s.dimos_dir, request.blueprint, launch_config)
+            started = await asyncio.to_thread(
+                runs.start, s.dimos_dir, request.blueprint, launch_config
+            )
         except runs.StillRunningError as error:
             raise ApiError(400, str(error))
         except runs.RunError as error:
@@ -763,7 +767,8 @@ def create_app(state: ServerState, background: bool = True) -> FastAPI:
             "Stop the blueprint this gateway launched (if it still runs) and launch it again: its own values on top "
             "of the config saved now",
             "Takes the last launch's blueprint and its own (one-off) overrides (kept even after it stopped), stops it "
-            "first if it's starting or running (as POST /dimos/runs/stop), then launches it as POST /dimos/runs "
+            "first if it's starting, running or stopping (as POST /dimos/runs/stop: launched again only once no process of "
+            "the old run is left and every port it listened on is free), then launches it as POST /dimos/runs "
             "would, with Desktop's saved global and module config as saved now (a config change since applies). "
             "Takes no body. 400 when nothing was launched yet; 500 when it won't stop or won't start.",
             errors=(400, 500),
@@ -781,7 +786,7 @@ def create_app(state: ServerState, background: bool = True) -> FastAPI:
         try:
             if current and current["phase"] in ("starting", "running", "stopping"):
                 await runs.stop(None, lambda: s.bus.launch(runs.current_launch()))
-            started = runs.start(s.dimos_dir, blueprint, launch_config)
+            started = await asyncio.to_thread(runs.start, s.dimos_dir, blueprint, launch_config)
         except runs.RunError as error:
             raise ApiError(500, str(error))
         s.bus.launch(started)
@@ -794,8 +799,9 @@ def create_app(state: ServerState, background: bool = True) -> FastAPI:
             "runs",
             "Stop the blueprint this gateway launched (or runId)",
             "Sends the run's process group SIGINT, then SIGTERM after 20 s, then SIGKILL after 10 more, and answers "
-            "once it's gone. Stops `runId` (any live run in the registry) or else this gateway's launch; the body is "
-            "optional. 500 when there's nothing running to stop or it won't stop.",
+            "once no process of it is left (its whole process group: workers, MuJoCo, rerun) and every port it listened "
+            "on is free again (a leftover of the run's own still holding one gets SIGTERM, then SIGKILL). Stops `runId` (any live run in the registry) or else this gateway's launch; the body is "
+            "optional. 500 when there's nothing running to stop, it won't stop, or a port it held is still taken.",
             errors=(400, 500),
             agent=True,
             mcp_tool="stop_blueprint",

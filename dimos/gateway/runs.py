@@ -30,10 +30,13 @@ from pathlib import Path
 import re
 import shutil
 import signal
+import socket
 import subprocess
 import threading
 import time
 from typing import Any
+
+import psutil
 
 from dimos.core.run_registry import is_pid_alive
 from dimos.gateway import config, diagnose, logs, overrides as overrides_
@@ -109,9 +112,26 @@ def _records(file: Path) -> list[dict[str, Any]]:
     return records
 
 
+def held_run_log_dir(pid: int) -> Path | None:
+    """The LOG_DIR/<run id> whose main.jsonl process `pid` has open: its own run's, whatever else runs."""
+    from dimos.constants import LOG_DIR
+
+    try:
+        files = psutil.Process(pid).open_files()
+        logs_root = LOG_DIR.resolve()
+    except (psutil.Error, OSError):
+        return None
+    for file in files:
+        path = Path(file.path)
+        if path.name.startswith("main.jsonl") and path.parent.parent == logs_root:
+            return LOG_DIR / path.parent.name
+    return None
+
+
 def run_log_dir(blueprint: str, started_at: str, entry: dict[str, Any] | None) -> Path | None:
-    """The launch's own log dir: its registry entry's once dimos registered it, before that the newest
-    LOG_DIR/<run id> for this blueprint made since the launch (dimos names it `<YYYYmmdd-HHMMSS>-<blueprint>`)."""
+    """The launch's own log dir: its registry entry's (or the one its process was seen holding open), else, for a run
+    that died before either, the one LOG_DIR/<run id> for this blueprint made since the launch that no live run owns
+    (dimos names it `<YYYYmmdd-HHMMSS>-<blueprint>`); two such (another Desktop on this checkout) is no answer."""
     if entry and entry.get("log_dir"):
         return Path(str(entry["log_dir"]))
     from dimos.constants import LOG_DIR
@@ -119,14 +139,15 @@ def run_log_dir(blueprint: str, started_at: str, entry: dict[str, Any] | None) -
     try:
         # Python 3.10's fromisoformat refuses a trailing Z
         since = datetime.fromisoformat(started_at.replace("Z", "+00:00")).timestamp() - 1
+        owned = {Path(str(run["log_dir"])).name for run in registry_runs()}
         candidates = [
             path
             for path in LOG_DIR.glob(f"*-{re.sub(r'[^a-zA-Z0-9_-]', '-', blueprint)}")
-            if path.is_dir() and path.stat().st_mtime >= since
+            if path.is_dir() and path.stat().st_mtime >= since and path.name not in owned
         ]
     except (OSError, ValueError):
         return None
-    return max(candidates, key=lambda path: path.stat().st_mtime, default=None)
+    return candidates[0] if len(candidates) == 1 else None
 
 
 def launch_records(moved: Path | None) -> list[dict[str, Any]]:
@@ -177,8 +198,13 @@ def current_launch() -> dict[str, Any] | None:
         # dimos registers a run once every module is built: from then on it "ran"; its run id outlives the entry
         record.update(ever_ran=True, run_id=entry["run_id"], log_dir=entry["log_dir"])
         config.write_atomic(launch_file(), json.dumps(record))
+    # its process still exits while anything in its process group (workers, MuJoCo) is left
+    alive = group_alive(pid)
+    if alive and not record.get("run_id") and (held := held_run_log_dir(pid)):
+        # before it registers (or if it never does), the log dir its own process writes is its run's
+        record.update(run_id=held.name, log_dir=str(held))
+        config.write_atomic(launch_file(), json.dumps(record))
     output = _tail(launch_log(), 200_000)
-    alive = is_pid_alive(pid)
     stopping = bool(record.get("stopping"))
     if alive and (stopping or (record.get("ever_ran") and not entry)):
         phase = "stopping"
@@ -310,6 +336,13 @@ def start(dimos_dir: Path, blueprint: str, launch_config: LaunchConfig) -> dict[
         raise StillRunningError(
             f"{previous['blueprint']} is still {previous['phase']}; stop it first"
         )
+    # two runs on one machine share module RPC names: the second's start and stop calls reach the first's modules
+    if other := next(iter(registry_runs()), None):
+        raise StillRunningError(
+            f"{other['blueprint']} (run {other['run_id']}, pid {other['pid']}) is running; stop it first"
+        )
+    if coordinator_on_bus():
+        raise StillRunningError("another dimos run is running on this machine; stop it first")
     program = config.dimos_bin(dimos_dir)
     if not program.exists():
         raise RunError(f"no dimos at {dimos_dir} (no {program})")
@@ -379,10 +412,100 @@ def mark_stopping(pid: int) -> None:
         config.write_atomic(launch_file(), json.dumps(record))
 
 
+def coordinator_on_bus() -> bool:
+    """Whether a dimos run (from any checkout, terminal or Desktop) answers on this machine's RPC bus."""
+    from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
+    from dimos.core.transport_factory import rpc_backend
+
+    probe = rpc_backend()()
+    probe.start()
+    try:
+        probe.call_sync(f"{CoordinatorRPC.NAME}/ping", ([], {}), rpc_timeout=0.5)
+        return True
+    except TimeoutError:
+        return False
+    finally:
+        probe.stop()
+
+
+def group_alive(pgid: int) -> bool:
+    """Whether any process of process group `pgid` is left (a launch is its own session: its pgid is its pid)."""
+    try:
+        os.killpg(pgid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
+def run_processes(
+    pgid: int | None, run_id: str | None, also: int | None = None
+) -> list[psutil.Process]:
+    """A run's processes: its process group (and its main process `also`), and what it started in a session of its
+    own (native modules), which carries its DIMOS_RUN_ID."""
+    from dimos.core.coordination.process_lifecycle import DIMOS_RUN_ID_ENV
+
+    found = []
+    for process in psutil.process_iter():
+        try:
+            if (
+                process.pid == also
+                or (pgid is not None and os.getpgid(process.pid) == pgid)
+                or (run_id and process.environ().get(DIMOS_RUN_ID_ENV) == run_id)
+            ):
+                found.append(process)
+        except (psutil.Error, OSError):
+            continue
+    return found
+
+
+def listening(processes: list[psutil.Process]) -> dict[tuple[str, int], psutil.Process]:
+    """The addresses `processes` listen on, and which listens."""
+    found = {}
+    for process in processes:
+        try:
+            for connection in process.net_connections("inet"):
+                if connection.status == psutil.CONN_LISTEN:
+                    found[(connection.laddr.ip, connection.laddr.port)] = process
+        except (psutil.Error, OSError):
+            continue
+    return found
+
+
+def port_free(address: tuple[str, int]) -> bool:
+    """Whether a server could bind `address` now (as most do, with SO_REUSEADDR)."""
+    host, port = address
+    family = socket.AF_INET6 if ":" in host else socket.AF_INET
+    with socket.socket(family, socket.SOCK_STREAM) as probe:
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            probe.bind((host, port))
+            return True
+        except OSError:
+            return False
+
+
+# how long stop() waits after Ctrl-C, SIGTERM and SIGKILL, and for the ports the run listened on
+STOP_WAITS = ((signal.SIGINT, 20.0), (signal.SIGTERM, 10.0), (signal.SIGKILL, 5.0))
+PORT_WAIT = 10.0
+
+
+async def _until(done: Callable[[], bool], seconds: float) -> bool:
+    deadline = time.monotonic() + seconds
+    while not done():
+        if time.monotonic() >= deadline:
+            return False
+        await asyncio.sleep(0.1)
+    return True
+
+
 async def stop(run_id: str | None, marked: Callable[[], None] | None = None) -> str:
-    """Stops this gateway's launch, or any live registry run by id: its process group gets Ctrl-C, then SIGTERM, then
-    SIGKILL, as a terminal would (not `dimos stop`, which picks its own target). `marked` is called once the launch
-    is marked `stopping`, before the first signal."""
+    """Stops this gateway's launch, or any live registry run by id, fully: its process group gets Ctrl-C, then
+    SIGTERM, then SIGKILL, as a terminal would (not `dimos stop`, which picks its own target), until no process of it
+    is left; then every port it listened on is free again (a leftover of the run's own that still holds one gets
+    SIGTERM, then SIGKILL). So a launch right after never finds the old run's ports or modules. `marked` is called
+    once the launch is marked `stopping`, before the first signal."""
     if run_id:
         run = next((r for r in registry_runs() if r["run_id"] == run_id), None)
         if run is None:
@@ -392,21 +515,43 @@ async def stop(run_id: str | None, marked: Callable[[], None] | None = None) -> 
         launch = current_launch()
         if not launch or launch["phase"] not in ("starting", "running", "stopping"):
             raise RunError("the dimos gateway hasn't launched anything that's still running")
-        pid, name = launch["pid"], launch["blueprint"]
+        pid, name, run_id = launch["pid"], launch["blueprint"], launch["runId"]
+    try:
+        # a launch is its own session, so its pgid is its pid; a run from a terminal may share its shell's
+        leads = os.getpgid(pid) == pid
+    except ProcessLookupError:
+        leads = True
+    ports = await asyncio.to_thread(
+        listening, run_processes(pid if leads else None, run_id, also=pid)
+    )
     mark_stopping(pid)
     if marked is not None:
         marked()
-    for signum, wait in ((signal.SIGINT, 20), (signal.SIGTERM, 10), (signal.SIGKILL, 5)):
+    gone = (lambda: not group_alive(pid)) if leads else (lambda: not is_pid_alive(pid))
+    for signum, wait in STOP_WAITS:
         try:
-            # a launch is its own session, so its pgid is its pid; a run from a terminal may not be
-            os.killpg(pid, signum)
-        except (ProcessLookupError, PermissionError):
-            try:
+            if leads:
+                os.killpg(pid, signum)
+            else:
                 os.kill(pid, signum)
-            except ProcessLookupError:
-                pass
-        for _ in range(wait * 4):
-            if not is_pid_alive(pid):
-                return f"stopped {name} (pid {pid})"
-            await asyncio.sleep(0.25)
-    raise RunError(f"{name} (pid {pid}) won't stop")
+        except (ProcessLookupError, PermissionError):
+            pass
+        if await _until(gone, wait):
+            break
+    else:
+        raise RunError(f"{name} (pid {pid}) won't stop")
+    held = [address for address in ports if not port_free(address)]
+    for signum in (signal.SIGTERM, signal.SIGKILL):
+        if not held:
+            break
+        for address in held:
+            holder = ports[address]
+            # only the old run's own processes, never whatever else took the port since
+            if run_id and holder.is_running() and holder in run_processes(None, run_id):
+                holder.send_signal(signum)
+        await _until(lambda held=held: all(map(port_free, held)), PORT_WAIT / 2)
+        held = [address for address in held if not port_free(address)]
+    if held:
+        taken = ", ".join(f"{host}:{port}" for host, port in held)
+        raise RunError(f"{name} (pid {pid}) stopped, but {taken} is still in use")
+    return f"stopped {name} (pid {pid})"

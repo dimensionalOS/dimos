@@ -71,6 +71,8 @@ def server_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr(run_registry, "REGISTRY_DIR", tmp_path / "state" / "runs")
 
     monkeypatch.setattr(runs, "registry_runs", lambda: [])
+    # nor a real dimos run's coordinator on this machine's bus
+    monkeypatch.setattr(runs, "coordinator_on_bus", lambda: False)
     return tmp_path
 
 

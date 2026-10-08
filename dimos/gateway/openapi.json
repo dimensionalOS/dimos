@@ -5354,7 +5354,7 @@
   "info": {
     "description": "The dimos gateway's HTTP API: blueprints, global config, runs and their logs, events, Dimensional cloud uploads,\ndiscovery (blueprints, modules, message types), docs, extras and jobs.\n\ndimOS Desktop starts the gateway (`python -m dimos.gateway`, on a unix socket) and forwards `/dimos/...` to it unchanged.\nEvery answer is JSON unless the operation says otherwise; every error is `{\"error\": \"<message>\"}` (ErrorResponse).\nState is HTTP; changes are events, published on zenoh at `<ns>/dimos/events/<type>` (the `events` tag).\n\nExtensions: `x-family: dimos` on every operation; `x-agent: true` marks what Desktop's agent finds through\nsearch_endpoints; `x-mcp-tool` names an MCP tool that does the same; `x-zenoh-key` on an event schema is its key.\n",
     "title": "dimos gateway",
-    "version": "1.14.0"
+    "version": "1.14.1"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -7062,7 +7062,7 @@
         "x-family": "dimos"
       },
       "post": {
-        "description": "Starts `dimos [--key value ...] run <blueprint>` in the checkout, in its own session, with Desktop's saved GlobalConfig overrides, then the body's, then `--replay` if asked. Answers at once with phase `starting`; `launch` events (or GET /dimos/runs) follow it to running, stopped or failed. 400 when the checkout's dimos is outside Desktop's range (unless config.yaml `dimos.ignore_version_range`), the name is bad, an override (saved or given) isn't a GlobalConfig flag or valid value, and while the last launch is still starting or running (one at a time); 500 when dimos isn't installed or won't start.",
+        "description": "Starts `dimos [--key value ...] run <blueprint>` in the checkout, in its own session, with Desktop's saved GlobalConfig overrides, then the body's, then `--replay` if asked. Answers at once with phase `starting`; `launch` events (or GET /dimos/runs) follow it to running, stopped or failed. 400 when the checkout's dimos is outside Desktop's range (unless config.yaml `dimos.ignore_version_range`), the name is bad, an override (saved or given) isn't a GlobalConfig flag or valid value, while the last launch is still starting, running or stopping (any process of it left), and while any other dimos run is on this machine (one in dimos's run registry, or a coordinator answering on the bus: two runs share module RPC names, so one's start and stop calls reach the other's modules); 500 when dimos isn't installed or won't start.",
         "operationId": "post_dimos_runs",
         "requestBody": {
           "content": {
@@ -7117,7 +7117,7 @@
     },
     "/dimos/runs/restart": {
       "post": {
-        "description": "Takes the last launch's blueprint and its own (one-off) overrides (kept even after it stopped), stops it first if it's starting or running (as POST /dimos/runs/stop), then launches it as POST /dimos/runs would, with Desktop's saved global and module config as saved now (a config change since applies). Takes no body. 400 when nothing was launched yet; 500 when it won't stop or won't start.",
+        "description": "Takes the last launch's blueprint and its own (one-off) overrides (kept even after it stopped), stops it first if it's starting, running or stopping (as POST /dimos/runs/stop: launched again only once no process of the old run is left and every port it listened on is free), then launches it as POST /dimos/runs would, with Desktop's saved global and module config as saved now (a config change since applies). Takes no body. 400 when nothing was launched yet; 500 when it won't stop or won't start.",
         "operationId": "post_dimos_runs_restart",
         "responses": {
           "200": {
@@ -7161,7 +7161,7 @@
     },
     "/dimos/runs/stop": {
       "post": {
-        "description": "Sends the run's process group SIGINT, then SIGTERM after 20 s, then SIGKILL after 10 more, and answers once it's gone. Stops `runId` (any live run in the registry) or else this gateway's launch; the body is optional. 500 when there's nothing running to stop or it won't stop.",
+        "description": "Sends the run's process group SIGINT, then SIGTERM after 20 s, then SIGKILL after 10 more, and answers once no process of it is left (its whole process group: workers, MuJoCo, rerun) and every port it listened on is free again (a leftover of the run's own still holding one gets SIGTERM, then SIGKILL). Stops `runId` (any live run in the registry) or else this gateway's launch; the body is optional. 500 when there's nothing running to stop, it won't stop, or a port it held is still taken.",
         "operationId": "post_dimos_runs_stop",
         "requestBody": {
           "content": {

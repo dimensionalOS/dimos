@@ -316,6 +316,12 @@ def test_launch_log_and_stop(
 ) -> None:
     sent: list[dict[str, Any]] = []
     state.bus.sinks.append(sent.append)
+    # Ctrl-C can land before python handles it (a restart right after a launch): don't wait 20 s for it
+    monkeypatch.setattr(
+        runs,
+        "STOP_WAITS",
+        ((runs.signal.SIGINT, 2.0), (runs.signal.SIGTERM, 10.0), (runs.signal.SIGKILL, 5.0)),
+    )
     assert client.get("/dimos/runs").json() == {"runs": [], "launch": None}
     nothing_yet = client.post("/dimos/runs/restart")
     assert (
@@ -398,6 +404,107 @@ def test_launch_log_and_stop(
     assert client.post("/dimos/runs/stop").json()["output"].startswith("stopped unitree-go2")
     # stopped while it was still starting: stopped, not failed
     assert client.get("/dimos/runs").json()["launch"]["phase"] == "stopped"
+
+
+# a `dimos run` whose worker (its process group, as dimos's are) shrugs off Ctrl-C, holds the run's port, and takes a
+# while to let go of it after SIGTERM: the leader is gone well before the run is
+LINGERING_DIMOS = """
+import os, signal, socket, sys, time
+marks = os.environ["FAKE_MARKS"]
+def mark(what):
+    with open(os.path.join(marks, what), "w") as out:
+        out.write(repr(time.time()))
+mark(f"start-{os.getpid()}")
+if os.fork() == 0:
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    server = socket.socket()
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        server.bind(("127.0.0.1", int(os.environ["FAKE_PORT"])))
+    except OSError:
+        mark(f"port-taken-{os.getpgid(0)}")
+        os._exit(1)
+    server.listen()
+    def term(*_):
+        time.sleep(1)
+        mark(f"worker-exit-{os.getpgid(0)}")
+        os._exit(0)
+    signal.signal(signal.SIGTERM, term)
+    while True:
+        time.sleep(1)
+signal.signal(signal.SIGINT, lambda *_: sys.exit(0))
+while True:
+    time.sleep(1)
+"""
+
+
+def test_a_relaunch_starts_only_once_the_old_run_is_gone_and_its_ports_are_free(
+    client: TestClient, checkout: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import socket
+
+    (checkout / ".venv" / "bin" / "dimos").write_text(f"#!{sys.executable}\n{LINGERING_DIMOS}")
+    marks = tmp_path / "marks"
+    marks.mkdir()
+    with socket.socket() as free:
+        free.bind(("127.0.0.1", 0))
+        port = free.getsockname()[1]
+    monkeypatch.setenv("FAKE_MARKS", str(marks))
+    monkeypatch.setenv("FAKE_PORT", str(port))
+    monkeypatch.setattr(
+        runs,
+        "STOP_WAITS",
+        ((runs.signal.SIGINT, 1.0), (runs.signal.SIGTERM, 10.0), (runs.signal.SIGKILL, 5.0)),
+    )
+    first = client.post("/dimos/runs", json={"blueprint": "unitree-go2"}).json()
+    # its worker is up and holds the port
+    for _ in range(200):
+        if runs.listening(runs.run_processes(first["pid"], None)):
+            break
+        time.sleep(0.05)
+    assert list(runs.listening(runs.run_processes(first["pid"], None))) == [("127.0.0.1", port)]
+
+    second = client.post("/dimos/runs/restart").json()
+    assert second["phase"] == "starting" and second["pid"] != first["pid"]
+    # the old leader went at Ctrl-C, its worker only a second after SIGTERM: the new run started after both
+    assert not runs.group_alive(first["pid"])
+    old_gone = float((marks / f"worker-exit-{first['pid']}").read_text())
+    for _ in range(200):
+        if (marks / f"start-{second['pid']}").exists():
+            break
+        time.sleep(0.05)
+    assert float((marks / f"start-{second['pid']}").read_text()) > old_gone
+    for _ in range(200):
+        if runs.listening(runs.run_processes(second["pid"], None)):
+            break
+        time.sleep(0.05)
+    assert not (marks / f"port-taken-{second['pid']}").exists()
+    assert client.post("/dimos/runs/stop").json()["output"].startswith("stopped unitree-go2")
+    assert not runs.group_alive(second["pid"])
+
+
+def test_a_launch_is_refused_while_another_dimos_run_is_on_this_machine(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # another run's coordinator would get this one's module start and stop calls (they share RPC names)
+    other = {
+        "run_id": "r9",
+        "pid": 4242,
+        "blueprint": "unitree-g1",
+        "started_at": "t",
+        "log_dir": "d",
+    }
+    monkeypatch.setattr(runs, "registry_runs", lambda: [other])
+    refused = client.post("/dimos/runs", json={"blueprint": "unitree-go2"})
+    assert (
+        refused.status_code == 400
+        and "unitree-g1 (run r9, pid 4242) is running" in refused.json()["error"]
+    )
+    # ... or one from another checkout or Desktop, which only the bus knows about
+    monkeypatch.setattr(runs, "registry_runs", lambda: [])
+    monkeypatch.setattr(runs, "coordinator_on_bus", lambda: True)
+    refused = client.post("/dimos/runs", json={"blueprint": "unitree-go2"})
+    assert refused.status_code == 400 and "another dimos run" in refused.json()["error"]
 
 
 def test_a_launch_event_goes_out_once_per_change() -> None:

@@ -42,7 +42,9 @@ const state = {
     // the latest launch (GET /dimos/runs), and the saved config Relaunch compares it with
     launch: null,
     saved: null,
+    // a relaunch in flight: "stopping" the run with pid relaunchedPid, then "starting" its successor
     relaunching: false,
+    relaunchedPid: null,
     actionError: null,
 }
 
@@ -715,6 +717,10 @@ async function pollRuns() {
         const { launch } = await getJson("runs")
         state.launch = launch?.blueprint === NAME ? launch : null
         state.running = !!state.launch && (launch.phase === "running" || launch.phase === "starting")
+        // a relaunch reads "Starting…" until its new run is past starting
+        if (state.relaunching === "starting" && state.launch?.pid !== state.relaunchedPid && state.launch?.phase !== "starting") {
+            state.relaunching = false
+        }
     } catch {
         state.running = false
     }
@@ -817,32 +823,51 @@ async function act(action) {
     await pollRuns()
 }
 
+/** "Stopping…" while the run is stopping (a relaunch's old run included), "Starting…" while its successor starts */
+function relaunchLabel(stale) {
+    const phase = state.launch?.phase
+    if (state.relaunching === "stopping" && state.launch?.pid === state.relaunchedPid || !state.relaunching && phase === "stopping") {
+        return "Stopping…"
+    }
+    if (state.relaunching || phase === "starting") {
+        return "Starting…"
+    }
+    return stale ? "Relaunch to apply" : "Relaunch"
+}
+
 function renderBar() {
     const launch = state.launch
     const phase = !launch ? "not running" : state.running ? launch.phase : launch.phase === "failed" ? "failed" : "last run"
     const stale = state.running && launchedWithOther(launch, state.saved)
+    const busy = !!state.relaunching || launch?.phase === "starting" || launch?.phase === "stopping"
     const codeOn = state.source && state.code?.file === state.source.file && state.code?.line === state.source.line
     $("#bar").replaceChildren(...[
         h("strong", { class: "name" }, NAME),
         h("span", { class: `phase ${phase.replace(/ /g, "-")}` }, phase),
         state.actionError && h("span", { class: "failed", title: state.actionError }, state.actionError),
         h("span", { class: "spacer" }),
-        // Relaunch: this blueprint's run again with the config saved now; filled when it isn't running
+        // Relaunch: this blueprint's run again with the config saved now; filled when it isn't running, a red border
+        // once it runs (it stops that live run first), grayed with a spinner while a run starts or stops
         launch && h("button", {
             type: "button",
-            class: `btn relaunch${state.running ? "" : " primary"}${stale && !state.relaunching ? " stale" : ""}`,
-            disabled: state.relaunching,
+            class: `btn relaunch${busy ? " busy" : launch.phase === "running" ? " live" : state.running ? "" : " primary"}${stale && !busy ? " stale" : ""}`,
+            disabled: busy,
             "data-bp-relaunch": true,
-            title: stale ? "the saved config changed since this run started" : undefined,
+            title: stale
+                ? "the saved config changed since this run started"
+                : state.running ? "stops this live run, then starts it again" : undefined,
             onclick: () => {
-                state.relaunching = true
+                state.relaunching = state.running ? "stopping" : "starting"
+                state.relaunchedPid = state.launch?.pid
                 renderBar()
-                act(() => send("POST", "runs/restart")).finally(() => {
+                act(() => send("POST", "runs/restart").then(() => {
+                    state.relaunching = "starting"
+                }, (error) => {
                     state.relaunching = false
-                    renderBar()
-                })
+                    throw error
+                }))
             },
-        }, h("span", { "aria-hidden": "true" }, "↻ "), state.relaunching ? "Relaunching…" : stale ? "Relaunch to apply" : "Relaunch"),
+        }, busy ? h("span", { class: "spinner", "aria-hidden": "true" }) : h("span", { "aria-hidden": "true" }, "↻ "), relaunchLabel(stale)),
         state.running && h("button", {
             type: "button",
             class: "btn",
