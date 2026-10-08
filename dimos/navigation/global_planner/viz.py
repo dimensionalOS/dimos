@@ -100,9 +100,10 @@ def robot_clearance(height: float, wall_clearance_m: float) -> Archetype:
     )
 
 
-def _body_on_base_link(
+def body_on_base_link(
     rr: ModuleType, length: float, width: float, height: float
 ) -> list[Archetype]:
+    """The robot's body box riding on base_link, for a bridge's static entities."""
     return [robot_body_box(length, width, height), rr.Transform3D(parent_frame="tf#/base_link")]
 
 
@@ -118,7 +119,7 @@ def nav_static(
     Module-level partials, since blueprint config is pickled out to the workers.
     """
     return {
-        "world/robot_body": partial(_body_on_base_link, length=length, width=width, height=height),
+        "world/robot_body": partial(body_on_base_link, length=length, width=width, height=height),
         "world/robot_body/clearance": partial(
             _clearance_on_body, height=height, wall_clearance_m=wall_clearance_m
         ),

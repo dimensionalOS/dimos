@@ -604,7 +604,56 @@ RegistryRun = create_model(
             ),
         }
     ),
+    registry=(
+        str | None,
+        Field(
+            default=None,
+            description="The run registry it's in (another DIMOS_HOME's, for a run this gateway didn't start); "
+            "null: not registered yet (still starting)",
+            examples=["/home/me/.local/state/dimos/runs"],
+        ),
+    ),
+    owner=(str | None, Field(default=None, description="The user it runs as", examples=["me"])),
+    command=(
+        str | None,
+        Field(
+            default=None,
+            description="Its command line from `dimos` on, secrets left out (null: not read)",
+            examples=["dimos --replay run unitree-go2"],
+        ),
+    ),
+    ours=(
+        bool,
+        Field(
+            default=True, description="In this gateway's own registry, or this gateway's own launch"
+        ),
+    ),
+    stoppable=(
+        bool,
+        Field(
+            default=True,
+            description="POST /dimos/runs/stop with its run_id can stop it (this user's)",
+        ),
+    ),
+    whyNot=(
+        str | None,
+        Field(default=None, description="Why it can't be stopped from here (null: it can)"),
+    ),
 )
+
+
+class BusRun(ApiModel):
+    """A dimos run heard on the bus that no run in `runs` accounts for; it can't be stopped from here."""
+
+    where: Literal["local", "network"] = Field(
+        description="network: on another machine, through the zenoh connection; local: on this computer, but no "
+        "process of it is visible to this gateway (another user's, a container)"
+    )
+    peer: str | None = Field(
+        description="The zenoh endpoint it was heard through (network)",
+        examples=["tcp/192.168.12.1:7447"],
+    )
+    note: str = Field(description="What it is, in words")
 
 
 class LaunchStep(ApiModel):
@@ -709,6 +758,11 @@ class Launch(ApiModel):
 class RunList(ApiModel):
     runs: list[RegistryRun] = Field(description="Live runs, newest first")  # type: ignore[valid-type]
     launch: Launch | None = Field(description="The launch this gateway started (null: none yet)")
+    seenOnBus: list[BusRun] = Field(
+        default_factory=list,
+        description="dimos runs heard on the bus that no run in `runs` accounts for (on another machine, or not "
+        "visible here); they can't be stopped from here",
+    )
 
 
 class LaunchRequest(ApiModel):
@@ -791,7 +845,8 @@ class ArgsCheck(ApiModel):
 class StopRequest(ApiModel):
     runId: str | None = Field(
         default=None,
-        description="run id (any live run in the registry); none: the launch this gateway started",
+        description="run id (any stoppable run GET /dimos/runs lists, whoever started it); none: the launch this "
+        "gateway started",
         examples=["20260101-120000-unitree-go2"],
     )
 

@@ -711,6 +711,14 @@
         "go2-dds-nav-viewer": {
           "title": "Go2 over DDS: nav viewer",
           "description": "The screen for go2-dds-nav on another machine: dials the Go2's zenoh router and shows its maps and plans."
+        },
+        "go2-sim": {
+          "title": "Go2 in simulation (keyboard)",
+          "description": "The Go2 with its Mid-360 lidar in a generated office, driven from the keyboard. No robot needed."
+        },
+        "unitree-go2-joystick-record": {
+          "title": "Go2 drive and record",
+          "description": "Drive the Go2 from the keyboard and show your input next to its lidar, odometry and camera; run with --record to save them. Needs the robot's IP."
         }
       }
     },
@@ -1620,6 +1628,10 @@
               "required": false
             }
           ]
+        },
+        "xarm-sim": {
+          "title": "xArm7 in simulation (robot only)",
+          "description": "A simulated xArm7: control and sensors as plain zenoh topics, for agents without dimOS. Needs MuJoCo."
         }
       }
     },

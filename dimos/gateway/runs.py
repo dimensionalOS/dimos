@@ -41,7 +41,7 @@ from typing import Any
 import psutil
 
 from dimos.core.run_registry import is_pid_alive
-from dimos.gateway import config, diagnose, logs, overrides as overrides_
+from dimos.gateway import config, diagnose, local_runs as local_runs_, logs, overrides as overrides_
 from dimos.gateway.overrides import LaunchOverrides, ModuleValues
 
 
@@ -171,8 +171,71 @@ def registry_runs() -> list[dict[str, Any]]:
     runs = [
         {key: value for key, value in asdict(entry).items() if key in RegistryRun.model_fields}
         for entry in list_runs(alive_only=True)
+        if not _pid_reused(entry.pid, entry.started_at)
     ]
     return sorted(runs, key=lambda run: str(run["run_id"]), reverse=True)
+
+
+def _pid_reused(pid: int, started_at: str) -> bool:
+    """A registry entry whose pid now belongs to a process started after it registered: stale, not running."""
+    try:
+        created = psutil.Process(pid).create_time()
+    except (psutil.Error, OSError):
+        return False
+    return not local_runs_.same_process(started_at, created)
+
+
+_scanned: tuple[float, list[dict[str, Any]]] = (0.0, [])
+SCAN_CACHE = 1.5
+
+
+def other_runs() -> list[dict[str, Any]]:
+    """`dimos run` processes on this computer, whoever started them (local_runs.scan), at most SCAN_CACHE s old."""
+    global _scanned
+    from dimos.core.run_registry import REGISTRY_DIR
+
+    if time.monotonic() - _scanned[0] >= SCAN_CACHE:
+        _scanned = (time.monotonic(), local_runs_.scan(REGISTRY_DIR))
+    return [dict(run) for run in _scanned[1]]
+
+
+def forget_scan() -> None:
+    global _scanned
+    _scanned = (0.0, [])
+
+
+def local_runs() -> list[dict[str, Any]]:
+    """Every live run on this computer, newest first: this gateway's registry's, then runs from other registries (another
+    DIMOS_HOME, a terminal with its own XDG_STATE_HOME) and `dimos run` processes not registered yet, each with where it
+    came from (local_runs.scan's fields)."""
+    from dimos.core.run_registry import REGISTRY_DIR
+
+    scanned = {run["pid"]: run for run in other_runs()}
+    try:
+        # this gateway's own launch, still starting (dimos registers a run once its modules are up)
+        launched = json.loads(launch_file().read_text()).get("pid")
+    except (OSError, ValueError, AttributeError):
+        launched = None
+    if launched in scanned:
+        scanned[launched]["ours"] = True
+    ours = [
+        {
+            "registry": str(REGISTRY_DIR),
+            "owner": None,
+            "command": None,
+            "stoppable": True,
+            "whyNot": None,
+            **scanned.pop(run["pid"], {}),
+            **run,
+            "ours": True,
+        }
+        for run in registry_runs()
+    ]
+    return sorted([*ours, *scanned.values()], key=lambda run: str(run["started_at"]), reverse=True)
+
+
+def find_local_run(run_id: str) -> dict[str, Any] | None:
+    return next((run for run in local_runs() if run["run_id"] == run_id), None)
 
 
 def _tail(path: Path, size: int) -> str:
@@ -379,7 +442,7 @@ def start(dimos_dir: Path, blueprint: str, launch_config: LaunchConfig) -> dict[
             f"{previous['blueprint']} is still {previous['phase']}; stop it first"
         )
     # two runs on one machine share module RPC names: the second's start and stop calls reach the first's modules
-    if other := next(iter(registry_runs()), None):
+    if other := next(iter(local_runs()), None):
         raise StillRunningError(
             f"{other['blueprint']} (run {other['run_id']}, pid {other['pid']}) is running; stop it first"
         )
@@ -476,6 +539,30 @@ def coordinator_on_bus() -> bool:
         probe.stop()
 
 
+def coordinator_reachable(connect: list[str]) -> bool:
+    """Whether a dimos run answers through the zenoh `connect` endpoints (another machine's, when none is local)."""
+    from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
+    from dimos.protocol.rpc.zenohrpc import ZenohRPC
+
+    probe = ZenohRPC(connect=connect)
+    probe.start()
+    try:
+        probe.call_sync(f"{CoordinatorRPC.NAME}/ping", ([], {}), rpc_timeout=1.0)
+        return True
+    except TimeoutError:
+        return False
+    finally:
+        probe.stop()
+
+
+bus_watch = local_runs_.BusWatch()
+
+
+def seen_on_bus(local: list[dict[str, Any]], connect: list[str]) -> list[dict[str, Any]]:
+    """Runs heard on the bus that no local run accounts for (local_runs.BusWatch); they can't be stopped from here."""
+    return bus_watch.get(local, connect)
+
+
 def group_alive(pgid: int) -> bool:
     """Whether any process of process group `pgid` is left (a launch is its own session: its pgid is its pid)."""
     try:
@@ -559,9 +646,13 @@ async def stop(run_id: str | None, marked: Callable[[], None] | None = None) -> 
     SIGTERM, then SIGKILL). So a launch right after never finds the old run's ports or modules. `marked` is called
     once the launch is marked `stopping`, before the first signal."""
     if run_id:
-        run = next((r for r in registry_runs() if r["run_id"] == run_id), None)
+        run = find_local_run(run_id)
         if run is None:
             raise RunError(f"no live run {run_id}")
+        if not run.get("stoppable", True):
+            raise RunError(
+                f"{run['blueprint']} (pid {run['pid']}) can't be stopped from here: {run.get('whyNot')}"
+            )
         pid, name = int(run["pid"]), str(run["blueprint"])
     else:
         launch = current_launch()
@@ -603,6 +694,7 @@ async def stop(run_id: str | None, marked: Callable[[], None] | None = None) -> 
                 holder.send_signal(signum)
         await _until(functools.partial(all_ports_free, held), PORT_WAIT / 2)
         held = [address for address in held if not port_free(address)]
+    forget_scan()
     if held:
         taken = ", ".join(f"{host}:{port}" for host, port in held)
         raise RunError(f"{name} (pid {pid}) stopped, but {taken} is still in use")

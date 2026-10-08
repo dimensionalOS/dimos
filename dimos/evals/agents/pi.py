@@ -49,8 +49,9 @@ from dimos.evals.constants import (
     PROVIDERS,
     RAW_MAX_ANGULAR_RPS,
     RAW_MAX_CMD_S,
+    RAW_MAX_EE_ANGULAR_RPS,
+    RAW_MAX_EE_LINEAR_MPS,
     RAW_MAX_LINEAR_MPS,
-    RAW_README,
 )
 from dimos.evals.environments.base import Environment
 from dimos.evals.types import (
@@ -191,6 +192,8 @@ class PiAdapter(Agent):
         self.validate_tools()
         if self.config.no_dimos and environment.has_robot and not environment.provides_raw_robot:
             raise ValueError("no_dimos on a robot environment needs raw_bridge=True")
+        if self.config.no_dimos and environment.provides_raw_robot and not environment.raw_guide:
+            raise ValueError("no_dimos needs the suite's raw_guide, the ROBOT.md template")
         missing = [p for p in self.config.skills if not Path(p).expanduser().resolve().exists()]
         if missing:
             raise RuntimeError(f"Pi skill paths do not exist: {missing}")
@@ -277,13 +280,16 @@ class PiAdapter(Agent):
         files = dict(env.artifacts)
         files.pop("recording", None)  # a dimOS memory store; not readable without dimOS
         if env.raw_endpoint:
+            assert env.raw_guide is not None, "checked in preflight"
             readme = run_dir / "ROBOT.md"
             readme.write_text(
-                RAW_README.format(
+                env.raw_guide.format(
                     endpoint=env.raw_endpoint,
                     max_cmd_s=RAW_MAX_CMD_S,
                     max_linear=RAW_MAX_LINEAR_MPS,
                     max_angular=RAW_MAX_ANGULAR_RPS,
+                    max_ee_linear=RAW_MAX_EE_LINEAR_MPS,
+                    max_ee_angular=RAW_MAX_EE_ANGULAR_RPS,
                 )
             )
             files["robot"] = readme

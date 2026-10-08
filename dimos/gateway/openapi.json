@@ -572,6 +572,48 @@
         "type": "object",
         "x-zenoh-key": "<ns>/dimos/events/blueprints"
       },
+      "BusRun": {
+        "additionalProperties": true,
+        "description": "A dimos run heard on the bus that no run in `runs` accounts for; it can't be stopped from here.",
+        "properties": {
+          "note": {
+            "description": "What it is, in words",
+            "title": "Note",
+            "type": "string"
+          },
+          "peer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The zenoh endpoint it was heard through (network)",
+            "examples": [
+              "tcp/192.168.12.1:7447"
+            ],
+            "title": "Peer"
+          },
+          "where": {
+            "description": "network: on another machine, through the zenoh connection; local: on this computer, but no process of it is visible to this gateway (another user's, a container)",
+            "enum": [
+              "local",
+              "network"
+            ],
+            "title": "Where",
+            "type": "string"
+          }
+        },
+        "required": [
+          "where",
+          "peer",
+          "note"
+        ],
+        "title": "BusRun",
+        "type": "object"
+      },
       "Catalog": {
         "additionalProperties": true,
         "properties": {
@@ -4092,6 +4134,21 @@
             "title": "Blueprint",
             "type": "string"
           },
+          "command": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Its command line from `dimos` on, secrets left out (null: not read)",
+            "examples": [
+              "dimos --replay run unitree-go2"
+            ],
+            "title": "Command"
+          },
           "log_dir": {
             "description": "Its log folder (main.jsonl is there)",
             "examples": [
@@ -4100,6 +4157,27 @@
             "title": "Log Dir",
             "type": "string"
           },
+          "ours": {
+            "default": true,
+            "description": "In this gateway's own registry, or this gateway's own launch",
+            "title": "Ours",
+            "type": "boolean"
+          },
+          "owner": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The user it runs as",
+            "examples": [
+              "me"
+            ],
+            "title": "Owner"
+          },
           "pid": {
             "description": "Its process id",
             "examples": [
@@ -4107,6 +4185,21 @@
             ],
             "title": "Pid",
             "type": "integer"
+          },
+          "registry": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The run registry it's in (another DIMOS_HOME's, for a run this gateway didn't start); null: not registered yet (still starting)",
+            "examples": [
+              "/home/me/.local/state/dimos/runs"
+            ],
+            "title": "Registry"
           },
           "run_id": {
             "description": "The run's id",
@@ -4123,6 +4216,24 @@
             ],
             "title": "Started At",
             "type": "string"
+          },
+          "stoppable": {
+            "default": true,
+            "description": "POST /dimos/runs/stop with its run_id can stop it (this user's)",
+            "title": "Stoppable",
+            "type": "boolean"
+          },
+          "whyNot": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why it can't be stopped from here (null: it can)",
+            "title": "Whynot"
           }
         },
         "required": [
@@ -4669,6 +4780,14 @@
               "$ref": "#/components/schemas/RegistryRun"
             },
             "title": "Runs",
+            "type": "array"
+          },
+          "seenOnBus": {
+            "description": "dimos runs heard on the bus that no run in `runs` accounts for (on another machine, or not visible here); they can't be stopped from here",
+            "items": {
+              "$ref": "#/components/schemas/BusRun"
+            },
+            "title": "Seenonbus",
             "type": "array"
           }
         },
@@ -5267,7 +5386,7 @@
                 "type": "null"
               }
             ],
-            "description": "run id (any live run in the registry); none: the launch this gateway started",
+            "description": "run id (any stoppable run GET /dimos/runs lists, whoever started it); none: the launch this gateway started",
             "examples": [
               "20260101-120000-unitree-go2"
             ],
@@ -7854,7 +7973,7 @@
     },
     "/dimos/runs": {
       "get": {
-        "description": "Live runs from dimos's run registry (pid alive; also runs started from a terminal), newest first, and this gateway's last launch with its phase. No side effects.",
+        "description": "Every live run on this computer, newest first, whoever started it: dimos's run registry (pid alive), plus runs in other registries (another DIMOS_HOME or XDG_STATE_HOME: a test Desktop, an agent, a terminal) and `dimos run` processes not registered yet; each says where it came from (`registry`, `owner`, `command`, `ours`) and whether POST /dimos/runs/stop can stop it (`stoppable`, `whyNot`). A registry entry whose pid now belongs to a newer process is stale and left out. `seenOnBus`: a dimos run answering on the bus that no listed run accounts for (on another machine through the zenoh connection, or a process this gateway can't see), probed in the background every 10 s; it can't be stopped from here. Also this gateway's last launch with its phase. No side effects.",
         "operationId": "get_dimos_runs",
         "responses": {
           "200": {
@@ -7865,7 +7984,7 @@
                 }
               }
             },
-            "description": "`{ runs: [{ run_id, pid, blueprint, started_at, log_dir }], launch: Launch | null }`"
+            "description": "`{ runs: [{ run_id, pid, blueprint, started_at, log_dir, registry, owner, command, ours, stoppable, whyNot }], launch: Launch | null, seenOnBus: [{ where, peer, note }] }`"
           },
           "500": {
             "content": {
@@ -7985,7 +8104,7 @@
     },
     "/dimos/runs/stop": {
       "post": {
-        "description": "Sends the run's process group SIGINT, then SIGTERM after 20 s, then SIGKILL after 10 more, and answers once no process of it is left (its whole process group: workers, MuJoCo, rerun) and every port it listened on is free again (a leftover of the run's own still holding one gets SIGTERM, then SIGKILL). Stops `runId` (any live run in the registry) or else this gateway's launch; the body is optional. 500 when there's nothing running to stop, it won't stop, or a port it held is still taken.",
+        "description": "Sends the run's process group SIGINT, then SIGTERM after 20 s, then SIGKILL after 10 more, and answers once no process of it is left (its whole process group: workers, MuJoCo, rerun) and every port it listened on is free again (a leftover of the run's own still holding one gets SIGTERM, then SIGKILL). Stops `runId` (any live run on this computer that GET /dimos/runs lists as `stoppable`, whoever started it) or else this gateway's launch; the body is optional. 500 when there's nothing running to stop, it isn't this user's to stop, it won't stop, or a port it held is still taken.",
         "operationId": "post_dimos_runs_stop",
         "requestBody": {
           "content": {
