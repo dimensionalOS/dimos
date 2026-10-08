@@ -25,7 +25,7 @@ install: |
 # `python -m dimos.gateway --write-provides`; a test fails while it's stale.
 # Desktop links into it too: a failed run's notification opens GET /dimos/blueprint_view?name=<bp>&view=logs&run=<runId>.
 provides:
-  description: "The dimos gateway: blueprints, global config, runs and their logs, events, Dimensional cloud uploads, discovery (blueprints, modules, message types), docs, extras, jobs and the running blueprint's skills"
+  description: "The dimos gateway: blueprints, global config, runs and their logs, events, Dimensional cloud uploads, discovery (blueprints, modules, message types), docs, extras, jobs and the running blueprint's skills and module RPC methods"
   endpoints:
     - {method: GET, path: "healthz", description: "The dimos gateway's liveness: `ok`"}
     - {method: GET, path: "info", description: "The dimos checkout this gateway drives: dir, version, installed"}
@@ -80,6 +80,8 @@ provides:
     - {method: GET, path: "msgs.ts", description: "Every dimos message's LCM decoder and encoder, as TypeScript with each message's type"}
     - {method: GET, path: "skills", description: "The running blueprint's skills: name, module, description, params"}
     - {method: POST, path: "skills/call", description: "Call a skill of the running blueprint and wait for its answer"}
+    - {method: GET, path: "rpc", description: "The running blueprint's module RPC methods: module, method, params, docstring"}
+    - {method: POST, path: "rpc/call", description: "Call a module's RPC method and wait for its answer"}
     - {method: POST, path: "mcp", description: "An MCP server (Streamable HTTP, JSON answers) with two tools: list_skills and call_skill"}
 # Every robot dimos supports and what each blueprint is for (title, description, tags, modes and their essential args,
 # the app to install): read per tag like provides:. CI keeps it in step with the code
