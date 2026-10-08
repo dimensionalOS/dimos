@@ -121,23 +121,146 @@ pub fn remove_from_by_col(by_col: &mut ColumnIz, (ix, iy, iz): VoxelKey) {
     }
 }
 
-/// Re-extract surface cells in the inclusive write box. Reads a morphology
-/// halo around the box so boundary closing matches a full rebuild, then
-/// filters back to the box. by_col must already be current.
+/// Dense set of columns over an inclusive box, for change footprints that
+/// dilate by the morphology reach.
+#[derive(Clone)]
+pub struct ColumnMask {
+    x0: i32,
+    y0: i32,
+    w: usize,
+    h: usize,
+    bits: Vec<bool>,
+}
+
+impl ColumnMask {
+    /// An empty mask over the box widened by `margin` on every side.
+    pub fn new((x0, x1, y0, y1): (i32, i32, i32, i32), margin: i32) -> Self {
+        let w = (x1 - x0 + 1 + 2 * margin).max(0) as usize;
+        let h = (y1 - y0 + 1 + 2 * margin).max(0) as usize;
+        Self {
+            x0: x0 - margin,
+            y0: y0 - margin,
+            w,
+            h,
+            bits: vec![false; w * h],
+        }
+    }
+
+    fn index(&self, (ix, iy): (i32, i32)) -> Option<usize> {
+        let x = ix - self.x0;
+        let y = iy - self.y0;
+        (x >= 0 && y >= 0 && (x as usize) < self.w && (y as usize) < self.h)
+            .then(|| y as usize * self.w + x as usize)
+    }
+
+    /// Mark a column. Columns outside the box are ignored.
+    pub fn set(&mut self, col: (i32, i32)) {
+        if let Some(i) = self.index(col) {
+            self.bits[i] = true;
+        }
+    }
+
+    pub fn contains(&self, col: (i32, i32)) -> bool {
+        self.index(col).is_some_and(|i| self.bits[i])
+    }
+
+    /// Every column within `r` of a set column, clipped to the box.
+    pub fn dilated(&self, r: i32) -> ColumnMask {
+        let r = r.max(0) as usize;
+        let (w, h) = (self.w, self.h);
+        let mut rows = vec![false; w * h];
+        for y in 0..h {
+            let row = &self.bits[y * w..(y + 1) * w];
+            let out = &mut rows[y * w..(y + 1) * w];
+            dilate_line(row, r, out);
+        }
+        let mut bits = vec![false; w * h];
+        let mut col_in = vec![false; h];
+        let mut col_out = vec![false; h];
+        for x in 0..w {
+            for y in 0..h {
+                col_in[y] = rows[y * w + x];
+            }
+            dilate_line(&col_in, r, &mut col_out);
+            for y in 0..h {
+                bits[y * w + x] = col_out[y];
+            }
+        }
+        ColumnMask {
+            x0: self.x0,
+            y0: self.y0,
+            w,
+            h,
+            bits,
+        }
+    }
+
+    /// Inclusive bbox of the set columns, None when empty.
+    pub fn bounds(&self) -> Option<(i32, i32, i32, i32)> {
+        let mut bb: Option<(i32, i32, i32, i32)> = None;
+        for col in self.columns() {
+            bb = Some(match bb {
+                None => (col.0, col.0, col.1, col.1),
+                Some((x0, x1, y0, y1)) => {
+                    (x0.min(col.0), x1.max(col.0), y0.min(col.1), y1.max(col.1))
+                }
+            });
+        }
+        bb
+    }
+
+    /// Row indices, for splitting a scan across threads.
+    pub fn rows(&self) -> std::ops::Range<usize> {
+        0..self.h
+    }
+
+    /// The set columns of one row.
+    pub fn row_columns(&self, row: usize) -> impl Iterator<Item = (i32, i32)> + '_ {
+        let iy = self.y0 + row as i32;
+        self.bits[row * self.w..(row + 1) * self.w]
+            .iter()
+            .enumerate()
+            .filter(|(_, &set)| set)
+            .map(move |(x, _)| (self.x0 + x as i32, iy))
+    }
+
+    pub fn columns(&self) -> impl Iterator<Item = (i32, i32)> + '_ {
+        self.rows().flat_map(move |row| self.row_columns(row))
+    }
+}
+
+/// Mark every cell within `r` of a set cell along one line.
+fn dilate_line(line: &[bool], r: usize, out: &mut [bool]) {
+    let n = line.len();
+    let mut prefix = vec![0u32; n + 1];
+    for (i, &b) in line.iter().enumerate() {
+        prefix[i + 1] = prefix[i] + b as u32;
+    }
+    for (i, o) in out.iter_mut().enumerate() {
+        let lo = i.saturating_sub(r);
+        let hi = (i + r + 1).min(n);
+        *o = prefix[hi] > prefix[lo];
+    }
+}
+
+/// Re-extract surface cells in the write mask. Reads a morphology halo
+/// around it so boundary closing matches a full rebuild, then filters back
+/// to the mask. by_col must already be current.
 pub fn extract_surfaces_region(
     by_col: &ColumnIz,
     clearance_cells: i32,
     closing_passes: u32,
-    write: (i32, i32, i32, i32),
+    write: &ColumnMask,
 ) -> Vec<VoxelKey> {
-    let (wx0, wx1, wy0, wy1) = write;
     let pad = (2 * closing_passes) as i32;
+    let read = write.dilated(pad);
 
-    let standable: Vec<VoxelKey> = ((wx0 - pad)..(wx1 + pad + 1))
+    let standable: Vec<VoxelKey> = read
+        .rows()
         .into_par_iter()
-        .flat_map_iter(|ix| {
+        .flat_map_iter(|row| {
             let mut local: Vec<VoxelKey> = Vec::new();
-            for iy in (wy0 - pad)..=(wy1 + pad) {
+            for (ix, iy) in read.row_columns(row) {
                 if let Some(zs) = by_col.get(&(ix, iy)) {
                     standable_in_column(ix, iy, zs, clearance_cells, &mut local);
                 }
@@ -156,7 +279,7 @@ pub fn extract_surfaces_region(
     );
     closed
         .into_iter()
-        .filter(|&(ix, iy, _)| ix >= wx0 && ix <= wx1 && iy >= wy0 && iy <= wy1)
+        .filter(|&(ix, iy, _)| write.contains((ix, iy)))
         .collect()
 }
 
@@ -362,6 +485,49 @@ mod tests {
 
     fn voxel_map(cells: &[VoxelKey]) -> AHashSet<VoxelKey> {
         cells.iter().copied().collect()
+    }
+
+    #[test]
+    fn column_mask_dilates_by_chebyshev_distance_and_clips_to_its_box() {
+        let mut mask = ColumnMask::new((0, 4, 0, 4), 1);
+        mask.set((0, 0));
+        mask.set((4, 4));
+        mask.set((9, 9));
+        assert!(!mask.contains((9, 9)), "outside the box is ignored");
+        let d = mask.dilated(1);
+        assert_eq!(d.columns().count(), 18, "two 3x3 blocks");
+        assert!(d.contains((-1, -1)) && d.contains((1, 1)));
+        assert!(d.contains((5, 5)) && !d.contains((6, 6)));
+        assert_eq!(d.bounds(), Some((-1, 5, -1, 5)));
+        assert_eq!(ColumnMask::new((0, 4, 0, 4), 0).bounds(), None);
+    }
+
+    #[test]
+    fn region_extraction_over_a_mask_matches_a_full_extraction_inside_it() {
+        let mut cells: Vec<VoxelKey> = Vec::new();
+        for ix in 0..20 {
+            for iy in 0..20 {
+                if (ix, iy) != (7, 7) {
+                    cells.push((ix, iy, 0));
+                }
+            }
+        }
+        let full = run(&cells, 3, 1);
+        let mut by_col = ColumnIz::default();
+        for &k in &cells {
+            add_to_by_col(&mut by_col, k);
+        }
+        let mut write = ColumnMask::new((0, 19, 0, 19), 2);
+        write.set((7, 7));
+        let write = write.dilated(2);
+        let region = extract_surfaces_region(&by_col, 3, 1, &write);
+        let want: AHashSet<VoxelKey> = full
+            .iter()
+            .copied()
+            .filter(|&(ix, iy, _)| write.contains((ix, iy)))
+            .collect();
+        assert_eq!(region.iter().copied().collect::<AHashSet<_>>(), want);
+        assert!(want.contains(&(7, 7, 0)), "the hole closes");
     }
 
     fn run(cells: &[VoxelKey], clearance: i32, closing: u32) -> Vec<VoxelKey> {

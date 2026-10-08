@@ -29,6 +29,7 @@ use crate::nodes::{
 use crate::planner;
 use crate::surfaces::{
     add_to_by_col, extract_surfaces, extract_surfaces_region, remove_from_by_col, ColumnIz,
+    ColumnMask,
 };
 use crate::voxel::{voxelize, VoxelKey};
 
@@ -258,17 +259,24 @@ impl Planner {
             let pad = (2 * config.closing_passes()) as i32;
 
             // No voxel changed, so surfaces and the graph are untouched.
-            let (bx0, bx1, by0, by1) =
-                self.replace_region_voxels(local_points, bounds, voxel_size)?;
+            let changed = self.replace_region_voxels(local_points, bounds, voxel_size);
+            if changed.is_empty() {
+                return None;
+            }
 
-            // A changed column shifts surfaces only within pad of it.
-            let write = (bx0 - pad, bx1 + pad, by0 - pad, by1 + pad);
+            // A changed column shifts surfaces only within pad of it, and
+            // the extraction reads one more pad around that.
+            let mut footprint = ColumnMask::new(bounds.column_bbox(voxel_size), 2 * pad);
+            for &col in &changed {
+                footprint.set(col);
+            }
+            let write = footprint.dilated(pad);
             let new_cells =
-                extract_surfaces_region(&self.by_col, clearance, config.closing_passes(), write);
-            let (added, removed) = self.replace_surface_region(write, &new_cells);
+                extract_surfaces_region(&self.by_col, clearance, config.closing_passes(), &write);
+            let (added, removed) = self.replace_surface_region(&write, &new_cells);
 
             self.rebuild_region_graph(added, removed, config);
-            Some(write)
+            write.bounds()
         })
     }
 
@@ -343,66 +351,61 @@ impl Planner {
     }
 
     /// Replace the cylinder's voxels with the local map points, ignoring
-    /// points outside it. Returns the column bbox of changed voxels.
+    /// points outside it. Returns the columns whose voxels changed.
     fn replace_region_voxels(
         &mut self,
         local_points: &[(f32, f32, f32)],
         bounds: &RegionBounds,
         voxel_size: f32,
-    ) -> Option<(i32, i32, i32, i32)> {
-        let new_set: AHashSet<VoxelKey> = local_points
-            .iter()
+    ) -> Vec<(i32, i32)> {
+        let incoming: Vec<VoxelKey> = local_points
+            .par_iter()
             .map(|&p| voxelize(p, voxel_size))
+            .filter(|&k| bounds.contains_voxel(k, voxel_size))
             .collect();
+        let bbox = bounds.column_bbox(voxel_size);
+        let buckets = ColumnBuckets::new(&incoming, bbox);
 
-        let (x0, x1, y0, y1) = bounds.column_bbox(voxel_size);
+        let (x0, x1, y0, y1) = bbox;
         let by_col = &self.by_col;
-        let stale: Vec<VoxelKey> = (x0..(x1 + 1))
+        let edits: Vec<ColumnEdit> = (x0..(x1 + 1))
             .into_par_iter()
             .flat_map_iter(|ix| {
-                let mut local: Vec<VoxelKey> = Vec::new();
+                let mut local: Vec<ColumnEdit> = Vec::new();
                 for iy in y0..=y1 {
-                    let Some(zs) = by_col.get(&(ix, iy)) else {
-                        continue;
-                    };
-                    for &iz in zs {
-                        let k = (ix, iy, iz);
-                        if bounds.contains_voxel(k, voxel_size) && !new_set.contains(&k) {
-                            local.push(k);
-                        }
+                    let col = (ix, iy);
+                    let old = by_col.get(&col).map(Vec::as_slice).unwrap_or(&[]);
+                    let new = buckets.column(col);
+                    if let Some(edit) = diff_column(col, old, new, bounds, voxel_size) {
+                        local.push(edit);
                     }
                 }
                 local
             })
             .collect();
 
-        let mut bb = ChangeBounds::new();
-        for &k in &stale {
-            bb.add(k.0, k.1);
-            self.voxel_map.remove(&k);
-            remove_from_by_col(&mut self.by_col, k);
-        }
-        for &k in &new_set {
-            if !bounds.contains_voxel(k, voxel_size) {
-                continue;
+        for edit in &edits {
+            let (ix, iy) = edit.col;
+            for &iz in &edit.removed {
+                self.voxel_map.remove(&(ix, iy, iz));
+                remove_from_by_col(&mut self.by_col, (ix, iy, iz));
             }
-            if self.voxel_map.insert(k) {
-                bb.add(k.0, k.1);
-                add_to_by_col(&mut self.by_col, k);
+            for &iz in &edit.added {
+                self.voxel_map.insert((ix, iy, iz));
+                add_to_by_col(&mut self.by_col, (ix, iy, iz));
             }
         }
-        bb.bounds()
+        edits.iter().map(|edit| edit.col).collect()
     }
 
-    /// Replace the surface_lookup entries for write-box columns whose cells
+    /// Replace the surface_lookup entries for write-mask columns whose cells
     /// changed, leaving identical columns untouched. Returns the added and
     /// removed cells so only the affected parts of the graph get patched.
     fn replace_surface_region(
         &mut self,
-        write: (i32, i32, i32, i32),
+        write: &ColumnMask,
         new_cells: &[VoxelKey],
     ) -> (Vec<VoxelKey>, Vec<VoxelKey>) {
-        let (x0, x1, y0, y1) = write;
         let mut new_by_col: AHashMap<(i32, i32), Vec<i32>> = AHashMap::new();
         for &(ix, iy, iz) in new_cells {
             new_by_col.entry((ix, iy)).or_default().push(iz);
@@ -413,12 +416,12 @@ impl Planner {
         }
 
         let lookup = &self.graph.surface_lookup;
-        let changed: Vec<((i32, i32), Vec<i32>)> = (x0..(x1 + 1))
+        let changed: Vec<((i32, i32), Vec<i32>)> = write
+            .rows()
             .into_par_iter()
-            .flat_map_iter(|ix| {
+            .flat_map_iter(|row| {
                 let mut local: Vec<((i32, i32), Vec<i32>)> = Vec::new();
-                for iy in y0..=y1 {
-                    let col = (ix, iy);
+                for col in write.row_columns(row) {
                     let old = lookup.get(&col).map(Vec::as_slice).unwrap_or(&[]);
                     let new = new_by_col.get(&col).map(Vec::as_slice).unwrap_or(&[]);
                     if old != new {
@@ -676,38 +679,127 @@ impl Planner {
     }
 }
 
-/// Running inclusive xy bounding box of changed columns.
-struct ChangeBounds {
-    min_x: i32,
-    max_x: i32,
-    min_y: i32,
-    max_y: i32,
-    any: bool,
+/// One column's voxel changes from a region update.
+struct ColumnEdit {
+    col: (i32, i32),
+    removed: Vec<i32>,
+    added: Vec<i32>,
 }
 
-impl ChangeBounds {
-    fn new() -> Self {
+/// Incoming voxels bucketed by column over a column bbox, each column's z
+/// values sorted and deduped. A counting sort, so no hashing per voxel.
+struct ColumnBuckets {
+    x0: i32,
+    y0: i32,
+    w: usize,
+    h: usize,
+    starts: Vec<usize>,
+    lens: Vec<usize>,
+    zs: Vec<i32>,
+}
+
+impl ColumnBuckets {
+    fn new(keys: &[VoxelKey], (x0, x1, y0, y1): (i32, i32, i32, i32)) -> Self {
+        let w = (x1 - x0 + 1).max(0) as usize;
+        let h = (y1 - y0 + 1).max(0) as usize;
+        let index = |&(ix, iy, _): &VoxelKey| {
+            let (x, y) = (ix - x0, iy - y0);
+            debug_assert!(x >= 0 && y >= 0 && (x as usize) < w && (y as usize) < h);
+            y as usize * w + x as usize
+        };
+        let mut starts = vec![0usize; w * h + 1];
+        for k in keys {
+            starts[index(k) + 1] += 1;
+        }
+        for i in 0..w * h {
+            starts[i + 1] += starts[i];
+        }
+        let mut fill = starts.clone();
+        let mut zs = vec![0i32; keys.len()];
+        for k in keys {
+            let i = index(k);
+            zs[fill[i]] = k.2;
+            fill[i] += 1;
+        }
+        let mut columns: Vec<&mut [i32]> = Vec::with_capacity(w * h);
+        let mut rest = zs.as_mut_slice();
+        for i in 0..w * h {
+            let (head, tail) = rest.split_at_mut(starts[i + 1] - starts[i]);
+            columns.push(head);
+            rest = tail;
+        }
+        let lens: Vec<usize> = columns
+            .par_iter_mut()
+            .map(|col| {
+                col.sort_unstable();
+                let mut n = 0;
+                for i in 0..col.len() {
+                    if n == 0 || col[i] != col[n - 1] {
+                        col[n] = col[i];
+                        n += 1;
+                    }
+                }
+                n
+            })
+            .collect();
         Self {
-            min_x: i32::MAX,
-            max_x: i32::MIN,
-            min_y: i32::MAX,
-            max_y: i32::MIN,
-            any: false,
+            x0,
+            y0,
+            w,
+            h,
+            starts,
+            lens,
+            zs,
         }
     }
 
-    fn add(&mut self, ix: i32, iy: i32) {
-        self.any = true;
-        self.min_x = self.min_x.min(ix);
-        self.max_x = self.max_x.max(ix);
-        self.min_y = self.min_y.min(iy);
-        self.max_y = self.max_y.max(iy);
+    /// The sorted z values a column received, empty outside the bbox.
+    fn column(&self, (ix, iy): (i32, i32)) -> &[i32] {
+        let (x, y) = (ix - self.x0, iy - self.y0);
+        if x < 0 || y < 0 || x as usize >= self.w || y as usize >= self.h {
+            return &[];
+        }
+        let i = y as usize * self.w + x as usize;
+        &self.zs[self.starts[i]..self.starts[i] + self.lens[i]]
     }
+}
 
-    fn bounds(&self) -> Option<(i32, i32, i32, i32)> {
-        self.any
-            .then_some((self.min_x, self.max_x, self.min_y, self.max_y))
+/// Merge a column's current voxels inside the bounds against its new ones.
+/// None when nothing changed.
+fn diff_column(
+    col: (i32, i32),
+    old: &[i32],
+    new: &[i32],
+    bounds: &RegionBounds,
+    voxel_size: f32,
+) -> Option<ColumnEdit> {
+    let (ix, iy) = col;
+    let mut removed: Vec<i32> = Vec::new();
+    let mut added: Vec<i32> = Vec::new();
+    let mut new_iter = new.iter().copied().peekable();
+    for &iz in old {
+        if !bounds.contains_voxel((ix, iy, iz), voxel_size) {
+            continue;
+        }
+        while let Some(&nz) = new_iter.peek() {
+            if nz >= iz {
+                break;
+            }
+            added.push(nz);
+            new_iter.next();
+        }
+        if new_iter.peek() == Some(&iz) {
+            new_iter.next();
+        } else {
+            removed.push(iz);
+        }
     }
+    added.extend(new_iter);
+    (!removed.is_empty() || !added.is_empty()).then_some(ColumnEdit {
+        col,
+        removed,
+        added,
+    })
 }
 
 #[cfg(test)]
