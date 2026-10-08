@@ -40,7 +40,8 @@ def _scene_lines(scene: LineSegments3D) -> Archetype:
     return scene.to_rerun(radii=0.01)
 
 
-def _rerun_blueprint() -> Blueprint:
+def rerun_blueprint(hidden: tuple[str, ...] = ()) -> Blueprint:
+    """One 3D view. Hidden entities stay in the entity tree, tickable in the viewer."""
     # rerun is heavy, loaded only in the viewer's worker
     import rerun as rr
     import rerun.blueprint as rrb
@@ -51,14 +52,15 @@ def _rerun_blueprint() -> Blueprint:
             name="3D",
             background=rrb.Background(kind="SolidColor", color=[0, 0, 0]),
             line_grid=rrb.LineGrid3D(plane=rr.components.Plane3D.XY.with_distance(0.5)),
+            overrides={entity: rrb.EntityBehavior(visible=False) for entity in hidden},
         ),
         rrb.TimePanel(state="hidden"),
         rrb.SelectionPanel(state="hidden"),
     )
 
 
-_rerun_config: dict[str, Any] = {
-    "blueprint": _rerun_blueprint,
+rerun_config: dict[str, Any] = {
+    "blueprint": rerun_blueprint,
     "tf_axes": 0.3,
     "static": {
         "world/robot_body": partial(
@@ -69,7 +71,7 @@ _rerun_config: dict[str, Any] = {
 }
 
 go2_sim = autoconnect(
-    vis_module(viewer_backend=global_config.viewer, rerun_config=_rerun_config),
+    vis_module(viewer_backend=global_config.viewer, rerun_config=rerun_config),
     SimGo2World.blueprint(),
     Go2Mid360StaticTf.blueprint(),
     MovementManager.blueprint(),
