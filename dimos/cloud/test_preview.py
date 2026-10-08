@@ -105,11 +105,12 @@ def test_timelapse(tmp_path: Path) -> None:
     assert (tmp_path / "t.mp4").read_bytes()[4:8] == b"ftyp"  # MP4
 
 
-def test_recording_without_lidar() -> None:
+def test_path_from_denser_odometry() -> None:
     odom = [
         (100.0 + i, PoseStamped(position=[i, 2, 0.3], frame_id="world"), None) for i in range(5)
     ]
     frames = [(101.0, Image.from_numpy(np.zeros((48, 64, 3), np.uint8)), None)]
-    doc = preview.build(store(color_image=frames, odom=odom))
-    assert doc is not None and doc["map"] == "" and doc["scans"] == [] and doc["duration_s"] == 4
+    lidar = [(102.0, cloud(102.0, (0, 0, 0.3)), Pose(9, 9, 0.3))]  # one posed scan: odom is denser
+    doc = preview.build(store(color_image=frames, odom=odom, lidar=lidar))
+    assert doc is not None and len(doc["scans"]) == 1 and doc["duration_s"] == 4
     assert [r[1] for r in doc["trajectory"]] == [0, 1, 2, 3, 4] and len(doc["camera"]) == 1

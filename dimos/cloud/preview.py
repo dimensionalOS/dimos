@@ -110,7 +110,9 @@ def build(store: Store) -> dict[str, Any] | None:
                 scans.append((obs.ts, pc))
             world = pc if world is None else (world + pc).voxel_downsample(PREVIEW_MAP_VOXEL)
         ends = ends[:1] + ends[-1:]
-    if not poses and odom is not None:  # no LiDAR (or unposed LiDAR): the path from odometry
+    if odom is not None and odom.count() > len(
+        poses
+    ):  # denser than the LiDAR poses, or the only path
         poses = [(o.ts, o.data) for o in odom]
     shots = []
     if camera is not None:
