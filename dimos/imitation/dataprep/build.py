@@ -22,11 +22,11 @@ readers/writers. Built-in workflows expose it through `dimos imitation`.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from itertools import chain
 import json
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 from dimos.imitation.dataprep.core import (
     extract_episodes,
@@ -43,19 +43,9 @@ from dimos.imitation.dataprep.schema import (
     Sample,
     Writer,
 )
-from dimos.memory.codecs.base import codec_from_id
 from dimos.memory.store.base import Store
-from dimos.memory.store.mcap import McapStore, StreamCodec
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.utils.logging_config import setup_logger
-
-make_reader: Callable[..., Any] | None
-try:
-    from mcap.reader import make_reader as _make_reader
-except ImportError:
-    make_reader = None
-else:
-    make_reader = _make_reader
 
 logger = setup_logger()
 
@@ -66,32 +56,11 @@ def _open_recording(path: str | Path) -> Store:
     if source.suffix == ".db":
         return SqliteStore(path=str(source), must_exist=True)
     if source.suffix == ".mcap":
-        return McapStore(path=str(source), codecs=_recording_codecs(source))
+        # MCAP is optional: import its reader only for an MCAP recording.
+        from dimos.imitation.dataprep.sources.mcap import open_recording
+
+        return open_recording(source)
     raise ValueError(f"Unsupported recording {str(source)!r}: expected a .db or .mcap artifact")
-
-
-def _recording_codecs(path: Path) -> dict[str, StreamCodec]:
-    """Load native codecs from a trusted recording's message-type metadata."""
-    if make_reader is None:
-        raise RuntimeError("MCAP recording support requires the optional learning extra")
-    with path.open("rb") as file:
-        summary = make_reader(file).get_summary()
-    codecs: dict[str, StreamCodec] = {}
-    if summary is None:
-        return codecs
-    for channel in summary.channels.values():
-        payload_type = channel.metadata.get("dimos.payload_type")
-        if payload_type and channel.message_encoding in {"jpeg", "lcm", "lz4+lcm"}:
-            try:
-                codecs[channel.topic] = cast(
-                    "StreamCodec", codec_from_id(channel.message_encoding, payload_type)
-                )
-            except (ImportError, AttributeError) as exc:
-                raise ImportError(
-                    f"Cannot decode MCAP stream {channel.topic!r}: install the package "
-                    f"providing {payload_type!r} in the dataset reader environment"
-                ) from exc
-    return codecs
 
 
 def _write_dimos_meta(
@@ -340,7 +309,7 @@ def inspect_dataset(path: Path | str) -> dict[str, Any]:
 
         return inspect(p)
     if (p / "meta" / "info.json").exists():
-        from dimos.imitation.dataprep.lerobot import inspect_lerobot_dataset
+        from dimos.imitation.dataprep.formats.lerobot.adapter import inspect_lerobot_dataset
 
         return inspect_lerobot_dataset(p)
     raise ValueError(
