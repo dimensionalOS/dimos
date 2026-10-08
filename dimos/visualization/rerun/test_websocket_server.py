@@ -178,6 +178,40 @@ def test_stop_publishes_zero_twist(
     assert received[0].is_zero()
 
 
+def test_twist_publishes_normalized_joystick(
+    server: RerunWebSocketServer, publisher: MockViewerPublisher
+) -> None:
+    received: list[Any] = []
+    done = threading.Event()
+
+    unsub = server.joystick.subscribe(lambda joy: (received.append(joy), done.set()))
+
+    publisher.send_twist(0.5, -1.0, 0.0, 0.0, 0.0, 1.6)
+    publisher.flush()
+    done.wait(timeout=2.0)
+    unsub()
+
+    assert len(received) == 1
+    assert received[0].axes == pytest.approx([0.5, -1.0, 1.0])
+
+
+def test_stop_publishes_zero_joystick(
+    server: RerunWebSocketServer, publisher: MockViewerPublisher
+) -> None:
+    received: list[Any] = []
+    done = threading.Event()
+
+    unsub = server.joystick.subscribe(lambda joy: (received.append(joy), done.set()))
+
+    publisher.send_stop()
+    publisher.flush()
+    done.wait(timeout=2.0)
+    unsub()
+
+    assert len(received) == 1
+    assert received[0].axes == [0.0, 0.0, 0.0]
+
+
 def test_invalid_json_does_not_crash(server: RerunWebSocketServer) -> None:
     """Malformed JSON is silently dropped; server stays alive for the next message."""
 
