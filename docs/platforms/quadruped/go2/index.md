@@ -16,6 +16,7 @@
 | `dimos run unitree-go2-detection` | Navigation + object detection |
 | `dimos --record run unitree-go2` | Navigation + record every stream to `recordings/<run-id>/memory.db` ([Recording](/docs/usage/recording.md)) |
 | `dimos run unitree-go2-memory` | Navigation + record `lidar`/`odom`/`color_image` to `.db` |
+| `dimos --record run unitree-go2-joystick-record` | Teleop from the viewer + record `joystick`, `tele_cmd_vel`, `cmd_vel` and every sensor; no mapper, constant memory for hour-long runs |
 | `dimos run unitree-go2-relocalization` | Navigation + align live scans to a saved `.pc2.lcm` premap |
 
 ## Deep Dive
