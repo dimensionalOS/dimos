@@ -24,6 +24,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TypeVar
 
+from dimos.evals.constants import RAW_README
 from dimos.evals.environments.dimsim import DimSimEnvironment
 from dimos.evals.scorers import choice, exact, first_number, numeric, yes_no
 from dimos.evals.types import EvalCase, Outcome, Suite
@@ -60,10 +61,11 @@ _SAME_DIFF = choice(["same", "different"])
 
 def _environment() -> DimSimEnvironment:
     return DimSimEnvironment(
-        blueprint=["unitree-go2", "mcp-server", "unitree-skill-container"],
+        blueprint=["unitree-go2", "mcp-server", "unitree-skill-container", "raw-robot-bridge"],
         disable=("wavefront-frontier-explorer", "patrolling-module"),
         scene="apartment",
         raw_bridge=True,
+        raw_guide=RAW_README,
     )
 
 

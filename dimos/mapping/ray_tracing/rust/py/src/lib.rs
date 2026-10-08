@@ -20,7 +20,7 @@ use validator::Validate;
 
 use dimos_voxel_ray_tracing::mapper::{Mapper, Pose};
 use dimos_voxel_ray_tracing::voxel_ray_tracer::{
-    iter_global_normals, partition_seed, Config, LocalBounds, SeedPartition,
+    partition_seed, Config, LocalBounds, SeedPartition,
 };
 
 fn extract_tuples(arr: &Bound<'_, PyAny>, name: &str) -> PyResult<Vec<(f32, f32, f32)>> {
@@ -154,6 +154,7 @@ impl VoxelRayMapper {
             world_frame: "world".to_string(),
             tf_match_tolerance_s: 0.1,
             max_cloud_age_s: 0.0,
+            tf_wait_timeout_s: 0.05,
             worker_threads,
             region_m,
             viz_emit_every: 0,
@@ -249,7 +250,7 @@ impl VoxelRayMapper {
             (config.voxel_size, config.region_m)
         };
         let part = py.allow_threads(|| partition_seed(&pts, voxel_size, origin, region_m));
-        self.mapper.reserve_voxels(part.voxels);
+        self.mapper.reserve_chunks(part.tile_count());
         let regions = part.regions.len();
         self.seed = Some((part, 0));
         Ok(regions)
@@ -288,18 +289,7 @@ impl VoxelRayMapper {
         py: Python<'py>,
     ) -> (Bound<'py, PyArray2<f32>>, Bound<'py, PyArray2<f32>>) {
         let mapper = &self.mapper;
-        let (positions, normals): (Vec<f32>, Vec<f32>) = py.allow_threads(|| {
-            let map = mapper.map();
-            let mut positions: Vec<f32> = Vec::with_capacity(map.voxels.len() * 3);
-            let mut normals: Vec<f32> = Vec::with_capacity(map.voxels.len() * 3);
-            for ((x, y, z), n) in iter_global_normals(map, mapper.config().voxel_size) {
-                positions.push(x);
-                positions.push(y);
-                positions.push(z);
-                normals.extend_from_slice(&n);
-            }
-            (positions, normals)
-        });
+        let (positions, normals) = py.allow_threads(|| mapper.normals());
         let m = positions.len() / 3;
         let positions = Array2::from_shape_vec((m, 3), positions)
             .expect("3 elements pushed per voxel")

@@ -44,7 +44,7 @@ enum Job {
 const JOB_QUEUE_CAPACITY: usize = 256;
 
 /// Tiles between seed load progress lines.
-const SEED_PROGRESS_TILES: usize = 100;
+const SEED_PROGRESS_TILES: usize = 400;
 
 /// How long one worker pass may spend on seed tiles before it returns to the
 /// job queue.
@@ -103,7 +103,7 @@ pub struct RayTracingVoxelMap {
 }
 
 /// Whether transforms have already moved past a cloud's stamp, so the one it needs will never
-/// arrive: waiting on it would cap a backed-up queue's drain rate at 1/TF_WAIT_TIMEOUT.
+/// arrive: waiting on it would cap a backed-up queue's drain rate at 1/tf_wait_timeout_s.
 fn transform_is_past(stamp: f64, latest_tf: Option<f64>, tolerance: f64) -> bool {
     latest_tf.is_some_and(|latest| latest > stamp + tolerance)
 }
@@ -334,7 +334,7 @@ impl Worker {
                         "Seed load started."
                     );
                     let mapper = &mut state.mapper;
-                    tokio::task::block_in_place(|| mapper.reserve_voxels(part.voxels));
+                    tokio::task::block_in_place(|| mapper.reserve_chunks(part.tile_count()));
                 }
                 state.seed.placed(partition);
             }
@@ -363,7 +363,9 @@ impl Worker {
         let found = if transform_is_past(stamp, latest, tolerance) {
             lookup.get()
         } else {
-            lookup.within(TF_WAIT_TIMEOUT).await
+            lookup
+                .within(Duration::from_secs_f64(self.config.tf_wait_timeout_s))
+                .await
         };
         let Some(tf_pose) = found else {
             warn!(
@@ -683,9 +685,6 @@ fn prepare_seed(
     Some(partition_seed(&points, voxel_size, origin, region_m))
 }
 
-/// How long to wait for a late transform before dropping a cloud.
-const TF_WAIT_TIMEOUT: Duration = Duration::from_millis(50);
-
 /// How long a loaded map waits for the transform that places it.
 const LOADED_MAP_TF_WAIT_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -806,7 +805,7 @@ async fn publish_cloud(out: &Output<PointCloud2>, cloud: &PointCloud2) {
 mod tests {
     use super::*;
     use crate::voxel_ray_tracer::{
-        emit_points, metric_voxel_keys, update_map, LocalBounds, VoxelKey, VoxelMap,
+        emit_points, metric_voxel_keys, update_map, LocalBounds, VoxelKey, VoxelMap, CHUNK_EDGE,
     };
     use ahash::AHashSet;
     use nalgebra::{Isometry3, Translation3, UnitQuaternion, Vector3};
@@ -830,6 +829,7 @@ mod tests {
             world_frame: "world".to_string(),
             tf_match_tolerance_s: 0.1,
             max_cloud_age_s: 0.0,
+            tf_wait_timeout_s: 0.05,
             worker_threads: 4,
             region_m: 4.0,
             viz_emit_every: 0,
@@ -993,8 +993,10 @@ mod tests {
             due.into_iter().map(|(c, p)| (c, p.len() / 3)).collect()
         };
 
+        // The 4 m grid widens to the chunk edge, so a point's cell is its chunk.
+        let far = (40 / CHUNK_EDGE, 40 / CHUNK_EDGE);
         let due = map_regions_due(&mut mapper, &mut viz, 1.0, 4.0, 0);
-        assert_eq!(sizes(due), vec![((0, 0), 1), ((2, 2), 1)]);
+        assert_eq!(sizes(due), vec![((0, 0), 1), (far, 1)]);
         assert!(map_regions_due(&mut mapper, &mut viz, 1.0, 4.0, 0).is_empty());
 
         mapper.clear_metric([(1.5, 1.5, 0.5)]);
@@ -1025,7 +1027,7 @@ mod tests {
     #[test]
     fn clear_mask_cloud_round_trips_to_the_voxels_it_covers() {
         let map = map_with_healthy(&[(3, -2, 1)]);
-        let occupied: Vec<VoxelKey> = map.voxels.keys().copied().collect();
+        let occupied: Vec<VoxelKey> = map.voxels.keys().collect();
         assert_eq!(occupied, vec![(3, -2, 1)]);
 
         // A mask cloud naming that voxel's center, encoded and decoded exactly

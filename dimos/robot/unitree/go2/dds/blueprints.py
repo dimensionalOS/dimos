@@ -101,11 +101,12 @@ def go2_nav_stack(session: ZenohConfig | None) -> Blueprint:
 
     MLS stays global; its path becomes the carrot source (planner_path) for the local
     planner over the raycaster's local map.
+    The Mid-360 IP comes from MID360__LIDAR_IP; host_ip is auto-detected.
     """
     go2_dds_mid360 = _go2_dds_lidar_off(session).remappings(_MID360_REMAPPINGS)
     return autoconnect(
         go2_dds_mid360,
-        mid360_for_pointlio(lidar_ip="192.168.123.157", host_ip="192.168.123.5"),
+        mid360_for_pointlio(),
         RayTracingVoxelMap.blueprint(**ray_tracing_config.model_dump(exclude_unset=True)),
         _mls_planner_motion,
         LocalPlannerNative.blueprint(body_dilate_m=MOTION_BODY_DILATE_M),
