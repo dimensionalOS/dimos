@@ -27,8 +27,13 @@
   cursor: default;
 }
 
-.banner {
+.status {
+  display: flex;
+  flex-direction: column;
   font-size: 11px;
+  gap: 3px;
+  max-width: 220px;
+  min-width: 160px;
 }
 
 .hint {
@@ -46,15 +51,14 @@
 .sticks {
   align-items: center;
   display: flex;
-  gap: 28px;
+  gap: 36px;
   justify-content: center;
 }
 
 .stick {
   align-items: center;
   display: flex;
-  flex-direction: column;
-  gap: 4px;
+  gap: 12px;
 }
 
 .stickLabel,
@@ -71,10 +75,11 @@
   border: 1px solid var(--line-strong);
   border-radius: 50%;
   display: flex;
-  height: 96px;
+  flex: none;
+  height: 84px;
   justify-content: center;
   position: relative;
-  width: 96px;
+  width: 84px;
 }
 
 .cross {
@@ -101,10 +106,10 @@
 .knobLive {
   background: var(--fg-faint);
   border-radius: 50%;
-  height: 22px;
+  height: 20px;
   position: absolute;
   transition: transform 40ms linear, background var(--dur);
-  width: 22px;
+  width: 20px;
 }
 
 .knobLive {
@@ -115,9 +120,11 @@
 .axes {
   color: var(--fg-muted);
   display: flex;
+  flex-direction: column;
   font-family: var(--font-mono);
-  font-size: 11px;
-  gap: 8px;
+  font-size: 12px;
+  gap: 2px;
+  min-width: 64px;
 }
 
 .speed {
@@ -125,7 +132,7 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
-  min-width: 110px;
+  min-width: 120px;
 }
 
 .speedValue {

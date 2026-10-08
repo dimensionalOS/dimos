@@ -4,6 +4,7 @@ import { teleopHooks } from "@dimos/sdk/internal/teleop";
 import { useStatus } from "@dimos/sdk/react";
 import { LayoutTree } from "./layout/LayoutTree.tsx";
 import { type PageTab, pageTabs, PageView } from "./layout/PageView.tsx";
+import { startBatteryHistories } from "./panels/BatteryPanel.tsx";
 import { startChatTranscripts } from "./panels/chatTranscript.ts";
 import { ChannelList } from "./ui/ChannelList.tsx";
 import { RobotPicker } from "./ui/RobotPicker.tsx";
@@ -24,10 +25,12 @@ export function App({ session }: { session: Session }) {
   const [picking, setPicking] = useState(false);
   const watchedId = status.watchedRobot?.id ?? null;
   const hasMultipleRobots = status.robots.length > 1;
-  // Chat transcripts outlive their panels (an inactive page is unmounted),
-  // so they start as soon as a manifest names them.
+  // Chat transcripts and battery histories outlive their panels (an inactive
+  // page is unmounted), so they start as soon as a manifest names them.
   useEffect(() => {
-    if (status.manifest !== null) startChatTranscripts(session.store, status.manifest);
+    if (status.manifest === null) return;
+    startChatTranscripts(session.store, status.manifest);
+    startBatteryHistories(session.store, status.manifest);
   }, [session, status.manifest]);
 
   useEffect(() => {

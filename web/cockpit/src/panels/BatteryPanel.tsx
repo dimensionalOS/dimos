@@ -1,9 +1,11 @@
 // Battery page: the pack's state from a battery.json.v1 latest channel, the
-// charge plotted over this run and the time left at the recent drain. The
-// history is the page's own (Tabs unmounts inactive pages), like Stats.
+// charge plotted over this run and the time left at the recent drain. Tabs
+// unmount inactive pages, so the history lives in a per-store tracker that
+// keeps folding frames while the page is hidden; a store reset empties it.
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import type { PanelSpec } from "@dimos/shared";
+import type { Manifest } from "@dimos/shared/manifest";
 import type { ChannelStore } from "@dimos/sdk";
 import { useStoreChannel } from "@dimos/sdk/react";
 import { Badge, PanelFrame } from "../layout/PanelFrame.tsx";
@@ -22,30 +24,60 @@ import styles from "./BatteryPanel.module.css";
 /** The Go2 pushes lowstate about once a second. */
 export const BATTERY_STALE_MS = 5000;
 
+interface Tracker {
+  history: BatteryHistory;
+  seen: number;
+  listeners: Set<() => void>;
+}
+
+const trackers = new WeakMap<ChannelStore, Map<string, Tracker>>();
+
+function trackerFor(store: ChannelStore, ch: string): Tracker {
+  let byCh = trackers.get(store);
+  if (byCh === undefined) trackers.set(store, byCh = new Map());
+  let tracker = byCh.get(ch);
+  if (tracker !== undefined) return tracker;
+  const t: Tracker = { history: EMPTY_HISTORY, seen: 0, listeners: new Set() };
+  const pull = (): void => {
+    const slot = store.get(ch);
+    if (slot === null) {
+      if (t.seen === 0) return;
+      t.seen = 0;
+      t.history = EMPTY_HISTORY;
+    } else if (slot.version > t.seen) {
+      t.seen = slot.version;
+      t.history = foldBattery(t.history, slot.value);
+    } else {
+      return;
+    }
+    for (const listener of t.listeners) listener();
+  };
+  // Never unsubscribed on purpose: the run's history must outlive the page.
+  store.subscribe(ch, pull);
+  pull();
+  byCh.set(ch, tracker = t);
+  return tracker;
+}
+
+/** Start folding every battery panel's channel as soon as a manifest names
+ * it, so the chart covers the run and not just the time the tab was open. */
+export function startBatteryHistories(store: ChannelStore, manifest: Manifest): void {
+  for (const panel of manifest.panels) {
+    if (panel.kind === "battery" && panel.channels.length === 1) {
+      trackerFor(store, panel.channels[0]);
+    }
+  }
+}
+
 function useBatteryHistory(store: ChannelStore, ch: string): BatteryHistory {
-  const [history, setHistory] = useState(EMPTY_HISTORY);
-  useEffect(() => {
-    let seen = 0;
-    let current = EMPTY_HISTORY;
-    const pull = (): void => {
-      const slot = store.get(ch);
-      if (slot === null) {
-        if (seen === 0) return;
-        seen = 0;
-        current = EMPTY_HISTORY;
-      } else if (slot.version > seen) {
-        seen = slot.version;
-        current = foldBattery(current, slot.value);
-      } else {
-        return;
-      }
-      setHistory(current);
+  const tracker = useMemo(() => trackerFor(store, ch), [store, ch]);
+  const subscribe = useCallback((cb: () => void) => {
+    tracker.listeners.add(cb);
+    return () => {
+      tracker.listeners.delete(cb);
     };
-    const unsubscribe = store.subscribe(ch, pull);
-    pull();
-    return unsubscribe;
-  }, [store, ch]);
-  return history;
+  }, [tracker]);
+  return useSyncExternalStore(subscribe, () => tracker.history);
 }
 
 const COLORS = { ok: "#3fb950", warn: "#d29922", danger: "#ff5c5c" };
@@ -144,14 +176,20 @@ function Chart({ samples, remainingS }: {
   );
 }
 
-function Card({ label, value, tone, big, testId }: {
+function Card({ label, value, tone, big, muted, testId }: {
   label: string;
   value: string;
   tone?: keyof typeof COLORS;
   big?: boolean;
+  muted?: boolean;
   testId?: string;
 }) {
-  const cls = [styles.value, big ? styles.big : "", tone ? styles[tone] : ""].join(" ");
+  const cls = [
+    styles.value,
+    big ? styles.big : "",
+    muted ? styles.muted : "",
+    tone ? styles[tone] : "",
+  ].join(" ");
   return (
     <div className={styles.card}>
       <span className={styles.label}>{label}</span>
@@ -196,8 +234,9 @@ function BatteryPage({ spec, store }: { spec: PanelSpec; store: ChannelStore }) 
               />
               <Card
                 label="time left"
-                value={remainingS === null ? "estimating..." : `~${fmtDuration(remainingS)}`}
+                value={remainingS === null ? "estimating" : `~${fmtDuration(remainingS)}`}
                 tone={remainingS !== null && remainingS < 600 ? "danger" : undefined}
+                muted={remainingS === null}
                 big
                 testId={`battery-${ch}-left`}
               />

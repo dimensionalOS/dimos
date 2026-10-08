@@ -147,7 +147,7 @@ Every panel takes a `title` (shown in its title bar, the panel id when empty) an
 Which names a panel can use depends on the stream:
 
 - The bridge has four built-in ports with fixed codecs: `color_image`, `odom`, `global_costmap` and `tele_cmd_vel`. The default panel arguments name them.
-- Map2D's `path`, `click` and `stop`, Map3D's `cloud`, Chat's four streams and Stats' `resource_stats` are declared by the panel itself, so any name works there.
+- Map2D's `path`, `click` and `stop`, Map3D's `cloud`, Chat's four streams, Stats' `resource_stats` and Battery's `stream` are declared by the panel itself, so any name works there.
 - Video's `stream`, and Map2D's `costmap` and `pose`, must be a built-in port or a `Channel` in `channels=[...]` that repeats what the panel asks for: the encoding, the delivery, and the panel's params (`quality` for Video). Teleop always drives `tele_cmd_vel`.
 
 A second camera, for example:
@@ -236,6 +236,12 @@ The conversation with the robot's agent (the same streams the `humancli` tool us
 `Stats(*, title="Stats")`
 
 Live CPU, memory, thread and file-descriptor numbers for every worker process, like the `dtop` tool. Meant for `pages=[...]`. It turns the resource monitor on for the run (`--no-dtop` still wins).
+
+### Battery
+
+`Battery(stream="battery", *, max_hz=2.0, title="Battery")`
+
+Charge, voltage, current and temperature from a `BatteryState` stream, the charge plotted over the run, and the time left at the drain seen over the last ten minutes. Meant for `pages=[...]`; the history covers the whole connection, not just the time the page is open. `GO2Connection` publishes `battery` from the dog's low-level state.
 
 ## Keyboard teleop
 

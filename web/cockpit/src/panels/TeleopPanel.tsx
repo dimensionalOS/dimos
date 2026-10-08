@@ -55,15 +55,17 @@ function Stick({ x, y, label, testId, data, children }: {
   const live = cx !== 0 || cy !== 0;
   return (
     <div className={styles.stick} data-testid={testId} {...data}>
-      <span className={styles.stickLabel}>{label}</span>
       <div className={styles.ring}>
         <span className={styles.cross} />
         <span
           className={live ? styles.knobLive : styles.knob}
-          style={{ transform: `translate(${cx * 36}px, ${cy * 36}px)` }}
+          style={{ transform: `translate(${cx * 30}px, ${cy * 30}px)` }}
         />
       </div>
-      <div className={styles.axes}>{children}</div>
+      <div className={styles.axes}>
+        <span className={styles.stickLabel}>{label}</span>
+        {children}
+      </div>
     </div>
   );
 }
@@ -260,8 +262,13 @@ function TeleopControls({ spec, teleop, ch, session }: {
         onKeyDown={onKeyDown}
         onKeyUp={onKeyUp}
       >
-        <div className={styles.banner}>{banner}</div>
         <div className={styles.sticks}>
+          <div className={styles.status}>
+            {banner}
+            {padName !== null && (
+              <span className={styles.padName} data-testid={`teleop-${ch}-pad`}>{padName}</span>
+            )}
+          </div>
           <Stick
             x={0 - shown.vy}
             y={0 - shown.vx}
@@ -295,9 +302,6 @@ function TeleopControls({ spec, teleop, ch, session }: {
             <span>yaw {fmtAxis(shown.wz)}</span>
           </Stick>
         </div>
-        {padName !== null && (
-          <span className={styles.padName} data-testid={`teleop-${ch}-pad`}>{padName}</span>
-        )}
       </div>
     </PanelFrame>
   );
