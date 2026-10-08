@@ -46,7 +46,7 @@ cd ~/galaxea-dimos/install/startup_config/share/startup_config/script
 ```bash
 dimos run r1pro-coordinator     # connection + coordinator + Point-LIO + viewer
 dimos run r1pro-teleop          # + chassis teleop from the viewer
-dimos run r1pro-nav             # + click-to-drive nav (costmap + A*)
+dimos run r1pro-nav             # + 3D nav: lidar + head depth, MLS planner
 dimos run r1pro-manipulation    # + dual-arm planning (experimental)
 dimos run r1pro-planar-preview   # planar-base planning preview with fake hardware
 dimos run r1pro-head-depth --g.transport lcm # + head depth anchored on the lidar
