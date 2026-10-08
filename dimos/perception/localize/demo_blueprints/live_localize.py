@@ -76,6 +76,9 @@ class LiveLocalizeModuleConfig(ModuleConfig):
     horizon_s: float = 600.0
     # raw frames kept for the embed tail and the depth pairing
     feed_frames: int = 300
+    # LocalizePolicy fields every call starts from, e.g. {"min_views": 1} for a camera that
+    # may not have moved yet; a call's own policy argument still overrides them
+    policy: dict[str, Any] = {}
 
 
 class LiveLocalizeModule(Module):
@@ -215,30 +218,44 @@ class LiveLocalizeModule(Module):
 
     @skill
     def localize(
-        self, objects: str, start: float = -10.0, duration: float = 10.0, policy: str = ""
+        self,
+        objects: str | list[str],
+        start: float = -10.0,
+        duration: float = 10.0,
+        policy: str = "",
     ) -> str:
         """Locate objects in a window of the robot's memory.
 
-        ``objects`` is one label, or several separated by commas.
+        ``objects`` is one label, several separated by commas, or a list of labels.
 
         ``start`` and ``duration`` are seconds and name the window. A positive
         ``start`` counts forward from the beginning of the feed; a negative one
         counts back from the newest frame, so the default reads the last ten
         seconds. What earlier calls proved is remembered and still answered.
 
-        ``policy`` is a JSON object of LocalizePolicy field overrides,
-        e.g. '{"accept_score": 0.4, "verify_radius_m": 2.0}'.
+        ``policy`` is optional: a JSON object of LocalizePolicy field overrides,
+        e.g. '{"accept_score": 0.4, "verify_radius_m": 2.0}'. Leave it empty for the defaults.
         """
         if not self._ready.is_set():
             return f"localize cannot answer yet: {self._stage}. Poll state() until it reads ready."
 
-        queries = [q.strip() for q in objects.split(",") if q.strip()]
+        labels = objects.split(",") if isinstance(objects, str) else objects
+        queries = [q.strip() for q in labels if q.strip()]
+        try:
+            overrides = json.loads(policy) if policy else {}
+            if not isinstance(overrides, dict):
+                raise ValueError
+            tuning = replace(
+                replace(self.rig.default_localize_policy(), **self.config.policy), **overrides
+            )
+        except (ValueError, TypeError):
+            return (
+                f"policy {policy!r} is not a JSON object of LocalizePolicy fields; "
+                "pass e.g. '{\"min_views\": 1}', or leave it empty for the defaults."
+            )
         first, head = self.index.get_time_range()
         lo = max(first, head + start if start < 0 else first + start)
         index = self.index.time_range(lo, lo + duration)
-        tuning = self.rig.default_localize_policy()
-        if policy:
-            tuning = replace(tuning, **json.loads(policy))
         traces = [LocalizeTrace() for _ in queries]
         results: Any = self.detector.localize(
             self._memory,

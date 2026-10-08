@@ -20,7 +20,7 @@ import numpy as np
 import pytest
 from reactivex.scheduler import ThreadPoolScheduler
 
-from dimos.agents.skills.observe_skill import ObserveSkill
+from dimos.agents.skills.observe_skill import ObserveSkill, ObserveWorkspaceSkill
 from dimos.core.transport import LCMTransport
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 
@@ -67,3 +67,28 @@ def test_observe_without_frames_raises(
     monkeypatch.setattr(ObserveSkill, "_frame_timeout", 0.2)
     with pytest.raises(TimeoutError, match="No camera frame received within 0.2 seconds"):
         module.observe()
+
+
+def test_observe_workspace_returns_the_overview_frame(monkeypatch: pytest.MonkeyPatch) -> None:
+    scheduler = ThreadPoolScheduler(max_workers=2)
+    monkeypatch.setattr("dimos.utils.reactive.get_scheduler", lambda: scheduler)
+    module = ObserveWorkspaceSkill()
+    module.overview_image.transport = LCMTransport("/test_observe/overview_image", Image)
+    frame = Image.from_numpy(np.zeros((6, 4, 3), dtype=np.uint8), format=ImageFormat.RGB, ts=1.0)
+    stop = threading.Event()
+
+    def pump() -> None:
+        while not stop.is_set():
+            module.overview_image.transport.publish(frame)
+            time.sleep(0.05)
+
+    thread = threading.Thread(target=pump, daemon=True)
+    thread.start()
+    try:
+        result = module.observe_workspace()
+    finally:
+        stop.set()
+        thread.join()
+        module.stop()
+        scheduler.executor.shutdown(wait=True)
+    assert result.data.shape[:2] == (6, 4)
