@@ -15,7 +15,6 @@
 import pytest
 
 from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.sensor_msgs.Joy import Joy
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_joystick_record import (
     record_rerun_config,
     unitree_go2_joystick_record,
@@ -47,7 +46,6 @@ def test_the_window_has_a_plot_per_command_stream() -> None:
     assert [(v.name, str(v.origin)) for v in column.contents] == [
         ("Camera", "world/color_image"),
         ("odom", "plots/odom"),
-        ("joystick", "plots/joystick"),
         ("tele_cmd_vel", "plots/tele_cmd_vel"),
         ("cmd_vel", "plots/cmd_vel"),
     ]
@@ -55,8 +53,7 @@ def test_the_window_has_a_plot_per_command_stream() -> None:
 
 def test_converters_plot_forward_strafe_and_turn() -> None:
     overrides = record_rerun_config["visual_override"]
-    joystick = overrides["world/joystick"](Joy(axes=[0.5, 0.1, 0.0, 0.0, 0.0, 0.8]))
     cmd_vel = overrides["world/cmd_vel"](Twist(linear=[0.5, 0.1, 0.0], angular=[0.0, 0.0, 0.8]))
-    assert [path for path, _ in joystick + cmd_vel] == ["plots/joystick", "plots/cmd_vel"]
-    for _, scalars in joystick + cmd_vel:
+    assert [path for path, _ in cmd_vel] == ["plots/cmd_vel"]
+    for _, scalars in cmd_vel:
         assert scalars.scalars.as_arrow_array().to_pylist() == pytest.approx([0.5, 0.1, 0.8])

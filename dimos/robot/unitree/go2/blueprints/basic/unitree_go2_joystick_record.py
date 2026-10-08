@@ -14,7 +14,7 @@
 
 """Drive-and-record blueprint for the Go2: the operator's input next to what the dog gets.
 
-The viewer's WASD panel publishes ``joystick`` and ``tele_cmd_vel``, MovementManager turns
+The viewer's WASD panel publishes ``tele_cmd_vel``, MovementManager turns
 that into ``cmd_vel``, and the Go2 streams lidar, odom, tf and the camera. Run it with
 ``--record`` to store all of them. Built for long runs: there is no mapper, so nothing grows
 with the distance covered, and the viewer holds a fixed memory limit. A map can be rebuilt
@@ -33,7 +33,6 @@ from dimos.core.global_config import global_config
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import rerun_config
 from dimos.robot.unitree.go2.connection import GO2Connection
-from dimos.visualization.rerun.websocket_server import JOY_AXES
 from dimos.visualization.vis_module import vis_module
 
 _VELOCITY_AXES = ("linear_x", "linear_y", "angular_z")
@@ -45,13 +44,6 @@ def _plot_twist(name: str, twist: Any) -> Any:
     import rerun as rr
 
     return [(f"plots/{name}", rr.Scalars([twist.linear.x, twist.linear.y, twist.angular.z]))]
-
-
-def _plot_joystick(joy: Any) -> Any:
-    import rerun as rr
-
-    axes = dict(zip(JOY_AXES, joy.axes, strict=True))
-    return [("plots/joystick", rr.Scalars([axes[axis] for axis in _VELOCITY_AXES]))]
 
 
 def _velocity_series(rr: Any) -> Any:
@@ -72,10 +64,9 @@ def _record_rerun_blueprint() -> Any:
             rrb.Vertical(
                 rrb.Spatial2DView(origin="world/color_image", name="Camera"),
                 rrb.TimeSeriesView(origin="plots/odom", name="odom"),
-                rrb.TimeSeriesView(origin="plots/joystick", name="joystick"),
                 rrb.TimeSeriesView(origin="plots/tele_cmd_vel", name="tele_cmd_vel"),
                 rrb.TimeSeriesView(origin="plots/cmd_vel", name="cmd_vel"),
-                row_shares=[3, 1, 1, 1, 1],
+                row_shares=[3, 1, 1, 1],
             ),
             rrb.Spatial3DView(
                 origin="world",
@@ -97,13 +88,11 @@ record_rerun_config: dict[str, Any] = {
     "blueprint": _record_rerun_blueprint,
     "visual_override": {
         **rerun_config["visual_override"],
-        "world/joystick": _plot_joystick,
         "world/tele_cmd_vel": partial(_plot_twist, "tele_cmd_vel"),
         "world/cmd_vel": partial(_plot_twist, "cmd_vel"),
     },
     "static": {
         **rerun_config["static"],
-        "plots/joystick": _velocity_series,
         "plots/tele_cmd_vel": _velocity_series,
         "plots/cmd_vel": _velocity_series,
     },
