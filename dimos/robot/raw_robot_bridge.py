@@ -203,7 +203,6 @@ class RawRobotBridgeConfig(ModuleConfig):
     state_hz: float = 20.0
     stale_s: float = 1.0
     camera_frame: str | None = None
-    overview_frame: str | None = None
     ee_frame: str | None = None
     gripper_joint: str | None = None
     gripper_range: tuple[float, float] = (0.0, 1.0)
@@ -217,8 +216,6 @@ class RawRobotBridge(Module):
     color_image: In[Image]
     depth_image: In[Image]
     camera_info: In[CameraInfo]
-    overview_image: In[Image]
-    overview_camera_info: In[CameraInfo]
     lidar: In[PointCloud2]
     odom: In[PoseStamped]
     coordinator_joint_state: In[JointState]
@@ -257,16 +254,6 @@ class RawRobotBridge(Module):
         q = cfg.jpeg_quality
         self.color_image.subscribe(lambda img: self._put("camera/jpeg", jpeg_bytes(img, q), img.ts))
         self.depth_image.subscribe(self._on_depth)
-        self.overview_image.subscribe(
-            lambda img: self._put("overview/jpeg", jpeg_bytes(img, q), img.ts)
-        )
-        self.overview_camera_info.subscribe(
-            lambda info: self._put(
-                "overview/camera_info/json",
-                json.dumps({"width": info.width, "height": info.height, "K": info.K}),
-                info.ts,
-            )
-        )
         self.lidar.subscribe(lambda cloud: self._put("lidar/xyz_f32", xyz_f32(cloud), cloud.ts))
         self.odom.subscribe(lambda pose: self._put("odom/json", odom_json(pose)))
         self.camera_info.subscribe(
@@ -390,11 +377,7 @@ class RawRobotBridge(Module):
     def _on_tf(self, message: TFMessage) -> None:
         for transform in message.transforms:
             child = transform.child_frame_id
-            cameras = {
-                self.config.camera_frame: "camera_pose/json",
-                self.config.overview_frame: "overview/camera_pose/json",
-            }
-            if child not in (*cameras, self.config.ee_frame) or child is None:
+            if child not in (self.config.camera_frame, self.config.ee_frame):
                 continue
             q = transform.rotation.to_numpy()
             pose = {
@@ -407,4 +390,4 @@ class RawRobotBridge(Module):
                     self._ee_pose = pose
                     self._ee_seen = time.monotonic()
             else:
-                self._put(cameras[child], json.dumps({"t": transform.ts, **pose}), transform.ts)
+                self._put("camera_pose/json", json.dumps({"t": transform.ts, **pose}), transform.ts)

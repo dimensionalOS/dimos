@@ -88,10 +88,6 @@ Binary payloads carry an attachment {{"t": unix_seconds}}.
   robot/camera_info/json   {{"width", "height", "K"}}
   robot/camera_pose/json   {{"t", "frame", "xyz", "quaternion_xyzw"}}: wrist optical pose
                            in world; optical +Z forward, +X image right, +Y image down
-  robot/overview/jpeg      fixed external RGB camera viewing the whole workspace, 5 Hz,
-                           no depth; use it to check an object after a grasp or lift
-  robot/overview/camera_info/json, robot/overview/camera_pose/json
-                           the overview's own intrinsics and pose (different from the wrist)
   robot/arm/twist/json     publish {{"vx", "vy", "vz" (m/s), "wx", "wy", "wz" (rad/s), "t" (s)}}:
                            TCP velocity about fixed world axes, held for t seconds
                            (max {max_cmd_s:g}) and then stopped. A new twist replaces the previous
