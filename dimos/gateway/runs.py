@@ -417,7 +417,9 @@ def coordinator_on_bus() -> bool:
     from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
     from dimos.core.transport_factory import rpc_backend
 
-    probe = rpc_backend()()
+    backend = rpc_backend()
+    # zenoh gossip reaches other machines' runs through any local peer that scouts the LAN; only this machine's count
+    probe = backend(gossip=False, connect=[]) if backend.__name__ == "ZenohRPC" else backend()
     probe.start()
     try:
         probe.call_sync(f"{CoordinatorRPC.NAME}/ping", ([], {}), rpc_timeout=0.5)
