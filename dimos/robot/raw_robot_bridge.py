@@ -66,6 +66,8 @@ from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.logging_config import setup_logger
 
+DEPENDENCY_BUNDLE = "runtime-common"
+
 logger = setup_logger()
 
 

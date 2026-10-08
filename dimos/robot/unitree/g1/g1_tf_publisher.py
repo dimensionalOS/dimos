@@ -38,6 +38,8 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.logging_config import setup_logger
 
+DEPENDENCY_BUNDLE = "runtime-unitree-dds"
+
 logger = setup_logger()
 
 MID360_PITCH = 0.04014257279586953

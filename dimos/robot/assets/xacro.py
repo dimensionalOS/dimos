@@ -130,7 +130,7 @@ def expand_xacro(path: Path, package_paths: dict[str, Path], xacro_args: dict[st
     except ImportError:
         msg = (
             "xacro is required for processing .xacro files. "
-            "Install the manipulation extra: pip install dimos[manipulation]"
+            "Install the control extra: pip install 'dimos[control]'"
         )
         raise ImportError(msg)
     import xacro

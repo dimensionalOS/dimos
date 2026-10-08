@@ -27,6 +27,8 @@ Throughout this document, replace `X.Y.Z` with the version you are releasing (e.
    uv run pytest -m '' --error-for-skips
    ```
 
+   `-m ''` includes the `clean_install` tests, which create fresh virtualenvs and download every bundle (allow for the extra time and disk).
+
 2. [Run](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow#running-a-workflow) the `release` workflow on the `release/X.Y.Z` branch.
 3. Monitor the CI run. When it reaches the publish-pypi step, you'll need other team members to approve the release.
 4. After completion, the bot will have pushed a signed merge-back commit directly to `main`. Confirm with `git log --first-parent main -1`. The tip should be `Merge release/X.Y.Z back to main`. Then verify `vX.Y.Z` shows on https://github.com/dimensionalOS/dimos/releases and on https://pypi.org/project/dimos/.

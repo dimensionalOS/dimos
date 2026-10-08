@@ -40,6 +40,8 @@ from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.turbojpeg import get_turbojpeg
 
+DEPENDENCY_BUNDLE = "runtime-unitree"
+
 if TYPE_CHECKING:
     from dimos.models.segmentation.edge_tam import EdgeTAMProcessor
 

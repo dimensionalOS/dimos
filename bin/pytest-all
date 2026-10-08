@@ -2,6 +2,8 @@
 
 set -euo pipefail
 
+uv sync --locked --inexact --group tests-self-hosted
+
 bin/build-test-natives
 bin/fetch-test-data
 

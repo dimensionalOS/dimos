@@ -71,12 +71,13 @@ Start one or more robot blueprints. Built-in dimOS blueprints use bare names suc
 such as `my-robot-stack.go2`.
 
 ```bash
-dimos run <blueprint> [<blueprint> ...] [--daemon] [--disable <module> ...] [--<config-field> <value> ...]
+dimos run <blueprint> [<blueprint> ...] [--prepare] [--daemon] [--disable <module> ...] [--<config-field> <value> ...]
 ```
 
 | Option | Description |
 |--------|-------------|
 | `--config`, `-c` | Path to a JSON configuration file; dynamic flags override its values |
+| `--prepare` | Install the selected built-in blueprints' and modules' locked dependencies, then start with automatic inference backend selection |
 | `--daemon`, `-d` | Run in background (double-fork, health check, writes run registry) |
 | `--disable` | Module class names to exclude from the blueprint |
 | `--<config-field>` | Set a blueprint configuration field using its kebab-case name, for example `--voxel-size=1`; qualify ambiguous fields as `--voxelgridmapper.voxel-size=1` |
@@ -93,6 +94,9 @@ as `--relocalizationmodule.map-file`. Global flags work on either side of
 ```bash
 # Foreground (Ctrl-C to stop)
 dimos run unitree-go2
+
+# Prepare Python dependencies and start
+dimos run --prepare unitree-go2
 
 # Background (returns immediately)
 dimos run unitree-go2-agentic --daemon
@@ -125,6 +129,11 @@ dimos run unitree-go2 my-robot-stack.keyboard-teleop
 # Disable specific modules
 dimos run unitree-go2-agentic --disable OsmSkill WebInput
 ```
+
+`--prepare` uses the same virtualenv and checks as `dimos prepare`, before importing
+the blueprint or starting a daemon. If installation fails, startup stops. For an
+explicit `--backend` or `--offline`, run `dimos prepare` separately first. External
+blueprints must be installed through their own packages and cannot use `--prepare`.
 
 External blueprint names are always fully qualified as
 `<canonical-distribution-namespace>.<external-local-blueprint-name>`. The namespace is
@@ -320,6 +329,29 @@ External blueprints:
   my-robot-stack.go2
   my-robot-stack.keyboard-teleop
 ```
+
+### `dimos deps`
+
+Show which dependency bundle each named blueprint or module needs, the inference backend that would be chosen, the target interpreter, the matching `dimos prepare` command and the setup limits that bundles cannot cover. Read-only; works from a core-only install and without uv.
+
+```sh skip
+dimos deps unitree-go2 xarm7-planner-coordinator
+dimos deps unitree-g1-teleop --backend cpu
+```
+
+Exit status is nonzero for unknown names and unsupported bundle/host combinations. See [dependencies](/docs/usage/dependencies.md).
+
+### `dimos prepare`
+
+Install the Python dependencies of the named blueprints or modules into the virtualenv that runs the command, then exit. The union of their bundles plus the `cpu` or `cuda` backend extra is installed with uv from the checkout's `uv.lock` or from the lock exports shipped in the release.
+
+```sh skip
+dimos prepare unitree-go2                      # backend chosen from the host (auto)
+dimos prepare drone-basic --backend cpu
+dimos prepare unitree-go2 --offline            # uv cache only, no network
+```
+
+Requires an ordinary virtualenv and no running `dimos run` in it. It never starts a blueprint, downloads model weights, or verifies hardware; the final message says which Python dependencies were installed. Runtime flags such as `--replay` or `--viewer` belong on `dimos run`.
 
 ### `dimos show-config`
 

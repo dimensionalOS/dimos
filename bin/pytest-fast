@@ -2,5 +2,7 @@
 
 set -euo pipefail
 
+uv sync --locked --inexact --group tests
+
 . .venv/bin/activate
 exec pytest --numprocesses=auto "$@" dimos

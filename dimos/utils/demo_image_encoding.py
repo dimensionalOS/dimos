@@ -37,6 +37,8 @@ from dimos.core.transport import JpegLcmTransport, LCMTransport
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.utils.fast_image_generator import random_image
 
+DEPENDENCY_BUNDLE = "runtime-common"
+
 
 class EmitterModule(Module):
     image: Out[Image]

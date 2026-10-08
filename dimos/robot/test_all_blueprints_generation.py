@@ -15,14 +15,22 @@
 import ast
 from collections.abc import Generator
 import difflib
+import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 
 import pytest
 
 from dimos.constants import DIMOS_PROJECT_ROOT
+from dimos.deps.bundles import BUNDLES_PATH
 from dimos.robot.get_all_blueprints import class_name_to_registry_key
+
+if sys.version_info >= (3, 11):
+    import tomllib
+else:  # pytest depends on tomli below 3.11
+    import tomli as tomllib
 
 IGNORED_FILES: set[str] = {
     "dimos/robot/all_blueprints.py",
@@ -44,6 +52,11 @@ BLUEPRINT_METHODS = {
     "configurators",
 }
 _EXCLUDED_MODULE_NAMES = {"Module", "ModuleBase", "StreamModule"}
+# Module-level literal naming the dependency bundle of a file's blueprints and modules;
+# dimos/deps/bundles.json is generated from it. A file without one inherits the literal of
+# the nearest ancestor directory's DEPENDENCY_BUNDLE_FILE.
+DEPENDENCY_BUNDLE_NAME = "DEPENDENCY_BUNDLE"
+DEPENDENCY_BUNDLE_FILE = "dependency_bundle.py"
 
 
 def test_all_blueprints_is_current() -> None:
@@ -56,25 +69,49 @@ def test_all_blueprints_is_current() -> None:
         f"but these appear in both: {sorted(common)}"
     )
 
-    generated_content = _generate_all_blueprints_content(all_blueprints, all_modules)
+    _sync_generated_file(
+        root / "robot" / "all_blueprints.py",
+        _generate_all_blueprints_content(all_blueprints, all_modules),
+    )
 
-    file_path = root / "robot" / "all_blueprints.py"
 
+def test_dependency_bundles_are_declared_and_current() -> None:
+    """Every file with a registered entry declares DEPENDENCY_BUNDLE; bundles.json mirrors them."""
+    root = DIMOS_PROJECT_ROOT / "dimos"
+    _, _, bundles, undeclared = _scan_registry(root)
+
+    assert not undeclared, (
+        "files that define a registered blueprint or module without a "
+        f"{DEPENDENCY_BUNDLE_NAME} literal, in the file or in a {DEPENDENCY_BUNDLE_FILE} of an "
+        f"ancestor directory: {undeclared}"
+    )
+    with (DIMOS_PROJECT_ROOT / "pyproject.toml").open("rb") as f:
+        extras = tomllib.load(f)["project"]["optional-dependencies"]
+    unknown = sorted(set(bundles.values()) - set(extras))
+    assert not unknown, (
+        f"{DEPENDENCY_BUNDLE_NAME} names extras missing from pyproject.toml: {unknown}"
+    )
+
+    _sync_generated_file(BUNDLES_PATH, _generate_bundles_content(bundles))
+
+
+def _sync_generated_file(file_path: Path, generated_content: str) -> None:
+    """Regenerate locally; in CI only compare, so a stale generated file fails the build."""
     if "CI" in os.environ:
         if not file_path.exists():
-            pytest.fail(f"all_blueprints.py does not exist at {file_path}")
+            pytest.fail(f"{file_path.name} does not exist at {file_path}")
 
         current_content = file_path.read_text()
         if current_content != generated_content:
             diff = difflib.unified_diff(
                 current_content.splitlines(keepends=True),
                 generated_content.splitlines(keepends=True),
-                fromfile="all_blueprints.py (current)",
-                tofile="all_blueprints.py (generated)",
+                fromfile=f"{file_path.name} (current)",
+                tofile=f"{file_path.name} (generated)",
             )
             diff_str = "".join(diff)
             pytest.fail(
-                f"all_blueprints.py is out of date. Run "
+                f"{file_path.name} is out of date. Run "
                 f"`pytest dimos/robot/test_all_blueprints_generation.py` locally to update.\n\n"
                 f"Diff:\n{diff_str}"
             )
@@ -83,7 +120,7 @@ def test_all_blueprints_is_current() -> None:
 
         if _check_for_uncommitted_changes(file_path):
             pytest.fail(
-                "all_blueprints.py was updated and has uncommitted changes. "
+                f"{file_path.name} was updated and has uncommitted changes. "
                 "Please commit the changes."
             )
 
@@ -175,31 +212,103 @@ def test_isolated_python_framework_is_not_a_production_module(
 
 
 def _scan_for_blueprints(root: Path) -> tuple[dict[str, str], dict[str, str]]:
+    all_blueprints, all_modules, _, _ = _scan_registry(root)
+    return all_blueprints, all_modules
+
+
+def _scan_registry(
+    root: Path,
+) -> tuple[dict[str, str], dict[str, str], dict[str, str], list[str]]:
+    """Registry entries, each entry's dependency bundle, and files missing a declaration."""
     all_blueprints: dict[str, str] = {}
     all_modules: dict[str, str] = {}
+    blueprint_bundles: dict[str, str] = {}
+    module_bundles: dict[str, str] = {}
+    undeclared: list[str] = []
 
     module_classes = _build_module_class_set(root)
+    directory_bundles: dict[Path, str | None] = {}
 
     for file_path in sorted(_get_all_python_files(root)):
         module_name = _path_to_module_name(file_path, root)
         blueprint_vars, module_vars = _find_blueprints_in_file(file_path, module_classes)
+        if not _is_production_module_file(file_path, root):
+            # Only register modules from production files (skip test, deprecated, core)
+            module_vars = []
+        if not blueprint_vars and not module_vars:
+            continue
+
+        bundle = _dependency_bundle_for(file_path, root, directory_bundles)
+        if bundle is None:
+            undeclared.append(str(file_path.relative_to(root.parent)))
 
         for var_name in blueprint_vars:
-            full_path = f"{module_name}:{var_name}"
             cli_name = var_name.replace("_", "-")
-            all_blueprints[cli_name] = full_path
-
-        # Only register modules from production files (skip test, deprecated, core)
-        if _is_production_module_file(file_path, root):
-            for class_name in module_vars:
-                all_modules[class_name_to_registry_key(class_name)] = f"{module_name}.{class_name}"
+            all_blueprints[cli_name] = f"{module_name}:{var_name}"
+            if bundle is not None:
+                blueprint_bundles[cli_name] = bundle
+        for class_name in module_vars:
+            key = class_name_to_registry_key(class_name)
+            all_modules[key] = f"{module_name}.{class_name}"
+            if bundle is not None:
+                module_bundles[key] = bundle
 
     # Blueprints take priority when names collide (e.g. a pre-configured
     # blueprint named "mid360" vs the raw Mid360 Module class).
     for key in set(all_modules) & set(all_blueprints):
         del all_modules[key]
+        module_bundles.pop(key, None)
 
-    return all_blueprints, all_modules
+    return all_blueprints, all_modules, {**module_bundles, **blueprint_bundles}, undeclared
+
+
+def _dependency_bundle_for(
+    file_path: Path, root: Path, directory_bundles: dict[Path, str | None]
+) -> str | None:
+    """The file's own literal, else the nearest ancestor directory's marker file, else None."""
+    own = _dependency_bundle_in_file(file_path)
+    if own is not None:
+        return own
+    directory = file_path.parent
+    while True:
+        if directory not in directory_bundles:
+            marker = directory / DEPENDENCY_BUNDLE_FILE
+            directory_bundles[directory] = (
+                _dependency_bundle_in_file(marker) if marker.is_file() else None
+            )
+        inherited = directory_bundles[directory]
+        if inherited is not None or directory == root:
+            return inherited
+        directory = directory.parent
+
+
+def _dependency_bundle_in_file(file_path: Path) -> str | None:
+    """The module-level ``DEPENDENCY_BUNDLE`` string literal, or None when absent."""
+    tree = ast.parse(file_path.read_text(encoding="utf-8"), filename=str(file_path))
+    for node in tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(
+            isinstance(target, ast.Name) and target.id == DEPENDENCY_BUNDLE_NAME
+            for target in node.targets
+        ):
+            continue
+        value = node.value
+        if isinstance(value, ast.Constant) and isinstance(value.value, str) and value.value:
+            return value.value
+        raise ValueError(
+            f"{file_path}: {DEPENDENCY_BUNDLE_NAME} must be a non-empty string literal"
+        )
+    return None
+
+
+def _generate_bundles_content(bundles: dict[str, str]) -> str:
+    """bundles.json: each bundle extra -> the sorted registry names it covers."""
+    grouped = {
+        bundle: sorted(name for name, assigned in bundles.items() if assigned == bundle)
+        for bundle in sorted(set(bundles.values()))
+    }
+    return json.dumps(grouped, indent=2) + "\n"
 
 
 def _generate_all_blueprints_content(
@@ -352,3 +461,49 @@ def test_nested_projects_do_not_contribute_modules_or_blueprints(tmp_path: Path)
 
     assert blueprints == {"host-blueprint": "dimos.provider.contract:host_blueprint"}
     assert modules == {"host-contract": "dimos.provider.contract.HostContract"}
+
+
+def test_dependency_bundles_follow_the_file_declaration(tmp_path: Path) -> None:
+    root = tmp_path / "dimos"
+    root.mkdir()
+    (root / "declared.py").write_text(
+        'DEPENDENCY_BUNDLE = "runtime-drone"\n'
+        "class Declared(Module): pass\n"
+        "declared_blueprint = Declared.blueprint()\n"
+    )
+    (root / "undeclared.py").write_text("class Undeclared(Module): pass\n")
+
+    _, _, bundles, undeclared = _scan_registry(root)
+
+    assert bundles == {"declared-blueprint": "runtime-drone", "declared": "runtime-drone"}
+    assert undeclared == ["dimos/undeclared.py"]
+    assert _generate_bundles_content(bundles) == (
+        '{\n  "runtime-drone": [\n    "declared",\n    "declared-blueprint"\n  ]\n}\n'
+    )
+
+
+def test_dependency_bundles_inherit_from_the_nearest_directory_marker(tmp_path: Path) -> None:
+    root = tmp_path / "dimos"
+    (root / "family/sub").mkdir(parents=True)
+    (root / "other").mkdir()
+    (root / "family/dependency_bundle.py").write_text('DEPENDENCY_BUNDLE = "runtime-drone"\n')
+    (root / "family/a.py").write_text("class A(Module): pass\n")
+    (root / "family/sub/dependency_bundle.py").write_text('DEPENDENCY_BUNDLE = "runtime-spot"\n')
+    (root / "family/sub/b.py").write_text("class B(Module): pass\n")
+    (root / "family/sub/c.py").write_text(
+        'DEPENDENCY_BUNDLE = "runtime-common"\nclass C(Module): pass\n'
+    )
+    (root / "other/d.py").write_text("class D(Module): pass\n")
+
+    _, _, bundles, undeclared = _scan_registry(root)
+
+    assert bundles == {"a": "runtime-drone", "b": "runtime-spot", "c": "runtime-common"}
+    assert undeclared == ["dimos/other/d.py"]
+
+
+def test_dependency_bundle_must_be_a_string_literal(tmp_path: Path) -> None:
+    path = tmp_path / "computed.py"
+    path.write_text('BUNDLE = "runtime-common"\nDEPENDENCY_BUNDLE = BUNDLE\n')
+
+    with pytest.raises(ValueError, match="non-empty string literal"):
+        _dependency_bundle_in_file(path)

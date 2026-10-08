@@ -60,6 +60,8 @@ from dimos.simulation.sensors.mid360.pattern import POINT_RATE
 from dimos.simulation.sensors.mujoco_raycaster import MujocoRaycaster
 from dimos.utils.logging_config import setup_logger
 
+DEPENDENCY_BUNDLE = "runtime-unitree"
+
 logger = setup_logger()
 
 FRAME_DT = 0.1

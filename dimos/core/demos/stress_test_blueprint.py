@@ -21,6 +21,8 @@ from dimos.agents.mcp.mcp_server import McpServer
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.demos.stress_test_module import StressTestModule
 
+DEPENDENCY_BUNDLE = "runtime-common"
+
 demo_mcp_stress_test = autoconnect(
     StressTestModule.blueprint(),
     McpServer.blueprint(),

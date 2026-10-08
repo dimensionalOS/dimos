@@ -33,6 +33,8 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.robot.unitree.g1.wholebody_connection import G1WholeBodyConnection
 
+DEPENDENCY_BUNDLE = "runtime-unitree-dds"
+
 _g1_joints = make_humanoid_joints("g1")
 
 

@@ -21,6 +21,7 @@ from typing import Any
 import pytest
 from typer.testing import CliRunner
 
+from dimos.cli.commands import deps as deps_commands
 import dimos.cli.commands.lifecycle as lifecycle
 from dimos.cli.commands.lifecycle import _with_relay_bridge
 from dimos.cli.dimos import main, normalize_argv
@@ -430,8 +431,13 @@ def test_run_options_still_work_after_dynamic_config_flags(
     assert stubbed_run["blueprint"].disabled_modules_tuple == (RunModuleB,)
 
 
-def test_run_help_lists_dynamic_flags_without_starting(stubbed_run: dict[str, Any]) -> None:
-    result = CliRunner().invoke(main, ["run", "alpha", "--help"])
+@pytest.mark.parametrize("prepare_args", [[], ["--prepare"]])
+def test_run_help_lists_dynamic_flags_without_starting(
+    stubbed_run: dict[str, Any], prepare_args: list[str], mocker
+) -> None:
+    install = mocker.patch.object(deps_commands.install, "prepare")
+
+    result = CliRunner().invoke(main, ["run", "alpha", *prepare_args, "--help"])
 
     assert result.exit_code == 0, result.output
     # In CI, GITHUB_ACTIONS makes typer emit ANSI styling that splits option
@@ -439,9 +445,21 @@ def test_run_help_lists_dynamic_flags_without_starting(stubbed_run: dict[str, An
     output_plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
     assert "--map-file" in output_plain
     assert "--runmodulea.daemon" in output_plain
+    assert "--prepare" in output_plain
     assert output_plain.count("--daemon") == 1
     assert "parsed_config" not in stubbed_run
     assert "entry" not in stubbed_run
+    install.assert_not_called()
+
+
+def test_run_without_prepare_does_not_install(stubbed_run: dict[str, Any], mocker) -> None:
+    install = mocker.patch.object(deps_commands.install, "prepare")
+
+    result = CliRunner().invoke(main, ["run", "alpha"])
+
+    assert result.exit_code == 0, result.output
+    assert stubbed_run["entry"]["blueprint"] == "alpha"
+    install.assert_not_called()
 
 
 @pytest.mark.parametrize("legacy_flag", ["-o", "--option"])

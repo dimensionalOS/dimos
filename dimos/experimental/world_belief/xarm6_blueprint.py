@@ -37,6 +37,8 @@ from dimos.robot.manipulators.common.blueprints import coordinator, trajectory_t
 from dimos.robot.manipulators.xarm.config import make_xarm6_model_config, xarm6_hardware
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 
+DEPENDENCY_BUNDLE = "runtime-manipulation"
+
 if TYPE_CHECKING:
     import rerun.blueprint as rrb
 

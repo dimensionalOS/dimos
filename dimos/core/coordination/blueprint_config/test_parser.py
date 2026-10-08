@@ -21,10 +21,7 @@ from pydantic import BaseModel, Field
 import pytest
 
 from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
-from dimos.core.coordination.blueprint_config.parser import (
-    BlueprintConfigParser,
-    split_run_arguments,
-)
+from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import TransportSpec, autoconnect
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Stream, Transport
@@ -582,12 +579,3 @@ def test_format_help_marks_a_required_nested_parent_with_default_children() -> N
     assert "(default: 7) [parent required]" in value_line
     with pytest.raises(BlueprintConfigError, match="nested"):
         parser.parse(environ={})
-
-
-def test_split_run_arguments_requires_leading_blueprint_names() -> None:
-    assert split_run_arguments(("first-blueprint", "second-blueprint", "--map-file", "map")) == (
-        ("first-blueprint", "second-blueprint"),
-        ("--map-file", "map"),
-    )
-    with pytest.raises(BlueprintConfigError, match="must precede"):
-        split_run_arguments(("--map-file", "map"))

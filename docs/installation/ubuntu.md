@@ -39,7 +39,8 @@ export PATH="$HOME/.local/bin:$PATH"
 mkdir dimos-app && cd dimos-app
 uv venv --python 3.12
 source .venv/bin/activate
-uv pip install --torch-backend cpu 'dimos[base,unitree,sim]'
+uv pip install dimos
+dimos prepare unitree-go2 --backend cpu   # the bundle of the blueprints you will run
 uv run dimos --help
 ```
 
@@ -48,11 +49,11 @@ uv run dimos --help
 ```sh skip
 GIT_LFS_SKIP_SMUDGE=1 git clone https://github.com/dimensionalOS/dimos.git
 cd dimos
-uv sync --locked --python 3.12 --extra manipulation --extra unitree --extra cpu --group tests --group lint
+uv sync --locked --python 3.12 --extra runtime-manipulation --extra cpu --group tests --group lint
 source .venv/bin/activate
 uv run --no-sync dimos --help
 ```
 
-Library mode selects CPU PyTorch wheels. On Linux x86_64 with a CUDA-capable GPU, use `--torch-backend cu128` for library mode or replace `--extra cpu` with `--extra cuda` to add GPU inference dependencies in developer mode.
+`dimos prepare <blueprint>` installs the bundle a blueprint needs in either mode (see [dependencies](/docs/usage/dependencies.md)). On Linux x86_64 with a CUDA-capable GPU, pass `--backend cuda` to `dimos prepare`, or replace `--extra cpu` with `--extra cuda` in developer mode.
 
 Developer installs use the locked PyTorch build. On Linux x86_64 it includes CUDA libraries and also supports CPU execution without an NVIDIA GPU. Selecting `cpu` skips optional CUDA extras; it does not select a CPU-only PyTorch wheel. Use `uv run --no-sync` to use the installed environment, and repeat your selected extras when running `uv sync`.

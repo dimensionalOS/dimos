@@ -45,6 +45,8 @@ from dimos.agents.skills.visual_servoing.visual_servoing_2d import VisualServoin
 from dimos.utils.logging_config import setup_logger
 from dimos.navigation.experimental.patrolling.constants import EXTRA_CLEARANCE
 
+DEPENDENCY_BUNDLE = "runtime-unitree"
+
 if TYPE_CHECKING:
     from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 

@@ -22,7 +22,7 @@ callers all resolve blueprint configuration in the same way.
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Collection, Iterable, Mapping, Sequence
+from collections.abc import Collection, Iterable, Mapping
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
@@ -83,22 +83,6 @@ from dimos.core.coordination.blueprints import (
     transport_config_name,
 )
 from dimos.core.global_config import GlobalConfig
-
-
-def split_run_arguments(tokens: Sequence[str]) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    """Split Typer's variadic run arguments into blueprint names and config tokens.
-
-    Blueprint names must form the leading positional segment.  Once any
-    dash-prefixed token is seen, all remaining tokens belong to option parsing.
-    """
-    split_at = next((i for i, token in enumerate(tokens) if token.startswith("-")), len(tokens))
-    blueprint_names = tuple(tokens[:split_at])
-    if not blueprint_names:
-        raise BlueprintConfigError(
-            "At least one blueprint name must precede configuration options. "
-            "Usage: dimos run <blueprint> [--config-field value]."
-        )
-    return blueprint_names, tuple(tokens[split_at:])
 
 
 class BlueprintConfigParser:

@@ -53,6 +53,8 @@ from dimos.robot.unitree.g1.effectors.high_level.commands import (
 from dimos.robot.unitree.g1.effectors.high_level.high_level_spec import HighLevelG1Spec
 from dimos.utils.logging_config import setup_logger
 
+DEPENDENCY_BUNDLE = "runtime-unitree-dds"
+
 logger = setup_logger()
 
 _LOCO_API_IDS = {

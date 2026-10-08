@@ -71,6 +71,8 @@ from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_groot_wbc import (
 from dimos.robot.unitree.g1.manip_config import g1_manipulation_model_config
 from dimos.teleop.webxr.extensions import VideoArmTeleopModule
 
+DEPENDENCY_BUNDLE = "runtime-unitree-dds"
+
 
 class G1CollectionRecorder(Recorder):
     """Record G1 observations and the operator's absolute controller poses.

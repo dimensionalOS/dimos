@@ -55,6 +55,8 @@ from dimos.teleop.webxr.controller_types import Buttons, Hand, WebXRControllerSt
 from dimos.utils.logging_config import setup_logger
 from dimos.web.robot_web_interface import RobotWebInterface
 
+DEPENDENCY_BUNDLE = "runtime-common"
+
 logger = setup_logger()
 
 STATIC_DIR = Path(__file__).parent / "web" / "static"

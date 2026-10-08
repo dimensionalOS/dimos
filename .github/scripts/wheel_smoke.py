@@ -18,13 +18,19 @@
 Imports the native extension, asserts the packaged relay + Cockpit files, then
 starts the packaged relay and fetches /api/info and the Cockpit at /. Deno is
 not preinstalled in the manylinux test containers: ensure_deno() downloads the
-pinned DENO_VERSION there, exactly as it does on a customer machine.
+pinned DENO_VERSION there, exactly as it does on a customer machine. It also
+checks that the dependency bundle metadata and every per-bundle lock export ship
+in the wheel and that `dimos deps` answers from them.
 """
 
 import json
 from pathlib import Path
+import subprocess
+import sys
 import urllib.request
 
+from dimos.deps.bundles import BUNDLES_PATH, load_assignments, lock_path
+from dimos.deps.export_locks import BACKENDS
 from dimos.navigation.go2.replanning_a_star.min_cost_astar_ext import (
     min_cost_astar_cpp,  # noqa: F401
 )
@@ -45,7 +51,31 @@ REQUIRED = (
 RELAY_READY_TIMEOUT_S = 120.0
 
 
+def check_dependency_bundles() -> None:
+    """The bundle metadata and lock exports are in the wheel and `dimos deps` reads them."""
+    if not BUNDLES_PATH.is_file():
+        raise SystemExit(f"missing from installed wheel: {BUNDLES_PATH}")
+    bundles = set(load_assignments().values())
+    missing = [
+        str(lock_path(bundle, backend))
+        for bundle in sorted(bundles)
+        for backend in BACKENDS
+        if not lock_path(bundle, backend).is_file()
+    ]
+    if missing:
+        raise SystemExit(f"lock exports missing from installed wheel: {missing}")
+    explained = subprocess.run(
+        [sys.executable, "-m", "dimos.cli.dimos", "deps", "unitree-go2", "--backend", "cpu"],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    if explained.returncode != 0 or "packaged lock artifacts" not in explained.stdout:
+        raise SystemExit(f"dimos deps failed in the wheel:\n{explained.stdout}\n{explained.stderr}")
+
+
 def main() -> None:
+    check_dependency_bundles()
     dist = Path(locate.__file__).resolve().parent / "_relay_dist"
     for rel in REQUIRED:
         if not (dist / rel).is_file():

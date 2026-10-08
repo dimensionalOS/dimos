@@ -38,6 +38,8 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.logging_config import setup_logger
 
+DEPENDENCY_BUNDLE = "runtime-common"
+
 logger = setup_logger()
 
 # (name, parent_name, translation_xyz, fixed-axis rpy) — parent None marks the tree root.

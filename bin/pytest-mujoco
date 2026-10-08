@@ -2,5 +2,7 @@
 
 set -euo pipefail
 
+uv sync --locked --inexact --group tests-self-hosted
+
 . .venv/bin/activate
 exec pytest "$@" -m mujoco dimos

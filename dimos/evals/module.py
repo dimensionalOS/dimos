@@ -24,6 +24,8 @@ from dimos.agents.annotation import skill
 from dimos.agents.skill_result import SkillResult
 from dimos.core.module import Module
 
+DEPENDENCY_BUNDLE = "runtime-common"
+
 
 def list_suites() -> list[str]:
     """Suite module paths, including nested suites and excluding shared helpers."""

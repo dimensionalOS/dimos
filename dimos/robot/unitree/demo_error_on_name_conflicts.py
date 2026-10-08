@@ -17,6 +17,8 @@ from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
 
+DEPENDENCY_BUNDLE = "runtime-common"
+
 
 class Data1:
     pass

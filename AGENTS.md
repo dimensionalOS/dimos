@@ -206,6 +206,14 @@ Singleton config. Values cascade: defaults → `.env` → env vars → blueprint
 
 ---
 
+## Dependencies
+
+Each built-in blueprint and module belongs to one runtime bundle (an aggregate extra in `pyproject.toml`: `runtime-common`, `runtime-unitree`, `runtime-manipulation`, `runtime-unitree-dds`, `runtime-drone`, `runtime-spot`). The bundle is declared with a module-level literal `DEPENDENCY_BUNDLE = "runtime-..."`, either in a directory's `dependency_bundle.py` (inherited by every file below it) or in the file itself, which takes precedence; `dimos/deps/bundles.json` is generated from those literals. `dimos prepare <name>` installs the bundle plus the `cpu`/`cuda` backend extra into the current venv, from the checkout's `uv.lock` or from the `pylock.*.toml` exports shipped in a release. Blueprints and modules do not declare packages themselves.
+
+- New package: add it to the feature extra whose code imports it, `uv lock`, check the covering bundles include that extra, then `python -m dimos.deps.export_locks` (CI checks the exports).
+- New blueprint or module: it inherits the nearest `dependency_bundle.py`; declare `DEPENDENCY_BUNDLE = "runtime-..."` in the file when it needs a different bundle. `pytest dimos/robot/test_all_blueprints_generation.py` regenerates `bundles.json` and fails on an entry without any declaration.
+- Full guide: `docs/usage/dependencies.md`.
+
 ## CLI Reference
 
 ### Global flags
@@ -223,6 +231,8 @@ Every `GlobalConfig` field is a CLI flag: `--robot-ip`, `--simulation/--no-simul
 | `dimos restart [--force]` | Stop + re-exec with original args |
 | `dimos list` | List all non-demo blueprints |
 | `dimos show-config` | Print resolved GlobalConfig values |
+| `dimos deps NAME...` | Show the dependency bundle each blueprint/module needs, the backend, and setup limits (read-only) |
+| `dimos prepare NAME... [--backend auto\|cpu\|cuda] [--offline]` | Install those bundles into the current virtualenv with uv; never starts anything |
 | `dimos cache clean [--yes] [--force]` | Remove DimOS caches; preserve robot Git work unless forced |
 | `dimos log [-f] [-n N] [--json] [-r <run-id>]` | View per-run logs |
 | `dimos mcp list-tools / call / status / modules` | MCP tools (requires McpServer in blueprint) |
@@ -373,6 +383,8 @@ Code style rules:
 ```bash
 pytest dimos/robot/test_all_blueprints_generation.py
 ```
+
+The same test generates `dimos/deps/bundles.json` from the `DEPENDENCY_BUNDLE` literals (a file's own, else the nearest directory's `dependency_bundle.py`), and fails when an entry has none.
 
 CI asserts the file is current — if it's stale, CI fails. Externally packaged blueprints are discovered from installed `dimos.blueprints` entry points and do not require regenerating this file.
 

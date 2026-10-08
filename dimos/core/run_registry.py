@@ -66,6 +66,9 @@ class RunEntry:
     cli_args: list[str] = field(default_factory=list)
     config_overrides: dict[str, object] = field(default_factory=dict)
     original_argv: list[str] = field(default_factory=list)
+    # sys.prefix of the interpreter running the coordinator. `dimos prepare` refuses to
+    # change an environment while a run recorded here is alive.
+    environment: str = ""
 
     def __post_init__(self) -> None:
         self.config_overrides = {
