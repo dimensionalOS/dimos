@@ -109,20 +109,6 @@ const result = await (await fetch("../../dimos/skills/call", {
 
 `- POST /skills/call` (acts on the robot: only from a user's action)
 
-## How do I call a module's RPC method?
-
-```js
-const { rpcs } = await (await fetch("../../dimos/rpc")).json() // [{ module, method, params, doc }]; no start/stop
-const result = await (await fetch("../../dimos/rpc/call", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ module: "GO2Connection", method: "get_battery_soc", args: {} }), // args: object or array
-})).json() // { ok, result, text }
-```
-
-`- GET /rpc`, `- POST /rpc/call` (acts on the robot: only from a user's action; start, stop, build, set_transport and
-set_module_ref are refused with 400)
-
 ## How do I decode dimos messages in a page?
 
 ```js

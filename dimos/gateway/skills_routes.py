@@ -132,46 +132,6 @@ def add(app: FastAPI) -> None:
         except skills.SkillError as error:
             raise ApiError(error.status, str(error))
 
-    @app.get(
-        "/dimos/rpc",
-        response_model=models.RpcList,
-        **route_doc(
-            "skills",
-            "The running blueprint's module RPC methods: module, method, params, docstring",
-            "Every `@rpc` method of the running blueprint's modules (`Coordinator/list_modules`), skills included, "
-            "with its signature and docstring when its class imports in the gateway. The lifecycle methods (start, "
-            "stop, build, set_transport, set_module_ref) are left out. Empty `rpcs` and null `run` when nothing "
-            "runs. No side effects.",
-            answer="`{ rpcs: [{ module, method, class, known, params: [{ name, type, default, required, kind }], "
-            "return_type, doc, skill, runId, blueprint }], run: { runId, blueprint } | null }`",
-        ),
-    )
-    async def rpc_list() -> dict[str, Any]:
-        return await asyncio.to_thread(skills.list_rpcs)
-
-    @app.post(
-        "/dimos/rpc/call",
-        response_model=models.RpcCallResult,
-        **route_doc(
-            "skills",
-            "Call a module's RPC method and wait for its answer",
-            "Calls `<module>/<method>` over dimos's module RPC. `args` is an object (by name) or an array (by "
-            "position), checked against its `params`. This can act on the robot. Waits up to 300 s. `ok` false when "
-            "the method raised. 400 for start or stop (or another lifecycle method: the coordinator runs those) and "
-            "for a missing, extra or unknown argument, 404 when the running blueprint has no such module or method, "
-            "409 when nothing runs, 500 when it didn't answer in time.",
-            errors=(400, 404, 409, 500),
-            answer="`{ module, method, runId, blueprint, ok, result, text }`",
-        ),
-    )
-    async def rpc_call(request: models.RpcCallRequest) -> dict[str, Any]:
-        try:
-            return await asyncio.to_thread(
-                skills.call_rpc, request.module, request.method, request.args
-            )
-        except skills.SkillError as error:
-            raise ApiError(error.status, str(error))
-
     async def mcp_call(name: str, arguments: dict[str, Any]) -> tuple[str, bool]:
         if name == "list_skills":
             answer = await listed()

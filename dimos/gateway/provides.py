@@ -36,7 +36,7 @@ DIMOS_YAML = Path(__file__).parents[2] / "dimos.yaml"
 WRITE_COMMAND = "python -m dimos.gateway --write-provides"
 DESCRIPTION = (
     "The dimos gateway: blueprints, global config, runs and their logs, events, Dimensional cloud uploads, discovery "
-    "(blueprints, modules, message types), docs, extras, jobs and the running blueprint's skills and module RPC methods"
+    "(blueprints, modules, message types), docs, extras, jobs and the running blueprint's skills"
 )
 PREFIX = "/dimos/"
 # the `provides:` block: its key and every indented line under it
