@@ -15,11 +15,13 @@
 from collections.abc import Callable
 import pickle
 import threading
+import time
 from types import MappingProxyType
 from typing import Any, Protocol
 
 from pydantic import BaseModel
 import pytest
+from pytest_mock import MockerFixture
 
 from dimos.core._test_future_annotations_helper import (
     FutureModuleIn,
@@ -1209,3 +1211,27 @@ def test_shutdown_unblocks_loop(monkeypatch: pytest.MonkeyPatch) -> None:
     looper.join(timeout=5)
     assert not looper.is_alive()
     assert stopped.is_set()
+
+
+def test_start_watchdog_names_modules_still_starting(mocker: MockerFixture) -> None:
+    from dimos.core.coordination import module_coordinator
+
+    mocker.patch.object(module_coordinator, "START_WARN_INTERVAL_S", 0.05)
+    log = mocker.patch.object(module_coordinator, "logger")
+    pending = {"slow", "fast"}
+    lock = threading.Lock()
+    done = threading.Event()
+    watchdog = threading.Thread(
+        target=module_coordinator._warn_while_pending, args=(pending, lock, done)
+    )
+    watchdog.start()
+    time.sleep(0.12)
+    with lock:
+        pending.discard("fast")
+    time.sleep(0.12)
+    done.set()
+    watchdog.join(1.0)
+
+    named = [call.kwargs["modules"] for call in log.error.call_args_list]
+    assert ["fast", "slow"] in named
+    assert named[-1] == ["slow"]
