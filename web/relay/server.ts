@@ -250,24 +250,36 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
   let endpoint: Deno.QuicEndpoint | undefined;
   let listener: Deno.QuicListener;
   try {
-    httpServer = Deno.serve(
-      {
-        hostname: host,
-        port: options.port ?? 7780,
-        onListen: () => {},
-        cert: options.cert,
-        key: options.key,
-      },
-      handleHttp,
-    );
-    httpPort = (httpServer.addr as Deno.NetAddr).port;
-    try {
-      endpoint = new Deno.QuicEndpoint({ hostname: host, port: tls ? httpPort : 0 });
-    } catch (e) {
-      throw new Error(
-        `QUIC cannot bind UDP port ${httpPort} (with --cert/--key it shares --port): ` +
-          ((e as Error)?.message ?? e),
+    // --port 0 with a certificate: the OS picks a free TCP port, but the same
+    // number can be taken on UDP; pick again rather than fail (a fixed port
+    // still fails at once, naming it).
+    for (let attempt = 1;; attempt++) {
+      httpServer = Deno.serve(
+        {
+          hostname: host,
+          port: options.port ?? 7780,
+          onListen: () => {},
+          cert: options.cert,
+          key: options.key,
+        },
+        handleHttp,
       );
+      httpPort = (httpServer.addr as Deno.NetAddr).port;
+      try {
+        endpoint = new Deno.QuicEndpoint({ hostname: host, port: tls ? httpPort : 0 });
+        break;
+      } catch (e) {
+        if (tls && options.port === 0 && e instanceof Deno.errors.AddrInUse && attempt < 10) {
+          // not awaited: nothing may await before the consts handleHttp uses
+          void httpServer.shutdown();
+          httpServer = undefined;
+          continue;
+        }
+        throw new Error(
+          `QUIC cannot bind UDP port ${httpPort} (with --cert/--key it shares --port): ` +
+            ((e as Error)?.message ?? e),
+        );
+      }
     }
     listener = endpoint.listen({
       cert: cert.certPem,
