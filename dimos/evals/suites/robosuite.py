@@ -48,6 +48,7 @@ def environment(scene: str, bodies: tuple[str, ...]) -> MujocoEnvironment:
         scene=LfsPath(f"robosuite/{scene}/scene.xml"),
         base_height=0.912,
         tracked_bodies=bodies,
+        agent_artifacts=(),  # sensors and skills only; the recording holds ground-truth poses
         module_env={
             # The wrist camera starts parked; confirm objects from one view.
             "LIVELOCALIZEMODULE__POLICY": '{"min_views": 1}',
