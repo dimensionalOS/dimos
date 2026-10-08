@@ -18,12 +18,8 @@
 // binds lidar_ip and sends UDP, so it works wherever the host_ip/lidar_ip are
 // reachable — IPs aliased on an interface (host ns, incl. macOS lo0) or a netns.
 
-#[allow(dead_code)]
-pub mod pcap;
-#[allow(dead_code)]
-pub mod pipeline;
-#[allow(dead_code)]
-pub mod wire;
+// The Livox SDK2 wire format, shared with the other Mid-360 modules.
+pub use livox_wire::{pcap, pipeline, wire};
 
 use crate::pcap::PcapReader;
 use crate::wire::{AsyncControlAck, ControlFrame, DetectionAck, InternalInfoAck, KeyValue};

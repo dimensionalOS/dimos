@@ -21,11 +21,9 @@ lidar = "sensor_msgs.PointCloud2"
 imu = "sensor_msgs.Imu"
 
 [dependencies]
-crc = "3"
+livox-wire = { git = "https://github.com/jeff-hykin/livox-wire", rev = "441c4a16dbe2adb0683ece976cc800c6d7fbc790" }
 dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "6663bcb6e5e18f43a6cb9cf77ccbec613e310443" }
-etherparse = "0.21.0"
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
-pcap-parser = "0.17.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 socket2 = "0.6"

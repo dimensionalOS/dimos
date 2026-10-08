@@ -30,10 +30,8 @@ lidar = "sensor_msgs.PointCloud2"
 odometry = "nav_msgs.Odometry"
 
 [dependencies]
+livox-wire = { git = "https://github.com/jeff-hykin/livox-wire", rev = "441c4a16dbe2adb0683ece976cc800c6d7fbc790" }
 # Direct dependencies of the copied livox wire/pipeline/pcap modules. See src/lib.rs.
-crc = "3"
-etherparse = "0.21.0"
-pcap-parser = "0.17.0"
 pointlio-core = { git = "https://github.com/dimensionalOS/dimos-module-pointlio.git", rev = "22a5403f827d030b248ae473c2808b5d405b3d55" }
 dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "6663bcb6e5e18f43a6cb9cf77ccbec613e310443" }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }

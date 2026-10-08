@@ -263,8 +263,11 @@ def _pinned_crates(lock: Path) -> list[tuple[str, str, str]]:
 
 
 def _hash_key(name: str, version: str, source: str) -> str:
-    # crate2nix's key: the Cargo.lock source minus its fragment, then name@version
-    return f"{source.split('#', 1)[0]}#{name}@{version}"
+    # crate2nix's key is Cargo's package ID: the source minus its fragment, then name@version,
+    # or just the version when the name is the URL's last segment.
+    url = source.split("#", 1)[0]
+    last = url.split("?", 1)[0].rstrip("/").rsplit("/", 1)[-1]
+    return f"{url}#{version}" if last == name else f"{url}#{name}@{version}"
 
 
 @cache

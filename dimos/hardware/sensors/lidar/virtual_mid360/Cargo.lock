@@ -651,10 +651,8 @@ dependencies = [
 name = "dimos-virtual-mid360"
 version = "0.1.0"
 dependencies = [
- "crc",
  "dimos-module",
- "etherparse",
- "pcap-parser",
+ "livox-wire",
  "serde",
  "socket2 0.6.5",
  "tempfile",
@@ -1485,6 +1483,17 @@ name = "litemap"
 version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "47d9d19d1d6efa0109d2f65ff4c85cddd50bd572e5a00127ab10987290bcefae"
+
+[[package]]
+name = "livox-wire"
+version = "0.1.0"
+source = "git+https://github.com/jeff-hykin/livox-wire?rev=441c4a16dbe2adb0683ece976cc800c6d7fbc790#441c4a16dbe2adb0683ece976cc800c6d7fbc790"
+dependencies = [
+ "crc",
+ "etherparse",
+ "pcap-parser",
+ "tracing",
+]
 
 [[package]]
 name = "lock_api"
