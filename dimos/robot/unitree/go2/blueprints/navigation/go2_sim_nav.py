@@ -41,4 +41,4 @@ go2_sim_nav = autoconnect(
     go2_sim,
     _go2_nav,
     vis_module(viewer_backend=global_config.viewer, rerun_config=_nav_rerun_config),
-).global_config(n_workers=10)
+).global_config(n_workers=9)

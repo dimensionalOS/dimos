@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The legged Go2 with its Mid-360 in a generated office, driven from the keyboard."""
+"""The legged Go2 with its Mid-360 in a generated office, driven from the rerun viewer."""
 
 from __future__ import annotations
 
@@ -25,7 +25,6 @@ from dimos.navigation.global_planner.viz import body_on_base_link
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.robot.unitree.go2.constants import ROBOT_HEIGHT, ROBOT_LENGTH, ROBOT_WIDTH
 from dimos.robot.unitree.go2.go2_mid360_static_transforms import Go2Mid360StaticTf
-from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
 from dimos.simulation.go2_sim.world import SimGo2World
 from dimos.visualization.vis_module import vis_module
 
@@ -75,9 +74,6 @@ go2_sim = autoconnect(
     SimGo2World.blueprint(),
     Go2Mid360StaticTf.blueprint(),
     MovementManager.blueprint(),
-    KeyboardTeleop.blueprint(linear_speed=0.5, angular_speed=0.8).remappings(
-        [(KeyboardTeleop, "cmd_vel", "tele_cmd_vel")]
-    ),
     # gossip off until zenoh fixes its pending-connection bug: with it on, native modules
     # spawned together never link, which the motion stack composed on this blueprint needs
-).global_config(transport="zenoh", zenoh_gossip=False, n_workers=6, robot_model="unitree_go2")
+).global_config(transport="zenoh", zenoh_gossip=False, n_workers=5, robot_model="unitree_go2")

@@ -20,8 +20,9 @@ import mujoco
 import numpy as np
 from numpy.typing import NDArray
 
-# Group 0 is scene geometry and group 2 is robot visual meshes. Collision primitives are left out.
-SCENE_AND_VISUAL_GROUPS = np.array((1, 0, 1, 0, 0, 0), dtype=np.uint8)
+# Groups 0 and 1 are scene geometry and group 2 is robot visual meshes. Collision primitives
+# are left out.
+SCENE_AND_VISUAL_GROUPS = np.array((1, 1, 1, 0, 0, 0), dtype=np.uint8)
 INCLUDE_STATIC = 1
 NO_BODY_EXCLUDED = -1
 

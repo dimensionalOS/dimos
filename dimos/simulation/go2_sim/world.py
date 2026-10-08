@@ -66,6 +66,8 @@ FRAME_DT = 0.1
 TICKS_PER_FRAME = round(FRAME_DT / CONTROL_DT)
 LIDAR_HALF_EXTENTS = (0.0325, 0.0325, 0.03)
 COLLISION_GROUP = 3
+# Drawn by nothing but the lidar: the viewer switches this group off so the room stays visible.
+CEILING_GROUP = 1
 SCENE_PUBLISH_DT = 2.0
 ODOM_FRAME_ID = "odom"
 SENSOR_FRAME_ID = "mid360_link"
@@ -145,6 +147,8 @@ def build_model(scene: Scene) -> mujoco.MjModel:
         geom.name = f"{box.kind}_{i}"
         geom.pos = box.center
         geom.size = box.half
+        if box.kind == "ceiling":
+            geom.group = CEILING_GROUP
     lidar = spec.body("base").add_geom()
     lidar.name = "mid360"
     lidar.type = mujoco.mjtGeom.mjGEOM_BOX
@@ -325,10 +329,12 @@ class SimGo2World(Module):
         viewer = mujoco.viewer.launch_passive(
             sim.model, sim.data, show_left_ui=False, show_right_ui=False
         )
+        viewer.opt.geomgroup[CEILING_GROUP] = 0
         viewer.cam.type = mujoco.mjtCamera.mjCAMERA_TRACKING
         viewer.cam.trackbodyid = sim.robot.trunk
-        viewer.cam.distance = 3.0
-        viewer.cam.elevation = -25
+        # above the walls, looking down over the robot's shoulder
+        viewer.cam.distance = 4.0
+        viewer.cam.elevation = -55
         viewer.cam.azimuth = 135
         return viewer
 

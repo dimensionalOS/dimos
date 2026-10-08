@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import mujoco
 import numpy as np
 from numpy.typing import NDArray
 import pytest
@@ -22,6 +23,7 @@ from dimos.msgs.sim_msgs.Contacts import Contact
 from dimos.simulation.go2_legged.policy import OnnxGo2Policy
 from dimos.simulation.go2_legged.robot import CONTROL_DT
 from dimos.simulation.go2_sim.world import (
+    CEILING_GROUP,
     FRAME_DT,
     MOUNT_R,
     TICKS_PER_FRAME,
@@ -30,6 +32,7 @@ from dimos.simulation.go2_sim.world import (
     scene_edges,
 )
 from dimos.simulation.scenes.procedural import Scene, office
+from dimos.simulation.sensors.mujoco_raycaster import MujocoRaycaster
 
 pytestmark = pytest.mark.self_hosted
 
@@ -126,6 +129,16 @@ def test_sensor_velocity_matches_the_motion(sim: Go2Sim) -> None:
     yaw_delta = (sim.robot.yaw() - yaw_before + np.pi) % (2 * np.pi) - np.pi
     assert rate == pytest.approx(yaw_delta / (10 * CONTROL_DT), abs=0.1)
     assert rate > 0.05
+
+
+def test_ceiling_is_hidden_from_the_viewer_but_not_the_lidar(sim: Go2Sim) -> None:
+    ceiling = next(box for box in sim.scene.boxes if box.kind == "ceiling")
+    underside = ceiling.center[2] - ceiling.half[2]
+    position, _ = sim.sensor_pose()
+    dist, _ = MujocoRaycaster(sim.model, sim.data).cast(position, np.array([[0.0, 0.0, 1.0]]), 10.0)
+    assert abs(dist[0] - (underside - position[2])) < 0.01
+    geom = mujoco.mj_name2id(sim.model, mujoco.mjtObj.mjOBJ_GEOM, "ceiling_5")
+    assert sim.model.geom_group[geom] == CEILING_GROUP
 
 
 def test_sensor_sits_on_the_mount_above_the_base(sim: Go2Sim) -> None:
