@@ -19,6 +19,7 @@ from typing import Any
 import pytest
 from pytest_mock import MockerFixture
 
+from dimos.constants import RECORDINGS_DIR
 from dimos.core.global_config import global_config
 from dimos.core.stream import Transport
 from dimos.memory import tap
@@ -145,3 +146,13 @@ def test_recording_delegates_to_rust_session(
     make_plan.assert_called_once_with(transports)
     create_session.assert_called_once_with("plan")
     session.stop.assert_called_once_with()
+
+
+def test_record_dir_overrides_recordings_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DIMOS_RUN_ID", "run-1")
+    monkeypatch.setattr(global_config, "record_dir", str(tmp_path))
+    assert tap.recording_dir() == tmp_path / "run-1"
+    monkeypatch.setattr(global_config, "record_dir", "")
+    assert tap.recording_dir() == RECORDINGS_DIR / "run-1"

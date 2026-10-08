@@ -21,6 +21,7 @@ dimos [GLOBAL OPTIONS] COMMAND [ARGS]
 | `--record [sqlite\|mcap]` | `sqlite\|mcap` | off | Record selected streams to one artifact; bare `--record` means SQLite ([Recording](/docs/usage/recording.md)) |
 | `--record-engine` | `python\|rust` | `python` | Recording implementation; Rust is experimental and never selected implicitly |
 | `--record-topics` | TEXT | `*` | Comma-separated globs on stream names to record |
+| `--record-dir` | PATH | `recordings/` | Parent folder for per-run recordings, e.g. an external drive |
 | `--record-encoding-threads` | INT | unset (Rust uses `4`) | Native encoding workers; valid only with `--record-engine rust` |
 | `--new-memory` / `--no-new-memory` | bool | `False` | Clear persistent memory on start |
 | `--viewer` | `rerun\|none` | `rerun` | Visualization backend |
