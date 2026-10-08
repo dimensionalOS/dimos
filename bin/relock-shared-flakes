@@ -159,9 +159,15 @@ def _unpushed(path: Path, what: str) -> str:
 
 
 def flake_locks() -> list[Path]:
-    """The flake.lock beside every tracked flake.nix, whether or not it exists yet."""
+    """The flake.lock beside every tracked flake.nix below the root, whether or not it exists yet.
+
+    Not the root's own: it is the devcontainer, it pins no shared code, and `nix flake lock path:<root>`
+    copies the whole worktree (cargo target/, LFS data) into the store.
+    """
     return [
-        (REPO_ROOT / p).with_name("flake.lock") for p in _git("ls-files", "*flake.nix").splitlines()
+        (REPO_ROOT / p).with_name("flake.lock")
+        for p in _git("ls-files", "*flake.nix").splitlines()
+        if "/" in p
     ]
 
 
