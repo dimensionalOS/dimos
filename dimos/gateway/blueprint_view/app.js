@@ -596,10 +596,7 @@ async function renderCode() {
                 type: "button",
                 class: "btn",
                 "data-bp-open-editor": true,
-                onclick: () => {
-                    status.hidden = true
-                    parent.postMessage({ type: "dimos:open-in-editor", file: want.file, line: want.line }, location.origin)
-                },
+                onclick: () => openInEditor(want.file, want.line, status),
             }, "Open in editor"),
             h("button", {
                 type: "button",
@@ -614,7 +611,6 @@ async function renderCode() {
         h("div", { class: "note" }, "loading…"),
         pre,
     )
-    pane.status = status
     try {
         const { text } = await getJson(`source?file=${encodeURIComponent(want.file)}`)
         if (shownCode !== want) {
@@ -638,6 +634,16 @@ async function renderCode() {
     }
 }
 
+// where the last open-in-editor's outcome shows (the code pane's, or the Logs')
+let editorStatus = null
+
+/** asks Desktop (the parent) to open `file` at `line` in the editor; its answer shows in `status` */
+function openInEditor(file, line, status) {
+    editorStatus = status
+    status.hidden = true
+    parent.postMessage({ type: "dimos:open-in-editor", file, line }, location.origin)
+}
+
 addEventListener("message", (event) => {
     if (event.origin !== location.origin || event.source !== parent) {
         return
@@ -645,8 +651,8 @@ addEventListener("message", (event) => {
     if (event.data?.type === "dimos:chrome-ok") {
         document.body.classList.add("chrome")
     } else if (event.data?.type === "dimos:open-in-editor-result") {
-        const status = $("#code").status
-        if (status) {
+        const status = editorStatus
+        if (status?.isConnected) {
             status.hidden = false
             status.className = `opened${event.data.ok ? "" : " failed"}`
             status.textContent = String(event.data.text ?? "")
@@ -709,7 +715,7 @@ $("#extrasToggle").addEventListener("change", (event) => {
 const logsRun = () => RUN ?? state.launch?.runId ?? null
 
 function showLogs() {
-    openLogs({ runId: logsRun(), title: NAME, h, getJson })
+    openLogs({ runId: logsRun(), title: NAME, h, getJson, openInEditor: FRAMED ? openInEditor : null })
 }
 
 async function pollRuns() {

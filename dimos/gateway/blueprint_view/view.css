@@ -481,6 +481,125 @@ body.framed:not(.chrome) #bar {
     margin-right: 6px;
     color: var(--muted-fg);
 }
+/* a record's fields: quiet key=value chips after its message */
+.log-line .chip {
+    display: inline-block;
+    margin: 0 0 0 6px;
+    padding: 0 5px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--muted-fg);
+    font-size: 10.5px;
+    line-height: 1.5;
+    white-space: normal;
+    word-break: break-all;
+}
+.log-line .chip .k {
+    margin-right: 4px;
+    opacity: 0.7;
+}
+.log-field {
+    margin: 2px 0 4px 66px;
+    color: var(--muted-fg);
+}
+.log-field .k {
+    font-size: 10.5px;
+    opacity: 0.7;
+}
+.log-field pre {
+    margin: 0;
+    font: inherit;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+/* a traceback: one row a line, the ExceptionGroup gutters kept, library frames folded, the raised exceptions at its end */
+.tb {
+    margin: 4px 0 8px 66px;
+    padding: 6px 8px;
+    border-left: 2px solid var(--close-red, #f0707f);
+    background: color-mix(in srgb, var(--close-red, #f0707f) 5%, transparent);
+    border-radius: 0 4px 4px 0;
+    overflow-x: auto;
+}
+.tb-lines {
+    width: max-content;
+    min-width: 100%;
+}
+.tb-row {
+    white-space: pre;
+    color: var(--muted-fg);
+}
+.tb-gutter,
+.tb-sep,
+.tb-head,
+.tb-marker {
+    color: var(--muted-fg);
+    opacity: 0.55;
+}
+.tb-frame.own {
+    color: var(--fg, inherit);
+}
+.tb-frame.lib {
+    opacity: 0.75;
+}
+.tb-file {
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--bv-info);
+    font: inherit;
+    font-weight: 600;
+}
+button.tb-file {
+    cursor: pointer;
+}
+button.tb-file:hover {
+    text-decoration: underline;
+}
+.tb-func {
+    color: var(--muted-fg);
+}
+.tb-code.own {
+    color: var(--fg, inherit);
+}
+.tb-exc {
+    color: var(--close-red, #f0707f);
+}
+.tb-lib > summary {
+    cursor: pointer;
+    list-style: none;
+    font-style: italic;
+    opacity: 0.6;
+}
+.tb-lib > summary::-webkit-details-marker {
+    display: none;
+}
+.tb-lib > summary::after {
+    content: " ▸";
+}
+.tb-lib[open] > summary::after {
+    content: " ▾";
+}
+.tb-raised {
+    margin-top: 8px;
+    padding-top: 6px;
+    border-top: 1px solid color-mix(in srgb, var(--close-red, #f0707f) 35%, transparent);
+}
+.tb-raised-one {
+    padding-left: calc(var(--depth, 0) * 14px);
+    color: var(--close-red, #f0707f);
+    white-space: pre-wrap;
+    word-break: break-word;
+    opacity: 0.75;
+}
+.tb-raised-one + .tb-raised-one::before {
+    content: "↳ ";
+}
+.tb-raised-one.leaf {
+    font-size: 12.5px;
+    font-weight: 600;
+    opacity: 1;
+}
 
 /* the side panel: the module list, or one module */
 #side {
@@ -1137,7 +1256,8 @@ svg.spot .edge:not(.lit) {
 .code-head .spacer {
     flex: 1;
 }
-#code .opened {
+#code .opened,
+.modal.logs .opened {
     padding: 5px 12px;
     border-bottom: 1px solid var(--border);
     background: var(--raised);
@@ -1147,10 +1267,12 @@ svg.spot .edge:not(.lit) {
     text-overflow: ellipsis;
     white-space: nowrap;
 }
-#code .opened[hidden] {
+#code .opened[hidden],
+.modal.logs .opened[hidden] {
     display: none;
 }
-#code .opened.failed {
+#code .opened.failed,
+.modal.logs .opened.failed {
     color: var(--warn);
     white-space: normal;
 }

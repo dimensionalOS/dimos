@@ -38,3 +38,47 @@ def test_no_layout_overlaps_nodes() -> None:
     # Hierarchy always runs left to right; only Vertical runs top to bottom
     assert all(r["vertical"] == (r["layout"] == "vertical") for r in results)
     assert [r for r in results if r["overlaps"]] == []
+
+
+def test_traceback_lines_are_parsed() -> None:
+    """The Logs' traceback drawing (blueprint_view/traceback.js): frames, gutters, separators and raised exceptions."""
+    out = subprocess.run(
+        [ensure_deno(), "run", "--no-prompt", "traceback_check.js"],
+        cwd=CHECK.parent,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=True,
+    ).stdout
+    result = json.loads(out)
+    assert result["grouped"] == [
+        "head",
+        "frame:lib:10:2",
+        "frame:own:84:1",
+        "exception",
+        "sep",
+        "head",
+        "frame:lib:59:1",
+        "frame:own:246:1",
+        "exception",
+        "sep",
+    ]
+    assert result["groupedRaised"] == [
+        {"depth": 0, "text": "ExceptionGroup: safe_thread_map failed (1 sub-exception)"},
+        {"depth": 1, "text": "RuntimeError: no\nsecond line of the message"},
+    ]
+    assert result["markers"] == [False, True]
+    assert result["gutter"] == "    | "
+    assert result["chained"] == [
+        "head",
+        "frame:own:3:1",
+        "exception",
+        "text",
+        "head",
+        "text",
+        "head",
+        "frame:lib:9:1",
+        "exception",
+    ]
+    assert [r["text"] for r in result["chainedRaised"]] == ["KeyError: 'x'", "ValueError: bad"]
+    assert result["path"] == "dimos/cli/entry.py"
