@@ -13,47 +13,11 @@
 # limitations under the License.
 
 import pygame
-import pytest
 
-from dimos.msgs.sensor_msgs.Joy import Joy
-from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
+from dimos.robot.unitree.keyboard_teleop import JOY_BUTTONS, joy_buttons
 
 
-class _Pressed:
-    def __init__(self, keys: set[int]) -> None:
-        self.keys = keys
-
-    def __getitem__(self, key: int) -> bool:
-        return key in self.keys
-
-
-def test_joystick_publishes_while_held_and_once_on_release(monkeypatch: pytest.MonkeyPatch) -> None:
-    teleop = KeyboardTeleop.__new__(KeyboardTeleop)
-    teleop._last_buttons = None
-    sent: list[Joy] = []
-    monkeypatch.setattr(
-        teleop, "joystick", type("Port", (), {"publish": lambda _, j: sent.append(j)})()
-    )
-    held: set[int] = set()
-    mods = {"value": 0}
-    monkeypatch.setattr(pygame.key, "get_pressed", lambda: _Pressed(held))
-    monkeypatch.setattr(pygame.key, "get_mods", lambda: mods["value"])
-
-    teleop._publish_joystick()
-    held.add(pygame.K_w)
-    teleop._publish_joystick()
-    teleop._publish_joystick()
-    mods["value"] = pygame.KMOD_LSHIFT
-    teleop._publish_joystick()
-    held.clear()
-    mods["value"] = 0
-    teleop._publish_joystick()
-    teleop._publish_joystick()
-
-    assert [j.buttons for j in sent] == [
-        [0, 0, 0, 0, 0, 0, 0, 0, 0],
-        [1, 0, 0, 0, 0, 0, 0, 0, 0],
-        [1, 0, 0, 0, 0, 0, 0, 0, 0],
-        [1, 0, 0, 0, 0, 0, 1, 0, 0],
-        [0, 0, 0, 0, 0, 0, 0, 0, 0],
-    ]
+def test_joy_buttons_follow_held_keys() -> None:
+    assert joy_buttons(set()) == [0] * len(JOY_BUTTONS)
+    assert joy_buttons({pygame.K_w, pygame.K_RSHIFT}) == [1, 0, 0, 0, 0, 0, 1, 0, 0]
+    assert joy_buttons({pygame.K_d, pygame.K_LCTRL, pygame.K_SPACE}) == [0, 0, 0, 1, 0, 0, 0, 1, 1]

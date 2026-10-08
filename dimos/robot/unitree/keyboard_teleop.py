@@ -67,6 +67,22 @@ _GREEN = (56, 200, 120)
 
 # Order of Joy.buttons on the joystick stream (1 = held).
 JOY_BUTTONS = ("w", "a", "s", "d", "q", "e", "shift", "ctrl", "space")
+_JOY_KEYS = (
+    (pygame.K_w,),
+    (pygame.K_a,),
+    (pygame.K_s,),
+    (pygame.K_d,),
+    (pygame.K_q,),
+    (pygame.K_e,),
+    (pygame.K_LSHIFT, pygame.K_RSHIFT),
+    (pygame.K_LCTRL, pygame.K_RCTRL),
+    (pygame.K_SPACE,),
+)
+_JOY_KEY_SET = frozenset(key for keys in _JOY_KEYS for key in keys)
+
+
+def joy_buttons(keys_held: set[int]) -> list[int]:
+    return [int(any(key in keys_held for key in keys)) for keys in _JOY_KEYS]
 
 
 class KeyboardTeleop(Module):
@@ -85,7 +101,6 @@ class KeyboardTeleop(Module):
     dedicated_worker = True
 
     cmd_vel: Out[Twist]
-    # Held keys as Joy.buttons in JOY_BUTTONS order: every tick while any is held, once on release.
     joystick: Out[Joy]
     operator_command: Out[Int8]
     # Reference-governor corridor half-width (m). Number keys 0-9 map
@@ -126,7 +141,6 @@ class KeyboardTeleop(Module):
         # but still want the operator's live e_max input.
         self.disable_movement = disable_movement
         self._was_active = False
-        self._last_buttons: list[int] | None = None
         self._estop_at = 0.0
         # Namespaced instances (e.g. "robot0/keyboardteleop") get their own
         # window title so multi-robot teleop windows are distinguishable.
@@ -173,6 +187,8 @@ class KeyboardTeleop(Module):
                     self._stop_event.set()
                 elif event.type == pygame.KEYDOWN:
                     self._keys_held.add(event.key)
+                    if event.key in _JOY_KEY_SET:
+                        self.joystick.publish(Joy(buttons=joy_buttons(self._keys_held)))
 
                     if event.key == pygame.K_SPACE:
                         # Emergency stop - clear all keys and send zero twist
@@ -198,6 +214,8 @@ class KeyboardTeleop(Module):
 
                 elif event.type == pygame.KEYUP:
                     self._keys_held.discard(event.key)
+                    if event.key in _JOY_KEY_SET:
+                        self.joystick.publish(Joy(buttons=joy_buttons(self._keys_held)))
 
             # Generate Twist message from held keys
             twist = Twist()
@@ -248,7 +266,9 @@ class KeyboardTeleop(Module):
             else:
                 self.cmd_vel.publish(twist)
 
-            self._publish_joystick()
+            buttons = joy_buttons(self._keys_held)
+            if any(buttons):
+                self.joystick.publish(Joy(buttons=buttons))
             self._update_display(twist)
 
             # Maintain control loop rate
@@ -257,24 +277,6 @@ class KeyboardTeleop(Module):
             self._clock.tick(_CONTROL_RATE_HZ)
 
         pygame.quit()
-
-    def _publish_joystick(self) -> None:
-        pressed = pygame.key.get_pressed()
-        mods = pygame.key.get_mods()
-        buttons = [
-            int(pressed[pygame.K_w]),
-            int(pressed[pygame.K_a]),
-            int(pressed[pygame.K_s]),
-            int(pressed[pygame.K_d]),
-            int(pressed[pygame.K_q]),
-            int(pressed[pygame.K_e]),
-            int(bool(mods & pygame.KMOD_SHIFT)),
-            int(bool(mods & pygame.KMOD_CTRL)),
-            int(pressed[pygame.K_SPACE]),
-        ]
-        if any(buttons) or buttons != self._last_buttons:
-            self.joystick.publish(Joy(buttons=buttons))
-            self._last_buttons = buttons
 
     def _font(self, size: int, bold: bool = False) -> pygame.font.Font:
         if self._fonts is None:
@@ -309,8 +311,7 @@ class KeyboardTeleop(Module):
         screen = self._screen
         screen.fill(_BG)
 
-        pressed = pygame.key.get_pressed()
-        mods = pygame.key.get_mods()
+        held = joy_buttons(self._keys_held)
         moving = twist.linear.x != 0 or twist.linear.y != 0 or twist.angular.z != 0
         estop = time.monotonic() - self._estop_at < _ESTOP_FLASH_S
 
@@ -331,10 +332,10 @@ class KeyboardTeleop(Module):
         for r, row in enumerate(rows):
             for c, (key, label, sub) in enumerate(row):
                 rect = pygame.Rect(20 + c * 60, 60 + r * 60, 52, 52)
-                self._keycap(rect, label, movement and bool(pressed[key]), sub)
+                self._keycap(rect, label, movement and key in self._keys_held, sub)
         boost, slow = f"boost {self.boost_multiplier:g}x", f"slow {self.slow_multiplier:g}x"
-        self._keycap(pygame.Rect(20, 180, 82, 52), "Shift", bool(mods & pygame.KMOD_SHIFT), boost)
-        self._keycap(pygame.Rect(110, 180, 82, 52), "Ctrl", bool(mods & pygame.KMOD_CTRL), slow)
+        self._keycap(pygame.Rect(20, 180, 82, 52), "Shift", bool(held[6]), boost)
+        self._keycap(pygame.Rect(110, 180, 82, 52), "Ctrl", bool(held[7]), slow)
         self._keycap(pygame.Rect(20, 240, 172, 52), "Space", estop, "e-stop", _RED)
 
         px = 220

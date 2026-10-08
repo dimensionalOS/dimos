@@ -66,8 +66,6 @@ K_t: int
 K_w: int
 K_y: int
 K_SPACE: int
-KMOD_SHIFT: int
-KMOD_CTRL: int
 K_ESCAPE: int
 K_RETURN: int
 K_BACKSPACE: int
