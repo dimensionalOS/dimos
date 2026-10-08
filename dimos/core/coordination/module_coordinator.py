@@ -27,6 +27,7 @@ import time
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.coordination.blueprint_config.values import deep_merge, plain
 from dimos.core.coordination.blueprints import TransportSpec, transport_config_name
 from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
@@ -56,6 +57,22 @@ if TYPE_CHECKING:
     from dimos.core.rpc_client import ModuleProxy, ModuleProxyProtocol
 
 logger = setup_logger()
+
+START_WARN_INTERVAL_S = 30.0
+
+
+def _warn_while_pending(pending: set[str], lock: threading.Lock, done: threading.Event) -> None:
+    """Log an error naming the modules still inside start() until *done* is set."""
+    t0 = time.perf_counter()
+    while not done.wait(START_WARN_INTERVAL_S):
+        with lock:
+            still = sorted(pending)
+        if still:
+            logger.error(
+                "Module start() has not returned",
+                modules=still,
+                elapsed_s=round(time.perf_counter() - t0),
+            )
 
 
 class ModuleDescriptor(NamedTuple):
@@ -263,20 +280,42 @@ class ModuleCoordinator(Resource):
             raise
 
     def start_all_modules(self) -> dict[str, float]:
-        """Start every deployed module in parallel and return each start() duration in seconds."""
+        """Start every deployed module in parallel and return each start() duration in seconds.
+
+        A module whose ``start()`` does not return is reported by name every
+        ``START_WARN_INTERVAL_S`` seconds, so a hung start is loud instead of silent.
+        """
         modules = list(self._deployed_modules.items())
         if not modules:
             raise ValueError("No modules deployed. Call deploy() before start_all_modules().")
 
         durations: dict[str, float] = {}
+        pending = {name for name, _ in modules}
+        pending_lock = threading.Lock()
+        done = threading.Event()
 
         def start(item: tuple[str, ModuleProxyProtocol]) -> None:
             name, module = item
             t0 = time.perf_counter()
-            module.start()
+            try:
+                module.start()
+            finally:
+                with pending_lock:
+                    pending.discard(name)
             durations[name] = time.perf_counter() - t0
 
-        safe_thread_map(modules, start)
+        watchdog = threading.Thread(
+            target=_warn_while_pending,
+            args=(pending, pending_lock, done),
+            name="start-watchdog",
+            daemon=True,
+        )
+        watchdog.start()
+        try:
+            safe_thread_map(modules, start)
+        finally:
+            done.set()
+            watchdog.join(DEFAULT_THREAD_JOIN_TIMEOUT)
 
         self._send_on_system_modules()
         return durations
