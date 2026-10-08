@@ -30,7 +30,7 @@ from dimos.utils.testing.waiting import wait_until
 @pytest.mark.native_e2e
 @pytest.mark.skipif(sys.platform != "linux", reason="POSIX native package acceptance runs on Linux")
 def test_installed_native_package_is_discovered_and_runs_outside_its_sources(tmp_path):
-    for command in ("cmake", "c++", "uv"):
+    for command in ("cmake", "cargo", "uv"):
         if shutil.which(command) is None:
             pytest.skip(f"external package acceptance requires {command}")
     for package in ("build", "scikit_build_core"):
@@ -124,6 +124,7 @@ def test_installed_native_package_is_discovered_and_runs_outside_its_sources(tmp
                 "none",
                 "--n-workers",
                 "1",
+                "--no-serve-coordinator-rpc",
                 "run",
                 "dimos-external-native.probe",
             ],
@@ -133,7 +134,14 @@ def test_installed_native_package_is_discovered_and_runs_outside_its_sources(tmp
             stderr=subprocess.STDOUT,
         )
         try:
-            wait_until(lambda: report.exists() or proc.poll() is not None, timeout=45)
+            wait_until(
+                lambda: (
+                    report.exists()
+                    and "serve_coordinator_rpc is off" in (tmp_path / "run.log").read_text()
+                )
+                or proc.poll() is not None,
+                timeout=45,
+            )
             log.seek(0)
             assert report.exists(), log.read()
             ready = report.read_text().splitlines()[0]

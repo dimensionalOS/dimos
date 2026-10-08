@@ -15,4 +15,4 @@ probe = "dimos_external_native.module:PackageProbe"
 [tool.scikit-build]
 wheel.packages = ["src/dimos_external_native"]
 wheel.py-api = "py3"
-sdist.include = ["native/probe.cpp", "CMakeLists.txt", "src/**"]
+sdist.include = ["native/Cargo.toml", "native/Cargo.lock", "native/src/**", "CMakeLists.txt", "src/**"]
