@@ -42,6 +42,7 @@ def message_types():
         "dimos_msgs/msg/BoundingBox3DArray",
         "dimos_msgs/msg/EntityMarker",
         "dimos_msgs/msg/EntityMarkers",
+        "dimos_msgs/msg/EpisodeStatus",
         "dimos_msgs/msg/GraspCandidate",
         "dimos_msgs/msg/GraspCandidateArray",
         "dimos_msgs/msg/ImuInfo",

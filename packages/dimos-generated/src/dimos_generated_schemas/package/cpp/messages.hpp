@@ -240,6 +240,25 @@ static constexpr const char* msg_name = "dimos_msgs/msg/EntityMarkers";
 };
 }
 #endif
+#ifndef DIMOS_MESSAGE_78F4ED1DEB1B34DFDA6F24F5EE35F865A25466476BAECF67ABEE6DEBC2A7E65B_TYPE
+#define DIMOS_MESSAGE_78F4ED1DEB1B34DFDA6F24F5EE35F865A25466476BAECF67ABEE6DEBC2A7E65B_TYPE
+namespace dimos_msgs::msg {
+struct EpisodeStatus {
+double ts{};
+std::string state{};
+int64_t episodes_saved{};
+int64_t episodes_discarded{};
+std::string last_event{"init"};
+std::vector<std::string> task_label{};
+bool operator==(const EpisodeStatus& other) const { return this->ts == other.ts && this->state == other.state && this->episodes_saved == other.episodes_saved && this->episodes_discarded == other.episodes_discarded && this->last_event == other.last_event && this->task_label == other.task_label; }
+bool operator!=(const EpisodeStatus& other) const { return !(*this == other); }
+void validate() const {
+if (task_label.size() > 1) throw std::length_error("task_label exceeds sequence bound");
+}
+static constexpr const char* msg_name = "dimos_msgs/msg/EpisodeStatus";
+};
+}
+#endif
 #ifndef DIMOS_MESSAGE_73822A2CF3903B0E42CAB4C29A13C75CC99C347178F391D1CEE7AF631942F8F6_TYPE
 #define DIMOS_MESSAGE_73822A2CF3903B0E42CAB4C29A13C75CC99C347178F391D1CEE7AF631942F8F6_TYPE
 namespace dimos_msgs::msg {
@@ -2978,6 +2997,36 @@ cdr << value.markers;
 template<> inline void deserialize(Cdr& cdr, dimos_msgs::msg::EntityMarkers& value) {
 cdr >> value.header;
 cdr >> value.markers;
+value.validate();
+}
+#endif
+#ifndef DIMOS_MESSAGE_78F4ED1DEB1B34DFDA6F24F5EE35F865A25466476BAECF67ABEE6DEBC2A7E65B_CODEC
+#define DIMOS_MESSAGE_78F4ED1DEB1B34DFDA6F24F5EE35F865A25466476BAECF67ABEE6DEBC2A7E65B_CODEC
+template<> inline size_t calculate_serialized_size(CdrSizeCalculator& calculator, const dimos_msgs::msg::EpisodeStatus& value, size_t& alignment) {
+size_t size = 0;
+size += calculator.calculate_serialized_size(value.ts, alignment);
+size += calculator.calculate_serialized_size(value.state, alignment);
+size += calculator.calculate_serialized_size(value.episodes_saved, alignment);
+size += calculator.calculate_serialized_size(value.episodes_discarded, alignment);
+size += calculator.calculate_serialized_size(value.last_event, alignment);
+size += calculator.calculate_serialized_size(value.task_label, alignment);
+return size;
+}
+template<> inline void serialize(Cdr& cdr, const dimos_msgs::msg::EpisodeStatus& value) {
+cdr << value.ts;
+cdr << value.state;
+cdr << value.episodes_saved;
+cdr << value.episodes_discarded;
+cdr << value.last_event;
+cdr << value.task_label;
+}
+template<> inline void deserialize(Cdr& cdr, dimos_msgs::msg::EpisodeStatus& value) {
+cdr >> value.ts;
+cdr >> value.state;
+cdr >> value.episodes_saved;
+cdr >> value.episodes_discarded;
+cdr >> value.last_event;
+cdr >> value.task_label;
 value.validate();
 }
 #endif

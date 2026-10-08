@@ -172,6 +172,39 @@ pub mod dimos_msgs {
             }
         }
         #[derive(Debug, Clone, PartialEq, ::serde::Serialize, ::serde::Deserialize)]
+        pub struct EpisodeStatus {
+            pub ts: f64,
+            pub state: ::std::string::String,
+            pub episodes_saved: i64,
+            pub episodes_discarded: i64,
+            pub last_event: ::std::string::String,
+            pub task_label: ::std::vec::Vec<::std::string::String>,
+        }
+        // Explicit defaults also support .msg defaults and arrays longer than 32.
+        #[allow(clippy::derivable_impls)]
+        impl ::std::default::Default for EpisodeStatus {
+            fn default() -> Self {
+                Self {
+                    ts: ::std::default::Default::default(),
+                    state: ::std::default::Default::default(),
+                    episodes_saved: ::std::default::Default::default(),
+                    episodes_discarded: ::std::default::Default::default(),
+                    last_event: "init".to_owned(),
+                    task_label: ::std::default::Default::default(),
+                }
+            }
+        }
+        impl crate::codec::Message for EpisodeStatus {
+            const NAME: &'static str = "dimos_msgs/msg/EpisodeStatus";
+            const SCHEMA: &'static str = "# EpisodeStatus internal model from robot-learning PR4343, ef5e5f2710c482fb1d43d43ec50fd73b0fbe1dde.\n# Seconds; application validation requires a finite value.\nfloat64 ts\n# Application values: idle, recording. Required by the source model.\nstring state\n# Source Python ints use signed 64-bit wire storage; negative values are retained.\nint64 episodes_saved\nint64 episodes_discarded\n# Application values: start, save, discard, init.\nstring last_event \"init\"\n# Nullable string: [] means None; [\"\"] preserves an explicitly empty label.\nstring[<=1] task_label\n";
+            fn validate(&self) -> ::std::result::Result<(), ::std::string::String> {
+                if self.task_label.len() > 1 {
+                    return Err("task_label exceeds sequence bound".into());
+                }
+                Ok(())
+            }
+        }
+        #[derive(Debug, Clone, PartialEq, ::serde::Serialize, ::serde::Deserialize)]
         pub struct GraspCandidate {
             pub pose: crate::geometry_msgs::msg::Pose,
             pub score: f64,
