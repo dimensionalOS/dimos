@@ -110,7 +110,6 @@ def test_raw_arm_blueprint_configures_its_bridge():
         blueprint=["xarm-sim", "mcp-server"], raw_bridge=True, raw_guide=RAW_ARM_README
     )
     assert env.provides_raw_robot
-    assert env._bridge() == []  # the blueprint's configured bridge, not a default one
     parsed = BlueprintConfigParser(xarm_sim).parse(
         environ={"RAWROBOTBRIDGE__ENDPOINT": "tcp/127.0.0.1:12345"}
     )
@@ -119,11 +118,6 @@ def test_raw_arm_blueprint_configures_its_bridge():
     assert bridge["endpoint"] == "tcp/127.0.0.1:12345"  # the per-run endpoint still applies
     tasks = parsed.module_kwargs("ControlCoordinator")["tasks"]
     assert any(task["type"] == "eef_twist" for task in tasks)
-
-
-def test_raw_bridge_is_added_to_a_blueprint_without_one():
-    env = MujocoEnvironment(blueprint=["xarm-perception-sim"], raw_bridge=True)
-    assert env._bridge() == ["raw-robot-bridge"]
 
 
 def test_suite_guide_becomes_robot_md(tmp_path):

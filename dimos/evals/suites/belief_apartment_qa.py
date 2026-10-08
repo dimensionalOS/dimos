@@ -61,7 +61,7 @@ _SAME_DIFF = choice(["same", "different"])
 
 def _environment() -> DimSimEnvironment:
     return DimSimEnvironment(
-        blueprint=["unitree-go2", "mcp-server", "unitree-skill-container"],
+        blueprint=["unitree-go2", "mcp-server", "unitree-skill-container", "raw-robot-bridge"],
         disable=("wavefront-frontier-explorer", "patrolling-module"),
         scene="apartment",
         raw_bridge=True,

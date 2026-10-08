@@ -111,7 +111,7 @@ misconfigured extension. Invalid trials count as errors in the summary; report t
 
 ### Raw robot topics
 
-`Sim(raw_bridge=True)` adds the `raw-robot-bridge` module to the launch. It republishes the
+A suite composes the `raw-robot-bridge` module and sets `Sim(raw_bridge=True)`. The bridge republishes the
 robot connection's streams as plain Zenoh topics on a per-run loopback port (an attached dimos
 uses `tcp/127.0.0.1:7448`), a peer with multicast and gossip scouting off, so a subscriber sees these keys and none of dimOS's own bus:
 
@@ -129,8 +129,8 @@ pose and a 0-1 gripper opening) on `robot/arm/state/json`, wrist depth and camer
 `robot/arm/twist/json` / `robot/arm/gripper/json` commands that drive the coordinator's
 `eef_twist` and gripper tasks. Robot-specific settings (camera and TCP frames, gripper joint and
 range) live in the robot's blueprint: `xarm-sim` composes a configured bridge and gets its TCP
-pose from the coordinator (`publish_frame_poses`). With `raw_bridge=True` the harness adds a
-default `raw-robot-bridge` only when the blueprint has none.
+pose from the coordinator (`publish_frame_poses`); the Go2 suites list `raw-robot-bridge` with its
+defaults.
 
 Every suite with `raw_bridge=True` names its `ROBOT.md` template as `raw_guide`: `RAW_README`
 for the Go2, `RAW_ARM_README` for arms; a suite appends its robot facts (`XARM7_NOTES`).
