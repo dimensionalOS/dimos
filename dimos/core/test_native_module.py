@@ -527,7 +527,11 @@ def test_json_mode_malformed_falls_back_to_plain_text() -> None:
             "MLSPlannerNative",
             "dimos/navigation/global_planner/mls_planner/rust/result/bin/mls_planner",
         ),
-        ("dimos.hardware.sensors.camera.v4l2.module", "V4L2Camera", "target/release/v4l2_camera"),
+        (
+            "dimos.hardware.sensors.camera.v4l2.module",
+            "V4L2Camera",
+            "dimos/hardware/sensors/camera/v4l2/rust/result/bin/v4l2_camera",
+        ),
         (
             "dimos.simulation.habitat.connection",
             "HabitatConnection",

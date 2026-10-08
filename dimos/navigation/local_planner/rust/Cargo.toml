@@ -39,8 +39,10 @@ module = ["dep:dimos-module", "dep:lcm-msgs", "dep:tokio", "dep:tracing", "dep:t
 # `Emb::fixture()`, a test body for this crate and its dependants.
 test-bodies = []
 
-[dev-dependencies]
-dimos-local-planner = { path = ".", features = ["test-bodies", "module"] }
+# `cargo test --features module,test-bodies` runs everything; without them the module's and fixture tests skip.
+[[test]]
+name = "invariants"
+required-features = ["test-bodies"]
 
 [package.metadata.dimos.module.local_planner]
 path = "dimos_local_planner::module::planner::LocalPlanner"

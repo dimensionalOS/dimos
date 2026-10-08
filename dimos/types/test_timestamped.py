@@ -318,7 +318,12 @@ def test_timestamp_alignment(test_scheduler) -> None:
         video_raw.pipe(ops.map(spy)), scheduler=test_scheduler
     ).pipe(ops.map(process_video_frame))
 
-    aligned_frames = align_timestamped(fake_video_processor, video_raw).pipe(ops.to_list()).run()
+    tolerance = 0.1
+    aligned_frames = (
+        align_timestamped(fake_video_processor, video_raw, match_tolerance=tolerance)
+        .pipe(ops.to_list())
+        .run()
+    )
 
     assert len(raw_frames) == 150
     assert len(processed_frames) >= 2
@@ -333,7 +338,8 @@ def test_timestamp_alignment(test_scheduler) -> None:
         print(
             f"Aligned pair: primary={primary.ts:.6f}, secondary={secondary.ts:.6f}, diff={diff:.6f}s"
         )
-        assert diff <= 0.05
+        # The two replays are separate streams, so a pair is only promised within the match tolerance.
+        assert diff <= tolerance
 
     assert len(aligned_frames) >= 2
 

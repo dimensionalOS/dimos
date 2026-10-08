@@ -593,7 +593,6 @@ dependencies = [
 name = "dimos-local-planner"
 version = "0.1.0"
 dependencies = [
- "dimos-local-planner",
  "dimos-module",
  "lcm-msgs",
  "numpy",

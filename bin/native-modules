@@ -551,18 +551,14 @@ def flake_dirs() -> list[str]:
 
 
 def _checks_of(build_dir: str) -> frozenset[str] | None:
-    """The names under `checks.<system>`, or None if the flake does not build on this system; an eval failure raises."""
-    directory = REPO_ROOT / build_dir
+    """The names under `checks.<system>`, or None if the flake declares none for this system; an eval failure raises."""
     system = current_system()
-    expr = f"""
-      let flake = builtins.getFlake "path:{directory}";
-          has = output: builtins.hasAttr "{system}" (flake.${{output}} or {{}});
-      in if has "checks" || has "packages" || has "devShells"
-         then builtins.attrNames ((flake.checks or {{}})."{system}" or {{}})
-         else null
-    """
+    # Read the flake as `nix build path:.` does; builtins.getFlake "path:…" can serve a stale copy.
+    apply = f'c: if c ? "{system}" then builtins.attrNames c."{system}" else null'
     names = json.loads(
-        _run(["nix", "eval", "--impure", "--json", "--expr", expr], directory).stdout
+        _run(
+            ["nix", "eval", "--json", "path:.#checks", "--apply", apply], REPO_ROOT / build_dir
+        ).stdout
     )
     return None if names is None else frozenset(names)
 

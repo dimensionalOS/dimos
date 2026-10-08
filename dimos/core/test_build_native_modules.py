@@ -486,23 +486,24 @@ def _rel(path: Path) -> str:
 _BUILD_EDGES = ("nixpkgs", "dimos-native-rust", "dimos-native-cpp")
 
 
-def _root_nixpkgs(lock: Path) -> str | None:
-    """The nixpkgs revision a lock's root actually builds against, following follows."""
+def _root_input(lock: Path, input_name: str) -> str | None:
+    """The revision of one input a lock's root actually builds against, following follows."""
     data = json.loads(lock.read_text())
     nodes, root = data["nodes"], data.get("root", "root")
-    name = nodes[root].get("inputs", {}).get("nixpkgs")
+    name = nodes[root].get("inputs", {}).get(input_name)
     seen: set[str] = set()
     while isinstance(name, str) and name not in seen:
         seen.add(name)
         node = nodes.get(name, {})
         if "locked" in node:
             return node["locked"].get("rev")
-        name = node.get("inputs", {}).get("nixpkgs")
+        name = node.get("inputs", {}).get(input_name)
     return None
 
 
-def test_every_module_flake_builds_against_one_nixpkgs() -> None:
-    """Every module flake pins the same nixpkgs.
+@pytest.mark.parametrize("input_name", ["nixpkgs", "crate2nix"])
+def test_every_module_flake_builds_against_one(input_name: str) -> None:
+    """Every module flake pins the same nixpkgs and the same crate2nix.
 
     Each flake is standalone and names `nixos-unstable` itself, so nothing makes them
     agree -- they pin whenever they happen to be locked and drift apart silently. The
@@ -517,17 +518,17 @@ def test_every_module_flake_builds_against_one_nixpkgs() -> None:
     for lock in sorted(DIMOS_PROJECT_ROOT.rglob("flake.lock")):
         if ".git" in lock.parts or lock.parent == DIMOS_PROJECT_ROOT:
             continue
-        rev = _root_nixpkgs(lock)
+        rev = _root_input(lock, input_name)
         if rev:
             by_rev.setdefault(rev, []).append(
                 lock.parent.relative_to(DIMOS_PROJECT_ROOT).as_posix()
             )
     if not by_rev:
-        pytest.skip("no flake.lock pins a nixpkgs to compare")
+        pytest.skip(f"no flake.lock pins a {input_name} to compare")
     assert len(by_rev) == 1, (
-        "module flakes disagree on nixpkgs, so they share no build: "
+        f"module flakes disagree on {input_name}, so they share no build: "
         + "; ".join(f"{rev[:10]} -> {mods}" for rev, mods in by_rev.items())
-        + " -- run `nix flake update nixpkgs` in each and commit the locks"
+        + f" -- run `nix flake update {input_name}` in each and commit the locks"
     )
 
 

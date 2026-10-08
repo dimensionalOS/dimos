@@ -37,9 +37,9 @@ default = []
 python = ["dep:pyo3", "dep:numpy", "dep:serde_json"]
 module = ["dimos-local-planner/module", "dep:serde", "dep:dimos-module", "dep:lcm-msgs", "dep:tokio", "dep:tracing", "dep:tracing-subscriber", "dep:validator"]
 
+# `cargo test --features module` also runs the module's own tests.
 [dev-dependencies]
 dimos-local-planner = { path = "../../../local_planner/rust", default-features = false, features = ["test-bodies"] }
-dimos-trajectory-follower = { path = ".", features = ["module"] }
 serde_json = "1"
 
 [package.metadata.dimos.module.trajectory_follower]

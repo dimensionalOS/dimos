@@ -16,7 +16,7 @@ path = "src/bin/go2_dds.rs"
 [dependencies]
 # Our forks, vendored: the robot has no GitHub access. See vendor/*/Cargo.toml.
 cyclonedds-rs = { path = "vendor/cyclonedds-rs", default-features = false }
-dimos-module = { path = "../../../../../../native/rust/dimos-module" }
+dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "6663bcb6e5e18f43a6cb9cf77ccbec613e310443" }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
 serde = { version = "1", features = ["derive"] }
 serde-big-array = "0.5"

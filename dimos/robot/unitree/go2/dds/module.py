@@ -38,8 +38,8 @@ from dimos.robot.unitree.go2.base import Go2Base, Go2BaseConfig
 
 class GO2DDSConfig(NativeModuleConfig, Go2BaseConfig):
     source_dir: str | None = "dimos/robot/unitree/go2/dds/rust"
-    executable: str = "../../../../../../target/release/go2_dds"
-    build_command: str | None = "nix develop path:nix -c cargo build --release"
+    executable: str = "result/bin/go2_dds"
+    build_command: str | None = "nix build -L path:."
     stdin_config: bool = True
 
     # Every field below crosses to the rust `Config` verbatim (test_module.py).

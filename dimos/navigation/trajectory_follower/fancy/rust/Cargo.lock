@@ -640,7 +640,6 @@ version = "0.1.0"
 dependencies = [
  "dimos-local-planner",
  "dimos-module",
- "dimos-trajectory-follower",
  "lcm-msgs",
  "numpy",
  "pyo3",
