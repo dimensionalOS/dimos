@@ -109,6 +109,7 @@ class KeyboardTeleop(Module):
 
     _stop_event: threading.Event
     _keys_held: set[int] | None = None
+    _keys_down: set[int]
     _thread: threading.Thread | None = None
     _screen: pygame.Surface | None = None
     _clock: pygame.time.Clock | None = None
@@ -151,6 +152,7 @@ class KeyboardTeleop(Module):
         super().start()
 
         self._keys_held = set()
+        self._keys_down = set()
         self._stop_event.clear()
 
         self._thread = threading.Thread(target=self._pygame_loop, daemon=True)
@@ -187,8 +189,9 @@ class KeyboardTeleop(Module):
                     self._stop_event.set()
                 elif event.type == pygame.KEYDOWN:
                     self._keys_held.add(event.key)
+                    self._keys_down.add(event.key)
                     if event.key in _JOY_KEY_SET:
-                        self.joystick.publish(Joy(buttons=joy_buttons(self._keys_held)))
+                        self.joystick.publish(Joy(buttons=joy_buttons(self._keys_down)))
 
                     if event.key == pygame.K_SPACE:
                         # Emergency stop - clear all keys and send zero twist
@@ -214,8 +217,9 @@ class KeyboardTeleop(Module):
 
                 elif event.type == pygame.KEYUP:
                     self._keys_held.discard(event.key)
+                    self._keys_down.discard(event.key)
                     if event.key in _JOY_KEY_SET:
-                        self.joystick.publish(Joy(buttons=joy_buttons(self._keys_held)))
+                        self.joystick.publish(Joy(buttons=joy_buttons(self._keys_down)))
 
             # Generate Twist message from held keys
             twist = Twist()
@@ -266,7 +270,7 @@ class KeyboardTeleop(Module):
             else:
                 self.cmd_vel.publish(twist)
 
-            buttons = joy_buttons(self._keys_held)
+            buttons = joy_buttons(self._keys_down)
             if any(buttons):
                 self.joystick.publish(Joy(buttons=buttons))
             self._update_display(twist)
