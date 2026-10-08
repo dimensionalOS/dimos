@@ -38,12 +38,12 @@ license shared by the standard interface packages and parser. The parser's
 original copyright header is preserved. `rosidl_parser.pyi` is DimOS's type stub;
 the upstream implementation has one documented patch replacing an ambiguous
 constant-name regex with its linear-time equivalent. `sources.json` records both
-the original and patched hashes; the maintenance script reapplies the patch.
+the original and patched hashes.
 
-To refresh the pinned inputs intentionally, edit the revisions in
-`scripts/vendor_message_definitions.py`, then run that maintenance command with
-`requests` installed. Review the source diff and update the conformance evidence.
-Applications and builds never run the maintenance downloader.
+The following message-package layer provides `scripts/vendor_message_definitions.py`
+for intentional updates of pinned upstream inputs and reapplication of the parser
+patch. It is not part of this standalone generator layer. Applications and builds
+never run a maintenance downloader.
 
 This work is being delivered through the `replace-lcm-message-encoding` OpenSpec
 change. The generated pipeline is under development; the old runtime message APIs
