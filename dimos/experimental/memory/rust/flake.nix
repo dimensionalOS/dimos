@@ -36,7 +36,8 @@
           inherit pkgs;
           buildRustCrateForPkgs = cratePkgs:
             let build = cratePkgs.buildRustCrate.override {
-                  defaultCrateOverrides = cratePkgs.defaultCrateOverrides // sysOverrides;
+                  # stabby-macros writes the builder's core count (NUM_JOBS) into its code; one value makes every machine's copy match.
+                  defaultCrateOverrides = cratePkgs.defaultCrateOverrides // sysOverrides // { stabby-macros = _: { preConfigure = "export NIX_BUILD_CORES=1"; }; };
                 };
             in crate: build (crate // pkgs.lib.optionalAttrs
               (mode != null && builtins.elem crate.crateName ours)

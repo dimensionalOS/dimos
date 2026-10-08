@@ -23,7 +23,10 @@
         callWith = mode: import generated {
           inherit pkgs;
           buildRustCrateForPkgs = cratePkgs: crate:
-            cratePkgs.buildRustCrate (crate // pkgs.lib.optionalAttrs
+            # stabby-macros writes the builder's core count (NUM_JOBS) into its code; one value makes every machine's copy match.
+            (cratePkgs.buildRustCrate.override {
+              defaultCrateOverrides = cratePkgs.defaultCrateOverrides // { stabby-macros = _: { preConfigure = "export NIX_BUILD_CORES=1"; }; };
+            }) (crate // pkgs.lib.optionalAttrs
               (mode != null && builtins.elem crate.crateName ours)
               ({
                 release = false;

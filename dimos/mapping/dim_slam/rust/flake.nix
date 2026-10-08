@@ -35,6 +35,8 @@
             buildRustCrateForPkgs = cratePkgs:
               let build = cratePkgs.buildRustCrate.override {
                     defaultCrateOverrides = cratePkgs.defaultCrateOverrides // {
+                      # stabby-macros writes the builder's core count (NUM_JOBS) into its code; one value makes every machine's copy match.
+                      stabby-macros = _: { preConfigure = "export NIX_BUILD_CORES=1"; };
                       # cu_vslam_rs's build.rs compiles its shim against this SDK.
                       cu_vslam_rs = _: { CUVSLAM_SDK_DIR = sdkPackage; };
                       dim-slam-module = _: { DEP_CUVSLAM_LIB_DIR = "${sdkPackage}/lib"; };

@@ -39,6 +39,8 @@
           buildRustCrateForPkgs = cratePkgs: crate:
             (cratePkgs.buildRustCrate.override {
               defaultCrateOverrides = cratePkgs.defaultCrateOverrides // {
+                # stabby-macros writes the builder's core count (NUM_JOBS) into its code; one value makes every machine's copy match.
+                stabby-macros = _: { preConfigure = "export NIX_BUILD_CORES=1"; };
                 # Builds libjpeg-turbo from source (the `cmake` feature).
                 turbojpeg-sys = attrs: { nativeBuildInputs = (attrs.nativeBuildInputs or [ ]) ++ [ pkgs.cmake pkgs.nasm ]; };
                 ${name} = attrs: pkgs.lib.optionalAttrs jetson {
