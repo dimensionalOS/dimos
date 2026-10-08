@@ -8,7 +8,7 @@ the underlying planning and perception stack.
 
 ## Prerequisites
 
-Install the manipulation dependencies:
+Use the [official installer](/docs/installation/index.md) first; its default extras include manipulation. To add the dependencies to an existing developer environment:
 
 ```bash
 uv sync --extra manipulation --inexact

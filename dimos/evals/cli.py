@@ -21,6 +21,11 @@ from collections.abc import Iterable
 import importlib
 import inspect
 import json
+import os
+import re
+import secrets
+import subprocess
+import time
 from typing import TYPE_CHECKING, Any
 
 import typer
@@ -62,11 +67,17 @@ def agent_kwargs(overrides: Iterable[str]) -> dict[str, Any]:
     return {name: _value(text) for name, _, text in pairs}
 
 
+def _key_words(key: str) -> list[str]:
+    """``accessToken`` -> ["access", "token"], ``max_output_tokens`` -> ["max", "output", "tokens"]."""
+    spaced = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", key)
+    return re.split(r"[\s_\-]+", spaced.casefold())
+
+
 def _has_secret(value: Any) -> bool:
-    words = ("key", "token", "secret", "password", "credential", "authorization")
+    words = {"key", "apikey", "token", "secret", "password", "credential", "authorization"}
     if isinstance(value, dict):
         return any(
-            any(word in str(key).casefold() for word in words) or _has_secret(item)
+            bool(words & set(_key_words(str(key)))) or _has_secret(item)
             for key, item in value.items()
         )
     return isinstance(value, list) and any(_has_secret(item) for item in value)
@@ -102,13 +113,39 @@ def run(
     set_: list[str] = typer.Option(
         [], "--set", help="Agent field override, e.g. --set model=gpt-5.6-luna --set max_steps=10"
     ),
+    allow: str | None = typer.Option(
+        None, "--allow", help="Allowed tool names, e.g. bash,grep; empty string disables tools"
+    ),
+    exclude: str | None = typer.Option(
+        None,
+        "--exclude",
+        help="Deny tool calls mentioning these keywords, e.g. dimos,dimensionalos",
+    ),
     tags: str = typer.Option("", help="Comma-separated tag filter"),
     limit: int = typer.Option(0, min=0, help="Run at most N cases"),
+    docker: bool = typer.Option(
+        False, "--docker", help="Run in a detached container (docker/evals/compose.yaml)"
+    ),
 ) -> None:
+    if docker:
+        _run_in_docker(suite, agent, set_, allow, exclude, tags, limit)
+        return
+
     from dimos.evals.runner import EvalRunner, summarize
 
     cases = importlib.import_module(suite).SUITE
     kwargs = agent_kwargs(set_)
+    if allow is not None:
+        if "allowed_tools" in kwargs:
+            raise typer.BadParameter("Use --allow or --set allowed_tools, not both")
+        names = [name.strip() for name in allow.split(",")] if allow.strip() else []
+        if any(not name for name in names) or len(names) != len(set(names)):
+            raise typer.BadParameter("Tool names must be nonempty and unique", param_hint="--allow")
+        kwargs["allowed_tools"] = names
+    if exclude is not None:
+        if "excluded_keywords" in kwargs:
+            raise typer.BadParameter("Use --exclude or --set excluded_keywords, not both")
+        kwargs["excluded_keywords"] = [w.strip() for w in exclude.split(",") if w.strip()]
     runner = EvalRunner()
     results = runner.run(
         cases,
@@ -126,6 +163,55 @@ def run(
     typer.echo(
         f"\n{s.n} cases | mean {s.mean_score:.2f} | pass {s.pass_rate:.0%} "
         f"| errors {s.errors} | {s.duration_s:.0f}s | {runner.run_dir}"
+    )
+
+
+def _run_in_docker(
+    suite: str,
+    agent: str,
+    set_: list[str],
+    allow: str | None,
+    exclude: str | None,
+    tags: str,
+    limit: int,
+) -> None:
+    """The same ``dimos evals run`` in a one-off worker of docker/evals/compose.yaml.
+
+    The container has its own network namespace, so any number of these run
+    side by side on one host without sharing a port or a multicast bus. It is
+    detached: this returns as soon as it is started, and it removes itself when
+    the eval ends. Results, recordings and Rerun files land under the runs
+    directory the compose file mounts on ``/state``.
+    """
+    from dimos.constants import DIMOS_PROJECT_ROOT
+
+    argv = [suite, "--agent", agent]
+    for item in set_:
+        argv += ["--set", item]
+    if allow is not None:
+        argv += ["--allow", allow]
+    if exclude is not None:
+        argv += ["--exclude", exclude]
+    if tags:
+        argv += ["--tags", tags]
+    if limit:
+        argv += ["--limit", str(limit)]
+
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    name = f"evals-{stamp}-{secrets.token_hex(2)}-{suite.rsplit('.', 1)[-1]}"
+    # COMPOSE_FILE set in the environment (e.g. to add compose.gpu.yaml) wins.
+    compose = DIMOS_PROJECT_ROOT / "docker" / "evals" / "compose.yaml"
+    files = [] if os.environ.get("COMPOSE_FILE") else ["-f", str(compose)]
+    command = ["docker", "compose", *files, "run", "--rm", "-d", "--name", name, "worker"]
+    command += ["dimos", "evals", "run", *argv]
+    runs = compose.parent / (os.environ.get("EVAL_RUNS_DIR") or "eval-runs")
+    # Created as the host user, else docker makes the mount points root-owned.
+    (runs / "dimos" / "runs").mkdir(parents=True, exist_ok=True)
+    subprocess.run(command, check=True, stdout=subprocess.DEVNULL)
+    typer.echo(f"{name}: started (detached)")
+    typer.echo(f"  follow:   docker logs -f {name}")
+    typer.echo(
+        f"  results:  {runs}/dimos/evals/   recordings + rerun.rrd: {runs}/dimos/recordings/"
     )
 
 

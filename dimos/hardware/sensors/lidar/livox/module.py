@@ -20,20 +20,18 @@ Usage::
 
     from dimos.core.coordination.module_coordinator import ModuleCoordinator
     ModuleCoordinator.build(autoconnect(
-        Mid360.blueprint(),  # host_ip auto-detected, lidar_ip defaults to the factory IP
+        Mid360.blueprint(lidar_ip="192.168.1.155"),  # host_ip auto-detected
         SomeConsumer.blueprint(),
     )).loop()
 """
 
 from __future__ import annotations
 
-import os
 import sys
 from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import Field, field_validator
 
-from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import Out
@@ -55,22 +53,25 @@ from dimos.spec import perception
 
 
 class Mid360Config(NativeModuleConfig):
-    cwd: str | None = "rust"
+    source_dir: str | None = "dimos/hardware/sensors/lidar/livox/rust"
     # The crate is a workspace member, so cargo builds into the repo-root target dir.
-    executable: str = str(DIMOS_PROJECT_ROOT / "target" / "release" / "mid360_native")
+    executable: str = "../../../../../../target/release/mid360_native"
     build_command: str | None = "cargo build --release"
     stdin_config: bool = True
     base_fields: frozenset[str] = frozenset({"frame_id"})
-    host_ip: str | None = Field(default_factory=lambda: os.environ.get("DIMOS_MID360_HOST_IP"))
-    lidar_ip: str = Field(
-        default_factory=lambda: os.environ.get("DIMOS_MID360_LIDAR_IP", "192.168.1.155")
-    )
+    # None derives host_ip from a NIC on the lidar's subnet; a box with two links
+    # into that subnet sets it explicitly.
+    host_ip: str | None = None
+    # Required for a live sensor.
+    lidar_ip: str | None = None
     frequency: float = 10.0
     enable_imu: bool = True
     # Replay this capture instead of a live sensor. host_ip/lidar_ip are unused.
     pcap: str | None = None
     # Replay speed relative to capture time. None runs flat-out.
     replay_rate: float | None = Field(default=1.0, gt=0)
+    # Seconds a replay holds its first packet, so consumers can subscribe first.
+    replay_delay: float = Field(default=0.0, ge=0)
     # Multicast group the device streams to. None receives unicast only, which
     # loopback replay needs and macOS requires (see virtual_mid360).
     multicast_ip: str | None = Field(
@@ -104,7 +105,7 @@ class Mid360Config(NativeModuleConfig):
     def to_config_dict(self) -> dict[str, Any]:
         config = super().to_config_dict()
         # The rust struct has every key. None crosses as an explicit null.
-        for key in ("host_ip", "pcap", "replay_rate", "multicast_ip"):
+        for key in ("host_ip", "lidar_ip", "pcap", "replay_rate", "multicast_ip"):
             config[key] = getattr(self, key)
         return config
 
@@ -113,6 +114,11 @@ def _resolved_host_ip(config: Mid360Config) -> str | None:
     """Live mode derives host_ip from a NIC on the lidar's subnet. Replay skips it."""
     if config.pcap is not None:
         return config.host_ip
+    if not config.lidar_ip:
+        raise RuntimeError(
+            "Mid360: lidar_ip is not set. Pass --mid360.lidar-ip, set it in the blueprint, "
+            "or set MID360__LIDAR_IP in the environment."
+        )
     return resolve_host_ip(config.lidar_ip, config.host_ip, label="Mid360")
 
 

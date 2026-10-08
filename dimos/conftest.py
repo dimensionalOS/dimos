@@ -171,6 +171,13 @@ def pytest_sessionstart(session):
     _arm_crash_dumps()
 
 
+def pytest_ignore_collect(collection_path: pathlib.Path) -> bool | None:
+    # Nested Python projects own their dependencies and test invocation.
+    if collection_path.is_dir() and (collection_path / "pyproject.toml").is_file():
+        return True
+    return None
+
+
 def pytest_configure(config):
     config.addinivalue_line(
         "markers",
@@ -182,7 +189,8 @@ def pytest_configure(config):
     )
     config.addinivalue_line(
         "markers",
-        "web_browser: cockpit browser e2e (playwright chromium); runs in the CI web job",
+        "web_browser: cockpit browser e2e (playwright chromium + firefox); "
+        "runs in the CI web job and the macOS self-hosted-tests job",
     )
     config.addinivalue_line(
         "markers",
@@ -190,11 +198,13 @@ def pytest_configure(config):
     )
     config.addinivalue_line(
         "markers",
-        "native_e2e: native module e2e (builds rust); runs in the CI rust job",
+        "native_e2e: native module e2e (builds rust); "
+        "runs in the CI rust job and the macOS self-hosted-tests job",
     )
     config.addinivalue_line("markers", "skipif_in_ci: skip when CI env var is set")
     config.addinivalue_line("markers", "skipif_no_openai: skip when OPENAI_API_KEY is not set")
     config.addinivalue_line("markers", "skipif_no_alibaba: skip when ALIBABA_API_KEY is not set")
+    config.addinivalue_line("markers", "skipif_no_typesafe: skip when TYPESAFE_API_KEY is not set")
     config.addinivalue_line("markers", "skipif_no_ros: skip when ROS dependencies are not present")
     config.addinivalue_line(
         "markers",
@@ -289,6 +299,7 @@ def pytest_collection_modifyitems(config, items):
         "skipif_in_ci": (bool(os.getenv("CI")), "Skipped in CI"),
         "skipif_no_openai": (not os.getenv("OPENAI_API_KEY"), "OPENAI_API_KEY not set"),
         "skipif_no_alibaba": (not os.getenv("ALIBABA_API_KEY"), "ALIBABA_API_KEY not set"),
+        "skipif_no_typesafe": (not os.getenv("TYPESAFE_API_KEY"), "TYPESAFE_API_KEY not set"),
         "skipif_no_ros": (not _has_ros(), "ROS dependencies are not present"),
         "skipif_no_turbojpeg": (
             not _has_turbojpeg() and not os.getenv("CI"),

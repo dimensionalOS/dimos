@@ -64,6 +64,7 @@ fn main() {
         wire::LIDAR_POINT_PORT,
         wire::LIDAR_IMU_PORT,
         None,
+        0.0,
         std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
     )
     .expect("parse pcap");
@@ -84,8 +85,8 @@ fn main() {
     let started = Instant::now();
     let mut frame_started = started;
 
-    while let Some(len) = source.recv(&mut buf) {
-        let packet = match DataPacket::parse(&buf[..len]) {
+    while let Some(received) = source.recv(&mut buf) {
+        let packet = match DataPacket::parse(&buf[..received.len]) {
             Ok(p) => p,
             Err(_) => {
                 bad_packets += 1;

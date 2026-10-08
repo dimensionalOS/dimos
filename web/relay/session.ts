@@ -2,7 +2,7 @@
 // the raw-QUIC data stream loop. Sessions own transport quirks; all routing
 // and subscription policy lives in registry.ts.
 //
-// Leg asymmetry, forced by upstream bugs (see web/README.md):
+// Leg asymmetry, forced by upstream bugs (see docs/web/protocol.md):
 // - Robot (aioquic): robot->relay hello rides an @control data frame on a
 //   one-shot bidi stream (v5); relay->robot handshake and teleop control
 //   (welcome, errors, pong, teleop) rides datagrams, while subs snapshots
@@ -30,7 +30,7 @@ import {
   type RobotManifest,
 } from "@dimos/shared";
 import type { Auth } from "./auth.ts";
-import { parseManifest } from "@dimos/shared/manifest";
+import { parseManifest, TRACK_ENCODING } from "@dimos/shared/manifest";
 import { type CarrierStats, RobotCarrier } from "./carrier.ts";
 import {
   type ChannelPolicy,
@@ -205,6 +205,14 @@ export class RobotSession implements RobotPeer {
         this.#registry.onRobotPubResult(this, msg);
         return;
       }
+      if (this.info !== null && msg.t === "rtc_offer") {
+        this.#registry.onRobotRtcOffer(this, msg);
+        return;
+      }
+      if (this.info !== null && msg.t === "rtc_stalled") {
+        this.#registry.onRobotRtcStalled(this, msg);
+        return;
+      }
     }
     if (this.info === null) {
       this.#reject(
@@ -259,6 +267,16 @@ export class RobotSession implements RobotPeer {
         channels = parseManifest(msg.manifest).channels;
       } catch (e) {
         this.#reject("invalid_manifest", (e as Error).message, "invalid manifest");
+        return;
+      }
+      if (!this.#registry.rtcEnabled && channels.some((c) => c.encoding === TRACK_ENCODING)) {
+        // The bridge only declares track channels when /api/info advertised
+        // rtc, so this is a relay reconfigured under a live robot.
+        this.#reject(
+          "rtc_unavailable",
+          `${TRACK_ENCODING} channels need a relay with Cloudflare configured (--rtc-file)`,
+          "rtc unavailable",
+        );
         return;
       }
     }

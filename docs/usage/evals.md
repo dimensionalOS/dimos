@@ -36,6 +36,193 @@ Every runner invocation writes one `~/.local/state/dimos/evals/run-*/` directory
 To generate deterministic image questions from recordings, see
 [Visual Question Answering](/docs/usage/vqa.md).
 
+## Baseline without dimOS versus dimcode + dimOS
+
+For the product comparison, run `PiAdapter` with `no_dimos=true` against `DimcodeAdapter`
+with the **same model**. The baseline keeps Pi's normal tools, the internet, pip, git and any
+public SDK; the only thing withheld is dimOS.
+
+```bash skip
+dimos evals run dimos.evals.suites.examples --agent dimos.evals.agents.pi \
+  --set no_dimos=true --set model=gpt-6-astra --set thinking=medium \
+  --set max_steps=250 --set max_output_tokens=4096
+
+dimos evals run dimos.evals.suites.examples --agent dimos.evals.agents.dimcode \
+  --set model=gpt-6-astra --set thinking=medium \
+  --set max_steps=250 --set max_output_tokens=4096
+```
+
+The same switches compose with the tool allowlist and an explicit keyword list, so a
+restricted or differently guarded baseline is one flag away:
+
+```bash skip
+# Bash and grep only, no dimOS
+dimos evals run dimos.evals.suites.examples --agent dimos.evals.agents.pi \
+  --allow bash,grep --set no_dimos=true --set model=gpt-6-astra
+
+# full Pi toolset, dimOS available, but any tool call naming a vendor SDK is denied
+dimos evals run dimos.evals.suites.examples --agent dimos.evals.agents.pi \
+  --exclude unitree_sdk2py,go2_webrtc --set model=gpt-6-astra
+
+# no tools at all: the model answers from the prompt
+dimos evals run dimos.evals.suites.examples --agent dimos.evals.agents.pi \
+  --allow "" --set model=gpt-6-astra
+```
+
+`no_dimos` is a field of the shared `AgentConfig`. Agents that are dimOS, dimcode and the MCP client, reject it; tool-less agents satisfy it as they are. For Pi it does four things. Pi runs with a `PATH` that has no dimOS executable or checkout
+venv, no `PYTHONPATH` and no `DIMOS_*` variables, so `import dimos` and `dimos` fail. A robot
+is exposed as live topics through `raw-robot-bridge` (below) and nothing else: no recording,
+no MCP tool listing, no `dimos mcp call` guidance. `excluded_keywords` defaults to
+`dimos, dimensionalos`, which denies any tool call that mentions them. And for `Dataset` cases,
+which ask about an existing recording with no robot running, the selected observations are
+exported as plain files, lossless PNGs, XYZ/RGB CSVs and JSON primitives with a manifest,
+because the memory store needs dimOS to read.
+
+`PiAdapter` uses Pi's stock loop, provider support, tracing, limits and cleanup; `no_dimos`
+changes only what it is handed. For a `Dataset` case the baseline receives selected point
+coordinates and colors as CSV, camera frames as lossless PNG and primitive observations as
+JSON, with timestamps and hashes; no `agent_encode` summaries, labels, semantic tags or the
+original database. For a robot case it receives the raw topics and `ROBOT.md`. Dimcode
+receives the same selected observations through the dimOS store, the robot through MCP, and
+keeps its production tools and skills. Representation and delivery differences between the
+arms are part of the comparison and belong in the report.
+
+The baseline runs on the host with the host's system packages; record their versions when
+freezing a pilot, this is not a pinned container image. Neither arm may receive task-specific
+solutions or hidden truth, and dimcode's production environment must not be able to reach
+graders or reference data.
+
+### Keyword guard
+
+`excluded_keywords` is shared `AgentConfig`; set it with `--exclude dimos,dimensionalos` or
+`--set excluded_keywords=[...]`. Before a tool runs, the shared Pi extension matches the call's
+arguments, lowercased, against each keyword as a whole token: `import dimos`, `/opt/dimos/x`,
+`dimos_lcm` and `github.com/dimensionalOS/dimos` hit; `dimosaurus` does not. The run's own
+workspace and config paths are stripped first, so a case directory under `~/.local/state/dimos`
+is not a hit. A denied call never executes; the model receives
+`Tool call denied: its arguments mention the excluded keyword "dimos"...` and continues. The
+guard reads arguments only: reasoning or answers that mention dimOS are untouched, and so is
+tool output. Denied calls are counted in the trajectory's `extra.blocked_calls`. Pi and dimcode
+both enforce it; single-call agents have no tools to guard.
+
+After the run, the runner re-checks executed calls (denied ones are recognised by their result
+text) and marks a trial `invalid: ...` in `error` if a keyword got through, for example a
+misconfigured extension. Invalid trials count as errors in the summary; report them separately.
+
+### Raw robot topics
+
+A suite composes the `raw-robot-bridge` module and sets `Sim(raw_bridge=True)`. The bridge republishes the
+robot connection's streams as plain Zenoh topics on a per-run loopback port (an attached dimos
+uses `tcp/127.0.0.1:7448`), a peer with multicast and gossip scouting off, so a subscriber sees these keys and none of dimOS's own bus:
+
+```
+robot/camera/jpeg        JPEG bytes per frame; attachment {"t": unix_seconds}
+robot/lidar/xyz_f32      float32 little-endian (N,3) metres in the lidar frame; attachment {"t": ...}
+robot/odom/json          {"t","x","y","z","qx","qy","qz","qw"}, base_link in the odom frame
+robot/camera_info/json   {"width","height","K"}, republished periodically
+robot/cmd_vel/json       subscribed: {"vx","vy","wz","t"}; clamped to 1.0 m/s and 1.5 rad/s, held for t seconds (max 2), then stop
+```
+
+These are the topics a Go2 produces. Every stream the bridge understands is optional, so the
+same module serves an arm when its blueprint provides them: joint state (with the measured TCP
+pose and a 0-1 gripper opening) on `robot/arm/state/json`, wrist depth and camera pose, and
+`robot/arm/twist/json` / `robot/arm/gripper/json` commands that drive the coordinator's
+`eef_twist` and gripper tasks. Robot-specific settings (camera and TCP frames, gripper joint and
+range) live in the robot's blueprint: `xarm-sim` composes a configured bridge and gets its TCP
+pose from the coordinator (`publish_frame_poses`); the Go2 suites list `raw-robot-bridge` with its
+defaults.
+
+Every suite with `raw_bridge=True` names its `ROBOT.md` template as `raw_guide`: `RAW_README`
+for the Go2, `RAW_ARM_README` for arms; a suite appends its robot facts (`XARM7_NOTES`).
+
+That is the surface a vendor SDK exposes: sensors out, body velocity with a deadman in. Nothing
+above the connection (map, costmap, planner, `move_to`, memory) and nothing beneath it (simulator
+state, scene assets). The baseline agent gets a `ROBOT.md` describing the endpoint and builds
+whatever it needs from there. The bridge is inert for the dimcode arm, which keeps both
+simulator launches identical. On real hardware there is no bridge: the baseline gets the
+robot's address and uses the vendor SDK directly, while dimOS records through its own connection.
+
+Budgets: building a recorder, a map and a navigator from live topics is long-horizon work; start
+at 250 requests and an hour per case for both arms.
+
+### Shared Pi runtime
+
+Use the same model, reasoning setting, output cap, case selection and timeout
+for each harness. Pi and dimcode use Pi's provider SDKs and built-in model
+registry; model capabilities and prices are not redefined by dimOS. Pin the
+same Pi version in both installations. The integration uses Pi 0.85.1 and
+dimcode's local gateway protocol (`0.1.0-next.2` / `0.1.0-next.3`).
+`DimcodeAdapter` extends `PiAdapter`, overriding gateway startup, session
+configuration and event transport. Provider setup, budgets, tracing and
+cleanup remain shared. No second model loop or SDK wrapper is introduced.
+
+To compare another model, change both commands together: `model=gpt-5.6-sol`,
+or `provider=anthropic` and `model=claude-fable-5-1`. Fable requires
+`ANTHROPIC_API_KEY`, independently of OpenAI access.
+
+`cli=` selects a specific Pi or dimcode executable. `OPENAI_BASE_URL` and
+`ANTHROPIC_BASE_URL` optionally override the upstream endpoints. API keys stay
+in process environment variables; a shared Pi extension registers the trace
+proxy URL and key variable through Pi's provider API. It also applies output
+caps and tool selection. No installed registry files are read or rewritten.
+Request traces omit authentication headers.
+
+Per-case adapter configuration lives under `dimos.constants.CONFIG_DIR / "evals"`;
+temporary gateway sockets use `CACHE_DIR / "evals"`. Home, XDG config/state/cache
+and Pi's agent-directory settings are inherited. Both adapters start new sessions
+with a copy of the selected recording observations. Pi retains its stock system
+prompt with shared case guidance appended. Dimcode retains its production prompt, skills,
+MCP integration and rendering tool; shared case guidance accompanies the user
+instruction. Each case starts and stops its own dimcode gateway and session.
+An existing personal gateway is never attached. Dimcode retains its production
+skills; its tools can be restricted with the shared allowlist.
+
+Freeze code/data, record runtime versions, balance execution order, repeat
+each case and retain failed trials before interpreting the comparison.
+
+### Tool selection
+
+`allowed_tools` belongs to the shared `AgentConfig`. Use `--allow bash,grep`
+on `dimos evals run` or `PiAdapter(allowed_tools=("bash", "grep"))` in Python.
+Omit the option to keep the adapter's native defaults; `--allow ""` disables all
+tools. Exact tool names are required. Unknown names, duplicates and conflicting
+`--allow` / `--set allowed_tools` inputs are errors. The manifest retains the
+requested allowlist, and raw requests retain the actual provider schemas.
+
+Pi and dimcode share a Pi extension that selects active tools and blocks excluded
+calls. Pi also passes the selection to its CLI. The dimcode adapter verifies that
+the extension applied the selection before sending the first prompt. Native MCP
+names are those advertised by dimcode, including its endpoint prefix and suffix.
+The production MCP-client adapter does not yet implement filtering and rejects
+explicit allowlists; single-call agents accept only an empty list or defaults.
+Adapters must enforce selection or reject it, never silently ignore it.
+
+Tool selection is independent of what an allowed tool can reach: `--allow bash` still permits any
+program on the shell's PATH. Use `no_dimos` to keep dimOS off that path.
+
+### Reading the metrics
+
+- `model_turns`: assistant model responses represented in the trajectory.
+  `steps` also includes the initial user instruction.
+- `request_attempts`: recorded HTTP requests, including retries. A failed
+  attempt can have no assistant response, so this can exceed `model_turns`.
+- `tool_calls`: calls requested by those model responses.
+- `agent_duration_s`: adapter execution, including recording export, provider
+  setup and agent cleanup. `duration_s` additionally includes environment
+  startup, settling, teardown and grading.
+- Prompt tokens include cache reads and writes; completion tokens include
+  reasoning when reported by the provider. `cached_tokens` means cache reads.
+- Pi/dimcode `cost_usd` is Pi's registry-based estimate, not a billing receipt.
+  Unknown costs remain null (or omitted in ATIF), never a fabricated zero.
+  Totals cover recorded assistant responses; interrupted requests may have
+  unreported usage. Keep raw attempts when auditing spend.
+
+Errors stay in the summary denominator. An agent error preserves completed
+steps, returns `ended_by=error`, and cannot pass. The runner saves a returned
+trajectory before environment teardown so teardown failures retain evidence.
+Raw requests preserve the actual tools/schemas used on each call; the ATIF
+agent metadata includes the latest recorded definition for each tool name.
+
 ## Your first eval, end to end
 
 Build a tiny SQLite recording using the same Store/Stream API as the robot's
@@ -120,8 +307,10 @@ module path; `--set field=value` sets an agent option, e.g.
 options to the constructor: `QuestionAnswer(frames_per_stream=16)`.
 CLI values are parsed as JSON when possible; quote lists as shown below.
 
-**Tools.** The case's blueprint decides the tool set: `Sim(blueprint=...)`
-is the robot stack plus `McpServer`, and its skill containers are the tools.
+**Tools.** The case's blueprint decides the tool set:
+`DimSimEnvironment(blueprint=...)`, `HabitatEnvironment(blueprint=...)` or
+`MujocoEnvironment(blueprint=...)`
+supplies the robot stack plus `McpServer`, and its skill containers are the tools.
 There is no tool filter. The agent's `modules` list is appended to the
 launch command (`dimos run <blueprint> <modules>`), and `autoconnect` dedups
 anything shared with the case, so `--set 'modules=["unitree-go2-agentic"]'` adds
@@ -133,12 +322,22 @@ already-running dimos instead. To
 compare two tool sets on one task, run the suite twice with different
 `--set modules=...`; each `trajectory.json` records the tools exposed.
 
+**Files.** An environment produces artifacts, files by name such as `recording`.
+The grader gets all of them. The agent gets only the ones named in the
+environment's `agent_artifacts`: by default the `recording` for simulators and
+the `image` for `ImageFile`. A `Dataset` names none, since its `recording` is
+the whole dataset and the agent is given the `select`ed streams instead. A file
+that holds answers, like Habitat's episode metadata with its prop positions,
+stays with the grader. Pass `agent_artifacts=(...)` to the environment to
+change it.
+
 **Limits.** The case's `timeout_s` sets the time budget for the agent and
 subsequent motion settling. `McpClientAdapter` returns what it has when its
 wait expires, marked `timeout`; `QuestionAnswer` and `Blind` rely on the
 model provider's timeout. Environment startup has a separate
-`launch_timeout_s`. There are no token or cost caps; usage is recorded when
-the agent supplies it.
+`launch_timeout_s`. Pi and dimcode bound model HTTP requests with `max_steps`
+(including retries), and optionally cap output per request with `max_output_tokens`.
+There is no aggregate token or dollar cap; usage is recorded when the agent supplies it.
 
 **Observation encoding.** Each agent class hard-codes how the recording
 reaches the model. `QuestionAnswer` calls `agent_encode()`; no other agent
@@ -178,14 +377,17 @@ an **error**, not a score; the run continues.
 
 ## Live environments
 
-`Sim` launches `dimos --simulation dimsim --dimsim-scene <scene> --record run
+`Sim` is the abstract base for simulator environments. Use `DimSimEnvironment`
+for DimSim, `HabitatEnvironment` for Habitat or `MujocoEnvironment` for MuJoCo.
+
+`DimSimEnvironment` launches `dimos --simulation dimsim --dimsim-scene <scene> --record run
 <blueprint> <modules>`, waits for MCP, runs the case's `setup`, and hands out the
 recording that `--record` writes (`recordings/<run-id>/memory.db`). The run
 ends when the agent finishes or `timeout_s` hits, the environment stops, and
 `grade` reads the recording once. `recording(o)` opens it:
 
 ```python session=evals ansi=false no-result
-from dimos.evals.environments.sim import Sim
+from dimos.evals.environments.dimsim import DimSimEnvironment
 from dimos.evals.scorers import ramp
 from dimos.evals.types import EvalCase, recording
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -205,9 +407,8 @@ def ended_near_bed(o):
 go_to_bed = EvalCase(
     id="go_to_bed",
     inputs="go to the bed",
-    environment=Sim(
+    environment=DimSimEnvironment(
         blueprint=["unitree-go2", "mcp-server", "unitree-skill-container"],
-        simulator="dimsim",
         scene="apartment",
     ),
     grade=ended_near_bed,
@@ -221,12 +422,92 @@ dimos evals run dimos.evals.suites.dimsim_house --agent dimos.evals.agents.mcp_c
 
 The recording holds the whole history, so "never left the zone" is `min` over
 the `odom` stream in the grader, and "coverage per meter driven" fuses the
-recorded `lidar` and integrates `odom`. `Sim(attach=True)` drives an
+recorded `lidar` and integrates `odom`.
+`DimSimEnvironment(blueprint=[], attach=True)` drives an
 already-running dimos (start it with `--record`) instead of launching one.
+
+For Habitat, select a downloaded dataset and its scene handle on the environment:
+
+```python session=evals ansi=false no-result
+from dimos.evals.environments.habitat import HabitatEnvironment
+
+habitat_environment = HabitatEnvironment(
+    blueprint=["habitat-nav", "mcp-server", "observe-skill"],
+    scene_dataset_config="target/habitat/data/versioned_data/hm3d-0.2/hm3d/example/hm3d_annotated_example_basis.scene_dataset_config.json",
+    scene_id="00861-GLAQ4DNUx5U",
+    seed=0,
+)
+```
+
+Pass this environment to an `EvalCase`. Habitat requires a fresh launch and
+does not support `attach=True`. It waits for fresh RGB and odometry and records
+episode metadata alongside the recording. Its recording topic selection includes
+sensor streams and navigation streams supplied by the composed blueprint.
+The metadata's `point_cloud_source` describes how Habitat scans are generated
+(depth unprojection), not whether scan publication is enabled.
+
+For MuJoCo, the blueprint brings its own `MujocoSimModule` and scene, so the
+environment only launches `dimos --simulation mujoco --record run <blueprint>
+<modules>` headless; `MUJOCOSIMMODULE__HEADLESS=false` in the shell opens the viewer on
+Linux. Manipulation graders need ground-truth object poses:
+`tracked_bodies` names free bodies in the MJCF, and the simulator publishes
+`world -> <body>` on `tf` next to its camera frames. `first_body_transform` and
+`last_body_transform` read them back from the recording:
+
+```python session=evals ansi=false no-result
+from dimos.evals.environments.lib.recorded_poses import first_body_transform, last_body_transform
+from dimos.evals.environments.mujoco_sim import MujocoEnvironment
+
+
+def lifted_apple(o):
+    with recording(o) as store:
+        start = first_body_transform(store, "apple").translation.z
+        end = last_body_transform(store, "apple").translation.z
+    return min(max((end - start) / 0.05, 0.0), 1.0)
+
+
+lift_apple = EvalCase(
+    id="lift_apple",
+    inputs="Pick up the apple and hold it in the air above the table.",
+    environment=MujocoEnvironment(
+        blueprint=["xarm-perception-sim", "mcp-server"],
+        disable=("rerun-bridge-module",),
+        tracked_bodies=("apple", "orange", "cup"),
+    ),
+    grade=lifted_apple,
+    timeout_s=600.0,
+)
+```
+
+A fixed-base arm has no odometry, so readiness waits for fresh `color_image`
+and `coordinator_joint_state` plus a pose for every tracked body, and settling
+waits until every joint is slower than `at_rest_rad_s`. Floating-base robots
+still settle on `odom`. The recording keeps color, camera info, joint state,
+`tf` and `odom`; depth frames are float32, which the JPEG recorder rejects. `module_env` passes extra
+`MODULE__FIELD` overrides to the launched dimos, which beat blueprint-pinned
+values, so a case can retune a module without a new blueprint. `scene` passes
+`--mujoco-scene`: a full MJCF, robot included, that `xarm-perception-sim` loads
+instead of its default `scene.xml`. `base_height` sets the planning model's
+existing `base_pose` to world `(0, 0, height)` with identity orientation. Without it,
+the robot's configured base pose is retained (0.12 m for the default xArm scene).
+`dimos.evals.suites.mujoco_xarm` is the xArm7 table scene with the perception
+modules disabled: pick up the cylinder, then put the red ball on top of it.
+
+`dimos.evals.suites.mujoco_xarm_pick` evaluates a cylinder lift in the default
+scene using plain robot commands and observations (see Raw robot topics). Run it
+with Pi and `--set no_dimos=true --set max_steps=120`.
+
+`dimos.evals.suites.robosuite` provides six manipulation cases using
+recorded body poses. See `data/robosuite/README.md` in the downloaded data
+package for tasks, scene setup and usage; use `--tags <scene>` to select a case.
 
 ## Running
 
 - **CLI**: `dimos evals run <dotted.suite> --agent <agent-module> [--set model=gpt-4o] [--tags nav] [--limit 5]`
+- **Docker**: add `--docker` to run that eval in a fresh, detached container
+  from the eval image, one per invocation, any number side by side on one
+  host; setup, GPU rendering and an EC2 runbook are in
+  [`evals-docker.md`](/docs/usage/evals-docker.md).
 - **Python**: `EvalRunner().run(SUITE, agent, tags=frozenset({"encoding"}))`
 - **pytest**: suites are importable lists. Use
   `@pytest.mark.parametrize("case", SUITE)` and assert on `passed`

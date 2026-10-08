@@ -21,15 +21,22 @@ from collections.abc import Sequence
 from contextlib import ExitStack
 from typing import TYPE_CHECKING, Any
 
-from dimos.protocol.service.spec import Configurable
+from dimos.protocol.service.spec import BaseConfig, Configurable
 
 if TYPE_CHECKING:
     from dimos.evals.agents.base import Agent
     from dimos.evals.types import RunningEnvironment
 
 
+class EnvironmentConfig(BaseConfig):
+    agent_artifacts: tuple[str, ...] = ()
+    """Names of the artifacts the agent is given. The grader gets all of them."""
+
+
 class Environment(Configurable, ABC):
     """What exists for a case, including ownership of the resources it starts."""
+
+    config: EnvironmentConfig
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -39,6 +46,16 @@ class Environment(Configurable, ABC):
     def has_robot(self) -> bool:
         """Whether this environment supplies an MCP server without agent modules."""
         return False
+
+    @property
+    def provides_raw_robot(self) -> bool:
+        """Whether the robot is also exposed as plain topics for agents without dimOS."""
+        return False
+
+    @property
+    def raw_guide(self) -> str | None:
+        """ROBOT.md template describing the raw topics, when provides_raw_robot."""
+        return None
 
     def preflight(self, agent: Agent) -> None:
         """Check compatibility before any environment starts."""

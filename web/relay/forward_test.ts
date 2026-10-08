@@ -1,4 +1,4 @@
-import { assert, assertEquals, assertRejects } from "@std/assert";
+import { assert, assertEquals, assertRejects, assertStrictEquals } from "@std/assert";
 import {
   CONTROL_CHANNEL,
   encodeDataFrame,
@@ -253,6 +253,22 @@ Deno.test("reliable: overflow kicks once and empties the FIFO", async () => {
   ch.offer(frame(200)); // still a no-op until transport teardown completes
   assertEquals(ch.queued(), 0);
   assertEquals(sink.kicks, 1);
+});
+
+Deno.test("reliable: a lone frame over the byte cap is sent, a backlog behind it kicks", async () => {
+  const big = new Uint8Array(17 * 1024 * 1024);
+  const alone = new FakeSink();
+  new ReliableChannel(alone).offer(big);
+  await tick();
+  assertEquals(alone.kicked, null);
+  assertEquals(alone.sent.length, 1);
+  assertStrictEquals(alone.sent[0], big);
+  const backlog = new FakeSink(false);
+  const ch = new ReliableChannel(backlog);
+  ch.offer(big);
+  ch.offer(frame(1)); // queued behind the unsent big frame: together over the cap
+  assertEquals(backlog.kicked, "reliable channel overflow");
+  assertEquals(ch.queued(), 0);
 });
 
 Deno.test("latest: dispose resets every outstanding send without kicking", async () => {

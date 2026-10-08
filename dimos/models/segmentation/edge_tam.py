@@ -92,6 +92,11 @@ def _build_model() -> "SAM2VideoPredictor":
         logger.warning(f"Config target is {cfg.model._target_}, forcing SAM2VideoPredictor")
         cfg.model._target_ = "sam2.sam2_video_predictor.SAM2VideoPredictor"
 
+    # Keep SAM2 from changing process-wide attention backends.
+    from sam2.modeling.sam import transformer
+
+    transformer.ALLOW_ALL_KERNELS = True
+
     predictor: SAM2VideoPredictor = instantiate(cfg.model, _recursive_=True)
 
     # Suppress the per-frame "propagate in video" tqdm bar from sam2

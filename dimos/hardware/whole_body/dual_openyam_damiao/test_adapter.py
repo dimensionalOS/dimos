@@ -23,7 +23,9 @@ from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
 from dimos.hardware.whole_body.dual_openyam_damiao.adapter import (
     DualOpenYamDamiaoAdapter,
 )
-from dimos.robot.manipulators.dual_openyam.config import DUAL_OPENYAM_JOINTS
+from dimos.robot.manipulators.dual_openyam.joints import (
+    DUAL_OPENYAM_JOINTS,
+)
 
 pytestmark = pytest.mark.self_hosted
 

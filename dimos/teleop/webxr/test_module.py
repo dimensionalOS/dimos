@@ -24,9 +24,10 @@ from fastapi.testclient import TestClient
 import pytest
 import pytest_mock
 
-from dimos.imitation.collection.episode_monitor import EpisodeStatus
+from dimos.imitation.collection.episode import EpisodeStatus
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Joy import Joy
+from dimos.msgs.std_msgs.String import String
 from dimos.teleop.webxr.body_tracking import BodyTrackingSnapshot
 from dimos.teleop.webxr.controller_types import (
     Buttons,
@@ -224,7 +225,7 @@ def test_episode_status_is_cached_and_broadcast(
     broadcast = mocker.patch.object(module, "_broadcast_text")
     mocker.patch("dimos.teleop.webxr.module.time.time", return_value=165.5)
 
-    module._on_episode_status(_episode_status())
+    module._on_episode_status(String(_episode_status().to_json()))
 
     assert module._latest_episode_status == _episode_status()
     payload = json.loads(broadcast.call_args.args[0])
@@ -395,6 +396,80 @@ def test_stop_publishes_safe_button_state(
 
     assert module.get_status().right_engaged is False
     assert published[-1].data == 0
+
+
+def test_button_edges_are_debounced_and_not_repeated_while_held(
+    module: WebXRTeleopModule, mocker: pytest_mock.MockerFixture
+) -> None:
+    pressed = mocker.patch.object(module.button_pressed, "publish")
+    released = mocker.patch.object(module.button_released, "publish")
+    mocker.patch(
+        "dimos.teleop.webxr.module.time.monotonic",
+        side_effect=[0.0, 0.049, 0.05, 1.0, 1.01, 1.06],
+    )
+    held = Buttons()
+    held.right_primary = True
+
+    module._publish_buttons(held)
+    module._publish_buttons(held)
+    module._publish_buttons(held)
+    module._publish_buttons(held)
+    module._publish_buttons(Buttons())
+    module._publish_buttons(Buttons())
+
+    pressed.assert_called_once()
+    assert pressed.call_args.args[0].right_primary
+    released.assert_called_once()
+    assert released.call_args.args[0].right_primary
+
+
+def test_button_edges_can_contain_simultaneous_digital_buttons(
+    module: WebXRTeleopModule, mocker: pytest_mock.MockerFixture
+) -> None:
+    publish = mocker.patch.object(module.button_pressed, "publish")
+    mocker.patch(
+        "dimos.teleop.webxr.module.time.monotonic",
+        side_effect=[0.0, 0.05],
+    )
+    buttons = Buttons()
+    buttons.left_secondary = True
+    buttons.right_primary = True
+
+    module._publish_buttons(buttons)
+    module._publish_buttons(buttons)
+
+    publish.assert_called_once()
+    edge = publish.call_args.args[0]
+    assert edge.left_secondary
+    assert edge.right_primary
+
+
+def test_analog_trigger_bits_do_not_emit_button_edges(
+    module: WebXRTeleopModule, mocker: pytest_mock.MockerFixture
+) -> None:
+    pressed = mocker.patch.object(module.button_pressed, "publish")
+    released = mocker.patch.object(module.button_released, "publish")
+    buttons = Buttons()
+    buttons.pack_analog_triggers(1.0, 1.0)
+
+    module._publish_buttons(buttons)
+    module._publish_buttons(buttons)
+
+    pressed.assert_not_called()
+    released.assert_not_called()
+
+
+def test_disconnect_releases_debounced_buttons_immediately(
+    module: WebXRTeleopModule, mocker: pytest_mock.MockerFixture
+) -> None:
+    publish = mocker.patch.object(module.button_released, "publish")
+    module._debounced_buttons = 1 << Buttons.BITS["right_primary"]
+
+    module._release_all_buttons()
+
+    publish.assert_called_once()
+    assert publish.call_args.args[0].right_primary
+    assert module._debounced_buttons == 0
 
 
 def test_go2_stale_input_publishes_zero_velocity(mocker: pytest_mock.MockerFixture) -> None:
@@ -695,6 +770,20 @@ def test_arm_teleop_publishes_absolute_controller_pose() -> None:
         module.stop()
 
 
+def test_arm_teleop_publishes_pose_without_face_button_engagement() -> None:
+    module = ArmTeleopModule()
+    try:
+        module._controllers[Hand.RIGHT] = WebXRControllerState(is_left=False)
+        module._current_poses[Hand.RIGHT] = PoseStamped(frame_id="right")
+
+        module._handle_engage()
+
+        assert module._should_publish(Hand.RIGHT)
+        assert not module._is_engaged[Hand.RIGHT]
+    finally:
+        module.stop()
+
+
 def test_arm_teleop_publishes_normalized_gripper_opening_for_engaged_hand(
     mocker: pytest_mock.MockerFixture,
 ) -> None:
@@ -702,14 +791,33 @@ def test_arm_teleop_publishes_normalized_gripper_opening_for_engaged_hand(
     try:
         left_publish = mocker.patch.object(module.left_gripper_command, "publish")
         right_publish = mocker.patch.object(module.right_gripper_command, "publish")
-        left = WebXRControllerState(is_left=True, trigger=0.25)
-        right = WebXRControllerState(is_left=False, trigger=0.75)
-        module._is_engaged[Hand.LEFT] = True
+        left = WebXRControllerState(is_left=True, trigger=0.25, grip=1.0)
+        right = WebXRControllerState(is_left=False, trigger=0.75, grip=0.0)
 
         module._publish_button_state(left, right)
 
         assert left_publish.call_args.args[0].data == pytest.approx(0.75)
         right_publish.assert_not_called()
+    finally:
+        module.stop()
+
+
+@pytest.mark.parametrize(("grip", "enabled"), [(0.5, False), (0.5001, True)])
+def test_arm_gripper_gate_uses_the_classified_grip_bit(
+    mocker: pytest_mock.MockerFixture,
+    grip: float,
+    enabled: bool,
+) -> None:
+    module = ArmTeleopModule()
+    try:
+        publish = mocker.patch.object(module.right_gripper_command, "publish")
+
+        module._publish_button_state(
+            None,
+            WebXRControllerState(is_left=False, trigger=0.25, grip=grip),
+        )
+
+        assert publish.called is enabled
     finally:
         module.stop()
 
@@ -727,7 +835,7 @@ def test_hand_teleop_pinch_toggles_engagement(mocker: pytest_mock.MockerFixture)
 
         assert module._is_engaged[Hand.RIGHT]
         module._publish_button_state(None, module._controllers[Hand.RIGHT])
-        assert publish.call_args.args[0].right_primary
+        assert publish.call_args.args[0].right_grip
         assert publish.call_args.args[0].right_trigger_analog == pytest.approx(1.0)
 
         module._handle_engage()
@@ -737,12 +845,30 @@ def test_hand_teleop_pinch_toggles_engagement(mocker: pytest_mock.MockerFixture)
         module._controllers[Hand.RIGHT] = WebXRControllerState(is_left=False, primary=False)
         module._handle_engage()
         module._publish_button_state(None, module._controllers[Hand.RIGHT])
-        assert publish.call_args.args[0].right_primary
+        assert publish.call_args.args[0].right_grip
         module._controllers[Hand.RIGHT] = WebXRControllerState(is_left=False, primary=True)
         module._handle_engage()
 
         assert not module._is_engaged[Hand.RIGHT]
         module._publish_button_state(None, module._controllers[Hand.RIGHT])
-        assert not publish.call_args.args[0].right_primary
+        assert not publish.call_args.args[0].right_grip
     finally:
         module.stop()
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        "not json",
+        '{"schema_version":2}',
+        '{"schema_version":true}',
+        '{"schema_version":1,"ts":null}',
+    ],
+)
+def test_invalid_episode_document_keeps_the_previous_hud_state(module, mocker, document):
+    broadcast = mocker.patch.object(module, "_broadcast_text")
+    module._on_episode_status(String(_episode_status().to_json()))
+    broadcast.reset_mock()
+    module._on_episode_status(String(document))
+    assert module._latest_episode_status == _episode_status()
+    broadcast.assert_not_called()

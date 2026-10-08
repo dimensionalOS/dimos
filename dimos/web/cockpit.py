@@ -50,6 +50,9 @@ from dimos_lcm.std_msgs import Bool
 
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.nav_msgs.Path import Path
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.web.codecs import is_generic_lcm_encoding
+from dimos.web.lcm_codec import default_encoding, export_schema, schema_class_for
 from dimos.web.relay_bridge.manifest import (
     MANIFEST_VERSION,
     MAX_MANIFEST_ID_LEN,
@@ -161,9 +164,12 @@ class Channel:
     delivery, and params must agree exactly, max_hz takes the max.
 
     `encoding` names a codec: a registered @web_encoder (dimos.web.codecs)
-    whose message type must match `message_type`, or the generic "json.v1"
-    for JSON-shaped types and dataclasses (rx) / JSON scalars, lists and
-    dicts (tx decode).
+    whose message type must match `message_type`, the generic "json.v1" for
+    JSON-shaped types and dataclasses (rx) / JSON scalars, lists and dicts
+    (tx decode), or `<msg_name>.lcm.v1` for rx DimOS messages with a
+    dimos_lcm schema (the frame is `lcm_encode()`, the schema rides
+    params["lcm"]). None picks the default: `<msg_name>.lcm.v1` for rx
+    DimOS messages, "json.v1" otherwise.
 
     A dir="tx" channel is a generic browser publish input: it must declare
     publish="shared" (any authorized viewer may publish; the bridge decodes
@@ -181,7 +187,7 @@ class Channel:
     stream: str
     message_type: type[Any]
     dir: Dir = field(default="rx", kw_only=True)
-    encoding: str = field(default="json.v1", kw_only=True)
+    encoding: str | None = field(default=None, kw_only=True)
     delivery: Delivery = field(default="reliable", kw_only=True)
     max_hz: float = field(default=10.0, kw_only=True)
     params: Mapping[str, Any] | None = field(default=None, kw_only=True)
@@ -205,6 +211,8 @@ class Channel:
             raise TypeError(f"message_type must be a class, got {self.message_type!r}")
         if self.dir not in ("rx", "tx"):
             raise ValueError(f"dir must be 'rx' or 'tx', got {self.dir!r}")
+        if self.encoding is None:
+            object.__setattr__(self, "encoding", default_encoding(self.message_type, self.dir))
         if not isinstance(self.encoding, str) or not 1 <= len(self.encoding) <= MAX_MANIFEST_ID_LEN:
             raise ValueError(
                 f"encoding must be 1..{MAX_MANIFEST_ID_LEN} chars, got {self.encoding!r}"
@@ -266,14 +274,20 @@ class Channel:
 
 def _request_of(channel: Channel) -> ChannelRequest:
     """The manifest request a declaration compiles to."""
+    assert channel.encoding is not None  # resolved in __post_init__
+    # Deep plain copy: the manifest and specs must not alias the (frozen)
+    # authoring record's nested values.
+    params = _thaw_params(channel.params or {})
+    if is_generic_lcm_encoding(channel.encoding):
+        if "lcm" in params:
+            raise ValueError("params key 'lcm' is reserved for the LCM schema")
+        params["lcm"] = export_schema(schema_class_for(channel.message_type))
     return ChannelRequest(
         channel.stream,
         channel.dir,
         channel.encoding,
         channel.max_hz,
-        # Deep plain copy: the manifest and specs must not alias the (frozen)
-        # authoring record's nested values.
-        _thaw_params(channel.params or {}),
+        params,
         delivery=channel.delivery,
         publish=channel.publish,
         required_scope=channel.required_scope,
@@ -404,6 +418,59 @@ class Map2D(Panel):
         requests = [
             ChannelRequest(
                 self.costmap, "rx", "costmap.zlib.v1", self.costmap_hz, delivery="latest"
+            )
+        ]
+        if self.pose is not None:
+            requests.append(ChannelRequest(self.pose, "rx", "pose.json.v1", self.pose_hz))
+        return tuple(requests)
+
+
+@dataclass(frozen=True)
+class Map3D(Panel):
+    """3D voxel map: a PointCloud2 stream (the mapper's global map by
+    default) voxelized at `res` and drawn as points, with the pose marker."""
+
+    kind: ClassVar[str] = "map3d"
+    cloud: str = "global_map"
+    pose: str | None = "odom"
+    res: float = field(default=0.05, kw_only=True)
+    max_hz: float = field(default=1.0, kw_only=True)
+    pose_hz: float = field(default=20.0, kw_only=True)
+    title: str = field(default="", kw_only=True)
+
+    def __post_init__(self) -> None:
+        _check_stream("cloud", self.cloud)
+        if self.pose is not None:
+            _check_stream("pose", self.pose)
+        _check_rate("res", self.res)
+        _check_rate("max_hz", self.max_hz)
+        _check_rate("pose_hz", self.pose_hz)
+
+    def _channels(self) -> tuple[Channel, ...]:
+        # Not a built-in bridge port, so the panel declares it (like Map2D's
+        # path) and cockpit() generates the typed port. A late viewer gets the
+        # last full map through the resend.
+        return (
+            Channel(
+                self.cloud,
+                PointCloud2,
+                encoding="voxels.zlib.v1",
+                delivery="latest",
+                max_hz=self.max_hz,
+                params={"res": self.res},
+                resend_on_subscribe=True,
+            ),
+        )
+
+    def _channel_requests(self) -> tuple[ChannelRequest, ...]:
+        requests = [
+            ChannelRequest(
+                self.cloud,
+                "rx",
+                "voxels.zlib.v1",
+                self.max_hz,
+                {"res": self.res},
+                delivery="latest",
             )
         ]
         if self.pose is not None:
@@ -854,6 +921,13 @@ def cockpit(
     paced = {c.stream for c in (*channels, *panel_channels) if c.paced}
     resend = {c.stream for c in (*channels, *panel_channels) if c.resend_on_subscribe}
 
+    requests: list[ChannelRequest] = []
+    for channel in declared.values():
+        try:
+            requests.append(_request_of(channel))
+        except ValueError as e:
+            raise ValueError(f"channel {channel.stream!r}: {e}") from e
+
     atom = RelayBridgeModule.blueprint().blueprints[0]
     port_types = {s.name: s.type for s in atom.streams}
     builtin_by_ch = {b.ch: b for b in BUILTIN_CHANNELS}
@@ -863,7 +937,7 @@ def cockpit(
         registry={b.ch: (b.encoding, b.delivery) for b in BUILTIN_CHANNELS},
         tx_streams={s.name for s in atom.streams if s.direction == "out"},
         tx_registry={ch: (encoding, delivery) for ch, encoding, delivery in TX_CHANNELS},
-        channels=tuple(_request_of(c) for c in declared.values()),
+        channels=tuple(requests),
     )
     # The domain parser is the authority; authoring bugs must fail at
     # blueprint definition time, not at robot start.

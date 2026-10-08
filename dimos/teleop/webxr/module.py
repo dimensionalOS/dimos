@@ -43,9 +43,10 @@ from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.imitation.collection.episode_monitor import EpisodeStatus
+from dimos.imitation.collection.episode import EpisodeStatus
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Joy import Joy
+from dimos.msgs.std_msgs.String import String
 from dimos.teleop.utils.teleop_transforms import webxr_to_robot
 from dimos.teleop.webxr.body_tracking import BodyTrackingMode, BodyTrackingSnapshot
 
@@ -57,6 +58,7 @@ from dimos.web.robot_web_interface import RobotWebInterface
 logger = setup_logger()
 
 STATIC_DIR = Path(__file__).parent / "web" / "static"
+BUTTON_DEBOUNCE_S = 0.05
 
 
 async def _ws_send_text(ws: WebSocket, data: str) -> None:
@@ -111,7 +113,9 @@ class WebXRTeleopModule(Module):
     left_controller_output: Out[PoseStamped]
     right_controller_output: Out[PoseStamped]
     teleop_buttons: Out[Buttons]
-    status: In[EpisodeStatus]
+    button_pressed: Out[Buttons]
+    button_released: Out[Buttons]
+    status: In[String]
     body_tracking: Out[BodyTrackingSnapshot]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -157,6 +161,8 @@ class WebXRTeleopModule(Module):
         self._body_report_started_at: float | None = None
         self._body_snapshots_since_report = 0
         self._body_tracking_acquired = False
+        self._debounced_buttons = 0
+        self._button_candidates: dict[int, tuple[bool, float]] = {}
 
     def _setup_routes(self) -> None:
         """Register teleop routes on the embedded web server."""
@@ -308,7 +314,12 @@ class WebXRTeleopModule(Module):
         for ws in clients:
             asyncio.run_coroutine_threadsafe(_ws_send_text(ws, data), loop)
 
-    def _on_episode_status(self, status: EpisodeStatus) -> None:
+    def _on_episode_status(self, message: String) -> None:
+        try:
+            status = EpisodeStatus.from_json(message.data)
+        except ValueError:
+            logger.warning("Ignoring invalid episode status JSON", exc_info=True)
+            return
         with self._lock:
             self._latest_episode_status = status
         self._broadcast_text(self._encode_episode_status(status))
@@ -348,7 +359,7 @@ class WebXRTeleopModule(Module):
         super().stop()
 
     def _reset_controller_state(self) -> None:
-        """Clear stale input and publish the zero-button safe command."""
+        """Clear stale input and immediately release every debounced button."""
         with self._lock:
             for hand in Hand:
                 self._is_engaged[hand] = False
@@ -358,6 +369,7 @@ class WebXRTeleopModule(Module):
                 self._last_pose_update[hand] = None
                 self._last_controller_update[hand] = None
             self._publish_button_state(None, None)
+            self._release_all_buttons()
             self._publish_safe_command()
 
     def _expire_stale_state(self, now: float) -> None:
@@ -619,4 +631,44 @@ class WebXRTeleopModule(Module):
         keep analog values, add extra streams).
         """
         buttons = Buttons.from_controllers(left, right)
+        self._publish_buttons(buttons)
+
+    def _publish_buttons(self, buttons: Buttons) -> None:
+        """Publish raw state and stable digital button edges."""
         self.teleop_buttons.publish(buttons)
+        now = time.monotonic()
+        observed = buttons.data & Buttons.DIGITAL_MASK
+        pressed = 0
+        released = 0
+        for bit in Buttons.BITS.values():
+            mask = 1 << bit
+            value = bool(observed & mask)
+            stable = bool(self._debounced_buttons & mask)
+            if value == stable:
+                self._button_candidates.pop(bit, None)
+                continue
+            candidate = self._button_candidates.get(bit)
+            if candidate is None or candidate[0] != value:
+                self._button_candidates[bit] = (value, now)
+                continue
+            if now - candidate[1] < BUTTON_DEBOUNCE_S:
+                continue
+            self._button_candidates.pop(bit, None)
+            if value:
+                self._debounced_buttons |= mask
+                pressed |= mask
+            else:
+                self._debounced_buttons &= ~mask
+                released |= mask
+        if pressed:
+            self.button_pressed.publish(Buttons(pressed))
+        if released:
+            self.button_released.publish(Buttons(released))
+
+    def _release_all_buttons(self) -> None:
+        """Emit release edges without debounce when input ownership disappears."""
+        released = self._debounced_buttons
+        self._debounced_buttons = 0
+        self._button_candidates.clear()
+        if released:
+            self.button_released.publish(Buttons(released))
