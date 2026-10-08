@@ -285,9 +285,6 @@ def test_time_window_collection() -> None:
 @pytest.mark.self_hosted
 def test_timestamp_alignment(test_scheduler) -> None:
     speed = 5.0
-    # ~6 s of recording: the 0.5 s processor finishes ~12 frames, so a runner a few times slower still
-    # yields the >=2 aligned pairs asserted below (30 frames gave ~4, and a 2x slowdown failed it)
-    frame_count = 90
 
     # ensure that lfs package is downloaded
     get_data("unitree_office_walk")
@@ -299,17 +296,15 @@ def test_timestamp_alignment(test_scheduler) -> None:
         print(image.ts)
         return image
 
-    # sensor reply of raw video frames, stamped on the replay's clock (recorded time / speed) rather
-    # than at decode, so the two subscriptions below agree on every frame's ts however unevenly a busy
-    # runner decodes them, and align_timestamped's buffer still spans its full second of wall time
+    # sensor reply of raw video frames, stamped with their recorded time (not decode time) so the
+    # two subscriptions below agree on every frame's ts however unevenly a busy runner decodes them
     store = LegacyPickleStore("unitree_office_walk/video")
     video_raw = timed_playback(
         lambda: (
-            (ts, Image.from_numpy(frame, ts=ts / speed).to_rgb())
-            for ts, frame in store.iterate_items()
+            (ts, Image.from_numpy(frame, ts=ts).to_rgb()) for ts, frame in store.iterate_items()
         ),
         speed=speed,
-    ).pipe(ops.take(frame_count))
+    ).pipe(ops.take(30))
 
     processed_frames = []
 
@@ -326,7 +321,7 @@ def test_timestamp_alignment(test_scheduler) -> None:
 
     aligned_frames = align_timestamped(fake_video_processor, video_raw).pipe(ops.to_list()).run()
 
-    assert len(raw_frames) == frame_count
+    assert len(raw_frames) == 30
     assert len(processed_frames) >= 2
     assert len(aligned_frames) >= 2
 
