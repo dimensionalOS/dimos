@@ -24,6 +24,7 @@ web/sdk/src/decoders/.
 
 from collections.abc import Mapping
 import json
+import math
 from typing import Any
 import zlib
 
@@ -35,6 +36,7 @@ from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid, block_max_reduce
 from dimos.msgs.nav_msgs.Path import Path
+from dimos.msgs.sensor_msgs.BatteryState import BatteryState
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.Joy import Joy
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -83,6 +85,22 @@ def encode_pose(msg: PoseStamped) -> bytes:
         "ts": msg.ts,
     }
     return json.dumps(pose, separators=(",", ":")).encode()
+
+
+@web_encoder("battery.json.v1")
+def encode_battery(msg: BatteryState) -> bytes:
+    # NaN is not JSON: what the pack does not report goes out as null.
+    def num(value: float) -> float | None:
+        return value if math.isfinite(value) else None
+
+    battery = {
+        "ts": msg.ts,
+        "percentage": num(msg.percentage),
+        "voltage": num(msg.voltage),
+        "current": num(msg.current),
+        "temperature": num(msg.temperature),
+    }
+    return json.dumps(battery, separators=(",", ":")).encode()
 
 
 @web_encoder("path.json.v1")

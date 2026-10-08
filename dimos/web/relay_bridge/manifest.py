@@ -381,6 +381,18 @@ def parse_manifest(data: Any) -> Manifest:
                     f"chat panel {panel.id} needs an audio.json.v1 reliable shared tx "
                     "channel fourth",
                 )
+        if panel.kind == "battery":
+            if len(panel.channels) != 1:
+                raise ManifestError(
+                    "invalid_battery_panel",
+                    f"battery panel {panel.id} must bind exactly one channel",
+                )
+            batt = ch_ids[panel.channels[0]]
+            if batt.encoding != "battery.json.v1" or batt.delivery != "latest" or batt.dir != "rx":
+                raise ManifestError(
+                    "invalid_battery_panel",
+                    f"battery panel {panel.id} needs a battery.json.v1 latest rx channel",
+                )
         if panel.kind == "stats":
             if len(panel.channels) != 1:
                 raise ManifestError(

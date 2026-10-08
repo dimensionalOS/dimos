@@ -50,6 +50,7 @@ from dimos_lcm.std_msgs import Bool
 
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.nav_msgs.Path import Path
+from dimos.msgs.sensor_msgs.BatteryState import BatteryState
 from dimos.msgs.sensor_msgs.Joy import Joy
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.web.codecs import is_generic_lcm_encoding
@@ -592,6 +593,37 @@ class Chat(Panel):
                 encoding="audio.json.v1",
                 publish="shared",
                 max_hz=20.0,
+            ),
+        )
+
+    def _channel_requests(self) -> tuple[ChannelRequest, ...]:
+        return tuple(_request_of(channel) for channel in self._channels())
+
+
+@dataclass(frozen=True)
+class Battery(Panel):
+    """Battery page: charge, voltage, current and temperature from a
+    BatteryState stream, the charge plotted over the run and the time left
+    at the observed drain. One battery.json.v1 latest rx channel.
+    """
+
+    kind: ClassVar[str] = "battery"
+    stream: str = "battery"
+    max_hz: float = field(default=2.0, kw_only=True)
+    title: str = field(default="Battery", kw_only=True)
+
+    def __post_init__(self) -> None:
+        _check_stream("stream", self.stream)
+        _check_rate("max_hz", self.max_hz)
+
+    def _channels(self) -> tuple[Channel, ...]:
+        return (
+            Channel(
+                self.stream,
+                BatteryState,
+                encoding="battery.json.v1",
+                delivery="latest",
+                max_hz=self.max_hz,
             ),
         )
 

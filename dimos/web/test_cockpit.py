@@ -15,6 +15,7 @@
 """Authoring-API tests: cockpit()/panels/layout compile to pinned manifests."""
 
 from dataclasses import dataclass
+import json
 import pickle
 import struct
 import subprocess
@@ -37,6 +38,7 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path
+from dimos.msgs.sensor_msgs.BatteryState import BatteryState
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -45,6 +47,7 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.web.cockpit import (
+    Battery,
     Channel,
     ChannelRequest,
     Chat,
@@ -740,6 +743,42 @@ def test_stats_panel_blueprint() -> None:
     restored = pickle.loads(pickle.dumps(blueprint))
     (ratom,) = restored.blueprints
     assert {s.ch: s.encoder for s in ratom.kwargs["channels"]}["resource_stats"] is encode_stats
+
+
+def test_battery_panel_blueprint() -> None:
+    blueprint = cockpit(layout=Video("color_image"), pages=[Battery()])
+    (atom,) = blueprint.blueprints
+    manifest = atom.kwargs["manifest"]
+    assert manifest["channels"][1] == {
+        "ch": "battery",
+        "dir": "rx",
+        "encoding": "battery.json.v1",
+        "delivery": "latest",
+        "maxHz": 2.0,
+        "params": {},
+        "publish": "none",
+        "requiredScope": None,
+    }
+    assert manifest["panels"][1] == {
+        "id": "p1",
+        "kind": "battery",
+        "title": "Battery",
+        "channels": ["battery"],
+        "params": {},
+    }
+    assert manifest["pages"] == ["p1"]
+    assert parse_manifest(manifest).model_dump() == manifest
+    ports = {(s.name, s.direction): s.type for s in atom.streams}
+    assert ports[("battery", "in")] is BatteryState
+    spec = next(s for s in atom.kwargs["channels"] if s.ch == "battery")
+    payload = json.loads(spec.encoder(BatteryState(ts=1.0, percentage=0.8, voltage=28.5)))
+    assert payload == {
+        "ts": 1.0,
+        "percentage": 0.8,
+        "voltage": 28.5,
+        "current": None,
+        "temperature": None,
+    }
 
 
 def test_stats_panel_switches_stats_publishing_on() -> None:

@@ -1,38 +1,23 @@
-// Keyboard teleop panel. Click to focus = arm (the lease handshake runs
-// through teleopMachine); armed only while the wrapper subtree has focus, so
-// typing anywhere else can never drive the robot. All safety logic lives in
-// the machine; this component is listeners + visuals.
+// Teleop panel: two stick widgets that follow the gamepad (or the keys), the
+// commanded speed, and the arm/stop state. Click to focus = arm (the lease
+// handshake runs through teleopMachine); armed only while the wrapper subtree
+// has focus, so typing anywhere else can never drive the robot. All safety
+// logic lives in the machine; this component is listeners + visuals.
 
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import type { FocusEvent, KeyboardEvent } from "react";
+import type { FocusEvent, KeyboardEvent, ReactNode } from "react";
 import {
   HANDLED_CODES,
+  STICK_AT_REST,
   stickFromGamepad,
+  type StickInput,
   teleopConfigFromChannel,
   TeleopMachine,
-  type TeleopSnapshot,
 } from "@dimos/sdk/internal/teleop";
 import { useStatus } from "@dimos/sdk/react";
 import { PanelFrame } from "../layout/PanelFrame.tsx";
 import type { PanelProps } from "./registry.tsx";
 import styles from "./TeleopPanel.module.css";
-
-const KEY_ROWS: { code: string; label: string }[][] = [
-  [
-    { code: "KeyQ", label: "Q" },
-    { code: "KeyW", label: "W" },
-    { code: "KeyE", label: "E" },
-  ],
-  [
-    { code: "KeyA", label: "A" },
-    { code: "KeyS", label: "S" },
-    { code: "KeyD", label: "D" },
-  ],
-];
-
-function pressedClass(snap: TeleopSnapshot, code: string): string {
-  return snap.pressed.has(code) ? styles.keyDown : styles.key;
-}
 
 /** Standard-mapping buttons the panel acts on: A arms (by focusing the
  * pad), B is the e-stop. Sticks and the right trigger go to the machine. */
@@ -49,6 +34,38 @@ function activeGamepad(): Gamepad | null {
     if (pad !== null && (best === null || pad.timestamp > best.timestamp)) best = pad;
   }
   return best;
+}
+
+function fmtAxis(v: number): string {
+  return (v < 0 ? "−" : "+") + Math.abs(v).toFixed(2);
+}
+
+/** A stick as the operator sees it: a ring, a knob at (x, y) in -1..1, and
+ * the values beneath. */
+function Stick({ x, y, label, testId, data, children }: {
+  x: number;
+  y: number;
+  label: string;
+  testId: string;
+  data: Record<string, string>;
+  children: ReactNode;
+}) {
+  const cx = Math.min(Math.max(x, -1), 1);
+  const cy = Math.min(Math.max(y, -1), 1);
+  const live = cx !== 0 || cy !== 0;
+  return (
+    <div className={styles.stick} data-testid={testId} {...data}>
+      <span className={styles.stickLabel}>{label}</span>
+      <div className={styles.ring}>
+        <span className={styles.cross} />
+        <span
+          className={live ? styles.knobLive : styles.knob}
+          style={{ transform: `translate(${cx * 36}px, ${cy * 36}px)` }}
+        />
+      </div>
+      <div className={styles.axes}>{children}</div>
+    </div>
+  );
 }
 
 export function TeleopPanel({ spec, teleop, session }: PanelProps) {
@@ -117,10 +134,12 @@ function TeleopControls({ spec, teleop, ch, session }: {
   // the sticks feed the machine; everything else keeps the keyboard rules.
   const padRef = useRef<HTMLDivElement>(null);
   const [padName, setPadName] = useState<string | null>(null);
+  const [padStick, setPadStick] = useState<StickInput>(STICK_AT_REST);
   useEffect(() => {
     let prevA = false;
     let prevB = false;
     let lastName: string | null = null;
+    let lastStick = STICK_AT_REST;
     let lastJoy = "";
     let lastJoyAt = 0;
     const joyMinMs = 1000 / machine.config.publishHz;
@@ -131,14 +150,24 @@ function TeleopControls({ spec, teleop, ch, session }: {
         lastName = name;
         setPadName(name);
       }
-      if (pad === null) return;
+      if (pad === null) {
+        if (lastStick !== STICK_AT_REST) setPadStick(lastStick = STICK_AT_REST);
+        return;
+      }
       const a = pad.buttons[PAD_A]?.pressed ?? false;
       const b = pad.buttons[PAD_B]?.pressed ?? false;
       if (a && !prevA) padRef.current?.focus();
       if (b && !prevB) machine.estop();
       prevA = a;
       prevB = b;
-      machine.stick(stickFromGamepad(pad.axes, pad.buttons, pad.mapping));
+      const stick = stickFromGamepad(pad.axes, pad.buttons, pad.mapping);
+      machine.stick(stick);
+      if (
+        stick.vx !== lastStick.vx || stick.vy !== lastStick.vy || stick.wz !== lastStick.wz ||
+        stick.boost !== lastStick.boost
+      ) {
+        setPadStick(lastStick = stick);
+      }
       if (joyCh !== undefined && session !== undefined) {
         const sample = joySample(pad);
         const key = JSON.stringify(sample);
@@ -185,6 +214,15 @@ function TeleopControls({ spec, teleop, ch, session }: {
     machine.keyUp(e.code);
   };
 
+  // What the sticks show: the pad when one is present, else the keys as a
+  // deflection (W = full forward).
+  const { maxLinear, maxAngular, boost } = machine.config;
+  const lin = maxLinear * (snap.boosted ? boost : 1);
+  const ang = maxAngular * (snap.boosted ? boost : 1);
+  const shown: StickInput = padName !== null
+    ? padStick
+    : { vx: snap.vx / lin, vy: snap.vy / lin, wz: snap.wz / ang, boost: 0 };
+
   const state = !connected ? "stopped" : snap.phase;
   let banner;
   if (state === "stopped") {
@@ -194,9 +232,7 @@ function TeleopControls({ spec, teleop, ch, session }: {
   } else if (state === "armed") {
     banner = (
       <span className={styles.armed}>
-        {padName === null
-          ? "armed - WASD drive, QE strafe, Space stop"
-          : "armed - sticks drive, RT boost, B stop"}
+        {padName === null ? "armed · WASD drive · QE strafe · Space stop" : "armed · B stops"}
       </span>
     );
   } else {
@@ -225,29 +261,43 @@ function TeleopControls({ spec, teleop, ch, session }: {
         onKeyUp={onKeyUp}
       >
         <div className={styles.banner}>{banner}</div>
-        <div className={styles.cluster}>
-          {KEY_ROWS.map((row) => (
-            <div key={row[0].code} className={styles.keyRow}>
-              {row.map(({ code, label }) => (
-                <span
-                  key={code}
-                  className={pressedClass(snap, code)}
-                  data-testid={`teleop-key-${label}`}
-                  data-pressed={snap.pressed.has(code) || undefined}
-                >
-                  {label}
-                </span>
-              ))}
-            </div>
-          ))}
+        <div className={styles.sticks}>
+          <Stick
+            x={0 - shown.vy}
+            y={0 - shown.vx}
+            label="move"
+            testId={`teleop-${ch}-stick-left`}
+            data={{ "data-vx": shown.vx.toFixed(2), "data-vy": shown.vy.toFixed(2) }}
+          >
+            <span>x {fmtAxis(shown.vx)}</span>
+            <span>y {fmtAxis(shown.vy)}</span>
+          </Stick>
+          <div className={styles.speed} data-testid={`teleop-${ch}-readout`}>
+            <span className={styles.speedValue}>
+              {Math.hypot(snap.vx, snap.vy).toFixed(2)}
+              <small>m/s</small>
+            </span>
+            <span className={styles.speedValue}>
+              {snap.wz.toFixed(2)}
+              <small>rad/s</small>
+            </span>
+            <span className={snap.boosted ? styles.boost : styles.hint}>
+              {snap.boosted ? "boost" : `max ${machine.config.maxLinear.toFixed(1)} m/s`}
+            </span>
+          </div>
+          <Stick
+            x={0 - shown.wz}
+            y={0}
+            label="turn"
+            testId={`teleop-${ch}-stick-right`}
+            data={{ "data-wz": shown.wz.toFixed(2) }}
+          >
+            <span>yaw {fmtAxis(shown.wz)}</span>
+          </Stick>
         </div>
-        <div className={styles.readout} data-testid={`teleop-${ch}-readout`}>
-          <span>vx {snap.vx.toFixed(2)}</span>
-          <span>vy {snap.vy.toFixed(2)}</span>
-          <span>wz {snap.wz.toFixed(2)}</span>
-          {snap.boosted && <span className={styles.boost}>boost</span>}
-          {padName !== null && <span data-testid={`teleop-${ch}-pad`}>pad: {padName}</span>}
-        </div>
+        {padName !== null && (
+          <span className={styles.padName} data-testid={`teleop-${ch}-pad`}>{padName}</span>
+        )}
       </div>
     </PanelFrame>
   );

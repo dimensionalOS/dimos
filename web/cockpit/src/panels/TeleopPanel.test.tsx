@@ -134,13 +134,13 @@ describe("TeleopPanel", () => {
     expect(pad().dataset.state).toBe("armed");
   });
 
-  it("drives from key events and reflects them in cluster and readout", () => {
+  it("drives from key events and reflects them in the sticks and readout", () => {
     armPanel();
     key("keydown", "KeyW");
     expect(hooks.datagrams.at(-1)).toMatchObject({ t: "twist", vx: 0.8, vy: 0, wz: 0 });
-    const wKey = container.querySelector('[data-testid="teleop-key-W"]');
-    expect(wKey?.getAttribute("data-pressed")).toBe("true");
-    expect(container.textContent).toContain("vx 0.80");
+    const left = container.querySelector(`[data-testid="teleop-${CH}-stick-left"]`);
+    expect(left?.getAttribute("data-vx")).toBe("1.00");
+    expect(container.textContent).toContain("0.80");
     key("keyup", "KeyW");
     expect(hooks.datagrams.at(-1)).toMatchObject({ t: "twist", vx: 0, vy: 0, wz: 0 });
   });

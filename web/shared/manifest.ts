@@ -462,6 +462,23 @@ export function parseManifest(value: unknown): Manifest {
         );
       }
     }
+    if (panel.kind === "battery") {
+      if (panel.channels.length !== 1) {
+        throw new ManifestError(
+          "invalid_battery_panel",
+          `battery panel ${panel.id} must bind exactly one channel`,
+        );
+      }
+      const batt = chIds.get(panel.channels[0])!;
+      if (
+        batt.encoding !== "battery.json.v1" || batt.delivery !== "latest" || dirOf(batt) !== "rx"
+      ) {
+        throw new ManifestError(
+          "invalid_battery_panel",
+          `battery panel ${panel.id} needs a battery.json.v1 latest rx channel`,
+        );
+      }
+    }
     if (panel.kind === "stats") {
       if (panel.channels.length !== 1) {
         throw new ManifestError(

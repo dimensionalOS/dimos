@@ -40,6 +40,7 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.BatteryState import BatteryState
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -352,11 +353,13 @@ class GO2Connection(Module, Camera, Pointcloud):
     color_image: Out[Image]
     camera_info: Out[CameraInfo]
     tf: Out[TFMessage]
+    battery: Out[BatteryState]  # from the firmware's lowstate push, 1 Hz
 
     connection: Go2ConnectionProtocol
     camera_info_static: CameraInfo = _camera_info_static()
     _camera_info_thread: Thread | None = None
     _latest_lowstate: LowStateMsg | None = None
+    _battery_sent_at: float = 0.0
 
     @classmethod
     def rerun_views(cls):  # type: ignore[no-untyped-def]
@@ -549,6 +552,24 @@ class GO2Connection(Module, Camera, Pointcloud):
     def _on_lowstate(self, msg: LowStateMsg) -> None:
         """Cache the latest low-level state push (battery, IMU, motors, etc.)."""
         self._latest_lowstate = msg
+        now = time.time()
+        if now - self._battery_sent_at < 1.0:
+            return
+        try:
+            data = msg["data"]
+            bms = data["bms_state"]
+            state = BatteryState(
+                ts=now,
+                frame_id="base_link",
+                voltage=float(data["power_v"]),
+                current=bms["current"] / 1000.0,
+                percentage=bms["soc"] / 100.0,
+                temperature=float(bms["bq_ntc"][0]),
+            )
+        except (KeyError, IndexError, TypeError, ValueError):
+            return
+        self._battery_sent_at = now
+        self.battery.publish(state)
 
     @skill
     def get_battery_soc(self) -> int | None:
