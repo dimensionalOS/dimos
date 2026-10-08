@@ -24,7 +24,8 @@ from dimos.experimental.isolated_python.module import (
     isolated_python_environment,
     isolated_python_run_command,
 )
-from dimos.imitation.dataprep._lerobot_protocol import (
+from dimos.imitation.dataprep.core import DataPrepConfig
+from dimos.imitation.dataprep.formats.lerobot.protocol import (
     RESULT_ADAPTER,
     BuildRequest,
     BuildResult,
@@ -33,7 +34,6 @@ from dimos.imitation.dataprep._lerobot_protocol import (
     Request,
     Result,
 )
-from dimos.imitation.dataprep.core import DataPrepConfig
 from dimos.imitation.policy.lerobot.module import LeRobotPolicyModule
 from dimos.utils.cache import cache_usage_guard
 from dimos.utils.data import get_project_root

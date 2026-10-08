@@ -52,7 +52,7 @@ from pathlib import Path
 
 from dimos.imitation.collection.recording import RecordingSchema
 from dimos.imitation.dataprep.core import OutputConfig
-from dimos.imitation.dataprep.lerobot import run_lerobot_dataprep
+from dimos.imitation.dataprep.formats.lerobot.adapter import run_lerobot_dataprep
 
 directory = Path("recordings/session-001")
 config = RecordingSchema.read(directory).dataprep_config(

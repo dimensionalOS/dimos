@@ -387,7 +387,19 @@ jobs:
             dimos/robot/manipulators/openyam/blueprints/test_learning_collection_e2e.py \
             dimos/imitation/test_datacollection_e2e.py --no-cov
 
-  isolated-lerobot-tests:
+  isolated-python-tests:
+    # Keep each published check name stable as more isolated projects are added.
+    name: ${{ matrix.check_name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - check_name: isolated-lerobot-tests
+            project: native/python/lerobot
+            tests:
+              - dimos_lerobot/dataprep_tests.py
+              - dimos_lerobot/collection_dataprep_tests.py
+            system_packages: [portaudio19-dev, libturbojpeg, ffmpeg]
     timeout-minutes: 30
     runs-on: ubuntu-latest
     permissions:
@@ -403,16 +415,21 @@ jobs:
         with:
           enable-cache: true
           prune-cache: true
-      - name: Install audio, image and video dependencies
+      - name: Install project system dependencies
+        env:
+          SYSTEM_PACKAGES: ${{ toJSON(matrix.system_packages) }}
         run: |
+          mapfile -t packages < <(python3 -c 'import json, os; print("\n".join(json.loads(os.environ["SYSTEM_PACKAGES"])))')
           sudo apt-get update
-          sudo apt-get install -y portaudio19-dev libturbojpeg ffmpeg
-      - name: Test isolated LeRobot export
-        working-directory: native/python/lerobot
+          sudo apt-get install -y "${packages[@]}"
+      - name: Test isolated Python project
+        working-directory: ${{ matrix.project }}
+        env:
+          TEST_PATHS: ${{ toJSON(matrix.tests) }}
         run: |
+          mapfile -t tests < <(python3 -c 'import json, os; print("\n".join(json.loads(os.environ["TEST_PATHS"])))')
           env -u VIRTUAL_ENV -u UV_PYTHON -u UV_PROJECT_ENVIRONMENT \
-            uv run --frozen --group tests --with-editable ../../.. pytest \
-            dimos_lerobot/dataprep_tests.py dimos_lerobot/collection_dataprep_tests.py
+            uv run --frozen --group tests --with-editable "$GITHUB_WORKSPACE" pytest "${tests[@]}"
 
   native:
     name: Native builds (C++ and Rust)
@@ -1419,7 +1436,7 @@ jobs:
     - lint
     - rust
     - native
-    - isolated-lerobot-tests
+    - isolated-python-tests
     - md-babel
     - web
     - tests
