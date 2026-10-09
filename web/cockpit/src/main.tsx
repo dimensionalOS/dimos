@@ -27,6 +27,6 @@ if (!globalThis.isSecureContext) {
   );
 } else {
   const session = connect({ decoders: cockpitDecoders, token: readToken() ?? undefined });
-  installAutoSubscriptions(session);
-  root.render(<App session={session} />);
+  const subscriptions = installAutoSubscriptions(session);
+  root.render(<App session={session} onShownPanels={subscriptions.setShownPanels} />);
 }
