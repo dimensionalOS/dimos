@@ -80,7 +80,7 @@ def test_no_route_to_a_wall_or_an_unreachable_cell(office_truth: GroundTruth) ->
 def test_low_overhang_blocks_and_high_overhang_does_not() -> None:
     scene = _room()
     scene.add((2.0, 1.0, 0.3), (3.0, 3.0, 0.34), "clutter")
-    scene.add((4.0, 1.0, 0.6), (5.0, 3.0, 0.64), "clutter")
+    scene.add((4.0, 1.0, 0.7), (5.0, 3.0, 0.74), "clutter")
     gt = GroundTruth(scene)
     assert not gt.stands((2.5, 2.0))
     assert gt.stands((4.5, 2.0))

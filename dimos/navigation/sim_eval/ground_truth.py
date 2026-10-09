@@ -33,13 +33,15 @@ from scipy import ndimage
 from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components, dijkstra
 
-from dimos.robot.unitree.go2.constants import ROBOT_HEIGHT, ROBOT_WIDTH
+from dimos.robot.unitree.go2.constants import ROBOT_WIDTH
 from dimos.simulation.scenes.mjcf import add_boxes
-from dimos.simulation.scenes.procedural import WALL_THICKNESS, Scene
+from dimos.simulation.scenes.procedural import WALL_THICKNESS, Box, Scene
 from dimos.simulation.sensors.mujoco_raycaster import MujocoRaycaster
 
 CELL = 0.05
 STEP_LIMIT = 0.2
+# the Mid-360 on its mount tops out near 0.55 m when the sim Go2 stands
+GO2_CLEARANCE_HEIGHT = 0.6
 CENTERING_CLEARANCE = 0.6
 CLUTTER_NEAR = 0.5
 EPS = 1e-4
@@ -55,7 +57,7 @@ class Body:
     step: float
 
 
-GO2 = Body(radius=ROBOT_WIDTH / 2, height=ROBOT_HEIGHT, step=STEP_LIMIT)
+GO2 = Body(radius=ROBOT_WIDTH / 2, height=GO2_CLEARANCE_HEIGHT, step=STEP_LIMIT)
 
 
 @dataclass(frozen=True)
@@ -94,6 +96,7 @@ class GroundTruth:
         ground = self._reachable(np.isfinite(self.height), self.index(scene.start))
         self.clearance = ndimage.distance_transform_edt(ground) * cell
         self.walkable = ground & (self.clearance >= body.radius)
+        self._walk = self._edges(self.walkable)
 
     def index(self, point: tuple[float, ...] | NDArray[np.float64]) -> tuple[int, int]:
         ix = int((point[0] - self.origin[0]) / self.cell)
@@ -123,7 +126,7 @@ class GroundTruth:
         """The shortest route over walkable cells, or the one that keeps away from obstacles."""
         if not (self.stands(start) and self.stands(goal)):
             return None
-        i, j, w = self._edges(self.walkable)
+        i, j, w = self._walk
         if centered:
             w = w * CENTERING_CLEARANCE / np.clip(self.clearance.flat[j], None, CENTERING_CLEARANCE)
         n = self.shape[0] * self.shape[1]
@@ -152,18 +155,19 @@ class GroundTruth:
         lo, hi = 0, len(levels) - 1
         while lo < hi:
             mid = (lo + hi + 1) // 2
-            if self._connected(self.walkable & (self.clearance >= levels[mid]), source, target):
+            if self._connected_above(levels[mid], source, target):
                 lo = mid
             else:
                 hi = mid - 1
         return float(levels[lo])
 
     def difficulty(self, route: Route) -> Difficulty:
+        clutter = [box for box in self.scene.boxes if box.kind == "clutter"]
         return Difficulty(
             min_clearance=self.bottleneck(route.points[0], route.points[-1]),
-            doors=_doors_crossed(self.scene, route),
-            detour=_detour(route),
-            clutter_near=_clutter_near(self.scene, route),
+            doors=doors_crossed(self.scene, route),
+            detour=detour(route),
+            clutter_near=len(boxes_near(route, clutter, CLUTTER_NEAR)),
         )
 
     def _ground(self, z_top: float, depth: float) -> NDArray[np.float64]:
@@ -182,17 +186,20 @@ class GroundTruth:
 
     def _reachable(self, ground: NDArray[np.bool_], start: tuple[int, int]) -> NDArray[np.bool_]:
         """The ground connected to the start by steps within the body's limit."""
-        labels = self._components(ground)
+        i, j, _ = self._edges(ground)
+        labels = self._components(i, j)
         reachable: NDArray[np.bool_] = labels == labels[start]
         return reachable & ground
 
-    def _connected(self, mask: NDArray[np.bool_], source: int, target: int) -> bool:
-        labels = self._components(mask)
+    def _connected_above(self, level: float, source: int, target: int) -> bool:
+        """Whether walkable cells with at least this clearance join source and target."""
+        i, j, _ = self._walk
+        keep = (self.clearance.flat[i] >= level) & (self.clearance.flat[j] >= level)
+        labels = self._components(i[keep], j[keep])
         return bool(labels.flat[source] == labels.flat[target])
 
-    def _components(self, mask: NDArray[np.bool_]) -> NDArray[np.int32]:
-        """A component label per cell, over steps between cells in the mask."""
-        i, j, _ = self._edges(mask)
+    def _components(self, i: NDArray[np.intp], j: NDArray[np.intp]) -> NDArray[np.int32]:
+        """A component label per cell, over the given edges."""
         n = self.shape[0] * self.shape[1]
         graph = coo_matrix((np.ones(len(i)), (i, j)), shape=(n, n)).tocsr()
         _, labels = connected_components(graph, directed=False)
@@ -263,7 +270,7 @@ def _lowest_surface(
         origin[2] = z - EPS
 
 
-def _doors_crossed(scene: Scene, route: Route) -> int:
+def doors_crossed(scene: Scene, route: Route) -> int:
     """How many distinct doorways the route passes through."""
     crossed = 0
     for door in scene.doors:
@@ -276,20 +283,19 @@ def _doors_crossed(scene: Scene, route: Route) -> int:
     return crossed
 
 
-def _detour(route: Route) -> float:
+def detour(route: Route) -> float:
+    """Route length over the straight-line distance between its ends."""
     straight = float(np.linalg.norm(route.points[-1, :2] - route.points[0, :2]))
     return route.length / straight if straight > 0 else 1.0
 
 
-def _clutter_near(scene: Scene, route: Route) -> int:
-    """How many clutter boxes come within CLUTTER_NEAR of the route."""
-    near = 0
+def boxes_near(route: Route, boxes: list[Box], within: float) -> list[Box]:
+    """The boxes whose footprint comes within the distance of the route."""
     xy = route.points[:, :2]
-    for box in scene.boxes:
-        if box.kind != "clutter":
-            continue
+    near = []
+    for box in boxes:
         center, half = np.array(box.center[:2]), np.array(box.half[:2])
         outside = np.maximum(np.abs(xy - center) - half, 0.0)
-        if np.any(np.hypot(outside[:, 0], outside[:, 1]) <= CLUTTER_NEAR):
-            near += 1
+        if np.any(np.hypot(outside[:, 0], outside[:, 1]) <= within):
+            near.append(box)
     return near

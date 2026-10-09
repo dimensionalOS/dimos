@@ -125,6 +125,13 @@ def test_office_counts_are_drawn_unless_given() -> None:
     assert sum(box.kind == "clutter" for box in scene.boxes) == 2 * 5
 
 
+def test_door_clutter_adds_one_box_past_every_doorway() -> None:
+    plain, cluttered = office(3), office(3, door_clutter=True)
+    assert len(cluttered.boxes) == len(plain.boxes) + len(plain.doors)
+    assert cluttered.boxes[: len(plain.boxes)] == plain.boxes
+    assert len(plain.doors) == 4
+
+
 def test_degenerate_boxes_are_dropped() -> None:
     scene = Scene("empty")
     scene.add((0.0, 0.0, 0.0), (1.0, 0.0, 1.0), "wall")

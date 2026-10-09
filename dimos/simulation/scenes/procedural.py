@@ -43,6 +43,7 @@ TABLE_LEG = 0.04
 START_CLEARANCE = 1.0
 DOOR_CLEARANCE = 0.8
 DOOR_SIDE_MARGIN = 0.3
+DOOR_CLUTTER_SIZE = (0.3, 0.3, 0.5)
 MIN_ROOM_WIDTH = 3.0
 PLACEMENT_TRIES = 50
 
@@ -223,10 +224,12 @@ def office(
     door_width: float | None = None,
     clutter: int | None = None,
     tables: int | None = None,
+    door_clutter: bool = False,
 ) -> Scene:
     """One floor of rooms joined by doorways, with clutter and tables kept out of the start and the doorways.
 
-    Door width, clutter count and table count are drawn from the seed unless given.
+    Door width, clutter count and table count are drawn from the seed unless given. With
+    door_clutter a box stands just past every doorway against one jamb, narrowing it.
     """
     rng = np.random.default_rng(seed)
     width, length = float(_uniform(rng, 12, 18)), float(_uniform(rng, 9, 13))
@@ -264,12 +267,26 @@ def office(
     tables = _given(int(rng.integers(1, 4)), tables)
     for _ in range(tables):
         _table(scene, rng, 0.3, 0.3, width - 0.3, length - 0.3, z0, keep_clear)
+    if door_clutter:
+        for door in scene.doors:
+            _door_clutter(scene, door, z0)
     scene.params.update({"rooms": 2 * (len(xs) + 1), "clutter": clutter, "tables": tables})
     return scene
 
 
-FAMILIES: dict[Family, Callable[[int], Scene]] = {"office": office}
+def _door_clutter(scene: Scene, door: Door, z: float) -> None:
+    sx, sy, sz = DOOR_CLUTTER_SIZE
+    along = door.at + WALL_THICKNESS + 0.1
+    across = door.start
+    if door.axis == 0:
+        scene.add((along, across, z), (along + sx, across + sy, z + sz), "clutter")
+    else:
+        scene.add((across, along, z), (across + sx, along + sy, z + sz), "clutter")
 
 
-def generate(family: Family, seed: int) -> Scene:
-    return FAMILIES[family](seed)
+FAMILIES: dict[Family, Callable[..., Scene]] = {"office": office}
+
+
+def generate(family: Family, seed: int, **params: float) -> Scene:
+    """The family's scene for the seed, with any of its named parameters overridden."""
+    return FAMILIES[family](seed, **params)
