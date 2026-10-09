@@ -98,7 +98,7 @@ def test_lcm_roundtrip(rgb_image) -> None:
     ci = compressed_image_from_image(rgb_image)
     wire = cdr_encode(ci)
     out = cdr_decode(wire, CompressedImage)
-    assert out.data == ci.data
+    np.testing.assert_array_equal(out.data, ci.data)
     assert "; jpeg compressed " in out.format
     assert out.header.frame_id == "cam"
     assert abs(to_nanoseconds(out.header.stamp) - to_nanoseconds(ci.header.stamp)) < 1e-06

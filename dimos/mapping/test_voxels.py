@@ -75,7 +75,7 @@ def test_roundtrip(lidar_frame: PointCloud2, voxel_size: float, expected_points:
                 np.sort(pointcloud_xyz(lidar_frame), axis=0),
                 atol=1e-6,
             )
-        grid.add_frame(cdr_decode(first.encode(), PointCloud2))
+        grid.add_frame(cdr_decode(cdr_encode(first), PointCloud2))
         assert grid.get_global_pointcloud2().width == expected_points
         np.testing.assert_array_equal(
             pointcloud_xyz(grid.get_global_pointcloud2()), pointcloud_xyz(first)

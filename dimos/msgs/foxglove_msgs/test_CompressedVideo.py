@@ -28,7 +28,7 @@ PACKET = b"\x00\x00\x00\x01\x65payload"
 
 def test_cdr_encode_decode() -> None:
     original = CompressedVideo(
-        data=np.asarray(PACKET, dtype=np.uint8),
+        data=np.frombuffer(PACKET, dtype=np.uint8),
         format="h264",
         frame_id="front_camera",
         timestamp=time_from_nanoseconds(1234567890123456789),
@@ -50,7 +50,7 @@ def test_resolves_generated_canonical_type() -> None:
 def test_to_rerun_video_stream() -> None:
     stream = video_archetype(
         CompressedVideo(
-            data=np.asarray(PACKET, dtype=np.uint8),
+            data=np.frombuffer(PACKET, dtype=np.uint8),
             format="h264",
             timestamp=Time(sec=0, nanosec=0),
             frame_id="",
@@ -64,7 +64,7 @@ def test_to_rerun_unknown_codec() -> None:
     with pytest.raises(ValueError, match="mjpeg"):
         video_archetype(
             CompressedVideo(
-                data=np.asarray(PACKET, dtype=np.uint8),
+                data=np.frombuffer(PACKET, dtype=np.uint8),
                 format="mjpeg",
                 timestamp=Time(sec=0, nanosec=0),
                 frame_id="",

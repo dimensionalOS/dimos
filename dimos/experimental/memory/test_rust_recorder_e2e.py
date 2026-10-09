@@ -264,7 +264,7 @@ def test_rust_artifact_is_readable_by_python_memory2(
     with memory:
         observation = cast("Observation[Imu]", memory.stream("imu").first())
         assert observation.ts == 1700000000.123456789
-        assert observation.data.encode() == cdr_encode(expected)
+        assert cdr_encode(observation.data) == cdr_encode(expected)
         image_observation = cast("Observation[Image]", memory.stream("color_image").first())
         decoded_image = image_observation.data
         assert image_observation.ts == 12.75
@@ -331,7 +331,7 @@ def test_cli_recording_uses_existing_binary_for_both_formats(
     with memory:
         observation = cast("Observation[Imu]", memory.stream("imu").first())
         assert observation.ts == 22.5
-        assert observation.data.encode() == cdr_encode(expected)
+        assert cdr_encode(observation.data) == cdr_encode(expected)
 
 
 def test_tf_records_over_zenoh_and_replays_through_python(

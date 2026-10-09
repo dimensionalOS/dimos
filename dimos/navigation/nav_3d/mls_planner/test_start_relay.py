@@ -24,7 +24,7 @@ from dimos_generated.geometry_msgs.msg import (
 )
 from dimos_generated.std_msgs.msg import Header
 from dimos_generated.tf2_msgs.msg import TFMessage
-from dimos_message_build.registry import decode as cdr_decode
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 
 from dimos.navigation.nav_3d.mls_planner.start_relay import StartRelay
 from dimos.protocol.tf.tf import MultiTBuffer
@@ -88,7 +88,7 @@ def _relay(tf: FakeTF, **config: Any) -> tuple[StartRelay, list[PoseStamped]]:
     module._tf = tf
     captured: list[PoseStamped] = []
     module.start_pose.subscribe(
-        lambda pose: captured.append(cdr_decode(pose.encode(), PoseStamped))
+        lambda pose: captured.append(cdr_decode(cdr_encode(pose), PoseStamped))
     )
     return module, captured
 

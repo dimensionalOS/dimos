@@ -27,6 +27,7 @@ from dimos_generated.dimos_msgs.msg import LineSegment3D, LineSegments3D
 from dimos_generated.geometry_msgs.msg import Point
 from dimos_generated.sensor_msgs.msg import Image
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import encode as cdr_encode
 import numpy as np
 
 from dimos.core.transport import LCMTransport, PubSubTransport, SHMTransport, ZenohTransport
@@ -111,16 +112,16 @@ def demonstrate(backend: str) -> None:
                 peer.start()
                 peers.append(peer)
             decoded = exchange(peers[0], peers[1], message)
-            assert decoded.encode() == message.encode()
+            assert cdr_encode(decoded) == cdr_encode(message)
             if isinstance(decoded, LineSegments3D):
                 print(
-                    f"{backend}: {decoded.msg_name}, frame={decoded.header.frame_id}, "
+                    f"{backend}: {decoded.__msgtype__}, frame={decoded.header.frame_id}, "
                     f"segment weight={decoded.segments[0].weight}"
                 )
             else:
                 assert isinstance(decoded, Image)
                 print(
-                    f"{backend}: {decoded.msg_name}, {len(decoded.data):,} pixel bytes match, "
+                    f"{backend}: {decoded.__msgtype__}, {len(decoded.data):,} pixel bytes match, "
                     f"source nanoseconds={to_nanoseconds(decoded.header.stamp)}"
                 )
 

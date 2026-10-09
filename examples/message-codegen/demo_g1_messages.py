@@ -19,6 +19,7 @@ from typing import Any
 
 from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 
 from dimos.msgs.time import to_nanoseconds
 from dimos.robot.unitree.g1.wholebody_connection import G1LowStateSnapshot, G1WholeBodyConnection
@@ -52,7 +53,7 @@ def main() -> None:
             assert list(state.position) == [index * 0.1] * 29
             assert orientation.orientation.w == 0.8 and orientation.orientation.z == 0.6
             for message in (state, orientation):
-                assert type(message).decode(message.encode()) == message
+                assert cdr_decode(cdr_encode(message), type(message)) == message
             print(
                 f"G1 sample {index}: joints={len(state.name)}, q0={state.position[0]:.1f}, IMU xyzw=(0,0,0.6,0.8), stamp={to_nanoseconds(state.header.stamp)}"
             )

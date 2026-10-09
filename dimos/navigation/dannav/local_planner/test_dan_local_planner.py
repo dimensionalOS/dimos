@@ -160,7 +160,7 @@ def test_smoothing_preserves_cdr_header_and_endpoints() -> None:
     path.header.stamp.nanosec = 123456789
     output = gate.on_planner_path(path)
     assert output is not None
-    decoded = cdr_decode(output.encode(), Path)
+    decoded = cdr_decode(cdr_encode(output), Path)
     assert decoded.header.frame_id == "world"
     assert decoded.header.stamp.sec == 1700000000
     assert decoded.header.stamp.nanosec == 123456789

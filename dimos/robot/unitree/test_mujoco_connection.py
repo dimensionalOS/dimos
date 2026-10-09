@@ -21,7 +21,7 @@ from typing import Any, cast
 from unittest.mock import MagicMock
 
 from dimos_generated.geometry_msgs.msg import Point, PoseStamped, Quaternion
-from dimos_message_build.registry import decode as cdr_decode
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 from pytest import MonkeyPatch
 
@@ -202,7 +202,7 @@ def test_odometry_reads_generated_pose_and_converts_wxyz(monkeypatch):
         sequence[2] = 1
         message = connection.get_odom_message()
         assert message is not None
-        decoded = cdr_decode(message.encode(), PoseStamped)
+        decoded = cdr_decode(cdr_encode(message), PoseStamped)
         assert decoded.header.frame_id == "world"
         assert (decoded.header.stamp.sec, decoded.header.stamp.nanosec) == (-1, 500000000)
         assert decoded.pose.position == Point(x=1.25, y=-2.5, z=0.3)

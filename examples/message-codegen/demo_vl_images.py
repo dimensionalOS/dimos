@@ -18,7 +18,7 @@ from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.sensor_msgs.msg import Image
 from dimos_generated.std_msgs.msg import Header
 from dimos_generated.vision_msgs.msg import Detection2DArray
-from dimos_message_build.registry import decode as cdr_decode
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 
 from dimos.models.vl.base import VlModel
@@ -43,7 +43,7 @@ def main() -> None:
     resized, scale = model._prepare_image(image)
     assert (resized.width, resized.height, scale) == (30, 20, 0.5)
     detections = model.query_detections(image, "target")
-    wire = cdr_decode(detections.to_ros_detection2d_array().encode(), Detection2DArray)
+    wire = cdr_decode(cdr_encode(detections.to_ros_detection2d_array()), Detection2DArray)
     assert wire.header == image.header and len(wire.detections) == 1
     print("Generated image: 60x40 → 30x20, scale=0.5")
     print("Fixed model response → one generated CDR detection; source header preserved")

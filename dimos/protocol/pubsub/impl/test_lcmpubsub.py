@@ -92,7 +92,7 @@ def test_lcm_autodecoder_pubsub(lcm: LCM) -> None:
     received_topic = collector.results[0][1]
 
     assert isinstance(received_data, String)
-    assert received_data.encode() == cdr_encode(test_message)
+    assert cdr_encode(received_data) == cdr_encode(test_message)
 
     assert isinstance(received_topic, Topic)
     assert received_topic == topic
@@ -152,7 +152,7 @@ def test_lcm_geometry_msgs_pubsub(test_message: Any, lcm: LCM) -> None:
     received_topic = collector.results[0][1]
 
     assert isinstance(received_data, test_message.__class__)
-    assert received_data.encode() == test_message.encode()
+    assert cdr_encode(received_data) == cdr_encode(test_message)
 
     assert isinstance(received_topic, Topic)
     assert received_topic == topic
@@ -176,7 +176,7 @@ def test_lcm_geometry_msgs_autopickle_pubsub(test_message: Any, pickle_lcm: Pick
     received_topic = collector.results[0][1]
 
     assert isinstance(received_data, test_message.__class__)
-    assert received_data.encode() == test_message.encode()
+    assert cdr_encode(received_data) == cdr_encode(test_message)
 
     assert isinstance(received_topic, Topic)
     assert received_topic == topic

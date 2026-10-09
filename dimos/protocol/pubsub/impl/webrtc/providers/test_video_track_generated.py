@@ -17,6 +17,7 @@
 
 import asyncio
 
+from dimos_message_build.registry import encode as cdr_encode
 import numpy as np
 import pytest
 
@@ -31,7 +32,7 @@ from dimos.protocol.pubsub.impl.webrtc.providers.video_track import CameraVideoT
 async def test_video_track_uses_generated_encoding_without_network(encoding, channels):
     pixels = np.full((4, 4) if channels == 1 else (4, 4, channels), 127, dtype=np.uint8)
     image = image_from_array(pixels, encoding=encoding)
-    original = image.encode()
+    original = cdr_encode(image)
     track = CameraVideoTrack(asyncio.get_running_loop())
     try:
         track.arm()
@@ -39,6 +40,6 @@ async def test_video_track_uses_generated_encoding_without_network(encoding, cha
         frame = await asyncio.wait_for(track.recv(), timeout=1)
         assert frame.width == 4 and frame.height == 4
         assert frame.pts == 0
-        assert image.encode() == original
+        assert cdr_encode(image) == original
     finally:
         track.stop()

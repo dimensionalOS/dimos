@@ -234,7 +234,7 @@ def test_load_uses_recorded_camera_info_and_tf(
 
     def rectify(source: Image, calibration: CameraInfo) -> tuple[Image, CameraInfo]:
         calibrations.append(calibration)
-        result = cdr_decode(camera_info.encode(), CameraInfo)
+        result = cdr_decode(cdr_encode(camera_info), CameraInfo)
         result.header.stamp = source.header.stamp
         return source, result
 

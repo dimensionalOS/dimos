@@ -21,7 +21,7 @@ from dimos_generated.dimos_msgs.msg import TrajectoryStatus
 from dimos_generated.sensor_msgs.msg import JointState
 from dimos_generated.std_msgs.msg import Header
 from dimos_generated.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
-from dimos_message_build.registry import decode as cdr_decode
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 
@@ -314,7 +314,7 @@ def test_split_cdr_plan_preserves_header_durations_and_optional_point_fields():
     plan.trajectory.points = points
     try:
         assert manager.execute(plan, blocking=False).status == ExecutionStatus.ACCEPTED
-        part = cdr_decode(robot.dispatched["base_traj"].encode(), JointTrajectory)
+        part = cdr_decode(cdr_encode(robot.dispatched["base_traj"]), JointTrajectory)
         assert part.header == plan.trajectory.header
         assert part.points[-1].time_from_start == Duration(sec=1, nanosec=9)
         assert list(part.points[-1].velocities) == [0.3, 0.4, 0.1]

@@ -66,7 +66,7 @@ def main() -> None:
         aruco_dictionary="DICT_4X4_50",
     )
     assert len(found) == 1
-    wire = cdr_decode(found[0].to_detection3d_msg().encode(), Detection3D)
+    wire = cdr_decode(cdr_encode(found[0].to_detection3d_msg()), Detection3D)
     assert wire.id == "7"
     assert wire.results[0].hypothesis.class_id == "DICT_4X4_50:7"
     assert wire.header.stamp == header.stamp
@@ -83,14 +83,14 @@ def main() -> None:
         emit_empty_frames=True,
     )
     arrays = list(MarkersPerFrame()(detector(iter([observation]))))
-    decoded_array = cdr_decode(arrays[0].data.encode(), Detection3DArray)
+    decoded_array = cdr_decode(cdr_encode(arrays[0].data), Detection3DArray)
     assert len(decoded_array.detections) == 1
     assert decoded_array.header.stamp == image.header.stamp
     print("Memory stream: image → marker observation → generated CDR array")
     publisher = MarkerTfModule()
     transforms: list[TFMessage] = []
     unsubscribe = publisher.tf.subscribe(
-        lambda msg: transforms.append(cdr_decode(msg.encode(), TFMessage))
+        lambda msg: transforms.append(cdr_decode(cdr_encode(msg), TFMessage))
     )
     try:
         publisher._process_detections(decoded_array)

@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import asdict
 import time
 
 from dimos_generated.builtin_interfaces.msg import Time
@@ -234,8 +235,8 @@ def test_odometry_cdr_roundtrip() -> None:
     assert abs(to_seconds(decoded.header.stamp) - to_seconds(source.header.stamp)) < 1e-06
     assert decoded.header.frame_id == source.header.frame_id
     assert decoded.child_frame_id == source.child_frame_id
-    assert decoded.pose == source.pose
-    assert decoded.twist == source.twist
+    np.testing.assert_equal(asdict(decoded.pose), asdict(source.pose))
+    np.testing.assert_equal(asdict(decoded.twist), asdict(source.twist))
 
 
 def test_odometry_zero_timestamp() -> None:

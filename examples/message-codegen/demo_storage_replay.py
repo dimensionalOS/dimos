@@ -22,6 +22,7 @@ from typing import Any
 from dimos_generated.dimos_msgs.msg import LineSegment3D, LineSegments3D
 from dimos_generated.geometry_msgs.msg import Point
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import encode as cdr_encode, schema as cdr_schema
 
 from dimos.memory.codecs.base import codec_for, codec_id
 from dimos.memory.replay_module import replay_module
@@ -54,9 +55,9 @@ def main() -> None:
                 stream.append(message, ts=1 + index * 0.05)
                 writer.write(
                     "segments",
-                    message.encode(),
-                    schema_name=message.msg_name,
-                    schema=message.schema,
+                    cdr_encode(message),
+                    schema_name=message.__msgtype__,
+                    schema=cdr_schema(message.__msgtype__),
                     log_time_ns=1000000000 + index * 50000000,
                     publish_time_ns=to_nanoseconds(message.header.stamp),
                 )

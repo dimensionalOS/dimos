@@ -27,6 +27,7 @@ from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Twist
 from dimos_generated.nav_msgs.msg import Path
 from dimos_generated.std_msgs.msg import Bool, Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import pytest
 
 from dimos.core.stream import Stream, Transport
@@ -45,7 +46,7 @@ class _DirectTransport(Transport):  # type: ignore[type-arg]
 
     def broadcast(self, _selfstream: Any, value: Any) -> None:
         for callback in list(self._subscribers):
-            callback(type(value).decode(value.encode()))
+            callback(cdr_decode(cdr_encode(value), type(value)))
 
     def subscribe(
         self, callback: Callable[[Any], Any], _selfstream: Stream[Any] | None = None

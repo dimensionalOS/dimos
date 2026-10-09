@@ -45,7 +45,7 @@ def main() -> None:
             restored = store.stream("video_stats").first().data
             assert restored == message
             print(
-                f"Recorded {restored.msg_name}: {restored.width}x{restored.height}, {restored.fps} fps"
+                f"Recorded {restored.__msgtype__}: {restored.width}x{restored.height}, {restored.fps} fps"
             )
             print(f"Exact dropped-frame counter: {restored.frames_dropped}")
             print(f"Source stamp: {restored.header.stamp.sec}s + {restored.header.stamp.nanosec}ns")

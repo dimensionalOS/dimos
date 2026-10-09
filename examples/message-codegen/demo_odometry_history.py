@@ -45,9 +45,9 @@ async def main() -> None:
     commands: list[Twist] = []
     arrivals: list[Bool] = []
     paths: list[Path] = []
-    follower.nav_cmd_vel.subscribe(lambda msg: commands.append(cdr_decode(msg.encode(), Twist)))
-    follower.goal_reached.subscribe(lambda msg: arrivals.append(cdr_decode(msg.encode(), Bool)))
-    history.odom_hist.subscribe(lambda msg: paths.append(cdr_decode(msg.encode(), Path)))
+    follower.nav_cmd_vel.subscribe(lambda msg: commands.append(cdr_decode(cdr_encode(msg), Twist)))
+    follower.goal_reached.subscribe(lambda msg: arrivals.append(cdr_decode(cdr_encode(msg), Bool)))
+    history.odom_hist.subscribe(lambda msg: paths.append(cdr_decode(cdr_encode(msg), Path)))
     header = Header(stamp=Time(sec=1700000000, nanosec=123456789), frame_id="map")
     reference = Path(
         header=header,

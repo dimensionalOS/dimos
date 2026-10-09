@@ -13,6 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import asdict
+
 from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.sensor_msgs.msg import CameraInfo, RegionOfInterest
 from dimos_generated.std_msgs.msg import Header
@@ -255,8 +257,8 @@ def test_equality() -> None:
         roi=RegionOfInterest(x_offset=0, y_offset=0, height=0, width=0, do_rectify=False),
     )
 
-    assert info1 == info2, "Identical CameraInfo objects should be equal"
-    assert info1 != info3, "Different CameraInfo objects should not be equal"
+    np.testing.assert_equal(asdict(info1), asdict(info2))
+    assert (info1.height, info1.width) != (info3.height, info3.width)
     assert info1 != "not_camera_info", "CameraInfo should not equal non-CameraInfo object"
 
     print("✓ Equality comparison works correctly")

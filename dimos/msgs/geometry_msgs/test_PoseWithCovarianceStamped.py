@@ -109,7 +109,7 @@ def test_fields_covariance_and_independent_cdr(stamp: int, covariance: np.ndarra
         assert matrix.shape == (6, 6)
         assert np.trace(matrix) == np.trace(covariance.reshape(6, 6))
     copied = pickle.loads(pickle.dumps(source))
-    assert copied.encode() == cdr_encode(source)
+    assert cdr_encode(copied) == cdr_encode(source)
     copied.pose.covariance[0] = 999
     assert source.pose.covariance[0] == covariance[0]
 

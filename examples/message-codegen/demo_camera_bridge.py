@@ -28,6 +28,7 @@ from dimos_generated.vision_msgs.msg import (
     ObjectHypothesis,
     ObjectHypothesisWithPose,
 )
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import rerun as rr
 
@@ -118,7 +119,7 @@ def main() -> None:
     try:
         for name, value in messages:
             bridge._on_message(
-                type(value).decode(value.encode()), SimpleNamespace(name="/camera/" + name)
+                cdr_decode(cdr_encode(value), type(value)), SimpleNamespace(name="/camera/" + name)
             )
             print(f"CDR {type(value).__name__} → world/camera/{name}")
     finally:

@@ -43,7 +43,7 @@ def main() -> None:
     received = Event()
     unsubscribe = module.goal_request.subscribe(
         lambda value: (
-            goals.append(cdr_decode(value.encode(), PoseStamped)),
+            goals.append(cdr_decode(cdr_encode(value), PoseStamped)),
             received.set(),
         )
     )

@@ -16,7 +16,7 @@
 
 from dimos_generated.geometry_msgs.msg import Twist, TwistStamped, Vector3
 from dimos_generated.std_msgs.msg import Float32
-from dimos_message_build.registry import decode as cdr_decode
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import pygame
 
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
@@ -28,10 +28,10 @@ def main() -> None:
     gripper: list[Float32] = []
     subscriptions = [
         module.ee_twist_command.subscribe(
-            lambda msg: commands.append(cdr_decode(msg.encode(), TwistStamped))
+            lambda msg: commands.append(cdr_decode(cdr_encode(msg), TwistStamped))
         ),
         module.gripper_command.subscribe(
-            lambda msg: gripper.append(cdr_decode(msg.encode(), Float32))
+            lambda msg: gripper.append(cdr_decode(cdr_encode(msg), Float32))
         ),
     ]
     try:

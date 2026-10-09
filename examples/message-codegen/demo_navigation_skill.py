@@ -48,7 +48,7 @@ def main() -> None:
             location = memory.tag_location.call_args.args[0]
             memory.query_tagged_location.return_value = location
             print(skill._navigate_by_tagged_location("desk"))
-            goal = cdr_decode(navigator.set_goal.call_args.args[0].encode(), PoseStamped)
+            goal = cdr_decode(cdr_encode(navigator.set_goal.call_args.args[0]), PoseStamped)
             np.testing.assert_allclose(
                 quaternion_euler(goal.pose.orientation), (0.2, -0.3, math.pi / 2)
             )

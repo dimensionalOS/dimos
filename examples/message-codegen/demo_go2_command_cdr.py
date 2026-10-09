@@ -42,10 +42,10 @@ def main() -> None:
         )
         module._on_cmd_vel_in(cdr_decode(cdr_encode(message), TwistStamped))
     assert module.tele_cmd_vel.publish.call_count == 2
-    command = cdr_decode(module.tele_cmd_vel.publish.call_args.args[0].encode(), Twist)
+    command = cdr_decode(cdr_encode(module.tele_cmd_vel.publish.call_args.args[0]), Twist)
     assert command.linear.x == 1.5 and command.angular.z == -2
     module._handle_nav_goal({"x": 2.5, "y": -1, "nonce": 1})
-    goal = cdr_decode(module.goal_request.publish.call_args.args[0].encode(), PoseStamped)
+    goal = cdr_decode(cdr_encode(module.goal_request.publish.call_args.args[0]), PoseStamped)
     assert goal.header.frame_id == "world" and goal.pose.position.x == 2.5
     module._estopped = True
     module._on_cmd_vel_in(message)

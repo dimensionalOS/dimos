@@ -20,7 +20,7 @@ from unittest.mock import MagicMock
 from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos_generated.std_msgs.msg import Header
-from dimos_message_build.registry import decode as cdr_decode
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 
@@ -97,12 +97,12 @@ def test_pgo_submap_places_generated_body_clouds_before_merging(monkeypatch):
         _KeyPose(local=MatrixPose(0), optimized=MatrixPose(offset), timestamp=ts, body_cloud=cloud)
         for cloud, offset, ts in zip(clouds, (2.0, 4.0), (1.0, 2.0), strict=True)
     ]
-    before = [cloud.encode() for cloud in clouds]
+    before = [cdr_encode(cloud) for cloud in clouds]
     result = state._get_submap(0, 1)
     np.testing.assert_allclose(pointcloud_xyz(result), [[3.0, 0.0, 0.0], [5.0, 0.0, 0.0]])
     assert result.header.frame_id == "world_corrected"
     assert result.header.stamp == time_from_seconds(2.0)
-    assert [cloud.encode() for cloud in clouds] == before
+    assert [cdr_encode(cloud) for cloud in clouds] == before
 
 
 @pytest.mark.parametrize(
@@ -133,7 +133,7 @@ def test_generated_correction_interpolates_and_clips_without_solver(query, expec
     assert value.header.frame_id == "world_corrected" and value.child_frame_id == "world_raw"
     assert value.header.stamp == time_from_seconds(query)
     assert value.transform.translation.x == pytest.approx(expected_x)
-    assert cdr_decode(value.encode(), TransformStamped) == value
+    assert cdr_decode(cdr_encode(value), TransformStamped) == value
 
 
 def test_generated_correct_preserves_exact_source_stamp_and_rejects_bad_frame():

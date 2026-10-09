@@ -41,7 +41,7 @@ def main() -> None:
 
     subscriptions = [
         server.clicked_point.subscribe(
-            lambda message: points.append(cdr_decode(message.encode(), PointStamped))
+            lambda message: points.append(cdr_decode(cdr_encode(message), PointStamped))
         ),
         server.tele_cmd_vel.subscribe(receive_velocity),
     ]

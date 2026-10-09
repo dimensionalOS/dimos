@@ -31,7 +31,7 @@ from unittest.mock import MagicMock
 
 from dimos_generated.geometry_msgs.msg import PoseStamped, Twist, TwistStamped, Vector3
 from dimos_generated.std_msgs.msg import Header
-from dimos_message_build.registry import decode as cdr_decode
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import pytest
 
 from dimos.core.module import Module
@@ -195,9 +195,9 @@ def test_drive_drops_invalid_nanoseconds(module: Go2CommandModule) -> None:
 def test_drive_orders_frames_one_nanosecond_apart(module: Go2CommandModule) -> None:
     first = _twist(time.time() - 0.1)
     stamp_ns = to_nanoseconds(first.header.stamp)
-    second = cdr_decode(first.encode(), TwistStamped)
+    second = cdr_decode(cdr_encode(first), TwistStamped)
     second.header.stamp = time_from_nanoseconds(stamp_ns + 1)
-    module._on_cmd_vel_in(cdr_decode(first.encode(), TwistStamped))
+    module._on_cmd_vel_in(cdr_decode(cdr_encode(first), TwistStamped))
     module._on_cmd_vel_in(second)
     assert module.tele_cmd_vel.publish.call_count == 2
     assert module._last_cmd_ns == stamp_ns + 1
@@ -394,7 +394,7 @@ def test_nav_goal_publishes_and_acks(
 
     (pose,) = module.goal_request.publish.call_args.args
     assert pose.pose.position.x == pytest.approx(2.5)
-    assert cdr_decode(pose.encode(), PoseStamped).header.frame_id == "world"
+    assert cdr_decode(cdr_encode(pose), PoseStamped).header.frame_id == "world"
     assert acks == [(11, True)]
 
 

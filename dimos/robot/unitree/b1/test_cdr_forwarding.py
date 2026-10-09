@@ -55,7 +55,7 @@ def test_b1_odometry_forwarding_preserves_generated_pose_and_exact_header():
     received = []
     proxy = SimpleNamespace(odom_pose=SimpleNamespace(publish=received.append))
     B1ConnectionModule._publish_odom_pose(proxy, source)
-    result = cdr_decode(received[0].encode(), PoseStamped)
+    result = cdr_decode(cdr_encode(received[0]), PoseStamped)
     assert result.header == source.header
     assert result.pose == source.pose.pose
 
@@ -91,7 +91,7 @@ def test_b1_joystick_stop_publishes_generated_zero_without_starting_loop(monkeyp
     monkeypatch.setattr("dimos.robot.unitree.b1.joystick_module.time.time", lambda: 1700000000.25)
     module.stop()
     assert len(received) == 1
-    value = cdr_decode(received[0].encode(), TwistStamped)
+    value = cdr_decode(cdr_encode(received[0]), TwistStamped)
     assert value.header.frame_id == "base_link"
     assert value.header.stamp == Time(sec=1700000000, nanosec=250000000)
     assert value.twist == Twist(

@@ -220,7 +220,7 @@ def test_generated_crop_scale_stamp_preserve_zero_source_header() -> None:
         header=Header(frame_id="camera_optical", stamp=Time(sec=0, nanosec=0)),
     )
     mux._on_cam("cam1", cdr_decode(cdr_encode(source), Image))
-    output = cdr_decode(mux.published[0].encode(), Image)
+    output = cdr_decode(cdr_encode(mux.published[0]), Image)
     assert output.width % 2 == 0 and output.height % 2 == 0
     assert output.header.frame_id == "camera_optical"
     assert to_nanoseconds(output.header.stamp) == 0

@@ -57,7 +57,7 @@ def test_generated_corrections_preserve_frames_time_and_nearest_neighbor() -> No
         corrections = keyframes_to_corrections(keyframes)
         lookup = make_interpolator(corrections)
         for ts, expected in [(-1, 2), (0.9, 2), (1.1, 4), (3, 4)]:
-            correction = cdr_decode(lookup(ts).encode(), TransformStamped)
+            correction = cdr_decode(cdr_encode(lookup(ts)), TransformStamped)
             assert correction.transform.translation.x == expected
             assert correction.header.frame_id == FRAME_WORLD_CORRECTED
             assert correction.child_frame_id == FRAME_WORLD_RAW

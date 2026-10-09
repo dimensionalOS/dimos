@@ -85,7 +85,7 @@ def test_path_accumulation_keeps_previous_snapshot_and_exact_pose_headers():
     )
     assert [len(obs.data.poses) for obs in result] == [1, 2]
     assert result[1].data.header == poses[1].header
-    assert result[0].data.poses[0].encode() == poses[0].encode()
+    assert cdr_encode(result[0].data.poses[0]) == cdr_encode(poses[0])
 
 
 def test_sportmode_wxyz_is_converted_to_generated_xyzw():

@@ -16,7 +16,7 @@
 
 from dimos_generated.sensor_msgs.msg import CameraInfo
 from dimos_generated.tf2_msgs.msg import TFMessage
-from dimos_message_build.registry import decode as cdr_decode
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 
@@ -41,14 +41,14 @@ def test_metadata_preserves_calibration_and_does_not_mutate_mount_template(modul
     mocker.patch(
         "dimos.hardware.sensors.camera.module.time.time_ns", return_value=1700000000123456789
     )
-    original = module.config.transform.encode()
+    original = cdr_encode(module.config.transform)
 
     module.publish_metadata()
 
     info_publish.assert_called_once()
     tf_publish.assert_called_once()
-    info = cdr_decode(info_publish.call_args.args[0].encode(), CameraInfo)
-    transforms = cdr_decode(tf_publish.call_args.args[0].encode(), TFMessage).transforms
+    info = cdr_decode(cdr_encode(info_publish.call_args.args[0]), CameraInfo)
+    transforms = cdr_decode(cdr_encode(tf_publish.call_args.args[0]), TFMessage).transforms
     assert (info.header.stamp.sec, info.header.stamp.nanosec) == (1700000000, 123456789)
     assert len(transforms) == 2
     assert [(edge.header.frame_id, edge.child_frame_id) for edge in transforms] == [
@@ -56,5 +56,5 @@ def test_metadata_preserves_calibration_and_does_not_mutate_mount_template(modul
         ("camera_link", "robot/camera_optical"),
     ]
     assert all(edge.header.stamp == info.header.stamp for edge in transforms)
-    assert module.config.transform.encode() == original
+    assert cdr_encode(module.config.transform) == original
     np.testing.assert_allclose(transform_matrix(transforms[0].transform), np.eye(4))

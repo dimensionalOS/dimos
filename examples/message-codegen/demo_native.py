@@ -180,7 +180,7 @@ def demonstrate(backend: str, cpp: Path, rust: Path, evidence: Path) -> None:
     assert decoded_lines.header.frame_id == "map"
     assert decoded_lines.segments[0].start.x == 1
     assert decoded_lines.segments[0].end.y == 2
-    assert received["image"].encode() == cdr_encode(image)
+    assert cdr_encode(received["image"]) == cdr_encode(image)
     print(f"{backend}: Python weight=4 → C++ weight=5 → Rust weight=6 → Python verified")
     print(f"{backend}: {len(image.data):,} image bytes and source nanoseconds={stamp} match")
 

@@ -25,7 +25,7 @@ from dimos_generated.vision_msgs.msg import (
     ObjectHypothesis,
     ObjectHypothesisWithPose,
 )
-from dimos_message_build.registry import decode as cdr_decode
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 
@@ -210,7 +210,7 @@ def test_marker_tf_wire_preserves_exact_timestamp():
     module = MarkerTfModule()
     outputs = []
     unsubscribe = module.tf.subscribe(
-        lambda msg: outputs.append(cdr_decode(msg.encode(), TFMessage))
+        lambda msg: outputs.append(cdr_decode(cdr_encode(msg), TFMessage))
     )
     detections = _detection_array(ts=0)
     detections.header.stamp.sec = 1700000000

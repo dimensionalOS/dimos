@@ -17,7 +17,7 @@ import math
 from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Twist, Vector3
 from dimos_generated.std_msgs.msg import Header
-from dimos_message_build.registry import decode as cdr_decode
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import pytest
 
 from dimos.hardware.drive_trains.transport.adapter import TransportTwistAdapter
@@ -72,7 +72,7 @@ def test_generated_commands_preserve_enable_and_stop_contract(
     adapter.write_enable(True)
     assert adapter.write_velocities(values)
     message = transport.publish.call_args.args[0]
-    assert cdr_decode(message.encode(), Twist) == expected
+    assert cdr_decode(cdr_encode(message), Twist) == expected
     assert adapter.read_velocities() == values
     adapter.write_enable(False)
     assert transport.publish.call_args.args[0] == Twist(

@@ -71,7 +71,7 @@ def main() -> None:
     relay._tf = tf
     poses: list[PoseStamped] = []
     unsubscribe = relay.start_pose.subscribe(
-        lambda value: poses.append(cdr_decode(value.encode(), PoseStamped))
+        lambda value: poses.append(cdr_decode(cdr_encode(value), PoseStamped))
     )
     try:
         relay._on_tf(TFMessage(transforms=[edge]))
@@ -92,13 +92,13 @@ def main() -> None:
     )
     ray_input = obs.derive(data=cloud, pose_tuple=(0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0))
     [mapped] = list(RayTraceMap(voxel_size=0.2)(iter([ray_input])))
-    mapped_cloud = cdr_decode(mapped.data.encode(), PointCloud2)
+    mapped_cloud = cdr_decode(cdr_encode(mapped.data), PointCloud2)
     assert mapped_cloud.header.stamp.nanosec == 123456789
     print(
         f"Ray-traced CDR local map: {mapped_cloud.width * mapped_cloud.height} points, frame={mapped_cloud.header.frame_id}"
     )
     [result] = list(MLSPlan(goal=(2.0, 2.0, 0.0), voxel_size=0.2, robot_height=1.0)(iter([obs])))
-    path = cdr_decode(result.data.encode(), Path)
+    path = cdr_decode(cdr_encode(result.data), Path)
     assert result.tags["planned"] and len(path.poses) >= 2
     assert path.header.stamp.nanosec == 123456789
     print(

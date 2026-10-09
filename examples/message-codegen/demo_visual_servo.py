@@ -46,7 +46,7 @@ def main() -> None:
         ("right of center", (370, 0, 470, 100), (0.36, -0.2)),
     ):
         command = controller.compute_twist(bbox, camera.width)
-        decoded = cdr_decode(command.encode(), Twist)
+        decoded = cdr_decode(cdr_encode(command), Twist)
         assert abs(decoded.linear.x - expected[0]) < 1e-9
         assert abs(decoded.angular.z - expected[1]) < 1e-9
         print(f"{label}: linear={decoded.linear.x:.2f} m/s, angular={decoded.angular.z:.2f} rad/s")
