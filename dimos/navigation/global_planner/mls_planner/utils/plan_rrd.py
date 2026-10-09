@@ -15,10 +15,13 @@
 """Replay a lidar .db through RayTraceMap and the MLS planner into rerun.
 
 Pass one or more --config clearance,buffer,weight to overlay each as a colored path.
+A loaded_map stream in the recording seeds the mapper at its timestamp, one region
+per frame, and each planner ingests every region as it lands.
 """
 
 from __future__ import annotations
 
+from enum import Enum, auto
 from pathlib import Path as FsPath
 from time import perf_counter
 from typing import TYPE_CHECKING, Any, NamedTuple
@@ -27,17 +30,30 @@ import numpy as np
 from numpy.typing import NDArray
 import typer
 
-from dimos.mapping.ray_tracing.module import TF_MATCH_TOLERANCE_S
-from dimos.mapping.ray_tracing.transformer import RayTraceMap
+from dimos.mapping.ray_tracing.module import TF_MATCH_TOLERANCE_S, RayTracingVoxelMapConfig
+from dimos.mapping.ray_tracing.transformer import RayTraceMap, pose_from_tf
+from dimos.mapping.ray_tracing.utils.loaded_map import (
+    LOADED_MAP_STREAM,
+    first_loaded_map,
+    place_loaded_map,
+)
+from dimos.mapping.ray_tracing.viz import log_loaded_map, voxel_map_points
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tf import StreamTF, tf_stream
-from dimos.memory.transform import FnTransformer
 from dimos.memory.type.observation import Observation
 from dimos.memory.vis.utils import DEFAULT_RENDER_VOXEL, default_render_voxel
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2, register_colormap_annotation
 from dimos.msgs.tf2_msgs.TFMessage import TfFrameTree, TFMessage
 from dimos.navigation.global_planner.mls_planner.mls_planner import MLSPlanner
+from dimos.navigation.global_planner.mls_planner.viz import graph_edges, graph_nodes, surface_points
+from dimos.navigation.global_planner.viz import (
+    PATH_COLOR,
+    goal_point,
+    path_strip,
+    robot_body_box,
+    robot_clearance,
+)
 from dimos.robot.unitree.go2.constants import (
     BASE_LINK_HEIGHT,
     ROBOT_HEIGHT,
@@ -59,15 +75,15 @@ DEFAULT_VOXEL_SIZE = 0.08
 SENSOR_PATH_COLOR = [80, 160, 255]
 
 # Different colors for each path when running with multiple configs
-PATH_PALETTE = [
-    [0, 255, 0],
-    [255, 0, 255],
-    [0, 200, 255],
-    [255, 180, 0],
-    [255, 80, 80],
-    [160, 120, 255],
-    [120, 255, 200],
-    [255, 255, 120],
+PATH_PALETTE: list[tuple[int, int, int]] = [
+    PATH_COLOR,
+    (255, 0, 255),
+    (0, 200, 255),
+    (255, 180, 0),
+    (255, 80, 80),
+    (160, 120, 255),
+    (120, 255, 200),
+    (255, 255, 120),
 ]
 
 # Sampled from the turbo colormap, low to high. Shared across both metric plots
@@ -91,6 +107,8 @@ SIZE_SERIES = [
     ("edges", "3_edges", "edges", TURBO_GREEN),
     ("nodes", "4_nodes", "nodes", TURBO_BLUE),
 ]
+# Logged only on seeded runs.
+REGIONS_LEFT_SERIES = "metrics/size/5_regions"
 
 
 class LocalCrop(NamedTuple):
@@ -118,45 +136,6 @@ def _parse_configs(
         c, b, w = (float(p) for p in parts)
         out.append((c, b, w))
     return out
-
-
-def _pose_from_tf(tf: StreamTF, world_frame: str) -> FnTransformer[PointCloud2, PointCloud2]:
-    """Attach the tf pose at the cloud stamp. A failed lookup clears any
-    recorded pose so the cloud is dropped downstream."""
-
-    def attach(obs: Observation[PointCloud2]) -> Observation[PointCloud2]:
-        t = tf.get(
-            world_frame,
-            obs.data.frame_id,
-            time_point=obs.ts,
-            time_tolerance=TF_MATCH_TOLERANCE_S,
-        )
-        return obs.with_pose(t)
-
-    return FnTransformer(attach)
-
-
-def _log_edges(edges: NDArray[np.float32], entity: str) -> None:
-    import rerun as rr
-
-    if edges.size == 0:
-        rr.log(entity, rr.LineStrips3D([]))
-        return
-    segments = [
-        [(float(r[0]), float(r[1]), float(r[2])), (float(r[3]), float(r[4]), float(r[5]))]
-        for r in edges
-    ]
-    rr.log(entity, rr.LineStrips3D(segments, colors=[[255, 255, 255]], radii=0.02))
-
-
-def _log_path_wp(waypoints: NDArray[np.float32] | None, entity: str, color: list[int]) -> None:
-    import rerun as rr
-
-    if waypoints is None or len(waypoints) == 0:
-        rr.log(entity, rr.LineStrips3D([]))
-        return
-    points = [(float(p[0]), float(p[1]), float(p[2])) for p in waypoints]
-    rr.log(entity, rr.LineStrips3D([points], colors=[color], radii=0.05))
 
 
 def _tf_over(store: SqliteStore, window: Stream[Any]) -> Stream[TFMessage] | None:
@@ -222,18 +201,6 @@ def _log_odometry(
     )
 
 
-def _clearance_colors(clearance: NDArray[np.float32], clamp_m: float) -> NDArray[np.uint8]:
-    """Color floor cells by wall clearance: dark navy where tight, pale blue in the open.
-
-    Its own ramp, not the map's turbo, so the floor reads as a distinct layer.
-    """
-    norm = np.clip(np.nan_to_num(clearance / clamp_m, nan=1.0, posinf=1.0), 0.0, 1.0)
-    tight = np.array([4.0, 8.0, 48.0], dtype=np.float64)
-    open_ = np.array([150.0, 200.0, 255.0], dtype=np.float64)
-    rgb: NDArray[np.float64] = tight + norm[:, None] * (open_ - tight)
-    return rgb.astype(np.uint8)
-
-
 def _log_local_map(
     voxel_map: NDArray[np.float32],
     ground: tuple[float, float, float],
@@ -259,15 +226,7 @@ def _log_local_map(
         & (rel[:, 2] >= -crop.below)
         & (rel[:, 2] <= crop.above)
     )
-    local = rel[keep]
-    if local.size == 0:
-        rr.log("world/local/voxel_map", rr.Points3D([]))
-        return
-    # Its own turbo: spread over the crop's own height range, not the building's,
-    # so a 1 m band of floor still reads as a full gradient.
-    z = local[:, 2]
-    class_ids = ((z - z.min()) / (z.max() - z.min() + 1e-8) * 255).astype(np.uint8)
-    rr.log("world/local/voxel_map", rr.Points3D(local, class_ids=class_ids, radii=render_voxel / 3))
+    rr.log("world/local/voxel_map", voxel_map_points(rel[keep], render_voxel))
 
 
 def _log_shared(
@@ -288,35 +247,25 @@ def _log_shared(
 
     voxel_map = planner.voxel_map()
     if voxel_map.size:
-        z = voxel_map[:, 2]
-        class_ids = ((z - z.min()) / (z.max() - z.min() + 1e-8) * 255).astype(np.uint8)
-        rr.log(
-            "world/voxel_map",
-            rr.Points3D(voxel_map, class_ids=class_ids, radii=render_voxel / 3),
-        )
+        rr.log("world/voxel_map", voxel_map_points(voxel_map, render_voxel))
     _log_local_map(voxel_map, start, crop, render_voxel)
 
-    surface = planner.surface_clearance_map()
-    # Walls are already drawn by the voxel map; the surface layer only answers
-    # "how much room is there", which is only a question where the robot fits.
-    passable = surface[surface[:, 3] >= hard_clearance] if surface.size else surface
     # Always log, even when empty: an unconditional update clears the prior
     # frame's floor so a newly blocked region doesn't keep showing stale cells.
+    surface = planner.surface_clearance_map()
     rr.log(
         "world/surface_map",
-        rr.Points3D(
-            passable[:, :3],
-            colors=_clearance_colors(passable[:, 3], clearance_clamp),
-            radii=render_voxel / 2,
+        surface_points(
+            surface[:, :3], surface[:, 3], render_voxel, hard_clearance, clearance_clamp
         ),
     )
 
     nodes = planner.nodes()
     if nodes.size:
-        rr.log("world/nodes", rr.Points3D(nodes, colors=[[255, 200, 0]], radii=0.05))
+        rr.log("world/nodes", graph_nodes(nodes))
 
     edges = planner.node_edges()
-    _log_edges(edges, "world/node_edges")
+    rr.log("world/node_edges", graph_edges(edges))
     return surface, nodes, edges
 
 
@@ -375,6 +324,76 @@ def _init_recording(db_path: FsPath, out: FsPath | None, live: bool, crop: Local
             )
 
 
+def _start_seed(
+    ray: RayTraceMap,
+    seed_pts: NDArray[np.float32],
+    start: tuple[float, float, float],
+) -> int:
+    """Partition the premap for a region-by-region seed. Returns the region count."""
+    regions = ray.mapper.start_seed(seed_pts, start)
+    log_loaded_map(seed_pts)
+    print(f"\nseeding {len(seed_pts)} premap points in {regions} regions")
+    return regions
+
+
+def _seed_next_region(ray: RayTraceMap, planners: list[MLSPlanner]) -> bool:
+    """Seed one region into the mapper and hand it to every planner, as the modules do."""
+    region = ray.mapper.seed_next_region()
+    if region is None:
+        return False
+    for p in planners:
+        p.update_seed_region(
+            region.points, region.center, region.radius, region.z_min, region.z_max
+        )
+    return True
+
+
+class SeedStage(Enum):
+    ABSENT = auto()
+    PENDING = auto()
+    LOADING = auto()
+    DONE = auto()
+
+
+class Seeding:
+    """The premap seed, landing one region per frame once the recording reaches it."""
+
+    def __init__(
+        self,
+        loaded_map: Observation[PointCloud2] | None,
+        ray: RayTraceMap,
+        planners: list[MLSPlanner],
+        tf_lookup: StreamTF,
+        world_frame: str,
+    ) -> None:
+        self.loaded_map = loaded_map
+        self.stage = SeedStage.ABSENT if loaded_map is None else SeedStage.PENDING
+        self.regions = 0
+        self.landed = 0
+        self._ray = ray
+        self._planners = planners
+        self._tf_lookup = tf_lookup
+        self._world_frame = world_frame
+
+    @property
+    def left(self) -> int:
+        return self.regions - self.landed
+
+    def step(self, ts: float, start: tuple[float, float, float]) -> None:
+        if self.stage is SeedStage.PENDING:
+            if self.loaded_map is None or ts < self.loaded_map.ts:
+                return
+            seed_pts = place_loaded_map(self.loaded_map, self._tf_lookup, self._world_frame, ts)
+            self.regions = _start_seed(self._ray, seed_pts, start)
+            self.stage = SeedStage.LOADING
+        elif self.stage is SeedStage.LOADING:
+            if _seed_next_region(self._ray, self._planners):
+                self.landed += 1
+            else:
+                self.stage = SeedStage.DONE
+                print("\nseed finished")
+
+
 def _build_planners(
     configs: list[tuple[float, float, float]],
     voxel_size: float,
@@ -384,8 +403,8 @@ def _build_planners(
     node_spacing: float,
     step_height: float,
     step_penalty_weight: float,
-) -> list[tuple[str, list[int], MLSPlanner]]:
-    planners: list[tuple[str, list[int], MLSPlanner]] = []
+) -> list[tuple[str, tuple[int, int, int], MLSPlanner]]:
+    planners: list[tuple[str, tuple[int, int, int], MLSPlanner]] = []
     for i, (clr, buf, wgt) in enumerate(configs):
         planner = MLSPlanner(
             voxel_size=voxel_size,
@@ -408,7 +427,7 @@ def _build_planners(
 
 def _process_frame(
     ray_obs: Observation[PointCloud2],
-    planners: list[tuple[str, list[int], MLSPlanner]],
+    planners: list[tuple[str, tuple[int, int, int], MLSPlanner]],
     goal: tuple[float, float, float],
     start: tuple[float, float, float],
     sensor_z: float,
@@ -433,7 +452,7 @@ def _process_frame(
         t1 = perf_counter()
         waypoints = planner.plan(start, goal)
         t2 = perf_counter()
-        _log_path_wp(waypoints, f"world/paths/{label}", color)
+        rr.log(f"world/paths/{label}", path_strip(waypoints, color))
         if j == 0:
             ref_timing = {
                 "update_ms": (t1 - t0) * 1000,
@@ -543,6 +562,16 @@ def main(
     goal: tuple[float, float, float] = typer.Option(
         (0.0, 0.0, 0.0), "--goal", help="Planner goal xyz; override per recording"
     ),
+    loaded_map_stream: str = typer.Option(
+        LOADED_MAP_STREAM,
+        "--loaded-map-stream",
+        help="Stream holding a map cloud to seed at its timestamp, placed by tf, when present",
+    ),
+    region_m: float = typer.Option(
+        RayTracingVoxelMapConfig.model_fields["region_m"].default,
+        "--region-m",
+        help="Region size (m) the seeded map is handed to the planner in",
+    ),
     live: bool = typer.Option(
         False, "--live", help="Also spawn the rerun viewer when --out is set"
     ),
@@ -585,6 +614,11 @@ def main(
 
     store = SqliteStore(path=str(db_path))
     with store:
+        if lidar_stream not in store.list_streams():
+            raise typer.BadParameter(
+                f"{db_path} has no {lidar_stream!r} stream. Available: {store.list_streams()}",
+                param_hint="--lidar-stream",
+            )
         lidar = store.stream(lidar_stream, PointCloud2).order_by("ts")
         if from_time is not None:
             lidar = lidar.from_time(from_time)
@@ -595,56 +629,57 @@ def main(
         if tf_lookup is None:
             raise typer.BadParameter(f"{db_path} has no tf stream to register clouds from")
 
-        pose_tagged = lidar.transform(_pose_from_tf(tf_lookup, world_frame))
-        ray_pipeline = pose_tagged.transform(
-            RayTraceMap(
-                voxel_size=voxel_size,
-                fine_divisor=fine_divisor,
-                max_range=max_range,
-                ray_subsample=ray_subsample,
-                shadow_depth=shadow_depth,
-                grace_depth=grace_depth,
-                emit_every=emit_every,
-                min_health=min_health,
-                max_health=max_health,
-                support_min=support_min,
-            )
+        pose_tagged = lidar.transform(pose_from_tf(tf_lookup, world_frame))
+        ray = RayTraceMap(
+            voxel_size=voxel_size,
+            fine_divisor=fine_divisor,
+            max_range=max_range,
+            ray_subsample=ray_subsample,
+            shadow_depth=shadow_depth,
+            grace_depth=grace_depth,
+            emit_every=emit_every,
+            min_health=min_health,
+            max_health=max_health,
+            support_min=support_min,
+            region_m=region_m,
         )
+        ray_pipeline = pose_tagged.transform(ray)
         tf_sync = _TfSync(tf)
 
         configs = _parse_configs(config, wall_clearance, wall_buffer, wall_buffer_weight)
         ref_clearance = configs[0][0]
         planners = _build_planners(
             configs,
-            voxel_size,
-            robot_height,
-            max_overhead,
-            surface_closing_radius,
-            node_spacing,
-            step_height,
-            step_penalty_weight,
+            voxel_size=voxel_size,
+            robot_height=robot_height,
+            max_overhead=max_overhead,
+            surface_closing_radius=surface_closing_radius,
+            node_spacing=node_spacing,
+            step_height=step_height,
+            step_penalty_weight=step_penalty_weight,
         )
 
-        rr.log("world/goal", rr.Points3D([goal], colors=[[255, 0, 0]], radii=0.1), static=True)
-
-        rr.log(
-            "world/robot_body/outline",
-            rr.Boxes3D(
-                half_sizes=[ROBOT_LENGTH / 2, ROBOT_WIDTH / 2, robot_height / 2],
-                colors=[(0, 255, 127)],
-            ),
-            static=True,
+        seeding = Seeding(
+            first_loaded_map(store, loaded_map_stream),
+            ray,
+            [p for _, _, p in planners],
+            tf_lookup,
+            world_frame,
         )
-        # wall_clearance is the planner's proxy for the robot radius.
+        if seeding.loaded_map is not None:
+            rr.log(
+                REGIONS_LEFT_SERIES,
+                rr.SeriesLines(colors=[[255, 255, 255]], names=["regions_left"]),
+                static=True,
+            )
+            print(f"loaded_map at ts={seeding.loaded_map.ts:.3f}; seeding when reached")
+
+        rr.log("world/goal", goal_point(goal), static=True)
         rr.log(
-            "world/robot_body/clearance",
-            rr.Cylinders3D(
-                lengths=[robot_height],
-                radii=[wall_clearance],
-                colors=[(255, 120, 120, 80)],
-                fill_mode="solid",
-            ),
-            static=True,
+            "world/robot_body", robot_body_box(ROBOT_LENGTH, ROBOT_WIDTH, robot_height), static=True
+        )
+        rr.log(
+            "world/robot_body/clearance", robot_clearance(robot_height, wall_clearance), static=True
         )
         sensor_trail: list[tuple[float, float, float]] = []
 
@@ -682,6 +717,9 @@ def main(
                     ref_clearance,
                     crop,
                 )
+                seeding.step(ray_obs.ts, start)
+                if seeding.stage is not SeedStage.ABSENT:
+                    rr.log(REGIONS_LEFT_SERIES, rr.Scalars(float(seeding.left)))
                 _log_odometry(ray_obs.pose_tuple, ray_obs.ts, sensor_trail, base)
                 frame += 1
                 print(

@@ -56,7 +56,7 @@ from dimos.spec import perception
 
 
 class FastLio2Config(NativeModuleConfig):
-    cwd: str | None = "cpp"
+    source_dir: str | None = "dimos/hardware/sensors/lidar/fastlio2/cpp"
     executable: str = "result/bin/fastlio2_native"
     build_command: str | None = "nix build -L .#fastlio2_native"
     stdin_config: bool = True

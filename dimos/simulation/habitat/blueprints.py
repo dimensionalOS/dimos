@@ -19,10 +19,13 @@
 - ``habitat-nav``: + MLS planner and follower; click the surface to set a goal.
 - ``habitat-voxel``: :class:`VoxelGridMapper` on a world-frame scan. An alternative,
   not a layer: the two mappers want the scan in different frames.
+- ``habitat-typesafe``: teleop + :class:`TypeSafeNavigationAgent` steering to a named visible object.
 """
 
 from typing import Any
 
+from dimos.agents.typesafe.agent import typesafe_api_key
+from dimos.agents.typesafe.navigation import TypeSafeNavigationAgent
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap, RayTracingVoxelMapConfig
@@ -32,6 +35,7 @@ from dimos.navigation.global_planner.mls_planner.mls_planner_native import (
     MLSPlannerNativeConfig,
 )
 from dimos.navigation.global_planner.mls_planner.viz import planner_visual_override
+from dimos.navigation.global_planner.viz import render_path
 from dimos.navigation.trajectory_follower.basic.module import BasicPathFollower
 from dimos.simulation.habitat.connection import HabitatConnection
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
@@ -53,6 +57,7 @@ SCAN_FRAME_SENSOR = "camera_optical"
 
 WORLD_FRAME = "world"
 voxel_size = 0.05
+wall_clearance_m = 0.1
 # Must be > 0: the planner's surface_map is what you click to set a goal.
 planner_viz_hz = 2.0
 ROBOT_HEIGHT = 0.5
@@ -64,11 +69,6 @@ HIDDEN = ("world/nodes", "world/depth_image")
 def _small_points(cloud: Any) -> Any:
     """Flat dots; mode is explicit so this does not track to_rerun's default."""
     return cloud.to_rerun(mode="points", ui_radius=1.0)
-
-
-def _render_path(msg: Any) -> Any:
-    """Skip empty paths so a failed plan keeps the last good one drawn."""
-    return None if len(msg.poses) == 0 else msg
 
 
 def _view() -> Any:
@@ -146,7 +146,7 @@ _mls_planner = MLSPlannerNative.blueprint(
         robot_height=ROBOT_HEIGHT,
         start_z_offset_m=0.0,  # base_link sits on the navmesh
         surface_closing_radius=0.3,
-        wall_clearance_m=0.1,
+        wall_clearance_m=wall_clearance_m,
         wall_buffer_m=0.75,
         wall_buffer_weight=100.0,
         step_threshold_m=0.16,
@@ -180,9 +180,9 @@ habitat_nav = autoconnect(
         global_config.viewer,
         rerun_config=_rerun_config(
             {
-                "world/path": _render_path,
+                "world/path": render_path,
                 **planner_visual_override(
-                    planner_viz_hz, voxel_size=voxel_size, wall_clearance_m=0.1
+                    planner_viz_hz, voxel_size=voxel_size, wall_clearance_m=wall_clearance_m
                 ),
             }
         ),
@@ -193,3 +193,22 @@ habitat_nav = autoconnect(
         ]
     ),
 ).global_config(transport="zenoh")
+
+
+# `go to the chair` on /human_input; visible annotated instances are the detections.
+habitat_typesafe = (
+    autoconnect(
+        habitat_teleop,
+        HabitatConnection.blueprint(
+            publish_scan=True, scan_frame=SCAN_FRAME_REGISTERED, publish_objects=True
+        ).remappings(
+            [
+                (HabitatConnection, "registered_scan", "lidar"),
+                (HabitatConnection, "objects", "detections_3d"),
+            ]
+        ),
+        TypeSafeNavigationAgent.blueprint(),
+    )
+    .requirements(typesafe_api_key)
+    .global_config(transport="zenoh")
+)

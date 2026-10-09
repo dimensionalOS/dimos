@@ -1,5 +1,6 @@
 import type { FrameHeader } from "@dimos/shared";
 import type { Decoded } from "./index.ts";
+import { inflateExact } from "./inflate.ts";
 
 // Mirrors the bridge's costmap.zlib.v1 ingress cap (_MAX_PAYLOAD_BYTES in
 // dimos/web/relay_bridge/_wt_session.py).
@@ -78,35 +79,9 @@ export function costmapDecoder(payload: Uint8Array, header: FrameHeader): Decode
 }
 
 /**
- * Inflate a validated slot value to exactly w*h cells. Python zlib.compress
- * emits RFC 1950 zlib framing, which is DecompressionStream("deflate");
- * "deflate-raw" is RFC 1951 and would reject every frame (the golden vectors
- * in shared/fixtures/costmap_frames.json pin this pairing). Output beyond
- * w*h throws mid-stream (decompression-bomb guard), a short stream throws at
- * the end, and a corrupt stream rejects from read().
+ * Inflate a validated slot value to exactly w*h cells (see inflateExact for
+ * the zlib framing and the bomb guard).
  */
-export async function inflateCostmap(value: CostmapValue): Promise<Uint8Array> {
-  const expected = value.w * value.h;
-  const cells = new Uint8Array(expected);
-  let written = 0;
-  const inflated = new Blob([value.bytes as BlobPart]).stream()
-    .pipeThrough(new DecompressionStream("deflate"));
-  const reader = inflated.getReader();
-  try {
-    while (true) {
-      const { done, value: chunk } = await reader.read();
-      if (done) break;
-      if (written + chunk.length > expected) {
-        throw new Error(`costmap inflates beyond ${expected} cells`);
-      }
-      cells.set(chunk, written);
-      written += chunk.length;
-    }
-  } finally {
-    void reader.cancel().catch(() => {});
-  }
-  if (written !== expected) {
-    throw new Error(`costmap inflated to ${written} cells, expected ${expected}`);
-  }
-  return cells;
+export function inflateCostmap(value: CostmapValue): Promise<Uint8Array> {
+  return inflateExact(value.bytes, value.w * value.h);
 }

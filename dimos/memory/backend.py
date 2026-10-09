@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
@@ -113,32 +114,34 @@ class Backend(CompositeResource, Generic[T]):
         if self.blob_store is not None and not is_scalar:
             encoded = self.codec.encode(payload)
 
-        try:
-            # Insert metadata, get assigned id
-            row_id = self.metadata_store.insert(obs)
-            obs.id = row_id
+        # One transaction per append: hold the store's lock from insert to commit/rollback.
+        with getattr(self.metadata_store, "transaction_lock", nullcontext()):
+            try:
+                # Insert metadata, get assigned id
+                row_id = self.metadata_store.insert(obs)
+                obs.id = row_id
 
-            # Store blob (non-scalar data only)
-            if encoded is not None:
-                assert self.blob_store is not None
-                self.blob_store.put(self.name, row_id, encoded)
-                # Replace inline data with lazy loader
-                obs._data = _UNLOADED
-                obs._loader = self._make_loader(row_id)
+                # Store blob (non-scalar data only)
+                if encoded is not None:
+                    assert self.blob_store is not None
+                    self.blob_store.put(self.name, row_id, encoded)
+                    # Replace inline data with lazy loader
+                    obs._data = _UNLOADED
+                    obs._loader = self._make_loader(row_id)
 
-            # Store embedding vector
-            if self.vector_store is not None:
-                emb = getattr(obs, "embedding", None)
-                if emb is not None:
-                    self.vector_store.put(self.name, row_id, emb)
+                # Store embedding vector
+                if self.vector_store is not None:
+                    emb = getattr(obs, "embedding", None)
+                    if emb is not None:
+                        self.vector_store.put(self.name, row_id, emb)
 
-            # Commit if the metadata store supports it (e.g. SqliteObservationStore)
-            if hasattr(self.metadata_store, "commit"):
-                self.metadata_store.commit()
-        except BaseException:
-            if hasattr(self.metadata_store, "rollback"):
-                self.metadata_store.rollback()
-            raise
+                # Commit if the metadata store supports it (e.g. SqliteObservationStore)
+                if hasattr(self.metadata_store, "commit"):
+                    self.metadata_store.commit()
+            except BaseException:
+                if hasattr(self.metadata_store, "rollback"):
+                    self.metadata_store.rollback()
+                raise
 
         self.notifier.notify(obs)
         return obs
@@ -207,13 +210,14 @@ class Backend(CompositeResource, Generic[T]):
         ranked: list[Observation[T]] = []
         for obs_id, sim in hits:
             match = obs_by_id.get(obs_id)
-            if match is not None:
-                ranked.append(
-                    match.derive(data=match.data, embedding=query.search_vec, similarity=sim)
-                )
+            if match is None:
+                continue
+            if not all(f.matches(match) for f in query.filters):
+                continue
+            ranked.append(match.derive(data=match.data, embedding=query.search_vec, similarity=sim))
 
-        # Apply remaining query ops (skip vector search)
-        rest = replace(query, search_vec=None, search_k=None)
+        # Apply remaining query ops (filters already applied; skip vector search)
+        rest = replace(query, search_vec=None, search_k=None, filters=())
         yield from rest.apply(iter(ranked))
 
     def _iterate_live(

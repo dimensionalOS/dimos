@@ -16,7 +16,6 @@
 
 from __future__ import annotations
 
-import platform
 import sqlite3
 import tempfile
 from typing import TYPE_CHECKING, cast
@@ -24,14 +23,11 @@ from typing import TYPE_CHECKING, cast
 import pytest
 
 from dimos.memory.blobstore.file import FileBlobStore
+from dimos.memory.blobstore.memory import MemoryBlobStore
 from dimos.memory.blobstore.sqlite import SqliteBlobStore
 from dimos.memory.store.memory import MemoryStore
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.models.embedding.clip import CLIPModel
-
-# sqlite-vec fails to load on Linux ARM (32-bit binary in the aarch64 wheel)
-# and on macOS in CI.
-_SKIP_SQLITE_VEC = platform.machine() == "aarch64" or platform.system() == "Darwin"
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -60,8 +56,6 @@ def memory_session(memory_store: MemoryStore) -> Iterator[MemoryStore]:
 
 @pytest.fixture
 def sqlite_store() -> Iterator[SqliteStore]:
-    if _SKIP_SQLITE_VEC:
-        pytest.skip("sqlite-vec extension not loadable here")
     with tempfile.NamedTemporaryFile(suffix=".db") as f:
         store = SqliteStore(path=f.name)
         with store:
@@ -97,6 +91,12 @@ def sqlite_blob_store() -> Iterator[SqliteBlobStore]:
         yield store
 
 
-@pytest.fixture(params=["file_blob_store", "sqlite_blob_store"])
+@pytest.fixture
+def memory_blob_store() -> Iterator[MemoryBlobStore]:
+    with MemoryBlobStore() as store:
+        yield store
+
+
+@pytest.fixture(params=["file_blob_store", "sqlite_blob_store", "memory_blob_store"])
 def blob_store(request: pytest.FixtureRequest) -> BlobStore:
     return cast("BlobStore", request.getfixturevalue(request.param))

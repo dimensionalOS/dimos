@@ -14,15 +14,16 @@
 
 """Demos: a SLAM consumer fed by a VirtualMid360 replaying a pcap (live SDK path).
 
-Each module has its own lidar/host IP config (MID360__LIDAR_IP=... in the
-environment for the sensor, FASTLIO2__ / POINTLIO__ for the consumer); set them so
-the two ends agree.
+Each module has its own lidar/host IP config (VIRTUALMID360__LIDAR_IP=... in the
+environment for the fake sensor, FASTLIO2__ or MID360__ for the receiving end). Set
+them so the two ends agree.
 """
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.sensors.lidar.fastlio2.module import FastLio2
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
-from dimos.hardware.sensors.lidar.virtual_mid360.module import VirtualMid360
+from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
+from dimos.hardware.sensors.lidar.virtual_mid360.module import VirtualMid360, VirtualMid360Config
 from dimos.visualization.vis_module import vis_module
 
 demo_virtual_mid360_fastlio = autoconnect(
@@ -33,6 +34,7 @@ demo_virtual_mid360_fastlio = autoconnect(
 
 demo_virtual_mid360_pointlio = autoconnect(
     VirtualMid360.blueprint(),
+    mid360_for_pointlio(lidar_ip=VirtualMid360Config.model_fields["lidar_ip"].default),
     PointLio.blueprint(),
     vis_module("rerun"),
-).global_config(n_workers=3, robot_model="virtual_mid360_pointlio")
+).global_config(n_workers=4, robot_model="virtual_mid360_pointlio")

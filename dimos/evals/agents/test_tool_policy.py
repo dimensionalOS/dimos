@@ -16,7 +16,9 @@
 
 from dataclasses import replace
 import json
+import os
 from pathlib import Path
+import sys
 from urllib.parse import urlsplit
 
 import pytest
@@ -148,8 +150,18 @@ def test_excluded_keyword_in_workspace_path_is_not_a_hit(
 @pytest.mark.parametrize("harness", ["pi"], indirect=True)
 @pytest.mark.parametrize("provider", ["openai"], indirect=True)
 def test_no_dimos_strips_dimos_from_the_environment(
-    harness: NativeHarness, provider: ScriptedProvider
+    harness: NativeHarness,
+    provider: ScriptedProvider,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
+    # The probe needs a working python3 without dimOS. The one on the user's PATH may be a
+    # version-manager shim that fails under the fixture's temporary HOME, so use the base
+    # interpreter the venv was built from.
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "python3").symlink_to(Path(sys.base_prefix) / "bin" / "python3")
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
     # Spelling the name in two halves gets past the keyword guard on purpose: the
     # process environment must not have dimOS even when the guard is circumvented.
     probe = "python3 -c \"import importlib.util as u; print(u.find_spec('di'+'mos'))\"; command -v di''mos || echo no-cli"

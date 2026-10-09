@@ -106,8 +106,12 @@ class ConnectedHardware:
         return self._adapter.get_limits()
 
     def ready_for_control(self) -> bool:
-        """Whether state is available and control commands may be sent."""
-        return True
+        """Whether state is available and control commands may be sent.
+
+        Adapters whose state can go stale opt in with ``has_live_state()``.
+        """
+        has_live_state = getattr(self.adapter, "has_live_state", None)
+        return has_live_state is None or bool(has_live_state())
 
     def read_state(self) -> dict[JointName, JointState]:
         """Read state as {joint_name: JointState}.

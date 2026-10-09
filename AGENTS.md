@@ -202,7 +202,7 @@ Singleton config. Values cascade: defaults → `.env` → env vars → blueprint
 - **SHMTransport/pSHMTransport**: Shared memory — use for images and point clouds.
 - **pLCMTransport**: Pickled LCM — use for complex Python objects.
 - **ROSTransport**: ROS topic bridge — interop with ROS nodes (`dimos/core/transport.py`).
-- **DDSTransport**: DDS pub/sub — available when `DDS_AVAILABLE`; install with `uv sync --extra dds --inexact` (`dimos/protocol/pubsub/impl/ddspubsub.py`).
+- **DDSTransport**: DDS pub/sub. `DDS_AVAILABLE` reports whether cyclonedds is installed, and cyclonedds is imported only when a `DDSTransport` is constructed. Install with `uv sync --extra dds --inexact` (`dimos/protocol/pubsub/impl/ddspubsub.py`).
 
 ---
 
@@ -380,7 +380,7 @@ CI asserts the file is current — if it's stale, CI fails. Externally packaged 
 
 ## Git Workflow
 
-- Branch prefixes: `feat/`, `fix/`, `refactor/`, `docs/`, `test/`, `chore/`, `perf/`
+- **Branch names are `<who>/<type>/<topic>`**, e.g. `paul/feat/add-3d-map`. `who` is any identifier that makes the owner clear. `type` is one of `feat`, `fix`, `refactor`, `docs`, `test`, `chore`, `perf`, `build`, `ci`, `style`, `revert`. Prefer lowercase and hyphens. A pre-commit hook enforces this, locally and in CI.
 - **PRs target `main`** — `main` is the unstable development branch. Work and PR off of `main`. Never push to `main` directly.
 - **Don't force-push** unless after a rebase with conflicts
 - **Minimize pushes** — every push triggers CI (~1 hour on self-hosted runners). Batch commits locally, push once.

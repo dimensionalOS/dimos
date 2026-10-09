@@ -24,26 +24,15 @@ from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.global_config import global_config
 from dimos.core.module import ModuleBase
 from dimos.robot.all_blueprints import all_blueprints
-from dimos.robot.get_all_blueprints import get_blueprint_by_name
-from dimos.robot.test_all_blueprints import (
-    OPTIONAL_DEPENDENCIES,
-    OPTIONAL_ERROR_SUBSTRINGS,
-    SELF_HOSTED_BLUEPRINTS,
-)
+from dimos.robot.get_all_blueprints import OptionalDependencyError, load_blueprint
+from dimos.robot.test_all_blueprints import SELF_HOSTED_BLUEPRINTS
 
 
 def _get_blueprint_or_skip(blueprint_name: str) -> Blueprint:
     try:
-        return get_blueprint_by_name(blueprint_name)
-    except ModuleNotFoundError as e:
-        if e.name in OPTIONAL_DEPENDENCIES:
-            pytest.skip(f"Skipping due to missing optional dependency: {e.name}")
-        raise
-    except Exception as e:
-        message = str(e)
-        if any(substring in message for substring in OPTIONAL_ERROR_SUBSTRINGS):
-            pytest.skip(f"Skipping due to missing optional dependency: {message}")
-        raise
+        return load_blueprint(blueprint_name)
+    except OptionalDependencyError as e:
+        pytest.skip(f"Skipping due to missing optional dependency: {e}")
 
 
 def _config_kwarg_names(module: type[ModuleBase]) -> set[str]:
