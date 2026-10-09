@@ -82,7 +82,16 @@ def main() -> None:
         library = rust_root / "lib.rs"
         library.write_text(license_text + library.read_text())
         subprocess.run(
-            ["rustup", "run", "1.92.0", "rustfmt", "--edition", "2024", str(library)],
+            [
+                "rustup",
+                "run",
+                "1.92.0",
+                "rustfmt",
+                "--edition",
+                "2024",
+                str(library),
+                str(rust_root.parent / "build.rs"),
+            ],
             check=True,
         )
         expected = {

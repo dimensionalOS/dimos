@@ -30,6 +30,13 @@ def test_clean_source_wheel_sdist_and_editable_install(tmp_path):
     environment.update(
         PIP_NO_INDEX="1", PIP_FIND_LINKS=wheelhouse, CC="/bin/false", CXX="/bin/false"
     )
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    for name in ("cargo", "rustc", "cmake", "c++"):
+        executable = tools / name
+        executable.write_text("#!/bin/sh\nexit 97\n")
+        executable.chmod(0o755)
+    environment["PATH"] = str(tools) + os.pathsep + environment["PATH"]
     venv = tmp_path / "venv"
     subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True)
     python = str(venv / "bin/python")

@@ -87,6 +87,8 @@ def run_generation(checkout, *, check):
         "missing_python",
         "missing_cpp",
         "missing_rust",
+        "missing_rust_generator",
+        "missing_rust_definition",
         "missing_schema",
     ],
 )
@@ -123,6 +125,8 @@ def test_independent_regeneration_rejects_and_repairs_drift(aligned_checkout, tm
             "missing_cpp": "dimos_generated_schemas/package/cpp/messages.hpp",
             "missing_rust": "dimos_generated_schemas/package/rust/src/lib.rs",
             "missing_schema": "dimos_generated_schemas/schemas/geometry_msgs/msg/Point.msg",
+            "missing_rust_generator": "dimos_generated_schemas/package/rust/build.rs",
+            "missing_rust_definition": "dimos_generated_schemas/package/rust/interfaces/geometry_msgs/msg/Point.msg",
         }
         (output / paths[change]).unlink()
     before_check = {
@@ -140,7 +144,12 @@ def test_independent_regeneration_rejects_and_repairs_drift(aligned_checkout, tm
     assert failed.returncode != 0
     assert "Generated source drift" in failed.stderr, failed.stderr
     if change == "field":
-        for language_output in ["_types.py", "messages.hpp", "lib.rs"]:
+        for language_output in [
+            "_types.py",
+            "messages.hpp",
+            "rust/build.rs",
+            "rust/interfaces/geometry_msgs/msg/Point.msg",
+        ]:
             assert language_output in failed.stderr
     repaired = run_generation(checkout, check=False)
     assert repaired.returncode == 0, repaired.stderr

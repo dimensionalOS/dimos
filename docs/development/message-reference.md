@@ -60,3 +60,12 @@ retaining the complete payload Header.
 Changing a wire layout requires matching rebuilt packages. The proposal is a
 deliberate old-message API/wire break; transparent legacy-recording decoding and
 mixed old/new typed deployments are not supported.
+
+
+Rust packages contain owned `.msg` inputs, a small `build.rs` adapter and the
+codec/schema contracts. Normal `cargo build` invokes pinned `ros2msg` to generate
+the declarations in Cargo's `OUT_DIR`; `src/lib.rs` includes that result. This
+also applies to the Rust part of `dimos build`. Cargo and its dependency cache
+are native build prerequisites, not Python installation prerequisites. No helper
+binary, ROS installation or runtime download is required. Dependency types are
+reexported from their owner crate, preserving exact cross-package identity.
