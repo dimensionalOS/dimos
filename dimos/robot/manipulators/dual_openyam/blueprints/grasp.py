@@ -82,12 +82,12 @@ DUAL_OPENYAM_BASE_YAW = {"left": -0.046, "right": -0.194}
 # in world metres, fitted from the tag-touch checks of 2026-10-09: with the
 # tool commanded over a tag centre the closed jaws land at the command plus
 # (real base minus model base), so the model base moves by the measured
-# error. Two rounds of readings per arm agree within 5 mm. Both arms also
-# sit about 3.5 cm lower than the URDF zero: tips commanded 3.5 cm above the
-# table touched it.
+# error. Three rounds of readings per arm; the last put both tools on the tag
+# centres within 5 mm. The height error is in the tool length, see
+# DUAL_OPENYAM_TCP_OFFSET.
 DUAL_OPENYAM_BASE_OFFSET = {
-    "left": (-0.033, 0.008, -0.035),
-    "right": (-0.036, 0.003, -0.035),
+    "left": (-0.038, 0.008, 0.0),
+    "right": (-0.036, 0.003, 0.0),
 }
 
 # Wrist camera: a D405 on a 6 cm bracket that leaves the top of the wrist tube
@@ -140,6 +140,11 @@ DUAL_OPENYAM_REST_PER_ARM = {
 # pads (tip_left.stl, tip_right.stl at the URDF's closed zero position) meet on
 # that axis from 12.7 to 14.7 cm below the gripper link; plan to the pad centre.
 DUAL_OPENYAM_TCP_OFFSET = (0.0, 0.0, -0.037)
+# The printed fingers on the rig reach further than the URDF's: with the tool
+# commanded a known height above the table, the closed tips sat 4.5 cm (left)
+# and 5.5 cm (right) lower than the model's. The tool point moves out along
+# the fingers by that much, per arm (2026-10-09).
+DUAL_OPENYAM_TCP_EXTENSION = {"left": -0.045, "right": -0.055}
 
 # The same gripper in GraspGenX's convention: origin on the gripper link,
 # approach along +Z (the URDF's -Z), jaws closing along X (the URDF's Y). The
@@ -247,7 +252,9 @@ def dual_openyam_grasp_model_config() -> RobotModelConfig:
                 f"{side}_gripper", f"{side}_{name}", size=size, xyz=xyz, rpy=_BRACKET_RPY
             )
         model = model.with_fixed_frame(
-            f"{side}_tcp", f"{side}_grasp_frame", xyz=DUAL_OPENYAM_TCP_OFFSET
+            f"{side}_tcp",
+            f"{side}_grasp_frame",
+            xyz=(0.0, 0.0, DUAL_OPENYAM_TCP_OFFSET[2] + DUAL_OPENYAM_TCP_EXTENSION[side]),
         )
     config.model = model
     config.home_joints = [*DUAL_OPENYAM_REST_PER_ARM["left"], *DUAL_OPENYAM_REST_PER_ARM["right"]]
