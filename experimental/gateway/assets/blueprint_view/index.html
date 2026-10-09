@@ -1,0 +1,47 @@
+<!doctype html>
+<!-- The blueprint view: GET /dimos/blueprint_view?name=<blueprint> (app.js), the whole of dimOS Desktop's blueprint
+     Details modal: its top bar too (Desktop only frames it once it says so, `dimos:chrome`). Its files are
+     /dimos/blueprint_view/<file>. portal.css is the Portal fallback; ../theme.css (dimOS Desktop's, same origin
+     through its /dimos/ proxy) overrides it with every skin's tokens when there is a Desktop. -->
+<html lang="en" data-skin="portal">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Blueprint</title>
+        <link rel="stylesheet" href="blueprint_view/portal.css" />
+        <link rel="stylesheet" href="../theme.css" />
+        <link rel="stylesheet" href="blueprint_view/view.css" />
+        <script>
+            try {
+                document.documentElement.dataset.skin = localStorage.getItem("portal.theme") || "portal"
+            } catch {}
+        </script>
+        <script type="module" src="blueprint_view/app.js"></script>
+    </head>
+    <body>
+        <!-- the top bar (app.js): the blueprint and its phase, Relaunch, Stop, Configure, Show code, Logs, close -->
+        <header id="bar"></header>
+        <div id="app">
+            <aside id="side" aria-label="Modules"></aside>
+            <main id="graph" aria-label="Module graph">
+                <div class="graph-head">
+                    <span class="label">Module graph</span>
+                    <span id="liveBadge" class="live" hidden>live</span>
+                </div>
+                <details id="extras" hidden>
+                    <summary>Other live topics · <span id="extrasCount">0</span></summary>
+                    <label class="show"><input type="checkbox" id="extrasToggle" /> draw them</label>
+                    <ul id="extrasList"></ul>
+                </details>
+                <div class="zoom">
+                    <button type="button" id="zoomIn" aria-label="Zoom in">+</button>
+                    <button type="button" id="zoomOut" aria-label="Zoom out">−</button>
+                    <button type="button" id="zoomFit">Fit</button>
+                </div>
+                <div id="layouts" role="tablist" aria-label="Layout"></div>
+                <div id="code" hidden></div>
+            </main>
+        </div>
+        <div id="flyout" role="tooltip" hidden></div>
+    </body>
+</html>
