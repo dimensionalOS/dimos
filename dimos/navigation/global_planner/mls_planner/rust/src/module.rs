@@ -373,7 +373,17 @@ impl MlsPlanner {
     }
 
     fn hand_off(&self, update: MapUpdate) {
-        *self.pending.lock().expect("pending mutex") = Some(update);
+        let replaced = self.pending.lock().expect("pending mutex").replace(update);
+        match replaced {
+            Some(MapUpdate::Region { received, .. }) => warn!(
+                waited_ms = received.elapsed().as_secs_f64() * 1e3,
+                "A live cloud was replaced by a newer one before the worker took it."
+            ),
+            Some(MapUpdate::Global { .. }) => {
+                warn!("A global map was replaced by a live cloud before the worker took it.")
+            }
+            None => {}
+        }
         self.wake.notify_one();
     }
 
