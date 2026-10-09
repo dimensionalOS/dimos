@@ -27,9 +27,13 @@ import math
 from typing import Any
 
 from dimos.control.connection.connection_module import ConnectionModule
-from dimos.control.contract.description import ControlDescription, Limits
-from dimos.control.contract.keys import POSITION, Key
-from dimos.control.contract.presets import manipulator_description
+from dimos.control.contract.description import (
+    ControlDescription,
+    Limits,
+    Resource,
+    ResourceKind,
+)
+from dimos.control.contract.keys import Interface, Key, Unit
 from dimos.core.module import ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -74,13 +78,20 @@ class MockConnectionModule(ConnectionModule):
     def describe(self) -> ControlDescription | list[ControlDescription]:
         source = self.config.source
         joints = [f"joint{i}" for i in range(1, self.config.joints + 1)]
-        limit = self.config.position_limit
-        return manipulator_description(
-            source,
-            joints,
-            limits={Key.of(source, joint, POSITION): Limits(-limit, limit) for joint in joints},
-            state=(POSITION,),
-            command=(POSITION,),
+        limit = Limits(-self.config.position_limit, self.config.position_limit)
+        return ControlDescription(
+            source=source,
+            resources=tuple(
+                Resource(
+                    name=joint,
+                    kind=ResourceKind.JOINT,
+                    state_interfaces=(Interface.POSITION,),
+                    command_interfaces=(Interface.POSITION,),
+                    units={Interface.POSITION: Unit.RAD},
+                )
+                for joint in joints
+            ),
+            limits={Key.of(source, joint, Interface.POSITION): limit for joint in joints},
             state_rate_hz=self.config.state_rate_hz,
             deadman_timeout_s=self.config.deadman_timeout_s,
         )

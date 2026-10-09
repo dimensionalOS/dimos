@@ -55,7 +55,7 @@ from dimos.control.contract.convert import (
     twist_to_values,
 )
 from dimos.control.contract.description import ControlDescription, ResourceKind
-from dimos.control.contract.keys import POSITION, SEPARATOR, VELOCITY
+from dimos.control.contract.keys import SEPARATOR, Interface
 from dimos.control.contract.validate import (
     FrameRejectedError,
     Rejected,
@@ -365,13 +365,17 @@ class ConnectionModule(Module, ABC):
         readers: dict[str, tuple[Callable[[Any, Any], Values], Any, set[str]]] = {
             "position_command": (
                 joint_state_to_values,
-                (POSITION,),
-                _keys([j for j, cmd, _ in joints if POSITION in cmd], (POSITION,)),
+                (Interface.POSITION,),
+                _keys(
+                    [j for j, cmd, _ in joints if Interface.POSITION in cmd], (Interface.POSITION,)
+                ),
             ),
             "velocity_command": (
                 joint_state_to_values,
-                (VELOCITY,),
-                _keys([j for j, cmd, _ in joints if VELOCITY in cmd], (VELOCITY,)),
+                (Interface.VELOCITY,),
+                _keys(
+                    [j for j, cmd, _ in joints if Interface.VELOCITY in cmd], (Interface.VELOCITY,)
+                ),
             ),
             "motor_command": (motor_command_to_values, motor, _keys(motor, MOTOR_INTERFACES)),
         }

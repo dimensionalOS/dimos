@@ -37,30 +37,7 @@ from collections.abc import Collection, Mapping, Sequence
 import math
 
 from dimos.control.contract.description import ControlDescription, ResourceKind
-from dimos.control.contract.keys import (
-    AX,
-    AY,
-    AZ,
-    EFFORT,
-    GX,
-    GY,
-    GZ,
-    KD,
-    KP,
-    POSITION,
-    QW,
-    QX,
-    QY,
-    QZ,
-    SEPARATOR,
-    VELOCITY,
-    VX,
-    VY,
-    WZ,
-    YAW,
-    X,
-    Y,
-)
+from dimos.control.contract.keys import SEPARATOR, Interface
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -88,16 +65,33 @@ STATE_PORTS: Mapping[str, type] = {
 }
 
 #: The JointState fields, each named after the interface it carries.
-JOINT_STATE_FIELDS: tuple[str, ...] = (POSITION, VELOCITY, EFFORT)
+JOINT_STATE_FIELDS: tuple[str, ...] = (Interface.POSITION, Interface.VELOCITY, Interface.EFFORT)
 #: What a MotorCommandArray carries for each joint, in its field order
 #: q, dq, tau, kp, kd.
-MOTOR_INTERFACES: tuple[str, ...] = (POSITION, VELOCITY, EFFORT, KP, KD)
+MOTOR_INTERFACES: tuple[str, ...] = (
+    Interface.POSITION,
+    Interface.VELOCITY,
+    Interface.EFFORT,
+    Interface.KP,
+    Interface.KD,
+)
 #: What a Twist carries for a base: forwards, leftwards, turning.
-TWIST_INTERFACES: tuple[str, ...] = (VX, VY, WZ)
+TWIST_INTERFACES: tuple[str, ...] = (Interface.VX, Interface.VY, Interface.WZ)
 #: What a PoseStamped carries for a base: where it is and which way it faces.
-POSE_INTERFACES: tuple[str, ...] = (X, Y, YAW)
+POSE_INTERFACES: tuple[str, ...] = (Interface.X, Interface.Y, Interface.YAW)
 #: What an Imu carries: orientation, turn rates, accelerations.
-IMU_INTERFACES: tuple[str, ...] = (QX, QY, QZ, QW, GX, GY, GZ, AX, AY, AZ)
+IMU_INTERFACES: tuple[str, ...] = (
+    Interface.QX,
+    Interface.QY,
+    Interface.QZ,
+    Interface.QW,
+    Interface.GX,
+    Interface.GY,
+    Interface.GZ,
+    Interface.AX,
+    Interface.AY,
+    Interface.AZ,
+)
 
 
 def motor_joints(descriptions: Sequence[ControlDescription]) -> list[str]:
@@ -115,7 +109,8 @@ def motor_joints(descriptions: Sequence[ControlDescription]) -> list[str]:
         f"{d.source}{SEPARATOR}{r.name}"
         for d in descriptions
         for r in d.resources
-        if r.kind is ResourceKind.JOINT and {KP, KD} <= set(r.command_interfaces)
+        if r.kind is ResourceKind.JOINT
+        and {Interface.KP, Interface.KD} <= set(r.command_interfaces)
     ]
 
 
@@ -130,7 +125,11 @@ def twist_to_values(twist: Twist, base: str) -> dict[str, float]:
         base: The base's full name, e.g. "chassis/base".
     """
     vx, vy, wz = twist.linear.x, twist.linear.y, twist.angular.z
-    return {_key(base, VX): vx, _key(base, VY): vy, _key(base, WZ): wz}
+    return {
+        _key(base, Interface.VX): vx,
+        _key(base, Interface.VY): vy,
+        _key(base, Interface.WZ): wz,
+    }
 
 
 def twist_from_values(values: Mapping[str, float], base: str) -> Twist:
@@ -200,9 +199,9 @@ def joint_state_from_values(
     return JointState(
         ts=ts,
         name=list(joints),
-        position=columns.get(POSITION),
-        velocity=columns.get(VELOCITY),
-        effort=columns.get(EFFORT),
+        position=columns.get(Interface.POSITION),
+        velocity=columns.get(Interface.VELOCITY),
+        effort=columns.get(Interface.EFFORT),
     )
 
 
@@ -242,7 +241,11 @@ def pose_to_values(pose: PoseStamped, base: str) -> dict[str, float]:
     rad, 0 along x, growing to the left), from a PoseStamped."""
     q = pose.orientation
     yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
-    return {_key(base, X): pose.position.x, _key(base, Y): pose.position.y, _key(base, YAW): yaw}
+    return {
+        _key(base, Interface.X): pose.position.x,
+        _key(base, Interface.Y): pose.position.y,
+        _key(base, Interface.YAW): yaw,
+    }
 
 
 def pose_from_values(

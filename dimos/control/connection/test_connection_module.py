@@ -30,16 +30,12 @@ from typing import Any
 
 import pytest
 
+from dimos.control._control_test_helpers import turning_joints
 from dimos.control.connection.connection_module import ConnectionDescription, ConnectionStatus
 from dimos.control.connection.mock_connection import MockConnectionModule
 from dimos.control.contract.description import ControlDescription, Limits
-from dimos.control.contract.keys import POSITION, VELOCITY, VX, VY, WZ, Key
-from dimos.control.contract.presets import (
-    imu_resource,
-    manipulator_description,
-    pd_joint_description,
-    twist_base_description,
-)
+from dimos.control.contract.keys import Interface, Key
+from dimos.control.contract.presets import imu_resource, twist_base_description
 from dimos.control.contract.validate import DescriptionError
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -139,9 +135,26 @@ class BodyAndBase(MockConnectionModule):
     imu: Out[Imu]
 
     def describe(self) -> list[ControlDescription]:
-        limits = {Key.of("base", "base", axis): Limits(-1.0, 1.0) for axis in (VX, VY, WZ)}
+        limits = {
+            Key.of("base", "base", axis): Limits(-1.0, 1.0)
+            for axis in (Interface.VX, Interface.VY, Interface.WZ)
+        }
         return [
-            pd_joint_description("g1", ["j1", "j2"], sensors=[imu_resource()]),
+            turning_joints(
+                "g1",
+                ["j1", "j2"],
+                state=(Interface.POSITION, Interface.VELOCITY, Interface.EFFORT),
+                command=(
+                    Interface.POSITION,
+                    Interface.VELOCITY,
+                    Interface.EFFORT,
+                    Interface.KP,
+                    Interface.KD,
+                ),
+                others=[imu_resource()],
+                state_rate_hz=500.0,
+                deadman_timeout_s=0.05,
+            ),
             # The preset's defaults: it reports where it is and how fast.
             twist_base_description("base", limits=limits),
         ]
@@ -158,8 +171,11 @@ class PositionAndVelocity(MockConnectionModule):
     velocity_command: In[JointState]
 
     def describe(self) -> ControlDescription:
-        return manipulator_description(
-            "mock", ["joint1"], state=(POSITION,), command=(POSITION, VELOCITY)
+        return turning_joints(
+            "mock",
+            ["joint1"],
+            state=(Interface.POSITION,),
+            command=(Interface.POSITION, Interface.VELOCITY),
         )
 
 
@@ -201,13 +217,22 @@ class BadDescription(Watched):
 
 class NoVelocityInput(Watched):
     def describe(self) -> ControlDescription:
-        return manipulator_description("mock", ["joint1"], state=(POSITION,))
+        return turning_joints(
+            "mock",
+            ["joint1"],
+            state=(Interface.POSITION,),
+            command=(Interface.POSITION, Interface.VELOCITY),
+        )
 
 
 class NoImuOutput(Watched):
     def describe(self) -> ControlDescription:
-        return manipulator_description(
-            "mock", ["joint1"], state=(POSITION,), command=(POSITION,), sensors=[imu_resource()]
+        return turning_joints(
+            "mock",
+            ["joint1"],
+            state=(Interface.POSITION,),
+            command=(Interface.POSITION,),
+            others=[imu_resource()],
         )
 
 

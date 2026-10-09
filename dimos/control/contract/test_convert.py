@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import math
+from pathlib import Path
 
 import pytest
 
@@ -32,7 +33,7 @@ from dimos.control.contract.convert import (
     twist_from_values,
     twist_to_values,
 )
-from dimos.control.contract.keys import EFFORT, POSITION, VELOCITY, Unit
+from dimos.control.contract.keys import Interface, Unit
 from dimos.control.contract.presets import (
     GripperSpec,
     manipulator_description,
@@ -46,6 +47,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
+from dimos.robot.assets.model import RobotModel
 
 BASE = "chassis/base"
 
@@ -61,11 +63,11 @@ def test_a_twist_carries_forwards_leftwards_and_turning_only() -> None:
 
 def test_a_joint_state_gives_only_the_fields_asked_for() -> None:
     msg = JointState(name=["arm/j1", "arm/j2"], position=[0.1, 0.2], velocity=[1.0, 2.0])
-    assert joint_state_to_values(msg, (POSITION,)) == {
+    assert joint_state_to_values(msg, (Interface.POSITION,)) == {
         "arm/j1/position": 0.1,
         "arm/j2/position": 0.2,
     }
-    assert joint_state_to_values(msg, (VELOCITY, EFFORT)) == {
+    assert joint_state_to_values(msg, (Interface.VELOCITY, Interface.EFFORT)) == {
         "arm/j1/velocity": 1.0,
         "arm/j2/velocity": 2.0,
     }
@@ -73,7 +75,9 @@ def test_a_joint_state_gives_only_the_fields_asked_for() -> None:
 
 def test_a_malformed_joint_state_raises() -> None:
     with pytest.raises(ValueError, match="2 names but 1 position"):
-        joint_state_to_values(JointState(name=["a/j1", "a/j2"], position=[0.1]), (POSITION,))
+        joint_state_to_values(
+            JointState(name=["a/j1", "a/j2"], position=[0.1]), (Interface.POSITION,)
+        )
     with pytest.raises(ValueError, match="no 'kp' field"):
         joint_state_to_values(JointState(name=["a/j1"]), ("kp",))
 
@@ -88,7 +92,9 @@ def test_a_joint_state_from_values_fills_the_fields_every_joint_has() -> None:
         [],
         [3.0],
     )
-    assert joint_state_to_values(msg, (POSITION, VELOCITY, EFFORT)) == {
+    assert joint_state_to_values(
+        msg, (Interface.POSITION, Interface.VELOCITY, Interface.EFFORT)
+    ) == {
         "arm/j1/position": 0.1,
         "arm/j1/effort": 3.0,
     }
@@ -98,9 +104,42 @@ def test_a_joint_state_from_values_fills_the_fields_every_joint_has() -> None:
         joint_state_from_values(values, ["arm/j3"])
 
 
-def test_motor_joints_are_the_stiffness_driven_joints_in_description_order() -> None:
-    arm = manipulator_description("arm", ["a1"], gripper=GripperSpec(unit=Unit.M, lo=0, hi=1))
-    body = pd_joint_description("g1", ["left_knee", "right_knee"])
+#: Three turning joints: one for an arm, two for a body.
+THREE_JOINTS_URDF = """<?xml version="1.0"?>
+<robot name="three">
+  <link name="l0"/>
+  <link name="l1"/>
+  <link name="l2"/>
+  <link name="l3"/>
+  <joint name="a1" type="revolute">
+    <parent link="l0"/>
+    <child link="l1"/>
+    <limit lower="-1.0" upper="1.0" velocity="1.0" effort="1.0"/>
+  </joint>
+  <joint name="left_knee" type="revolute">
+    <parent link="l1"/>
+    <child link="l2"/>
+    <limit lower="-1.0" upper="1.0" velocity="1.0" effort="1.0"/>
+  </joint>
+  <joint name="right_knee" type="revolute">
+    <parent link="l2"/>
+    <child link="l3"/>
+    <limit lower="-1.0" upper="1.0" velocity="1.0" effort="1.0"/>
+  </joint>
+</robot>
+"""
+
+
+def test_motor_joints_are_the_stiffness_driven_joints_in_description_order(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "three.urdf"
+    path.write_text(THREE_JOINTS_URDF)
+    model = RobotModel.from_file(path)
+    arm = manipulator_description(
+        model, source="arm", joints=["a1"], gripper=GripperSpec(unit=Unit.M, lo=0, hi=1)
+    )
+    body = pd_joint_description(model, source="g1", joints=["left_knee", "right_knee"])
     base = twist_base_description("base", limits={})
     assert motor_joints([arm, body, base]) == ["g1/left_knee", "g1/right_knee"]
 
