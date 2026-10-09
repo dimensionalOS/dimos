@@ -54,11 +54,22 @@ class Box:
     kind: Kind
 
 
+@dataclass(frozen=True)
+class Door:
+    """A doorway in a wall across the given axis, with the opening along the other axis."""
+
+    axis: int
+    at: float
+    start: float
+    width: float
+
+
 @dataclass
 class Scene:
     name: str
     params: dict[str, float] = field(default_factory=dict)
     boxes: list[Box] = field(default_factory=list)
+    doors: list[Door] = field(default_factory=list)
     start: Vec3 = (0.0, 0.0, 0.0)
 
     def add(self, lo: ArrayLike, hi: ArrayLike, kind: Kind) -> None:
@@ -119,13 +130,13 @@ def _wall_with_doors(
     hi: float,
     z: float,
     top: float,
-    doors: list[tuple[float, float]],
+    doors: list[Door],
 ) -> None:
     """A wall across the given axis with door gaps and lintels."""
     t = WALL_THICKNESS
     edges = [lo]
-    for door_start, door_width in sorted(doors):
-        edges += [door_start, door_start + door_width]
+    for door in sorted(doors, key=lambda d: d.start):
+        edges += [door.start, door.start + door.width]
     edges.append(hi)
     for i in range(0, len(edges), 2):
         a, b = edges[i], edges[i + 1]
@@ -133,19 +144,20 @@ def _wall_with_doors(
             scene.add((at, a, z), (at + t, b, top), "wall")
         else:
             scene.add((a, at, z), (b, at + t, top), "wall")
-    for door_start, door_width in doors:
+    for door in doors:
         lintel = z + DOOR_HEIGHT
         if axis == 0:
-            scene.add((at, door_start, lintel), (at + t, door_start + door_width, top), "wall")
+            scene.add((at, door.start, lintel), (at + t, door.start + door.width, top), "wall")
         else:
-            scene.add((door_start, at, lintel), (door_start + door_width, at + t, top), "wall")
+            scene.add((door.start, at, lintel), (door.start + door.width, at + t, top), "wall")
+    scene.doors += doors
 
 
-def _door_zone(axis: int, at: float, start: float, width: float) -> Rect:
+def _door_zone(door: Door) -> Rect:
     """The passage through a door: the opening plus DOOR_CLEARANCE on both sides of the wall."""
-    lo, hi = start - DOOR_SIDE_MARGIN, start + width + DOOR_SIDE_MARGIN
-    near, far = at - DOOR_CLEARANCE, at + WALL_THICKNESS + DOOR_CLEARANCE
-    return (near, lo, far, hi) if axis == 0 else (lo, near, hi, far)
+    lo, hi = door.start - DOOR_SIDE_MARGIN, door.start + door.width + DOOR_SIDE_MARGIN
+    near, far = door.at - DOOR_CLEARANCE, door.at + WALL_THICKNESS + DOOR_CLEARANCE
+    return (near, lo, far, hi) if door.axis == 0 else (lo, near, hi, far)
 
 
 def _clear(x0: float, y0: float, x1: float, y1: float, keep_clear: list[Rect]) -> bool:
@@ -239,15 +251,14 @@ def office(
     for a, b in zip([0.0, *xs], [*xs, width], strict=True):
         w = _given(_uniform(rng, *DOOR_WIDTH), door_width)
         if b - a > w + 1.0:
-            doors_mid.append((_uniform(rng, a + 0.4, b - w - 0.4), w))
+            doors_mid.append(Door(1, wy, _uniform(rng, a + 0.4, b - w - 0.4), w))
     _wall_with_doors(scene, 1, wy, 0, width, z0, top, doors_mid)
-    keep_clear += [_door_zone(1, wy, *door) for door in doors_mid]
     for x in xs:
         for a, b in ((0.0, wy), (wy + WALL_THICKNESS, length)):
             w = _given(_uniform(rng, *DOOR_WIDTH), door_width)
-            door = (_uniform(rng, a + 0.3, b - w - 0.3), w)
+            door = Door(0, x, _uniform(rng, a + 0.3, b - w - 0.3), w)
             _wall_with_doors(scene, 0, x, a, b, z0, top, [door])
-            keep_clear.append(_door_zone(0, x, *door))
+    keep_clear += [_door_zone(door) for door in scene.doors]
     clutter = _given(int(rng.integers(8, 16)), clutter)
     _clutter(scene, rng, 0.2, 0.2, width - 0.2, length - 0.2, z0, clutter, keep_clear)
     tables = _given(int(rng.integers(1, 4)), tables)

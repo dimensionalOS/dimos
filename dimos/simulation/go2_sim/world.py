@@ -54,6 +54,7 @@ from dimos.robot.unitree.go2.constants import CMD_VEL_TIMEOUT
 from dimos.robot.unitree.go2.go2_mid360_static_transforms import FRAMES
 from dimos.simulation.go2_legged.policy import Go2Policy, load_policy
 from dimos.simulation.go2_legged.robot import CONTROL_DT, LeggedGo2, apply_fitted_physics, go2_spec
+from dimos.simulation.scenes.mjcf import add_boxes
 from dimos.simulation.scenes.procedural import Family, Scene, generate
 from dimos.simulation.sensors.mid360.lidar import SimMid360
 from dimos.simulation.sensors.mid360.pattern import POINT_RATE
@@ -139,12 +140,7 @@ class GroundTruthLio:
 def build_model(scene: Scene) -> mujoco.MjModel:
     """The scene's boxes, the Go2 and the Mid-360 housing as a contact box, in one model."""
     spec = go2_spec()
-    for i, box in enumerate(scene.boxes):
-        geom = spec.worldbody.add_geom()
-        geom.type = mujoco.mjtGeom.mjGEOM_BOX
-        geom.name = f"{box.kind}_{i}"
-        geom.pos = box.center
-        geom.size = box.half
+    add_boxes(spec, scene)
     lidar = spec.body("base").add_geom()
     lidar.name = "mid360"
     lidar.type = mujoco.mjtGeom.mjGEOM_BOX
