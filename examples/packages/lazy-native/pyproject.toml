@@ -1,20 +1,21 @@
 [build-system]
-requires = ["setuptools>=70"]
-build-backend = "setuptools.build_meta"
+requires = ["scikit-build-core>=1.0,<2", "dimos-build-config"]
+build-backend = "scikit_build_core.build"
 
 [project]
 name = "dimos-lazy-native"
 version = "0.1.0"
+dynamic = ["entry-points"]
 requires-python = ">=3.10,<3.13"
 # Requires a host containing NativeModuleConfig.source_package (not released yet).
 dependencies = ["dimos>=0.0.14,<0.1"]
 
-[project.entry-points."dimos.blueprints"]
+[tool.dimos]
+package = "src/dimos_lazy_native"
+
+[tool.dimos.blueprints]
 probe = "dimos_lazy_native.module:PackageProbe"
 other = "dimos_lazy_native.module:OtherProbe"
 
-[tool.setuptools.packages.find]
-where = ["src"]
-
-[tool.setuptools.package-data]
-dimos_lazy_native = ["native/Cargo.toml", "native/Cargo.lock", "native/src/*.rs", "native/src/bin/*.rs", "resources/*.txt"]
+[[tool.dynamic-metadata]]
+provider = "dimos"

@@ -1,3 +1,10 @@
+# Legacy prebuilt compatibility fixture
+
+This fixture tests existing installed-executable support. New packages should follow
+[source-only lazy native](/examples/packages/lazy-native/README.md) and the
+[authoring guide](/docs/usage/packages.md). Its wheel build intentionally compiles;
+it does not use the new source-only `tool.dimos` API.
+
 # An installed native module
 
 This independent project demonstrates the existing `NativeModule` and

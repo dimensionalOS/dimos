@@ -1,4 +1,11 @@
-# A source-only native package
+# Canonical source-only native package
+
+This Rust probe is the small reference for the [package API](/docs/usage/packages.md).
+`tool.dimos` supplies source packaging and blueprint metadata; no Cargo/CMake runs
+while building or installing the Python distribution. The build integration is not
+published: first build `packages/dimos-build-config` and provide its wheel through
+`PIP_FIND_LINKS` or `UV_FIND_LINKS`. The host must contain `source_package` support.
+
 
 This project ships two Rust binaries as source in one ordinary Python wheel.
 Installing it or listing blueprints does not invoke Cargo, rustc or CMake.

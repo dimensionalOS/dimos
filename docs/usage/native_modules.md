@@ -273,20 +273,10 @@ autoconnect(
 
 ## Independently installed native packages
 
-A native module can live outside this repository. Package its Python declaration,
-executable and resources together, and export the declaration with a
-`dimos.blueprints` entry point. The installed declaration uses an absolute path
-to its own executable, with `source_dir=None` and `build_command=None`.
-Building the wheel is the package build backend's job; running it does not fetch
-or build dimOS sources. Install into the coordinator's Python environment.
-
-The [independent native package example](/examples/packages/native/README.md)
-contains a complete CMake/scikit-build-core project and a real native lifecycle
-probe. It demonstrates platform-wheel installation, metadata-only discovery,
-resource paths and shutdown from outside the package source directory. It uses
-existing interfaces and does not require a new registry or editing the built-in
-blueprint list. For entry-point naming and Python composition, see
-[external blueprints](/docs/usage/blueprints.md#publishing-external-blueprints).
+Use the [package authoring guide](/docs/usage/packages.md) for source-only wheels,
+blueprint metadata and lazy preparation. NativeModuleConfig adds only
+`source_package` to select installed package sources; build targets remain in Python.
+Existing prebuilt executable declarations remain compatible.
 
 ## Native sources in pip installations
 
