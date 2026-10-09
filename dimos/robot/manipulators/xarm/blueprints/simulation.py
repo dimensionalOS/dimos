@@ -17,12 +17,14 @@
 from __future__ import annotations
 
 from dimos.control.coordinator import TaskConfig
-from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import global_config
 from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspModule
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.manipulation_skills import ManipulationSkills
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
 from dimos.robot.manipulators.common.blueprints import (
     coordinator,
@@ -76,38 +78,49 @@ xarm_perception_sim = autoconnect(
     RerunBridgeModule.blueprint(),
 )
 
-# Robot-only stack: control and sensors, exposed as plain Zenoh topics for agents without dimOS.
-xarm_sim = autoconnect(
-    MujocoSimModule.blueprint(
-        **{
-            **_xarm7_sim_kwargs,
-            "base_frame_id": "world",
-        }
-    ),
-    coordinator(
-        hardware=[_xarm7_sim_hw],
-        tasks=[
-            eef_twist_task(
-                _xarm7_sim_hw,
-                robot_model=_xarm7_sim_model,
-                target_frame="link_tcp",
-                max_joint_velocity_rad_s=0.5,
-            ),
-            TaskConfig(
-                name="arm_gripper",
-                type="gripper",
-                joint_names=["arm/gripper"],
-                priority=20,
-            ),
-        ],
-        cls=ArmTwistCoordinator,
-        instance_name="ControlCoordinator",
-        publish_frame_poses=True,
-    ),
-    RawRobotBridge.blueprint(
-        camera_frame="wrist_camera_color_optical_frame",
-        ee_frame="link_tcp",
-        gripper_joint="arm/gripper",
-        gripper_range=(0.0, 0.85),
-    ),
+
+def _xarm_sim(base_pose: PoseStamped | None = None) -> Blueprint:
+    """Robot-only stack: control and sensors, exposed as plain Zenoh topics for agents without
+    dimOS. ``base_pose`` is where the scene mounts ``link_base``; the eef_twist IK and the
+    measured TCP pose on tf use it."""
+    return autoconnect(
+        MujocoSimModule.blueprint(
+            **{
+                **_xarm7_sim_kwargs,
+                "base_frame_id": "world",
+            }
+        ),
+        coordinator(
+            hardware=[_xarm7_sim_hw],
+            tasks=[
+                eef_twist_task(
+                    _xarm7_sim_hw,
+                    robot_model=make_xarm7_sim_robot_config(base_pose=base_pose),
+                    target_frame="link_tcp",
+                    max_joint_velocity_rad_s=0.5,
+                ),
+                TaskConfig(
+                    name="arm_gripper",
+                    type="gripper",
+                    joint_names=["arm/gripper"],
+                    priority=20,
+                ),
+            ],
+            cls=ArmTwistCoordinator,
+            instance_name="ControlCoordinator",
+            publish_frame_poses=True,
+        ),
+        RawRobotBridge.blueprint(
+            camera_frame="wrist_camera_color_optical_frame",
+            ee_frame="link_tcp",
+            gripper_joint="arm/gripper",
+            gripper_range=(0.0, 0.85),
+        ),
+    )
+
+
+xarm_sim = autoconnect(_xarm_sim())
+# The robosuite exports keep their full-height tables and mount link_base 0.912 m up.
+xarm_sim_robosuite = autoconnect(
+    _xarm_sim(PoseStamped(frame_id="world", position=Vector3(z=0.912)))
 )
