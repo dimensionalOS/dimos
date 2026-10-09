@@ -520,7 +520,10 @@ class PickAndPlaceModule(Module):
         if leg.mode == "pose" and leg.target is not None:
             result = self._manipulation.plan_to_poses({group: leg.target})
         elif leg.mode == "linear" and leg.target is not None:
-            current = self._manipulation.get_ee_pose(group)
+            # get_state is an RPC; the tool pose getter is not, and this module
+            # may run in another process from the manipulation module.
+            group_state = self._manipulation.get_state().groups.get(group)
+            current = group_state.end_effector_pose if group_state is not None else None
             if current is None:
                 result = self._manipulation.plan_to_poses({group: leg.target})
             else:

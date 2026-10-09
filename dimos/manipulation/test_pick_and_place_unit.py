@@ -747,10 +747,8 @@ def test_proceed_completes_when_the_object_left_its_start_position(
 def test_proceed_replans_a_leg_the_controller_rejects_from_the_live_state(
     staged: PickAndPlaceModule,
 ) -> None:
-    from dimos.msgs.geometry_msgs.Pose import Pose
-
     manipulation: Any = staged._manipulation
-    manipulation.get_ee_pose.return_value = Pose(
+    manipulation.get_state.return_value.groups["arm/tool"].end_effector_pose = PoseStamped(
         position=Vector3(0.33, -0.10, 0.23), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)
     )
     rejected = ExecutionResult(
