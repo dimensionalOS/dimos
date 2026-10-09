@@ -15,8 +15,10 @@
 """Check grasp candidates against the gripper's own shape, open and while it closes.
 
 A grasp passes when, at the open pose and at each closing step until a contact
-patch reaches the object, only contact patches come near the object and no part
-of the gripper overlaps anything else.
+patch presses on the object, only contact patches come near the object and no
+part of the gripper overlaps anything else. At the open pose a contact patch may
+come near the object but not press into it: the fingers would have to push the
+object aside to get there.
 """
 
 from __future__ import annotations
@@ -173,7 +175,8 @@ class GripperContactModel:
         }
         # The fingers stop once a contact patch presses into the object, so the
         # poses from there on are never reached. A patch already pressing at the
-        # open pose leaves only the open pose to check.
+        # open pose leaves only the open pose to check, and is itself a touch.
+        off_patch[:, 0] |= pressed[:, 0]
         reached = pressed.any(axis=1)
         first = np.argmax(pressed, axis=1)
         last = np.where(reached, np.maximum(first - 1, 0), steps - 1)

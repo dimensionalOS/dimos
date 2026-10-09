@@ -135,6 +135,17 @@ def test_xarm_rejects_a_fingertip_resting_on_top_of_the_box(xarm: GripperContact
 
 
 @pytest.mark.self_hosted
+def test_xarm_rejects_pads_pressing_into_a_box_wider_than_the_open_jaws(
+    xarm: GripperContactModel,
+) -> None:
+    # The open pads stand 8.89 cm apart; this box is 9.2 cm across them.
+    wide = _box((0.0, 0.0, 0.03), (0.04, 0.092, 0.06))
+    table = _table(hole=(-0.02, 0.02, -0.046, 0.046))
+
+    assert _check(xarm, _top_down(0.0, 0.0, 0.03), wide, table=table) == GraspContact(("target",))
+
+
+@pytest.mark.self_hosted
 def test_xarm_closing_sweep_catches_fingertips_swinging_into_the_table(
     xarm: GripperContactModel,
 ) -> None:
