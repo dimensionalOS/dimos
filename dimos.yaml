@@ -18,7 +18,7 @@ install: |
       "https://api.github.com/repos/dimensionalOS/dimos/contents/scripts/install.sh?ref=$REF" -o "$script" \
       || curl -fsSL "$raw" -o "$script"
   fi
-  bash "$script" --mode dev --branch "$REF" --project-dir "$DIMOS_DIR" --skip-tests ${NON_INTERACTIVE:+--non-interactive}
+  DIMOS_COMMIT="${COMMIT:-}" bash "$script" --mode dev --branch "$REF" --project-dir "$DIMOS_DIR" --skip-tests ${NON_INTERACTIVE:+--non-interactive}
   "$DIMOS_DIR/.venv/bin/python" -c "import dimos" && echo "dimos is installed in $DIMOS_DIR"
 # The /dimos HTTP API the dimos gateway serves: its semver (a breaking change is a major bump) and its OpenAPI document,
 # which Desktop can read per tag without running anything. Regenerate it with `python -m dimos.gateway --write-openapi`.

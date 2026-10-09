@@ -1,7 +1,5 @@
 # Unitree G1
 
-![output](assets/g1_rerun.webp)
-
 ## Requirements
 
 - Unitree G1 EDU (need SDK/SSH access)
