@@ -44,8 +44,8 @@ pytestmark = [
 REST = JointState(name=list(DUAL_OPENYAM_ARM_JOINTS), position=[0.0] * 12)
 HOME = [0.0, 1.047, 1.047, 0.0, 0.0, 0.0] * 2
 # Right-arm configurations found by sweeping joints 1 to 4 (left arm at rest).
-RIGHT_TCP_IN_BIN = [0.0] * 6 + [0.2, 1.9, 1.0, 0.2, 0.0, 0.0]
-RIGHT_TCP_BELOW_TABLE = [0.0] * 6 + [-0.6, 0.2, 0.0, -1.2, 0.0, 0.0]
+RIGHT_TCP_IN_BIN = [0.0] * 6 + [0.5, 2.0, 1.0, 0.4, 0.0, 0.0]
+RIGHT_TCP_BELOW_TABLE = [0.0] * 6 + [-0.6, 0.4, 0.0, -1.0, 0.0, 0.0]
 RIGHT_TCP_FREE = [0.0] * 6 + [-0.6, 0.0, 0.0, 0.0, 0.0, 0.0]
 
 

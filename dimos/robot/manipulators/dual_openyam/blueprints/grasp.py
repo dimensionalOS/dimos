@@ -72,17 +72,17 @@ from dimos.visualization.rerun.bridge import RerunBridgeModule
 # 2026-10-07 reading that favoured 0.62 was confounded by the old camera pose,
 # which sat 4.5 cm too high and 3 cm too far forward.
 DUAL_OPENYAM_BASE_SPACING = 0.43
-# Yaw of each arm's base about the world z axis, radians, from the tag-touch
-# check of 2026-10-09: the real tool and the model's tool lie on the same arc
-# about the base, turned by this angle. A plate mounted turned, or a joint 1
-# zero that is off, looks the same to the planner and is corrected the same way.
-DUAL_OPENYAM_BASE_YAW = {"left": 0.0, "right": 0.0}
+# Joint 1 zero of each arm, measured 2026-10-09 by jogging joint 1 until the
+# arm lay straight along the table, parallel to its twin: the motor read
+# 0.046 rad on the left and 0.194 rad on the right at that pose. The model
+# turns each base by the opposite angle so the reported angles place the arm
+# where it really is. The lasting fix is re-zeroing those motors.
+DUAL_OPENYAM_BASE_YAW = {"left": -0.046, "right": -0.194}
 # Where each arm's real base sits relative to the nominal (0, +-spacing/2), in
-# metres, from the same tag-touch check: with the tool commanded over a tag the
-# closed jaws landed this far from where the model put them, so the base is
-# moved by the same amount. Right: 4.5 cm nearer the table and 5.6 cm further
-# out; left: 2.6 cm nearer and 0.6 cm further out.
-DUAL_OPENYAM_BASE_OFFSET = {"left": (-0.026, -0.006), "right": (-0.045, -0.056)}
+# metres, from the tag-touch check of the same day: with the tool commanded
+# over a tag the closed jaws landed this much nearer the table than the model
+# put them, on both arms, after the joint 1 error above is accounted for.
+DUAL_OPENYAM_BASE_OFFSET = {"left": (-0.026, 0.0), "right": (-0.045, 0.0)}
 
 # Wrist camera: a D405 on a 6 cm bracket that leaves the top of the wrist tube
 # at 45 deg, leaning toward the wrist (sketch of 2026-10-06). It sits on the
