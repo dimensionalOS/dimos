@@ -1,6 +1,6 @@
-# Authoring DimOS packages
+# Authoring dimOS packages
 
-A DimOS package is an ordinary Python distribution. Use `tool.dimos` to package
+A dimOS package is an ordinary Python distribution. Use `tool.dimos` to package
 Python declarations, native sources and resources, and to generate standard
 `dimos.blueprints` entry points. Installation and `dimos list` do not compile native
 code. A selected native module builds during preparation, in a writable cache.
@@ -36,7 +36,7 @@ There is no `packaging` selector, native target DSL, custom registry or backend 
 The independent build integration is in `packages/dimos-build-config`. It is **not
 published yet**. Build its wheel locally and make it available with `--find-links`
 (or `PIP_FIND_LINKS` / `UV_FIND_LINKS`) for isolated builds. Do not assume an index
-contains it. It depends only on a TOML parser for Python 3.10, not the DimOS runtime.
+contains it. It depends only on a TOML parser for Python 3.10, not the dimOS runtime.
 
 ```bash
 python -m build --wheel packages/dimos-build-config --outdir /tmp/dimos-build-wheels
@@ -82,7 +82,7 @@ resource deliberately verifies resource inclusion and lookup; applications can u
 ordinary config strings when no resource is needed. The second binary tests target
 selection, rather than introducing another packaging mode.
 
-`source_package` is not in released DimOS 0.0.14: use a host artifact containing this
+`source_package` is not in released dimOS 0.0.14: use a host artifact containing this
 change until a compatible release exists. `source_package=None` retains checkout/main
 fallback. Existing absolute prebuilt executable declarations remain supported; the
 [legacy fixture](/examples/packages/native/README.md) tests compatibility, not a new
@@ -111,7 +111,7 @@ require reinstalling. Restart the module after edits. Native source changes inva
 the preparation cache; unchanged inputs reuse the executable. Untracked toolchain
 changes may require `--build-native`. Stop dependent processes before rebuilding or
 cleaning caches. `pip uninstall acme-probe` removes installed package files, not
-source checkouts or DimOS caches; use `dimos cache clean` separately when appropriate.
+source checkouts or dimOS caches; use `dimos cache clean` separately when appropriate.
 Build commands and installed Python packages are trusted executable code, not sandboxes.
 
 References: [configuration providers](https://scikit-build-core.readthedocs.io/en/latest/configuration/entrypoint_config.html),
