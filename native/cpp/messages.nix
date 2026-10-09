@@ -56,6 +56,9 @@ in pkgs.stdenv.mkDerivation {
   propagatedBuildInputs = [ support ];
   # Installed ament CMake exports require Python even for C++ consumers.
   propagatedNativeBuildInputs = [ python ];
+  setupHook = pkgs.writeText "dimos-message-python-hook" ''
+    addToSearchPath PYTHONPATH "${support}/${pkgs.python3.sitePackages}"
+  '';
   preConfigure = ''
     export PYTHONPATH="${support}/${pkgs.python3.sitePackages}:$PYTHONPATH"
     export AMENT_PREFIX_PATH="${support}:$out"
