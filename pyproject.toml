@@ -746,6 +746,7 @@ ignore = [
     # an evolved planner: one generated rust file, not hand-edited source
     "dimos/navigation/local_planner/rust/src/planner.rs",
     "*/uv.lock",
+    "native/python/behavior/pixi.lock",
     "*/package-lock.json",
     "Cargo.lock",
     "*/Cargo.lock",
@@ -757,3 +758,7 @@ ignore = [
     # Generated golden vectors (web/shared/fixtures/gen.ts); grows per panel kind.
     "web/shared/fixtures/manifests.json",
 ]
+
+[[tool.mypy.overrides]]
+module = ["omnigibson.*", "yaml"]
+ignore_missing_imports = true
