@@ -33,7 +33,9 @@ from dimos.utils.logging_config import setup_logger
 
 ZENOH_LOG_DIRECTIVES = "zenoh=warn,zenoh_shm::watchdog::periodic_task=error"
 
-zenoh.init_log_from_env_or(f"warn,{ZENOH_LOG_DIRECTIVES}")
+# The orchestrator warns on every failed dial of a connect endpoint, which a router
+# redialing an absent peer repeats forever; _await_connect reports a missing link once.
+zenoh.init_log_from_env_or(f"warn,{ZENOH_LOG_DIRECTIVES},zenoh::net::runtime::orchestrator=error")
 
 logger = setup_logger()
 
@@ -141,6 +143,11 @@ class ZenohConfig(SessionConfig):
     # Seconds to block in start() waiting for the connect endpoints to link.
     # Also bounds zenoh's dial retries at open. 0 skips both.
     connect_timeout: float = Field(default_factory=_default_connect_timeout, ge=0, le=86400)
+    # Serve zenoh's read-only admin space (@/<zid>/...), e.g. a router's routing tables.
+    # Python sessions only, native modules never see it.
+    adminspace: bool = False
+    # A router links to the routers it scouts. Python sessions only.
+    router_autoconnect: bool = False
 
     @model_validator(mode="after")
     def _router_needs_a_listen_endpoint(self) -> ZenohConfig:
@@ -244,6 +251,12 @@ def _zenoh_config(config: ZenohConfig) -> zenoh.Config:
         zconfig.insert_json5(_ZENOH_KEYS[name], json.dumps(value))
     # Off: shared-memory transfer silently loses payloads over 3 kB between some sessions.
     zconfig.insert_json5("transport/shared_memory/enabled", "false")
+    if config.adminspace:
+        zconfig.insert_json5("adminspace/enabled", "true")
+    if config.router_autoconnect:
+        zconfig.insert_json5(
+            "scouting/multicast/autoconnect", '{router: ["router"], peer: ["router", "peer"]}'
+        )
     return zconfig
 
 

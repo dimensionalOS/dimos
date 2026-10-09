@@ -19,7 +19,7 @@ from functools import partial
 import os
 from typing import Any
 
-from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
@@ -45,34 +45,46 @@ go2_dds = GO2DDS.blueprint(
     iface="enP8p1s0", session=ZenohConfig(mode="router", listen=["tcp/0.0.0.0:7447"], connect=[])
 ).global_config(transport="zenoh", robot_model="unitree_go2")
 
+# GO2DDS's native process doubles as the robot's zenoh router.
+GO2_ROUTER_SESSION = ZenohConfig(mode="router", listen=["tcp/0.0.0.0:7447"], connect=[])
+
+
+def _go2_dds_lidar_off(session: ZenohConfig | None) -> Blueprint:
+    return GO2DDS.blueprint(
+        iface="enP8p1s0", session=session, lidar_on=False, tf_root="mid360_link"
+    )
+
+
 # The head L1 stays off and Point-LIO owns odom, so GO2DDS publishes no lidar, odometry or
 # odom tf edge. Its raw L1 cloud and body IMU move aside so only the MID-360 reaches
 # Point-LIO's inputs.
-go2_dds_mid360 = GO2DDS.blueprint(
-    iface="enP8p1s0",
-    session=ZenohConfig(mode="router", listen=["tcp/0.0.0.0:7447"], connect=[]),
-    lidar_on=False,
-    tf_root="mid360_link",
-).remappings(
-    [
-        (GO2DDS, "odometry", "go2_odometry_unused"),
-        (GO2DDS, "lidar", "go2_lidar_unused"),
-        (GO2DDS, "lidar_raw", "go2_lidar_raw_unused"),
-        (GO2DDS, "imu", "body_imu"),
-    ]
-)
+_MID360_REMAPPINGS: list[Any] = [
+    (GO2DDS, "odometry", "go2_odometry_unused"),
+    (GO2DDS, "lidar", "go2_lidar_unused"),
+    (GO2DDS, "lidar_raw", "go2_lidar_raw_unused"),
+    (GO2DDS, "imu", "body_imu"),
+]
+go2_dds_mid360 = _go2_dds_lidar_off(GO2_ROUTER_SESSION).remappings(_MID360_REMAPPINGS)
 
-# GO2DDS's native process is the zenoh router (the Go2 forwards 7447 to the Jetson, so the
-# viewer dials go22); every other process dials it on loopback. Headless:
-# go2-dds-mid360-viewer on another machine is the screen.
-# The Mid-360 IP comes from MID360__LIDAR_IP; host_ip is auto-detected.
-go2_dds_nav = autoconnect(
-    go2_dds_mid360,
-    mid360_for_pointlio(),
-    _go2_nav,
-    relocalization(republish_loaded_map=0.0),
-    PointLio.blueprint(),
-).global_config(
+
+def go2_nav_stack(session: ZenohConfig | None) -> Blueprint:
+    """The robot-side nav modules; ``session`` pins GO2DDS's own zenoh session.
+
+    The Mid-360 IP comes from MID360__LIDAR_IP; host_ip is auto-detected.
+    """
+    return autoconnect(
+        _go2_dds_lidar_off(session).remappings(_MID360_REMAPPINGS),
+        mid360_for_pointlio(),
+        _go2_nav,
+        relocalization(republish_loaded_map=0.0),
+        PointLio.blueprint(),
+    )
+
+
+# GO2DDS is the router (the Go2 forwards 7447 to the Jetson, so the viewer dials go22);
+# every other process dials it on loopback. Headless: go2-dds-mid360-viewer on another
+# machine is the screen.
+go2_dds_nav = autoconnect(go2_nav_stack(GO2_ROUTER_SESSION)).global_config(
     transport="zenoh",
     zenoh_connect="tcp/127.0.0.1:7447",
     n_workers=11,
@@ -99,7 +111,7 @@ def _image_to_camera(image: Any) -> Any:
     return [(CAMERA_ENTITY, image.to_rerun())]
 
 
-def _rerun_blueprint() -> Any:
+def _rerun_blueprint(hidden: tuple[str, ...] = ()) -> Any:
     """Split layout: camera feed + 3D world, as the WebRTC go2 blueprint has."""
     import rerun as rr
     import rerun.blueprint as rrb
@@ -119,6 +131,7 @@ def _rerun_blueprint() -> Any:
                     "world/lidar": rrb.EntityBehavior(visible=False),
                     "world/nodes": rrb.EntityBehavior(visible=False),
                     "world/node_edges": rrb.EntityBehavior(visible=False),
+                    **{path: rrb.EntityBehavior(visible=False) for path in hidden},
                 },
             ),
             column_shares=[1, 2],
@@ -132,10 +145,12 @@ def _render_map(msg: Any) -> Any:
     return msg.to_rerun(voxel_size=0.01)
 
 
-def _rerun_config(visual_override: dict[str, Any] | None = None) -> dict[str, Any]:
+def _rerun_config(
+    visual_override: dict[str, Any] | None = None, hidden: tuple[str, ...] = ()
+) -> dict[str, Any]:
     """The bridge's own view, plus whatever the layer above it adds."""
     return {
-        "blueprint": _rerun_blueprint,
+        "blueprint": partial(_rerun_blueprint, hidden),
         "tf_axes": 0.5,
         # The robot box hangs off base_link on its own entity: a static transform
         # under world/tf would override the live one.
@@ -157,13 +172,17 @@ def _rerun_config(visual_override: dict[str, Any] | None = None) -> dict[str, An
 # The router is named, not scouted: behind wifi multicast scouting finds nothing
 # (docs/usage/transports/zenoh.md). --robot-ip still adds its endpoint alongside.
 GO2_ROUTER = os.environ.get("DIMOS_GO2_ROUTER", "tcp/go22:7447")
-# Ceiling cut for map_regions in odom: the origin is the lidar at start, ~0.5m above the floor.
-MAP_CEILING_M = 1.5
-# The storey the surface_map shows, in odom: the floor sits ~0.5m below the start pose.
-SURFACE_Z_BAND = (-0.5, MAP_CEILING_M)
+# The storey the viewer shows, in odom (origin: the lidar at start, ~0.5m above the floor):
+# map regions, surface map and mesh are all cut to it.
+VIEW_Z_BAND = (-0.5, 2.3)
 
-go2_dds_nav_viewer = autoconnect(
-    vis_module(
+
+def nav_viewer(
+    extra_topics: tuple[str, ...] = (),
+    visual_override: dict[str, Any] | None = None,
+    hidden: tuple[str, ...] = (),
+) -> Any:
+    return vis_module(
         viewer_backend=global_config.viewer,
         rerun_config={
             **_rerun_config(
@@ -172,16 +191,18 @@ go2_dds_nav_viewer = autoconnect(
                         render_map_region,
                         voxel_size=voxel_size,
                         height_range=HEIGHT_RANGE,
-                        max_z=MAP_CEILING_M,
+                        z_band=VIEW_Z_BAND,
                     ),
                     SURFACE_MAP_ENTITY: partial(
                         render_surface_region,
                         voxel_size=voxel_size,
                         wall_clearance_m=WALL_CLEARANCE_M,
                         clearance_clamp_m=1.0,
-                        z_band=SURFACE_Z_BAND,
+                        z_band=VIEW_Z_BAND,
                     ),
-                }
+                    **(visual_override or {}),
+                },
+                hidden,
             ),
             "topics": [
                 "tf",
@@ -199,18 +220,22 @@ go2_dds_nav_viewer = autoconnect(
                 "video",
                 "image",
                 "camera_info",
+                *extra_topics,
             ],
         },
-    ),
-).global_config(
-    transport="zenoh",
+    )
+
+
+VIEWER_GLOBAL_CONFIG = {
+    "transport": "zenoh",
     # a client: the router forwards to clients only, never between peers
-    zenoh_mode="client",
-    zenoh_connect=GO2_ROUTER,
+    "zenoh_mode": "client",
+    "zenoh_connect": GO2_ROUTER,
     # the router appears well after the robot's dimos run, keep dialing until it does
-    zenoh_connect_timeout=120.0,
+    "zenoh_connect_timeout": 120.0,
     # the robot's stack owns the bus-wide `Coordinator` name; this one only watches
-    serve_coordinator_rpc=False,
-    n_workers=3,
-    robot_model="unitree_go2",
-)
+    "serve_coordinator_rpc": False,
+    "robot_model": "unitree_go2",
+}
+
+go2_dds_nav_viewer = autoconnect(nav_viewer()).global_config(n_workers=3, **VIEWER_GLOBAL_CONFIG)
