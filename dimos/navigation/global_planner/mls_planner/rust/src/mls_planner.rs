@@ -119,19 +119,28 @@ impl Config {
         (self.step_threshold_m / self.voxel_size).floor() as i32
     }
 
-    /// Cells a changed cell can touch through wall distances: the penalty
-    /// band plus slack, the radius of the node window's BFS ball.
+    /// Radius of the node window's BFS ball around a changed cell: the hard
+    /// clearance plus slack. Wall distances inside it decide which cells are
+    /// passable, so they are exact. Costs in the wider penalty band refresh
+    /// when a later change reaches them, which only shifts path preference.
     pub fn node_window_cells(&self) -> i32 {
         const SLACK_CELLS: i32 = 2;
-        let buffer_cells =
-            ((self.wall_clearance_m + self.wall_buffer_m) / self.voxel_size).ceil() as i32;
-        buffer_cells + SLACK_CELLS
+        (self.wall_clearance_m / self.voxel_size).ceil() as i32 + SLACK_CELLS
     }
 
-    /// Columns past a rewritten window the viz must reread: the node window,
-    /// plus one node spacing for the edges of a relocated node.
+    /// Radius of the ball for a repair that keeps wall buffer costs exact: the
+    /// whole penalty band plus slack.
+    pub fn buffer_window_cells(&self) -> i32 {
+        const SLACK_CELLS: i32 = 2;
+        ((self.wall_clearance_m + self.wall_buffer_m) / self.voxel_size).ceil() as i32 + SLACK_CELLS
+    }
+
+    /// Columns past a rewritten window the viz must reread: the widest repair
+    /// window, which a seed region uses, plus one node spacing for the edges
+    /// of a relocated node.
     pub fn viz_reach_cells(&self) -> i32 {
-        self.node_window_cells() + (self.node_spacing_m / self.voxel_size).ceil() as i32
+        self.buffer_window_cells().max(self.node_window_cells())
+            + (self.node_spacing_m / self.voxel_size).ceil() as i32
     }
 
     /// Config-derived scalars for node placement.
@@ -258,6 +267,28 @@ impl Planner {
         bounds: &RegionBounds,
         config: &Config,
     ) -> Option<ColumnWindow> {
+        self.update_with(local_points, bounds, config, config.node_window_cells())
+    }
+
+    /// update_region for a region of a seeded map. It repairs out to the full
+    /// wall buffer, so the costs around a seeded wall are exact across region
+    /// borders. Seed regions only run when no live cloud waits.
+    pub fn update_seed_region(
+        &mut self,
+        points: &[(f32, f32, f32)],
+        bounds: &RegionBounds,
+        config: &Config,
+    ) -> Option<ColumnWindow> {
+        self.update_with(points, bounds, config, config.buffer_window_cells())
+    }
+
+    fn update_with(
+        &mut self,
+        local_points: &[(f32, f32, f32)],
+        bounds: &RegionBounds,
+        config: &Config,
+        window_steps: i32,
+    ) -> Option<ColumnWindow> {
         let pool = Arc::clone(&self.pool);
         pool.install(|| {
             let voxel_size = config.voxel_size;
@@ -290,7 +321,7 @@ impl Planner {
             let (cells_added, cells_removed) = (added.len(), removed.len());
 
             let stage = Instant::now();
-            self.rebuild_region_graph(added, removed, &edits, config);
+            self.rebuild_region_graph(added, removed, &edits, window_steps, config);
             debug!(
                 diff_ms,
                 extract_ms,
@@ -314,6 +345,7 @@ impl Planner {
         added: Vec<VoxelKey>,
         removed: Vec<VoxelKey>,
         edits: &VoxelEdits,
+        window_steps: i32,
         config: &Config,
     ) {
         let step = config.step_cells();
@@ -358,7 +390,7 @@ impl Planner {
             &params,
             &mut self.graph.node_index,
         );
-        let window = self.node_window(edits, &affected, config);
+        let window = self.node_window(edits, &affected, window_steps, config);
         if window.is_empty() {
             return;
         }
@@ -575,11 +607,9 @@ impl Planner {
         &mut self,
         edits: &VoxelEdits,
         roots: &[CellId],
+        steps: i32,
         config: &Config,
     ) -> Vec<CellId> {
-        // Wall distances only matter out to the penalty band, so the ball
-        // covers the buffer reach of the changed cells plus slack.
-        let steps = config.node_window_cells();
         let step_dz = config.step_cells();
 
         let graph = &mut self.graph;

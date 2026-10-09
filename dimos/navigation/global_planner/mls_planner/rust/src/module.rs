@@ -17,7 +17,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use crate::mls_planner::{Config, Planner, RegionBounds};
+use crate::mls_planner::{ColumnWindow, Config, Planner, RegionBounds};
 use crate::region_viz::{pack_cell, Cell, RegionContent, RegionViz};
 use crate::voxel::{surface_point_xyz, VoxelKey};
 use dimos_module::time::now;
@@ -607,7 +607,8 @@ impl Worker {
                 };
                 let region = region_bounds(&bounds).capped_at(sensor_z, self.config.max_overhead_m);
                 let process_start = Instant::now();
-                let applied = self.apply_region(planner, &points, &region, viz);
+                let applied =
+                    self.apply_region(planner, &points, &region, viz, Planner::update_region);
                 if let Some(points) = applied {
                     debug_throttled!(
                         Duration::from_secs(5),
@@ -641,19 +642,27 @@ impl Worker {
         viz: &mut RegionViz,
     ) -> Option<usize> {
         let region = region_bounds(&seed.bounds);
-        self.apply_region(planner, &seed.points, &region, viz)
+        self.apply_region(
+            planner,
+            &seed.points,
+            &region,
+            viz,
+            Planner::update_seed_region,
+        )
     }
 
-    /// Replace the voxels in a region and repair the graph around them,
-    /// marking the rewritten window for the viz. The points applied.
+    /// Replace the voxels in a region with the given update and repair the
+    /// graph around them, marking the rewritten window for the viz. The
+    /// points applied.
     fn apply_region(
         &self,
         planner: &mut Planner,
         points: &[Xyz],
         region: &RegionBounds,
         viz: &mut RegionViz,
+        update: fn(&mut Planner, &[Xyz], &RegionBounds, &Config) -> Option<ColumnWindow>,
     ) -> Option<usize> {
-        if let Some(window) = planner.update_region(points, region, &self.config) {
+        if let Some(window) = update(planner, points, region, &self.config) {
             viz.mark_window(window);
         }
         Some(points.len())

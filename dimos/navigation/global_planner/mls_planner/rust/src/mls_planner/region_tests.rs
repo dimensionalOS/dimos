@@ -87,12 +87,14 @@ fn test_config() -> Config {
 }
 
 #[test]
-fn viz_reach_covers_the_node_window_and_a_relocated_node_edge() {
+fn viz_reach_covers_the_widest_window_and_a_relocated_node_edge() {
     let cfg = test_config();
-    // 0.3 m of wall band at 0.1 m cells is 3 cells, plus 2 slack.
-    assert_eq!(cfg.node_window_cells(), 5);
+    // No hard clearance at 0.1 m cells, plus 2 slack.
+    assert_eq!(cfg.node_window_cells(), 2);
+    // A seed region repairs out to the wall buffer.
+    assert!(cfg.buffer_window_cells() >= cfg.node_window_cells());
     // Plus a 1 m node spacing, 10 cells.
-    assert_eq!(cfg.viz_reach_cells(), 15);
+    assert_eq!(cfg.viz_reach_cells(), cfg.buffer_window_cells() + 10);
 }
 
 #[test]
