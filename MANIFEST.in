@@ -52,3 +52,5 @@ prune dimos/web/command-center-extension
 
 global-exclude test_*.py
 global-exclude conftest.py
+
+recursive-include dimos/message_codegen/_vendor/rosidl *.em *.lark *.hpp *.h *.xml *.json *.pyi LICENSE
