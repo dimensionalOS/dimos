@@ -3,7 +3,7 @@
 // generated code does not contain a copyright notice
 
 @{
-from dimos.message_codegen._vendor.rosidl.rosidl_adapter.msg import get_include_file
+from .rosidl_adapter.msg import get_include_file
 include_files = set()
 for field in msg.fields:
     include_file = get_include_file(field.type)

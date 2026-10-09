@@ -1,26 +1,26 @@
 @# Included from rosidl_generator_cpp/resource/idl__struct.hpp.em
 @{
-from dimos.message_codegen._vendor.rosidl.rosidl_generator_cpp import create_init_alloc_and_member_lists
-from dimos.message_codegen._vendor.rosidl.rosidl_generator_cpp import escape_string
-from dimos.message_codegen._vendor.rosidl.rosidl_generator_cpp import escape_wstring
-from dimos.message_codegen._vendor.rosidl.rosidl_generator_cpp import msg_type_to_cpp
-from dimos.message_codegen._vendor.rosidl.rosidl_generator_cpp import MSG_TYPE_TO_CPP
-from dimos.message_codegen._vendor.rosidl.rosidl_parser.definition import AbstractNestedType
-from dimos.message_codegen._vendor.rosidl.rosidl_parser.definition import AbstractString
-from dimos.message_codegen._vendor.rosidl.rosidl_parser.definition import AbstractWString
-from dimos.message_codegen._vendor.rosidl.rosidl_parser.definition import ACTION_FEEDBACK_SUFFIX
-from dimos.message_codegen._vendor.rosidl.rosidl_parser.definition import ACTION_GOAL_SUFFIX
-from dimos.message_codegen._vendor.rosidl.rosidl_parser.definition import ACTION_RESULT_SUFFIX
-from dimos.message_codegen._vendor.rosidl.rosidl_parser.definition import SERVICE_REQUEST_MESSAGE_SUFFIX
-from dimos.message_codegen._vendor.rosidl.rosidl_parser.definition import SERVICE_RESPONSE_MESSAGE_SUFFIX
-from dimos.message_codegen._vendor.rosidl.rosidl_parser.definition import BasicType
-from dimos.message_codegen._vendor.rosidl.rosidl_parser.definition import BOOLEAN_TYPE
-from dimos.message_codegen._vendor.rosidl.rosidl_parser.definition import CHARACTER_TYPES
-from dimos.message_codegen._vendor.rosidl.rosidl_parser.definition import EMPTY_STRUCTURE_REQUIRED_MEMBER_NAME
-from dimos.message_codegen._vendor.rosidl.rosidl_parser.definition import INTEGER_TYPES
-from dimos.message_codegen._vendor.rosidl.rosidl_parser.definition import NamespacedType
-from dimos.message_codegen._vendor.rosidl.rosidl_parser.definition import OCTET_TYPE
-from dimos.message_codegen._vendor.rosidl.rosidl_parser.definition import UNSIGNED_INTEGER_TYPES
+from .rosidl_generator_cpp import create_init_alloc_and_member_lists
+from .rosidl_generator_cpp import escape_string
+from .rosidl_generator_cpp import escape_wstring
+from .rosidl_generator_cpp import msg_type_to_cpp
+from .rosidl_generator_cpp import MSG_TYPE_TO_CPP
+from .rosidl_parser.definition import AbstractNestedType
+from .rosidl_parser.definition import AbstractString
+from .rosidl_parser.definition import AbstractWString
+from .rosidl_parser.definition import ACTION_FEEDBACK_SUFFIX
+from .rosidl_parser.definition import ACTION_GOAL_SUFFIX
+from .rosidl_parser.definition import ACTION_RESULT_SUFFIX
+from .rosidl_parser.definition import SERVICE_REQUEST_MESSAGE_SUFFIX
+from .rosidl_parser.definition import SERVICE_RESPONSE_MESSAGE_SUFFIX
+from .rosidl_parser.definition import BasicType
+from .rosidl_parser.definition import BOOLEAN_TYPE
+from .rosidl_parser.definition import CHARACTER_TYPES
+from .rosidl_parser.definition import EMPTY_STRUCTURE_REQUIRED_MEMBER_NAME
+from .rosidl_parser.definition import INTEGER_TYPES
+from .rosidl_parser.definition import NamespacedType
+from .rosidl_parser.definition import OCTET_TYPE
+from .rosidl_parser.definition import UNSIGNED_INTEGER_TYPES
 
 message_typename = '::'.join(message.structure.namespaced_type.namespaced_name())
 
@@ -32,7 +32,7 @@ msvc_common_macros = ('DELETE', 'ERROR', 'NO_ERROR')
 @# Collect necessary include directives for all members
 @{
 from collections import OrderedDict
-from dimos.message_codegen._vendor.rosidl.rosidl_pycommon import convert_camel_case_to_lower_case_underscore
+from .rosidl_pycommon import convert_camel_case_to_lower_case_underscore
 includes = OrderedDict()
 for member in message.structure.members:
     type_ = member.type
@@ -110,8 +110,8 @@ struct @(message.structure.namespaced_type.name)_
 init_list, alloc_list, member_list = create_init_alloc_and_member_lists(message)
 
 def generate_default_string(membset):
-    from dimos.message_codegen._vendor.rosidl.rosidl_generator_cpp import msg_type_only_to_cpp
-    from dimos.message_codegen._vendor.rosidl.rosidl_generator_cpp import msg_type_to_cpp
+    from .rosidl_generator_cpp import msg_type_only_to_cpp
+    from .rosidl_generator_cpp import msg_type_to_cpp
     strlist = []
     for member in membset.members:
         if member.default_value is not None:
@@ -133,8 +133,8 @@ def generate_default_string(membset):
     return strlist
 
 def generate_zero_string(membset, fill_args):
-    from dimos.message_codegen._vendor.rosidl.rosidl_generator_cpp import msg_type_only_to_cpp
-    from dimos.message_codegen._vendor.rosidl.rosidl_generator_cpp import msg_type_to_cpp
+    from .rosidl_generator_cpp import msg_type_only_to_cpp
+    from .rosidl_generator_cpp import msg_type_to_cpp
     strlist = []
     for member in membset.members:
         if isinstance(member.zero_value, list):

@@ -27,8 +27,8 @@ try:
 except ImportError:
     em_has_configuration = False
 
-from dimos.message_codegen._vendor.rosidl.rosidl_parser.definition import IdlLocator
-from dimos.message_codegen._vendor.rosidl.rosidl_parser.parser import parse_idl_file
+from ..rosidl_parser.definition import IdlLocator
+from ..rosidl_parser.parser import parse_idl_file
 
 
 def convert_camel_case_to_lower_case_underscore(value):
@@ -167,10 +167,12 @@ def expand_template(
             rawErrors=True,
             useProxy=True)
         interpreter = em.Interpreter(
+                globals={"__package__": __package__.rsplit(".", 1)[0]},
             config=config,
             dispatcher=False)
     else:
         interpreter = em.Interpreter(
+                globals={"__package__": __package__.rsplit(".", 1)[0]},
             output=output,
             options={
                 em.BUFFERED_OPT: True,
