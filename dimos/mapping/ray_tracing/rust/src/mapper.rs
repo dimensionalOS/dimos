@@ -311,6 +311,7 @@ mod tests {
             tf_wait_timeout_s: 0.05,
             worker_threads: 4,
             region_m: 4.0,
+            viz_region_m: 4.0,
             viz_emit_every: 0,
             viz_sweep_regions: 0,
         }

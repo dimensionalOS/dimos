@@ -119,9 +119,14 @@ pub struct Config {
     /// viz publishes by.
     #[validate(range(exclusive_min = 0.0))]
     pub region_m: f32,
-    /// Publish the regions whose chunks changed every Nth frame. Zero disables it.
+    /// Edge of the square cells the map viz publishes by, at least a chunk
+    /// edge. A change costs one cell, so small cells keep a live map's viz
+    /// traffic proportional to what changed.
+    #[validate(range(exclusive_min = 0.0))]
+    pub viz_region_m: f32,
+    /// Publish the cells whose chunks changed every Nth frame. Zero disables it.
     pub viz_emit_every: u32,
-    /// Unchanged regions republished per viz tick, round robin. Zero turns the sweep off.
+    /// Unchanged cells republished per viz tick, round robin. Zero turns the sweep off.
     pub viz_sweep_regions: u32,
 }
 

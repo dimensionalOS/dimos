@@ -46,6 +46,7 @@ fn basic_config() -> Config {
         tf_wait_timeout_s: 0.05,
         worker_threads: 4,
         region_m: 4.0,
+        viz_region_m: 4.0,
         viz_emit_every: 0,
         viz_sweep_regions: 0,
     }
@@ -363,6 +364,7 @@ fn ground_clipping_single_ray() {
         tf_wait_timeout_s: 0.05,
         worker_threads: 4,
         region_m: 4.0,
+        viz_region_m: 4.0,
         viz_emit_every: 0,
         viz_sweep_regions: 0,
     };
@@ -521,6 +523,7 @@ fn stair_clipping_ray_fan() {
         tf_wait_timeout_s: 0.05,
         worker_threads: 4,
         region_m: 4.0,
+        viz_region_m: 4.0,
         viz_emit_every: 0,
         viz_sweep_regions: 0,
     };
@@ -605,6 +608,7 @@ fn landing_floor_ray_fan() {
         tf_wait_timeout_s: 0.05,
         worker_threads: 4,
         region_m: 4.0,
+        viz_region_m: 4.0,
         viz_emit_every: 0,
         viz_sweep_regions: 0,
     };
@@ -677,6 +681,7 @@ fn landing_grazed_from_below() {
         tf_wait_timeout_s: 0.05,
         worker_threads: 4,
         region_m: 4.0,
+        viz_region_m: 4.0,
         viz_emit_every: 0,
         viz_sweep_regions: 0,
     };
@@ -818,6 +823,7 @@ fn grazing_ray_spares_planar_floor() {
         tf_wait_timeout_s: 0.05,
         worker_threads: 4,
         region_m: 4.0,
+        viz_region_m: 4.0,
         viz_emit_every: 0,
         viz_sweep_regions: 0,
     };
