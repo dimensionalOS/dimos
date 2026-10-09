@@ -172,12 +172,12 @@ def replace_launch_settings(key: str, values: dict[str, Any], blueprint: str | N
                 }
                 if not reset[blueprint]:
                     reset = {}
-            if reset:
-                cleared = requests.put(
-                    desktop_url + "/api/config", json={"dimos": {key: reset}}, timeout=10
-                )
-                cleared.raise_for_status()
             try:
+                if reset:
+                    cleared = requests.put(
+                        desktop_url + "/api/config", json={"dimos": {key: reset}}, timeout=10
+                    )
+                    cleared.raise_for_status()
                 response = requests.put(
                     desktop_url + "/api/config", json={"dimos": {key: change}}, timeout=10
                 )
@@ -194,6 +194,10 @@ def replace_launch_settings(key: str, values: dict[str, Any], blueprint: str | N
                             }
                         }
                     try:
+                        reset_again = requests.put(
+                            desktop_url + "/api/config", json={"dimos": {key: reset}}, timeout=10
+                        )
+                        reset_again.raise_for_status()
                         restored = requests.put(
                             desktop_url + "/api/config", json={"dimos": {key: restore}}, timeout=10
                         )

@@ -188,7 +188,7 @@ def test_failed_desktop_replacement_restores_reset_fields(
 
     with pytest.raises(requests.HTTPError):
         config.set_global_config_overrides({"options": {"new": 2}})
-    assert request.call_count == 3
+    assert request.call_count == 4
     assert request.last_request.json() == {"dimos": {"global_config": {"options": {"old": 1}}}}
 
 
@@ -229,3 +229,38 @@ def test_desktop_replacement_blocks_gateway_readers(
         release.set()
         writer.result()
         assert reader.result() == {"options": {"new": 2}}
+
+
+@pytest.mark.parametrize("lost_response_call", [1, 2])
+def test_ambiguous_desktop_timeout_restores_exact_object(
+    server_home: Path, monkeypatch: pytest.MonkeyPatch, requests_mock: Any, lost_response_call: int
+) -> None:
+    import requests
+
+    path = config.config_file()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    old = {"dimos": {"global_config": {"options": {"old": 1}}}}
+    path.write_text(yaml.safe_dump(old))
+    monkeypatch.setenv("DESKTOP_URL", "http://desktop.invalid")
+    calls = 0
+
+    def merge(target: dict[str, Any], patch: dict[str, Any]) -> None:
+        for key, value in patch.items():
+            if isinstance(value, dict) and isinstance(target.get(key), dict):
+                merge(target[key], value)
+            else:
+                target[key] = value
+
+    def put(request: Any, context: Any) -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        merge(old, request.json())
+        path.write_text(yaml.safe_dump(old))
+        if calls == lost_response_call:
+            raise requests.ReadTimeout("response lost after applying update")
+        return {}
+
+    requests_mock.put("http://desktop.invalid/api/config", json=put)
+    with pytest.raises(requests.ReadTimeout):
+        config.set_global_config_overrides({"options": {"new": 2}})
+    assert config.global_config_overrides() == {"options": {"old": 1}}
