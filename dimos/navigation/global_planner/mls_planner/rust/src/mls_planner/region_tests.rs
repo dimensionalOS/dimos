@@ -54,8 +54,17 @@ fn seed_regions(
 /// Feed a world to the planner region by region, as a seed load arrives.
 fn load_by_regions(p: &mut Planner, points: &[(f32, f32, f32)], center: (f32, f32), cfg: &Config) {
     for (bounds, cloud) in seed_regions(points, 2.0, center, cfg.voxel_size) {
-        p.update_region(&cloud, &bounds, cfg);
+        p.update_seed_region(&cloud, &bounds, cfg);
     }
+}
+
+/// Wall clearance per cell, clamped to the band a repair keeps exact.
+fn clearance_map(p: &Planner, cfg: &Config) -> BTreeMap<VoxelKey, u32> {
+    let band = cfg.wall_clearance_m + cfg.wall_buffer_m;
+    p.surface_clearance()
+        .into_iter()
+        .map(|(c, d)| (c, d.min(band).to_bits()))
+        .collect()
 }
 
 /// Slack for comparing regional and full-rebuild path lengths. Node
@@ -925,6 +934,79 @@ fn seed_regions_match_full_rebuild() {
         "cell edges mismatch"
     );
     assert_plans_equivalent(&full, &seeded, &cfg);
+}
+
+/// A seed region repairs out to the whole wall buffer, so the clearance and
+/// the buffer costs around a wall on a region border match a full rebuild.
+#[test]
+fn seed_regions_keep_wall_buffer_costs_exact_across_borders() {
+    let mut cfg = test_config();
+    cfg.wall_clearance_m = 0.2;
+    cfg.wall_buffer_m = 0.8;
+    // big_world's wall stands at x = 4.05, just past the region border at 4.0.
+    let all = big_world();
+
+    let mut full = Planner::new(cfg.worker_threads);
+    full.update_global_map(&all, &cfg);
+
+    let mut seeded = Planner::new(cfg.worker_threads);
+    load_by_regions(&mut seeded, &all, (0.5, 0.5), &cfg);
+
+    assert_eq!(surface_set(&seeded), surface_set(&full), "surface mismatch");
+    assert_eq!(
+        clearance_map(&seeded, &cfg),
+        clearance_map(&full, &cfg),
+        "clearance mismatch"
+    );
+    assert_eq!(
+        cell_edges(&seeded),
+        cell_edges(&full),
+        "cell edges mismatch"
+    );
+}
+
+/// A region update that empties every surface cell near it leaves no node or
+/// edge behind, and the graph grows back cleanly when surface returns.
+#[test]
+fn wipe_then_regrow_leaves_no_ghost_graph() {
+    let cfg = test_config();
+    let vs = cfg.voxel_size;
+    let half = vs * 0.5;
+    let floor = |n: i32| -> Vec<(f32, f32, f32)> {
+        (0..n)
+            .flat_map(|ix| {
+                (0..n).map(move |iy| (ix as f32 * vs + half, iy as f32 * vs + half, half))
+            })
+            .collect()
+    };
+    let mut p = Planner::new(cfg.worker_threads);
+    p.update_global_map(&floor(80), &cfg);
+    assert!(!p.graph.nodes.is_empty());
+
+    let bounds = RegionBounds {
+        origin_x: 3.0,
+        origin_y: 3.0,
+        radius: 9.0,
+        z_min: -1.0,
+        z_max: 2.0,
+    };
+    p.update_region(&[], &bounds, &cfg);
+    assert!(p.graph.nodes.is_empty(), "nodes survived the wipe");
+    assert!(
+        p.graph.node_edges.edges.is_empty(),
+        "edges survived the wipe"
+    );
+
+    for n in [12, 20, 30, 45, 80] {
+        p.update_region(&floor(n), &bounds, &cfg);
+    }
+    let full = {
+        let mut full = Planner::new(cfg.worker_threads);
+        full.update_global_map(&floor(80), &cfg);
+        full
+    };
+    assert_eq!(cell_edges(&p), cell_edges(&full), "cell edges mismatch");
+    assert_plans_equivalent(&full, &p, &cfg);
 }
 
 /// Regions claim points by voxel center, so an off-center cloud seeds the

@@ -38,11 +38,9 @@ pub struct RegionSweep {
 }
 
 impl RegionSweep {
-    /// The cells due this tick, in the order they should go out. The sweep
-    /// slice of `sweep` cells from the cursor comes first: under congestion
-    /// the tail of a burst is what gets dropped, and the sweep is what brings
-    /// a viewer the rest of the map. Then the cells that just vanished, then
-    /// the changed ones.
+    /// The cells due this tick, in send order: `sweep` cells from the cursor,
+    /// then the vanished cells, then the changed ones. The sweep goes first
+    /// since congestion drops the tail of a burst.
     pub fn tick<T>(
         &mut self,
         changed: impl IntoIterator<Item = Cell>,

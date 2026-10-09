@@ -157,6 +157,7 @@ impl VoxelRayMapper {
             tf_wait_timeout_s: 0.05,
             worker_threads,
             region_m,
+            viz_region_m: region_m,
             viz_emit_every: 0,
             viz_sweep_regions: 0,
         };

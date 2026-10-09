@@ -300,14 +300,12 @@ impl Worker {
         };
         loop {
             let job = if matches!(state.seed, SeedState::Loading(_)) {
-                // don't sit and wait for a cloud, there are tiles to seed!
                 match self.jobs.try_recv() {
                     Ok(job) => Some(job),
                     Err(TryRecvError::Empty) => None,
                     Err(TryRecvError::Disconnected) => return,
                 }
             } else {
-                // there are no tiles, so we should just wait for the next real job
                 match self.jobs.recv().await {
                     Some(job) => Some(job),
                     None => return,

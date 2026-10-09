@@ -159,11 +159,9 @@ impl RegionViz {
         }
     }
 
-    /// The cells due this tick with their current content, in the order they
-    /// should go out: the sweep slice first, since under congestion the tail
-    /// of a burst is what gets dropped and the sweep is what brings a viewer
-    /// the rest of the map, then the changed cells, then the ones that just
-    /// emptied.
+    /// The cells due this tick with their content, in send order: the sweep
+    /// slice, then the changed cells, then the ones that just emptied. The
+    /// sweep goes first since congestion drops the tail of a burst.
     pub fn tick(
         &mut self,
         surface: impl Iterator<Item = (VoxelKey, f32)>,
@@ -216,8 +214,8 @@ impl RegionViz {
         (due, unchanged)
     }
 
-    /// Append the sweep slice: the first candidates not already due. The
-    /// number of cells appended.
+    /// Append the sweep slice: the first candidates not already due. Returns
+    /// the number of cells appended.
     fn sweep_into(
         &mut self,
         due: &mut Vec<(Cell, RegionContent)>,

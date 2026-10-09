@@ -217,7 +217,7 @@ pub fn relocate_dead_nodes(
     let crowd_m = RELOCATION_CROWDING_FRAC * params.node_spacing_m;
     // Dead nodes leave the index first, so none of them counts as a neighbor
     // while the others look for a cell. The dead cell's slot may already
-    // belong to a new cell; the old id is what the edges still reference.
+    // belong to a new cell. The old id is what the edges still reference.
     for &(ni, coord) in dead_nodes {
         let old = nodes[ni].cell_id;
         gone.push(old);
@@ -724,10 +724,7 @@ impl Beyond<'_> {
 }
 
 /// Seed a node in every cluster the clearance floor left empty, so a thin or
-/// sparse component is still reachable. The clusters are the connected pieces
-/// of every live cell for a full rebuild, or of the window for a repair, where
-/// a piece that continues into node-owned surface beyond the window is already
-/// reachable.
+/// sparse component is still reachable.
 fn ensure_node_per_component(
     cells: &SurfaceCells,
     dist: &[f32],
@@ -738,8 +735,7 @@ fn ensure_node_per_component(
     out_nodes: &mut Vec<NodeData>,
 ) {
     // A cluster is served when it holds or borders a node. Fragments below
-    // the size floor are transient sensor noise, not places to grow graph
-    // structure.
+    // the size floor are sensor noise, not places to grow graph structure.
     let seeds: Vec<CellId> = {
         let index = &*index;
         clusters

@@ -311,19 +311,15 @@ pub enum Frontier<'a> {
     /// Every labeled neighbor. For fields where only the value matters.
     Any,
     /// Only a neighbor whose cached chain reaches a live source without
-    /// entering the window, labeled with that source. A chain through the
-    /// window was built on the labels this search replaces. The closure says
-    /// whether a cell is a live source.
+    /// entering the window. The closure says whether a cell is a live source.
     Chained(&'a (dyn Fn(CellId) -> bool + Sync)),
 }
 
 /// Longest cached chain followed before it counts as broken.
 const MAX_CHAIN: usize = 4096;
 
-/// The live source a cell's cached chain reaches without entering the window,
-/// or None when the chain enters the window, hits a dead cell or ends
-/// elsewhere. Chains are kept valid by every repair, so hops are not checked
-/// for adjacency here.
+/// The live source a cell's cached chain reaches without entering the window.
+/// None when the chain enters the window, hits a dead cell or ends elsewhere.
 pub fn chain_source(
     cells: &SurfaceCells,
     state: &DijkstraState,
@@ -476,11 +472,8 @@ fn dijkstra_cluster(
     ClusterLabels { dist, pred, source }
 }
 
-/// Cells a labeled neighbor can step into that are still unreached after the
-/// cluster searches, and the unreached cells passable from those. Inside the
-/// window a cluster strands cells whose only way in runs through a neighbor
-/// that hangs off another cluster. Beyond it, surface that had no way to a
-/// node can gain one through the window.
+/// Cells still unreached after the cluster searches that a labeled neighbor
+/// can step into, and the unreached cells passable from those.
 pub fn stranded(
     cells: &SurfaceCells,
     window: &[CellId],
@@ -518,12 +511,9 @@ pub fn stranded(
     out
 }
 
-/// Re-attach the cells outside the window whose cached chain ran through a
-/// window cell that lost or changed its source, together with the window
-/// cells the cluster searches left unreached. The first had labels built on
-/// that cell. The second may only be reachable through a neighbor that was
-/// waiting on another cluster. Both are searched again from the settled
-/// cells around them. Returns the cells it searched.
+/// Search again, from the settled cells around them, the cells whose cached
+/// chain ran through a changed window cell and the window cells left
+/// unreached. Returns the cells it searched.
 pub fn reattach_descendants(
     cells: &SurfaceCells,
     changed: &[CellId],

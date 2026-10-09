@@ -115,13 +115,10 @@ pub struct Config {
     /// Worker threads for parallel map work.
     #[validate(range(min = 1))]
     pub worker_threads: u32,
-    /// Edge of the square regions a seed load is handed on in and the map
-    /// viz publishes by.
+    /// Edge of the square regions a seed load is handed on in.
     #[validate(range(exclusive_min = 0.0))]
     pub region_m: f32,
-    /// Edge of the square cells the map viz publishes by, at least a chunk
-    /// edge. A change costs one cell, so small cells keep a live map's viz
-    /// traffic proportional to what changed.
+    /// Edge of the square cells the map viz publishes by, at least a chunk edge.
     #[validate(range(exclusive_min = 0.0))]
     pub viz_region_m: f32,
     /// Publish the cells whose chunks changed every Nth frame. Zero disables it.

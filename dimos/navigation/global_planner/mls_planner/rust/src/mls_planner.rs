@@ -15,10 +15,10 @@
 //! Config and the owned-state Planner that builds and queries the MLS graph.
 
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use ahash::AHashSet;
-use dimos_module::{native_config, worker_pool};
+use dimos_module::{debug_throttled, native_config, worker_pool};
 use rayon::prelude::*;
 use validator::ValidationError;
 
@@ -34,7 +34,6 @@ use crate::nodes::{
 use crate::planner;
 use crate::surfaces::{extract_surfaces, extract_surfaces_region, ColumnIz, ColumnMask};
 use crate::voxel::{voxelize, VoxelKey};
-use tracing::debug;
 
 #[native_config]
 #[derive(Clone)]
@@ -121,19 +120,17 @@ impl Config {
     }
 
     /// Radius of the node window's BFS ball around a changed cell: the hard
-    /// clearance plus slack. Wall distances inside it decide which cells are
-    /// passable, so they are exact. Costs in the wider penalty band refresh
-    /// when a later change reaches them, which only shifts path preference.
+    /// clearance plus slack. Costs in the wider penalty band lag until a later
+    /// change reaches them, which only shifts path preference.
     pub fn node_window_cells(&self) -> i32 {
-        const SLACK_CELLS: i32 = 2;
-        (self.wall_clearance_m / self.voxel_size).ceil() as i32 + SLACK_CELLS
+        (self.wall_clearance_m / self.voxel_size).ceil() as i32 + WINDOW_SLACK_CELLS
     }
 
     /// Radius of the ball for a repair that keeps wall buffer costs exact: the
     /// whole penalty band plus slack.
     pub fn buffer_window_cells(&self) -> i32 {
-        const SLACK_CELLS: i32 = 2;
-        ((self.wall_clearance_m + self.wall_buffer_m) / self.voxel_size).ceil() as i32 + SLACK_CELLS
+        ((self.wall_clearance_m + self.wall_buffer_m) / self.voxel_size).ceil() as i32
+            + WINDOW_SLACK_CELLS
     }
 
     /// Columns past a rewritten window the viz must reread: the widest repair
@@ -161,6 +158,9 @@ impl Config {
 
 /// Inclusive column window, as x0, x1, y0, y1.
 pub type ColumnWindow = (i32, i32, i32, i32);
+
+/// Cells a repair window reaches past the band it must keep exact.
+const WINDOW_SLACK_CELLS: i32 = 2;
 
 fn ms_since(start: Instant) -> f64 {
     start.elapsed().as_secs_f64() * 1e3
@@ -296,10 +296,10 @@ impl Planner {
             let clearance = config.headroom_cells();
             let pad = (2 * config.closing_passes()) as i32;
 
-            // No voxel changed, so surfaces and the graph are untouched.
             let stage = Instant::now();
             let (changed, edits) = self.replace_region_voxels(local_points, bounds, voxel_size);
             let diff_ms = ms_since(stage);
+            // No voxel changed, so surfaces and the graph are untouched.
             if changed.is_empty() {
                 return None;
             }
@@ -323,7 +323,8 @@ impl Planner {
 
             let stage = Instant::now();
             self.rebuild_region_graph(added, removed, &edits, window_steps, config);
-            debug!(
+            debug_throttled!(
+                Duration::from_secs(5),
                 diff_ms,
                 extract_ms,
                 replace_ms,
@@ -392,7 +393,7 @@ impl Planner {
             &mut self.graph.node_index,
         );
         let window = self.node_window(edits, &affected, window_steps, config);
-        if window.is_empty() {
+        if window.is_empty() && removed_ids.is_empty() && gone_nodes.is_empty() {
             return;
         }
         let clusters = window_clusters(
@@ -629,15 +630,8 @@ impl Planner {
             insert(id, &mut ball, &mut frontier);
         }
 
-        // A wall scan crosses up to HOLE_SPAN_CELLS columns that hold no voxel
-        // and is decided by the voxels of the first column that holds one, near
-        // the scanning cell's height. So a voxel edit can flip the wall adjacency
-        // of surface cells that far away, with or without a surface change of
-        // its own, since closing can keep a cell where the voxel went. Root the
-        // cells such a scan could start from: on each side, the columns up to the
-        // first one that holds a voxel, at the heights the edit can reach. A
-        // column that gained its first voxel or lost its last starts or stops
-        // ending scans at every height.
+        // A voxel edit can flip the wall adjacency of surface cells up to
+        // HOLE_SPAN_CELLS away without any surface change, so those cells root too.
         let reach = config.headroom_cells() + step_dz;
         let reached = |heights: &[i32], nz: i32| {
             let first = heights.partition_point(|&iz| iz < nz - step_dz);
@@ -823,9 +817,7 @@ struct ColumnEdit {
 }
 
 /// Incoming voxels bucketed by column over a column bbox, each column's z
-/// values sorted and deduped. Keys are split into bands of TILE_EDGE rows in
-/// parallel, then each band is counting-sorted by column in parallel, so no
-/// voxel is hashed and no step runs over the whole cylinder on one thread.
+/// values sorted and deduped.
 struct ColumnBuckets {
     x0: i32,
     y0: i32,

@@ -344,9 +344,7 @@ pub fn build_node_edges(
     out.reindex(cells);
 }
 
-/// Incremental build_node_edges. Redo the Voronoi inside the window, drop the
-/// edges of gone nodes, re-price or drop the corridors running through the
-/// window or a removed cell, and rescan the window for new crossings.
+/// Repair the node edges inside a window to match what a full build gives.
 #[allow(clippy::too_many_arguments)]
 pub fn build_node_edges_region(
     cells: &SurfaceCells,
@@ -378,8 +376,6 @@ pub fn build_node_edges_region(
         Weight::Penalized,
         Frontier::Chained(&|c| index.has(c)),
     );
-    // Cells beyond the window that hung off a window cell whose owner
-    // changed are searched again, and their boundaries scanned with it.
     let unreached = stranded(cells, window.cells, state, Weight::Penalized);
     let reattached = reattach_descendants(
         cells,
@@ -393,9 +389,8 @@ pub fn build_node_edges_region(
     let window = &window.cells;
     out.ensure_capacity(cells.slot_capacity());
 
-    // A gone node's edges go whatever their corridors say. The rest are
-    // visited in descending order so swap_remove never moves an edge still
-    // to be visited.
+    // A gone node's edges go whatever their corridors say. Descending order
+    // keeps swap_remove from moving an edge still to be visited.
     let mut work: Vec<(NodeEdgeIdx, bool)> = Vec::new();
     for g in gone {
         if let Some(list) = out.adj.remove(g) {
@@ -427,7 +422,7 @@ pub fn build_node_edges_region(
     let mut broken: Vec<NodeId> = Vec::new();
     for ((i, doomed), cost) in work.into_iter().zip(costs) {
         let e = &out.edges[i as usize];
-        let pair = (e.a, e.b);
+        let a = e.a;
         if doomed {
             out.swap_remove(cells, i);
             continue;
@@ -438,15 +433,14 @@ pub fn build_node_edges_region(
                 out.edges[i as usize].cost = cost;
             }
             None => {
-                broken.push(pair.0);
+                broken.push(a);
                 out.swap_remove(cells, i);
             }
         }
     }
 
-    // A corridor can break far from the boundary its edge crossed, and the
-    // two nodes may still touch there, outside the window. One endpoint's
-    // whole region joins the scan so the pair gets its edge back.
+    // A broken corridor's nodes may still touch outside the window, so one
+    // endpoint's whole region joins the scan to give the pair its edge back.
     let mut beyond: AHashSet<CellId> = reattached
         .iter()
         .copied()

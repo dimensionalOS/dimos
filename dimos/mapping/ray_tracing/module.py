@@ -82,8 +82,6 @@ class RayTracingVoxelMapConfig(NativeModuleConfig):
     # Edge of the square regions a seeded map is handed on in.
     region_m: float = 4.0
     # Edge of the square cells the map viz publishes by, at least a chunk edge.
-    # A change costs one cell, so small cells keep the viz traffic of a live
-    # map proportional to what changed.
     viz_region_m: float = 1.0
     # Publish the cells whose chunks changed every Nth frame, zero for never.
     viz_emit_every: int = 0

@@ -71,9 +71,9 @@ struct VizBatch {
     node_points: Vec<Xyz>,
 }
 
-/// Viz batches the publisher may hold while the worker moves on. A full
-/// channel drops the tick, since the next one carries the same cells.
-const VIZ_QUEUE: usize = 2;
+/// Viz batches the publisher may hold while the worker moves on. With no
+/// slot free the tick is skipped untaken, so its cells stay due.
+const VIZ_QUEUE_CAPACITY: usize = 2;
 
 /// How long half a seed region waits for its counterpart before it is dropped.
 const SEED_PAIR_TIMEOUT: Duration = Duration::from_secs(10);
@@ -90,8 +90,9 @@ const SEED_STARVED_WARN_AFTER: Duration = Duration::from_secs(2);
 struct SeedProgress {
     started: Option<Instant>,
     last_at: Option<Instant>,
+    /// When regions were first seen queued with none applied yet.
+    waiting_since: Option<Instant>,
     applied: usize,
-    unusable: usize,
     points: usize,
     max_region_ms: f64,
     sum_region_ms: f64,
@@ -111,21 +112,26 @@ impl SeedProgress {
         self.sum_region_ms / self.applied.max(1) as f64
     }
 
-    /// Whether no region has been applied for SEED_STARVED_WARN_AFTER.
+    /// Whether queued regions have gone unapplied for SEED_STARVED_WARN_AFTER,
+    /// counted from the last one applied or from the first seen queued.
     fn starved(&self) -> bool {
         self.last_at
+            .or(self.waiting_since)
             .is_some_and(|at| at.elapsed() >= SEED_STARVED_WARN_AFTER)
     }
 
+    /// Regions are queued and none has been applied yet.
+    fn note_waiting(&mut self) {
+        if self.last_at.is_none() {
+            self.waiting_since.get_or_insert(Instant::now());
+        }
+    }
+
     /// Count one region by the points it applied.
-    fn record(&mut self, applied: Option<usize>, region_ms: f64) {
+    fn record(&mut self, points: usize, region_ms: f64) {
         let now = Instant::now();
         self.started.get_or_insert(now);
         self.last_at = Some(now);
-        let Some(points) = applied else {
-            self.unusable += 1;
-            return;
-        };
         self.applied += 1;
         self.points += points;
         self.max_region_ms = self.max_region_ms.max(region_ms);
@@ -144,7 +150,6 @@ impl SeedProgress {
             Duration::from_millis(500),
             regions_done = self.applied,
             queued,
-            unusable = self.unusable,
             points = self.points,
             max_region_ms = self.max_region_ms,
             mean_region_ms = self.mean_region_ms(),
@@ -158,7 +163,6 @@ impl SeedProgress {
         if let (Some(started), Some(last_at)) = (self.started, self.last_at) {
             info!(
                 regions = self.applied,
-                unusable = self.unusable,
                 points = self.points,
                 load_s = last_at.duration_since(started).as_secs_f64(),
                 max_region_ms = self.max_region_ms,
@@ -280,7 +284,7 @@ pub struct MlsPlanner {
 
 impl MlsPlanner {
     async fn spawn_worker(&mut self) {
-        let (viz_tx, viz_rx) = mpsc::channel(VIZ_QUEUE);
+        let (viz_tx, viz_rx) = mpsc::channel(VIZ_QUEUE_CAPACITY);
         let publisher = VizPublisher {
             batches: viz_rx,
             voxel_size: self.config.voxel_size,
@@ -411,7 +415,8 @@ fn goal_position(p: &Point) -> Option<Xyz> {
 }
 
 /// Owns the planner graph and does map mutation, publishing, and replanning
-/// off the handle loop. Woken by the handlers.
+/// off the handle loop. Woken by the handlers. Each pass takes a live update
+/// or goal first, else one seed region, else waits.
 struct Worker {
     pending: Shared<MapUpdate>,
     seed_regions: Arc<Mutex<VecDeque<QueuedSeed>>>,
@@ -463,8 +468,6 @@ impl Worker {
             self.config.viz_sweep_regions as usize,
         );
         let mut seed_progress = SeedProgress::default();
-        // One unit of work per pass: a live update or goal first, else one
-        // seed region, else wait.
         loop {
             let goal_changed = self.goal_changed.swap(false, Ordering::SeqCst);
             let update = self.pending.lock().expect("pending mutex").take();
@@ -482,7 +485,7 @@ impl Worker {
                 if replan_due(goal_changed, live_update) {
                     self.maybe_replan(&mut planner, &mut last_path_at).await;
                 }
-                self.warn_if_seeds_starved(&seed_progress);
+                self.warn_if_seeds_starved(&mut seed_progress);
                 continue;
             }
 
@@ -494,16 +497,14 @@ impl Worker {
                 if !seed_progress.in_flight() {
                     info!("Premap load started.");
                 }
+                let points = seed.points.len();
                 let region_start = Instant::now();
-                let applied =
-                    tokio::task::block_in_place(|| self.ingest_seed(&mut planner, seed, &mut viz));
+                tokio::task::block_in_place(|| self.ingest_seed(&mut planner, seed, &mut viz));
                 let region_ms = region_start.elapsed().as_secs_f64() * 1e3;
-                seed_progress.record(applied, region_ms);
+                seed_progress.record(points, region_ms);
                 seed_progress.log_progress(queued);
-                if applied.is_some() {
-                    self.publish_viz_if_due(&planner, &mut viz, &mut last_viz_at)
-                        .await;
-                }
+                self.publish_viz_if_due(&planner, &mut viz, &mut last_viz_at)
+                    .await;
                 tokio::task::yield_now().await;
                 continue;
             }
@@ -521,12 +522,13 @@ impl Worker {
     }
 
     /// Live work has kept seed regions queued and unapplied for too long.
-    fn warn_if_seeds_starved(&self, progress: &SeedProgress) {
-        if !progress.starved() {
+    fn warn_if_seeds_starved(&self, progress: &mut SeedProgress) {
+        let queued = self.seed_regions.lock().expect("seed mutex").len();
+        if queued == 0 {
             return;
         }
-        let queued = self.seed_regions.lock().expect("seed mutex").len();
-        if queued > 0 {
+        progress.note_waiting();
+        if progress.starved() {
             warn_throttled!(
                 SEED_STARVED_WARN_AFTER,
                 queued,
@@ -567,6 +569,13 @@ impl Worker {
         if last_viz_at.is_some_and(|t| tick_at.duration_since(t) < viz_interval) {
             return;
         }
+        let Ok(permit) = self.viz.try_reserve() else {
+            debug_throttled!(
+                Duration::from_secs(5),
+                "viz tick skipped, the publisher is behind"
+            );
+            return;
+        };
         let (regions, node_points) = tokio::task::block_in_place(|| {
             let regions = viz.tick(
                 planner.surface_clearance_iter(),
@@ -576,20 +585,14 @@ impl Worker {
             (regions, node_points)
         });
         *last_viz_at = Some(tick_at);
-        let batch = VizBatch {
+        permit.send(VizBatch {
             regions,
             node_points,
-        };
-        if let Err(e) = self.viz.try_send(batch) {
-            debug_throttled!(
-                Duration::from_secs(5),
-                regions = e.into_inner().regions.len(),
-                "viz tick dropped, the publisher is behind"
-            );
-        }
+        });
     }
 
-    /// Mutate the graph from a map update. False if the cloud was unusable.
+    /// Mutate the graph from a map update. False when a region has no base
+    /// pose on tf or the global map is empty.
     fn ingest(&self, planner: &mut Planner, update: MapUpdate, viz: &mut RegionViz) -> bool {
         match update {
             MapUpdate::Region {
@@ -607,18 +610,15 @@ impl Worker {
                 };
                 let region = region_bounds(&bounds).capped_at(sensor_z, self.config.max_overhead_m);
                 let process_start = Instant::now();
-                let applied =
-                    self.apply_region(planner, &points, &region, viz, Planner::update_region);
-                if let Some(points) = applied {
-                    debug_throttled!(
-                        Duration::from_secs(5),
-                        process_ms = process_start.elapsed().as_secs_f64() * 1e3,
-                        wait_ms = process_start.duration_since(received).as_secs_f64() * 1e3,
-                        points,
-                        "local region processed"
-                    );
-                }
-                applied.is_some()
+                self.apply_region(planner, &points, &region, viz, Planner::update_region);
+                debug_throttled!(
+                    Duration::from_secs(5),
+                    process_ms = process_start.elapsed().as_secs_f64() * 1e3,
+                    wait_ms = process_start.duration_since(received).as_secs_f64() * 1e3,
+                    points = points.len(),
+                    "local region processed"
+                );
+                true
             }
             MapUpdate::Global { points } => {
                 if points.is_empty() {
@@ -633,14 +633,8 @@ impl Worker {
     }
 
     /// Apply one seed region through the region pipeline. Its bounds are the
-    /// premap's own, so no sensor ceiling applies. The points applied, or
-    /// None if unusable.
-    fn ingest_seed(
-        &self,
-        planner: &mut Planner,
-        seed: QueuedSeed,
-        viz: &mut RegionViz,
-    ) -> Option<usize> {
+    /// premap's own, so no sensor ceiling applies.
+    fn ingest_seed(&self, planner: &mut Planner, seed: QueuedSeed, viz: &mut RegionViz) {
         let region = region_bounds(&seed.bounds);
         self.apply_region(
             planner,
@@ -648,12 +642,11 @@ impl Worker {
             &region,
             viz,
             Planner::update_seed_region,
-        )
+        );
     }
 
     /// Replace the voxels in a region with the given update and repair the
-    /// graph around them, marking the rewritten window for the viz. The
-    /// points applied.
+    /// graph around them, marking the rewritten window for the viz.
     fn apply_region(
         &self,
         planner: &mut Planner,
@@ -661,11 +654,10 @@ impl Worker {
         region: &RegionBounds,
         viz: &mut RegionViz,
         update: fn(&mut Planner, &[Xyz], &RegionBounds, &Config) -> Option<ColumnWindow>,
-    ) -> Option<usize> {
+    ) {
         if let Some(window) = update(planner, points, region, &self.config) {
             viz.mark_window(window);
         }
-        Some(points.len())
     }
 
     /// The base frame position in the world frame, from the latest tf.
@@ -1156,14 +1148,13 @@ mod tests {
         const REGIONS: usize = 20;
         let mut progress = SeedProgress::default();
         assert!(!progress.in_flight());
-        progress.record(None, 1.0);
+        progress.record(100, 1.0);
         assert!(progress.in_flight());
-        for i in 1..REGIONS {
-            progress.record(Some(100), i as f64);
+        for i in 2..REGIONS {
+            progress.record(100, i as f64);
         }
-        progress.record(Some(100), 0.5);
+        progress.record(100, 0.5);
         assert_eq!(progress.applied, REGIONS);
-        assert_eq!(progress.unusable, 1);
         assert_eq!(progress.points, 100 * REGIONS);
         assert_eq!(progress.max_region_ms, (REGIONS - 1) as f64);
         let sum: f64 = (1..REGIONS).map(|i| i as f64).sum::<f64>() + 0.5;
@@ -1172,6 +1163,26 @@ mod tests {
         progress.finish();
         assert!(!progress.in_flight());
         assert_eq!(progress.applied, 0);
+    }
+
+    #[test]
+    fn seed_progress_is_starved_from_the_first_queued_region_or_the_last_applied() {
+        let old = Instant::now() - SEED_STARVED_WARN_AFTER;
+        let mut progress = SeedProgress::default();
+        assert!(!progress.starved());
+
+        progress.note_waiting();
+        assert!(!progress.starved());
+        progress.waiting_since = Some(old);
+        assert!(progress.starved());
+
+        progress.record(100, 1.0);
+        assert!(!progress.starved());
+        progress.last_at = Some(old);
+        assert!(progress.starved());
+
+        progress.finish();
+        assert!(!progress.starved());
     }
 
     #[test]
