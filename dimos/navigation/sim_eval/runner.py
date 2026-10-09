@@ -50,11 +50,20 @@ RESULTS_FILE = "results.jsonl"
 RUN_FILE = "run.json"
 SCORE_FILE = "score.json"
 RECORDING_FILE = "memory.db"
-SCORE_TOPICS = "ground_truth,odometry,tf,scene,contacts,goal,planner_path,path,cmd_vel,goal_reached"
+REPLAY_FILE = "episode.rrd"
+RECORD_TOPICS = (
+    "ground_truth,odometry,tf,scene,contacts,goal,planner_path,path,cmd_vel,goal_reached,"
+    "lidar,local_map,surface_map"
+)
 LCM_PORT_BASE = 7800
 ZENOH_PORT_BASE = 7500
+RERUN_PORT_BASE = 9900
+WEBSOCKET_PORT_BASE = 3100
 STOP_GRACE_S = 20.0
 RECORDING_LINE = re.compile(r"Recording to (\S+memory\.db)")
+
+_live: set[subprocess.Popen[bytes]] = set()
+_live_lock = threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -68,7 +77,7 @@ class RunConfig:
     out_dir: Path | None = None
     overrides: tuple[str, ...] = ()
     policy: Path | None = None
-    record_topics: str = SCORE_TOPICS
+    record_topics: str = RECORD_TOPICS
     viewer: str = "none"
     episode_cap_s: float = 900.0
     command: tuple[str, ...] = ("dimos",)
@@ -139,13 +148,37 @@ def run(config: RunConfig) -> Path:
         )
         return result
 
-    first = one(episodes[0])
-    if first.terminal is None:
-        raise RuntimeError(f"the first episode produced no terminal record, see {episodes[0].dir}")
-    with ThreadPoolExecutor(max_workers=config.procs) as pool:
-        list(pool.map(one, episodes[1:]))
+    previous = signal.signal(signal.SIGTERM, _interrupt)
+    pool = ThreadPoolExecutor(max_workers=config.procs)
+    try:
+        first = one(episodes[0])
+        if first.terminal is None:
+            raise RuntimeError(
+                f"the first episode produced no terminal record, see {episodes[0].dir}"
+            )
+        for future in [pool.submit(one, episode) for episode in episodes[1:]]:
+            future.result()
+    except BaseException:
+        pool.shutdown(wait=False, cancel_futures=True)
+        stop_all()
+        raise
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+    pool.shutdown()
     _write_run(run_dir, config, manifest, len(episodes), finished=True)
     return run_dir
+
+
+def stop_all() -> None:
+    """Stop every episode process this runner has going."""
+    with _live_lock:
+        live = list(_live)
+    for process in live:
+        _stop(process)
+
+
+def _interrupt(*_: object) -> None:
+    raise KeyboardInterrupt
 
 
 def rescore(run_dir: Path) -> Path:
@@ -161,7 +194,6 @@ def rescore(run_dir: Path) -> Path:
             episode = Episode(case, int(episode_dir.name[1:]), episode_dir)
             terminal = _terminal(episode_dir)
             out.write(json.dumps(asdict(_score(manifest, episode, terminal))) + "\n")
-            _replay(episode)
     return results
 
 
@@ -208,6 +240,8 @@ def _episode(config: RunConfig, manifest: Manifest, episode: Episode, slot: int)
             env=_environment(slot),
             start_new_session=True,
         )
+        with _live_lock:
+            _live.add(process)
         try:
             deadline = time.time() + config.episode_cap_s
             while time.time() < deadline and process.poll() is None:
@@ -216,23 +250,33 @@ def _episode(config: RunConfig, manifest: Manifest, episode: Episode, slot: int)
                 time.sleep(0.5)
         finally:
             _stop(process)
+            with _live_lock:
+                _live.discard(process)
     _collect_recording(log, episode.dir)
-    result = _score(manifest, episode, _terminal(episode.dir))
-    _replay(episode)
-    return result
+    return _score(manifest, episode, _terminal(episode.dir))
 
 
 def _command(config: RunConfig, episode: Episode, slot: int) -> list[str]:
-    """The dimos run invocation, on a private zenoh scouting group for its slot."""
+    """The dimos run invocation, on a private zenoh scouting group for its slot.
+
+    The rerun bridge always runs and saves the episode's rerun file, on its own port, since
+    a bridge that finds its port taken joins that server instead. Headless means no viewer
+    window on it.
+    """
     case = episode.case
     command = [
         *config.command,
         "--viewer",
-        config.viewer,
+        "rerun",
+        "--rerun-save",
+        *(("--rerun-open", "none") if config.viewer == "none" else ()),
         "--zenoh-scout-addr",
         f"224.0.0.224:{ZENOH_PORT_BASE + slot}",
+        "--rerun-websocket-server-port",
+        str(WEBSOCKET_PORT_BASE + slot),
         "run",
         config.blueprint,
+        f"--rerunbridgemodule.connect-url=rerun+http://127.0.0.1:{RERUN_PORT_BASE + slot}/proxy",
         "--record",
         "sqlite",
         "--record-topics",
@@ -269,23 +313,20 @@ def _stop(process: subprocess.Popen[bytes]) -> None:
 
 
 def _collect_recording(log: Path, episode_dir: Path) -> None:
-    """Move the run's recording next to its terminal record, found from the run's log."""
+    """Move the run's recording and rerun file next to its terminal record, found from the log."""
     match = RECORDING_LINE.search(log.read_text(errors="replace"))
     if match is None:
         return
     source = Path(match.group(1))
-    if source.exists():
-        shutil.move(str(source), episode_dir / RECORDING_FILE)
-        if source.parent.exists() and not any(source.parent.iterdir()):
-            source.parent.rmdir()
-
-
-def _replay(episode: Episode) -> None:
-    """The episode as a rerun file, when it left a recording."""
-    from dimos.navigation.sim_eval.replay import write_rrd
-
-    if (episode.dir / RECORDING_FILE).exists():
-        write_rrd(episode.dir)
+    if not source.parent.exists():
+        return
+    for file in source.parent.iterdir():
+        if file.name.startswith(RECORDING_FILE):
+            shutil.move(str(file), episode_dir / file.name)
+        elif file.name == "rerun.rrd":
+            shutil.move(str(file), episode_dir / REPLAY_FILE)
+    if not any(source.parent.iterdir()):
+        source.parent.rmdir()
 
 
 def _terminal(episode_dir: Path) -> dict[str, object] | None:
