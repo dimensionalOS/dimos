@@ -140,8 +140,12 @@ def test_generated_path_produces_velocity_and_arrival():
     module = BasicPathFollower()
     commands = []
     arrivals = []
-    module.nav_cmd_vel.subscribe(lambda value: commands.append(cdr_decode(value.encode(), Twist)))
-    module.goal_reached.subscribe(lambda value: arrivals.append(cdr_decode(value.encode(), Bool)))
+    module.nav_cmd_vel.subscribe(
+        lambda value: commands.append(cdr_decode(cdr_encode(value), Twist))
+    )
+    module.goal_reached.subscribe(
+        lambda value: arrivals.append(cdr_decode(cdr_encode(value), Bool))
+    )
     try:
         path = Path(
             poses=[

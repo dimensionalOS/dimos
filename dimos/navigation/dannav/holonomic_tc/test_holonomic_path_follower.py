@@ -236,7 +236,7 @@ def test_velocity_uses_nanosecond_interval_and_copies_previous_pose() -> None:
     try:
         assert core._estimate_measured_body_twist(first).linear.x == 0.0
         first.pose.position.x = 99.0
-        decoded = cdr_decode(core._estimate_measured_body_twist(second).encode(), Twist)
+        decoded = cdr_decode(cdr_encode(core._estimate_measured_body_twist(second)), Twist)
         assert abs(decoded.linear.x - 1.0) < 1e-12
     finally:
         core.close()

@@ -25,7 +25,7 @@ from dimos_generated.vision_msgs.msg import (
     ObjectHypothesis,
     ObjectHypothesisWithPose,
 )
-from dimos_message_build.registry import decode as cdr_decode
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import rerun as rr
 
@@ -88,7 +88,7 @@ def test_detection3darray_bridge_attaches_topic_entity_to_message_frame() -> Non
     try:
         with patch("rerun.log") as mock_log:
             bridge._on_message(
-                cdr_decode(_detection_array().encode(), Detection3DArray),
+                cdr_decode(cdr_encode(_detection_array()), Detection3DArray),
                 Topic("/marker_detection/detections"),
             )
     finally:
@@ -105,7 +105,7 @@ def test_detection3darray_bridge_attaches_topic_entity_to_message_frame() -> Non
 
 
 def test_generated_detection_boxes_preserve_geometry_and_labels() -> None:
-    boxes = detection_boxes(cdr_decode(_detection_array().encode(), Detection3DArray))
+    boxes = detection_boxes(cdr_decode(cdr_encode(_detection_array()), Detection3DArray))
     assert boxes.centers.as_arrow_array().to_pylist() == [[1, 2, 3]]
     assert boxes.labels.as_arrow_array().to_pylist() == ["DICT_APRILTAG_36h11:4 id=4"]
     assert boxes.quaternions.as_arrow_array().to_pylist() == [[0, 0, 0, 1]]

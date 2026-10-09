@@ -98,7 +98,7 @@ def nodes() -> Generator[tuple[DimosROS, DimosROS], None, None]:
             is_bigendian=0,
         ),
     ],
-    ids=lambda msg: msg.msg_name,
+    ids=lambda msg: msg.__msgtype__,
 )
 def test_generated_pubsub(nodes, original):
     publisher, subscriber = nodes

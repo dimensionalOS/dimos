@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from copy import deepcopy
 import pickle
 
 from dimos_generated.geometry_msgs.msg import Point, Pose, Quaternion, Vector3
@@ -320,9 +321,9 @@ def test_pose_with_mixed_types() -> None:
     assert pose1.orientation.w == pose2.orientation.w
 
 
-def test_pose_nested_value_copy() -> None:
+def test_pose_explicit_nested_value_copy() -> None:
     source = Pose(position=Point(x=1, y=2, z=3), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0))
-    copied = Pose(position=source.position, orientation=source.orientation)
+    copied = deepcopy(source)
     copied.position.x = 10
     assert source.position == Point(x=1, y=2, z=3)
     assert copied.position == Point(x=10, y=2, z=3)

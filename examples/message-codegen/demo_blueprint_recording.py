@@ -27,6 +27,7 @@ from demo_blueprint import PythonRelayDemo, blueprint
 from dimos_generated.dimos_msgs.msg import LineSegments3D
 from dimos_generated.geometry_msgs.msg import PoseStamped
 from dimos_generated.sensor_msgs.msg import Image
+from dimos_message_build.registry import encode as cdr_encode
 from mcap.reader import make_reader
 import numpy as np
 from rosbags.typesys import Stores, get_types_from_msg, get_typestore
@@ -60,7 +61,7 @@ def verify_and_replay(artifact: Path, samples: int) -> None:
     with McapStore(path=str(artifact)) as store:
         for name in ("l2", "i2", "p0"):
             messages = [obs.data for obs in store.stream(name)]
-            expected[name] = [message.encode() for message in messages]
+            expected[name] = [cdr_encode(message) for message in messages]
             observed_samples = set()
             for message in messages:
                 delta = to_nanoseconds(message.header.stamp) - 1700000000123456789
@@ -96,7 +97,7 @@ def verify_and_replay(artifact: Path, samples: int) -> None:
 
     def receive(name: str, message: Any) -> None:
         with lock:
-            received[name].append(message.encode())
+            received[name].append(cdr_encode(message))
             if all(len(received[key]) >= len(values) for key, values in expected.items()):
                 done.set()
 

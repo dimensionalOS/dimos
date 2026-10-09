@@ -48,7 +48,7 @@ def main() -> None:
             header=Header(stamp=time_from_nanoseconds(stamp_ns + index), frame_id=camera),
         )
         mux._on_cam(camera, cdr_decode(cdr_encode(image), Image))
-    output = cdr_decode(mux.mux_image.publish.call_args.args[0].encode(), Image)
+    output = cdr_decode(cdr_encode(mux.mux_image.publish.call_args.args[0]), Image)
     assert output.width == 100 and output.height == 36
     assert to_nanoseconds(output.header.stamp) == stamp_ns + 1
     assert output.header.frame_id == "camera_mux"

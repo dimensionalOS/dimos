@@ -22,7 +22,7 @@ import threading
 from typing import Any
 
 from dimos_generated.geometry_msgs.msg import PointStamped, Twist, Vector3
-from dimos_message_build.registry import decode as cdr_decode
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import pytest
 import websockets.asyncio.client as ws_client
 
@@ -132,7 +132,7 @@ def test_click_publishes_point_stamped(
     unsub()
 
     assert len(received) == 1
-    point = cdr_decode(received[0].encode(), PointStamped)
+    point = cdr_decode(cdr_encode(received[0]), PointStamped)
     assert point.point.x == pytest.approx(1.5)
     assert point.point.y == pytest.approx(2.5)
     assert point.point.z == pytest.approx(0.0)
@@ -172,7 +172,7 @@ def test_stop_publishes_zero_twist(
     unsub()
 
     assert len(received) == 1
-    assert cdr_decode(received[0].encode(), Twist) == Twist(
+    assert cdr_decode(cdr_encode(received[0]), Twist) == Twist(
         linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)
     )
 

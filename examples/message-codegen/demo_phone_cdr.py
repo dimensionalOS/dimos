@@ -56,7 +56,7 @@ def main() -> None:
             assert message.header.frame_id == "phone"
             assert message.header.stamp.sec > 0
             print(
-                f"Browser → {message.msg_name}: stamp={message.header.stamp.sec}s + "
+                f"Browser → {message.__msgtype__}: stamp={message.header.stamp.sec}s + "
                 f"{message.header.stamp.nanosec}ns",
                 flush=True,
             )

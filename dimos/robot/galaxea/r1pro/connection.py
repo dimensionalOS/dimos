@@ -587,10 +587,10 @@ class R1ProConnection(Module):
     ) -> None:
         n = min(len(msg.position), len(q_dst))
         q_dst[:n] = list(msg.position)[:n]
-        if msg.velocity:
+        if len(msg.velocity):
             nv = min(len(msg.velocity), len(dq_dst))
             dq_dst[:nv] = list(msg.velocity)[:nv]
-        if msg.effort:
+        if len(msg.effort):
             ne = min(len(msg.effort), len(eff_dst))
             eff_dst[:ne] = list(msg.effort)[:ne]
 

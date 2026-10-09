@@ -82,7 +82,7 @@ def main() -> None:
             f"Local planner committed {len(committed.poses)} resampled poses; duplicate replan held"
         )
         core.handle_odom(odometry(0))
-        core.start_planning(cdr_decode(committed.encode(), Path))
+        core.start_planning(cdr_decode(cdr_encode(committed), Path))
         for tick in range(300):
             if stopped:
                 break

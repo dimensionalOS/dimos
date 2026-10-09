@@ -145,7 +145,7 @@ class RobotStateMonitor:
                 self._latest_velocities = velocities
                 self._last_update_time = current_time
                 joint_state = JointState(
-                    header=msg.header,
+                    header=copy.deepcopy(msg.header),
                     name=self._joint_names,
                     position=np.asarray(positions.tolist(), dtype=np.float64),
                     velocity=np.asarray(
@@ -203,7 +203,7 @@ class RobotStateMonitor:
 
         Uses the same canonical-name lookup as _extract_positions.
         """
-        if not msg.velocity or len(msg.velocity) == 0:
+        if len(msg.velocity) == 0:
             return None
 
         name_to_idx = {name: i for i, name in enumerate(msg.name)}
@@ -226,13 +226,7 @@ class RobotStateMonitor:
             state = self._latest_state
             if state is None:
                 return None
-            return JointState(
-                header=state.header,
-                name=state.name,
-                position=np.asarray(state.position, dtype=np.float64),
-                velocity=np.asarray(state.velocity, dtype=np.float64),
-                effort=np.array([], dtype=np.float64),
-            )
+            return copy.deepcopy(state)
 
     def get_current_positions(self) -> NDArray[np.float64] | None:
         """Get current joint positions (thread-safe).

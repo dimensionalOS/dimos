@@ -69,7 +69,7 @@ def main() -> None:
     )
     result = Detection3DPC.from_depth(detection, depth, camera, transform, filters=[])
     assert result is not None
-    pose = cdr_decode(result.pose.encode(), PoseStamped)
+    pose = cdr_decode(cdr_encode(result.pose), PoseStamped)
     assert pose.header.stamp == header.stamp
     assert pose.header.frame_id == "world"
     assert (pose.pose.position.x, pose.pose.position.y, pose.pose.position.z) == (11.5, 1.5, 2)

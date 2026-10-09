@@ -133,7 +133,7 @@ def test_sdk_raw_camera_boundary_emits_generated_pixels(
     clock = SimpleNamespace(local_seconds_from_robot_timestamp=lambda stamp: 1700000000.25)
     value = decode_image(response, "camera-optical", clock)
     assert type(value) is Image and value.encoding == encoding
-    decoded = cdr_decode(value.encode(), Image)
+    decoded = cdr_decode(cdr_encode(value), Image)
     assert decoded.header.frame_id == "camera-optical"
     assert decoded.header.stamp == Time(sec=1700000000, nanosec=250000000)
     np.testing.assert_array_equal(image_view(decoded), pixels)
@@ -148,7 +148,7 @@ def test_sdk_jpeg_camera_boundary_decodes_generated_image(image_sdk):
     clock = SimpleNamespace(local_seconds_from_robot_timestamp=lambda stamp: 1700000000.25)
     value = decode_image(response, "camera-optical", clock)
     assert type(value) is Image and value.encoding == "bgr8"
-    np.testing.assert_allclose(image_view(cdr_decode(value.encode(), Image)), pixels, atol=2)
+    np.testing.assert_allclose(image_view(cdr_decode(cdr_encode(value), Image)), pixels, atol=2)
 
 
 @pytest.mark.parametrize("turns", [-1, 0, 1, 2, 4])

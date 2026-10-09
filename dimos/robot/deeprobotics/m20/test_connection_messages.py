@@ -27,7 +27,7 @@ from dimos_generated.geometry_msgs.msg import (
 )
 from dimos_generated.nav_msgs.msg import Odometry
 from dimos_generated.std_msgs.msg import Bool, Header
-from dimos_message_build.registry import decode as cdr_decode
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 
 from dimos.robot.deeprobotics.m20.connection import M20Connection
@@ -66,6 +66,6 @@ def test_generated_forwarding_preserves_readiness_pose_clock_and_zero_stop(monke
         assert velocities[-1] == Twist(
             linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)
         )
-        assert cdr_decode(velocities[0].encode(), Twist) == command
+        assert cdr_decode(cdr_encode(velocities[0]), Twist) == command
     finally:
         module.stop()

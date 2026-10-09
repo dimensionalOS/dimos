@@ -27,7 +27,7 @@ from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaterni
 from dimos_generated.sensor_msgs.msg import CameraInfo, RegionOfInterest
 from dimos_generated.std_msgs.msg import Header
 from dimos_generated.tf2_msgs.msg import TFMessage
-from dimos_message_build.registry import decode as cdr_decode
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 from pytest_mock import MockerFixture
@@ -212,7 +212,7 @@ def test_published_tf_copies_source_pose_and_keeps_exact_stamp(connection):
     )
     conn._publish_tf(source)
     message = conn.odom.publish.call_args.args[0]
-    tf = cdr_decode(conn.tf.publish.call_args.args[0].encode(), TFMessage)
+    tf = cdr_decode(cdr_encode(conn.tf.publish.call_args.args[0]), TFMessage)
     assert source.header.frame_id == "device_odom"
     assert message.header.frame_id == "go2_odom"
     assert all(edge.header.stamp == source.header.stamp for edge in tf.transforms)

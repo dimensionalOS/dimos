@@ -52,13 +52,13 @@ def test_click_and_velocity_generate_cdr_messages(module):
     points, velocities, stamped = [], [], []
     subscriptions = [
         module.goal_request.subscribe(
-            lambda msg: points.append(cdr_decode(msg.encode(), PoseStamped))
+            lambda msg: points.append(cdr_decode(cdr_encode(msg), PoseStamped))
         ),
         module.tele_cmd_vel.subscribe(
-            lambda msg: velocities.append(cdr_decode(msg.encode(), Twist))
+            lambda msg: velocities.append(cdr_decode(cdr_encode(msg), Twist))
         ),
         module.movecmd_stamped.subscribe(
-            lambda msg: stamped.append(cdr_decode(msg.encode(), TwistStamped))
+            lambda msg: stamped.append(cdr_decode(cdr_encode(msg), TwistStamped))
         ),
     ]
     try:

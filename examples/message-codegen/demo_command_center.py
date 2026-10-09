@@ -31,7 +31,7 @@ def main() -> None:
     module = WebsocketVisModule()
     goals: list[PoseStamped] = []
     unsubscribe = module.goal_request.subscribe(
-        lambda value: goals.append(cdr_decode(value.encode(), PoseStamped))
+        lambda value: goals.append(cdr_decode(cdr_encode(value), PoseStamped))
     )
     try:
         module._create_server()

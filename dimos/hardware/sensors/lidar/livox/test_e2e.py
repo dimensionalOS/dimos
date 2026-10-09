@@ -31,6 +31,7 @@ import subprocess
 import time
 
 from dimos_generated.sensor_msgs.msg import Imu, PointCloud2
+from dimos_message_build.registry import decode as cdr_decode
 import lcm as lcm_module
 import pytest
 
@@ -172,13 +173,13 @@ def _collect(
             raw[topic].append(data)
 
         msg_type = topics[topic]
-        lc.subscribe(f"{topic}#{msg_type.msg_name}", on_msg)
+        lc.subscribe(f"{topic}#{msg_type.__msgtype__}", on_msg)
     end = time.monotonic() + seconds
     while time.monotonic() < end:
         if all(len(raw[topic]) >= count for topic, count in enough.items()):
             break
         lc.handle_timeout(200)
-    return {topic: [topics[topic].decode(data) for data in raw[topic]] for topic in topics}
+    return {topic: [cdr_decode(data, topics[topic]) for data in raw[topic]] for topic in topics}
 
 
 def _magnitude(sample: Imu) -> float:

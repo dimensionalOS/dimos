@@ -27,8 +27,8 @@ def main() -> None:
     goals: list[PointStamped] = []
     commands: list[Twist] = []
     unsubs = [
-        manager.goal.subscribe(lambda msg: goals.append(cdr_decode(msg.encode(), PointStamped))),
-        manager.cmd_vel.subscribe(lambda msg: commands.append(cdr_decode(msg.encode(), Twist))),
+        manager.goal.subscribe(lambda msg: goals.append(cdr_decode(cdr_encode(msg), PointStamped))),
+        manager.cmd_vel.subscribe(lambda msg: commands.append(cdr_decode(cdr_encode(msg), Twist))),
     ]
     try:
         clicked = PointStamped(

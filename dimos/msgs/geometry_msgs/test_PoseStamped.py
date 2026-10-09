@@ -62,4 +62,4 @@ def test_pickle_encode_decode() -> None:
     decoded = pickle.loads(pickle.dumps(source))
     assert isinstance(decoded, PoseStamped)
     assert decoded is not source
-    assert decoded.encode() == cdr_encode(source)
+    assert cdr_encode(decoded) == cdr_encode(source)

@@ -62,7 +62,7 @@ def test_quaternion_component_init() -> None:
     assert q4.y == 2.0
     assert q4.z == 3.0
     assert q4.w == 4.0
-    assert isinstance(q4.x, float)
+    assert isinstance(cdr_decode(cdr_encode(q4), Quaternion).x, float)
 
 
 def test_quaternion_sequence_init() -> None:

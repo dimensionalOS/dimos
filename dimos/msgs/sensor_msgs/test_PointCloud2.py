@@ -154,7 +154,7 @@ def test_cdr_intensity_round_trip() -> None:
     np.testing.assert_allclose(got, intensities, atol=1e-6)
 
     # Round-trip through LCM
-    binary = original.encode()
+    binary = cdr_encode(original)
     decoded = cdr_decode(binary, PointCloud2)
 
     # Positions preserved
@@ -174,7 +174,7 @@ def test_cdr_no_intensity_round_trip() -> None:
 
     assert _field(original, "intensity") is None
 
-    binary = original.encode()
+    binary = cdr_encode(original)
     decoded = cdr_decode(binary, PointCloud2)
 
     # No intensities should appear (all-zero wire data is ignored)
@@ -207,7 +207,7 @@ def test_cdr_per_point_timing_round_trip() -> None:
     assert got_offsets is not None
     np.testing.assert_array_equal(got_offsets, offset_times)
 
-    decoded = cdr_decode(original.encode(), PointCloud2)
+    decoded = cdr_decode(cdr_encode(original), PointCloud2)
 
     decoded_pts = pointcloud_xyz(decoded)
     np.testing.assert_allclose(decoded_pts.astype(np.float32), points, atol=1e-6)

@@ -38,7 +38,10 @@ def test_tfmessage_initialization() -> None:
     )
     message = TFMessage(transforms=[first, second])
     assert len(message.transforms) == 2
-    assert [item.encode() for item in message.transforms] == [cdr_encode(first), cdr_encode(second)]
+    assert [cdr_encode(item) for item in message.transforms] == [
+        cdr_encode(first),
+        cdr_encode(second),
+    ]
 
 
 def test_tfmessage_empty() -> None:
@@ -58,7 +61,7 @@ def test_tfmessage_add_transform() -> None:
     )
     message.transforms.append(transform)
     assert len(message.transforms) == 1
-    assert message.transforms[0].encode() == cdr_encode(transform)
+    assert cdr_encode(message.transforms[0]) == cdr_encode(transform)
 
 
 def test_tfmessage_tree() -> None:

@@ -22,6 +22,7 @@ from typing import Any
 from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Twist, TwistStamped, Vector3
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 
 from dimos.msgs.time import to_nanoseconds
 from dimos.robot.galaxea.r1pro.connection import R1ProConnection
@@ -67,7 +68,7 @@ def main() -> None:
             assert all(to_nanoseconds(edge.header.stamp) == stamp for edge in tf.transforms)
             assert math.isclose(pose.pose.orientation.z, math.sin(index * 0.01))
             for message in (pose, odometry, tf):
-                assert type(message).decode(message.encode()) == message
+                assert cdr_decode(cdr_encode(message), type(message)) == message
             print(
                 f"tick {index}: x={pose.pose.position.x:.6f}, y={pose.pose.position.y:.6f}, stamp={stamp}"
             )

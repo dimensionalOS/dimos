@@ -25,7 +25,7 @@ from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import PoseStamped
 from dimos_generated.sensor_msgs.msg import Imu
 from dimos_generated.std_msgs.msg import Header
-from dimos_message_build.registry import decode as cdr_decode
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 
@@ -132,7 +132,7 @@ def test_ready_signal_happens_after_joint_state_and_imu_write() -> None:
         module._publish_shm_and_lcm(_FakeEngine)
 
         assert events == ["joint_state", "imu", "ready"]
-        pose = cdr_decode(module.odom.publish.call_args.args[0].encode(), PoseStamped)
+        pose = cdr_decode(cdr_encode(module.odom.publish.call_args.args[0]), PoseStamped)
         assert pose.header.frame_id == "world"
         assert (pose.pose.position.x, pose.pose.position.y, pose.pose.position.z) == (
             0.0,
@@ -140,7 +140,7 @@ def test_ready_signal_happens_after_joint_state_and_imu_write() -> None:
             0.75,
         )
         assert pose.pose.orientation.w == 1.0
-        imu = cdr_decode(module.imu.publish.call_args.args[0].encode(), Imu)
+        imu = cdr_decode(cdr_encode(module.imu.publish.call_args.args[0]), Imu)
         assert imu.orientation.w == 1.0
         assert (imu.angular_velocity.x, imu.angular_velocity.y, imu.angular_velocity.z) == (
             0.1,

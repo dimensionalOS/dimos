@@ -183,7 +183,7 @@ def test_samples_own_values_and_control_survives_cdr() -> None:
     pose = _pose_xy_yaw(1.0, 0.0, 0.0)
     twist = Twist(linear=Vector3(x=0.25, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
     reference = _ref(
-        cdr_decode(pose.encode(), Pose),
+        cdr_decode(cdr_encode(pose), Pose),
         cdr_decode(cdr_encode(twist), Twist),
     )
     measurement = _meas(
@@ -197,6 +197,6 @@ def test_samples_own_values_and_control_survives_cdr() -> None:
     assert sample.twist_body.linear.x == 0.25
     controller = HolonomicTrackingController(k_position_per_s=1.0, k_yaw_per_s=0.0)
     output = controller.control(reference, measurement)
-    decoded = cdr_decode(output.encode(), Twist)
+    decoded = cdr_decode(cdr_encode(output), Twist)
     assert decoded.linear.x == pytest.approx(0.0, abs=1e-12)
     assert decoded.linear.y == pytest.approx(-1.25)

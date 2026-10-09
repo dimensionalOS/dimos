@@ -73,7 +73,7 @@ def _object(object_id, x, timestamp):
 def test_detection_cdr_preserves_source_pose_header_and_current_center():
     obj = _object("cup-1", 0.2, 1.0)
     obj.set_center(Vector3(x=0.4, y=0.5, z=0.6))
-    decoded = cdr_decode(obj.to_detection3d_msg().encode(), Detection3D)
+    decoded = cdr_decode(cdr_encode(obj.to_detection3d_msg()), Detection3D)
     assert decoded.header == obj.pose.header
     assert decoded.bbox.center == obj.pose.pose
     assert decoded.bbox.size == obj.size

@@ -39,7 +39,7 @@ def main() -> None:
     provider = HeuristicGraspModule()
     try:
         proposals = provider.propose_grasps(cdr_decode(cdr_encode(cloud), PointCloud2))
-        payload = proposals.encode()
+        payload = cdr_encode(proposals)
         received = cdr_decode(payload, GraspCandidateArray)
         assert received.header == cloud.header
         assert len(received.candidates) == 1

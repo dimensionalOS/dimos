@@ -14,6 +14,7 @@
 
 """File, color, CDR and reactive selection checks on generated images."""
 
+from dataclasses import asdict
 from pathlib import Path
 
 from dimos_generated.sensor_msgs.msg import Image
@@ -64,14 +65,14 @@ def test_file_load(img: Image) -> None:
 def test_cdr_encode_decode(img: Image) -> None:
     decoded = cdr_decode(cdr_encode(img), Image)
     assert decoded is not img
-    assert decoded == img
+    np.testing.assert_equal(asdict(decoded), asdict(img))
 
 
 def test_rgb_bgr_conversion(img: Image) -> None:
     bgr = image_from_array(image_to_bgr(img), encoding="bgr8", header=img.header)
     assert bgr != img
     restored = image_from_array(image_to_rgb(bgr), encoding="rgb8", header=img.header)
-    assert restored == img
+    np.testing.assert_equal(asdict(restored), asdict(img))
 
 
 def test_opencv_conversion(img: Image) -> None:

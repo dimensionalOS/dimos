@@ -130,9 +130,9 @@ class PythonRelayDemo(Module):
                 start=Point(x=sample, y=0.0, z=0.0), end=Point(y=2, x=0.0, z=0.0), weight=sample + 2
             )
         ]
-        if self._lines.encode() != cdr_encode(expected):
+        if cdr_encode(self._lines) != cdr_encode(expected):
             raise ValueError("Native custom message reply differs from the expected edits")
-        if self._image.encode() != cdr_encode(image):
+        if cdr_encode(self._image) != cdr_encode(image):
             raise ValueError("Native image reply changed pixels or metadata")
         return (
             f"sample {sample}: Python weight={sample} → C++ {sample + 1} → Rust {sample + 2}; "

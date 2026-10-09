@@ -17,10 +17,13 @@
 Legacy polymorphic positional constructors and presentation methods are retired.
 """
 
+from dataclasses import asdict
+
 from dimos_generated.geometry_msgs.msg import Point, Pose, PoseWithCovariance, Quaternion
 from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
+from rosbags.serde import SerdeError
 from rosbags.typesys import Stores, get_typestore
 
 
@@ -94,13 +97,13 @@ def test_copy_equality_and_independent_storage() -> None:
         covariance=np.asarray(np.arange(36, dtype=float), dtype=np.float64),
     )
     copied = cdr_decode(cdr_encode(original), PoseWithCovariance)
-    assert copied == original
+    np.testing.assert_equal(asdict(copied), asdict(original))
     assert copied is not original
     assert copied.pose is not original.pose
     assert copied.covariance is not original.covariance
     original.covariance[0] = 999
     assert copied.covariance[0] == 0
-    assert copied != original
+    assert not np.array_equal(copied.covariance, original.covariance)
     assert copied != "not a message"
     assert copied is not None
 
@@ -121,15 +124,16 @@ def test_matrix_assignment() -> None:
 
 
 @pytest.mark.parametrize("size", [0, 35, 37])
-def test_fixed_covariance_rejects_invalid_length(size: int) -> None:
-    with pytest.raises((ValueError, TypeError, RuntimeError)):
-        PoseWithCovariance(
-            covariance=np.asarray(np.zeros(size), dtype=np.float64),
-            pose=Pose(
-                position=Point(x=0.0, y=0.0, z=0.0),
-                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
-            ),
-        )
+def test_cdr_rejects_invalid_covariance_length(size: int) -> None:
+    source = PoseWithCovariance(
+        covariance=np.asarray(np.zeros(size), dtype=np.float64),
+        pose=Pose(
+            position=Point(x=0.0, y=0.0, z=0.0),
+            orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+        ),
+    )
+    with pytest.raises(SerdeError, match="Unexpected array length"):
+        cdr_encode(source)
 
 
 @pytest.mark.parametrize("xyz", [(0, 0, 0), (1, 2, 3), (-1, -2, -3), (100, -100, 0)])

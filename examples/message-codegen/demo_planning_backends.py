@@ -90,7 +90,7 @@ def main() -> None:
         print(f"Drake model joints: {world.get_prepared_model().joint_space.names}")
         print(f"RRT result: {result.status.name}; interpolated waypoints={len(path_points)}")
         for index, point in enumerate(path_points):
-            decoded = cdr_decode(point.encode(), JointState)
+            decoded = cdr_decode(cdr_encode(point), JointState)
             assert decoded == point
             assert world.check_config_collision_free(decoded)
             with world.scratch_context() as context:

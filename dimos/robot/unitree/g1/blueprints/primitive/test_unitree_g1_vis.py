@@ -32,7 +32,7 @@ def test_global_map_uses_generated_xyz_and_height_colors():
         np.array([[1.0, 2.0, 0.0], [3.0, 4.0, 2.0]]),
         header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
     )
-    result = _global_map_colors(type(cloud).decode(cdr_encode(cloud)))
+    result = _global_map_colors(cdr_decode(cdr_encode(cloud), type(cloud)))
     np.testing.assert_array_equal(
         result.positions.as_arrow_array().to_pylist(), [[1, 2, 0], [3, 4, 2]]
     )

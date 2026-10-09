@@ -63,7 +63,7 @@ def main() -> None:
                 )
                 result = module.filter_cloud(cdr_decode(cdr_encode(source), PointCloud2))
                 assert result is not None
-                filtered, mask = (cdr_decode(value.encode(), PointCloud2) for value in result)
+                filtered, mask = (cdr_decode(cdr_encode(value), PointCloud2) for value in result)
                 np.testing.assert_allclose(pointcloud_xyz(filtered), [[5.0, 0, 0]])
                 assert filtered.header == source.header
                 assert mask.header.stamp == stamp and mask.header.frame_id == "world"
