@@ -12,9 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use dimos_generated_messages::{codec::Message, demo_msgs::msg::Telemetry};
+use dimos_generated_messages::{codec::Message, demo_msgs::msg::{QuotedDefault, Telemetry}};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    assert_eq!(QuotedDefault::default().label, "@label@");
+    assert!(QuotedDefault::SCHEMA.contains("@label@"));
     let arguments: Vec<String> = std::env::args().collect();
     if arguments.len() != 4 {
         return Err("usage: relay <edit|echo|echo-be|defaults> <input.cdr> <output.cdr>".into());
