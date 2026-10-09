@@ -61,7 +61,7 @@ def test_build_eval_context_maps_message_names_to_classes() -> None:
     for name in ("Twist", "Vector3", "PoseStamped"):
         cls = context[name]
         assert isinstance(cls, type)
-        assert cls.__name__ == name
+        assert cls.__msgtype__.rsplit("/", 1)[1] == name
 
 
 def test_topic_send_delivers_over_lcm(monkeypatch: pytest.MonkeyPatch, lcm_url: str) -> None:
@@ -84,7 +84,10 @@ def test_topic_send_delivers_over_lcm(monkeypatch: pytest.MonkeyPatch, lcm_url: 
     bus.subscribe(Topic(topic="/test_topic_send", msg_type=Twist), collector)
 
     try:
-        topic_send("/test_topic_send", "Twist(linear=Vector3(x=0.5), angular=Vector3())")
+        topic_send(
+            "/test_topic_send",
+            "Twist(linear=Vector3(x=0.5, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))",
+        )
         collector.wait()
     finally:
         for transport in transports:

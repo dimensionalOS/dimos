@@ -748,7 +748,9 @@ def test_explicit_channel_conflicts_with_panel_raise(channel: Channel) -> None:
 
 
 def test_builtin_stream_type_and_table_mismatches() -> None:
-    with pytest.raises(ValueError, match="does not match the bridge port type PoseStamped"):
+    with pytest.raises(
+        ValueError, match=f"does not match the bridge port type {PoseStamped.__qualname__}"
+    ):
         cockpit(channels=[Channel("odom", Twist, encoding="pose.json.v1")])
     with pytest.raises(
         ValueError, match="'odom' encodes pose.json.v1, not geometry_msgs/msg/PoseStamped.cdr.v1"
@@ -834,7 +836,9 @@ def test_cdr_schema_joins_user_params_in_the_request_only() -> None:
 
 
 def test_cdr_encoding_errors() -> None:
-    with pytest.raises(ValueError, match="encodes nav_msgs/msg/Odometry, not PoseStamped"):
+    with pytest.raises(
+        ValueError, match=f"encodes nav_msgs/msg/Odometry, not {PoseStamped.__qualname__}"
+    ):
         cockpit(channels=[Channel("pose", PoseStamped, encoding="nav_msgs/msg/Odometry.cdr.v1")])
     with pytest.raises(ValueError, match="no generated CDR schema"):
         cockpit(channels=[Channel("note", dict, encoding="geometry_msgs/msg/PoseStamped.cdr.v1")])
@@ -844,7 +848,7 @@ def test_all_generated_types_have_default_cdr_encoders() -> None:
     for message_type in (JointTrajectory, MotorCommandArray, PoseArray):
         (atom,) = cockpit(channels=[Channel("message", message_type)]).blueprints
         (channel,) = atom.kwargs["manifest"]["channels"]
-        assert channel["params"]["cdr"]["type"] == message_type.msg_name
+        assert channel["params"]["cdr"]["type"] == message_type.__msgtype__
 
 
 @web_encoder("t.ck.cdr.v1")

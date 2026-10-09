@@ -20,6 +20,7 @@ import asyncio
 from collections import Counter
 from collections.abc import Mapping, Sequence
 import copy
+from copy import deepcopy
 from enum import Enum
 import math
 import threading
@@ -367,7 +368,7 @@ class ManipulationModule(Module):
                 return
             indices = [name_to_idx[name] for name in names]
             state = JointState(
-                header=msg.header,
+                header=deepcopy(msg.header),
                 name=list(names),
                 position=np.asarray([msg.position[index] for index in indices], dtype=np.float64),
                 velocity=np.asarray(

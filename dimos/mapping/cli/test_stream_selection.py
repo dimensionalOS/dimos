@@ -14,6 +14,7 @@
 
 """Select recorded streams by compatible type, with explicit ambiguity errors."""
 
+from click import unstyle
 from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos_generated.sensor_msgs.msg import Image, PointCloud2
@@ -76,7 +77,7 @@ def test_multiple_clouds_require_selection_even_when_one_is_named_lidar(tmp_path
     result = CliRunner().invoke(map_app, [command, str(source), "--no-gui", "--out", str(output)])
     assert result.exit_code == 2, result.output
     assert "Multiple compatible streams: lidar, second_cloud" in result.output
-    assert "--lidar" in result.output
+    assert "--lidar" in unstyle(result.output)
     assert not output.exists()
 
 
@@ -128,7 +129,7 @@ def test_multiple_images_require_selection(tmp_path):
     result = CliRunner().invoke(map_app, ["replay", str(source), "--no-gui", "--out", str(output)])
     assert result.exit_code == 2, result.output
     assert "Multiple compatible streams: left, right" in result.output
-    assert "--image" in result.output
+    assert "--image" in unstyle(result.output)
     assert not output.exists()
 
 

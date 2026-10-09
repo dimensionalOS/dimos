@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from copy import deepcopy
 import threading
 from typing import TYPE_CHECKING, Any
 
@@ -386,9 +387,9 @@ class WorldMonitor:
         """Get current joint velocities as JointState. Returns None if not available."""
         if self._state_monitor is not None:
             state = self._state_monitor.get_current_joint_state()
-            if state is not None and state.velocity:
+            if state is not None and len(state.velocity):
                 return JointState(
-                    header=state.header,
+                    header=deepcopy(state.header),
                     name=state.name,
                     velocity=np.asarray(state.velocity, dtype=np.float64),
                     position=np.array([], dtype=np.float64),
@@ -476,8 +477,10 @@ class WorldMonitor:
 
             pose = self._world.get_group_ee_pose(ctx, group_id)
             return PoseStamped(
-                header=Header(frame_id=pose.header.frame_id, stamp=joint_state.header.stamp),
-                pose=pose.pose,
+                header=Header(
+                    frame_id=pose.header.frame_id, stamp=deepcopy(joint_state.header.stamp)
+                ),
+                pose=deepcopy(pose.pose),
             )
 
     def get_link_pose(
@@ -505,7 +508,7 @@ class WorldMonitor:
             quat = quaternion_from_matrix(rot)
             header = Header(frame_id="world", stamp=Time(sec=0, nanosec=0))
             if joint_state is not None:
-                header.stamp = joint_state.header.stamp
+                header.stamp = deepcopy(joint_state.header.stamp)
             return PoseStamped(
                 header=header,
                 pose=Pose(

@@ -443,7 +443,7 @@ def test_spec_manifest_mismatch_fails(monkeypatch) -> None:
     start_with(replace(good, dir="tx"), "does not match its compiled runtime spec")
     start_with(
         replace(good, message_type=Twist),
-        "message type Twist does not match the RelayBridgeModule port type PoseStamped",
+        f"message type {Twist.__qualname__} does not match the RelayBridgeModule port type {PoseStamped.__qualname__}",
     )
 
 

@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from collections.abc import Callable
-from copy import copy
+from copy import deepcopy
 import time
 
 from dimos_generated.builtin_interfaces.msg import Time
@@ -87,14 +87,14 @@ class CameraModule(Module, perception.Camera):
         )
 
     def publish_metadata(self) -> None:
-        camera_info = copy(self.hardware.camera_info)
+        camera_info = deepcopy(self.hardware.camera_info)
         camera_info.header.stamp = time_from_nanoseconds(time.time_ns())
         self.camera_info.publish(camera_info)
 
         if not self.config.transform:
             return
 
-        camera_link = copy(self.config.transform)
+        camera_link = deepcopy(self.config.transform)
         camera_link.header.stamp = camera_info.header.stamp
         camera_optical = TransformStamped(
             header=Header(frame_id=camera_link.child_frame_id, stamp=camera_info.header.stamp),

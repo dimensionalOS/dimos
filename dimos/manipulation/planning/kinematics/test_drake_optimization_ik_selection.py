@@ -137,7 +137,7 @@ def test_solve_pose_targets_uses_group_tip_locks_seed_fallback_and_filters(monke
     assert result.is_success()
     assert result.joint_state is not None
     assert result.joint_state.name == ["arm/shoulder", "arm/wrist"]
-    assert result.joint_state.position == [20.0, 40.0]
+    np.testing.assert_array_equal(result.joint_state.position, [20.0, 40.0])
     assert calls[0]["target_frame_name"] == "group_tip_link"
     np.testing.assert_allclose(calls[0]["seed"], [1.0, 22.0, 3.0, 4.0])
     assert calls[0]["locked_joint_positions"] == {0: 1.0, 2: 3.0}

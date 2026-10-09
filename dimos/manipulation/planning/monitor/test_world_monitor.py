@@ -469,7 +469,7 @@ def test_current_group_joint_state_uses_public_names_in_group_order() -> None:
     state = monitor.current_group_joint_state("manipulator")
 
     assert state.name == ["j2", "j1"]
-    assert state.position == [0.2, 0.1]
+    np.testing.assert_array_equal(state.position, [0.2, 0.1])
 
 
 def test_current_model_joint_state_rejects_stale_state(mocker) -> None:
@@ -491,7 +491,7 @@ def test_current_model_joint_state_rejects_stale_state(mocker) -> None:
     state = monitor.current_model_joint_state(max_age=0.5)
 
     assert state.name == []
-    assert state.position == []
+    np.testing.assert_array_equal(state.position, [])
 
 
 def test_current_group_joint_state_rejects_stale_state(mocker) -> None:
@@ -533,7 +533,7 @@ def test_group_ee_pose_uses_current_state_when_no_joint_state_is_provided() -> N
 
     set_calls = [call for call in fake_world.calls if call[0] == "set_joint_state"]
     assert set_calls[0][2].name == ["j1", "j2", "j3"]
-    assert set_calls[0][2].position == [0.1, 0.2, 0.3]
+    np.testing.assert_array_equal(set_calls[0][2].position, [0.1, 0.2, 0.3])
     assert pose.pose.position.x == 1
 
 
@@ -575,7 +575,7 @@ def test_group_kinematics_with_full_state_does_not_require_current_state() -> No
 
     set_calls = [call for call in fake_world.calls if call[0] == "set_joint_state"]
     assert set_calls[0][2].name == ["j1", "j2", "j3"]
-    assert set_calls[0][2].position == [0.1, 0.2, 0.3]
+    np.testing.assert_array_equal(set_calls[0][2].position, [0.1, 0.2, 0.3])
     assert pose.pose.position.x == 1
 
 
@@ -607,9 +607,9 @@ def test_group_kinematics_route_full_state_to_backend() -> None:
 
     set_calls = [call for call in fake_world.calls if call[0] == "set_joint_state"]
     assert set_calls[0][2].name == ["j1", "j2", "j3"]
-    assert set_calls[0][2].position == [0.9, 0.8, 0.3]
+    np.testing.assert_array_equal(set_calls[0][2].position, [0.9, 0.8, 0.3])
     assert set_calls[1][2].name == ["j1", "j2", "j3"]
-    assert set_calls[1][2].position == [0.4, 0.3, 0.3]
+    np.testing.assert_array_equal(set_calls[1][2].position, [0.4, 0.3, 0.3])
     assert pose.pose.position.x == 1
     assert jacobian.shape == (6, 2)
     assert ("get_group_ee_pose", "scratch", "manipulator") in fake_world.calls
@@ -1135,6 +1135,6 @@ def test_link_pose_preserves_joint_sample_stamp(mocker):
     pose = monitor.get_link_pose("ee", state)
     assert pose is not None
     assert pose.header == Header(frame_id="world", stamp=state.header.stamp)
-    assert pose.pose.position == Point(x=1, y=2, z=3)
+    np.testing.assert_array_equal(pose.pose.position, Point(x=1, y=2, z=3))
     pose.header.stamp.nanosec = 0
     assert state.header.stamp.nanosec == 987654321

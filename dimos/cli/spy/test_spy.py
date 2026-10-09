@@ -202,7 +202,8 @@ def _assert_no_decode(monkeypatch):
     def boom(*a, **k):
         raise AssertionError("spy decoded a payload on the hot path")
 
-    monkeypatch.setattr(Vector3, "decode", staticmethod(boom))
+    monkeypatch.setattr("dimos_message_build.registry.decode", boom)
+    monkeypatch.setattr("dimos.protocol.pubsub.encoders.cdr_decode", boom)
 
 
 @pytest.fixture

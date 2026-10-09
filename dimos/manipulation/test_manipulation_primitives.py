@@ -15,6 +15,7 @@
 """Behavior tests for the primitive manipulation RPCs and skill adapter."""
 
 from collections.abc import Iterator
+from dataclasses import asdict
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -158,16 +159,21 @@ def test_get_state_returns_every_group_with_presets(module_factory) -> None:
     snapshot = module.get_state()
 
     group = snapshot.groups["tool"]
-    assert group.joints == JointState(
-        name=["j0"],
-        position=np.array([0.1], dtype=np.float64),
-        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
-        velocity=np.array([], dtype=np.float64),
-        effort=np.array([], dtype=np.float64),
+    np.testing.assert_equal(
+        asdict(group.joints),
+        asdict(
+            JointState(
+                name=["j0"],
+                position=np.array([0.1], dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            )
+        ),
     )
     assert group.gripper_position == pytest.approx(0.04)
-    assert group.joint_presets["home"].position == [0.3]
-    assert group.joint_presets["init"].position == [-0.2]
+    np.testing.assert_array_equal(group.joint_presets["home"].position, [0.3])
+    np.testing.assert_array_equal(group.joint_presets["init"].position, [-0.2])
     module._control_coordinator.task_invoke.assert_called_once_with(
         "arm_gripper", "get_normalized", {}
     )
@@ -293,5 +299,5 @@ def test_legacy_skill_adapter_delegates_to_primitive_rpcs(
     assert result.is_success()
     target = manipulation.plan_to_joints.call_args.args[0]["tool"]
     assert target.name == ["j0"]
-    assert target.position == [0.25]
+    np.testing.assert_array_equal(target.position, [0.25])
     manipulation.execute.assert_called_once_with(blocking=True)

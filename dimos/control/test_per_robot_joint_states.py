@@ -376,7 +376,7 @@ class TestPostPivotPattern:
 
         trajectory = coordinator.get_task("joint_trajectory")._trajectory
         assert trajectory is not None
-        assert trajectory.points[-1].positions == [0.4, 0.5]
+        np.testing.assert_array_equal(trajectory.points[-1].positions, [0.4, 0.5])
         wait_until(lambda: bool(left.count and right.count), timeout=5.0)
         assert list(left.latest().name) == LEFT_JOINTS
         assert list(right.latest().name) == RIGHT_JOINTS

@@ -675,7 +675,7 @@ def test_scene_staleness_compares_pixels_not_padding():
         is_bigendian=0,
     )
     last = cdr_decode(cdr_encode(first), Image)
-    last.data = [10] * 6 + [255, 255] + [10] * 6 + [255, 255]
+    last.data = np.asarray([10] * 6 + [255, 255] + [10] * 6 + [255, 255], dtype=np.uint8)
     assert is_scene_stale([Frame(0, 0, first), Frame(1, 1, last)], stale_threshold=1)
-    last.data = [30] * 6 + [255, 255] + [30] * 6 + [255, 255]
+    last.data = np.asarray([30] * 6 + [255, 255] + [30] * 6 + [255, 255], dtype=np.uint8)
     assert not is_scene_stale([Frame(0, 0, first), Frame(1, 1, last)], stale_threshold=1)

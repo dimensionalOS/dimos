@@ -131,11 +131,14 @@ def test_materializes_trajectory_and_preserves_source_path() -> None:
         speed_scale=0.4,
     )
 
-    assert [state.position for state in plan.path] == [
-        [0.0, 0.0],
-        [0.2, 0.1],
-        [0.4, 0.0],
-    ]
+    np.testing.assert_array_equal(
+        [state.position for state in plan.path],
+        [
+            [0.0, 0.0],
+            [0.2, 0.1],
+            [0.4, 0.0],
+        ],
+    )
     assert plan.path is not source_path
     assert plan.trajectory is parametrizer.output
     assert plan.planning_time == 0.2
@@ -177,7 +180,7 @@ def test_timed_planner_result_bypasses_backend_path_conversion() -> None:
         0.0,
         0.75,
     ]
-    assert plan.trajectory.points[-1].velocities == [0.3, 0.0]
+    np.testing.assert_array_equal(plan.trajectory.points[-1].velocities, [0.3, 0.0])
 
 
 def test_timed_planner_result_requires_velocity_for_each_joint() -> None:

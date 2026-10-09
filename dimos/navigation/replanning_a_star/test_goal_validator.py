@@ -30,7 +30,7 @@ def costmap() -> OccupancyGrid:
         info=MapMetaData(
             width=cells.shape[1],
             height=cells.shape[0],
-            resolution=0.05,
+            resolution=float(np.float32(0.05)),
             origin=Pose(
                 orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0),
                 position=Point(x=0.0, y=0.0, z=0.0),

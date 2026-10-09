@@ -206,9 +206,15 @@ def test_pose_target_solver_advances_from_last_command_not_delayed_feedback(
         0.01,
     )
 
-    assert step.call_args_list[0].kwargs["command_state"].position == [0.0, 0.0]
-    assert step.call_args_list[1].kwargs["command_state"].position == [0.1, 0.1]
-    assert step.call_args_list[1].kwargs["measured_state"].position == [-0.3, -0.3]
+    np.testing.assert_array_equal(
+        step.call_args_list[0].kwargs["command_state"].position, [0.0, 0.0]
+    )
+    np.testing.assert_array_equal(
+        step.call_args_list[1].kwargs["command_state"].position, [0.1, 0.1]
+    )
+    np.testing.assert_array_equal(
+        step.call_args_list[1].kwargs["measured_state"].position, [-0.3, -0.3]
+    )
     assert step.call_args_list[1].kwargs["command_increment_history"][0] == pytest.approx(
         [0.1, 0.1]
     )
@@ -278,7 +284,9 @@ def test_pose_target_solver_reset_reseeds_from_feedback(mocker: MockerFixture) -
         0.01,
     )
 
-    assert step.call_args_list[1].kwargs["command_state"].position == [-0.3, -0.3]
+    np.testing.assert_array_equal(
+        step.call_args_list[1].kwargs["command_state"].position, [-0.3, -0.3]
+    )
     assert step.call_args_list[1].kwargs["command_increment_history"] == ()
 
 
@@ -361,7 +369,7 @@ def test_compute_calls_one_pink_step_and_preserves_output_order(
 
     assert output is not None
     assert output.joint_names == ["arm/a", "arm/b", "arm/gripper"]
-    assert output.positions == [0.02, -0.03, 0.4]
+    np.testing.assert_array_equal(output.positions, [0.02, -0.03, 0.4])
     solver.step.assert_called_once()
     assert solver.step.call_args.args[2] == 0.01
     assert task.claim().joints == frozenset({"arm/a", "arm/b", "arm/gripper"})
@@ -481,4 +489,4 @@ def test_current_frame_poses_uses_live_coordinator_seed(mocker: MockerFixture) -
     }
     seed = solver.frame_poses.call_args.args[0]
     assert seed.name == ["arm/a", "arm/b"]
-    assert seed.position == [0.2, 0.3]
+    np.testing.assert_array_equal(seed.position, [0.2, 0.3])

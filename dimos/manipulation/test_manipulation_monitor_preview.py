@@ -232,8 +232,8 @@ class TestOnJointState:
 
         state = module._world_monitor.on_joint_state.call_args.args[0]
         assert state.name == canonical_model_config.joint_names
-        assert state.position == [0.1, 0.2, 0.3]
-        assert state.velocity == [1.0, 2.0, 3.0]
+        np.testing.assert_array_equal(state.position, [0.1, 0.2, 0.3])
+        np.testing.assert_array_equal(state.velocity, [1.0, 2.0, 3.0])
         assert state.header == msg.header
         msg.header.frame_id = "changed"
         assert state.header.frame_id == "robot"
@@ -256,7 +256,7 @@ class TestOnJointState:
 
         state = module._world_monitor.on_joint_state.call_args.args[0]
         assert state.name == canonical_model_config.joint_names
-        assert state.position == [0.1, 0.2, 0.3]
+        np.testing.assert_array_equal(state.position, [0.1, 0.2, 0.3])
 
     def test_skips_incomplete_model_state(self, canonical_model_config, module_factory):
         module = _make_module_with_monitor(module_factory)
@@ -286,7 +286,7 @@ class TestOnJointState:
         )
         module._on_joint_state(first_msg)
         assert module._init_joints is not None
-        assert module._init_joints.position == [0.1, 0.2, 0.3]
+        np.testing.assert_array_equal(module._init_joints.position, [0.1, 0.2, 0.3])
 
         # Second call should NOT overwrite
         second_msg = JointState(
@@ -297,7 +297,7 @@ class TestOnJointState:
             effort=np.array([], dtype=np.float64),
         )
         module._on_joint_state(second_msg)
-        assert module._init_joints.position == [0.1, 0.2, 0.3]
+        np.testing.assert_array_equal(module._init_joints.position, [0.1, 0.2, 0.3])
 
     def test_no_monitor_returns_early(self, canonical_model_config, module_factory):
         """When world_monitor is None, _on_joint_state returns without error."""

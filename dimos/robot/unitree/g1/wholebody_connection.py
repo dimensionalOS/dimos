@@ -21,6 +21,7 @@ make_humanoid_joints("g1") (left leg -> right leg -> waist -> left arm -> right 
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 import threading
 from threading import Thread
@@ -77,7 +78,7 @@ def _imu_from_unitree_wxyz(
         orientation=Quaternion(x=x, y=y, z=z, w=_w),
         angular_velocity=Vector3(x=gyroscope[0], y=gyroscope[1], z=gyroscope[2]),
         linear_acceleration=Vector3(x=accelerometer[0], y=accelerometer[1], z=accelerometer[2]),
-        header=header,
+        header=deepcopy(header),
         orientation_covariance=np.zeros(9, dtype=np.float64),
         angular_velocity_covariance=np.zeros(9, dtype=np.float64),
         linear_acceleration_covariance=np.zeros(9, dtype=np.float64),
@@ -341,8 +342,8 @@ class G1WholeBodyConnection(Module):
     def _publish_motor_state_and_imu(self, header: Header, sample: G1LowStateSnapshot) -> None:
         self.motor_states.publish(
             JointState(
-                header=header,
-                name=G1_JOINT_NAMES,
+                header=deepcopy(header),
+                name=list(G1_JOINT_NAMES),
                 position=np.asarray(sample.positions, dtype=np.float64),
                 velocity=np.asarray(sample.velocities, dtype=np.float64),
                 effort=np.asarray(sample.efforts, dtype=np.float64),
