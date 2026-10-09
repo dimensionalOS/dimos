@@ -79,10 +79,17 @@ def run_command(
     suite: Path = typer.Option(..., "--suite", exists=True, help="A frozen manifest."),
     blueprint: str = typer.Option("go2-sim-nav-episode", help="Blueprint with an EpisodeDriver."),
     split: str = typer.Option("dev", help="dev, held_out or all."),
+    case: list[str] = typer.Option(
+        [], "--case", help="Only cases whose id starts with this, e.g. narrow_door or a full id."
+    ),
     repeats: int = typer.Option(1, min=1),
     procs: int = typer.Option(4, min=1, help="Episodes running at once."),
     out: Path | None = typer.Option(None, "--out", help="Run directory, new."),
     policy: Path | None = typer.Option(None, help="Body policy file for the sim world."),
+    viewer: str = typer.Option(
+        "none",
+        help="Viewer for every episode, as dimos --viewer. One window each, so use --procs 1.",
+    ),
     setting: list[str] = typer.Option(
         [], "--set", help="Module config override, Module.field=value. Repeatable."
     ),
@@ -95,11 +102,13 @@ def run_command(
             suite=suite,
             blueprint=blueprint,
             split=None if split == "all" else split,  # type: ignore[arg-type]
+            cases=tuple(case),
             repeats=repeats,
             procs=procs,
             out_dir=out,
             overrides=tuple(override_flag(s) for s in setting),
             policy=policy,
+            viewer=viewer,
         )
     )
     typer.echo(f"run finished -> {run_dir}")

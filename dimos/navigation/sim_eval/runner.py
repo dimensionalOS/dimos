@@ -50,7 +50,7 @@ RESULTS_FILE = "results.jsonl"
 RUN_FILE = "run.json"
 SCORE_FILE = "score.json"
 RECORDING_FILE = "memory.db"
-SCORE_TOPICS = "ground_truth,odometry,tf,contacts,goal,planner_path,path,cmd_vel,goal_reached"
+SCORE_TOPICS = "ground_truth,odometry,tf,scene,contacts,goal,planner_path,path,cmd_vel,goal_reached"
 LCM_PORT_BASE = 7800
 ZENOH_PORT_BASE = 7500
 STOP_GRACE_S = 20.0
@@ -62,12 +62,14 @@ class RunConfig:
     suite: Path
     blueprint: str = "go2-sim-nav-episode"
     split: Split | None = "dev"
+    cases: tuple[str, ...] = ()
     repeats: int = 1
     procs: int = 4
     out_dir: Path | None = None
     overrides: tuple[str, ...] = ()
     policy: Path | None = None
     record_topics: str = SCORE_TOPICS
+    viewer: str = "none"
     episode_cap_s: float = 900.0
     command: tuple[str, ...] = ("dimos",)
 
@@ -96,9 +98,16 @@ def run(config: RunConfig) -> Path:
     """Run every selected case the given number of times and return the run directory."""
     manifest = Manifest.load(config.suite)
     manifest.check_drift()
-    cases = [c for c in manifest.cases if config.split is None or c.split == config.split]
+    cases = [
+        c
+        for c in manifest.cases
+        if (config.split is None or c.split == config.split)
+        and (not config.cases or c.id.startswith(config.cases))
+    ]
     if not cases:
-        raise ValueError(f"no cases in split {config.split!r} of {config.suite}")
+        raise ValueError(
+            f"no cases match split {config.split!r} and {config.cases} in {config.suite}"
+        )
     run_dir = config.out_dir or RUNS_DIR / time.strftime(f"%Y%m%d-%H%M%S-{manifest.suite}")
     run_dir.mkdir(parents=True, exist_ok=False)
     episodes = [
@@ -152,6 +161,7 @@ def rescore(run_dir: Path) -> Path:
             episode = Episode(case, int(episode_dir.name[1:]), episode_dir)
             terminal = _terminal(episode_dir)
             out.write(json.dumps(asdict(_score(manifest, episode, terminal))) + "\n")
+            _replay(episode)
     return results
 
 
@@ -170,11 +180,13 @@ def _write_run(
         "rules_version": manifest.rules.version,
         "blueprint": config.blueprint,
         "split": config.split,
+        "cases": list(config.cases),
         "repeats": config.repeats,
         "procs": config.procs,
         "overrides": list(config.overrides),
         "policy": str(config.policy) if config.policy else None,
         "record_topics": config.record_topics,
+        "viewer": config.viewer,
         "git_sha": sha,
         "git_dirty": dirty,
         "host": socket.gethostname(),
@@ -196,14 +208,18 @@ def _episode(config: RunConfig, manifest: Manifest, episode: Episode, slot: int)
             env=_environment(slot),
             start_new_session=True,
         )
-        deadline = time.time() + config.episode_cap_s
-        while time.time() < deadline and process.poll() is None:
-            if (episode.dir / TERMINAL_FILE).exists():
-                break
-            time.sleep(0.5)
-        _stop(process)
+        try:
+            deadline = time.time() + config.episode_cap_s
+            while time.time() < deadline and process.poll() is None:
+                if (episode.dir / TERMINAL_FILE).exists():
+                    break
+                time.sleep(0.5)
+        finally:
+            _stop(process)
     _collect_recording(log, episode.dir)
-    return _score(manifest, episode, _terminal(episode.dir))
+    result = _score(manifest, episode, _terminal(episode.dir))
+    _replay(episode)
+    return result
 
 
 def _command(config: RunConfig, episode: Episode, slot: int) -> list[str]:
@@ -212,7 +228,7 @@ def _command(config: RunConfig, episode: Episode, slot: int) -> list[str]:
     command = [
         *config.command,
         "--viewer",
-        "none",
+        config.viewer,
         "--zenoh-scout-addr",
         f"224.0.0.224:{ZENOH_PORT_BASE + slot}",
         "run",
@@ -262,6 +278,14 @@ def _collect_recording(log: Path, episode_dir: Path) -> None:
         shutil.move(str(source), episode_dir / RECORDING_FILE)
         if source.parent.exists() and not any(source.parent.iterdir()):
             source.parent.rmdir()
+
+
+def _replay(episode: Episode) -> None:
+    """The episode as a rerun file, when it left a recording."""
+    from dimos.navigation.sim_eval.replay import write_rrd
+
+    if (episode.dir / RECORDING_FILE).exists():
+        write_rrd(episode.dir)
 
 
 def _terminal(episode_dir: Path) -> dict[str, object] | None:
