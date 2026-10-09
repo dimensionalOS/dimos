@@ -1084,3 +1084,151 @@ fn goal_on_subclearance_spur_still_plans() {
     let last = *wp.last().expect("path has waypoints");
     assert!((last.0 - goal.0).abs() < 1e-3 && (last.1 - goal.1).abs() < 1e-3);
 }
+
+/// A ground plane with a deck 3 m above it. The deck has a three column gap
+/// at x 5..=7, and under the gap, on the row y = 3, the ground has only the
+/// middle column.
+fn deck_over_a_gap(with_middle: bool) -> Vec<(f32, f32, f32)> {
+    let vs = 0.1_f32;
+    let half = vs * 0.5;
+    let at = |ix: i32, iy: i32, iz: i32| {
+        (
+            ix as f32 * vs + half,
+            iy as f32 * vs + half,
+            iz as f32 * vs + half,
+        )
+    };
+    let mut pts = Vec::new();
+    for ix in 0..13 {
+        for iy in 0..7 {
+            let under_gap = iy == 3 && (5..=7).contains(&ix);
+            if !under_gap || (ix == 6 && with_middle) {
+                pts.push(at(ix, iy, 0));
+            }
+            if !(5..=7).contains(&ix) {
+                pts.push(at(ix, iy, 30));
+            }
+        }
+    }
+    pts
+}
+
+#[test]
+fn a_column_that_empties_under_filled_surface_frees_the_wall_across_the_gap() {
+    let mut cfg = test_config();
+    // One closing pass fills the single-column holes in the ground and leaves
+    // the three column gap in the deck open.
+    cfg.surface_closing_radius = 0.1;
+    let vs = cfg.voxel_size;
+    let deck_edge = (4, 3, 30);
+    let wall_distance = |p: &Planner| {
+        p.surface_clearance()
+            .into_iter()
+            .find(|&(c, _)| c == deck_edge)
+            .map(|(_, d)| d)
+            .expect("the deck edge is a surface cell")
+    };
+
+    // Looking across the gap from the deck edge, the scan passes the empty
+    // column at x 5 and stops on the ground voxel at x 6: a drop.
+    let mut p = Planner::new(cfg.worker_threads);
+    p.update_global_map(&deck_over_a_gap(true), &cfg);
+    assert_eq!(wall_distance(&p), 0.0);
+    let ground_before: BTreeSet<VoxelKey> =
+        surface_set(&p).into_iter().filter(|c| c.2 == 0).collect();
+
+    // The ground voxel goes. Closing still fills its cell, so no surface
+    // changes, but the scan now crosses the whole gap to the far deck.
+    let world = deck_over_a_gap(false);
+    let spot = RegionBounds {
+        origin_x: 0.65,
+        origin_y: 0.35,
+        radius: 0.15,
+        z_min: -0.5,
+        z_max: 0.5,
+    };
+    p.update_region(&slice(&world, &spot, vs), &spot, &cfg);
+    let ground_after: BTreeSet<VoxelKey> =
+        surface_set(&p).into_iter().filter(|c| c.2 == 0).collect();
+    assert_eq!(ground_after, ground_before, "the hole stays filled");
+
+    let mut full = Planner::new(cfg.worker_threads);
+    full.update_global_map(&world, &cfg);
+    assert!(
+        wall_distance(&full) > 0.0,
+        "a full rebuild sees no wall there"
+    );
+    assert_eq!(wall_distance(&p), wall_distance(&full));
+}
+
+/// Two decks a step apart with a one column slot between them on the row
+/// y = 3, and one post in the slot's far column reaching the upper deck's
+/// height above a lone voxel on the ground.
+fn decks_with_a_post(with_post_top: bool) -> Vec<(f32, f32, f32)> {
+    let vs = 0.1_f32;
+    let half = vs * 0.5;
+    let at = |ix: i32, iy: i32, iz: i32| {
+        (
+            ix as f32 * vs + half,
+            iy as f32 * vs + half,
+            iz as f32 * vs + half,
+        )
+    };
+    let mut pts = Vec::new();
+    for iy in 0..7 {
+        for ix in 0..=4 {
+            pts.push(at(ix, iy, 19));
+        }
+        let upper_from = if iy == 3 { 7 } else { 5 };
+        for ix in upper_from..=12 {
+            pts.push(at(ix, iy, 20));
+        }
+    }
+    pts.push(at(6, 3, 0));
+    if with_post_top {
+        pts.push(at(6, 3, 20));
+    }
+    pts
+}
+
+#[test]
+fn a_voxel_that_goes_under_filled_surface_raises_the_wall_across_the_gap() {
+    let mut cfg = test_config();
+    // One closing pass keeps the post's cell filled once its voxel is gone.
+    cfg.surface_closing_radius = 0.1;
+    let vs = cfg.voxel_size;
+    let lower_edge = (4, 3, 19);
+    let wall_distance = |p: &Planner| {
+        p.surface_clearance()
+            .into_iter()
+            .find(|&(c, _)| c == lower_edge)
+            .map(|(_, d)| d)
+            .expect("the lower deck's edge is a surface cell")
+    };
+
+    // From the lower deck's edge the scan crosses the empty slot column and
+    // reaches the post top, one step up: no wall.
+    let mut p = Planner::new(cfg.worker_threads);
+    p.update_global_map(&decks_with_a_post(true), &cfg);
+    assert!(wall_distance(&p) > 0.0);
+    let before = surface_set(&p);
+
+    // The post top goes. Its column still holds the ground voxel and closing
+    // keeps its cell, so no surface changes and no column empties, but the
+    // scan now ends on a column with nothing to step onto: a drop.
+    let world = decks_with_a_post(false);
+    let spot = RegionBounds {
+        origin_x: 0.65,
+        origin_y: 0.35,
+        radius: 0.15,
+        z_min: 1.5,
+        z_max: 2.5,
+    };
+    p.update_region(&slice(&world, &spot, vs), &spot, &cfg);
+    assert_eq!(surface_set(&p), before, "the post's cell stays filled");
+
+    let mut full = Planner::new(cfg.worker_threads);
+    full.update_global_map(&world, &cfg);
+    assert_eq!(wall_distance(&full), 0.0, "a full rebuild sees the drop");
+    assert_eq!(wall_distance(&p), 0.0);
+}

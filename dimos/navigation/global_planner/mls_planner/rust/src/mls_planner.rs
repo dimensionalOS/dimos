@@ -266,7 +266,7 @@ impl Planner {
 
             // No voxel changed, so surfaces and the graph are untouched.
             let stage = Instant::now();
-            let changed = self.replace_region_voxels(local_points, bounds, voxel_size);
+            let (changed, edits) = self.replace_region_voxels(local_points, bounds, voxel_size);
             let diff_ms = ms_since(stage);
             if changed.is_empty() {
                 return None;
@@ -290,7 +290,7 @@ impl Planner {
             let (cells_added, cells_removed) = (added.len(), removed.len());
 
             let stage = Instant::now();
-            self.rebuild_region_graph(added, removed, config);
+            self.rebuild_region_graph(added, removed, &edits, config);
             debug!(
                 diff_ms,
                 extract_ms,
@@ -307,11 +307,13 @@ impl Planner {
     }
 
     /// Patch changed cells, then repair nodes and edges around the change.
-    /// A no-op when no surface cell changed.
+    /// A voxel edit can change a wall scan without changing any surface cell,
+    /// so the repair runs for the edits too.
     fn rebuild_region_graph(
         &mut self,
         added: Vec<VoxelKey>,
         removed: Vec<VoxelKey>,
+        edits: &VoxelEdits,
         config: &Config,
     ) {
         let step = config.step_cells();
@@ -335,7 +337,7 @@ impl Planner {
         }
         let mut seeds = added;
         seeds.extend_from_slice(&removed);
-        if seeds.is_empty() {
+        if seeds.is_empty() && edits.changed.is_empty() && edits.flipped.is_empty() {
             return;
         }
 
@@ -356,7 +358,10 @@ impl Planner {
             &params,
             &mut self.graph.node_index,
         );
-        let window = self.node_window(&seeds, &affected, config);
+        let window = self.node_window(edits, &affected, config);
+        if window.is_empty() {
+            return;
+        }
         let clusters = window_clusters(
             &self.graph.cells,
             &window,
@@ -395,13 +400,14 @@ impl Planner {
     }
 
     /// Replace the cylinder's voxels with the local map points, ignoring
-    /// points outside it. Returns the columns whose voxels changed.
+    /// points outside it. Returns the columns whose voxels changed and the
+    /// edits themselves.
     fn replace_region_voxels(
         &mut self,
         local_points: &[(f32, f32, f32)],
         bounds: &RegionBounds,
         voxel_size: f32,
-    ) -> Vec<(i32, i32)> {
+    ) -> (Vec<(i32, i32)>, VoxelEdits) {
         let incoming: Vec<VoxelKey> = local_points
             .par_iter()
             .map(|&p| voxelize(p, voxel_size))
@@ -428,8 +434,10 @@ impl Planner {
             })
             .collect();
 
+        let mut voxel_edits = VoxelEdits::default();
         for edit in &edits {
             let (ix, iy) = edit.col;
+            let was_empty = self.by_col.get(edit.col).is_none();
             for &iz in &edit.removed {
                 self.voxel_map.remove(&(ix, iy, iz));
                 self.by_col.remove((ix, iy, iz));
@@ -438,8 +446,16 @@ impl Planner {
                 self.voxel_map.insert((ix, iy, iz));
                 self.by_col.add((ix, iy, iz));
             }
+            if was_empty != self.by_col.get(edit.col).is_none() {
+                voxel_edits.flipped.push(edit.col);
+            } else {
+                let mut heights: Vec<i32> =
+                    edit.removed.iter().chain(&edit.added).copied().collect();
+                heights.sort_unstable();
+                voxel_edits.changed.push((edit.col, heights));
+            }
         }
-        edits.iter().map(|edit| edit.col).collect()
+        (edits.iter().map(|edit| edit.col).collect(), voxel_edits)
     }
 
     /// Replace the surface_lookup entries for write-mask columns whose cells
@@ -556,7 +572,7 @@ impl Planner {
     /// wall-seed columns a change can flip.
     fn node_window(
         &mut self,
-        changed: &[VoxelKey],
+        edits: &VoxelEdits,
         roots: &[CellId],
         config: &Config,
     ) -> Vec<CellId> {
@@ -566,6 +582,7 @@ impl Planner {
         let step_dz = config.step_cells();
 
         let graph = &mut self.graph;
+        let by_col = &self.by_col;
         let lookup = &graph.surface_lookup;
         let cells = &graph.cells;
         graph.node_scratch.ensure_capacity(cells.slot_capacity());
@@ -584,30 +601,45 @@ impl Planner {
             insert(id, &mut ball, &mut frontier);
         }
 
-        // Wall-seed scans cross up to HOLE_SPAN_CELLS empty columns, so a
-        // change can flip wall adjacency that far away. Root the first
-        // surfaced column each direction, whole when its existence flipped.
-        let headroom = config.headroom_cells();
-        for &(ix, iy, iz) in changed {
-            let flipped = lookup.get(&(ix, iy)).is_none_or(|zs| zs.len() <= 1);
-            let (z_lo, z_hi) = (iz - headroom - step_dz, iz + step_dz);
+        // A wall scan crosses up to HOLE_SPAN_CELLS columns that hold no voxel
+        // and is decided by the voxels of the first column that holds one, near
+        // the scanning cell's height. So a voxel edit can flip the wall adjacency
+        // of surface cells that far away, with or without a surface change of
+        // its own, since closing can keep a cell where the voxel went. Root the
+        // cells such a scan could start from: on each side, the columns up to the
+        // first one that holds a voxel, at the heights the edit can reach. A
+        // column that gained its first voxel or lost its last starts or stops
+        // ending scans at every height.
+        let reach = config.headroom_cells() + step_dz;
+        let reached = |heights: &[i32], nz: i32| {
+            let first = heights.partition_point(|&iz| iz < nz - step_dz);
+            heights.get(first).is_some_and(|&iz| iz <= nz + reach)
+        };
+        let mut scan_from = |ix: i32, iy: i32, heights: Option<&[i32]>| {
             for (dx, dy) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
                 for k in 1..=HOLE_SPAN_CELLS {
                     let col = (ix + dx * k, iy + dy * k);
-                    let Some(zs) = lookup.get(&col) else {
-                        continue;
-                    };
-                    for &nz in zs {
-                        if !flipped && !(z_lo..=z_hi).contains(&nz) {
-                            continue;
-                        }
-                        if let Some(id) = cells.id((col.0, col.1, nz)) {
-                            insert(id, &mut ball, &mut frontier);
+                    if let Some(zs) = lookup.get(&col) {
+                        for &nz in zs {
+                            if heights.is_some_and(|heights| !reached(heights, nz)) {
+                                continue;
+                            }
+                            if let Some(id) = cells.id((col.0, col.1, nz)) {
+                                insert(id, &mut ball, &mut frontier);
+                            }
                         }
                     }
-                    break;
+                    if by_col.get(col).is_some() {
+                        break;
+                    }
                 }
             }
+        };
+        for ((ix, iy), heights) in &edits.changed {
+            scan_from(*ix, *iy, Some(heights));
+        }
+        for &(ix, iy) in &edits.flipped {
+            scan_from(ix, iy, None);
         }
 
         for _ in 0..steps {
@@ -745,6 +777,14 @@ impl Planner {
     pub fn voxel_keys(&self) -> impl Iterator<Item = VoxelKey> + '_ {
         self.voxel_map.iter().copied()
     }
+}
+
+/// The heights a repair's edits added or removed per column, sorted, and the
+/// columns that gained their first voxel or lost their last.
+#[derive(Default)]
+struct VoxelEdits {
+    changed: Vec<((i32, i32), Vec<i32>)>,
+    flipped: Vec<(i32, i32)>,
 }
 
 /// One column's voxel changes from a region update.
