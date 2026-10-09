@@ -762,7 +762,7 @@ ignore = [
     "packages/dimos-generated/src/dimos_generated/_types.py",
     "packages/dimos-generated/src/dimos_generated_schemas/schemas.json",
     "packages/dimos-generated/src/dimos_generated_schemas/**/schemas.json",
-    "packages/dimos-generated/src/dimos_generated_schemas/package/rust/src/lib.rs",
+    "packages/dimos-generated/src/dimos_generated_schemas/package/rust/build.rs",
     "packages/dimos-generated/src/dimos_generated_schemas/package/cpp/messages.hpp",
     "*/package-lock.json",
     "Cargo.lock",
