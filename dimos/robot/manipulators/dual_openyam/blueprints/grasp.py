@@ -72,6 +72,17 @@ from dimos.visualization.rerun.bridge import RerunBridgeModule
 # 2026-10-07 reading that favoured 0.62 was confounded by the old camera pose,
 # which sat 4.5 cm too high and 3 cm too far forward.
 DUAL_OPENYAM_BASE_SPACING = 0.43
+# Yaw of each arm's base about the world z axis, radians, from the tag-touch
+# check of 2026-10-09: the real tool and the model's tool lie on the same arc
+# about the base, turned by this angle. A plate mounted turned, or a joint 1
+# zero that is off, looks the same to the planner and is corrected the same way.
+DUAL_OPENYAM_BASE_YAW = {"left": 0.0, "right": 0.0}
+# Where each arm's real base sits relative to the nominal (0, +-spacing/2), in
+# metres, from the same tag-touch check: with the tool commanded over a tag the
+# closed jaws landed this far from where the model put them, so the base is
+# moved by the same amount. Right: 4.5 cm nearer the table and 5.6 cm further
+# out; left: 2.6 cm nearer and 0.6 cm further out.
+DUAL_OPENYAM_BASE_OFFSET = {"left": (-0.026, -0.006), "right": (-0.045, -0.056)}
 
 # Wrist camera: a D405 on a 6 cm bracket that leaves the top of the wrist tube
 # at 45 deg, leaning toward the wrist (sketch of 2026-10-06). It sits on the
@@ -215,8 +226,11 @@ def dual_openyam_grasp_model_config() -> RobotModelConfig:
     config = dual_openyam_model_config(base_pose=PoseStamped(frame_id="world"))
     model = config.model.with_collision_from_visuals()
     for side, sign in zip(DUAL_OPENYAM_SIDES, (1.0, -1.0), strict=True):
+        dx, dy = DUAL_OPENYAM_BASE_OFFSET[side]
         model = model.with_joint_origin(
-            f"{side}_arm_fixed_joint", xyz=(0.0, sign * DUAL_OPENYAM_BASE_SPACING / 2, 0.0)
+            f"{side}_arm_fixed_joint",
+            xyz=(dx, sign * (DUAL_OPENYAM_BASE_SPACING / 2 + dy), 0.0),
+            rpy=(0.0, 0.0, DUAL_OPENYAM_BASE_YAW[side]),
         )
         for name, size, xyz in DUAL_OPENYAM_WRIST_CAMERA_BOXES:
             model = model.with_collision_box(
