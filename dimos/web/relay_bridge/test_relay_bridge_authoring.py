@@ -498,25 +498,39 @@ def test_publish_frame_decodes_publishes_then_acks(monkeypatch) -> None:
         stop_module(module)
 
 
-def test_paced_sender_spaces_frames_in_order_and_bounds_its_queue() -> None:
+def test_paced_sender_spaces_frames_in_order_and_bounds_its_queue(monkeypatch) -> None:
     async def run() -> None:
         loop = asyncio.get_running_loop()
         sent: list[tuple[bytes, float]] = []
-        pacer = relay_bridge_module._PacedSender(
-            loop, 0.02, lambda payload, meta, ts: sent.append((payload, loop.time()))
-        )
-        for i in range(3):
-            pacer(bytes([i]), None, None)
-        assert [p for p, _ in sent] == [b"\x00"]  # the first goes now, the rest wait
-        await asyncio.sleep(0.1)
-        assert [p for p, _ in sent] == [b"\x00", b"\x01", b"\x02"]
-        assert sent[2][1] - sent[0][1] >= 0.04 - 0.005
-        # One goes out immediately; the queue keeps the newest of the rest.
-        for i in range(relay_bridge_module._PACED_QUEUE_MAX + 10):
-            pacer(bytes([i % 256]), None, None)
-        assert pacer.dropped == 9
-        pacer.close()
-        await asyncio.sleep(0.05)
+        drained = asyncio.Event()
+
+        def send(payload, meta, ts):
+            sent.append((payload, loop.time()))
+            if len(sent) == 3:
+                drained.set()
+
+        pacer = relay_bridge_module._PacedSender(loop, 0.02, send)
+        try:
+            for i in range(3):
+                pacer(bytes([i]), None, None)
+            assert [p for p, _ in sent] == [b"\x00"]
+            await asyncio.wait_for(drained.wait(), timeout=5.0)
+            assert [p for p, _ in sent] == [b"\x00", b"\x01", b"\x02"]
+            assert sent[2][1] - sent[0][1] >= 0.04 - 0.005
+            # Hold the clock beyond the last send's interval for this burst.
+            # A loaded runner may finish draining just before the waiter wakes.
+            with monkeypatch.context() as clock:
+                clock.setattr(loop, "time", lambda: sent[2][1] + 1.0)
+                for i in range(relay_bridge_module._PACED_QUEUE_MAX + 10):
+                    pacer(bytes([i % 256]), None, None)
+                assert pacer.dropped == 9
+                pacer.close()
+                clock.setattr(loop, "time", lambda: sent[2][1] + 2.0)
+                # Let any uncancelled timer run after its deadline.
+                await asyncio.sleep(0)
+                await asyncio.sleep(0)
+        finally:
+            pacer.close()
         assert len(sent) == 4  # closed: nothing queued goes out
 
     asyncio.run(run())
