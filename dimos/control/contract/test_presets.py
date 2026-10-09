@@ -32,7 +32,7 @@ import pytest
 
 from dimos.control.contract.conftest import ARM_JOINTS, G1_JOINTS
 from dimos.control.contract.description import ControlDescription, Limits, ResourceKind
-from dimos.control.contract.keys import EFFORT, KD, KP, POSITION, VELOCITY, VX, VY, WZ, Key, Unit
+from dimos.control.contract.keys import Interface, Key, Unit
 from dimos.control.contract.presets import (
     GripperSpec,
     imu_resource,
@@ -50,14 +50,14 @@ from dimos.control.contract.validate import (
 from dimos.msgs.control_msgs.ControlValues import ControlValues
 from dimos.robot.assets.model import RobotModel
 
-ARM_LIMITS = {Key.of("arm", j, POSITION): Limits(-3.14, 3.14) for j in ARM_JOINTS} | {
-    Key.of("arm", j, VELOCITY): Limits(-1.0, 1.0) for j in ARM_JOINTS
+ARM_LIMITS = {Key.of("arm", j, Interface.POSITION): Limits(-3.14, 3.14) for j in ARM_JOINTS} | {
+    Key.of("arm", j, Interface.VELOCITY): Limits(-1.0, 1.0) for j in ARM_JOINTS
 }
-G1_LIMITS = {Key.of("g1", j, POSITION): Limits(-2.0, 2.0) for j in G1_JOINTS}
+G1_LIMITS = {Key.of("g1", j, Interface.POSITION): Limits(-2.0, 2.0) for j in G1_JOINTS}
 CHASSIS_LIMITS = {
-    Key.of("chassis", "base", VX): Limits(-1.5, 1.5),
-    Key.of("chassis", "base", VY): Limits(-1.0, 1.0),
-    Key.of("chassis", "base", WZ): Limits(-2.0, 2.0),
+    Key.of("chassis", "base", Interface.VX): Limits(-1.5, 1.5),
+    Key.of("chassis", "base", Interface.VY): Limits(-1.0, 1.0),
+    Key.of("chassis", "base", Interface.WZ): Limits(-2.0, 2.0),
 }
 
 
@@ -67,7 +67,7 @@ def preset_arm() -> ControlDescription:
         "arm",
         ARM_JOINTS,
         limits=ARM_LIMITS,
-        state=(POSITION, EFFORT),
+        state=(Interface.POSITION, Interface.EFFORT),
         gripper=GripperSpec(unit=Unit.M, lo=0.0, hi=0.085),
     )
 
@@ -118,13 +118,13 @@ def test_every_preset_output_survives_a_pickle(build) -> None:
 
 def test_an_arm_is_told_position_and_velocity_unless_it_says_otherwise() -> None:
     both = manipulator_description("arm", ARM_JOINTS, limits={})
-    assert both.resource("joint1").command_interfaces == (POSITION, VELOCITY)
-    only = manipulator_description("arm", ARM_JOINTS, limits={}, command=(POSITION,))
-    assert only.resource("joint1").command_interfaces == (POSITION,)
+    assert both.resource("joint1").command_interfaces == (Interface.POSITION, Interface.VELOCITY)
+    only = manipulator_description("arm", ARM_JOINTS, limits={}, command=(Interface.POSITION,))
+    assert only.resource("joint1").command_interfaces == (Interface.POSITION,)
 
 
 def test_a_limit_for_a_joint_the_arm_does_not_have_is_an_error() -> None:
-    limits = {Key.of("arm", "joint99", POSITION): Limits(-1.0, 1.0)}
+    limits = {Key.of("arm", "joint99", Interface.POSITION): Limits(-1.0, 1.0)}
     with pytest.raises(DescriptionError, match="joint99"):
         manipulator_description("arm", ARM_JOINTS, limits=limits)
 
@@ -157,12 +157,20 @@ def test_an_arm_with_no_joints_or_nothing_to_command_raises() -> None:
 
 def test_an_interface_the_preset_has_no_unit_for_raises() -> None:
     with pytest.raises(ValueError, match="no preset unit"):
-        manipulator_description("arm", ARM_JOINTS, limits={}, state=(POSITION, "temperature"))
+        manipulator_description(
+            "arm", ARM_JOINTS, limits={}, state=(Interface.POSITION, Interface.VX)
+        )
 
 
 def test_a_body_is_told_stiffness_and_damping_with_every_target() -> None:
     described = pd_joint_description("g1", G1_JOINTS, limits={})
-    assert described.resource("joint1").command_interfaces == (POSITION, VELOCITY, EFFORT, KP, KD)
+    assert described.resource("joint1").command_interfaces == (
+        Interface.POSITION,
+        Interface.VELOCITY,
+        Interface.EFFORT,
+        Interface.KP,
+        Interface.KD,
+    )
     # No orientation sensor unless asked for.
     assert [r.kind for r in described.resources] == [ResourceKind.JOINT] * len(G1_JOINTS)
 
@@ -184,7 +192,7 @@ def test_a_base_is_one_part_told_three_speeds() -> None:
     described = preset_chassis()
     [base] = described.resources
     assert base.name == "base" and base.kind is ResourceKind.BASE
-    assert base.command_interfaces == (VX, VY, WZ)
+    assert base.command_interfaces == (Interface.VX, Interface.VY, Interface.WZ)
     assert described.joint_names() == ()
 
 
@@ -207,7 +215,7 @@ def test_a_base_told_to_go_too_fast_goes_at_its_top_speed() -> None:
 
 
 def test_a_base_that_cannot_move_sideways_limits_that_speed_to_zero() -> None:
-    limits = CHASSIS_LIMITS | {Key.of("chassis", "base", VY): Limits(0.0, 0.0)}
+    limits = CHASSIS_LIMITS | {Key.of("chassis", "base", Interface.VY): Limits(0.0, 0.0)}
     described = twist_base_description("chassis", limits=limits)
     accepted = validate_command(described, command({"chassis/base/vy": 0.5}), last_sequence=None)
     assert accepted == CommandBatch(values={"chassis/base/vy": 0.0}, clamped=("chassis/base/vy",))
@@ -215,12 +223,14 @@ def test_a_base_that_cannot_move_sideways_limits_that_speed_to_zero() -> None:
 
 def test_a_base_limit_needs_both_bounds() -> None:
     with pytest.raises(DescriptionError, match="not bounded on both sides"):
-        twist_base_description("chassis", limits={Key.of("chassis", "base", VX): Limits(hi=1.5)})
+        twist_base_description(
+            "chassis", limits={Key.of("chassis", "base", Interface.VX): Limits(hi=1.5)}
+        )
 
 
 def test_a_base_reports_only_what_it_can() -> None:
     no_pose = twist_base_description("chassis", limits={}, odometry=False)
-    assert no_pose.resources[0].state_interfaces == (VX, VY, WZ)
+    assert no_pose.resources[0].state_interfaces == (Interface.VX, Interface.VY, Interface.WZ)
     # One that can only repeat back what it was told does not claim to measure.
     no_speed = twist_base_description("chassis", limits={}, measured_velocity=False)
     assert no_speed.resources[0].state_interfaces == ("x", "y", "yaw")

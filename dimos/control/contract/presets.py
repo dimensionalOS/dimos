@@ -46,31 +46,7 @@ from dimos.control.contract.description import (
     Resource,
     ResourceKind,
 )
-from dimos.control.contract.keys import (
-    AX,
-    AY,
-    AZ,
-    EFFORT,
-    GX,
-    GY,
-    GZ,
-    KD,
-    KP,
-    POSITION,
-    QW,
-    QX,
-    QY,
-    QZ,
-    VELOCITY,
-    VX,
-    VY,
-    WZ,
-    YAW,
-    Key,
-    Unit,
-    X,
-    Y,
-)
+from dimos.control.contract.keys import Interface, Key, Unit
 from dimos.control.contract.validate import validate_description
 
 if TYPE_CHECKING:
@@ -80,47 +56,54 @@ if TYPE_CHECKING:
 #: one. A gripper is the exception: it sets its own, because some are
 #: measured in metres and some in a 0-to-1 fraction of fully open.
 _REVOLUTE: Mapping[str, Unit] = {
-    POSITION: Unit.RAD,
-    VELOCITY: Unit.RAD_PER_S,
-    EFFORT: Unit.NM,
-    KP: Unit.UNITLESS,
-    KD: Unit.UNITLESS,
+    Interface.POSITION: Unit.RAD,
+    Interface.VELOCITY: Unit.RAD_PER_S,
+    Interface.EFFORT: Unit.NM,
+    Interface.KP: Unit.UNITLESS,
+    Interface.KD: Unit.UNITLESS,
 }
 _PRISMATIC: Mapping[str, Unit] = {
-    POSITION: Unit.M,
-    VELOCITY: Unit.M_PER_S,
-    EFFORT: Unit.N,
-    KP: Unit.UNITLESS,
-    KD: Unit.UNITLESS,
-}
-#: Units by the kind of joint a URDF says it is. Any other kind (fixed,
-#: floating, planar) cannot be driven.
-_UNITS_BY_URDF_TYPE: Mapping[str, Mapping[str, Unit]] = {
-    "revolute": _REVOLUTE,
-    "continuous": _REVOLUTE,
-    "prismatic": _PRISMATIC,
+    Interface.POSITION: Unit.M,
+    Interface.VELOCITY: Unit.M_PER_S,
+    Interface.EFFORT: Unit.N,
+    Interface.KP: Unit.UNITLESS,
+    Interface.KD: Unit.UNITLESS,
 }
 
-_PD_STATE: tuple[str, ...] = (POSITION, VELOCITY, EFFORT)
-_PD_COMMAND: tuple[str, ...] = (POSITION, VELOCITY, EFFORT, KP, KD)
+_PD_STATE: tuple[Interface, ...] = (Interface.POSITION, Interface.VELOCITY, Interface.EFFORT)
+_PD_COMMAND: tuple[Interface, ...] = (
+    Interface.POSITION,
+    Interface.VELOCITY,
+    Interface.EFFORT,
+    Interface.KP,
+    Interface.KD,
+)
 
 _IMU_UNITS: Mapping[str, Unit] = {
-    QX: Unit.UNITLESS,
-    QY: Unit.UNITLESS,
-    QZ: Unit.UNITLESS,
-    QW: Unit.UNITLESS,
-    GX: Unit.RAD_PER_S,
-    GY: Unit.RAD_PER_S,
-    GZ: Unit.RAD_PER_S,
-    AX: Unit.M_PER_S2,
-    AY: Unit.M_PER_S2,
-    AZ: Unit.M_PER_S2,
+    Interface.QX: Unit.UNITLESS,
+    Interface.QY: Unit.UNITLESS,
+    Interface.QZ: Unit.UNITLESS,
+    Interface.QW: Unit.UNITLESS,
+    Interface.GX: Unit.RAD_PER_S,
+    Interface.GY: Unit.RAD_PER_S,
+    Interface.GZ: Unit.RAD_PER_S,
+    Interface.AX: Unit.M_PER_S2,
+    Interface.AY: Unit.M_PER_S2,
+    Interface.AZ: Unit.M_PER_S2,
 }
 
 #: What a base is told: how fast to drive forwards, sideways, and turn.
-_BASE_TWIST: Mapping[str, Unit] = {VX: Unit.M_PER_S, VY: Unit.M_PER_S, WZ: Unit.RAD_PER_S}
+_BASE_TWIST: Mapping[str, Unit] = {
+    Interface.VX: Unit.M_PER_S,
+    Interface.VY: Unit.M_PER_S,
+    Interface.WZ: Unit.RAD_PER_S,
+}
 #: Where a base reports itself as being, and which way it is facing.
-_BASE_POSE: Mapping[str, Unit] = {X: Unit.M, Y: Unit.M, YAW: Unit.RAD}
+_BASE_POSE: Mapping[str, Unit] = {
+    Interface.X: Unit.M,
+    Interface.Y: Unit.M,
+    Interface.YAW: Unit.RAD,
+}
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -161,37 +144,43 @@ def imu_resource(name: str = "imu") -> Resource:
     )
 
 
-def _model_limit(joint: JointDescription, interface: str) -> Limits | None:
+def _model_limit(joint: JointDescription, interface: Interface) -> Limits | None:
     """The robot model's limit on one thing a joint is told, or ``None``.
 
     A missing bound is never read as "no limit", which would let the joint be
     driven anywhere. The one exception is the position of a joint that spins
     freely. Stiffness and damping have no limit in a URDF.
     """
-    if interface == POSITION:
-        if joint.lower is not None and joint.upper is not None:
-            return Limits(joint.lower, joint.upper)
-        if joint.lower is not None or joint.upper is not None:
-            raise ValueError(f"joint {joint.name!r} has only half a position range in its model")
-        if joint.type != "continuous":
-            raise ValueError(
-                f"joint {joint.name!r} is {joint.type} but has no position range in its "
-                f"model; only a joint that spins freely may go without one"
-            )
-        return None
-    if interface in (VELOCITY, EFFORT):
-        bound = joint.velocity if interface == VELOCITY else joint.effort
-        if bound is None:
-            raise ValueError(f"joint {joint.name!r} has no {interface} limit in its model")
-        return Limits(-bound, bound)
-    return None
+    match interface:
+        case Interface.POSITION:
+            if joint.lower is not None and joint.upper is not None:
+                return Limits(joint.lower, joint.upper)
+            if joint.lower is not None or joint.upper is not None:
+                raise ValueError(
+                    f"joint {joint.name!r} has only half a position range in its model"
+                )
+            if joint.type != "continuous":
+                raise ValueError(
+                    f"joint {joint.name!r} is {joint.type} but has no position range in its "
+                    f"model; only a joint that spins freely may go without one"
+                )
+            return None
+        case Interface.VELOCITY:
+            bound = joint.velocity
+        case Interface.EFFORT:
+            bound = joint.effort
+        case _:
+            return None
+    if bound is None:
+        raise ValueError(f"joint {joint.name!r} has no {interface} limit in its model")
+    return Limits(-bound, bound)
 
 
 def _joints(
     source: str,
     joints: Sequence[str],
-    state: Sequence[str],
-    command: Sequence[str],
+    state: Sequence[Interface],
+    command: Sequence[Interface],
     model: RobotModel | None,
     limits: Mapping[str, Limits] | None,
 ) -> tuple[list[Resource], dict[str, Limits]]:
@@ -209,12 +198,16 @@ def _joints(
             joint = loaded.get_joint(name)
             if joint is None:
                 raise ValueError(f"joint {name!r} is not in the robot model")
-            model_units = _UNITS_BY_URDF_TYPE.get(joint.type)
-            if model_units is None:
-                raise ValueError(
-                    f"joint {name!r} is {joint.type} in the robot model, so it cannot be driven"
-                )
-            kind_units = model_units
+            match joint.type:
+                case "revolute" | "continuous":
+                    kind_units = _REVOLUTE
+                case "prismatic":
+                    kind_units = _PRISMATIC
+                case _:
+                    # fixed, floating and planar joints
+                    raise ValueError(
+                        f"joint {name!r} is {joint.type} in the robot model, so it cannot be driven"
+                    )
             for interface in command:
                 limit = _model_limit(joint, interface)
                 if limit is not None:
@@ -224,8 +217,8 @@ def _joints(
         for interface in dict.fromkeys((*state, *command)):
             if interface not in kind_units:
                 raise ValueError(
-                    f"interface {interface!r} has no preset unit: build the Resource by hand "
-                    f"or use one of {sorted(kind_units)}"
+                    f"interface '{interface}' has no preset unit: build the Resource by hand "
+                    f"or use one of {', '.join(kind_units)}"
                 )
             units[interface] = kind_units[interface]
         resources.append(
@@ -246,8 +239,8 @@ def manipulator_description(
     *,
     model: RobotModel | None = None,
     limits: Mapping[str, Limits] | None = None,
-    state: Sequence[str] = (POSITION, VELOCITY, EFFORT),
-    command: Sequence[str] = (POSITION, VELOCITY),
+    state: Sequence[Interface] = (Interface.POSITION, Interface.VELOCITY, Interface.EFFORT),
+    command: Sequence[Interface] = (Interface.POSITION, Interface.VELOCITY),
     gripper: GripperSpec | None = None,
     sensors: Sequence[Resource] = (),
     state_rate_hz: float = 100.0,
@@ -299,12 +292,14 @@ def manipulator_description(
             Resource(
                 name=gripper.name,
                 kind=ResourceKind.JOINT,
-                state_interfaces=(POSITION,),
-                command_interfaces=(POSITION,),
-                units={POSITION: gripper.unit},
+                state_interfaces=(Interface.POSITION,),
+                command_interfaces=(Interface.POSITION,),
+                units={Interface.POSITION: gripper.unit},
             )
         )
-        all_limits[Key.of(source, gripper.name, POSITION)] = Limits(gripper.lo, gripper.hi)
+        all_limits[Key.of(source, gripper.name, Interface.POSITION)] = Limits(
+            gripper.lo, gripper.hi
+        )
 
     description = ControlDescription(
         source=source,
