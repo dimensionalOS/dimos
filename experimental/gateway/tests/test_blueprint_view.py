@@ -1,0 +1,84 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""The blueprint view's graph layouts (blueprint_view/layout.js): no two nodes overlap, in every layout, for a small
+and a crowded blueprint, with and without 20 extra live topics drawn. Runs layout_check.js under dimos's pinned Deno."""
+
+import json
+from pathlib import Path
+import subprocess
+
+from dimos.utils.deno import ensure_deno
+
+CHECK = Path(__file__).parents[1] / "assets/blueprint_view" / "layout_check.js"
+
+
+def test_no_layout_overlaps_nodes() -> None:
+    out = subprocess.run(
+        [ensure_deno(), "run", "--no-prompt", CHECK.name],
+        cwd=CHECK.parent,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=True,
+    ).stdout
+    results = json.loads(out)
+    assert len(results) == 25
+    # Hierarchy always runs left to right; only Vertical runs top to bottom
+    assert all(r["vertical"] == (r["layout"] == "vertical") for r in results)
+    assert [r for r in results if r["overlaps"]] == []
+
+
+def test_traceback_lines_are_parsed() -> None:
+    """The Logs' traceback drawing (blueprint_view/traceback.js): frames, gutters, separators and raised exceptions."""
+    out = subprocess.run(
+        [ensure_deno(), "run", "--no-prompt", "traceback_check.js"],
+        cwd=CHECK.parent,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=True,
+    ).stdout
+    result = json.loads(out)
+    assert result["grouped"] == [
+        "head",
+        "frame:lib:10:2",
+        "frame:own:84:1",
+        "exception",
+        "sep",
+        "head",
+        "frame:lib:59:1",
+        "frame:own:246:1",
+        "exception",
+        "sep",
+    ]
+    assert result["groupedRaised"] == [
+        {"depth": 0, "text": "ExceptionGroup: safe_thread_map failed (1 sub-exception)"},
+        {"depth": 1, "text": "RuntimeError: no\nsecond line of the message"},
+    ]
+    assert result["markers"] == [False, True]
+    assert result["gutter"] == "    | "
+    assert result["chained"] == [
+        "head",
+        "frame:own:3:1",
+        "exception",
+        "text",
+        "head",
+        "text",
+        "head",
+        "frame:lib:9:1",
+        "exception",
+    ]
+    assert [r["text"] for r in result["chainedRaised"]] == ["KeyError: 'x'", "ValueError: bad"]
+    assert result["path"] == "dimos/cli/entry.py"

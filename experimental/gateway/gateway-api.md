@@ -1,0 +1,184 @@
+# The dimos gateway's HTTP API
+
+How do I launch a blueprint, read its logs, call a skill...? See [gateway-how-to.md](/docs/usage/gateway-how-to.md).
+
+`python -m experimental.gateway` serves the `/dimos` HTTP API that dimOS Desktop uses: blueprints, global config, runs and
+their logs, events, and Dimensional cloud uploads. Desktop starts it on a unix socket and forwards `/dimos/...` to it
+unchanged (`--port 8123` also serves it on `127.0.0.1:8123`).
+
+## The OpenAPI document
+
+Every endpoint is described in an OpenAPI 3.1 document: summaries and descriptions, request and response schemas
+with examples, parameters, error answers (always `{"error": "<message>"}`), and each event's payload.
+
+- **Live:** `GET /dimos/openapi.json` from a running gateway. `info.version` is the API's version, and
+  `info.x-dimos-version` is the version of dimos serving it.
+- **Checked in:** [`experimental/gateway/openapi.json`](/experimental/gateway/openapi.json), which [`dimos.yaml`](/dimos.yaml) names
+  under `api:`, next to the API's version. Desktop reads it per tag over HTTP without running anything.
+- **Regenerate** the checked-in file after changing an endpoint or a model in
+  [`experimental/gateway/models.py`](/experimental/gateway/models.py):
+
+  ```sh
+  python -m experimental.gateway --write-openapi
+  ```
+
+  A test fails while it's stale. The API is versioned with semver (`API_VERSION` in
+  [`experimental/gateway/openapi.py`](/experimental/gateway/openapi.py#L18), and `api.version` in `dimos.yaml`): a breaking change is a
+  major bump.
+
+There is no Swagger page (`/docs`): it would load its scripts from a CDN, and robots are often offline. Load the JSON
+into any OpenAPI viewer instead.
+
+Operations carry Desktop's extensions: `x-family: dimos`; `x-agent: true` for what Desktop's agent can find; and
+`x-mcp-tool` for an operation an MCP tool also does.
+
+## Groups (tags)
+
+| Tag             | What                                                                                 |
+| --------------- | ------------------------------------------------------------------------------------ |
+| `server`        | liveness, the checkout it serves, where things are, stopping it                      |
+| `blueprints`    | the blueprint list, a blueprint's modules and config, the catalog of modules/skills  |
+| `global-config` | dimos's GlobalConfig schema and defaults, and Desktop's saved overrides               |
+| `runs`          | launching and stopping blueprints, and the live runs                                  |
+| `logs`          | a run's structured log, with filters and tailing                                     |
+| `cloud`         | the Dimensional cloud login (device flow) and account                                |
+| `uploads`       | the upload queue, and which recordings are already in the cloud                      |
+| `events`        | the event payloads, and the deprecated SSE stream                                    |
+| `discovery`     | the discovery cache: blueprints, modules, their config, message types, robot ranking |
+| `docs`          | the guide to adding your own robot, and links into the docs site                     |
+| `extras`        | dimos's optional extras, which are installed, and installing more                    |
+| `jobs`          | long jobs (an extras install): their output, live on zenoh and as a snapshot         |
+| `skills`        | the running blueprint's skills: list them, call one, and an MCP server for agents    |
+
+## Launch diagnostics
+
+A launch's `steps` and `problems` are stable codes with data: clients own the wording. The gateway reads them from the
+run's structured log (`main.jsonl`), not from the console, and needs nothing added to dimos for it:
+
+- **Steps:** the messages dimos logs as it starts: its startup line, `Building the blueprint`, `Starting the
+  modules`, one `Deployed module.` per module and `Blueprint started` (`test_diagnose.py` checks dimos still logs
+  each). dimos doesn't log how many modules it will start, so `starting_modules` counts only the deployed ones.
+- **Problems:** an exception is logged with its traceback; the gateway reads the exception classes and an errno or
+  SQLite "can't open" from it and maps them to a problem code in
+  [`experimental/gateway/diagnose.py`](/experimental/gateway/diagnose.py). Refusals dimos only prints (bad arguments, an unknown
+  blueprint, an unmet requirement) have no record: the launch's `error` is then its output's last line.
+
+The gateway starts `dimos run` with `DIMOS_RUN_LOG_DIR` set, so even the records from before the run has an id are in a
+file it can read; after that it follows the run to `LOG_DIR/<run id>`.
+
+## Events
+
+The gateway publishes its events on zenoh at `<ns>/dimos/events/<type>` (`<ns>` is Desktop's namespace): `launch`,
+`log`, `upload`, `uploads`, `upload-removed`, `cloud-login`, `discovery`, `job` and `blueprints` (the blueprint list changed: `added`, `removed`; the gateway watches dimos/robot and site-packages itself). Each payload is a component schema in the document
+(`LaunchEvent`, ... ; `DimosEvent` is any of them) with its zenoh key in `x-zenoh-key`. `GET /dimos/events` streams
+the same events as server-sent events, and is deprecated.
+
+A job's output lines are on `<ns>/dimos/jobs/<job>` (`{type: "line", n, line}`, then `{type: "done", ok, error,
+failure, lines}`), the same shape as Desktop's own jobs; `GET /dimos/jobs/{job}/log?after=<n>` is the snapshot.
+
+## Discovery
+
+When the gateway starts it imports every blueprint in dimos's registry ([`dimos/robot/all_blueprints.py`](/dimos/robot/all_blueprints.py))
+and every registry module once, in child processes ([`experimental/gateway/discover.py`](/experimental/gateway/discover.py)): a blueprint that
+hangs or crashes its process costs only itself. The answer (whether each blueprint imports and why not, its modules
+and their streams and topics, every module's config fields, the message types) is saved under
+`<state>/experimental/gateway/discovery/`, keyed by the checkout's commit, its dirty files and the installed packages, so a
+restart answers at once. The key is checked every 30 s and after an extras install; when it changes the old answer is
+served (`stale: true`) until the new one is in. See [`experimental/gateway/discovery.py`](/experimental/gateway/discovery.py#L25).
+
+`GET /dimos/robots/{robot}/modules` ranks the modules of a robot's blueprints by how specific they are to it:
+
+```
+score = (robot's blueprints using the module / robot's blueprints) * ln(robots / robots using the module)
+```
+
+so the robot's own connection module comes first and a module every robot uses scores 0. Robots are
+[`experimental/gateway/annotations.json`](/experimental/gateway/annotations.json)'s, and only blueprints that import count.
+
+## Topic rates
+
+`GET /dimos/topics/rates` lists every topic the gateway has heard on the bus since it started: rate and throughput
+over the last 2 s, messages so far, seconds since the last one. It listens to zenoh `dimos/**` from its start, so a
+topic published once (at a blueprint's startup) is listed, and one gone quiet stays (0 Hz). RPC calls (zenoh queries)
+and LCM-only traffic aren't there. The blueprint view's side panel shows it, with the blueprint's own topics that
+nothing has published yet.
+
+## Skills
+
+`GET /dimos/skills` lists the skills (a module's `@skill` methods) of the running blueprint, agent or no agent: name,
+module, docstring, params as JSON Schema (the one McpServer gives an agent), `lifecycle` and the capabilities it
+`uses`. The gateway reads them over dimos's module RPC, as `dimos.porcelain` does: `Coordinator/list_modules`, then
+each module's `get_skills`; a module that doesn't answer is in `errors`, and nothing running is an empty list with
+`run: null`. `POST /dimos/skills/call {skill, args, module?, runId?}` checks `args` against `params`, calls
+`<module>/<skill>` over the same RPC (as the coordinator calls a module's `start`), and answers with its text once it
+returns (`via: rpc`). A skill that holds a capability goes through the run's McpServer instead when one answers
+(`via: mcp`), so the capability locks its agent goes by cover the call too. It acts on the robot: the gateway calls a
+skill only when asked to.
+
+```sh skip
+sock=$DIMOS_SERVER_SOCKET # the gateway's --socket
+curl -s --unix-socket "$sock" http://gateway/dimos/skills | jq '.skills[] | {name, module}'
+curl -s --unix-socket "$sock" -X POST http://gateway/dimos/skills/call -H 'content-type: application/json' \
+    -d '{"skill": "execute_sport_command", "args": {"command_name": "FrontJump"}}'
+```
+
+`POST /dimos/mcp` is an MCP server (Streamable HTTP, JSON answers) with two tools, `list_skills` and `call_skill`,
+for an agent: they don't change with what runs, so a session that connected before the blueprint started still reaches
+its skills. dimcode's `dimcode desktop --mcp-url <Desktop>/mcp` connects it too, as the MCP endpoint `skills`.
+
+## Dimos's python, for an agent
+
+`GET /dimos/python` says which python dimos runs with, so an agent (dimcode) can use dimos's python API: `python`
+(absolute, usually `<checkout>/.venv/bin/python`), `command` (the argv to start it), `env` (what to set for `import
+dimos` to find the checkout; usually empty, else `PYTHONPATH`), `dimosDir`, `version`, `dimosVersion` and a runnable
+`example`. The gateway checks it once, by running `import dimos` in it from another folder, and caches the answer.
+Run one-liners as `<python> -c '...'` and scripts as `<python> script.py`, with `env` set:
+
+```sh skip
+py=$(curl -s --unix-socket "$DIMOS_SERVER_SOCKET" http://gateway/dimos/python | jq -r .python)
+"$py" -c 'import dimos; print(dimos.__file__)'
+```
+
+## The blueprint view
+
+`GET /dimos/blueprint_view?name=<blueprint>` is dimOS Desktop's whole blueprint Details modal: its top bar (phase,
+Relaunch, Stop, Configure, Show code, Logs, close), Topic rates, the modules and the module graph, all plain JS and CSS
+in `experimental/gateway/blueprint_view/`, so it changes with the dimos checkout, not with Desktop. Framed by Desktop, it posts
+`dimos:chrome`; a Desktop that then shows only the frame answers `dimos:chrome-ok` and the page shows its bar (an older
+Desktop keeps its own bar, so there's never two).
+
+## Decoding messages in a page
+
+`GET /dimos/msgs.js` is an ES module that decodes and encodes every dimos message, for pages and apps with no build
+step; `GET /dimos/msgs.ts` is the same module as TypeScript (an interface per message), for Deno and TypeScript. Both
+are generated from the message classes under dimos/msgs and their dimos_lcm schemas
+([`experimental/gateway/msgs/codegen.py`](/experimental/gateway/msgs/codegen.py)), and a test fails while they're stale:
+
+```sh skip
+python -m experimental.gateway.msgs           # check, and list the messages without a schema
+python -m experimental.gateway.msgs --write   # regenerate msgs.ts, and msgs.js from it (needs deno)
+```
+
+With the [zenoh-gateway](https://github.com/jeff-hykin/zenoh-gateway) browser client, where dimos publishes each
+topic on the zenoh key `dimos/<topic>/<package>.<Type>`:
+
+```js
+import { connect } from "./zenoh_gateway.js" // zenoh-gateway's client/zenoh_gateway.ts, however your app ships it
+import { decodeMessage, geometry_msgs } from "../../dimos/msgs.js"
+
+const z = await connect(url)
+// the type in the key picks the decoder
+z.subscribe("dimos/odom/**", {}, (message) => console.log(decodeMessage(message).pose.position))
+// publish a Twist: fields left out are zero
+await z.put(geometry_msgs.Twist.zenohKey("dimos/cmd_vel"), geometry_msgs.Twist.encode({ linear: { x: 0.3 } }))
+```
+
+- `decode(bytes)` decodes by the frame's 8-byte fingerprint; `decodeChannel(channelOrKey, bytes)` lets the type an
+  LCM channel (`/odom#nav_msgs.Odometry`) or zenoh key names win over it; `decodeMessage(message)` does that for a
+  zenoh-gateway message (`undefined` for a delete).
+- `geometry_msgs.PoseStamped` and the like: `.decode(bytes)`, `.encode(value)`, `.zenohKey(topic)`,
+  `.lcmChannel(topic)`. `getTypeNames()` lists them. Values are plain objects in wire order; `int64_t` is a bigint and
+  `byte[]` a view into the frame.
+- A few dimos messages are hand-written, with no LCM schema (`sensor_msgs.JointCommand`, `trajectory_msgs.JointTrajectory`
+  and others: `getMissingTypes()`, and the warnings the check prints). Decoding one throws until a page adds it with
+  `register(name, fingerprint, decode, encode?)`.
