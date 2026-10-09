@@ -30,7 +30,11 @@ import numpy as np
 from dimos.core.stream import In, Stream, Transport
 from dimos.msgs.protocol import DimosMsg
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM, PickleLCM, Topic as LCMTopic
-from dimos.protocol.pubsub.impl.shmpubsub import BytesSharedMemory, PickleSharedMemory
+from dimos.protocol.pubsub.impl.shmpubsub import (
+    BytesSharedMemory,
+    PickleSharedMemory,
+    SharedMemoryPubSubBase,
+)
 from dimos.protocol.pubsub.impl.webrtc.providers.broker import BrokerConfig
 from dimos.protocol.pubsub.impl.webrtc.providers.spec import AudioProvider, ProviderConfig
 from dimos.protocol.pubsub.impl.webrtc.webrtcpubsub import WebRTCPubSub
@@ -108,7 +112,10 @@ class pLCMTransport(PubSubTransport[T]):
         self.lcm = PickleLCM(**kwargs)
 
     def __reduce__(self):  # type: ignore[no-untyped-def]
-        return (pLCMTransport, (self.topic,))
+        return (
+            functools.partial(pLCMTransport, **self.lcm.config.model_dump(exclude={"lcm"})),
+            (self.topic,),
+        )
 
     def broadcast(self, _: Stream[T] | None, msg: T) -> None:
         if not self._started:
@@ -149,7 +156,10 @@ class LCMTransport(PubSubTransport[T]):
         self._started = False
 
     def __reduce__(self):  # type: ignore[no-untyped-def]
-        return (LCMTransport, (self.topic.topic, self.topic.lcm_type))
+        return (
+            functools.partial(LCMTransport, **self.lcm.config.model_dump(exclude={"lcm"})),
+            (self.topic.topic, self.topic.lcm_type),
+        )
 
     def broadcast(self, _, msg) -> None:  # type: ignore[no-untyped-def]
         if not self._started:
@@ -175,7 +185,10 @@ class JpegLcmTransport(LCMTransport):  # type: ignore[type-arg]
         super().__init__(topic, type)
 
     def __reduce__(self):  # type: ignore[no-untyped-def]
-        return (JpegLcmTransport, (self.topic.topic, self.topic.lcm_type))
+        return (
+            functools.partial(JpegLcmTransport, **self.lcm.config.model_dump(exclude={"lcm"})),
+            (self.topic.topic, self.topic.lcm_type),
+        )
 
     def start(self) -> None:
         self.lcm.start()
@@ -186,7 +199,15 @@ class JpegLcmTransport(LCMTransport):  # type: ignore[type-arg]
         self._started = False
 
 
-class pSHMTransport(PubSubTransport[T]):
+class _SharedMemoryTransport(PubSubTransport[T]):
+    shm: SharedMemoryPubSubBase
+
+    def prepare_for_clients(self) -> None:
+        self.shm.prepare_topic(self.topic)
+
+
+class pSHMTransport(_SharedMemoryTransport[T]):
+    shm: PickleSharedMemory
     _started: bool = False
 
     def __init__(self, topic: str, **kwargs) -> None:  # type: ignore[no-untyped-def]
@@ -219,7 +240,7 @@ class pSHMTransport(PubSubTransport[T]):
         self._started = False
 
 
-class SHMTransport(PubSubTransport[T]):
+class SHMTransport(_SharedMemoryTransport[T]):
     _started: bool = False
 
     def __init__(self, topic: str, **kwargs) -> None:  # type: ignore[no-untyped-def]
@@ -252,7 +273,7 @@ class SHMTransport(PubSubTransport[T]):
         self._started = False
 
 
-class JpegShmTransport(PubSubTransport[T]):
+class JpegShmTransport(_SharedMemoryTransport[T]):
     _started: bool = False
 
     def __init__(self, topic: str, quality: int = 75, **kwargs) -> None:  # type: ignore[no-untyped-def]
@@ -265,7 +286,10 @@ class JpegShmTransport(PubSubTransport[T]):
         self.quality = quality
 
     def __reduce__(self):  # type: ignore[no-untyped-def]
-        return (JpegShmTransport, (self.topic, self.quality))
+        return (
+            functools.partial(JpegShmTransport, default_capacity=self.shm.config.default_capacity),
+            (self.topic, self.quality),
+        )
 
     def broadcast(self, _, msg) -> None:  # type: ignore[no-untyped-def]
         if not self._started:

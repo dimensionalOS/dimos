@@ -155,6 +155,10 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
 
     # PubSub API (bytes on the wire)
 
+    def prepare_topic(self, topic: str) -> None:
+        """Create the publisher's channel before connected clients attach."""
+        self._ensure_topic(topic)
+
     def publish(self, topic: str, message: bytes) -> None:
         if not isinstance(message, bytes | bytearray | memoryview):
             raise TypeError(f"publish expects bytes-like, got {type(message)!r}")

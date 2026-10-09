@@ -14,13 +14,18 @@
 
 from __future__ import annotations
 
+import functools
 import importlib
+import pickle
 import threading
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
 from dimos.core.coordination.module_coordinator import ModuleDescriptor
+from dimos.core.introspection.module.info import StreamDescriptor
 from dimos.core.rpc_client import RPCClient
+from dimos.core.stream import RemoteOut
+from dimos.core.transport import WebRTCAudioTransport, WebRTCTransport, WebRTCVideoTransport
 from dimos.porcelain.module_handle import ModuleHandle, RemoteModuleProxy
 from dimos.porcelain.module_source import ModuleSource
 from dimos.utils.logging_config import setup_logger
@@ -44,7 +49,9 @@ class RemoteModuleSource(ModuleSource):
         self._timeout = timeout
         self._cache: dict[str, RPCClient | RemoteModuleProxy] = {}
         self._descriptors: dict[str, ModuleDescriptor] | None = None
+        self._streams: dict[tuple[str, str], RemoteOut[Any]] = {}
         self._lock = threading.RLock()
+        self._closed = False
 
         try:
             self._coord = CoordinatorRPC.connect(timeout=timeout)
@@ -56,6 +63,8 @@ class RemoteModuleSource(ModuleSource):
             ) from None
 
     def _refresh_descriptors(self) -> dict[str, ModuleDescriptor]:
+        if self._closed:
+            raise RuntimeError("This module source has been stopped")
         descriptors = self._coord.call("list_modules")
         # rpc_name is empty when talking to an older daemon.
         self._descriptors = {(d.rpc_name or d.class_name): d for d in descriptors}
@@ -89,6 +98,12 @@ class RemoteModuleSource(ModuleSource):
         with self._lock:
             return list(self._refresh_descriptors().values())
 
+    def list_stream_descriptors(self) -> list[StreamDescriptor]:
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("This module source has been stopped")
+            return list(self._coord.call("list_streams", rpc_timeout=self._timeout))
+
     def get_module(self, name: str) -> ModuleHandle:
         with self._lock:
             descriptor = self._get_descriptor(name)
@@ -101,20 +116,55 @@ class RemoteModuleSource(ModuleSource):
             try:
                 module_path, class_name = descriptor.qualified_path.rsplit(".", 1)
                 cls = getattr(importlib.import_module(module_path), class_name)
-                proxy = RPCClient(None, cls, remote_name, rpc=self._coord.rpc)
+                proxy = RPCClient(
+                    None,
+                    cls,
+                    remote_name,
+                    rpc=self._coord.rpc,
+                    stream_lookup=functools.partial(self._get_stream, remote_name),
+                )
             except (ImportError, AttributeError):
                 proxy = RemoteModuleProxy(
                     self._coord.rpc,
                     remote_name,
                     set(descriptor.rpc_names),
+                    functools.partial(self._get_stream, remote_name),
                 )
             self._cache[remote_name] = proxy
             return proxy
+
+    def _get_stream(self, remote_name: str, name: str) -> RemoteOut[Any]:
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("This module source has been stopped")
+            key = (remote_name, name)
+            if key not in self._streams:
+                descriptor = next(
+                    (d for d in self.list_stream_descriptors() if (d.module, d.name) == key), None
+                )
+                if descriptor is None:
+                    raise AttributeError(
+                        f"{remote_name!r} has no @rpc method or stream named {name!r}"
+                    )
+                stream_type, transport = pickle.loads(descriptor.transport)
+                if isinstance(
+                    transport, (WebRTCTransport, WebRTCVideoTransport, WebRTCAudioTransport)
+                ):
+                    raise NotImplementedError(
+                        "WebRTC stream subscriptions require an operator client; "
+                        "use the hosted teleop client."
+                    )
+                # Expose a subscription view for inputs, outputs and IO ports.
+                self._streams[key] = RemoteOut(stream_type, name, remote_name, transport)
+            return self._streams[key]
 
     def invalidate(self, name: str) -> None:
         with self._lock:
             entry = self._cache.pop(name, None)
             self._descriptors = None
+            streams = [self._streams.pop(key) for key in list(self._streams) if key[0] == name]
+        for stream in streams:
+            stream.stop()
         if isinstance(entry, RPCClient):
             try:
                 entry.stop_rpc_client()
@@ -133,14 +183,23 @@ class RemoteModuleSource(ModuleSource):
 
     def close(self) -> None:
         with self._lock:
-            for entry in self._cache.values():
-                if isinstance(entry, RPCClient):
-                    try:
-                        entry.stop_rpc_client()
-                    except Exception:
-                        pass
+            if self._closed:
+                return
+            self._closed = True
+            entries = list(self._cache.values())
+            streams = list(self._streams.values())
             self._cache.clear()
             self._descriptors = None
+            self._streams.clear()
+        # Never hold the source lock while waiting for dispatch threads.
+        for entry in entries:
+            if isinstance(entry, RPCClient):
+                try:
+                    entry.stop_rpc_client()
+                except Exception:
+                    pass
+        for stream in streams:
+            stream.stop()
         try:
             self._coord.stop()
         except Exception:

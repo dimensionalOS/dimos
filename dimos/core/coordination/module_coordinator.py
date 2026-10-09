@@ -33,6 +33,7 @@ from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
 from dimos.core.coordination.worker_manager import WorkerManager
 from dimos.core.coordination.worker_manager_python import WorkerManagerPython
 from dimos.core.global_config import GlobalConfig, global_config
+from dimos.core.introspection.module.info import StreamDescriptor
 from dimos.core.module import ModuleBase, ModuleSpec, is_module_type
 from dimos.core.o3dpickle import register_picklers
 from dimos.core.resource import Resource
@@ -141,6 +142,7 @@ class ModuleCoordinator(Resource):
         return {
             "ping": self.ping,
             "list_modules": self.list_modules,
+            "list_streams": self.list_streams,
             "load_blueprint_by_name": self.load_blueprint_by_name,
             "load_blueprint": self.load_blueprint,
             "restart_module_by_class_name": self.restart_module_by_class_name,
@@ -169,6 +171,14 @@ class ModuleCoordinator(Resource):
                         rpc_name=_rpc_name(name, cls),
                     )
                 )
+            return descriptors
+
+    def list_streams(self) -> list[StreamDescriptor]:
+        """Describe the wired streams of deployed modules using their existing RPCs."""
+        with self._modules_lock:
+            descriptors: list[StreamDescriptor] = []
+            for module in self._deployed_modules.values():
+                descriptors.extend(module.get_stream_descriptors())
             return descriptors
 
     def load_blueprint_by_name(self, name: str) -> None:
