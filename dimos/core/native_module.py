@@ -51,6 +51,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import shutil
 import signal
 import subprocess
 import sys
@@ -198,6 +199,10 @@ def _package_source_workspace(
             for name, (data, mode) in inputs.items():
                 destination = workspace / name
                 destination.parent.mkdir(parents=True, exist_ok=True)
+                # A replacement source file supersedes generated output beneath
+                # its former directory; unrelated incremental outputs survive.
+                if destination.is_dir():
+                    shutil.rmtree(destination)
                 # Preserve timestamps of unchanged inputs for Cargo/CMake.
                 if not destination.is_file() or destination.read_bytes() != data:
                     destination.write_bytes(data)

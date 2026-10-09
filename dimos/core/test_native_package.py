@@ -259,11 +259,16 @@ def test_source_removal_preserves_generated_files_and_handles_directory_changes(
     assert not (workspace / "old/input").exists()
     assert (workspace / "old/generated").read_text() == "keep"
     assert (workspace / "replace/child").read_text() == "directory"
+    (workspace / "replace/generated").write_text("superseded output")
     (source / "replace/child").unlink()
     (source / "replace").rmdir()
     (source / "replace").write_text("file again")
     module_factory(**config)._prepare_native()
     assert (workspace / "replace").read_text() == "file again"
+    assert (workspace / "old/generated").read_text() == "keep"
+    assert (source / "replace").read_text() == "file again"
+    module_factory(**config)._prepare_native()
+    assert Path(config["extra_env"]["COUNTER"]).read_text() == "build\n" * 3
 
 
 @pytest.mark.parametrize("field", ["source_dir", "build_command"])
