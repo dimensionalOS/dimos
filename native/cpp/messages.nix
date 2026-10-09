@@ -57,7 +57,7 @@ in pkgs.stdenv.mkDerivation {
   preConfigure = ''
     export PYTHONPATH="${support}/${pkgs.python3.sitePackages}:$PYTHONPATH"
     export AMENT_PREFIX_PATH="${support}:$out"
-    cmakeFlags+=("-DCMAKE_PREFIX_PATH=${support};$out")
+    cmakeFlagsArray+=("-DCMAKE_PREFIX_PATH=${support};$out")
   '';
   cmakeFlags = [
     "-DPython3_EXECUTABLE=${python}/bin/python3"
