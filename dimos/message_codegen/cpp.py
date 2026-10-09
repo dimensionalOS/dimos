@@ -16,12 +16,16 @@
 
 from __future__ import annotations
 
+from contextlib import redirect_stdout
 from dataclasses import asdict
 from hashlib import sha256
+from io import StringIO
 import json
-import math
-from typing import Any
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
+from ._vendor.rosidl.rosidl_adapter import convert_to_idl
+from ._vendor.rosidl.rosidl_pycommon import generate_files
 from .definitions import FieldType, Message
 
 PRIMITIVES = {
@@ -156,28 +160,6 @@ def type_name(type_: FieldType) -> str:
     return scalar
 
 
-def literal(value: Any, type_name_: str) -> str:
-    if isinstance(value, tuple):
-        return "{" + ", ".join(literal(item, type_name_) for item in value) + "}"
-    if isinstance(value, str):
-        return ("L" if type_name_ == "wstring" else "") + json.dumps(value, ensure_ascii=True)
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    if isinstance(value, float):
-        native = PRIMITIVES[type_name_]
-        if math.isnan(value):
-            return f"std::numeric_limits<{native}>::quiet_NaN()"
-        if math.isinf(value):
-            sign = "-" if value < 0 else ""
-            return f"{sign}std::numeric_limits<{native}>::infinity()"
-        return repr(value) + ("f" if type_name_ == "float32" else "")
-    if type_name_ == "uint64":
-        return f"{value}ULL"
-    if type_name_ == "int64" and value == -(2**63):
-        return "(-9223372036854775807LL - 1)"
-    return str(value)
-
-
 def validation(message: Message) -> list[str]:
     lines = []
     for field in message.fields:
@@ -233,44 +215,95 @@ def generate(messages: tuple[Message, ...], imports: tuple[str, ...] = ()) -> st
         '#include "dimos_cdr.hpp"',
     ]
     lines.extend(f"#include <{module}/messages.hpp>" for module in imports)
-    for message in messages:
-        guard = guards[message.name] + "_TYPE"
-        lines.extend([f"#ifndef {guard}", f"#define {guard}"])
-        namespace = qualified(message.name.rsplit("/", 1)[0])
-        name = identifier(message.short_name)
-        lines.extend([f"namespace {namespace} {{", f"struct {name} {{"])
-        for constant in message.constants:
-            native = PRIMITIVES[constant.type]
-            if constant.type in {"string", "wstring"}:
-                native = "const wchar_t*" if constant.type == "wstring" else "const char*"
-            lines.append(
-                f"static constexpr {native} {identifier(constant.name)} = {literal(constant.value, constant.type)};"
+    upstream = Path(__file__).with_name("_vendor") / "rosidl"
+    for name in [
+        "rosidl_runtime_c/message_initialization.h",
+        "rosidl_runtime_cpp/message_initialization.hpp",
+        "rosidl_runtime_cpp/bounded_vector.hpp",
+    ]:
+        lines.append(
+            "\n".join(
+                line
+                for line in (upstream / "include" / name).read_text().splitlines()
+                if not line.startswith("#include <rosidl_runtime")
             )
-        for field in message.fields:
-            if field.default is None:
-                default = "{}"
-            elif isinstance(field.default, tuple):
-                default = literal(field.default, field.type.name)
-            else:
-                default = "{" + literal(field.default, field.type.name) + "}"
-            lines.append(f"{type_name(field.type)} {identifier(field.name)}{default};")
-        equal = (
-            " && ".join(
-                f"this->{identifier(field.name)} == other.{identifier(field.name)}"
-                for field in message.fields
-            )
-            or "true"
         )
-        other = " other" if message.fields else ""
-        lines.append(f"bool operator==(const {name}&{other}) const {{ return {equal}; }}")
-        lines.append(f"bool operator!=(const {name}& other) const {{ return !(*this == other); }}")
-        lines.append("void validate() const {")
-        lines.extend(validation(message))
-        lines.extend(["}", f'static constexpr const char* msg_name = "{message.name}";', "};", "}"])
-        lines.append("#endif")
+    with TemporaryDirectory(prefix="dimos-rosidl-") as temporary:
+        output = Path(temporary)
+        for message in messages:
+            with redirect_stdout(StringIO()):
+                idl = convert_to_idl(
+                    message.source.parent.parent.resolve(),
+                    message.package,
+                    Path("msg") / message.source.name,
+                    output / "idl" / message.package,
+                )
+                arguments = output / "arguments.json"
+                arguments.write_text(
+                    json.dumps(
+                        {
+                            "package_name": message.package,
+                            "idl_tuples": [str(idl.parent.parent) + ":msg/" + idl.name],
+                            "output_dir": str(output / "cpp" / message.package),
+                            "template_dir": str(upstream / "rosidl_generator_cpp" / "resource"),
+                            "target_dependencies": [str(message.source.resolve())],
+                        }
+                    )
+                )
+                generate_files(str(arguments), {"idl__struct.hpp.em": "detail/%s__struct.hpp"})
+            headers = (output / "cpp" / message.package / "msg" / "detail").glob("*__struct.hpp")
+            declaration = next(
+                path.read_text()
+                for path in headers
+                if f"struct {message.short_name}_\n" in path.read_text()
+            )
+            declaration = "\n".join(
+                line for line in declaration.splitlines() if not line.startswith('#include "')
+            )
+            # Identical dependency declarations share an include guard; conflicting
+            # definitions must not be hidden by an upstream name-only guard.
+            original_guard = next(
+                line.split()[1] for line in declaration.splitlines() if line.startswith("#ifndef ")
+            )
+            identity = [
+                message.name,
+                [asdict(field) for field in message.fields],
+                [asdict(constant) for constant in message.constants],
+            ]
+            guard = (
+                "DIMOS_CDR_"
+                + sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest().upper()
+            )
+            declaration = declaration.replace(original_guard, guard)
+            marker = f"  using Type = {message.short_name}_<ContainerAllocator>;"
+            adapter = "\nvoid validate() const {\n" + "\n".join(validation(message)) + "\n}\n"
+            adapter += f'static constexpr const char* msg_name = "{message.name}";'
+            lines.append(declaration.replace(marker, marker + adapter))
 
     lines.append("namespace eprosima::fastcdr {")
-    lines.extend(f"#include <{module}/messages.hpp>" for module in imports)
+    bounded = set()
+    for message in messages:
+        for field in message.fields:
+            if not field.type.array_bounded or field.type in bounded:
+                continue
+            bounded.add(field.type)
+            alias = qualified(message.name) + "::_" + field.name + "_type"
+            vector = type_name(field.type)
+            guard = (
+                "DIMOS_CDR_BOUNDED_"
+                + sha256(json.dumps(asdict(field.type), sort_keys=True).encode())
+                .hexdigest()
+                .upper()
+            )
+            lines.extend([f"#ifndef {guard}", f"#define {guard}"])
+            lines.extend(
+                [
+                    f"template<> inline size_t calculate_serialized_size(CdrSizeCalculator& c, const {alias}& v, size_t& a) {{ return c.calculate_serialized_size({vector}(v.begin(), v.end()), a); }}",
+                    f"template<> inline void serialize(Cdr& c, const {alias}& v) {{ c << {vector}(v.begin(), v.end()); }}",
+                    f"template<> inline void deserialize(Cdr& c, {alias}& v) {{ {vector} values; c >> values; v.assign(values.begin(), values.end()); }}",
+                    "#endif",
+                ]
+            )
     for message in messages:
         guard = guards[message.name] + "_CODEC"
         lines.extend([f"#ifndef {guard}", f"#define {guard}"])
@@ -303,7 +336,6 @@ def generate(messages: tuple[Message, ...], imports: tuple[str, ...] = ()) -> st
             lines.append(f"cdr >> value.{identifier(field.name)};")
         if not message.fields:
             lines.append("uint8_t unused; cdr >> unused;")
-        lines.extend(["value.validate();", "}"])
-        lines.append("#endif")
+        lines.extend(["value.validate();", "}", "#endif"])
     lines.append("}")
     return "\n".join(lines) + "\n"

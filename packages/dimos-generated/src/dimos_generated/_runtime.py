@@ -289,18 +289,6 @@ class Message:
             }
         )
 
-    def __eq__(self, other: Any) -> bool:
-        return type(self) is type(other) and all(
-            getattr(self, field[0]) == getattr(other, field[0]) for field in self._fields
-        )
-
-    def __repr__(self) -> str:
-        return (
-            f"{type(self).__name__}("
-            + ", ".join(f"{field[0]}={getattr(self, field[0])!r}" for field in self._fields)
-            + ")"
-        )
-
     def __reduce__(self) -> Any:
         return type(self).decode, (self.encode(),)
 
