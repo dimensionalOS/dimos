@@ -74,6 +74,12 @@ class SkillInfo:
     lifecycle: str = "instant"
 
 
+# Skill metadata derives from the class, so one build serves every instance.
+# The lock makes a worker's deploy warm-up and McpServer's later request share it.
+_skills_by_class: dict[type, list[SkillInfo]] = {}
+_skills_lock = threading.Lock()
+
+
 class PeekNotFound:
     """Sentinel returned by `Module.peek_stream` when the named stream is
     not present on a module. A class instance survives pickle round-trips so
@@ -137,6 +143,12 @@ class ModuleBase(Configurable, CompositeResource):
     # process. Used for heavy modules that would otherwise contend with
     # each other for CPU and the GIL.
     dedicated_worker: ClassVar[bool] = False
+
+    # When True, the worker imports the input types' decode dependencies right
+    # after construction (see python_worker._start_warm_up). Set False where
+    # Python never decodes the inputs, e.g. native modules, or when a heavy
+    # input is optional.
+    warm_up_inputs: ClassVar[bool] = True
 
     _rpc: RPCSpec | None = None
     _tf: TF | None = None
@@ -466,29 +478,41 @@ class ModuleBase(Configurable, CompositeResource):
 
     @rpc
     def get_skills(self) -> list[SkillInfo]:
+        cls = type(self)
+        with _skills_lock:
+            if cls not in _skills_by_class:
+                _skills_by_class[cls] = self._build_skills()
+            return _skills_by_class[cls]
+
+    def _build_skills(self) -> list[SkillInfo]:
+        cls = type(self)
+        # Static lookup on the class: getattr on the instance would evaluate
+        # properties, and those may raise when unconfigured (tfbuffer without
+        # a tf port) or block on a lazy load.
+        names = [
+            name
+            for name in dir(cls)
+            if hasattr(inspect.getattr_static(cls, name, None), "__skill__")
+        ]
+        if not names:
+            return []
         from langchain_core.tools import tool  # ~170ms: deferred to avoid CLI startup cost
 
         skills: list[SkillInfo] = []
-        for name in dir(self):
-            try:
-                attr = getattr(self, name)
-            except Exception:
-                # Properties may legitimately raise when unconfigured (e.g.
-                # tfbuffer without a tf port); they are not skills.
-                continue
-            if callable(attr) and hasattr(attr, "__skill__"):
-                schema = json.dumps(tool(attr).args_schema.model_json_schema())
-                uses = tuple(getattr(attr, "__skill_uses__", ()) or ())
-                lifecycle = getattr(attr, "__skill_lifecycle__", "instant")
-                skills.append(
-                    SkillInfo(
-                        class_name=self.__class__.__name__,
-                        func_name=name,
-                        args_schema=schema,
-                        uses=uses,
-                        lifecycle=lifecycle,
-                    )
+        for name in names:
+            attr = getattr(self, name)
+            schema = json.dumps(tool(attr).args_schema.model_json_schema())
+            uses = tuple(getattr(attr, "__skill_uses__", ()) or ())
+            lifecycle = getattr(attr, "__skill_lifecycle__", "instant")
+            skills.append(
+                SkillInfo(
+                    class_name=cls.__name__,
+                    func_name=name,
+                    args_schema=schema,
+                    uses=uses,
+                    lifecycle=lifecycle,
                 )
+            )
         return skills
 
     def spawn(self, coro: Any) -> Any:

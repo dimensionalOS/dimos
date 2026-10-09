@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Build DimSim's frontend (misc/DimSim/dist) and install its headless Chromium
+# up front, so the first `--simulation dimsim` run doesn't do both inside the
+# blueprint's startup window. CI runs this before pytest: `git clean -ffdx`
+# wipes dist/ and node_modules/ on every job.
+set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+uv run python -c 'from dimos.simulation.dimsim.dimsim_process import prepare; prepare()'

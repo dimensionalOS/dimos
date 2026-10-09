@@ -290,6 +290,21 @@ Restart the run and the lidar scatter draws live. The recording is a couple of m
 
 A decoder is `(payload: Uint8Array, header) => { value, preview? }`, looked up by the channel's manifest encoding. `header.meta` carries the encoder's `EncodedPayload` meta. The rules are in the [Decoders](#decoders) reference below.
 
+## Video as WebRTC tracks
+
+A relay with Cloudflare configured ([Relay hosting](/docs/web/relay_hosting.md#video-through-cloudflare)) delivers every `jpeg.v1` channel as a `video.webrtc.v1` track. The robot encodes H.264 once and the browser pulls it from Cloudflare's SFU, so nothing of the video rides the relay. The SDK handles the signaling. The channel's value is the received `MediaStreamTrack` instead of JPEG bytes:
+
+```js
+session.subscribe("color_image", (snapshot) => {
+  const track = snapshot.slot?.value;
+  if (track instanceof MediaStreamTrack) {
+    document.querySelector("video").srcObject = new MediaStream([track]);
+  }
+});
+```
+
+The cockpit's video panel does exactly this. The relay's `/api/info` says whether it offers WebRTC video (`rtc: true`), and the manifest's encoding says which channels use it. A relay without Cloudflare, or a robot without aiortc (`dimos[webrtc]`), keeps `jpeg.v1`. A `rtc_failed` session error means a WebRTC step failed, at the relay (which retries it) or locally (the SDK drops its peer connection and offers again with the transport's backoff, also when the relay reports the SFU session gone or the peer connection fails later). The WebTransport session itself is unaffected.
+
 ## Publishing to the robot
 
 A `dir="tx"` channel with `publish="shared"` is a browser input. Any viewer may publish on it. The bridge decodes the JSON value with the matching decoder and publishes it on a typed `Out` port, and your modules consume it like any other stream.
@@ -341,7 +356,7 @@ try {
 | `publish(ch, value, { clientTs? })` | Publishes one JSON value on a `publish="shared"` tx channel. Resolves with `{ ch, relayTs, bridgeTs }` (seconds since the epoch) once the bridge published it. See [Publishing](#publishing). |
 | `close()` | Closes the transport, drops every subscription and rejects pending publishes. |
 
-`SessionStatus` has `transport` (the phase below), `robots` (every robot on the relay, `{ id, name, model }`), `watchedRobot`, `manifest`, `manifestUnsupported` (the robot's manifest version is newer than the SDK), `epoch` (bumps whenever the manifest changes) and `lastError` (`{ code, message, ch? }` with code `invalid_manifest`, `unknown_channel` or `relay_error`).
+`SessionStatus` has `transport` (the phase below), `robots` (every robot on the relay, `{ id, name, model }`), `watchedRobot`, `manifest`, `manifestUnsupported` (the robot's manifest version is newer than the SDK), `epoch` (bumps whenever the manifest changes) and `lastError` (`{ code, message, ch? }` with code `invalid_manifest`, `unknown_channel`, `rtc_failed` or `relay_error`).
 
 `transport.phase` is `connecting` (with `attempt`), `connected`, `reconnecting` (with `attempt`, `retryAtMs` and a `reason`) or `failed` (with `reason` and a `code` such as `auth_failed`). Reconnects back off from 500 ms to 8 s. A `failed` transport does not retry.
 
@@ -364,6 +379,7 @@ Built-in ids:
 | Encoding | Value |
 |---|---|
 | `jpeg.v1` | The raw JPEG bytes (`Uint8Array`). Wrap them in a `Blob` to decode them: `createImageBitmap(new Blob([bytes], { type: "image/jpeg" }))` for a canvas, or `URL.createObjectURL(blob)` for an `<img>` (revoke the URL once the image is shown). |
+| `video.webrtc.v1` | The received `MediaStreamTrack`, not a decoded frame. See [Video as WebRTC tracks](#video-as-webrtc-tracks). |
 | `costmap.zlib.v1` | `{ bytes, w, h, res, origin }` with the cells still deflated. `await inflateCostmap(value)` returns the `w * h` cells. |
 | `voxels.zlib.v1` | `{ bytes, res, n, chunks }` with the chunk records still deflated. `await inflateVoxels(value)` returns a `Float32Array` of the `n` voxel centres as x, y, z triplets. `n` is 0 for an empty cloud. |
 | `json.v1` (and any `*.json.vN`) | The parsed JSON value. |

@@ -33,9 +33,11 @@ from dimos.utils.logging_config import setup_logger
 
 # The orchestrator warns on every failed dial of a connect endpoint, which a router
 # redialing an absent peer repeats forever; _await_connect reports a missing link once.
-zenoh.init_log_from_env_or(
-    "warn,zenoh_shm::watchdog::periodic_task=error,zenoh::net::runtime::orchestrator=error"
+ZENOH_LOG_DIRECTIVES = (
+    "zenoh=warn,zenoh_shm::watchdog::periodic_task=error,zenoh::net::runtime::orchestrator=error"
 )
+
+zenoh.init_log_from_env_or(f"warn,{ZENOH_LOG_DIRECTIVES}")
 
 logger = setup_logger()
 
