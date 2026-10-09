@@ -598,7 +598,8 @@ def test_stage_moves_to_the_next_candidate_when_a_leg_cannot_be_planned(
     staged._grasp_generator.propose_grasps.return_value = GraspCandidateArray(
         Header(1.0, "world"), [_candidate(0.1, 0.9), _candidate(0.2, 0.8)]
     )
-    calls = iter([NO_PATH, _planned("pose"), _planned("pose")])
+    # the first candidate's approach fails at every clearance (10, 7, 5 cm)
+    calls = iter([NO_PATH, NO_PATH, NO_PATH, _planned("pose"), _planned("pose")])
     manipulation.plan_to_poses.side_effect = lambda targets, **kw: next(calls)
 
     result = staged.stage_pick_and_place("cup-1", 0.35, -0.02, 0.25)
@@ -774,6 +775,34 @@ def test_proceed_replans_a_leg_the_controller_rejects_from_the_live_state(
     live = [c for c in linear_calls if c[3] is None]
     assert len(live) == 1
     assert live[0][2] < 0  # heads down to the grasp from the live tool pose
+
+
+def test_stage_lowers_the_approach_when_the_full_clearance_cannot_plan(
+    staged: PickAndPlaceModule,
+) -> None:
+    staged.config.pregrasp_along_tool_z = True
+    manipulation: Any = staged._manipulation
+    heights: list[float] = []
+
+    def plan_to_poses(targets: dict[str, PoseStamped], **kw: Any) -> PlanResult:
+        pose = next(iter(targets.values()))
+        if len(heights) < 2:
+            # the first approach (10 cm) and the second (7 cm) are out of reach
+            heights.append(pose.position.z)
+            return NO_PATH
+        heights.append(pose.position.z)
+        return _planned("pose")
+
+    manipulation.plan_to_poses.side_effect = plan_to_poses
+
+    result = staged.stage_pick_and_place("cup-1", 0.46, 0.05, 0.12)
+
+    assert result.message.startswith("Staged a pick of object cup-1")
+    # each retry sits closer to the grasp along the tool axis: 10, 7, then 5 cm
+    approaches = heights[:3]  # the fourth planned pose is the carry
+    assert approaches == sorted(approaches) or approaches == sorted(approaches, reverse=True)
+    assert abs(approaches[0] - approaches[1]) == pytest.approx(0.03)
+    assert abs(approaches[0] - approaches[2]) == pytest.approx(0.05)
 
 
 def test_preplace_offset_shortens_the_lift_over_the_place(module: PickAndPlaceModule) -> None:

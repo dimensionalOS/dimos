@@ -57,6 +57,9 @@ from dimos.utils.logging_config import setup_logger
 class PickAndPlaceModuleConfig(ModuleConfig):
     planning_frame: str = "base_link"
     pregrasp_offset: float = Field(default=0.10, gt=0.0)
+    # Shortest approach clearance a staged pick may fall back to when the full
+    # one does not plan; the jaws are open, so it only needs to clear the object.
+    min_pregrasp_offset: float = Field(default=0.05, gt=0.0)
     # The pregrasp backs off along the tool's -Z. Grippers whose grasp frame
     # points Z out of the back of the palm need +Z, or the approach starts
     # underneath the object.
@@ -426,7 +429,6 @@ class PickAndPlaceModule(Module):
         place_position: Vector3,
     ) -> list[_StagedLeg]:
         """Plan every leg of a pick and place from *start*, chaining predicted states."""
-        pregrasp = self._offset_pose(grasp, self._pregrasp_offset())
         legs: list[_StagedLeg] = [_StagedLeg("open the gripper", gripper="open")]
         state = start
 
@@ -461,12 +463,24 @@ class PickAndPlaceModule(Module):
                 target=b,
             )
 
-        planned(
-            "approach above the object",
-            self._manipulation.plan_to_poses({group: pregrasp}, start=state),
-            mode="pose",
-            target=pregrasp,
-        )
+        # A far object's full approach height can sit past the arm's reach while
+        # the grasp itself is inside it, so the approach steps down to the
+        # shortest clearance that plans.
+        approach_failures: list[str] = []
+        for offset in self._pregrasp_offsets():
+            pregrasp = self._offset_pose(grasp, offset)
+            try:
+                planned(
+                    "approach above the object",
+                    self._manipulation.plan_to_poses({group: pregrasp}, start=state),
+                    mode="pose",
+                    target=pregrasp,
+                )
+                break
+            except _UnplannableLegError as exc:
+                approach_failures.append(f"{abs(offset):.2f} m: {exc}")
+        else:
+            raise _UnplannableLegError("; ".join(approach_failures[-2:]))
         linear("descend to the grasp", pregrasp, grasp)
         legs.append(_StagedLeg("close and verify the grasp", gripper="close"))
         linear("lift", grasp, pregrasp)
@@ -757,6 +771,19 @@ class PickAndPlaceModule(Module):
     def _pregrasp_offset(self) -> float:
         offset = self.config.pregrasp_offset
         return -offset if self.config.pregrasp_along_tool_z else offset
+
+    def _pregrasp_offsets(self) -> list[float]:
+        """Approach clearances to try, the configured one first, down to min_pregrasp_offset."""
+        full = self.config.pregrasp_offset
+        steps = [full]
+        for fraction in (0.7, 0.5):
+            candidate = round(full * fraction, 3)
+            if candidate >= self.config.min_pregrasp_offset and candidate < steps[-1]:
+                steps.append(candidate)
+        if self.config.min_pregrasp_offset < steps[-1]:
+            steps.append(self.config.min_pregrasp_offset)
+        sign = -1.0 if self.config.pregrasp_along_tool_z else 1.0
+        return [sign * step for step in steps]
 
     def _preplace_offset(self) -> float:
         offset = self.config.preplace_offset
