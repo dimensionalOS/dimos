@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""``dimos sim-eval``: freeze a suite, run it against a blueprint, and score runs again."""
+"""``dimos sim-eval``: freeze a suite, run it against a blueprint, score runs again, play episodes back."""
 
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ from pathlib import Path
 
 import typer
 
+from dimos.navigation.sim_eval.playback import play
 from dimos.navigation.sim_eval.runner import RESULTS_FILE, RunConfig, rescore, run as run_suite
 from dimos.navigation.sim_eval.suite import FreezeConfig, freeze
 
@@ -121,6 +122,16 @@ def score_command(
 ) -> None:
     """Score every episode of a run again from its recording."""
     _summary(rescore(run_dir))
+
+
+@app.command("replay")
+def replay_command(
+    episode_dir: Path = typer.Argument(..., exists=True, help="An episode directory of a run."),
+    speed: float = typer.Option(1.0, min=0.01, help="Playback pace relative to the recording."),
+    loop: bool = typer.Option(False, help="Start over at the end."),
+) -> None:
+    """Play the episode's recorded body motion back in a MuJoCo viewer of its scene."""
+    play(episode_dir, speed=speed, loop=loop)
 
 
 def _summary(results: Path) -> None:
