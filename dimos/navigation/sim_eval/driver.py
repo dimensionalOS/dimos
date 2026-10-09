@@ -14,9 +14,10 @@
 
 """Runs one benchmark case against the navigation stack in the simulated world.
 
-Premaps by walking the reference route on teleop, resets the robot to the case's start,
-sends the goal until the stack echoes it, then watches for a terminal condition and
-writes it to terminal.json. Collisions never end an episode. The runner stops the process.
+Resets the robot to the case's start, premaps by seeding the stack with the scene's cloud or
+by walking the reference route on teleop, sends the goal until the stack echoes it, then
+watches for a terminal condition and writes it to terminal.json. Collisions never end an
+episode. The runner stops the process.
 """
 
 from __future__ import annotations
@@ -41,6 +42,7 @@ from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.navigation.sim_eval.ground_truth import GroundTruth
 from dimos.navigation.sim_eval.oracle import RouteTracker
@@ -62,6 +64,7 @@ class EpisodeDriverConfig(ModuleConfig):
     case_id: str = ""
     out_dir: Path = Path()
     settle_s: float = 2.0
+    seed_settle_s: float = 4.0
     teleop_hz: float = 20.0
     goal_resend_s: float = 1.0
     goal_wait_s: float = 8.0
@@ -79,6 +82,7 @@ class EpisodeDriver(Module):
 
     tele_cmd_vel: Out[Twist]
     clicked_point: Out[PointStamped]
+    loaded_map: Out[PointCloud2]
 
     _world: SimWorldSpec
     _thread: Thread | None = None
@@ -148,16 +152,23 @@ class EpisodeDriver(Module):
         if not self._wait(lambda: self._pose is not None, FIRST_POSE_WAIT_S):
             return {"reason": "no_ground_truth"}
         self._reset_to_start()
-        record: dict[str, object] = {"case_id": case.id}
-        if rules.premapped:
-            route = self._truth.route(case.start, case.goal, centered=True)
-            if route is None:
-                return {**record, "reason": "no_reference_route"}
-            started = time.time()
+        record: dict[str, object] = {"case_id": case.id, "premap": rules.premap}
+        started = time.time()
+        route = self._truth.route(case.start, case.goal, centered=True)
+        if route is None:
+            return {**record, "reason": "no_reference_route"}
+        if rules.premap == "seed":
+            cloud = self._truth.premap_cloud(route.points)
+            self.loaded_map.publish(
+                PointCloud2.from_numpy(cloud, frame_id=ODOM_FRAME_ID, timestamp=time.time())
+            )
+            record["premap_points"] = len(cloud)
+            self._stop_event.wait(self.config.seed_settle_s)
+        else:
             walked = self._walk(route.points, rules.timeout_s(route.length) or FIRST_POSE_WAIT_S)
             record["premap_walked"] = walked
-            record["premap_s"] = round(time.time() - started, 2)
             self._reset_to_start()
+        record["premap_s"] = round(time.time() - started, 2)
         t0 = self._send_goal()
         if t0 is None:
             return {**record, "reason": "goal_lost"}

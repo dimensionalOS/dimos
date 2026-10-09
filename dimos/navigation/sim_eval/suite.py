@@ -68,10 +68,10 @@ class Rules:
     """How an episode is scored. Changing any value is a new version."""
 
     version: int = 1
-    premapped: bool = True
+    premap: Literal["seed", "walk"] = "seed"
     goal_xy_m: float = 0.5
     goal_z_m: float = 0.3
-    stand_height_m: float = 0.3
+    stand_height_m: float = GO2.stand
     timeout_s_per_m: float = 6.0
     timeout_base_s: float = 20.0
     fall_rad: float = 1.0

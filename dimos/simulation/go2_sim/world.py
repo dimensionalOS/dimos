@@ -46,6 +46,7 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.LineSegments3D import LineSegments3D
 from dimos.msgs.nav_msgs.Odometry import Odometry
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.sim_msgs.Contacts import Contact, Contacts, Part
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
@@ -83,6 +84,7 @@ SCENE_PUBLISH_DT = 2.0
 # contacts go out on change, and on this period so a recording always holds the current set
 CONTACTS_HEARTBEAT_DT = 1.0
 ODOM_FRAME_ID = "odom"
+BASE_FRAME_ID = "base_link"
 SENSOR_FRAME_ID = "mid360_link"
 STILL = np.zeros(3)
 
@@ -208,6 +210,20 @@ def scene_edges(scene: Scene) -> NDArray[np.float64]:
     return edges
 
 
+def open_viewer(
+    model: mujoco.MjModel, data: mujoco.MjData, lookat: NDArray[np.float64]
+) -> mujoco.viewer.Handle:
+    """A passive viewer on the scene with the ceiling hidden and a free camera over the robot."""
+    viewer = mujoco.viewer.launch_passive(model, data, show_left_ui=False, show_right_ui=False)
+    viewer.opt.geomgroup[CEILING_GROUP] = 0
+    viewer.cam.type = mujoco.mjtCamera.mjCAMERA_FREE
+    viewer.cam.lookat[:] = lookat
+    viewer.cam.distance = 4.0
+    viewer.cam.elevation = -55
+    viewer.cam.azimuth = 225
+    return viewer
+
+
 class Go2Sim:
     """The compiled scene with the Go2 and its Mid-360, ticked from a velocity command."""
 
@@ -324,6 +340,7 @@ class SimGo2World(Module):
     odometry: Out[Odometry]
     tf: Out[TFMessage]
     ground_truth: Out[PoseStamped]
+    joint_state: Out[JointState]
     contacts: Out[Contacts]
     scene: Out[LineSegments3D]
 
@@ -371,18 +388,7 @@ class SimGo2World(Module):
     def _open_viewer(self, sim: Go2Sim) -> mujoco.viewer.Handle | None:
         if not self.config.mujoco_viewer:
             return None
-        viewer = mujoco.viewer.launch_passive(
-            sim.model, sim.data, show_left_ui=False, show_right_ui=False
-        )
-        viewer.opt.geomgroup[CEILING_GROUP] = 0
-        # a free camera, so the mouse can pan away from the robot. Starts above the walls,
-        # looking down over the robot's shoulder.
-        viewer.cam.type = mujoco.mjtCamera.mjCAMERA_FREE
-        viewer.cam.lookat[:] = sim.base_pose()[0]
-        viewer.cam.distance = 4.0
-        viewer.cam.elevation = -55
-        viewer.cam.azimuth = 225
-        return viewer
+        return open_viewer(sim.model, sim.data, sim.base_pose()[0])
 
     def _run(self) -> None:
         # open3d loads on the first cloud, about a second
@@ -467,5 +473,15 @@ class SimGo2World(Module):
                 *map(float, base_q),
                 ts=stamp,
                 frame_id=ODOM_FRAME_ID,
+            )
+        )
+        positions, velocities = sim.robot.joint_state()
+        self.joint_state.publish(
+            JointState(
+                ts=stamp,
+                frame_id=BASE_FRAME_ID,
+                name=list(sim.robot.policy.joint_names),
+                position=positions.tolist(),
+                velocity=velocities.tolist(),
             )
         )

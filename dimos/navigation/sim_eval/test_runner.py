@@ -27,7 +27,6 @@ from dimos.navigation.sim_eval.cli import override_flag, seeds_of
 from dimos.navigation.sim_eval.ground_truth import Difficulty
 from dimos.navigation.sim_eval.runner import (
     RECORDING_FILE,
-    REPLAY_FILE,
     RESULTS_FILE,
     RUN_FILE,
     SCORE_FILE,
@@ -35,6 +34,7 @@ from dimos.navigation.sim_eval.runner import (
     RunConfig,
     _episode,
     _live,
+    _slot,
     rescore,
     run,
     stop_all,
@@ -143,12 +143,12 @@ def test_run_scores_every_episode_of_the_split_in_parallel(
     assert by_case[("mined-s1-aaaaaa", 0)]["terminal"] == "arrived"
     assert by_case[("stay_put-s1-cccccc", 1)]["outcome"] == "timeout"
     assert all(r["error"] is None for r in rows)
-    episode = run_dir / "episodes" / "narrow_door-s1-bbbbbb" / "r1"
+    episode = run_dir / "narrow_door-s1-bbbbbb-r1"
     assert (episode / RECORDING_FILE).exists()
     assert (episode / SCORE_FILE).exists()
+    assert (run_dir / "narrow_door-s1-bbbbbb-r1.rrd").read_bytes() == b"rrd"
     assert 'scene 1 {"door_width": 0.5} --set-x=1' in (episode / "run.log").read_text()
     assert not any((tmp_path / "recordings").iterdir())
-    assert (episode / REPLAY_FILE).read_bytes() == b"rrd"
     meta = json.loads((run_dir / RUN_FILE).read_text())
     assert meta["finished"] is True
     assert meta["episodes"] == 6
@@ -196,6 +196,13 @@ def test_stop_all_ends_an_episode_that_never_terminates(
     assert not worker.is_alive()
     assert results[0].error == "no terminal record"
     assert not _live
+
+
+def test_slots_are_exclusive_across_runners() -> None:
+    with _slot() as first, _slot() as second:
+        assert first != second
+    with _slot() as again:
+        assert again == first
 
 
 def test_cli_parses_seed_lists_and_overrides() -> None:

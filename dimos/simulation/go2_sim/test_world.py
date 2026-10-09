@@ -188,6 +188,12 @@ def test_reset_pose_moves_the_robot_through_the_sim_thread(scene: Scene) -> None
         world.stop()
 
 
+def test_joint_state_names_every_leg_joint(sim: Go2Sim) -> None:
+    positions, velocities = sim.robot.joint_state()
+    assert len(positions) == len(velocities) == len(sim.robot.policy.joint_names) == 12
+    assert positions == pytest.approx(sim.robot.policy.default_pose, abs=0.3)
+
+
 def test_contacts_are_republished_on_a_heartbeat() -> None:
     world = SimGo2World()
     world.cmd_vel.transport = LCMTransport("/test_go2_sim_world/cmd_vel_heartbeat", Twist)

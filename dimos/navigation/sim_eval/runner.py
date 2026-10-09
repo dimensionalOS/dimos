@@ -24,11 +24,12 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
+import fcntl
 import json
 import os
 from pathlib import Path
-import queue
 import re
 import shutil
 import signal
@@ -38,6 +39,7 @@ import threading
 import time
 
 from dimos.constants import STATE_DIR
+from dimos.core.coordination.blueprint_config.sources import configuration_environment
 from dimos.navigation.sim_eval.driver import TERMINAL_FILE
 from dimos.navigation.sim_eval.scorer import Recording, score
 from dimos.navigation.sim_eval.suite import Case, Manifest, Split, _git_state
@@ -46,14 +48,16 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 RUNS_DIR = STATE_DIR / "sim-eval"
+SLOTS_DIR = RUNS_DIR / "slots"
+MAX_SLOTS = 64
 RESULTS_FILE = "results.jsonl"
 RUN_FILE = "run.json"
 SCORE_FILE = "score.json"
 RECORDING_FILE = "memory.db"
-REPLAY_FILE = "episode.rrd"
+REPLAY_SUFFIX = ".rrd"
 RECORD_TOPICS = (
-    "ground_truth,odometry,tf,scene,contacts,goal,planner_path,path,cmd_vel,goal_reached,"
-    "lidar,local_map,surface_map"
+    "ground_truth,joint_state,odometry,tf,scene,contacts,goal,planner_path,path,cmd_vel,"
+    "goal_reached,lidar,local_map,surface_map"
 )
 LCM_PORT_BASE = 7800
 ZENOH_PORT_BASE = 7500
@@ -61,6 +65,7 @@ RERUN_PORT_BASE = 9900
 WEBSOCKET_PORT_BASE = 3100
 STOP_GRACE_S = 20.0
 RECORDING_LINE = re.compile(r"Recording to (\S+memory\.db)")
+POLICY_ENV = "SIMGO2WORLD__POLICY"
 
 _live: set[subprocess.Popen[bytes]] = set()
 _live_lock = threading.Lock()
@@ -88,6 +93,11 @@ class Episode:
     case: Case
     repeat: int
     dir: Path
+
+    @property
+    def replay(self) -> Path:
+        """The episode's rerun file, beside its directory so a run's files open together."""
+        return self.dir.with_suffix(REPLAY_SUFFIX)
 
 
 @dataclass
@@ -120,23 +130,17 @@ def run(config: RunConfig) -> Path:
     run_dir = config.out_dir or RUNS_DIR / time.strftime(f"%Y%m%d-%H%M%S-{manifest.suite}")
     run_dir.mkdir(parents=True, exist_ok=False)
     episodes = [
-        Episode(case, repeat, run_dir / "episodes" / case.id / f"r{repeat}")
+        Episode(case, repeat, run_dir / f"{case.id}-r{repeat}")
         for case in cases
         for repeat in range(config.repeats)
     ]
     _write_run(run_dir, config, manifest, len(episodes), finished=False)
     results = run_dir / RESULTS_FILE
     lock = threading.Lock()
-    slots: queue.Queue[int] = queue.Queue()
-    for slot in range(config.procs):
-        slots.put(slot)
 
     def one(episode: Episode) -> Result:
-        slot = slots.get()
-        try:
+        with _slot() as slot:
             result = _episode(config, manifest, episode, slot)
-        finally:
-            slots.put(slot)
         with lock, results.open("a") as out:
             out.write(json.dumps(asdict(result)) + "\n")
         logger.info(
@@ -169,6 +173,26 @@ def run(config: RunConfig) -> Path:
     return run_dir
 
 
+@contextmanager
+def _slot() -> Iterator[int]:
+    """A port slot no other runner on this machine holds, locked for the episode's lifetime."""
+    SLOTS_DIR.mkdir(parents=True, exist_ok=True)
+    for slot in range(MAX_SLOTS):
+        handle = (SLOTS_DIR / f"{slot}.lock").open("w")
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            handle.close()
+            continue
+        try:
+            yield slot
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+            handle.close()
+        return
+    raise RuntimeError(f"all {MAX_SLOTS} episode slots are held by running episodes")
+
+
 def stop_all() -> None:
     """Stop every episode process this runner has going."""
     with _live_lock:
@@ -190,16 +214,15 @@ def rescore(run_dir: Path) -> Path:
     results.unlink(missing_ok=True)
     with results.open("a") as out:
         for episode_dir in sorted(_episode_dirs(run_dir)):
-            case = cases[episode_dir.parent.name]
-            episode = Episode(case, int(episode_dir.name[1:]), episode_dir)
+            case_id, _, repeat = episode_dir.name.rpartition("-r")
+            episode = Episode(cases[case_id], int(repeat), episode_dir)
             terminal = _terminal(episode_dir)
             out.write(json.dumps(asdict(_score(manifest, episode, terminal))) + "\n")
     return results
 
 
 def _episode_dirs(run_dir: Path) -> Iterator[Path]:
-    for case_dir in (run_dir / "episodes").iterdir():
-        yield from (d for d in case_dir.iterdir() if d.is_dir())
+    return (d for d in run_dir.iterdir() if d.is_dir() and (d / TERMINAL_FILE).exists())
 
 
 def _write_run(
@@ -216,7 +239,7 @@ def _write_run(
         "repeats": config.repeats,
         "procs": config.procs,
         "overrides": list(config.overrides),
-        "policy": str(config.policy) if config.policy else None,
+        "policy": str(config.policy) if config.policy else _environment_policy(),
         "record_topics": config.record_topics,
         "viewer": config.viewer,
         "git_sha": sha,
@@ -252,7 +275,7 @@ def _episode(config: RunConfig, manifest: Manifest, episode: Episode, slot: int)
             _stop(process)
             with _live_lock:
                 _live.discard(process)
-    _collect_recording(log, episode.dir)
+    _collect_recording(log, episode)
     return _score(manifest, episode, _terminal(episode.dir))
 
 
@@ -293,6 +316,12 @@ def _command(config: RunConfig, episode: Episode, slot: int) -> list[str]:
     return [*command, *config.overrides]
 
 
+def _environment_policy() -> str | None:
+    """The world's policy as the environment or .env sets it for every dimos run, if at all."""
+    environment = configuration_environment(None)
+    return next((v for k, v in environment.items() if k.upper() == POLICY_ENV), None)
+
+
 def _environment(slot: int) -> dict[str, str]:
     """A private LCM multicast port for the slot. LCM reads this variable itself."""
     env = dict(os.environ)
@@ -312,8 +341,8 @@ def _stop(process: subprocess.Popen[bytes]) -> None:
         process.wait()
 
 
-def _collect_recording(log: Path, episode_dir: Path) -> None:
-    """Move the run's recording and rerun file next to its terminal record, found from the log."""
+def _collect_recording(log: Path, episode: Episode) -> None:
+    """Move the run's recording into the episode and its rerun file beside it, found from the log."""
     match = RECORDING_LINE.search(log.read_text(errors="replace"))
     if match is None:
         return
@@ -322,9 +351,9 @@ def _collect_recording(log: Path, episode_dir: Path) -> None:
         return
     for file in source.parent.iterdir():
         if file.name.startswith(RECORDING_FILE):
-            shutil.move(str(file), episode_dir / file.name)
+            shutil.move(str(file), episode.dir / file.name)
         elif file.name == "rerun.rrd":
-            shutil.move(str(file), episode_dir / REPLAY_FILE)
+            shutil.move(str(file), episode.replay)
     if not any(source.parent.iterdir()):
         source.parent.rmdir()
 

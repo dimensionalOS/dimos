@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import numpy as np
+from numpy.typing import NDArray
 import pytest
 
 from dimos.navigation.sim_eval.ground_truth import GO2, GroundTruth
@@ -51,12 +52,16 @@ def test_floor_is_ground_and_walls_and_the_outside_are_not(office_truth: GroundT
     assert gt.clearance[gt.index((1.0, 1.0))] == pytest.approx(1.0, abs=0.1)
 
 
-def test_route_through_the_office_stays_on_walkable_ground(office_truth: GroundTruth) -> None:
-    gt = office_truth
+def _far_goal(gt: GroundTruth) -> NDArray[np.float64]:
     far = np.unravel_index(
         np.argmax(np.where(gt.walkable, np.add.outer(*map(np.arange, gt.shape)), -1)), gt.shape
     )
-    goal = gt.center(*far)
+    return gt.center(*far)
+
+
+def test_route_through_the_office_stays_on_walkable_ground(office_truth: GroundTruth) -> None:
+    gt = office_truth
+    goal = _far_goal(gt)
     route = gt.route(gt.scene.start, goal)
     assert route is not None
     assert all(gt.stands(p) for p in route.points)
@@ -71,6 +76,26 @@ def test_route_through_the_office_stays_on_walkable_ground(office_truth: GroundT
     assert centered is not None
     assert centered.clearance.mean() >= route.clearance.mean()
     assert centered.length >= route.length
+
+
+def test_premap_cloud_is_what_the_lidar_sees_along_the_route(office_truth: GroundTruth) -> None:
+    gt = office_truth
+    goal = _far_goal(gt)
+    route = gt.route(gt.scene.start, goal, centered=True)
+    assert route is not None
+    cloud = gt.premap_cloud(route.points)
+    lo, hi = gt.scene.bounds()
+    assert len(cloud) > 20_000
+    assert np.all(cloud >= lo - gt.cell) and np.all(cloud <= hi + gt.cell)
+    z0 = gt.scene.params["z0"]
+    assert np.mean(np.abs(cloud[:, 2] - z0) < 0.05) > 0.1
+    assert np.any(cloud[:, 2] > z0 + 2.5)
+    near_route = np.min(
+        np.linalg.norm(cloud[:, None, :2] - route.points[None, ::20, :2], axis=2), axis=1
+    )
+    assert np.mean(near_route < 3.0) > 0.5
+    keys = np.unique(np.floor((cloud - lo) / gt.cell).astype(np.int64), axis=0)
+    assert len(keys) > 0.99 * len(cloud)
 
 
 def test_no_route_to_a_wall_or_an_unreachable_cell(office_truth: GroundTruth) -> None:

@@ -27,13 +27,14 @@ from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.navigation.sim_eval.driver import TERMINAL_FILE, EpisodeDriver
 from dimos.navigation.sim_eval.ground_truth import GroundTruth
 from dimos.navigation.sim_eval.suite import Case, Manifest, Rules
 from dimos.simulation.scenes.procedural import office
 
-RULES = Rules(stuck_s=1.0, stalled_s=1.0)
+RULES = Rules(premap="walk", stuck_s=1.0, stalled_s=1.0)
 
 
 class FakeWorld:
@@ -90,8 +91,7 @@ class FakeWorld:
         self._thread.join(timeout=2.0)
 
 
-@pytest.fixture(scope="module")
-def manifest_path(tmp_path_factory: pytest.TempPathFactory) -> Path:
+def _manifest(path: Path, rules: Rules) -> Path:
     scene = office(1)
     gt = GroundTruth(scene)
     start = (scene.start[0], scene.start[1], 0.0)
@@ -111,9 +111,18 @@ def manifest_path(tmp_path_factory: pytest.TempPathFactory) -> Path:
         route_length=route.length,
         scene_digest=scene.digest(),
     )
-    path = tmp_path_factory.mktemp("suite") / "suite.json"
-    Manifest("test", RULES, 0, None, False, [case], []).save(path)
+    Manifest("test", rules, 0, None, False, [case], []).save(path)
     return path
+
+
+@pytest.fixture(scope="module")
+def manifest_path(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    return _manifest(tmp_path_factory.mktemp("suite") / "suite.json", RULES)
+
+
+@pytest.fixture(scope="module")
+def seeded_manifest_path(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    return _manifest(tmp_path_factory.mktemp("seeded") / "suite.json", Rules(premap="seed"))
 
 
 def _driver(
@@ -128,6 +137,7 @@ def _driver(
         case_id="mined-s1-test",
         out_dir=out_dir,
         settle_s=0.2,
+        seed_settle_s=0.2,
         goal_resend_s=0.2,
         goal_wait_s=3.0,
     )
@@ -140,6 +150,8 @@ def _driver(
     driver.tele_cmd_vel.subscribe(world.on_teleop)
     clicks: list[PointStamped] = []
     driver.clicked_point.subscribe(clicks.append)
+    seeds: list[PointCloud2] = []
+    driver.loaded_map.subscribe(seeds.append)
     return (
         driver,
         world,
@@ -149,6 +161,7 @@ def _driver(
             "reached": reached,
             "commands": commands,
             "clicks": clicks,
+            "seeds": seeds,
         },
     )
 
@@ -192,6 +205,39 @@ def test_driver_premaps_resets_sends_the_goal_and_ends_on_arrival(
     assert record["premap_walked"] is True
     assert record["t0"] == pytest.approx(echo.ts)
     assert record["case_id"] == "mined-s1-test"
+
+
+def test_driver_seeds_the_map_instead_of_walking(
+    seeded_manifest_path: Path, tmp_path: Path
+) -> None:
+    driver, world, io = _driver(seeded_manifest_path, tmp_path, "seed")
+    teleops: list[Twist] = []
+    driver.tele_cmd_vel.subscribe(teleops.append)
+    world.start()
+    driver.start()
+    try:
+        deadline = time.time() + 30.0
+        while not io["clicks"] and time.time() < deadline:
+            time.sleep(0.05)
+        assert len(io["seeds"]) == 1
+        assert io["seeds"][0].frame_id == "odom"
+        assert len(io["seeds"][0].points_f32()) > 10_000
+        assert teleops == []
+        assert len(world.resets) == 1
+        click = io["clicks"][0]
+        io["goals"].publish(
+            PointStamped(click.x, click.y, click.z, ts=time.time(), frame_id="odom")
+        )
+        time.sleep(0.5)
+        io["reached"].publish(Bool(True))
+        record = _terminal(tmp_path, 5.0)
+    finally:
+        driver.stop()
+        world.stop()
+        _close(io)
+    assert record["reason"] == "arrived"
+    assert record["premap"] == "seed"
+    assert record["premap_points"] > 10_000
 
 
 def test_driver_reports_a_lost_goal(manifest_path: Path, tmp_path: Path) -> None:

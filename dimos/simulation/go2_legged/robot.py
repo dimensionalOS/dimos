@@ -152,6 +152,10 @@ class LeggedGo2:
     def base_pose(self) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
         return self.data.xpos[self.trunk].copy(), self.data.xmat[self.trunk].reshape(3, 3).copy()
 
+    def joint_state(self) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+        """Position and velocity of every leg joint, in the policy's joint order."""
+        return self.data.qpos[self._qpos_adr].copy(), self.data.qvel[self._dof_adr].copy()
+
     def base_velocity(self) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
         """Linear velocity in the world frame and angular velocity in the base frame."""
         return self.data.qvel[BASE_LINEAR_VELOCITY].copy(), self.data.qvel[

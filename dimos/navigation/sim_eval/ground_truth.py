@@ -34,12 +34,20 @@ from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components, dijkstra
 
 from dimos.robot.unitree.go2.constants import ROBOT_WIDTH
+from dimos.simulation.go2_sim.world import MOUNT_R, MOUNT_XYZ
 from dimos.simulation.scenes.mjcf import SCENE_GROUPS, add_boxes
 from dimos.simulation.scenes.procedural import WALL_THICKNESS, Box, Scene
+from dimos.simulation.sensors.mid360.lidar import SimMid360
+from dimos.simulation.sensors.mid360.pattern import POINT_RATE
 from dimos.simulation.sensors.mujoco_raycaster import MujocoRaycaster
 
 CELL = 0.05
 STEP_LIMIT = 0.2
+GO2_STAND_HEIGHT = 0.3
+PREMAP_STEP_M = 0.1
+PREMAP_SPEED = 0.5
+PREMAP_SEED = 0
+PROBE_GROUP = 5
 # the Mid-360 on its mount tops out near 0.55 m when the sim Go2 stands
 GO2_CLEARANCE_HEIGHT = 0.6
 CENTERING_CLEARANCE = 0.6
@@ -55,9 +63,12 @@ class Body:
     radius: float
     height: float
     step: float
+    stand: float
 
 
-GO2 = Body(radius=ROBOT_WIDTH / 2, height=GO2_CLEARANCE_HEIGHT, step=STEP_LIMIT)
+GO2 = Body(
+    radius=ROBOT_WIDTH / 2, height=GO2_CLEARANCE_HEIGHT, step=STEP_LIMIT, stand=GO2_STAND_HEIGHT
+)
 
 
 @dataclass(frozen=True)
@@ -92,6 +103,7 @@ class GroundTruth:
         lo, hi = scene.bounds()
         self.origin = (float(lo[0]), float(lo[1]))
         self.shape = (math.ceil((hi[0] - lo[0]) / cell), math.ceil((hi[1] - lo[1]) / cell))
+        self._probe = Probe(scene, body.height, cell / 4)
         self.height = self._ground(float(hi[2]), float(hi[2] - lo[2]))
         ground = self._reachable(np.isfinite(self.height), self.index(scene.start))
         self.clearance = ndimage.distance_transform_edt(ground) * cell
@@ -161,6 +173,28 @@ class GroundTruth:
                 hi = mid - 1
         return float(levels[lo])
 
+    def premap_cloud(self, route: NDArray[np.float64]) -> NDArray[np.float32]:
+        """What the body's Mid-360 returns walking the route, in the world frame.
+
+        One return per CELL voxel, the way a prior mapping run leaves them.
+        """
+        caster = MujocoRaycaster(self._probe.model, self._probe.data, SCENE_GROUPS)
+        lidar = SimMid360.go2(caster, PREMAP_SEED)
+        per_pose = int(POINT_RATE * PREMAP_STEP_M / PREMAP_SPEED)
+        hits = []
+        for position, rotation in sensor_poses(route, self.body.stand, PREMAP_STEP_M):
+            points = lidar.cast(position, rotation, per_pose)
+            hits.append(position + points.astype(np.float64) @ rotation.T)
+        points = np.concatenate(hits)
+        lo, _ = self.scene.bounds()
+        keys = np.floor((points - lo) / self.cell).astype(np.int64) + 1
+        side = int(keys.max()) + 1
+        _, first = np.unique(
+            (keys[:, 0] * side + keys[:, 1]) * side + keys[:, 2], return_index=True
+        )
+        cloud: NDArray[np.float32] = points[np.sort(first)].astype(np.float32)
+        return cloud
+
     def difficulty(self, route: Route) -> Difficulty:
         clutter = [box for box in self.scene.boxes if box.kind == "clutter"]
         return Difficulty(
@@ -172,7 +206,7 @@ class GroundTruth:
 
     def _ground(self, z_top: float, depth: float) -> NDArray[np.float64]:
         """Per column, the lowest surface with the body's headroom above it. The outside is not ground."""
-        probe = Probe(self.scene, self.body.height, self.cell / 4)
+        probe = self._probe
         caster = MujocoRaycaster(probe.model, probe.data, SCENE_GROUPS)
         height = np.full(self.shape, np.nan)
         origin = np.array([0.0, 0.0, z_top])
@@ -223,6 +257,25 @@ class GroundTruth:
         return np.concatenate(sources), np.concatenate(targets), np.concatenate(weights)
 
 
+def sensor_poses(
+    route: NDArray[np.float64], stand: float, step: float
+) -> list[tuple[NDArray[np.float64], NDArray[np.float64]]]:
+    """Mid-360 poses of a body walking the route, facing along it, one every step of arc length."""
+    arc = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(route, axis=0), axis=1))])
+    stops = np.minimum(np.arange(0.0, arc[-1] + step / 2, step), arc[-1])
+    bases = np.column_stack([np.interp(stops, arc, route[:, i]) for i in range(3)])
+    poses = []
+    for s, base in zip(stops, bases, strict=True):
+        k = int(np.clip(np.searchsorted(arc, s, side="right"), 1, len(route) - 1))
+        heading = route[k, :2] - route[k - 1, :2] if len(route) > 1 else np.array([1.0, 0.0])
+        yaw = math.atan2(heading[1], heading[0])
+        c, w = math.cos(yaw), math.sin(yaw)
+        rotation = np.array([[c, -w, 0.0], [w, c, 0.0], [0.0, 0.0, 1.0]])
+        position = base + [0.0, 0.0, stand] + rotation @ MOUNT_XYZ
+        poses.append((position, rotation @ MOUNT_R))
+    return poses
+
+
 class Probe:
     """A thin column standing on a point, which touches nothing when that point is ground."""
 
@@ -235,6 +288,7 @@ class Probe:
         geom.type = mujoco.mjtGeom.mjGEOM_BOX
         geom.size = (radius, radius, height / 2 - EPS)
         geom.pos = (0.0, 0.0, height / 2)
+        geom.group = PROBE_GROUP
         self.height = height
         self.model = spec.compile()
         self.data = mujoco.MjData(self.model)
