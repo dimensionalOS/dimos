@@ -140,7 +140,7 @@ jobs:
         run: |
           uv build packages/dimos-generated --wheel --out-dir wheelhouse
           uv venv build/message-smoke
-          uv pip install --python build/message-smoke/bin/python wheelhouse/dimos_generated-*.whl
+          uv pip install --python build/message-smoke/bin/python wheelhouse/dimos_generated-*.whl wheelhouse/dimos_message_build-*.whl
           build/message-smoke/bin/python -I .github/scripts/message_wheel_smoke.py
       - name: Build wheels
         uses: pypa/cibuildwheel@v4.2.0
