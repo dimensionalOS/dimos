@@ -22,6 +22,7 @@ PREVIEW_MAP_VOXEL = 0.1
 PREVIEW_MAP_POINTS = 40_000
 PREVIEW_SCAN_POINTS = 4_000
 PREVIEW_THUMB_PX = 320
+PREVIEW_JOY_SAMPLES = 1500  # joystick axes/buttons over time: confirms the controls were recorded
 PREVIEW_BAND = (-0.5, 2.0)  # metres around the robot's height; ceilings hide the floor plan
 WORLD_FRAMES = ("world", "map", "odom")
 
