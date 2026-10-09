@@ -19,6 +19,7 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import numpy as np
+import pytest
 
 from dimos.cloud import preview
 from dimos.cloud.constants import PREVIEW_SCALE
@@ -133,3 +134,16 @@ def test_joystick_samples_ride_along() -> None:
     ]
     bare = preview.build(store(odom=odom))
     assert bare is not None and bare["joy"] == [] and "joystick" not in bare["streams"]
+
+
+def test_joystick_is_capped_evenly(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(preview, "PREVIEW_JOY_SAMPLES", 3)
+    odom = [(100.0, PoseStamped(position=[0, 0, 0.3], frame_id="world"), None)]
+    sticks = [(100.0 + i, Joy(axes=[i / 10], buttons=[]), None) for i in range(10)]
+    doc = preview.build(store(odom=odom, joystick=sticks))
+    assert doc is not None and doc["streams"]["joystick"]["count"] == 10
+    assert [r[0] for r in doc["joy"]] == [0, 4, 9] and [r[1] for r in doc["joy"]] == [
+        [0.0],
+        [0.4],
+        [0.9],
+    ]
