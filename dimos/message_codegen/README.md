@@ -116,7 +116,7 @@ the current ten files are:
 | --- | ---: |
 | python.py | 163 |
 | cpp.py | 170 |
-| rust.py | 136 |
+| rust.py | 138 |
 | definitions.py | 193 |
 | generate.py | 99 |
 | templates/runtime.py | 383 |
@@ -124,7 +124,7 @@ the current ten files are:
 | templates/dimos_cdr.hpp | 71 |
 | templates/message_build.rs | 99 |
 | templates/idl_cdr.hpp.em | 8 |
-| Total, including both new helpers | 1378 |
+| Total, including both new helpers | 1380 |
 
 Counts include blank lines and comments. Tests, schema inputs, vendored sources
 and generated outputs are not counted as handwritten generator/runtime code.
