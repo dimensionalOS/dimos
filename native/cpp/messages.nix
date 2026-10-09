@@ -6,10 +6,14 @@ let
   python = pkgs.python3.withPackages (p: [
     p.pip p.setuptools p.wheel p.empy p.lark p.catkin-pkg p.pyyaml
   ]);
-  archives = builtins.mapAttrs (_: source: pkgs.fetchurl {
-    url = source.archive_url;
-    sha256 = source.archive_sha256;
-  }) lock.repositories;
+  archivePins = builtins.fromJSON (builtins.readFile ./source-archives.json);
+  archives = builtins.mapAttrs (name: source:
+    assert archivePins.${name}.revision == source.revision;
+    pkgs.fetchurl {
+      url = "https://codeload.github.com/${pkgs.lib.removePrefix "https://github.com/" (pkgs.lib.removeSuffix ".git" source.url)}/tar.gz/${source.revision}";
+      sha256 = archivePins.${name}.sha256;
+    }
+  ) lock.repositories;
   fastcdr = pkgs.fetchurl {
     url = lock.fastcdr.url;
     sha256 = lock.fastcdr.sha256;

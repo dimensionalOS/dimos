@@ -253,3 +253,14 @@ def test_full_upstream_serialization_and_fastcdr_sources_are_pinned():
         "sha256": "79d8466107dd6b7d1defe961c4aa31735038937cf9dd1175cf6b0da0df2209ab",
         "version": "2.4.0",
     }
+
+
+def test_nix_archive_pins_cover_the_shared_upstream_revisions():
+    root = Path(__file__).resolve().parents[2]
+    sources = json.loads((Path(__file__).parent / "native_sources.json").read_text())
+    archives = json.loads((root / "native/cpp/source-archives.json").read_text())
+    assert archives.keys() == sources["repositories"].keys()
+    for name, archive in archives.items():
+        assert archive["revision"] == sources["repositories"][name]["revision"]
+        assert len(archive["sha256"]) == 64
+        assert all(character in "0123456789abcdef" for character in archive["sha256"])

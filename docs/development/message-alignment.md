@@ -5,7 +5,7 @@ The distribution version comes from `packages/dimos-generated/pyproject.toml`.
 These are the inputs; installed packages and generated output are never used as
 the definition source for the alignment check.
 
-Python value classes, C++ headers/CMake sources, Rust crate sources, and complete
+Python imports/stubs, C++ ROSIDL source projects, Rust crate inputs, and complete
 schema closures are **checked in** under `packages/dimos-generated/src/`:
 
 ```text
