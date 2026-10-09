@@ -775,7 +775,7 @@ ignore = [
     "uv.lock",
     "*/uv.lock",
     # Deterministic source/schema snapshots checked by generate_builtin_messages.py --check.
-    "packages/dimos-generated/src/dimos_generated/_types.py",
+    "packages/dimos-generated/src/dimos_generated/_types.pyi",
     "packages/dimos-generated/src/dimos_generated_schemas/schemas.json",
     "packages/dimos-generated/src/dimos_generated_schemas/**/schemas.json",
     "packages/dimos-generated/src/dimos_generated_schemas/package/rust/build.rs",
