@@ -24,11 +24,12 @@ import pytest
 from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.sim_msgs.Contacts import Contact
+from dimos.msgs.sim_msgs.Contacts import Contact, Contacts
 from dimos.simulation.go2_legged.policy import OnnxGo2Policy
 from dimos.simulation.go2_legged.robot import CONTROL_DT
 from dimos.simulation.go2_sim.world import (
     CEILING_GROUP,
+    CONTACTS_HEARTBEAT_DT,
     FRAME_DT,
     LIDAR_GROUPS,
     MOUNT_R,
@@ -185,6 +186,23 @@ def test_reset_pose_moves_the_robot_through_the_sim_thread(scene: Scene) -> None
         assert first.ts > poses[0].ts
     finally:
         world.stop()
+
+
+def test_contacts_are_republished_on_a_heartbeat() -> None:
+    world = SimGo2World()
+    world.cmd_vel.transport = LCMTransport("/test_go2_sim_world/cmd_vel_heartbeat", Twist)
+    heard: list[Contacts] = []
+    world.contacts.subscribe(heard.append)
+    world.start()
+    try:
+        deadline = time.monotonic() + 10.0
+        while len(heard) < 3 and time.monotonic() < deadline:
+            time.sleep(0.05)
+    finally:
+        world.stop()
+    assert len(heard) >= 3
+    assert heard[-1].ts - heard[-2].ts == pytest.approx(CONTACTS_HEARTBEAT_DT, abs=0.1)
+    assert heard[-1].contacts == [Contact("foot", "floor")]
 
 
 def test_scene_edges_cover_every_box(scene: Scene) -> None:

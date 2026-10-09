@@ -71,6 +71,7 @@ class Rules:
     premapped: bool = True
     goal_xy_m: float = 0.5
     goal_z_m: float = 0.3
+    stand_height_m: float = 0.3
     timeout_s_per_m: float = 6.0
     timeout_base_s: float = 20.0
     fall_rad: float = 1.0
