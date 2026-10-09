@@ -591,7 +591,7 @@ def resolved(doc: dict[str, Any], registry: dict[str, str] | None = None) -> dic
     return out
 
 
-# ───────────────────────── generating annotations.json from annotations.yaml ─────────────────────────
+# Generate annotations from the source metadata.
 
 
 def load_source(path: Path = SOURCE_FILE) -> dict[str, Any]:
@@ -724,7 +724,7 @@ def generate(source: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-# ───────────────────────── keeping annotations.yaml current (like all_blueprints.py) ─────────────────────────
+# Keep generated metadata current.
 #
 # annotations.yaml is hand-edited, with comments, so it is never re-dumped: `updated_source` edits its text in place, only in
 # the parts it owns. The GlobalConfig catalog after GENERATED_MARK is rewritten whole; a blueprint the registry has in a
@@ -852,10 +852,22 @@ def stale_problems(doc: dict[str, Any] | None = None) -> list[str]:
 
     text = SOURCE_FILE.read_text()
     found = []
-    if updated_source(text, all_blueprints) != text:
+    updated = updated_source(text, all_blueprints)
+    if updated != text:
+        import difflib
+
+        difference = "".join(
+            difflib.unified_diff(
+                text.splitlines(keepends=True),
+                updated.splitlines(keepends=True),
+                fromfile=str(SOURCE_FILE),
+                tofile="generated",
+            )
+        )
         found.append(
             "experimental/gateway/annotations.yaml is out of date (a blueprint added or removed, or GlobalConfig changed): run "
-            "`python -m experimental.gateway.utils.robots --write`, then fill in any TODO it added"
+            "`python -m experimental.gateway.utils.robots --write`, then fill in any TODO it added\n"
+            + difference
         )
     if (doc if doc is not None else load()) != generate(load_source()):
         found.append(
