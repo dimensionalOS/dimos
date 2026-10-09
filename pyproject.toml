@@ -686,6 +686,8 @@ module = [
     "unitree_sdk2py.*",
     "viser",
     "viser.*",
+    "warp",
+    "warp.*",
     "unitree_webrtc_connect.*",
     "websocket",
     "xarm.*",

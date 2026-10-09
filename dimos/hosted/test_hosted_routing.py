@@ -33,6 +33,7 @@ import re
 import shutil
 import socket
 import subprocess
+import sys
 import time
 from typing import Any
 
@@ -221,6 +222,7 @@ def test_cross_host_stream_arrives_and_same_host_stream_stays_local(
     assert crossed < carried_locally / 20, (crossed, carried_locally)
 
 
+@pytest.mark.skipif(sys.platform == "darwin", reason="scouts multicast on Linux loopback")
 def test_hosts_scout_each_other_and_answer_probes(tmp_path: Path) -> None:
     from dimos.hosted.discovery import merge, probe_all, scouted_endpoints
 
