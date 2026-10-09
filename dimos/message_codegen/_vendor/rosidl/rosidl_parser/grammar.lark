@@ -1,0 +1,524 @@
+// Only implements the following parts of the spec:
+// 7.2.2 Comments
+// 7.2.3 Identifiers
+// 7.2.6 Literals
+// 7.3 Preprocessing
+//   only #include is supported
+// 7.4.1 Building Block Core Data Types
+// 7.4.15.4.2 Applying Annotations
+//   Only supported on modules, structs, members, enums and enum identifiers
+
+%import common.DECIMAL
+%import common.DIGIT
+%import common.FLOAT
+%import common.HEXDIGIT
+%import common.INT
+%import common.LETTER
+%import common.WS
+%ignore WS
+
+// Copied from lark-parser instead of imported so wide string doesn't match: `L   "white space between L and quote"`
+// https://github.com/lark-parser/lark/blob/953171821ed307f700fddf27f3fcb9483346bd46/lark/grammars/common.lark#L26-L29
+_STRING_INNER: /.*?/
+_STRING_ESC_INNER: _STRING_INNER /(?<!\\)(\\\\)*?/
+
+ESCAPED_STRING : "\"" _STRING_ESC_INNER "\""
+ESCAPED_WIDE_STRING: "L\"" _STRING_ESC_INNER "\""
+
+
+// 7.2.2 Comments
+COMMENT: "//" /[^\n]/*
+  | "/*" /(.|\n)+?/ "*/"
+%ignore COMMENT
+
+
+// 7.2.3 Identifiers
+IDENTIFIER: LETTER (LETTER | DIGIT | "_")*
+
+
+// 7.2.6 Literals
+
+// 7.2.6.1 Integer Literals
+integer_literal: decimal_literal
+  | octal_literal
+  | hexadecimal_literal
+decimal_literal: DIGIT
+  | "1".."9" DIGIT+
+octal_literal: "0" "0".."7"+
+hexadecimal_literal: "0x"i HEXDIGIT+
+
+// 7.2.6.2 Character Literals
+character_literal: "'" CHAR "'"
+wide_character_literal: "L'" CHAR "'"
+
+CHAR: CHAR_SPACE
+  | _CHARACTERS
+  | DIGIT
+  | _FORMATTING_CHARACTERS
+  | _ESCAPE_SEQUENCES
+  | _GRAPHIC_CHAR
+CHAR_SPACE: " "
+
+// Table 7-2: Characters
+_CHARACTERS: LETTER | /[ÃãÄäÅåÆæÇçÈèÉéÊêËëÌìÍíÎîÏïÑñÒòÓóÔôÕõÖöØøÙùÚúÛûÜüßÿ]/
+
+// Table 7-3: Decimal digits
+// DIGIT
+
+// Table 7-4: Graphic characters, missing: soft hyphen, vulgar fractions
+_GRAPHIC_CHAR: "!" | "\"" | "#" | "$" | "%" | "&" | "'" | "(" | ")" | "*" | "+" | "," | "-" | "." | "/" | ":" | ";" | "<" | "=" | ">" | "?" | "@" | "[" | "\\" | "]" | "^" | "_" | "`" | "{" | "|" | "}" | "~"
+| "¡" | "¢" | "£" | "¤" | "¥" | "¦" | "§" | " ̈ " | "©" | "a" | "«" | "¬" | "®" | " ̄" | "°" | "±" | "2" | "3" | " ́ " | "μ" | "¶" | "•" | " ̧ "| "1" | "o" | "»" | "¿" | "×" | "÷"
+
+// Table 7-5: Formatting characters, missing some uncommon ones
+_FORMATTING_CHARACTERS: "\t" | "\n" | "\r"
+
+// Table 7-9: Escape sequences
+_ESCAPE_SEQUENCES: "\\n" | "\\t" | "\\v" | "\\b" | "\\r" | "\\f" | "\\a" | "\\\\" | "\\?" | "\\'" | "\\\"" | "\\" "0".."7" "0".."7" | "\\x" HEXDIGIT HEXDIGIT | "\\" HEXDIGIT HEXDIGIT HEXDIGIT HEXDIGIT
+
+// 7.2.6.3 String Literals
+// adjacent string literals are concatenated
+string_literals: string_literal+
+wide_string_literals: wide_string_literal+
+string_literal: ESCAPED_STRING
+wide_string_literal: ESCAPED_WIDE_STRING
+
+// 7.2.6.4 Floating-point Literals
+floating_pt_literal: FLOAT
+
+// 7.2.6.5 Fixed-Point Literals
+fixed_pt_literal: DECIMAL "d"i
+  | INT "d"i
+
+
+// 7.3 Preprocessing
+include_directive: "#include" ("<" h_char_sequence ">" | "\"" q_char_sequence "\"")
+// Preprocessor spec - 5.8 Header names
+h_char_sequence: /[^>]+/
+q_char_sequence: /[^"]+/
+
+
+// 7.4.1 Building Block Core Data Types
+
+// (1)
+specification: definition+
+
+// (2)
+definition: module_dcl ";"
+  | const_dcl ";"
+  | type_dcl ";"
+  | include_directive
+
+// (3), 7.4.15.2
+module_dcl: annotation_appl* "module" IDENTIFIER "{" definition+ "}"
+
+// (4)
+scoped_name.1: IDENTIFIER
+  | scoped_name_separator IDENTIFIER
+  | scoped_name scoped_name_separator IDENTIFIER
+// separate rule to identify the separator
+scoped_name_separator: "::"
+
+// (5), 7.4.15.2
+const_dcl: annotation_appl* "const" const_type IDENTIFIER "=" const_expr
+
+// (6)
+const_type: integer_type
+  | floating_pt_type
+  | fixed_pt_const_type
+  | char_type
+  | wide_char_type
+  | boolean_type
+  | octet_type
+  | string_type
+  | wide_string_type
+  | scoped_name
+
+// (7)
+const_expr: or_expr
+
+// (8)
+or_expr: xor_expr
+  | or_expr "|" xor_expr
+
+// (9)
+xor_expr: and_expr
+  | xor_expr "^" and_expr
+
+// (10)
+and_expr: shift_expr
+  | and_expr "&" shift_expr
+
+// (11)
+shift_expr: add_expr
+  | shift_expr ">>" add_expr
+  | shift_expr "<<" add_expr
+
+// (12)
+add_expr: mult_expr
+  | add_expr "+" mult_expr
+  | add_expr "-" mult_expr
+
+// (13)
+mult_expr: unary_expr
+  | mult_expr "*" unary_expr
+  | mult_expr "/" unary_expr
+  | mult_expr "%" unary_expr
+
+// (14)
+unary_expr: unary_operator primary_expr
+  | primary_expr
+
+// (15)
+unary_operator: unary_operator_minus
+  | unary_operator_plus
+  | unary_operator_tilde
+// separate rules to identify the unary operator
+unary_operator_minus: "-"
+unary_operator_plus: "+"
+unary_operator_tilde: "~"
+
+// (16)
+primary_expr: scoped_name
+  | literal
+  | "(" const_expr ")"
+
+// (17)
+literal.2: integer_literal
+  | floating_pt_literal
+  | fixed_pt_literal
+  | character_literal
+  | wide_character_literal
+  | boolean_literal
+  | string_literals
+  | wide_string_literals
+
+// (18)
+boolean_literal: boolean_literal_true
+  | boolean_literal_false
+// separate rules to identify the boolean literal
+boolean_literal_true: "TRUE"
+boolean_literal_false: "FALSE"
+
+// (19)
+positive_int_const: const_expr
+
+// (20)
+type_dcl: constr_type_dcl
+  | typedef_dcl
+//  | native_dcl
+
+// (21), (216)
+type_spec: simple_type_spec
+  | template_type_spec
+
+// (22)
+simple_type_spec: base_type_spec
+  | scoped_name
+
+// (23)
+base_type_spec.2: integer_type
+  | floating_pt_type
+  | char_type
+  | wide_char_type
+  | boolean_type
+  | octet_type
+
+// (24)
+floating_pt_type.2: floating_pt_type_float
+  | floating_pt_type_double
+  | floating_pt_type_long_double
+// separate rules to identify the floating point type
+floating_pt_type_float: "float"
+floating_pt_type_double: "double"
+floating_pt_type_long_double: "long" "double"
+
+// (25)
+integer_type.2: signed_int
+  | unsigned_int
+
+// (26), (206)
+signed_int: signed_short_int
+  | signed_long_int
+  | signed_longlong_int
+  | signed_tiny_int
+
+// (27), (210)
+signed_short_int: "short"
+  | "int16"
+
+// (28), (211)
+signed_long_int: "long"
+  | "int32"
+
+// (29), (212)
+signed_longlong_int: "long" "long"
+  | "int64"
+
+// (30), (207)
+unsigned_int: unsigned_short_int
+  | unsigned_long_int
+  | unsigned_longlong_int
+  | unsigned_tiny_int
+
+// (31), (213)
+unsigned_short_int: "unsigned" "short"
+  | "uint16"
+
+// (32), (214)
+unsigned_long_int: "unsigned" "long"
+  | "uint32"
+
+// (33), (215)
+unsigned_longlong_int: "unsigned" "long" "long"
+  | "uint64"
+
+// (34)
+char_type.2: "char"
+
+// (35)
+wide_char_type.2: "wchar"
+
+// (36)
+boolean_type.2: "boolean"
+
+// (37)
+octet_type.2: "octet"
+
+// (38)
+template_type_spec.2: sequence_type
+  | string_type
+  | wide_string_type
+  | fixed_pt_type
+
+// (39)
+sequence_type: "sequence" "<" type_spec "," positive_int_const ">"
+  | "sequence" "<" type_spec ">"
+
+// (40)
+string_type.2: "string" "<" positive_int_const ">"
+  | "string"
+
+// (41)
+wide_string_type.2: "wstring" "<" positive_int_const ">"
+  | "wstring"
+
+// (42)
+fixed_pt_type: "fixed" "<" positive_int_const "," positive_int_const ">"
+
+// (43)
+fixed_pt_const_type.2: "fixed"
+
+// (44)
+constr_type_dcl: struct_dcl
+  | enum_dcl
+//  | union_dcl
+
+// (45)
+struct_dcl: struct_def
+  | struct_forward_dcl
+
+// (46), 7.4.15.2
+struct_def: annotation_appl* "struct" IDENTIFIER "{" member+ "}"
+
+// (47), 7.4.15.2
+member: annotation_appl* type_spec declarators ";"
+
+// (48)
+struct_forward_dcl: "struct" IDENTIFIER
+
+// (49)
+//union_dcl: union_def
+//  | union_forward_dcl
+
+// (50)
+//union_def: "union" IDENTIFIER "switch" "(" switch_type_spec ")" "{" switch_body "}"
+
+// (51)
+switch_type_spec: integer_type
+  | char_type
+  | boolean_type
+  | scoped_name
+
+// (52)
+switch_body: case+
+
+// (53)
+case: case_label+ element_spec ";"
+
+// (54)
+case_label: "case" const_expr ":"
+  | "default" ":"
+
+// (55)
+element_spec: type_spec declarator
+
+// (56)
+//union_forward_dcl: "union" IDENTIFIER
+
+// (57)
+enum_dcl: annotation_appl* "enum" IDENTIFIER "{" enumerator ("," enumerator)* "}"
+
+// (58)
+enumerator: annotation_appl* IDENTIFIER
+
+// (59)
+array_declarator: IDENTIFIER fixed_array_size+
+
+// (60)
+fixed_array_size: "[" positive_int_const "]"
+
+// (61)
+//native_dcl: "native" simple_declarator
+
+// (62)
+simple_declarator: IDENTIFIER
+
+// (63)
+typedef_dcl: "typedef" type_declarator
+
+// (64)
+type_declarator: (simple_type_spec | template_type_spec | constr_type_dcl) any_declarators
+
+// (65)
+any_declarators: any_declarator ("," any_declarator)*
+
+// (66)
+any_declarator: simple_declarator
+  | array_declarator
+
+// (67)
+declarators: declarator ("," declarator)*
+
+// (68), (217)
+declarator: simple_declarator
+  | array_declarator
+
+
+// 7.4.2 Building Block Any
+
+// (69)
+//‎ base_type_spec:+ any_type
+// (70)
+// ‎any_type: "any"
+
+
+// 7.4.3 Building Block Interfaces – Basic
+// ...
+
+
+// 7.4.4 Building Block Interfaces – Full
+// ...
+
+// 7.4.5 Building Block Value Types
+// ...
+
+// 7.4.6 Building Block CORBA-Specific – Interfaces
+// ...
+
+// 7.4.7 Building Block CORBA-Specific – Value Types
+// ...
+
+// 7.4.8 Building Block Components – Basic
+// ...
+
+// 7.4.9 Building Block Components – Homes
+// ...
+
+// 7.4.10 Building Block CCM-Specific
+// ...
+
+// 7.4.11 Building Block Components – Ports and Connectors
+// ...
+
+// 7.4.12 Building Block Template Modules
+// ...
+
+
+// 7.4.13 Building Block Extended Data-Types
+
+// (195)
+//struct_def:+ "struct" IDENTIFIER ":" scoped_name "{" member* "}" | "struct" identifier "{" "}"
+// (196)
+//switch_type_spec:+ wide_char_type | octet_type
+// (197)
+//template_type_spec:+ map_type
+// (198)
+//constr_type_dcl:+ bitset_dcl | bitmask_dcl
+// (199)
+//map_type: "map" "" type_spec "," type_spec "," positive_int_const "" | "map" "" type_spec "," type_spec ""
+// (200)
+//bitset_dcl: "bitset" identifier [":" scoped_name] "{" bitfield* "}"
+// (201)
+//bitfield: bitfield_spec identifier* ";"
+// (202)
+//bitfield_spec: "bitfield" "" positive_int_const "" | "bitfield" "" positive_int_const "," destination_type ""
+// (203)
+//destination_type: boolean_type | octet_type | integer_type
+// (204)
+//bitmask_dcl: "bitmask" identifier "{" bit_value { "," bit_value }* "}"
+// (205)
+//bit_value: identifier
+// (206) appended to (26)
+//signed_int:+ signed_tiny_int
+// (207) appended to (30)
+//unsigned_int:+ unsigned_tiny_int
+// (208)
+signed_tiny_int: "int8"
+// (209)
+unsigned_tiny_int: "uint8"
+// (210) appended to (27)
+//signed_short_int:+ "int16"
+// (211) appended to (28)
+//signed_long_int:+ "int32"
+// (212) appended to (29)
+//signed_longlong_int:+ "int64"
+// (213) appended to (31)
+//unsigned_short_int:+ "uint16"
+// (214) appended to (32)
+//unsigned_long_int:+ "uint32"
+// (215) appended to (33)
+//unsigned_longlong_int:+ "uint64"
+
+
+// 7.4.14 Building Block Anonymous Types
+// ...
+
+
+// 7.4.15 Building Block Annotations
+
+// 7.4.15.4.1 Defining Annotations
+
+// (218) should be appended to (2)
+//definition: annotation_dcl ";"
+
+// (219)
+//annotation_dcl: annotation_header "{" annotation_body "}"
+
+// (220)
+//annotation_header: "@annotation" IDENTIFIER
+
+// (221)
+//annotation_body: (annotation_member | enum_dcl ";" | const_dcl ";" | typedef_dcl ";")*
+
+// (222)
+//annotation_member: annotation_member_type simple_declarator [ "default" const_expr ] ";"
+
+// (223)
+//annotation_member_type: const_type
+//  | any_const_type
+//  | scoped_name
+
+// (224)
+//any_const_type: "any"
+
+// 7.4.15.4.2 Applying Annotations
+
+// (225)
+annotation_appl: "@" scoped_name [ "(" annotation_appl_params ")" ]
+
+// (226)
+annotation_appl_params: const_expr
+  | annotation_appl_param ("," annotation_appl_param)*
+
+// (227)
+annotation_appl_param: IDENTIFIER "=" const_expr

@@ -1,0 +1,117 @@
+{
+  "repository": "https://github.com/ros2/rosidl",
+  "revision": "85fa592b698b0f665e3120f48fac0d35e2f7d8a4",
+  "patch": "Relocate Python imports into the vendored namespace; reuse the existing pinned rosidl_adapter parser. No generator templates or type/default rules changed.",
+  "files": {
+    "rosidl_adapter/__init__.py": {
+      "source": "rosidl_adapter/rosidl_adapter/__init__.py",
+      "upstream_sha256": "fb45e9222e2aec473c3aec8cf986830cc1e8093ddce28773e6012917b3ddc43e",
+      "sha256": "9bb9855a90b8fe146615d9564eac147fc82c68f818c7ca9ff0927c964b727898"
+    },
+    "rosidl_adapter/msg/__init__.py": {
+      "source": "rosidl_adapter/rosidl_adapter/msg/__init__.py",
+      "upstream_sha256": "8c2176b4c06a1f3e9926887abf85bb978d86bd1702f026b8c4591228534fbfd6",
+      "sha256": "e1b81977d953b8d8b4e131d271b8cb0cf25c830a456e519636e311d1b56c55eb"
+    },
+    "rosidl_adapter/resource/__init__.py": {
+      "source": "rosidl_adapter/rosidl_adapter/resource/__init__.py",
+      "upstream_sha256": "95fedb5dde3727364770d7b0f899f90f5faeecbc2e3ad5386061b3252799435a",
+      "sha256": "95fedb5dde3727364770d7b0f899f90f5faeecbc2e3ad5386061b3252799435a"
+    },
+    "rosidl_adapter/resource/msg.idl.em": {
+      "source": "rosidl_adapter/rosidl_adapter/resource/msg.idl.em",
+      "upstream_sha256": "a88137989991e2565b1e24acee0c4df1b0f48d14c2be566c54c28fa6957ed828",
+      "sha256": "b7ba2612529e499d4473c01c177f96eeeeb3ccbaf2b9e89a2d1ef47374baf3fd"
+    },
+    "rosidl_adapter/resource/struct.idl.em": {
+      "source": "rosidl_adapter/rosidl_adapter/resource/struct.idl.em",
+      "upstream_sha256": "cb06fbf7f471d418bc179a79509ef612549c05ca4ffc4a3bed4f6aea452f14ac",
+      "sha256": "ef4635f84d78b57bed03d1f3dc866854a7b2812c1ecb3a3c82bad3be5aac5c82"
+    },
+    "rosidl_parser/__init__.py": {
+      "source": "rosidl_parser/rosidl_parser/__init__.py",
+      "upstream_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "rosidl_parser/definition.py": {
+      "source": "rosidl_parser/rosidl_parser/definition.py",
+      "upstream_sha256": "6d882e25ad6f59476839928e36b2ba05ab297ed24593af9654eba5ce9cfa1cd2",
+      "sha256": "6d882e25ad6f59476839928e36b2ba05ab297ed24593af9654eba5ce9cfa1cd2"
+    },
+    "rosidl_parser/grammar.lark": {
+      "source": "rosidl_parser/rosidl_parser/grammar.lark",
+      "upstream_sha256": "74fbcb06037699e88592c6795c066535dad2b40cf06414551c64416867343f65",
+      "sha256": "74fbcb06037699e88592c6795c066535dad2b40cf06414551c64416867343f65"
+    },
+    "rosidl_parser/parser.py": {
+      "source": "rosidl_parser/rosidl_parser/parser.py",
+      "upstream_sha256": "3ae02585b726a5a54038d8f7d1f0730090af320bea52b0935c624423566f298e",
+      "sha256": "70afaf3184dc1d62e8667fa1db5fc1d77f9f04d41149dd6baeb3e2a3f96ec452"
+    },
+    "rosidl_pycommon/__init__.py": {
+      "source": "rosidl_pycommon/rosidl_pycommon/__init__.py",
+      "upstream_sha256": "d0fc43457e82bc442010af4e84f87d9d56390c6faf16cae9313493dd1496de47",
+      "sha256": "d4b2bc254e348679a2ef9e35b4f844e13d7ff3cf31038f4f467fa1d7185cf189"
+    },
+    "rosidl_generator_cpp/__init__.py": {
+      "source": "rosidl_generator_cpp/rosidl_generator_cpp/__init__.py",
+      "upstream_sha256": "8205243d3d377b5b56d30c1a5429386034607e6d2a7b54d4f053439f1d72a316",
+      "sha256": "006e549d4315f28e2925794212573aa97d83da343e000bed2be7a42757cc188c"
+    },
+    "rosidl_generator_cpp/resource/idl__struct.hpp.em": {
+      "source": "rosidl_generator_cpp/resource/idl__struct.hpp.em",
+      "upstream_sha256": "c652928b33243fc1744ba0fd8a8b474e7aa71f3919a79733c206d74fa81224e8",
+      "sha256": "45ecf5dee725d81e618f0222b01d416d365e62ad2d20a4808b502c704814ede8"
+    },
+    "rosidl_generator_cpp/resource/msg__struct.hpp.em": {
+      "source": "rosidl_generator_cpp/resource/msg__struct.hpp.em",
+      "upstream_sha256": "fbcb625ebfafb3313cf9999cbe45b061c2867bff6a45ad84177d063258850488",
+      "sha256": "f8204e681ea31f52065d60e97a1de7978bdc0240857d66b18d5579f8083d17ba"
+    },
+    "include/rosidl_runtime_cpp/bounded_vector.hpp": {
+      "source": "rosidl_runtime_cpp/include/rosidl_runtime_cpp/bounded_vector.hpp",
+      "upstream_sha256": "51bb701b7a8208064ac39b8d7f089c15043d503cda2241b8193b081af9df8808",
+      "sha256": "51bb701b7a8208064ac39b8d7f089c15043d503cda2241b8193b081af9df8808"
+    },
+    "include/rosidl_runtime_cpp/message_initialization.hpp": {
+      "source": "rosidl_runtime_cpp/include/rosidl_runtime_cpp/message_initialization.hpp",
+      "upstream_sha256": "f687d74de409df8c9a41a449416b74d5ab25744926db44eca5328484b37128e5",
+      "sha256": "f687d74de409df8c9a41a449416b74d5ab25744926db44eca5328484b37128e5"
+    },
+    "include/rosidl_runtime_c/message_initialization.h": {
+      "source": "rosidl_runtime_c/include/rosidl_runtime_c/message_initialization.h",
+      "upstream_sha256": "3ff6850b4fc347fc063e198e44075c22169de165706e94b6c7b35c3e938b285b",
+      "sha256": "3ff6850b4fc347fc063e198e44075c22169de165706e94b6c7b35c3e938b285b"
+    },
+    "notices/rosidl_adapter/package.xml": {
+      "source": "rosidl_adapter/package.xml",
+      "upstream_sha256": "653c797d2b4e2f5e6ad7b18812632bf6bf55aa924dfbca0405439389a5273989",
+      "sha256": "653c797d2b4e2f5e6ad7b18812632bf6bf55aa924dfbca0405439389a5273989"
+    },
+    "notices/rosidl_parser/package.xml": {
+      "source": "rosidl_parser/package.xml",
+      "upstream_sha256": "3973858ea09c6fb21b25a670201ab88ed46a998064ceac0e354335f3099fb739",
+      "sha256": "3973858ea09c6fb21b25a670201ab88ed46a998064ceac0e354335f3099fb739"
+    },
+    "notices/rosidl_pycommon/package.xml": {
+      "source": "rosidl_pycommon/package.xml",
+      "upstream_sha256": "5af29a56018307a6d96632a5a94b9798ee4668983a214b21012f81a3e7fb5dd2",
+      "sha256": "5af29a56018307a6d96632a5a94b9798ee4668983a214b21012f81a3e7fb5dd2"
+    },
+    "notices/rosidl_generator_cpp/package.xml": {
+      "source": "rosidl_generator_cpp/package.xml",
+      "upstream_sha256": "437b8959dd48fb8a71521044f563947b9d1f290ea49e2a3ba000c4921921462a",
+      "sha256": "437b8959dd48fb8a71521044f563947b9d1f290ea49e2a3ba000c4921921462a"
+    },
+    "notices/rosidl_runtime_cpp/package.xml": {
+      "source": "rosidl_runtime_cpp/package.xml",
+      "upstream_sha256": "3a255de08073bd9b42e9b2509fe5d0db7e7f448467877715fc277f4144ce5d8f",
+      "sha256": "3a255de08073bd9b42e9b2509fe5d0db7e7f448467877715fc277f4144ce5d8f"
+    },
+    "notices/rosidl_runtime_c/package.xml": {
+      "source": "rosidl_runtime_c/package.xml",
+      "upstream_sha256": "3fa7043a7d337c9dd27aeb976684d84750cb15df01f1606207f3e01b6485fc64",
+      "sha256": "3fa7043a7d337c9dd27aeb976684d84750cb15df01f1606207f3e01b6485fc64"
+    }
+  }
+}

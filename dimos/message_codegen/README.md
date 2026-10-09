@@ -82,3 +82,34 @@ normal Python checkout installation does not.
 This layer supplies the complete bundled message catalog and distributable
 generated packages. The preceding generator layer uses only explicit fixture
 roots; transport integration belongs to the runtime layer.
+## Upstream generation and remaining adapters
+
+Python class declarations, annotations and constants come from pinned rosbags
+0.11.0 `generate_python_code`, not a DimOS field-to-Python type emitter. A small
+AST adapter attaches the existing Message base and maps array annotations to the
+owned Sequence API. Standard dataclasses supply equality and representation.
+The adapter preserves upstream generated-code attribution.
+
+Rosbags does not preserve declared field defaults in its emitted dataclasses.
+The Message/Sequence runtime still supplies those defaults, constructor and
+assignment validation, dependency-owned nested values, read-only borrowed views
+and resize guards. Its malformed-input precheck still traverses CDR layout; it
+must not be described as entirely library-owned serialization validation.
+
+C++ struct declarations, constructors, default values, constants, equality and
+field types now come from the pinned upstream Jazzy `rosidl_generator_cpp`, using
+`rosidl_adapter` for MSG-to-IDL conversion. Vendored upstream resources have a
+separate revision/hash manifest under `_vendor/rosidl`; namespace relocation is
+recorded. EmPy 4.2 and Lark 1.2.2 are build-time Python dependencies. Generated
+headers include the minimal upstream runtime declarations, so consumers need no
+ROS installation. DimOS still supplies metadata, validation and Fast CDR field
+visitation. Bounded-vector adaptation currently copies through a standard vector;
+this is not claimed as zero-copy.
+
+The Rust emitter has not yet been replaced. Actual compatibility probes
+found that Fast-DDS-Gen 4.3.0 rejects array `@default({...})`, while ros2msg 0.5.3
+emits uncompilable string and floating-array defaults for the existing Telemetry
+fixture. ROS Jazzy's C++ generator does preserve these defaults and public fields;
+its types compile using only packaged runtime headers, without a ROS installation.
+The bounded-vector codec adapter passes the same conformance checks. These are isolated
+integration gaps, not evidence that an entire custom generator is necessary.

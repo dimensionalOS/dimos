@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from hashlib import sha256
+import json
 from pathlib import Path
 
 import pytest
@@ -149,3 +151,11 @@ def test_all_bundled_schemas_resolve():
         for message in closure
         for dependency in message.dependencies
     )
+
+
+def test_upstream_generator_sources_match_recorded_hashes():
+    root = Path(__file__).parent / "_vendor" / "rosidl"
+    manifest = json.loads((root / "sources.json").read_text())
+    assert manifest["revision"] == "85fa592b698b0f665e3120f48fac0d35e2f7d8a4"
+    for name, source in manifest["files"].items():
+        assert sha256((root / name).read_bytes()).hexdigest() == source["sha256"], name
