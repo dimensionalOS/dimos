@@ -47,8 +47,6 @@ import copy
 from dataclasses import dataclass, field, replace
 import functools
 import importlib.util
-import json
-import math
 from pathlib import Path
 import threading
 import time
@@ -62,12 +60,10 @@ from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.utils.generic import finite_number
 from dimos.utils.logging_config import setup_logger
-from dimos.web.codecs import EncodedPayload, PublishContext, encoder_definition
+from dimos.web.codecs import EncodedPayload, encoder_definition
 
 # Imported for its registration side effect: the built-in encoders must be in
 # the codec registry wherever this module runs (parent and worker).
@@ -78,14 +74,11 @@ from dimos.web.relay_bridge.locate import find_web_dir
 from dimos.web.relay_bridge.manifest import TRACK_ENCODING, parse_manifest
 from dimos.web.relay_bridge.pacing import FrameMeta, PacedSender, Sender, passes_rate_gate
 from dimos.web.relay_bridge.protocol import (
-    MAX_REQUEST_ID_LEN,
     MAX_RTC_TRACKS,
     ChannelSpec,
     DataFrame,
     IceServer,
     Msg,
-    PubAck,
-    PubNack,
     RobotInfo,
     RobotManifest,
     RtcAnswer,
@@ -98,7 +91,9 @@ from dimos.web.relay_bridge.protocol import (
     TeleopStop as WireTeleopStop,
     Twist as WireTwist,
 )
+from dimos.web.relay_bridge.publish import PublishHandler
 from dimos.web.relay_bridge.relay_process import RelayProcess, ensure_web_dist, probe_local_port
+from dimos.web.relay_bridge.teleop import Teleop, resolve_teleop_params
 from dimos.web.relay_bridge.wt_client import (
     RelayClient,
     RelayInfo,
@@ -133,10 +128,6 @@ _CHILD_POLL_S = 1.0
 # dies within the SIGTERM-to-SIGKILL grace; this adds a margin on top).
 _BUILD_CANCEL_WAIT_S = 8.0
 
-# Deadman poll granularity; small against the default 300 ms watchdog window
-# so the zero lands close to the deadline.
-_TELEOP_POLL_S = 0.05
-
 # Per-channel floor between "encoder failed" logs (a broken encoder on a
 # 30 Hz stream must not flood the log).
 _ENCODE_ERROR_LOG_S = 5.0
@@ -147,24 +138,6 @@ _ENCODE_ERROR_LOG_S = 5.0
 _RTC_ANSWER_TIMEOUT_S = 15.0
 _RTC_RETRY_BASE_S = 2.0
 _RTC_RETRY_MAX_S = 30.0
-
-
-@dataclass(frozen=True)
-class _TeleopParams:
-    """Teleop tx channel params resolved at start (manifest, with defaults)."""
-
-    max_linear: float
-    max_angular: float
-    boost: float
-    watchdog_s: float
-
-
-# Manifest param keys and their defaults (matching the Teleop panel's).
-_TELEOP_PARAM_DEFAULTS = {"maxLinear": 0.8, "maxAngular": 1.0, "boost": 2.0, "watchdogMs": 300.0}
-
-
-def _clamp(value: float, bound: float) -> float:
-    return max(-bound, min(bound, value))
 
 
 async def _blocking_call(func: Callable[..., _T], *args: Any) -> _T:
@@ -200,74 +173,6 @@ async def _cancel_task(task: asyncio.Task[None] | None, name: str) -> None:
     except Exception:
         # A task that already died re-raises here; teardown must continue.
         logger.exception(f"relay bridge {name} task failed during teardown")
-
-
-def _matches_message_type(value: Any, message_type: type[Any]) -> bool:
-    """Decoded-result check with JSON's number/bool subtleties: bool is exact
-    (Python bool subclasses int), int excludes bool, float accepts int (JSON
-    has one number type) but not bool."""
-    if message_type is bool:
-        return isinstance(value, bool)
-    if message_type is int:
-        return isinstance(value, int) and not isinstance(value, bool)
-    if message_type is float:
-        return isinstance(value, (int, float)) and not isinstance(value, bool)
-    return isinstance(value, message_type)
-
-
-# Publish values nesting deeper than this are rejected before json.loads; the
-# SDK enforces the same cap, so both ends agree on what "too deep" means.
-_MAX_PUB_DEPTH = 100
-
-
-def _pub_depth_ok(payload: bytes) -> bool:
-    """True when the JSON payload's bracket nesting stays within
-    _MAX_PUB_DEPTH (string contents are skipped, so braces in text never
-    count). Keeps deep-but-valid JSON from reaching json.loads, whose own
-    depth bound is a RecursionError near the interpreter limit."""
-    depth = 0
-    in_string = False
-    escaped = False
-    for byte in payload:
-        if in_string:
-            if escaped:
-                escaped = False
-            elif byte == 0x5C:  # backslash
-                escaped = True
-            elif byte == 0x22:  # quote
-                in_string = False
-        elif byte == 0x22:  # quote
-            in_string = True
-        elif byte in (0x5B, 0x7B):  # [ {
-            depth += 1
-            if depth > _MAX_PUB_DEPTH:
-                return False
-        elif byte in (0x5D, 0x7D):  # ] }
-            depth -= 1
-    return True
-
-
-def _parse_pub_meta(meta: dict[str, Any] | None) -> tuple[str, str, float, float | None] | None:
-    """(request id, principal, relayTs, clientTs) from a publish frame's
-    relay-stamped meta; None when the shape is unusable (a compliant relay
-    never produces one)."""
-    if not isinstance(meta, dict):
-        return None
-    request_id = meta.get("id")
-    principal = meta.get("principal")
-    relay_ts = meta.get("relayTs")
-    client_ts = meta.get("clientTs")
-    if not isinstance(request_id, str) or not 1 <= len(request_id) <= MAX_REQUEST_ID_LEN:
-        return None
-    if not isinstance(principal, str):
-        return None
-    if isinstance(relay_ts, bool) or not isinstance(relay_ts, (int, float)):
-        return None
-    if client_ts is not None and (
-        isinstance(client_ts, bool) or not isinstance(client_ts, (int, float))
-    ):
-        return None
-    return request_id, principal, float(relay_ts), None if client_ts is None else float(client_ts)
 
 
 @dataclass(slots=True)
@@ -330,9 +235,9 @@ class RelayBridgeModule(Module):
         self._robot_info: RobotInfo | None = None
         self._manifest: RobotManifest | None = None
         self._channel_specs: tuple[RuntimeChannelSpec, ...] = ()
-        # Generic-publish tx specs by channel id (decoder resolved); the rx
-        # machinery (_reconcile, rate gates, encode counters) never sees them.
-        self._pub_specs: dict[str, RuntimeChannelSpec] = {}
+        # Viewer publishes on tx channels (decoder resolved); the rx machinery
+        # (_reconcile, rate gates, encode counters) never sees them.
+        self._publish: PublishHandler | None = None
         self._min_interval: dict[str, float] = {}
         self._last_input: dict[str, float] = {}
         # Last "encoder failed" log time per channel: a broken encoder on a
@@ -344,25 +249,12 @@ class RelayBridgeModule(Module):
         # reconnect replays too. Pins the full grid (MBs, one per channel);
         # encoding stays lazy.
         self._last_msg: dict[str, tuple[Any, float]] = {}
-        # Teleop state, all touched on the module loop only. None params =
-        # the manifest advertises no teleop channel; every teleop message is
-        # then ignored. `driving` implements the release-edge rule: publish
-        # a zero only after a nonzero (MovementManager cancels the nav goal
-        # on EVERY teleop message, so idle zeros must never repeat).
-        self._teleop_params: _TeleopParams | None = None
-        self._teleop_driving = False
-        # Lease-generation floor (relay-stamped, monotonic in a session):
-        # anything below it is voided permanently, so a released holder's
-        # delayed datagrams cannot restart motion after a stop.
-        self._teleop_gen: int | float = -math.inf
-        self._teleop_last_seq = -math.inf
-        self._teleop_last_rx = 0.0
+        # None: the manifest advertises no teleop channel, so every teleop
+        # message is ignored.
+        self._teleop: Teleop | None = None
         # Live-path encode counters, keyed by the advertised rx channels at
         # start (main() fills it once the manifest resolves).
         self.encoded: dict[str, int] = {}
-        # Publish frames dropped for an unusable meta shape (no correlatable
-        # request id to nack with); a compliant relay never produces one.
-        self._pub_invalid = 0
         self._rtc_unavailable_logged = False
 
     async def main(self) -> AsyncIterator[None]:
@@ -397,10 +289,12 @@ class RelayBridgeModule(Module):
             # module start instead of poisoning the relay.
             manifest = parse_manifest(manifest_data)
             rx_wire = [spec for spec in manifest.channels if spec.dir == "rx"]
+            pub_specs: dict[str, RuntimeChannelSpec] = {}
             if self.config.channels is not None:
-                self._channel_specs, self._pub_specs = self._adopt_authored_specs(manifest.channels)
+                self._channel_specs, pub_specs = self._adopt_authored_specs(manifest.channels)
             else:
                 self._channel_specs = self._resolve_builtin_specs(rx_wire)
+            self._publish = PublishHandler(self._robot_info.id, pub_specs, self.outputs)
             self._min_interval = {s.ch: 1.0 / s.max_hz for s in self._channel_specs}
             self.encoded = {s.ch: 0 for s in self._channel_specs}
             by_tx = {ch: (encoding, delivery) for ch, encoding, delivery in TX_CHANNELS}
@@ -416,7 +310,7 @@ class RelayBridgeModule(Module):
                         f"no matching handler; this bridge supports: {sorted(by_tx)}"
                     )
                 if spec.ch == "tele_cmd_vel":
-                    self._teleop_params = self._resolve_teleop_params(spec)
+                    self._teleop = Teleop(resolve_teleop_params(spec), self.tele_cmd_vel.publish)
             # No runtime stream probing: an authored channel whose input got
             # no transport stays advertised (its panel shows "waiting for
             # data"); _reconcile just never subscribes it.
@@ -840,11 +734,14 @@ class RelayBridgeModule(Module):
         module stops."""
         watchdog: asyncio.Task[None] | None = None
         deadman: asyncio.Task[None] | None = None
+        teleop = self._teleop
+        publish = self._publish
+        assert publish is not None  # main() builds it before the supervisor starts
         try:
             if self._relay is not None:
                 watchdog = asyncio.create_task(self._watch_child())
-            if self._teleop_params is not None:
-                deadman = asyncio.create_task(self._teleop_watchdog())
+            if teleop is not None:
+                deadman = asyncio.create_task(teleop.watchdog())
             while True:
                 crashed = False
                 try:
@@ -855,15 +752,15 @@ class RelayBridgeModule(Module):
                         elif isinstance(msg, DataFrame):
                             # A forwarded viewer publish (tx channel data on
                             # the carrier); never raises out of the loop.
-                            self._on_pub_frame(session, msg)
-                        elif isinstance(msg, WireTwist):
-                            self._on_wire_twist(msg)
-                        elif isinstance(msg, WireStop):
-                            self._on_wire_stop(msg)
-                        elif isinstance(msg, WireTeleopStart):
-                            self._on_wire_teleop_start(msg)
-                        elif isinstance(msg, WireTeleopStop):
-                            self._on_wire_teleop_stop(msg)
+                            publish.on_frame(msg, functools.partial(self._send_pub_result, session))
+                        elif teleop is not None and isinstance(msg, WireTwist):
+                            teleop.on_twist(msg)
+                        elif teleop is not None and isinstance(msg, WireStop):
+                            teleop.on_stop(msg)
+                        elif teleop is not None and isinstance(msg, WireTeleopStart):
+                            teleop.on_start(msg)
+                        elif teleop is not None and isinstance(msg, WireTeleopStop):
+                            teleop.on_end(msg)
                         elif isinstance(msg, RtcIce):
                             self._on_rtc_ice(session, msg)
                         elif isinstance(msg, RtcAnswer):
@@ -940,75 +837,6 @@ class RelayBridgeModule(Module):
                 )
                 await asyncio.sleep(delay)
 
-    def _on_pub_frame(self, session: _Session, frame: DataFrame) -> None:
-        """One forwarded viewer publish from the carrier: decode the JSON
-        value, publish on the channel's Out port, then acknowledge on a
-        robot-opened one-shot @control stream - pub_ack only after
-        Out.publish() returned, pub_nack for decode/publish failures (bounded
-        messages, no tracebacks). Failures never raise (an exception would
-        recycle the whole relay session) and never touch other channels.
-        """
-        ch = frame.header.ch
-        parsed = _parse_pub_meta(frame.header.meta)
-        if parsed is None:
-            # No trustworthy request id to nack with; the relay's publish
-            # timeout settles the viewer side.
-            self._pub_invalid += 1
-            logger.warning(f"dropping publish frame on {ch!r}: unusable meta")
-            return
-        request_id, principal, relay_ts, client_ts = parsed
-
-        def nack(code: str, error: Exception | str) -> None:
-            message = error if isinstance(error, str) else f"{type(error).__name__}: {error}"
-            self._send_pub_result(session, PubNack(id=request_id, code=code, message=message[:200]))
-
-        spec = self._pub_specs.get(ch)
-        if spec is None:
-            nack("unknown_channel", f"no publishable channel {ch!r}")
-            return
-        if not _pub_depth_ok(frame.payload):
-            nack("decode_failed", f"value nests deeper than {_MAX_PUB_DEPTH} levels")
-            return
-        try:
-            value = json.loads(frame.payload)
-        except (ValueError, RecursionError) as e:
-            # RecursionError as backstop: escaping here would recycle the
-            # whole relay session over one request's payload.
-            nack("decode_failed", e)
-            return
-        assert self._robot_info is not None  # set before the supervisor starts
-        assert spec.decoder is not None  # _adopt_authored_specs required it
-        context = PublishContext(
-            robot=self._robot_info.id,
-            ch=ch,
-            relay_ts=relay_ts,
-            request_id=request_id,
-            principal=principal,
-            client_ts=client_ts,
-        )
-        try:
-            if spec.decoder_takes_context:
-                result = spec.decoder(value, context)
-            else:
-                result = spec.decoder(value)
-        except Exception as e:
-            nack("decode_failed", e)
-            return
-        if not _matches_message_type(result, spec.message_type):
-            nack(
-                "decode_failed",
-                f"decoder returned {type(result).__name__}, not {spec.message_type.__name__}",
-            )
-            return
-        try:
-            self.outputs[ch].publish(result)
-        except Exception as e:
-            nack("publish_failed", e)
-            return
-        self._send_pub_result(
-            session, PubAck(id=request_id, ch=ch, relayTs=relay_ts, bridgeTs=time.time())
-        )
-
     def _send_pub_result(self, session: _Session, msg: Msg) -> None:
         try:
             session.client.send_control_frame(msg)
@@ -1032,128 +860,6 @@ class RelayBridgeModule(Module):
             ):
                 logger.warning("local relay child died; closing the session to reconnect")
                 await session.client.close()
-
-    def _resolve_teleop_params(self, spec: ChannelSpec) -> _TeleopParams:
-        values: dict[str, float] = {}
-        for key, default in _TELEOP_PARAM_DEFAULTS.items():
-            candidate = spec.params.get(key, default)
-            value = finite_number(candidate, f"manifest channel {spec.ch!r} {key}")
-            if value <= 0:
-                raise RuntimeError(
-                    f"manifest channel {spec.ch!r} {key} must be a positive number, "
-                    f"got {candidate!r}"
-                )
-            values[key] = value
-        return _TeleopParams(
-            max_linear=values["maxLinear"],
-            max_angular=values["maxAngular"],
-            boost=values["boost"],
-            watchdog_s=values["watchdogMs"] / 1000.0,
-        )
-
-    def _on_wire_twist(self, msg: WireTwist) -> None:
-        params = self._teleop_params
-        if params is None:
-            return
-        # Non-finite components cannot reach here: the wire decoders reject
-        # NaN/Infinity (allow_inf_nan=False).
-        gen = msg.gen
-        if gen is None or gen < self._teleop_gen:
-            return  # unstamped, or in flight from a lease already voided
-        if gen == self._teleop_gen and msg.seq <= self._teleop_last_seq:
-            # Within a generation the high-water mark is permanent: a paused
-            # holder resumes with rising seq, while a delayed pre-stop twist
-            # stays dead even after watchdog silence. A new lease (gen above
-            # the floor) rebaselines instead.
-            return
-        self._teleop_gen = gen
-        self._teleop_last_seq = float(msg.seq)
-        self._teleop_last_rx = time.monotonic()
-        bound_linear = params.max_linear * params.boost
-        vx = _clamp(float(msg.vx), bound_linear)
-        vy = _clamp(float(msg.vy), bound_linear)
-        wz = _clamp(float(msg.wz), params.max_angular * params.boost)
-        if vx == 0.0 and vy == 0.0 and wz == 0.0:
-            self._teleop_zero("release")
-            return
-        self._teleop_driving = True
-        self.tele_cmd_vel.publish(Twist(linear=Vector3(vx, vy, 0.0), angular=Vector3(0.0, 0.0, wz)))
-
-    def _on_wire_stop(self, msg: WireStop) -> None:
-        """E-stop: unconditional zero, even from idle - it must also cancel
-        an autonomous nav goal (MovementManager cancels on any teleop msg)."""
-        if self._teleop_params is None:
-            return
-        gen = msg.gen
-        if gen is None or gen < self._teleop_gen:
-            # A voided lease's in-flight e-stop must not blip the current
-            # holder (the relay gate already blocks post-release sends).
-            return
-        self._teleop_zero("stop message (e-stop)", force=True)
-        if gen > self._teleop_gen:
-            self._teleop_gen = gen
-            self._teleop_last_seq = float(msg.seq)
-        else:
-            # max(): a stale reordered e-stop must not lower the high-water
-            # mark and let an already-superseded twist re-apply.
-            self._teleop_last_seq = max(self._teleop_last_seq, float(msg.seq))
-        self._teleop_last_rx = time.monotonic()
-
-    def _on_wire_teleop_start(self, msg: WireTeleopStart) -> None:
-        """A relay-granted lease: adopt its generation, voiding the previous
-        one. Heals a lost teleop_stop (zeroing if it arrived mid-drive)."""
-        if self._teleop_params is None:
-            return
-        gen = msg.gen
-        if gen is None or gen <= self._teleop_gen:
-            return  # a duplicated start must not reset the high-water mid-lease
-        self._teleop_zero("new teleop lease")
-        self._teleop_gen = gen
-        self._teleop_last_seq = -math.inf
-        self._teleop_last_rx = 0.0
-
-    def _on_wire_teleop_stop(self, msg: WireTeleopStop) -> None:
-        """The lease ended (holder released, disconnected, or watched away)."""
-        if self._teleop_params is None:
-            return
-        gen = msg.gen
-        if gen is None or gen < self._teleop_gen:
-            return  # a stale lease-end must not blip or reset the current holder
-        self._teleop_zero("teleop lease ended")
-        # The relay bumps by exactly 1 per grant, so this floor equals the
-        # next lease's generation; the ended lease and everything below it
-        # are voided permanently.
-        self._teleop_gen = gen + 1
-        self._teleop_last_seq = -math.inf
-        self._teleop_last_rx = 0.0
-
-    def _teleop_zero(self, reason: str, *, force: bool = False) -> None:
-        """Publish one zero twist; edge-gated unless `force` (e-stop)."""
-        if not force and not self._teleop_driving:
-            return
-        self._teleop_driving = False
-        logger.warning(f"relay bridge teleop: zero twist ({reason})")
-        self.tele_cmd_vel.publish(Twist.zero())
-
-    def _teleop_reset(self) -> None:
-        # Session teardown only: datagrams are QUIC-session-scoped and the
-        # relay's lease generation dies with the robot registration, so
-        # nothing stale can leak into the next session.
-        self._teleop_gen = -math.inf
-        self._teleop_last_seq = -math.inf
-        self._teleop_last_rx = 0.0
-
-    async def _teleop_watchdog(self) -> None:
-        """Deadman: the cockpit repeats commands at publish_hz, so silence
-        while driving means the chain broke (viewer gone, relay killed,
-        datagrams lost) - zero within ~watchdog_s regardless of which hop
-        failed."""
-        assert self._teleop_params is not None
-        watchdog_s = self._teleop_params.watchdog_s
-        while True:
-            await asyncio.sleep(_TELEOP_POLL_S)
-            if self._teleop_driving and time.monotonic() - self._teleop_last_rx > watchdog_s:
-                self._teleop_zero("watchdog: twist silence")
 
     async def _reconnect(self) -> _Session | None:
         while True:
@@ -1338,12 +1044,8 @@ class RelayBridgeModule(Module):
         for sender in target.senders.values():
             if isinstance(sender, PacedSender):
                 sender.close()
-        # A driving teleop stream cannot outlive its session (this also
-        # covers module stop, KeyboardTeleop.stop() parity). Idempotent:
-        # the edge gate makes the second call of a double-disconnect a no-op.
-        if self._teleop_params is not None:
-            self._teleop_zero("relay session ended")
-            self._teleop_reset()
+        if self._teleop is not None:
+            self._teleop.session_ended()
         for ch, unsubscribe in tuple(target.unsubs.items()):
             try:
                 unsubscribe()
