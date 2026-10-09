@@ -74,15 +74,22 @@ def main() -> None:
             check=True,
         )
         rust_root = source / "dimos_generated_schemas/package/rust/src"
-        license_text = (
-            (root / "dimos/message_codegen/templates/codec.rs")
-            .read_text()
-            .split("use re_cdr", 1)[0]
-        )
+        license_text = "\n".join(
+            (root / "dimos/message_codegen/templates/codec.rs").read_text().splitlines()[:13]
+        ) + "\n\n"
         library = rust_root / "lib.rs"
         library.write_text(license_text + library.read_text())
         subprocess.run(
-            ["rustup", "run", "1.92.0", "rustfmt", "--edition", "2024", str(library)],
+            [
+                "rustup",
+                "run",
+                "1.92.0",
+                "rustfmt",
+                "--edition",
+                "2024",
+                str(library),
+                str(rust_root.parent / "build.rs"),
+            ],
             check=True,
         )
         expected = {

@@ -36,7 +36,7 @@ infrared_right_camera_info = "sensor_msgs/msg/CameraInfo"
 
 [dependencies]
 dimos-module = { path = "../../../../../../native/rust/dimos-module" }
-dimos-generated-messages = { path = "../../../../../message_codegen" }
+dimos-generated-messages = { path = "../../../../../../packages/dimos-generated/src/dimos_generated_schemas/package/rust" }
 realsense-rust = "1.3"
 realsense-sys = "2.56"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }

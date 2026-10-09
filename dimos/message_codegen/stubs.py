@@ -16,7 +16,6 @@
 
 from collections import defaultdict
 
-from . import cpp
 from .definitions import FieldType, Message
 
 NUMPY_TYPES = {
@@ -57,7 +56,7 @@ def input_type(field: FieldType, module: str) -> str:
 
 def generate(messages: tuple[Message, ...], module: str) -> dict[str, str]:
     containers = {
-        cpp.type_name(field.type): field.type
+        repr(field.type): field.type
         for message in messages
         for field in message.fields
         if field.type.is_array
@@ -124,7 +123,7 @@ def generate(messages: tuple[Message, ...], module: str) -> dict[str, str]:
             lines.append(f"    def __init__(self{args}) -> None: ...")
             for message_field in message.fields:
                 if message_field.type.is_array:
-                    sequence = names[cpp.type_name(message_field.type)]
+                    sequence = names[repr(message_field.type)]
                     lines.extend(
                         [
                             "    @property",

@@ -64,3 +64,11 @@ mixed old/new typed deployments are not supported.
 Invalid field values and malformed CDR raise `ValueError` in the generated
 Python source API. Fixed-array length errors no longer expose pybind11's
 `RuntimeError: Unable to cast`; invalid lengths remain rejected.
+
+Rust packages contain owned `.msg` inputs, a small `build.rs` adapter and the
+codec/schema contracts. Normal `cargo build` invokes pinned `ros2msg` to generate
+the declarations in Cargo's `OUT_DIR`; `src/lib.rs` includes that result. This
+also applies to the Rust part of `dimos build`. Cargo and its dependency cache
+are native build prerequisites, not Python installation prerequisites. No helper
+binary, ROS installation or runtime download is required. Dependency types are
+reexported from their owner crate, preserving exact cross-package identity.

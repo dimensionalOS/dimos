@@ -13,6 +13,10 @@
 # limitations under the License.
 
 import json
+from pathlib import Path
+import shutil
+import subprocess
+import sys
 import tarfile
 from types import SimpleNamespace
 
@@ -174,3 +178,36 @@ def test_python_only_build_needs_no_native_build_tool(tmp_path, monkeypatch):
     assert (tmp_path / "dist/example_messages-1.2.3.tar.gz").is_file()
     assert "cmake_prefix" not in artifacts
     assert "cargo_manifest" not in artifacts
+
+
+@pytest.mark.parametrize(
+    "resource, artifact",
+    [
+        ("_vendor/rosidl/serialization/msg__cdr.hpp.em", "cpp/messages.hpp"),
+        ("templates/message_build.rs", "rust/build.rs"),
+    ],
+)
+def test_upstream_template_and_cargo_adapter_changes_invalidate_cache(tmp_path, resource, artifact):
+    project(tmp_path)
+    toolkit = tmp_path / "toolkit"
+    shutil.copytree(
+        Path(project_module.__file__).parent,
+        toolkit,
+        ignore=shutil.ignore_patterns("__pycache__", "build", "*.egg-info"),
+    )
+    program = rf"""
+import sys
+from pathlib import Path
+sys.path.insert(0, {str(tmp_path)!r})
+from toolkit.project import Project, prepare
+project = Project.load(Path({str(tmp_path)!r}))
+output = prepare(project)
+artifact = output / {artifact!r}
+assert 'UPSTREAM_CACHE_PROBE' not in artifact.read_text()
+resource = Path({str(toolkit / resource)!r})
+resource.write_text(resource.read_text() + '\n// UPSTREAM_CACHE_PROBE\n')
+prepare(project)
+assert 'UPSTREAM_CACHE_PROBE' in artifact.read_text()
+"""
+    result = subprocess.run([sys.executable, "-I", "-c", program], capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
