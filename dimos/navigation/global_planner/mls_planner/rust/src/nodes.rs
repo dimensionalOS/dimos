@@ -423,7 +423,7 @@ fn edge_in_direction(
 ) -> bool {
     for k in 1..=HOLE_SPAN_CELLS {
         let (nx, ny) = (cx + dx * k, cy + dy * k);
-        let Some(zs) = by_col.get(&(nx, ny)) else {
+        let Some(zs) = by_col.get((nx, ny)) else {
             continue; // empty column: keep scanning across the hole
         };
         let reachable = zs.iter().any(|&oz| {

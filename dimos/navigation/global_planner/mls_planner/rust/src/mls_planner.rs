@@ -28,10 +28,7 @@ use crate::nodes::{
     place_nodes, place_nodes_region, relocate_dead_nodes, PlacementParams, HOLE_SPAN_CELLS,
 };
 use crate::planner;
-use crate::surfaces::{
-    add_to_by_col, extract_surfaces, extract_surfaces_region, remove_from_by_col, ColumnIz,
-    ColumnMask,
-};
+use crate::surfaces::{extract_surfaces, extract_surfaces_region, ColumnIz, ColumnMask};
 use crate::voxel::{voxelize, VoxelKey};
 use tracing::debug;
 
@@ -392,16 +389,16 @@ impl Planner {
         let bbox = bounds.column_bbox(voxel_size);
         let buckets = ColumnBuckets::new(&incoming, bbox);
 
-        let (x0, x1, y0, y1) = bbox;
         let by_col = &self.by_col;
-        let edits: Vec<ColumnEdit> = (x0..(x1 + 1))
+        let edits: Vec<ColumnEdit> = ColumnIz::tiles_covering(bbox)
             .into_par_iter()
-            .flat_map_iter(|ix| {
+            .flat_map_iter(|tile| {
                 let mut local: Vec<ColumnEdit> = Vec::new();
-                for iy in y0..=y1 {
-                    let col = (ix, iy);
-                    let old = by_col.get(&col).map(Vec::as_slice).unwrap_or(&[]);
+                for (col, old) in by_col.tile_columns_in(tile, bbox) {
                     let new = buckets.column(col);
+                    if old.is_empty() && new.is_empty() {
+                        continue;
+                    }
                     if let Some(edit) = diff_column(col, old, new, bounds, voxel_size) {
                         local.push(edit);
                     }
@@ -414,11 +411,11 @@ impl Planner {
             let (ix, iy) = edit.col;
             for &iz in &edit.removed {
                 self.voxel_map.remove(&(ix, iy, iz));
-                remove_from_by_col(&mut self.by_col, (ix, iy, iz));
+                self.by_col.remove((ix, iy, iz));
             }
             for &iz in &edit.added {
                 self.voxel_map.insert((ix, iy, iz));
-                add_to_by_col(&mut self.by_col, (ix, iy, iz));
+                self.by_col.add((ix, iy, iz));
             }
         }
         edits.iter().map(|edit| edit.col).collect()

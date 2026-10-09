@@ -19,11 +19,10 @@
 use ahash::{AHashMap, AHashSet};
 use rayon::prelude::*;
 
+pub use crate::columns::ColumnIz;
 use crate::voxel::VoxelKey;
 
 const INF: u16 = u16::MAX - 1;
-
-pub type ColumnIz = AHashMap<(i32, i32), Vec<i32>>;
 
 /// A cell is standable if it has at least the robot's height of clear space
 /// above it.
@@ -34,7 +33,7 @@ pub(crate) fn is_standable(
     by_col: &ColumnIz,
     clearance_cells: i32,
 ) -> bool {
-    let Some(zs) = by_col.get(&(ix, iy)) else {
+    let Some(zs) = by_col.get((ix, iy)) else {
         return true;
     };
     let idx = zs.partition_point(|&z| z <= iz);
@@ -58,26 +57,16 @@ pub fn extract_surfaces(
     if voxel_map.is_empty() {
         return;
     }
+    *by_col = ColumnIz::from_voxels(voxel_map.iter());
 
-    for &(ix, iy, iz) in voxel_map {
-        by_col.entry((ix, iy)).or_default().push(iz);
-    }
-
-    let mut entries: Vec<((i32, i32), &mut Vec<i32>)> =
-        by_col.iter_mut().map(|(&k, v)| (k, v)).collect();
-    entries
-        .par_iter_mut()
-        .for_each(|(_, zs)| zs.sort_unstable());
-
-    let standable: Vec<VoxelKey> = entries
-        .par_iter()
-        .flat_map_iter(|((ix, iy), zs)| {
-            let mut local: Vec<VoxelKey> = Vec::new();
-            standable_in_column(*ix, *iy, zs, clearance_cells, &mut local);
+    let standable: Vec<VoxelKey> = by_col
+        .par_columns()
+        .fold(Vec::new, |mut local, ((ix, iy), zs)| {
+            standable_in_column(ix, iy, zs, clearance_cells, &mut local);
             local
         })
+        .flatten_iter()
         .collect();
-    drop(entries);
 
     close_surface_holes(standable, by_col, closing_passes, clearance_cells, out);
 }
@@ -101,35 +90,19 @@ fn standable_in_column(
     }
 }
 
-/// Insert a voxel into the per-column index, keeping each column sorted.
-pub fn add_to_by_col(by_col: &mut ColumnIz, (ix, iy, iz): VoxelKey) {
-    let zs = by_col.entry((ix, iy)).or_default();
-    if let Err(pos) = zs.binary_search(&iz) {
-        zs.insert(pos, iz);
-    }
-}
-
-/// Remove a voxel from the per-column index, dropping emptied columns.
-pub fn remove_from_by_col(by_col: &mut ColumnIz, (ix, iy, iz): VoxelKey) {
-    if let Some(zs) = by_col.get_mut(&(ix, iy)) {
-        if let Ok(pos) = zs.binary_search(&iz) {
-            zs.remove(pos);
-        }
-        if zs.is_empty() {
-            by_col.remove(&(ix, iy));
-        }
-    }
-}
-
 /// Dense set of columns over an inclusive box, for change footprints that
-/// dilate by the morphology reach.
+/// dilate by the morphology reach. One bit per column, so a dilation is a
+/// few word shifts per row and a scan skips empty words.
 #[derive(Clone)]
 pub struct ColumnMask {
     x0: i32,
     y0: i32,
     w: usize,
     h: usize,
-    bits: Vec<bool>,
+    words_per_row: usize,
+    bits: Vec<u64>,
+    /// Inclusive row range holding set bits, so scans skip the rest.
+    rows_set: Option<(usize, usize)>,
 }
 
 impl ColumnMask {
@@ -137,109 +110,165 @@ impl ColumnMask {
     pub fn new((x0, x1, y0, y1): (i32, i32, i32, i32), margin: i32) -> Self {
         let w = (x1 - x0 + 1 + 2 * margin).max(0) as usize;
         let h = (y1 - y0 + 1 + 2 * margin).max(0) as usize;
+        let words_per_row = w.div_ceil(64);
         Self {
             x0: x0 - margin,
             y0: y0 - margin,
             w,
             h,
-            bits: vec![false; w * h],
+            words_per_row,
+            bits: vec![0; words_per_row * h],
+            rows_set: None,
         }
     }
 
-    fn index(&self, (ix, iy): (i32, i32)) -> Option<usize> {
+    fn local(&self, (ix, iy): (i32, i32)) -> Option<(usize, usize)> {
         let x = ix - self.x0;
         let y = iy - self.y0;
         (x >= 0 && y >= 0 && (x as usize) < self.w && (y as usize) < self.h)
-            .then(|| y as usize * self.w + x as usize)
+            .then_some((x as usize, y as usize))
     }
 
     /// Mark a column. Columns outside the box are ignored.
     pub fn set(&mut self, col: (i32, i32)) {
-        if let Some(i) = self.index(col) {
-            self.bits[i] = true;
+        if let Some((x, y)) = self.local(col) {
+            self.bits[y * self.words_per_row + x / 64] |= 1 << (x % 64);
+            self.rows_set = Some(match self.rows_set {
+                None => (y, y),
+                Some((lo, hi)) => (lo.min(y), hi.max(y)),
+            });
         }
     }
 
     pub fn contains(&self, col: (i32, i32)) -> bool {
-        self.index(col).is_some_and(|i| self.bits[i])
+        self.local(col)
+            .is_some_and(|(x, y)| self.bits[y * self.words_per_row + x / 64] >> (x % 64) & 1 == 1)
     }
 
     /// Every column within `r` of a set column, clipped to the box.
     pub fn dilated(&self, r: i32) -> ColumnMask {
         let r = r.max(0) as usize;
-        let (w, h) = (self.w, self.h);
-        let mut rows = vec![false; w * h];
-        for y in 0..h {
-            let row = &self.bits[y * w..(y + 1) * w];
-            let out = &mut rows[y * w..(y + 1) * w];
-            dilate_line(row, r, out);
-        }
-        let mut bits = vec![false; w * h];
-        let mut col_in = vec![false; h];
-        let mut col_out = vec![false; h];
-        for x in 0..w {
-            for y in 0..h {
-                col_in[y] = rows[y * w + x];
+        let mut out = self.clone();
+        let Some((lo, hi)) = self.rows_set else {
+            return out;
+        };
+        let wpr = self.words_per_row;
+        let mut row = vec![0u64; wpr];
+        for y in lo..=hi {
+            let src = &self.bits[y * wpr..(y + 1) * wpr];
+            row.copy_from_slice(src);
+            for _ in 0..r {
+                shift_or(&mut row, self.w);
             }
-            dilate_line(&col_in, r, &mut col_out);
-            for y in 0..h {
-                bits[y * w + x] = col_out[y];
+            out.bits[y * wpr..(y + 1) * wpr].copy_from_slice(&row);
+        }
+        let (lo2, hi2) = (lo.saturating_sub(r), (hi + r).min(self.h.saturating_sub(1)));
+        let widened = out.bits.clone();
+        for y in lo2..=hi2 {
+            let dst = &mut out.bits[y * wpr..(y + 1) * wpr];
+            for sy in y.saturating_sub(r)..=(y + r).min(self.h.saturating_sub(1)) {
+                if sy == y {
+                    continue;
+                }
+                for (d, &w) in dst.iter_mut().zip(&widened[sy * wpr..(sy + 1) * wpr]) {
+                    *d |= w;
+                }
             }
         }
-        ColumnMask {
-            x0: self.x0,
-            y0: self.y0,
-            w,
-            h,
-            bits,
-        }
+        out.rows_set = (self.h > 0).then_some((lo2, hi2));
+        out
     }
 
     /// Inclusive bbox of the set columns, None when empty.
     pub fn bounds(&self) -> Option<(i32, i32, i32, i32)> {
+        let (lo, hi) = self.rows_set?;
         let mut bb: Option<(i32, i32, i32, i32)> = None;
-        for col in self.columns() {
+        for y in lo..=hi {
+            let row = &self.bits[y * self.words_per_row..(y + 1) * self.words_per_row];
+            let Some(first) = row.iter().position(|&w| w != 0) else {
+                continue;
+            };
+            let last = row
+                .iter()
+                .rposition(|&w| w != 0)
+                .expect("a set word exists");
+            let xmin = first * 64 + row[first].trailing_zeros() as usize;
+            let xmax = last * 64 + 63 - row[last].leading_zeros() as usize;
+            let (ix0, ix1, iy) = (
+                self.x0 + xmin as i32,
+                self.x0 + xmax as i32,
+                self.y0 + y as i32,
+            );
             bb = Some(match bb {
-                None => (col.0, col.0, col.1, col.1),
-                Some((x0, x1, y0, y1)) => {
-                    (x0.min(col.0), x1.max(col.0), y0.min(col.1), y1.max(col.1))
+                None => (ix0, ix1, iy, iy),
+                Some((bx0, bx1, by0, by1)) => {
+                    (bx0.min(ix0), bx1.max(ix1), by0.min(iy), by1.max(iy))
                 }
             });
         }
         bb
     }
 
-    /// Row indices, for splitting a scan across threads.
+    /// Row indices that may hold set columns, for splitting a scan across
+    /// threads.
     pub fn rows(&self) -> std::ops::Range<usize> {
-        0..self.h
+        match self.rows_set {
+            Some((lo, hi)) => lo..hi + 1,
+            None => 0..0,
+        }
     }
 
     /// The set columns of one row.
     pub fn row_columns(&self, row: usize) -> impl Iterator<Item = (i32, i32)> + '_ {
         let iy = self.y0 + row as i32;
-        self.bits[row * self.w..(row + 1) * self.w]
+        self.bits[row * self.words_per_row..(row + 1) * self.words_per_row]
             .iter()
             .enumerate()
-            .filter(|(_, &set)| set)
-            .map(move |(x, _)| (self.x0 + x as i32, iy))
+            .flat_map(move |(wi, &word)| {
+                SetBits(word).map(move |bit| (self.x0 + (wi * 64 + bit) as i32, iy))
+            })
     }
 
+    #[cfg(test)]
     pub fn columns(&self) -> impl Iterator<Item = (i32, i32)> + '_ {
         self.rows().flat_map(move |row| self.row_columns(row))
     }
 }
 
-/// Mark every cell within `r` of a set cell along one line.
-fn dilate_line(line: &[bool], r: usize, out: &mut [bool]) {
-    let n = line.len();
-    let mut prefix = vec![0u32; n + 1];
-    for (i, &b) in line.iter().enumerate() {
-        prefix[i + 1] = prefix[i] + b as u32;
+/// Mark every cell within one of a set cell along a row of words, clipped
+/// to `width` columns.
+fn shift_or(row: &mut [u64], width: usize) {
+    let n = row.len();
+    let mut carry_left = 0u64;
+    let mut out = vec![0u64; n];
+    for i in 0..n {
+        let w = row[i];
+        out[i] = w | (w << 1) | carry_left | (w >> 1);
+        carry_left = w >> 63;
     }
-    for (i, o) in out.iter_mut().enumerate() {
-        let lo = i.saturating_sub(r);
-        let hi = (i + r + 1).min(n);
-        *o = prefix[hi] > prefix[lo];
+    for i in 0..n {
+        let next_low = if i + 1 < n { row[i + 1] & 1 } else { 0 };
+        out[i] |= next_low << 63;
+    }
+    if !width.is_multiple_of(64) {
+        out[n - 1] &= (1u64 << (width % 64)) - 1;
+    }
+    row.copy_from_slice(&out);
+}
+
+/// Positions of the set bits of one word, ascending.
+struct SetBits(u64);
+
+impl Iterator for SetBits {
+    type Item = usize;
+
+    fn next(&mut self) -> Option<usize> {
+        if self.0 == 0 {
+            return None;
+        }
+        let bit = self.0.trailing_zeros() as usize;
+        self.0 &= self.0 - 1;
+        Some(bit)
     }
 }
 
@@ -261,7 +290,7 @@ pub fn extract_surfaces_region(
         .flat_map_iter(|row| {
             let mut local: Vec<VoxelKey> = Vec::new();
             for (ix, iy) in read.row_columns(row) {
-                if let Some(zs) = by_col.get(&(ix, iy)) {
+                if let Some(zs) = by_col.get((ix, iy)) {
                     standable_in_column(ix, iy, zs, clearance_cells, &mut local);
                 }
             }
@@ -365,7 +394,7 @@ fn has_support(by_col: &ColumnIz, ix: i32, iy: i32, iz: i32) -> bool {
     const Z_TOL: i32 = 3;
     for dx in -R..=R {
         for dy in -R..=R {
-            if let Some(zs) = by_col.get(&(ix + dx, iy + dy)) {
+            if let Some(zs) = by_col.get((ix + dx, iy + dy)) {
                 if zs.iter().any(|&oz| (oz - iz).abs() <= Z_TOL) {
                     return true;
                 }
@@ -515,7 +544,7 @@ mod tests {
         let full = run(&cells, 3, 1);
         let mut by_col = ColumnIz::default();
         for &k in &cells {
-            add_to_by_col(&mut by_col, k);
+            by_col.add(k);
         }
         let mut write = ColumnMask::new((0, 19, 0, 19), 2);
         write.set((7, 7));
@@ -532,7 +561,7 @@ mod tests {
 
     fn run(cells: &[VoxelKey], clearance: i32, closing: u32) -> Vec<VoxelKey> {
         let map = voxel_map(cells);
-        let mut by_col = ColumnIz::new();
+        let mut by_col = ColumnIz::default();
         let mut out = Vec::new();
         extract_surfaces(&map, clearance, closing, &mut by_col, &mut out);
         out
