@@ -247,6 +247,7 @@ fn node_edge_pairs(p: &Planner) -> BTreeSet<(VoxelKey, VoxelKey, u32)> {
     let cells = &p.graph.cells;
     p.graph
         .node_edges
+        .edges
         .iter()
         .map(|e| {
             let a = cells.coord(e.a);

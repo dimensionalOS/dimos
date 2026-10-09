@@ -20,8 +20,9 @@
 
 use std::collections::hash_map::Entry;
 
-use ahash::{AHashMap, AHashSet};
+use ahash::AHashMap;
 use rayon::prelude::*;
+use smallvec::SmallVec;
 
 use crate::adjacency::{CellId, SurfaceCells, SurfaceLookup, NO_CELL};
 use crate::dijkstra::{dijkstra, dijkstra_region, walk_preds, DijkstraState, Weight};
@@ -48,9 +49,6 @@ pub struct NodeEdge {
     /// The corridor: cell coordinates from a toward b, captured when the edge
     /// was built. Coordinates, not ids, so slot recycling cannot alias it.
     pub chain: Vec<VoxelKey>,
-    /// Bounding box of the chain, (min, max) inclusive. Regional updates only
-    /// re-walk corridors whose box touches the update window.
-    pub bbox: (VoxelKey, VoxelKey),
 }
 
 /// A fresh crossing replaces a valid cached corridor only when clearly
@@ -75,7 +73,6 @@ fn capture_chain(cells: &SurfaceCells, state: &DijkstraState, edge: &mut NodeEdg
         .chain(to_b)
         .map(|c| cells.coord(c))
         .collect();
-    edge.bbox = chain_bbox(edge.chain.iter().copied());
     true
 }
 
@@ -96,25 +93,6 @@ fn walk_live_chain(cells: &SurfaceCells, state: &DijkstraState, from: CellId) ->
     }
     chain.truncate(keep);
     chain
-}
-
-fn chain_bbox(chain: impl IntoIterator<Item = VoxelKey>) -> (VoxelKey, VoxelKey) {
-    let mut min = (i32::MAX, i32::MAX, i32::MAX);
-    let mut max = (i32::MIN, i32::MIN, i32::MIN);
-    for (x, y, z) in chain {
-        min = (min.0.min(x), min.1.min(y), min.2.min(z));
-        max = (max.0.max(x), max.1.max(y), max.2.max(z));
-    }
-    (min, max)
-}
-
-fn bbox_intersects(a: (VoxelKey, VoxelKey), b: (VoxelKey, VoxelKey)) -> bool {
-    a.0 .0 <= b.1 .0
-        && b.0 .0 <= a.1 .0
-        && a.0 .1 <= b.1 .1
-        && b.0 .1 <= a.1 .1
-        && a.0 .2 <= b.1 .2
-        && b.0 .2 <= a.1 .2
 }
 
 /// The corridor still runs from a's cell to b's cell. Slot recycling can hand
@@ -147,13 +125,157 @@ fn corridor_cost(cells: &SurfaceCells, edge: &NodeEdge) -> Option<f32> {
     Some(total)
 }
 
+/// The node graph's edges, their per-node adjacency, and per surface cell
+/// slot the edges whose corridor runs through it.
+#[derive(Default)]
+pub struct NodeEdges {
+    pub edges: Vec<NodeEdge>,
+    pub adj: AHashMap<NodeId, Vec<NodeEdgeIdx>>,
+    through: Vec<SmallVec<[NodeEdgeIdx; 2]>>,
+}
+
+impl NodeEdges {
+    pub fn len(&self) -> usize {
+        self.edges.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.edges.is_empty()
+    }
+
+    pub fn clear(&mut self) {
+        self.edges.clear();
+        self.adj.clear();
+        for list in &mut self.through {
+            list.clear();
+        }
+    }
+
+    /// The edge between two nodes, if any.
+    pub fn between(&self, a: NodeId, b: NodeId) -> Option<NodeEdgeIdx> {
+        self.adj.get(&a)?.iter().copied().find(|&i| {
+            let e = &self.edges[i as usize];
+            e.a == b || e.b == b
+        })
+    }
+
+    fn ensure_capacity(&mut self, slots: usize) {
+        if self.through.len() < slots {
+            self.through.resize_with(slots, SmallVec::new);
+        }
+    }
+
+    /// Rebuild the adjacency and the per-cell index from the edge list.
+    fn reindex(&mut self, cells: &SurfaceCells) {
+        self.adj.clear();
+        for list in &mut self.through {
+            list.clear();
+        }
+        self.ensure_capacity(cells.slot_capacity());
+        for (i, e) in self.edges.iter().enumerate() {
+            let i = i as NodeEdgeIdx;
+            self.adj.entry(e.a).or_default().push(i);
+            self.adj.entry(e.b).or_default().push(i);
+            Self::index_chain(&mut self.through, cells, i, &e.chain);
+        }
+    }
+
+    fn push(&mut self, cells: &SurfaceCells, edge: NodeEdge) {
+        let i = self.edges.len() as NodeEdgeIdx;
+        self.adj.entry(edge.a).or_default().push(i);
+        self.adj.entry(edge.b).or_default().push(i);
+        Self::index_chain(&mut self.through, cells, i, &edge.chain);
+        self.edges.push(edge);
+    }
+
+    /// Swap in a new corridor for the same node pair.
+    fn replace(&mut self, cells: &SurfaceCells, i: NodeEdgeIdx, edge: NodeEdge) {
+        let old = std::mem::replace(&mut self.edges[i as usize], edge);
+        Self::unindex_chain(&mut self.through, cells, i, &old.chain);
+        Self::index_chain(&mut self.through, cells, i, &self.edges[i as usize].chain);
+    }
+
+    fn swap_remove(&mut self, cells: &SurfaceCells, i: NodeEdgeIdx) {
+        let last = (self.edges.len() - 1) as NodeEdgeIdx;
+        let gone = self.edges.swap_remove(i as usize);
+        Self::drop_adj(&mut self.adj, gone.a, i);
+        Self::drop_adj(&mut self.adj, gone.b, i);
+        Self::unindex_chain(&mut self.through, cells, i, &gone.chain);
+        if i != last {
+            let moved = &self.edges[i as usize];
+            Self::renumber_adj(&mut self.adj, moved.a, last, i);
+            Self::renumber_adj(&mut self.adj, moved.b, last, i);
+            for &c in &moved.chain {
+                if let Some(slot) = cells.id(c) {
+                    if let Some(x) = self.through[slot as usize].iter_mut().find(|x| **x == last) {
+                        *x = i;
+                    }
+                }
+            }
+        }
+    }
+
+    fn drop_adj(adj: &mut AHashMap<NodeId, Vec<NodeEdgeIdx>>, node: NodeId, i: NodeEdgeIdx) {
+        if let Entry::Occupied(mut o) = adj.entry(node) {
+            o.get_mut().retain(|&x| x != i);
+            if o.get().is_empty() {
+                o.remove();
+            }
+        }
+    }
+
+    fn renumber_adj(
+        adj: &mut AHashMap<NodeId, Vec<NodeEdgeIdx>>,
+        node: NodeId,
+        from: NodeEdgeIdx,
+        to: NodeEdgeIdx,
+    ) {
+        if let Some(x) = adj
+            .get_mut(&node)
+            .and_then(|list| list.iter_mut().find(|x| **x == from))
+        {
+            *x = to;
+        }
+    }
+
+    fn index_chain(
+        through: &mut [SmallVec<[NodeEdgeIdx; 2]>],
+        cells: &SurfaceCells,
+        i: NodeEdgeIdx,
+        chain: &[VoxelKey],
+    ) {
+        for &c in chain {
+            if let Some(slot) = cells.id(c) {
+                through[slot as usize].push(i);
+            }
+        }
+    }
+
+    /// Cells the corridor lost no longer list the edge, so a dead coordinate
+    /// is skipped here and its slot cleared by the region repair.
+    fn unindex_chain(
+        through: &mut [SmallVec<[NodeEdgeIdx; 2]>],
+        cells: &SurfaceCells,
+        i: NodeEdgeIdx,
+        chain: &[VoxelKey],
+    ) {
+        for &c in chain {
+            if let Some(slot) = cells.id(c) {
+                let list = &mut through[slot as usize];
+                if let Some(p) = list.iter().position(|&x| x == i) {
+                    list.swap_remove(p);
+                }
+            }
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct PlannerGraph {
     pub cells: SurfaceCells,
     pub surface_lookup: SurfaceLookup,
     pub nodes: Vec<NodeData>,
-    pub node_edges: Vec<NodeEdge>,
-    pub node_adj: AHashMap<NodeId, Vec<NodeEdgeIdx>>,
+    pub node_edges: NodeEdges,
     /// Each cell's nearest node and the predecessor back toward it. The planner
     /// walks these to expand a node-to-node edge into its cell path.
     pub cell_state: DijkstraState,
@@ -177,11 +299,9 @@ pub fn build_node_edges(
     cells: &SurfaceCells,
     nodes: &[NodeData],
     state: &mut DijkstraState,
-    out_edges: &mut Vec<NodeEdge>,
-    out_adj: &mut AHashMap<NodeId, Vec<NodeEdgeIdx>>,
+    out: &mut NodeEdges,
 ) {
-    out_edges.clear();
-    out_adj.clear();
+    out.clear();
 
     if nodes.is_empty() {
         state.reset(cells.slot_capacity());
@@ -191,93 +311,82 @@ pub fn build_node_edges(
     let source_cells: Vec<CellId> = nodes.iter().map(|n| n.cell_id).collect();
     dijkstra(cells, &source_cells, state, Weight::Penalized);
 
-    best_boundary_edges(cells, state, out_edges);
-
-    rebuild_node_adj(out_edges, out_adj);
+    best_boundary_edges(cells, state, &mut out.edges);
+    out.reindex(cells);
 }
 
-/// Rebuild the per-node edge index from the edge list.
-fn rebuild_node_adj(edges: &[NodeEdge], out_adj: &mut AHashMap<NodeId, Vec<NodeEdgeIdx>>) {
-    out_adj.clear();
-    for (edge_idx, edge) in edges.iter().enumerate() {
-        out_adj
-            .entry(edge.a)
-            .or_default()
-            .push(edge_idx as NodeEdgeIdx);
-        out_adj
-            .entry(edge.b)
-            .or_default()
-            .push(edge_idx as NodeEdgeIdx);
-    }
-}
-
-/// Incremental build_node_edges. Redo the Voronoi inside the window, keep
-/// cached edges whose corridors are still intact, and rescan the window for
-/// new node-to-node crossings.
+/// Incremental build_node_edges. Redo the Voronoi inside the window, drop the
+/// edges of gone nodes, re-price or drop the corridors running through the
+/// window or a removed cell, and rescan the window for new crossings.
+#[allow(clippy::too_many_arguments)]
 pub fn build_node_edges_region(
     cells: &SurfaceCells,
     nodes: &[NodeData],
+    index: &NodeIndex,
     window: &[CellId],
+    removed: &[CellId],
+    gone: &[NodeId],
     state: &mut DijkstraState,
-    out_edges: &mut Vec<NodeEdge>,
-    out_adj: &mut AHashMap<NodeId, Vec<NodeEdgeIdx>>,
+    out: &mut NodeEdges,
 ) {
-    let source_cells: Vec<CellId> = nodes.iter().map(|n| n.cell_id).collect();
-    if source_cells.is_empty() {
+    if nodes.is_empty() {
         state.reset(cells.slot_capacity());
-        out_edges.clear();
-        out_adj.clear();
+        out.clear();
         return;
     }
-    dijkstra_region(cells, &source_cells, window, state, Weight::Penalized);
+    let sources: Vec<CellId> = window.iter().copied().filter(|&w| index.has(w)).collect();
+    dijkstra_region(cells, &sources, window, state, Weight::Penalized);
+    out.ensure_capacity(cells.slot_capacity());
 
-    let live_node: AHashSet<NodeId> = source_cells.iter().copied().collect();
-    let window_bbox = chain_bbox(window.iter().map(|&c| cells.coord(c)));
+    // A gone node's edges go whatever their corridors say. The rest are
+    // visited in descending order so swap_remove never moves an edge still
+    // to be visited.
+    let mut work: Vec<(NodeEdgeIdx, bool)> = Vec::new();
+    for g in gone {
+        if let Some(list) = out.adj.remove(g) {
+            work.extend(list.into_iter().map(|i| (i, true)));
+        }
+    }
+    for &c in window.iter().chain(removed) {
+        work.extend(out.through[c as usize].iter().map(|&i| (i, false)));
+    }
+    for &r in removed {
+        out.through[r as usize].clear();
+    }
+    work.sort_unstable_by(|x, y| y.cmp(x));
+    work.dedup_by_key(|x| x.0);
+    for (i, doomed) in work {
+        if doomed {
+            out.swap_remove(cells, i);
+            continue;
+        }
+        match corridor_cost(cells, &out.edges[i as usize]) {
+            Some(cost) => out.edges[i as usize].cost = cost,
+            None => out.swap_remove(cells, i),
+        }
+    }
 
-    // Corridors clear of the update window are provably untouched and keep
-    // their cost. Touched ones are re-priced in place, or dropped when broken.
-    out_edges.retain_mut(|e| {
-        if !live_node.contains(&e.a) || !live_node.contains(&e.b) {
-            return false;
-        }
-        if !bbox_intersects(e.bbox, window_bbox) {
-            return endpoints_match(cells, e);
-        }
-        match corridor_cost(cells, e) {
-            Some(cost) => {
-                e.cost = cost;
-                true
-            }
-            None => false,
-        }
-    });
-    let by_pair: AHashMap<(NodeId, NodeId), usize> = out_edges
-        .iter()
-        .enumerate()
-        .map(|(i, e)| ((e.a, e.b), i))
+    let mut crossings: Vec<NodeEdge> = boundary_edge_map(cells, state, window)
+        .into_values()
+        .filter(|e| index.has(e.a) && index.has(e.b))
         .collect();
-
-    let mut new_edges = boundary_edge_map(cells, state, window);
-    new_edges.retain(|_, e| live_node.contains(&e.a) && live_node.contains(&e.b));
-    for ((a, b), mut e) in new_edges {
-        match by_pair.get(&(a, b)) {
-            Some(&i) => {
-                if e.cost < CORRIDOR_ADOPT_FRAC * out_edges[i].cost
+    crossings.sort_unstable_by_key(|e| (e.a, e.b));
+    for mut e in crossings {
+        match out.between(e.a, e.b) {
+            Some(i) => {
+                if e.cost < CORRIDOR_ADOPT_FRAC * out.edges[i as usize].cost
                     && capture_chain(cells, state, &mut e)
                 {
-                    out_edges[i] = e;
+                    out.replace(cells, i, e);
                 }
             }
             None => {
                 if capture_chain(cells, state, &mut e) {
-                    out_edges.push(e);
+                    out.push(cells, e);
                 }
             }
         }
     }
-
-    out_edges.par_sort_unstable_by_key(|e| (e.a, e.b));
-    rebuild_node_adj(out_edges, out_adj);
 }
 
 fn best_boundary_edges(cells: &SurfaceCells, state: &DijkstraState, out: &mut Vec<NodeEdge>) {
@@ -331,7 +440,6 @@ fn boundary_edge_map(
                         boundary_u: NO_CELL,
                         boundary_v: NO_CELL,
                         chain: Vec::new(),
-                        bbox: ((0, 0, 0), (0, 0, 0)),
                     });
                     if cost < entry.cost {
                         entry.cost = cost;
@@ -384,7 +492,7 @@ pub fn edges_to_segments(node_edges: &[NodeEdge]) -> Vec<(VoxelKey, VoxelKey, f3
 mod tests {
     use super::*;
     use crate::adjacency::{build_surface_cells, build_surface_lookup};
-    use crate::nodes::NodeData;
+    use crate::nodes::{NodeData, PlacementParams};
     use crate::voxel::surface_point_xyz;
 
     const VOXEL: f32 = 0.1;
@@ -403,14 +511,27 @@ mod tests {
                 }
             })
             .collect();
+        plg.node_index.rebuild(&plg.cells, &plg.nodes, &params());
         build_node_edges(
             &plg.cells,
             &plg.nodes,
             &mut plg.cell_state,
             &mut plg.node_edges,
-            &mut plg.node_adj,
         );
         plg
+    }
+
+    fn params() -> PlacementParams {
+        PlacementParams {
+            clearance_cells: 2,
+            step_cells: 2,
+            voxel_size: VOXEL,
+            node_spacing_m: 1.0,
+            wall_clearance_m: 0.1,
+            wall_buffer_m: 0.5,
+            wall_buffer_weight: 10.0,
+            step_penalty_weight: 1.0,
+        }
     }
 
     fn strip_cells() -> Vec<VoxelKey> {
@@ -421,19 +542,19 @@ mod tests {
     fn two_nodes_on_strip_have_one_edge() {
         let pg = setup(&strip_cells(), &[(3, 0, 0), (15, 0, 0)]);
         assert_eq!(pg.node_edges.len(), 1);
-        let e = &pg.node_edges[0];
+        let e = &pg.node_edges.edges[0];
         let a = pg.cells.id((3, 0, 0)).unwrap();
         let b = pg.cells.id((15, 0, 0)).unwrap();
         assert_eq!((e.a.min(e.b), e.a.max(e.b)), (a.min(b), a.max(b)));
-        assert_eq!(pg.node_adj[&a], vec![0]);
-        assert_eq!(pg.node_adj[&b], vec![0]);
+        assert_eq!(pg.node_edges.adj[&a], vec![0]);
+        assert_eq!(pg.node_edges.adj[&b], vec![0]);
     }
 
     #[test]
     fn three_nodes_in_line_form_a_chain() {
         let pg = setup(&strip_cells(), &[(3, 0, 0), (10, 0, 0), (17, 0, 0)]);
         let c = |k| pg.cells.id(k).unwrap();
-        let pairs: Vec<(NodeId, NodeId)> = pg.node_edges.iter().map(|e| (e.a, e.b)).collect();
+        let pairs: Vec<(NodeId, NodeId)> = pg.node_edges.edges.iter().map(|e| (e.a, e.b)).collect();
         assert_eq!(
             pairs,
             vec![
@@ -476,7 +597,6 @@ mod tests {
             &plg.nodes,
             &mut plg.cell_state,
             &mut plg.node_edges,
-            &mut plg.node_adj,
         );
 
         assert!(
@@ -484,7 +604,7 @@ mod tests {
             "an infinite crossing is not an edge"
         );
         // Walking boundaries must not panic on an unset boundary cell.
-        edges_to_segments(&plg.node_edges);
+        edges_to_segments(&plg.node_edges.edges);
     }
 
     #[test]
@@ -499,7 +619,7 @@ mod tests {
     fn predecessor_walk_recovers_cell_path() {
         let pg = setup(&strip_cells(), &[(0, 0, 0), (19, 0, 0)]);
         assert_eq!(pg.node_edges.len(), 1);
-        let e = &pg.node_edges[0];
+        let e = &pg.node_edges.edges[0];
 
         let cell_a = pg.nodes[0].cell_id;
         let cell_b = pg.nodes[1].cell_id;
@@ -513,7 +633,7 @@ mod tests {
     #[test]
     fn corridor_cost_none_on_impassable_hop() {
         let mut pg = setup(&strip_cells(), &[(0, 0, 0), (19, 0, 0)]);
-        let edge = pg.node_edges[0].clone();
+        let edge = pg.node_edges.edges[0].clone();
         assert!(corridor_cost(&pg.cells, &edge).is_some());
 
         let c9 = pg.cells.id((9, 0, 0)).unwrap();
@@ -532,7 +652,7 @@ mod tests {
     #[test]
     fn corridor_cost_none_when_a_chain_cell_dies() {
         let mut pg = setup(&strip_cells(), &[(0, 0, 0), (19, 0, 0)]);
-        let edge = pg.node_edges[0].clone();
+        let edge = pg.node_edges.edges[0].clone();
         pg.cells.remove((10, 0, 0));
         assert!(
             corridor_cost(&pg.cells, &edge).is_none(),
@@ -543,7 +663,7 @@ mod tests {
     #[test]
     fn corridor_cost_none_when_the_chain_misses_an_endpoint() {
         let pg = setup(&strip_cells(), &[(0, 0, 0), (19, 0, 0)]);
-        let mut edge = pg.node_edges[0].clone();
+        let mut edge = pg.node_edges.edges[0].clone();
         assert!(corridor_cost(&pg.cells, &edge).is_some());
         // A corridor that loops back to a instead of reaching b is corrupt
         // even though every cell is live and every hop is feasible.
@@ -558,7 +678,7 @@ mod tests {
     #[test]
     fn capture_chain_rejects_a_walk_that_misses_the_endpoint() {
         let mut pg = setup(&strip_cells(), &[(0, 0, 0), (19, 0, 0)]);
-        let mut edge = pg.node_edges[0].clone();
+        let mut edge = pg.node_edges.edges[0].clone();
         assert!(capture_chain(&pg.cells, &pg.cell_state, &mut edge));
         // Kill a cell between the boundary and node b: the live walk truncates
         // before its endpoint, so the corridor must be refused, not stored.
@@ -574,28 +694,109 @@ mod tests {
 
     fn rebuild_region_all(pg: &mut PlannerGraph) {
         let window: Vec<CellId> = pg.cells.ids().collect();
+        repair_region(pg, &window, &[], &[]);
+    }
+
+    fn repair_region(
+        pg: &mut PlannerGraph,
+        window: &[CellId],
+        removed: &[CellId],
+        gone: &[NodeId],
+    ) {
         let PlannerGraph {
             cells,
             nodes,
+            node_index,
             node_edges,
-            node_adj,
             cell_state,
             ..
         } = pg;
-        build_node_edges_region(cells, nodes, &window, cell_state, node_edges, node_adj);
+        build_node_edges_region(
+            cells, nodes, node_index, window, removed, gone, cell_state, node_edges,
+        );
+        assert_indexed(cells, node_edges);
+    }
+
+    /// The adjacency and per-cell index match what a rebuild from the edge
+    /// list would give.
+    fn assert_indexed(cells: &SurfaceCells, ne: &NodeEdges) {
+        let mut fresh = NodeEdges {
+            edges: ne.edges.clone(),
+            ..NodeEdges::default()
+        };
+        fresh.reindex(cells);
+        let sorted = |adj: &AHashMap<NodeId, Vec<NodeEdgeIdx>>| {
+            let mut v: Vec<(NodeId, Vec<NodeEdgeIdx>)> = adj
+                .iter()
+                .map(|(k, l)| {
+                    let mut l = l.clone();
+                    l.sort_unstable();
+                    (*k, l)
+                })
+                .collect();
+            v.sort_unstable();
+            v
+        };
+        assert_eq!(sorted(&ne.adj), sorted(&fresh.adj));
+        for slot in 0..cells.slot_capacity() {
+            let mut have: Vec<NodeEdgeIdx> =
+                ne.through.get(slot).map_or(Vec::new(), |l| l.to_vec());
+            let mut want: Vec<NodeEdgeIdx> = fresh.through[slot].to_vec();
+            have.sort_unstable();
+            want.sort_unstable();
+            assert_eq!(have, want, "edges through slot {slot}");
+        }
+    }
+
+    #[test]
+    fn gone_node_loses_its_edges_and_the_survivors_bridge_the_gap() {
+        let mut pg = setup(&strip_cells(), &[(0, 0, 0), (10, 0, 0), (19, 0, 0)]);
+        assert_eq!(pg.node_edges.len(), 2);
+        let gone = pg.cells.id((10, 0, 0)).unwrap();
+        pg.nodes.retain(|n| n.cell_id != gone);
+        pg.node_index.rebuild(&pg.cells, &pg.nodes, &params());
+
+        let window: Vec<CellId> = pg.cells.ids().collect();
+        repair_region(&mut pg, &window, &[], &[gone]);
+
+        let (a, b) = (
+            pg.cells.id((0, 0, 0)).unwrap(),
+            pg.cells.id((19, 0, 0)).unwrap(),
+        );
+        assert_eq!(pg.node_edges.len(), 1);
+        assert!(pg.node_edges.between(a, b).is_some());
+        assert!(!pg.node_edges.adj.contains_key(&gone));
+    }
+
+    #[test]
+    fn removed_cell_under_a_corridor_drops_the_edge_outside_the_window() {
+        let mut pg = setup(
+            &strip_cells(),
+            &[(0, 0, 0), (6, 0, 0), (12, 0, 0), (19, 0, 0)],
+        );
+        assert_eq!(pg.node_edges.len(), 3);
+        let removed = pg.cells.remove((3, 0, 0)).unwrap();
+
+        repair_region(&mut pg, &[], &[removed], &[]);
+
+        let ids = |x: i32| pg.cells.id((x, 0, 0)).unwrap();
+        assert_eq!(pg.node_edges.len(), 2);
+        assert!(pg.node_edges.between(ids(0), ids(6)).is_none());
+        assert!(pg.node_edges.between(ids(6), ids(12)).is_some());
+        assert!(pg.node_edges.between(ids(12), ids(19)).is_some());
     }
 
     #[test]
     fn cached_corridor_survives_an_equal_cost_rescan() {
         let mut pg = setup(&parallel_strips(), &[(0, 0, 0), (19, 0, 0)]);
         assert_eq!(pg.node_edges.len(), 1);
-        let cached = pg.node_edges[0].chain.clone();
+        let cached = pg.node_edges.edges[0].chain.clone();
 
         rebuild_region_all(&mut pg);
 
         assert_eq!(pg.node_edges.len(), 1);
         assert_eq!(
-            pg.node_edges[0].chain, cached,
+            pg.node_edges.edges[0].chain, cached,
             "a crossing that is not clearly cheaper must not displace the corridor"
         );
     }
@@ -603,8 +804,8 @@ mod tests {
     #[test]
     fn clearly_cheaper_crossing_replaces_the_cached_corridor() {
         let mut pg = setup(&parallel_strips(), &[(0, 0, 0), (19, 0, 0)]);
-        let cached = pg.node_edges[0].chain.clone();
-        let old_cost = pg.node_edges[0].cost;
+        let cached = pg.node_edges.edges[0].chain.clone();
+        let old_cost = pg.node_edges.edges[0].cost;
 
         // The y=1 row becomes a highway two orders of magnitude cheaper.
         let ids: Vec<CellId> = pg.cells.ids().collect();
@@ -631,7 +832,7 @@ mod tests {
         rebuild_region_all(&mut pg);
 
         assert_eq!(pg.node_edges.len(), 1);
-        let e = &pg.node_edges[0];
+        let e = &pg.node_edges.edges[0];
         assert!(e.cost < CORRIDOR_ADOPT_FRAC * old_cost);
         assert_ne!(e.chain, cached, "the cheaper crossing is adopted");
         assert!(

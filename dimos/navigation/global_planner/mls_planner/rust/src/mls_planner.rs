@@ -322,9 +322,10 @@ impl Planner {
                 Some((i, c))
             })
             .collect();
-        for &c in &removed {
-            self.graph.cells.remove(c);
-        }
+        let removed_ids: Vec<CellId> = removed
+            .iter()
+            .filter_map(|&c| self.graph.cells.remove(c))
+            .collect();
         let mut added_ids: Vec<CellId> = Vec::with_capacity(added.len());
         for &c in &added {
             added_ids.push(self.graph.cells.insert(c));
@@ -343,7 +344,7 @@ impl Planner {
             step,
         );
         let params = config.placement_params();
-        relocate_dead_nodes(
+        let mut gone_nodes = relocate_dead_nodes(
             &self.graph.cells,
             &self.graph.surface_lookup,
             &mut self.graph.nodes,
@@ -352,7 +353,7 @@ impl Planner {
             &mut self.graph.node_index,
         );
         let window = self.node_window(&seeds, config);
-        place_nodes_region(
+        gone_nodes.extend(place_nodes_region(
             &mut self.graph.cells,
             &self.by_col,
             &params,
@@ -362,14 +363,16 @@ impl Planner {
             &mut self.graph.node_scratch,
             &mut self.graph.node_index,
             &mut self.graph.nodes,
-        );
+        ));
         build_node_edges_region(
             &self.graph.cells,
             &self.graph.nodes,
+            &self.graph.node_index,
             &window,
+            &removed_ids,
+            &gone_nodes,
             &mut self.graph.cell_state,
             &mut self.graph.node_edges,
-            &mut self.graph.node_adj,
         );
     }
 
@@ -605,7 +608,6 @@ impl Planner {
             &self.graph.nodes,
             &mut self.graph.cell_state,
             &mut self.graph.node_edges,
-            &mut self.graph.node_adj,
         );
     }
 
@@ -661,12 +663,12 @@ impl Planner {
     /// Corridor segments of every node edge, for visualization.
     pub fn edge_segments(&self) -> Vec<(VoxelKey, VoxelKey, f32)> {
         self.pool
-            .install(|| edges_to_segments(&self.graph.node_edges))
+            .install(|| edges_to_segments(&self.graph.node_edges.edges))
     }
 
     /// The same segments without materializing them.
     pub fn edge_segment_iter(&self) -> impl Iterator<Item = (VoxelKey, VoxelKey, f32)> + '_ {
-        self.graph.node_edges.iter().flat_map(|edge| {
+        self.graph.node_edges.edges.iter().flat_map(|edge| {
             edge.chain
                 .windows(2)
                 .map(move |pair| (pair[0], pair[1], edge.cost))
