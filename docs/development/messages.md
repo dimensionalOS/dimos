@@ -3,7 +3,7 @@
 Choose the workflow that owns your definitions:
 
 - [Develop a built-in message in this checkout](/docs/development/messages-in-repository.md): edit canonical `.msg` inputs, rebuild the independent message package, test consumers, and let CI distribute artifacts.
-- Installed dimOS users author a separate external message project. Its complete Python/C++/Rust tutorial accompanies the runtime-cutover layer; ordinary built-in users only install matching prebuilt packages.
+- [Use installed dimOS with a custom message project](/docs/development/messages-external-project.md): prepare matching review packages, define one external message and build/install it for Python, C++ and Rust.
 
 Both workflows share [message contracts](/docs/development/message-reference.md):
 type ownership, language builds, schema distribution and generated values versus

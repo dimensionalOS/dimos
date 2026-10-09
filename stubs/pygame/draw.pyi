@@ -1,4 +1,4 @@
-from . import Surface
+from . import Rect, Surface
 
 def circle(
     surface: Surface,
@@ -10,8 +10,9 @@ def circle(
 def rect(
     surface: Surface,
     color: tuple[int, int, int],
-    rect: tuple[int, int, int, int],
+    rect: Rect | tuple[int, int, int, int],
     width: int = ...,
+    border_radius: int = ...,
 ) -> None: ...
 def line(
     surface: Surface,

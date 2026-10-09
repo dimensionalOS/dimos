@@ -6,6 +6,7 @@
 // new QUIC port and a new ephemeral certificate.
 
 import { PROTOCOL_VERSION } from "@dimos/shared";
+import type { PeerConnectionFactory } from "./rtc.ts";
 
 export interface RelayInfo {
   /** WebTransport base URL (no path); connectWebTransport appends /viewer. */
@@ -13,6 +14,8 @@ export interface RelayInfo {
   /** base64 SHA-256 of the relay's ephemeral certificate; absent with a real one. */
   certHash?: string;
   v: number;
+  /** True when the relay brokers video.webrtc.v1 track channels (v7). */
+  rtc?: boolean;
 }
 
 export type TransportPhase =
@@ -55,6 +58,8 @@ export interface TransportEvents {
 export interface TransportDeps {
   fetchInfo?: (signal: AbortSignal) => Promise<RelayInfo>;
   createWebTransport?: (info: RelayInfo) => WebTransportLike;
+  /** Test seam for the PeerConnection toward the SFU. */
+  createPeerConnection?: PeerConnectionFactory;
   now?: () => number;
 }
 
@@ -100,7 +105,9 @@ export async function fetchRelayInfo(url: string, signal: AbortSignal): Promise<
     typeof (data as Record<string, unknown>).wtUrl !== "string" ||
     ((data as Record<string, unknown>).certHash !== undefined &&
       typeof (data as Record<string, unknown>).certHash !== "string") ||
-    typeof (data as Record<string, unknown>).v !== "number"
+    typeof (data as Record<string, unknown>).v !== "number" ||
+    ((data as Record<string, unknown>).rtc !== undefined &&
+      typeof (data as Record<string, unknown>).rtc !== "boolean")
   ) {
     throw new Error(`${url} returned an unexpected shape`);
   }

@@ -110,8 +110,8 @@ def test_independent_regeneration_rejects_and_repairs_drift(aligned_checkout, tm
     elif change == "deleted_type":
         (definitions / "std_msgs/msg/Empty.msg").unlink()
     elif change == "generator":
-        runtime = checkout / "dimos/message_codegen/templates/runtime.py"
-        runtime.write_text("# Deliberately changed generator output\n" + runtime.read_text())
+        runtime = checkout / "dimos/message_codegen/templates/message_build.rs"
+        runtime.write_text("// Deliberately changed generator output\n" + runtime.read_text())
     elif change == "version":
         metadata = checkout / "packages/dimos-generated/pyproject.toml"
         metadata.write_text(metadata.read_text().replace('version = "0.1.0"', 'version = "0.1.1"'))
@@ -122,7 +122,7 @@ def test_independent_regeneration_rejects_and_repairs_drift(aligned_checkout, tm
     else:
         paths = {
             "missing_python": "dimos_generated/_types.py",
-            "missing_cpp": "dimos_generated_schemas/package/cpp/messages.hpp",
+            "missing_cpp": "dimos_generated_schemas/package/cpp/CMakeLists.txt",
             "missing_rust": "dimos_generated_schemas/package/rust/src/lib.rs",
             "missing_schema": "dimos_generated_schemas/schemas/geometry_msgs/msg/Point.msg",
             "missing_rust_generator": "dimos_generated_schemas/package/rust/build.rs",
@@ -145,9 +145,8 @@ def test_independent_regeneration_rejects_and_repairs_drift(aligned_checkout, tm
     assert "Generated source drift" in failed.stderr, failed.stderr
     if change == "field":
         for language_output in [
-            "_types.py",
-            "messages.hpp",
-            "rust/build.rs",
+            "_types.pyi",
+            "cpp/geometry_msgs/msg/Point.msg",
             "rust/interfaces/geometry_msgs/msg/Point.msg",
         ]:
             assert language_output in failed.stderr

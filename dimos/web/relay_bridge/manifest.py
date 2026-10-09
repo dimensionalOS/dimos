@@ -55,6 +55,10 @@ MAX_MANIFEST_ID_LEN = 64
 # and can never be declared by a manifest.
 RESERVED_CHANNEL_PREFIX = "@"
 
+# A video channel delivered as a WebRTC track through the relay's SFU: no
+# frame ever rides the relay for it.
+TRACK_ENCODING = "video.webrtc.v1"
+
 
 class ManifestError(ValueError):
     """`code` is the machine-readable reason, pinned by the golden vectors."""
@@ -180,6 +184,29 @@ def _validate_layout_node(node: Any, panel_ids: set[str], seen: set[str]) -> Any
     return out
 
 
+# The map panels: channels[0] is the map (latest rx in the kind's encoding),
+# channels[1] (optional) the pose.json.v1 rx pose marker.
+_MAP_ENCODINGS = {"map2d": "costmap.zlib.v1", "map3d": "voxels.zlib.v1"}
+
+
+def _check_map_panel(panel: PanelSpec, ch_ids: dict[str, ChannelSpec], encoding: str) -> None:
+    code = f"invalid_{panel.kind}_panel"
+    if len(panel.channels) not in (1, 2):
+        raise ManifestError(code, f"{panel.kind} panel {panel.id} must bind one or two channels")
+    map_ch = ch_ids[panel.channels[0]]
+    if map_ch.encoding != encoding or map_ch.delivery != "latest" or map_ch.dir != "rx":
+        raise ManifestError(
+            code, f"{panel.kind} panel {panel.id} needs a {encoding} latest rx channel first"
+        )
+    if len(panel.channels) == 2:
+        pose = ch_ids[panel.channels[1]]
+        if pose.encoding != "pose.json.v1" or pose.dir != "rx":
+            raise ManifestError(
+                code,
+                f"{panel.kind} panel {panel.id} pose channel must be a pose.json.v1 rx channel",
+            )
+
+
 def parse_manifest(data: Any) -> Manifest:
     """Validated manifest from parsed JSON (or any untrusted value); raises
     ManifestError. Absent dir/params/title/layout/pages normalize to
@@ -279,35 +306,18 @@ def parse_manifest(data: Any) -> Manifest:
                     "invalid_video_panel", f"video panel {panel.id} must bind exactly one channel"
                 )
             bound = ch_ids[panel.channels[0]]
-            if bound.encoding != "jpeg.v1" or bound.delivery != "latest" or bound.dir != "rx":
-                raise ManifestError(
-                    "invalid_video_panel",
-                    f"video panel {panel.id} needs a jpeg.v1 latest rx channel",
-                )
-        if panel.kind == "map2d":
-            # channels[0] is the costmap; channels[1] (optional) the pose overlay.
-            if len(panel.channels) not in (1, 2):
-                raise ManifestError(
-                    "invalid_map2d_panel",
-                    f"map2d panel {panel.id} must bind one or two channels",
-                )
-            costmap = ch_ids[panel.channels[0]]
             if (
-                costmap.encoding != "costmap.zlib.v1"
-                or costmap.delivery != "latest"
-                or costmap.dir != "rx"
+                bound.encoding not in ("jpeg.v1", TRACK_ENCODING)
+                or bound.delivery != "latest"
+                or bound.dir != "rx"
             ):
                 raise ManifestError(
-                    "invalid_map2d_panel",
-                    f"map2d panel {panel.id} needs a costmap.zlib.v1 latest rx channel first",
+                    "invalid_video_panel",
+                    f"video panel {panel.id} needs a jpeg.v1 or {TRACK_ENCODING} latest rx channel",
                 )
-            if len(panel.channels) == 2:
-                pose = ch_ids[panel.channels[1]]
-                if pose.encoding != "pose.json.v1" or pose.dir != "rx":
-                    raise ManifestError(
-                        "invalid_map2d_panel",
-                        f"map2d panel {panel.id} pose channel must be a pose.json.v1 rx channel",
-                    )
+        map_encoding = _MAP_ENCODINGS.get(panel.kind)
+        if map_encoding is not None:
+            _check_map_panel(panel, ch_ids, map_encoding)
         if panel.kind == "teleop":
             if len(panel.channels) != 1:
                 raise ManifestError(

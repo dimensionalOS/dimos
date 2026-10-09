@@ -1,0 +1,1 @@
+<package format="3"><name>shape_msgs</name><version>0.1.0</version><description>DimOS message sources</description><maintainer email="build@dimensionalos.com">DimOS</maintainer><license>Apache-2.0</license><depend>geometry_msgs</depend><member_of_group>rosidl_interface_packages</member_of_group><export><build_type>ament_cmake</build_type></export></package>

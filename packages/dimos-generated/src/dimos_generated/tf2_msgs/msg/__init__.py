@@ -1,3 +1,4 @@
-from ..._types import tf2_msgs__msg__TF2Error as TF2Error, tf2_msgs__msg__TFMessage as TFMessage
+from ..._types import store
 
-__all__ = ["TF2Error", "TFMessage"]
+TF2Error = store.types["tf2_msgs/msg/TF2Error"]
+TFMessage = store.types["tf2_msgs/msg/TFMessage"]

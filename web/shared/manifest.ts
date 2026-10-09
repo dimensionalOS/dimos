@@ -87,6 +87,10 @@ export const MAX_MANIFEST_ID_LEN = 64;
  * and can never be declared by a manifest. */
 export const RESERVED_CHANNEL_PREFIX = "@";
 
+/** A video channel delivered as a WebRTC track through the relay's SFU: no
+ * frame ever rides the relay for it. */
+export const TRACK_ENCODING = "video.webrtc.v1";
+
 export class ManifestError extends Error {
   constructor(readonly code: string, message: string) {
     super(`${code}: ${message}`);
@@ -151,6 +155,40 @@ function isPanelSpec(value: unknown): value is RawPanelSpec {
 
 function boundedId(s: string): boolean {
   return s.length >= 1 && s.length <= MAX_MANIFEST_ID_LEN;
+}
+
+// The map panels: channels[0] is the map (latest rx in the kind's encoding),
+// channels[1] (optional) the pose.json.v1 rx pose marker.
+const MAP_ENCODINGS = new Map([
+  ["map2d", "costmap.zlib.v1"],
+  ["map3d", "voxels.zlib.v1"],
+]);
+
+function checkMapPanel(
+  panel: RawPanelSpec,
+  chIds: Map<string, RawChannelSpec>,
+  encoding: string,
+): void {
+  const code = `invalid_${panel.kind}_panel`;
+  if (panel.channels.length !== 1 && panel.channels.length !== 2) {
+    throw new ManifestError(code, `${panel.kind} panel ${panel.id} must bind one or two channels`);
+  }
+  const map = chIds.get(panel.channels[0])!;
+  if (map.encoding !== encoding || map.delivery !== "latest" || dirOf(map) !== "rx") {
+    throw new ManifestError(
+      code,
+      `${panel.kind} panel ${panel.id} needs a ${encoding} latest rx channel first`,
+    );
+  }
+  if (panel.channels.length === 2) {
+    const pose = chIds.get(panel.channels[1])!;
+    if (pose.encoding !== "pose.json.v1" || dirOf(pose) !== "rx") {
+      throw new ManifestError(
+        code,
+        `${panel.kind} panel ${panel.id} pose channel must be a pose.json.v1 rx channel`,
+      );
+    }
+  }
 }
 
 function dirOf(spec: RawChannelSpec): Dir {
@@ -343,41 +381,18 @@ export function parseManifest(value: unknown): Manifest {
         );
       }
       const bound = chIds.get(panel.channels[0])!;
-      if (bound.encoding !== "jpeg.v1" || bound.delivery !== "latest" || dirOf(bound) !== "rx") {
-        throw new ManifestError(
-          "invalid_video_panel",
-          `video panel ${panel.id} needs a jpeg.v1 latest rx channel`,
-        );
-      }
-    }
-    if (panel.kind === "map2d") {
-      // channels[0] is the costmap; channels[1] (optional) the pose overlay.
-      if (panel.channels.length !== 1 && panel.channels.length !== 2) {
-        throw new ManifestError(
-          "invalid_map2d_panel",
-          `map2d panel ${panel.id} must bind one or two channels`,
-        );
-      }
-      const costmap = chIds.get(panel.channels[0])!;
       if (
-        costmap.encoding !== "costmap.zlib.v1" || costmap.delivery !== "latest" ||
-        dirOf(costmap) !== "rx"
+        (bound.encoding !== "jpeg.v1" && bound.encoding !== TRACK_ENCODING) ||
+        bound.delivery !== "latest" || dirOf(bound) !== "rx"
       ) {
         throw new ManifestError(
-          "invalid_map2d_panel",
-          `map2d panel ${panel.id} needs a costmap.zlib.v1 latest rx channel first`,
+          "invalid_video_panel",
+          `video panel ${panel.id} needs a jpeg.v1 or ${TRACK_ENCODING} latest rx channel`,
         );
       }
-      if (panel.channels.length === 2) {
-        const pose = chIds.get(panel.channels[1])!;
-        if (pose.encoding !== "pose.json.v1" || dirOf(pose) !== "rx") {
-          throw new ManifestError(
-            "invalid_map2d_panel",
-            `map2d panel ${panel.id} pose channel must be a pose.json.v1 rx channel`,
-          );
-        }
-      }
     }
+    const mapEncoding = MAP_ENCODINGS.get(panel.kind);
+    if (mapEncoding !== undefined) checkMapPanel(panel, chIds, mapEncoding);
     if (panel.kind === "teleop") {
       if (panel.channels.length !== 1) {
         throw new ManifestError(

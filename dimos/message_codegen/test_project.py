@@ -45,7 +45,7 @@ dependencies = {}
 def test_defaults_and_cache_reuse_without_touching_generated_files(tmp_path):
     config, _ = project(tmp_path)
     output = prepare(config)
-    header = output / "cpp/messages.hpp"
+    header = output / "python/example_messages/_types.pyi"
     stamp = header.stat().st_mtime_ns
     assert config.module == "example_messages"
     assert config.languages == ("python",)
@@ -67,13 +67,13 @@ def test_schema_edits_deletion_and_rename_remove_stale_outputs(tmp_path):
     assert (output / "schemas/example_msgs/msg/Renamed.msg").is_file()
     source.with_name("Renamed.msg").write_text("int32 replacement\n")
     prepare(config)
-    assert "replacement" in (output / "cpp/messages.hpp").read_text()
+    assert "replacement" in (output / "python/example_messages/_types.pyi").read_text()
 
 
 def test_missing_or_modified_generated_file_is_repaired(tmp_path):
     config, _ = project(tmp_path)
     output = prepare(config)
-    header = output / "cpp/messages.hpp"
+    header = output / "python/example_messages/_types.pyi"
     original = header.read_bytes()
     header.write_text("corrupt")
     prepare(config)
@@ -183,8 +183,8 @@ def test_python_only_build_needs_no_native_build_tool(tmp_path, monkeypatch):
 @pytest.mark.parametrize(
     "resource, artifact",
     [
-        ("_vendor/rosidl/serialization/msg__cdr.hpp.em", "cpp/messages.hpp"),
-        ("templates/message_build.rs", "rust/build.rs"),
+        ("templates/native-support.cmake", "generation.json"),
+        ("templates/message_build.rs", "generation.json"),
     ],
 )
 def test_upstream_template_and_cargo_adapter_changes_invalidate_cache(tmp_path, resource, artifact):
@@ -203,11 +203,80 @@ from toolkit.project import Project, prepare
 project = Project.load(Path({str(tmp_path)!r}))
 output = prepare(project)
 artifact = output / {artifact!r}
-assert 'UPSTREAM_CACHE_PROBE' not in artifact.read_text()
+previous = artifact.read_text()
 resource = Path({str(toolkit / resource)!r})
 resource.write_text(resource.read_text() + '\n// UPSTREAM_CACHE_PROBE\n')
 prepare(project)
-assert 'UPSTREAM_CACHE_PROBE' in artifact.read_text()
+assert artifact.read_text() != previous
 """
     result = subprocess.run([sys.executable, "-I", "-c", program], capture_output=True, text=True)
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_rust_build_recovers_dependency_sources_from_python_only_package(tmp_path, monkeypatch):
+    config, source = project(tmp_path, "std_msgs/Header header\nfloat64 value\n")
+    dependency = tmp_path / "base_schemas/package"
+    generate(
+        [],
+        dependency,
+        ["std_msgs/msg/Header"],
+        "base",
+        version="1.0.0",
+        shared=True,
+        languages=("python",),
+    )
+    config.dependency_specs["base"] = {"version": "1.0.0", "path": str(dependency)}
+    commands = []
+    monkeypatch.setattr("dimos.message_codegen.build.shutil.which", lambda tool: "/tools/" + tool)
+    monkeypatch.setattr(subprocess, "run", lambda command, **kwargs: commands.append(command))
+
+    artifacts = build_project(config, ("rust",), offline=True)
+
+    manifest = Path(artifacts["cargo_manifest"])
+    base = manifest.parent.parent / "base"
+    assert not (dependency / "rust").exists()
+    assert (base / "interfaces/std_msgs/msg/Header.msg").read_text() == (
+        dependency / "schemas/std_msgs/msg/Header.msg"
+    ).read_text()
+    assert "pub use base_messages::std_msgs;" in (manifest.parent / "src/lib.rs").read_text()
+    assert 'path = "../base"' in manifest.read_text()
+    schemas = json.loads((manifest.parent / "schemas.json").read_text())
+    assert "MSG: std_msgs/Header" in schemas["example_msgs/msg/Reading"]
+    assert commands == [["cargo", "build", "--manifest-path", str(manifest), "--offline"]]
+    with tarfile.open(artifacts["cargo_archive"]) as archive:
+        assert "./base/interfaces/std_msgs/msg/Header.msg" in archive.getnames()
+
+
+def test_selected_language_cache_invalidates_on_selection_edit_delete_and_rename(
+    tmp_path, monkeypatch
+):
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname="accept-messages"\nversion="0.1.0"\n[tool.dimos.messages]\ndependencies={}\n'
+    )
+    source = tmp_path / "interfaces/accept_msgs/msg/Reading.msg"
+    source.parent.mkdir(parents=True)
+    source.write_text("float64 value\n")
+    config = Project.load(tmp_path)
+
+    def no_tools(*args, **kwargs):
+        raise AssertionError("Source packaging invoked an external build")
+
+    monkeypatch.setattr(subprocess, "run", no_tools)
+    output = prepare(config)
+    stamp = (output / "generation.json").stat().st_mtime_ns
+    assert prepare(config) == output
+    assert (output / "generation.json").stat().st_mtime_ns == stamp
+    assert not (output / "cpp").exists()
+    assert not (output / "rust").exists()
+    prepare(config, ("rust",))
+    assert (output / "rust/build.rs").is_file()
+    assert not (output / "python").exists()
+    source.rename(source.with_name("Renamed.msg"))
+    source.with_name("Renamed.msg").write_text("int32 other\n")
+    prepare(config)
+    assert not (output / "schemas/accept_msgs/msg/Reading.msg").exists()
+    assert (output / "schemas/accept_msgs/msg/Renamed.msg").read_text() == "int32 other\n"
+    source.with_name("Renamed.msg").unlink()
+    with pytest.raises(ValueError, match="No messages"):
+        prepare(config)
+    assert (output / "schemas/accept_msgs/msg/Renamed.msg").is_file()

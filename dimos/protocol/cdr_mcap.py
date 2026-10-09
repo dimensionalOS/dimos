@@ -55,6 +55,26 @@ class CdrMcapWriter:
     ) -> None:
         if self._closed:
             raise ValueError("MCAP writer is closed")
+        channel_id = self.register_stream(topic, schema_name=schema_name, schema=schema)
+        self._writer.add_message(
+            channel_id=channel_id,
+            data=payload,
+            log_time=log_time_ns,
+            publish_time=log_time_ns if publish_time_ns is None else publish_time_ns,
+            sequence=sequence,
+        )
+
+    def register_stream(
+        self,
+        topic: str,
+        *,
+        schema_name: str,
+        schema: str,
+        metadata: dict[str, str] | None = None,
+    ) -> int:
+        """Declare a CDR stream even when it has no messages."""
+        if self._closed:
+            raise ValueError("MCAP writer is closed")
         schema_key = (schema_name, schema)
         if schema_key not in self._schemas:
             self._schemas[schema_key] = self._writer.register_schema(
@@ -67,21 +87,15 @@ class CdrMcapWriter:
                 topic=topic,
                 message_encoding="cdr",
                 schema_id=schema_id,
-                metadata={"offered_qos_profiles": "[]"},
+                metadata={"offered_qos_profiles": "[]", **(metadata or {})},
             )
-        self._writer.add_message(
-            channel_id=self._channels[channel_key],
-            data=payload,
-            log_time=log_time_ns,
-            publish_time=log_time_ns if publish_time_ns is None else publish_time_ns,
-            sequence=sequence,
-        )
+        return self._channels[channel_key]
 
     def close(self) -> None:
         if not self._closed:
             self._closed = True
             try:
-                self._writer.finish()
+                self._writer.finish()  # type: ignore[no-untyped-call]  # mcap lacks an annotation.
             finally:
                 self._stream.close()
 

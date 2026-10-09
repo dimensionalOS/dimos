@@ -20,14 +20,18 @@ from pathlib import Path
 
 import dimos_generated as messages
 from dimos_generated_schemas.provider import package_root
+from dimos_message_build.registry import decode, encode
 
 assert messages.__dimos_version__ == "0.1.0"
-header = messages.std_msgs.msg.Header()
-assert type(header).decode(header.encode()).encode() == header.encode()
+header = messages.std_msgs.msg.Header(
+    stamp=messages.builtin_interfaces.msg.Time(sec=17, nanosec=23), frame_id="wheel"
+)
+assert decode(encode(header), type(header)) == header
 root = Path(package_root())
 metadata = json.loads((root / "message-package.json").read_text())
 assert metadata["shared"]
 assert "std_msgs/msg/Header" in metadata["owned"]
 assert (root / "schemas/std_msgs/msg/Header.msg").is_file()
-assert (root / "lib/cmake/dimos_generated/dimos_generatedConfig.cmake").is_file()
+assert (root / "cpp/CMakeLists.txt").is_file()
+assert (root / "cpp/std_msgs/msg/Header.msg").is_file()
 assert (root / "rust/Cargo.toml").is_file()

@@ -1,59 +1,29 @@
-from ..._types import (
-    sensor_msgs__msg__BatteryState as BatteryState,
-    sensor_msgs__msg__CameraInfo as CameraInfo,
-    sensor_msgs__msg__ChannelFloat32 as ChannelFloat32,
-    sensor_msgs__msg__CompressedImage as CompressedImage,
-    sensor_msgs__msg__FluidPressure as FluidPressure,
-    sensor_msgs__msg__Illuminance as Illuminance,
-    sensor_msgs__msg__Image as Image,
-    sensor_msgs__msg__Imu as Imu,
-    sensor_msgs__msg__JointState as JointState,
-    sensor_msgs__msg__Joy as Joy,
-    sensor_msgs__msg__JoyFeedback as JoyFeedback,
-    sensor_msgs__msg__JoyFeedbackArray as JoyFeedbackArray,
-    sensor_msgs__msg__LaserEcho as LaserEcho,
-    sensor_msgs__msg__LaserScan as LaserScan,
-    sensor_msgs__msg__MagneticField as MagneticField,
-    sensor_msgs__msg__MultiDOFJointState as MultiDOFJointState,
-    sensor_msgs__msg__MultiEchoLaserScan as MultiEchoLaserScan,
-    sensor_msgs__msg__NavSatFix as NavSatFix,
-    sensor_msgs__msg__NavSatStatus as NavSatStatus,
-    sensor_msgs__msg__PointCloud as PointCloud,
-    sensor_msgs__msg__PointCloud2 as PointCloud2,
-    sensor_msgs__msg__PointField as PointField,
-    sensor_msgs__msg__Range as Range,
-    sensor_msgs__msg__RegionOfInterest as RegionOfInterest,
-    sensor_msgs__msg__RelativeHumidity as RelativeHumidity,
-    sensor_msgs__msg__Temperature as Temperature,
-    sensor_msgs__msg__TimeReference as TimeReference,
-)
+from ..._types import store
 
-__all__ = [
-    "BatteryState",
-    "CameraInfo",
-    "ChannelFloat32",
-    "CompressedImage",
-    "FluidPressure",
-    "Illuminance",
-    "Image",
-    "Imu",
-    "JointState",
-    "Joy",
-    "JoyFeedback",
-    "JoyFeedbackArray",
-    "LaserEcho",
-    "LaserScan",
-    "MagneticField",
-    "MultiDOFJointState",
-    "MultiEchoLaserScan",
-    "NavSatFix",
-    "NavSatStatus",
-    "PointCloud",
-    "PointCloud2",
-    "PointField",
-    "Range",
-    "RegionOfInterest",
-    "RelativeHumidity",
-    "Temperature",
-    "TimeReference",
-]
+BatteryState = store.types["sensor_msgs/msg/BatteryState"]
+RegionOfInterest = store.types["sensor_msgs/msg/RegionOfInterest"]
+CameraInfo = store.types["sensor_msgs/msg/CameraInfo"]
+ChannelFloat32 = store.types["sensor_msgs/msg/ChannelFloat32"]
+CompressedImage = store.types["sensor_msgs/msg/CompressedImage"]
+FluidPressure = store.types["sensor_msgs/msg/FluidPressure"]
+Illuminance = store.types["sensor_msgs/msg/Illuminance"]
+Image = store.types["sensor_msgs/msg/Image"]
+Imu = store.types["sensor_msgs/msg/Imu"]
+JointState = store.types["sensor_msgs/msg/JointState"]
+Joy = store.types["sensor_msgs/msg/Joy"]
+JoyFeedback = store.types["sensor_msgs/msg/JoyFeedback"]
+JoyFeedbackArray = store.types["sensor_msgs/msg/JoyFeedbackArray"]
+LaserEcho = store.types["sensor_msgs/msg/LaserEcho"]
+LaserScan = store.types["sensor_msgs/msg/LaserScan"]
+MagneticField = store.types["sensor_msgs/msg/MagneticField"]
+MultiDOFJointState = store.types["sensor_msgs/msg/MultiDOFJointState"]
+MultiEchoLaserScan = store.types["sensor_msgs/msg/MultiEchoLaserScan"]
+NavSatStatus = store.types["sensor_msgs/msg/NavSatStatus"]
+NavSatFix = store.types["sensor_msgs/msg/NavSatFix"]
+PointCloud = store.types["sensor_msgs/msg/PointCloud"]
+PointField = store.types["sensor_msgs/msg/PointField"]
+PointCloud2 = store.types["sensor_msgs/msg/PointCloud2"]
+Range = store.types["sensor_msgs/msg/Range"]
+RelativeHumidity = store.types["sensor_msgs/msg/RelativeHumidity"]
+Temperature = store.types["sensor_msgs/msg/Temperature"]
+TimeReference = store.types["sensor_msgs/msg/TimeReference"]

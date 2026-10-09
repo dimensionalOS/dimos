@@ -9,10 +9,13 @@ description = "Standalone DimOS message build backend"
 requires-python = ">=3.10"
 dependencies = ["rosbags==0.11.0", "empy==4.2", "lark==1.2.2", "setuptools>=70", "wheel", "tomli>=2; python_version < '3.11'"]
 
+[project.optional-dependencies]
+native = ["pip", "catkin-pkg==1.1.0", "PyYAML==6.0.2"]
+
 [tool.setuptools]
-packages = ["dimos_message_build", "dimos_message_build._vendor", "dimos_message_build._vendor.rosidl", "dimos_message_build._vendor.rosidl.rosidl_adapter", "dimos_message_build._vendor.rosidl.rosidl_adapter.msg", "dimos_message_build._vendor.rosidl.rosidl_adapter.resource", "dimos_message_build._vendor.rosidl.rosidl_parser", "dimos_message_build._vendor.rosidl.rosidl_pycommon", "dimos_message_build._vendor.rosidl.rosidl_generator_cpp"]
+packages = ["dimos_message_build", "dimos_message_build._vendor"]
 package-dir = {"dimos_message_build" = "."}
 include-package-data = false
 
 [tool.setuptools.package-data]
-"dimos_message_build" = ["schemas/**/*", "templates/*", "sources.json", "_vendor/rosidl/**/*.em", "_vendor/rosidl/**/*.lark", "_vendor/rosidl/**/*.pyi", "_vendor/rosidl/include/**/*", "_vendor/rosidl/notices/**/*", "_vendor/rosidl/LICENSE", "_vendor/rosidl/sources.json", "_vendor/rosidl/serialization/*"]
+"dimos_message_build" = ["py.typed", "schemas/**/*", "templates/*", "sources.json", "native_sources.json", "_vendor/*.pyi", "_vendor/LICENSE", "_vendor/*.xml", "_vendor/*sources.json"]

@@ -74,7 +74,7 @@ def write_distribution(
         f"    names = {list(owned)!r}\n"
         "    return {name: getattr(getattr(values, name.split('/')[0]).msg, name.split('/')[-1]) for name in names}\n"
     )
-    requirements = ["numpy>=1.26.4", "rosbags==0.11.0"] + [
+    requirements = ["numpy>=1.26.4", "rosbags==0.11.0", "dimos-message-build==0.1.0"] + [
         dep.module.replace("_", "-") + "==" + dep.version for dep in dependencies
     ]
     (project / "pyproject.toml").write_text(
@@ -84,7 +84,7 @@ def write_distribution(
         "from setuptools import find_packages, setup\n"
         f"setup(name={module.replace('_', '-')!r}, version={version!r}, packages=find_packages(),\n"
         f"      install_requires={requirements!r},\n"
-        f"      package_data={{{module!r}: ['py.typed'], {support!r}: ['schemas.json', 'schemas/**/*', 'package/**/*']}},\n"
+        f"      package_data={{{module!r}: ['py.typed', '**/*.pyi', '*.pyi'], {support!r}: ['schemas.json', 'schemas/**/*', 'package/**/*']}},\n"
         f"      entry_points={{'dimos.messages': [{(module + '=' + support + '.provider')!r}]}})\n"
     )
     (project / "MANIFEST.in").write_text(
