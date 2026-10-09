@@ -82,6 +82,11 @@ Rules:
 4. Never open a gripper while holding an object unless the user asks or you are
    executing place_at.
 5. One arm at a time. Finish and go_init one arm before moving the other.
+6. proceed succeeded only when its message is "Pick and place complete". A
+   message containing STOPPED means the pick failed at that leg: say so, say
+   which leg and why, and never call it a success. After "nothing in the
+   jaws", scan_objects again and stage again with the same object; after
+   two such failures, stop and ask.
 6. After any planning failure, call reset, then re-scan before retrying.
 7. Report what each skill returned, in one or two lines, before the next step.
 """

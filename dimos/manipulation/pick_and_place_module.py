@@ -472,13 +472,24 @@ class PickAndPlaceModule(Module):
                     return not_open
             elif leg.gripper == "close":
                 if not_held := self._close_and_verify(group, program.object_id):
-                    return not_held
+                    return SkillResult(
+                        f"Pick and place of object {program.object_id} STOPPED at leg {index} "
+                        f"of {len(program.legs)} ({leg.label}): {not_held.message} The object "
+                        "was not picked and the arm stayed at the grasp pose with the gripper "
+                        "open.",
+                        metadata={"stopped_at_leg": index, "legs": len(program.legs)},
+                    )
                 self._selected_object_id = program.object_id
                 self._selected_grasp = program.grasp
                 self._holding_object = True
             elif leg.gripper == "release":
                 if not_open := self._open_gripper(group, "to release the object"):
-                    return SkillResult(f"{not_open.message} The arm stayed at the place pose.")
+                    return SkillResult(
+                        f"Pick and place of object {program.object_id} STOPPED at leg {index} "
+                        f"of {len(program.legs)} ({leg.label}): {not_open.message} The arm "
+                        "stayed at the place pose.",
+                        metadata={"stopped_at_leg": index, "legs": len(program.legs)},
+                    )
                 self._holding_object = False
                 self._clear_selection()
             elif leg.plan is not None:
