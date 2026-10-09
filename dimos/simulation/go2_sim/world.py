@@ -325,6 +325,7 @@ class SimGo2World(Module):
     scene: Out[LineSegments3D]
 
     _thread: Thread | None = None
+    _reset: tuple[float, float, float, float] | None = None
 
     @rpc
     def start(self) -> None:
@@ -343,6 +344,11 @@ class SimGo2World(Module):
         if self._thread is not None:
             self._thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         super().stop()
+
+    @rpc
+    def reset_pose(self, x: float, y: float, z: float, yaw: float) -> None:
+        """Stand the robot at rest at the pose with its feet on z, before the sim's next tick."""
+        self._reset = (x, y, z, yaw)
 
     def _on_cmd_vel(self, msg: Twist) -> None:
         command = np.array([msg.linear.x, msg.linear.y, msg.angular.z])
@@ -392,6 +398,10 @@ class SimGo2World(Module):
         last_contacts: list[Contact] | None = None
         next_scene_publish = 0.0
         while not self._stop_event.is_set():
+            if (pose := self._reset) is not None:
+                self._reset = None
+                sim.reset(*pose)
+                t0 = time.time()
             frame = sim.tick(self._hold.current(time.monotonic()))
             if viewer is not None:
                 viewer.sync()
