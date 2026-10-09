@@ -277,14 +277,14 @@ public:
     /// Handlers run serialized, so they touch module state without locks.
     template <class T, class Self>
     void input(const std::string& port, void (Self::*handler)(const T&), Self* self,
-               DecodeFn<T> decode = cdr_decode<T>) {
+               DecodeFn<T> decode = [](const uint8_t* data, std::size_t size) { return cdr_decode<T>(data, size); }) {
         input<T>(port, std::move(decode),
                  [self, handler](T msg) { (self->*handler)(msg); });
     }
 
     /// publish() hands off to a per-channel worker, so it never blocks.
     template <class T>
-    Output<T> output(const std::string& port, EncodeFn<T> encode = cdr_encode<T>) {
+    Output<T> output(const std::string& port, EncodeFn<T> encode = [](const T& message) { return cdr_encode(message); }) {
         std::string topic = topic_for(port);
         auto queue = std::make_shared<PublishQueue>(topic);
         publish_queues_.push_back(queue);

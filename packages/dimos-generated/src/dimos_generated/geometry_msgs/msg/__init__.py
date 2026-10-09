@@ -1,71 +1,35 @@
-from ..._types import (
-    geometry_msgs__msg__Accel as Accel,
-    geometry_msgs__msg__AccelStamped as AccelStamped,
-    geometry_msgs__msg__AccelWithCovariance as AccelWithCovariance,
-    geometry_msgs__msg__AccelWithCovarianceStamped as AccelWithCovarianceStamped,
-    geometry_msgs__msg__Inertia as Inertia,
-    geometry_msgs__msg__InertiaStamped as InertiaStamped,
-    geometry_msgs__msg__Point as Point,
-    geometry_msgs__msg__Point32 as Point32,
-    geometry_msgs__msg__PointStamped as PointStamped,
-    geometry_msgs__msg__Polygon as Polygon,
-    geometry_msgs__msg__PolygonInstance as PolygonInstance,
-    geometry_msgs__msg__PolygonInstanceStamped as PolygonInstanceStamped,
-    geometry_msgs__msg__PolygonStamped as PolygonStamped,
-    geometry_msgs__msg__Pose as Pose,
-    geometry_msgs__msg__Pose2D as Pose2D,
-    geometry_msgs__msg__PoseArray as PoseArray,
-    geometry_msgs__msg__PoseStamped as PoseStamped,
-    geometry_msgs__msg__PoseWithCovariance as PoseWithCovariance,
-    geometry_msgs__msg__PoseWithCovarianceStamped as PoseWithCovarianceStamped,
-    geometry_msgs__msg__Quaternion as Quaternion,
-    geometry_msgs__msg__QuaternionStamped as QuaternionStamped,
-    geometry_msgs__msg__Transform as Transform,
-    geometry_msgs__msg__TransformStamped as TransformStamped,
-    geometry_msgs__msg__Twist as Twist,
-    geometry_msgs__msg__TwistStamped as TwistStamped,
-    geometry_msgs__msg__TwistWithCovariance as TwistWithCovariance,
-    geometry_msgs__msg__TwistWithCovarianceStamped as TwistWithCovarianceStamped,
-    geometry_msgs__msg__Vector3 as Vector3,
-    geometry_msgs__msg__Vector3Stamped as Vector3Stamped,
-    geometry_msgs__msg__VelocityStamped as VelocityStamped,
-    geometry_msgs__msg__VelocityWithCovarianceStamped as VelocityWithCovarianceStamped,
-    geometry_msgs__msg__Wrench as Wrench,
-    geometry_msgs__msg__WrenchStamped as WrenchStamped,
-)
+from ..._types import store
 
-__all__ = [
-    "Accel",
-    "AccelStamped",
-    "AccelWithCovariance",
-    "AccelWithCovarianceStamped",
-    "Inertia",
-    "InertiaStamped",
-    "Point",
-    "Point32",
-    "PointStamped",
-    "Polygon",
-    "PolygonInstance",
-    "PolygonInstanceStamped",
-    "PolygonStamped",
-    "Pose",
-    "Pose2D",
-    "PoseArray",
-    "PoseStamped",
-    "PoseWithCovariance",
-    "PoseWithCovarianceStamped",
-    "Quaternion",
-    "QuaternionStamped",
-    "Transform",
-    "TransformStamped",
-    "Twist",
-    "TwistStamped",
-    "TwistWithCovariance",
-    "TwistWithCovarianceStamped",
-    "Vector3",
-    "Vector3Stamped",
-    "VelocityStamped",
-    "VelocityWithCovarianceStamped",
-    "Wrench",
-    "WrenchStamped",
-]
+Point = store.types["geometry_msgs/msg/Point"]
+Quaternion = store.types["geometry_msgs/msg/Quaternion"]
+Pose = store.types["geometry_msgs/msg/Pose"]
+Vector3 = store.types["geometry_msgs/msg/Vector3"]
+Accel = store.types["geometry_msgs/msg/Accel"]
+AccelStamped = store.types["geometry_msgs/msg/AccelStamped"]
+AccelWithCovariance = store.types["geometry_msgs/msg/AccelWithCovariance"]
+AccelWithCovarianceStamped = store.types["geometry_msgs/msg/AccelWithCovarianceStamped"]
+Inertia = store.types["geometry_msgs/msg/Inertia"]
+InertiaStamped = store.types["geometry_msgs/msg/InertiaStamped"]
+Point32 = store.types["geometry_msgs/msg/Point32"]
+PointStamped = store.types["geometry_msgs/msg/PointStamped"]
+Polygon = store.types["geometry_msgs/msg/Polygon"]
+PolygonInstance = store.types["geometry_msgs/msg/PolygonInstance"]
+PolygonInstanceStamped = store.types["geometry_msgs/msg/PolygonInstanceStamped"]
+PolygonStamped = store.types["geometry_msgs/msg/PolygonStamped"]
+Pose2D = store.types["geometry_msgs/msg/Pose2D"]
+PoseArray = store.types["geometry_msgs/msg/PoseArray"]
+PoseStamped = store.types["geometry_msgs/msg/PoseStamped"]
+PoseWithCovariance = store.types["geometry_msgs/msg/PoseWithCovariance"]
+PoseWithCovarianceStamped = store.types["geometry_msgs/msg/PoseWithCovarianceStamped"]
+QuaternionStamped = store.types["geometry_msgs/msg/QuaternionStamped"]
+Transform = store.types["geometry_msgs/msg/Transform"]
+TransformStamped = store.types["geometry_msgs/msg/TransformStamped"]
+Twist = store.types["geometry_msgs/msg/Twist"]
+TwistStamped = store.types["geometry_msgs/msg/TwistStamped"]
+TwistWithCovariance = store.types["geometry_msgs/msg/TwistWithCovariance"]
+TwistWithCovarianceStamped = store.types["geometry_msgs/msg/TwistWithCovarianceStamped"]
+Vector3Stamped = store.types["geometry_msgs/msg/Vector3Stamped"]
+VelocityStamped = store.types["geometry_msgs/msg/VelocityStamped"]
+VelocityWithCovarianceStamped = store.types["geometry_msgs/msg/VelocityWithCovarianceStamped"]
+Wrench = store.types["geometry_msgs/msg/Wrench"]
+WrenchStamped = store.types["geometry_msgs/msg/WrenchStamped"]

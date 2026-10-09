@@ -15,6 +15,7 @@
 from dataclasses import replace
 import json
 import os
+from pathlib import Path
 import subprocess
 import sys
 
@@ -56,7 +57,10 @@ def test_external_package_owns_only_custom_type_and_preserves_schema_closure(tmp
         "MSG: std_msgs/Header"
         in json.loads((output / "schemas.json").read_text())["custom_msgs/msg/Reading"]
     )
-    assert "struct Header" not in (output / "cpp/messages.hpp").read_text()
+    assert not (output / "cpp/std_msgs").exists()
+    assert (
+        "find_package(std_msgs REQUIRED)" in (output / "cpp/custom_msgs/CMakeLists.txt").read_text()
+    )
     assert "pub struct Header" not in (output / "rust/src/lib.rs").read_text()
 
 
@@ -108,26 +112,32 @@ def test_python_source_reuses_dependency_class_for_assignment_and_decode(tmp_pat
         dependencies=(dependency,),
         shared=True,
     )
+    # Source-only projects have no installed entry points: bootstrap their exact closure.
+    (tmp_path / "dimos_message_build").symlink_to(Path(__file__).parent, target_is_directory=True)
     subprocess.run(
         [
             sys.executable,
             "-c",
             """
 import pickle
+from pathlib import Path
+from dimos_message_build import registry
+registry.providers = lambda: ()
+registry.initialize((Path("base"), Path("custom")), discover=False)
+from base_messages.builtin_interfaces.msg import Time
 from base_messages.std_msgs.msg import Header
 from custom_messages.custom_msgs.msg import Reading
-header = Header(frame_id='camera')
-header.stamp.sec = 123
+header = Header(stamp=Time(sec=123, nanosec=0), frame_id='camera')
 reading = Reading(header=header, value=20.5)
 assert type(reading.header) is Header
 reading.header = header
 for little in (True, False):
-    restored = Reading.decode(reading.encode(little))
+    restored = registry.decode(registry.encode(reading, little_endian=little), Reading.__msgtype__)
     assert type(restored.header) is Header
     assert restored.header == header
     assert restored.value == 20.5
 assert type(pickle.loads(pickle.dumps(reading)).header) is Header
-assert 'MSG: std_msgs/Header' in Reading.schema
+assert 'MSG: std_msgs/Header' in registry.schema(Reading.__msgtype__)
 """,
         ],
         check=True,
@@ -135,7 +145,7 @@ assert 'MSG: std_msgs/Header' in Reading.schema
         env={
             **os.environ,
             "PYTHONPATH": os.pathsep.join(
-                [str(dependency.root / "python"), str(output / "python")]
+                [str(tmp_path), str(dependency.root / "python"), str(output / "python")]
             ),
         },
     )

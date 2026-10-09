@@ -21,14 +21,14 @@ import tarfile
 import pytest
 
 from dimos.message_codegen.definitions import Definitions
+from dimos.message_codegen.native_build import prepare_cpp, write_cmake_toolchain
 from dimos.message_codegen.project import Project
 
 
 def test_builtin_native_artifact_version_and_relocated_consumer(tmp_path):
     location = os.environ.get("DIMOS_BUILTIN_PACKAGE")
-    fastcdr = os.environ.get("DIMOS_FASTCDR_PREFIX")
-    if not location or not fastcdr:
-        pytest.skip("Set DIMOS_BUILTIN_PACKAGE and DIMOS_FASTCDR_PREFIX for artifact acceptance")
+    if not location:
+        pytest.skip("Set DIMOS_BUILTIN_PACKAGE for native source artifact acceptance")
     output = Path(location).resolve()
     root = Path(__file__).resolve().parents[2]
     version = Project.load(root / "packages/dimos-generated").version
@@ -37,22 +37,38 @@ def test_builtin_native_artifact_version_and_relocated_consumer(tmp_path):
     assert metadata["shared"]
     assert set(metadata["owned"]) == {message.name for message in Definitions([]).resolve()}
     assert (output / "dist" / f"dimos-generated-messages-{version}.crate").is_file()
-    prefix = tmp_path / "prefix"
-    prefix.mkdir()
-    with tarfile.open(output / "dist" / f"dimos-messages-cmake-{version}.tar.gz") as archive:
-        archive.extractall(prefix, filter="data")
+    relocated = tmp_path / "relocated"
+    relocated.mkdir()
+    with tarfile.open(output / "dist" / f"dimos-messages-sources-{version}.tar.gz") as archive:
+        archive.extractall(relocated, filter="data")
+    assert json.loads((relocated / "message-package.json").read_text()) == metadata
+    sources = {
+        name: Path(path)
+        for name, path in json.loads(os.environ.get("DIMOS_NATIVE_SOURCE_DIRS", "{}")).items()
+    }
+    cache = os.environ.get("DIMOS_NATIVE_TEST_CACHE")
+    prefix = prepare_cpp(
+        relocated,
+        cache=Path(cache) if cache else None,
+        offline=os.environ.get("DIMOS_OFFLINE") == "1",
+        source_dirs=sources or None,
+    )
+    toolchain = write_cmake_toolchain(prefix, tmp_path / "toolchain.cmake")
     source = tmp_path / "app"
     source.mkdir()
     (source / "CMakeLists.txt").write_text(f"""cmake_minimum_required(VERSION 3.20)
 project(external_builtin LANGUAGES CXX)
 find_package(dimos_generated {version} EXACT CONFIG REQUIRED)
 add_executable(check main.cpp)
+target_compile_features(check PRIVATE cxx_std_17)
+target_include_directories(check PRIVATE "{root}/native/cpp/include")
 target_link_libraries(check PRIVATE dimos_generated::messages)
 """)
-    (source / "main.cpp").write_text("""#include <dimos_generated/messages.hpp>
+    (source / "main.cpp").write_text("""#include <std_msgs/msg/header.hpp>
+#include <dimos/native/cdr_codec.hpp>
 int main() {
  std_msgs::msg::Header h; h.frame_id = "outside-checkout"; h.stamp.sec = 17;
- auto result = dimos::cdr::decode<std_msgs::msg::Header>(dimos::cdr::encode(h));
+ auto result = dimos::native::cdr_decode<std_msgs::msg::Header>(dimos::native::cdr_encode(h));
  return result.frame_id == h.frame_id && result.stamp.sec == 17 ? 0 : 1;
 }
 """)
@@ -64,7 +80,7 @@ int main() {
             str(source),
             "-B",
             str(build),
-            f"-DCMAKE_PREFIX_PATH={prefix};{Path(fastcdr).resolve()}",
+            f"-DCMAKE_TOOLCHAIN_FILE={toolchain}",
         ],
         check=True,
     )

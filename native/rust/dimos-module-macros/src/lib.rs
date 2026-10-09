@@ -428,7 +428,7 @@ struct PortDecl {
 }
 
 /// The last `::`-separated segment of the single generic argument of
-/// `Input<T>`/`Output<T>`, e.g. `Input<dimos_generated_messages::sensor_msgs::msg::PointCloud2>` -> `PointCloud2`.
+/// `Input<T>`/`Output<T>`, e.g. `Input<dimos_generated_messages::sensor_msgs::msg::point_cloud2::PointCloud2>` -> `PointCloud2`.
 fn port_payload_type(ty: &Type) -> Option<String> {
     let Type::Path(p) = ty else { return None };
     let segment = p.path.segments.last()?;
@@ -880,8 +880,10 @@ mod tests {
 
     #[test]
     fn payload_type_is_the_last_generic_segment() {
-        let ty: syn::Type =
-            parse_str("Input<dimos_generated_messages::sensor_msgs::msg::PointCloud2>").unwrap();
+        let ty: syn::Type = parse_str(
+            "Input<dimos_generated_messages::sensor_msgs::msg::point_cloud2::PointCloud2>",
+        )
+        .unwrap();
         assert_eq!(port_payload_type(&ty).as_deref(), Some("PointCloud2"));
         let ty: syn::Type = parse_str("Output<Path>").unwrap();
         assert_eq!(port_payload_type(&ty).as_deref(), Some("Path"));

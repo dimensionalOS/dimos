@@ -1,0 +1,281 @@
+{
+  "repositories": {
+    "ament_package": {
+      "url": "https://github.com/ament/ament_package.git",
+      "revision": "ee3c5eda4fbc4df2c7a135d0ac1385e4a53fa0ee"
+    },
+    "ament_cmake": {
+      "url": "https://github.com/ament/ament_cmake.git",
+      "revision": "5741cff5b9f83253bf3521bd8f44108fde3504ad"
+    },
+    "ament_cmake_ros": {
+      "url": "https://github.com/ros2/ament_cmake_ros.git",
+      "revision": "5b77a227b940a25be5224d78d37591c8baccd756"
+    },
+    "rcutils": {
+      "url": "https://github.com/ros2/rcutils.git",
+      "revision": "26413034bab69688475f230ea7723e534ec3f8cd"
+    },
+    "rmw": {
+      "url": "https://github.com/ros2/rmw.git",
+      "revision": "8cb94a87cf3f4049abe2d563af893517bf336930"
+    },
+    "rosidl_dynamic_typesupport": {
+      "url": "https://github.com/ros2/rosidl_dynamic_typesupport.git",
+      "revision": "cb8c54d12c678daa70410bb0626ed8626f561e45"
+    },
+    "ament_index": {
+      "url": "https://github.com/ament/ament_index.git",
+      "revision": "2ccdcb8fd19a364fc793273b5793459207a440b9"
+    },
+    "rosidl": {
+      "url": "https://github.com/ros2/rosidl.git",
+      "revision": "85fa592b698b0f665e3120f48fac0d35e2f7d8a4"
+    },
+    "rosidl_typesupport_fastrtps": {
+      "url": "https://github.com/ros2/rosidl_typesupport_fastrtps.git",
+      "revision": "b883555055cce17982a22172a42ef557ef40bac5"
+    }
+  },
+  "packages": [
+    {
+      "name": "ament_package",
+      "repository": "ament_package",
+      "directory": ".",
+      "python": true
+    },
+    {
+      "name": "ament_cmake_core",
+      "repository": "ament_cmake",
+      "directory": "ament_cmake_core",
+      "python": false
+    },
+    {
+      "name": "ament_cmake_libraries",
+      "repository": "ament_cmake",
+      "directory": "ament_cmake_libraries",
+      "python": false
+    },
+    {
+      "name": "ament_cmake_export_dependencies",
+      "repository": "ament_cmake",
+      "directory": "ament_cmake_export_dependencies",
+      "python": false
+    },
+    {
+      "name": "ament_cmake_export_definitions",
+      "repository": "ament_cmake",
+      "directory": "ament_cmake_export_definitions",
+      "python": false
+    },
+    {
+      "name": "ament_cmake_export_include_directories",
+      "repository": "ament_cmake",
+      "directory": "ament_cmake_export_include_directories",
+      "python": false
+    },
+    {
+      "name": "ament_cmake_export_libraries",
+      "repository": "ament_cmake",
+      "directory": "ament_cmake_export_libraries",
+      "python": false
+    },
+    {
+      "name": "ament_cmake_export_interfaces",
+      "repository": "ament_cmake",
+      "directory": "ament_cmake_export_interfaces",
+      "python": false
+    },
+    {
+      "name": "ament_cmake_export_link_flags",
+      "repository": "ament_cmake",
+      "directory": "ament_cmake_export_link_flags",
+      "python": false
+    },
+    {
+      "name": "ament_cmake_export_targets",
+      "repository": "ament_cmake",
+      "directory": "ament_cmake_export_targets",
+      "python": false
+    },
+    {
+      "name": "ament_cmake_gen_version_h",
+      "repository": "ament_cmake",
+      "directory": "ament_cmake_gen_version_h",
+      "python": false
+    },
+    {
+      "name": "ament_cmake_python",
+      "repository": "ament_cmake",
+      "directory": "ament_cmake_python",
+      "python": false
+    },
+    {
+      "name": "ament_cmake_include_directories",
+      "repository": "ament_cmake",
+      "directory": "ament_cmake_include_directories",
+      "python": false
+    },
+    {
+      "name": "ament_cmake_target_dependencies",
+      "repository": "ament_cmake",
+      "directory": "ament_cmake_target_dependencies",
+      "python": false
+    },
+    {
+      "name": "ament_cmake_test",
+      "repository": "ament_cmake",
+      "directory": "ament_cmake_test",
+      "python": false
+    },
+    {
+      "name": "ament_cmake_version",
+      "repository": "ament_cmake",
+      "directory": "ament_cmake_version",
+      "python": false
+    },
+    {
+      "name": "ament_cmake",
+      "repository": "ament_cmake",
+      "directory": "ament_cmake",
+      "python": false
+    },
+    {
+      "name": "rosidl_cli",
+      "repository": "rosidl",
+      "directory": "rosidl_cli",
+      "python": true
+    },
+    {
+      "name": "rosidl_adapter",
+      "repository": "rosidl",
+      "directory": "rosidl_adapter",
+      "python": false
+    },
+    {
+      "name": "rosidl_parser",
+      "repository": "rosidl",
+      "directory": "rosidl_parser",
+      "python": false
+    },
+    {
+      "name": "rosidl_pycommon",
+      "repository": "rosidl",
+      "directory": "rosidl_pycommon",
+      "python": true
+    },
+    {
+      "name": "rosidl_cmake",
+      "repository": "rosidl",
+      "directory": "rosidl_cmake",
+      "python": false
+    },
+    {
+      "name": "ament_cmake_gtest",
+      "repository": "ament_cmake",
+      "directory": "ament_cmake_gtest",
+      "python": false
+    },
+    {
+      "name": "ament_cmake_gmock",
+      "repository": "ament_cmake",
+      "directory": "ament_cmake_gmock",
+      "python": false
+    },
+    {
+      "name": "ament_cmake_pytest",
+      "repository": "ament_cmake",
+      "directory": "ament_cmake_pytest",
+      "python": false
+    },
+    {
+      "name": "domain_coordinator",
+      "repository": "ament_cmake_ros",
+      "directory": "domain_coordinator",
+      "python": true
+    },
+    {
+      "name": "ament_cmake_ros",
+      "repository": "ament_cmake_ros",
+      "directory": "ament_cmake_ros",
+      "python": false
+    },
+    {
+      "name": "ament_index_python",
+      "repository": "ament_index",
+      "directory": "ament_index_python",
+      "python": true
+    },
+    {
+      "name": "rosidl_generator_type_description",
+      "repository": "rosidl",
+      "directory": "rosidl_generator_type_description",
+      "python": false
+    },
+    {
+      "name": "rosidl_typesupport_interface",
+      "repository": "rosidl",
+      "directory": "rosidl_typesupport_interface",
+      "python": false
+    },
+    {
+      "name": "rcutils",
+      "repository": "rcutils",
+      "directory": ".",
+      "python": false
+    },
+    {
+      "name": "rosidl_generator_c",
+      "repository": "rosidl",
+      "directory": "rosidl_generator_c",
+      "python": false
+    },
+    {
+      "name": "rosidl_runtime_c",
+      "repository": "rosidl",
+      "directory": "rosidl_runtime_c",
+      "python": false
+    },
+    {
+      "name": "rosidl_runtime_cpp",
+      "repository": "rosidl",
+      "directory": "rosidl_runtime_cpp",
+      "python": false
+    },
+    {
+      "name": "rosidl_generator_cpp",
+      "repository": "rosidl",
+      "directory": "rosidl_generator_cpp",
+      "python": false
+    },
+    {
+      "name": "fastrtps_cmake_module",
+      "repository": "rosidl_typesupport_fastrtps",
+      "directory": "fastrtps_cmake_module",
+      "python": false
+    },
+    {
+      "name": "rosidl_dynamic_typesupport",
+      "repository": "rosidl_dynamic_typesupport",
+      "directory": ".",
+      "python": false
+    },
+    {
+      "name": "rmw",
+      "repository": "rmw",
+      "directory": "rmw",
+      "python": false
+    },
+    {
+      "name": "rosidl_typesupport_fastrtps_cpp",
+      "repository": "rosidl_typesupport_fastrtps",
+      "directory": "rosidl_typesupport_fastrtps_cpp",
+      "python": false
+    }
+  ],
+  "fastcdr": {
+    "url": "https://github.com/eProsima/Fast-CDR/archive/refs/tags/v2.4.0.tar.gz",
+    "sha256": "79d8466107dd6b7d1defe961c4aa31735038937cf9dd1175cf6b0da0df2209ab",
+    "version": "2.4.0"
+  }
+}

@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from pathlib import Path
 import subprocess
 import sys
 
@@ -22,19 +21,32 @@ from dimos.message_codegen.generate import generate
 def test_generated_interfaces_check_nested_fields_buffers_and_keyword_arguments(
     tmp_path, monkeypatch
 ):
-    generate(
-        [Path("examples/message-codegen")], tmp_path / "generated", ["demo_msgs/msg/Telemetry"]
+    definition = tmp_path / "interfaces/demo_msgs/msg/Reading.msg"
+    definition.parent.mkdir(parents=True)
+    definition.write_text(
+        "std_msgs/Header header\ngeometry_msgs/Point position\nfloat64[] readings\nfloat64[3] axes\nuint8[] payload\n"
     )
-    monkeypatch.setenv("MYPYPATH", str(tmp_path / "generated/typing"))
+    generate(
+        [tmp_path / "interfaces"],
+        tmp_path / "generated",
+        ["demo_msgs/msg/Reading"],
+        languages=("python",),
+    )
+    monkeypatch.setenv("MYPYPATH", str(tmp_path / "generated/python"))
     source = tmp_path / "consumer.py"
     source.write_text(
-        "from dimos_generated.demo_msgs.msg import Telemetry\n"
+        "import numpy as np\n"
+        "from dimos_generated.demo_msgs.msg import Reading\n"
         "from dimos_generated.geometry_msgs.msg import Point\n"
-        "value = Telemetry(position=Point(x=1.5), hops=[1, 2], payload=b'abc')\n"
-        "value.reading.temperature = 32.0\n"
-        "value.hops.append(3)\n"
+        "from dimos_generated.std_msgs.msg import Header\n"
+        "from dimos_generated.builtin_interfaces.msg import Time\n"
+        "from dimos_message_build.registry import encode, decode\n"
+        "value = Reading(header=Header(Time(1, 2), 'map'), position=Point(1.5, 0.0, 0.0), "
+        "readings=np.array([1.0, 2.0]), axes=np.zeros(3), payload=np.frombuffer(b'abc', dtype=np.uint8))\n"
+        "value.position.x = 32.0\n"
+        "value.readings = np.append(value.readings, 3.0)\n"
         "pixels = value.payload.view()\n"
-        "result: float = Telemetry.decode(value.encode()).position.x\n"
+        "result: float = decode(encode(value), Reading).position.x\n"
     )
     command = [
         sys.executable,
@@ -52,9 +64,9 @@ def test_generated_interfaces_check_nested_fields_buffers_and_keyword_arguments(
     assert valid.returncode == 0, valid.stdout + valid.stderr
 
     source.write_text(
-        source.read_text() + "value.reading.temperature = 'hot'\n"
+        source.read_text() + "value.position.x = 'hot'\n"
         "value.axes.append(1.0)\n"
-        "Telemetry(unknown_field=1)\n"
+        "Reading(unknown_field=1)\n"
     )
 
     invalid = subprocess.run(command, capture_output=True, text=True, check=False)

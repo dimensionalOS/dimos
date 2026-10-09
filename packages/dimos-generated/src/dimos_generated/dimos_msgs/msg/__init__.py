@@ -1,33 +1,16 @@
-from ..._types import (
-    dimos_msgs__msg__BoundingBox2DArray as BoundingBox2DArray,
-    dimos_msgs__msg__BoundingBox3DArray as BoundingBox3DArray,
-    dimos_msgs__msg__EntityMarker as EntityMarker,
-    dimos_msgs__msg__EntityMarkers as EntityMarkers,
-    dimos_msgs__msg__GraspCandidate as GraspCandidate,
-    dimos_msgs__msg__GraspCandidateArray as GraspCandidateArray,
-    dimos_msgs__msg__ImuInfo as ImuInfo,
-    dimos_msgs__msg__JointCommand as JointCommand,
-    dimos_msgs__msg__LineSegment3D as LineSegment3D,
-    dimos_msgs__msg__LineSegments3D as LineSegments3D,
-    dimos_msgs__msg__MotorCommandArray as MotorCommandArray,
-    dimos_msgs__msg__RobotState as RobotState,
-    dimos_msgs__msg__TrajectoryStatus as TrajectoryStatus,
-    dimos_msgs__msg__VideoStats as VideoStats,
-)
+from ..._types import store
 
-__all__ = [
-    "BoundingBox2DArray",
-    "BoundingBox3DArray",
-    "EntityMarker",
-    "EntityMarkers",
-    "GraspCandidate",
-    "GraspCandidateArray",
-    "ImuInfo",
-    "JointCommand",
-    "LineSegment3D",
-    "LineSegments3D",
-    "MotorCommandArray",
-    "RobotState",
-    "TrajectoryStatus",
-    "VideoStats",
-]
+BoundingBox2DArray = store.types["dimos_msgs/msg/BoundingBox2DArray"]
+BoundingBox3DArray = store.types["dimos_msgs/msg/BoundingBox3DArray"]
+EntityMarker = store.types["dimos_msgs/msg/EntityMarker"]
+EntityMarkers = store.types["dimos_msgs/msg/EntityMarkers"]
+GraspCandidate = store.types["dimos_msgs/msg/GraspCandidate"]
+GraspCandidateArray = store.types["dimos_msgs/msg/GraspCandidateArray"]
+ImuInfo = store.types["dimos_msgs/msg/ImuInfo"]
+JointCommand = store.types["dimos_msgs/msg/JointCommand"]
+LineSegment3D = store.types["dimos_msgs/msg/LineSegment3D"]
+LineSegments3D = store.types["dimos_msgs/msg/LineSegments3D"]
+MotorCommandArray = store.types["dimos_msgs/msg/MotorCommandArray"]
+RobotState = store.types["dimos_msgs/msg/RobotState"]
+TrajectoryStatus = store.types["dimos_msgs/msg/TrajectoryStatus"]
+VideoStats = store.types["dimos_msgs/msg/VideoStats"]

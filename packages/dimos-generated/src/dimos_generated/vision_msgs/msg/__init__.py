@@ -1,37 +1,18 @@
-from ..._types import (
-    vision_msgs__msg__BoundingBox2D as BoundingBox2D,
-    vision_msgs__msg__BoundingBox2DArray as BoundingBox2DArray,
-    vision_msgs__msg__BoundingBox3D as BoundingBox3D,
-    vision_msgs__msg__BoundingBox3DArray as BoundingBox3DArray,
-    vision_msgs__msg__Classification as Classification,
-    vision_msgs__msg__Detection2D as Detection2D,
-    vision_msgs__msg__Detection2DArray as Detection2DArray,
-    vision_msgs__msg__Detection3D as Detection3D,
-    vision_msgs__msg__Detection3DArray as Detection3DArray,
-    vision_msgs__msg__LabelInfo as LabelInfo,
-    vision_msgs__msg__ObjectHypothesis as ObjectHypothesis,
-    vision_msgs__msg__ObjectHypothesisWithPose as ObjectHypothesisWithPose,
-    vision_msgs__msg__Point2D as Point2D,
-    vision_msgs__msg__Pose2D as Pose2D,
-    vision_msgs__msg__VisionClass as VisionClass,
-    vision_msgs__msg__VisionInfo as VisionInfo,
-)
+from ..._types import store
 
-__all__ = [
-    "BoundingBox2D",
-    "BoundingBox2DArray",
-    "BoundingBox3D",
-    "BoundingBox3DArray",
-    "Classification",
-    "Detection2D",
-    "Detection2DArray",
-    "Detection3D",
-    "Detection3DArray",
-    "LabelInfo",
-    "ObjectHypothesis",
-    "ObjectHypothesisWithPose",
-    "Point2D",
-    "Pose2D",
-    "VisionClass",
-    "VisionInfo",
-]
+Point2D = store.types["vision_msgs/msg/Point2D"]
+Pose2D = store.types["vision_msgs/msg/Pose2D"]
+BoundingBox2D = store.types["vision_msgs/msg/BoundingBox2D"]
+BoundingBox3D = store.types["vision_msgs/msg/BoundingBox3D"]
+BoundingBox2DArray = store.types["vision_msgs/msg/BoundingBox2DArray"]
+BoundingBox3DArray = store.types["vision_msgs/msg/BoundingBox3DArray"]
+ObjectHypothesis = store.types["vision_msgs/msg/ObjectHypothesis"]
+Classification = store.types["vision_msgs/msg/Classification"]
+ObjectHypothesisWithPose = store.types["vision_msgs/msg/ObjectHypothesisWithPose"]
+Detection2D = store.types["vision_msgs/msg/Detection2D"]
+Detection2DArray = store.types["vision_msgs/msg/Detection2DArray"]
+Detection3D = store.types["vision_msgs/msg/Detection3D"]
+Detection3DArray = store.types["vision_msgs/msg/Detection3DArray"]
+VisionClass = store.types["vision_msgs/msg/VisionClass"]
+LabelInfo = store.types["vision_msgs/msg/LabelInfo"]
+VisionInfo = store.types["vision_msgs/msg/VisionInfo"]

@@ -1,6 +1,9 @@
 // Copyright 2026 Dimensional Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <dimos/native/cdr_codec.hpp>
+#include <geometry_msgs/msg/pose_stamped.hpp>
+#include <std_msgs/msg/int32.hpp>
 #include <doctest/doctest.h>
 #include "dimos/native/cdr_codec.hpp"
 
@@ -18,7 +21,7 @@ TEST_CASE("default CDR codecs preserve nested generated fields") {
     CHECK(bytes[0] == 0);
     CHECK(bytes[1] == 1);
     CHECK(cdr_decode<geometry_msgs::msg::PoseStamped>(bytes.data(), bytes.size()) == message);
-    const auto big = dimos::cdr::encode(message, false);
+    const auto big = dimos::native::cdr_encode(message, false);
     CHECK(cdr_decode<geometry_msgs::msg::PoseStamped>(big.data(), big.size()) == message);
 }
 
