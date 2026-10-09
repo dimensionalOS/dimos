@@ -359,7 +359,30 @@ class Object(Detection3D):
             if max_distance > 0:
                 dist = (center.x**2 + center.y**2 + center.z**2) ** 0.5
                 if dist > max_distance:
+                    logger.warning(
+                        "Detection %s dropped: centre (%.2f, %.2f, %.2f) in %s is %.2f m "
+                        "from the origin, beyond max_distance %.2f",
+                        getattr(det, "name", "?"),
+                        center.x,
+                        center.y,
+                        center.z,
+                        frame_id,
+                        dist,
+                        max_distance,
+                    )
                     continue
+            logger.info(
+                "Detection %s: %d points, centre (%.2f, %.2f, %.2f) in %s, size (%.2f, %.2f, %.2f)",
+                getattr(det, "name", "?"),
+                len(pcd_filtered.points),
+                center.x,
+                center.y,
+                center.z,
+                frame_id,
+                sx,
+                sy,
+                sz,
+            )
 
             objects.append(
                 cls(
