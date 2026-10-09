@@ -410,6 +410,8 @@ project-deps = [
 ]
 
 tests = [
+    "empy==4.2",
+    "lark==1.2.2",
     # Independent CDR/schema references used by message and MCAP tests.
     "rosbags==0.11.0",
     "mcap>=1.2.0",
