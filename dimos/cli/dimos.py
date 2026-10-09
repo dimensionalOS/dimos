@@ -141,8 +141,10 @@ main.add_typer(topic_app, name="topic")
 main.add_typer(map_app, name="map")
 
 from dimos.navigation.global_planner.evaluator.cli import app as nav_eval_app
+from dimos.navigation.sim_eval.cli import app as sim_eval_app
 
 main.add_typer(nav_eval_app, name="nav-eval")
+main.add_typer(sim_eval_app, name="sim-eval")
 main.add_typer(dataprep_app, name="dataprep")
 
 from dimos.memory.cli.app import mem_app
