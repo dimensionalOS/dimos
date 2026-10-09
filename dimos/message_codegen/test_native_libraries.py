@@ -177,7 +177,10 @@ def test_native_build_rejects_changed_schema_before_preparing_support(tmp_path, 
     assert not (tmp_path / "cache").exists()
 
 
-def test_cache_identity_tracks_selected_compilers_and_cmake(monkeypatch):
+@pytest.mark.parametrize("platform", ["linux", "darwin"])
+def test_cache_identity_tracks_selected_compilers_and_cmake(monkeypatch, platform):
+    monkeypatch.setattr(native_build.sys, "platform", platform)
+    monkeypatch.setenv("SDKROOT", "/test-sdk")
     monkeypatch.setenv("CXX", "selected-cxx --target=test")
     monkeypatch.setenv("CC", "selected-cc")
     monkeypatch.setattr(native_build.shutil, "which", lambda name: "/tools/" + name)
