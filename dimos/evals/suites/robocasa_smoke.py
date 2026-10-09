@@ -14,8 +14,8 @@
 
 """RoboCasa smoke: ``data/robocasa/manifest.json`` → EvalCases.
 
-    python -m dimos.evals.environments.lib.export_benchmark_scenes --robocasa PATH
-    dimos evals run dimos.evals.suites.robocasa_smoke --agent dimos.evals.agents.pi
+python -m dimos.evals.environments.lib.export_benchmark_scenes --robocasa PATH
+dimos evals run dimos.evals.suites.robocasa_smoke --agent dimos.evals.agents.pi
 """
 
 from __future__ import annotations

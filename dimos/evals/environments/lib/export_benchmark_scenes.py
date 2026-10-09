@@ -22,8 +22,8 @@ from __future__ import annotations
 
 import argparse
 import os
-import shutil
 from pathlib import Path
+import shutil
 
 from dimos.evals.environments.lib.benchmark_scenes import write_manifest
 from dimos.utils.data import get_data_dir

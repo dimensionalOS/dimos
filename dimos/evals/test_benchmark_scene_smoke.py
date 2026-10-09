@@ -54,9 +54,7 @@ def test_export_loadable_and_autogen(exported: Path, monkeypatch: pytest.MonkeyP
         manifest = load_manifest(root)
         scene = exported / root / manifest.cases[0].scene
         model = mujoco.MjModel.from_xml_path(str(scene))
-        names = {
-            mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, i) for i in range(model.nbody)
-        }
+        names = {mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, i) for i in range(model.nbody)}
         assert body in names
 
         suite = cases_from_manifest(manifest)
