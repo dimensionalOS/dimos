@@ -103,7 +103,11 @@ def test_scan_objects_uses_latest_scan_ids(module: PickAndPlaceModule) -> None:
         detections_length=1,
         detections=[
             SimpleNamespace(
-                id="cup-1", results=[SimpleNamespace(hypothesis=SimpleNamespace(class_id="cup"))]
+                id="cup-1",
+                results=[SimpleNamespace(hypothesis=SimpleNamespace(class_id="cup"))],
+                bbox=SimpleNamespace(
+                    center=SimpleNamespace(position=SimpleNamespace(x=0.31, y=-0.2, z=-0.01))
+                ),
             )
         ],
     )
@@ -111,7 +115,13 @@ def test_scan_objects_uses_latest_scan_ids(module: PickAndPlaceModule) -> None:
     result = module.scan_objects([" cup "])
 
     assert result.message == "Detected 1 object(s)"
-    assert module.get_object("cup-1") == {"object_id": "cup-1", "name": "cup"}
+    assert module.get_object("cup-1") == {
+        "object_id": "cup-1",
+        "name": "cup",
+        "x": 0.31,
+        "y": -0.2,
+        "z": -0.01,
+    }
     scene.scan_scene.assert_called_once_with(text=["cup"])
 
 
