@@ -215,18 +215,17 @@ class EpisodeDriver(Module):
         return "stopped"
 
     def _stuck_or_stalled(self, now: float) -> str | None:
-        moving = [m for t, m in self._moving if t >= now - self._rules.stuck_s]
-        if not moving or not self._recent:
-            return "stalled" if self._since_moving(now) >= self._rules.stalled_s else None
+        # the callbacks keep appending, so work on copies
+        commands, recent = list(self._moving), list(self._recent)
+        moving = [m for t, m in commands if t >= now - self._rules.stuck_s]
+        since_moving = now - max((t for t, m in commands if m), default=now - self._rules.stalled_s)
+        if not moving or not recent:
+            return "stalled" if since_moving >= self._rules.stalled_s else None
         if sum(moving) / len(moving) >= 0.8:
-            start = self._recent[0][1][:2]
-            progress = max(float(np.linalg.norm(xyz[:2] - start)) for _, xyz in self._recent)
+            start = recent[0][1][:2]
+            progress = max(float(np.linalg.norm(xyz[:2] - start)) for _, xyz in recent)
             return "stuck" if progress < self._rules.stuck_progress_m else None
-        return "stalled" if self._since_moving(now) >= self._rules.stalled_s else None
-
-    def _since_moving(self, now: float) -> float:
-        last = max((t for t, m in self._moving if m), default=None)
-        return now - last if last is not None else self._rules.stalled_s
+        return "stalled" if since_moving >= self._rules.stalled_s else None
 
     def _wait(self, done: Callable[[], bool], timeout_s: float) -> bool:
         deadline = time.time() + timeout_s
