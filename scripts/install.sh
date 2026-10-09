@@ -552,8 +552,20 @@ install_steamos_deps() (
 )
 
 # A default SDK newer than the linker ("tapi error: unknown architecture") fails every native extension.
-# Update the Command Line Tools (needs sudo); failing that, build with an older installed SDK that links.
+# Build with nixpkgs' clang (own SDK and linker, output links only /usr/lib), else update the Command Line
+# Tools (needs sudo), else build with an older installed SDK that links.
 cxx_links() { c++ -x c++ - -o /dev/null >/dev/null 2>&1 <<< 'int main() { return 0; }'; }
+
+use_nix_compiler() {
+    [[ "$HAS_NIX" == 1 ]] || return 1
+    local clang
+    info "the C++ linker can't use the default macOS SDK; getting nixpkgs' clang..."
+    clang=$(nix --extra-experimental-features 'nix-command flakes' build --no-link --print-out-paths nixpkgs#clang) || return 1
+    PATH="$clang/bin:$PATH" cxx_links || return 1
+    export PATH="$clang/bin:$PATH"
+    warn "building with nixpkgs' clang, since the default macOS SDK doesn't link"
+    dim "  other native builds (e.g. Homebrew's) will fail until the Command Line Tools are updated (softwareupdate --list)"
+}
 
 update_command_line_tools() {
     local label
@@ -573,6 +585,7 @@ update_command_line_tools() {
 select_macos_sdk() {
     has_cmd c++ || return 0
     cxx_links && return
+    use_nix_compiler && return
     update_command_line_tools && { ok "Command Line Tools updated"; return; }
     local sdk developer_dir
     developer_dir=$(xcode-select -p 2>/dev/null || true)
