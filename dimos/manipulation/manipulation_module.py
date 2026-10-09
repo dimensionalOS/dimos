@@ -50,6 +50,7 @@ from dimos.manipulation.manipulation_spec import (
     PlanStatus,
 )
 from dimos.manipulation.planning.factory import WorldBackend, create_planning_specs, create_world
+from dimos.manipulation.planning.gripper_contact import GripperContactModel
 from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupSelection
 from dimos.manipulation.planning.groups.utils import (
     filter_joint_state_to_selected_joints,
@@ -67,6 +68,7 @@ from dimos.manipulation.planning.planners.config import (
 from dimos.manipulation.planning.planners.roboplan_config import RoboPlanPlannerConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import IKStatus, ObstacleType
+from dimos.manipulation.planning.spec.gripper import GraspContact
 from dimos.manipulation.planning.spec.models import (
     DEFAULT_OBSTACLE_RGBA,
     CartesianTarget,
@@ -101,6 +103,7 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.perception.experimental.object import Object as DetObject
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.transform_utils import pose_to_matrix
 
 logger = setup_logger()
 
@@ -239,6 +242,10 @@ class ManipulationModule(Module):
 
         # Canonical generated plan for the plan/preview/execute workflow.
         self._last_plan: GeneratedPlan | None = None
+
+        # The gripper's shapes for grasp contact checks, by tool tip link, built on first use.
+        self._gripper_contact: dict[str, GripperContactModel] = {}
+        self._gripper_contact_lock = threading.Lock()
 
         # Coordinator integration (initialized in start())
         self._execution_manager: PlanExecutionManager
@@ -508,6 +515,62 @@ class ManipulationModule(Module):
         """Display the ranked proposals. The grasp module owns no visualizer."""
         if self._world_monitor is not None:
             self._world_monitor.show_grasp_proposals(candidates)
+
+    @rpc
+    def check_grasp_contacts(
+        self,
+        candidates: GraspCandidateArray,
+        target: PointCloud2,
+        obstacles: Mapping[str, PointCloud2],
+        contact_margin: float,
+        obstacle_margin: float,
+        planning_group: PlanningGroupID | None = None,
+    ) -> list[GraspContact] | None:
+        """Check where each grasp candidate's gripper would touch, open and while closing.
+
+        Uses the robot model's gripper spec and link shapes; see
+        ``GripperContactModel.check``. Candidates are tool tip poses.
+
+        Args:
+            candidates: Grasp poses, in the frame of the point clouds.
+            target: Points of the object to grasp, metres.
+            obstacles: Other points the gripper must not overlap, by name
+                (for example "table" and "objects"), metres.
+            contact_margin: Closer than this (metres) to the object is a touch,
+                allowed only at a contact patch.
+            obstacle_margin: Closer than this (metres) to an obstacle point is an overlap.
+            planning_group: Group whose tool tip the candidates pose; None for the only one.
+
+        Returns one GraspContact per candidate, or None when the robot model has
+        no gripper spec. Raises ValueError when the frames differ or the group
+        is unknown.
+        """
+        spec = self.config.model.gripper
+        if spec is None:
+            return None
+        group = self._resolve_pose_group(planning_group)
+        if isinstance(group, CommandResult):
+            raise ValueError(group.message)
+        frames = {candidates.header.frame_id, target.frame_id}
+        frames.update(cloud.frame_id for cloud in obstacles.values())
+        if len(frames) > 1:
+            raise ValueError(f"Grasp candidates and point clouds are in different frames: {frames}")
+        assert group.tip_link is not None
+        with self._gripper_contact_lock:
+            model = self._gripper_contact.get(group.tip_link)
+            if model is None:
+                model = GripperContactModel(self.config.model.model.load(), spec, group.tip_link)
+                self._gripper_contact[group.tip_link] = model
+        poses = np.asarray(
+            [pose_to_matrix(candidate.pose) for candidate in candidates.candidates]
+        ).reshape((-1, 4, 4))
+        return model.check(
+            poses,
+            target.points_f32(),
+            {name: cloud.points_f32() for name, cloud in obstacles.items()},
+            contact_margin,
+            obstacle_margin,
+        )
 
     @rpc
     def reset(self) -> CommandResult:

@@ -54,7 +54,8 @@ def _linear_move(execution: ExecutionResult = COMPLETED) -> MoveResult:
 
 @pytest.fixture
 def module() -> Iterator[PickAndPlaceModule]:
-    instance = PickAndPlaceModule(planning_frame="world")
+    # The grasp contact check has its own tests.
+    instance = PickAndPlaceModule(planning_frame="world", grasp_contact_check=False)
     instance._scene = MagicMock()
     instance._grasp_generator = MagicMock()
     instance._manipulation = MagicMock()

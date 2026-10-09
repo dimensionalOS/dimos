@@ -22,10 +22,12 @@ from enum import Enum, auto
 from typing import Protocol
 
 from dimos.control.tasks.trajectory_task.trajectory_task import TrajectoryExecutionResult
+from dimos.manipulation.planning.spec.gripper import GraspContact
 from dimos.manipulation.planning.spec.models import GeneratedPlan, PlanningGroupID
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryStatus
 from dimos.spec.utils import Spec
 
@@ -265,6 +267,16 @@ class ManipulationSpec(Spec, Protocol):
     ) -> MoveResult: ...
 
     def show_grasp_proposals(self, candidates: GraspCandidateArray) -> None: ...
+
+    def check_grasp_contacts(
+        self,
+        candidates: GraspCandidateArray,
+        target: PointCloud2,
+        obstacles: Mapping[str, PointCloud2],
+        contact_margin: float,
+        obstacle_margin: float,
+        planning_group: PlanningGroupID | None = None,
+    ) -> list[GraspContact] | None: ...
 
     def reset(self) -> CommandResult: ...
 

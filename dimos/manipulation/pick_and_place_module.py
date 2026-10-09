@@ -34,6 +34,7 @@ from dimos.manipulation.grasp_verification import (
     grasp_failure,
     open_failure,
 )
+from dimos.manipulation.grasping.contact_filter import add_facts, check_in_scene, contact_note
 from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec
 from dimos.manipulation.manipulation_spec import ExecutionResult, ManipulationSpec, PlanResult
 from dimos.manipulation.planning.spec.models import PlanningGroupID
@@ -64,6 +65,16 @@ class PickAndPlaceModuleConfig(ModuleConfig):
     max_grasp_attempts: int = Field(default=5, gt=0)
     yaw_policy: Literal["generated", "preserve_current"] = "generated"
     grasp_verification: GraspVerificationConfig = Field(default_factory=GraspVerificationConfig)
+    # Drop grasps whose gripper would touch the target anywhere but its contact
+    # patches (the finger pads), at the open pose or as the fingers close, or
+    # would overlap the table or another object. Needs a gripper spec in the
+    # robot model; without one the pick skips the check and says so. False
+    # tries every grasp the provider gives.
+    grasp_contact_check: bool = True
+    # A gripper part closer than this (metres) to the target touches it.
+    grasp_contact_margin: float = Field(default=0.005, gt=0.0)
+    # A gripper part closer than this (metres) to a table or object point overlaps it.
+    grasp_obstacle_margin: float = Field(default=0.003, gt=0.0)
 
 
 def _status(result: PlanResult | ExecutionResult) -> str:
@@ -116,6 +127,8 @@ class PickAndPlaceModule(Module):
         self._selected_object_id: str | None = None
         self._selected_grasp: PoseStamped | None = None
         self._holding_object = False
+        # What the grasp contact check did over the current pick (see drop_touching).
+        self._contact: dict[str, Any] = {}
 
     @skill
     def scan_objects(self, prompts: list[str]) -> SkillResult:
@@ -155,6 +168,10 @@ class PickAndPlaceModule(Module):
     ) -> SkillResult:
         """Generate ranked grasps and pick one object from the latest scan.
 
+        ``contact_rejected`` in the result counts the grasps dropped for
+        touching the object off the finger pads (``target``) or hitting the
+        ``table`` or other ``objects``.
+
         Args:
             object_id: Exact object ID returned by the latest scan_objects call.
             planning_group: Gripper-capable pose group; omitted only when unambiguous.
@@ -165,6 +182,7 @@ class PickAndPlaceModule(Module):
                 f"did not start a pick of object {object_id}. Use place_at to put it down first."
             )
         self._clear_selection()
+        self._contact = {}
         if object_id not in self._objects:
             scanned = ", ".join(self._objects) or "none"
             return SkillResult(
@@ -176,7 +194,16 @@ class PickAndPlaceModule(Module):
             return SkillResult(
                 f"Object {object_id} has no point cloud in the latest scan. Use scan_objects again."
             )
+        group = self._gripper_group(planning_group)
         candidates = self._grasp_generator.propose_grasps(pointcloud)
+        facts: dict[str, Any] = {}
+        # With grasp_contact_check, grasps whose gripper would touch the object
+        # off its pads or hit the scene are dropped.
+        candidates = self._drop_touching(object_id, pointcloud, candidates, group)
+        if "skipped" in self._contact:
+            facts["contact_check_skipped"] = self._contact["skipped"]
+        elif self._contact:
+            facts["contact_rejected"] = dict(self._contact)
         self._grasp_candidates = candidates
         self._manipulation.show_grasp_proposals(candidates)
         if candidates.header.frame_id != self.config.planning_frame:
@@ -185,18 +212,56 @@ class PickAndPlaceModule(Module):
                 f"the planning frame is {self.config.planning_frame!r}"
             )
         if not candidates.candidates:
-            return SkillResult(f"Generated 0 grasp candidates for object {object_id}.")
-        group = self._gripper_group(planning_group)
+            return SkillResult(
+                f"Generated 0 grasp candidates for object {object_id}."
+                f"{contact_note(self._contact)}",
+                metadata=facts,
+            )
         # The target is mapped geometry: with its cells as obstacles the planner
         # refuses the approach into it, and the held object blocks every move after.
         box = _target_box(pointcloud)
         if box is not None:
             self._leave_out(Pose(position=box.center), box.size, pointcloud.frame_id or None)
         try:
-            return self._pick_from(candidates, object_id, box, group)
+            result = self._pick_from(candidates, object_id, box, group)
         finally:
             if not self._holding_object:
                 self._clear_target_box()
+        result.metadata = {**facts, **result.metadata}
+        return result
+
+    def _drop_touching(
+        self,
+        object_id: str,
+        pointcloud: PointCloud2,
+        candidates: GraspCandidateArray,
+        group: PlanningGroupID,
+    ) -> GraspCandidateArray:
+        """Keep the grasps whose gripper touches the target only at its finger pads.
+
+        See ``contact_filter.check_in_scene``; what it did adds to ``_contact``.
+
+        Args:
+            object_id: The object to grasp, from the latest scan.
+            pointcloud: The target's points, planning frame, metres.
+            candidates: The provider's grasps, same frame.
+            group: Planning group whose tool tip the grasps pose.
+        """
+        if not self.config.grasp_contact_check:
+            self._contact = {"skipped": "off"}
+            return candidates
+        kept, facts = check_in_scene(
+            self._manipulation,
+            self._scene,
+            object_id,
+            pointcloud,
+            candidates,
+            self.config.grasp_contact_margin,
+            self.config.grasp_obstacle_margin,
+            group,
+        )
+        add_facts(self._contact, facts)
+        return kept
 
     def _pick_from(
         self,
