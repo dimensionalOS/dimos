@@ -113,3 +113,57 @@ fixture. ROS Jazzy's C++ generator does preserve these defaults and public field
 its types compile using only packaged runtime headers, without a ROS installation.
 The bounded-vector codec adapter passes the same conformance checks. These are isolated
 integration gaps, not evidence that an entire custom generator is necessary.
+
+
+### Replacement evidence and remaining Rust distribution work
+
+The Python/C++ replacement was tested against all 142 bundled definitions,
+all nine Python/C++/Rust encoder-decoder pairs in both byte orders, malformed
+inputs and borrowed-buffer lifetime checks. The package integration suite passed
+55 tests, including eleven generated-source drift/repair cases. Downstream
+cross-package tests compile separate C++ packages and Rust crates and verify
+that a custom message uses the dependency's exact Header type.
+
+The ros2msg 0.5.3 probe generated the existing Telemetry fixture. Unmodified
+output contained `label: start` and floating-array defaults `[1, 2, 3]` and did
+not compile. Correcting those two defaults made the consumer compile. A separate
+owner/custom-crate probe then passed Header assignment and produced the same
+Serde CDR body as Python. This supports using upstream declarations plus a small
+defaults adapter; it does not establish unmodified compatibility.
+
+Production Rust generation remains custom in this batch. ros2msg is a Rust
+library, so invoking it requires a compiled helper. The current compiler-free
+Python package backend also emits native source resources used by dependency
+consumers. Requiring Cargo in that path would break the tested install contract.
+A follow-up must either distribute a pinned helper for each supported build
+platform or separate native generation from Python package preparation while
+preserving dependency exports. Neither helper distribution nor that contract
+change is implemented here. This is a packaging gap, not a claim that custom
+Rust field generation is intrinsically necessary.
+
+### Maintained code accounting
+
+Against published generator commit `d7d3e4e2e9280e05d3d507bc507f57d08c6af1db`,
+the eight core source/template files changed as follows (physical lines,
+including comments and blanks):
+
+| File | Before | After |
+| --- | ---: | ---: |
+| python.py | 150 | 163 |
+| cpp.py | 273 | 314 |
+| rust.py | 218 | 218 |
+| definitions.py | 193 | 193 |
+| generate.py | 98 | 98 |
+| templates/runtime.py | 404 | 392 |
+| templates/codec.rs | 56 | 56 |
+| templates/dimos_cdr.hpp | 71 | 71 |
+| Total | 1463 | 1505 |
+
+No backend file was removed. Python/C++ declaration rules were replaced with
+upstream calls, and custom equality/representation was removed from the Python
+runtime. Integration code adds more lines than those removals; this is upstream
+ownership reuse, **not a net maintained-code reduction**. The vendored ROSIDL
+sources/templates/runtime headers and generated package outputs are separate
+from these counts. Review the adapters, defaults/bounds checks, dependency type
+identity and packaging contracts; generated declarations are mechanically
+reproducible and the upstream source hashes are recorded in the vendor manifest.
