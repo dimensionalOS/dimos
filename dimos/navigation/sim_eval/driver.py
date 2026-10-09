@@ -1,0 +1,243 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Runs one benchmark case against the navigation stack in the simulated world.
+
+Premaps by walking the reference route on teleop, resets the robot to the case's start,
+sends the goal until the stack echoes it, then watches for a terminal condition and
+writes it to terminal.json. Collisions never end an episode. The runner stops the process.
+"""
+
+from __future__ import annotations
+
+from collections import deque
+from collections.abc import Callable
+import json
+import math
+from pathlib import Path
+from threading import Event, Thread
+import time
+
+import numpy as np
+from numpy.typing import NDArray
+from reactivex.disposable import Disposable
+
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
+from dimos.core.core import rpc
+from dimos.core.module import Module, ModuleConfig
+from dimos.core.stream import In, Out
+from dimos.msgs.geometry_msgs.PointStamped import PointStamped
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.std_msgs.Bool import Bool
+from dimos.navigation.sim_eval.ground_truth import GroundTruth
+from dimos.navigation.sim_eval.oracle import RouteTracker
+from dimos.navigation.sim_eval.scorer import GOAL_ECHO_M
+from dimos.navigation.sim_eval.suite import Manifest
+from dimos.simulation.go2_sim.world_spec import SimWorldSpec
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
+
+TERMINAL_FILE = "terminal.json"
+ODOM_FRAME_ID = "odom"
+WATCH_DT = 0.05
+FIRST_POSE_WAIT_S = 60.0
+
+
+class EpisodeDriverConfig(ModuleConfig):
+    manifest: Path = Path()
+    case_id: str = ""
+    out_dir: Path = Path()
+    settle_s: float = 2.0
+    teleop_hz: float = 20.0
+    goal_resend_s: float = 1.0
+    goal_wait_s: float = 8.0
+
+
+class EpisodeDriver(Module):
+    """Drives one case: premap, reset, goal, and the terminal condition."""
+
+    config: EpisodeDriverConfig
+
+    ground_truth: In[PoseStamped]
+    goal: In[PointStamped]
+    goal_reached: In[Bool]
+    cmd_vel: In[Twist]
+
+    tele_cmd_vel: Out[Twist]
+    clicked_point: Out[PointStamped]
+
+    _world: SimWorldSpec
+    _thread: Thread | None = None
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+        manifest = Manifest.load(self.config.manifest)
+        self._rules = manifest.rules
+        self._case = next(c for c in manifest.cases if c.id == self.config.case_id)
+        self._truth = GroundTruth(self._case.scene())
+        self._pose: tuple[float, NDArray[np.float64], NDArray[np.float64]] | None = None
+        self._recent: deque[tuple[float, NDArray[np.float64]]] = deque()
+        self._moving: deque[tuple[float, bool]] = deque()
+        self._echo: float | None = None
+        self._arrival: float | None = None
+        self._stop_event = Event()
+        self.register_disposable(Disposable(self.ground_truth.subscribe(self._on_pose)))
+        self.register_disposable(Disposable(self.goal.subscribe(self._on_goal)))
+        self.register_disposable(Disposable(self.goal_reached.subscribe(self._on_reached)))
+        self.register_disposable(Disposable(self.cmd_vel.subscribe(self._on_cmd)))
+        self._thread = Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    @rpc
+    def stop(self) -> None:
+        self._stop_event.set()
+        if self._thread is not None:
+            self._thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+        super().stop()
+
+    def _on_pose(self, msg: PoseStamped) -> None:
+        xyz = np.array(tuple(msg.position), dtype=np.float64)
+        rpy = np.array(tuple(msg.orientation.to_euler()), dtype=np.float64)
+        self._pose = (msg.ts, xyz, rpy)
+        self._recent.append((msg.ts, xyz))
+        while self._recent and self._recent[0][0] < msg.ts - self._rules.stuck_s:
+            self._recent.popleft()
+
+    def _on_goal(self, msg: PointStamped) -> None:
+        if np.linalg.norm(np.subtract((msg.x, msg.y, msg.z), self._case.goal)) <= GOAL_ECHO_M:
+            self._echo = self._echo if self._echo is not None else msg.ts
+
+    def _on_reached(self, msg: Bool) -> None:
+        if msg.data and self._echo is not None and self._arrival is None:
+            self._arrival = time.time()
+
+    def _on_cmd(self, msg: Twist) -> None:
+        moving = (
+            math.hypot(msg.linear.x, msg.linear.y) >= self._rules.moving_cmd
+            or abs(msg.angular.z) >= self._rules.moving_cmd
+        )
+        now = time.time()
+        self._moving.append((now, moving))
+        while self._moving and self._moving[0][0] < now - self._rules.stuck_s:
+            self._moving.popleft()
+
+    def _run(self) -> None:
+        try:
+            self._write(self._episode())
+        except Exception:
+            logger.exception("Episode driver failed")
+            self._write({"reason": "driver_error"})
+
+    def _episode(self) -> dict[str, object]:
+        case, rules = self._case, self._rules
+        if not self._wait(lambda: self._pose is not None, FIRST_POSE_WAIT_S):
+            return {"reason": "no_ground_truth"}
+        self._reset_to_start()
+        record: dict[str, object] = {"case_id": case.id}
+        if rules.premapped:
+            route = self._truth.route(case.start, case.goal, centered=True)
+            if route is None:
+                return {**record, "reason": "no_reference_route"}
+            started = time.time()
+            walked = self._walk(route.points, rules.timeout_s(route.length) or FIRST_POSE_WAIT_S)
+            record["premap_walked"] = walked
+            record["premap_s"] = round(time.time() - started, 2)
+            self._reset_to_start()
+        t0 = self._send_goal()
+        if t0 is None:
+            return {**record, "reason": "goal_lost"}
+        record["t0"] = t0
+        reason = self._watch(t0, rules.timeout_s(case.route_length))
+        return {**record, "reason": reason, "t_end": time.time()}
+
+    def _reset_to_start(self) -> None:
+        x, y, yaw = self._case.start
+        z = float(self._truth.height[self._truth.index((x, y))])
+        self._world.reset_pose(x, y, z, yaw)
+        self._stop_event.wait(self.config.settle_s)
+
+    def _walk(self, route: NDArray[np.float64], timeout_s: float) -> bool:
+        """Teleop along the route from the true pose until the tracker arrives."""
+        tracker = RouteTracker(route)
+        deadline = time.time() + timeout_s
+        period = 1.0 / self.config.teleop_hz
+        arrived = False
+        while not arrived and time.time() < deadline and not self._stop_event.is_set():
+            assert self._pose is not None
+            _, xyz, rpy = self._pose
+            command, arrived = tracker.step(float(xyz[0]), float(xyz[1]), float(rpy[2]))
+            self.tele_cmd_vel.publish(
+                Twist(Vector3(command[0], command[1], 0.0), Vector3(0.0, 0.0, command[2]))
+            )
+            self._stop_event.wait(period)
+        self.tele_cmd_vel.publish(Twist(Vector3(0.0, 0.0, 0.0), Vector3(0.0, 0.0, 0.0)))
+        return arrived
+
+    def _send_goal(self) -> float | None:
+        """Send the goal until the stack echoes it. The echo's stamp starts the episode clock."""
+        deadline = time.time() + self.config.goal_wait_s
+        while self._echo is None and time.time() < deadline and not self._stop_event.is_set():
+            self.clicked_point.publish(
+                PointStamped(*self._case.goal, ts=time.time(), frame_id=ODOM_FRAME_ID)
+            )
+            self._wait(lambda: self._echo is not None, self.config.goal_resend_s)
+        return self._echo
+
+    def _watch(self, t0: float, timeout_s: float | None) -> str:
+        rules = self._rules
+        while not self._stop_event.is_set():
+            now = time.time()
+            if self._arrival is not None:
+                return "arrived"
+            assert self._pose is not None
+            if np.any(np.abs(self._pose[2][:2]) > rules.fall_rad):
+                return "fall"
+            if timeout_s is not None and now - t0 >= timeout_s:
+                return "timeout"
+            if now - t0 >= rules.stuck_s and self._stuck_or_stalled(now) is not None:
+                return str(self._stuck_or_stalled(now))
+            self._stop_event.wait(WATCH_DT)
+        return "stopped"
+
+    def _stuck_or_stalled(self, now: float) -> str | None:
+        moving = [m for t, m in self._moving if t >= now - self._rules.stuck_s]
+        if not moving or not self._recent:
+            return "stalled" if self._since_moving(now) >= self._rules.stalled_s else None
+        if sum(moving) / len(moving) >= 0.8:
+            start = self._recent[0][1][:2]
+            progress = max(float(np.linalg.norm(xyz[:2] - start)) for _, xyz in self._recent)
+            return "stuck" if progress < self._rules.stuck_progress_m else None
+        return "stalled" if self._since_moving(now) >= self._rules.stalled_s else None
+
+    def _since_moving(self, now: float) -> float:
+        last = max((t for t, m in self._moving if m), default=None)
+        return now - last if last is not None else self._rules.stalled_s
+
+    def _wait(self, done: Callable[[], bool], timeout_s: float) -> bool:
+        deadline = time.time() + timeout_s
+        while time.time() < deadline and not self._stop_event.is_set():
+            if done():
+                return True
+            self._stop_event.wait(WATCH_DT)
+        return done()
+
+    def _write(self, record: dict[str, object]) -> None:
+        self.config.out_dir.mkdir(parents=True, exist_ok=True)
+        path = self.config.out_dir / TERMINAL_FILE
+        path.write_text(json.dumps(record, indent=2) + "\n")
+        logger.info("Episode terminal", **{k: v for k, v in record.items() if k != "t0"})

@@ -40,7 +40,7 @@ from dimos.navigation.sim_eval.suite import Rules
 
 RULES = Rules()
 START = np.array([1.0, 1.0, 0.3])
-GOAL = (5.0, 1.0, 0.3)
+GOAL = (5.0, 1.0, 0.0)
 T0 = 100.0
 SPEED = 0.5
 
@@ -113,7 +113,7 @@ def test_a_collision_on_the_way_counts_against_the_arrival() -> None:
 
 
 def test_a_false_arrival_is_wrong_place_or_wrong_floor() -> None:
-    assert score(_walk(10.0), RULES, (7.0, 1.0, 0.3)).outcome == "wrong_place"
+    assert score(_walk(10.0), RULES, (7.0, 1.0, 0.0)).outcome == "wrong_place"
     assert score(_walk(10.0), RULES, (5.0, 1.0, 1.0)).outcome == "wrong_floor"
 
 
@@ -146,7 +146,7 @@ def test_commanding_nothing_is_stalled() -> None:
 
 
 def test_running_out_of_time_is_timeout_and_caps_the_window() -> None:
-    far = (40.0, 1.0, 0.3)
+    far = (40.0, 1.0, 0.0)
     rec = _walk(60.0, arrive=False, goal=far)
     s = score(rec, RULES, far, route_length=4.0)
     assert s.outcome == "timeout"

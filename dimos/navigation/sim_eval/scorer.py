@@ -169,7 +169,7 @@ class Score:
     traveled_m: float | None
     spl: float | None
     final_error_xy: float | None
-    final_error_z: float | None
+    final_error_z: float | None  # of the body's standing height above the goal
     reroutes: int | None
     reroute_rate: float | None
     path_change_p95: float | None
@@ -210,7 +210,7 @@ def score(
     fell = _fell(pose, recording.contacts, rules, t0, t1)
     final = _at(recording.pose, t1)
     error_xy = float(np.hypot(*(final[:2] - goal[:2])))
-    error_z = float(abs(final[2] - goal[2]))
+    error_z = float(abs(final[2] - rules.stand_height_m - goal[2]))
     paths = _path_metrics(recording.planner_paths, rules, t0, t1)
     outcome = _outcome(
         recording, rules, t0, t1, arrival, error_xy, error_z, collisions, fell, paths

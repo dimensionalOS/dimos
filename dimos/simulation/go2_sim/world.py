@@ -80,6 +80,8 @@ BOX_RGBA = {
 }
 FLOOR_CHECKER = ((0.62, 0.60, 0.56), (0.70, 0.68, 0.64))
 SCENE_PUBLISH_DT = 2.0
+# contacts go out on change, and on this period so a recording always holds the current set
+CONTACTS_HEARTBEAT_DT = 1.0
 ODOM_FRAME_ID = "odom"
 SENSOR_FRAME_ID = "mid360_link"
 STILL = np.zeros(3)
@@ -305,6 +307,7 @@ class CommandHold:
 class SimGo2WorldConfig(ModuleConfig):
     family: Family = "office"
     seed: int = 1
+    scene_params: dict[str, bool | int | float] = {}
     real_time_factor: float = Field(default=1.0, gt=0.0)
     mujoco_viewer: bool = False
     policy: Path | None = None
@@ -331,7 +334,7 @@ class SimGo2World(Module):
     def start(self) -> None:
         super().start()
         self._policy = load_policy(self.config.policy)
-        self._sim = self._load(self.config.family, self.config.seed)
+        self._sim = self._load(self.config.family, self.config.seed, self.config.scene_params)
         self._hold = CommandHold()
         self._stop_event = Event()
         self.register_disposable(Disposable(self.cmd_vel.subscribe(self._on_cmd_vel)))
@@ -355,8 +358,8 @@ class SimGo2World(Module):
         if not self._hold.update(command, time.monotonic()):
             logger.warning("Ignored non-finite cmd_vel", command=command.tolist())
 
-    def _load(self, family: Family, seed: int) -> Go2Sim:
-        scene = generate(family, seed)
+    def _load(self, family: Family, seed: int, params: dict[str, bool | int | float]) -> Go2Sim:
+        scene = generate(family, seed, **params)
         sim = Go2Sim(scene, seed, self._policy)
         sim.reset(*scene.start, 0.0)
         blocked = [c for c in sim.contacts() if c.kind != "floor"]
@@ -396,6 +399,7 @@ class SimGo2World(Module):
     def _simulate(self, sim: Go2Sim, viewer: mujoco.viewer.Handle | None) -> None:
         t0 = time.time()
         last_contacts: list[Contact] | None = None
+        next_contacts_publish = 0.0
         next_scene_publish = 0.0
         while not self._stop_event.is_set():
             if (pose := self._reset) is not None:
@@ -408,9 +412,10 @@ class SimGo2World(Module):
             stamp = t0 + sim.t / self.config.real_time_factor
             self._publish_poses(sim, stamp)
             contacts = sim.contacts()
-            if contacts != last_contacts:
+            if contacts != last_contacts or sim.t >= next_contacts_publish:
                 self.contacts.publish(Contacts(contacts, ts=stamp))
                 last_contacts = contacts
+                next_contacts_publish = sim.t + CONTACTS_HEARTBEAT_DT
             if frame is not None:
                 self.lidar.publish(
                     PointCloud2.from_numpy(frame.points, frame_id=SENSOR_FRAME_ID, timestamp=stamp)
