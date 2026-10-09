@@ -2,9 +2,9 @@
 @{
 from collections import OrderedDict
 
-from .rosidl_adapter.msg import get_idl_type
-from .rosidl_adapter.msg import to_idl_literal
-from .rosidl_adapter.msg import string_to_idl_string_literal
+from .rosidl_adapter.msg.api import get_idl_type
+from .rosidl_adapter.msg.api import to_idl_literal
+from .rosidl_adapter.msg.api import string_to_idl_string_literal
 
 typedefs = OrderedDict()
 def get_idl_type_identifier(idl_type):

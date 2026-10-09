@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from ....rosidl_parser import parse_message_string
-from ..resource import expand_template
+from ..resource.api import expand_template
 
 
 def convert_msg_to_idl(package_dir, package_name, input_file, output_dir):
