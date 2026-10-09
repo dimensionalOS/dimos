@@ -1,4 +1,4 @@
-ARG FROM_IMAGE=ubuntu:24.04
+ARG FROM_IMAGE=ubuntu:26.04
 FROM ${FROM_IMAGE}
 
 # Avoid prompts from apt
@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y locales && \
 ENV LANG=en_US.UTF-8
 
 # Set ROS distro
-ENV ROS_DISTRO=jazzy
+ENV ROS_DISTRO=lyrical
 
 # Install basic requirements
 RUN apt-get update && apt-get install -y \

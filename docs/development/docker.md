@@ -13,7 +13,7 @@ fill = none
 
 # Base images
 U1: box "ubuntu:22.04" rad 5px fit wid 170% ht 170%
-U2: box "ubuntu:22.04" rad 5px fit wid 170% ht 170% at (U1.x + 2.5in, U1.y)
+U2: box "ubuntu:26.04" rad 5px fit wid 170% ht 170% at (U1.x + 2.5in, U1.y)
 
 # Labels
 text "Non-ROS Track" at (U1.x, U1.y + 0.5in)
@@ -52,7 +52,7 @@ All images are published to [Docker Hub](https://hub.docker.com/u/dimensional) u
 | ------------ | ------------ | -------------------------------------------------- |
 | `python`     | ubuntu:22.04 | Core dimos with Python dependencies, no ROS        |
 | `dev`        | python       | Development environment (editors, git, pre-commit) |
-| `ros`        | ubuntu:22.04 | ROS2 Humble with navigation packages               |
+| `ros`        | ubuntu:26.04 | ROS 2 Lyrical with navigation packages             |
 | `ros-python` | ros          | ROS + dimos Python dependencies                    |
 | `ros-dev`    | ros-python   | Full ROS development environment                   |
 
