@@ -32,7 +32,10 @@ def main() -> None:
         shutil.copytree(source, target, ignore=shutil.ignore_patterns("target"))
         manifest = target / "Cargo.toml"
         manifest.write_text(
-            manifest.read_text().replace(', path = "../../../dimos/message_codegen"', "")
+            manifest.read_text().replace(
+                ', path = "../../../packages/dimos-generated/src/dimos_generated_schemas/package/rust"',
+                "",
+            )
         )
     (args.output / "rust" / "Cargo.toml").write_text(
         '[workspace]\nmembers = ["dimos-module", "dimos-module-macros", "dimos-lcm-transport"]\nresolver = "2"\n'

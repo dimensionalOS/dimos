@@ -75,7 +75,7 @@ builds an **external message project**, not all built-in messages.
 
 The main CI **Built-in message alignment** check fails `ci-complete` if definitions,
 package versions, generator/templates, or any checked-in output drift. Python,
-C++, Rust and schema sources are all committed; the check independently regenerates
+C++ headers, Rust build-script/schema inputs and viewer schemas are committed; the check independently regenerates
 in a temporary directory and includes new/untracked and deleted files. Prepare
 Rust 1.92.0 with `rustup toolchain install 1.92.0 --component rustfmt` once.
 [The alignment guide](/docs/development/message-alignment.md) gives the small

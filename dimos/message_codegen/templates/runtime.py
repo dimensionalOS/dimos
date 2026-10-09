@@ -17,12 +17,17 @@
 from __future__ import annotations
 
 import copy
+from dataclasses import replace
 import struct
+from types import FunctionType
 from typing import Any, ClassVar, TypeVar, cast
 import weakref
 
 import numpy as np
-from rosbags.typesys import Stores, get_types_from_msg, get_typestore
+from rosbags.serde import cdr
+from rosbags.serde.utils import compile_lines
+from rosbags.typesys import get_types_from_msg
+from rosbags.typesys.store import Typestore
 
 _DTYPES = {
     "bool": "bool",
@@ -303,7 +308,6 @@ class Message:
         if len(data) < 4 or data[:1] != b"\0" or data[1] not in (0, 1) or data[2:4] != b"\0\0":
             raise ValueError("Expected plain CDR/XCDR1 encapsulation")
         body = memoryview(data)[4:]
-        cls._codec.check(cls, body, bool(data[1]))
         definition = cls._codec.store.get_msgdef(cls.msg_name)
         decoder = definition.deserialize_cdr_le if data[1] else definition.deserialize_cdr_be
         try:
@@ -318,7 +322,7 @@ class Message:
 class Codec:
     def __init__(self, schemas: dict[str, str], types: dict[str, type[Message]]) -> None:
         self.types = types
-        self.store = get_typestore(Stores.EMPTY)
+        self.store = _CheckedStore()
         definitions = {}
         for name, schema in schemas.items():
             definitions.update(get_types_from_msg(schema, name))
@@ -327,66 +331,53 @@ class Codec:
         self.store.types.update(cast("Any", types))
         self.store.cache.clear()
 
-    def check(self, cls: type[Message], body: memoryview, little: bool) -> None:
-        """Check lengths/bounds before library decoding; numeric arrays are scanned in bulk."""
-        endian = "<" if little else ">"
 
-        def scalar(kind: str, position: int, bound: int | None) -> int:
-            if "/" in kind:
-                return message(self.types[kind], position)
-            if kind == "string":
-                position = (position + 3) & ~3
-                size = length(position)
-                position += 4
-                if size == 0 or position + size > len(body) or body[position + size - 1] != 0:
-                    raise ValueError("Invalid or truncated CDR string")
-                if bound is not None and size - 1 > bound:
-                    raise ValueError("String exceeds string bound")
-                bytes(body[position : position + size - 1]).decode()
-                return position + size
-            size = np.dtype(_DTYPES[kind]).itemsize
-            position = (position + size - 1) & -size
-            if position + size > len(body):
-                raise ValueError("Truncated CDR scalar")
-            if kind == "bool" and body[position] not in (0, 1):
-                raise ValueError("Invalid CDR bool")
-            return position + size
+def _checked_compile(lines: list[str]) -> Any:
+    """Add strict value checks to pinned rosbags code, without duplicating CDR layout."""
+    checked = []
+    for line in lines:
+        checked.append(line)
+        indent = line[: len(line) - len(line.lstrip())]
+        condition, error = "", ""
+        if "length = unpack_int32_" in line:
+            condition = "length <= 0 or pos + 4 + length > len(rawdata) or rawdata[pos + 4 + length - 1] != 0"
+            error = "Invalid or truncated CDR string"
+        elif "size = unpack_int32_" in line:
+            condition = "size < 0 or size > len(rawdata) - pos - 4"
+            error = "Invalid CDR sequence length"
+        elif "value = unpack_bool_" in line:
+            condition = "rawdata[pos] > 1"
+            error = "Invalid CDR bool"
+        elif "numpy.frombuffer" in line and "dtype=numpy.bool" in line:
+            condition = "numpy.any(val.view(numpy.uint8) > 1)"
+            error = "Invalid CDR bool"
+        if condition:
+            checked.extend(
+                [
+                    indent + "if " + condition + ":",
+                    indent + "  raise ValueError(" + repr(error) + ")",
+                ]
+            )
+    return compile_lines(checked)
 
-        def length(position: int) -> int:
-            if position + 4 > len(body):
-                raise ValueError("Truncated CDR length")
-            return int(struct.unpack_from(endian + "I", body, position)[0])
 
-        def message(kind: type[Message], position: int) -> int:
-            if not kind._fields:
-                return scalar("uint8", position, None)
-            for field in kind._fields:
-                _, name, array, size, bounded, bound, _ = field
-                if not array:
-                    position = scalar(name, position, bound)
-                    continue
-                if size is None or bounded:
-                    position = (position + 3) & ~3
-                    count = length(position)
-                    position += 4
-                    if size is not None and count > size:
-                        raise ValueError("Sequence exceeds its declared bound")
-                else:
-                    count = size
-                if name in _DTYPES:
-                    width = np.dtype(_DTYPES[name]).itemsize
-                    if count:
-                        position = (position + width - 1) & -width
-                    end = position + count * width
-                    if end > len(body):
-                        raise ValueError("Truncated CDR sequence")
-                    if name == "bool" and any(item not in (0, 1) for item in body[position:end]):
-                        raise ValueError("Invalid CDR bool")
-                    position = end
-                else:
-                    for _ in range(count):
-                        position = scalar(name, position, bound)
-            return position
+# Clone the generator with a local compiler callback; never patch rosbags globals.
+_checked_decoder = FunctionType(
+    cdr.generate_deserialize_cdr.__code__,
+    {
+        **cdr.generate_deserialize_cdr.__globals__,
+        "compile_lines": _checked_compile,
+    },
+)
 
-        if message(cls, 0) != len(body):
-            raise ValueError("Trailing bytes after CDR message")
+
+class _CheckedStore(Typestore):
+    def get_msgdef(self, typename: str) -> Any:
+        if typename not in self.cache:
+            definition = super().get_msgdef(typename)
+            self.cache[typename] = replace(
+                definition,
+                deserialize_cdr_le=_checked_decoder(definition.fields, self, "le"),
+                deserialize_cdr_be=_checked_decoder(definition.fields, self, "be"),
+            )
+        return self.cache[typename]

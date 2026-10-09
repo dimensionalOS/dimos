@@ -1,0 +1,58 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>rosidl_typesupport_fastrtps_cpp</name>
+  <version>3.6.4</version>
+  <description>Generate the C++ interfaces for eProsima FastRTPS.</description>
+
+  <maintainer email="sloretz@openrobotics.org">Shane Loretz</maintainer>
+
+  <license>Apache License 2.0</license>
+
+  <author email="dthomas@osrfoundation.org">Dirk Thomas</author>
+  <author email="michel@ekumenlabs.com">Michel Hidalgo</author>
+  <author>Ricardo González</author>
+
+  <!-- Used in the CMakeLists.txt of this package and only needed by CMake-->
+  <buildtool_depend>ament_cmake_ros</buildtool_depend>
+  <buildtool_depend>ament_cmake_python</buildtool_depend>
+  <buildtool_depend>fastrtps_cmake_module</buildtool_depend>
+
+  <!-- Used in the projectConfig.cmake or generator extension and only needed by CMake -->
+  <buildtool_export_depend>ament_cmake_ros</buildtool_export_depend>
+  <buildtool_export_depend>fastrtps_cmake_module</buildtool_export_depend>
+  <buildtool_export_depend>python3</buildtool_export_depend>
+
+  <!-- Generator depends on output of this other generator -->
+  <buildtool_export_depend>rosidl_generator_c</buildtool_export_depend>
+  <buildtool_export_depend>rosidl_generator_cpp</buildtool_export_depend>
+
+  <!-- Needed by downstream targets to use this package's headers or the headers it generates, but header only so not needed to link against -->
+  <build_export_depend>rosidl_runtime_cpp</build_export_depend>
+  <build_export_depend>rosidl_typesupport_interface</build_export_depend>
+
+  <!-- Needed for headers in this package, or the headers it generates, and also needs to be linked in downstream packages -->
+  <depend>fastcdr</depend>
+  <depend>rmw</depend>
+  <depend>rosidl_runtime_c</depend>
+
+  <!-- Needed for the python library it installs, which is also used to generate interfaces -->
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>rosidl_cli</exec_depend>
+  <exec_depend>rosidl_pycommon</exec_depend>
+
+  <!-- Needed for tests in this package -->
+  <test_depend>ament_cmake_gtest</test_depend>
+  <test_depend>ament_cmake_pytest</test_depend>
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+  <test_depend>osrf_testing_tools_cpp</test_depend>
+  <test_depend>performance_test_fixture</test_depend>
+  <test_depend>rcutils</test_depend>
+
+  <member_of_group>rosidl_typesupport_cpp_packages</member_of_group>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

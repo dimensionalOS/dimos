@@ -15,4 +15,4 @@ package-dir = {"dimos_message_build" = "."}
 include-package-data = false
 
 [tool.setuptools.package-data]
-"dimos_message_build" = ["schemas/**/*", "templates/*", "sources.json", "_vendor/rosidl/**/*.em", "_vendor/rosidl/**/*.lark", "_vendor/rosidl/**/*.pyi", "_vendor/rosidl/include/**/*", "_vendor/rosidl/notices/**/*", "_vendor/rosidl/LICENSE", "_vendor/rosidl/sources.json"]
+"dimos_message_build" = ["schemas/**/*", "templates/*", "sources.json", "_vendor/rosidl/**/*.em", "_vendor/rosidl/**/*.lark", "_vendor/rosidl/**/*.pyi", "_vendor/rosidl/include/**/*", "_vendor/rosidl/notices/**/*", "_vendor/rosidl/LICENSE", "_vendor/rosidl/sources.json", "_vendor/rosidl/serialization/*"]

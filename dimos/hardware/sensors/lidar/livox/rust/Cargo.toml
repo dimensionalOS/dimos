@@ -24,7 +24,7 @@ imu = "sensor_msgs/msg/Imu"
 crc = "3"
 dimos-module = { path = "../../../../../../native/rust/dimos-module" }
 etherparse = "0.21.0"
-dimos-generated-messages = { path = "../../../../../message_codegen" }
+dimos-generated-messages = { path = "../../../../../../packages/dimos-generated/src/dimos_generated_schemas/package/rust" }
 pcap-parser = "0.17.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

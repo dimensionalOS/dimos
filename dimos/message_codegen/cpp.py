@@ -26,144 +26,13 @@ from tempfile import TemporaryDirectory
 
 from ._vendor.rosidl.rosidl_adapter import convert_to_idl
 from ._vendor.rosidl.rosidl_pycommon import generate_files
-from .definitions import FieldType, Message
-
-PRIMITIVES = {
-    "bool": "bool",
-    "byte": "uint8_t",
-    "char": "uint8_t",
-    "int8": "int8_t",
-    "uint8": "uint8_t",
-    "int16": "int16_t",
-    "uint16": "uint16_t",
-    "int32": "int32_t",
-    "uint32": "uint32_t",
-    "int64": "int64_t",
-    "uint64": "uint64_t",
-    "float32": "float",
-    "float64": "double",
-    "string": "std::string",
-    "wstring": "std::wstring",
-}
-KEYWORDS = frozenset(
-    [
-        "alignas",
-        "alignof",
-        "and",
-        "and_eq",
-        "asm",
-        "auto",
-        "bitand",
-        "bitor",
-        "bool",
-        "break",
-        "case",
-        "catch",
-        "char",
-        "char8_t",
-        "char16_t",
-        "char32_t",
-        "class",
-        "compl",
-        "concept",
-        "const",
-        "consteval",
-        "constexpr",
-        "constinit",
-        "const_cast",
-        "continue",
-        "co_await",
-        "co_return",
-        "co_yield",
-        "decltype",
-        "default",
-        "delete",
-        "do",
-        "double",
-        "dynamic_cast",
-        "else",
-        "enum",
-        "explicit",
-        "export",
-        "extern",
-        "false",
-        "float",
-        "for",
-        "friend",
-        "goto",
-        "if",
-        "inline",
-        "int",
-        "long",
-        "mutable",
-        "namespace",
-        "new",
-        "noexcept",
-        "not",
-        "not_eq",
-        "nullptr",
-        "operator",
-        "or",
-        "or_eq",
-        "private",
-        "protected",
-        "public",
-        "register",
-        "reinterpret_cast",
-        "requires",
-        "return",
-        "short",
-        "signed",
-        "sizeof",
-        "static",
-        "static_assert",
-        "static_cast",
-        "struct",
-        "switch",
-        "template",
-        "this",
-        "thread_local",
-        "throw",
-        "true",
-        "try",
-        "typedef",
-        "typeid",
-        "typename",
-        "union",
-        "unsigned",
-        "using",
-        "virtual",
-        "void",
-        "volatile",
-        "wchar_t",
-        "while",
-        "xor",
-        "xor_eq",
-    ]
-)
-
-
-def identifier(name: str) -> str:
-    return name + "_" if name in KEYWORDS else name
-
-
-def qualified(name: str) -> str:
-    return "::".join(identifier(part) for part in name.split("/"))
-
-
-def type_name(type_: FieldType) -> str:
-    scalar = qualified(type_.name) if type_.nested else PRIMITIVES[type_.name]
-    if type_.sequence:
-        return f"std::vector<{scalar}>"
-    if type_.is_array:
-        return f"std::array<{scalar}, {type_.array_size}>"
-    return scalar
+from .definitions import Message
 
 
 def validation(message: Message) -> list[str]:
     lines = []
     for field in message.fields:
-        member = identifier(field.name)
+        member = field.name
         type_ = field.type
         if type_.array_bounded:
             lines.append(
@@ -185,22 +54,6 @@ def validation(message: Message) -> list[str]:
 
 
 def generate(messages: tuple[Message, ...], imports: tuple[str, ...] = ()) -> str:
-    guards = {
-        message.name: "DIMOS_MESSAGE_"
-        + sha256(
-            json.dumps(
-                [
-                    message.name,
-                    [asdict(field) for field in message.fields],
-                    [asdict(constant) for constant in message.constants],
-                ],
-                sort_keys=True,
-            ).encode()
-        )
-        .hexdigest()
-        .upper()
-        for message in messages
-    }
     lines = [
         "// Generated from ROS2 .msg definitions. Do not edit.",
         "#pragma once",
@@ -228,8 +81,18 @@ def generate(messages: tuple[Message, ...], imports: tuple[str, ...] = ()) -> st
                 if not line.startswith("#include <rosidl_runtime")
             )
         )
+    serialization = []
+    guards = {}
     with TemporaryDirectory(prefix="dimos-rosidl-") as temporary:
         output = Path(temporary)
+        templates = output / "templates"
+        templates.mkdir()
+        (templates / "idl_cdr.hpp.em").write_text(
+            Path(__file__).with_name("templates").joinpath("idl_cdr.hpp.em").read_text()
+        )
+        (templates / "msg__cdr.hpp.em").write_text(
+            (upstream / "serialization/msg__cdr.hpp.em").read_text()
+        )
         for message in messages:
             with redirect_stdout(StringIO()):
                 idl = convert_to_idl(
@@ -251,6 +114,11 @@ def generate(messages: tuple[Message, ...], imports: tuple[str, ...] = ()) -> st
                     )
                 )
                 generate_files(str(arguments), {"idl__struct.hpp.em": "detail/%s__struct.hpp"})
+                config = json.loads(arguments.read_text())
+                config["template_dir"] = str(templates)
+                arguments.write_text(json.dumps(config))
+                generated = generate_files(str(arguments), {"idl_cdr.hpp.em": "detail/%s__cdr.hpp"})
+                serialized = Path(generated[0]).read_text()
             headers = (output / "cpp" / message.package / "msg" / "detail").glob("*__struct.hpp")
             declaration = next(
                 path.read_text()
@@ -274,68 +142,30 @@ def generate(messages: tuple[Message, ...], imports: tuple[str, ...] = ()) -> st
                 "DIMOS_CDR_"
                 + sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest().upper()
             )
+            guards[message.name] = guard
+            serialization.append(
+                f"#ifndef {guard}_SERIALIZATION\n#define {guard}_SERIALIZATION\n{serialized}\n#endif"
+            )
             declaration = declaration.replace(original_guard, guard)
             marker = f"  using Type = {message.short_name}_<ContainerAllocator>;"
             adapter = "\nvoid validate() const {\n" + "\n".join(validation(message)) + "\n}\n"
             adapter += f'static constexpr const char* msg_name = "{message.name}";'
             lines.append(declaration.replace(marker, marker + adapter))
 
+    lines.extend(serialization)
     lines.append("namespace eprosima::fastcdr {")
-    bounded = set()
     for message in messages:
-        for field in message.fields:
-            if not field.type.array_bounded or field.type in bounded:
-                continue
-            bounded.add(field.type)
-            alias = qualified(message.name) + "::_" + field.name + "_type"
-            vector = type_name(field.type)
-            guard = (
-                "DIMOS_CDR_BOUNDED_"
-                + sha256(json.dumps(asdict(field.type), sort_keys=True).encode())
-                .hexdigest()
-                .upper()
-            )
-            lines.extend([f"#ifndef {guard}", f"#define {guard}"])
-            lines.extend(
-                [
-                    f"template<> inline size_t calculate_serialized_size(CdrSizeCalculator& c, const {alias}& v, size_t& a) {{ return c.calculate_serialized_size({vector}(v.begin(), v.end()), a); }}",
-                    f"template<> inline void serialize(Cdr& c, const {alias}& v) {{ c << {vector}(v.begin(), v.end()); }}",
-                    f"template<> inline void deserialize(Cdr& c, {alias}& v) {{ {vector} values; c >> values; v.assign(values.begin(), values.end()); }}",
-                    "#endif",
-                ]
-            )
-    for message in messages:
+        name = message.name.replace("/", "::")
         guard = guards[message.name] + "_CODEC"
         lines.extend([f"#ifndef {guard}", f"#define {guard}"])
-        name = qualified(message.name)
+        namespace = "::".join(message.name.split("/")[:-1]) + "::typesupport_fastrtps_cpp"
         lines.extend(
             [
-                f"template<> inline size_t calculate_serialized_size(CdrSizeCalculator& calculator, const {name}& value, size_t& alignment) {{",
-                "size_t size = 0;",
+                f"template<> inline size_t calculate_serialized_size(CdrSizeCalculator&, const {name}& value, size_t& alignment) {{ auto size = {namespace}::get_serialized_size(value, alignment); alignment += size; return size; }}",
+                f'template<> inline void serialize(Cdr& cdr, const {name}& value) {{ if (!{namespace}::cdr_serialize(value, cdr)) throw std::invalid_argument("Invalid CDR value"); }}',
+                f'template<> inline void deserialize(Cdr& cdr, {name}& value) {{ if (!{namespace}::cdr_deserialize(cdr, value)) throw std::invalid_argument("Invalid CDR data"); value.validate(); }}',
             ]
         )
-        for field in message.fields:
-            lines.append(
-                f"size += calculator.calculate_serialized_size(value.{identifier(field.name)}, alignment);"
-            )
-        if not message.fields:
-            lines.append("size += calculator.calculate_serialized_size(uint8_t{0}, alignment);")
-        lines.extend(
-            [
-                "return size;",
-                "}",
-                f"template<> inline void serialize(Cdr& cdr, const {name}& value) {{",
-            ]
-        )
-        for field in message.fields:
-            lines.append(f"cdr << value.{identifier(field.name)};")
-        if not message.fields:
-            lines.append("cdr << uint8_t{0};")
-        lines.extend(["}", f"template<> inline void deserialize(Cdr& cdr, {name}& value) {{"])
-        for field in message.fields:
-            lines.append(f"cdr >> value.{identifier(field.name)};")
-        if not message.fields:
-            lines.append("uint8_t unused; cdr >> unused;")
-        lines.extend(["value.validate();", "}", "#endif"])
+        lines.append("#endif")
     lines.append("}")
     return "\n".join(lines) + "\n"
