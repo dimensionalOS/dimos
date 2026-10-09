@@ -679,7 +679,7 @@ def build_manifest_data(
     dict.
 
     Shared by cockpit() and the bridge's availability-driven default
-    manifest (default_manifest in relay_bridge_module.py). `registry` and
+    manifest (default_manifest in relay_bridge/config.py). `registry` and
     `tx_registry` map built-in stream name -> (encoding, delivery) in
     advertisement order (the bridge's BUILTIN_CHANNELS/TX_CHANNELS tables);
     tx_streams are the module's typed Out names. Panel ids are p0..pN in
@@ -889,13 +889,13 @@ def cockpit(
             raise ValueError(f"duplicate channel declaration for stream {entry.stream!r}")
         declared[entry.stream] = entry
     try:
-        from dimos.web.relay_bridge.dynamic import DynamicPortSpec, make_relay_bridge_class
-        from dimos.web.relay_bridge.relay_bridge_module import (
+        from dimos.web.relay_bridge.channels import (
             BUILTIN_CHANNELS,
             TX_CHANNELS,
-            RelayBridgeModule,
             RuntimeChannelSpec,
         )
+        from dimos.web.relay_bridge.dynamic import DynamicPortSpec, make_relay_bridge_class
+        from dimos.web.relay_bridge.relay_bridge_module import RelayBridgeModule
     except ImportError as e:
         raise RuntimeError(
             "the cockpit blueprint needs the web extra: `uv sync --extra web --inexact`"

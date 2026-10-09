@@ -45,8 +45,10 @@ from dimos.msgs.nav_msgs.Path import Path as NavPath
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.web.cockpit import Channel, Chat, Map2D, Stats, Video, cockpit
 from dimos.web.codecs import EncodedPayload, PublishContext, web_decoder, web_encoder
-from dimos.web.relay_bridge import builtin_codecs, relay_bridge_module
+from dimos.web.relay_bridge import builtin_codecs, pacing, relay_bridge_module
 from dimos.web.relay_bridge.audio_codec import AudioChunk
+from dimos.web.relay_bridge.channels import RuntimeChannelSpec
+from dimos.web.relay_bridge.config import RelayBridgeConfig
 from dimos.web.relay_bridge.e2e_support import stop_module
 from dimos.web.relay_bridge.module_test_support import (
     FakeClient,
@@ -65,12 +67,7 @@ from dimos.web.relay_bridge.protocol import (
     PubNack,
     Subs,
 )
-from dimos.web.relay_bridge.relay_bridge_module import (
-    RelayBridgeConfig,
-    RelayBridgeModule,
-    RuntimeChannelSpec,
-    with_relay_bridge,
-)
+from dimos.web.relay_bridge.relay_bridge_module import RelayBridgeModule, with_relay_bridge
 
 
 # Composition helpers live at module level: under PEP 563 (`from __future__
@@ -502,7 +499,7 @@ def test_paced_sender_spaces_frames_in_order_and_bounds_its_queue() -> None:
     async def run() -> None:
         loop = asyncio.get_running_loop()
         sent: list[tuple[bytes, float]] = []
-        pacer = relay_bridge_module._PacedSender(
+        pacer = pacing.PacedSender(
             loop, 0.02, lambda payload, meta, ts: sent.append((payload, loop.time()))
         )
         for i in range(3):
@@ -512,7 +509,7 @@ def test_paced_sender_spaces_frames_in_order_and_bounds_its_queue() -> None:
         assert [p for p, _ in sent] == [b"\x00", b"\x01", b"\x02"]
         assert sent[2][1] - sent[0][1] >= 0.04 - 0.005
         # One goes out immediately; the queue keeps the newest of the rest.
-        for i in range(relay_bridge_module._PACED_QUEUE_MAX + 10):
+        for i in range(pacing._PACED_QUEUE_MAX + 10):
             pacer(bytes([i % 256]), None, None)
         assert pacer.dropped == 9
         pacer.close()
