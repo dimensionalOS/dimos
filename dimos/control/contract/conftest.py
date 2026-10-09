@@ -131,10 +131,13 @@ def g1() -> ControlDescription:
         | dict.fromkeys((Interface.GX, Interface.GY, Interface.GZ), Unit.RAD_PER_S)
         | dict.fromkeys((Interface.AX, Interface.AY, Interface.AZ), Unit.M_PER_S2),
     )
+    limits = {Key.of("g1", j, Interface.POSITION): Limits(-2.0, 2.0) for j in G1_JOINTS}
+    limits |= {Key.of("g1", j, Interface.VELOCITY): Limits(-32.0, 32.0) for j in G1_JOINTS}
+    limits |= {Key.of("g1", j, Interface.EFFORT): Limits(-88.0, 88.0) for j in G1_JOINTS}
     return ControlDescription(
         source="g1",
         resources=(*joints, imu),
-        limits={Key.of("g1", j, Interface.POSITION): Limits(-2.0, 2.0) for j in G1_JOINTS},
+        limits=limits,
         state_rate_hz=500.0,
         deadman_timeout_s=0.05,
     )
