@@ -4,9 +4,11 @@ This offline tool is for reviewing historical DimOS recordings on the CDR propos
 It does not start a blueprint, router, robot, viewer or network connection.
 
 From this proposal checkout, use an environment containing DimOS, its matching
-`dimos-generated` package and the retained historical decoder:
+`dimos-generated` package and the retained historical decoder. The commands below
+require your existing historical recording: replace `old.mcap` or `old.db` with
+its path. These input files are not created by the walkthrough.
 
-```sh
+```sh skip
 pip install dimos-lcm==0.1.4
 dimos mem convert old.mcap converted.mcap
 ```
@@ -18,7 +20,7 @@ converter does not create an account or upload your recording.
 
 For an old memory SQLite recording, or for CDR SQLite output:
 
-```sh
+```sh skip
 dimos mem convert old.db converted.mcap
 dimos mem convert old.mcap converted.db
 dimos mem convert old.db converted.db
@@ -31,14 +33,15 @@ any stream or payload fails. Output directories must already exist.
 
 Inspect either output through the current CDR memory reader:
 
-```sh
+```sh skip
 dimos mem summary converted.mcap
 dimos mem summary converted.db
 ```
 
-The original `dimos.msgs` legacy classes and their `lcm_encode`/`lcm_decode`
-interfaces are temporarily retained with the existing `dimos-lcm` dependency for
-migration. This reuses the original implementation; it introduces no new codec.
+The converter loads the allowlisted historical decoders from `dimos-lcm`.
+Historical `dimos.msgs` names are recognized as input metadata; their old runtime
+classes and `lcm_encode`/`lcm_decode` APIs are not restored. This reuses the original
+decoder implementation; it introduces no new codec.
 New runtime transports and recordings still use generated CDR types; there is
 no automatic old-wire fallback.
 For JSON-only input it is unnecessary. `mcap`/`lz4` and SQLite support come from
@@ -111,7 +114,7 @@ silently discarded. Keep the audit file with the converted recording.
 
 With the historical decoder installed:
 
-```sh
+```sh skip
 python -m pytest dimos/memory/test_convert_recording.py dimos/protocol/test_cdr_mcap.py
 ```
 
@@ -123,7 +126,7 @@ converter acceptance run.
 
 ## Convert a directory explicitly
 
-```sh
+```sh skip
 dimos mem convert ./recordings ./recordings-cdr --dry-run
 dimos mem convert ./recordings ./recordings-cdr
 dimos mem convert ./recordings ./recordings-cdr-sqlite --format db
@@ -149,7 +152,7 @@ originals; a successful conversion is not authorization to delete them.
 MCAP is a cheap bus-recording format, not an embedding database. Convert a
 recording into the standard writable SQLite backend before analysis:
 
-```sh
+```sh skip
 dimos mem convert converted.mcap analysis.db
 dimos mem summary analysis.db
 ```
@@ -163,7 +166,7 @@ For historical SQLite recordings with embeddings, use SQLite output. This path
 uses the existing `Embedding` class and requires its PyTorch dependency (already
 present in the development environment); it does not load a model or weights:
 
-```sh
+```sh skip
 uv pip install torch  # only if absent from a core-only environment
 dimos mem convert go2_short.db go2_short.cdr.db --dry-run &&
 dimos mem convert go2_short.db go2_short.cdr.db
@@ -201,7 +204,7 @@ Run from this proposal checkout with its prepared development environment activa
 NumPy, Open3D and Rerun packages. These commands do not build/install dependencies
 or start a robot. Use a fresh directory for each run:
 
-```sh
+```sh skip
 export CDR_REVIEW_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dimos-cdr-review.XXXXXX")"
 ```
 
@@ -213,7 +216,7 @@ LCM point clouds/poses and JPEG images. This is a direct SQLite-to-CDR conversio
 no Python packaging script or synthetic fixture is needed. Download only this
 archive, verify its project LFS hash, and extract into the fresh review directory:
 
-```sh
+```sh skip
 git lfs pull --include="data/.lfs/go2_mid360_stairs.db.tar.gz" --exclude=""
 printf '%s\n' '02d8d2194332291cf71988458965aa9f8019b8d61661ff153e93886dd72e85e9  data/.lfs/go2_mid360_stairs.db.tar.gz' | shasum -a 256 -c -
 tar -xzf data/.lfs/go2_mid360_stairs.db.tar.gz -C "$CDR_REVIEW_DIR"
@@ -239,7 +242,7 @@ For a core-only checkout environment, mapping currently also imports Unitree
 helpers and Matplotlib. Install the declared Unitree extra and the plotting
 package if absent (the full development environment already has these):
 
-```sh
+```sh skip
 uv sync --frozen --python 3.12 --no-default-groups --extra unitree
 source .venv/bin/activate
 uv pip install 'mcap>=1.2.0' 'dimos-lcm==0.1.4' 'matplotlib>=3.7.1'
@@ -247,7 +250,7 @@ uv pip install 'mcap>=1.2.0' 'dimos-lcm==0.1.4' 'matplotlib>=3.7.1'
 
 The following bound visualization to five seconds and use CPU mapping:
 
-```sh
+```sh skip
 dimos mem rerun "$CDR_REVIEW_DIR/converted.mcap" --seconds 5 --no-gui --out "$CDR_REVIEW_DIR/memory.rrd"
 dimos map global "$CDR_REVIEW_DIR/converted.mcap" --lidar lidar --duration 5 --device CPU:0 --block-count 10000 --no-gui --out "$CDR_REVIEW_DIR/global.rrd"
 dimos map replay "$CDR_REVIEW_DIR/converted.mcap" --lidar lidar --duration 5 --map-final --map-device CPU:0 --no-gui --out "$CDR_REVIEW_DIR/replay.rrd"
@@ -275,7 +278,7 @@ marker acceptance. `map rename` and `map pose-fill` remain SQLite-only.
 
 If the separately installed official Foxglove MCAP CLI is on PATH:
 
-```sh
+```sh skip
 mcap doctor "$CDR_REVIEW_DIR/converted.mcap"
 ```
 
@@ -285,7 +288,7 @@ are not a substitute for it.
 
 Open the generated files locally (manual visual acceptance):
 
-```sh
+```sh skip
 rerun --serve-web --bind 127.0.0.1 --web-viewer-port 9090 "$CDR_REVIEW_DIR/memory.rrd"
 ```
 
@@ -304,7 +307,7 @@ visual review.
 
 ### Focused regression entry
 
-```sh
+```sh skip
 python -m pytest dimos/memory/test_convert_recording.py dimos/protocol/test_cdr_mcap.py dimos/memory/store/test_mcap.py dimos/mapping/cli/test_stream_selection.py dimos/mapping/cli/test_pgo_accumulate.py dimos/mapping/loop_closure/test_pgo.py
 ```
 
