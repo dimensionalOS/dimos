@@ -558,16 +558,27 @@ fn apply_wall_safe_penalty_region(
     for &id in &affected {
         scratch.seen[id as usize] = false;
     }
-    for &id in &affected {
-        scale_edges(
-            cells.edges_mut(id),
-            id,
-            dist,
-            clearance_m,
-            buffer_m,
-            buffer_weight,
-            step_weight,
-        );
+    // Costs read only distances and neighbors, so they compute in parallel
+    // and land serially.
+    let scaled: Vec<(CellId, Vec<f32>)> = affected
+        .par_iter()
+        .map(|&id| {
+            let costs = scaled_costs(
+                cells.neighbors(id),
+                id,
+                dist,
+                clearance_m,
+                buffer_m,
+                buffer_weight,
+                step_weight,
+            );
+            (id, costs)
+        })
+        .collect();
+    for (id, costs) in scaled {
+        for (edge, cost) in cells.edges_mut(id).iter_mut().zip(costs) {
+            edge.cost = cost;
+        }
     }
 }
 
@@ -639,6 +650,30 @@ fn scale_edges(
         );
         edge.cost = edge.base_cost * (pu + pv) / 2.0 + step_weight * edge.rise;
     }
+}
+
+fn scaled_costs(
+    edges: &[Edge],
+    src: CellId,
+    dist: &[f32],
+    clearance_m: f32,
+    buffer_m: f32,
+    buffer_weight: f32,
+    step_weight: f32,
+) -> Vec<f32> {
+    let pu = penalty_of(dist[src as usize], clearance_m, buffer_m, buffer_weight);
+    edges
+        .iter()
+        .map(|edge| {
+            let pv = penalty_of(
+                dist[edge.dest as usize],
+                clearance_m,
+                buffer_m,
+                buffer_weight,
+            );
+            edge.base_cost * (pu + pv) / 2.0 + step_weight * edge.rise
+        })
+        .collect()
 }
 
 /// Lateral wall multiplier: infinite inside clearance, ramping convexly from

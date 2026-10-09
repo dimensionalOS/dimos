@@ -16,7 +16,7 @@
 //!
 //! A slot map: inserts reuse freed slots marked with a tombstone, or grow.
 
-use ahash::{AHashMap, AHashSet};
+use ahash::AHashMap;
 use rayon::prelude::*;
 
 use crate::voxel::VoxelKey;
@@ -246,61 +246,48 @@ pub fn build_surface_cells(
         });
 }
 
-/// Recompute outgoing edges for the seed cells and their surface neighbors.
-///
-/// Call after an incremental insert or remove so the affected region matches a
-/// full rebuild.
+/// Recompute outgoing edges for the affected cells. Call after an incremental
+/// insert or remove with the changed cells and their surface neighbors so the
+/// region matches a full rebuild.
 pub fn rebuild_edges_around(
     cells: &mut SurfaceCells,
     surface_lookup: &SurfaceLookup,
-    seeds: &[VoxelKey],
+    affected: &[CellId],
     voxel_size: f32,
     step_threshold_cells: i32,
 ) {
-    let mut affected: AHashSet<CellId> = AHashSet::new();
-    for &(ix, iy, iz) in seeds {
-        if let Some(id) = cells.id((ix, iy, iz)) {
-            affected.insert(id);
-        }
-        for (dx, dy) in NEIGHBORS_4 {
-            let Some(nzs) = surface_lookup.get(&(ix + dx, iy + dy)) else {
-                continue;
-            };
-            for &nz in nzs {
-                if (nz - iz).abs() > step_threshold_cells {
+    // Edges read only the lookup and cell ids, so they build in parallel and
+    // land serially.
+    let rebuilt: Vec<(CellId, Vec<Edge>)> = affected
+        .par_iter()
+        .map(|&id| {
+            let (ix, iy, iz) = cells.coord(id);
+            let mut edges: Vec<Edge> = Vec::new();
+            for (dx, dy) in NEIGHBORS_4 {
+                let Some(nzs) = surface_lookup.get(&(ix + dx, iy + dy)) else {
                     continue;
-                }
-                if let Some(id) = cells.id((ix + dx, iy + dy, nz)) {
-                    affected.insert(id);
+                };
+                for &nz in nzs {
+                    let dz = nz - iz;
+                    if dz.abs() > step_threshold_cells {
+                        continue;
+                    }
+                    let dest = cells
+                        .id((ix + dx, iy + dy, nz))
+                        .expect("neighbor cell exists in lookup");
+                    let cost = ((dx * dx + dy * dy + dz * dz) as f32).sqrt() * voxel_size;
+                    edges.push(Edge {
+                        dest,
+                        base_cost: cost,
+                        rise: rise(dz, voxel_size),
+                        cost,
+                    });
                 }
             }
-        }
-    }
-
-    for id in affected {
-        let (ix, iy, iz) = cells.coord(id);
-        let mut edges: Vec<Edge> = Vec::new();
-        for (dx, dy) in NEIGHBORS_4 {
-            let Some(nzs) = surface_lookup.get(&(ix + dx, iy + dy)) else {
-                continue;
-            };
-            for &nz in nzs {
-                let dz = nz - iz;
-                if dz.abs() > step_threshold_cells {
-                    continue;
-                }
-                let dest = cells
-                    .id((ix + dx, iy + dy, nz))
-                    .expect("neighbor cell exists in lookup");
-                let cost = ((dx * dx + dy * dy + dz * dz) as f32).sqrt() * voxel_size;
-                edges.push(Edge {
-                    dest,
-                    base_cost: cost,
-                    rise: rise(dz, voxel_size),
-                    cost,
-                });
-            }
-        }
+            (id, edges)
+        })
+        .collect();
+    for (id, edges) in rebuilt {
         cells.edges[id as usize] = edges;
     }
 }

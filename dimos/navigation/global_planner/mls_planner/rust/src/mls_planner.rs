@@ -336,10 +336,11 @@ impl Planner {
             return;
         }
 
+        let affected = self.changed_neighborhood(&seeds, step);
         rebuild_edges_around(
             &mut self.graph.cells,
             &self.graph.surface_lookup,
-            &seeds,
+            &affected,
             config.voxel_size,
             step,
         );
@@ -352,7 +353,7 @@ impl Planner {
             &params,
             &mut self.graph.node_index,
         );
-        let window = self.node_window(&seeds, config);
+        let window = self.node_window(&seeds, &affected, config);
         gone_nodes.extend(place_nodes_region(
             &mut self.graph.cells,
             &self.by_col,
@@ -500,10 +501,48 @@ impl Planner {
         self.rebuild_nodes(config);
     }
 
+    /// The changed cells and the live cells one column step from them, each
+    /// once. Their adjacency is rebuilt and the node window grows from them.
+    fn changed_neighborhood(&mut self, changed: &[VoxelKey], step_dz: i32) -> Vec<CellId> {
+        let graph = &mut self.graph;
+        let lookup = &graph.surface_lookup;
+        let cells = &graph.cells;
+        graph.node_scratch.ensure_capacity(cells.slot_capacity());
+        let seen = &mut graph.node_scratch.seen;
+        let mut out: Vec<CellId> = Vec::new();
+        for &(ix, iy, iz) in changed {
+            for (dx, dy) in [(0, 0), (-1, 0), (1, 0), (0, -1), (0, 1)] {
+                let Some(zs) = lookup.get(&(ix + dx, iy + dy)) else {
+                    continue;
+                };
+                for &nz in zs {
+                    if (nz - iz).abs() > step_dz {
+                        continue;
+                    }
+                    if let Some(id) = cells.id((ix + dx, iy + dy, nz)) {
+                        if !seen[id as usize] {
+                            seen[id as usize] = true;
+                            out.push(id);
+                        }
+                    }
+                }
+            }
+        }
+        for &id in &out {
+            seen[id as usize] = false;
+        }
+        out
+    }
+
     /// Live cells within the node-graph margin of the changed cells, walked
-    /// as a BFS ball over cell adjacency from roots covering everything a
-    /// change can directly touch.
-    fn node_window(&mut self, changed: &[VoxelKey], config: &Config) -> Vec<CellId> {
+    /// as a BFS ball over cell adjacency from the changed neighborhood and the
+    /// wall-seed columns a change can flip.
+    fn node_window(
+        &mut self,
+        changed: &[VoxelKey],
+        roots: &[CellId],
+        config: &Config,
+    ) -> Vec<CellId> {
         // Wall distances only matter out to the penalty band, so the ball
         // covers the buffer reach of the changed cells plus slack.
         let steps = config.node_window_cells();
@@ -524,22 +563,8 @@ impl Planner {
             }
         };
 
-        // Roots: the changed cells themselves, plus the live column neighbors
-        // that carry the change when the cell itself was removed.
-        for &(ix, iy, iz) in changed {
-            for (dx, dy) in [(0, 0), (-1, 0), (1, 0), (0, -1), (0, 1)] {
-                let Some(zs) = lookup.get(&(ix + dx, iy + dy)) else {
-                    continue;
-                };
-                for &nz in zs {
-                    if (nz - iz).abs() > step_dz {
-                        continue;
-                    }
-                    if let Some(id) = cells.id((ix + dx, iy + dy, nz)) {
-                        insert(id, &mut ball, &mut frontier);
-                    }
-                }
-            }
+        for &id in roots {
+            insert(id, &mut ball, &mut frontier);
         }
 
         // Wall-seed scans cross up to HOLE_SPAN_CELLS empty columns, so a
