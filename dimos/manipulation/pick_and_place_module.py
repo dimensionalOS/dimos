@@ -164,6 +164,11 @@ class PickAndPlaceModule(Module):
             {
                 "object_id": str(detection.id),
                 "name": str(detection.results[0].hypothesis.class_id),
+                # Centre in the planning frame, so the caller can pick the arm
+                # on the object's side without another call.
+                "x": round(detection.bbox.center.position.x, 3),
+                "y": round(detection.bbox.center.position.y, 3),
+                "z": round(detection.bbox.center.position.z, 3),
             }
             for detection in detections.detections
             if detection.id and detection.results

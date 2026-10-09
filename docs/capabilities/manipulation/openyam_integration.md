@@ -204,7 +204,7 @@ a ghost and Rerun draws the full tool path. The agent reports the legs, the
 seconds of motion and the grasp rank, then waits. Say "proceed" and it calls
 `proceed`, which runs the legs in order and stops at the first that fails; say
 "discard" and nothing moves. The agent passes the arm as `planning_group` on
-every motion skill and asks once when the arm is not stated.
+every motion skill and picks the arm on the object's side when none is stated.
 
 
 The recording lands under `recordings/<run-id>/`. `applied_joint_position_command`
