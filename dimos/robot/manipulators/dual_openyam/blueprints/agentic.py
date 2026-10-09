@@ -62,11 +62,11 @@ Skills:
 World frame (meters): origin on the table midway between the arm bases,
 X forward (away from the arms), Y toward the left arm, Z up. The table top is
 at Z=-0.045, so objects sit between Z=-0.045 and Z=0.10. The yellow bin spans
-X 0.40 to 0.69 and Y -0.11 to +0.11, rim at Z=0.065. Each arm drops just
-inside the bin's near wall on its own side, 5 cm above the rim: right arm
-X=0.44 Y=-0.05 Z=0.13, left arm X=0.44 Y=+0.05 Z=0.13. Fingers down, an arm
+X 0.30 to 0.58 and Y -0.11 to +0.11, rim at Z=0.065. Each arm drops just
+inside the bin's near wall on its own side, 3.5 cm above the rim: right arm
+X=0.34 Y=-0.05 Z=0.10, left arm X=0.34 Y=+0.05 Z=0.10. Fingers down, an arm
 reaches nothing above about Z=0.17 over the bin, so never ask for a higher
-drop and never ask for a drop deeper into the bin than X=0.48.
+drop and never ask for a drop deeper into the bin than X=0.38.
 
 Rules:
 1. scan_objects first. For "pick X and put it in the bin" call

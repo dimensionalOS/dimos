@@ -97,7 +97,7 @@ def test_the_table_and_the_bin_are_in_the_world(module: ManipulationModule) -> N
 
 def test_fingertips_in_the_bin_or_under_the_table_collide(module: ManipulationModule) -> None:
     in_bin = _tcp(module, RIGHT_TCP_IN_BIN).position
-    assert 0.40 < in_bin.x < 0.69 and -0.12 < in_bin.y < 0.12 and in_bin.z < 0.065
+    assert 0.30 < in_bin.x < 0.60 and -0.12 < in_bin.y < 0.12 and in_bin.z < 0.065
     assert not module.is_collision_free(RIGHT_TCP_IN_BIN)
 
     below = _tcp(module, RIGHT_TCP_BELOW_TABLE).position
