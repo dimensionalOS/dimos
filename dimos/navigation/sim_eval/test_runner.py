@@ -17,21 +17,27 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import sys
+import threading
+import time
 
 import pytest
 import typer
 
 from dimos.navigation.sim_eval.cli import override_flag, seeds_of
 from dimos.navigation.sim_eval.ground_truth import Difficulty
-from dimos.navigation.sim_eval.replay import REPLAY_FILE
 from dimos.navigation.sim_eval.runner import (
     RECORDING_FILE,
+    REPLAY_FILE,
     RESULTS_FILE,
     RUN_FILE,
     SCORE_FILE,
+    Episode,
     RunConfig,
+    _episode,
+    _live,
     rescore,
     run,
+    stop_all,
 )
 from dimos.navigation.sim_eval.suite import Case, Manifest, Rules
 from dimos.simulation.scenes.procedural import office
@@ -50,6 +56,8 @@ case_id = args["--episodedriver.case-id"]
 manifest = json.loads(Path(args["--episodedriver.manifest"]).read_text())
 case = next(c for c in manifest["cases"] if c["id"] == case_id)
 arrive = case["tag"] != "stay_put"
+if case["tag"] == "hang":
+    signal.pause()
 recording = Path(args["--fake-recordings"]) / f"{case_id}-{time.time_ns()}" / "memory.db"
 recording.parent.mkdir(parents=True)
 store = SqliteStore(path=str(recording))
@@ -64,6 +72,7 @@ store.stream("goal", PointStamped).append(PointStamped(x, y, z, ts=t0, frame_id=
 if arrive:
     store.stream("goal_reached", Bool).append(Bool(True), ts=t0 + 5)
 store.stop()
+(recording.parent / "rerun.rrd").write_bytes(b"rrd")
 print(f"Recording to {recording}", flush=True)
 (out / "terminal.json").write_text(json.dumps({"reason": "arrived" if arrive else "timeout", "t0": t0}))
 print("scene", args["--simgo2world.seed"], args["--simgo2world.scene-params"], " ".join(a for a in sys.argv if a.startswith("--set-")), flush=True)
@@ -139,7 +148,7 @@ def test_run_scores_every_episode_of_the_split_in_parallel(
     assert (episode / SCORE_FILE).exists()
     assert 'scene 1 {"door_width": 0.5} --set-x=1' in (episode / "run.log").read_text()
     assert not any((tmp_path / "recordings").iterdir())
-    assert (episode / REPLAY_FILE).stat().st_size > 1000
+    assert (episode / REPLAY_FILE).read_bytes() == b"rrd"
     meta = json.loads((run_dir / RUN_FILE).read_text())
     assert meta["finished"] is True
     assert meta["episodes"] == 6
@@ -162,6 +171,31 @@ def test_rescore_reproduces_the_results(
     before = (run_dir / RESULTS_FILE).read_text()
     assert rescore(run_dir).read_text() == before
     assert json.loads(before)["case_id"] == "mined-s1-dddddd"
+
+
+def test_stop_all_ends_an_episode_that_never_terminates(
+    suite: Path, fake_blueprint: tuple[str, ...], tmp_path: Path
+) -> None:
+    manifest = Manifest.load(suite)
+    case = _case("hang-s1-eeeeee", "hang", "dev", {})
+    config = RunConfig(
+        suite=suite,
+        overrides=(f"--fake-recordings={tmp_path / 'recordings'}",),
+        command=fake_blueprint,
+    )
+    episode = Episode(case, 0, tmp_path / "hang" / "r0")
+    results: list = []
+    worker = threading.Thread(target=lambda: results.append(_episode(config, manifest, episode, 0)))
+    worker.start()
+    deadline = time.time() + 10.0
+    while not _live and time.time() < deadline:
+        time.sleep(0.05)
+    assert _live
+    stop_all()
+    worker.join(timeout=30.0)
+    assert not worker.is_alive()
+    assert results[0].error == "no terminal record"
+    assert not _live
 
 
 def test_cli_parses_seed_lists_and_overrides() -> None:
