@@ -49,18 +49,20 @@ def _camera_if_real() -> tuple[Blueprint, ...]:
     return (RealSenseCamera.blueprint(enable_pointcloud=False),)
 
 
-# buttons / color_image / coordinator_joint_state / status are left to
+# teleop_buttons / color_image / coordinator_joint_state / status are left to
 # autoconnect — each name is unique across the composed blueprint, so it
 # resolves to a stable /<name> topic shared by producer and recorder. The
 # recorder captures whatever joints are present, so the coordinator's aggregate
 # stream is its intended input (see dimos/control/README.md).
+# These generic teleoperation labels should be customized for a specific
+# training task when composing a collection blueprint.
 learning_collect_webxr_xarm7 = autoconnect(
     CollectionRecorder.blueprint(
         db_path=_session_db("xarm7"),
         poseless_streams=["color_image", "coordinator_joint_state", "status"],
         record_tf=False,
     ),
-    EpisodeMonitorModule.blueprint(),  # default button_map: toggle=B, discard=Y
+    EpisodeMonitorModule.blueprint(task="Teleoperate the xArm"),
     teleop_webxr_xarm7,
     *_camera_if_real(),
 )
@@ -72,7 +74,7 @@ learning_collect_webxr_piper = autoconnect(
         poseless_streams=["color_image", "coordinator_joint_state", "status"],
         record_tf=False,
     ),
-    EpisodeMonitorModule.blueprint(),  # default button_map: toggle=B, discard=Y
+    EpisodeMonitorModule.blueprint(task="Teleoperate the Piper"),
     teleop_webxr_piper,
     *_camera_if_real(),
 )

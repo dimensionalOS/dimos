@@ -28,12 +28,13 @@ from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
-from dimos.navigation.frontier_exploration.wavefront_frontier_goal_selector import (
+from dimos.navigation.experimental.frontier_exploration.wavefront_frontier_goal_selector import (
     WavefrontFrontierExplorer,
 )
+from dimos.navigation.experimental.patrolling.module import PatrollingModule
+from dimos.navigation.go2.loop_closure.module import PGOVoxelMapper
+from dimos.navigation.go2.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.navigation.movement_manager.movement_manager import MovementManager
-from dimos.navigation.patrolling.module import PatrollingModule
-from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.perception.fiducial.marker_detection_stream_module import MarkerDetectionStreamModule
 from dimos.perception.fiducial.marker_tf_module import MarkerTfModule
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import unitree_go2_basic
@@ -105,3 +106,13 @@ unitree_go2_memory = autoconnect(
     unitree_go2,
     Go2Memory.blueprint(),
 ).global_config(n_workers=12)
+
+# Live loop closure: PGOVoxelMapper replaces the plain voxel mapper.
+unitree_go2_pgo = (
+    autoconnect(
+        unitree_go2,
+        PGOVoxelMapper.blueprint(emit_every=5),
+    )
+    .disabled_modules(VoxelGridMapper)
+    .global_config(n_workers=11)
+)

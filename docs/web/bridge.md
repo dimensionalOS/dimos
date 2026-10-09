@@ -32,7 +32,7 @@ The relay flags are `dimos run` options. Most of the rest are fields of the brid
 | `--robot-name NAME` | the id | Display name in the cockpit. |
 | `--serve-dir DIR` | none | Serve this directory at `/` instead of the cockpit. Local relay only. |
 | `--local-port N` | 7780 | HTTP port of the local relay. |
-| `--no-open-browser` | opens | Do not open the page once the local relay is up. |
+| `--open-browser false` | opens | Do not open the page once the local relay is up. |
 | `--no-web-build` | builds | Do not rebuild the cockpit and SDK bundles when they are stale (checkouts only, wheels ship them prebuilt). |
 | `--jpeg-quality`, `--image-max-hz`, `--odom-max-hz`, `--costmap-max-hz` | 75, 30, 20, 5 | Quality and rates of the built-in channels in the default cockpit. A `cockpit(...)` layout sets them per panel instead. |
 
@@ -47,7 +47,7 @@ A channel is one stream crossing the wire in one direction with one encoding. `r
 | `global_costmap` | `OccupancyGrid` | `costmap.zlib.v1` | latest, the last grid is replayed to a new viewer |
 | `tele_cmd_vel` (tx) | `Twist` | `twist.json.v1` | latest |
 
-Every other stream needs a `Channel` declaration. It becomes a port typed with the declared message type and wired by `autoconnect` like any module port. The Map2D, Chat and Stats panels declare the channels for their own extra streams (`path`, `click`, `stop`, the chat streams, `resource_stats`). A Video panel, or a Map2D costmap or pose, on a stream that is not a built-in port needs a `Channel` from you, see [Panels](/docs/web/cockpit.md#panels) on the cockpit page.
+Every other stream needs a `Channel` declaration. It becomes a port typed with the declared message type and wired by `autoconnect` like any module port. The Map2D, Map3D, Chat and Stats panels declare the channels for their own extra streams (`path`, `click`, `stop`, `cloud`, the chat streams, `resource_stats`). A Video panel, or a Map2D costmap or pose, on a stream that is not a built-in port needs a `Channel` from you, see [Panels](/docs/web/cockpit.md#panels) on the cockpit page.
 
 The relay keeps the bridge informed of which channels have at least one subscribed viewer. The bridge encodes and sends a channel only while that holds: it subscribes to the stream when the first viewer arrives and unsubscribes when the last one leaves. Replayable channels (`resend_on_subscribe`, and the built-in `global_costmap`) also keep a raw-message cache, so they stay subscribed to their stream without viewers, but nothing is encoded for them. Two settings shape what crosses the wire:
 
@@ -112,6 +112,7 @@ An encoding id names a codec pair: the encoder in the bridge and the decoder in 
 |---|---|---|---|
 | `jpeg.v1` | `Image` | rx | the Video panel |
 | `costmap.zlib.v1` | `OccupancyGrid` | rx | Map2D |
+| `voxels.zlib.v1` | `PointCloud2` | rx | Map3D |
 | `pose.json.v1` | `PoseStamped` | rx | the Map2D pose marker |
 | `path.json.v1` | `Path` | rx | the Map2D path overlay |
 | `stats.json.v1` | `dict` | rx | Stats |
@@ -125,7 +126,7 @@ An encoding id names a codec pair: the encoder in the bridge and the decoder in 
 Two more need no registration:
 
 - `json.v1`: JSON scalars, lists, dicts and plain dataclasses on rx. On tx, scalars, lists and dicts only (a dataclass built from untrusted browser JSON needs an explicit decoder).
-- `<package>.<Message>.lcm.v1`, for example `geometry_msgs.PoseStamped.lcm.v1`: any dimOS message with an LCM schema, rx only. The frame is the message's `lcm_encode()` bytes and the manifest carries the schema, so the browser decodes it into a plain object with no registration. A bulk message costs its full size per frame (a `PointCloud2` is 16 bytes per point), so set `max_hz` accordingly or write an encoder that sends less.
+- `<package>.<Message>.lcm.v1`, for example `geometry_msgs.PoseStamped.lcm.v1`: any dimOS message with an LCM schema, rx only. The frame is the message's `lcm_encode()` bytes and the manifest carries the schema, so the browser decodes it into a plain object with no registration. A bulk message costs its full size per frame (a `PointCloud2` is 16 bytes per point), so set `max_hz` accordingly or write an encoder that sends less. `voxels.zlib.v1`, the Map3D encoding, is one: it sends a cloud as voxel occupancy bits, about 0.3 bytes per voxel.
 
 When `encoding` is not given, an rx dimOS message gets its LCM encoding and everything else (every tx channel included) gets `json.v1`. `Image` has no default: use `jpeg.v1` or an encoder of your own. The built-in names keep their codecs: `Channel("odom", PoseStamped)` in `cockpit(channels=[...])` raises, because `odom` is `pose.json.v1`. Any other name takes the default:
 
@@ -177,7 +178,7 @@ def encode_path_points(msg: Path) -> EncodedPayload:
 my_ui = cockpit(channels=[Channel("nav_path", Path, encoding="path.points.v1", max_hz=20.0)])
 ```
 
-Codec functions must be module-level functions that can be imported by name. `cockpit()` resolves the id to the function when the blueprint is defined and ships it to the worker process by reference, so lambdas, nested functions and functions defined in a script running as `__main__` are rejected. Registering an id twice raises (except for the same function after a reload). An encoder that raises is logged, with rate limiting, and only its own channel is affected.
+Codec functions must be module-level functions that can be imported by name. `cockpit()` resolves the id to the function when the blueprint is defined and ships it to the worker process by reference, so lambdas, nested functions and functions defined in a script running as `__main__` are rejected. Registering an id twice raises (except for the same function after a reload). An encoder that raises is logged, with rate limiting, and only its own channel is affected. The bridge calls an encoder on the stream's transport thread for live messages and on a worker thread when it replays a cached message (`resend_on_subscribe`) to a new viewer. The two can overlap, so an encoder must not keep state between calls. Compute the frame from the message and the params, as the built-in encoders do.
 
 ## Publishing from the browser
 
