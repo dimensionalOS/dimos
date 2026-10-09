@@ -6,12 +6,10 @@ while building or installing the Python distribution. The build integration is n
 published: first build `packages/dimos-build-config` and provide its wheel through
 `PIP_FIND_LINKS` or `UV_FIND_LINKS`. The host must contain `source_package` support.
 
-
 This project ships two Rust binaries as source in one ordinary Python wheel.
 Installing it or listing blueprints does not invoke Cargo, rustc or CMake.
 Only the selected blueprint's binary is built, just before its module starts.
-The companion [prebuilt example](../native/README.md) still installs a compiled
-platform wheel and requires no Rust toolchain at runtime.
+The [legacy prebuilt fixture](../native/README.md) is retained only for runtime compatibility tests.
 
 Use a dimOS host containing `NativeModuleConfig.source_package`. This API is not
 in the currently published 0.0.14 host; the example's version constraint alone
@@ -25,7 +23,7 @@ dimos list
 dimos --transport zenoh --viewer none --n-workers 1 --no-serve-coordinator-rpc run dimos-lazy-native.probe
 ```
 
-Installation needs Python 3.10–3.12 and the ordinary setuptools build backend.
+Installation needs Python 3.10–3.12, scikit-build-core and the local dimos-build-config wheel.
 Running this POSIX example additionally needs Cargo and rustc; there are no
 third-party crates or runtime SDK downloads. If prompted to apply system
 configuration changes, answer `n`. Wait for `Blueprint started`, then Ctrl-C.
@@ -35,7 +33,7 @@ by `stopped`. No hardware or typed transport is exercised.
 `probe` builds only `package_probe`. `dimos-lazy-native.other` selects
 `package_other` instead. The explicit `--bin` argument selects a Cargo target;
 DimOS does not infer targets from blueprint names. Installing from a wheel or
-source uses setuptools to copy the complete `native/` tree, including the lockfile,
+source uses scikit-build-core to copy the complete `native/` tree, including the lockfile,
 into the wheel. The backend never invokes Cargo.
 
 The declaration adds only `source_package` to the existing native fields:

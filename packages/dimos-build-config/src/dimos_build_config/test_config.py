@@ -16,6 +16,7 @@
 
 import configparser
 import os
+from pathlib import Path
 import subprocess
 import sys
 import tarfile
@@ -143,6 +144,46 @@ def test_source_distributions_and_editable_never_compile(project):
         any(part in name for part in ("/target/", "/build/", "/dist/", "/.env", "secret.pem"))
         for name in names + sources
     )
+    # A separate build environment resolves only the thin build dependencies.
+    provider_source = Path(__file__).resolve().parents[2]
+    local_wheels = project / "provider-wheels"
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "build",
+            "--wheel",
+            "--no-isolation",
+            "--outdir",
+            str(local_wheels),
+            str(provider_source),
+        ],
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    isolated = project / "isolated-install"
+    subprocess.run(
+        [
+            "uv",
+            "pip",
+            "install",
+            "--python",
+            sys.executable,
+            "--target",
+            str(isolated),
+            "--no-deps",
+            "--find-links",
+            str(local_wheels),
+            str(project),
+        ],
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert (isolated / "acme_probe/native/main.rs").read_text() == "fn main() {}"
     # Repeat installation regenerates metadata; editable source changes remain visible.
     prefix = project / "installed"
     command = [
@@ -187,3 +228,14 @@ def test_source_distributions_and_editable_never_compile(project):
         text=True,
     )
     assert not calls.exists()
+
+
+def test_resource_only_package_and_environment_conflict(project):
+    path = project / "pyproject.toml"
+    path.write_text(path.read_text().replace('probe = "acme_probe.module:Probe"', ""))
+    assert dynamic_metadata({}, {}) == {"entry-points": {"dimos.blueprints": {}}}
+    with pytest.raises(ValueError, match="cannot enable wheel.cmake"):
+        config(env={"SKBUILD_WHEEL_CMAKE": "true"})
+    (project / "src/acme_probe/link").symlink_to(project / "pyproject.toml")
+    with pytest.raises(ValueError, match="symlinks"):
+        config(env={})
