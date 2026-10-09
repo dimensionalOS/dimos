@@ -916,8 +916,9 @@ jobs:
       - name: Install web_browser e2e dependencies (macOS)
         if: matrix.os == 'macOS'
         run: |
-          brew install ffmpeg
+          brew install ffmpeg libjpeg-turbo
           uv sync --group tests-self-hosted --group browser-tests --frozen
+          uv run python -c "from dimos.utils.turbojpeg import get_turbojpeg; get_turbojpeg()"
           uv run playwright install chromium firefox
       - name: Build C++ extensions in-place
         run: uv run python setup.py build_ext --inplace
