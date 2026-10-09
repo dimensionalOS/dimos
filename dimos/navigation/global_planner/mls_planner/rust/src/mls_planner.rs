@@ -315,14 +315,12 @@ impl Planner {
         // Removal frees cell ids and the insert loop below recycles them, so a
         // node id captured here is not stable. Capture doomed nodes by
         // coordinate while their ids still resolve.
-        let removed_set: AHashSet<VoxelKey> = removed.iter().copied().collect();
-        let dead_nodes: Vec<(usize, VoxelKey)> = self
-            .graph
-            .nodes
+        let dead_nodes: Vec<(usize, VoxelKey)> = removed
             .iter()
-            .enumerate()
-            .map(|(i, n)| (i, self.graph.cells.coord(n.cell_id)))
-            .filter(|(_, c)| removed_set.contains(c))
+            .filter_map(|&c| {
+                let i = self.graph.node_index.node_at(self.graph.cells.id(c)?)?;
+                Some((i, c))
+            })
             .collect();
         for &c in &removed {
             self.graph.cells.remove(c);
@@ -351,6 +349,7 @@ impl Planner {
             &mut self.graph.nodes,
             &dead_nodes,
             &params,
+            &mut self.graph.node_index,
         );
         let window = self.node_window(&seeds, config);
         place_nodes_region(
@@ -361,6 +360,7 @@ impl Planner {
             &window,
             &mut self.graph.wall_state,
             &mut self.graph.node_scratch,
+            &mut self.graph.node_index,
             &mut self.graph.nodes,
         );
         build_node_edges_region(
@@ -596,6 +596,7 @@ impl Planner {
             &config.placement_params(),
             &mut self.graph.wall_state,
             &mut self.graph.node_scratch,
+            &mut self.graph.node_index,
             &mut self.graph.nodes,
         );
 

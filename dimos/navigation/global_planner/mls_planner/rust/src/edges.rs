@@ -25,7 +25,7 @@ use rayon::prelude::*;
 
 use crate::adjacency::{CellId, SurfaceCells, SurfaceLookup, NO_CELL};
 use crate::dijkstra::{dijkstra, dijkstra_region, walk_preds, DijkstraState, Weight};
-use crate::nodes::{NodeData, NodeScratch};
+use crate::nodes::{NodeData, NodeIndex, NodeScratch};
 use crate::voxel::VoxelKey;
 
 /// A node is identified by the CellId it sits on. Stable across incremental
@@ -161,6 +161,8 @@ pub struct PlannerGraph {
     pub wall_state: DijkstraState,
     /// Reusable dense scratch for node placement, shared across region frames.
     pub node_scratch: NodeScratch,
+    /// Which cell holds which node, and node cells by spacing bin.
+    pub node_index: NodeIndex,
 }
 
 impl PlannerGraph {
