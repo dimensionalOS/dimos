@@ -22,7 +22,7 @@ from reactivex.disposable import Disposable
 
 from dimos.control.coordinator import ControlCoordinator
 from dimos.core.core import rpc
-from dimos.core.module import Module
+from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -30,7 +30,7 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.robot.galaxea.r1pro.config import R1PRO_PLANAR_BASE
 from dimos.robot.galaxea.r1pro.joints import UPPER_BODY_JOINTS, coordinator_name
-from dimos.simulation.behavior.r1pro_model import MODEL_JOINTS, upper_body_limits
+from dimos.simulation.behavior.r1pro_model import MODEL_JOINTS, joint_limits, upper_body_limits
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -66,11 +66,18 @@ class BehaviorCoordinator(ControlCoordinator):
 
     @rpc
     def start(self) -> None:
-        self.config.hardware[0].limits = upper_body_limits()
+        names = tuple(name.split("/", 1)[1] for name in self.config.hardware[0].joints)
+        self.config.hardware[0].limits = joint_limits(names)
         super().start()
 
 
+class BehaviorR1ProBridgeConfig(ModuleConfig):
+    command_joints: tuple[str, ...] = UPPER_BODY_JOINTS
+
+
 class BehaviorR1ProBridge(Module):
+    default_config = BehaviorR1ProBridgeConfig
+    config: BehaviorR1ProBridgeConfig
     joint_state: In[JointState]
     odom: In[PoseStamped]
     motor_command: In[MotorCommandArray]
@@ -84,7 +91,11 @@ class BehaviorR1ProBridge(Module):
         self._lock = threading.Lock()
         self._odom: PoseStamped | None = None
         self._state: JointState | None = None
-        self._limits = upper_body_limits()
+        self._limits = (
+            upper_body_limits()
+            if self.config.command_joints == UPPER_BODY_JOINTS
+            else joint_limits(self.config.command_joints)
+        )
 
     @rpc
     def start(self) -> None:
@@ -99,7 +110,7 @@ class BehaviorR1ProBridge(Module):
 
     def _on_state(self, message: JointState) -> None:
         try:
-            upper = ordered_state(message, UPPER_BODY_JOINTS)
+            upper = ordered_state(message, self.config.command_joints)
             model = ordered_state(message, MODEL_JOINTS)
         except ValueError as error:
             logger.warning("Rejected simulator feedback", error=str(error))
@@ -124,7 +135,7 @@ class BehaviorR1ProBridge(Module):
         )
 
     def _on_command(self, message: MotorCommandArray) -> None:
-        if len(message.q) != len(UPPER_BODY_JOINTS):
+        if len(message.q) != len(self.config.command_joints):
             logger.warning("Rejected incomplete coordinator command")
             return
         for value, low, high in zip(
@@ -134,7 +145,7 @@ class BehaviorR1ProBridge(Module):
                 logger.warning("Rejected out-of-range coordinator command")
                 return
         self.joint_command.publish(
-            JointState(name=list(UPPER_BODY_JOINTS), position=list(message.q))
+            JointState(name=list(self.config.command_joints), position=list(message.q))
         )
 
     @rpc

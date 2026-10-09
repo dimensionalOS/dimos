@@ -235,6 +235,18 @@ def test_pose_preserves_current_orientation(arm, rpc):
     )
 
 
+def test_pose_move_allows_explicit_auxiliary_group_and_executes_exact_plan(arm, rpc):
+    arm.move_pose([0.5, 0.1, 0.4], auxiliary_groups=["torso"], timeout=20.0)
+
+    assert rpc.plan_to_poses.call_args.kwargs == {
+        "speed_scale": None,
+        "auxiliary_groups": ("torso",),
+    }
+    rpc.execute.assert_called_once_with(
+        blocking=True, timeout=20.0, plan_id=rpc.plan_to_poses.return_value.plan.plan_id
+    )
+
+
 def test_explicit_orientation_needs_no_state_read(arm, rpc):
     arm.move_pose([0.4, 0.0, 0.3], orientation=(0.0, 0.0, 0.0, 1.0))
 
@@ -332,6 +344,7 @@ def test_linear_delegates_directly_and_preserves_collision_default(arm, rpc, opt
         dy=0.0,
         dz=0.01,
         planning_group="arm",
+        auxiliary_groups=(),
         check_collision=checked,
         speed_scale=0.2,
         blocking=True,
@@ -442,3 +455,11 @@ def test_missing_preset_lists_available_without_moving(arm, rpc):
 
     rpc.plan_to_joints.assert_not_called()
     rpc.execute.assert_not_called()
+
+
+def test_linear_move_forwards_explicit_auxiliary_group(arm, rpc):
+    arm.move_linear(dy=0.03, auxiliary_groups=["torso"], check_collision=True)
+
+    assert rpc.move_linear.call_args.kwargs["auxiliary_groups"] == ("torso",)
+    assert rpc.move_linear.call_args.kwargs["planning_group"] == "arm"
+    assert rpc.move_linear.call_args.kwargs["check_collision"] is True

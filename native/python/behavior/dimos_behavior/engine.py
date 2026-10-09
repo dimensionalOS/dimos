@@ -18,6 +18,7 @@ from collections.abc import Iterator
 from importlib.metadata import version
 import json
 import math
+import os
 from pathlib import Path
 import random
 import re
@@ -37,6 +38,7 @@ from omnigibson.controllers import ControllerView
 import omnigibson.lazy as lazy
 from omnigibson.macros import gm
 from omnigibson.object_states.object_state_base import AbsoluteObjectState, BooleanStateMixin
+from omnigibson.object_states.toggle import ToggledOn
 from omnigibson.sensors.vision_sensor import VisionSensor
 from omnigibson.tasks.behavior_task import BehaviorTask
 from omnigibson.utils.asset_utils import get_task_instance_path
@@ -94,6 +96,7 @@ class OmniEngine:
     def __init__(self, config: BehaviorConfig) -> None:
         self.config = config
         self._goal_status: dict[str, Any] = {}
+        self.radio_diagnostic_camera: Any = None
 
     def initialize(self) -> None:
         config = self.config
@@ -199,7 +202,9 @@ class OmniEngine:
 
     def _prepare_spawn(self) -> None:
         # Ground-truth contacts are setup checks only.
-        if self.task is None and self.config.spawn_position is not None:
+        if (
+            self.task is None or self.config.development_task_spawn
+        ) and self.config.spawn_position is not None:
             self.robot.set_position_orientation(
                 torch.tensor(self.config.spawn_position),
                 torch.tensor(Rotation.from_euler("z", self.config.spawn_yaw).as_quat()),
@@ -264,6 +269,11 @@ class OmniEngine:
                 plain(self.robot.action_space.low), plain(self.robot.action_space.high), strict=True
             )
         )
+        self.policy_hidden_markers = 0
+        if self.config.policy_hide_toggle_markers:
+            from dimos.simulation.behavior.policy_visuals import hide_toggle_markers
+
+            self.policy_hidden_markers = hide_toggle_markers(self.env.scene.objects, ToggledOn)
         self.cameras = {role: self.robot.sensors[name] for role, name in self.camera_roles.items()}
         if not all(isinstance(sensor, VisionSensor) for sensor in self.cameras.values()):
             raise ValueError("Benchmark camera roles must refer to vision sensors")
@@ -281,6 +291,23 @@ class OmniEngine:
         self.intrinsics = {
             slot: plain(sensor.intrinsic_matrix) for slot, sensor in self.cameras.items()
         }
+        self.radio_diagnostic_camera: Any = None
+        diagnostic_directory = os.environ.get("DIMOS_RADIO_DIAGNOSTIC_DIR")
+        if diagnostic_directory:
+            from dimos.simulation.behavior.radio_diagnostic_camera import RadioDiagnosticCamera
+
+            # Evaluator viewer only: robot head/wrist sensors and policy messages stay intact.
+            radio = self.env.task.object_scope["radio_receiver.n.01_1"]
+            center = np.asarray(cpu(radio.get_position_orientation()[0])) + np.array([0, 0, 0.13])
+            with og.sim.editing_usd():
+                lazy.isaacsim.core.utils.viewports.set_camera_view(
+                    eye=center + np.array([-0.8, -0.6, 0.55]),
+                    target=center,
+                    camera_prim_path=og.sim.viewer_camera.prim_path,
+                )
+            self.radio_diagnostic_camera = RadioDiagnosticCamera(
+                og.sim.viewer_camera, diagnostic_directory
+            )
         if not self.config.headless:
             position, orientation = self.robot.base_footprint_link.get_position_orientation()
             position = cpu(position)
@@ -299,6 +326,10 @@ class OmniEngine:
             "robot": "R1Pro",
             "versions": {name: version(name) for name in ("omnigibson", "isaacsim", "torch")},
             "localization": "simulator_ground_truth",
+            "policy_visuals": {
+                "toggle_markers_hidden": self.config.policy_hide_toggle_markers,
+                "hidden_count": self.policy_hidden_markers,
+            },
             "scene": self.task.scene if self.task else self.config.scene,
             "action_hz": self.config.action_hz,
             "max_episode_steps": self.config.max_episode_steps,
@@ -315,6 +346,9 @@ class OmniEngine:
             "unsupported_physical": ["OPEN", "CLOSE", "TOGGLE_ON", "TOGGLE_OFF"],
             "primitive_arm": self.robot.default_arm,
             "grasping_mode": self.robot.grasping_mode,
+            "development_task_spawn": self.config.development_task_spawn,
+            "spawn_position": self.config.spawn_position,
+            "spawn_yaw": self.config.spawn_yaw,
         }
 
     def list_tasks(self) -> list[TaskSelection]:
@@ -430,6 +464,8 @@ class OmniEngine:
             objects[key] = {
                 "name": obj.name,
                 "category": obj.category,
+                "model": getattr(obj, "model", None),
+                "scale": plain(obj.scale),
                 "position": plain(pos),
                 "orientation": plain(quat),
                 "states": {
@@ -439,8 +475,105 @@ class OmniEngine:
                     and isinstance(state, BooleanStateMixin)
                 },
             }
+            if obj.category == "radio":
+                # Owner-thread evaluator diagnostics, never a policy observation.
+                from omnigibson.utils.usd_utils import RigidContactAPI
+
+                from dimos.simulation.behavior.radio_contact_evidence import (
+                    radio_contact_pairs,
+                    radio_finger_contacts,
+                    radio_overlap_finger_hits,
+                )
+
+                pairs = list(
+                    RigidContactAPI.get_contact_pairs(self.env.scene.idx, {self.robot}, {obj}, True)
+                )
+                objects[key]["development_finger_contacts"] = radio_finger_contacts(pairs)
+                objects[key]["development_contact_pairs"] = radio_contact_pairs(pairs)
+                # Include support/furniture contacts, not just robot contacts.
+                # Pair membership does not measure contact force or normal.
+                objects[key]["development_all_contact_pairs"] = [
+                    {"radio_link": a, "other_link": b}
+                    for a, b in sorted(
+                        RigidContactAPI.get_contact_pairs(self.env.scene.idx, {obj}, None, True)
+                    )
+                ]
+                # Official sleep-aware cache is separate from current force pairs.
+                objects[key]["development_sleep_aware_contact_pairs"] = [
+                    {"radio_link": a, "other_link": b}
+                    for a, b in sorted(
+                        RigidContactAPI.get_contact_pairs(self.env.scene.idx, {obj}, None, False)
+                    )
+                ]
+                body = obj.root_link
+                objects[key]["development_body_diagnostics"] = {
+                    "is_asleep": bool(body.is_asleep),
+                    "rigid_body_enabled": body.get_attribute("physics:rigidBodyEnabled"),
+                    "kinematic_enabled": body.get_attribute("physics:kinematicEnabled"),
+                    "gravity_disabled": body.get_attribute("physxRigidBody:disableGravity"),
+                    "linear_velocity": plain(body.get_linear_velocity()),
+                    "angular_velocity": plain(body.get_angular_velocity()),
+                }
+                # Passive inspection of the official assisted-grasp lifecycle.
+                # These internals are pinned-runtime diagnostics, not SDK/agent APIs.
+                objects[key]["development_assisted_grasp"] = {
+                    arm: {
+                        "mode": self.robot.grasping_mode,
+                        "candidate_is_grasping": str(self.robot.is_grasping(arm, obj)),
+                        "candidate_in_hand": self.robot._ag_obj_in_hand[arm] is obj,
+                        "release_counter": self.robot._ag_release_counter[arm],
+                        "constraint_path": (
+                            self.robot._ag_obj_constraints[arm].GetPath().pathString
+                            if self.robot._ag_obj_constraints[arm] is not None
+                            else None
+                        ),
+                        "constraint_valid": (
+                            bool(self.robot._ag_obj_constraints[arm].IsValid())
+                            if self.robot._ag_obj_constraints[arm] is not None
+                            else False
+                        ),
+                    }
+                    for arm in self.robot.arm_names
+                }
+            if ToggledOn in obj.states:
+                toggle = obj.states[ToggledOn]
+                position, orientation = toggle.link.get_position_orientation()
+                objects[key]["toggle_region"] = {
+                    "position": plain(position),
+                    "orientation": plain(orientation),
+                    "marker_position": plain(toggle.visual_marker.get_position_orientation()[0]),
+                    "overlap_radius": float(
+                        torch.min(toggle.visual_marker.extent * toggle.scale * toggle.link.scale)
+                    ),
+                    "finger_contact_steps": toggle.robot_can_toggle_steps,
+                    "finger_contact_registered": obj in (ToggledOn._finger_contact_objs or ()),
+                    "privileged": True,
+                }
+                if obj.category == "radio":
+                    # Same official sphere and eligible finger paths, read only.
+                    # This is a new owner-snapshot query, not a record of the
+                    # original update callback's first-hit ordering.
+                    eligible = {path for paths in ToggledOn._robot_finger_paths for path in paths}
+                    objects[key]["toggle_region"]["development_overlap_finger_hits"] = (
+                        radio_overlap_finger_hits(
+                            og.sim.psqi.overlap_sphere,
+                            objects[key]["toggle_region"]["overlap_radius"],
+                            objects[key]["toggle_region"]["marker_position"],
+                            eligible,
+                        )
+                    )
+                    objects[key]["toggle_region"]["development_overlap_source"] = (
+                        "Passive owner-snapshot PhysX query after official update; "
+                        "original first-hit ordering is not recorded"
+                    )
         return {
             "objects": objects,
+            # Robot encoders read in this owner call without a simulation step
+            # between them and the object/link poses. Diagnostic consumers must
+            # not pair these poses with a later stream/RPC joint observation.
+            "measured_joint_positions": dict(
+                zip(self.names, plain(self.robot.get_joint_positions()), strict=True)
+            ),
             "links": {
                 name: {
                     "position": plain(link.get_position_orientation()[0]),
@@ -448,6 +581,7 @@ class OmniEngine:
                 }
                 for name, link in self.robot.links.items()
                 if name in ("base_link", "left_gripper_link", "right_gripper_link")
+                or "gripper_finger" in name
             },
             # The evaluator reports goals through step(); task.info rejects pre-step reads.
             "goal_status": self._goal_status,
@@ -457,6 +591,8 @@ class OmniEngine:
         }
 
     def messages(self, ts: float) -> dict[str, Any]:
+        if self.radio_diagnostic_camera is not None:
+            self.radio_diagnostic_camera.capture(ts)
         pos, quat = self.robot.base_footprint_link.get_position_orientation()
         p, q = plain(pos), plain(quat)
         base_rotation = Rotation.from_quat(q)
@@ -557,4 +693,6 @@ class OmniEngine:
         return messages
 
     def close(self) -> None:
+        if self.radio_diagnostic_camera is not None:
+            self.radio_diagnostic_camera.close()
         og.shutdown(due_to_signal=True)

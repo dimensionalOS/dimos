@@ -27,6 +27,7 @@ from dimos.core.core import rpc
 from dimos.experimental.isolated_python.bootstrap import load_class
 from dimos.simulation.behavior.connection import BehaviorConnection
 from dimos.simulation.behavior.control import RobotControl
+from dimos.simulation.behavior.radio_evidence import make_sensor_snapshot
 from dimos.simulation.behavior.types import (
     BehaviorStatus,
     ControlMode,
@@ -54,6 +55,7 @@ class BehaviorRuntime(BehaviorConnection):
         self._mailbox: dict[str, tuple[int, Any, float]] = {}
         self._description: dict[str, Any] = {}
         self._truth: dict[str, Any] = {}
+        self._sensor_snapshot: dict[str, Any] | None = None
         self._tasks: list[TaskSelection] = []
         self._scenes: list[str] = []
         self._state = BehaviorStatus(episode=Episode(id=uuid4().hex))
@@ -122,6 +124,17 @@ class BehaviorRuntime(BehaviorConnection):
     def get_status(self) -> BehaviorStatus:
         with self._lock:
             return self._state.model_copy(deep=True)
+
+    @rpc
+    def get_sensor_snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            if (
+                self._sensor_snapshot is None
+                or self._state.state not in ("running", "paused", "finished")
+                or self._sensor_snapshot["episode"] != self._state.episode.id
+            ):
+                raise RuntimeError("Atomic policy sensor capture unavailable for this episode")
+            return copy.deepcopy(self._sensor_snapshot)
 
     @rpc
     def get_ground_truth(self) -> dict[str, Any]:
@@ -310,10 +323,18 @@ class BehaviorRuntime(BehaviorConnection):
     def _refresh(self) -> None:
         truth = self._engine.ground_truth()
         with self._lock:
-            tags = {"episode": self._state.episode.id, "step": self._state.episode.step}
-            self._truth = {**tags, **truth}
+            tags: dict[str, Any] = {
+                "episode": self._state.episode.id,
+                "step": self._state.episode.step,
+            }
+            self._truth = {**tags, "observed_at_monotonic": time.monotonic(), **truth}
         if self._started.is_set():
-            for name, message in self._engine.messages(time.time()).items():
+            messages = self._engine.messages(time.time())
+            if self.config.policy_hide_toggle_markers:
+                snapshot = make_sensor_snapshot(messages, tags["episode"], tags["step"])
+                with self._lock:
+                    self._sensor_snapshot = snapshot
+            for name, message in messages.items():
                 getattr(self, name).publish(message)
 
     def _tick(self) -> None:

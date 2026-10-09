@@ -243,6 +243,100 @@ and failure reporting without importing Isaac Sim. They do not establish camera
 calibration, physical grasp success, or task-fixture compatibility. Those claims
 require the live demos and their reports.
 
+### Development-only stationary radio interaction
+
+The experimental `demo_radio` composition connects the Python manipulation SDK
+to arm trajectories and one selected coupled gripper. It has no locomotion task.
+Run the measured motion check before trying contact:
+
+```bash
+mkdir -p radio-development/evidence
+python -m dimos.simulation.behavior.demo_radio --stage motion --report radio-development/evidence/radio-motion.json
+python -m dimos.simulation.behavior.demo_radio --stage serve --report radio-development/evidence/radio-ready.json
+```
+
+`serve` leaves the coordinator running so a separate Python policy can use
+`Dimos.connect()` and `Arm.from_app(app, group="left_arm")`. Dimcode's ordinary
+write/edit/bash tools can write that policy and execute it with the selected
+dimOS environment's Python; this path needs no MCP wrapper. An SDK error is
+feedback for the policy, not proof that the remote motion has stopped. Confirm
+cancellation before dispatching a recovery motion.
+
+The contact helper accepts a world-frame **gripper-link** target and approach
+direction, performs pose/linear SDK motion, holds for at least five simulator
+steps, then retracts. It never sets `ToggledOn` symbolically. Press mode requires
+a JSON target containing `position`, `approach`, optional XYZW `orientation`, and
+explicit `provenance`, for example `development oracle-assisted geometry`.
+
+```bash
+python -m dimos.simulation.behavior.demo_radio --stage press --target /tmp/radio-target.json --report radio-development/evidence/radio-press.json
+```
+
+These commands are development experiments, not validated task-performance
+claims. Finger contact geometry and reachability still need live verification.
+An optional `--spawn-position X Y Z --spawn-yaw RADIANS` changes only the starting
+robot pose after restoring the official task instance; the report marks this
+custom setup and retains the official goal. SDK motion completion and the BDDL
+evaluator result remain separate. Truth-derived targets must be reported as
+oracle-assisted. The development environment does not enforce a truth boundary.
+
+The fixed script establishes actuation and contact plumbing. A first useful
+agent comparison keeps the same task but changes a reachable target pose or
+returns a recoverable planning failure, then checks whether the policy adapts
+from sensor observations and SDK feedback. Repeating the fixed script proves
+code execution only.
+
+Current development validation loaded official `turning_on_radio` instance 0.
+RRT-Connect rejects Cartesian paths, so this composition selects RoboPlan.
+A native URDF parser treated omitted planar-base position bounds as zero and
+clamped the frozen base during Cartesian planning. Explicit parser-compatible
+bounds fix that contract; equivalent translated robot, target, and obstacle
+regressions pass with the base frozen and only the arm group selected.
+
+At the official robot spawn, the SDK measured gripper closing and opening, then
+executed a 10 mm Cartesian excursion and return: 9.806 mm displacement and
+0.194 mm return error. This verifies development plumbing, not radio task
+completion. The BDDL evaluator remained false. A custom near-field physical press attempt failed precontact IK before
+contact; its evaluator stayed false. Agent adaptation remains untested. Scene obstacles are not yet
+registered automatically in the planner world; the simulator still enforces
+physical scene contact.
+
+The radio development composition disables PyTorch compilation before importing
+the simulator, using its supported `TORCH_COMPILE_DISABLE=1` environment option.
+First-use compilation can block the simulator's single stepping/feedback thread.
+In the torso-assisted smoke, the trajectory clock completed while feedback was
+stale; the subsequent press could not plan, and shutdown then logged a C++
+compilation error. Replaying the same compiler command on CPU succeeded in
+about one second, so a compiler defect has not been established. Pose-level
+steps now require fresh measured FK at the target before continuing. The latest
+physical attempt still reported BDDL false and zero consecutive toggle-contact
+steps. These development results do not establish fair benchmark performance.
+
+With compilation disabled and fresh measured FK required, the SDK completed
+precontact, a 30 mm press, eight hold steps, and retraction. All three measured
+poses were within about 1 mm of their targets, but BDDL remained false. The radio
+moved about 17 cm and tipped over. The final toggle-contact counter was zero;
+before/after snapshots alone cannot establish the contact history or which
+motion displaced it. Stage evidence now records precontact, press, hold, and
+retraction separately, with episode/step tags and optional privileged geometry.
+
+The accepted `wxnicr` radio marker matches the measured object's local button
+coordinates. It lies near the collision box's +X face, whose world outward normal
+is approximately `(-0.050, 0.997, 0.051)`. The earlier +Y approach points outward,
+so it can traverse the body before reaching that face. This is a face-normal
+inference from bounding geometry; the spherical marker supplies no intrinsic
+press normal. A revised candidate approaches from outside that face, after a
+collision-checked clearance motion, with shallow contact travel. Friction, mass,
+object constraints, and official task goals remain unchanged. Whether a separate
+physical stabilization action is needed has not been demonstrated.
+
+A temporary official Dimcode `0.1.0-next.7` installation completed a localhost
+mock-provider tool loop: write a Python policy file, execute it with the selected
+Python interpreter, import `dimos.manipulation.sdk.Arm`, and return API signatures
+as tool feedback. This verifies Dimcode's code execution path without MCP,
+provider credentials, external model calls, or simulator execution. It does not
+verify genuine model planning or autonomous task performance.
+
 ### Tested environment and results
 
 The integration was validated on an RTX 3090 with NVIDIA driver **590.48.01**,
@@ -284,3 +378,55 @@ Run mocked runtime tests without installing Isaac Sim from the repository root:
 ```bash
 PYTHONPATH="$PWD:$PWD/native/python/behavior" .venv/bin/pytest --confcutdir=native/python/behavior native/python/behavior/dimos_behavior/test_runtime.py
 ```
+
+The development radio press now requires an explicit `collision_scene` in its
+oracle-assisted target JSON. It installs matching radio/support boxes in the
+runtime planner and checks the actual materialized trajectory in a second
+planning world. The previous inside-body target is rejected. Intended contact
+permits only the selected finger/radio pairs; the static radio/support pair is
+permitted because their conservative boxes intersect at the support surface.
+These planning exclusions do not alter simulator physics.
+
+Every action retains the returned SDK plan ID. The coordinator's previous
+command can anchor the first waypoint, so the checker validates that effective
+trajectory too. Dispatch consumes a one-use authorization of the original and
+effective trajectory digests; a changed path, anchor, or expired authorization
+is rejected. Robot state and fresh, episode-tagged object pose snapshots are
+checked again before authorization. The radio/support snapshot is held fixed
+in the planning worlds, not physically frozen in the simulator. If the object
+moves, the next action rejects the old snapshot instead of silently retargeting.
+
+This is development validation with privileged geometry. It checks linearly
+interpolated command edges at a 0.01 configuration-space step against robot/self
+and radio/support boxes. Other scene objects, continuous collision clearance,
+tracking deviations, and object motion during execution remain outside that
+claim. Candidate boxes have a recorded 1 mm margin per face for asset scale
+rounding; this margin changes only the planning geometry. Per-stage physical
+pose/contact logs and independent BDDL results remain the actual trial evidence.
+
+The first live checked trial exposed a guard-contract error before any arm
+motion: the checker substituted fresh measured feedback for every first
+waypoint, while JTT only substitutes cached commanded positions. Saved encoder
+snapshots drifted by at most 0.000000928 rad, sufficient to change the erroneous
+hash although the task would retain its stored first waypoint. The guard now
+mirrors only cached substitutions, keeps an independent validation snapshot,
+and separately rejects measured start deviations above 0.002 in the selected arm/torso joint coordinates. Actual path or cached-command changes still reject
+by digest. Future reports capture both prepared and dispatched command payloads,
+their numeric diff, and start errors. The failed trial did not record the full
+pending trajectory; its CPU reconstruction uses saved feedback and an explicitly
+synthetic endpoint, rather than claiming recovery of that missing payload.
+
+One bounded development trial with the corrected guard completed the official
+`turning_on_radio` instance-0 goal in `house_double_floor_lower`. This used the
+explicit custom robot base `[3.6, 4.15, 0.005]`, yaw pi/2, an oracle-assisted
+finger-tip target, and arm/torso motion through the Python SDK. Four generated
+and dispatched trajectory payloads matched exactly. The radio stayed in place
+through clearance and precontact, then displaced approximately 6.9 mm during
+contact. The runtime recorded five consecutive finger-contact steps, changed
+`ToggledOn` from false to true, and independently terminated with BDDL success
+at step 402. No object freezing, physics parameter change, or symbolic toggle
+was used. The episode ended during the hold, so retraction and the complete
+motion sequence were not reported as completed. This is a single development
+baseline, not autonomous agent or fair-evaluation performance. The recorded
+head-camera stream is genuine, but its framing does not directly show the
+button interaction; contact/pose logs provide that trial's diagnostic evidence.

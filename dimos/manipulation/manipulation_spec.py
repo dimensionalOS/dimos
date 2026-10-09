@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Protocol
@@ -236,6 +236,7 @@ class ManipulationSpec(Spec, Protocol):
         self,
         targets: Mapping[PlanningGroupID, PoseStamped],
         speed_scale: float | None = None,
+        auxiliary_groups: Sequence[PlanningGroupID] = (),
     ) -> PlanResult: ...
 
     def preview_plan(
@@ -262,6 +263,7 @@ class ManipulationSpec(Spec, Protocol):
         speed_scale: float | None = None,
         blocking: bool = True,
         timeout: float | None = None,
+        auxiliary_groups: Sequence[PlanningGroupID] = (),
     ) -> MoveResult: ...
 
     def show_grasp_proposals(self, candidates: GraspCandidateArray) -> None: ...

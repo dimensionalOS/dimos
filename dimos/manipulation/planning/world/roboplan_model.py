@@ -159,6 +159,18 @@ def _prepare_model(config: RobotModelConfig, description: LoadedRobotModel) -> _
         ):
             continue
         copied = ET.fromstring(ET.tostring(element, encoding="unicode"))
+        if _tag(copied.tag) == "joint" and copied.get("type") == "prismatic":
+            limit = copied.find("limit")
+            if limit is not None:
+                # URDFDOM defaults omitted prismatic bounds to zero and rejects
+                # infinity literals. Use the native scalar range at this import
+                # boundary; DimOS still represents these coordinates as unbounded.
+                # Otherwise Cartesian planning clamps measured base X/Y to zero.
+                native_max = str(np.finfo(np.float64).max)
+                if limit.get("lower") is None:
+                    limit.set("lower", f"-{native_max}")
+                if limit.get("upper") is None:
+                    limit.set("upper", native_max)
         _normalize_references(copied, names)
         result.append(copied)
     if _ROOT_JOINT in all_names:
