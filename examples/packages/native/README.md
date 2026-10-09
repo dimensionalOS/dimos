@@ -1,71 +1,79 @@
-# Legacy prebuilt compatibility fixture
+# Canonical source-only native package
 
-This fixture tests existing installed-executable support. New packages should follow
-[source-only lazy native](/examples/packages/lazy-native/README.md) and the
-[authoring guide](/docs/usage/packages.md). Its wheel build intentionally compiles;
-it does not use the new source-only `tool.dimos` API.
+This Rust probe is the small reference for the [package API](/docs/usage/packages.md).
+`tool.dimos` supplies source packaging and blueprint metadata; no Cargo/CMake runs
+while building or installing the Python distribution. The build integration is not
+published: first build `packages/dimos-build-config` and provide its wheel through
+`PIP_FIND_LINKS` or `UV_FIND_LINKS`. The host must contain `source_package` support.
 
-# An installed native module
+This project ships two Rust binaries as source in one ordinary Python wheel.
+Source, wheel, sdist and editable installs all use this same source-only recipe.
+Installing it or listing blueprints does not invoke Cargo, rustc or CMake.
+Only the selected blueprint's binary is built, just before its module starts.
 
-This independent project demonstrates the existing `NativeModule` and
-`dimos.blueprints` interfaces. It builds a standalone Rust executable into a platform
-wheel with scikit-build-core. No DimOS checkout is used by the installed module.
-The small probe tests process/resource ownership; it does not implement pub/sub,
-use the DimOS native SDK, or connect to hardware. Cargo builds offline with a
-committed lockfile and no third-party crates. CMake only invokes Cargo and installs
-the resulting executable; no C/C++ compiler is needed.
-
-Activate the coordinator's Python environment first. From this directory, with Python 3.10–3.12, uv, CMake and a Rust toolchain (`cargo`/`rustc`):
+Use a dimOS host containing `NativeModuleConfig.source_package`. This API is not
+in the currently published 0.0.14 host; the example's version constraint alone
+cannot distinguish an unreleased checkout from that release. For development,
+activate the matching host environment, then from this directory:
 
 ```bash
-uv pip install --python "$VIRTUAL_ENV/bin/python" .
-export DIMOS_PACKAGE_REPORT=/tmp/dimos-package-report.txt
+uv pip install --python "$VIRTUAL_ENV/bin/python" --no-deps .
+export DIMOS_PACKAGE_REPORT=/tmp/dimos-native-report.txt
 dimos list
-dimos --transport zenoh --viewer none --n-workers 1 --no-serve-coordinator-rpc run dimos-external-native.probe
+dimos --transport zenoh --viewer none --n-workers 1 --no-serve-coordinator-rpc run dimos-native.probe
 ```
 
-In another terminal, `cat /tmp/dimos-package-report.txt` should show
-`ready <PID> hello from an installed native package`. The same message appears in
-the module log. Wait until the CLI reports that the blueprint is running before
-pressing Ctrl-C. If prompted to apply system configuration changes, answer `n`;
-this probe does not require those changes. Reading the report again should show a final `stopped` line.
+Installation needs Python 3.10–3.12, scikit-build-core and the local dimos-build-config wheel.
+Running this POSIX example additionally needs Cargo and rustc; there are no
+third-party crates or runtime SDK downloads. If prompted to apply system
+configuration changes, answer `n`. Wait for `Blueprint started`, then Ctrl-C.
+The report contains `ready <PID> hello from a lazily built native package`, followed
+by `stopped`. No hardware or typed transport is exercised.
 
-The executable reads its packaged message resource and writes its PID/readiness
-to the report. Ctrl-C stops it and appends `stopped`. Pick a report path owned by
-your run. Install in the coordinator's Python environment, not a separate pipx
-environment. The example currently targets POSIX systems.
+`probe` builds only `package_probe`. `dimos-native.other` selects
+`package_other` instead. The explicit `--bin` argument selects a Cargo target;
+DimOS does not infer targets from blueprint names. Installing from a wheel or
+source uses scikit-build-core to copy the complete `native/` tree, including the lockfile,
+into the wheel. The backend never invokes Cargo.
 
-The Python declaration passes absolute paths to the installed executable and
-resource. `source_dir` and `build_command` remain unset: they describe builds in
-the DimOS checkout, not arbitrary external projects. No public `cwd`, separate
-registration command, or modification to `all_blueprints.py` is needed.
+The declaration adds only `source_package` to the existing native fields:
 
-To build a distributable wheel/sdist use `python -m build`. A native executable
-requires a platform wheel, even though it does not link to the CPython ABI.
-`pip install -e .` uses the backend's editable behavior; rebuild native changes
-and restart processes. Stop dependent runs before `pip uninstall
-dimos-external-native`. The report is user data and is not removed by uninstall.
-
-The explicit installation test requires `build`, `scikit-build-core`, CMake,
-Cargo/Rust and uv in the test environment:
-
-```bash
-uv pip install --python "$VIRTUAL_ENV/bin/python" build scikit-build-core
-# From the repository root, with the repository test dependencies installed:
-python -m pytest dimos/core/test_external_native_package.py -m native_e2e --no-cov
+```python
+source_package = "dimos_native"
+source_dir = "native"
+executable = "target/release/package_probe"
+build_command = "cargo build --release --locked --offline --bin package_probe --target-dir target"
 ```
 
-It builds/installs the wheel into a temporary prefix, removes the package source,
-checks metadata-only discovery and runs the real CLI from an unrelated directory.
+Preparation snapshots this source directory into
+`$XDG_CACHE_HOME/dimos/native-packages/<fingerprint>/source` (normally under
+`~/.cache`). Both the build and native process use that snapshot as CWD. The
+executable is relative to it; resources are declared with absolute paths to the
+installed package. Builds never write into `site-packages`.
 
-Only the external example is installed as a platform wheel here. If the coordinator
-uses an editable DimOS checkout, it still uses that checkout at runtime. This
-example and its PR1 test do not claim to validate an installed DimOS host wheel.
-Stop the foreground run before uninstalling with
-`uv pip uninstall --python "$VIRTUAL_ENV/bin/python" dimos-external-native`.
-This removes the example's executable, resource and entry point; it leaves DimOS,
-the virtual environment, your report and normal build caches in place.
+The source directory must contain its complete local build inputs, including any
+workspace manifests and path dependencies. Local references outside this tree
+are unsupported. Symlinks are rejected. `.git`, `.venv`, `__pycache__`, `target`,
+`build` and `dist` directories are excluded from snapshots. Network dependencies
+are controlled by the build command; this example uses `--locked --offline`.
 
-For installation without compilation and per-module builds on first use, see the
-[source-only Rust package](../lazy-native/README.md). This prebuilt example keeps
-its original platform-wheel behavior.
+Each source location and explicit recipe (executable, command, extra environment,
+and platform) gets its own workspace and process lock. Source bytes and modes,
+including lockfiles, detect editable changes without a version bump. Preparation
+updates source-owned files and invalidates the executable; generated intermediate
+outputs and unchanged input timestamps survive for Cargo/CMake incremental builds.
+Removed source files are removed from the workspace, without deleting unrelated
+outputs. The existing native builder alone decides whether to run the command.
+
+DimOS does not guess toolchain versions or parse build commands. After changing
+an untracked external build input or ambient toolchain setting, stop dependent
+runs and use the existing `--build-native` option to rebuild. Failed or interrupted
+builds have no completion marker; retry invalidates their executable while keeping
+intermediate outputs. Stop dependent runs before editing sources or rebuilding a
+shared workspace. This is trusted build execution, not a sandbox or signature check.
+
+Stop dependent runs before uninstalling or removing a cache. Uninstall removes
+the package's declarations and source files but leaves its regenerable cache and
+user report. Existing checkout builds (`source_package=None`) and prebuilt
+absolute executable paths keep their existing behavior, including checkout
+fallback. No registry or new RPC is involved.

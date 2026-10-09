@@ -24,7 +24,7 @@ if "source_package" not in NativeModuleConfig.model_fields:
 
 
 class PackageProbeConfig(NativeModuleConfig):
-    source_package: str | None = "dimos_lazy_native"
+    source_package: str | None = "dimos_native"
     source_dir: str | None = "native"
     executable: str = "target/release/package_probe"
     build_command: str | None = (

@@ -1,18 +1,21 @@
 [build-system]
-requires = ["scikit-build-core>=0.11,<2"]
+requires = ["scikit-build-core>=1.0,<2", "dimos-build-config"]
 build-backend = "scikit_build_core.build"
 
 [project]
-name = "dimos-external-native"
+name = "dimos-native"
 version = "0.1.0"
-description = "An independently installed DimOS native module"
+dynamic = ["entry-points"]
 requires-python = ">=3.10,<3.13"
+# Requires a host containing NativeModuleConfig.source_package (not released yet).
 dependencies = ["dimos>=0.0.14,<0.1"]
 
-[project.entry-points."dimos.blueprints"]
-probe = "dimos_external_native.module:PackageProbe"
+[tool.dimos]
+package = "src/dimos_native"
 
-[tool.scikit-build]
-wheel.packages = ["src/dimos_external_native"]
-wheel.py-api = "py3"
-sdist.include = ["native/Cargo.toml", "native/Cargo.lock", "native/src/**", "CMakeLists.txt", "src/**"]
+[tool.dimos.blueprints]
+probe = "dimos_native.module:PackageProbe"
+other = "dimos_native.module:OtherProbe"
+
+[[tool.dynamic-metadata]]
+provider = "dimos"

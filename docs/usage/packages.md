@@ -77,16 +77,15 @@ The module configuration owns the exact build target. The cache copies the entir
 source directory, then runs both build and executable there. Installed sources are
 not writable build directories. Pass explicit package resource paths when a native
 process needs files outside that source tree. See the
-[canonical Rust probe](/examples/packages/lazy-native/README.md). Its separate text
+[canonical Rust probe](/examples/packages/native/README.md). Its separate text
 resource deliberately verifies resource inclusion and lookup; applications can use
 ordinary config strings when no resource is needed. The second binary tests target
 selection, rather than introducing another packaging mode.
 
 `source_package` is not in released dimOS 0.0.14: use a host artifact containing this
 change until a compatible release exists. `source_package=None` retains checkout/main
-fallback. Existing absolute prebuilt executable declarations remain supported; the
-[legacy fixture](/examples/packages/native/README.md) tests compatibility, not a new
-authoring recipe.
+fallback. Native package authoring is source-only: Python package builds and installs
+never compile native modules. Compilation belongs to selected-module preparation.
 
 ## Build settings and boundaries
 

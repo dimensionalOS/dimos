@@ -29,159 +29,27 @@ from dimos.utils.testing.waiting import wait_until
 
 
 @pytest.mark.native_e2e
-@pytest.mark.skipif(sys.platform != "linux", reason="POSIX native package acceptance runs on Linux")
-def test_installed_native_package_is_discovered_and_runs_outside_its_sources(tmp_path):
-    for command in ("cmake", "cargo", "uv"):
-        if shutil.which(command) is None:
-            pytest.skip(f"external package acceptance requires {command}")
-    for package in ("build", "scikit_build_core"):
-        if importlib.util.find_spec(package) is None:
-            pytest.skip(f"external package acceptance requires {package}")
-
-    root = Path(__file__).resolve().parents[2]
-    source = tmp_path / "source"
-    shutil.copytree(root / "examples/packages/native", source)
-    wheels = tmp_path / "wheels"
-    subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "build",
-            "--wheel",
-            "--no-isolation",
-            "--outdir",
-            str(wheels),
-            str(source),
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
-    (wheel,) = wheels.glob("*.whl")
-    assert "-py3-none-linux_" in wheel.name
-    installed = tmp_path / "installed"
-    subprocess.run(
-        [
-            "uv",
-            "pip",
-            "install",
-            "--python",
-            sys.executable,
-            "--target",
-            str(installed),
-            "--offline",
-            "--no-deps",
-            str(wheel),
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    shutil.rmtree(source)
-    report = tmp_path / "report.txt"
-    env = {
-        **os.environ,
-        "PYTHONPATH": str(installed),
-        "DIMOS_PACKAGE_REPORT": str(report),
-        "XDG_STATE_HOME": str(tmp_path / "state"),
-        "XDG_CACHE_HOME": str(tmp_path / "cache"),
-    }
-    discovery = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import sys; from dimos.robot.external_blueprints import "
-            "list_external_blueprint_names; assert 'dimos-external-native.probe' in "
-            "list_external_blueprint_names(); assert 'dimos_external_native.module' not in sys.modules",
-        ],
-        cwd=tmp_path,
-        env=env,
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    assert discovery.returncode == 0
-    cli = [sys.executable, "-c", "from dimos.cli.entry import main; main()"]
-    listed = subprocess.run(
-        [*cli, "list"],
-        cwd=tmp_path,
-        env=env,
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    assert "dimos-external-native.probe" in listed.stdout
-    with (tmp_path / "run.log").open("w+") as log:
-        proc = subprocess.Popen(
-            [
-                *cli,
-                "--transport",
-                "zenoh",
-                "--viewer",
-                "none",
-                "--n-workers",
-                "1",
-                "--no-serve-coordinator-rpc",
-                "run",
-                "dimos-external-native.probe",
-            ],
-            cwd=tmp_path,
-            env=env,
-            stdout=log,
-            stderr=subprocess.STDOUT,
-        )
-        try:
-            wait_until(
-                lambda: (
-                    report.exists()
-                    and "serve_coordinator_rpc is off" in (tmp_path / "run.log").read_text()
-                )
-                or proc.poll() is not None,
-                timeout=45,
-            )
-            log.seek(0)
-            assert report.exists(), log.read()
-            ready = report.read_text().splitlines()[0]
-            assert ready.startswith("ready ")
-            assert ready.endswith("hello from an installed native package")
-            child_pid = int(ready.split()[1])
-        finally:
-            proc.send_signal(signal.SIGTERM)
-            try:
-                proc.wait(timeout=30)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait(timeout=10)
-        assert report.read_text().splitlines()[-1] == "stopped"
-        with pytest.raises(ProcessLookupError):
-            os.kill(child_pid, 0)
-
-
-@pytest.mark.native_e2e
 @pytest.mark.skipif(sys.platform != "linux", reason="Rust package acceptance runs on Linux")
-@pytest.mark.parametrize("installed_host", [False, True], ids=["source-install", "host-wheel"])
-def test_source_package_install_list_and_selected_target(tmp_path, installed_host):
+@pytest.mark.parametrize("install_kind", ["source", "wheel", "sdist", "editable", "host-wheel"])
+def test_source_package_install_list_and_selected_target(tmp_path, install_kind):
+    installed_host = install_kind == "host-wheel"
     for tool in ("uv", "cargo"):
         if shutil.which(tool) is None:
-            pytest.skip(f"lazy package acceptance requires {tool}")
+            pytest.skip(f"native package acceptance requires {tool}")
     for package in ("build", "scikit_build_core", "dimos_build_config"):
         if importlib.util.find_spec(package) is None:
-            pytest.skip(f"lazy package acceptance requires {package}")
+            pytest.skip(f"native package acceptance requires {package}")
     wheelhouse = os.environ.get("DIMOS_PACKAGE_WHEELHOUSE")
     if installed_host and not wheelhouse:
         pytest.skip("set DIMOS_PACKAGE_WHEELHOUSE to a host wheel with source_package support")
 
     root = Path(__file__).resolve().parents[2]
     source = tmp_path / "source"
-    shutil.copytree(root / "examples/packages/lazy-native", source)
+    shutil.copytree(root / "examples/packages/native", source)
     guards = tmp_path / "guards"
     guards.mkdir()
     calls = tmp_path / "compiler-calls"
-    for name in ("cargo", "rustc", "cmake", "cc", "c++"):
+    for name in ("cargo", "rustc", "cmake", "ninja", "cc", "c++", "gcc", "g++", "clang", "clang++"):
         guard = guards / name
         guard.write_text('#!/bin/sh\necho invoked >> "$COMPILER_CALLS"\nexit 97\n')
         guard.chmod(0o755)
@@ -201,7 +69,6 @@ def test_source_package_install_list_and_selected_target(tmp_path, installed_hos
             sys.executable,
             "-m",
             "build",
-            "--wheel",
             "--no-isolation",
             "--outdir",
             str(wheels),
@@ -214,11 +81,12 @@ def test_source_package_install_list_and_selected_target(tmp_path, installed_hos
         timeout=60,
     )
     (wheel,) = wheels.glob("*.whl")
+    (sdist,) = wheels.glob("*.tar.gz")
     assert wheel.name.endswith("py3-none-any.whl")
     with zipfile.ZipFile(wheel) as archive:
         names = archive.namelist()
-        assert "dimos_lazy_native/native/Cargo.lock" in names
-        assert "dimos_lazy_native/native/src/bin/other.rs" in names
+        assert "dimos_native/native/Cargo.lock" in names
+        assert "dimos_native/native/src/bin/other.rs" in names
         assert not any("/target/" in name for name in names)
 
     if installed_host:
@@ -246,11 +114,14 @@ def test_source_package_install_list_and_selected_target(tmp_path, installed_hos
             text=True,
         )
         assert str(host) in provenance
-        installed = next(host.glob("lib/python*/site-packages/dimos_lazy_native"))
+        installed = next(host.glob("lib/python*/site-packages/dimos_native"))
     else:
         python = sys.executable
         prefix = tmp_path / "installed"
-        # Also test pip's local-source build path, with compilers deliberately unavailable.
+        # Exercise the canonical package through each standard install form.
+        requirement = {"source": source, "wheel": wheel, "sdist": sdist, "editable": source}[
+            install_kind
+        ]
         subprocess.run(
             [
                 "uv",
@@ -263,7 +134,8 @@ def test_source_package_install_list_and_selected_target(tmp_path, installed_hos
                 "--no-build-isolation",
                 "--target",
                 str(prefix),
-                str(source),
+                *(["--editable"] if install_kind == "editable" else []),
+                str(requirement),
             ],
             env=env,
             check=True,
@@ -272,17 +144,22 @@ def test_source_package_install_list_and_selected_target(tmp_path, installed_hos
             timeout=60,
         )
         env["PYTHONPATH"] = str(prefix)
-        installed = prefix / "dimos_lazy_native"
-    shutil.rmtree(source)
+        installed = (
+            source / "src/dimos_native" if install_kind == "editable" else prefix / "dimos_native"
+        )
+    if install_kind != "editable":
+        shutil.rmtree(source)
     original = {
         path.relative_to(installed): path.read_bytes()
         for path in installed.rglob("*")
         if path.is_file()
     }
-    cli = [python, "-c", "from dimos.cli.entry import main; main()"]
+    # Process the installed editable .pth through site, as a normal venv does.
+    site_setup = "" if installed_host else f"import site; site.addsitedir({str(prefix)!r}); "
+    cli = [python, "-c", site_setup + "from dimos.cli.entry import main; main()"]
     listed = subprocess.check_output([*cli, "list"], cwd=tmp_path, env=env, text=True)
-    assert "dimos-lazy-native.probe" in listed
-    assert "dimos-lazy-native.other" in listed
+    assert "dimos-native.probe" in listed
+    assert "dimos-native.other" in listed
     assert not calls.exists()
     cache = tmp_path / "cache/dimos/native-packages"
     assert not cache.exists()
@@ -305,7 +182,7 @@ def test_source_package_install_list_and_selected_target(tmp_path, installed_hos
                     "1",
                     "--no-serve-coordinator-rpc",
                     "run",
-                    "dimos-lazy-native.probe",
+                    "dimos-native.probe",
                 ],
                 cwd=tmp_path,
                 env=env,

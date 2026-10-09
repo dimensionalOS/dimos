@@ -1,7 +1,0 @@
-[package]
-name = "package_probe"
-version = "0.1.0"
-edition = "2021"
-publish = false
-
-[workspace]
