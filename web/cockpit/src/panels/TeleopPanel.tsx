@@ -151,7 +151,8 @@ function TeleopControls({ spec, teleop, ch, session }: {
     let lastStick = STICK_AT_REST;
     let lastJoy = "";
     let lastJoyAt = 0;
-    const joyMinMs = 1000 / machine.config.publishHz;
+    // Half a poll tick of slack, else a 15 Hz gate on a 30 Hz poll lands on every third tick.
+    const joyMinMs = 1000 / machine.config.publishHz - 500 / PAD_POLL_HZ;
     const timer = setInterval(() => {
       const pad = activeGamepad();
       const name = pad?.id ?? null;
