@@ -7,12 +7,12 @@ name = "dimos-message-build"
 version = "0.1.0"
 description = "Standalone DimOS message build backend"
 requires-python = ">=3.10"
-dependencies = ["setuptools>=70", "wheel", "tomli>=2; python_version < '3.11'"]
+dependencies = ["rosbags==0.11.0", "empy==4.2", "lark==1.2.2", "setuptools>=70", "wheel", "tomli>=2; python_version < '3.11'"]
 
 [tool.setuptools]
-packages = ["dimos_message_build", "dimos_message_build._vendor"]
+packages = ["dimos_message_build", "dimos_message_build._vendor", "dimos_message_build._vendor.rosidl", "dimos_message_build._vendor.rosidl.rosidl_adapter", "dimos_message_build._vendor.rosidl.rosidl_adapter.msg", "dimos_message_build._vendor.rosidl.rosidl_adapter.resource", "dimos_message_build._vendor.rosidl.rosidl_parser", "dimos_message_build._vendor.rosidl.rosidl_pycommon", "dimos_message_build._vendor.rosidl.rosidl_generator_cpp"]
 package-dir = {"dimos_message_build" = "."}
 include-package-data = false
 
 [tool.setuptools.package-data]
-"dimos_message_build" = ["schemas/**/*", "templates/*", "sources.json"]
+"dimos_message_build" = ["schemas/**/*", "templates/*", "sources.json", "_vendor/rosidl/**/*.em", "_vendor/rosidl/**/*.lark", "_vendor/rosidl/**/*.pyi", "_vendor/rosidl/include/**/*", "_vendor/rosidl/notices/**/*", "_vendor/rosidl/LICENSE", "_vendor/rosidl/sources.json"]
