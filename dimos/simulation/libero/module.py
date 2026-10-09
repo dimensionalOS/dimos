@@ -12,9 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""A LIBERO(-PRO) task with LIBERO's own Panda, run by LIBERO itself in its own environment.
+"""A LIBERO(-PRO) task, robot included, run by LIBERO itself in its own environment.
 
-The native process (``server.py``) builds the BDDL task in LIBERO, robot included, steps
+The robot is LIBERO's own Panda or dimos's xArm7, registered with LIBERO in the Panda's
+place. The native process (``server.py``) builds the BDDL task in LIBERO, steps
 it in real time, and publishes the streams ``MujocoSimModule`` gives an arm sim, plus
 LIBERO's own goal check on ``task_status``. The coordinator drives the arm over
 ``sim_state`` / ``sim_command`` through the ``sim_transport`` adapter.
@@ -23,10 +24,11 @@ LIBERO's own goal check on ``task_status``. The coordinator drives the arm over
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import Field
 
+from dimos.constants import CACHE_DIR
 from dimos.core.native_module import LogFormat, NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
@@ -41,6 +43,7 @@ from dimos.simulation.libero.benchmark import (
     libero_config_dir,
     libero_root,
 )
+from dimos.utils.data import LfsPath
 
 
 def _default_bddl() -> str:
@@ -59,6 +62,12 @@ class LiberoSimConfig(NativeModuleConfig):
     # Picks one of LIBERO's recorded initial states for the task, or, for a task without
     # them (generated perturbations), seeds LIBERO's own placement sampling.
     seed: int = 0
+    robot: Literal["Panda", "XArm7"] = "Panda"
+    # XArm7 only. LIBERO places robots for the Panda's reach; the xArm7 stands this much
+    # closer, on a collision-free copy of the Panda's mount.
+    base_forward_m: float = 0.15
+    xarm_mjcf: str = Field(default_factory=lambda: str(Path(LfsPath("xarm7")) / "xarm7.xml"))
+    cache_dir: str = str(CACHE_DIR / "libero-robots")
 
     width: int = 640
     height: int = 480
