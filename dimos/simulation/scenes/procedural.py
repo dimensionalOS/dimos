@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 import hashlib
 import itertools
 import json
-from typing import Literal
+from typing import Literal, TypeVar
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
@@ -31,6 +31,7 @@ from dimos.msgs.sim_msgs.Contacts import Kind
 Vec3 = tuple[float, float, float]
 Rect = tuple[float, float, float, float]
 Family = Literal["office"]
+T = TypeVar("T", int, float)
 
 SLAB_THICKNESS = 0.15
 WALL_THICKNESS = 0.1
@@ -90,6 +91,11 @@ class Scene:
 def _uniform(rng: np.random.Generator, low: float, high: float) -> float:
     """A uniform draw with the arithmetic done in Python, so every platform rounds it the same way."""
     return low + (high - low) * float(rng.random())
+
+
+def _given(drawn: T, given: T | None) -> T:
+    """The given value over the drawn one. The draw still happens, so the seed's later draws do not shift."""
+    return drawn if given is None else given
 
 
 def _walls(scene: Scene, x0: float, y0: float, x1: float, y1: float, z: float, top: float) -> None:
@@ -200,8 +206,16 @@ def _table(
             )
 
 
-def office(seed: int) -> Scene:
-    """One floor of rooms joined by doorways, with clutter and tables kept out of the start and the doorways."""
+def office(
+    seed: int,
+    door_width: float | None = None,
+    clutter: int | None = None,
+    tables: int | None = None,
+) -> Scene:
+    """One floor of rooms joined by doorways, with clutter and tables kept out of the start and the doorways.
+
+    Door width, clutter count and table count are drawn from the seed unless given.
+    """
     rng = np.random.default_rng(seed)
     width, length = float(_uniform(rng, 12, 18)), float(_uniform(rng, 9, 13))
     z0 = float(_uniform(rng, 0.0, 0.08))
@@ -223,20 +237,20 @@ def office(seed: int) -> Scene:
     ]
     doors_mid = []
     for a, b in zip([0.0, *xs], [*xs, width], strict=True):
-        door_width = _uniform(rng, *DOOR_WIDTH)
-        if b - a > door_width + 1.0:
-            doors_mid.append((_uniform(rng, a + 0.4, b - door_width - 0.4), door_width))
+        w = _given(_uniform(rng, *DOOR_WIDTH), door_width)
+        if b - a > w + 1.0:
+            doors_mid.append((_uniform(rng, a + 0.4, b - w - 0.4), w))
     _wall_with_doors(scene, 1, wy, 0, width, z0, top, doors_mid)
     keep_clear += [_door_zone(1, wy, *door) for door in doors_mid]
     for x in xs:
         for a, b in ((0.0, wy), (wy + WALL_THICKNESS, length)):
-            door_width = _uniform(rng, *DOOR_WIDTH)
-            door = (_uniform(rng, a + 0.3, b - door_width - 0.3), door_width)
+            w = _given(_uniform(rng, *DOOR_WIDTH), door_width)
+            door = (_uniform(rng, a + 0.3, b - w - 0.3), w)
             _wall_with_doors(scene, 0, x, a, b, z0, top, [door])
             keep_clear.append(_door_zone(0, x, *door))
-    clutter = int(rng.integers(8, 16))
+    clutter = _given(int(rng.integers(8, 16)), clutter)
     _clutter(scene, rng, 0.2, 0.2, width - 0.2, length - 0.2, z0, clutter, keep_clear)
-    tables = int(rng.integers(1, 4))
+    tables = _given(int(rng.integers(1, 4)), tables)
     for _ in range(tables):
         _table(scene, rng, 0.3, 0.3, width - 0.3, length - 0.3, z0, keep_clear)
     scene.params.update({"rooms": 2 * (len(xs) + 1), "clutter": clutter, "tables": tables})
