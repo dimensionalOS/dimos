@@ -142,9 +142,9 @@ DUAL_OPENYAM_REST_PER_ARM = {
 DUAL_OPENYAM_TCP_OFFSET = (0.0, 0.0, -0.037)
 # The printed fingers on the rig reach further than the URDF's: with the tool
 # commanded a known height above the table, the closed tips sat 4.5 cm (left)
-# and 5.5 cm (right) lower than the model's. The tool point moves out along
+# and 6 cm (right) lower than the model's. The tool point moves out along
 # the fingers by that much, per arm (2026-10-09).
-DUAL_OPENYAM_TCP_EXTENSION = {"left": -0.045, "right": -0.055}
+DUAL_OPENYAM_TCP_EXTENSION = {"left": -0.045, "right": -0.060}
 
 # The same gripper in GraspGenX's convention: origin on the gripper link,
 # approach along +Z (the URDF's -Z), jaws closing along X (the URDF's Y). The
