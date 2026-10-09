@@ -36,6 +36,8 @@ import subprocess
 import sys
 import time
 
+import pytest
+
 _CLIENT = """
 from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
 
@@ -60,7 +62,15 @@ def _sweep_leftover_daemons(state_dir: Path) -> None:
             time.sleep(1.0)
 
 
-def test_daemon_serves_coordinator_ping_over_zenoh(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "blueprint",
+    [
+        "demo-mcp-stress-test",
+        # Go2 replay needs go2_short.db, exceeding the standard CI LFS limit.
+        pytest.param("unitree-go2-basic", marks=pytest.mark.self_hosted),
+    ],
+)
+def test_daemon_serves_coordinator_ping_over_zenoh(tmp_path: Path, blueprint: str) -> None:
     env = os.environ | {
         "DIMOS_TRANSPORT": "zenoh",
         # Never touch the developer's real registry/config, even without xdist.
@@ -77,11 +87,11 @@ def test_daemon_serves_coordinator_ping_over_zenoh(tmp_path: Path) -> None:
                     sys.executable,
                     "-m",
                     "dimos.cli.dimos",
+                    "--replay",
                     "run",
-                    "demo-mcp-stress-test",
+                    blueprint,
                     "--daemon",
-                    "--disable",
-                    "mcp-server",
+                    *(["--disable", "mcp-server"] if blueprint == "demo-mcp-stress-test" else []),
                     "--viewer",
                     "none",
                     "--n-workers",
