@@ -28,7 +28,7 @@ import pytest
 from experimental.gateway.utils import diagnose
 from experimental.gateway.utils.diagnose import problems, steps
 
-ROOT = Path(__file__).parents[3]
+ROOT = Path(__file__).parents[3] / "dimos"
 
 
 def record(level: str = "info", event: str = "x", **extra: Any) -> dict[str, Any]:
