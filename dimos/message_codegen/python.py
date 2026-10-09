@@ -86,6 +86,16 @@ def generate(
         )
         declaration.bases = [ast.Name(id="Message", ctx=ast.Load())]
         declaration.decorator_list = [ast.parse("dataclass(init=False)", mode="eval").body]
+        if not message.fields:
+            declaration.body = [
+                member
+                for member in declaration.body
+                if not (
+                    isinstance(member, ast.AnnAssign)
+                    and isinstance(member.target, ast.Name)
+                    and member.target.id == "structure_needs_at_least_one_member"
+                )
+            ]
         arrays = {field.name for field in message.fields if field.type.is_array}
         for member in declaration.body:
             if isinstance(member, ast.AnnAssign) and isinstance(member.target, ast.Name):
