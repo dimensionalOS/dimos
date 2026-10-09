@@ -89,7 +89,7 @@ def _toolchain_key() -> str:
     }
     versions = {
         name: metadata.version(name)
-        for name in ["empy", "lark", "catkin-pkg", "PyYAML", "setuptools", "wheel"]
+        for name in ["pip", "empy", "lark", "catkin-pkg", "PyYAML", "setuptools", "wheel"]
     }
     return sha256(
         (

@@ -2,57 +2,39 @@
   "repositories": {
     "ament_package": {
       "url": "https://github.com/ament/ament_package.git",
-      "revision": "ee3c5eda4fbc4df2c7a135d0ac1385e4a53fa0ee",
-      "archive_url": "https://codeload.github.com/ament/ament_package/tar.gz/ee3c5eda4fbc4df2c7a135d0ac1385e4a53fa0ee",
-      "archive_sha256": "19dd626283a9f5dcfed5039ecd0ab149daa5e658a970bf607ed5bd053d54e629"
+      "revision": "ee3c5eda4fbc4df2c7a135d0ac1385e4a53fa0ee"
     },
     "ament_cmake": {
       "url": "https://github.com/ament/ament_cmake.git",
-      "revision": "5741cff5b9f83253bf3521bd8f44108fde3504ad",
-      "archive_url": "https://codeload.github.com/ament/ament_cmake/tar.gz/5741cff5b9f83253bf3521bd8f44108fde3504ad",
-      "archive_sha256": "7172066ce00a4521205b74f70bfeb975345789ce1a69901e7a8da9dc45e22fcb"
+      "revision": "5741cff5b9f83253bf3521bd8f44108fde3504ad"
     },
     "ament_cmake_ros": {
       "url": "https://github.com/ros2/ament_cmake_ros.git",
-      "revision": "5b77a227b940a25be5224d78d37591c8baccd756",
-      "archive_url": "https://codeload.github.com/ros2/ament_cmake_ros/tar.gz/5b77a227b940a25be5224d78d37591c8baccd756",
-      "archive_sha256": "d063e9cc5c68d12d33597f0ac5bb9568710848ad08741b019a5436eb52c43988"
+      "revision": "5b77a227b940a25be5224d78d37591c8baccd756"
     },
     "rcutils": {
       "url": "https://github.com/ros2/rcutils.git",
-      "revision": "26413034bab69688475f230ea7723e534ec3f8cd",
-      "archive_url": "https://codeload.github.com/ros2/rcutils/tar.gz/26413034bab69688475f230ea7723e534ec3f8cd",
-      "archive_sha256": "e71a0fd5fe8c42ae2f92ec1076d2fdf3e753034f9200fa7a4f14bc93f90e22b2"
+      "revision": "26413034bab69688475f230ea7723e534ec3f8cd"
     },
     "rmw": {
       "url": "https://github.com/ros2/rmw.git",
-      "revision": "8cb94a87cf3f4049abe2d563af893517bf336930",
-      "archive_url": "https://codeload.github.com/ros2/rmw/tar.gz/8cb94a87cf3f4049abe2d563af893517bf336930",
-      "archive_sha256": "d0d43d3f19b125b1abc1e26c412a674cca4d20ab88bd9ba5496cf5a336d25f8e"
+      "revision": "8cb94a87cf3f4049abe2d563af893517bf336930"
     },
     "rosidl_dynamic_typesupport": {
       "url": "https://github.com/ros2/rosidl_dynamic_typesupport.git",
-      "revision": "cb8c54d12c678daa70410bb0626ed8626f561e45",
-      "archive_url": "https://codeload.github.com/ros2/rosidl_dynamic_typesupport/tar.gz/cb8c54d12c678daa70410bb0626ed8626f561e45",
-      "archive_sha256": "c9d30f03eaad34657ce94ffe95faec445d46dccdb2372d66d06d382abc504a76"
+      "revision": "cb8c54d12c678daa70410bb0626ed8626f561e45"
     },
     "ament_index": {
       "url": "https://github.com/ament/ament_index.git",
-      "revision": "2ccdcb8fd19a364fc793273b5793459207a440b9",
-      "archive_url": "https://codeload.github.com/ament/ament_index/tar.gz/2ccdcb8fd19a364fc793273b5793459207a440b9",
-      "archive_sha256": "54ca269d31fc6b8f650ce262f5781f8805cc7c8750467f8dfaf6a16cbd9f8dbd"
+      "revision": "2ccdcb8fd19a364fc793273b5793459207a440b9"
     },
     "rosidl": {
       "url": "https://github.com/ros2/rosidl.git",
-      "revision": "85fa592b698b0f665e3120f48fac0d35e2f7d8a4",
-      "archive_url": "https://codeload.github.com/ros2/rosidl/tar.gz/85fa592b698b0f665e3120f48fac0d35e2f7d8a4",
-      "archive_sha256": "ba5369bca27297f606bf3396a9e066140d07ce754d8659159148102b089e9510"
+      "revision": "85fa592b698b0f665e3120f48fac0d35e2f7d8a4"
     },
     "rosidl_typesupport_fastrtps": {
       "url": "https://github.com/ros2/rosidl_typesupport_fastrtps.git",
-      "revision": "b883555055cce17982a22172a42ef557ef40bac5",
-      "archive_url": "https://codeload.github.com/ros2/rosidl_typesupport_fastrtps/tar.gz/b883555055cce17982a22172a42ef557ef40bac5",
-      "archive_sha256": "4bb21020ab28a249890339301efb8e200af8330a6dee6e13ecd9388981cba83d"
+      "revision": "b883555055cce17982a22172a42ef557ef40bac5"
     }
   },
   "packages": [
