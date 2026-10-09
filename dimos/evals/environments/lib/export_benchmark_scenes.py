@@ -214,14 +214,14 @@ def export_robocasa(source: Path, out_root: Path, *, data_dir: Path | None = Non
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Always write under project data/ — smoke suites load via get_data_dir().
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--libero-pro", type=Path)
     p.add_argument("--robocasa", type=Path)
-    p.add_argument("--data-dir", type=Path, default=None)
     args = p.parse_args(argv)
     if not args.libero_pro and not args.robocasa:
         p.error("pass --libero-pro and/or --robocasa")
-    data = args.data_dir or get_data_dir()
+    data = get_data_dir()
     if args.libero_pro:
         print("wrote", export_libero_pro(args.libero_pro, data / "libero_pro", data_dir=data))
     if args.robocasa:
