@@ -15,10 +15,13 @@
 from hashlib import sha256
 import json
 from pathlib import Path
+import subprocess
+import sys
 
 import pytest
 from rosbags.typesys import get_types_from_msg
 
+from dimos.message_codegen import python as python_codegen
 from dimos.message_codegen.definitions import Definitions, parse_message
 
 
@@ -159,3 +162,21 @@ def test_upstream_generator_sources_match_recorded_hashes():
     assert manifest["revision"] == "85fa592b698b0f665e3120f48fac0d35e2f7d8a4"
     for name, source in manifest["files"].items():
         assert sha256((root / name).read_bytes()).hexdigest() == source["sha256"], name
+
+
+def test_upstream_python_empty_type_keeps_wire_sentinel_out_of_value_repr(tmp_path):
+    write_message(tmp_path, "example_msgs/msg/Empty", "uint8 MODE=7\n")
+    definitions = Definitions([tmp_path])
+    files = python_codegen.generate(definitions.resolve(), definitions, "probe_values")
+    for name, source in files.items():
+        path = tmp_path / "probe_values" / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(source)
+    consumer = (
+        "import sys; sys.path.insert(0, " + repr(str(tmp_path)) + "); "
+        "from probe_values.example_msgs.msg import Empty; "
+        "value = Empty(); assert repr(value) == 'Empty()'; "
+        "assert value.MODE == 7; assert Empty.decode(value.encode()) == value"
+    )
+    result = subprocess.run([sys.executable, "-I", "-c", consumer], capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr

@@ -1727,7 +1727,6 @@ std_msgs__msg__ColorRGBA._fields = (
 class std_msgs__msg__Empty(Message):
     """Class for std_msgs/msg/Empty."""
 
-    structure_needs_at_least_one_member: int = 0
     __msgtype__: ClassVar[str] = "std_msgs/msg/Empty"
 
 
