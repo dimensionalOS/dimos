@@ -18,6 +18,7 @@ from contextlib import ExitStack
 import threading
 
 from dimos_generated.sensor_msgs.msg import JointState
+from dimos_message_build.registry import decode as cdr_decode
 
 from dimos.control.components import HardwareComponent, HardwareType
 from dimos.control.coordinator import ControlCoordinator
@@ -71,7 +72,7 @@ def main() -> None:
         assert list(complete["right_arm_joints"].position) == [0.3, 0.4]
         assert len(complete["coordinator_joint_state"].position) == 4
         for port, message in complete.items():
-            assert JointState.decode(message.encode()) == message
+            assert cdr_decode(message.encode(), JointState) == message
             print(
                 f"{port}: frame={message.header.frame_id}, names={list(message.name)}, q={list(message.position)}, stamp={to_nanoseconds(message.header.stamp)}"
             )

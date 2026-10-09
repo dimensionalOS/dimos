@@ -29,9 +29,12 @@ from typing import Any
 from urllib.parse import urlsplit
 import uuid
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.dimos_msgs.msg import LineSegment3D, LineSegments3D
 from dimos_generated.geometry_msgs.msg import Point
 from dimos_generated.sensor_msgs.msg import Image
+from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import encode as cdr_encode
 import numpy as np
 
 from dimos.core.transport import LCMTransport, PubSubTransport, ZenohTransport
@@ -151,7 +154,12 @@ def exchange_native(
 
 def demonstrate(backend: str, cpp: Path, rust: Path, evidence: Path) -> None:
     stamp = 1_700_000_000_123_456_789
-    lines = LineSegments3D(segments=[LineSegment3D(start=Point(x=1), end=Point(y=2), weight=4)])
+    lines = LineSegments3D(
+        segments=[
+            LineSegment3D(start=Point(x=1, y=0.0, z=0.0), end=Point(y=2, x=0.0, z=0.0), weight=4)
+        ],
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+    )
     lines.header.frame_id = "map"
     lines.header.stamp = time_from_nanoseconds(stamp)
     image = Image(
@@ -160,6 +168,8 @@ def demonstrate(backend: str, cpp: Path, rust: Path, evidence: Path) -> None:
         encoding="rgb8",
         step=1920,
         data=np.arange(640 * 480 * 3, dtype=np.uint8),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        is_bigendian=0,
     )
     image.header.frame_id = "camera"
     image.header.stamp = time_from_nanoseconds(stamp)
@@ -170,7 +180,7 @@ def demonstrate(backend: str, cpp: Path, rust: Path, evidence: Path) -> None:
     assert decoded_lines.header.frame_id == "map"
     assert decoded_lines.segments[0].start.x == 1
     assert decoded_lines.segments[0].end.y == 2
-    assert received["image"].encode() == image.encode()
+    assert received["image"].encode() == cdr_encode(image)
     print(f"{backend}: Python weight=4 → C++ weight=5 → Rust weight=6 → Python verified")
     print(f"{backend}: {len(image.data):,} image bytes and source nanoseconds={stamp} match")
 

@@ -19,12 +19,23 @@ from io import BytesIO
 import math
 from pathlib import Path
 
-from dimos_generated.demo_msgs.msg import Telemetry
-from dimos_generated.geometry_msgs.msg import PoseStamped, TransformStamped
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseStamped,
+    Quaternion,
+    Transform,
+    TransformStamped,
+    Vector3,
+)
 from dimos_generated.sensor_msgs.msg import CompressedImage, Image
+from dimos_generated.std_msgs.msg import Header
 from dimos_generated.tf2_msgs.msg import TFMessage
+from dimos_message_build.registry import encode, schema
 import numpy as np
 from PIL import Image as PillowImage
+from story_messages.story_msgs.msg import DeviceReading
 
 from dimos.protocol.cdr_mcap import CdrMcapWriter
 
@@ -46,9 +57,21 @@ def write_demo(path: Path, frames: int = 30) -> None:
                 axis=-1,
             ).astype(np.uint8)
             image = Image(
-                height=192, width=256, step=256 * 3, encoding="rgb8", data=pixels.reshape(-1)
+                height=192,
+                width=256,
+                step=256 * 3,
+                encoding="rgb8",
+                data=np.asarray(pixels.reshape(-1), dtype=np.uint8),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                is_bigendian=0,
             )
-            pose = PoseStamped()
+            pose = PoseStamped(
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                pose=Pose(
+                    position=Point(x=0.0, y=0.0, z=0.0),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+            )
             pose.pose.position.x = math.cos(index / 5)
             pose.pose.position.y = math.sin(index / 5)
             pose.pose.orientation.w = 1.0
@@ -59,17 +82,24 @@ def write_demo(path: Path, frames: int = 30) -> None:
             compressed_bytes = BytesIO()
             PillowImage.fromarray(pixels).save(compressed_bytes, format="PNG")
             compressed = CompressedImage(
-                header=image.header, format="png", data=compressed_bytes.getvalue()
+                header=image.header,
+                format="png",
+                data=np.frombuffer(compressed_bytes.getvalue(), dtype=np.uint8),
             )
-            telemetry = Telemetry(
+            telemetry = DeviceReading(
                 header=pose.header,
                 sequence=index,
                 label="synthetic",
-                position=pose.pose.position,
-                hops=[1, 2, 3],
+                value=20.0 + index / 10,
             )
-            telemetry.reading.temperature = 20.0 + index / 10
-            transform = TransformStamped(header=pose.header, child_frame_id="camera")
+            transform = TransformStamped(
+                header=pose.header,
+                child_frame_id="camera",
+                transform=Transform(
+                    translation=Vector3(x=0.0, y=0.0, z=0.0),
+                    rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+            )
             transform.transform.translation.x = pose.pose.position.x
             transform.transform.translation.y = pose.pose.position.y
             transform.transform.rotation.w = 1.0
@@ -83,9 +113,9 @@ def write_demo(path: Path, frames: int = 30) -> None:
             ):
                 writer.write(
                     topic,
-                    value.encode(),
-                    schema_name=value.msg_name,
-                    schema=value.schema,
+                    encode(value),
+                    schema_name=value.__msgtype__,
+                    schema=schema(value.__msgtype__),
                     log_time_ns=stamp_ns + 1_000_000,
                     publish_time_ns=stamp_ns,
                     sequence=index,
@@ -93,9 +123,9 @@ def write_demo(path: Path, frames: int = 30) -> None:
     print(f"Wrote {frames * 5} messages to {path} ({path.stat().st_size:,} bytes)")
     print("Five CDR channels; ROS2 schemas and all dependencies are embedded.")
     print(
-        "Image: 256x192 RGB gradient; pose: circular path; telemetry: sequence 0..29 and temperature 20.0..22.9."
+        "Image: 256x192 RGB gradient; pose: circular path; telemetry: sequence 0..29 and value 20.0..22.9."
     )
-    print("Open this same file in Foxglove and Rerun without installing demo_msgs.")
+    print("Open this same file in Foxglove and Rerun without installing story_messages.")
 
 
 def main() -> None:

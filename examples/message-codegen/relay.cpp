@@ -12,11 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <dimos/native/cdr_codec.hpp>
+#include <demo_msgs/msg/telemetry.hpp>
 #include <fstream>
 #include <iostream>
 #include <iterator>
 #include <string>
-#include "messages.hpp"
+
 
 int main(int argc, char** argv) {
     if (argc != 4) {
@@ -28,7 +30,7 @@ int main(int argc, char** argv) {
         if (!input) throw std::runtime_error("Cannot open input");
         std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(input)), {});
         const std::string mode(argv[1]);
-        auto value = mode == "defaults" ? demo_msgs::msg::Telemetry{} : dimos::cdr::decode<demo_msgs::msg::Telemetry>(bytes);
+        auto value = mode == "defaults" ? demo_msgs::msg::Telemetry{} : dimos::native::cdr_decode<demo_msgs::msg::Telemetry>(bytes);
         std::cout << "C++ received: frame=" << value.header.frame_id
                   << " sequence=" << value.sequence << " label=" << value.label
                   << " temperature=" << value.reading.temperature
@@ -41,7 +43,7 @@ int main(int argc, char** argv) {
         } else if (mode != "echo" && mode != "echo-be" && mode != "defaults") {
             throw std::runtime_error("Expected edit, echo, echo-be, or defaults mode");
         }
-        const auto output = dimos::cdr::encode(value, mode != "echo-be");
+        const auto output = dimos::native::cdr_encode(value, mode != "echo-be");
         std::ofstream stream(argv[3], std::ios::binary);
         stream.write(reinterpret_cast<const char*>(output.data()), output.size());
         if (!stream) throw std::runtime_error("Cannot write output");

@@ -18,6 +18,7 @@ from unittest.mock import MagicMock, patch
 
 from dimos_generated.sensor_msgs.msg import Image
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 
 from dimos.core.module import Module
@@ -46,8 +47,8 @@ def main() -> None:
             encoding="rgb8",
             header=Header(stamp=time_from_nanoseconds(stamp_ns + index), frame_id=camera),
         )
-        mux._on_cam(camera, Image.decode(image.encode()))
-    output = Image.decode(mux.mux_image.publish.call_args.args[0].encode())
+        mux._on_cam(camera, cdr_decode(cdr_encode(image), Image))
+    output = cdr_decode(mux.mux_image.publish.call_args.args[0].encode(), Image)
     assert output.width == 100 and output.height == 36
     assert to_nanoseconds(output.header.stamp) == stamp_ns + 1
     assert output.header.frame_id == "camera_mux"

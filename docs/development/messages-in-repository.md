@@ -21,6 +21,10 @@ the local packages in
 uv sources.** It needs matching `dimos-generated` and `dimos-message-build`
 distributions available to pip; it is not a substitute for this checkout setup.
 
+The [accepted native-library limitations](/docs/development/message-limitations.md) describe the
+provisional input constraints and unsupported schemas. They also identify the
+precise expected-failure tests; bounded valid messages do not silently work.
+
 ## Define and rebuild one message
 
 Create `dimos/message_codegen/schemas/dimos_msgs/msg/DeviceReading.msg`:
@@ -46,7 +50,10 @@ uv run python -m scripts.generate_builtin_messages --check
 ```
 
 The checkout's editable dependency uses the regenerated source directly; no
-wheel rebuild or message compiler is needed for development. Restart Python
+wheel rebuild or native message compiler is needed for development. Native
+rosbags classes/codecs are initialized in memory from installed schemas; this is
+not precompiled Python class delivery. Constructors require explicit fields, even
+when `.msg` declares a default. Restart Python
 processes after changing generated classes. Editing `.msg` alone does not change
 installed classes: the drift check rejects missing, stale or changed outputs
 until you explicitly regenerate and commit them. Import and check the new value:
@@ -55,10 +62,15 @@ until you explicitly regenerate and commit them. Import and check the new value:
 ```python skip
 from dimos_generated.dimos_msgs.msg import DeviceReading
 from dimos_generated.std_msgs.msg import Header
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_message_build.registry import encode, decode
 
-reading = DeviceReading(header=Header(frame_id="sensor"), value=20.5)
+reading = DeviceReading(
+    header=Header(stamp=Time(sec=0, nanosec=0), frame_id="sensor"),
+    sequence=1, value=20.5, label="sensor",
+)
 assert type(reading.header) is Header
-assert DeviceReading.decode(reading.encode()).value == 20.5
+assert decode(encode(reading), DeviceReading).value == 20.5
 ```
 
 Run the package and runtime regressions appropriate to your changed consumers:
@@ -93,7 +105,7 @@ uv build packages/dimos-generated --python .venv/bin/python \
 
 ## Native artifacts
 
-Build CMake headers/schemas and the Rust crate with the package's configured
+Build native source inputs/schemas and the Rust crate with the package's configured
 version:
 
 ```sh skip
@@ -101,15 +113,18 @@ bash scripts/package_messages.sh
 ```
 
 Artifacts land in `build/message-codegen/release/dist/`: a
-`dimos-messages-cmake-0.1.0.tar.gz` and `dimos-generated-messages-0.1.0.crate` for
-the current proposal version. CMake consumers use `dimos_generated::messages`;
+`dimos-messages-sources-0.1.0.tar.gz` and `dimos-generated-messages-0.1.0.crate` for
+the current proposal version. The C++ archive contains source inputs, not a
+header-only or prebuilt SDK. The shared `prepare_cpp` build core must generate and
+compile the upstream ROSIDL typesupport and support libraries before consumption.
+C++ distribution is source-only; prebuilt native SDK archives are out of scope.
+CMake consumers use `dimos_generated::messages`;
 Rust consumers use the `dimos-generated-messages` dependency. Native module
 applications additionally need the transport SDK and its native dependencies;
 a message wheel alone does not supply an installed SDK.
 
 CI builds the Python wheel/sdist and native artifacts and verifies consumers.
-Ordinary users install matching prebuilt artifacts; they never need to run this
-maintainer generation workflow. Changes to wire layout require matching rebuilt
+Python users install matching wheels without this maintainer generation workflow. Changes to wire layout require matching rebuilt
 producers and typed consumers. Version changes must update dependency pins
 consistently; package registry publication is a separate release operation.
 

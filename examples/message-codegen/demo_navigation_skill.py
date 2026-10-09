@@ -17,7 +17,10 @@
 import math
 from unittest.mock import Mock, patch
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped
+from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 
 from dimos.agents.skills.navigation import NavigationSkillContainer
@@ -37,14 +40,15 @@ def main() -> None:
                 pose=Pose(
                     position=Point(x=1, y=2, z=3),
                     orientation=quaternion_from_euler(0.2, -0.3, math.pi / 2),
-                )
+                ),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
             )
-            skill._on_odom(PoseStamped.decode(original.encode()))
+            skill._on_odom(cdr_decode(cdr_encode(original), PoseStamped))
             print(skill.tag_location("desk"))
             location = memory.tag_location.call_args.args[0]
             memory.query_tagged_location.return_value = location
             print(skill._navigate_by_tagged_location("desk"))
-            goal = PoseStamped.decode(navigator.set_goal.call_args.args[0].encode())
+            goal = cdr_decode(navigator.set_goal.call_args.args[0].encode(), PoseStamped)
             np.testing.assert_allclose(
                 quaternion_euler(goal.pose.orientation), (0.2, -0.3, math.pi / 2)
             )

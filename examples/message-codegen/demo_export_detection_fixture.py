@@ -25,6 +25,7 @@ from typing import Any
 from dimos_generated.geometry_msgs.msg import PoseStamped
 from dimos_generated.sensor_msgs.msg import Image, PointCloud2
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import encode as cdr_encode
 import numpy as np
 from numpy.core.multiarray import _reconstruct
 
@@ -144,13 +145,13 @@ for seek in [10, 12, 14, 16, 18]:
             np.testing.assert_array_equal(image_view(msg), value.data)
         else:
             msg = pose_from_webrtc_odometry(value)
-        data = msg.encode()
+        data = cdr_encode(msg)
         assert type(msg).decode(data).encode() == data
         name = f"{seek}-{kind}.cdr"
         (out / name).write_bytes(data)
         entry["streams"][kind] = {
             "file": name,
-            "msg_name": msg.msg_name,
+            "msg_name": msg.__msgtype__,
             "recorded_ts": ts,
             "source": str(p.relative_to(root)),
             "source_sha256": hashlib.sha256(p.read_bytes()).hexdigest(),

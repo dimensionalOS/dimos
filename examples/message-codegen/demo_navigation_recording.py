@@ -27,6 +27,8 @@ from dimos_generated.geometry_msgs.msg import (
     Quaternion,
     Transform,
     TransformStamped,
+    Twist,
+    TwistWithCovariance,
     Vector3,
 )
 from dimos_generated.nav_msgs.msg import Odometry
@@ -56,8 +58,8 @@ def main() -> None:
                     header=Header(frame_id="lidar", stamp=stamp),
                 )
                 pose = Pose(
-                    position=Point(x=float(tick)),
-                    orientation=Quaternion(z=math.sqrt(0.5), w=math.sqrt(0.5)),
+                    position=Point(x=float(tick), y=0.0, z=0.0),
+                    orientation=Quaternion(z=math.sqrt(0.5), w=math.sqrt(0.5), x=0.0, y=0.0),
                 )
                 lidar.append(cloud, ts=timestamp)
                 transforms.append(
@@ -67,7 +69,8 @@ def main() -> None:
                                 header=Header(frame_id="world", stamp=stamp),
                                 child_frame_id="lidar",
                                 transform=Transform(
-                                    translation=Vector3(x=float(tick)), rotation=pose.orientation
+                                    translation=Vector3(x=float(tick), y=0.0, z=0.0),
+                                    rotation=pose.orientation,
                                 ),
                             )
                         ]
@@ -77,7 +80,17 @@ def main() -> None:
                 odometry.append(
                     Odometry(
                         header=Header(frame_id="world", stamp=stamp),
-                        pose=PoseWithCovariance(pose=pose),
+                        pose=PoseWithCovariance(
+                            pose=pose, covariance=np.zeros(36, dtype=np.float64)
+                        ),
+                        child_frame_id="",
+                        twist=TwistWithCovariance(
+                            twist=Twist(
+                                linear=Vector3(x=0.0, y=0.0, z=0.0),
+                                angular=Vector3(x=0.0, y=0.0, z=0.0),
+                            ),
+                            covariance=np.zeros(36, dtype=np.float64),
+                        ),
                     ),
                     ts=timestamp,
                 )

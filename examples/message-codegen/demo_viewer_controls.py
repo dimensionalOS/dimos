@@ -18,7 +18,8 @@ import asyncio
 import json
 from threading import Event
 
-from dimos_generated.geometry_msgs.msg import PointStamped, Twist
+from dimos_generated.geometry_msgs.msg import PointStamped, Twist, Vector3
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import websockets.asyncio.client as ws_client
 
 from dimos.core.global_config import GlobalConfig
@@ -34,13 +35,13 @@ def main() -> None:
     stopped = Event()
 
     def receive_velocity(message: Twist) -> None:
-        velocities.append(Twist.decode(message.encode()))
+        velocities.append(cdr_decode(cdr_encode(message), Twist))
         if len(velocities) == 2:
             stopped.set()
 
     subscriptions = [
         server.clicked_point.subscribe(
-            lambda message: points.append(PointStamped.decode(message.encode()))
+            lambda message: points.append(cdr_decode(message.encode(), PointStamped))
         ),
         server.tele_cmd_vel.subscribe(receive_velocity),
     ]
@@ -71,7 +72,9 @@ def main() -> None:
         assert point.header.frame_id == "map"
         assert (point.header.stamp.sec, point.header.stamp.nanosec) == (1700000000, 123000000)
         assert velocities[0].linear.x == 0.5 and velocities[0].angular.z == 0.8
-        assert velocities[1] == Twist()
+        assert velocities[1] == Twist(
+            linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)
+        )
         print("Viewer click → CDR PointStamped: map (1.5, 2.5, 0), stamp 1700000000.123000000")
         print("Viewer velocity → CDR Twist: forward 0.5 m/s, yaw 0.8 rad/s")
         print("Viewer stop → CDR Twist: all six components zero")

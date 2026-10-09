@@ -24,10 +24,20 @@ import uuid
 
 from demo_pubsub import free_port
 from dimos_generated.builtin_interfaces.msg import Time
-from dimos_generated.geometry_msgs.msg import Point, PointStamped, Pose, Quaternion, Twist
+from dimos_generated.geometry_msgs.msg import (
+    Point,
+    PointStamped,
+    Pose,
+    PoseWithCovariance,
+    Quaternion,
+    Twist,
+    TwistWithCovariance,
+    Vector3,
+)
 from dimos_generated.nav_msgs.msg import OccupancyGrid, Odometry, Path
 from dimos_generated.sensor_msgs.msg import PointCloud2
 from dimos_generated.std_msgs.msg import Bool, Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 
 from dimos.core.transport import LCMTransport, ZenohTransport
@@ -108,7 +118,7 @@ def demonstrate(backend: str) -> None:
         x, y = np.meshgrid(np.arange(0, 6, 0.25), np.arange(0, 6, 0.25))
         points = np.column_stack((x.ravel(), y.ravel(), np.zeros(x.size)))
         source = pointcloud_from_xyz(points, header=header)
-        voxels.add_frame(PointCloud2.decode(source.encode()))
+        voxels.add_frame(cdr_decode(cdr_encode(source), PointCloud2))
         accumulated = voxels.get_global_pointcloud2()
         assert accumulated.header == header
         position = [1.0, 1.0, 0.0]
@@ -118,10 +128,28 @@ def demonstrate(backend: str) -> None:
         received_paths: list[Path] = []
 
         def feedback() -> None:
-            message = Odometry(header=header, child_frame_id="base_link")
+            message = Odometry(
+                header=header,
+                child_frame_id="base_link",
+                pose=PoseWithCovariance(
+                    pose=Pose(
+                        position=Point(x=0.0, y=0.0, z=0.0),
+                        orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                    ),
+                    covariance=np.zeros(36, dtype=np.float64),
+                ),
+                twist=TwistWithCovariance(
+                    twist=Twist(
+                        linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)
+                    ),
+                    covariance=np.zeros(36, dtype=np.float64),
+                ),
+            )
             message.pose.pose = Pose(
-                position=Point(x=position[0], y=position[1]),
-                orientation=Quaternion(z=math.sin(position[2] / 2), w=math.cos(position[2] / 2)),
+                position=Point(x=position[0], y=position[1], z=0.0),
+                orientation=Quaternion(
+                    z=math.sin(position[2] / 2), w=math.cos(position[2] / 2), x=0.0, y=0.0
+                ),
             )
             odometry.publish(message)
 
@@ -149,7 +177,7 @@ def demonstrate(backend: str) -> None:
             )
 
         wait_until(initialized, timeout=5)
-        goals.publish(PointStamped(header=header, point=Point(x=3, y=1)))
+        goals.publish(PointStamped(header=header, point=Point(x=3, y=1, z=0.0)))
         assert arrived.wait(10), f"{backend}: navigation module did not report arrival"
         with lock:
             final = tuple(position)
@@ -157,7 +185,12 @@ def demonstrate(backend: str) -> None:
         assert any(command.linear.x > 0 for command in commands)
         path = next(path for path in received_paths if len(path.poses))
         assert path.header == header and all(pose.header == header for pose in path.poses)
-        wait_until(lambda: bool(commands) and commands[-1] == Twist(), timeout=5)
+        wait_until(
+            lambda: bool(commands)
+            and commands[-1]
+            == Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)),
+            timeout=5,
+        )
         grid = module._planner._navigation_map.binary_costmap
         assert grid.header == header
         print(

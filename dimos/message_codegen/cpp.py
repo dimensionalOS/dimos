@@ -111,4 +111,4 @@ def write_project(output: Path, messages: tuple[Message, ...], module: str, vers
         + ";".join(f"{p}::{p}__rosidl_typesupport_fastrtps_cpp" for p in order)
         + '")\nendif()\n'
     )
-    (output / "packages.json").write_text(json.dumps(order) + "\n")
+    (output / "packages.json").write_text(json.dumps(order, indent=2) + "\n")

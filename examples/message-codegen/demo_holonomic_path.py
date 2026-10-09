@@ -17,9 +17,11 @@
 import math
 import time
 
-from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Twist
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Twist, Vector3
 from dimos_generated.nav_msgs.msg import Path
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 
 from dimos.msgs.time import time_from_nanoseconds
 from dimos.navigation.dannav.holonomic_tc.module import DanHolonomicTCConfig, _HolonomicPathFollower
@@ -30,12 +32,12 @@ def main() -> None:
     core = _HolonomicPathFollower(
         DanHolonomicTCConfig(speed_m_s=1.2, control_frequency=60.0, goal_tolerance=0.08)
     )
-    command = Twist()
+    command = Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
     stopped: list[str] = []
 
     def receive(value: Twist) -> None:
         nonlocal command
-        command = Twist.decode(value.encode())
+        command = cdr_decode(cdr_encode(value), Twist)
 
     subscription = core.cmd_vel.subscribe(receive)
     stop_subscription = core.stopped_navigating.subscribe(stopped.append)
@@ -49,16 +51,22 @@ def main() -> None:
                 stamp=time_from_nanoseconds(1700000000000000000 + round(tick * dt * 1e9)),
             ),
             pose=Pose(
-                position=Point(x=x, y=y),
-                orientation=Quaternion(z=math.sin(yaw / 2), w=math.cos(yaw / 2)),
+                position=Point(x=x, y=y, z=0.0),
+                orientation=Quaternion(z=math.sin(yaw / 2), w=math.cos(yaw / 2), x=0.0, y=0.0),
             ),
         )
-        return PoseStamped.decode(value.encode())
+        return cdr_decode(cdr_encode(value), PoseStamped)
 
     path = Path(
-        header=Header(frame_id="map"),
+        header=Header(frame_id="map", stamp=Time(sec=0, nanosec=0)),
         poses=[
-            PoseStamped(pose=Pose(position=Point(x=px), orientation=Quaternion(w=1.0)))
+            PoseStamped(
+                pose=Pose(
+                    position=Point(x=px, y=0.0, z=0.0),
+                    orientation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0),
+                ),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            )
             for px in (0.1, 1.0)
         ],
     )
@@ -67,14 +75,14 @@ def main() -> None:
             DanLocalPlannerConfig(lock_replan=0.5, resample_spacing_m=0.1, smoothing_window=3)
         )
         gate.on_odom(odometry(0))
-        committed = gate.on_planner_path(Path.decode(path.encode()))
+        committed = gate.on_planner_path(cdr_decode(cdr_encode(path), Path))
         assert committed is not None
-        assert gate.on_planner_path(Path.decode(path.encode())) is None
+        assert gate.on_planner_path(cdr_decode(cdr_encode(path), Path)) is None
         print(
             f"Local planner committed {len(committed.poses)} resampled poses; duplicate replan held"
         )
         core.handle_odom(odometry(0))
-        core.start_planning(Path.decode(committed.encode()))
+        core.start_planning(cdr_decode(committed.encode(), Path))
         for tick in range(300):
             if stopped:
                 break

@@ -164,8 +164,8 @@ jobs:
       - uses: astral-sh/setup-uv@v10.0.1
       - uses: dtolnay/rust-toolchain@stable
       - run: uv venv .venv --python 3.12
-      - run: bash scripts/setup_message_codegen.sh
-      - name: Package CMake headers, schemas, and native Rust sources
+      - run: uv pip install --python .venv/bin/python ./dimos/message_codegen
+      - name: Package native source inputs, schemas, and Rust crate
         run: bash scripts/package_messages.sh
       - uses: actions/upload-artifact@v7
         with:

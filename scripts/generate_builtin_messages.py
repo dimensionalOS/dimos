@@ -51,7 +51,12 @@ def main() -> None:
         alias = source / "dimos_generated/_types.py"
         header = "\n".join(Path(__file__).read_text().splitlines()[:13]) + "\n\n"
         alias.write_text(header + alias.read_text())
-        python_files = [str(path) for package in packages for path in package.rglob("*.py")]
+        python_files = [
+            str(path)
+            for package in packages
+            for path in package.rglob("*")
+            if path.suffix in {".py", ".pyi"}
+        ]
         subprocess.run(
             [
                 sys.executable,

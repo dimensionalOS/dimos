@@ -18,6 +18,7 @@ from pathlib import Path
 import tempfile
 
 from dimos_generated.dimos_msgs.msg import VideoStats
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.teleop.utils.video_stats import video_stats_from_dict
@@ -34,7 +35,7 @@ def main() -> None:
             "frames_dropped": 2**32 + 1,
         }
     )
-    decoded = VideoStats.decode(message.encode())
+    decoded = cdr_decode(cdr_encode(message), VideoStats)
     assert decoded == message
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / "video.db"

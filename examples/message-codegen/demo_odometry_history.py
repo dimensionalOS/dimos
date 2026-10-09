@@ -18,9 +18,20 @@ import asyncio
 from pathlib import Path as FilePath
 
 from dimos_generated.builtin_interfaces.msg import Time
-from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Twist
+from dimos_generated.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseStamped,
+    PoseWithCovariance,
+    Quaternion,
+    Twist,
+    TwistWithCovariance,
+    Vector3,
+)
 from dimos_generated.nav_msgs.msg import Odometry, Path
 from dimos_generated.std_msgs.msg import Bool, Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
+import numpy as np
 
 from dimos.mapping.odometry_hist import OdometryHist, path_at_true_height
 from dimos.memory.vis.space.elements import Polyline
@@ -34,35 +45,66 @@ async def main() -> None:
     commands: list[Twist] = []
     arrivals: list[Bool] = []
     paths: list[Path] = []
-    follower.nav_cmd_vel.subscribe(lambda msg: commands.append(Twist.decode(msg.encode())))
-    follower.goal_reached.subscribe(lambda msg: arrivals.append(Bool.decode(msg.encode())))
-    history.odom_hist.subscribe(lambda msg: paths.append(Path.decode(msg.encode())))
+    follower.nav_cmd_vel.subscribe(lambda msg: commands.append(cdr_decode(msg.encode(), Twist)))
+    follower.goal_reached.subscribe(lambda msg: arrivals.append(cdr_decode(msg.encode(), Bool)))
+    history.odom_hist.subscribe(lambda msg: paths.append(cdr_decode(msg.encode(), Path)))
     header = Header(stamp=Time(sec=1700000000, nanosec=123456789), frame_id="map")
     reference = Path(
         header=header,
         poses=[
-            PoseStamped(header=header, pose=Pose(position=Point(x=x), orientation=Quaternion(w=1)))
+            PoseStamped(
+                header=header,
+                pose=Pose(
+                    position=Point(x=x, y=0.0, z=0.0),
+                    orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0),
+                ),
+            )
             for x in [0, 1, 2]
         ],
     )
     try:
-        follower._on_path(Path.decode(reference.encode()))
+        follower._on_path(cdr_decode(cdr_encode(reference), Path))
         waypoints = follower._waypoints
         assert waypoints is not None
         x = 0.0
         for tick in range(100):
             header.stamp.nanosec = 123456789 + tick
             pose = PoseStamped(
-                header=header, pose=Pose(position=Point(x=x, z=0.25), orientation=Quaternion(w=1))
+                header=header,
+                pose=Pose(
+                    position=Point(x=x, z=0.25, y=0.0),
+                    orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0),
+                ),
             )
-            sample = Odometry(header=header)
+            sample = Odometry(
+                header=header,
+                child_frame_id="",
+                pose=PoseWithCovariance(
+                    pose=Pose(
+                        position=Point(x=0.0, y=0.0, z=0.0),
+                        orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                    ),
+                    covariance=np.zeros(36, dtype=np.float64),
+                ),
+                twist=TwistWithCovariance(
+                    twist=Twist(
+                        linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)
+                    ),
+                    covariance=np.zeros(36, dtype=np.float64),
+                ),
+            )
             sample.pose.pose = pose.pose
-            await history.handle_odometry(Odometry.decode(sample.encode()))
-            follower._step(PoseStamped.decode(pose.encode()), waypoints)
+            await history.handle_odometry(cdr_decode(cdr_encode(sample), Odometry))
+            follower._step(cdr_decode(cdr_encode(pose), PoseStamped), waypoints)
             if arrivals:
                 break
             x += commands[-1].linear.x * 0.1
-        assert arrivals and arrivals[-1].data and commands[-1] == Twist()
+        assert (
+            arrivals
+            and arrivals[-1].data
+            and commands[-1]
+            == Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+        )
         assert x >= 1.7 and x <= 2
         recorded = paths[-1]
         assert recorded.poses[0].header.stamp.nanosec == 123456789

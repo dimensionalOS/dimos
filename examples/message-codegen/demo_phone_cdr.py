@@ -20,6 +20,7 @@ import socket
 import threading
 
 from dimos_generated.geometry_msgs.msg import TwistStamped
+from dimos_message_build.registry import decode as cdr_decode
 import uvicorn
 
 from dimos.teleop.phone.phone_teleop_module import PhoneTeleopModule
@@ -32,7 +33,7 @@ class PhonePreview(PhoneTeleopModule):
 
     def _on_sensors_bytes(self, data: bytes) -> None:
         super()._on_sensors_bytes(data)
-        self.received.put(TwistStamped.decode(data))
+        self.received.put(cdr_decode(data, TwistStamped))
 
 
 def main() -> None:

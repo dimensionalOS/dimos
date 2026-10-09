@@ -17,6 +17,8 @@
 from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.sensor_msgs.msg import JointState
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
+import numpy as np
 
 from dimos.manipulation.planning.groups.models import PlanningGroup
 from dimos.manipulation.planning.groups.utils import (
@@ -36,12 +38,21 @@ def main() -> None:
     source = JointState(
         header=Header(stamp=Time(sec=1700000000, nanosec=123456789), frame_id="robot"),
         name=["right/j1", "left/j2", "left/j1"],
-        position=[0.9, 0.3, -0.2],
+        position=np.array([0.9, 0.3, -0.2], dtype=np.float64),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
     )
-    decoded = JointState.decode(source.encode())
+    decoded = cdr_decode(cdr_encode(source), JointState)
     selected = filter_joint_state_to_selected_joints(decoded, group.joint_names)
     target = normalize_joint_target(
-        group, JointState(header=source.header, name=["left/j2", "left/j1"], position=[0.5, 0.1])
+        group,
+        JointState(
+            header=source.header,
+            name=["left/j2", "left/j1"],
+            position=np.array([0.5, 0.1], dtype=np.float64),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        ),
     )
     space = JointSpace(
         tuple(
@@ -61,7 +72,7 @@ def main() -> None:
     assert positions.tolist() == [-0.2, 0.3]
     assert space.from_joint_state(target).tolist() == [0.1, 0.5]
     assert selected.header == target.header == source.header
-    assert JointState.decode(target.encode()) == target
+    assert cdr_decode(cdr_encode(target), JointState) == target
     print(f"Coordinator input: names={list(source.name)}, q={list(source.position)}")
     print(f"Selected {group.id}: names={list(selected.name)}, q={positions.tolist()}")
     print(f"Normalized target: q={list(target.position)}; within declared joint limits")

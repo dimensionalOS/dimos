@@ -28,7 +28,7 @@ MAX_UNCOMPRESSED_MB = 40
 # Paths below the dimos-<version>/ root that every release sdist must carry.
 REQUIRED = (
     "dimos/message_codegen/schemas/sensor_msgs/msg/Image.msg",
-    "dimos/message_codegen/templates/dimos_cdr.hpp",
+    "dimos/message_codegen/templates/native-support.cmake",
     "dimos/message_codegen/_vendor/rosidl_parser.py",
     "scripts/setup_message_codegen.sh",
     "web/cockpit/dist/index.html",
@@ -48,6 +48,13 @@ def main(sdist: str) -> None:
     generated = sorted(n for n in names if "node_modules" in n.split("/"))
     if generated:
         problems.append(f"{len(generated)} node_modules entries, e.g. {generated[0]}")
+    stale_builds = sorted(
+        n
+        for n in names
+        if n.startswith(("dimos/message_codegen/build/", "dimos/message_codegen/dist/"))
+    )
+    if stale_builds:
+        problems.append(f"{len(stale_builds)} nested message build entries, e.g. {stale_builds[0]}")
     total_mb = sum(m.size for m in members) / 1e6
     if total_mb > MAX_UNCOMPRESSED_MB:
         problems.append(f"{total_mb:.1f} MB uncompressed exceeds {MAX_UNCOMPRESSED_MB} MB")

@@ -16,7 +16,8 @@
 
 import math
 
-from dimos_generated.geometry_msgs.msg import Point, Pose, Quaternion, Twist
+from dimos_generated.geometry_msgs.msg import Point, Pose, Quaternion, Twist, Vector3
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 
 from dimos.navigation.dannav.holonomic_tc.command_limits import (
     HolonomicCommandLimits,
@@ -35,15 +36,23 @@ def main() -> None:
     limits = HolonomicCommandLimits(1.0, 1.0, 2.0, 2.0)
     controller = HolonomicTrackingController(k_position_per_s=2.0, k_yaw_per_s=1.0)
     controller.configure(limits)
-    target = Pose(position=Point(x=2.0, y=1.0), orientation=Quaternion(w=1.0))
-    pose = Pose(orientation=Quaternion(w=1.0))
-    command = Twist()
+    target = Pose(
+        position=Point(x=2.0, y=1.0, z=0.0), orientation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0)
+    )
+    pose = Pose(
+        orientation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0), position=Point(x=0.0, y=0.0, z=0.0)
+    )
+    command = Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
     dt = 0.05
     for tick in range(200):
-        reference = TrajectoryReferenceSample(tick * dt, Pose.decode(target.encode()), Twist())
-        measured = TrajectoryMeasuredSample(tick * dt, Pose.decode(pose.encode()), command)
+        reference = TrajectoryReferenceSample(
+            tick * dt,
+            cdr_decode(cdr_encode(target), Pose),
+            Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)),
+        )
+        measured = TrajectoryMeasuredSample(tick * dt, cdr_decode(cdr_encode(pose), Pose), command)
         raw = controller.control(reference, measured)
-        command = Twist.decode(clamp_holonomic_cmd_vel(command, raw, limits, dt).encode())
+        command = cdr_decode(cdr_encode(clamp_holonomic_cmd_vel(command, raw, limits, dt)), Twist)
         pose.position.x += command.linear.x * dt
         pose.position.y += command.linear.y * dt
         if tick % 40 == 0:

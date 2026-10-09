@@ -19,6 +19,7 @@ from unittest.mock import MagicMock, patch
 
 from dimos_generated.geometry_msgs.msg import PoseStamped, Twist, TwistStamped, Vector3
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 
 from dimos.core.module import Module
 from dimos.msgs.time import time_from_nanoseconds
@@ -36,15 +37,15 @@ def main() -> None:
     stamp_ns = time.time_ns() - 100_000_000
     for offset in (0, 1):
         message = TwistStamped(
-            header=Header(stamp=time_from_nanoseconds(stamp_ns + offset)),
-            twist=Twist(linear=Vector3(x=99), angular=Vector3(z=-50)),
+            header=Header(stamp=time_from_nanoseconds(stamp_ns + offset), frame_id=""),
+            twist=Twist(linear=Vector3(x=99, y=0.0, z=0.0), angular=Vector3(z=-50, x=0.0, y=0.0)),
         )
-        module._on_cmd_vel_in(TwistStamped.decode(message.encode()))
+        module._on_cmd_vel_in(cdr_decode(cdr_encode(message), TwistStamped))
     assert module.tele_cmd_vel.publish.call_count == 2
-    command = Twist.decode(module.tele_cmd_vel.publish.call_args.args[0].encode())
+    command = cdr_decode(module.tele_cmd_vel.publish.call_args.args[0].encode(), Twist)
     assert command.linear.x == 1.5 and command.angular.z == -2
     module._handle_nav_goal({"x": 2.5, "y": -1, "nonce": 1})
-    goal = PoseStamped.decode(module.goal_request.publish.call_args.args[0].encode())
+    goal = cdr_decode(module.goal_request.publish.call_args.args[0].encode(), PoseStamped)
     assert goal.header.frame_id == "world" and goal.pose.position.x == 2.5
     module._estopped = True
     module._on_cmd_vel_in(message)

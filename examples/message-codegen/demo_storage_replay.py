@@ -35,7 +35,13 @@ def main() -> None:
     messages = [
         LineSegments3D(
             header=Header(frame_id="map", stamp=time_from_nanoseconds(1700000000123456789 + index)),
-            segments=[LineSegment3D(start=Point(x=index), end=Point(y=2), weight=index + 4)],
+            segments=[
+                LineSegment3D(
+                    start=Point(x=index, y=0.0, z=0.0),
+                    end=Point(y=2, x=0.0, z=0.0),
+                    weight=index + 4,
+                )
+            ],
         )
         for index in range(3)
     ]

@@ -17,8 +17,9 @@
 from pathlib import Path
 from types import SimpleNamespace
 
-from dimos_generated.geometry_msgs.msg import Point, Pose, Quaternion, Vector3
-from dimos_generated.sensor_msgs.msg import CameraInfo, CompressedImage
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseWithCovariance, Quaternion, Vector3
+from dimos_generated.sensor_msgs.msg import CameraInfo, CompressedImage, RegionOfInterest
 from dimos_generated.std_msgs.msg import Header
 from dimos_generated.vision_msgs.msg import (
     BoundingBox3D,
@@ -43,16 +44,35 @@ def main() -> None:
     bridge._min_intervals = {}
     bridge._camera_infos = {}
     bridge._image_entities = set()
-    header = Header(frame_id="camera_optical")
+    header = Header(frame_id="camera_optical", stamp=Time(sec=0, nanosec=0))
     pixels = np.zeros((120, 160, 3), dtype=np.uint8)
     pixels[:, :80, 0] = 255
     pixels[:, 80:, 1] = 255
     color = image_from_array(pixels, encoding="rgb8", header=header)
-    info = CameraInfo(header=header, width=160, height=120, k=[100, 0, 80, 0, 100, 60, 0, 0, 1])
+    info = CameraInfo(
+        header=header,
+        width=160,
+        height=120,
+        k=np.array([100, 0, 80, 0, 100, 60, 0, 0, 1], dtype=np.float64),
+        distortion_model="",
+        d=np.array([], dtype=np.float64),
+        r=np.zeros(9, dtype=np.float64),
+        p=np.zeros(12, dtype=np.float64),
+        binning_x=0,
+        binning_y=0,
+        roi=RegionOfInterest(x_offset=0, y_offset=0, height=0, width=0, do_rectify=False),
+    )
     messages = [
         ("color", color),
         ("camera_info", info),
-        ("jpeg", CompressedImage(header=header, format="jpeg", data=image_to_jpeg(color))),
+        (
+            "jpeg",
+            CompressedImage(
+                header=header,
+                format="jpeg",
+                data=np.frombuffer(image_to_jpeg(color), dtype=np.uint8),
+            ),
+        ),
         (
             "depth_mm",
             image_from_array(
@@ -72,14 +92,25 @@ def main() -> None:
             Detection3D(
                 id="4",
                 bbox=BoundingBox3D(
-                    center=Pose(position=Point(z=1), orientation=Quaternion(w=1)),
+                    center=Pose(
+                        position=Point(z=1, x=0.0, y=0.0),
+                        orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0),
+                    ),
                     size=Vector3(x=0.5, y=0.5, z=0.2),
                 ),
                 results=[
                     ObjectHypothesisWithPose(
-                        hypothesis=ObjectHypothesis(class_id="demo-box", score=1)
+                        hypothesis=ObjectHypothesis(class_id="demo-box", score=1),
+                        pose=PoseWithCovariance(
+                            pose=Pose(
+                                position=Point(x=0.0, y=0.0, z=0.0),
+                                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                            ),
+                            covariance=np.zeros(36, dtype=np.float64),
+                        ),
                     )
                 ],
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
             )
         ],
     )

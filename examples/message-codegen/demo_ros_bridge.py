@@ -18,9 +18,11 @@ import threading
 import uuid
 
 from dimos_generated.builtin_interfaces.msg import Time
-from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from dimos_generated.sensor_msgs.msg import Image
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import encode as cdr_encode
+import numpy as np
 
 from dimos.msgs.protocol import DimosMsg
 from dimos.protocol.pubsub.impl.rospubsub import DimosROS, ROSTopic
@@ -43,7 +45,7 @@ def main() -> None:
             stamp = message.header.stamp
             key = (topic.topic, stamp.nanosec)
             received[key] = message
-            print(f"ROS received {message.msg_name}: source={stamp.sec}.{stamp.nanosec:09d}")
+            print(f"ROS received {message.__msgtype__}: source={stamp.sec}.{stamp.nanosec:09d}")
             if len(received) == 6:
                 done.set()
 
@@ -58,14 +60,21 @@ def main() -> None:
                 return
             header = Header(stamp=Time(sec=1700000000, nanosec=123456789 + count), frame_id="map")
             messages: list[DimosMsg] = [
-                PoseStamped(header=header, pose=Pose(position=Point(x=float(count)))),
+                PoseStamped(
+                    header=header,
+                    pose=Pose(
+                        position=Point(x=float(count), y=0.0, z=0.0),
+                        orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                    ),
+                ),
                 Image(
                     header=header,
                     height=1,
                     width=1,
                     encoding="rgb8",
                     step=3,
-                    data=bytes([count, 128, 255 - count]),
+                    data=np.frombuffer(bytes([count, 128, 255 - count]), dtype=np.uint8),
+                    is_bigendian=0,
                 ),
             ]
             for topic, message in zip(topics, messages, strict=True):
@@ -76,7 +85,9 @@ def main() -> None:
         timer = node.create_timer(0.1, publish_next)
         try:
             assert done.wait(15), "ROS discovery or message delivery timed out"
-            assert received == expected
+            assert {key: cdr_encode(value) for key, value in received.items()} == {
+                key: cdr_encode(value) for key, value in expected.items()
+            }
             for index in range(3):
                 pose = received[(topics[0].topic, 123456789 + index)]
                 image = received[(topics[1].topic, 123456789 + index)]

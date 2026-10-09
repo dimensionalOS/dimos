@@ -17,9 +17,10 @@
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from dimos_generated.geometry_msgs.msg import Transform, TransformStamped, Vector3
+from dimos_generated.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos_generated.sensor_msgs.msg import PointCloud2
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 
 from dimos.manipulation.planning.utils.point_cloud_self_filter import PointCloudSelfFilter
@@ -50,16 +51,19 @@ def main() -> None:
                         TransformStamped(
                             header=Header(frame_id=frame, stamp=stamp),
                             child_frame_id="arm",
-                            transform=Transform(translation=Vector3(x=arm_x)),
+                            transform=Transform(
+                                translation=Vector3(x=arm_x, y=0.0, z=0.0),
+                                rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                            ),
                         )
                     )
                 source = pointcloud_from_xyz(
                     np.array([[arm_x, 0, 0], [5.0, 0, 0]]),
                     header=Header(frame_id="camera", stamp=stamp),
                 )
-                result = module.filter_cloud(PointCloud2.decode(source.encode()))
+                result = module.filter_cloud(cdr_decode(cdr_encode(source), PointCloud2))
                 assert result is not None
-                filtered, mask = (PointCloud2.decode(value.encode()) for value in result)
+                filtered, mask = (cdr_decode(value.encode(), PointCloud2) for value in result)
                 np.testing.assert_allclose(pointcloud_xyz(filtered), [[5.0, 0, 0]])
                 assert filtered.header == source.header
                 assert mask.header.stamp == stamp and mask.header.frame_id == "world"

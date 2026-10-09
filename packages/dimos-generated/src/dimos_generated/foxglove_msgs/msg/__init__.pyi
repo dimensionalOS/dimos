@@ -1,2 +1,2 @@
-__all__ = ['CompressedVideo']
+__all__ = ["CompressedVideo"]
 from ..._types import foxglove_msgs__msg__CompressedVideo as CompressedVideo

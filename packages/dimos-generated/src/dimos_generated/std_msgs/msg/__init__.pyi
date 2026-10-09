@@ -1,31 +1,64 @@
-__all__ = ['Header', 'Bool', 'Byte', 'MultiArrayDimension', 'MultiArrayLayout', 'ByteMultiArray', 'Char', 'ColorRGBA', 'Empty', 'Float32', 'Float32MultiArray', 'Float64', 'Float64MultiArray', 'Int16', 'Int16MultiArray', 'Int32', 'Int32MultiArray', 'Int64', 'Int64MultiArray', 'Int8', 'Int8MultiArray', 'String', 'UInt16', 'UInt16MultiArray', 'UInt32', 'UInt32MultiArray', 'UInt64', 'UInt64MultiArray', 'UInt8', 'UInt8MultiArray']
-from ..._types import std_msgs__msg__Header as Header
-from ..._types import std_msgs__msg__Bool as Bool
-from ..._types import std_msgs__msg__Byte as Byte
-from ..._types import std_msgs__msg__MultiArrayDimension as MultiArrayDimension
-from ..._types import std_msgs__msg__MultiArrayLayout as MultiArrayLayout
-from ..._types import std_msgs__msg__ByteMultiArray as ByteMultiArray
-from ..._types import std_msgs__msg__Char as Char
-from ..._types import std_msgs__msg__ColorRGBA as ColorRGBA
-from ..._types import std_msgs__msg__Empty as Empty
-from ..._types import std_msgs__msg__Float32 as Float32
-from ..._types import std_msgs__msg__Float32MultiArray as Float32MultiArray
-from ..._types import std_msgs__msg__Float64 as Float64
-from ..._types import std_msgs__msg__Float64MultiArray as Float64MultiArray
-from ..._types import std_msgs__msg__Int16 as Int16
-from ..._types import std_msgs__msg__Int16MultiArray as Int16MultiArray
-from ..._types import std_msgs__msg__Int32 as Int32
-from ..._types import std_msgs__msg__Int32MultiArray as Int32MultiArray
-from ..._types import std_msgs__msg__Int64 as Int64
-from ..._types import std_msgs__msg__Int64MultiArray as Int64MultiArray
-from ..._types import std_msgs__msg__Int8 as Int8
-from ..._types import std_msgs__msg__Int8MultiArray as Int8MultiArray
-from ..._types import std_msgs__msg__String as String
-from ..._types import std_msgs__msg__UInt16 as UInt16
-from ..._types import std_msgs__msg__UInt16MultiArray as UInt16MultiArray
-from ..._types import std_msgs__msg__UInt32 as UInt32
-from ..._types import std_msgs__msg__UInt32MultiArray as UInt32MultiArray
-from ..._types import std_msgs__msg__UInt64 as UInt64
-from ..._types import std_msgs__msg__UInt64MultiArray as UInt64MultiArray
-from ..._types import std_msgs__msg__UInt8 as UInt8
-from ..._types import std_msgs__msg__UInt8MultiArray as UInt8MultiArray
+__all__ = [
+    "Bool",
+    "Byte",
+    "ByteMultiArray",
+    "Char",
+    "ColorRGBA",
+    "Empty",
+    "Float32",
+    "Float32MultiArray",
+    "Float64",
+    "Float64MultiArray",
+    "Header",
+    "Int8",
+    "Int8MultiArray",
+    "Int16",
+    "Int16MultiArray",
+    "Int32",
+    "Int32MultiArray",
+    "Int64",
+    "Int64MultiArray",
+    "MultiArrayDimension",
+    "MultiArrayLayout",
+    "String",
+    "UInt8",
+    "UInt8MultiArray",
+    "UInt16",
+    "UInt16MultiArray",
+    "UInt32",
+    "UInt32MultiArray",
+    "UInt64",
+    "UInt64MultiArray",
+]
+from ..._types import (
+    std_msgs__msg__Bool as Bool,
+    std_msgs__msg__Byte as Byte,
+    std_msgs__msg__ByteMultiArray as ByteMultiArray,
+    std_msgs__msg__Char as Char,
+    std_msgs__msg__ColorRGBA as ColorRGBA,
+    std_msgs__msg__Empty as Empty,
+    std_msgs__msg__Float32 as Float32,
+    std_msgs__msg__Float32MultiArray as Float32MultiArray,
+    std_msgs__msg__Float64 as Float64,
+    std_msgs__msg__Float64MultiArray as Float64MultiArray,
+    std_msgs__msg__Header as Header,
+    std_msgs__msg__Int8 as Int8,
+    std_msgs__msg__Int8MultiArray as Int8MultiArray,
+    std_msgs__msg__Int16 as Int16,
+    std_msgs__msg__Int16MultiArray as Int16MultiArray,
+    std_msgs__msg__Int32 as Int32,
+    std_msgs__msg__Int32MultiArray as Int32MultiArray,
+    std_msgs__msg__Int64 as Int64,
+    std_msgs__msg__Int64MultiArray as Int64MultiArray,
+    std_msgs__msg__MultiArrayDimension as MultiArrayDimension,
+    std_msgs__msg__MultiArrayLayout as MultiArrayLayout,
+    std_msgs__msg__String as String,
+    std_msgs__msg__UInt8 as UInt8,
+    std_msgs__msg__UInt8MultiArray as UInt8MultiArray,
+    std_msgs__msg__UInt16 as UInt16,
+    std_msgs__msg__UInt16MultiArray as UInt16MultiArray,
+    std_msgs__msg__UInt32 as UInt32,
+    std_msgs__msg__UInt32MultiArray as UInt32MultiArray,
+    std_msgs__msg__UInt64 as UInt64,
+    std_msgs__msg__UInt64MultiArray as UInt64MultiArray,
+)

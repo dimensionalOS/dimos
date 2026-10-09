@@ -19,10 +19,11 @@ import json
 from pathlib import Path
 import sys
 
-from dimos_generated.geometry_msgs.msg import Twist
+from dimos_generated.geometry_msgs.msg import Twist, Vector3
 from dimos_generated.nav_msgs.msg import Odometry
 from dimos_generated.sensor_msgs.msg import CameraInfo, Image, PointCloud2
 from dimos_generated.tf2_msgs.msg import TFMessage
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 
 root = Path(__file__).resolve().parents[2]
@@ -80,10 +81,18 @@ for name, (message_type, payload) in payloads.items():
     header = value.transforms[0].header if name == "tf" else value.header
     assert header.stamp.sec == 12 and header.stamp.nanosec == 250000000
     (output / (name + ".cdr")).write_bytes(payload)
-assert Odometry.decode(payloads["odometry"][1]).pose.pose.position.x == 1
-assert PointCloud2.decode(payloads["cloud"][1]).row_step == 16
-assert TFMessage.decode(payloads["tf"][1]).transforms[1].transform.translation.z == 0.45
-assert Twist.decode(Twist().encode()).linear.x == 0
+assert cdr_decode(payloads["odometry"][1], Odometry).pose.pose.position.x == 1
+assert cdr_decode(payloads["cloud"][1], PointCloud2).row_step == 16
+assert cdr_decode(payloads["tf"][1], TFMessage).transforms[1].transform.translation.z == 0.45
+assert (
+    cdr_decode(
+        cdr_encode(
+            Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+        ),
+        Twist,
+    ).linear.x
+    == 0
+)
 print(
     json.dumps(
         {

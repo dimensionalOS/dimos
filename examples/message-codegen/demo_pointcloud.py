@@ -19,7 +19,11 @@
 
 import struct
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.sensor_msgs.msg import PointCloud2, PointField
+from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
+import numpy as np
 
 from dimos.msgs.pointcloud import pointcloud_view, pointcloud_xyz
 
@@ -36,15 +40,17 @@ def main() -> None:
             point_step=20,
             row_step=32,
             is_bigendian=big_endian,
-            data=bytes(payload),
+            data=np.frombuffer(bytes(payload), dtype=np.uint8),
             fields=[
                 PointField(name="x", offset=0, datatype=7, count=1),
                 PointField(name="y", offset=4, datatype=7, count=1),
                 PointField(name="z", offset=8, datatype=7, count=1),
                 PointField(name="tags", offset=12, datatype=4, count=2),
             ],
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            is_dense=False,
         )
-        decoded = PointCloud2.decode(message.encode(little_endian=not big_endian))
+        decoded = cdr_decode(cdr_encode(message, little_endian=not big_endian), PointCloud2)
         view = pointcloud_view(decoded)
         assert pointcloud_xyz(decoded).tolist() == [[1, 2, 3], [2, 2, 3]]
         assert view["tags"].tolist() == [[[7, 9]], [[7, 9]]]
