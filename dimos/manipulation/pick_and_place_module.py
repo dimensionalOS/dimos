@@ -165,10 +165,9 @@ class PickAndPlaceModule(Module):
             if detection.id and detection.results
         ]
         self._objects = {str(obj["object_id"]): obj for obj in objects if "object_id" in obj}
-        return SkillResult.ok(
+        return SkillResult(
             f"Detected {detections.detections_length} object(s)",
-            prompts=prompts,
-            objects=list(self._objects.values()),
+            metadata={"prompts": prompts, "objects": list(self._objects.values())},
         )
 
     @rpc
@@ -186,7 +185,7 @@ class PickAndPlaceModule(Module):
             planning_group: Gripper-capable pose group; omitted only when unambiguous.
         """
         if self._holding_object:
-            return SkillResult.ok(
+            return SkillResult(
                 f"Still holding object {self._selected_object_id}; "
                 f"did not start a pick of object {object_id}. Use place_at to put it down first."
             )
@@ -194,13 +193,13 @@ class PickAndPlaceModule(Module):
         self._clear_selection()
         if object_id not in self._objects:
             scanned = ", ".join(self._objects) or "none"
-            return SkillResult.ok(
+            return SkillResult(
                 f"No object with id {object_id} in the latest scan. Scanned ids: {scanned}. "
                 "Use scan_objects to refresh the list."
             )
         pointcloud = self._scene.get_object_pointcloud_by_object_id(object_id)
         if pointcloud is None:
-            return SkillResult.ok(
+            return SkillResult(
                 f"Object {object_id} has no point cloud in the latest scan. Use scan_objects again."
             )
         candidates = self._grasp_generator.propose_grasps(pointcloud)
@@ -218,7 +217,7 @@ class PickAndPlaceModule(Module):
                 f"the planning frame is {self.config.planning_frame!r}"
             )
         if not candidates.candidates:
-            return SkillResult.ok(f"Generated 0 grasp candidates for object {object_id}.")
+            return SkillResult(f"Generated 0 grasp candidates for object {object_id}.")
         group = self._gripper_group(planning_group)
         if not_open := self._open_gripper(group, "before grasping"):
             return not_open
@@ -255,15 +254,17 @@ class PickAndPlaceModule(Module):
             self._holding_object = True
             if blocked := self._servo(grasp, pregrasp, group):
                 return self._stopped(f"Retract after grasping object {object_id}", blocked)
-            return SkillResult.ok(
+            return SkillResult(
                 "Pick complete",
-                object_id=object_id,
-                rank=rank,
-                score=candidate.score,
-                candidates=len(candidates.candidates),
+                metadata={
+                    "object_id": object_id,
+                    "rank": rank,
+                    "score": candidate.score,
+                    "candidates": len(candidates.candidates),
+                },
             )
         attempted = min(len(candidates.candidates), self.config.max_grasp_attempts)
-        return SkillResult.ok(
+        return SkillResult(
             f"The planner found no path to any of the {attempted} grasp candidate(s) tried "
             f"for object {object_id}; last planner result {last_plan}."
         )
@@ -515,7 +516,7 @@ class PickAndPlaceModule(Module):
         """
         target = f"({x:.2f}, {y:.2f}, {z:.2f})"
         if self._selected_grasp is None or not self._holding_object:
-            return SkillResult.ok(
+            return SkillResult(
                 f"Not holding any object; nothing was placed at {target}. Use pick_object first."
             )
         self._staged = None
@@ -531,12 +532,12 @@ class PickAndPlaceModule(Module):
         if blocked := self._servo(preplace, place, group):
             return self._stopped(f"Move down to the place pose {target}", blocked)
         if not_open := self._open_gripper(group, "to release the object"):
-            return SkillResult.ok(f"{not_open.message} The arm stayed at the place pose.")
+            return SkillResult(f"{not_open.message} The arm stayed at the place pose.")
         self._holding_object = False
         self._clear_selection()
         if blocked := self._servo(place, preplace, group):
             return self._stopped(f"Retract from {target} after releasing", blocked)
-        return SkillResult.ok("Place complete")
+        return SkillResult("Place complete")
 
     def _clear_selection(self) -> None:
         self._grasp_candidates = GraspCandidateArray()
@@ -581,7 +582,7 @@ class PickAndPlaceModule(Module):
             result: The planner or execution result that did not succeed.
         """
         source = "planner" if isinstance(result, PlanResult) else "execution"
-        return SkillResult.ok(f"{step} did not complete; {source} returned {_status(result)}")
+        return SkillResult(f"{step} did not complete; {source} returned {_status(result)}")
 
     def _apply_yaw_policy(self, pose: PoseStamped, group: PlanningGroupID) -> PoseStamped:
         if self.config.yaw_policy == "generated":
@@ -705,7 +706,7 @@ class PickAndPlaceModule(Module):
         )
         if settle.position is None or open_failure(settle, self.config.grasp_verification) is None:
             return None
-        return SkillResult.ok(f"Commanded the gripper open {step}. {_gripper_reading(settle)}")
+        return SkillResult(f"Commanded the gripper open {step}. {_gripper_reading(settle)}")
 
     def _close_and_verify(
         self, planning_group: PlanningGroupID, object_id: str
@@ -736,7 +737,7 @@ class PickAndPlaceModule(Module):
         if "nothing in the jaws" in failure:
             reopened = self._open_gripper(planning_group, "after closing on nothing")
             report = f"{report} {'Reopened the gripper.' if reopened is None else reopened.message}"
-        return SkillResult.ok(report)
+        return SkillResult(report)
 
     def _gripper_position(self, planning_group: PlanningGroupID) -> float | None:
         state = self._manipulation.get_state().groups.get(planning_group)

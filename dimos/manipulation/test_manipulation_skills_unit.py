@@ -47,10 +47,10 @@ def test_cancel_reports_an_unconfirmed_stop(
         skills.cancel()
 
 
-def test_cancel_reports_a_confirmed_stop_as_success(skills: ManipulationSkills) -> None:
+def test_cancel_reports_a_confirmed_stop(skills: ManipulationSkills) -> None:
     skills.manipulation.cancel.return_value = ExecutionResult(ExecutionStatus.ABORTED, "Cancelled")
 
-    assert skills.cancel().success
+    assert skills.cancel().message == "Cancelled"
 
 
 def test_reset_surfaces_a_refused_recovery(skills: ManipulationSkills) -> None:

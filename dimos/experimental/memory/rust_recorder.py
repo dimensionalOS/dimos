@@ -27,8 +27,8 @@ from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In
-from dimos.memory.module import OnExisting
 from dimos.memory.store.sqlite import SqliteStore
+from dimos.memory.type.recording import OnExisting
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.std_msgs.String import String
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
@@ -97,7 +97,7 @@ RustRecordingStoreConfig: TypeAlias = Annotated[
 
 
 class RustRecorderConfig(NativeModuleConfig):
-    """Compatibility-first configuration for :class:`RustRecorder`.
+    """Configuration for :class:`RustRecorder`.
 
     Python owns artifact lifecycle and stream registration. The native process
     receives only ``store``, ``encoding_threads``, and the internally resolved
@@ -105,8 +105,8 @@ class RustRecorderConfig(NativeModuleConfig):
     """
 
     executable: str = "result/bin/dimos-memory-recorder"
-    build_command: str = "nix build -L .#dimos-memory-recorder"
-    cwd: str = "rust"
+    build_command: str | None = "nix build -L .#dimos-memory-recorder"
+    source_dir: str | None = "dimos/experimental/memory/rust"
     stdin_config: bool = True
 
     store: RustRecordingStoreConfig = Field(
@@ -154,13 +154,6 @@ class RustRecorderConfig(NativeModuleConfig):
     )
 
     @model_validator(mode="after")
-    def _resolve_cwd(self) -> RustRecorderConfig:
-        # Subclassed recorders share this native project, regardless of their source file.
-        if not Path(self.cwd).is_absolute():
-            self.cwd = str(Path(__file__).parent / self.cwd)
-        return self
-
-    @model_validator(mode="after")
     def _stdin_only(self) -> RustRecorderConfig:
         if self.extra_args:
             raise ValueError("RustRecorder is stdin-only and does not accept extra_args")
@@ -195,6 +188,13 @@ class RustRecorder(NativeModule):
 
     config: RustRecorderConfig
     tf: In[TFMessage]
+
+    @rpc
+    def build(self) -> None:
+        if self.config.g.replay:
+            Module.build(self)
+            return
+        super().build()
 
     @rpc
     def start(self) -> None:
@@ -324,4 +324,4 @@ class RustRecorder(NativeModule):
 
     def _argv(self, _topics: dict[str, str]) -> list[str]:
         """Launch the stdin-only recorder without topic or configuration arguments."""
-        return [self.config.executable]
+        return [self._executable]

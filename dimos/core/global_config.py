@@ -103,6 +103,7 @@ class GlobalConfig(BaseSettings):
     viewer: ViewerBackend = "rerun"
     rerun_open: RerunOpenOption = RERUN_OPEN_DEFAULT
     rerun_web: bool = RERUN_ENABLE_WEB
+    rerun_save: bool = False  # also write the stream to recordings/<run-id>/rerun.rrd
     rerun_host: str | None = None
     rerun_websocket_server_port: int = 3030
     n_workers: int = 2
