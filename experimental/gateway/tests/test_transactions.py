@@ -167,3 +167,65 @@ def test_desktop_replaces_nested_arguments_without_losing_nulls(
     assert config.module_config("fixture") == {"Echo": {"settings": {"keep": 3, "nullable": None}}}
     config.set_global_config_overrides({"options": {"nullable": None}})
     assert config.global_config_overrides() == {"options": {"nullable": None}}
+
+
+def test_failed_desktop_replacement_restores_reset_fields(
+    server_home: Path, monkeypatch: pytest.MonkeyPatch, requests_mock: Any
+) -> None:
+    path = config.config_file()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("dimos:\n  global_config:\n    options:\n      old: 1\n")
+    monkeypatch.setenv("DESKTOP_URL", "http://desktop.invalid")
+    request = requests_mock.put(
+        "http://desktop.invalid/api/config",
+        [
+            {"json": {}},
+            {"status_code": 500},
+            {"json": {}},
+        ],
+    )
+    import requests
+
+    with pytest.raises(requests.HTTPError):
+        config.set_global_config_overrides({"options": {"new": 2}})
+    assert request.call_count == 3
+    assert request.last_request.json() == {"dimos": {"global_config": {"options": {"old": 1}}}}
+
+
+def test_desktop_replacement_blocks_gateway_readers(
+    server_home: Path, monkeypatch: pytest.MonkeyPatch, requests_mock: Any
+) -> None:
+    path = config.config_file()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("dimos:\n  global_config:\n    options:\n      old: 1\n")
+    monkeypatch.setenv("DESKTOP_URL", "http://desktop.invalid")
+    cleared = threading.Event()
+    release = threading.Event()
+    reader_started = threading.Event()
+    calls = 0
+
+    def put(request: Any, context: Any) -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            path.write_text("dimos:\n  global_config:\n    options: null\n")
+            cleared.set()
+            assert release.wait(5)
+        else:
+            path.write_text(yaml.safe_dump(request.json()))
+        return {}
+
+    def read() -> dict[str, Any]:
+        reader_started.set()
+        return config.global_config_overrides()
+
+    requests_mock.put("http://desktop.invalid/api/config", json=put)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        writer = pool.submit(config.set_global_config_overrides, {"options": {"new": 2}})
+        assert cleared.wait(5)
+        reader = pool.submit(read)
+        assert reader_started.wait(5)
+        assert not reader.done()
+        release.set()
+        writer.result()
+        assert reader.result() == {"options": {"new": 2}}

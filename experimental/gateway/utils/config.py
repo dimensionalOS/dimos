@@ -177,10 +177,32 @@ def replace_launch_settings(key: str, values: dict[str, Any], blueprint: str | N
                     desktop_url + "/api/config", json={"dimos": {key: reset}}, timeout=10
                 )
                 cleared.raise_for_status()
-            response = requests.put(
-                desktop_url + "/api/config", json={"dimos": {key: change}}, timeout=10
-            )
-            response.raise_for_status()
+            try:
+                response = requests.put(
+                    desktop_url + "/api/config", json={"dimos": {key: change}}, timeout=10
+                )
+                response.raise_for_status()
+            except requests.RequestException as failure:
+                if reset:
+                    if blueprint is None:
+                        restore = {name: old[name] for name in reset}
+                    else:
+                        restore = {
+                            blueprint: {
+                                module: {field: previous[module][field] for field in fields}
+                                for module, fields in reset[blueprint].items()
+                            }
+                        }
+                    try:
+                        restored = requests.put(
+                            desktop_url + "/api/config", json={"dimos": {key: restore}}, timeout=10
+                        )
+                        restored.raise_for_status()
+                    except requests.RequestException as rollback_failure:
+                        raise RuntimeError(
+                            "Desktop settings save and rollback failed; previous object overrides may be cleared"
+                        ) from rollback_failure
+                raise failure
             return
         if blueprint is None:
             section[key] = values
@@ -210,7 +232,8 @@ LAUNCH_GLOBAL_DEFAULTS: dict[str, Any] = {"rerun_open": "none", "rerun_web": Tru
 
 
 def global_config_overrides() -> dict[str, Any]:
-    overrides = _section(load_desktop_config(), "dimos").get("global_config")
+    with _config_lock:
+        overrides = _section(load_desktop_config(), "dimos").get("global_config")
     return (
         {key: value for key, value in overrides.items() if value is not None}
         if isinstance(overrides, dict)
@@ -225,7 +248,8 @@ def set_global_config_overrides(overrides: dict[str, Any]) -> None:
 
 
 def module_config(blueprint: str) -> dict[str, dict[str, Any]]:
-    saved = _section(_section(load_desktop_config(), "dimos"), "module_config").get(blueprint)
+    with _config_lock:
+        saved = _section(_section(load_desktop_config(), "dimos"), "module_config").get(blueprint)
     if not isinstance(saved, dict):
         return {}
     modules = {
