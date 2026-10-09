@@ -148,6 +148,35 @@ def replace_launch_settings(key: str, values: dict[str, Any], blueprint: str | N
                 for module, fields in values.items():
                     change.setdefault(module, {}).update(fields)
                 change = {blueprint: change}
+            # Reset object-valued arguments before replacing them: Desktop deep-merges dictionaries.
+            if blueprint is None:
+                reset: dict[str, Any] = {
+                    name: None
+                    for name, value in values.items()
+                    if isinstance(value, dict) and isinstance(old.get(name), dict)
+                }
+            else:
+                reset_modules = {
+                    module: {
+                        field: None
+                        for field, value in fields.items()
+                        if isinstance(value, dict)
+                        and isinstance(_section(previous, module).get(field), dict)
+                    }
+                    for module, fields in values.items()
+                }
+                reset = {
+                    blueprint: {
+                        module: fields for module, fields in reset_modules.items() if fields
+                    }
+                }
+                if not reset[blueprint]:
+                    reset = {}
+            if reset:
+                cleared = requests.put(
+                    desktop_url + "/api/config", json={"dimos": {key: reset}}, timeout=10
+                )
+                cleared.raise_for_status()
             response = requests.put(
                 desktop_url + "/api/config", json={"dimos": {key: change}}, timeout=10
             )

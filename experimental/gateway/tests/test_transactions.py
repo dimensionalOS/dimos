@@ -134,3 +134,36 @@ def test_atomic_writes_use_independent_temporary_files(tmp_path: Path) -> None:
         list(pool.map(lambda value: config.write_atomic(path, value), values))
     assert path.read_text() in values
     assert list(tmp_path.iterdir()) == [path]
+
+
+def test_desktop_replaces_nested_arguments_without_losing_nulls(
+    server_home: Path, monkeypatch: pytest.MonkeyPatch, requests_mock: Any
+) -> None:
+    path = config.config_file()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    saved = {
+        "dimos": {
+            "global_config": {"options": {"stale": 1}},
+            "module_config": {"fixture": {"Echo": {"settings": {"keep": 1, "remove": 2}}}},
+        }
+    }
+    path.write_text(yaml.safe_dump(saved))
+    monkeypatch.setenv("DESKTOP_URL", "http://desktop.invalid")
+
+    def merge(target: dict[str, Any], patch: dict[str, Any]) -> None:
+        for key, value in patch.items():
+            if isinstance(value, dict) and isinstance(target.get(key), dict):
+                merge(target[key], value)
+            else:
+                target[key] = value
+
+    def desktop_put(request: Any, context: Any) -> dict[str, Any]:
+        merge(saved, request.json())
+        path.write_text(yaml.safe_dump(saved))
+        return {}
+
+    requests_mock.put("http://desktop.invalid/api/config", json=desktop_put)
+    config.set_module_config("fixture", {"Echo": {"settings": {"keep": 3, "nullable": None}}})
+    assert config.module_config("fixture") == {"Echo": {"settings": {"keep": 3, "nullable": None}}}
+    config.set_global_config_overrides({"options": {"nullable": None}})
+    assert config.global_config_overrides() == {"options": {"nullable": None}}
