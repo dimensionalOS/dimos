@@ -107,6 +107,9 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
+# How far inside a joint limit a captured home pose is kept, in radians.
+HOME_LIMIT_MARGIN = 0.01
+
 ModelInfoValue: TypeAlias = (
     str | bool | float | list[str] | list[float] | list[PlanningGroupInfo] | None
 )
@@ -1184,11 +1187,7 @@ class ManipulationModule(Module):
                 seeds.append(
                     (name, JointState(name=list(positions), position=list(positions.values())))
                 )
-        limits = {
-            joint.name: (joint.lower, joint.upper)
-            for joint in self.config.model.model.load().joints
-            if joint.lower is not None and joint.upper is not None
-        }
+        limits = self._joint_position_limits()
         for label, roll in (
             ("midrange", 0.0),
             ("midrange_roll_pos", 0.25),
@@ -1290,15 +1289,40 @@ class ManipulationModule(Module):
 
     @rpc
     def set_home_to_current(self) -> CommandResult:
-        """Make the pose the arms are in right now the home preset for this run."""
+        """Make the pose the arms are in right now the home preset for this run.
+
+        An arm resting on its support sits on a joint's hard stop; a goal on
+        the stop fails the trajectory timing by rounding, so captured joints
+        are kept HOME_LIMIT_MARGIN inside their limits.
+        """
         if self._world_monitor is None:
             return CommandResult(CommandStatus.FAILED, "Planning not initialized")
         current = self._world_monitor.get_current_joint_state()
         if current is None:
             return CommandResult(CommandStatus.FAILED, "No joint state yet")
-        self._home_joints = current
-        logger.info("Home joints set to the current pose", positions=current.position)
-        return CommandResult(CommandStatus.SUCCEEDED, "Home is now the current pose")
+        limits = self._joint_position_limits()
+        positions: list[float] = []
+        nudged: list[str] = []
+        for name, position in zip(current.name, current.position, strict=True):
+            lower, upper = limits.get(name, (None, None))
+            inside = position
+            if lower is not None and upper is not None and upper - lower > 2 * HOME_LIMIT_MARGIN:
+                inside = min(max(position, lower + HOME_LIMIT_MARGIN), upper - HOME_LIMIT_MARGIN)
+            if inside != position:
+                nudged.append(name)
+            positions.append(inside)
+        self._home_joints = JointState(name=list(current.name), position=positions)
+        logger.info("Home joints set to the current pose", positions=positions, nudged=nudged)
+        note = f"; {', '.join(nudged)} moved just inside the joint limits" if nudged else ""
+        return CommandResult(CommandStatus.SUCCEEDED, f"Home is now the current pose{note}")
+
+    def _joint_position_limits(self) -> dict[str, tuple[float, float]]:
+        """Position limits of every model joint that declares them."""
+        return {
+            joint.name: (joint.lower, joint.upper)
+            for joint in self.config.model.model.load().joints
+            if joint.lower is not None and joint.upper is not None
+        }
 
     def set_init_joints_to_current(self) -> bool:
         """Set init joints to the current joint positions."""

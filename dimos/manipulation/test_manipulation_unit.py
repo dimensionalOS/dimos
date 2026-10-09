@@ -147,6 +147,34 @@ def _bimanual_config() -> RobotModelConfig:
     )
 
 
+def test_set_home_to_current_keeps_captured_joints_inside_their_limits() -> None:
+    from dimos.manipulation.manipulation_spec import CommandStatus
+
+    config = _bimanual_config()
+    module = ManipulationModule(model=config)
+    module.coordinator_joint_state = None
+    module.voxel_map = None
+    module.objects = None
+    try:
+        module.config.model = config
+        module._world_monitor = MagicMock()
+        module._world_monitor.get_current_joint_state.return_value = JointState(
+            name=config.joint_names, position=[-8.9e-16, 1.2]
+        )
+        module._joint_position_limits = MagicMock(  # type: ignore[method-assign]
+            return_value={"left/j1": (0.0, 3.66), "right/j1": (-2.0, 2.0)}
+        )
+
+        result = module.set_home_to_current()
+
+        assert result.status == CommandStatus.SUCCEEDED
+        assert "left/j1 moved just inside" in result.message
+        assert module._home_joints is not None
+        assert module._home_joints.position == pytest.approx([0.01, 1.2])
+    finally:
+        module.stop()
+
+
 def _install_generated_plan(
     module: ManipulationModule,
     config: RobotModelConfig,
