@@ -69,7 +69,7 @@ def test_flat_floor_yields_populated_path_and_planned_true() -> None:
 
     [out] = list(MLSPlan(goal=(2.0, 2.0, 0.0), voxel_size=0.2, robot_height=1.0)(iter([obs])))
 
-    decoded = cdr_decode(out.data.encode(), Path)
+    decoded = cdr_decode(cdr_encode(out.data), Path)
     assert decoded.header.frame_id == "world"
     assert decoded.header.stamp.sec == 1700000000
     assert decoded.header.stamp.nanosec == 123456789
