@@ -77,7 +77,7 @@ payloads = {
     ),
 }
 for name, (message_type, payload) in payloads.items():
-    value = message_type.decode(payload)
+    value = cdr_decode(payload, message_type)
     header = value.transforms[0].header if name == "tf" else value.header
     assert header.stamp.sec == 12 and header.stamp.nanosec == 250000000
     (output / (name + ".cdr")).write_bytes(payload)

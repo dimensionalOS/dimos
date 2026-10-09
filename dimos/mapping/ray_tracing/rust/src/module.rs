@@ -366,7 +366,7 @@ mod tests {
 
         // A mask cloud naming that voxel's center, encoded and decoded exactly
         // as the port would.
-        let cloud = points_to_cloud(&[3.5, -1.5, 1.5], "world", Time::default());
+        let cloud = points_to_cloud(&[3.5, -1.5, 1.5], "world", Time { sec: 0, nanosec: 0 });
         let Ok(points) = extract_xyz(&cloud) else {
             panic!("clear mask cloud must decode");
         };
@@ -389,12 +389,12 @@ mod tests {
         let global = points_to_cloud(
             &emit_points(&map, 1.0, None, 0, &live),
             "world",
-            Time::default(),
+            Time { sec: 0, nanosec: 0 },
         );
         let local = points_to_cloud(
             &emit_points(&map, 1.0, Some(&cylinder), 0, &live),
             "world",
-            Time::default(),
+            Time { sec: 0, nanosec: 0 },
         );
         assert!(cloud_points(&global).contains(&voxel_center(0, 0, 0)));
         assert!(cloud_points(&local).contains(&voxel_center(0, 0, 0)));
@@ -414,12 +414,12 @@ mod tests {
         let global = points_to_cloud(
             &emit_points(&map, 1.0, None, 0, &live),
             "world",
-            Time::default(),
+            Time { sec: 0, nanosec: 0 },
         );
         let local = points_to_cloud(
             &emit_points(&map, 1.0, Some(&cylinder), 0, &live),
             "world",
-            Time::default(),
+            Time { sec: 0, nanosec: 0 },
         );
         assert!(cloud_points(&global).contains(&voxel_center(5, 0, 0)));
         assert!(!cloud_points(&local).contains(&voxel_center(5, 0, 0)));
@@ -440,12 +440,12 @@ mod tests {
         let global = points_to_cloud(
             &emit_points(&map, 1.0, None, 0, &live),
             "world",
-            Time::default(),
+            Time { sec: 0, nanosec: 0 },
         );
         let local = points_to_cloud(
             &emit_points(&map, 1.0, Some(&cylinder), 0, &live),
             "world",
-            Time::default(),
+            Time { sec: 0, nanosec: 0 },
         );
         assert!(cloud_points(&global).contains(&voxel_center(0, 0, 5)));
         assert!(!cloud_points(&local).contains(&voxel_center(0, 0, 5)));
@@ -468,12 +468,12 @@ mod tests {
         let global = points_to_cloud(
             &emit_points(&map, 1.0, None, 0, &live),
             "world",
-            Time::default(),
+            Time { sec: 0, nanosec: 0 },
         );
         let local = points_to_cloud(
             &emit_points(&map, 1.0, Some(&cylinder), 0, &live),
             "world",
-            Time::default(),
+            Time { sec: 0, nanosec: 0 },
         );
         assert!(cloud_points(&global).contains(&voxel_center(1, 0, 0)));
         assert!(cloud_points(&global).contains(&voxel_center(10, 10, 10)));
@@ -505,7 +505,7 @@ mod tests {
         let local = points_to_cloud(
             &emit_points(&map, 1.0, Some(&cylinder), 3, &live),
             "world",
-            Time::default(),
+            Time { sec: 0, nanosec: 0 },
         );
         let pts = cloud_points(&local);
         assert!(pts.contains(&voxel_center(1, 1, 0)), "dense patch kept");

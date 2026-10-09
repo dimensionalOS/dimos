@@ -78,12 +78,13 @@ A generated `Transform` contains translation and rotation. `TransformStamped` ad
 ```python
 from dimos_generated.geometry_msgs.msg import TransformStamped
 from dimos_generated.std_msgs.msg import Header
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos.msgs.geometry import compose_transforms, inverse_transform, transform_matrix
 from dimos.msgs.time import time_from_seconds
 from dimos_generated.geometry_msgs.msg import Quaternion
 from dimos_generated.geometry_msgs.msg import Transform
 from dimos_generated.geometry_msgs.msg import Vector3
-camera_transform = TransformStamped(header=Header(frame_id='base_link'), child_frame_id='camera_link', transform=Transform(translation=Vector3(x=0.5, y=0.0, z=0.3), rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)))
+camera_transform = TransformStamped(header=Header(stamp=Time(sec=0, nanosec=0), frame_id='base_link'), child_frame_id='camera_link', transform=Transform(translation=Vector3(x=0.5, y=0.0, z=0.3), rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)))
 print(camera_transform)
 ```
 
@@ -98,13 +99,14 @@ Transforms can be composed and inverted:
 ```python
 from dimos_generated.geometry_msgs.msg import TransformStamped
 from dimos_generated.std_msgs.msg import Header
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos.msgs.geometry import compose_transforms, inverse_transform, transform_matrix
 from dimos.msgs.time import time_from_seconds
 from dimos_generated.geometry_msgs.msg import Quaternion
 from dimos_generated.geometry_msgs.msg import Transform
 from dimos_generated.geometry_msgs.msg import Vector3
-t1 = TransformStamped(header=Header(frame_id='base_link'), child_frame_id='camera_link', transform=Transform(translation=Vector3(x=1.0, y=0.0, z=0.0), rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)))
-t2 = TransformStamped(header=Header(frame_id='camera_link'), child_frame_id='end_effector', transform=Transform(translation=Vector3(x=0.0, y=0.5, z=0.0), rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)))
+t1 = TransformStamped(header=Header(stamp=Time(sec=0, nanosec=0), frame_id='base_link'), child_frame_id='camera_link', transform=Transform(translation=Vector3(x=1.0, y=0.0, z=0.0), rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)))
+t2 = TransformStamped(header=Header(stamp=Time(sec=0, nanosec=0), frame_id='camera_link'), child_frame_id='end_effector', transform=Transform(translation=Vector3(x=0.0, y=0.5, z=0.0), rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)))
 t3 = compose_transforms(t1, t2)
 print(f'Composed: {t3.header.frame_id} -> {t3.child_frame_id}')
 print(f'Translation: ({t3.transform.translation.x}, {t3.transform.translation.y}, {t3.transform.translation.z})')
@@ -125,6 +127,7 @@ For integration with libraries like NumPy or OpenCV:
 ```python
 from dimos_generated.geometry_msgs.msg import TransformStamped
 from dimos_generated.std_msgs.msg import Header
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos.msgs.geometry import compose_transforms, inverse_transform, transform_matrix
 from dimos.msgs.time import time_from_seconds
 from dimos_generated.geometry_msgs.msg import Quaternion
@@ -203,6 +206,7 @@ This example demonstrates how multiple modules publish and receive transforms. T
 ```python skip ansi=false
 from dimos_generated.geometry_msgs.msg import TransformStamped
 from dimos_generated.std_msgs.msg import Header
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos.msgs.geometry import compose_transforms, inverse_transform, transform_matrix
 from dimos.msgs.time import time_from_seconds
 import time
@@ -367,6 +371,7 @@ import time
 
 from dimos_generated.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos_generated.std_msgs.msg import Header
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos.msgs.time import time_from_nanoseconds
 from dimos.protocol.tf.tf import MultiTBuffer
 
@@ -381,7 +386,7 @@ for i in range(5):
         ),
         child_frame_id="camera_link",
         transform=Transform(
-            translation=Vector3(x=float(i)), rotation=Quaternion(w=1.0)
+            translation=Vector3(x=float(i), y=0.0, z=0.0), rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
         ),
     )
     tf.receive_transform(t)

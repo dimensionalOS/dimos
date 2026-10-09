@@ -135,7 +135,7 @@ class VisualServoing2D:
         """
         fx = self._camera_info.k[0]  # focal length x
         cx = self._camera_info.k[2]  # optical center x
-        return (pixel_x - cx) / fx
+        return float((pixel_x - cx) / fx)
 
     def _estimate_distance(self, bbox: tuple[float, float, float, float]) -> float | None:
         """Estimate distance to object based on bounding box size and camera intrinsics.
@@ -162,4 +162,4 @@ class VisualServoing2D:
         fx = self._camera_info.k[0]  # focal length x in pixels
         estimated_distance = (self._assumed_object_width * fx) / bbox_width
 
-        return estimated_distance
+        return float(estimated_distance)

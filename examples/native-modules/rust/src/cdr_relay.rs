@@ -15,7 +15,9 @@
 // Copyright 2026 Dimensional Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use dimos_generated_messages::{dimos_msgs::msg::LineSegments3D, sensor_msgs::msg::Image};
+use dimos_generated_messages::{
+    dimos_msgs::msg::line_segments3_d::LineSegments3D, sensor_msgs::msg::image::Image,
+};
 use dimos_module::{cdr, run_with_transport, Input, Module, Output};
 
 #[derive(Module)]

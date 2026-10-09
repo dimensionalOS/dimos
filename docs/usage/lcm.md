@@ -6,8 +6,8 @@ CDR messages. LCM and Zenoh use the same message bytes; choosing a transport
 does not change a message's schema or codec.
 
 Message definitions are ROS2 `.msg` files. The standalone generator produces
-Python, C++ and Rust value types without requiring ROS. Python bindings share
-the C++ Fast CDR implementation; native Rust types use `re_cdr`.
+Python, C++ and Rust value types without requiring ROS. Python types and codecs use rosbags; C++ uses ROSIDL/Fast CDR and Rust
+uses ros2msg/`re_cdr`.
 See [add and use a message](/docs/development/messages.md) for the complete
 local-message user story and the three language examples.
 
@@ -15,12 +15,13 @@ local-message user story and the three language examples.
 
 ```python session=cdr_transport_demo ansi=false
 from dimos_generated.geometry_msgs.msg import Vector3
+from dimos_message_build.registry import encode, decode
 
 message = Vector3(x=1.0, y=2.0, z=3.0)
-payload = message.encode()
-decoded = Vector3.decode(payload)
+payload = encode(message)
+decoded = decode(payload, Vector3)
 assert (decoded.x, decoded.y, decoded.z) == (1.0, 2.0, 3.0)
-print(message.msg_name)
+print(message.__msgtype__)
 print(f"Decoded: x={decoded.x}, y={decoded.y}, z={decoded.z}")
 ```
 
@@ -54,12 +55,13 @@ dot=32.0
 
 ```python session=cdr_transport_demo ansi=false
 from dimos_generated.sensor_msgs.msg import PointCloud2
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.std_msgs.msg import Header
 from dimos.msgs.pointcloud import pointcloud_from_xyz, pointcloud_xyz
 
 points = np.array([[1, 2, 3], [4, 5, 6]], dtype=np.float32)
-cloud = pointcloud_from_xyz(points, header=Header(frame_id="camera"))
-roundtrip = PointCloud2.decode(cloud.encode())
+cloud = pointcloud_from_xyz(points, header=Header(stamp=Time(sec=0, nanosec=0), frame_id="camera"))
+roundtrip = decode(encode(cloud), PointCloud2)
 np.testing.assert_array_equal(pointcloud_xyz(roundtrip), points)
 print(f"PointCloud: {roundtrip.width * roundtrip.height} points")
 print(f"Frame: {roundtrip.header.frame_id}")
@@ -104,7 +106,7 @@ finally:
 In-process value: 1.0, 2.0, 3.0
 ```
 
-For inter-process exchange, encode with `message.encode()` and decode using the
+For inter-process exchange, encode with `encode(message)` and decode using the
 known generated type. Separate Python-object serialization paths retain their
 own contracts; CDR is the typed-message representation.
 

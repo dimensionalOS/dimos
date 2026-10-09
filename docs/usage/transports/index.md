@@ -350,7 +350,7 @@ received = []
 topic = Topic("/robot/velocity", Vector3)
 
 lcm.subscribe(topic, lambda msg, t: received.append(msg))
-lcm.publish(topic, Vector3(x=1.0, z=0.5))
+lcm.publish(topic, Vector3(x=1.0, y=0.0, z=0.5))
 
 import time
 time.sleep(0.1)
