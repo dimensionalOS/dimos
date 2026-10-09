@@ -476,7 +476,8 @@ def convert(source: Path, destination: Path) -> dict[str, Any]:
         for stream in streams:
             if destination.suffix != ".mcap":
                 validate_identifier(stream.name)
-            _ = stream.target  # Validate generated type availability before creating output.
+            # The property resolves/validates the generated type before output is created.
+            stream.target  # noqa: B018
         with tempfile.TemporaryDirectory(prefix=".cdr-convert-", dir=destination.parent) as tmp:
             temp = Path(tmp) / destination.name
             sidecar = Path(tmp) / report.name

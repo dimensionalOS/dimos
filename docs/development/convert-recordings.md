@@ -1,9 +1,9 @@
 # Convert an old recording to CDR
 
-This offline tool is for reviewing historical DimOS recordings on the CDR proposal.
+This offline tool is for reviewing historical dimOS recordings on the CDR proposal.
 It does not start a blueprint, router, robot, viewer or network connection.
 
-From this proposal checkout, use an environment containing DimOS, its matching
+From this proposal checkout, use an environment containing dimOS, its matching
 `dimos-generated` package and the retained historical decoder. The commands below
 require your existing historical recording: replace `old.mcap` or `old.db` with
 its path. These input files are not created by the walkthrough.
@@ -45,13 +45,13 @@ decoder implementation; it introduces no new codec.
 New runtime transports and recordings still use generated CDR types; there is
 no automatic old-wire fallback.
 For JSON-only input it is unnecessary. `mcap`/`lz4` and SQLite support come from
-the prepared DimOS environment. No dependencies are downloaded by conversion.
+the prepared dimOS environment. No dependencies are downloaded by conversion.
 
 ## Accepted input and mapping
 
 | Input | Output |
 | --- | --- |
-| DimOS MCAP `lcm`, `jpeg`, `json`, optionally `lz4+…` | Generated standard ROS-compatible CDR values |
+| dimOS MCAP `lcm`, `jpeg`, `json`, optionally `lz4+…` | Generated standard ROS-compatible CDR values |
 | Memory SQLite `_streams` registry, in-file observation/blob tables, same codecs | Same CDR values through the actual `SqliteStore` |
 | Known CDR MCAP with `ros2msg` exactly matching the installed schema | Match the schema and decode/re-encode without changing the type |
 | LCM Image with explicit `jpeg` codec | `sensor_msgs/msg/CompressedImage`, `format="jpeg"`, **original JPEG bytes** |
