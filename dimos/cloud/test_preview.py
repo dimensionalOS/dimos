@@ -14,7 +14,10 @@
 
 import base64
 from collections.abc import Iterator, Sequence
+from contextlib import closing
+import json
 from pathlib import Path
+import sqlite3
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -23,7 +26,9 @@ import pytest
 
 from dimos.cloud import preview
 from dimos.cloud.constants import PREVIEW_SCALE
+from dimos.memory.codecs.lcm import LcmCodec
 from dimos.memory.store.base import Store
+from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
@@ -47,9 +52,21 @@ class Stream:
         return self.obs[0]
 
 
-def store(**streams: Sequence[tuple[float, Any, Pose | None]]) -> Store:
+def store(path: Path | None = None, **streams: Sequence[tuple[float, Any, Pose | None]]) -> Store:
     built = {name: Stream(name, items) for name, items in streams.items()}
-    return cast("Store", SimpleNamespace(list_streams=lambda: list(built), streams=built))
+    if path is not None:
+        with closing(sqlite3.connect(path)) as db:
+            for name, items in streams.items():
+                table = name.replace('"', '""')
+                db.execute(f'CREATE TABLE "{table}" (ts REAL)')
+                db.executemany(f'INSERT INTO "{table}" VALUES (?)', [(t,) for t, _, _ in items])
+            db.commit()
+    return cast(
+        "Store",
+        SimpleNamespace(
+            list_streams=lambda: list(built), streams=built, config=SimpleNamespace(path=path)
+        ),
+    )
 
 
 def points(doc: dict[str, Any], b64: str) -> np.ndarray:
@@ -147,3 +164,145 @@ def test_joystick_is_capped_evenly(monkeypatch: pytest.MonkeyPatch) -> None:
         [0.4],
         [0.9],
     ]
+
+
+def test_timing_does_not_decode_eager_sqlite_stream(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with SqliteStore(path=str(tmp_path / "eager.db")) as recording:
+        stream = recording.stream("color_image", Image, eager_blobs=True, codec=LcmCodec(Image))
+        image = Image.from_numpy(np.zeros((8, 8, 3), np.uint8))
+        for t in [103.0, 100.0, 101.0]:
+            stream.append(image, ts=t)
+
+        def no_decode(*args: Any) -> Any:
+            pytest.fail("timestamp scan must not decode even eagerly configured payloads")
+
+        monkeypatch.setattr(LcmCodec, "decode", no_decode)
+        report = preview._timing(tmp_path / "eager.db", {"camera": stream}, 100.0)
+        assert report["streams"]["camera"]["gaps"] == [[1.0, 3.0]]
+
+
+def test_timing_respects_full_wire_json_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    recording = store(
+        tmp_path / "meta.db",
+        odom_名字=[(100.0, Pose(0, 0, 0), None)],
+        lidar=[(100.0, cloud(100.0, (0, 0, 0.3)), None)],
+    )
+    doc = preview.build(recording)
+    assert doc is not None and "timing" in doc
+    # Match HttpCloudRequest's encoding, including escaped Unicode and whitespace.
+    size = len(json.dumps(doc, allow_nan=False).encode())
+    monkeypatch.setattr(preview, "PREVIEW_MAX_BYTES", size, raising=False)
+    assert preview.build(recording) == doc  # exact boundary fits
+    monkeypatch.setattr(preview, "PREVIEW_MAX_BYTES", size - 1)
+    doc.pop("timing")
+    doc["streams"].pop("odom")  # timing-only count metadata must also fall back
+    assert preview.build(recording) == doc
+
+
+@pytest.mark.parametrize(
+    "timestamps,t0",
+    [
+        ([100.0, float("nan")], 100.0),
+        ([float("inf")], 0.0),
+        ([1.0], float("nan")),
+        ([-1e308, 1e308], 0.0),
+    ],
+)
+def test_timing_rejects_nonfinite_metadata(
+    tmp_path: Path, timestamps: list[float], t0: float
+) -> None:
+    recording = store(tmp_path / "meta.db", camera=[(t, None, None) for t in timestamps])
+    with pytest.raises(ValueError, match="finite"):
+        preview._timing(tmp_path / "meta.db", dict(recording.streams.items()), t0)
+
+
+def test_timing_failure_preserves_spatial_preview(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    recording = store(
+        tmp_path / "meta.db",
+        odom=[(100.0, Pose(0, 0, 0), None)],
+        lidar=[(100.0, cloud(100.0, (0, 0, 0.3)), None)],
+    )
+    expected = preview.build(recording)
+    assert expected is not None
+    expected.pop("timing")
+    expected["streams"].pop("odom")
+
+    def fail(*args: Any) -> Any:
+        raise RuntimeError("metadata scan failed")
+
+    monkeypatch.setattr(preview, "_timing", fail)
+    assert preview.build(recording) == expected
+
+
+def test_timing_caps_intervals_not_metadata_scan(tmp_path: Path) -> None:
+    # This file contains timestamp columns only: there are no payloads to decode.
+    recording = store(
+        tmp_path / "meta.db", camera=[(100 + i * 2.0, None, None) for i in reversed(range(201))]
+    )
+    report = preview._timing(tmp_path / "meta.db", dict(recording.streams.items()), 100.0)[
+        "streams"
+    ]["camera"]
+    assert report["gaps"] == [[i * 2.0, (i + 1) * 2.0] for i in range(64)]
+    assert report["gap_count"] == 200 and report["truncated"] is True
+    assert report["last_s"] == report["span_s"] == 400.0
+    assert report["max_gap_s"] == 2.0
+
+
+def test_timing_uses_original_sorted_timestamps_and_preview_origin(tmp_path: Path) -> None:
+    # The camera starts late; duplicates and a one-second interval are not gaps.
+    image = Image.from_numpy(np.zeros((8, 8, 3), np.uint8))
+    frames = [(t, image, None) for t in [102.0, 105.0, 103.0, 103.0, 106.0]]
+    odom = [(100.0 + i, Pose(i, 0, 0), None) for i in range(8)]
+    lidar = [(101.0, cloud(101.0, (0, 0, 0.3)), None)]
+    doc = preview.build(
+        store(
+            tmp_path / "meta.db",
+            color_image=frames,
+            odom=odom,
+            lidar=lidar,
+            joystick=[(99.0, Joy(axes=[], buttons=[]), None)],
+        )
+    )
+    assert doc is not None
+    assert doc["duration_s"] == 7  # joystick must not move the preview origin
+    assert doc["streams"]["camera"]["count"] == 5
+    assert doc["streams"]["odom"] == {"name": "odom", "count": 8}
+    assert doc["timing"] == {
+        "version": 1,
+        "gap_threshold_s": 1.0,
+        "streams": {
+            "camera": {
+                "first_s": 2.0,
+                "last_s": 6.0,
+                "span_s": 4.0,
+                "max_gap_s": 2.0,
+                "gaps": [[3.0, 5.0]],
+                "gap_count": 1,
+                "truncated": False,
+            },
+            "odom": {
+                "first_s": 0.0,
+                "last_s": 7.0,
+                "span_s": 7.0,
+                "max_gap_s": 1.0,
+                "gaps": [],
+                "gap_count": 0,
+                "truncated": False,
+            },
+            "lidar": {
+                "first_s": 1.0,
+                "last_s": 1.0,
+                "span_s": 0.0,
+                "max_gap_s": 0.0,
+                "gaps": [],
+                "gap_count": 0,
+                "truncated": False,
+            },
+        },
+    }

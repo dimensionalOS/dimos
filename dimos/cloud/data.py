@@ -222,6 +222,7 @@ class MultipartBackend:
                 return "none (no lidar, camera or odometry)"
             if video:
                 doc["video"] = video
+            preview.trim_timing(doc)  # include video metadata in the JSON budget
             sent = self.api.put_preview(upload_id, doc)
             if not (video and sent.get("video_url")):
                 return "sent" + note
