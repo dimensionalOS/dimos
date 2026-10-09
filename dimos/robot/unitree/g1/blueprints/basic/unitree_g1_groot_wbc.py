@@ -90,6 +90,8 @@ from dimos.utils.data import LfsPath
 from dimos.visualization.rerun.scene_package import scene_package_static_entities
 from dimos.visualization.vis_module import vis_module
 
+DEPENDENCY_BUNDLE = "runtime-unitree-dds"
+
 # Lazy data handles. LfsPath only triggers the LFS pull on first
 # str()/open(); using ``get_data(...)`` at import time would block the
 # whole CLI on a multi-GB download every time the module is imported.

@@ -48,6 +48,8 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.utils.logging_config import setup_logger
 
+DEPENDENCY_BUNDLE = "runtime-unitree-dds"
+
 logger = setup_logger()
 
 _NUM_MOTORS = 29

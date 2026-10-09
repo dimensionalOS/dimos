@@ -54,6 +54,7 @@ from dimos.cli.commands.bake import bake
 from dimos.cli.commands.cameracalibrate import cameracalibrate
 from dimos.cli.commands.data import data_app
 from dimos.cli.commands.dataprep import dataprep_app
+from dimos.cli.commands.deps import deps, prepare
 from dimos.cli.commands.docs import docs
 from dimos.cli.commands.global_options import create_dynamic_callback
 from dimos.cli.commands.graph import graph
@@ -121,6 +122,8 @@ main.add_typer(mcp_app, name="mcp")
 main.command("agent-send")(agent_send_cmd)
 main.command()(restart)
 main.command()(show_config)
+main.command()(deps)
+main.command()(prepare)
 main.command(
     context_settings={
         "allow_extra_args": True,

@@ -63,6 +63,8 @@ from dimos.protocol.tf.static_tf_publisher import (
     frames_to_edge_transforms,
 )
 
+DEPENDENCY_BUNDLE = "runtime-common"
+
 BASE_LINK = "base_link"
 
 CAMERA_ANGLE_UP = math.radians(10)

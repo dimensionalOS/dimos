@@ -51,6 +51,19 @@ def _get_all_numbers(s: str) -> list[float]:
     return [float(x) for x in re.findall(r"-?\d+\.?\d*", s)]
 
 
+def unitree_connection_type_for(ip: str | None, *, simulation: str, replay: bool) -> str:
+    """Which Go2 connection a run uses: ``replay``, ``mujoco``, ``dimsim`` or ``webrtc``.
+
+    The address aliases (``fake``, ``mock``, ``replay`` and ``mujoco``) win so a fleet can
+    mix a simulated robot into real ones; this mirrors ``make_connection``.
+    """
+    if replay or ip in ("fake", "mock", "replay"):
+        return "replay"
+    if ip == "mujoco":
+        return "mujoco"
+    return simulation or "webrtc"
+
+
 class GlobalConfig(BaseSettings):
     robot_ip: str | None = None
     robot_ips: str | None = None
@@ -205,13 +218,18 @@ class GlobalConfig(BaseSettings):
                 raise AttributeError(f"GlobalConfig has no field '{key}'")
             setattr(self, key, value)
 
+    @field_validator("simulation")
+    @classmethod
+    def _normalize_simulation(cls, value: str) -> str:
+        """Lowercase; a bare ``--simulation`` (``true``) means MuJoCo."""
+        value = value.strip().lower()
+        return "mujoco" if value == "true" else value
+
     @property
     def unitree_connection_type(self) -> str:
-        if self.replay:
-            return "replay"
-        if self.simulation:
-            return self.simulation
-        return "webrtc"
+        return unitree_connection_type_for(
+            self.robot_ip, simulation=self.simulation, replay=self.replay
+        )
 
     @property
     def mujoco_start_pos_float(self) -> tuple[float, float]:

@@ -78,6 +78,8 @@ from dimos.robot.unitree.go2.connection import BASE_TO_OPTICAL, GO2Connection
 from dimos.utils.logging_config import setup_logger
 from dimos.visualization.vis_module import vis_module
 
+DEPENDENCY_BUNDLE = "runtime-unitree"
+
 if TYPE_CHECKING:
     from collections.abc import Iterator
 

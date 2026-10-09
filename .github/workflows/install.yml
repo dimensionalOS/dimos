@@ -5,10 +5,13 @@ on:
     paths:
       - 'scripts/install.sh'
       - 'scripts/test-install.sh'
+      - 'scripts/test_install.py'
       - 'pyproject.toml'
       - 'uv.lock'
       - 'setup.py'
       - 'MANIFEST.in'
+      - 'dimos/deps/**'
+      - 'dimos/cli/commands/deps.py'
       - '.github/workflows/install.yml'
   workflow_dispatch:
 
@@ -34,6 +37,8 @@ jobs:
           /bin/bash -n scripts/install.sh
           /bin/bash -n scripts/test-install.sh
           uvx --from shellcheck-py shellcheck -e SC1091 scripts/install.sh scripts/test-install.sh
+      - name: Installer extras regression tests
+        run: uvx --from pytest==8.3.5 pytest -c /dev/null -p no:cacheprovider scripts/test_install.py
 
   ubuntu:
     needs: lint
@@ -43,11 +48,23 @@ jobs:
         os: [ubuntu-24.04, ubuntu-24.04-arm]
         version: ['22.04', '24.04']
         mode: [library, dev]
+        backend: [cpu]
+        include:
+          # The cuda backend installs onnxruntime-gpu and the CUDA libraries; the
+          # provider check needs no GPU, so a plain runner covers it.
+          - os: ubuntu-24.04
+            version: '24.04'
+            mode: dev
+            backend: cuda
     runs-on: ${{ matrix.os }}
     container: ubuntu:${{ matrix.version }}
-    timeout-minutes: 60
+    timeout-minutes: 150
     env:
       INSTALL_TEST_ROOT: /tmp/dimos-install-test
+      # Keep uv's cache on the job container's own filesystem, next to the
+      # virtualenvs. HOME is mounted from the runner, and uv cannot hardlink
+      # across that mount, so it would copy several GB into every virtualenv.
+      UV_CACHE_DIR: /tmp/dimos-install-test/uv-cache
     steps:
       # curl and Git are prerequisites for fetching and testing the installer.
       # All DimOS runtime/build prerequisites must be installed by install.sh.
@@ -65,9 +82,68 @@ jobs:
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           git config --global --add safe.directory "$GITHUB_WORKSPACE/.git"
           bash scripts/test-install.sh '${{ matrix.mode }}'
+      - name: Clean-install dependency bundles
+        # Fresh virtualenvs per bundle, `dimos prepare`, then the bundle is exercised.
+        # The dev install above leaves a warm uv cache, so these mostly hardlink.
+        if: matrix.mode == 'dev'
+        env:
+          DIMOS_CLEAN_INSTALL_BACKEND: ${{ matrix.backend }}
+        run: |
+          cd "$INSTALL_TEST_ROOT/dev"
+          .venv/bin/python -m pytest -p no:cacheprovider -o addopts="" -m clean_install -x -ra \
+            dimos/deps/test_prepare_integration.py
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         # act has no GitHub artifact service; installation output stays in its log.
         if: always() && !env.ACT
         with:
-          name: install-${{ matrix.os }}-${{ matrix.version }}-${{ matrix.mode }}
+          name: install-${{ matrix.os }}-${{ matrix.version }}-${{ matrix.mode }}-${{ matrix.backend }}
           path: /tmp/dimos-install-test/logs
+
+  # The oldest uv the project accepts must run the same export/install operations.
+  min-uv:
+    needs: lint
+    runs-on: ubuntu-24.04
+    container: ubuntu:24.04
+    timeout-minutes: 150
+    env:
+      INSTALL_TEST_ROOT: /tmp/dimos-install-test
+      DIMOS_CLEAN_INSTALL_BUNDLES: runtime-drone
+    steps:
+      - name: Bootstrap checkout tools
+        run: |
+          apt-get update
+          apt-get install -y ca-certificates curl git
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.9.25"
+      - name: Install with the minimum uv and prepare a bundle
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git config --global --add safe.directory "$GITHUB_WORKSPACE/.git"
+          uv --version
+          bash scripts/test-install.sh dev
+          cd "$INSTALL_TEST_ROOT/dev"
+          .venv/bin/python -m pytest -p no:cacheprovider -o addopts="" -m clean_install -x -ra \
+            dimos/deps/test_prepare_integration.py
+
+  # macOS runner capacity is limited: run on demand.
+  macos:
+    if: github.event_name == 'workflow_dispatch'
+    needs: lint
+    runs-on: macos-14
+    timeout-minutes: 150
+    env:
+      INSTALL_TEST_ROOT: /tmp/dimos-install-test
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Install and clean-install dependency bundles
+        run: |
+          bash scripts/test-install.sh dev
+          cd "$INSTALL_TEST_ROOT/dev"
+          .venv/bin/python -m pytest -p no:cacheprovider -o addopts="" -m clean_install -x -ra \
+            dimos/deps/test_prepare_integration.py

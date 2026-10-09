@@ -27,6 +27,10 @@ MAX_UNCOMPRESSED_MB = 40
 
 # Paths below the dimos-<version>/ root that every release sdist must carry.
 REQUIRED = (
+    # Dependency bundle metadata and the per-bundle lock exports `dimos prepare` installs
+    # from a release (dimos/deps/export_locks.py).
+    "dimos/deps/bundles.json",
+    "dimos/deps/locks/pylock.runtime-common-cpu.toml",
     "web/cockpit/dist/index.html",
     "web/deno.lock",
     "web/relay/main.ts",

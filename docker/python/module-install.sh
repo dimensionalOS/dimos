@@ -58,8 +58,10 @@ if [ -z "$PYTHON" ]; then
     echo "Using system Python"
 fi
 
-# ---- Install DimOS (deps from pyproject.toml[docker]) ----
-${PIP} install --no-cache-dir -e "/dimos/source[docker]"
+# ---- Install DimOS (extras selected by the image through DIMOS_EXTRAS) ----
+# Runtime bundles (runtime-common, runtime-unitree, ...) are the extras to use here;
+# `dimos deps <blueprint>` names the one a blueprint needs.
+${PIP} install --no-cache-dir -e "/dimos/source${DIMOS_EXTRAS:+[$DIMOS_EXTRAS]}"
 
 # ---- Create entrypoint ----
 cat > /dimos/entrypoint.sh <<EOF

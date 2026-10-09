@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
 from datetime import datetime, timezone
 import os
 from pathlib import Path
@@ -28,7 +29,9 @@ from typing import TYPE_CHECKING, Any
 from pydantic import ValidationError
 import typer
 
+from dimos.cli.commands.deps import prepare as prepare_dependencies
 from dimos.constants import CONFIG_DIR, LOG_DIR
+from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
 from dimos.core.daemon import (
     fork_daemon,
     install_signal_handlers,
@@ -38,6 +41,7 @@ from dimos.core.daemon import (
 )
 from dimos.core.global_config import global_config
 from dimos.core.run_registry import get_most_recent, is_pid_alive, stop_entry
+from dimos.robot.all_blueprints import all_blueprints, all_modules
 from dimos.utils.cache import cache_usage_guard, cache_usage_locked
 from dimos.utils.logging_config import setup_logger
 
@@ -47,6 +51,22 @@ if TYPE_CHECKING:
 logger = setup_logger()
 
 DEFAULT_CONFIG_PATH = CONFIG_DIR / "config"
+
+
+def split_run_arguments(tokens: Sequence[str]) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Split Typer's variadic run arguments without importing the blueprint runtime.
+
+    Blueprint names must form the leading positional segment. Once any
+    dash-prefixed token is seen, all remaining tokens belong to option parsing.
+    """
+    split_at = next((i for i, token in enumerate(tokens) if token.startswith("-")), len(tokens))
+    blueprint_names = tuple(tokens[:split_at])
+    if not blueprint_names:
+        raise BlueprintConfigError(
+            "At least one blueprint name must precede configuration options. "
+            "Usage: dimos run <blueprint> [--config-field value]."
+        )
+    return blueprint_names, tuple(tokens[split_at:])
 
 
 def _reject_legacy_config() -> None:
@@ -59,6 +79,20 @@ def _reject_legacy_config() -> None:
             err=True,
         )
         raise typer.Exit(2)
+
+
+def _resolve_or_hint(resolve: Callable[[str], Blueprint], name: str) -> Blueprint:
+    """Resolve a name; when a built-in one fails to import, point at `dimos prepare`."""
+    try:
+        return resolve(name)
+    except ImportError:
+        if name in all_blueprints or name in all_modules:
+            typer.echo(
+                f"Hint: {name!r} failed to import. If a package is missing, install this "
+                f"blueprint's dependencies with: dimos prepare {name}",
+                err=True,
+            )
+        raise
 
 
 def _with_relay_bridge(blueprint: Blueprint) -> Blueprint:
@@ -80,6 +114,9 @@ def _with_relay_bridge(blueprint: Blueprint) -> Blueprint:
 def run(
     ctx: typer.Context,
     robot_types: list[str] = typer.Argument(..., help="Blueprints or modules to run"),
+    prepare: bool = typer.Option(
+        False, "--prepare", help="Install the selected blueprints' dependencies before starting"
+    ),
     daemon: bool = typer.Option(False, "--daemon", "-d", help="Run in background"),
     disable: list[str] = typer.Option([], "--disable", help="Module names to disable"),
     config_path: Path = typer.Option(
@@ -110,11 +147,26 @@ def run(
 
     if config_path == DEFAULT_CONFIG_PATH:
         _reject_legacy_config()
-    from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
-    from dimos.core.coordination.blueprint_config.parser import (
-        BlueprintConfigParser,
-        split_run_arguments,
-    )
+
+    try:
+        blueprint_names, config_tokens = split_run_arguments(robot_types)
+    except BlueprintConfigError as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
+
+    if prepare and not show_help:
+        prepare_dependencies(list(blueprint_names), backend="auto", offline=False)
+        # Packages (including native libraries and .pth files) may have changed.
+        # Start a fresh interpreter, without preparing again, before runtime imports.
+        argv = [arg for arg in sys.argv if arg != "--prepare"]
+        try:
+            os.execv(sys.executable, [sys.executable, *argv])
+        except OSError as error:
+            typer.echo(f"Error: failed to start after preparation: {error}", err=True)
+            raise typer.Exit(1) from error
+        return
+
+    from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
     from dimos.core.coordination.blueprints import autoconnect
     from dimos.core.coordination.module_coordinator import ModuleCoordinator, stream_name_types
     from dimos.core.coordination.process_lifecycle import (
@@ -131,12 +183,6 @@ def run(
     from dimos.utils.logging_config import set_run_log_dir, setup_exception_handler
 
     setup_exception_handler()
-
-    try:
-        blueprint_names, config_tokens = split_run_arguments(robot_types)
-    except BlueprintConfigError as error:
-        typer.echo(f"Error: {error}", err=True)
-        raise typer.Exit(2) from error
 
     global_option_overrides: dict[str, Any] = dict(ctx.obj or {})
 
@@ -171,11 +217,14 @@ def run(
         typer.echo(f"Error: {error.errors()[0]['msg']}", err=True)
         raise typer.Exit(2) from error
 
-    blueprint = autoconnect(*map(get_by_name_or_exit, blueprint_names))
+    blueprint = autoconnect(
+        *(_resolve_or_hint(get_by_name_or_exit, name) for name in blueprint_names)
+    )
 
     if disable:
         disabled_classes = tuple(
-            get_module_by_name_or_exit(name).blueprints[0].module for name in disable
+            _resolve_or_hint(get_module_by_name_or_exit, name).blueprints[0].module
+            for name in disable
         )
         blueprint = blueprint.disabled_modules(*disabled_classes)
 
@@ -287,6 +336,7 @@ def run(
                 cli_args=list(blueprint_names),
                 config_overrides=global_option_overrides,
                 original_argv=sys.argv,
+                environment=str(Path(sys.prefix).resolve()),
             )
             entry.save()
             spawn_watchdog(run_id, log_dir=log_dir)
@@ -325,6 +375,7 @@ def run(
             cli_args=list(blueprint_names),
             config_overrides=global_option_overrides,
             original_argv=sys.argv,
+            environment=str(Path(sys.prefix).resolve()),
         )
         entry.save()
         spawn_watchdog(run_id, log_dir=log_dir)
@@ -363,6 +414,8 @@ def status() -> None:
     typer.echo(f"  Blueprint: {entry.blueprint}")
     typer.echo(f"  Uptime:    {uptime}")
     typer.echo(f"  Log:       {entry.log_dir}")
+    if entry.environment:
+        typer.echo(f"  Env:       {entry.environment}")
 
 
 def stop(

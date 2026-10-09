@@ -25,6 +25,8 @@ from dimos.robot.unitree.g1.blueprints.primitive.unitree_g1_onboard import _unit
 from dimos.robot.unitree.g1.blueprints.primitive.unitree_g1_vis import unitree_g1_vis
 from dimos.robot.unitree.g1.config import G1
 
+DEPENDENCY_BUNDLE = "runtime-unitree-dds"
+
 assert G1.height_clearance is not None and G1.width_clearance is not None
 
 g1_overhead_safety_margin = 0.2

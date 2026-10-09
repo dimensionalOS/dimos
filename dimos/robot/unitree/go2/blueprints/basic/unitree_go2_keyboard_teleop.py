@@ -28,6 +28,8 @@ from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
 
+DEPENDENCY_BUNDLE = "runtime-unitree-dds"
+
 _go2_joints = make_twist_base_joints("go2")
 
 unitree_go2_keyboard_teleop = (

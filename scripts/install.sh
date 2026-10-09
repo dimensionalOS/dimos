@@ -644,7 +644,11 @@ prompt_extras() {
     local -a extras_list=()
     # Bash 3.2 treats empty arrays as unset under nounset.
     for p in ${platform_sel[@]+"${platform_sel[@]}"}; do
-        case "$p" in *Unitree*) extras_list+=("unitree");; *Drone*) extras_list+=("drone");; *Manipulator*) extras_list+=("manipulation");; esac
+        case "$p" in
+            *Unitree*) extras_list+=("unitree");;
+            *Drone*) extras_list+=("drone");;
+            *Manipulator*) extras_list+=("manipulation");;
+        esac
     done
     for f in ${feature_sel[@]+"${feature_sel[@]}"}; do
         case "$f" in *Agent*) extras_list+=("agents");; *Perception*) extras_list+=("perception");; *Visualization*) extras_list+=("visualization");;
@@ -694,7 +698,9 @@ resolve_extras() {
     IFS=',' read -r -a inputs <<< "$requested"
     for extra in "${inputs[@]}"; do
         if [[ "$extra" == all ]]; then
-            selected+=(agents apriltag base drone manipulation misc perception sim unitree visualization web webrtc)
+            # Expand to feature extras also understood by releases without runtime bundles.
+            # This is pyproject.toml's `all`, minus scene where usd-core has no wheel.
+            selected+=(manipulation unitree learning mapping misc webrtc apriltag drone spot)
             if [[ "$DETECTED_OS" != macos && "$DETECTED_ARCH" == aarch64 ]]; then
                 info "scene is unavailable on Linux ARM64; excluding it from all"
             else
@@ -721,6 +727,46 @@ resolve_extras() {
         fi
     fi
     info "installing extras: $EXTRAS"
+}
+
+# Releases that ship `dimos prepare` map the resolved extras to representative blueprints,
+# whether selected at a prompt, through --extras, or through DIMOS_EXTRAS.
+# Older releases fall back to the extras with PyTorch picked by --torch-backend.
+install_library_dependencies() {
+    local backend=cpu
+    if [[ ",$EXTRAS," == *,cuda,* ]]; then backend=cuda; fi
+    project_cmd uv pip install --python .venv/bin/python dimos
+    if [[ "$DRY_RUN" != 1 ]] && "$INSTALL_DIR/.venv/bin/dimos" prepare --help >/dev/null 2>&1; then
+        local -a names=() extras=() standalone=()
+        local extra name standalone_extras
+        IFS=',' read -r -a extras <<< "$EXTRAS"
+        for extra in "${extras[@]}"; do
+            case "$extra" in
+                cpu|cuda) continue;;
+                base|agents|web|perception|visualization|mapping|misc|webrtc|apriltag|runtime-common)
+                    name=replay;;
+                unitree|sim|control|runtime-unitree) name=unitree-go2;;
+                manipulation|planning|learning|runtime-manipulation) name=xarm7-planner-coordinator;;
+                unitree-dds|runtime-unitree-dds) name=unitree-g1-teleop;;
+                drone|runtime-drone) name=drone-basic;;
+                spot|runtime-spot) name=spot;;
+                *) standalone+=("$extra"); continue;;
+            esac
+            if [[ " ${names[*]:-} " != *" $name "* ]]; then names+=("$name"); fi
+        done
+        # Install extras outside the bundles (e.g. scene and dds) before prepare,
+        # which restores locked shared dependencies and the selected ONNX provider.
+        if [[ ${#standalone[@]} -gt 0 ]]; then
+            standalone_extras="$(IFS=,; echo "${standalone[*]}")"
+            project_cmd uv pip install --python .venv/bin/python "dimos[$standalone_extras]"
+        fi
+        [[ ${#names[@]} -eq 0 ]] && names=("replay")
+        project_cmd .venv/bin/dimos prepare "${names[@]}" --backend "$backend"
+        return
+    fi
+    local torch_backend=cpu
+    if [[ "$backend" == cuda ]]; then torch_backend=cu128; fi
+    project_cmd uv pip install --python .venv/bin/python --torch-backend "$torch_backend" "dimos[$EXTRAS]"
 }
 
 do_install_library() {
@@ -751,9 +797,7 @@ do_install_library() {
     else
         project_cmd uv venv --python "$INSTALL_PYTHON"
     fi
-    local backend=cpu
-    if [[ ",$EXTRAS," == *,cuda,* ]]; then backend=cu128; fi
-    project_cmd uv pip install --python .venv/bin/python --torch-backend "$backend" "dimos[$EXTRAS]"
+    install_library_dependencies
     if [[ "$DEV_TOOLS" == 1 ]]; then
         project_cmd uv pip install --python .venv/bin/python ruff pytest mypy
     fi

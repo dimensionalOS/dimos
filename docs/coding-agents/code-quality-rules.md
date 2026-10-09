@@ -110,10 +110,10 @@ Rules dimos code is expected to follow. They address recurring issues found in c
 
 ## Repository hygiene and data files
 
-* `dimos/` is for source code only; non-code files don't belong there.
+* `dimos/` is for source code only; non-code files don't belong there. The exceptions are generated metadata the runtime reads: `dimos/deps/bundles.json` and `dimos/deps/locks/`.
 * Dependencies:
   - Don't ship deps that block PyPI publishing (git-URL deps, unpublished packages).
-  - Put deps in the right extra group, and include new groups in `all` where expected.
+  - Put deps in the right extra group, and make sure the runtime bundles (`runtime-*` extras) that cover the affected blueprints include that group; then run `python -m dimos.deps.export_locks`.
   - Comment non-obvious deps (e.g. why `bitsandbytes` is needed).
 * Don't write state/output files to the repo root or `data/` (that's for static LFS data). Use a state dir (`STATE_DIR`, `~/.local/state/dimos`, XDG). Runtime files that must live in the tree use the `.ignore.*` convention so they're git-ignored.
 * Put project scripts in `pyproject.toml` `[project.scripts]` instead of adding to `bin/`.

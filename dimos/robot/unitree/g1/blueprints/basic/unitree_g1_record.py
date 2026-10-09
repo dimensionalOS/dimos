@@ -36,6 +36,8 @@ from dimos.robot.unitree.g1.g1_recorder import G1Recorder
 from dimos.robot.unitree.g1.g1_tf_publisher import G1TfPublisher
 from dimos.visualization.vis_module import vis_module
 
+DEPENDENCY_BUNDLE = "runtime-unitree-dds"
+
 _RECORDING_DIR = default_recording_dir()
 
 

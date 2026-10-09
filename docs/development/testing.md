@@ -10,11 +10,12 @@ Before the first run:
 - `uv run playwright install chromium firefox` for the browser tests.
 - If tests get killed for lack of memory, pass a smaller `--numprocesses` than `auto`, which starts one worker per core regardless of RAM.
 
-Self-hosted tests need the heavy optional extras (LFS data, perception models, simulation, hardware SDKs, …). Sync them explicitly before running:
+The `bin/pytest-*` scripts sync Python dependencies from `uv.lock` before running. `pytest-fast` installs the `tests` group; `pytest-slow`, `pytest-all`, `pytest-mujoco`, and `pytest-coverage` install `tests-self-hosted`. `bin/test-speed-leaderboard` also installs `tests-self-hosted`. Syncing uses `--inexact` to preserve separately installed native extensions. `dimos prepare` installs runtime bundles and does not install these test dependencies.
+
+When invoking `pytest` directly for self-hosted tests, sync the dependencies first:
 
 ```bash
-uv sync --all-groups              # all dependency groups (tests-self-hosted, lint, …)
-uv sync --group tests-self-hosted # just what CI installs on the self-hosted runner
+uv sync --locked --inexact --group tests-self-hosted
 ```
 
 ## Types of tests
@@ -63,9 +64,9 @@ The default `addopts` in `pyproject.toml` includes a `-m` filter that excludes `
 ./bin/pytest-slow
 ```
 
-(Shortcut for `pytest -m 'not (mujoco or self_hosted_large)' dimos`: runs the default suite *and* self-hosted tests, excluding only `mujoco` and `self_hosted_large`.)
+(Shortcut for `pytest -m 'not (mujoco or self_hosted_large or clean_install)' dimos`: runs the default suite *and* self-hosted tests, excluding `mujoco`, `self_hosted_large`, and `clean_install`.)
 
-Before running tests it calls `bin/build-test-natives`, which builds any missing native test dependencies.
+After syncing dependencies, it calls `bin/build-test-natives` to build native test dependencies and `bin/fetch-test-data` to fetch LFS data.
 
 This includes slow agent and MCP-style integration tests in addition to slower transport and module tests. If one of those paths is broken, a failure can take close to a minute to surface because the harness waits for the agent flow to finish before timing out.
 
@@ -191,6 +192,7 @@ We have a few markers in use now.
 * `self_hosted`: used to mark tests that need the self-hosted runner (LFS, ROS, CUDA, heavy deps).
 * `web_browser`: the Playwright tests of the cockpit and the web SDK in `dimos/e2e_tests/` (see [Development](/docs/web/development.md#tests)).
 * `mujoco`: tests which use `MuJoCo`. These are very slow and don't work in CI currently.
+* `clean_install`: `dimos prepare` into fresh virtualenvs (`dimos/deps/test_prepare_integration.py`). Slow and network-bound; the install workflow runs them, `pytest -m clean_install` runs them locally.
 
 If a test needs to be skipped for some reason, please use on of these markers, or add another one.
 

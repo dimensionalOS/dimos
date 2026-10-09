@@ -2,9 +2,11 @@
 
 set -euo pipefail
 
+uv sync --locked --inexact --group tests-self-hosted
+
 bin/build-test-natives
 bin/fetch-test-data
 
 . .venv/bin/activate
 export PATH="${XDG_CACHE_HOME:-$HOME/.cache}/dimos-test-clis/node_modules/.bin:$PATH"
-exec pytest "$@" -m 'not (mujoco or self_hosted_large)' dimos
+exec pytest "$@" -m 'not (mujoco or self_hosted_large or clean_install)' dimos

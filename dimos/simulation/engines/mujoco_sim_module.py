@@ -69,6 +69,8 @@ from dimos.simulation.mujoco.constants import LIDAR_RESOLUTION, MAX_HEIGHT, MAX_
 from dimos.spec import perception
 from dimos.utils.logging_config import setup_logger
 
+DEPENDENCY_BUNDLE = "runtime-unitree"
+
 logger = setup_logger()
 
 

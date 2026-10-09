@@ -3,12 +3,15 @@ global-exclude __pycache__
 global-exclude .DS_Store
 
 # --- Runtime data shipped inside the package ---
-# include-package-data=true maps everything matched here into the wheel too.
+# [tool.setuptools.package-data] in pyproject.toml mirrors this list for the wheel.
 # Scoped by extension on purpose: docs (*.md), native build files (*.nix,
 # *.lock, *.patch, CMakeLists.txt, Dockerfile) and .gitignore are NOT Python
 # runtime data and must stay out. Add a new extension here when code starts
 # loading a new data type — never go back to per-package globs.
 recursive-include dimos *.yaml *.yml *.json *.urdf *.html *.css *.js *.svg *.tcss
+# Per-bundle lockfiles exported from uv.lock (dimos/deps/export_locks.py); scoped so
+# the native modules' Cargo.toml files stay out.
+include dimos/deps/locks/*.toml
 
 # --- Exclusions (must come after the includes above so they win) ---
 # Test fixtures must never ship.

@@ -124,6 +124,25 @@ def test_cli_import_does_not_pull_heavy_deps() -> None:
     assert _leaked_modules("import dimos.cli.dimos", CLI_MUST_NOT_IMPORT) == []
 
 
+def test_deps_command_does_not_pull_heavy_deps() -> None:
+    """`dimos deps` must work from a core-only install, before any bundle exists."""
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; from typer.testing import CliRunner; import dimos.cli.dimos as cli; "
+            "r = CliRunner().invoke(cli.main, ['deps', 'unitree-go2', '--backend', 'cpu']); "
+            "assert r.exit_code == 0, r.output; "
+            f"print(' '.join(m for m in {CLI_MUST_NOT_IMPORT!r} if m in sys.modules))",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.split() == []
+
+
 def test_go2_blueprint_import_does_not_pull_heavy_deps() -> None:
     # Importing the blueprint builds LCM handles. memq keeps them off the network.
     env = {**os.environ, "LCM_DEFAULT_URL": "memq://"}

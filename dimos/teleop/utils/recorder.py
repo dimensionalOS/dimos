@@ -36,6 +36,8 @@ from dimos.teleop.utils.video_stats import VideoStats
 from dimos.teleop.webxr.controller_types import Buttons
 from dimos.utils.logging_config import setup_logger
 
+DEPENDENCY_BUNDLE = "runtime-common"
+
 logger = setup_logger()
 
 

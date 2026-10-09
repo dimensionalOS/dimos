@@ -68,8 +68,8 @@ class WhisperNode(AbstractAudioConsumer, AbstractTextEmitter):
         elif whisper is None:
             raise ImportError(
                 "No whisper backend found. "
-                "Install faster-whisper (pip install faster-whisper) "
-                "or openai-whisper (pip install dimos[agents])."
+                "Install faster-whisper (part of the agents extra: pip install 'dimos[agents]') "
+                "or openai-whisper (pip install openai-whisper)."
             )
         else:
             self.modelopts = modelopts

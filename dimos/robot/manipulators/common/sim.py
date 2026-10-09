@@ -23,8 +23,13 @@ from dimos.core.global_config import global_config
 
 
 def mujoco_if_sim(sim_path: str | Path, dof: int) -> tuple[Blueprint, ...]:
+    """The MuJoCo module when ``--simulation mujoco`` is selected, nothing on real hardware."""
     if not global_config.simulation:
         return ()
+    if global_config.simulation != "mujoco":
+        raise ValueError(
+            f"Unknown simulation module: {global_config.simulation!r}. Choose from: mujoco"
+        )
 
     from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
 

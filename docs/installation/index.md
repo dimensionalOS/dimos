@@ -32,7 +32,7 @@ source .venv/bin/activate
 uv run dimos --help
 ```
 
-Use `--mode dev --project-dir ./dimos` for a source checkout. Use `--extras base,unitree` to select capabilities (developer mode defaults to `all` with platform exclusions). See [dependency tiers](/docs/requirements.md#dependency-tiers).
+Use `--mode dev --project-dir ./dimos` for a source checkout. Use `--extras runtime-unitree` to select capabilities (developer mode defaults to `all` with platform exclusions). After installation, `dimos prepare <blueprint>` adds the Python dependencies of any blueprint to the environment; see [dependencies](/docs/usage/dependencies.md) and [dependency tiers](/docs/requirements.md#dependency-tiers).
 
 `--skip-tests` skips replay only (installation verification still runs). `--no-sysctl` skips network tuning. These commands can install system packages on your host.
 
