@@ -50,22 +50,26 @@ _INSIDE_RAYS = 3
 
 @dataclass(frozen=True)
 class _Body:
-    """One closed piece of a link's collision shape.
+    """One piece of a link's collision shape.
 
     Args:
         scene: Ray-casting scene holding the piece, in the link's frame.
         low: Lower corner of its bounding box in the link's frame, metres.
         high: Upper corner of that box, metres.
+        closed: Whether the piece is a closed surface. Only a closed piece
+            says whether a point is inside it; an open one gives only how far a
+            point is from its surface.
     """
 
     scene: o3d.t.geometry.RaycastingScene
     low: NDArray[np.float64]
     high: NDArray[np.float64]
+    closed: bool
 
 
 @dataclass(frozen=True)
 class _LinkShape:
-    """A gripper link's collision shape, as closed pieces.
+    """A gripper link's collision shape, as pieces.
 
     Args:
         link: URDF link name.
@@ -334,7 +338,7 @@ class _UrdfTree:
             if mesh is None:
                 continue
             mesh.apply_transform(_origin(collision))
-            bodies += [_body(piece) for piece in _closed_pieces(mesh)]
+            bodies += _bodies(mesh)
         if not bodies:
             return None
         low = np.min([body.low for body in bodies], axis=0)
@@ -413,32 +417,32 @@ def _motion(joint: ET.Element, value: float) -> NDArray[np.float64]:
     return transform
 
 
-def _closed_pieces(mesh: trimesh.Trimesh) -> list[trimesh.Trimesh]:
-    """A mesh as closed pieces that each have a well-defined inside.
+def _bodies(mesh: trimesh.Trimesh) -> list[_Body]:
+    """A collision mesh as pieces to measure distances to.
 
     CAD exports often hold several overlapping closed shells; each is kept
     apart, since counting surface crossings through overlapping shells gets
-    inside and outside wrong. A mesh with any open shell is replaced by its
-    convex hull, which is closed and holds all of it.
+    inside and outside wrong. A mesh with any open shell stays whole and open:
+    its convex hull would fill recesses with material that is not there.
     """
     pieces = list(mesh.split(only_watertight=False))
     if pieces and all(piece.is_watertight for piece in pieces):
-        return pieces
-    return [mesh.convex_hull]
+        return [_body(piece, closed=True) for piece in pieces]
+    return [_body(mesh, closed=False)]
 
 
-def _body(mesh: trimesh.Trimesh) -> _Body:
+def _body(mesh: trimesh.Trimesh, *, closed: bool) -> _Body:
     scene = o3d.t.geometry.RaycastingScene()
     scene.add_triangles(
         o3d.core.Tensor(np.asarray(mesh.vertices, dtype=np.float32)),
         o3d.core.Tensor(np.asarray(mesh.faces, dtype=np.uint32)),
     )
     low, high = np.asarray(mesh.bounds, dtype=np.float64)
-    return _Body(scene, low, high)
+    return _Body(scene, low, high, closed)
 
 
 def _distance(shape: _LinkShape, points: NDArray[np.float64], margin: float) -> NDArray[np.float64]:
-    """Distance (metres) from each point to the link's surface, negative inside it.
+    """Distance (metres) from each point to the link's surface, negative inside a closed piece.
 
     Points farther than ``margin`` from every piece's box may get any value of
     at least ``margin``.
@@ -449,7 +453,11 @@ def _distance(shape: _LinkShape, points: NDArray[np.float64], margin: float) -> 
         if not len(kept):
             continue
         query = o3d.core.Tensor(np.asarray(points[kept], dtype=np.float32))
-        found = body.scene.compute_signed_distance(query, nsamples=_INSIDE_RAYS).numpy()
+        found = (
+            body.scene.compute_signed_distance(query, nsamples=_INSIDE_RAYS)
+            if body.closed
+            else body.scene.compute_distance(query)
+        ).numpy()
         distance[kept] = np.minimum(distance[kept], found)
     return distance
 
