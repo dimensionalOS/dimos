@@ -44,7 +44,7 @@ from dimos.control.contract.convert import (
     twist_to_values,
 )
 from dimos.control.contract.description import ControlDescription, Limits, ResourceKind
-from dimos.control.contract.keys import EFFORT, POSITION, SEPARATOR, VELOCITY
+from dimos.control.contract.keys import SEPARATOR, Interface
 from dimos.control.contract.sequence import Freshness
 from dimos.control.task import JointStateSnapshot
 from dimos.hardware.manipulators.spec import ControlMode
@@ -56,15 +56,15 @@ Values = dict[str, float]
 
 # Which part of a joint each task control mode drives.
 _INTERFACE_BY_MODE: dict[ControlMode, str] = {
-    ControlMode.POSITION: POSITION,
-    ControlMode.SERVO_POSITION: POSITION,
-    ControlMode.VELOCITY: VELOCITY,
-    ControlMode.TORQUE: EFFORT,
+    ControlMode.POSITION: Interface.POSITION,
+    ControlMode.SERVO_POSITION: Interface.POSITION,
+    ControlMode.VELOCITY: Interface.VELOCITY,
+    ControlMode.TORQUE: Interface.EFFORT,
 }
 # The command port that carries each joint interface the coordinator sends.
 _JOINT_COMMAND_PORTS: dict[str, str] = {
-    POSITION: "position_command",
-    VELOCITY: "velocity_command",
+    Interface.POSITION: "position_command",
+    Interface.VELOCITY: "velocity_command",
 }
 
 
@@ -125,8 +125,11 @@ class ConnectionSource:
             r.name
             for r in description.resources
             if r.kind is ResourceKind.JOINT
-            and VELOCITY not in r.command_interfaces
-            and not (POSITION in r.command_interfaces and POSITION in r.state_interfaces)
+            and Interface.VELOCITY not in r.command_interfaces
+            and not (
+                Interface.POSITION in r.command_interfaces
+                and Interface.POSITION in r.state_interfaces
+            )
         ]
         if unholdable:
             raise ValueError(
@@ -158,7 +161,9 @@ class ConnectionSource:
                         command_keys={
                             i: f"{part}{SEPARATOR}{i}" for i in resource.command_interfaces
                         },
-                        position_limit=description.limits.get(f"{part}{SEPARATOR}{POSITION}"),
+                        position_limit=description.limits.get(
+                            f"{part}{SEPARATOR}{Interface.POSITION}"
+                        ),
                     )
                 )
                 if state:
@@ -305,9 +310,9 @@ class ConnectionSource:
         snapshot = JointStateSnapshot(timestamp=self._received_at)
         for joint in self._joints:
             for interface, into in (
-                (POSITION, snapshot.joint_positions),
-                (VELOCITY, snapshot.joint_velocities),
-                (EFFORT, snapshot.joint_efforts),
+                (Interface.POSITION, snapshot.joint_positions),
+                (Interface.VELOCITY, snapshot.joint_velocities),
+                (Interface.EFFORT, snapshot.joint_efforts),
             ):
                 key = joint.state_keys.get(interface)
                 if key is not None and key in latest:
@@ -351,19 +356,19 @@ class ConnectionSource:
                     raise ValueError(f"{joint.name} cannot be told its {interface}")
                 value = winners[joint.name]
                 values[joint.command_keys[interface]] = value
-                if interface == POSITION:
+                if interface == Interface.POSITION:
                     self._holds[joint.name] = value
                 else:
                     self._holds.pop(joint.name, None)
                 continue
-            velocity_key = joint.command_keys.get(VELOCITY)
+            velocity_key = joint.command_keys.get(Interface.VELOCITY)
             if mode is ControlMode.VELOCITY and velocity_key is not None:
                 values[velocity_key] = 0.0
                 self._holds.pop(joint.name, None)
                 continue
             hold = self._hold(joint, latest)
             if hold is not None:
-                values[joint.command_keys[POSITION]] = hold
+                values[joint.command_keys[Interface.POSITION]] = hold
             elif velocity_key is not None:
                 values[velocity_key] = 0.0
         if self._base is not None:
@@ -398,11 +403,11 @@ class ConnectionSource:
             joint: The joint to hold.
             latest: The robot's latest reading, to start a new hold from.
         """
-        if POSITION not in joint.command_keys:
+        if Interface.POSITION not in joint.command_keys:
             return None
         held = self._holds.get(joint.name)
         if held is None:
-            measured_key = joint.state_keys.get(POSITION)
+            measured_key = joint.state_keys.get(Interface.POSITION)
             if measured_key is None or measured_key not in latest:
                 return None
             held = latest[measured_key]

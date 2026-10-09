@@ -30,18 +30,14 @@ from typing import Any
 
 import pytest
 
+from dimos.control._control_test_helpers import turning_joints
 from dimos.control.components import HardwareComponent, HardwareType, make_joints
 from dimos.control.connection.connection_module import ConnectionDescription
 from dimos.control.connection.mock_connection import MockConnectionModule
 from dimos.control.contract.convert import pose_from_values
 from dimos.control.contract.description import ControlDescription, Limits
-from dimos.control.contract.keys import EFFORT, POSITION, VX, VY, WZ, Key
-from dimos.control.contract.presets import (
-    imu_resource,
-    manipulator_description,
-    pd_joint_description,
-    twist_base_description,
-)
+from dimos.control.contract.keys import Interface, Key
+from dimos.control.contract.presets import imu_resource, twist_base_description
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.task import (
     BaseControlTask,
@@ -71,11 +67,11 @@ ZERO_TWIST = {"go2/base/vx": 0.0, "go2/base/vy": 0.0, "go2/base/wz": 0.0}
 
 def arm(joints: int = 2, **kwargs: Any) -> ControlDescription:
     """An arm called "arm" that reports and takes joint positions."""
-    return manipulator_description(
+    return turning_joints(
         "arm",
         [f"joint{i}" for i in range(1, joints + 1)],
-        state=(POSITION,),
-        command=(POSITION,),
+        state=(Interface.POSITION,),
+        command=(Interface.POSITION,),
         **kwargs,
     )
 
@@ -83,7 +79,8 @@ def arm(joints: int = 2, **kwargs: Any) -> ControlDescription:
 def base() -> ControlDescription:
     """A base called "go2" that reports where it is and how fast it goes."""
     limits: dict[str, Limits] = {
-        Key.of("go2", "base", axis): Limits(-1.0, 1.0) for axis in (VX, VY, WZ)
+        Key.of("go2", "base", axis): Limits(-1.0, 1.0)
+        for axis in (Interface.VX, Interface.VY, Interface.WZ)
     }
     return twist_base_description("go2", limits=limits)
 
@@ -289,17 +286,39 @@ def test_a_coordinator_with_adapters_refuses_connections(rig: Callable[..., Rig]
 
 def test_a_robot_it_cannot_hold_is_refused(rig: Callable[..., Rig]) -> None:
     r = rig()
-    limp = manipulator_description("limp", ["joint1"], state=(POSITION,), command=(EFFORT,))
+    limp = turning_joints(
+        "limp", ["joint1"], state=(Interface.POSITION,), command=(Interface.EFFORT,)
+    )
 
     with pytest.raises(ValueError, match="'limp'"):
         r.find(StandIn("Limp", [limp]))
     with pytest.raises(ValueError, match="'g1'.*stiffness"):
-        r.find(StandIn("Body", [pd_joint_description("g1", ["hip"])]))
+        r.find(
+            StandIn(
+                "Body",
+                [
+                    turning_joints(
+                        "g1",
+                        ["hip"],
+                        state=(Interface.POSITION, Interface.VELOCITY, Interface.EFFORT),
+                        command=(
+                            Interface.POSITION,
+                            Interface.VELOCITY,
+                            Interface.EFFORT,
+                            Interface.KP,
+                            Interface.KD,
+                        ),
+                    )
+                ],
+            )
+        )
 
 
 def test_a_robot_without_its_ports_is_refused(rig: Callable[..., Rig]) -> None:
     r = rig()
-    other = manipulator_description("other", ["joint1"], state=(POSITION,), command=(POSITION,))
+    other = turning_joints(
+        "other", ["joint1"], state=(Interface.POSITION,), command=(Interface.POSITION,)
+    )
 
     with pytest.raises(ValueError) as raised:
         r.find(StandIn("Other", [other]), StandIn("Mock", [arm()]))
@@ -336,7 +355,7 @@ def test_every_robot_that_has_reported_gets_a_complete_command_each_tick(
 
 def test_tasks_drive_connection_joints_and_see_their_sensors(rig: Callable[..., Rig]) -> None:
     r = rig()
-    r.find(StandIn("Mock", [arm(sensors=[imu_resource()])]))
+    r.find(StandIn("Mock", [arm(others=[imu_resource()])]))
     task = SendsPositions({"arm/joint1": 0.5})
     r.coordinator.add_task(task)
 

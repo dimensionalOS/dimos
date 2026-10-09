@@ -21,16 +21,11 @@ from typing import Any
 
 import pytest
 
+from dimos.control._control_test_helpers import turning_joints
 from dimos.control.connection_source import ConnectionSource
-from dimos.control.contract.description import ControlDescription, Limits
-from dimos.control.contract.keys import EFFORT, POSITION, VELOCITY, VX, VY, WZ, Key, Unit
-from dimos.control.contract.presets import (
-    GripperSpec,
-    imu_resource,
-    manipulator_description,
-    pd_joint_description,
-    twist_base_description,
-)
+from dimos.control.contract.description import ControlDescription, Limits, Resource, ResourceKind
+from dimos.control.contract.keys import Interface, Key, Unit
+from dimos.control.contract.presets import imu_resource, twist_base_description
 from dimos.hardware.manipulators.spec import ControlMode
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.sensor_msgs.Imu import Imu
@@ -46,23 +41,31 @@ def arm(**kwargs: Any) -> ControlDescription:
     limited to +-1 rad."""
     joints = ["joint1", "joint2"]
     settings: dict[str, Any] = {
-        "limits": {Key.of("arm", j, POSITION): Limits(-1.0, 1.0) for j in joints},
-        "state": (POSITION,),
-        "command": (POSITION, VELOCITY),
+        "limits": {Key.of("arm", j, Interface.POSITION): Limits(-1.0, 1.0) for j in joints},
+        "state": (Interface.POSITION,),
+        "command": (Interface.POSITION, Interface.VELOCITY),
     }
     settings.update(kwargs)
-    return manipulator_description("arm", joints, **settings)
+    return turning_joints("arm", joints, **settings)
 
 
 def arm_with_gripper() -> ControlDescription:
     """A one-joint arm that reports position and effort, and a gripper that
     reports only its position."""
-    return manipulator_description(
+    gripper = Resource(
+        name="gripper",
+        kind=ResourceKind.JOINT,
+        state_interfaces=(Interface.POSITION,),
+        command_interfaces=(Interface.POSITION,),
+        units={Interface.POSITION: Unit.M},
+    )
+    return turning_joints(
         "arm",
         ["joint1"],
-        state=(POSITION, EFFORT),
-        command=(POSITION, VELOCITY),
-        gripper=GripperSpec(unit=Unit.M, lo=0.0, hi=0.1),
+        state=(Interface.POSITION, Interface.EFFORT),
+        command=(Interface.POSITION, Interface.VELOCITY),
+        limits={Key.of("arm", "gripper", Interface.POSITION): Limits(0.0, 0.1)},
+        others=[gripper],
     )
 
 
@@ -81,10 +84,11 @@ def source_at(*positions: float, description: ControlDescription | None = None) 
 def test_the_ports_it_needs_follow_its_description() -> None:
     assert ConnectionSource(arm()).command_ports == ["position_command", "velocity_command"]
     assert ConnectionSource(arm()).reading_ports == ["joint_state"]
-    with_imu = ConnectionSource(arm(sensors=[imu_resource()]))
+    with_imu = ConnectionSource(arm(others=[imu_resource()]))
     assert with_imu.reading_ports == ["joint_state", "imu"]
     limits: dict[str, Limits] = {
-        Key.of("go2", "base", axis): Limits(-1.0, 1.0) for axis in (VX, VY, WZ)
+        Key.of("go2", "base", axis): Limits(-1.0, 1.0)
+        for axis in (Interface.VX, Interface.VY, Interface.WZ)
     }
     base = ConnectionSource(twist_base_description("go2", limits=limits))
     assert base.command_ports == ["base_command"]
@@ -92,7 +96,7 @@ def test_the_ports_it_needs_follow_its_description() -> None:
 
 
 def test_joints_and_sensors_come_from_readings() -> None:
-    source = ConnectionSource(arm(sensors=[imu_resource()]))
+    source = ConnectionSource(arm(others=[imu_resource()]))
     source.on_message("joint_state", reading(0.3, -0.2))
     source.on_message("imu", Imu(orientation=Quaternion(0.0, 0.0, 0.0, 1.0)))
 
@@ -181,13 +185,13 @@ def test_a_held_position_stays_inside_the_limit_but_task_values_are_sent_as_is()
 
 
 def test_a_joint_that_cannot_take_a_position_gets_zero_velocity() -> None:
-    source = source_at(0.3, 0.0, description=arm(command=(VELOCITY,), limits={}))
+    source = source_at(0.3, 0.0, description=arm(command=(Interface.VELOCITY,), limits={}))
 
     assert source.command({}, None) == {f"{J1}/velocity": 0.0, f"{J2}/velocity": 0.0}
 
 
 def test_a_task_driving_a_joint_in_a_way_it_does_not_accept_raises() -> None:
-    source = source_at(0.3, 0.0, description=arm(command=(POSITION,)))
+    source = source_at(0.3, 0.0, description=arm(command=(Interface.POSITION,)))
 
     with pytest.raises(ValueError, match="velocity"):
         source.command({J1: 0.2}, ControlMode.VELOCITY)
@@ -210,7 +214,8 @@ def test_each_kind_of_command_goes_in_its_own_message() -> None:
 
 def test_a_base_is_told_zero_on_every_axis() -> None:
     limits: dict[str, Limits] = {
-        Key.of("go2", "base", axis): Limits(-1.0, 1.0) for axis in (VX, VY, WZ)
+        Key.of("go2", "base", axis): Limits(-1.0, 1.0)
+        for axis in (Interface.VX, Interface.VY, Interface.WZ)
     }
     source = ConnectionSource(twist_base_description("go2", limits=limits, odometry=False))
 
@@ -256,12 +261,29 @@ def test_a_robot_that_goes_quiet_is_held_where_it_is_when_it_comes_back() -> Non
 
 
 def test_a_robot_it_cannot_hold_is_refused() -> None:
-    effort_only = manipulator_description("arm", ["joint1"], state=(POSITION,), command=(EFFORT,))
-    unmeasured = manipulator_description("arm", ["joint1"], state=(EFFORT,), command=(POSITION,))
+    effort_only = turning_joints(
+        "arm", ["joint1"], state=(Interface.POSITION,), command=(Interface.EFFORT,)
+    )
+    unmeasured = turning_joints(
+        "arm", ["joint1"], state=(Interface.EFFORT,), command=(Interface.POSITION,)
+    )
 
     with pytest.raises(ValueError, match="joint1"):
         ConnectionSource(effort_only)
     with pytest.raises(ValueError, match="joint1"):
         ConnectionSource(unmeasured)
     with pytest.raises(ValueError, match="stiffness"):
-        ConnectionSource(pd_joint_description("g1", ["hip"]))
+        ConnectionSource(
+            turning_joints(
+                "g1",
+                ["hip"],
+                state=(Interface.POSITION, Interface.VELOCITY, Interface.EFFORT),
+                command=(
+                    Interface.POSITION,
+                    Interface.VELOCITY,
+                    Interface.EFFORT,
+                    Interface.KP,
+                    Interface.KD,
+                ),
+            )
+        )
