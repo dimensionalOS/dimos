@@ -1589,7 +1589,7 @@ global_config:
   build_native:
     type: boolean
     nullable: false
-    default: true
+    default: false
     kind: bool
   dtop:
     type: boolean
