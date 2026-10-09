@@ -1300,10 +1300,22 @@ class ManipulationModule(Module):
         current = self._world_monitor.get_current_joint_state()
         if current is None:
             return CommandResult(CommandStatus.FAILED, "No joint state yet")
+        self._home_joints, nudged = self._inside_joint_limits(current)
+        logger.info(
+            "Home joints set to the current pose",
+            positions=self._home_joints.position,
+            nudged=nudged,
+        )
+        note = f"; {', '.join(nudged)} moved just inside the joint limits" if nudged else ""
+        return CommandResult(CommandStatus.SUCCEEDED, f"Home is now the current pose{note}")
+
+    def _inside_joint_limits(self, state: JointState) -> tuple[JointState, list[str]]:
+        """*state* with every joint kept HOME_LIMIT_MARGIN inside its limits, and
+        the names of the joints that had to move."""
         limits = self._joint_position_limits()
         positions: list[float] = []
         nudged: list[str] = []
-        for name, position in zip(current.name, current.position, strict=True):
+        for name, position in zip(state.name, state.position, strict=True):
             lower, upper = limits.get(name, (None, None))
             inside = position
             if lower is not None and upper is not None and upper - lower > 2 * HOME_LIMIT_MARGIN:
@@ -1311,10 +1323,7 @@ class ManipulationModule(Module):
             if inside != position:
                 nudged.append(name)
             positions.append(inside)
-        self._home_joints = JointState(name=list(current.name), position=positions)
-        logger.info("Home joints set to the current pose", positions=positions, nudged=nudged)
-        note = f"; {', '.join(nudged)} moved just inside the joint limits" if nudged else ""
-        return CommandResult(CommandStatus.SUCCEEDED, f"Home is now the current pose{note}")
+        return JointState(name=list(state.name), position=positions), nudged
 
     def _joint_position_limits(self) -> dict[str, tuple[float, float]]:
         """Position limits of every model joint that declares them."""
@@ -1330,9 +1339,12 @@ class ManipulationModule(Module):
             return False
         current = self._world_monitor.get_current_joint_state()
         if current is None:
-            logger.error("Cannot capture init joints — no current joint state")
+            logger.error("Cannot capture init joints: no current joint state")
             return False
-        self._init_joints = current
+        # An arm captured on its hard stop would make init an unreachable goal.
+        self._init_joints, nudged = self._inside_joint_limits(current)
+        if nudged:
+            logger.info("Init joints kept inside the limits", nudged=nudged)
         return True
 
     def _initialize_execution(self) -> None:
