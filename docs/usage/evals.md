@@ -492,6 +492,9 @@ existing `base_pose` to world `(0, 0, height)` with identity orientation. Withou
 the robot's configured base pose is retained (0.12 m for the default xArm scene).
 `dimos.evals.suites.mujoco_xarm` is the xArm7 table scene with the perception
 modules disabled: pick up the cylinder, then put the red ball on top of it.
+`dimos.evals.suites.dimsim_emergency` is apartment watch duty: kitchen smoke
+above the gas range should lead to waking the person by the bed; a quiet
+control uses the same duty prompt with no smoke.
 
 `dimos.evals.suites.mujoco_xarm_pick` evaluates a cylinder lift in the default
 scene using plain robot commands and observations (see Raw robot topics). Run it
