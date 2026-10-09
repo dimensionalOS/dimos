@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Protocol, cast
 from unittest.mock import DEFAULT, MagicMock
 
+from dimos_generated.builtin_interfaces.msg import Duration
 from dimos_generated.dimos_msgs.msg import TrajectoryStatus
 import pytest
 from pytest_mock import MockerFixture
@@ -58,7 +59,12 @@ def _mock_control_coordinator() -> MagicMock:
         return DEFAULT
 
     coordinator.task_invoke.return_value = TrajectoryStatus(
-        header=header_now(), state=TrajectoryState.IDLE
+        header=header_now(),
+        state=TrajectoryState.IDLE,
+        progress=0.0,
+        time_elapsed=Duration(sec=0, nanosec=0),
+        time_remaining=Duration(sec=0, nanosec=0),
+        error="",
     )
     coordinator.task_invoke.side_effect = invoke
     return coordinator

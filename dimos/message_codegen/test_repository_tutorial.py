@@ -106,7 +106,8 @@ def test_builtin_tutorial_builds_new_definition_without_runtime(tmp_path):
         + """
 from importlib.metadata import distributions
 assert 'dimos' not in {dist.metadata['Name'] for dist in distributions()}
-assert 'MSG: std_msgs/Header' in DeviceReading.schema
+from dimos_message_build.registry import schema
+assert 'MSG: std_msgs/Header' in schema(DeviceReading.__msgtype__)
 """
     )
     subprocess.run([python, "-I", "-c", validation], cwd=tmp_path, env=environment, check=True)
@@ -156,18 +157,16 @@ def test_checkout_sync_sees_generated_source_changes_without_reinstall(tmp_path)
     )
     python = str(checkout / ".venv/bin/python")
     validation = (
+        "import dimos_generated; "
         "from dimos_generated.geometry_msgs.msg import Point; "
-        "assert Point.decode(Point(x=1.25).encode()).x == 1.25; "
-        "assert getattr(Point, 'CHECKOUT_PROBE', None) == 17"
+        "from dimos_message_build.registry import encode, decode; "
+        "assert decode(encode(Point(x=1.25, y=0., z=0.)), Point).x == 1.25; "
+        "assert dimos_generated.CHECKOUT_PROBE == 17"
     )
-    # Stand in for a regenerated constant in a committed source value class.
-    # The isolated wheel tutorial separately verifies .msg -> all-language generation.
-    values = package / "src/dimos_generated/_types.py"
-    values.write_text(
-        values.read_text().replace(
-            "class geometry_msgs__msg__Point(Message):",
-            "class geometry_msgs__msg__Point(Message):\n    CHECKOUT_PROBE = 17",
-        )
-    )
+    # Editable installation must expose refreshed generated package exports.
+    # The isolated wheel tutorial above verifies actual .msg -> source generation.
+    # Native rosbags classes are not declarations in _types.py to rewrite.
+    exports = package / "src/dimos_generated/__init__.py"
+    exports.write_text(exports.read_text() + "\nCHECKOUT_PROBE = 17\n")
     subprocess.run([uv, "sync", "--frozen", "--offline"], cwd=checkout, env=environment, check=True)
     subprocess.run([python, "-I", "-c", validation], cwd=checkout, env=environment, check=True)

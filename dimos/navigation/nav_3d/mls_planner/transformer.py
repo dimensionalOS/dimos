@@ -63,7 +63,7 @@ class MLSPlan(Transformer[PointCloud2, Path]):
                         header=header,
                         pose=Pose(
                             position=Point(x=float(x), y=float(y), z=float(z)),
-                            orientation=Quaternion(w=1.0),
+                            orientation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0),
                         ),
                     )
                 )

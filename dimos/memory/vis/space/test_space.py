@@ -14,6 +14,7 @@
 
 """Tests for Space builder and element types."""
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import (
     Point as GeoPoint,
     Pose as GeoPose,
@@ -22,7 +23,8 @@ from dimos_generated.geometry_msgs.msg import (
     Vector3,
 )
 from dimos_generated.nav_msgs.msg import MapMetaData, OccupancyGrid, Path as Path
-from dimos_generated.vision_msgs.msg import Detection3D
+from dimos_generated.std_msgs.msg import Header
+from dimos_generated.vision_msgs.msg import BoundingBox3D, Detection3D
 import numpy as np
 import pytest
 
@@ -38,7 +40,11 @@ class TestElementTypes:
 
     def test_pose_wraps_posestamped(self):
         ps = PoseStamped(
-            pose=GeoPose(position=GeoPoint(x=3.2, y=1.5, z=0.0), orientation=Quaternion())
+            pose=GeoPose(
+                position=GeoPoint(x=3.2, y=1.5, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
         )
         p = Pose(ps, color="red", label="fridge")
         assert p.msg is ps
@@ -49,7 +55,8 @@ class TestElementTypes:
         ps = PoseStamped(
             pose=GeoPose(
                 position=GeoPoint(x=1, y=2, z=0), orientation=Quaternion(x=0, y=0, z=0.1, w=1)
-            )
+            ),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
         )
         a = Arrow(ps, color="orange", length=0.8)
         assert a.msg is ps
@@ -62,13 +69,20 @@ class TestElementTypes:
         assert p.msg.x == pytest.approx(7.1)
 
     def test_point_wraps_posestamped(self):
-        ps = PoseStamped(pose=GeoPose(position=GeoPoint(x=3, y=1, z=0), orientation=Quaternion()))
+        ps = PoseStamped(
+            pose=GeoPose(
+                position=GeoPoint(x=3, y=1, z=0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+            ),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        )
         p = Point(ps, radius=0.5)
         assert p.msg.pose.position.x == pytest.approx(3.0)
 
     def test_box3d_from_center_size(self):
         b = Box3D(
-            center=GeoPose(position=GeoPoint(x=5, y=3, z=0), orientation=Quaternion()),
+            center=GeoPose(
+                position=GeoPoint(x=5, y=3, z=0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+            ),
             size=Vector3(x=2, y=1, z=0.5),
             label="table",
         )
@@ -77,7 +91,12 @@ class TestElementTypes:
         assert b.label == "table"
 
     def test_camera_with_image(self):
-        ps = PoseStamped(pose=GeoPose(position=GeoPoint(x=1, y=2, z=0), orientation=Quaternion()))
+        ps = PoseStamped(
+            pose=GeoPose(
+                position=GeoPoint(x=1, y=2, z=0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+            ),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        )
         img = image_from_array(np.zeros((480, 640, 3), dtype=np.uint8), encoding="rgb8")
         c = Camera(pose=ps, image=img, color="purple")
         assert c.pose is ps
@@ -95,7 +114,12 @@ class TestSpaceExplicitElements:
 
     def test_add_pose(self):
         s = Space()
-        ps = PoseStamped(pose=GeoPose(position=GeoPoint(x=3, y=1, z=0), orientation=Quaternion()))
+        ps = PoseStamped(
+            pose=GeoPose(
+                position=GeoPoint(x=3, y=1, z=0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+            ),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        )
         pose = Pose(ps, color="red")
         s.add(pose)
         assert len(s) == 1
@@ -103,7 +127,12 @@ class TestSpaceExplicitElements:
 
     def test_add_multiple_types(self):
         s = Space()
-        ps = PoseStamped(pose=GeoPose(position=GeoPoint(x=3, y=1, z=0), orientation=Quaternion()))
+        ps = PoseStamped(
+            pose=GeoPose(
+                position=GeoPoint(x=3, y=1, z=0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+            ),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        )
         s.add(Pose(ps, color="red"))
         s.add(Arrow(ps, color="orange"))
         s.add(Point(GeoPoint(x=1, y=2, z=0), label="x"))
@@ -111,7 +140,12 @@ class TestSpaceExplicitElements:
         assert len(s) == 4
 
     def test_chaining(self):
-        ps = PoseStamped(pose=GeoPose(position=GeoPoint(x=1, y=1, z=0), orientation=Quaternion()))
+        ps = PoseStamped(
+            pose=GeoPose(
+                position=GeoPoint(x=1, y=1, z=0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+            ),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        )
         s = Space().add(Pose(ps)).add(Arrow(ps)).add(Text((0, 0, 0), "hi"))
         assert len(s) == 3
 
@@ -122,7 +156,11 @@ class TestSpaceAutoWrap:
     def test_posestamped_becomes_pose(self):
         s = Space()
         ps = PoseStamped(
-            pose=GeoPose(position=GeoPoint(x=3.2, y=1.5, z=0), orientation=Quaternion())
+            pose=GeoPose(
+                position=GeoPoint(x=3.2, y=1.5, z=0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
         )
         s.add(ps, color="blue", label="auto")
         assert len(s) == 1
@@ -146,10 +184,15 @@ class TestSpaceAutoWrap:
         p = Path(
             poses=[
                 PoseStamped(
-                    pose=GeoPose(position=GeoPoint(x=i, y=0, z=0), orientation=Quaternion())
+                    pose=GeoPose(
+                        position=GeoPoint(x=i, y=0, z=0),
+                        orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                    ),
+                    header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
                 )
                 for i in range(3)
-            ]
+            ],
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
         )
         s.add(p, color="blue", width=0.1)
         el = s.elements[0]
@@ -160,12 +203,36 @@ class TestSpaceAutoWrap:
 
     def test_occupancy_grid_passthrough(self):
         s = Space()
-        grid = OccupancyGrid()
+        grid = OccupancyGrid(
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            info=MapMetaData(
+                map_load_time=Time(sec=0, nanosec=0),
+                resolution=0.0,
+                width=0,
+                height=0,
+                origin=GeoPose(
+                    position=GeoPoint(x=0.0, y=0.0, z=0.0),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+            ),
+            data=np.array([], dtype=np.int8),
+        )
         s.add(grid)
         assert s.elements[0] is grid
 
     def test_detection3d_becomes_box3d(self):
-        det = Detection3D()
+        det = Detection3D(
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            results=[],
+            bbox=BoundingBox3D(
+                center=GeoPose(
+                    position=GeoPoint(x=0.0, y=0.0, z=0.0),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+                size=Vector3(x=0.0, y=0.0, z=0.0),
+            ),
+            id="",
+        )
         det.bbox.center.position.x = 5.0
         det.bbox.center.position.y = 3.0
         det.bbox.size.x = 2.0
@@ -213,7 +280,13 @@ class TestSpaceObservations:
             id=3,
             ts=3.0,
             pose=(1, 2, 0, 0, 0, 0, 1),
-            _data=PoseStamped(pose=GeoPose(position=GeoPoint(x=5, y=2))),
+            _data=PoseStamped(
+                pose=GeoPose(
+                    position=GeoPoint(x=5, y=2, z=0.0),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            ),
         )
 
         s = Space()
@@ -242,14 +315,33 @@ class TestSpaceConvenience:
     """Space convenience methods: base_map."""
 
     def test_base_map(self):
-        grid = OccupancyGrid()
+        grid = OccupancyGrid(
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            info=MapMetaData(
+                map_load_time=Time(sec=0, nanosec=0),
+                resolution=0.0,
+                width=0,
+                height=0,
+                origin=GeoPose(
+                    position=GeoPoint(x=0.0, y=0.0, z=0.0),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+            ),
+            data=np.array([], dtype=np.int8),
+        )
         s = Space().base_map(grid)
         assert len(s) == 1
         assert isinstance(s.elements[0], OccupancyGrid)
 
     def test_add_list_of_msgs(self):
         poses = [
-            PoseStamped(pose=GeoPose(position=GeoPoint(x=i, y=0, z=0), orientation=Quaternion()))
+            PoseStamped(
+                pose=GeoPose(
+                    position=GeoPoint(x=i, y=0, z=0),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            )
             for i in range(3)
         ]
         s = Space()
@@ -266,7 +358,12 @@ class TestSpaceRepr:
 
     def test_repr_with_elements(self):
         s = Space()
-        ps = PoseStamped(pose=GeoPose(position=GeoPoint(x=0, y=0, z=0), orientation=Quaternion()))
+        ps = PoseStamped(
+            pose=GeoPose(
+                position=GeoPoint(x=0, y=0, z=0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+            ),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        )
         s.add(Pose(ps))
         s.add(Pose(ps))
         s.add(Arrow(ps))
@@ -294,7 +391,11 @@ class TestSVGRender:
         s.add(
             Pose(
                 PoseStamped(
-                    pose=GeoPose(position=GeoPoint(x=1, y=2, z=0), orientation=Quaternion())
+                    pose=GeoPose(
+                        position=GeoPoint(x=1, y=2, z=0),
+                        orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                    ),
+                    header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
                 ),
                 color="blue",
             )
@@ -311,7 +412,8 @@ class TestSVGRender:
                     pose=GeoPose(
                         position=GeoPoint(x=0, y=0, z=0),
                         orientation=Quaternion(x=0, y=0, z=0.38, w=0.92),
-                    )
+                    ),
+                    header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
                 ),
                 color="orange",
             )
@@ -328,11 +430,14 @@ class TestSVGRender:
                     poses=[
                         PoseStamped(
                             pose=GeoPose(
-                                position=GeoPoint(x=i, y=i * 0.5, z=0), orientation=Quaternion()
-                            )
+                                position=GeoPoint(x=i, y=i * 0.5, z=0),
+                                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                            ),
+                            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
                         )
                         for i in range(5)
-                    ]
+                    ],
+                    header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
                 ),
                 color="blue",
             )
@@ -344,7 +449,10 @@ class TestSVGRender:
         s = Space()
         s.add(
             Box3D(
-                center=GeoPose(position=GeoPoint(x=5, y=3, z=0), orientation=Quaternion()),
+                center=GeoPose(
+                    position=GeoPoint(x=5, y=3, z=0),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
                 size=Vector3(x=2, y=1, z=0),
                 label="table",
             )
@@ -365,7 +473,11 @@ class TestSVGRender:
         s.add(
             Camera(
                 pose=PoseStamped(
-                    pose=GeoPose(position=GeoPoint(x=1, y=2, z=0), orientation=Quaternion())
+                    pose=GeoPose(
+                        position=GeoPoint(x=1, y=2, z=0),
+                        orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                    ),
+                    header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
                 ),
                 color="purple",
             )
@@ -376,8 +488,18 @@ class TestSVGRender:
 
     def test_occupancy_grid_renders_image(self):
         grid = OccupancyGrid(
-            info=MapMetaData(width=10, height=10, resolution=0.1),
-            data=[0] * 100,
+            info=MapMetaData(
+                width=10,
+                height=10,
+                resolution=0.1,
+                map_load_time=Time(sec=0, nanosec=0),
+                origin=GeoPose(
+                    position=GeoPoint(x=0.0, y=0.0, z=0.0),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+            ),
+            data=np.asarray([0] * 100, dtype=np.int8),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
         )
         s = Space().base_map(grid)
         svg = s.to_svg()
@@ -386,7 +508,12 @@ class TestSVGRender:
 
     def test_mixed_space(self):
         s = Space()
-        ps = PoseStamped(pose=GeoPose(position=GeoPoint(x=3, y=1, z=0), orientation=Quaternion()))
+        ps = PoseStamped(
+            pose=GeoPose(
+                position=GeoPoint(x=3, y=1, z=0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+            ),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        )
         s.add(Pose(ps, color="red", label="robot"))
         s.add(Arrow(ps, color="orange"))
         s.add(Point(GeoPoint(x=5, y=5, z=0), color="green", label="goal"))

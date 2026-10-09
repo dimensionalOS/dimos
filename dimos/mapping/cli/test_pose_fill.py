@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import math
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import (
     Point,
     Pose,
@@ -30,6 +31,7 @@ from dimos_generated.geometry_msgs.msg import (
     TransformStamped,
     Vector3,
 )
+from dimos_generated.std_msgs.msg import Header
 import pytest
 
 from dimos.mapping.cli.pose_fill import pose_fill
@@ -42,7 +44,13 @@ def test_pose_fill_attaches_nearest_pose() -> None:
         target = store.stream("image", str)
         poses = store.stream("odom", Pose)
         target.append("img0", ts=0.0)
-        poses.append(Pose(position=Point(x=1.0), orientation=Quaternion(w=1)), ts=0.001)
+        poses.append(
+            Pose(
+                position=Point(x=1.0, y=0.0, z=0.0),
+                orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0),
+            ),
+            ts=0.001,
+        )
 
         out = pose_fill(target, poses, tolerance=0.05).to_list()
 
@@ -59,9 +67,20 @@ def test_pose_fill_mount_composes_static_child_transform() -> None:
         poses = store.stream("odom", Pose)
         target.append("img0", ts=0.0)
         # Base pose 1m forward in x; mount offsets 1m in y (identity rotations).
-        poses.append(Pose(position=Point(x=1.0), orientation=Quaternion(w=1)), ts=0.001)
+        poses.append(
+            Pose(
+                position=Point(x=1.0, y=0.0, z=0.0),
+                orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0),
+            ),
+            ts=0.001,
+        )
         mount = TransformStamped(
-            transform=Transform(translation=Vector3(y=1), rotation=Quaternion(w=1))
+            transform=Transform(
+                translation=Vector3(y=1, x=0.0, z=0.0),
+                rotation=Quaternion(w=1, x=0.0, y=0.0, z=0.0),
+            ),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            child_frame_id="",
         )
 
         out = pose_fill(target, poses, tolerance=0.05, mount=mount).to_list()
@@ -80,13 +99,18 @@ def test_pose_fill_rotates_mount_offset_in_base_axes() -> None:
         target.append("camera frame", ts=5.0)
         poses.append(
             Pose(
-                position=Point(x=2),
-                orientation=Quaternion(z=math.sqrt(0.5), w=math.sqrt(0.5)),
+                position=Point(x=2, y=0.0, z=0.0),
+                orientation=Quaternion(z=math.sqrt(0.5), w=math.sqrt(0.5), x=0.0, y=0.0),
             ),
             ts=5.001,
         )
         mount = TransformStamped(
-            transform=Transform(translation=Vector3(x=1), rotation=Quaternion(w=1))
+            transform=Transform(
+                translation=Vector3(x=1, y=0.0, z=0.0),
+                rotation=Quaternion(w=1, x=0.0, y=0.0, z=0.0),
+            ),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            child_frame_id="",
         )
         result = pose_fill(target, poses, tolerance=0.05, mount=mount).to_list()
     assert len(result) == 1
@@ -100,5 +124,10 @@ def test_pose_fill_drops_unmatched_frame_without_loading_payload() -> None:
         target = store.stream("image", str)
         poses = store.stream("odom", Pose)
         target.append("unmatched", ts=1.0)
-        poses.append(Pose(position=Point(x=1), orientation=Quaternion(w=1)), ts=3.0)
+        poses.append(
+            Pose(
+                position=Point(x=1, y=0.0, z=0.0), orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0)
+            ),
+            ts=3.0,
+        )
         assert pose_fill(target, poses, tolerance=0.05).to_list() == []

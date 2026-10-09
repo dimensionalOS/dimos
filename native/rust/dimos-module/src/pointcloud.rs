@@ -18,7 +18,9 @@
 //! Geometry extraction kept separate from generated message values and codecs.
 use std::io;
 
-use dimos_generated_messages::sensor_msgs::msg::{PointCloud2, PointField};
+use dimos_generated_messages::sensor_msgs::msg::{
+    point_cloud2::PointCloud2, point_field::PointField,
+};
 
 fn invalid(reason: &str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, reason)
@@ -142,7 +144,14 @@ mod tests {
                     count: 1,
                 },
             ],
-            ..Default::default()
+            header: dimos_generated_messages::std_msgs::msg::header::Header {
+                stamp: dimos_generated_messages::builtin_interfaces::msg::time::Time {
+                    sec: 0,
+                    nanosec: 0,
+                },
+                frame_id: String::new(),
+            },
+            is_dense: false,
         }
     }
 

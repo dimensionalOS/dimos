@@ -18,6 +18,8 @@ from dataclasses import dataclass
 import hashlib
 from typing import TYPE_CHECKING, Any
 
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseWithCovariance, Quaternion
+
 if TYPE_CHECKING:
     from dimos_generated.sensor_msgs.msg import Image
     from typing_extensions import Self
@@ -329,7 +331,14 @@ class Detection2DBBox(Detection2D):
                     hypothesis=ObjectHypothesis(
                         class_id=str(self.class_id),
                         score=self.confidence,
-                    )
+                    ),
+                    pose=PoseWithCovariance(
+                        pose=Pose(
+                            position=Point(x=0.0, y=0.0, z=0.0),
+                            orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                        ),
+                        covariance=np.zeros(36, dtype=np.float64),
+                    ),
                 )
             ],
             id=str(self.track_id),

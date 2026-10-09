@@ -18,6 +18,7 @@ from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.dimos_msgs.msg import GraspCandidateArray
 from dimos_generated.sensor_msgs.msg import PointCloud2
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 
 from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspModule
@@ -37,9 +38,9 @@ def main() -> None:
     )
     provider = HeuristicGraspModule()
     try:
-        proposals = provider.propose_grasps(PointCloud2.decode(cloud.encode()))
+        proposals = provider.propose_grasps(cdr_decode(cdr_encode(cloud), PointCloud2))
         payload = proposals.encode()
-        received = GraspCandidateArray.decode(payload)
+        received = cdr_decode(payload, GraspCandidateArray)
         assert received.header == cloud.header
         assert len(received.candidates) == 1
         candidate = received.candidates[0]

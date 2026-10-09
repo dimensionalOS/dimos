@@ -20,6 +20,7 @@ from types import SimpleNamespace
 from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.dimos_msgs.msg import MotorCommandArray
 from dimos_generated.std_msgs.msg import Header
+import numpy as np
 from pydantic import ValidationError
 import pytest
 
@@ -72,11 +73,12 @@ def _wire(connection, soft_start_seconds):
 
 def _command():
     return MotorCommandArray(
-        q=[1.0] * _NUM_MOTORS,
-        dq=[0.0] * _NUM_MOTORS,
-        kp=[100.0] * _NUM_MOTORS,
-        kd=[5.0] * _NUM_MOTORS,
-        tau=[8.0] * _NUM_MOTORS,
+        q=np.asarray([1.0] * _NUM_MOTORS, dtype=np.float64),
+        dq=np.asarray([0.0] * _NUM_MOTORS, dtype=np.float64),
+        kp=np.asarray([100.0] * _NUM_MOTORS, dtype=np.float64),
+        kd=np.asarray([5.0] * _NUM_MOTORS, dtype=np.float64),
+        tau=np.asarray([8.0] * _NUM_MOTORS, dtype=np.float64),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
     )
 
 
@@ -121,7 +123,16 @@ def test_soft_start_disabled_passes_through(connection: G1WholeBodyConnection):
 def test_wrong_joint_count_is_dropped(connection: G1WholeBodyConnection):
     publisher = _wire(connection, soft_start_seconds=0.0)
 
-    connection._on_motor_command(MotorCommandArray(q=[0.0] * 5))
+    connection._on_motor_command(
+        MotorCommandArray(
+            q=np.asarray([0.0] * 5, dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            dq=np.array([], dtype=np.float64),
+            kp=np.array([], dtype=np.float64),
+            kd=np.array([], dtype=np.float64),
+            tau=np.array([], dtype=np.float64),
+        )
+    )
 
     assert publisher.frames == []
 

@@ -18,8 +18,10 @@ import hashlib
 import json
 from pathlib import Path
 import sqlite3
+import sys
 
 from dimos_generated.std_msgs.msg import String
+from dimos_message_build.registry import decode as cdr_decode
 import lz4.frame
 from mcap.reader import make_reader
 from mcap.writer import Writer
@@ -33,6 +35,18 @@ from dimos.memory.convert_recording import convert
 from dimos.memory.recording_migration import inspect_recording
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.models.embedding.base import Embedding
+
+
+@pytest.fixture(autouse=True)
+def restore_reference_types_module():
+    previous = sys.modules.get("rosbags.usertypes")
+    try:
+        yield
+    finally:
+        if previous is None:
+            sys.modules.pop("rosbags.usertypes", None)
+        else:
+            sys.modules["rosbags.usertypes"] = previous
 
 
 def write_mcap(path, streams):
@@ -150,7 +164,7 @@ def test_json_string_preserves_utf8_and_stream_name(tmp_path, codec):
     convert(source, output)
     [(schema, channel, row)] = read_mcap(output)
     assert channel.topic == "status/raw" and schema.name == "std_msgs/msg/String"
-    assert String.decode(row.data).data.encode() == data
+    assert cdr_decode(row.data, String).data.encode() == data
 
 
 def test_all_unsupported_streams_reported_before_output(tmp_path):
@@ -397,3 +411,49 @@ def test_sqlite_vectors_preserved_by_new_ids_and_rejected_for_mcap(tmp_path):
     with pytest.raises(ValueError, match="orphan vectors"):
         convert(source, tmp_path / "orphan.db")
     assert not (tmp_path / "orphan.db").exists()
+
+
+@pytest.mark.parametrize(
+    "typename", ["sensor_msgs.Image", "sensor_msgs.JointState", "sensor_msgs.Imu"]
+)
+def test_nonempty_numeric_and_byte_arrays_preserve_values(tmp_path, typename):
+    module = pytest.importorskip("dimos_lcm." + typename)
+    old = getattr(module, typename.rsplit(".", 1)[1])()
+    if typename.endswith("Image"):
+        old.encoding = "rgb8"
+        old.height, old.width, old.step = 1, 2, 6
+        old.data = bytes([0, 1, 127, 128, 254, 255])
+        old.data_length = len(old.data)
+        expected = {"data": np.frombuffer(old.data, dtype=np.uint8)}
+    elif typename.endswith("JointState"):
+        old.name = ["left", "right"]
+        old.name_length = 2
+        expected = {}
+        for field, values in {
+            "position": [-1.5, 2.25],
+            "velocity": [0.125, -0.25],
+            "effort": [3.0, 4.0],
+        }.items():
+            setattr(old, field, values)
+            setattr(old, field + "_length", len(values))
+            expected[field] = np.array(values, dtype=np.float64)
+    else:
+        old.orientation_covariance = [i / 8 for i in range(9)]
+        expected = {
+            "orientation_covariance": np.array(old.orientation_covariance, dtype=np.float64)
+        }
+    source, output = tmp_path / "old.mcap", tmp_path / "new.mcap"
+    write_mcap(source, [("data", typename.replace(".", "/msg/"), "lcm", [old.lcm_encode()])])
+
+    convert(source, output)
+
+    [(schema, _, row)] = read_mcap(output)
+    oracle = get_typestore(Stores.EMPTY)
+    oracle.register(get_types_from_msg(schema.data.decode(), schema.name))
+    value = oracle.deserialize_cdr(row.data, schema.name)
+    for field, expected_array in expected.items():
+        actual = getattr(value, field)
+        assert actual.dtype == expected_array.dtype
+        np.testing.assert_array_equal(actual, expected_array)
+    if typename.endswith("JointState"):
+        assert value.name == ["left", "right"]

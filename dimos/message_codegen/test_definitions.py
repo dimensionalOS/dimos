@@ -12,17 +12,31 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from hashlib import sha256
 import json
+import math
 from pathlib import Path
-import subprocess
+import struct
 import sys
 
+import numpy as np
 import pytest
-from rosbags.typesys import get_types_from_msg
+from rosbags.typesys import Stores, get_types_from_msg, get_typestore
 
-from dimos.message_codegen import python as python_codegen
 from dimos.message_codegen.definitions import Definitions, parse_message
+
+
+@pytest.fixture(autouse=True)
+def restore_reference_types_module():
+    # Independent oracle stores own a process-global module. Restore it so they
+    # do not invalidate the canonical registry's native class pickle identities.
+    previous = sys.modules.get("rosbags.usertypes")
+    try:
+        yield
+    finally:
+        if previous is None:
+            sys.modules.pop("rosbags.usertypes", None)
+        else:
+            sys.modules["rosbags.usertypes"] = previous
 
 
 def write_message(root: Path, name: str, text: str) -> Path:
@@ -156,68 +170,86 @@ def test_all_bundled_schemas_resolve():
     )
 
 
-def test_upstream_generator_sources_match_recorded_hashes():
-    root = Path(__file__).parent / "_vendor" / "rosidl"
-    manifest = json.loads((root / "sources.json").read_text())
-    assert manifest["revision"] == "85fa592b698b0f665e3120f48fac0d35e2f7d8a4"
-    for name, source in manifest["files"].items():
-        assert sha256((root / name).read_bytes()).hexdigest() == source["sha256"], name
+def test_full_upstream_generator_sources_are_pinned():
+    manifest = json.loads((Path(__file__).parent / "native_sources.json").read_text())
+    repositories = manifest["repositories"]
+    assert repositories["rosidl"] == {
+        "url": "https://github.com/ros2/rosidl.git",
+        "revision": "85fa592b698b0f665e3120f48fac0d35e2f7d8a4",
+    }
+    for source in repositories.values():
+        assert source["url"].startswith("https://github.com/")
+        assert len(source["revision"]) == 40
+        assert all(character in "0123456789abcdef" for character in source["revision"])
+    assert not (Path(__file__).parent / "_vendor/rosidl").exists()
 
 
-def test_upstream_python_empty_type_keeps_wire_sentinel_out_of_value_repr(tmp_path):
+def test_native_python_empty_type_preserves_wire_sentinel(tmp_path):
     write_message(tmp_path, "example_msgs/msg/Empty", "uint8 MODE=7\n")
     definitions = Definitions([tmp_path])
-    files = python_codegen.generate(definitions.resolve(), definitions, "probe_values")
-    for name, source in files.items():
-        path = tmp_path / "probe_values" / name
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(source)
-    consumer = (
-        "import sys; sys.path.insert(0, " + repr(str(tmp_path)) + "); "
-        "from probe_values.example_msgs.msg import Empty; "
-        "value = Empty(); assert repr(value) == 'Empty()'; "
-        "assert value.MODE == 7; assert Empty.decode(value.encode()) == value"
+
+    store = get_typestore(Stores.EMPTY)
+    store.register(
+        get_types_from_msg(definitions.schema("example_msgs/msg/Empty"), "example_msgs/msg/Empty")
     )
-    result = subprocess.run([sys.executable, "-I", "-c", consumer], capture_output=True, text=True)
-    assert result.returncode == 0, result.stdout + result.stderr
+    cls = store.types["example_msgs/msg/Empty"]
+    value = cls(0)
+    assert value.MODE == 7
+    assert bytes(store.serialize_cdr(value, value.__msgtype__)) == b"\0\1\0\0\0"
+    assert (
+        type(
+            store.deserialize_cdr(store.serialize_cdr(value, value.__msgtype__), value.__msgtype__)
+        )
+        is cls
+    )
 
 
-def test_library_decoder_preserves_padding_and_nan_and_rejects_bool_arrays(tmp_path):
+def test_library_decoder_preserves_padding_and_nan(tmp_path):
     write_message(tmp_path, "probe_msgs/msg/Value", "uint8 prefix\nfloat32 sample\nbool[] flags\n")
     definitions = Definitions([tmp_path])
-    for name, source in python_codegen.generate(
-        definitions.resolve(), definitions, "probe"
-    ).items():
-        path = tmp_path / "probe" / name
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(source)
-    consumer = tmp_path / "consumer.py"
-    consumer.write_text("""import math
-import struct
-from probe.probe_msgs.msg import Value
-for little in (True, False):
-    value = Value(prefix=7, sample=1.0, flags=[False, True])
-    wire = bytearray(value.encode(little_endian=little))
-    wire[5:8] = b"\\xa5" * 3  # CDR padding is unspecified, not required to be zero.
-    wire[8:12] = struct.pack("<I" if little else ">I", 0x7f800001)
-    decoded = Value.decode(bytes(wire))
-    assert math.isnan(decoded.sample)
-    assert decoded.prefix == 7 and list(decoded.flags) == [False, True]
+
+    store = get_typestore(Stores.EMPTY)
+    store.register(
+        get_types_from_msg(definitions.schema("probe_msgs/msg/Value"), "probe_msgs/msg/Value")
+    )
+    for little in (True, False):
+        value = store.types["probe_msgs/msg/Value"](7, 1.0, np.array([False, True]))
+        wire = bytearray(store.serialize_cdr(value, value.__msgtype__, little_endian=little))
+        wire[5:8] = b"\xa5" * 3
+        wire[8:12] = struct.pack("<I" if little else ">I", 0x7F800001)
+        decoded = store.deserialize_cdr(bytes(wire), value.__msgtype__)
+        assert math.isnan(decoded.sample)
+        assert decoded.prefix == 7 and list(decoded.flags) == [False, True]
+
+
+@pytest.mark.parametrize("little", [True, False])
+@pytest.mark.xfail(
+    strict=True,
+    raises=pytest.fail.Exception,
+    reason="CDR-L06 bool arrays: docs/development/message-limitations.md#cdr-l06",
+)
+def test_library_decoder_rejects_noncanonical_bool_array(tmp_path, little):
+    write_message(tmp_path, "probe_msgs/msg/Value", "uint8 prefix\nfloat32 sample\nbool[] flags\n")
+    definitions = Definitions([tmp_path])
+    store = get_typestore(Stores.EMPTY)
+    store.register(
+        get_types_from_msg(definitions.schema("probe_msgs/msg/Value"), "probe_msgs/msg/Value")
+    )
+    value = store.types["probe_msgs/msg/Value"](7, 1.0, np.array([False, True]))
+    wire = bytearray(store.serialize_cdr(value, value.__msgtype__, little_endian=little))
     wire[-1] = 2
-    try:
-        Value.decode(bytes(wire))
-    except ValueError as error:
-        assert "bool" in str(error)
-    else:
-        raise AssertionError("noncanonical bool array accepted")
-""")
-    result = subprocess.run([sys.executable, str(consumer)], capture_output=True, text=True)
-    assert result.returncode == 0, result.stdout + result.stderr
+    with pytest.raises(ValueError, match="bool"):
+        store.deserialize_cdr(bytes(wire), value.__msgtype__)
 
 
-def test_upstream_serialization_template_matches_recorded_hashes():
-    root = Path(__file__).parent / "_vendor" / "rosidl" / "serialization"
-    manifest = json.loads((root / "sources.json").read_text())
-    assert manifest["revision"] == "b883555055cce17982a22172a42ef557ef40bac5"
-    for name, digest in manifest["files"].items():
-        assert sha256((root / name).read_bytes()).hexdigest() == digest, name
+def test_full_upstream_serialization_and_fastcdr_sources_are_pinned():
+    manifest = json.loads((Path(__file__).parent / "native_sources.json").read_text())
+    assert manifest["repositories"]["rosidl_typesupport_fastrtps"] == {
+        "url": "https://github.com/ros2/rosidl_typesupport_fastrtps.git",
+        "revision": "b883555055cce17982a22172a42ef557ef40bac5",
+    }
+    assert manifest["fastcdr"] == {
+        "url": "https://github.com/eProsima/Fast-CDR/archive/refs/tags/v2.4.0.tar.gz",
+        "sha256": "79d8466107dd6b7d1defe961c4aa31735038937cf9dd1175cf6b0da0df2209ab",
+        "version": "2.4.0",
+    }

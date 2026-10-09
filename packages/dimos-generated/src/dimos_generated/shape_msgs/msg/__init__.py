@@ -1,8 +1,6 @@
-from ..._types import (
-    shape_msgs__msg__Mesh as Mesh,
-    shape_msgs__msg__MeshTriangle as MeshTriangle,
-    shape_msgs__msg__Plane as Plane,
-    shape_msgs__msg__SolidPrimitive as SolidPrimitive,
-)
+from ..._types import store
 
-__all__ = ["Mesh", "MeshTriangle", "Plane", "SolidPrimitive"]
+MeshTriangle = store.types["shape_msgs/msg/MeshTriangle"]
+Mesh = store.types["shape_msgs/msg/Mesh"]
+Plane = store.types["shape_msgs/msg/Plane"]
+SolidPrimitive = store.types["shape_msgs/msg/SolidPrimitive"]

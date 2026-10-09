@@ -21,7 +21,10 @@ import threading
 from typing import Any
 from unittest.mock import MagicMock
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.std_msgs.msg import Header
+import numpy as np
 import pytest
 
 from dimos.control.components import HardwareComponent, HardwareType, make_joints
@@ -361,7 +364,15 @@ class TestPostPivotPattern:
         right = OutTap(coordinator.right_arm_joints)
         coordinator.start()
 
-        commands.emit(JointState(name=LEFT_JOINTS, position=[0.4, 0.5]))
+        commands.emit(
+            JointState(
+                name=LEFT_JOINTS,
+                position=np.array([0.4, 0.5], dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            )
+        )
 
         trajectory = coordinator.get_task("joint_trajectory")._trajectory
         assert trajectory is not None

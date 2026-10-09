@@ -14,9 +14,11 @@
 
 """Exercise generated image preparation with a fixed model response, offline."""
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.sensor_msgs.msg import Image
 from dimos_generated.std_msgs.msg import Header
 from dimos_generated.vision_msgs.msg import Detection2DArray
+from dimos_message_build.registry import decode as cdr_decode
 import numpy as np
 
 from dimos.models.vl.base import VlModel
@@ -33,13 +35,15 @@ class FixedResponseModel(VlModel):
 
 def main() -> None:
     image = image_from_array(
-        np.zeros((40, 60, 3), dtype=np.uint8), encoding="rgb8", header=Header(frame_id="camera")
+        np.zeros((40, 60, 3), dtype=np.uint8),
+        encoding="rgb8",
+        header=Header(frame_id="camera", stamp=Time(sec=0, nanosec=0)),
     )
     model = FixedResponseModel(auto_resize=(30, 20))
     resized, scale = model._prepare_image(image)
     assert (resized.width, resized.height, scale) == (30, 20, 0.5)
     detections = model.query_detections(image, "target")
-    wire = Detection2DArray.decode(detections.to_ros_detection2d_array().encode())
+    wire = cdr_decode(detections.to_ros_detection2d_array().encode(), Detection2DArray)
     assert wire.header == image.header and len(wire.detections) == 1
     print("Generated image: 60x40 → 30x20, scale=0.5")
     print("Fixed model response → one generated CDR detection; source header preserved")

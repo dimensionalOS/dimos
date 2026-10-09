@@ -57,6 +57,7 @@ from dimos_generated.nav_msgs.msg import Odometry
 from dimos_generated.sensor_msgs.msg import CameraInfo, Image
 from dimos_generated.std_msgs.msg import Header
 from dimos_generated.tf2_msgs.msg import TFMessage
+import numpy as np
 
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
@@ -491,8 +492,8 @@ class SpotHighLevel(StaticTfPublisher):
         odometry = Odometry(
             header=Header(stamp=time_from_seconds(ts), frame_id=self.config.odom_frame_id),
             child_frame_id=self.config.base_frame_id,
-            pose=PoseWithCovariance(pose=pose),
-            twist=TwistWithCovariance(twist=twist),
+            pose=PoseWithCovariance(pose=pose, covariance=np.zeros(36, dtype=np.float64)),
+            twist=TwistWithCovariance(twist=twist, covariance=np.zeros(36, dtype=np.float64)),
         )
         self.odometry.publish(odometry)
         self.tf.publish(TFMessage(transforms=[transform_from_odometry(odometry)]))
@@ -561,7 +562,7 @@ class SpotHighLevel(StaticTfPublisher):
             yaw: Rotational velocity (rad/s).
             duration: Seconds to move. 0 uses one `cmd_vel_timeout` window.
         """
-        twist = Twist(linear=Vector3(x=x, y=y), angular=Vector3(z=yaw))
+        twist = Twist(linear=Vector3(x=x, y=y, z=0.0), angular=Vector3(z=yaw, x=0.0, y=0.0))
         if await self.move(twist, duration=duration):
             return f"Moving with velocity=({x}, {y}, {yaw}) for {duration} seconds"
         return f"Failed to move with velocity=({x}, {y}, {yaw})"

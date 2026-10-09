@@ -15,6 +15,7 @@
 from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.std_msgs.msg import Header
 from dimos_generated.vision_msgs.msg import Detection2D, Detection2DArray
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 
 from dimos.msgs.image import image_from_array, image_view
@@ -47,7 +48,7 @@ def test_generated_bbox_image_and_wire_round_trip():
     assert annotated.header == header
     np.testing.assert_array_equal(image_view(annotated)[39, 59], [0, 0, 250])
     np.testing.assert_array_equal(image_view(image), pixels)
-    wire = Detection2D.decode(det.to_ros_detection2d().encode())
+    wire = cdr_decode(cdr_encode(det.to_ros_detection2d()), Detection2D)
     assert wire.header == header
     assert wire.results[0].hypothesis.class_id == "2"
     restored = Detection2DBBox.from_ros_detection2d(wire, image=image)
@@ -59,7 +60,7 @@ def test_generated_bbox_image_and_wire_round_trip():
 def test_generated_detection_collection_round_trip():
     pixels = np.zeros((40, 60, 3), dtype=np.uint8)
     image = image_from_array(
-        pixels, encoding="rgb8", header=Header(frame_id="camera", stamp=Time(nanosec=123))
+        pixels, encoding="rgb8", header=Header(frame_id="camera", stamp=Time(nanosec=123, sec=0))
     )
     det = Detection2DBBox(
         bbox=(10, 10, 30, 30),
@@ -71,7 +72,7 @@ def test_generated_detection_collection_round_trip():
         image=image,
     )
     collection = ImageDetections2D(image=image, detections=[det])
-    wire = Detection2DArray.decode(collection.to_ros_detection2d_array().encode())
+    wire = cdr_decode(cdr_encode(collection.to_ros_detection2d_array()), Detection2DArray)
     assert wire.header == image.header
     assert len(wire.detections) == 1
     restored = ImageDetections2D.from_ros_detection2d_array(image, wire)
@@ -87,14 +88,14 @@ def test_generated_detection_collection_round_trip():
 def test_generated_point_detection_crop_and_cdr():
     pixels = np.arange(100, dtype=np.uint8).reshape(10, 10)
     image = image_from_array(
-        pixels, encoding="mono8", header=Header(frame_id="camera", stamp=Time(nanosec=789))
+        pixels, encoding="mono8", header=Header(frame_id="camera", stamp=Time(nanosec=789, sec=0))
     )
     point = Detection2DPoint(x=1, y=1, name="point", ts=0, image=image)
     assert point.is_valid()
     crop = point.cropped_image(padding=2)
     np.testing.assert_array_equal(image_view(crop), pixels[:3, :3])
     assert crop.header == image.header
-    wire = Detection2D.decode(point.to_ros_detection2d().encode())
+    wire = cdr_decode(cdr_encode(point.to_ros_detection2d()), Detection2D)
     assert wire.header == image.header
     assert wire.bbox.center.position.x == wire.bbox.center.position.y == 1
     assert wire.bbox.size_x == wire.bbox.size_y == 0

@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from dimos_generated.geometry_msgs.msg import Quaternion, Vector3
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 
@@ -31,7 +32,7 @@ from dimos.msgs.geometry import (
 
 def test_quaternion_default_init() -> None:
     """Test that default initialization creates an identity quaternion (w=1, x=y=z=0)."""
-    q = Quaternion()
+    q = Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
     assert q.x == 0.0
     assert q.y == 0.0
     assert q.z == 0.0
@@ -110,7 +111,7 @@ def test_quaternion_numpy_init() -> None:
 def test_quaternion_copy_init() -> None:
     """Test initialization from another Quaternion (copy constructor)."""
     original = Quaternion(x=0.1, y=0.2, z=0.3, w=0.4)
-    copy = Quaternion.decode(original.encode())
+    copy = cdr_decode(cdr_encode(original), Quaternion)
     assert copy.x == 0.1
     assert copy.y == 0.2
     assert copy.z == 0.3
@@ -121,12 +122,12 @@ def test_quaternion_copy_init() -> None:
 
 def test_quaternion_mutated_value_copy() -> None:
     """Test initialization from generated Quaternion."""
-    source_quaternion = Quaternion()
+    source_quaternion = Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
     source_quaternion.x = 0.1
     source_quaternion.y = 0.2
     source_quaternion.z = 0.3
     source_quaternion.w = 0.4
-    q = Quaternion.decode(source_quaternion.encode())
+    q = cdr_decode(cdr_encode(source_quaternion), Quaternion)
     assert q.x == 0.1
     assert q.y == 0.2
     assert q.z == 0.3
@@ -154,7 +155,7 @@ def test_quaternion_indexing() -> None:
 
 def test_quaternion_euler() -> None:
     """Test quaternion to Euler angles conversion."""
-    q_identity = Quaternion()
+    q_identity = Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
     angles = vector_from_array(quaternion_euler(q_identity))
     assert np.isclose(angles.x, 0.0, atol=1e-10)
     assert np.isclose(angles.y, 0.0, atol=1e-10)
@@ -174,8 +175,8 @@ def test_quaternion_euler() -> None:
 def test_cdr_encode_decode() -> None:
     """Test encoding and decoding of Quaternion to/from binary CDR format."""
     q_source = Quaternion(x=1.0, y=2.0, z=3.0, w=4.0)
-    binary_msg = q_source.encode()
-    q_dest = Quaternion.decode(binary_msg)
+    binary_msg = cdr_encode(q_source)
+    q_dest = cdr_decode(binary_msg, Quaternion)
     assert isinstance(q_dest, Quaternion)
     assert q_dest is not q_source
     assert q_dest == q_source

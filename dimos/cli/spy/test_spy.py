@@ -27,6 +27,7 @@ import time
 from typing import Any
 
 from dimos_generated.geometry_msgs.msg import Vector3
+from dimos_message_build.registry import encode as cdr_encode
 import pytest
 
 from dimos.cli.spy.core import (
@@ -45,7 +46,7 @@ from dimos.protocol.pubsub.impl.zenohpubsub import ZenohPubSubBase
 from dimos.protocol.service.zenohservice import ZenohSessionPool
 
 VEC = Vector3(x=1.0, y=2.0, z=3.0)
-VEC_BYTES = VEC.encode()
+VEC_BYTES = cdr_encode(VEC)
 
 
 # TopicStats: pure, deterministic (injected timestamps, no sleeps)

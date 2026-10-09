@@ -17,7 +17,7 @@ from uuid import uuid4
 
 from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import PoseStamped
-from dimos_generated.sensor_msgs.msg import CameraInfo
+from dimos_generated.sensor_msgs.msg import CameraInfo, RegionOfInterest
 from dimos_generated.std_msgs.msg import Header
 from dimos_generated.vision_msgs.msg import (
     BoundingBox2D,
@@ -26,6 +26,8 @@ from dimos_generated.vision_msgs.msg import (
     Point2D,
     Pose2D,
 )
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
+import numpy as np
 import pytest
 
 from dimos.core.transport import LCMTransport
@@ -41,22 +43,46 @@ def test_generated_bbox_goal_preserves_header_and_projection():
     ready = Event()
     received = Event()
     unsubscribe = module.goal_request.subscribe(
-        lambda value: (goals.append(PoseStamped.decode(value.encode())), received.set())
+        lambda value: (
+            goals.append(cdr_decode(cdr_encode(value), PoseStamped)),
+            received.set(),
+        )
     )
     message = Detection2DArray(
         header=Header(frame_id="base_link", stamp=Time(sec=1700000000, nanosec=123456789)),
-        detections=[Detection2D(bbox=BoundingBox2D(center=Pose2D(position=Point2D(x=420, y=290))))],
+        detections=[
+            Detection2D(
+                bbox=BoundingBox2D(
+                    center=Pose2D(position=Point2D(x=420, y=290), theta=0.0), size_x=0.0, size_y=0.0
+                ),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                results=[],
+                id="",
+            )
+        ],
     )
     try:
         module.start()
         module._on_detection(message)
         assert not goals
-        camera = CameraInfo(k=[500, 0, 320, 0, 250, 240, 0, 0, 1])
+        camera = CameraInfo(
+            k=np.array([500, 0, 320, 0, 250, 240, 0, 0, 1], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            height=0,
+            width=0,
+            distortion_model="",
+            d=np.array([], dtype=np.float64),
+            r=np.zeros(9, dtype=np.float64),
+            p=np.zeros(12, dtype=np.float64),
+            binning_x=0,
+            binning_y=0,
+            roi=RegionOfInterest(x_offset=0, y_offset=0, height=0, width=0, do_rectify=False),
+        )
         camera_unsubscribe = module.camera_info.subscribe(lambda _: ready.set())
-        module.camera_info.transport.publish(CameraInfo.decode(camera.encode()))
+        module.camera_info.transport.publish(cdr_decode(cdr_encode(camera), CameraInfo))
         assert ready.wait(2)
         camera_unsubscribe()
-        module.detection2d.transport.publish(Detection2DArray.decode(message.encode()))
+        module.detection2d.transport.publish(cdr_decode(cdr_encode(message), Detection2DArray))
         assert received.wait(2)
         assert len(goals) == 1
         goal = goals[0]
@@ -64,7 +90,11 @@ def test_generated_bbox_goal_preserves_header_and_projection():
         assert (goal.pose.position.x, goal.pose.position.y, goal.pose.position.z) == pytest.approx(
             (2, -0.4, -0.4)
         )
-        module._on_detection(Detection2DArray())
+        module._on_detection(
+            Detection2DArray(
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""), detections=[]
+            )
+        )
         assert len(goals) == 1
     finally:
         unsubscribe()

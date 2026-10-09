@@ -60,7 +60,7 @@ def inspect_recording(source: Path, output_format: str) -> dict[str, Any]:
                 validate_identifier(stream.name)
             types[stream.name] = {
                 "input_codec": stream.codec,
-                "output_type": stream.target.msg_name,
+                "output_type": stream.target.__msgtype__,
             }
         for row in rows:
             counts[row.stream.name] += 1

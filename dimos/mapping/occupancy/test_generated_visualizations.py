@@ -22,6 +22,7 @@ from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaterni
 from dimos_generated.nav_msgs.msg import MapMetaData, OccupancyGrid, Path
 from dimos_generated.sensor_msgs.msg import Image
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 
@@ -35,10 +36,19 @@ from dimos.msgs.image import image_view
 def test_generated_image_preserves_header_and_colors(palette: Palette) -> None:
     grid = OccupancyGrid(
         header=Header(stamp=Time(sec=1, nanosec=999), frame_id="map"),
-        info=MapMetaData(width=3, height=1, resolution=1),
-        data=[-1, 0, 100],
+        info=MapMetaData(
+            width=3,
+            height=1,
+            resolution=1,
+            map_load_time=Time(sec=0, nanosec=0),
+            origin=Pose(
+                position=Point(x=0.0, y=0.0, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+        ),
+        data=np.array([-1, 0, 100], dtype=np.int8),
     )
-    image = Image.decode(visualize_occupancy_grid(grid, palette).encode())
+    image = cdr_decode(cdr_encode(visualize_occupancy_grid(grid, palette)), Image)
     assert image.header == grid.header
     assert image.encoding == "bgr8"
     assert image_view(image).shape == (1, 3, 3)
@@ -52,15 +62,30 @@ def test_generated_image_preserves_header_and_colors(palette: Palette) -> None:
 def test_path_rendering_is_relative_to_rotated_grid(footprint: bool) -> None:
     grid = OccupancyGrid(
         info=MapMetaData(
-            width=10, height=10, resolution=1, origin=Pose(orientation=Quaternion(w=1))
+            width=10,
+            height=10,
+            resolution=1,
+            origin=Pose(
+                orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0),
+                position=Point(x=0.0, y=0.0, z=0.0),
+            ),
+            map_load_time=Time(sec=0, nanosec=0),
         ),
-        data=[0] * 100,
+        data=np.asarray([0] * 100, dtype=np.int8),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
     )
     path = Path(
         poses=[
-            PoseStamped(pose=Pose(position=Point(x=x, y=3), orientation=Quaternion(w=1)))
+            PoseStamped(
+                pose=Pose(
+                    position=Point(x=x, y=3, z=0.0),
+                    orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0),
+                ),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            )
             for x in [2, 4, 6]
-        ]
+        ],
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
     )
     expected = (
         visualize_path(grid, path, 1, 2)
@@ -68,13 +93,15 @@ def test_path_rendering_is_relative_to_rotated_grid(footprint: bool) -> None:
         else visualize_occupancy_grid(grid, "rainbow", path)
     )
     grid.info.origin = Pose(
-        position=Point(x=20, y=10), orientation=quaternion_from_euler(0, 0, math.pi / 2)
+        position=Point(x=20, y=10, z=0.0), orientation=quaternion_from_euler(0, 0, math.pi / 2)
     )
     path.poses = [
         PoseStamped(
             pose=Pose(
-                position=Point(x=17, y=10 + x), orientation=quaternion_from_euler(0, 0, math.pi / 2)
-            )
+                position=Point(x=17, y=10 + x, z=0.0),
+                orientation=quaternion_from_euler(0, 0, math.pi / 2),
+            ),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
         )
         for x in [2, 4, 6]
     ]

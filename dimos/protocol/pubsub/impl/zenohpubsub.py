@@ -92,7 +92,7 @@ class Topic(LCMTopic):
             Topic("dimos/data")           -> "dimos/data"
         """
         if self.msg_type is not None:
-            return f"{self.pattern}/{self.msg_type.msg_name}"
+            return f"{self.pattern}/{self.msg_type.__msgtype__}"
         return self.pattern
 
 

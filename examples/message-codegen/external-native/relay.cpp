@@ -1,8 +1,9 @@
 // Copyright 2026 Dimensional Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <demo_msgs/msg/telemetry.hpp>
 #include "dimos/native.hpp"
-#include <external_telemetry/messages.hpp>
+
 
 using demo_msgs::msg::Telemetry;
 using namespace dimos::native;

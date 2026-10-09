@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Annotated, Any, Literal, TypeAlias
 
 from dimos_generated.tf2_msgs.msg import TFMessage
+from dimos_message_build.registry import schema as cdr_schema
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from dimos.constants import DIMOS_PROJECT_ROOT
@@ -57,8 +58,8 @@ class RustStreamSpec(BaseModel):
             name=name,
             codec=codec,
             payload_type=f"{payload_type.__module__}.{payload_type.__qualname__}",
-            schema_name=payload_type.msg_name,
-            schema_definition=payload_type.schema,
+            schema_name=payload_type.__msgtype__,
+            schema_definition=cdr_schema(payload_type.__msgtype__),
         )
 
 
@@ -252,9 +253,7 @@ class RustRecorder(NativeModule):
 
     @staticmethod
     def _default_codec(payload_type: type[Any]) -> str:
-        if all(
-            hasattr(payload_type, member) for member in ("encode", "decode", "msg_name", "schema")
-        ):
+        if all(hasattr(payload_type, member) for member in ("__msgtype__",)):
             return "cdr"
         raise TypeError(
             f"RustRecorder requires a generated CDR message, got {payload_type.__qualname__}"

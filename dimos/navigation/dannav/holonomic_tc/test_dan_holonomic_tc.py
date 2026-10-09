@@ -23,6 +23,7 @@ import math
 import time
 from typing import Any, Literal
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Twist
 from dimos_generated.nav_msgs.msg import Path
 from dimos_generated.std_msgs.msg import Bool, Header
@@ -70,13 +71,13 @@ class _Captured:
 
 
 def _yaw_quaternion(yaw_rad: float) -> Quaternion:
-    return Quaternion(z=math.sin(yaw_rad / 2.0), w=math.cos(yaw_rad / 2.0))
+    return Quaternion(z=math.sin(yaw_rad / 2.0), w=math.cos(yaw_rad / 2.0), x=0.0, y=0.0)
 
 
 def _odom(x: float, y: float, yaw_rad: float, *, ts: float = 1.0) -> PoseStamped:
     return PoseStamped(
         header=Header(stamp=time_from_seconds(ts), frame_id="map"),
-        pose=Pose(position=Point(x=x, y=y), orientation=_yaw_quaternion(yaw_rad)),
+        pose=Pose(position=Point(x=x, y=y, z=0.0), orientation=_yaw_quaternion(yaw_rad)),
     )
 
 
@@ -90,7 +91,7 @@ def _path_from_points(points: list[tuple[float, float]]) -> Path:
             prev_point = points[index - 1]
             yaw = math.atan2(point[1] - prev_point[1], point[0] - prev_point[0])
         poses.append(_odom(point[0], point[1], yaw))
-    return Path(header=Header(frame_id="map"), poses=poses)
+    return Path(header=Header(frame_id="map", stamp=Time(sec=0, nanosec=0)), poses=poses)
 
 
 def _is_zero_twist(cmd: Twist) -> bool:
@@ -125,7 +126,9 @@ class _ModuleHarness:
         self.module.path.transport.broadcast(None, path)
 
     def feed_empty_path(self) -> None:
-        self.module.path.transport.broadcast(None, Path(header=Header(frame_id="map"), poses=[]))
+        self.module.path.transport.broadcast(
+            None, Path(header=Header(frame_id="map", stamp=Time(sec=0, nanosec=0)), poses=[])
+        )
 
     def feed_stop(self, value: bool = True) -> None:
         self.module.stop_movement.transport.broadcast(None, Bool(data=value))

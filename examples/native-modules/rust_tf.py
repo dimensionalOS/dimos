@@ -76,8 +76,8 @@ class TfProducer(Module):
                             header=Header(frame_id="a", stamp=stamp),
                             child_frame_id="b",
                             transform=Transform(
-                                translation=Vector3(y=math.cos(t), z=math.sin(t)),
-                                rotation=Quaternion(w=1),
+                                translation=Vector3(y=math.cos(t), z=math.sin(t), x=0.0),
+                                rotation=Quaternion(w=1, x=0.0, y=0.0, z=0.0),
                             ),
                         ),
                     ]

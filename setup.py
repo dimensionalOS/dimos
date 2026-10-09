@@ -97,6 +97,22 @@ class build_py(_build_py):
         super().run()
         if not getattr(self, "editable_mode", False):
             self._copy_relay_dist()
+            self._copy_native_sources()
+
+    def _copy_native_sources(self):
+        source = Path(__file__).parent / "native" / "cpp"
+        destination = Path(self.build_lib) / "dimos" / "_native" / "cpp"
+        for path in sorted(source.rglob("*")):
+            relative = path.relative_to(source)
+            if any(part in {"build", "result", "_deps"} for part in relative.parts):
+                continue
+            if path.is_file() and (
+                path.suffix in {".hpp", ".h", ".cpp", ".cmake", ".in"}
+                or path.name == "CMakeLists.txt"
+            ):
+                target = destination / relative
+                self.mkpath(str(target.parent))
+                self.copy_file(str(path), str(target))
 
     def _copy_relay_dist(self):
         src = Path(__file__).parent / "web"

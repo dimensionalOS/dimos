@@ -57,7 +57,7 @@ class PController:
 
         if distance < 1e-6:
             # Robot is coincidentally at the lookahead point; skip this cycle.
-            return Twist()
+            return Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
 
         robot_yaw = quaternion_euler(current_odom.pose.orientation)[2]
         desired_yaw = np.arctan2(direction[1], direction[0])
@@ -74,8 +74,8 @@ class PController:
         linear_velocity = self._apply_min_velocity(linear_velocity, self._min_linear_velocity)
 
         return Twist(
-            linear=Vector3(x=linear_velocity),
-            angular=Vector3(z=angular_velocity),
+            linear=Vector3(x=linear_velocity, y=0.0, z=0.0),
+            angular=Vector3(z=angular_velocity, x=0.0, y=0.0),
         )
 
     def rotate(self, yaw_error: float) -> Twist:
@@ -108,8 +108,8 @@ class PController:
             angular_velocity = 0.8 * np.sign(angular_velocity)
 
         return Twist(
-            linear=Vector3(),
-            angular=Vector3(z=angular_velocity),
+            linear=Vector3(x=0.0, y=0.0, z=0.0),
+            angular=Vector3(z=angular_velocity, x=0.0, y=0.0),
         )
 
 

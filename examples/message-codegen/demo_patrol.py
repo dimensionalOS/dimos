@@ -17,9 +17,10 @@
 from pathlib import Path
 
 from dimos_generated.builtin_interfaces.msg import Time
-from dimos_generated.geometry_msgs.msg import Pose, PoseStamped, Quaternion
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from dimos_generated.nav_msgs.msg import MapMetaData, OccupancyGrid
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 
 from dimos.memory.vis.space.space import Space
@@ -36,11 +37,18 @@ def main() -> None:
     grid = OccupancyGrid(
         header=Header(frame_id="map", stamp=Time(sec=1700000000, nanosec=123456789)),
         info=MapMetaData(
-            width=24, height=24, resolution=0.5, origin=Pose(orientation=Quaternion(w=1))
+            width=24,
+            height=24,
+            resolution=0.5,
+            origin=Pose(
+                orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0),
+                position=Point(x=0.0, y=0.0, z=0.0),
+            ),
+            map_load_time=Time(sec=0, nanosec=0),
         ),
-        data=cells.ravel(),
+        data=np.asarray(cells.ravel(), dtype=np.int8),
     )
-    grid = OccupancyGrid.decode(grid.encode())
+    grid = cdr_decode(cdr_encode(grid), OccupancyGrid)
     for name in ("random", "coverage", "frontier"):
         router = create_patrol_router(name, 0.5)
         router.handle_occupancy_grid(grid)
@@ -49,7 +57,7 @@ def main() -> None:
         for _ in range(5):
             goal = router.next_goal()
             assert goal is not None
-            goal = PoseStamped.decode(goal.encode())
+            goal = cdr_decode(cdr_encode(goal), PoseStamped)
             assert goal.header == grid.header
             space.add(goal, color="#ff0000")
             router.handle_odom(goal)

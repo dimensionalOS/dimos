@@ -17,6 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseWithCovariance, Quaternion
 from dimos_generated.vision_msgs.msg import (
     BoundingBox2D,
     Detection2D as ROSDetection2D,
@@ -25,6 +26,7 @@ from dimos_generated.vision_msgs.msg import (
     Point2D,
     Pose2D,
 )
+import numpy as np
 
 from dimos.msgs.image import image_from_array, image_view
 from dimos.perception.detection.type.detection2d.base import Detection2D
@@ -89,7 +91,14 @@ class Detection2DPoint(Detection2D):
                     hypothesis=ObjectHypothesis(
                         class_id=str(self.class_id),
                         score=self.confidence,
-                    )
+                    ),
+                    pose=PoseWithCovariance(
+                        pose=Pose(
+                            position=Point(x=0.0, y=0.0, z=0.0),
+                            orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                        ),
+                        covariance=np.zeros(36, dtype=np.float64),
+                    ),
                 )
             ],
             id=str(self.track_id),

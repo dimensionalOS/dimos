@@ -1,172 +1,97 @@
-# Standalone ROS2 message generation
+# Message build implementation
 
-This package reads ROS2 `.msg` files without importing or installing ROS. A pinned
-upstream `rosidl_adapter` parser validates syntax. DimOS resolves package names and
-dependencies, then emits C++ value types and Fast CDR customizations, Python
-plain source classes with CDR codecs, and native Rust types using Serde and `re_cdr`.
+Custom-message authors should start with the self-contained
+[external-project walkthrough](../../docs/development/messages-external-project.md).
+A project declares its name/version and selected languages once in `pyproject.toml`;
+`interfaces/<package>/msg/*.msg` supplies its definitions. `dimos build` and the
+PEP 517/660 backend share `Project`, dependency resolution and generation. Neither
+builds the whole dimOS runtime. Built-in messages are distributed separately.
 
-```bash
-python -m dimos.message_codegen.generate \
-  --package-root examples/message-codegen \
-  --type demo_msgs/msg/Telemetry \
-  --output build/message-codegen/demo
-```
+## Native libraries and ownership
 
-The output contains `cpp/`, `rust/`, and `schemas.json`. Definitions are resolved
-before output is written. Repeat `--package-root` and `--type` for multiple inputs;
-omitting `--type` generates all available definitions. The output belongs in an
-ignored build directory. Generation never downloads dependencies.
+- Python uses unmodified **rosbags 0.11.0** dataclasses from one frozen typestore.
+  Generated package imports alias those classes. The pinned upstream
+  `generate_python_code` API emits the static `.pyi` declarations; runtime classes
+  are neither rewritten nor monkey-patched. `dimos_message_build.registry.encode`
+  and `decode` call the native typestore. There are no Message/Sequence wrappers.
+- C++ uses full upstream **ROSIDL 4.6.9 / FastRTPS 3.6.4** source generators and
+  **Fast CDR 2.4.0**. `native_sources.json` pins the support source closure.
+  Native preparation builds that closure in a writable cache; CMake consumers
+  link the generated typesupport libraries as well as Fast CDR. This requires no
+  system ROS installation, but it does use ROSIDL/ament support libraries and
+  build resources. It is not evidence of ROS node integration.
+- Rust uses unmodified **ros2msg 0.5.3** during Cargo's normal `build.rs` step.
+  Its public callback adds Serde/PartialEq derives and fixed-array annotations.
+  **re_cdr 0.1.0** owns wire serialization. SDK framing supplies the four-byte
+  XCDR1 header and verifies complete consumption. Generated declarations live in
+  Cargo's `OUT_DIR`; no class emitter or generated-output rewrite remains here.
 
-Python emits plain source values and uses rosbags 0.11.0 for CDR; C++ uses
-Fast CDR 2.4.0. Python message use requires no native message compilation. Rust uses
-`re_cdr` 0.1.0 and `serde-big-array` 0.5.1. The current generator explicitly rejects
-`wstring` because the selected Rust backend has no matching wide-string Serde
-representation. No bundled definition uses it. Service/action generation is out
-of scope.
+Dependencies own their types. A custom message containing `std_msgs/Header`
+reuses the dependency's Python class, C++ declaration and Rust crate type.
+Manifests reject conflicting owners, versions, ABIs and schema hashes. The entire
+ros2msg schema closure still travels with each root message for MCAP/viewers;
+Rust exposes that metadata as `ROS2MSG_SCHEMAS`. Metadata is not a wire codec.
 
-The C++ generator emits declarations, defaults, validation, and library calls;
-Fast CDR owns sizing, alignment, strings, sequences, primitive representation,
-and byte order. The Rust backend delegates those operations to `re_cdr`. Both
-emit plain CDR/XCDR1 with its standard four-byte encapsulation.
+## Build contracts
 
-## Upstream sources and licenses
+`pip install .` and `pip install -e .` generate/package only Python resources.
+They require no C/C++/Rust compiler and do not prepare native support. Editable
+users rerun installation after `.msg` edits and restart consumers. Wheel install,
+message imports and `dimos list` perform no native compilation, generated-file
+writes or downloads. On first registry initialization, rosbags builds its native
+Python classes and codecs in memory from the installed schemas; this is Python
+library initialization, not precompiled Python class delivery.
 
-`sources.json` records immutable revisions and SHA-256 hashes for the vendored
-files. `schemas/*/package.xml` retains upstream authorship and declared licenses.
-`schemas/licenses/` contains upstream license texts, including the Apache 2.0
-license shared by the standard interface packages and parser. The parser's
-original copyright header is preserved. `rosidl_parser.pyi` is DimOS's type stub;
-the upstream implementation has one documented patch replacing an ambiguous
-constant-name regex with its linear-time equivalent. `sources.json` records both
-the original and patched hashes.
+An explicit C++ build currently supports Linux and requires C/C++, CMake and the
+backend's `native` Python extra. It can fetch pinned upstream sources at build
+time; offline preparation requires cached sources. The exported local CMake
+`toolchain.cmake` supplies installed prefixes, the build interpreter and ament
+Python resources. Regenerate it after moving the environment. It is not a
+portable binary SDK archive.
 
-The following message-package layer provides `scripts/vendor_message_definitions.py`
-for intentional updates of pinned upstream inputs and reapplication of the parser
-patch. It is not part of this standalone generator layer. Applications and builds
-never run a maintenance downloader.
+Explicit Rust builds use ordinary Cargo dependency resolution. An installed
+Python-only dependency can supply schemas from which the shared core prepares
+its native source crate without mutating the installed package. The Cargo bundle
+uses relative dependency paths. Offline builds require Cargo's dependency cache.
+No frontend silently installs OS tools or downloads executable toolchains.
 
-This work is being delivered through the `replace-lcm-message-encoding` OpenSpec
-change. The generated pipeline is under development; the old runtime message APIs
-have not yet been replaced.
-
-## Distribution
-
-Pass `--package` to emit a setuptools source project in `python/`, alongside the
-CMake project and Cargo crate. `--python-module` gives independent message
-packages distinct import namespaces; `--version` sets the package version.
-The Python sdist contains generated Python source and complete schemas. Wheel, source and editable installs use setuptools
-and do not run message generation, CMake or a C++ compiler. The C++ headers and
-Rust crate remain source resources compiled by their native consumers.
-
-Built-in source is checked into `packages/dimos-generated/src`. Maintainers run:
+`python -m dimos.message_codegen.generate` remains a low-level fixture/maintainer
+entrypoint; normal custom-message users do not need its root/type/output flags.
+Maintainers refresh built-in checked-in resources with:
 
 ```sh
 python -m scripts.generate_builtin_messages
 python -m scripts.generate_builtin_messages --check
 ```
 
-This explicit authoring command needs Ruff 0.14.3 and rustfmt for deterministic
-formatting. Normal checkout installation uses the checked-in Python source:
+## Native semantics and incomplete acceptance
 
-```sh
-pip install packages/dimos-generated
-```
+Python/Rust constructors require explicit fields. Rosbags does not apply `.msg`
+defaults; Rust's upstream floating default emission is not usable for this catalog,
+so the public `derive_default(false)` option is selected. Python numeric arrays
+are native NumPy arrays. Construction does not clone nested objects, and native
+NumPy-backed dataclass equality is not scalar equality. Runtime helpers explicitly
+copy or expose read-only views where their own contracts require those behaviors.
 
-CI rejects source drift and verifies wheel/source/editable installation with
-message compiler commands disabled. DimOS's unrelated native runtime extensions
-retain their own build requirements.
-Native C++ applications still require explicit Fast CDR toolchain setup. The
-standalone conformance CI builds this dependency for native consumer tests;
-normal Python checkout installation does not.
+Bounds are not silently ignored: Python encode/decode rejects affected bounded
+closures; selected C++/Rust bounded strings and Rust wide strings fail generation.
+These are unsupported semantics, not successful conformance tests.
 
-This layer supplies the complete bundled message catalog and distributable
-generated packages. The preceding generator layer uses only explicit fixture
-roots; transport integration belongs to the runtime layer.
-## Upstream generation and remaining adapters
+The user provisionally accepted the native-library limitations as proposal
+non-blockers on 2026-10-09. The original strict assertions remain, with precise
+`xfail(strict=True)` cases linked to the [limitation register](../../docs/development/message-limitations.md).
+This records permissive malformed boolean/string/representation decoding,
+exact-consumption differences, and unsupported bounded schemas. It is not a
+parser-safety or correctness claim. Use schema-matched inputs from trusted
+producers; the Python decoder is not an untrusted-input validation boundary.
+No custom decoder, upstream patch, silent bound truncation, or broad test skip
+was introduced. Valid bounded Python messages still fail as unsupported.
 
-Python class declarations, annotations and constants come from pinned rosbags
-0.11.0 code generation. An AST adapter attaches the Message base and owned
-Sequence annotations. Dataclasses supply equality and representation. The
-remaining runtime supplies declared defaults, assignment validation and borrowed
-NumPy ownership. These are the Python value API, not requirements of CDR itself.
+## Provenance
 
-The independent Python CDR layout walker has been deleted. Rosbags owns traversal,
-alignment and primitive decoding. A scoped compiler callback adds only strict
-bool, string length/terminator and sequence-length checks to the pinned upstream
-decoder. It clones the generator function with a local compilation callback and
-does not modify library globals. Tests cover every truncation, malformed bool
-scalars/arrays, invalid strings, both byte orders, legal nonzero padding and
-signaling NaNs. A decode/reserialize comparison was rejected because it would
-reject valid signaling NaNs; it is not part of production decoding.
-
-C++ declarations/defaults use ROSIDL Jazzy. Serialization, deserialization and
-size calculation use the official ROSIDL FastRTPS generator template fragment,
-not DimOS field-visitation loops. The former bounded-vector copy adapters and
-C++ type/keyword mapping tables are deleted. Remaining adapters expose the
-Fast CDR customization interface and validate message bounds. Consumers still
-need Fast CDR but no ROS installation or ROS node/type-support runtime.
-
-The serialization fragment is pinned separately under
-`_vendor/rosidl/serialization`: its manifest records the original complete
-upstream template hash, extracted fragment hash and namespace/inline patches.
-Two bool checks preserve rejection before the upstream uint8-to-bool conversion.
-No ROS transport or service/action support is implied.
-
-Vendored package entry points live in ordinary `api.py` modules, with matching
-typing stubs. Imports and EmPy templates reference those modules directly; the
-empty upstream parser initializer is omitted. This preserves namespace-package
-policy without exempting vendored files from the repository test. Source manifests
-retain original upstream paths/hashes and record the layout/import patch.
-
-Rust declarations, primitive/nested/array type mappings and constants now come
-from pinned **ros2msg 0.5.3** during the crate's normal Cargo `build.rs` step.
-DimOS supplies only defaults, schema/codec metadata, bounds validation and
-cross-package reexports. The defaults adapter handles the verified upstream
-string/floating-array default gap. Standard Header references reexport the
-owning dependency's type rather than regenerating it.
-
-Python generation packages the Rust build script and owned `.msg` inputs without
-invoking Cargo. `pip install` and wheel use therefore require no Rust compiler.
-Explicit Rust builds (including `dimos build --language rust` in the authoring
-layer) run the pinned build dependency through ordinary Cargo, which caches it.
-Generated Rust declarations live in Cargo's `OUT_DIR`; no executable is shipped
-or downloaded at Python import. Cargo's ordinary dependency setup and lockfile
-control network/offline/reproducible native builds. No new tool manager exists.
-
-### Responsibility and code accounting
-
-No backend file is merely renamed or hidden. `rust.py` now emits compatibility
-adapters and crate inputs; `cpp.py` invokes upstream declaration/serialization
-templates. `python.py` adapts upstream classes. The custom Python Sequence API
-still provides copy, append/extend/clear and read-only borrowed views with resize
-guards; those compatibility conveniences are not described as wire requirements.
-
-The accounting includes the new Rust build script and EmPy orchestration template
-as maintained code, separately from upstream vendored template fragments and
-mechanically generated package artifacts. Against original generator
-`d7d3e4e2e9280e05d3d507bc507f57d08c6af1db` (1,463 lines across eight core files),
-the current ten files are:
-
-| File | Physical lines |
-| --- | ---: |
-| python.py | 163 |
-| cpp.py | 170 |
-| rust.py | 138 |
-| definitions.py | 193 |
-| generate.py | 99 |
-| templates/runtime.py | 383 |
-| templates/codec.rs | 56 |
-| templates/dimos_cdr.hpp | 71 |
-| templates/message_build.rs | 99 |
-| templates/idl_cdr.hpp.em | 8 |
-| Total, including both new helpers | 1380 |
-
-Counts include blank lines and comments. Tests, schema inputs, vendored sources
-and generated outputs are not counted as handwritten generator/runtime code.
-The point of this change is removing duplicate generation rules, not relocating
-those rules into an uncounted helper.
-
-The core-only reduction is 1,463 to 1,380 (83 lines). Including maintained typing
-stubs inside `_vendor` changes the comparison to 1,493 to 1,444 (49 lines): the
-old stub had 30 lines; the current three stubs total 64. These PR1 counts exclude
-the later layers' ownership, build and packaging implementation.
+`sources.json` records immutable revisions/hashes of the schema catalog and the
+standalone vendored ROSIDL parser. That parser retains its documented linear-time
+constant-name regex patch; it is not described as pristine upstream code.
+Schema package XML files and `schemas/licenses` retain upstream license notices.
+The former partial vendored C++ generator/template subtree is removed. Full
+native source pins live separately in `native_sources.json`.

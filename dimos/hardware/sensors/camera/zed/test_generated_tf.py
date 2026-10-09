@@ -19,8 +19,9 @@ import sys
 from types import ModuleType, SimpleNamespace
 from unittest.mock import Mock
 
-from dimos_generated.geometry_msgs.msg import Transform, Vector3
+from dimos_generated.geometry_msgs.msg import Quaternion, Transform, Vector3
 from dimos_generated.tf2_msgs.msg import TFMessage
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 
@@ -56,7 +57,16 @@ def sdk_pose(translation):
     )
 
 
-@pytest.mark.parametrize("mount", [None, Transform(translation=Vector3(x=0.25))])
+@pytest.mark.parametrize(
+    "mount",
+    [
+        None,
+        Transform(
+            translation=Vector3(x=0.25, y=0.0, z=0.0),
+            rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+        ),
+    ],
+)
 def test_tracking_uses_generated_frame_chain(camera_module, mount):
     camera = camera_module.ZEDCamera(base_transform=mount)
     camera._zed = Mock()
@@ -84,7 +94,7 @@ def test_generated_tf_preserves_mount_extrinsics_and_optical_frames(camera_modul
     monkeypatch.setattr(camera.tf, "publish", received.append)
     try:
         camera._publish_tf(1700000000.125)
-        message = TFMessage.decode(received[0].encode())
+        message = cdr_decode(cdr_encode(received[0]), TFMessage)
         assert len(message.transforms) == 5
         frames = [(t.header.frame_id, t.child_frame_id) for t in message.transforms]
         assert frames == [

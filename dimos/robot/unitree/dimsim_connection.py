@@ -16,6 +16,7 @@ from collections.abc import Callable
 import functools
 from typing import Any
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import (
     PoseStamped,
     Quaternion,
@@ -50,7 +51,7 @@ class DimSimConnection:
         width=_WIDTH,
         height=_HEIGHT,
         axis="horizontal",
-        header=Header(frame_id="camera_optical"),
+        header=Header(frame_id="camera_optical", stamp=Time(sec=0, nanosec=0)),
     )
 
     def __init__(self, global_config: GlobalConfig) -> None:
@@ -131,15 +132,25 @@ def _odom_to_tf(odom: PoseStamped) -> list[TransformStamped]:
         TransformStamped(
             header=Header(stamp=odom.header.stamp, frame_id="base_link"),
             child_frame_id="camera_link",
-            transform=Transform(translation=Vector3(x=0.3)),
+            transform=Transform(
+                translation=Vector3(x=0.3, y=0.0, z=0.0),
+                rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
         ),
         TransformStamped(
             header=Header(stamp=odom.header.stamp, frame_id="camera_link"),
             child_frame_id="camera_optical",
-            transform=Transform(rotation=Quaternion(x=-0.5, y=0.5, z=-0.5, w=0.5)),
+            transform=Transform(
+                rotation=Quaternion(x=-0.5, y=0.5, z=-0.5, w=0.5),
+                translation=Vector3(x=0.0, y=0.0, z=0.0),
+            ),
         ),
         TransformStamped(
             header=Header(stamp=odom.header.stamp, frame_id="base_link"),
             child_frame_id="lidar_link",
+            transform=Transform(
+                translation=Vector3(x=0.0, y=0.0, z=0.0),
+                rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
         ),
     ]

@@ -218,7 +218,9 @@ class _HolonomicPathFollower:
             if thread.is_alive():
                 logger.warning("Holonomic control thread did not exit within join timeout.")
 
-        self.cmd_vel.on_next(Twist())
+        self.cmd_vel.on_next(
+            Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+        )
         self._reset_state()
 
     # run-profile envelope
@@ -311,7 +313,9 @@ class _HolonomicPathFollower:
                     self._thread = None
                     self._reset_state()
             if owns_state:
-                self.cmd_vel.on_next(Twist())
+                self.cmd_vel.on_next(
+                    Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+                )
 
     def _change_state(self, new_state: PlannerState) -> None:
         if new_state == self._state:
@@ -363,7 +367,9 @@ class _HolonomicPathFollower:
             elif state == "arrived":
                 # Stop motion before signalling arrival, matching the path
                 # followers downstream consumers expect.
-                self.cmd_vel.on_next(Twist())
+                self.cmd_vel.on_next(
+                    Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+                )
                 self.stopped_navigating.on_next("arrived")
                 break
             else:  # idle
@@ -420,7 +426,7 @@ class _HolonomicPathFollower:
             logger.info("Reached goal position")
             with self._lock:
                 self._change_state("arrived")
-            return Twist()
+            return Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
 
         path_speed = self._path_speed_at_position(path_distancer, current_pos)
         self._controller.set_speed(path_speed)
@@ -544,7 +550,7 @@ class _HolonomicPathFollower:
             logger.info("Final rotation complete, goal reached")
             with self._lock:
                 self._change_state("arrived")
-            return Twist()
+            return Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
 
         self._controller.set_speed(self._active_envelope.speed_m_s)
         measured_body_twist = self._estimate_measured_body_twist(current_odom)
@@ -563,12 +569,12 @@ class _HolonomicPathFollower:
         previous = self._previous_odom_for_velocity
         self._previous_odom_for_velocity = deepcopy(current_odom)
         if previous is None:
-            return Twist()
+            return Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
         dt = (
             to_nanoseconds(current_odom.header.stamp) - to_nanoseconds(previous.header.stamp)
         ) / 1e9
         if not math.isfinite(dt) or dt <= 0.0:
-            return Twist()
+            return Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
         vx_w = (float(current_odom.pose.position.x) - float(previous.pose.position.x)) / dt
         vy_w = (float(current_odom.pose.position.y) - float(previous.pose.position.y)) / dt
         yaw = float(quaternion_euler(current_odom.pose.orientation)[2])
@@ -639,7 +645,9 @@ class DanHolonomicTC(Module):
     @rpc
     def stop(self) -> None:
         self._core.close()
-        self.nav_cmd_vel.publish(Twist())
+        self.nav_cmd_vel.publish(
+            Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+        )
         super().stop()
 
     def _on_odom(self, msg: PoseStamped) -> None:

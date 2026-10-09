@@ -46,6 +46,7 @@ from typing import Any
 from dimos_generated.geometry_msgs.msg import TransformStamped
 from dimos_generated.sensor_msgs.msg import PointCloud2
 from dimos_generated.tf2_msgs.msg import TFMessage
+from dimos_message_build.registry import decode as cdr_decode
 import reactivex as rx
 from reactivex import Observable, Subject, operators as ops
 
@@ -126,7 +127,7 @@ class RelocalizationModule(Module):
         # get_data, so a premap that is only in LFS is pulled and decompressed
         # rather than reported missing.
         name = map_file if map_file.endswith(MAP_SUFFIX) else map_file + MAP_SUFFIX
-        premap = PointCloud2.decode(get_data(name).read_bytes())
+        premap = cdr_decode(get_data(name).read_bytes(), PointCloud2)
 
         premap.header.frame_id = self.config.map_frame
         self.premap = premap

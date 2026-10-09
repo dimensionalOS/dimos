@@ -24,6 +24,7 @@ from collections import Counter
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from functools import lru_cache
 import importlib
 import io
 import json
@@ -35,11 +36,19 @@ import sqlite3
 import tempfile
 from typing import Any
 
+from dimos_message_build.registry import (
+    decode as cdr_decode,
+    encode as cdr_encode,
+    initialize,
+    schema as cdr_schema,
+)
 import lz4.frame
 from mcap.reader import make_reader
 from mcap.records import Attachment, Channel, Metadata, Schema
 from mcap.stream_reader import StreamReader
 import numpy as np
+from rosbags.interfaces import Nodetype
+from rosbags.interfaces.typing import FieldDesc
 import sqlite_vec
 
 from dimos.memory.store.sqlite import SqliteStore
@@ -142,7 +151,7 @@ def _stream(name: str, payload: str, codec: str, schema: str = "", **metadata: A
     if codec.endswith("json") and ros_type != "std_msgs/msg/String":
         raise ValueError(f"{name}: json requires explicitly declared std_msgs/String")
     result = Stream(name, ros_type, codec, schema, metadata)
-    if codec == "cdr" and schema != result.target.schema:
+    if codec == "cdr" and schema != cdr_schema(result.target.__msgtype__):
         raise ValueError(f"{name}: CDR schema differs from the installed generated definition")
     return result
 
@@ -247,12 +256,19 @@ def read_sqlite(
                     raise ValueError(f"{name}: external/custom blob store is unsupported")
                 payload_type = config["payload_module"]
                 schema = ""
-                if config["codec_id"] == "cdr" and payload_type in GENERATED_TYPES:
-                    payload_type = GENERATED_TYPES[payload_type]
-                    message_type = resolve_msg_type(payload_type)
-                    if message_type is None:
-                        raise ValueError(f"{name}: generated type unavailable")
-                    schema = message_type.schema
+                if config["codec_id"] == "cdr":
+                    payload_type = GENERATED_TYPES.get(payload_type, payload_type)
+                    # Match only installed allowlisted identities, never import a name
+                    # supplied by the recording (including native rosbags module paths).
+                    for ros_type in sorted(ROS_TYPES):
+                        message_type = resolve_msg_type(ros_type)
+                        if message_type is not None and payload_type in {
+                            ros_type,
+                            f"{message_type.__module__}.{message_type.__qualname__}",
+                        }:
+                            payload_type = ros_type
+                            schema = cdr_schema(ros_type)
+                            break
                 stream = _stream(name, payload_type, config["codec_id"], schema=schema)
                 vector_schema = conn.execute(
                     "SELECT sql FROM sqlite_master WHERE name=?", (name + "_vec",)
@@ -348,6 +364,13 @@ def read_sqlite(
         conn.close()
 
 
+@lru_cache(maxsize=len(ROS_TYPES))
+def _target_fields(ros_type: str) -> dict[str, FieldDesc]:
+    # The runtime registry is frozen; inspect schema metadata once per type,
+    # rather than rereading the installed package on every nested recording value.
+    return dict(initialize().fielddefs[ros_type][1])
+
+
 def _convert_fields(old: Any, sequences: dict[str, int], path: str = "") -> Any:
     if isinstance(old, (list, tuple)):
         return [_convert_fields(item, sequences, f"{path}[{i}]") for i, item in enumerate(old)]
@@ -364,6 +387,7 @@ def _convert_fields(old: Any, sequences: dict[str, int], path: str = "") -> Any:
     if target is None:
         raise ValueError(f"Missing generated {ros_type}")
     values = {}
+    fields = _target_fields(ros_type)
     for key in old.__slots__:
         value = getattr(old, key)
         if ros_type == "std_msgs/msg/Header" and key == "seq":
@@ -376,7 +400,19 @@ def _convert_fields(old: Any, sequences: dict[str, int], path: str = "") -> Any:
         new_key = "nanosec" if package == "builtin_interfaces" and key == "nsec" else key
         if new_key not in target.__annotations__:
             raise ValueError(f"No lossless field mapping for {ros_type}.{key}")
-        values[new_key] = _convert_fields(value, sequences, f"{path}.{key}".lstrip("."))
+        converted = _convert_fields(value, sequences, f"{path}.{key}".lstrip("."))
+        definition = fields[new_key]
+        if definition[0] == Nodetype.ARRAY or definition[0] == Nodetype.SEQUENCE:
+            element = definition[1][0]
+            if element[0] == Nodetype.BASE and element[1][0] != "string":
+                scalar = element[1][0]
+                dtype = np.dtype({"byte": "uint8", "char": "uint8"}.get(scalar, scalar))
+                converted = (
+                    np.frombuffer(converted, dtype=dtype).copy()
+                    if isinstance(converted, bytes)
+                    else np.asarray(converted, dtype=dtype)
+                )
+        values[new_key] = converted
     return target(**values)
 
 
@@ -386,7 +422,7 @@ def decode(row: Row) -> tuple[Any, dict[str, int]]:
         data = lz4.frame.decompress(data)
         codec = codec[4:]
     if codec == "cdr":
-        return row.stream.target.decode(data), {}
+        return cdr_decode(data, row.stream.target), {}
     if codec == "json":
         text = data.decode("utf-8")
         json.loads(
@@ -410,7 +446,9 @@ def decode(row: Row) -> tuple[Any, dict[str, int]]:
         if old.encoding != "jpeg":
             raise ValueError(f"{row.stream.name}: jpeg codec contains {old.encoding!r}")
         h = _convert_fields(old.header, sequences, "header")
-        return row.stream.target(header=h, format="jpeg", data=old.data), sequences
+        return row.stream.target(
+            header=h, format="jpeg", data=np.frombuffer(old.data, dtype=np.uint8).copy()
+        ), sequences
     if name == "Image" and old.encoding == "jpeg":
         raise ValueError(f"{row.stream.name}: JPEG Image requires explicit jpeg codec metadata")
     return _convert_fields(old, sequences), sequences
@@ -457,8 +495,8 @@ def convert(source: Path, destination: Path) -> dict[str, Any]:
                     for stream in streams:
                         writer.register_stream(
                             stream.name,
-                            schema_name=stream.target.msg_name,
-                            schema=stream.target.schema,
+                            schema_name=stream.target.__msgtype__,
+                            schema=cdr_schema(stream.target.__msgtype__),
                             metadata={
                                 **stream.metadata.get("channel_metadata", {}),
                                 "dimos.payload_type": f"{stream.target.__module__}.{stream.target.__name__}",
@@ -470,7 +508,7 @@ def convert(source: Path, destination: Path) -> dict[str, Any]:
                 for row in rows:
                     try:
                         value, sequences = decode(row)
-                        payload = value.encode()
+                        payload = cdr_encode(value)
                     except Exception as exc:
                         raise ValueError(
                             f"{row.stream.name}[{counts[row.stream.name]}]: {exc}"
@@ -513,8 +551,8 @@ def convert(source: Path, destination: Path) -> dict[str, Any]:
                         writer.write(
                             row.stream.name,
                             payload,
-                            schema_name=value.msg_name,
-                            schema=value.schema,
+                            schema_name=value.__msgtype__,
+                            schema=cdr_schema(value.__msgtype__),
                             log_time_ns=row.log_ns,
                             publish_time_ns=publish_ns,
                             sequence=sequence,

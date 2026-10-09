@@ -18,8 +18,9 @@
 from types import SimpleNamespace
 from unittest.mock import Mock
 
-from dimos_generated.geometry_msgs.msg import Twist
+from dimos_generated.geometry_msgs.msg import Twist, Vector3
 from dimos_generated.std_msgs.msg import Float32, Int8
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import pytest
 
 from dimos.control.benchmarking.gate import GATE_ADVANCE, GATE_QUIT, GATE_SKIP
@@ -58,16 +59,18 @@ def test_keyboard_generated_operator_gates_and_slider_without_window(monkeypatch
     monkeypatch.setattr(keyboard.pygame.event, "get", lambda: events)
     try:
         module._pygame_loop()
-        assert [Int8.decode(value.encode()).data for value in received] == [
+        assert [cdr_decode(cdr_encode(value), Int8).data for value in received] == [
             GATE_ADVANCE,
             GATE_SKIP,
             GATE_QUIT,
         ]
-        assert Float32.decode(slider[0].encode()).data == pytest.approx(0.7)
+        assert cdr_decode(cdr_encode(slider[0]), Float32).data == pytest.approx(0.7)
         assert not motion  # disable_movement keeps this an operator-only interface
     finally:
         module.stop()
-    assert len(motion) == 1 and Twist.decode(motion[0].encode()) == Twist()
+    assert len(motion) == 1 and cdr_decode(cdr_encode(motion[0]), Twist) == Twist(
+        linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)
+    )
 
 
 def test_g1_skill_constructs_generated_twist_at_captured_rpc_boundary():
@@ -79,7 +82,7 @@ def test_g1_skill_constructs_generated_twist_at_captured_rpc_boundary():
         gateway.move.assert_called_once()
         args, kwargs = gateway.move.call_args
         assert type(args[0]) is Twist
-        value = Twist.decode(args[0].encode())
+        value = cdr_decode(cdr_encode(args[0]), Twist)
         assert value.linear.x == 0.25 and value.linear.y == -0.125
         assert value.angular.z == 0.5 and value.linear.z == 0
         assert kwargs == {"duration": 2}

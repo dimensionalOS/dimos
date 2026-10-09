@@ -14,7 +14,7 @@
 
 from unittest.mock import Mock
 
-from dimos_generated.geometry_msgs.msg import PoseStamped
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from dimos_generated.std_msgs.msg import Header
 import pytest
 
@@ -39,7 +39,13 @@ def test_dimsim_launch_setup_and_pose(mocker):
         with MemoryStore() as store:
             with pytest.raises(LookupError):
                 env.latest_pose(store)
-            pose = PoseStamped(header=Header(stamp=time_from_seconds(123), frame_id="world"))
+            pose = PoseStamped(
+                header=Header(stamp=time_from_seconds(123), frame_id="world"),
+                pose=Pose(
+                    position=Point(x=0.0, y=0.0, z=0.0),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+            )
             store.stream("odom", PoseStamped).append(pose)
             assert to_seconds(env.latest_pose(store).header.stamp) == 123
     finally:

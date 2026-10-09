@@ -16,6 +16,7 @@
 import os
 
 import cv2
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Point
 from dimos_generated.nav_msgs.msg import OccupancyGrid
 from dimos_generated.std_msgs.msg import Header
@@ -39,7 +40,9 @@ from dimos.utils.data import get_data
 @pytest.fixture
 def big_office() -> OccupancyGrid:
     data = read_pointcloud(get_data("big_office.ply"))
-    cloud = pointcloud_from_xyz(np.asarray(data.points), header=Header(frame_id="map"))
+    cloud = pointcloud_from_xyz(
+        np.asarray(data.points), header=Header(frame_id="map", stamp=Time(sec=0, nanosec=0))
+    )
     return height_cost_occupancy(cloud)
 
 
@@ -48,7 +51,7 @@ def big_office() -> OccupancyGrid:
     "router_name, saturation", [("random", 0.20), ("coverage", 0.30), ("frontier", 0.20)]
 )
 def test_patrolling_coverage(router_name, saturation, big_office) -> None:
-    start = Point(x=-1.03, y=-13.48)
+    start = Point(x=-1.03, y=-13.48, z=0.0)
     robot_width = 0.4
     multiplier = 1.5
     big_office_gradient = gradient(big_office, max_distance=1.5)

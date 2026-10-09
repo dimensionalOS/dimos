@@ -204,7 +204,7 @@ def _goal_pose(
     """Where move_to sends the robot, in the world frame."""
     roll, pitch, yaw = quaternion_euler(current.pose.orientation)
     if relative:
-        translated = translate_pose_local(current.pose, Vector3(x=x, y=y))
+        translated = translate_pose_local(current.pose, Vector3(x=x, y=y, z=0.0))
         position = translated.position
         heading = yaw + math.radians(degrees or 0.0)
     else:

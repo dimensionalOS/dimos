@@ -99,7 +99,9 @@ class ReplanningAStarPlanner(Module, NavigationInterface):
                     lambda pt: self._planner.handle_goal_request(
                         PoseStamped(
                             header=pt.header,
-                            pose=Pose(position=pt.point, orientation=Quaternion(w=1)),
+                            pose=Pose(
+                                position=pt.point, orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0)
+                            ),
                         )
                     )
                 )

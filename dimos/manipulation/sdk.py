@@ -19,6 +19,7 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from dimos_generated.sensor_msgs.msg import JointState
 from dimos_generated.std_msgs.msg import Header
@@ -138,7 +139,13 @@ class Arm:
     ) -> ExecutionResult:
         """Plan and move to positions in group joint order; angular units are radians."""
         values = _vector(positions, len(self.info.joint_names), "positions")
-        target = JointState(name=list(self.info.joint_names), position=values.tolist())
+        target = JointState(
+            name=list(self.info.joint_names),
+            position=np.asarray(values.tolist(), dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        )
         return self._move_joint_target("move_joints", target, speed_scale, timeout)
 
     def _move_joint_target(
@@ -173,7 +180,7 @@ class Arm:
         if math.hypot(rotation.x, rotation.y, rotation.z, rotation.w) == 0.0:
             raise ValueError("orientation must have nonzero norm")
         target = PoseStamped(
-            header=Header(frame_id="world"),
+            header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
             pose=Pose(position=Point(x=xyz[0], y=xyz[1], z=xyz[2]), orientation=rotation),
         )
         plan = self.rpc.plan_to_poses({self.info.id: target}, speed_scale=speed_scale)

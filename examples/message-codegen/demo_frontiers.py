@@ -17,9 +17,10 @@
 from pathlib import Path
 
 from dimos_generated.builtin_interfaces.msg import Time
-from dimos_generated.geometry_msgs.msg import Pose, PoseStamped, Quaternion
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from dimos_generated.nav_msgs.msg import MapMetaData, OccupancyGrid
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 
 from dimos.memory.vis.space.space import Space
@@ -36,19 +37,27 @@ def main() -> None:
     grid = OccupancyGrid(
         header=header,
         info=MapMetaData(
-            width=20, height=20, resolution=0.5, origin=Pose(orientation=Quaternion(w=1))
+            width=20,
+            height=20,
+            resolution=0.5,
+            origin=Pose(
+                orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0),
+                position=Point(x=0.0, y=0.0, z=0.0),
+            ),
+            map_load_time=Time(sec=0, nanosec=0),
         ),
-        data=cells.ravel(),
+        data=np.asarray(cells.ravel(), dtype=np.int8),
     )
     explorer = WavefrontFrontierExplorer()
     try:
-        received = OccupancyGrid.decode(grid.encode())
+        received = cdr_decode(cdr_encode(grid), OccupancyGrid)
         frontiers = explorer.detect_frontiers(grid_to_world(received, (5, 10)), received)
         assert len(frontiers) == 1
         goal = PoseStamped(
-            header=received.header, pose=Pose(position=frontiers[0], orientation=Quaternion(w=1))
+            header=received.header,
+            pose=Pose(position=frontiers[0], orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0)),
         )
-        decoded = PoseStamped.decode(goal.encode())
+        decoded = cdr_decode(cdr_encode(goal), PoseStamped)
         assert decoded.header == header
         assert decoded.pose.position.x == 5 and decoded.pose.position.y == 4.75
         output = Path("build/message-codegen/demo/evidence/frontiers.svg")

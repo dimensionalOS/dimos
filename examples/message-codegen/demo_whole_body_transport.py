@@ -21,9 +21,12 @@ from typing import Any
 import uuid
 
 from demo_pubsub import free_port
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.dimos_msgs.msg import MotorCommandArray
 from dimos_generated.geometry_msgs.msg import Quaternion, Vector3
 from dimos_generated.sensor_msgs.msg import Imu, JointState
+from dimos_generated.std_msgs.msg import Header
+import numpy as np
 
 from dimos.core.transport import LCMTransport, PubSubTransport, ZenohTransport
 from dimos.hardware.whole_body.spec import MotorCommand
@@ -77,9 +80,25 @@ def demonstrate(backend: str) -> None:
 
         def feedback_received() -> bool:
             states.publish(
-                JointState(position=[0.25, -0.5], velocity=[0.1, 0.2], effort=[1.0, 2.0])
+                JointState(
+                    position=np.array([0.25, -0.5], dtype=np.float64),
+                    velocity=np.array([0.1, 0.2], dtype=np.float64),
+                    effort=np.array([1.0, 2.0], dtype=np.float64),
+                    header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                    name=[],
+                )
             )
-            imu.publish(Imu(orientation=Quaternion(w=0.8, z=0.6), angular_velocity=Vector3(z=0.2)))
+            imu.publish(
+                Imu(
+                    orientation=Quaternion(w=0.8, z=0.6, x=0.0, y=0.0),
+                    angular_velocity=Vector3(z=0.2, x=0.0, y=0.0),
+                    header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                    orientation_covariance=np.zeros(9, dtype=np.float64),
+                    angular_velocity_covariance=np.zeros(9, dtype=np.float64),
+                    linear_acceleration=Vector3(x=0.0, y=0.0, z=0.0),
+                    linear_acceleration_covariance=np.zeros(9, dtype=np.float64),
+                )
+            )
             return adapter.has_motor_states() and adapter.read_imu().gyroscope[2] == 0.2
 
         wait_until(feedback_received, timeout=5)

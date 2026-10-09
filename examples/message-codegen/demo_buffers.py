@@ -19,7 +19,9 @@ import gc
 from statistics import median
 from time import perf_counter_ns
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.sensor_msgs.msg import Image, PointCloud2, PointField
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 
 
@@ -33,19 +35,27 @@ def main() -> None:
     points = np.arange(100_000 * 3, dtype=np.float32).view(np.uint8)
     fixtures = {
         "640x480 RGB image": Image(
-            height=480, width=640, step=640 * 3, encoding="rgb8", data=pixels
+            height=480,
+            width=640,
+            step=640 * 3,
+            encoding="rgb8",
+            data=np.asarray(pixels, dtype=np.uint8),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            is_bigendian=0,
         ),
         "100,000-point buffer": PointCloud2(
             height=1,
             width=100_000,
             point_step=12,
             row_step=1_200_000,
-            data=points,
+            data=np.asarray(points, dtype=np.uint8),
             fields=[
                 PointField(name=name, offset=index * 4, datatype=PointField.FLOAT32, count=1)
                 for index, name in enumerate(("x", "y", "z"))
             ],
             is_dense=True,
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            is_bigendian=False,
         ),
     }
     for label, message in fixtures.items():

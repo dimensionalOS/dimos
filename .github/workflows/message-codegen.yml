@@ -9,6 +9,7 @@ on:
       - packages/dimos-generated/**
       - docs/development/messages*.md
       - docs/development/message-reference.md
+      - docs/development/message-limitations.md
       - native/rust/dimos-lcm-transport/**
       - scripts/*message*codegen*
       - scripts/test_message_packages.sh
@@ -55,37 +56,20 @@ jobs:
         run: .venv/bin/python -m scripts.generate_builtin_messages --check
       - name: Install built-in source without message compilers
         run: bash scripts/test_builtin_message_source.sh
-      - name: Build the pinned standalone CDR library
-        run: bash scripts/setup_message_codegen.sh
+      - name: Install the native generation prerequisites
+        run: uv pip install --python .venv/bin/python './dimos/message_codegen[native]' ./packages/dimos-generated
       - name: Generate, build, test, and demonstrate all three languages
         run: bash scripts/test_message_codegen.sh
-      - name: Build and consume wheel, sdist, CMake, and Cargo packages
-        run: bash scripts/test_message_packages.sh
       - name: Build standalone message authoring and built-in packages
         run: |
           uv build dimos/message_codegen --out-dir build/message-codegen/ux-wheelhouse
           uv build packages/dimos-generated --out-dir build/message-codegen/ux-wheelhouse
           uv venv --seed build/message-codegen/download-env
-          build/message-codegen/download-env/bin/python -m pip download --only-binary=:all: --dest build/message-codegen/ux-wheelhouse setuptools wheel packaging numpy rosbags==0.11.0
-      - name: Verify custom package ownership, rebuilds, and isolated pip installs
+          build/message-codegen/download-env/bin/python -m pip wheel --wheel-dir build/message-codegen/ux-wheelhouse build/message-codegen/ux-wheelhouse/dimos_message_build-*.whl build/message-codegen/ux-wheelhouse/dimos_generated-*.whl tomli packaging pytest catkin-pkg==1.1.0 PyYAML==6.0.2
+      - name: Verify source, wheel, editable and native source consumers
         env:
-          DIMOS_FASTCDR_PREFIX: ${{ github.workspace }}/build/message-codegen/install
           DIMOS_MESSAGE_WHEELHOUSE: ${{ github.workspace }}/build/message-codegen/ux-wheelhouse
-        run: |
-          .venv/bin/python -m pytest -o addopts="" --noconftest -q \
-            dimos/message_codegen/test_project.py \
-            dimos/message_codegen/test_repository_tutorial.py \
-            dimos/message_codegen/test_documented_project.py \
-            dimos/message_codegen/test_ownership.py \
-            dimos/message_codegen/test_ownership_native.py \
-            dimos/message_codegen/test_project_install.py
-      - name: Package matching built-in CMake and Rust artifacts
-        run: bash scripts/package_messages.sh
-      - name: Consume relocated built-in native packages
-        env:
-          DIMOS_BUILTIN_PACKAGE: ${{ github.workspace }}/build/message-codegen/release
-          DIMOS_FASTCDR_PREFIX: ${{ github.workspace }}/build/message-codegen/install
-        run: .venv/bin/python -m pytest -o addopts="" --noconftest -q dimos/message_codegen/test_builtin_artifacts.py
+        run: bash scripts/test_message_packages.sh
       - name: Retain standalone message build artifacts
         uses: actions/upload-artifact@v7
         with:
@@ -103,19 +87,11 @@ jobs:
             build/message-codegen/viewers/demo.mcap
             build/message-codegen/viewers/demo.rrd
             build/message-codegen/viewers/evidence/
-      - name: Retain external application and packages
-        uses: actions/upload-artifact@v7
-        with:
-          name: message-package-evidence
-          path: |
-            build/message-codegen/external-app/evidence/
-            build/message-codegen/external-app/dist/
-            build/message-codegen/external-app/generated/rust/target/package/*.crate
       - name: Retain the standalone Python source for ROS bridge verification
         uses: actions/upload-artifact@v7
         with:
           name: message-codegen-python-source
-          path: build/message-codegen/demo/python/
+          path: packages/dimos-generated/src/
           if-no-files-found: error
       - name: Retain executable demo evidence
         if: always()
@@ -137,7 +113,7 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           name: message-codegen-python-source
-          path: build/message-codegen/demo/python/
+          path: packages/dimos-generated/src/
       - name: Build independent ROS2 reference environment
         run: docker build -f .github/docker/message-codegen-reference.Dockerfile -t dimos-cdr-jazzy-reference .github/docker
       - name: Compare native payloads with independently generated ROS2 types
@@ -149,9 +125,10 @@ jobs:
               set -e
               source /opt/ros/jazzy/setup.bash
               mkdir -p /tmp/reference/src
-              cp -r /source/examples/message-codegen/demo_msgs /tmp/reference/src/
+              cp -r /demo/evidence/custom_msgs /tmp/reference/src/
+              sed -i "/rosidl_generate_interfaces/i find_package(rosidl_generator_py REQUIRED)" /tmp/reference/src/custom_msgs/CMakeLists.txt
               cd /tmp/reference
-              colcon build --packages-select demo_msgs --event-handlers console_direct+
+              colcon build --packages-select custom_msgs --event-handlers console_direct+
               source install/setup.bash
               python3 /source/examples/message-codegen/demo_ros_reference.py --build /demo
             ' | tee build/message-codegen/demo/evidence/jazzy-reference.txt
@@ -160,7 +137,11 @@ jobs:
           docker run --rm -v "$PWD:/source:ro" dimos-cdr-jazzy-reference '
             set -e
             source /opt/ros/jazzy/setup.bash
-            export PYTHONPATH=/source:/source/build/message-codegen/demo/python:$PYTHONPATH
+            cp -r /source/dimos/message_codegen /tmp/message-build
+            cp -r /source/packages/dimos-generated /tmp/message-values
+            /opt/cdr-python/bin/pip install /tmp/message-build /tmp/message-values
+            export ROS_LOCALHOST_ONLY=1
+            export PYTHONPATH=/source:$PYTHONPATH
             cd /source
             python3 -m pytest -o addopts="" --noconftest --import-mode=importlib -p no:cacheprovider \
               dimos/protocol/pubsub/impl/test_rospubsub_conversion.py \

@@ -18,7 +18,9 @@ import math
 from pathlib import Path
 from typing import Any
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 import pytest
 
@@ -160,7 +162,15 @@ def test_joint_space_wraps_interpolates_lifts_and_builds_finite_domains(
             base_link="base",
         )
     ).joint_space
-    start = space.from_joint_state(JointState(name=["yaw", "x"], position=[math.pi - 0.1, 10.0]))
+    start = space.from_joint_state(
+        JointState(
+            name=["yaw", "x"],
+            position=np.array([math.pi - 0.1, 10.0], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        )
+    )
     goal = space.normalize_positions([-4.0, -math.pi + 0.1])
 
     assert space.delta(start, goal) == pytest.approx((-14.0, 0.2))
@@ -195,4 +205,12 @@ def test_joint_space_rejects_invalid_input_states(tmp_path, names, positions, me
     ).joint_space
 
     with pytest.raises(ValueError, match=message):
-        space.from_joint_state(JointState(name=names, position=positions))
+        space.from_joint_state(
+            JointState(
+                name=names,
+                position=np.asarray(positions, dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            )
+        )

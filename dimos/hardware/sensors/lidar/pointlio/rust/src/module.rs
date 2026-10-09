@@ -19,14 +19,19 @@ use dimos_module::{native_config, Input, Module, Output, Tf, Transform};
 
 /// The driver publishes linear acceleration in m/s^2; Point-LIO wants it in g.
 const GRAVITY_MS2: f64 = 9.80665;
-use dimos_generated_messages::builtin_interfaces::msg::Time;
+use dimos_generated_messages::builtin_interfaces::msg::time::Time;
 use dimos_generated_messages::geometry_msgs::msg::{
-    Point, Pose, PoseWithCovariance, Twist, TwistWithCovariance,
+    point::Point, pose::Pose, pose_with_covariance::PoseWithCovariance, twist::Twist,
+    twist_with_covariance::TwistWithCovariance,
 };
-use dimos_generated_messages::geometry_msgs::msg::{Quaternion as QuatMsg, Vector3};
-use dimos_generated_messages::nav_msgs::msg::Odometry;
-use dimos_generated_messages::sensor_msgs::msg::{Imu, PointCloud2, PointField};
-use dimos_generated_messages::std_msgs::msg::Header;
+use dimos_generated_messages::geometry_msgs::msg::{
+    quaternion::Quaternion as QuatMsg, vector3::Vector3,
+};
+use dimos_generated_messages::nav_msgs::msg::odometry::Odometry;
+use dimos_generated_messages::sensor_msgs::msg::{
+    imu::Imu, point_cloud2::PointCloud2, point_field::PointField,
+};
+use dimos_generated_messages::std_msgs::msg::header::Header;
 use dimos_module::cdr;
 use pointlio_core::{LivoxPoint, PointLio, PointXYZI};
 use serde::{Deserialize, Serialize};

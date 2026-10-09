@@ -48,7 +48,14 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, TypedDict, TypeVar, cast
 
-from dimos_generated.geometry_msgs.msg import PoseStamped, Transform, TransformStamped, Vector3
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import (
+    PoseStamped,
+    Quaternion,
+    Transform,
+    TransformStamped,
+    Vector3,
+)
 from dimos_generated.sensor_msgs.msg import PointCloud2
 from dimos_generated.std_msgs.msg import Header
 import numpy as np
@@ -536,7 +543,8 @@ class _PGOState:
         hi = min(len(self._key_poses) - 1, idx + half_range)
         if lo > hi:
             return pointcloud_from_xyz(
-                np.empty((0, 3)), header=Header(frame_id=FRAME_WORLD_CORRECTED)
+                np.empty((0, 3)),
+                header=Header(frame_id=FRAME_WORLD_CORRECTED, stamp=Time(sec=0, nanosec=0)),
             )
 
         def registered(kp: _KeyPose) -> PointCloud2:
@@ -716,7 +724,14 @@ def _icp(
     import open3d.core as o3c  # type: ignore[import-untyped]
 
     if source.width * source.height < min_inliers or target.width * target.height < min_inliers:
-        return TransformStamped(), float("inf")
+        return TransformStamped(
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            child_frame_id="",
+            transform=Transform(
+                translation=Vector3(x=0.0, y=0.0, z=0.0),
+                rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+        ), float("inf")
 
     src_pcd = o3d.t.geometry.PointCloud.from_legacy(pointcloud_to_open3d(source))
     tgt_pcd = o3d.t.geometry.PointCloud.from_legacy(pointcloud_to_open3d(target))
@@ -750,12 +765,20 @@ def _icp(
         )
 
     if float(result.fitness) == 0.0:
-        return TransformStamped(), float("inf")
+        return TransformStamped(
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            child_frame_id="",
+            transform=Transform(
+                translation=Vector3(x=0.0, y=0.0, z=0.0),
+                rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+        ), float("inf")
 
     # Frames intentionally unlabeled: caller only reads the transform matrix.
     tf = TransformStamped(
-        header=Header(stamp=source.header.stamp),
+        header=Header(stamp=source.header.stamp, frame_id=""),
         transform=transform_from_matrix(result.transformation.numpy()),
+        child_frame_id="",
     )
     rmse = float(result.inlier_rmse)
     return tf, rmse * rmse

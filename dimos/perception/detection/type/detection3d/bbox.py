@@ -18,10 +18,12 @@ from dataclasses import dataclass, field
 import functools
 from typing import Any
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import (
     Point,
     Pose,
     PoseStamped,
+    PoseWithCovariance,
     Quaternion,
     TransformStamped,
     Vector3,
@@ -33,6 +35,7 @@ from dimos_generated.vision_msgs.msg import (
     ObjectHypothesis,
     ObjectHypothesisWithPose,
 )
+import numpy as np
 
 from dimos.msgs.geometry import point_distance
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
@@ -49,7 +52,7 @@ class Detection3DBBox(Detection2DBBox):
     size: Vector3  # Width, height, depth
     transform: TransformStamped | None = None  # Camera to world transform
     frame_id: str = ""  # Frame ID (e.g., "world", "map")
-    orientation: Quaternion = field(default_factory=lambda: Quaternion(w=1))
+    orientation: Quaternion = field(default_factory=lambda: Quaternion(w=1, x=0.0, y=0.0, z=0.0))
 
     @functools.cached_property
     def pose(self) -> PoseStamped:
@@ -67,7 +70,18 @@ class Detection3DBBox(Detection2DBBox):
 
     def to_detection3d_msg(self) -> Detection3D:
         """Convert to ROS Detection3D message."""
-        msg = Detection3D()
+        msg = Detection3D(
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            results=[],
+            bbox=BoundingBox3D(
+                center=Pose(
+                    position=Point(x=0.0, y=0.0, z=0.0),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+                size=Vector3(x=0.0, y=0.0, z=0.0),
+            ),
+            id="",
+        )
         msg.header = Header(stamp=self.image.header.stamp, frame_id=self.frame_id)
 
         # Results
@@ -76,7 +90,14 @@ class Detection3DBBox(Detection2DBBox):
                 hypothesis=ObjectHypothesis(
                     class_id=str(self.class_id),
                     score=self.confidence,
-                )
+                ),
+                pose=PoseWithCovariance(
+                    pose=Pose(
+                        position=Point(x=0.0, y=0.0, z=0.0),
+                        orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                    ),
+                    covariance=np.zeros(36, dtype=np.float64),
+                ),
             )
         ]
 

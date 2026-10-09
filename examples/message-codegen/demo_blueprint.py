@@ -26,9 +26,12 @@ from typing import Literal
 from unittest.mock import patch
 import uuid
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.dimos_msgs.msg import LineSegment3D, LineSegments3D
 from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from dimos_generated.sensor_msgs.msg import Image
+from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
@@ -83,7 +86,12 @@ class PythonRelayDemo(Module):
         self._image = None
         self._received.clear()
         lines = LineSegments3D(
-            segments=[LineSegment3D(start=Point(x=sample), end=Point(y=2), weight=sample)]
+            segments=[
+                LineSegment3D(
+                    start=Point(x=sample, y=0.0, z=0.0), end=Point(y=2, x=0.0, z=0.0), weight=sample
+                )
+            ],
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
         )
         lines.header.stamp = time_from_nanoseconds(self._stamp)
         lines.header.frame_id = "map"
@@ -93,11 +101,17 @@ class PythonRelayDemo(Module):
             step=1920,
             encoding="rgb8",
             data=np.full(640 * 480 * 3, sample % 256, dtype=np.uint8),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            is_bigendian=0,
         )
         image.header.stamp = time_from_nanoseconds(self._stamp)
         image.header.frame_id = "camera"
         pose = PoseStamped(
-            header=lines.header, pose=Pose(position=Point(x=sample), orientation=Quaternion(w=1))
+            header=lines.header,
+            pose=Pose(
+                position=Point(x=sample, y=0.0, z=0.0),
+                orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0),
+            ),
         )
         for _ in range(60):
             self.p0.publish(pose)
@@ -110,13 +124,15 @@ class PythonRelayDemo(Module):
                 f"Missing native relay reply for sample {sample}: "
                 f"lines={self._lines is not None}, image={self._image is not None}"
             )
-        expected = LineSegments3D.decode(lines.encode())
+        expected = cdr_decode(cdr_encode(lines), LineSegments3D)
         expected.segments = [
-            LineSegment3D(start=Point(x=sample), end=Point(y=2), weight=sample + 2)
+            LineSegment3D(
+                start=Point(x=sample, y=0.0, z=0.0), end=Point(y=2, x=0.0, z=0.0), weight=sample + 2
+            )
         ]
-        if self._lines.encode() != expected.encode():
+        if self._lines.encode() != cdr_encode(expected):
             raise ValueError("Native custom message reply differs from the expected edits")
-        if self._image.encode() != image.encode():
+        if self._image.encode() != cdr_encode(image):
             raise ValueError("Native image reply changed pixels or metadata")
         return (
             f"sample {sample}: Python weight={sample} → C++ {sample + 1} → Rust {sample + 2}; "

@@ -50,7 +50,7 @@ the prepared DimOS environment. No dependencies are downloaded by conversion.
 | --- | --- |
 | DimOS MCAP `lcm`, `jpeg`, `json`, optionally `lz4+…` | Generated standard ROS-compatible CDR values |
 | Memory SQLite `_streams` registry, in-file observation/blob tables, same codecs | Same CDR values through the actual `SqliteStore` |
-| Known CDR MCAP with `ros2msg` exactly matching the installed schema | Decode/validate/re-encode without changing the type |
+| Known CDR MCAP with `ros2msg` exactly matching the installed schema | Match the schema and decode/re-encode without changing the type |
 | LCM Image with explicit `jpeg` codec | `sensor_msgs/msg/CompressedImage`, `format="jpeg"`, **original JPEG bytes** |
 | Raw LCM Image / PointCloud2 / Imu / PoseStamped / Odometry / TFMessage and listed standard messages | Same ROS message shape; `std_msgs.Time.nsec` becomes `builtin_interfaces/Time.nanosec` |
 | Explicit JSON `std_msgs.String` | Same UTF-8 JSON document inside generated `std_msgs/msg/String` |
@@ -61,11 +61,17 @@ semantics are admitted; unknown fields/types are errors. LCM length fields are
 checked against their arrays, then represented by CDR sequence lengths. The
 installed historical decoder checks the LCM fingerprint.
 
+CDR input must come from trusted producers and match the installed schema. The
+native Python decoder is not a hostile-input validation boundary: see the
+[accepted native-library limitations](/docs/development/message-limitations.md).
+A matching schema does not make malformed bytes safe. Conversion uses the shared
+registry codecs and native value types, with no fallback to the old message API.
+
 MCAP reads `dimos.payload_type` metadata. Historical
 `dimos/<stream>/<Type>` wire names are also recognized when the type is uniquely
 listed. It never imports a Python class or SQLite component named by an input
 file. **Pickle is never loaded.** Unknown streams are listed together before an
-output is created; corrupt later payloads also leave no published output.
+output is created; detected payload errors also leave no published output.
 
 Go2 DDS recordings use different conventions (`rt/utlidar/cloud`,
 `rt/frontvideo`, proprietary Unitree types). A topic name alone does not specify
@@ -310,3 +316,12 @@ These are real legacy recording checks, not repackaged CDR fixtures. The runtime
 layer separately passed 40 focused mapping/reader/PGO tests and the converter
 layer 34 converter/migration/writer tests. macOS installation/execution, doctor,
 human visual review, full archive migration and full-suite CI are not claimed.
+
+The 2026-10-09 native-library integration was also checked locally using the
+existing real fixtures: all 4,451 stairs messages matched independently decoded
+LCM fields and exact output envelope times; all 2,546 Go2-short observations and
+108 stored 512-dimensional vectors were retained, including exact vector bytes
+and old/new observation-ID associations. Both source database hashes remained
+unchanged. The converter/writer regression suite passed 38 tests, including
+nonempty numeric and byte arrays. These results do not establish strict malformed
+CDR rejection; the accepted native-library limitations above still apply.

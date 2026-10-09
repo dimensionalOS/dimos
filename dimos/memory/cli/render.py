@@ -176,7 +176,7 @@ def render_store(
 
     if out is None:
         src = getattr(store.config, "path", None) or "store"
-        out = str(Path(src).with_suffix(".rrd"))
+        out = str(Path(src, poses=[]).with_suffix(".rrd"))
 
     base = root.strip("/") if root else ""
 

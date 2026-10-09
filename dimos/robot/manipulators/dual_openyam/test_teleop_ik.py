@@ -14,8 +14,10 @@
 
 """Objective tests for Dual OpenYAM WebXR teleoperation."""
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped
 from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 import pytest
 
@@ -54,7 +56,10 @@ def test_solver_uses_nominal_posture_without_manipulability() -> None:
     solver = _solver()
     seed = JointState(
         name=DUAL_OPENYAM_ARM_JOINTS,
-        position=DUAL_OPENYAM_HOME_JOINTS,
+        position=np.asarray(DUAL_OPENYAM_HOME_JOINTS, dtype=np.float64),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
     )
     targets = solver.frame_poses(seed, _TARGET_FRAMES)
 
@@ -71,7 +76,10 @@ def test_webxr_solver_matches_a1z_target_tracking_speed() -> None:
     solver = _solver()
     state = JointState(
         name=DUAL_OPENYAM_ARM_JOINTS,
-        position=DUAL_OPENYAM_HOME_JOINTS,
+        position=np.asarray(DUAL_OPENYAM_HOME_JOINTS, dtype=np.float64),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
     )
     initial = solver.frame_poses(state, _TARGET_FRAMES)
     targets = {

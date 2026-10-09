@@ -17,8 +17,9 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.dimos_msgs.msg import GraspCandidate, GraspCandidateArray
-from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from dimos_generated.std_msgs.msg import Header
 import pytest
 
@@ -43,8 +44,11 @@ def module() -> Iterator[PickAndPlaceModule]:
             "arm/tool": SimpleNamespace(
                 gripper_position=0.5,
                 end_effector_pose=PoseStamped(
-                    header=Header(frame_id="world"),
-                    pose=Pose(orientation=quaternion_from_euler(0, 0, 0.7)),
+                    header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+                    pose=Pose(
+                        orientation=quaternion_from_euler(0, 0, 0.7),
+                        position=Point(x=0.0, y=0.0, z=0.0),
+                    ),
                 ),
             )
         }
@@ -241,8 +245,11 @@ def test_pick_preserves_current_yaw_when_configured(module: PickAndPlaceModule) 
 def test_place_uses_local_axis_and_clears_held_state(module: PickAndPlaceModule) -> None:
     manipulation: Any = module._manipulation
     module._selected_grasp = PoseStamped(
-        header=Header(frame_id="world"),
-        pose=Pose(orientation=quaternion_from_euler(-3.141592653589793, 0.0, 0.0)),
+        header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+        pose=Pose(
+            orientation=quaternion_from_euler(-3.141592653589793, 0.0, 0.0),
+            position=Point(x=0.0, y=0.0, z=0.0),
+        ),
     )
     module._holding_object = True
 
@@ -257,7 +264,12 @@ def test_place_uses_local_axis_and_clears_held_state(module: PickAndPlaceModule)
 
 def test_scan_failure_clears_stale_selection(module: PickAndPlaceModule) -> None:
     scene: Any = module._scene
-    module._selected_grasp = PoseStamped(header=Header(frame_id="world"), pose=Pose())
+    module._selected_grasp = PoseStamped(
+        header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+        pose=Pose(
+            position=Point(x=0.0, y=0.0, z=0.0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+        ),
+    )
     scene.scan_scene.side_effect = RuntimeError("No aligned RGB-D frame")
 
     result = module.scan_objects(["cup"])
@@ -271,7 +283,12 @@ def test_scan_failure_clears_stale_selection(module: PickAndPlaceModule) -> None
 def test_pick_rejects_when_already_holding(module: PickAndPlaceModule) -> None:
     manipulation: Any = module._manipulation
     module._holding_object = True
-    module._selected_grasp = PoseStamped(header=Header(frame_id="world"), pose=Pose())
+    module._selected_grasp = PoseStamped(
+        header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+        pose=Pose(
+            position=Point(x=0.0, y=0.0, z=0.0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+        ),
+    )
 
     pick = module.pick_object("cup-1")
 
@@ -280,7 +297,12 @@ def test_pick_rejects_when_already_holding(module: PickAndPlaceModule) -> None:
 
 
 def test_failed_pick_clears_previous_selection(module: PickAndPlaceModule) -> None:
-    module._selected_grasp = PoseStamped(header=Header(frame_id="world"), pose=Pose())
+    module._selected_grasp = PoseStamped(
+        header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+        pose=Pose(
+            position=Point(x=0.0, y=0.0, z=0.0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+        ),
+    )
 
     result = module.pick_object("missing")
 
@@ -403,7 +425,12 @@ def test_pick_fails_when_gripper_feedback_is_unavailable(
 def test_place_retains_held_state_when_release_fails(
     module: PickAndPlaceModule, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    module._selected_grasp = PoseStamped(header=Header(frame_id="world"), pose=Pose())
+    module._selected_grasp = PoseStamped(
+        header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+        pose=Pose(
+            position=Point(x=0.0, y=0.0, z=0.0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+        ),
+    )
     module._holding_object = True
 
     def settle(read: Any, target: float, config: Any, **_: Any) -> GripperSettle:
@@ -437,7 +464,8 @@ def test_motion_skills_declare_movement_capability() -> None:
 @pytest.mark.parametrize("score", [float("nan"), float("inf"), -float("inf")])
 def test_pick_rejects_invalid_score_before_commanding_motion(module, score):
     module._grasp_generator.propose_grasps.return_value = GraspCandidateArray(
-        header=Header(frame_id="world"), candidates=[_candidate(0.1, score=score)]
+        header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+        candidates=[_candidate(0.1, score=score)],
     )
     result = module.pick_object("cup-1")
     assert result.error_code == "GRASP_GENERATION_FAILED"

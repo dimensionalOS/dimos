@@ -19,7 +19,8 @@ from __future__ import annotations
 import time
 import uuid
 
-from dimos_generated.geometry_msgs.msg import Point, Pose, Quaternion, Vector3
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseWithCovariance, Quaternion, Vector3
 from dimos_generated.std_msgs.msg import Header
 from dimos_generated.tf2_msgs.msg import TFMessage
 from dimos_generated.vision_msgs.msg import (
@@ -29,6 +30,7 @@ from dimos_generated.vision_msgs.msg import (
     ObjectHypothesis,
     ObjectHypothesisWithPose,
 )
+import numpy as np
 import pytest
 
 from dimos.core.transport import LCMTransport
@@ -39,7 +41,18 @@ from dimos.protocol.tf.tf import TF
 
 
 def _marker_detection_array(ts: float) -> Detection3DArray:
-    det = Detection3D()
+    det = Detection3D(
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        results=[],
+        bbox=BoundingBox3D(
+            center=Pose(
+                position=Point(x=0.0, y=0.0, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+            size=Vector3(x=0.0, y=0.0, z=0.0),
+        ),
+        id="",
+    )
     det.header = Header(stamp=time_from_seconds(ts), frame_id="world")
     det.id = "11"
     det.results = [
@@ -47,7 +60,14 @@ def _marker_detection_array(ts: float) -> Detection3DArray:
             hypothesis=ObjectHypothesis(
                 class_id="DICT_APRILTAG_36h11:11",
                 score=1.0,
-            )
+            ),
+            pose=PoseWithCovariance(
+                pose=Pose(
+                    position=Point(x=0.0, y=0.0, z=0.0),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+                covariance=np.zeros(36, dtype=np.float64),
+            ),
         )
     ]
     det.bbox = BoundingBox3D(

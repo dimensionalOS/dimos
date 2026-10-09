@@ -17,6 +17,7 @@ import time
 from dimos_generated.geometry_msgs.msg import PoseStamped, TransformStamped
 from dimos_generated.sensor_msgs.msg import CameraInfo, Image, PointCloud2
 from dimos_generated.tf2_msgs.msg import TFMessage
+from dimos_message_build.registry import decode as cdr_decode
 import pytest
 
 from dimos.core.transport import LCMTransport
@@ -47,7 +48,7 @@ class Go2Moment(Moment):
 
         # we just make sure to change timestamps so that we can jump
         # back and forth through time and the viewer doesn't get confused
-        odom = PoseStamped.decode(self.odom.value.encode())
+        odom = cdr_decode(self.odom.value.encode(), PoseStamped)
         odom.header.stamp = time_from_seconds(time.time())
         return connection.GO2Connection._odom_to_tf(odom)
 
@@ -58,7 +59,7 @@ class Go2Moment(Moment):
         t.dispose()
         tf_transport.stop()
 
-        camera_info = CameraInfo.decode(connection.GO2Connection.camera_info_static.encode())
+        camera_info = cdr_decode(connection.GO2Connection.camera_info_static.encode(), CameraInfo)
         camera_info.header.stamp = time_from_seconds(time.time())
         camera_info_transport: LCMTransport[CameraInfo] = LCMTransport("/camera_info", CameraInfo)
         camera_info_transport.publish(camera_info)

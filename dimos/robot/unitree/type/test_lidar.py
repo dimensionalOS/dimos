@@ -19,6 +19,7 @@ from typing import cast
 from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.sensor_msgs.msg import PointCloud2
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 import reactivex as rx
@@ -34,7 +35,17 @@ from dimos.utils.testing.replay import SensorReplay
 
 
 def _stamped(seconds: float) -> PointCloud2:
-    return PointCloud2(header=Header(stamp=time_from_seconds(seconds)))
+    return PointCloud2(
+        header=Header(stamp=time_from_seconds(seconds), frame_id=""),
+        height=0,
+        width=0,
+        fields=[],
+        is_bigendian=False,
+        point_step=0,
+        row_step=0,
+        data=np.array([], dtype=np.uint8),
+        is_dense=False,
+    )
 
 
 @pytest.mark.self_hosted
@@ -115,7 +126,7 @@ def test_repair_stale_ts_calibration_boundary_one_differs() -> None:
 def test_webrtc_xyz_conversion_preserves_points_and_explicit_time(override):
     raw = {"data": {"stamp": -0.5, "data": {"points": np.array([[1.25, 2.5, 3.75]])}}}
     cloud = pointcloud2_from_webrtc_lidar(cast("RawLidarMsg", raw), stamp=override)
-    decoded = PointCloud2.decode(cloud.encode())
+    decoded = cdr_decode(cdr_encode(cloud), PointCloud2)
     np.testing.assert_array_equal(pointcloud_xyz(decoded), [[1.25, 2.5, 3.75]])
     assert decoded.header.frame_id == "world"
     assert decoded.header.stamp == (

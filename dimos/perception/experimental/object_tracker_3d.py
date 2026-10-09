@@ -14,9 +14,11 @@
 
 
 # Generated detection values
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import (
     Point,
     Pose,
+    PoseWithCovariance,
     Quaternion,
     Transform,
     TransformStamped,
@@ -26,9 +28,11 @@ from dimos_generated.sensor_msgs.msg import CameraInfo, Image
 from dimos_generated.std_msgs.msg import Header
 from dimos_generated.tf2_msgs.msg import TFMessage
 from dimos_generated.vision_msgs.msg import (
+    BoundingBox3D,
     Detection2DArray,
     Detection3D,
     Detection3DArray,
+    ObjectHypothesis,
     ObjectHypothesisWithPose,
 )
 import numpy as np
@@ -210,16 +214,18 @@ class ObjectTracker3D(ObjectTracker2D):
         y_optical = (center_y - cy) * z_optical / fy  # type: ignore[has-type]
 
         # Create pose in optical frame
-        optical_pose = Pose()
+        optical_pose = Pose(
+            position=Point(x=0.0, y=0.0, z=0.0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+        )
         optical_pose.position = Point(x=x_optical, y=y_optical, z=z_optical)
-        optical_pose.orientation = Quaternion(w=1.0)
+        optical_pose.orientation = Quaternion(w=1.0, x=0.0, y=0.0, z=0.0)
 
         # Convert to robot frame
         robot_pose = optical_to_robot_frame(optical_pose)
 
         # Calculate orientation: object facing towards camera
         yaw = yaw_towards_point(robot_pose.position)
-        euler = Vector3(z=yaw)
+        euler = Vector3(z=yaw, x=0.0, y=0.0)
         robot_pose.orientation = euler_to_quaternion(euler)
 
         # Estimate object size in meters
@@ -229,23 +235,47 @@ class ObjectTracker3D(ObjectTracker2D):
 
         # Create Detection3D
         header = Header(stamp=detection2d.header.stamp, frame_id=self.config.frame_id)
-        detection_3d = Detection3D()
+        detection_3d = Detection3D(
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            results=[],
+            bbox=BoundingBox3D(
+                center=Pose(
+                    position=Point(x=0.0, y=0.0, z=0.0),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+                size=Vector3(x=0.0, y=0.0, z=0.0),
+            ),
+            id="",
+        )
         detection_3d.id = "0"
         detection_3d.header = header
 
         # Create hypothesis
-        hypothesis = ObjectHypothesisWithPose()
+        hypothesis = ObjectHypothesisWithPose(
+            hypothesis=ObjectHypothesis(class_id="", score=0.0),
+            pose=PoseWithCovariance(
+                pose=Pose(
+                    position=Point(x=0.0, y=0.0, z=0.0),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+                covariance=np.zeros(36, dtype=np.float64),
+            ),
+        )
         hypothesis.hypothesis.class_id = "tracked_object"
         hypothesis.hypothesis.score = 1.0
         detection_3d.results = [hypothesis]
 
         # Create 3D bounding box
-        detection_3d.bbox.center = Pose()
+        detection_3d.bbox.center = Pose(
+            position=Point(x=0.0, y=0.0, z=0.0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+        )
         detection_3d.bbox.center.position = robot_pose.position
         detection_3d.bbox.center.orientation = robot_pose.orientation
         detection_3d.bbox.size = Vector3(x=size_x, y=size_y, z=size_z)
 
-        detection3darray = Detection3DArray()
+        detection3darray = Detection3DArray(
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""), detections=[]
+        )
         detection3darray.header = header
         detection3darray.detections = [detection_3d]
 

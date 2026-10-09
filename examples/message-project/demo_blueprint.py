@@ -26,6 +26,7 @@ import uuid
 from demo_modules import ReadingProcessor
 from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import encode as cdr_encode
 from story_messages.story_msgs.msg import DeviceReading
 
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
@@ -58,6 +59,7 @@ class Exchange(Module):
             header=Header(stamp=Time(sec=17, nanosec=123456789), frame_id="sensor"),
             sequence=42,
             value=20.5,
+            label="sensor",
         )
         for _ in range(60):
             self.raw.publish(message)
@@ -66,7 +68,7 @@ class Exchange(Module):
         if self.received is None:
             raise TimeoutError("No reply from the three-language module chain")
         expected = DeviceReading(header=message.header, sequence=42, value=23.5, label="sensor")
-        if self.received.encode() != expected.encode():
+        if cdr_encode(self.received) != cdr_encode(expected):
             raise ValueError("Received fields differ from the expected three module edits")
         return "PASS: 20.5 -> Python 21.5 -> C++ 22.5 -> Rust 23.5; Header and sequence preserved"
 

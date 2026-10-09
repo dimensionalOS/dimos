@@ -16,9 +16,10 @@ import math
 from threading import Event, RLock, Thread, current_thread
 import time
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Point, PoseStamped, Twist
 from dimos_generated.nav_msgs.msg import OccupancyGrid, Path
-from dimos_generated.std_msgs.msg import Bool
+from dimos_generated.std_msgs.msg import Bool, Header
 import numpy as np
 from reactivex import Subject
 from reactivex.disposable import CompositeDisposable
@@ -162,7 +163,7 @@ class GlobalPlanner(Resource):
                 self._goal_reached = arrived
                 self._replan_limiter.reset()
 
-        self.path.on_next(Path())
+        self.path.on_next(Path(header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""), poses=[]))
         self._local_planner.stop_planning()
 
         if not but_will_try_again:
@@ -271,7 +272,7 @@ class GlobalPlanner(Resource):
     def _handle_stop_message(self, stop_message: StopMessage) -> None:
         # Note, this runs in the monitoring thread.
 
-        self.path.on_next(Path())
+        self.path.on_next(Path(header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""), poses=[]))
 
         if stop_message == "arrived":
             logger.info("Arrived at goal.")

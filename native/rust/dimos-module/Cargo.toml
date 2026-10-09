@@ -6,6 +6,7 @@ description = "Rust native module SDK for dimos NativeModule framework"
 license = "Apache-2.0"
 
 [dependencies]
+re_cdr = "=0.1.0"
 dimos-lcm-transport = { path = "../dimos-lcm-transport", version = "0.1.0" }
 dimos-module-macros = { version = "=0.1.0", path = "../dimos-module-macros" }
 dimos-generated-messages = { version = "0.1.0", path = "../../../packages/dimos-generated/src/dimos_generated_schemas/package/rust" }

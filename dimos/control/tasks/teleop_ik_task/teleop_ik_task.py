@@ -24,6 +24,7 @@ import threading
 from typing import TYPE_CHECKING
 
 import attrs
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Pose, PoseStamped
 from dimos_generated.std_msgs.msg import Header, UInt32
 
@@ -175,7 +176,11 @@ class TeleopIKTask(PoseTargetIKTask):
     ) -> bool:
         if hand not in self._bindings:
             return False
-        sample = copy.deepcopy(pose) if isinstance(pose, PoseStamped) else PoseStamped(pose=pose)
+        sample = (
+            copy.deepcopy(pose)
+            if isinstance(pose, PoseStamped)
+            else PoseStamped(pose=pose, header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""))
+        )
         with self._lock:
             if self._session_state is _SessionState.ESTOPPED:
                 return False

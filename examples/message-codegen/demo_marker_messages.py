@@ -18,6 +18,7 @@ from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Vector3
 from dimos_generated.std_msgs.msg import Header
 from dimos_generated.vision_msgs.msg import Detection3DArray
+from dimos_message_build.registry import decode as cdr_decode
 import numpy as np
 
 from dimos.msgs.image import image_from_array
@@ -41,7 +42,7 @@ def main() -> None:
             ts=0,
             image=image,
             center=Vector3(x=float(identifier), y=2, z=3),
-            size=Vector3(x=0.16, y=0.16),
+            size=Vector3(x=0.16, y=0.16, z=0.0),
             frame_id="world",
             marker_id=identifier,
             dictionary="DICT_APRILTAG_36h11",
@@ -49,7 +50,7 @@ def main() -> None:
         for identifier in (7, 42)
     ]
     message = ImageDetections3D(image, markers).to_ros_detection3d_array()
-    decoded = Detection3DArray.decode(message.encode())
+    decoded = cdr_decode(message.encode(), Detection3DArray)
     assert decoded.header.stamp == image.header.stamp
     for marker in decoded.detections:
         assert marker.results[0].hypothesis.class_id == f"DICT_APRILTAG_36h11:{marker.id}"

@@ -17,9 +17,11 @@
 from pathlib import Path
 from typing import cast
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from dimos_generated.sensor_msgs.msg import JointState
 from dimos_generated.std_msgs.msg import Header, UInt32
+import numpy as np
 import pytest
 from pytest_mock import MockerFixture
 
@@ -68,14 +70,14 @@ def _solver(mocker: MockerFixture) -> PinkPoseTargetSolver:
     solver = mocker.Mock(spec=PinkPoseTargetSolver)
     solver.frame_poses.return_value = {
         "left_tool": PoseStamped(
-            header=Header(frame_id=""),
+            header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
             pose=Pose(
                 position=Point(x=1.0, y=0.0, z=0.0),
                 orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
             ),
         ),
         "right_tool": PoseStamped(
-            header=Header(frame_id=""),
+            header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
             pose=Pose(
                 position=Point(x=-1.0, y=0.0, z=0.0),
                 orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
@@ -83,7 +85,11 @@ def _solver(mocker: MockerFixture) -> PinkPoseTargetSolver:
         ),
     }
     solver.step.return_value = JointState(
-        name=["robot/left", "robot/right"], position=[0.01, -0.01]
+        name=["robot/left", "robot/right"],
+        position=np.array([0.01, -0.01], dtype=np.float64),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
     )
     return solver
 
@@ -124,7 +130,7 @@ def test_face_buttons_do_not_engage_arm_teleop(mocker: MockerFixture) -> None:
 
 def _pose(x: float) -> PoseStamped:
     return PoseStamped(
-        header=Header(frame_id=""),
+        header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
         pose=Pose(
             position=Point(x=x, y=0.0, z=0.0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
         ),
@@ -230,14 +236,24 @@ def test_deadman_reengagement_reseeds_command_from_feedback(
     )
     task.on_teleop_buttons(_buttons(left=True), 1.0)
     task.on_left_cartesian_command(_pose(0.1), 1.0)
-    solver.step.return_value = JointState(name=["robot/left", "robot/right"], position=[0.1, -0.1])
+    solver.step.return_value = JointState(
+        name=["robot/left", "robot/right"],
+        position=np.array([0.1, -0.1], dtype=np.float64),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
+    )
     assert task.compute(_state()) is not None
 
     task.on_teleop_buttons(_buttons(), 1.1)
     task.on_teleop_buttons(_buttons(left=True), 1.2)
     task.on_left_cartesian_command(_pose(0.2), 1.2)
     solver.step.return_value = JointState(
-        name=["robot/left", "robot/right"], position=[0.01, -0.01]
+        name=["robot/left", "robot/right"],
+        position=np.array([0.01, -0.01], dtype=np.float64),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
     )
     assert task.compute(_state(1.2)) is not None
 

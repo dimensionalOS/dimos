@@ -1,13 +1,6 @@
-from ..._types import (
-    trajectory_msgs__msg__JointTrajectory as JointTrajectory,
-    trajectory_msgs__msg__JointTrajectoryPoint as JointTrajectoryPoint,
-    trajectory_msgs__msg__MultiDOFJointTrajectory as MultiDOFJointTrajectory,
-    trajectory_msgs__msg__MultiDOFJointTrajectoryPoint as MultiDOFJointTrajectoryPoint,
-)
+from ..._types import store
 
-__all__ = [
-    "JointTrajectory",
-    "JointTrajectoryPoint",
-    "MultiDOFJointTrajectory",
-    "MultiDOFJointTrajectoryPoint",
-]
+JointTrajectoryPoint = store.types["trajectory_msgs/msg/JointTrajectoryPoint"]
+JointTrajectory = store.types["trajectory_msgs/msg/JointTrajectory"]
+MultiDOFJointTrajectoryPoint = store.types["trajectory_msgs/msg/MultiDOFJointTrajectoryPoint"]
+MultiDOFJointTrajectory = store.types["trajectory_msgs/msg/MultiDOFJointTrajectory"]

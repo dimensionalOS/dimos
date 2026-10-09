@@ -30,8 +30,17 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
-from dimos_generated.geometry_msgs.msg import PoseStamped, Twist, TwistStamped, Vector3
+from dimos_generated.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseStamped,
+    Quaternion,
+    Twist,
+    TwistStamped,
+    Vector3,
+)
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import encode as cdr_encode
 import pytest
 
 from dimos.core.module import Module
@@ -81,9 +90,9 @@ def _frame(channel, message):
             seq=0,
             ts=time.time(),
             delivery="latest",
-            meta={"encoding": "cdr", "type": message.msg_name},
+            meta={"encoding": "cdr", "type": message.__msgtype__},
         ),
-        message.encode(),
+        cdr_encode(message),
     )
 
 
@@ -93,7 +102,11 @@ def _pose_bytes(frame_id: str, ts: float | None = None) -> bytes:
         PoseStamped(
             header=Header(
                 stamp=time_from_seconds(time.time() if ts is None else ts), frame_id=frame_id
-            )
+            ),
+            pose=Pose(
+                position=Point(x=0.0, y=0.0, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
         ),
     )
 
@@ -105,7 +118,9 @@ def _twist_bytes(x: float = 0.1, angular_x: float = 0.0, ts: float | None = None
             header=Header(
                 stamp=time_from_seconds(time.time() if ts is None else ts), frame_id="eef_twist_arm"
             ),
-            twist=Twist(linear=Vector3(x=x), angular=Vector3(x=angular_x)),
+            twist=Twist(
+                linear=Vector3(x=x, y=0.0, z=0.0), angular=Vector3(x=angular_x, y=0.0, z=0.0)
+            ),
         ),
     )
 

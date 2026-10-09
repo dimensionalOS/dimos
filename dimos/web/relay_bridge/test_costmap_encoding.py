@@ -23,8 +23,11 @@ import json
 from typing import Any
 import zlib
 
-from dimos_generated.geometry_msgs.msg import Point, Pose
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Point, Pose, Quaternion
 from dimos_generated.nav_msgs.msg import MapMetaData, OccupancyGrid
+from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 
@@ -60,7 +63,7 @@ def test_encoder_reproduces_golden_vector(vec: dict[str, Any]) -> None:
 def test_encoder_handles_wire_decoded_grid() -> None:
     """The bridge derives yaw from the quaternion after a CDR roundtrip."""
     msg = grid_msg([[0, 100], [-1, 50]], 0.05, -1.25, 2.5, 0.5)
-    decoded = OccupancyGrid.decode(msg.encode())
+    decoded = cdr_decode(cdr_encode(msg), OccupancyGrid)
     encoded = encode_costmap(decoded)
     assert encoded is not None
     payload, meta = encoded.payload, encoded.meta
@@ -69,7 +72,25 @@ def test_encoder_handles_wire_decoded_grid() -> None:
 
 
 def test_empty_grid_encodes_to_none() -> None:
-    assert encode_costmap(OccupancyGrid()) is None
+    assert (
+        encode_costmap(
+            OccupancyGrid(
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                info=MapMetaData(
+                    map_load_time=Time(sec=0, nanosec=0),
+                    resolution=0.0,
+                    width=0,
+                    height=0,
+                    origin=Pose(
+                        position=Point(x=0.0, y=0.0, z=0.0),
+                        orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                    ),
+                ),
+                data=np.array([], dtype=np.int8),
+            )
+        )
+        is None
+    )
 
 
 def test_oversized_grid_is_downsampled_within_budget() -> None:
@@ -81,9 +102,13 @@ def test_oversized_grid_is_downsampled_within_budget() -> None:
             width=rows.shape[1],
             height=rows.shape[0],
             resolution=0.05,
-            origin=Pose(position=Point(x=1, y=2)),
+            origin=Pose(
+                position=Point(x=1, y=2, z=0.0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+            ),
+            map_load_time=Time(sec=0, nanosec=0),
         ),
-        data=rows.ravel(),
+        data=np.asarray(rows.ravel(), dtype=np.int8),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
     )
     encoded = encode_costmap(msg)
     assert encoded is not None
@@ -100,8 +125,18 @@ def test_oversized_grid_is_downsampled_within_budget() -> None:
 def test_grid_at_exactly_max_side_is_not_downsampled() -> None:
     rows = np.full((4, 2048), 7, dtype=np.int8)
     msg = OccupancyGrid(
-        info=MapMetaData(width=rows.shape[1], height=rows.shape[0], resolution=0.05),
-        data=rows.ravel(),
+        info=MapMetaData(
+            width=rows.shape[1],
+            height=rows.shape[0],
+            resolution=0.05,
+            map_load_time=Time(sec=0, nanosec=0),
+            origin=Pose(
+                position=Point(x=0.0, y=0.0, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+        ),
+        data=np.asarray(rows.ravel(), dtype=np.int8),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
     )
     encoded = encode_costmap(msg)
     assert encoded is not None
@@ -113,8 +148,18 @@ def test_grid_at_exactly_max_side_is_not_downsampled() -> None:
 def test_non_square_oversized_grid_uses_ceil_factor() -> None:
     rows = np.zeros((100, 4100), dtype=np.int8)
     msg = OccupancyGrid(
-        info=MapMetaData(width=rows.shape[1], height=rows.shape[0], resolution=0.05),
-        data=rows.ravel(),
+        info=MapMetaData(
+            width=rows.shape[1],
+            height=rows.shape[0],
+            resolution=0.05,
+            map_load_time=Time(sec=0, nanosec=0),
+            origin=Pose(
+                position=Point(x=0.0, y=0.0, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+        ),
+        data=np.asarray(rows.ravel(), dtype=np.int8),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
     )
     encoded = encode_costmap(msg)
     assert encoded is not None

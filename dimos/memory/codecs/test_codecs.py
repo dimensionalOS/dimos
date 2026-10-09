@@ -15,9 +15,10 @@
 """Storage uses generated CDR without altering message fields or image pixels."""
 
 from dimos_generated.builtin_interfaces.msg import Time
-from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from dimos_generated.sensor_msgs.msg import CompressedImage, Image
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import encode as cdr_encode
 import numpy as np
 import pytest
 
@@ -35,7 +36,13 @@ from dimos.msgs.image import image_from_array, image_to_jpeg, image_view
 def message(request):
     header = Header(frame_id="sensor", stamp=Time(sec=1700000000, nanosec=123456789))
     if request.param == "pose":
-        return PoseStamped(header=header, pose=Pose(position=Point(x=1.25, y=-2.5, z=3.75)))
+        return PoseStamped(
+            header=header,
+            pose=Pose(
+                position=Point(x=1.25, y=-2.5, z=3.75),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+        )
     if request.param == "depth":
         return image_from_array(
             np.array([[0, 1, 65535]], dtype=np.uint16), encoding="16UC1", header=header
@@ -45,7 +52,9 @@ def message(request):
     )
     if request.param == "compressed":
         return CompressedImage(
-            header=header, format="rgb8; jpeg compressed bgr8", data=image_to_jpeg(image)
+            header=header,
+            format="rgb8; jpeg compressed bgr8",
+            data=np.frombuffer(image_to_jpeg(image), dtype=np.uint8),
         )
     return image
 
@@ -58,10 +67,10 @@ def test_codec_roundtrip_and_reconstruction_preserve_generated_value(message, wr
     restored = codec_from_id(name, f"{type(message).__module__}.{type(message).__qualname__}")
     encoded = codec.encode(message)
     decoded = restored.decode(encoded)
-    assert decoded == message
+    assert cdr_encode(decoded) == cdr_encode(message)
     assert decoded.header.stamp.nanosec == 123456789
     if not wrapped:
-        assert encoded == message.encode()
+        assert encoded == cdr_encode(message)
     if isinstance(message, Image):
         np.testing.assert_array_equal(image_view(decoded), image_view(message))
 
@@ -75,8 +84,8 @@ def test_sqlite_reopen_uses_cdr_and_preserves_exact_message(message, wrapped, tm
     with SqliteStore(path=str(path), must_exist=True) as store:
         observation = store.stream("samples").first()
         assert observation.ts == 12.5
-        assert observation.data == message
-        assert observation.data.encode() == message.encode()
+        assert cdr_encode(observation.data) == cdr_encode(message)
+        assert cdr_encode(observation.data) == cdr_encode(message)
 
 
 @pytest.mark.parametrize("identifier", ["lcm", "lz4+lcm", "jpeg"])
@@ -104,7 +113,12 @@ def test_python_objects_keep_the_explicit_python_storage_path(value):
 
 @pytest.mark.parametrize("stamped_transform", [False, True])
 def test_observation_pose_metadata_accepts_nested_generated_values(stamped_transform):
-    pose = PoseStamped(header=Header(frame_id="world"), pose=Pose(position=Point(x=1, y=2, z=3)))
+    pose = PoseStamped(
+        header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+        pose=Pose(
+            position=Point(x=1, y=2, z=3), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+        ),
+    )
     value = transform_from_pose(pose, child_frame_id="base") if stamped_transform else pose
     observation = Observation(id=0, ts=-0.5, pose=value, _data="payload")
     assert observation.pose_tuple == (1, 2, 3, 0, 0, 0, 1)
@@ -115,7 +129,17 @@ def test_observation_pose_metadata_accepts_nested_generated_values(stamped_trans
 
 def test_cdr_rejects_a_message_of_the_wrong_type():
     with pytest.raises(TypeError, match="Expected geometry_msgs/msg/PoseStamped"):
-        CdrCodec(PoseStamped).encode(Image())
+        CdrCodec(PoseStamped).encode(
+            Image(
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                height=0,
+                width=0,
+                encoding="",
+                is_bigendian=0,
+                step=0,
+                data=np.array([], dtype=np.uint8),
+            )
+        )
 
 
 def test_unknown_storage_codec_is_not_misdiagnosed_as_historical_recording():

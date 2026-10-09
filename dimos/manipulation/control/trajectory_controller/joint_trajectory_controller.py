@@ -36,6 +36,7 @@ from typing import Any
 from dimos_generated.dimos_msgs.msg import JointCommand, RobotState, TrajectoryStatus
 from dimos_generated.sensor_msgs.msg import JointState
 from dimos_generated.trajectory_msgs.msg import JointTrajectory
+import numpy as np
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
@@ -325,7 +326,9 @@ class JointTrajectoryController(Module):
                             q_ref, _qd_ref = sample_trajectory(self._trajectory, t)
 
                             # Create and publish command (outside lock would be better but simpler here)
-                            cmd = JointCommand(positions=q_ref, header=header_now())
+                            cmd = JointCommand(
+                                positions=np.asarray(q_ref, dtype=np.float64), header=header_now()
+                            )
 
                             # Publish - must release lock first for thread safety
                             trajectory_active = True

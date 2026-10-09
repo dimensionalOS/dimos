@@ -1,9 +1,13 @@
 {
-  "abi": "dimos-cdr-source-rosbags-0.11.0-v1",
-  "codec_owner": "dimos_generated",
+  "abi": "dimos-native-rosbags-0.11.0-v2",
   "dependencies": {},
   "format": 1,
   "module": "dimos_generated",
+  "native_construction": {
+    "cpp": "upstream default constructors",
+    "python": "explicit fields; no implicit defaults",
+    "rust": "explicit fields; upstream Default generation unsupported"
+  },
   "owned": [
     "builtin_interfaces/msg/Duration",
     "builtin_interfaces/msg/Time",
@@ -315,5 +319,57 @@
     "visualization_msgs/msg/UVCoordinate": "544f2580cfb42e1e28dcb27856572abd52ad348d8f6197526f51f6d15acec1f0"
   },
   "shared": true,
+  "types_with_declared_defaults": [
+    "geometry_msgs/msg/Quaternion",
+    "geometry_msgs/msg/Pose",
+    "vision_msgs/msg/BoundingBox3D",
+    "dimos_msgs/msg/BoundingBox3DArray",
+    "dimos_msgs/msg/GraspCandidate",
+    "dimos_msgs/msg/GraspCandidateArray",
+    "dimos_msgs/msg/LineSegment3D",
+    "dimos_msgs/msg/LineSegments3D",
+    "geometry_msgs/msg/PoseArray",
+    "geometry_msgs/msg/PoseStamped",
+    "geometry_msgs/msg/PoseWithCovariance",
+    "geometry_msgs/msg/PoseWithCovarianceStamped",
+    "geometry_msgs/msg/QuaternionStamped",
+    "geometry_msgs/msg/Transform",
+    "geometry_msgs/msg/TransformStamped",
+    "nav_msgs/msg/Goals",
+    "nav_msgs/msg/MapMetaData",
+    "nav_msgs/msg/OccupancyGrid",
+    "nav_msgs/msg/Odometry",
+    "nav_msgs/msg/Path",
+    "nav_msgs/msg/TrajectoryPoint",
+    "nav_msgs/msg/Trajectory",
+    "sensor_msgs/msg/Imu",
+    "sensor_msgs/msg/MultiDOFJointState",
+    "sensor_msgs/msg/NavSatStatus",
+    "sensor_msgs/msg/NavSatFix",
+    "tf2_msgs/msg/TFMessage",
+    "trajectory_msgs/msg/MultiDOFJointTrajectoryPoint",
+    "trajectory_msgs/msg/MultiDOFJointTrajectory",
+    "vision_msgs/msg/BoundingBox3DArray",
+    "vision_msgs/msg/ObjectHypothesisWithPose",
+    "vision_msgs/msg/Detection2D",
+    "vision_msgs/msg/Detection2DArray",
+    "vision_msgs/msg/Detection3D",
+    "vision_msgs/msg/Detection3DArray",
+    "visualization_msgs/msg/Marker",
+    "visualization_msgs/msg/InteractiveMarkerControl",
+    "visualization_msgs/msg/InteractiveMarker",
+    "visualization_msgs/msg/InteractiveMarkerFeedback",
+    "visualization_msgs/msg/InteractiveMarkerInit",
+    "visualization_msgs/msg/InteractiveMarkerPose",
+    "visualization_msgs/msg/InteractiveMarkerUpdate",
+    "visualization_msgs/msg/MarkerArray"
+  ],
+  "unsupported": {
+    "cpp": {},
+    "python": {
+      "shape_msgs/msg/SolidPrimitive": "rosbags does not enforce declared bounds"
+    },
+    "rust": {}
+  },
   "version": "0.1.0"
 }

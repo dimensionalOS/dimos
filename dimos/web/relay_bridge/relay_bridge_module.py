@@ -1212,7 +1212,9 @@ class RelayBridgeModule(Module):
             self._teleop_zero("release")
             return
         self._teleop_driving = True
-        self.tele_cmd_vel.publish(Twist(linear=Vector3(x=vx, y=vy), angular=Vector3(z=wz)))
+        self.tele_cmd_vel.publish(
+            Twist(linear=Vector3(x=vx, y=vy, z=0.0), angular=Vector3(z=wz, x=0.0, y=0.0))
+        )
 
     def _on_wire_stop(self, msg: WireStop) -> None:
         """E-stop: unconditional zero, even from idle - it must also cancel
@@ -1268,7 +1270,9 @@ class RelayBridgeModule(Module):
             return
         self._teleop_driving = False
         logger.warning(f"relay bridge teleop: zero twist ({reason})")
-        self.tele_cmd_vel.publish(Twist())
+        self.tele_cmd_vel.publish(
+            Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+        )
 
     def _teleop_reset(self) -> None:
         # Session teardown only: datagrams are QUIC-session-scoped and the

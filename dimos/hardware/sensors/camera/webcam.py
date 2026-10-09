@@ -18,6 +18,7 @@ import threading
 import time
 from typing import Annotated, Any, Literal
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.sensor_msgs.msg import CameraInfo, Image
 from dimos_generated.std_msgs.msg import Header
 from pydantic import BeforeValidator, Field
@@ -198,7 +199,7 @@ class Webcam(CameraHardware):
             width,
             height,
             axis="horizontal",
-            header=Header(frame_id=self._frame("camera_optical")),
+            header=Header(frame_id=self._frame("camera_optical"), stamp=Time(sec=0, nanosec=0)),
         )
 
     def emit(self, image: Image) -> None: ...

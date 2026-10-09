@@ -35,6 +35,7 @@ from dimos_generated.dimos_msgs.msg import JointCommand, RobotState
 from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Twist, Vector3
 from dimos_generated.sensor_msgs.msg import JointState
 from dimos_generated.std_msgs.msg import Header
+import numpy as np
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
@@ -548,8 +549,8 @@ class CartesianMotionController(Module):
 
                 # Publish joint command
                 joint_cmd = JointCommand(
-                    header=Header(stamp=time_from_seconds(current_time)),
-                    positions=list(target_joints),
+                    header=Header(stamp=time_from_seconds(current_time), frame_id=""),
+                    positions=np.asarray(list(target_joints), dtype=np.float64),
                 )
 
                 # Always try to publish - the Out stream will handle transport availability

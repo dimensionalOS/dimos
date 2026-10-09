@@ -12,8 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Twist
-from dimos_generated.sensor_msgs.msg import CameraInfo
+from dimos_generated.sensor_msgs.msg import CameraInfo, RegionOfInterest
+from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
+import numpy as np
 import pytest
 
 from dimos.navigation.visual_servoing.visual_servoing_2d import VisualServoing2D
@@ -30,10 +34,22 @@ from dimos.navigation.visual_servoing.visual_servoing_2d import VisualServoing2D
     ],
 )
 def test_generated_camera_to_twist(bbox, linear, angular):
-    camera = CameraInfo(width=640, height=480, k=[500, 0, 320, 0, 500, 240, 0, 0, 1])
-    controller = VisualServoing2D(CameraInfo.decode(camera.encode()))
+    camera = CameraInfo(
+        width=640,
+        height=480,
+        k=np.array([500, 0, 320, 0, 500, 240, 0, 0, 1], dtype=np.float64),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        distortion_model="",
+        d=np.array([], dtype=np.float64),
+        r=np.zeros(9, dtype=np.float64),
+        p=np.zeros(12, dtype=np.float64),
+        binning_x=0,
+        binning_y=0,
+        roi=RegionOfInterest(x_offset=0, y_offset=0, height=0, width=0, do_rectify=False),
+    )
+    controller = VisualServoing2D(cdr_decode(cdr_encode(camera), CameraInfo))
     output = controller.compute_twist(bbox, 640)
-    decoded = Twist.decode(output.encode())
+    decoded = cdr_decode(output.encode(), Twist)
     assert decoded.linear.x == pytest.approx(linear)
     assert decoded.angular.z == pytest.approx(angular)
     assert decoded.linear.y == decoded.linear.z == 0

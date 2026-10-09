@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections import Counter
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos_generated.sensor_msgs.msg import Image, PointCloud2
 from dimos_generated.std_msgs.msg import Header
@@ -158,17 +159,23 @@ def _frame(
     image = image_from_array(
         np.zeros((10, 10, 3), dtype=np.uint8),
         encoding="rgb8",
-        header=Header(stamp=time_from_seconds(10)),
+        header=Header(stamp=time_from_seconds(10), frame_id=""),
     )
     return PointCloudFrame(
         index=index,
         image=image,
         pointcloud=pointcloud,
-        camera_info=camera_info_from_intrinsics(fx, fy, cx, cy, 10, 10, header=Header()),
+        camera_info=camera_info_from_intrinsics(
+            fx, fy, cx, cy, 10, 10, header=Header(stamp=Time(sec=0, nanosec=0), frame_id="")
+        ),
         pointcloud_to_camera=TransformStamped(
-            header=Header(frame_id="optical"),
+            header=Header(frame_id="optical", stamp=Time(sec=0, nanosec=0)),
             child_frame_id="lidar",
-            transform=transform or Transform(rotation=Quaternion(w=1)),
+            transform=transform
+            or Transform(
+                rotation=Quaternion(w=1, x=0.0, y=0.0, z=0.0),
+                translation=Vector3(x=0.0, y=0.0, z=0.0),
+            ),
         ),
         image_observation_timestamp=10.0,
         pointcloud_observation_timestamp=9.98,
@@ -195,7 +202,7 @@ def test_mask_estimator_batches_and_caches_without_pointcloud() -> None:
     image = image_from_array(
         np.zeros((10, 10, 3), dtype=np.uint8),
         encoding="rgb8",
-        header=Header(stamp=time_from_seconds(10)),
+        header=Header(stamp=time_from_seconds(10), frame_id=""),
     )
     left_mask = np.zeros((10, 10), dtype=np.uint8)
     right_mask = np.zeros((10, 10), dtype=np.uint8)
@@ -223,7 +230,7 @@ def test_mask_estimator_batches_and_caches_without_pointcloud() -> None:
     next_image = image_from_array(
         np.zeros((10, 10, 3), dtype=np.uint8),
         encoding="rgb8",
-        header=Header(stamp=time_from_seconds(11)),
+        header=Header(stamp=time_from_seconds(11), frame_id=""),
     )
     estimator.estimate(next_image, "left person")
 
@@ -242,7 +249,10 @@ def test_projects_transformed_points_and_rejects_invalid_projections() -> None:
     )
     frame = _frame(
         pointcloud,
-        transform=Transform(translation=Vector3(x=1.0)),
+        transform=Transform(
+            translation=Vector3(x=1.0, y=0.0, z=0.0),
+            rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+        ),
         cx=0.0,
         cy=0.0,
     )

@@ -96,7 +96,7 @@ def decode_point(msg: dict[str, Any]) -> PointStamped:
         raise ValueError(f"point.json.v1 wants an object, got {type(msg).__name__}")
     return PointStamped(
         header=header_now("world"),
-        point=Point(x=finite_number(msg.get("x"), "x"), y=finite_number(msg.get("y"), "y")),
+        point=Point(x=finite_number(msg.get("x"), "x"), y=finite_number(msg.get("y"), "y"), z=0.0),
     )
 
 

@@ -20,9 +20,10 @@
 from pathlib import Path as FilePath
 
 from dimos_generated.builtin_interfaces.msg import Time
-from dimos_generated.geometry_msgs.msg import Pose, Quaternion
+from dimos_generated.geometry_msgs.msg import Point, Pose, Quaternion
 from dimos_generated.nav_msgs.msg import MapMetaData, OccupancyGrid, Path
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 
 from dimos.mapping.occupancy.path_mask import make_path_mask
@@ -42,11 +43,18 @@ def main() -> None:
     grid = OccupancyGrid(
         header=header,
         info=MapMetaData(
-            width=40, height=40, resolution=0.25, origin=Pose(orientation=Quaternion(w=1))
+            width=40,
+            height=40,
+            resolution=0.25,
+            origin=Pose(
+                orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0),
+                position=Point(x=0.0, y=0.0, z=0.0),
+            ),
+            map_load_time=Time(sec=0, nanosec=0),
         ),
-        data=cells.ravel(),
+        data=np.asarray(cells.ravel(), dtype=np.int8),
     )
-    received = OccupancyGrid.decode(grid.encode())
+    received = cdr_decode(cdr_encode(grid), OccupancyGrid)
     start = grid_to_world(received, (5, 5))
     goal = grid_to_world(received, (35, 35))
     output_dir = FilePath("build/message-codegen/demo/evidence")
@@ -55,8 +63,15 @@ def main() -> None:
         name = "cpp" if use_cpp else "python"
         path = min_cost_astar(received, goal, start, use_cpp=use_cpp)
         assert path is not None
-        resampled = simple_resample_path(path, Pose(orientation=Quaternion(w=1)), 0.1)
-        decoded = Path.decode(resampled.encode())
+        resampled = simple_resample_path(
+            path,
+            Pose(
+                orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0),
+                position=Point(x=0.0, y=0.0, z=0.0),
+            ),
+            0.1,
+        )
+        decoded = cdr_decode(cdr_encode(resampled), Path)
         assert decoded.header == header
         assert all(pose.header == header for pose in decoded.poses)
         mask = make_path_mask(received, decoded, 0.1)

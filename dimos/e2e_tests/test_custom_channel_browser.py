@@ -53,16 +53,25 @@ PATH_MSG = Path(
     header=Header(stamp=time_from_seconds(42.5), frame_id="world"),
     poses=[
         PoseStamped(
-            header=Header(stamp=time_from_seconds(42.5)),
-            pose=Pose(position=Point(x=1.5, y=-2.5), orientation=Quaternion(w=1)),
+            header=Header(stamp=time_from_seconds(42.5), frame_id=""),
+            pose=Pose(
+                position=Point(x=1.5, y=-2.5, z=0.0),
+                orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0),
+            ),
         ),
         PoseStamped(
-            header=Header(stamp=time_from_seconds(42.5)),
-            pose=Pose(position=Point(x=2.0, y=0.25), orientation=Quaternion(w=1)),
+            header=Header(stamp=time_from_seconds(42.5), frame_id=""),
+            pose=Pose(
+                position=Point(x=2.0, y=0.25, z=0.0),
+                orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0),
+            ),
         ),
         PoseStamped(
-            header=Header(stamp=time_from_seconds(42.5)),
-            pose=Pose(position=Point(x=3.5, y=4.0), orientation=Quaternion(w=1)),
+            header=Header(stamp=time_from_seconds(42.5), frame_id=""),
+            pose=Pose(
+                position=Point(x=3.5, y=4.0, z=0.0),
+                orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0),
+            ),
         ),
     ],
 )

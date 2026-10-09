@@ -16,9 +16,11 @@
 
 from pathlib import Path as FilePath
 
-from dimos_generated.geometry_msgs.msg import PoseStamped, Twist, Vector3
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Twist, Vector3
 from dimos_generated.nav_msgs.msg import Path
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 
 from dimos.control.benchmarking.paths import straight_line, trajectory_to_svg
 from dimos.control.benchmarking.plant import (
@@ -36,11 +38,11 @@ from dimos.core.global_config import GlobalConfig
 
 def main() -> None:
     reference = straight_line(length=2.0)
-    reference.header = Header(frame_id="world")
+    reference.header = Header(frame_id="world", stamp=Time(sec=0, nanosec=0))
     reference.poses = [
         PoseStamped(header=reference.header, pose=pose.pose) for pose in reference.poses
     ]
-    received = Path.decode(reference.encode())
+    received = cdr_decode(cdr_encode(reference), Path)
     names = ["base/vx", "base/vy", "base/wz"]
     task = PathFollowerTask(
         "demo", PathFollowerTaskConfig(joint_names=names, speed=0.5), GlobalConfig()
@@ -48,7 +50,16 @@ def main() -> None:
     channel = FopdtChannelParams(K=1.0, tau=0.1, L=0.0)
     plant = TwistBasePlantSim(TwistBasePlantParams(vx=channel, vy=channel, wz=channel))
     plant.reset(0.0, 0.0, 0.0, 0.1)
-    assert task.start_path(received, PoseStamped(header=received.header))
+    assert task.start_path(
+        received,
+        PoseStamped(
+            header=received.header,
+            pose=Pose(
+                position=Point(x=0.0, y=0.0, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+        ),
+    )
     trace: list[tuple[float, float]] = []
     for tick in range(200):
         state = CoordinatorState(
@@ -65,8 +76,10 @@ def main() -> None:
             break
         assert command is not None
         vx, vy, wz = command.velocities
-        wire = Twist(linear=Vector3(x=vx, y=vy), angular=Vector3(z=wz)).encode()
-        decoded = Twist.decode(wire)
+        wire = cdr_encode(
+            Twist(linear=Vector3(x=vx, y=vy, z=0.0), angular=Vector3(z=wz, x=0.0, y=0.0))
+        )
+        decoded = cdr_decode(wire, Twist)
         plant.step(decoded.linear.x, decoded.linear.y, decoded.angular.z, 0.1)
     assert task.get_state() == "arrived"
     assert abs(plant.x - 2.0) <= 0.2 and abs(plant.y) < 1e-9

@@ -19,7 +19,7 @@ from __future__ import annotations
 import bisect
 from typing import TYPE_CHECKING, Any
 
-from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from dimos_generated.sensor_msgs.msg import Image, PointCloud2
 from dimos_generated.std_msgs.msg import Header
 import numpy as np
@@ -48,7 +48,13 @@ def source(tmp_path_factory: pytest.TempPathFactory) -> Iterator[SqliteStore]:
         for index in range(1024):
             ns = 1_700_000_000_123_456_789 + index * 25_000_000
             header = Header(stamp=time_from_nanoseconds(ns), frame_id="world")
-            pose = PoseStamped(header=header, pose=Pose(position=Point(x=index / 100)))
+            pose = PoseStamped(
+                header=header,
+                pose=Pose(
+                    position=Point(x=index / 100, y=0.0, z=0.0),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+            )
             pixels = np.full((8, 8, 3), 64 + index % 128, dtype=np.uint8)
             pixels[:, index % 8] = (255, 0, 127)
             video.append(image_from_array(pixels, encoding="rgb8", header=header), ts=ns / 1e9)

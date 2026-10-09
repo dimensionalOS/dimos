@@ -420,13 +420,15 @@ jobs:
           sudo unzip -q /tmp/zenoh-c.zip -d /usr/local
           sudo unzip -q /tmp/zenoh-cpp.zip -d /usr/local
           sudo ldconfig
-      - name: Generate native CDR message package
+      - uses: astral-sh/setup-uv@v10.0.1
+      - name: Prepare native message build prerequisites
         run: |
-          bash scripts/setup_message_codegen.sh
-          bash scripts/install_native_messages.sh
-          echo "CMAKE_PREFIX_PATH=$PWD/build/message-codegen/install" >> "$GITHUB_ENV"
+          uv venv .venv --python 3.12
+          uv pip install --python .venv/bin/python './dimos/message_codegen[native]'
+      - name: Generate native CDR message package
+        run: bash scripts/install_native_messages.sh
       - name: Configure
-        run: cmake -S native/cpp -B build/native-cpp -DDIMOS_NATIVE_BUILD_TESTS=ON
+        run: cmake -S native/cpp -B build/native-cpp -DDIMOS_NATIVE_BUILD_TESTS=ON -DCMAKE_TOOLCHAIN_FILE="$PWD/build/message-codegen/native/toolchain.cmake"
       - name: Build
         run: cmake --build build/native-cpp -j
       - name: Test
@@ -436,9 +438,10 @@ jobs:
       - name: Verify the documented external three-language project
         run: |
           uv sync --group tests --frozen
+          uv pip install --python .venv/bin/python './dimos/message_codegen[native]'
           cmake --install build/native-cpp --prefix "$PWD/build/native-sdk"
           uv run python scripts/package_native_sdk.py --output examples/message-project/sdk
-          export CMAKE_PREFIX_PATH="$PWD/build/native-sdk:$CMAKE_PREFIX_PATH"
+          export CMAKE_PREFIX_PATH="$PWD/build/native-sdk${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}"
           uv run dimos build --project examples/message-project
           uv pip install --no-deps examples/message-project/dist/story_messages-*.whl
           (cd examples/message-project/cpp && cmake --preset dimos && cmake --build --preset dimos)

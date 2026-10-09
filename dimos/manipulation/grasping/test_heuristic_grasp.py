@@ -32,7 +32,8 @@ def _cloud(
     points: np.ndarray, *, frame_id: str = "world", stamp: Time | None = None
 ) -> PointCloud2:
     return pointcloud_from_xyz(
-        points.astype(np.float32), header=Header(frame_id=frame_id, stamp=stamp or Time(sec=1))
+        points.astype(np.float32),
+        header=Header(frame_id=frame_id, stamp=stamp or Time(sec=1, nanosec=0)),
     )
 
 
@@ -63,7 +64,7 @@ def test_heuristic_grasp_proposes_centered_top_down_pose(module: HeuristicGraspM
 
     assert len(proposals.candidates) == 1
     assert proposals.header.frame_id == "world"
-    assert proposals.header.stamp == Time(sec=1)
+    assert proposals.header.stamp == Time(sec=1, nanosec=0)
     pose = proposals.candidates[0].pose
     assert pose.position.x == pytest.approx(0.0)
     assert pose.position.y == pytest.approx(0.0)
@@ -111,10 +112,10 @@ def test_heuristic_grasp_canonicalizes_pca_eigenvector_sign(
 @pytest.mark.parametrize(
     "points, frame_id, stamp, error",
     [
-        (np.zeros((2, 3)), "world", Time(), "at least three"),
-        (np.asarray([[0.0, 0.0, math.nan]] * 3), "world", Time(), "finite"),
-        (np.zeros((3, 3)), "", Time(), "frame_id"),
-        (np.zeros((3, 3)), "world", Time(nanosec=1000000000), "nanosec"),
+        (np.zeros((2, 3)), "world", Time(sec=0, nanosec=0), "at least three"),
+        (np.asarray([[0.0, 0.0, math.nan]] * 3), "world", Time(sec=0, nanosec=0), "finite"),
+        (np.zeros((3, 3)), "", Time(sec=0, nanosec=0), "frame_id"),
+        (np.zeros((3, 3)), "world", Time(nanosec=1000000000, sec=0), "nanosec"),
     ],
 )
 def test_heuristic_grasp_rejects_invalid_pointclouds(module, points, frame_id, stamp, error):
@@ -122,7 +123,7 @@ def test_heuristic_grasp_rejects_invalid_pointclouds(module, points, frame_id, s
         module.propose_grasps(_cloud(points, frame_id=frame_id, stamp=stamp))
 
 
-@pytest.mark.parametrize("stamp", [Time(), Time(sec=1700000000, nanosec=123456789)])
+@pytest.mark.parametrize("stamp", [Time(sec=0, nanosec=0), Time(sec=1700000000, nanosec=123456789)])
 def test_heuristic_grasp_preserves_exact_header_without_aliasing(module, stamp):
     cloud = _cloud(np.zeros((3, 3)), stamp=stamp)
     proposals = module.propose_grasps(cloud)

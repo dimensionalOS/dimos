@@ -28,6 +28,8 @@ import sys
 import tarfile
 
 from . import backend
+from .generate import generate
+from .native_build import prepare_cpp, write_cmake_toolchain
 from .project import LANGUAGES, Project, prepare
 
 
@@ -46,11 +48,11 @@ def local_cargo_dependency(text: str, module: str) -> str:
     crate_name = module.replace("_", "-") + "-messages"
 
     def replace(match: re.Match[str]) -> str:
-        declaration = re.sub(r', path = "[^"]*"', "", match.group(1))
+        declaration = re.sub(r',\s*path\s*=\s*"[^"]*"', "", match.group(1)).rstrip()
         return declaration + ", path = " + json.dumps("../" + module) + " }"
 
     return re.sub(
-        r"(?m)^(" + re.escape(crate_name) + r" = \{[^}]*?)(?:, path = \"[^\"]*\")? \}$",
+        r"(?m)^(" + re.escape(crate_name) + r"\s*=\s*\{[^}]*?)\s*\}$",
         replace,
         text,
     )
@@ -70,14 +72,14 @@ def build_project(
         raise ValueError(
             "Python --install requires an active virtual environment; no system install is performed"
         )
-    for tool in ({"cmake", "c++"} if "cpp" in selected else set()) | (
+    for tool in ({"cmake"} if "cpp" in selected else set()) | (
         {"cargo"} if "rust" in selected else set()
     ):
         if shutil.which(tool) is None:
             raise ValueError(
                 f"Missing build tool {tool}; prepare the language toolchain before building"
             )
-    output = prepare(project)
+    output = prepare(project, selected)
     dist = project.root / "dist"
     dist.mkdir(exist_ok=True)
     state = output / "artifacts.json"
@@ -89,8 +91,6 @@ def build_project(
         }
     )
     dependencies = project.dependencies()
-    prefixes = [str(dep.root) for dep in dependencies]
-    prefixes.extend(os.environ.get("CMAKE_PREFIX_PATH", "").split(os.pathsep))
     if "python" in selected:
         with project_directory(project.root):
             wheel = backend.build_wheel(str(dist))
@@ -100,26 +100,14 @@ def build_project(
             subprocess.run(
                 [sys.executable, "-m", "pip", "install", "--no-deps", str(dist / wheel)], check=True
             )
+    if set(selected) - {"python"}:
+        output = prepare(project, selected)
     if "cpp" in selected:
-        subprocess.run(
-            [
-                "cmake",
-                "-S",
-                str(output / "cpp"),
-                "-B",
-                str(output / "cmake"),
-                "-DCMAKE_PREFIX_PATH=" + ";".join(prefixes),
-                "-DCMAKE_INSTALL_PREFIX=" + str(output / "install"),
-            ],
-            check=True,
+        prefix = prepare_cpp(output, offline=offline)
+        artifacts["cmake_prefix"] = str(prefix)
+        artifacts["cmake_toolchain"] = str(
+            write_cmake_toolchain(prefix, output / "toolchain.cmake")
         )
-        subprocess.run(["cmake", "--build", str(output / "cmake"), "--parallel", "2"], check=True)
-        subprocess.run(["cmake", "--install", str(output / "cmake")], check=True)
-        archive = dist / f"{project.name}-{project.version}-cmake.tar.gz"
-        with tarfile.open(archive, "w:gz") as tar:
-            tar.add(output / "install", arcname=".")
-        artifacts["cmake_prefix"] = str(output / "install")
-        artifacts["cmake_archive"] = str(archive)
     if "rust" in selected:
         # A relocatable local source bundle works before any registry publication.
         bundle = output / "cargo-packages"
@@ -129,6 +117,30 @@ def build_project(
             shutil.rmtree(bundle)
         crates = [(project.module, output), *((dep.module, dep.root) for dep in dependencies)]
         for module, root in crates:
+            if not (root / "rust/Cargo.toml").is_file():
+                manifest = json.loads((root / "message-package.json").read_text())
+                available = {dep.module: dep for dep in dependencies}
+                required = set(manifest["dependencies"])
+                pending = list(required)
+                while pending:
+                    dep = available[pending.pop()]
+                    children = json.loads((dep.root / "message-package.json").read_text())[
+                        "dependencies"
+                    ]
+                    pending.extend(set(children) - required)
+                    required.update(children)
+                generated = output / "native-sources" / module
+                generate(
+                    [root / "schemas"],
+                    generated,
+                    manifest["owned"],
+                    module,
+                    version=manifest["version"],
+                    shared=True,
+                    languages=("rust",),
+                    dependencies=tuple(available[name] for name in sorted(required)),
+                )
+                root = generated
             target = bundle / module
             shutil.copytree(
                 root / "rust", target, ignore=shutil.ignore_patterns("target", "Cargo.lock")

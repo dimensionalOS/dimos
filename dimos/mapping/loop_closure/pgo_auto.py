@@ -58,6 +58,7 @@ from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypedDict, TypeVar
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Transform, TransformStamped, Vector3
 from dimos_generated.sensor_msgs.msg import PointCloud2
 from dimos_generated.std_msgs.msg import Header
@@ -584,7 +585,8 @@ class _PGO:
         hi = min(len(self._key_poses) - 1, idx + half_range)
         if lo > hi:
             return pointcloud_from_xyz(
-                np.empty((0, 3)), header=Header(frame_id=FRAME_WORLD_CORRECTED)
+                np.empty((0, 3)),
+                header=Header(frame_id=FRAME_WORLD_CORRECTED, stamp=Time(sec=0, nanosec=0)),
             )
 
         def registered(kp: _KeyPose) -> PointCloud2:

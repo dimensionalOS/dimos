@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Point, Pose, Quaternion
 from dimos_generated.nav_msgs.msg import MapMetaData, OccupancyGrid
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 import pytest
 
@@ -29,9 +31,14 @@ def costmap() -> OccupancyGrid:
             width=cells.shape[1],
             height=cells.shape[0],
             resolution=0.05,
-            origin=Pose(orientation=Quaternion(w=1)),
+            origin=Pose(
+                orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0),
+                position=Point(x=0.0, y=0.0, z=0.0),
+            ),
+            map_load_time=Time(sec=0, nanosec=0),
         ),
-        data=cells.astype(np.int8).ravel(),
+        data=np.asarray(cells.astype(np.int8).ravel(), dtype=np.int8),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
     )
 
 
@@ -47,7 +54,7 @@ def costmap() -> OccupancyGrid:
     ],
 )
 def test_find_safe_goal(costmap, input_pos, expected_pos) -> None:
-    goal = Point(x=input_pos[0], y=input_pos[1])
+    goal = Point(x=input_pos[0], y=input_pos[1], z=0.0)
 
     safe_goal = find_safe_goal(
         costmap,

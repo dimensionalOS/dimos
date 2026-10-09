@@ -91,7 +91,10 @@ def test_recorded_observations_are_exported_as_plain_files(tmp_path: Path) -> No
             ts=1.0,
         )
         lidar.append(
-            pointcloud_from_xyz(points * 2, header=Header(stamp=time_from_seconds(2.0))), ts=2.0
+            pointcloud_from_xyz(
+                points * 2, header=Header(stamp=time_from_seconds(2.0), frame_id="")
+            ),
+            ts=2.0,
         )
         images = store.stream("camera", Image)
         images.append(image_from_array(pixels, encoding="rgb8"), ts=3.0)

@@ -21,6 +21,7 @@ from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped
 from dimos_generated.nav_msgs.msg import MapMetaData, OccupancyGrid, Path
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 
@@ -45,16 +46,19 @@ def test_generated_grid_to_path_and_mask(use_cpp, yaw):
             width=30,
             height=30,
             resolution=0.25,
-            origin=Pose(position=Point(x=2, y=3), orientation=quaternion_from_euler(0, 0, yaw)),
+            origin=Pose(
+                position=Point(x=2, y=3, z=0.0), orientation=quaternion_from_euler(0, 0, yaw)
+            ),
+            map_load_time=Time(sec=0, nanosec=0),
         ),
-        data=cells.ravel(),
+        data=np.asarray(cells.ravel(), dtype=np.int8),
     )
-    received = OccupancyGrid.decode(grid.encode())
+    received = cdr_decode(cdr_encode(grid), OccupancyGrid)
     start = grid_to_world(received, (5, 5))
     goal = grid_to_world(received, (25, 25))
     path = min_cost_astar(received, goal, start, use_cpp=use_cpp)
     assert path is not None
-    decoded = Path.decode(path.encode())
+    decoded = cdr_decode(cdr_encode(path), Path)
     assert decoded.header == header
     assert world_to_grid(received, decoded.poses[0].pose.position) == pytest.approx((5, 5))
     assert world_to_grid(received, decoded.poses[-1].pose.position) == pytest.approx((25, 25))
@@ -77,14 +81,18 @@ def test_resampling_preserves_headers_orientations_and_input(resample):
         poses=[
             PoseStamped(
                 header=header,
-                pose=Pose(position=Point(x=1, y=y), orientation=quaternion_from_euler(0, 0, 0)),
+                pose=Pose(
+                    position=Point(x=1, y=y, z=0.0), orientation=quaternion_from_euler(0, 0, 0)
+                ),
             )
             for y in [1, 2, 3]
         ],
     )
-    before = path.encode()
-    goal = Pose(orientation=quaternion_from_euler(0, 0, -math.pi / 2))
-    actual = Path.decode(resample(path, goal, 0.1).encode())
+    before = cdr_encode(path)
+    goal = Pose(
+        orientation=quaternion_from_euler(0, 0, -math.pi / 2), position=Point(x=0.0, y=0.0, z=0.0)
+    )
+    actual = cdr_decode(cdr_encode(resample(path, goal, 0.1)), Path)
     assert actual.header == header
     assert len(actual.poses) > 3
     assert actual.poses[0].pose.position == path.poses[0].pose.position
@@ -93,17 +101,30 @@ def test_resampling_preserves_headers_orientations_and_input(resample):
     for pose in list(actual.poses)[:-1]:
         assert pose.header == header
         assert quaternion_euler(pose.pose.orientation)[2] == pytest.approx(math.pi / 2)
-    assert path.encode() == before
+    assert cdr_encode(path) == before
 
 
 @pytest.mark.parametrize("use_cpp", [False, True])
 def test_outside_start_and_goal_are_rejected(use_cpp):
     grid = OccupancyGrid(
         info=MapMetaData(
-            width=3, height=3, resolution=1, origin=Pose(orientation=quaternion_from_euler(0, 0, 0))
+            width=3,
+            height=3,
+            resolution=1,
+            origin=Pose(
+                orientation=quaternion_from_euler(0, 0, 0), position=Point(x=0.0, y=0.0, z=0.0)
+            ),
+            map_load_time=Time(sec=0, nanosec=0),
         ),
-        data=[0] * 9,
+        data=np.asarray([0] * 9, dtype=np.int8),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
     )
-    assert min_cost_astar(grid, Point(x=1, y=1), Point(x=-0.1), use_cpp=use_cpp) is None
-    assert min_cost_astar(grid, Point(x=-0.1), Point(x=1, y=1), use_cpp=use_cpp) is None
-    assert min_cost_astar(grid, Point(x=3), use_cpp=use_cpp) is None
+    assert (
+        min_cost_astar(grid, Point(x=1, y=1, z=0.0), Point(x=-0.1, y=0.0, z=0.0), use_cpp=use_cpp)
+        is None
+    )
+    assert (
+        min_cost_astar(grid, Point(x=-0.1, y=0.0, z=0.0), Point(x=1, y=1, z=0.0), use_cpp=use_cpp)
+        is None
+    )
+    assert min_cost_astar(grid, Point(x=3, y=0.0, z=0.0), use_cpp=use_cpp) is None

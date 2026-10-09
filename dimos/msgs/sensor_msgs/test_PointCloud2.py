@@ -14,8 +14,10 @@
 # limitations under the License.
 
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.sensor_msgs.msg import PointCloud2, PointField
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 
@@ -80,8 +82,9 @@ def _cloud(
         fields=fields,
         point_step=dtype.itemsize,
         row_step=len(points) * dtype.itemsize,
-        data=packed.view(np.uint8),
+        data=np.asarray(packed.view(np.uint8), dtype=np.uint8),
         is_dense=True,
+        is_bigendian=False,
     )
 
 
@@ -94,8 +97,8 @@ def test_cdr_encode_decode() -> None:
     points = np.arange(300, dtype=np.float32).reshape(100, 3) / 10
     lidar_msg = pointcloud2_from_webrtc_lidar({"data": {"stamp": 12.5, "data": {"points": points}}})
 
-    binary_msg = lidar_msg.encode()
-    decoded = PointCloud2.decode(binary_msg)
+    binary_msg = cdr_encode(lidar_msg)
+    decoded = cdr_decode(binary_msg, PointCloud2)
 
     # 1. Check number of points
     original_points = pointcloud_xyz(lidar_msg)
@@ -152,7 +155,7 @@ def test_cdr_intensity_round_trip() -> None:
 
     # Round-trip through LCM
     binary = original.encode()
-    decoded = PointCloud2.decode(binary)
+    decoded = cdr_decode(binary, PointCloud2)
 
     # Positions preserved
     decoded_pts = pointcloud_xyz(decoded)
@@ -172,7 +175,7 @@ def test_cdr_no_intensity_round_trip() -> None:
     assert _field(original, "intensity") is None
 
     binary = original.encode()
-    decoded = PointCloud2.decode(binary)
+    decoded = cdr_decode(binary, PointCloud2)
 
     # No intensities should appear (all-zero wire data is ignored)
     assert _field(decoded, "intensity") is None, "Spurious intensities created from zero wire data"
@@ -204,7 +207,7 @@ def test_cdr_per_point_timing_round_trip() -> None:
     assert got_offsets is not None
     np.testing.assert_array_equal(got_offsets, offset_times)
 
-    decoded = PointCloud2.decode(original.encode())
+    decoded = cdr_decode(original.encode(), PointCloud2)
 
     decoded_pts = pointcloud_xyz(decoded)
     np.testing.assert_allclose(decoded_pts.astype(np.float32), points, atol=1e-6)
@@ -306,7 +309,7 @@ def test_to_rerun_keeps_the_clouds_own_rgb() -> None:
     cloud = pointcloud_from_xyz_rgb(
         np.array([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]]),
         np.array([[255, 0, 0], [0, 0, 255]], dtype=np.uint8),
-        header=Header(),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
     )
 
     colored = cloud_archetype(cloud, mode="points")

@@ -19,6 +19,7 @@ from threading import Thread
 import time
 from typing import Any, Protocol
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import (
     PoseStamped,
     Quaternion,
@@ -117,14 +118,20 @@ def _prefixed(prefix: str | None, name: str) -> str:
 # TODO we need a standardized way to specify this for all cameras in dimos
 BASE_TO_OPTICAL = compose_transforms(
     TransformStamped(
-        header=Header(frame_id="base_link"),
+        header=Header(frame_id="base_link", stamp=Time(sec=0, nanosec=0)),
         child_frame_id="camera_link",
-        transform=Transform(translation=Vector3(x=0.3)),
+        transform=Transform(
+            translation=Vector3(x=0.3, y=0.0, z=0.0),
+            rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+        ),
     ),
     TransformStamped(
-        header=Header(frame_id="camera_link"),
+        header=Header(frame_id="camera_link", stamp=Time(sec=0, nanosec=0)),
         child_frame_id="camera_optical",
-        transform=Transform(rotation=Quaternion(x=-0.5, y=0.5, z=-0.5, w=0.5)),
+        transform=Transform(
+            rotation=Quaternion(x=-0.5, y=0.5, z=-0.5, w=0.5),
+            translation=Vector3(x=0.0, y=0.0, z=0.0),
+        ),
     ),
 )
 
@@ -373,12 +380,18 @@ class GO2Connection(Module, Camera, Pointcloud):
             TransformStamped(
                 header=Header(stamp=odom.header.stamp, frame_id=_prefixed(prefix, "base_link")),
                 child_frame_id=_prefixed(prefix, "camera_link"),
-                transform=Transform(translation=Vector3(x=0.3)),
+                transform=Transform(
+                    translation=Vector3(x=0.3, y=0.0, z=0.0),
+                    rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
             ),
             TransformStamped(
                 header=Header(stamp=odom.header.stamp, frame_id=_prefixed(prefix, "camera_link")),
                 child_frame_id=_prefixed(prefix, "camera_optical"),
-                transform=Transform(rotation=Quaternion(x=-0.5, y=0.5, z=-0.5, w=0.5)),
+                transform=Transform(
+                    rotation=Quaternion(x=-0.5, y=0.5, z=-0.5, w=0.5),
+                    translation=Vector3(x=0.0, y=0.0, z=0.0),
+                ),
             ),
         ]
 

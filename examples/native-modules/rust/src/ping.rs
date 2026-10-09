@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use dimos_generated_messages::geometry_msgs::msg::{Twist, Vector3};
+use dimos_generated_messages::geometry_msgs::msg::{twist::Twist, vector3::Vector3};
 use dimos_module::cdr;
 use dimos_module::{run_with_transport, Input, Module, Output};
 use tokio::time::{interval, Duration};

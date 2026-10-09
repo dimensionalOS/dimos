@@ -15,6 +15,7 @@
 """Inspect a Go2 device pose and generated CDR TF chain without connecting to a robot."""
 
 from dimos_generated.tf2_msgs.msg import TFMessage
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 
 from dimos.msgs.geometry import compose_transforms
 from dimos.msgs.time import to_nanoseconds
@@ -25,7 +26,7 @@ from dimos.robot.unitree.type.odometry import pose_from_webrtc_odometry, raw_odo
 def main() -> None:
     pose = pose_from_webrtc_odometry(raw_odometry_msg_sample)
     edges = GO2Connection._odom_to_tf(pose, prefix="robot0")
-    decoded = TFMessage.decode(TFMessage(transforms=edges).encode())
+    decoded = cdr_decode(cdr_encode(TFMessage(transforms=edges)), TFMessage)
     assert len(decoded.transforms) == 3
     print(f"Device pose: frame={pose.header.frame_id}, stamp={to_nanoseconds(pose.header.stamp)}")
     for edge in decoded.transforms:

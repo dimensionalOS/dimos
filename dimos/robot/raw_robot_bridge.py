@@ -219,7 +219,9 @@ class RawRobotBridge(Module):
     def stop(self) -> None:
         if self._topics is not None:
             self._stop.set()
-            self.cmd_vel.publish(Twist())
+            self.cmd_vel.publish(
+                Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+            )
             self._topics.close()
             self._topics = None
         super().stop()
@@ -240,8 +242,12 @@ class RawRobotBridge(Module):
         while not self._stop.wait(1.0 / self.config.drive_hz):
             vx, vy, wz = self._deadman.current()
             if (vx, vy, wz) != (0.0, 0.0, 0.0):
-                self.cmd_vel.publish(Twist(linear=Vector3(x=vx, y=vy), angular=Vector3(z=wz)))
+                self.cmd_vel.publish(
+                    Twist(linear=Vector3(x=vx, y=vy, z=0.0), angular=Vector3(z=wz, x=0.0, y=0.0))
+                )
                 active = True
             elif active:
-                self.cmd_vel.publish(Twist())
+                self.cmd_vel.publish(
+                    Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+                )
                 active = False

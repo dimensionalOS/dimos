@@ -19,6 +19,7 @@ from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped
 from dimos_generated.nav_msgs.msg import MapMetaData, OccupancyGrid
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 
@@ -43,18 +44,19 @@ def test_generated_patrol_goals(router_name, yaw):
             origin=Pose(
                 position=Point(x=2, y=3, z=1), orientation=quaternion_from_euler(0, 0, yaw)
             ),
+            map_load_time=Time(sec=0, nanosec=0),
         ),
-        data=cells.ravel(),
+        data=np.asarray(cells.ravel(), dtype=np.int8),
     )
     router = create_patrol_router(router_name, 0.5)
     assert router.next_goal() is None
-    received = OccupancyGrid.decode(grid.encode())
+    received = cdr_decode(cdr_encode(grid), OccupancyGrid)
     router.handle_occupancy_grid(received)
     router.handle_odom(point_to_pose_stamped(grid_to_world(received, (12, 12)), received.header))
     initial = router.get_saturation()
     goal = router.next_goal()
     assert goal is not None
-    decoded = PoseStamped.decode(goal.encode())
+    decoded = cdr_decode(cdr_encode(goal), PoseStamped)
     assert decoded.header == grid.header
     assert decoded.pose.position.z == pytest.approx(1)
     x, y = world_to_grid(received, decoded.pose.position)

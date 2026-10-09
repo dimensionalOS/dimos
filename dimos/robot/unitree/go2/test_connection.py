@@ -23,10 +23,12 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from dimos_generated.builtin_interfaces.msg import Time
-from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped
-from dimos_generated.sensor_msgs.msg import CameraInfo
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos_generated.sensor_msgs.msg import CameraInfo, RegionOfInterest
 from dimos_generated.std_msgs.msg import Header
 from dimos_generated.tf2_msgs.msg import TFMessage
+from dimos_message_build.registry import decode as cdr_decode
+import numpy as np
 import pytest
 from pytest_mock import MockerFixture
 
@@ -63,7 +65,12 @@ def test_connection_config_aes_key_defaults_from_global_config() -> None:
 
 
 def test_odom_to_tf_unprefixed_by_default() -> None:
-    odom = PoseStamped(header=Header(stamp=Time(sec=1, nanosec=123456789), frame_id="world"))
+    odom = PoseStamped(
+        header=Header(stamp=Time(sec=1, nanosec=123456789), frame_id="world"),
+        pose=Pose(
+            position=Point(x=0.0, y=0.0, z=0.0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+        ),
+    )
     base, camera_link, camera_optical = GO2Connection._odom_to_tf(odom)
     assert (base.header.frame_id, base.child_frame_id) == ("world", "base_link")
     assert (camera_link.header.frame_id, camera_link.child_frame_id) == ("base_link", "camera_link")
@@ -99,14 +106,30 @@ def test_publish_tf_off_keeps_odometry_on_its_port(
 ) -> None:
     """Turning tf off hands the base_link edge to another publisher, not the odom port."""
     conn = connection(publish_tf=False)
-    conn._publish_tf(PoseStamped(header=Header(stamp=Time(sec=1), frame_id="ignored")))
+    conn._publish_tf(
+        PoseStamped(
+            header=Header(stamp=Time(sec=1, nanosec=0), frame_id="ignored"),
+            pose=Pose(
+                position=Point(x=0.0, y=0.0, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+        )
+    )
     assert conn.tf.publish.call_count == 0
     assert conn.odom.publish.call_count == 1
 
 
 def test_publish_tf_on_by_default(connection: Callable[[bool], GO2Connection]) -> None:
     conn = connection(publish_tf=True)
-    conn._publish_tf(PoseStamped(header=Header(stamp=Time(sec=1), frame_id="ignored")))
+    conn._publish_tf(
+        PoseStamped(
+            header=Header(stamp=Time(sec=1, nanosec=0), frame_id="ignored"),
+            pose=Pose(
+                position=Point(x=0.0, y=0.0, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+        )
+    )
     assert conn.tf.publish.call_count == 1
     assert conn.odom.publish.call_count == 1
 
@@ -122,7 +145,17 @@ def test_camera_info_is_restamped_on_each_publish(
     conn = connection(publish_tf=True)
     conn.camera_info = MagicMock()
     conn.camera_info_static = CameraInfo(
-        header=Header(frame_id="camera_optical", stamp=Time(sec=1))
+        header=Header(frame_id="camera_optical", stamp=Time(sec=1, nanosec=0)),
+        height=0,
+        width=0,
+        distortion_model="",
+        d=np.array([], dtype=np.float64),
+        k=np.zeros(9, dtype=np.float64),
+        r=np.zeros(9, dtype=np.float64),
+        p=np.zeros(12, dtype=np.float64),
+        binning_x=0,
+        binning_y=0,
+        roi=RegionOfInterest(x_offset=0, y_offset=0, height=0, width=0, do_rectify=False),
     )
 
     def sleep(_seconds: float) -> None:
@@ -144,13 +177,18 @@ def test_camera_info_is_restamped_on_each_publish(
     assert [info.header.frame_id for info in published] == [
         conn.camera_info_static.header.frame_id
     ] * 2
-    assert conn.camera_info_static.header.stamp == Time(sec=1)
+    assert conn.camera_info_static.header.stamp == Time(sec=1, nanosec=0)
 
 
 def test_odom_to_tf_prefixed() -> None:
     """.namespace() sets frame_id_prefix: robot-local frames get prefixed, the
     odom parent frame stays global so all robots hang off one tree root."""
-    odom = PoseStamped(header=Header(stamp=Time(sec=1, nanosec=123456789), frame_id="world"))
+    odom = PoseStamped(
+        header=Header(stamp=Time(sec=1, nanosec=123456789), frame_id="world"),
+        pose=Pose(
+            position=Point(x=0.0, y=0.0, z=0.0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+        ),
+    )
     base, camera_link, camera_optical = GO2Connection._odom_to_tf(odom, prefix="robot0")
     assert (base.header.frame_id, base.child_frame_id) == ("world", "robot0/base_link")
     assert (camera_link.header.frame_id, camera_link.child_frame_id) == (
@@ -167,11 +205,14 @@ def test_published_tf_copies_source_pose_and_keeps_exact_stamp(connection):
     conn = connection(publish_tf=True)
     source = PoseStamped(
         header=Header(stamp=Time(sec=1700000000, nanosec=123456789), frame_id="device_odom"),
-        pose=Pose(position=Point(x=1.25, y=-2.5, z=0.3)),
+        pose=Pose(
+            position=Point(x=1.25, y=-2.5, z=0.3),
+            orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+        ),
     )
     conn._publish_tf(source)
     message = conn.odom.publish.call_args.args[0]
-    tf = TFMessage.decode(conn.tf.publish.call_args.args[0].encode())
+    tf = cdr_decode(conn.tf.publish.call_args.args[0].encode(), TFMessage)
     assert source.header.frame_id == "device_odom"
     assert message.header.frame_id == "go2_odom"
     assert all(edge.header.stamp == source.header.stamp for edge in tf.transforms)

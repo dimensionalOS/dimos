@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 import functools
 from typing import TYPE_CHECKING, Any
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import (
     Point,
     Pose,
@@ -51,7 +52,19 @@ if TYPE_CHECKING:
 
 @dataclass
 class Detection3DPC(Detection3D):
-    pointcloud: PointCloud2 = field(default_factory=PointCloud2)
+    pointcloud: PointCloud2 = field(
+        default_factory=lambda: PointCloud2(
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            height=0,
+            width=0,
+            fields=[],
+            is_bigendian=False,
+            point_step=0,
+            row_step=0,
+            data=np.array([], dtype=np.uint8),
+            is_dense=False,
+        )
+    )
 
     @functools.cached_property
     def center(self) -> Vector3:
@@ -69,7 +82,7 @@ class Detection3DPC(Detection3D):
             header=self.pointcloud.header,
             pose=Pose(
                 position=Point(x=self.center.x, y=self.center.y, z=self.center.z),
-                orientation=Quaternion(w=1),
+                orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0),
             ),
         )
 

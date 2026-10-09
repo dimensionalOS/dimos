@@ -21,9 +21,11 @@ import time
 from typing import Any
 from unittest.mock import MagicMock
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import PoseStamped
 from dimos_generated.sensor_msgs.msg import Imu
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode
 import numpy as np
 import pytest
 
@@ -130,7 +132,7 @@ def test_ready_signal_happens_after_joint_state_and_imu_write() -> None:
         module._publish_shm_and_lcm(_FakeEngine)
 
         assert events == ["joint_state", "imu", "ready"]
-        pose = PoseStamped.decode(module.odom.publish.call_args.args[0].encode())
+        pose = cdr_decode(module.odom.publish.call_args.args[0].encode(), PoseStamped)
         assert pose.header.frame_id == "world"
         assert (pose.pose.position.x, pose.pose.position.y, pose.pose.position.z) == (
             0.0,
@@ -138,7 +140,7 @@ def test_ready_signal_happens_after_joint_state_and_imu_write() -> None:
             0.75,
         )
         assert pose.pose.orientation.w == 1.0
-        imu = Imu.decode(module.imu.publish.call_args.args[0].encode())
+        imu = cdr_decode(module.imu.publish.call_args.args[0].encode(), Imu)
         assert imu.orientation.w == 1.0
         assert (imu.angular_velocity.x, imu.angular_velocity.y, imu.angular_velocity.z) == (
             0.1,
@@ -556,7 +558,7 @@ def test_publish_loop_stamps_messages_with_frame_timestamp() -> None:
             fy=1.0,
             cx=0.5,
             cy=0.5,
-            header=Header(frame_id="wrist_camera_color_frame"),
+            header=Header(frame_id="wrist_camera_color_frame", stamp=Time(sec=0, nanosec=0)),
         )
         color: list[Any] = []
         depth: list[Any] = []
@@ -592,7 +594,7 @@ def test_camera_info_falls_back_to_wall_clock_before_first_frame() -> None:
             fy=1.0,
             cx=0.5,
             cy=0.5,
-            header=Header(frame_id="wrist_camera_color_frame"),
+            header=Header(frame_id="wrist_camera_color_frame", stamp=Time(sec=0, nanosec=0)),
         )
         assert module._latest_frame_ts is None
         assert module._camera_info_ts() == pytest.approx(time.time(), abs=5.0)

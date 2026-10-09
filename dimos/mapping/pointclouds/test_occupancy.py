@@ -16,6 +16,7 @@
 from pathlib import Path
 
 import cv2
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.nav_msgs.msg import OccupancyGrid
 from dimos_generated.std_msgs.msg import Header
 import numpy as np
@@ -58,7 +59,9 @@ def big_office() -> PointCloud:
 )
 def test_occupancy(apartment: PointCloud, occupancy_fn, output_name: str) -> None:
     expected_image = cv2.imread(str(get_data(output_name)), cv2.IMREAD_GRAYSCALE)
-    cloud = pointcloud_from_xyz(np.asarray(apartment.points), header=Header(frame_id="map"))
+    cloud = pointcloud_from_xyz(
+        np.asarray(apartment.points), header=Header(frame_id="map", stamp=Time(sec=0, nanosec=0))
+    )
 
     occupancy_grid = occupancy_fn(cloud)
 
@@ -77,7 +80,9 @@ def test_occupancy(apartment: PointCloud, occupancy_fn, output_name: str) -> Non
 )
 def test_occupancy2(big_office, occupancy_fn, output_name):
     expected_image = image_from_file(get_data(output_name))
-    cloud = pointcloud_from_xyz(np.asarray(big_office.points), header=Header())
+    cloud = pointcloud_from_xyz(
+        np.asarray(big_office.points), header=Header(stamp=Time(sec=0, nanosec=0), frame_id="")
+    )
 
     occupancy_grid = occupancy_fn(cloud)
 

@@ -108,9 +108,7 @@ class TransportRecorder:
         """Subscribe *transport* and record into stream *name*; returns the unsubscribe."""
         if not matching(self._topics, [name]):
             return None
-        if not all(
-            hasattr(stream_type, member) for member in ("encode", "decode", "msg_name", "schema")
-        ):
+        if not all(hasattr(stream_type, member) for member in ("__msgtype__",)):
             logger.info("--record: %s (%s) is not a dimos message type, skipped", name, stream_type)
             return None
         stream: Stream[Any] = self.store.stream(name, stream_type)

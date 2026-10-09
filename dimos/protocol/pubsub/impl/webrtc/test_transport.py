@@ -20,6 +20,7 @@ from collections.abc import Callable
 import pickle
 
 from dimos_generated.geometry_msgs.msg import Point, TwistStamped, Vector3
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 from pydantic import ValidationError
 import pytest
 
@@ -100,7 +101,7 @@ def test_typed_encode_decode() -> None:
     transport = MockTransport("cmd_unreliable", Point, name="typed")
     received: list[Point] = []
     transport.subscribe(lambda msg: received.append(msg))
-    transport.broadcast(None, Point(x=3.14))
+    transport.broadcast(None, Point(x=3.14, y=0.0, z=0.0))
     assert len(received) == 1
     assert abs(received[0].x - 3.14) < 1e-9
 
@@ -114,8 +115,8 @@ def test_multiple_types_multiplexed() -> None:
     t1.subscribe(lambda msg: r1.append(msg))
     t2.subscribe(lambda msg: r2.append(msg))
 
-    t1.broadcast(None, Point(x=1.0))
-    t2.broadcast(None, Vector3(x=2.0))
+    t1.broadcast(None, Point(x=1.0, y=0.0, z=0.0))
+    t2.broadcast(None, Vector3(x=2.0, y=0.0, z=0.0))
     assert [m.x for m in r1] == [1.0]
     assert [m.x for m in r2] == [2.0]
 
@@ -125,13 +126,15 @@ def test_generated_frames_declare_type_and_sequence() -> None:
     raw = MockTransport("data", name="framed")
     received: list[bytes] = []
     raw.subscribe(received.append)
-    publisher.broadcast(None, Point(x=1))
-    publisher.broadcast(None, Point(x=2))
+    publisher.broadcast(None, Point(x=1, y=0.0, z=0.0))
+    publisher.broadcast(None, Point(x=2, y=0.0, z=0.0))
     frames = [decode_data_frame(data) for data in received]
     assert [frame.header.seq for frame in frames] == [0, 1]
     assert all(frame.header.ch == "data" for frame in frames)
-    assert all(frame.header.meta == {"type": Point.msg_name, "encoding": "cdr"} for frame in frames)
-    assert [Point.decode(frame.payload).x for frame in frames] == [1, 2]
+    assert all(
+        frame.header.meta == {"type": Point.__msgtype__, "encoding": "cdr"} for frame in frames
+    )
+    assert [cdr_decode(frame.payload, Point).x for frame in frames] == [1, 2]
 
 
 @pytest.mark.parametrize("bad", ["type", "topic", "encoding", "truncated", "trailing", "raw"])
@@ -144,24 +147,24 @@ def test_invalid_frame_does_not_poison_subscription(bad: str) -> None:
         seq=1,
         ts=0,
         delivery="latest",
-        meta={"type": Point.msg_name, "encoding": "cdr"},
+        meta={"type": Point.__msgtype__, "encoding": "cdr"},
     )
     if bad == "topic":
         header.ch = "other"
     elif bad in ("type", "encoding"):
         assert header.meta is not None
         header.meta[bad] = "unknown"
-    wire = encode_data_frame(header, Point(x=1).encode())
+    wire = encode_data_frame(header, cdr_encode(Point(x=1, y=0.0, z=0.0)))
     if bad == "truncated":
         wire = wire[:-1]
     elif bad == "trailing":
         wire += b"extra"
     elif bad == "raw":
-        wire = Point(x=1).encode()
+        wire = cdr_encode(Point(x=1, y=0.0, z=0.0))
     transport._config.provider().publish("cmd_unreliable", wire)
     assert received == []
-    transport.broadcast(None, Point(x=2))
-    assert received == [Point(x=2)]
+    transport.broadcast(None, Point(x=2, y=0.0, z=0.0))
+    assert received == [Point(x=2, y=0.0, z=0.0)]
 
 
 # ─── Pickling + provider sharing ─────────────────────────────────────
@@ -181,7 +184,7 @@ def test_pickle_roundtrip_preserves_everything() -> None:
     # Same config → same per-process provider, so the two halves interoperate.
     received: list[Point] = []
     t2.subscribe(lambda msg: received.append(msg))
-    t1.broadcast(None, Point(x=42.0))
+    t1.broadcast(None, Point(x=42.0, y=0.0, z=0.0))
     assert len(received) == 1
     assert abs(received[0].x - 42.0) < 1e-9
 

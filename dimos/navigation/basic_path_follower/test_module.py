@@ -25,6 +25,7 @@ from dimos_generated.geometry_msgs.msg import (
 )
 from dimos_generated.nav_msgs.msg import Path
 from dimos_generated.std_msgs.msg import Bool, Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 
 from dimos.navigation.basic_path_follower.module import BasicPathFollower, lookahead_distance
 from dimos.protocol.tf.tf import MultiTBuffer
@@ -63,17 +64,22 @@ class FakeTF(MultiTBuffer):
 
 def _mount() -> TransformStamped:
     return TransformStamped(
-        header=Header(frame_id="base_link", stamp=Time(sec=1)),
+        header=Header(frame_id="base_link", stamp=Time(sec=1, nanosec=0)),
         child_frame_id="mid360_link",
-        transform=Transform(translation=Vector3(z=MOUNT_Z), rotation=Quaternion(w=1)),
+        transform=Transform(
+            translation=Vector3(z=MOUNT_Z, x=0.0, y=0.0),
+            rotation=Quaternion(w=1, x=0.0, y=0.0, z=0.0),
+        ),
     )
 
 
 def _odom_edge() -> TransformStamped:
     return TransformStamped(
-        header=Header(frame_id="odom", stamp=Time(sec=1)),
+        header=Header(frame_id="odom", stamp=Time(sec=1, nanosec=0)),
         child_frame_id="mid360_link",
-        transform=Transform(translation=Vector3(x=1, y=2, z=3), rotation=Quaternion(w=1)),
+        transform=Transform(
+            translation=Vector3(x=1, y=2, z=3), rotation=Quaternion(w=1, x=0.0, y=0.0, z=0.0)
+        ),
     )
 
 
@@ -134,25 +140,34 @@ def test_generated_path_produces_velocity_and_arrival():
     module = BasicPathFollower()
     commands = []
     arrivals = []
-    module.nav_cmd_vel.subscribe(lambda value: commands.append(Twist.decode(value.encode())))
-    module.goal_reached.subscribe(lambda value: arrivals.append(Bool.decode(value.encode())))
+    module.nav_cmd_vel.subscribe(lambda value: commands.append(cdr_decode(value.encode(), Twist)))
+    module.goal_reached.subscribe(lambda value: arrivals.append(cdr_decode(value.encode(), Bool)))
     try:
         path = Path(
             poses=[
-                PoseStamped(pose=Pose(position=Point(x=x), orientation=Quaternion(w=1)))
+                PoseStamped(
+                    pose=Pose(
+                        position=Point(x=x, y=0.0, z=0.0),
+                        orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0),
+                    ),
+                    header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                )
                 for x in [0, 1, 2]
-            ]
+            ],
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
         )
-        module._on_path(Path.decode(path.encode()))
+        module._on_path(cdr_decode(cdr_encode(path), Path))
         waypoints = module._waypoints
         assert waypoints is not None
         module._step(path.poses[0], waypoints)
         assert commands[-1].linear.x > 0
         assert not arrivals
         module._step(path.poses[-1], waypoints)
-        assert commands[-1] == Twist()
+        assert commands[-1] == Twist(
+            linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)
+        )
         assert arrivals[-1].data
-        module._on_path(Path())
+        module._on_path(Path(header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""), poses=[]))
         assert module._waypoints is None
     finally:
         module.stop()

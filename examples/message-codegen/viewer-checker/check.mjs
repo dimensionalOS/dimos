@@ -32,9 +32,9 @@ for await (const message of reader.readMessages({ validateCrcs: true })) {
   assert.equal(message.logTime - message.publishTime, 1000000n);
   if (channel.topic === '/telemetry') {
     assert.equal(value.sequence, index);
-    assert.equal(value.reading.temperature, 20 + index / 10);
+    assert.equal(value.value, 20 + index / 10);
     assert.equal(value.label, 'synthetic');
-    assert.deepEqual(Array.from(value.hops), [1, 2, 3]);
+    assert.equal(value.header.frame_id, 'map');
   } else if (channel.topic === '/camera/image') {
     assert.equal(value.width, 256);
     assert.equal(value.height, 192);

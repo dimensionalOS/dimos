@@ -19,7 +19,9 @@ from __future__ import annotations
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
+from dimos_generated.std_msgs.msg import Header
 
 from dimos.agents.mcp.mcp_server import McpServer
 from dimos.constants import STATE_DIR
@@ -44,7 +46,9 @@ XARM6_WORLDBELIEF_CAMERA_TRANSFORM = TransformStamped(
     transform=Transform(
         translation=Vector3(x=0.06693724, y=-0.0309563, z=0.00691482),
         rotation=Quaternion(x=0.70513398, y=0.00535696, z=0.70897578, w=-0.01052180),
-    )
+    ),
+    header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+    child_frame_id="",
 )
 
 

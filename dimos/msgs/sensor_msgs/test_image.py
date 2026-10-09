@@ -18,6 +18,7 @@ from pathlib import Path
 
 from dimos_generated.sensor_msgs.msg import Image
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 from PIL import Image as PILImage
 import pytest
@@ -42,7 +43,9 @@ def img(tmp_path: Path) -> Image:
     pixels[..., 1] = 37
     path = tmp_path / "camera.png"
     PILImage.fromarray(pixels).save(path)
-    return image_from_file(path, header=Header(stamp=time_from_nanoseconds(1234567890123456789)))
+    return image_from_file(
+        path, header=Header(stamp=time_from_nanoseconds(1234567890123456789), frame_id="")
+    )
 
 
 def test_file_load(img: Image) -> None:
@@ -59,7 +62,7 @@ def test_file_load(img: Image) -> None:
 
 
 def test_cdr_encode_decode(img: Image) -> None:
-    decoded = Image.decode(img.encode())
+    decoded = cdr_decode(cdr_encode(img), Image)
     assert decoded is not img
     assert decoded == img
 

@@ -17,6 +17,7 @@
 from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Point, PointStamped, Twist, Vector3
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 
@@ -26,24 +27,32 @@ def main() -> None:
     goals: list[PointStamped] = []
     commands: list[Twist] = []
     unsubs = [
-        manager.goal.subscribe(lambda msg: goals.append(PointStamped.decode(msg.encode()))),
-        manager.cmd_vel.subscribe(lambda msg: commands.append(Twist.decode(msg.encode()))),
+        manager.goal.subscribe(lambda msg: goals.append(cdr_decode(msg.encode(), PointStamped))),
+        manager.cmd_vel.subscribe(lambda msg: commands.append(cdr_decode(msg.encode(), Twist))),
     ]
     try:
         clicked = PointStamped(
             header=Header(frame_id="map", stamp=Time(sec=1700000000, nanosec=123456789)),
-            point=Point(x=3, y=4),
+            point=Point(x=3, y=4, z=0.0),
         )
-        manager._on_click(PointStamped.decode(clicked.encode()))
+        manager._on_click(cdr_decode(cdr_encode(clicked), PointStamped))
         assert goals == [clicked]
         print("Click → CDR goal: (3, 4), map, 1700000000123456789 ns")
-        manager._on_nav(Twist(linear=Vector3(x=0.2)))
-        manager._on_teleop(Twist(linear=Vector3(x=0.5)))
-        manager._on_nav(Twist(linear=Vector3(x=0.9)))
+        manager._on_nav(
+            Twist(linear=Vector3(x=0.2, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+        )
+        manager._on_teleop(
+            Twist(linear=Vector3(x=0.5, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+        )
+        manager._on_nav(
+            Twist(linear=Vector3(x=0.9, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+        )
         assert [msg.linear.x for msg in commands] == [0.2, 0.5]
         print("Navigation: 0.2 m/s; teleop: 0.5 m/s; competing navigation suppressed")
         manager.config.tele_cooldown_sec = 0
-        manager._on_nav(Twist(linear=Vector3(x=0.1)))
+        manager._on_nav(
+            Twist(linear=Vector3(x=0.1, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+        )
         assert commands[-1].linear.x == 0.1
         print("Cooldown elapsed → navigation resumes at 0.1 m/s")
         print("PASS: generated click and velocity messages cross CDR output boundaries")

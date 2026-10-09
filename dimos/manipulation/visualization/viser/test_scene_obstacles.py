@@ -16,7 +16,8 @@
 
 from unittest.mock import MagicMock
 
-from dimos_generated.geometry_msgs.msg import Pose
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Point, Pose, Quaternion
 from dimos_generated.std_msgs.msg import Header
 import numpy as np
 import pytest
@@ -38,7 +39,13 @@ def _octree(points: np.ndarray, resolution: float = 0.025) -> Obstacle:
     return Obstacle(
         name="mapping/voxel-map",
         obstacle_type=ObstacleType.OCTREE,
-        pose=PoseStamped(header=Header(frame_id="world"), pose=Pose()),
+        pose=PoseStamped(
+            header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+            pose=Pose(
+                position=Point(x=0.0, y=0.0, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+        ),
         points=points,
         octree_resolution=resolution,
     )

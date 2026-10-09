@@ -23,7 +23,13 @@ import threading
 import time
 from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
-from dimos_generated.geometry_msgs.msg import PoseStamped, TransformStamped
+from dimos_generated.geometry_msgs.msg import (
+    PoseStamped,
+    Quaternion,
+    Transform,
+    TransformStamped,
+    Vector3,
+)
 from dimos_generated.std_msgs.msg import Header
 from dimos_generated.tf2_msgs.msg import TFMessage
 from sortedcontainers import SortedDict  # type: ignore[import-untyped]
@@ -171,6 +177,10 @@ class MultiTBuffer:
                     stamp=time_from_seconds(time_point if time_point is not None else time.time()),
                 ),
                 child_frame_id=child_frame,
+                transform=Transform(
+                    translation=Vector3(x=0.0, y=0.0, z=0.0),
+                    rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
             )
 
         # No explicit tolerance means "anything still buffered" — the buffer

@@ -25,6 +25,7 @@ from threading import RLock, current_thread
 from typing import TYPE_CHECKING, Any
 import xml.etree.ElementTree as ET
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Point, Pose, Quaternion
 from dimos_generated.std_msgs.msg import Header
 import numpy as np
@@ -894,7 +895,13 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
             plant_ctx = self._diagram.GetSubsystemContext(self._plant, ctx)
             full_positions = self._plant.GetPositions(plant_ctx)
             positions = [float(full_positions[idx]) for idx in robot_data.joint_indices]
-            return JointState(name=robot_data.config.joint_names, position=positions)
+            return JointState(
+                name=robot_data.config.joint_names,
+                position=np.asarray(positions, dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            )
 
     # Collision Checking (context-based)
 
@@ -955,7 +962,13 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
                 for i in range(n_steps):
                     t = i / (n_steps - 1)
                     q = q_start + t * (q_end - q_start)
-                    interp_state = JointState(name=start.name, position=q.tolist())
+                    interp_state = JointState(
+                        name=start.name,
+                        position=np.asarray(q.tolist(), dtype=np.float64),
+                        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                        velocity=np.array([], dtype=np.float64),
+                        effort=np.array([], dtype=np.float64),
+                    )
                     self.set_joint_state(ctx, interp_state)
                     if not self.is_collision_free(ctx):
                         return False
@@ -992,7 +1005,7 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
         quat = X_WE.rotation().ToQuaternion()  # Drake returns [w, x, y, z]
 
         return PoseStamped(
-            header=Header(frame_id="world"),
+            header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
             pose=Pose(
                 position=Point(x=float(pos[0]), y=float(pos[1]), z=float(pos[2])),
                 orientation=Quaternion(

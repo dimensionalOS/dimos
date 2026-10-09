@@ -16,6 +16,7 @@ import pickle
 
 from dimos_generated.geometry_msgs.msg import Twist, TwistStamped, Vector3
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 from rosbags.typesys import Stores, get_typestore
 
 from dimos.msgs.time import time_from_nanoseconds
@@ -23,15 +24,15 @@ from dimos.msgs.time import time_from_nanoseconds
 
 def test_cdr_encode_decode() -> None:
     source = TwistStamped(
-        header=Header(stamp=time_from_nanoseconds(1234567890123456789)),
+        header=Header(stamp=time_from_nanoseconds(1234567890123456789), frame_id=""),
         twist=Twist(linear=Vector3(x=1, y=2, z=3), angular=Vector3(x=0.1, y=0.2, z=0.3)),
     )
-    binary = source.encode()
-    decoded = TwistStamped.decode(binary)
+    binary = cdr_encode(source)
+    decoded = cdr_decode(binary, TwistStamped)
     assert isinstance(decoded, TwistStamped)
     assert decoded is not source
-    assert decoded.encode() == binary
-    independent = get_typestore(Stores.ROS2_JAZZY).deserialize_cdr(binary, source.msg_name)
+    assert cdr_encode(decoded) == binary
+    independent = get_typestore(Stores.ROS2_JAZZY).deserialize_cdr(binary, source.__msgtype__)
     assert (independent.header.stamp.sec, independent.header.stamp.nanosec) == (
         1234567890,
         123456789,
@@ -50,10 +51,10 @@ def test_cdr_encode_decode() -> None:
 
 def test_pickle_encode_decode() -> None:
     source = TwistStamped(
-        header=Header(stamp=time_from_nanoseconds(1234567890123456789)),
+        header=Header(stamp=time_from_nanoseconds(1234567890123456789), frame_id=""),
         twist=Twist(linear=Vector3(x=1, y=2, z=3), angular=Vector3(x=0.1, y=0.2, z=0.3)),
     )
     decoded = pickle.loads(pickle.dumps(source))
     assert isinstance(decoded, TwistStamped)
     assert decoded is not source
-    assert decoded.encode() == source.encode()
+    assert decoded.encode() == cdr_encode(source)

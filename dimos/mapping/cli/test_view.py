@@ -17,7 +17,9 @@
 
 from pathlib import Path
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import encode as cdr_encode
 import numpy as np
 import rerun as rr
 
@@ -28,9 +30,10 @@ from dimos.msgs.pointcloud import pointcloud_from_xyz
 def test_view_cdr_cloud_writes_offline_recording(tmp_path: Path, capsys):
     pc2 = tmp_path / "map.pc2.cdr"
     cloud = pointcloud_from_xyz(
-        np.random.default_rng(0).random((256, 3)), header=Header(frame_id="world")
+        np.random.default_rng(0).random((256, 3)),
+        header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
     )
-    pc2.write_bytes(cloud.encode())
+    pc2.write_bytes(cdr_encode(cloud))
     out = tmp_path / "view.rrd"
     try:
         main(pc2, voxel=0.05, bottom_cutoff=None, out=out)

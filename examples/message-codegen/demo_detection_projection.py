@@ -22,8 +22,9 @@ from dimos_generated.geometry_msgs.msg import (
     TransformStamped,
     Vector3,
 )
-from dimos_generated.sensor_msgs.msg import CameraInfo, Image
+from dimos_generated.sensor_msgs.msg import CameraInfo, Image, RegionOfInterest
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 
 from dimos.msgs.image import image_from_array
@@ -36,7 +37,7 @@ def main() -> None:
     depth = image_from_array(
         np.full((4, 4), 2000, dtype=np.uint16), encoding="16UC1", header=header
     )
-    depth = Image.decode(depth.encode())
+    depth = cdr_decode(cdr_encode(depth), Image)
     detection = Detection2DBBox(
         bbox=(0, 0, 3, 3),
         track_id=1,
@@ -46,15 +47,29 @@ def main() -> None:
         ts=1700000000.0,
         image=depth,
     )
-    camera = CameraInfo(width=4, height=4, k=[2, 0, 0, 0, 2, 0, 0, 0, 1])
+    camera = CameraInfo(
+        width=4,
+        height=4,
+        k=np.array([2, 0, 0, 0, 2, 0, 0, 0, 1], dtype=np.float64),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        distortion_model="",
+        d=np.array([], dtype=np.float64),
+        r=np.zeros(9, dtype=np.float64),
+        p=np.zeros(12, dtype=np.float64),
+        binning_x=0,
+        binning_y=0,
+        roi=RegionOfInterest(x_offset=0, y_offset=0, height=0, width=0, do_rectify=False),
+    )
     transform = TransformStamped(
-        header=Header(frame_id="camera"),
+        header=Header(frame_id="camera", stamp=Time(sec=0, nanosec=0)),
         child_frame_id="world",
-        transform=Transform(translation=Vector3(x=-10), rotation=Quaternion(w=1)),
+        transform=Transform(
+            translation=Vector3(x=-10, y=0.0, z=0.0), rotation=Quaternion(w=1, x=0.0, y=0.0, z=0.0)
+        ),
     )
     result = Detection3DPC.from_depth(detection, depth, camera, transform, filters=[])
     assert result is not None
-    pose = PoseStamped.decode(result.pose.encode())
+    pose = cdr_decode(result.pose.encode(), PoseStamped)
     assert pose.header.stamp == header.stamp
     assert pose.header.frame_id == "world"
     assert (pose.pose.position.x, pose.pose.position.y, pose.pose.position.z) == (11.5, 1.5, 2)

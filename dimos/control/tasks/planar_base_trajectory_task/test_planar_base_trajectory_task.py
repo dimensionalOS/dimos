@@ -14,7 +14,9 @@
 
 import math
 
+from dimos_generated.builtin_interfaces.msg import Duration
 from dimos_generated.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+import numpy as np
 import pytest
 
 from dimos.control.task import CoordinatorState, JointStateSnapshot
@@ -60,8 +62,13 @@ def _line(start, goal, duration, n=60):
     points = [
         JointTrajectoryPoint(
             time_from_start=duration_from_seconds(duration * i / (n - 1)),
-            positions=[s + (g - s) * i / (n - 1) for s, g in zip(start, goal, strict=True)],
-            velocities=velocity,
+            positions=np.asarray(
+                [s + (g - s) * i / (n - 1) for s, g in zip(start, goal, strict=True)],
+                dtype=np.float64,
+            ),
+            velocities=np.asarray(velocity, dtype=np.float64),
+            accelerations=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
         )
         for i in range(n)
     ]
@@ -159,7 +166,16 @@ def test_rejects_trajectories_it_cannot_follow():
     never_ends.points[-1] = point
     two_columns = JointTrajectory(
         header=header_now(),
-        points=[JointTrajectoryPoint(positions=[0.0, 0.0], velocities=[0.0, 0.0])],
+        points=[
+            JointTrajectoryPoint(
+                positions=np.array([0.0, 0.0], dtype=np.float64),
+                velocities=np.array([0.0, 0.0], dtype=np.float64),
+                accelerations=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+                time_from_start=Duration(sec=0, nanosec=0),
+            )
+        ],
+        joint_names=[],
     )
     diagonal_too_fast = _line((0.0, 0.0, 0.0), (1.0, 1.0, 0.0), duration=1.0)
 

@@ -291,7 +291,8 @@ class WebsocketVisModule(Module):
             goal = PoseStamped(
                 header=header_now("world"),
                 pose=Pose(
-                    position=Point(x=position[0], y=position[1]), orientation=Quaternion(w=1)
+                    position=Point(x=position[0], y=position[1], z=0.0),
+                    orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0),
                 ),
             )
             self.goal_request.publish(goal)

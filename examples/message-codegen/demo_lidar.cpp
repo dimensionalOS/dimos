@@ -1,6 +1,8 @@
 // Copyright 2026 Dimensional Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <dimos/native/cdr_codec.hpp>
+#include <sensor_msgs/msg/point_cloud2.hpp>
 #include <cassert>
 #include <iostream>
 #include <limits>
@@ -18,8 +20,8 @@ int main() {
         point[3] = 0.5;
     }
     for (bool little : {true, false}) {
-        auto bytes = dimos::cdr::encode(cloud, little);
-        auto decoded = dimos::cdr::decode<sensor_msgs::msg::PointCloud2>(bytes);
+        auto bytes = dimos::native::cdr_encode(cloud, little);
+        auto decoded = dimos::native::cdr_decode<sensor_msgs::msg::PointCloud2>(bytes);
         assert(decoded == cloud);
         assert(decoded.header.stamp.sec == 1 && decoded.header.stamp.nanosec == 250000000);
         assert(decoded.width == 2 && decoded.fields.size() == 4 && decoded.data.size() == 32);

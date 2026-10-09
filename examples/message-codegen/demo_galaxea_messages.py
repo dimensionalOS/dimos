@@ -50,9 +50,12 @@ def main() -> None:
             robot._on_chassis_speed(
                 TwistStamped(
                     header=Header(
-                        stamp=Time(sec=1700000000, nanosec=123456789 + index * 100000000)
+                        stamp=Time(sec=1700000000, nanosec=123456789 + index * 100000000),
+                        frame_id="",
                     ),
-                    twist=Twist(linear=Vector3(x=1.0), angular=Vector3(z=0.2)),
+                    twist=Twist(
+                        linear=Vector3(x=1.0, y=0.0, z=0.0), angular=Vector3(z=0.2, x=0.0, y=0.0)
+                    ),
                 ),
                 None,
             )

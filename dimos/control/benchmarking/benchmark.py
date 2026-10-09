@@ -51,6 +51,7 @@ import threading
 import time
 from typing import Any, Literal
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Twist
 from dimos_generated.nav_msgs.msg import Path as NavPath
 from dimos_generated.std_msgs.msg import Float32, Header, Int8
@@ -126,7 +127,7 @@ def shift_path_to_start_at_pose(path: NavPath, start_pose: PoseStamped) -> NavPa
         rx, ry = p.pose.position.x - px0, p.pose.position.y - py0
         new.append(
             PoseStamped(
-                header=Header(frame_id=""),
+                header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
                 pose=Pose(
                     position=Point(x=sx + rx * cd - ry * sd, y=sy + rx * sd + ry * cd, z=0.0),
                     orientation=quaternion_from_euler(
@@ -135,7 +136,7 @@ def shift_path_to_start_at_pose(path: NavPath, start_pose: PoseStamped) -> NavPa
                 ),
             )
         )
-    return NavPath(poses=new)
+    return NavPath(poses=new, header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""))
 
 
 # Recording (flat per-run JSON) + round-trip
@@ -202,14 +203,15 @@ class RunRecording:
         return NavPath(
             poses=[
                 PoseStamped(
-                    header=Header(frame_id=""),
+                    header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
                     pose=Pose(
                         position=Point(x=x, y=y, z=0.0),
                         orientation=quaternion_from_euler(0.0, 0.0, yaw),
                     ),
                 )
                 for x, y, yaw in self.reference
-            ]
+            ],
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
         )
 
 

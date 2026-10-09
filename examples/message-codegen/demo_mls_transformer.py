@@ -31,6 +31,7 @@ from dimos_generated.nav_msgs.msg import MapMetaData, OccupancyGrid, Path
 from dimos_generated.sensor_msgs.msg import PointCloud2
 from dimos_generated.std_msgs.msg import Header
 from dimos_generated.tf2_msgs.msg import TFMessage
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import rerun as rr
 
@@ -60,14 +61,17 @@ def main() -> None:
     edge = TransformStamped(
         header=cloud.header,
         child_frame_id="base_link",
-        transform=Transform(translation=Vector3(x=-2.0, y=-2.0, z=1.0), rotation=Quaternion(w=1.0)),
+        transform=Transform(
+            translation=Vector3(x=-2.0, y=-2.0, z=1.0),
+            rotation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0),
+        ),
     )
-    tf.receive_transform(TransformStamped.decode(edge.encode()))
+    tf.receive_transform(cdr_decode(cdr_encode(edge), TransformStamped))
     relay = StartRelay(world_frame="world")
     relay._tf = tf
     poses: list[PoseStamped] = []
     unsubscribe = relay.start_pose.subscribe(
-        lambda value: poses.append(PoseStamped.decode(value.encode()))
+        lambda value: poses.append(cdr_decode(value.encode(), PoseStamped))
     )
     try:
         relay._on_tf(TFMessage(transforms=[edge]))
@@ -84,17 +88,17 @@ def main() -> None:
         ts=0.0,
         pose=poses[0],
         tags={"region_bounds": (0.0, 0.0, 5.0, -1.0, 2.0)},
-        _data=PointCloud2.decode(cloud.encode()),
+        _data=cdr_decode(cdr_encode(cloud), PointCloud2),
     )
     ray_input = obs.derive(data=cloud, pose_tuple=(0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0))
     [mapped] = list(RayTraceMap(voxel_size=0.2)(iter([ray_input])))
-    mapped_cloud = PointCloud2.decode(mapped.data.encode())
+    mapped_cloud = cdr_decode(mapped.data.encode(), PointCloud2)
     assert mapped_cloud.header.stamp.nanosec == 123456789
     print(
         f"Ray-traced CDR local map: {mapped_cloud.width * mapped_cloud.height} points, frame={mapped_cloud.header.frame_id}"
     )
     [result] = list(MLSPlan(goal=(2.0, 2.0, 0.0), voxel_size=0.2, robot_height=1.0)(iter([obs])))
-    path = Path.decode(result.data.encode())
+    path = cdr_decode(result.data.encode(), Path)
     assert result.tags["planned"] and len(path.poses) >= 2
     assert path.header.stamp.nanosec == 123456789
     print(
@@ -110,21 +114,35 @@ def main() -> None:
     bridge._min_intervals = {}
     try:
         bridge._on_message(
-            TFMessage.decode(TFMessage(transforms=[edge]).encode()), SimpleNamespace(name="/tf")
+            cdr_decode(cdr_encode(TFMessage(transforms=[edge])), TFMessage),
+            SimpleNamespace(name="/tf"),
         )
     finally:
         bridge.stop()
     bridge = RerunBridgeModule()
     bridge._min_intervals = {}
     try:
-        bridge._on_message(PointCloud2.decode(cloud.encode()), SimpleNamespace(name="/terrain"))
-        bridge._on_message(Path.decode(path.encode()), SimpleNamespace(name="/planned_path"))
+        bridge._on_message(
+            cdr_decode(cdr_encode(cloud), PointCloud2), SimpleNamespace(name="/terrain")
+        )
+        bridge._on_message(
+            cdr_decode(cdr_encode(path), Path), SimpleNamespace(name="/planned_path")
+        )
         grid = OccupancyGrid(
             header=path.header,
-            info=MapMetaData(width=2, height=2, resolution=1.0, origin=poses[0].pose),
-            data=[0, 100, -1, 50],
+            info=MapMetaData(
+                width=2,
+                height=2,
+                resolution=1.0,
+                origin=poses[0].pose,
+                map_load_time=Time(sec=0, nanosec=0),
+            ),
+            data=np.array([0, 100, -1, 50], dtype=np.int8),
         )
-        bridge._on_message(OccupancyGrid.decode(grid.encode()), SimpleNamespace(name="/occupancy"))
+        bridge._on_message(
+            cdr_decode(cdr_encode(grid), OccupancyGrid),
+            SimpleNamespace(name="/occupancy"),
+        )
     finally:
         bridge.stop()
     rr.log("world/ray_map", render_surface_map(mapped_cloud))
@@ -139,11 +157,15 @@ def main() -> None:
             LineSegment3D(
                 start=Point(x=a.pose.position.x, y=a.pose.position.y, z=a.pose.position.z),
                 end=Point(x=b.pose.position.x, y=b.pose.position.y, z=b.pose.position.z),
+                weight=1.0,
             )
             for a, b in zip(path.poses, list(path.poses)[1:], strict=False)
         ],
     )
-    rr.log("world/path_edges", render_node_edges(LineSegments3D.decode(segments.encode())))
+    rr.log(
+        "world/path_edges",
+        render_node_edges(cdr_decode(cdr_encode(segments), LineSegments3D)),
+    )
     rr.disconnect()
     assert output.stat().st_size > 0
     print(f"Rerun recording: {output}")

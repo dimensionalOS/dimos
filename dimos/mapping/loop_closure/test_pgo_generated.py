@@ -17,8 +17,10 @@ import sys
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode
 import numpy as np
 import pytest
 
@@ -30,14 +32,19 @@ from dimos.msgs.time import time_from_nanoseconds, time_from_seconds
 
 def test_generated_observation_pose_correction_applies_rotation_after_translation():
     local = TransformStamped(
-        header=Header(frame_id="world_raw", stamp=time_from_seconds(1.0)), child_frame_id="body"
+        header=Header(frame_id="world_raw", stamp=time_from_seconds(1.0)),
+        child_frame_id="body",
+        transform=Transform(
+            translation=Vector3(x=0.0, y=0.0, z=0.0),
+            rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+        ),
     )
     optimized = TransformStamped(
         header=Header(frame_id="world_corrected", stamp=time_from_seconds(1.0)),
         child_frame_id="body",
         transform=Transform(
-            translation=Vector3(x=5.0),
-            rotation=Quaternion(z=math.sqrt(0.5), w=math.sqrt(0.5)),
+            translation=Vector3(x=5.0, y=0.0, z=0.0),
+            rotation=Quaternion(z=math.sqrt(0.5), w=math.sqrt(0.5), x=0.0, y=0.0),
         ),
     )
     graph = PoseGraph(keyframes=(Keyframe(ts=1.0, local=local, optimized=optimized),))
@@ -105,12 +112,20 @@ def test_generated_correction_interpolates_and_clips_without_solver(query, expec
     keyframes = []
     for ts, x in ((1.0, 0.0), (11.0, 10.0)):
         local = TransformStamped(
-            header=Header(frame_id="world_raw", stamp=time_from_seconds(ts)), child_frame_id="body"
+            header=Header(frame_id="world_raw", stamp=time_from_seconds(ts)),
+            child_frame_id="body",
+            transform=Transform(
+                translation=Vector3(x=0.0, y=0.0, z=0.0),
+                rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
         )
         optimized = TransformStamped(
             header=Header(frame_id="world_corrected", stamp=time_from_seconds(ts)),
             child_frame_id="body",
-            transform=Transform(translation=Vector3(x=x)),
+            transform=Transform(
+                translation=Vector3(x=x, y=0.0, z=0.0),
+                rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
         )
         keyframes.append(Keyframe(ts=ts, local=local, optimized=optimized))
     graph = PoseGraph(keyframes=tuple(keyframes))
@@ -118,21 +133,34 @@ def test_generated_correction_interpolates_and_clips_without_solver(query, expec
     assert value.header.frame_id == "world_corrected" and value.child_frame_id == "world_raw"
     assert value.header.stamp == time_from_seconds(query)
     assert value.transform.translation.x == pytest.approx(expected_x)
-    assert TransformStamped.decode(value.encode()) == value
+    assert cdr_decode(value.encode(), TransformStamped) == value
 
 
 def test_generated_correct_preserves_exact_source_stamp_and_rejects_bad_frame():
-    local = TransformStamped(header=Header(frame_id="world_raw"), child_frame_id="body")
-    optimized = TransformStamped(
-        header=Header(frame_id="world_corrected"),
+    local = TransformStamped(
+        header=Header(frame_id="world_raw", stamp=Time(sec=0, nanosec=0)),
         child_frame_id="body",
-        transform=Transform(translation=Vector3(x=5.0)),
+        transform=Transform(
+            translation=Vector3(x=0.0, y=0.0, z=0.0),
+            rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+        ),
+    )
+    optimized = TransformStamped(
+        header=Header(frame_id="world_corrected", stamp=Time(sec=0, nanosec=0)),
+        child_frame_id="body",
+        transform=Transform(
+            translation=Vector3(x=5.0, y=0.0, z=0.0),
+            rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+        ),
     )
     graph = PoseGraph(keyframes=(Keyframe(ts=1.0, local=local, optimized=optimized),))
     source = TransformStamped(
         header=Header(frame_id="world_raw", stamp=time_from_nanoseconds(1700000000123456789)),
         child_frame_id="camera",
-        transform=Transform(translation=Vector3(x=2.0)),
+        transform=Transform(
+            translation=Vector3(x=2.0, y=0.0, z=0.0),
+            rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+        ),
     )
     result = graph.correct(source)
     assert result.header.stamp == source.header.stamp

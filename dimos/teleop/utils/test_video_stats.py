@@ -17,6 +17,11 @@
 from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.dimos_msgs.msg import VideoStats
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import (
+    decode as cdr_decode,
+    encode as cdr_encode,
+    schema as cdr_schema,
+)
 import pytest
 
 from dimos.memory.store.sqlite import SqliteStore
@@ -33,10 +38,13 @@ def test_cdr_and_sqlite_preserve_exact_counters_and_source_header(tmp_path) -> N
         loss_pct=2.1,
         frames_dropped=2**32 + 1,
         freezes=2**32 + 2,
+        jitter_buffer_ms=0.0,
+        decode_ms=0.0,
+        e2e_latency_ms=0.0,
     )
-    assert VideoStats.decode(expected.encode()) == expected
-    assert VideoStats.msg_name == "dimos_msgs/msg/VideoStats"
-    assert "uint64 frames_dropped" in VideoStats.schema
+    assert cdr_decode(cdr_encode(expected), VideoStats) == expected
+    assert VideoStats.__msgtype__ == "dimos_msgs/msg/VideoStats"
+    assert "uint64 frames_dropped" in cdr_schema(VideoStats.__msgtype__)
     path = tmp_path / "video.db"
     with SqliteStore(path=str(path)) as store:
         stream = store.stream("video_stats", VideoStats, codec="cdr")

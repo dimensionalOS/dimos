@@ -20,11 +20,13 @@ from contextlib import contextmanager
 import threading
 from typing import TYPE_CHECKING, Any
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.dimos_msgs.msg import GraspCandidateArray
 from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from dimos_generated.sensor_msgs.msg import JointState
 from dimos_generated.std_msgs.msg import Header
 from dimos_generated.trajectory_msgs.msg import JointTrajectory
+import numpy as np
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.manipulation.planning.groups.identifiers import assert_valid_group_id
@@ -46,7 +48,6 @@ if TYPE_CHECKING:
     from collections.abc import Generator
 
     from dimos_generated.vision_msgs.msg import Detection3D
-    import numpy as np
     from numpy.typing import NDArray
 
     from dimos.manipulation.planning.spec.config import RobotModelConfig
@@ -337,8 +338,20 @@ class WorldMonitor:
     def current_model_joint_state(self, max_age: float = 1.0) -> JointState:
         """Return the fresh canonical model state."""
         if self._state_monitor is not None and self.is_state_stale(max_age):
-            return JointState()
-        return self.get_current_joint_state() or JointState()
+            return JointState(
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                name=[],
+                position=np.array([], dtype=np.float64),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            )
+        return self.get_current_joint_state() or JointState(
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            name=[],
+            position=np.array([], dtype=np.float64),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        )
 
     def current_group_joint_state(
         self, group_id: PlanningGroupID, max_age: float = 1.0
@@ -374,7 +387,13 @@ class WorldMonitor:
         if self._state_monitor is not None:
             state = self._state_monitor.get_current_joint_state()
             if state is not None and state.velocity:
-                return JointState(header=state.header, name=state.name, velocity=state.velocity)
+                return JointState(
+                    header=state.header,
+                    name=state.name,
+                    velocity=np.asarray(state.velocity, dtype=np.float64),
+                    position=np.array([], dtype=np.float64),
+                    effort=np.array([], dtype=np.float64),
+                )
         return None
 
     def wait_for_state(self, timeout: float = 1.0) -> bool:
@@ -484,7 +503,7 @@ class WorldMonitor:
             pos = mat[:3, 3]
             rot = mat[:3, :3]
             quat = quaternion_from_matrix(rot)
-            header = Header(frame_id="world")
+            header = Header(frame_id="world", stamp=Time(sec=0, nanosec=0))
             if joint_state is not None:
                 header.stamp = joint_state.header.stamp
             return PoseStamped(

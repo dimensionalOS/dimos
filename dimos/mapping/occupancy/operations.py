@@ -51,7 +51,9 @@ def smooth_occupied(
     result_grid[unsupported] = 0
 
     return OccupancyGrid(
-        header=occupancy_grid.header, info=occupancy_grid.info, data=result_grid.ravel()
+        header=occupancy_grid.header,
+        info=occupancy_grid.info,
+        data=np.asarray(result_grid.ravel(), dtype=np.int8),
     )
 
 
@@ -76,4 +78,6 @@ def overlay_occupied(base: OccupancyGrid, overlay: OccupancyGrid) -> OccupancyGr
     overlay_occupied_mask = occupancy_view(overlay) >= 100
     result_grid[overlay_occupied_mask] = 100
 
-    return OccupancyGrid(header=base.header, info=base.info, data=result_grid.ravel())
+    return OccupancyGrid(
+        header=base.header, info=base.info, data=np.asarray(result_grid.ravel(), dtype=np.int8)
+    )

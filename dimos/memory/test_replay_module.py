@@ -16,7 +16,7 @@ from pathlib import Path
 import time
 from typing import Any
 
-from dimos_generated.geometry_msgs.msg import PoseStamped
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from dimos_generated.std_msgs.msg import Header
 import pytest
 
@@ -34,8 +34,26 @@ def recording(tmp_path: Path) -> str:
     odom = store.stream("odom", PoseStamped)
     goal = store.stream("goal", PoseStamped)
     for ts in (1.0, 1.1, 1.2):
-        odom.append(PoseStamped(header=Header(stamp=time_from_seconds(ts))), ts=ts)
-    goal.append(PoseStamped(header=Header(stamp=time_from_seconds(1.05))), ts=1.05)
+        odom.append(
+            PoseStamped(
+                header=Header(stamp=time_from_seconds(ts), frame_id=""),
+                pose=Pose(
+                    position=Point(x=0.0, y=0.0, z=0.0),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+            ),
+            ts=ts,
+        )
+    goal.append(
+        PoseStamped(
+            header=Header(stamp=time_from_seconds(1.05), frame_id=""),
+            pose=Pose(
+                position=Point(x=0.0, y=0.0, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+        ),
+        ts=1.05,
+    )
     store.stop()
     return str(path)
 
@@ -94,10 +112,24 @@ def test_stream_named_like_a_module_attribute_is_skipped(
     store = SqliteStore(path=str(path))
     store.start()
     store.stream("start", PoseStamped).append(
-        PoseStamped(header=Header(stamp=time_from_seconds(1.0))), ts=1.0
+        PoseStamped(
+            header=Header(stamp=time_from_seconds(1.0), frame_id=""),
+            pose=Pose(
+                position=Point(x=0.0, y=0.0, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+        ),
+        ts=1.0,
     )
     store.stream("odom", PoseStamped).append(
-        PoseStamped(header=Header(stamp=time_from_seconds(1.0))), ts=1.0
+        PoseStamped(
+            header=Header(stamp=time_from_seconds(1.0), frame_id=""),
+            pose=Pose(
+                position=Point(x=0.0, y=0.0, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+        ),
+        ts=1.0,
     )
     store.stop()
     assert list(replay_module(str(path)).__annotations__) == ["odom"]
@@ -114,9 +146,25 @@ def test_single_timestamp_stream_is_republished_and_not_the_anchor(tmp_path: Pat
     store.start()
     info = store.stream("camera_info", PoseStamped)
     for _ in range(3):
-        info.append(PoseStamped(header=Header(stamp=time_from_seconds(1.0))), ts=1.0)
+        info.append(
+            PoseStamped(
+                header=Header(stamp=time_from_seconds(1.0), frame_id=""),
+                pose=Pose(
+                    position=Point(x=0.0, y=0.0, z=0.0),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+            ),
+            ts=1.0,
+        )
     store.stream("odom", PoseStamped).append(
-        PoseStamped(header=Header(stamp=time_from_seconds(40.0))), ts=40.0
+        PoseStamped(
+            header=Header(stamp=time_from_seconds(40.0), frame_id=""),
+            pose=Pose(
+                position=Point(x=0.0, y=0.0, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+        ),
+        ts=40.0,
     )
     store.stop()
     module = replay_module(str(path))(dataset=str(path))

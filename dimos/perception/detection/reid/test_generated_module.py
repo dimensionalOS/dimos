@@ -59,7 +59,7 @@ def test_generated_detection_alignment_uses_headers_and_filters_empty_arrays(
     header = Header(stamp=time_from_seconds(1.25), frame_id="camera")
     image = image_from_array(np.zeros((32, 32, 3), dtype=np.uint8), encoding="rgb8", header=header)
     try:
-        detections.on_next(Detection2DArray(header=header))
+        detections.on_next(Detection2DArray(header=header, detections=[]))
         detections.on_next(
             Detection2DArray(
                 header=header,
@@ -68,8 +68,11 @@ def test_generated_detection_alignment_uses_headers_and_filters_empty_arrays(
                         header=header,
                         id="7",
                         bbox=BoundingBox2D(
-                            center=Pose2D(position=Point2D(x=16, y=16)), size_x=8, size_y=8
+                            center=Pose2D(position=Point2D(x=16, y=16), theta=0.0),
+                            size_x=8,
+                            size_y=8,
                         ),
+                        results=[],
                     )
                 ],
             )

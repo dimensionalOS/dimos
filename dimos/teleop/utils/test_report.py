@@ -18,7 +18,15 @@ import json
 from pathlib import Path
 
 from dimos_generated.dimos_msgs.msg import VideoStats
-from dimos_generated.geometry_msgs.msg import PoseStamped, TwistStamped
+from dimos_generated.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseStamped,
+    Quaternion,
+    Twist,
+    TwistStamped,
+    Vector3,
+)
 from dimos_generated.std_msgs.msg import Header, UInt32
 import pytest
 
@@ -28,7 +36,10 @@ from dimos.teleop.utils.report import _run_duration, _summary, generate_report
 
 
 def stamped(stamp_ns: int) -> TwistStamped:
-    return TwistStamped(header=Header(stamp=time_from_nanoseconds(stamp_ns)))
+    return TwistStamped(
+        header=Header(stamp=time_from_nanoseconds(stamp_ns), frame_id=""),
+        twist=Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)),
+    )
 
 
 def test_epoch_nanoseconds_and_out_of_order_source_frames() -> None:
@@ -55,12 +66,42 @@ def test_generated_sqlite_recording_produces_report(tmp_path: Path) -> None:
         commands = store.stream("cmd_vel_stamped", TwistStamped)
         poses = store.stream("left_controller_output", PoseStamped)
         for index in range(3):
-            header = Header(stamp=time_from_nanoseconds(base + index * 20_000_000))
-            commands.append(TwistStamped(header=header), ts=100 + index)
-            poses.append(PoseStamped(header=header), ts=100 + index)
+            header = Header(stamp=time_from_nanoseconds(base + index * 20_000_000), frame_id="")
+            commands.append(
+                TwistStamped(
+                    header=header,
+                    twist=Twist(
+                        linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)
+                    ),
+                ),
+                ts=100 + index,
+            )
+            poses.append(
+                PoseStamped(
+                    header=header,
+                    pose=Pose(
+                        position=Point(x=0.0, y=0.0, z=0.0),
+                        orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                    ),
+                ),
+                ts=100 + index,
+            )
         store.stream("teleop_buttons", UInt32).append(UInt32(data=3), ts=101)
         store.stream("video_stats", VideoStats).append(
-            VideoStats(header=header, width=640, height=480, frames_dropped=2**32 + 1), ts=102
+            VideoStats(
+                header=header,
+                width=640,
+                height=480,
+                frames_dropped=2**32 + 1,
+                fps=0.0,
+                kbps=0.0,
+                loss_pct=0.0,
+                jitter_buffer_ms=0.0,
+                decode_ms=0.0,
+                freezes=0,
+                e2e_latency_ms=0.0,
+            ),
+            ts=102,
         )
     report = json.loads(generate_report(path).read_text())
     assert report["duration_s"] == 0.04

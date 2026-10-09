@@ -17,6 +17,7 @@ import os
 import time
 from typing import Any
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import PoseStamped
 from dimos_generated.sensor_msgs.msg import Image
 from dimos_generated.std_msgs.msg import Header
@@ -58,7 +59,9 @@ class VideoReplayModule(Module):
         # Use LegacyPickleStore to replay video frames
         video_replay = LegacyPickleStore(
             self.config.video_path,
-            autocast=lambda pixels: image_from_array(pixels, encoding="bgr8", header=Header()),
+            autocast=lambda pixels: image_from_array(
+                pixels, encoding="bgr8", header=Header(stamp=Time(sec=0, nanosec=0), frame_id="")
+            ),
         )
 
         # Subscribe to the replay stream and publish to LCM

@@ -18,6 +18,7 @@ from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from dimos_generated.nav_msgs.msg import MapMetaData, OccupancyGrid
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 
@@ -35,7 +36,7 @@ def test_generated_frontier_centroid_respects_map_origin(request, yaw):
     cells = np.full((20, 20), -1, dtype=np.int8)
     cells[5:15, 5:15] = 0
     grid = OccupancyGrid(
-        header=Header(frame_id="map"),
+        header=Header(frame_id="map", stamp=Time(sec=0, nanosec=0)),
         info=MapMetaData(
             width=20,
             height=20,
@@ -43,10 +44,11 @@ def test_generated_frontier_centroid_respects_map_origin(request, yaw):
             origin=Pose(
                 position=Point(x=2, y=3, z=1), orientation=quaternion_from_euler(0, 0, yaw)
             ),
+            map_load_time=Time(sec=0, nanosec=0),
         ),
-        data=cells.ravel(),
+        data=np.asarray(cells.ravel(), dtype=np.int8),
     )
-    received = OccupancyGrid.decode(grid.encode())
+    received = cdr_decode(cdr_encode(grid), OccupancyGrid)
     centroids = explorer.detect_frontiers(grid_to_world(received, (10, 10)), received)
     assert len(centroids) == 1
     expected = grid_to_world(received, (9.5, 9.5))
@@ -60,12 +62,16 @@ def test_stopping_exploration_retains_current_pose_header(request):
     request.addfinalizer(explorer.stop)
     source = PoseStamped(
         header=Header(frame_id="odom", stamp=Time(sec=1700000000, nanosec=123456789)),
-        pose=Pose(position=Point(x=2, y=3), orientation=Quaternion(w=1)),
+        pose=Pose(
+            position=Point(x=2, y=3, z=0.0), orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0)
+        ),
     )
     explorer.latest_odometry = source
     explorer.exploration_active = True
     goals = []
-    explorer.goal_request.subscribe(lambda value: goals.append(PoseStamped.decode(value.encode())))
+    explorer.goal_request.subscribe(
+        lambda value: goals.append(cdr_decode(cdr_encode(value), PoseStamped))
+    )
     assert explorer.stop_exploration()
     assert goals == [source]
     source.pose.position.x = 100
@@ -81,17 +87,27 @@ def test_exploration_loop_publishes_generated_goal_with_map_header(request):
     explorer.latest_costmap = OccupancyGrid(
         header=header,
         info=MapMetaData(
-            width=20, height=20, resolution=0.5, origin=Pose(orientation=Quaternion(w=1))
+            width=20,
+            height=20,
+            resolution=0.5,
+            origin=Pose(
+                orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0),
+                position=Point(x=0.0, y=0.0, z=0.0),
+            ),
+            map_load_time=Time(sec=0, nanosec=0),
         ),
-        data=cells.ravel(),
+        data=np.asarray(cells.ravel(), dtype=np.int8),
     )
     explorer.latest_odometry = PoseStamped(
-        header=header, pose=Pose(position=Point(x=2, y=5), orientation=Quaternion(w=1))
+        header=header,
+        pose=Pose(
+            position=Point(x=2, y=5, z=0.0), orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0)
+        ),
     )
     goals = []
 
     def receive(value):
-        goals.append(PoseStamped.decode(value.encode()))
+        goals.append(cdr_decode(cdr_encode(value), PoseStamped))
         explorer.exploration_active = False
 
     explorer.goal_request.subscribe(receive)

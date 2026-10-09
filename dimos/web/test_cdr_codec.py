@@ -19,8 +19,11 @@ import json
 import subprocess
 import sys
 
-from dimos_generated.geometry_msgs.msg import Point, PoseStamped
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from dimos_generated.sensor_msgs.msg import Image
+from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import encode as cdr_encode
 import pytest
 
 from dimos.web.cdr_codec import check_cdr_params, default_encoding, encode_cdr_v1, export_schema
@@ -42,10 +45,15 @@ def test_schema_and_declared_type() -> None:
     assert "MSG: std_msgs/Header" in schema["definition"]
     params = {"cdr": schema}
     check_cdr_params(params)
-    msg = PoseStamped()
-    assert encode_cdr_v1(msg, params) == msg.encode()
+    msg = PoseStamped(
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        pose=Pose(
+            position=Point(x=0.0, y=0.0, z=0.0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+        ),
+    )
+    assert encode_cdr_v1(msg, params) == cdr_encode(msg)
     with pytest.raises(ValueError, match="declared channel type"):
-        encode_cdr_v1(Point(), params)
+        encode_cdr_v1(Point(x=0.0, y=0.0, z=0.0), params)
     for bad in [{}, {"cdr": {}}, {"cdr": {"type": "p.T", "definition": ""}}]:
         with pytest.raises(ValueError, match="params"):
             check_cdr_params(bad)

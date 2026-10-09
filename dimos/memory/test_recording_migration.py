@@ -16,7 +16,10 @@
 
 import json
 
-from dimos_generated.geometry_msgs.msg import PoseStamped
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import pytest
 from typer.testing import CliRunner
 
@@ -105,7 +108,12 @@ def test_retained_legacy_interface_is_explicit_and_cdr_remains_distinct():
     old = LegacyPoseStamped(ts=1.5, frame_id="world", position=(3.25, 0, 0))
     restored = LegacyPoseStamped.lcm_decode(old.lcm_encode())
     assert (restored.ts, restored.frame_id, restored.position.x) == (1.5, "world", 3.25)
-    current = PoseStamped()
-    assert PoseStamped.decode(current.encode()) == current
-    with pytest.raises(Exception):
-        PoseStamped.decode(old.lcm_encode())
+    current = PoseStamped(
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        pose=Pose(
+            position=Point(x=0.0, y=0.0, z=0.0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+        ),
+    )
+    assert cdr_decode(cdr_encode(current), PoseStamped) == current
+    with pytest.raises(ValueError):
+        cdr_decode(old.lcm_encode(), PoseStamped)

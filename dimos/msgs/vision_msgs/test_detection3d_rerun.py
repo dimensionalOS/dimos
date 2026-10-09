@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos_generated.geometry_msgs.msg import Point, Pose, Quaternion, Vector3
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseWithCovariance, Quaternion, Vector3
 from dimos_generated.std_msgs.msg import Header
 from dimos_generated.vision_msgs.msg import (
     BoundingBox3D,
@@ -21,6 +22,7 @@ from dimos_generated.vision_msgs.msg import (
     ObjectHypothesis,
     ObjectHypothesisWithPose,
 )
+import numpy as np
 import pytest
 import rerun as rr
 
@@ -35,7 +37,18 @@ def _detection3d(
     marker_id: str = "7",
     class_id: str = "DICT_APRILTAG_36h11:7",
 ) -> Detection3D:
-    det = Detection3D()
+    det = Detection3D(
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        results=[],
+        bbox=BoundingBox3D(
+            center=Pose(
+                position=Point(x=0.0, y=0.0, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+            size=Vector3(x=0.0, y=0.0, z=0.0),
+        ),
+        id="",
+    )
     det.header = Header(stamp=time_from_seconds(ts), frame_id=frame_id)
     det.id = marker_id
     det.results = [
@@ -43,15 +56,22 @@ def _detection3d(
             hypothesis=ObjectHypothesis(
                 class_id=class_id,
                 score=1.0,
-            )
+            ),
+            pose=PoseWithCovariance(
+                pose=Pose(
+                    position=Point(x=0.0, y=0.0, z=0.0),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+                covariance=np.zeros(36, dtype=np.float64),
+            ),
         )
     ]
     det.bbox = BoundingBox3D(
         center=Pose(
             position=Point(x=1.0, y=2.0, z=3.0),
-            orientation=Quaternion(z=0.70710678, w=0.70710678),
+            orientation=Quaternion(z=0.70710678, w=0.70710678, x=0.0, y=0.0),
         ),
-        size=Vector3(x=0.2, y=0.4),
+        size=Vector3(x=0.2, y=0.4, z=0.0),
     )
     return det
 

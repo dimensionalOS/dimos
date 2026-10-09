@@ -16,6 +16,7 @@
 
 from dimos_generated.sensor_msgs.msg import CameraInfo
 from dimos_generated.tf2_msgs.msg import TFMessage
+from dimos_message_build.registry import decode as cdr_decode
 import numpy as np
 import pytest
 
@@ -46,8 +47,8 @@ def test_metadata_preserves_calibration_and_does_not_mutate_mount_template(modul
 
     info_publish.assert_called_once()
     tf_publish.assert_called_once()
-    info = CameraInfo.decode(info_publish.call_args.args[0].encode())
-    transforms = TFMessage.decode(tf_publish.call_args.args[0].encode()).transforms
+    info = cdr_decode(info_publish.call_args.args[0].encode(), CameraInfo)
+    transforms = cdr_decode(tf_publish.call_args.args[0].encode(), TFMessage).transforms
     assert (info.header.stamp.sec, info.header.stamp.nanosec) == (1700000000, 123456789)
     assert len(transforms) == 2
     assert [(edge.header.frame_id, edge.child_frame_id) for edge in transforms] == [

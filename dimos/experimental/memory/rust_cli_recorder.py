@@ -98,9 +98,7 @@ def make_plan(transports: dict[tuple[str, type], Any]) -> RustRecordingPlan:
     for index, ((name, payload_type), transport) in enumerate(transports.items()):
         if name not in selected:
             continue
-        if not all(
-            hasattr(payload_type, member) for member in ("encode", "decode", "msg_name", "schema")
-        ):
+        if not all(hasattr(payload_type, member) for member in ("__msgtype__",)):
             logger.info(
                 "--record: stream is not a generated CDR message type; skipped",
                 stream=name,

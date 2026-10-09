@@ -13,10 +13,12 @@
 # limitations under the License.
 
 from dimos_generated.builtin_interfaces.msg import Time
-from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped
-from dimos_generated.sensor_msgs.msg import CameraInfo
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos_generated.sensor_msgs.msg import CameraInfo, RegionOfInterest
 from dimos_generated.std_msgs.msg import Header
 from dimos_generated.tf2_msgs.msg import TFMessage
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
+import numpy as np
 import pytest
 
 from dimos.core.global_config import GlobalConfig
@@ -29,12 +31,14 @@ from dimos.robot.unitree.mujoco_connection import MujocoConnection
 def source_pose():
     return PoseStamped(
         header=Header(frame_id="world", stamp=Time(sec=1700000000, nanosec=123456789)),
-        pose=Pose(position=Point(x=1.25, y=2.5, z=0.7)),
+        pose=Pose(
+            position=Point(x=1.25, y=2.5, z=0.7), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+        ),
     )
 
 
 def test_dimsim_tf_preserves_source_pose_and_stamp(source_pose):
-    message = TFMessage.decode(TFMessage(transforms=_odom_to_tf(source_pose)).encode())
+    message = cdr_decode(cdr_encode(TFMessage(transforms=_odom_to_tf(source_pose))), TFMessage)
     assert [(edge.header.frame_id, edge.child_frame_id) for edge in message.transforms] == [
         ("world", "base_link"),
         ("base_link", "camera_link"),
@@ -61,7 +65,7 @@ def g1_connection(mocker):
 
 def test_g1_simulator_tf_uses_pose_time_for_all_mounts(g1_connection, source_pose):
     g1_connection._publish_tf(source_pose)
-    message = TFMessage.decode(g1_connection.tf.publish.call_args.args[0].encode())
+    message = cdr_decode(g1_connection.tf.publish.call_args.args[0].encode(), TFMessage)
     assert [(edge.header.frame_id, edge.child_frame_id) for edge in message.transforms] == [
         ("world", "base_link"),
         ("base_link", "camera_link"),
@@ -74,14 +78,26 @@ def test_g1_simulator_tf_uses_pose_time_for_all_mounts(g1_connection, source_pos
 
 
 def test_g1_camera_info_stamps_each_publication_without_mutating_template(g1_connection, mocker):
-    template = CameraInfo(header=Header(frame_id="camera_optical"), width=640, height=288)
+    template = CameraInfo(
+        header=Header(frame_id="camera_optical", stamp=Time(sec=0, nanosec=0)),
+        width=640,
+        height=288,
+        distortion_model="",
+        d=np.array([], dtype=np.float64),
+        k=np.zeros(9, dtype=np.float64),
+        r=np.zeros(9, dtype=np.float64),
+        p=np.zeros(12, dtype=np.float64),
+        binning_x=0,
+        binning_y=0,
+        roi=RegionOfInterest(x_offset=0, y_offset=0, height=0, width=0, do_rectify=False),
+    )
     g1_connection.connection.camera_info_static = template
     mocker.patch("dimos.robot.unitree.g1.mujoco_sim.time.time_ns", return_value=1700000000123456789)
     mocker.patch.object(
         g1_connection._stop_event, "wait", side_effect=lambda _: g1_connection._stop_event.set()
     )
     g1_connection._publish_camera_info_loop()
-    message = CameraInfo.decode(g1_connection.camera_info.publish.call_args.args[0].encode())
+    message = cdr_decode(g1_connection.camera_info.publish.call_args.args[0].encode(), CameraInfo)
     assert message.header.stamp == Time(sec=1700000000, nanosec=123456789)
     assert message.header.frame_id == "camera_optical"
-    assert template.header.stamp == Time()
+    assert template.header.stamp == Time(sec=0, nanosec=0)

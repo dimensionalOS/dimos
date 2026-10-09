@@ -22,9 +22,10 @@ import time
 from typing import Any
 
 from dimos_generated.geometry_msgs.msg import PoseStamped
-from dimos_generated.sensor_msgs.msg import CameraInfo, Image
+from dimos_generated.sensor_msgs.msg import CameraInfo, Image, RegionOfInterest
 from dimos_generated.std_msgs.msg import Header
 from dimos_generated.tf2_msgs.msg import TFMessage
+import numpy as np
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
@@ -183,12 +184,13 @@ class DroneCameraModule(Module):
                 height=height,
                 width=width,
                 distortion_model="plumb_bob",
-                d=D,
-                k=K,
-                r=R,
-                p=P,
+                d=np.asarray(D, dtype=np.float64),
+                k=np.asarray(K, dtype=np.float64),
+                r=np.asarray(R, dtype=np.float64),
+                p=np.asarray(P, dtype=np.float64),
                 binning_x=0,
                 binning_y=0,
+                roi=RegionOfInterest(x_offset=0, y_offset=0, height=0, width=0, do_rectify=False),
             )
 
             self.camera_info.publish(msg)

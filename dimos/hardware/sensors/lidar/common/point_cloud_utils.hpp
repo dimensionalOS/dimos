@@ -5,12 +5,16 @@
 
 #pragma once
 
+#include <builtin_interfaces/msg/time.hpp>
+#include <sensor_msgs/msg/point_cloud2.hpp>
+#include <sensor_msgs/msg/point_field.hpp>
+#include <std_msgs/msg/header.hpp>
 #include <cmath>
 #include <limits>
 #include <stdexcept>
 #include <cstdint>
 #include <string>
-#include <dimos_generated/messages.hpp>
+
 
 
 namespace dimos {

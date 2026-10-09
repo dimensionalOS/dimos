@@ -27,7 +27,9 @@ from __future__ import annotations
 import os
 import time
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Twist, TwistStamped, Vector3
+from dimos_generated.std_msgs.msg import Header
 import pytest
 
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
@@ -54,7 +56,14 @@ class TwistSource(Module):
 
     @rpc
     def send(self, x: float) -> None:
-        self.cmd_webrtc.publish(TwistStamped(twist=Twist(linear=Vector3(x=x))))
+        self.cmd_webrtc.publish(
+            TwistStamped(
+                twist=Twist(
+                    linear=Vector3(x=x, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)
+                ),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            )
+        )
 
 
 class TwistSink(Module):

@@ -22,9 +22,11 @@ from typing import Any
 from urllib.parse import urlsplit
 import uuid
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.dimos_msgs.msg import LineSegment3D, LineSegments3D
 from dimos_generated.geometry_msgs.msg import Point
 from dimos_generated.sensor_msgs.msg import Image
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 
 from dimos.core.transport import LCMTransport, PubSubTransport, SHMTransport, ZenohTransport
@@ -66,10 +68,17 @@ def demonstrate(backend: str) -> None:
         encoding="rgb8",
         step=1920,
         data=np.arange(640 * 480 * 3, dtype=np.uint8),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        is_bigendian=0,
     )
     image.header.frame_id = "camera"
     image.header.stamp = time_from_nanoseconds(1_700_000_000_123_456_789)
-    lines = LineSegments3D(segments=[LineSegment3D(start=Point(x=1), end=Point(y=2), weight=4)])
+    lines = LineSegments3D(
+        segments=[
+            LineSegment3D(start=Point(x=1, y=0.0, z=0.0), end=Point(y=2, x=0.0, z=0.0), weight=4)
+        ],
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+    )
     lines.header.frame_id = "map"
     with ExitStack() as stack:
         pools = [ZenohSessionPool(), ZenohSessionPool()]

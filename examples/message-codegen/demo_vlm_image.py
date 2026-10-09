@@ -19,6 +19,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from dimos_generated.sensor_msgs.msg import Image
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 from langchain_core.messages import AIMessage
 import numpy as np
 
@@ -36,7 +37,7 @@ def main() -> None:
     with patch("langchain.chat_models.init_chat_model", return_value=model):
         agent = VLMAgent()
     try:
-        result = agent.query_image(Image.decode(image.encode()), "Describe the colors")
+        result = agent.query_image(cdr_decode(cdr_encode(image), Image), "Describe the colors")
         request = model.invoke.call_args.args[0][-1]
         encoded = request.content[1]["image_url"]["url"].split(",", 1)[1]
         destination = Path("build/message-codegen/demo/evidence/vlm-request.jpg")

@@ -20,6 +20,8 @@ from pathlib import Path
 import subprocess
 from typing import TYPE_CHECKING, Any
 
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_message_build.registry import encode as cdr_encode
 import typer
 
 from dimos.mapping.cli.streams import select_stream
@@ -704,7 +706,9 @@ def main(
             print(f"re-posing color_image from {image_pose!r} + camera optical mount")
             color_image = pose_fill(color_image, src_pose, tolerance=0.1, mount=BASE_TO_OPTICAL)
         cam_info = (
-            camera_info_from_yaml(camera_info, header=Header(frame_id="camera_optical"))
+            camera_info_from_yaml(
+                camera_info, header=Header(frame_id="camera_optical", stamp=Time(sec=0, nanosec=0))
+            )
             if camera_info
             else front_camera_calibration()
         )
@@ -767,12 +771,13 @@ def main(
     if export and pgo_map is not None:
         out_path = Path.cwd() / f"{db_path.stem}.pc2.cdr"
         print(f"exporting PGO twopass map to {out_path}...")
-        out_path.write_bytes(pgo_map.encode())
+        out_path.write_bytes(cdr_encode(pgo_map))
         print(f"wrote {out_path}")
         print()
         print("load back with:")
         print("    from dimos_generated.sensor_msgs.msg import PointCloud2")
-        print(f'    pcd = PointCloud2.decode(open("{out_path.name}", "rb").read())')
+        print("    from dimos_message_build.registry import decode")
+        print(f'    pcd = decode(open("{out_path.name}", "rb").read(), PointCloud2)')
 
 
 if __name__ == "__main__":

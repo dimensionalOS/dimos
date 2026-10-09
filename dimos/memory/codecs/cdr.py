@@ -14,7 +14,9 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
+
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 
 if TYPE_CHECKING:
     from dimos.msgs.protocol import DimosMsg
@@ -24,9 +26,7 @@ class CdrCodec:
     """Store a generated message as its transport-neutral CDR bytes."""
 
     def __init__(self, msg_type: type[DimosMsg]) -> None:
-        if not all(
-            hasattr(msg_type, member) for member in ("encode", "decode", "msg_name", "schema")
-        ):
+        if not all(hasattr(msg_type, member) for member in ("__msgtype__",)):
             raise TypeError(f"{msg_type!r} is not a generated CDR message type")
         self._msg_type = msg_type
 
@@ -37,8 +37,8 @@ class CdrCodec:
 
     def encode(self, value: DimosMsg) -> bytes:
         if not isinstance(value, self._msg_type):
-            raise TypeError(f"Expected {self._msg_type.msg_name}, got {type(value).__name__}")
-        return value.encode()
+            raise TypeError(f"Expected {self._msg_type.__msgtype__}, got {type(value).__name__}")
+        return cdr_encode(value)
 
     def decode(self, data: bytes) -> DimosMsg:
-        return self._msg_type.decode(data)
+        return cast("DimosMsg", cdr_decode(data, self._msg_type.__msgtype__))

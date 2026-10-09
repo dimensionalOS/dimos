@@ -35,6 +35,7 @@ import time
 from typing import Any
 import zlib
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Twist, Vector3
 from dimos_generated.nav_msgs.msg import MapMetaData, OccupancyGrid
 from dimos_generated.sensor_msgs.msg import Image
@@ -202,8 +203,10 @@ def test_encode_paths_and_max_hz_gate(bridge) -> None:
     )
 
     pose = PoseStamped(
-        header=Header(stamp=time_from_seconds(42.5)),
-        pose=Pose(position=Point(x=1.5, y=-2.5, z=0.25), orientation=Quaternion(w=1)),
+        header=Header(stamp=time_from_seconds(42.5), frame_id=""),
+        pose=Pose(
+            position=Point(x=1.5, y=-2.5, z=0.25), orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0)
+        ),
     )
     odom_transport(module).publish(pose)
     assert module.encoded["odom"] == 1
@@ -282,11 +285,18 @@ def test_no_jpeg_encode_while_unsubscribed(bridge, monkeypatch) -> None:
 # Covers every value class of the wire contract: -1 unknown -> 255, 0 free,
 # graded cost, 100 lethal.
 COSTMAP_GRID = OccupancyGrid(
-    data=[-1, 0, 50, 100, 0, -1],
+    data=np.array([-1, 0, 50, 100, 0, -1], dtype=np.int8),
     info=MapMetaData(
-        width=3, height=2, resolution=0.05, origin=Pose(position=Point(x=-1.25, y=2.5))
+        width=3,
+        height=2,
+        resolution=0.05,
+        origin=Pose(
+            position=Point(x=-1.25, y=2.5, z=0.0),
+            orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+        ),
+        map_load_time=Time(sec=0, nanosec=0),
     ),
-    header=Header(stamp=time_from_seconds(42.5)),
+    header=Header(stamp=time_from_seconds(42.5), frame_id=""),
 )
 COSTMAP_CELLS = bytes([255, 0, 50, 100, 0, 255])
 
@@ -323,7 +333,22 @@ def test_costmap_empty_grid_is_skipped(costmap_bridge) -> None:
     push(module, clients[0], Subs(chs=["global_costmap"], n=1))
     assert wait_until(lambda: len(costmap_transport(module).subscribers) == 2)
 
-    costmap_transport(module).publish(OccupancyGrid())
+    costmap_transport(module).publish(
+        OccupancyGrid(
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            info=MapMetaData(
+                map_load_time=Time(sec=0, nanosec=0),
+                resolution=0.0,
+                width=0,
+                height=0,
+                origin=Pose(
+                    position=Point(x=0.0, y=0.0, z=0.0),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+            ),
+            data=np.array([], dtype=np.int8),
+        )
+    )
     flush_loop(module)
     assert module.encoded["global_costmap"] == 0
     assert clients[0].writers["global_costmap"].offers == []
@@ -428,11 +453,18 @@ def test_costmap_replay_uses_message_published_while_unsubscribed(costmap_bridge
     push(module, client, Subs(chs=[], n=2))
     assert wait_until(lambda: len(costmap_transport(module).subscribers) == 1)
     grid_b = OccupancyGrid(
-        data=[100, 100, 100, 0, 0, 0],
+        data=np.array([100, 100, 100, 0, 0, 0], dtype=np.int8),
         info=MapMetaData(
-            width=3, height=2, resolution=0.05, origin=Pose(position=Point(x=-1.25, y=2.5))
+            width=3,
+            height=2,
+            resolution=0.05,
+            origin=Pose(
+                position=Point(x=-1.25, y=2.5, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+            map_load_time=Time(sec=0, nanosec=0),
         ),
-        header=Header(stamp=time_from_seconds(43)),
+        header=Header(stamp=time_from_seconds(43), frame_id=""),
     )
     costmap_transport(module).publish(grid_b)
 
@@ -446,7 +478,22 @@ def test_costmap_replay_uses_message_published_while_unsubscribed(costmap_bridge
 def test_costmap_empty_cached_grid_is_not_replayed(costmap_bridge) -> None:
     module, clients = costmap_bridge
     client = clients[0]
-    costmap_transport(module).publish(OccupancyGrid())
+    costmap_transport(module).publish(
+        OccupancyGrid(
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            info=MapMetaData(
+                map_load_time=Time(sec=0, nanosec=0),
+                resolution=0.0,
+                width=0,
+                height=0,
+                origin=Pose(
+                    position=Point(x=0.0, y=0.0, z=0.0),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+            ),
+            data=np.array([], dtype=np.int8),
+        )
+    )
     push(module, client, Subs(chs=["global_costmap"], n=1))
     assert wait_until(lambda: len(costmap_transport(module).subscribers) == 2)
     flush_loop(module)
@@ -529,8 +576,11 @@ def test_encode_started_in_old_session_is_not_sent_to_replacement(
         target=odom_transport(module).publish,
         args=(
             PoseStamped(
-                header=Header(stamp=time_from_seconds(42.5)),
-                pose=Pose(position=Point(x=1.5, y=-2.5, z=0.25), orientation=Quaternion(w=1)),
+                header=Header(stamp=time_from_seconds(42.5), frame_id=""),
+                pose=Pose(
+                    position=Point(x=1.5, y=-2.5, z=0.25),
+                    orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0),
+                ),
             ),
         ),
     )
@@ -1337,7 +1387,9 @@ def test_teleop_twist_publishes_geometry_twist(teleop_bridge) -> None:
     module, clients, twists = teleop_bridge
     push(module, clients[0], wire_twist(0.4, 0.2, -0.5, seq=1))
     assert wait_until(lambda: len(twists) == 1)
-    assert twists[0] == Twist(linear=Vector3(x=0.4, y=0.2), angular=Vector3(z=-0.5))
+    assert twists[0] == Twist(
+        linear=Vector3(x=0.4, y=0.2, z=0.0), angular=Vector3(z=-0.5, x=0.0, y=0.0)
+    )
 
 
 def test_teleop_clamps_to_boost_bounds(teleop_bridge) -> None:
@@ -1345,7 +1397,9 @@ def test_teleop_clamps_to_boost_bounds(teleop_bridge) -> None:
     push(module, clients[0], wire_twist(100.0, -100.0, -100.0, seq=1))
     assert wait_until(lambda: len(twists) == 1)
     # maxLinear 0.8 * boost 2.0; maxAngular 1.0 * boost 2.0.
-    assert twists[0] == Twist(linear=Vector3(x=1.6, y=-1.6), angular=Vector3(z=-2.0))
+    assert twists[0] == Twist(
+        linear=Vector3(x=1.6, y=-1.6, z=0.0), angular=Vector3(z=-2.0, x=0.0, y=0.0)
+    )
 
 
 def test_teleop_seq_guard_drops_stale_within_live_stream(teleop_bridge) -> None:
@@ -1368,7 +1422,9 @@ def test_teleop_watchdog_deadline_and_high_water_survives_silence(teleop_bridge)
     # wait_until poll and thread scheduling).
     assert wait_until(lambda: len(twists) == 2)
     elapsed = time.monotonic() - started
-    assert twists[1] == Twist()
+    assert twists[1] == Twist(
+        linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)
+    )
     deadline = _TELEOP_TEST_WATCHDOG_MS / 1000 + relay_bridge_module._TELEOP_POLL_S + 0.5
     assert elapsed < deadline, f"deadman zero took {elapsed:.3f}s (deadline {deadline:.3f}s)"
     time.sleep(3 * _TELEOP_TEST_WATCHDOG_MS / 1000)
@@ -1398,7 +1454,9 @@ def test_teleop_zero_only_on_release_edge(teleop_bridge) -> None:
     assert wait_until(lambda: len(twists) == 2)
     settle(module)
     assert len(twists) == 2
-    assert twists[1] == Twist()
+    assert twists[1] == Twist(
+        linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)
+    )
 
 
 def test_teleop_stop_is_unconditional(teleop_bridge) -> None:
@@ -1408,7 +1466,10 @@ def test_teleop_stop_is_unconditional(teleop_bridge) -> None:
     push(module, clients[0], WireStop(seq=1, ts=time.time(), gen=1))
     push(module, clients[0], WireStop(seq=2, ts=time.time(), gen=1))
     assert wait_until(lambda: len(twists) == 2)
-    assert all(t == Twist() for t in twists)
+    assert all(
+        t == Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+        for t in twists
+    )
 
 
 def test_teleop_stop_blocks_stale_reordered_twist(teleop_bridge) -> None:
@@ -1430,7 +1491,9 @@ def test_teleop_lease_end_zeroes_once_and_resets_seq(teleop_bridge) -> None:
     assert wait_until(lambda: len(twists) == 1)
     push(module, clients[0], WireTeleopStop(gen=1))
     assert wait_until(lambda: len(twists) == 2)
-    assert twists[1] == Twist()
+    assert twists[1] == Twist(
+        linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)
+    )
     push(module, clients[0], WireTeleopStop(gen=1))  # repeat: dead on the gen gate
     settle(module)
     assert len(twists) == 2
@@ -1445,7 +1508,11 @@ def test_teleop_session_drop_zeroes(teleop_bridge) -> None:
     push(module, clients[0], wire_twist(0.5, 0.0, 0.0, seq=1))
     assert wait_until(lambda: len(twists) == 1)
     kill_session(module, clients[0])
-    assert wait_until(lambda: len(twists) == 2 and twists[1] == Twist())
+    assert wait_until(
+        lambda: len(twists) == 2
+        and twists[1]
+        == Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+    )
     assert wait_until(lambda: len(clients) == 2)  # supervisor reconnected
     settle(module)
     assert len(twists) == 2
@@ -1456,7 +1523,11 @@ def test_teleop_lease_end_blocks_stale_gen_twist_permanently(teleop_bridge) -> N
     push(module, clients[0], wire_twist(0.5, 0.0, 0.0, seq=50))
     assert wait_until(lambda: len(twists) == 1)
     push(module, clients[0], WireTeleopStop(gen=1))
-    assert wait_until(lambda: len(twists) == 2 and twists[1] == Twist())
+    assert wait_until(
+        lambda: len(twists) == 2
+        and twists[1]
+        == Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+    )
     # Past the watchdog window, delayed twists from the released lease must
     # stay dead regardless of seq: a reordered pre-stop command must never
     # restart the robot after a stop.
@@ -1491,7 +1562,11 @@ def test_teleop_start_adopts_new_gen_and_zeroes_lost_stop(teleop_bridge) -> None
     # The lease changed hands but its teleop_stop datagram was lost: the
     # next grant's announcement stops the robot and voids the old lease.
     push(module, clients[0], WireTeleopStart(gen=2))
-    assert wait_until(lambda: len(twists) == 2 and twists[1] == Twist())
+    assert wait_until(
+        lambda: len(twists) == 2
+        and twists[1]
+        == Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+    )
     push(module, clients[0], wire_twist(0.5, 0.0, 0.0, seq=51))  # old lease
     settle(module)
     assert len(twists) == 2
@@ -1512,7 +1587,11 @@ def test_teleop_estop_does_not_lower_high_water(teleop_bridge) -> None:
     # A stale reordered e-stop still zeroes (safe direction) but must not
     # lower the high-water and let the superseded twist 11 re-apply.
     push(module, clients[0], WireStop(seq=10, ts=time.time(), gen=1))
-    assert wait_until(lambda: len(twists) == 2 and twists[1] == Twist())
+    assert wait_until(
+        lambda: len(twists) == 2
+        and twists[1]
+        == Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+    )
     push(module, clients[0], wire_twist(0.9, 0.0, 0.0, seq=11))
     settle(module)
     assert len(twists) == 2

@@ -19,6 +19,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.sensor_msgs.msg import CompressedImage, Image
 from dimos_generated.std_msgs.msg import Header
 import numpy as np
@@ -52,15 +53,15 @@ def image_from_array(pixels: NDArray[Any], *, encoding: str, header: Header | No
         channels != 1 and (pixels.ndim != 3 or pixels.shape[2] != channels)
     ):
         raise ValueError(f"array shape does not match {encoding}")
-    contiguous = np.ascontiguousarray(pixels)
+    contiguous = np.array(pixels, copy=True, order="C")
     return Image(
-        header=header if header is not None else Header(),
+        header=header if header is not None else Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
         width=pixels.shape[1],
         height=pixels.shape[0],
         encoding=encoding,
         is_bigendian=int(not pixels.dtype.isnative if np.little_endian else pixels.dtype.isnative),
         step=pixels.shape[1] * channels * pixels.dtype.itemsize,
-        data=contiguous.view(np.uint8).ravel(),
+        data=np.asarray(contiguous.view(np.uint8).ravel(), dtype=np.uint8),
     )
 
 
@@ -79,7 +80,9 @@ def image_view(msg: Image) -> NDArray[Any]:
         if channels == 1
         else (msg.step, channels * dtype.itemsize, dtype.itemsize)
     )
-    return np.ndarray(shape, dtype=dtype, buffer=msg.data.view(), strides=strides)
+    view = np.ndarray(shape, dtype=dtype, buffer=msg.data, strides=strides)
+    view.setflags(write=False)
+    return view
 
 
 def image_to_jpeg(msg: Image, quality: int = 75) -> bytes:
@@ -163,7 +166,7 @@ def compressed_image_from_image(
     return CompressedImage(
         header=message.header,
         format=f"{message.encoding}; {format} compressed {output_encoding}",
-        data=data,
+        data=np.asarray(np.frombuffer(data, dtype=np.uint8).copy(), dtype=np.uint8),
     )
 
 

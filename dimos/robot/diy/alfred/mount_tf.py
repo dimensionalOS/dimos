@@ -25,6 +25,7 @@ from __future__ import annotations
 
 from xml.etree import ElementTree
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Transform, TransformStamped, Vector3
 from dimos_generated.std_msgs.msg import Header
 
@@ -54,7 +55,7 @@ def mount_transforms() -> list[TransformStamped]:
         rpy = [float(value) for value in origin.attrib["rpy"].split()]
         transforms.append(
             TransformStamped(
-                header=Header(frame_id=parent.attrib["link"]),
+                header=Header(frame_id=parent.attrib["link"], stamp=Time(sec=0, nanosec=0)),
                 child_frame_id=child_link,
                 transform=Transform(
                     translation=Vector3(x=translation[0], y=translation[1], z=translation[2]),

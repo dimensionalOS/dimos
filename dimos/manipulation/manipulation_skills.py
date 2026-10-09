@@ -16,9 +16,11 @@
 
 from __future__ import annotations
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped
 from dimos_generated.sensor_msgs.msg import JointState
 from dimos_generated.std_msgs.msg import Header
+import numpy as np
 
 from dimos.agents.annotation import skill
 from dimos.agents.capabilities import CAP_MOVEMENT
@@ -167,7 +169,7 @@ class ManipulationSkills(Module):
                 euler[2] if yaw is None else yaw,
             )
         target = PoseStamped(
-            header=Header(frame_id="world"),
+            header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
             pose=Pose(position=Point(x=x, y=y, z=z), orientation=orientation),
         )
         plan = self.manipulation.plan_to_poses({group_id: target})
@@ -204,7 +206,15 @@ class ManipulationSkills(Module):
                 f"Expected {len(group.joint_names)} joint values, got {len(values)}",
             )
         plan = self.manipulation.plan_to_joints(
-            {group_id: JointState(name=list(group.joint_names), position=values)}
+            {
+                group_id: JointState(
+                    name=list(group.joint_names),
+                    position=np.asarray(values, dtype=np.float64),
+                    header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                    velocity=np.array([], dtype=np.float64),
+                    effort=np.array([], dtype=np.float64),
+                )
+            }
         )
         if failure := self._planning_result(plan):
             return failure

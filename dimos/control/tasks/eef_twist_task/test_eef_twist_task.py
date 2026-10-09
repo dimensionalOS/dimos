@@ -14,7 +14,16 @@
 
 from pathlib import Path
 
-from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Twist, TwistStamped, Vector3
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseStamped,
+    Quaternion,
+    Twist,
+    TwistStamped,
+    Vector3,
+)
 from dimos_generated.sensor_msgs.msg import JointState
 from dimos_generated.std_msgs.msg import Header
 import numpy as np
@@ -42,12 +51,19 @@ def _solver(mocker: MockerFixture) -> PinkPoseTargetSolver:
     solver = mocker.Mock(spec=PinkPoseTargetSolver)
     solver.frame_poses.return_value = {
         "tool": PoseStamped(
-            header=Header(frame_id="world"), pose=Pose(position=Point(x=0.0, y=0.0, z=0.0))
+            header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+            pose=Pose(
+                position=Point(x=0.0, y=0.0, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
         )
     }
     solver.step.return_value = JointState(
         name=["arm/joint1", "arm/joint2"],
-        position=[0.01, 0.02],
+        position=np.array([0.01, 0.02], dtype=np.float64),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
     )
     return solver
 
@@ -94,7 +110,10 @@ def _state(t_now: float = 1.0, *, dt: float = 0.01) -> CoordinatorState:
 
 
 def _twist(x: float = 0.1) -> TwistStamped:
-    return TwistStamped(header=Header(frame_id="tool"), twist=Twist(linear=Vector3(x=x)))
+    return TwistStamped(
+        header=Header(frame_id="tool", stamp=Time(sec=0, nanosec=0)),
+        twist=Twist(linear=Vector3(x=x, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)),
+    )
 
 
 def test_twist_integrates_target_and_uses_shared_persistent_command(

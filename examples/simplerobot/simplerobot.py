@@ -25,7 +25,7 @@ Subscribes to Twist commands and publishes PoseStamped.
 import math
 import time
 
-from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Twist, Vector3
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Twist, Vector3
 from dimos_generated.std_msgs.msg import Header
 import reactivex as rx
 
@@ -61,8 +61,10 @@ class SimpleRobot(Module):
     config: SimpleRobotConfig
     cmd_vel: In[Twist]
     pose: Out[PoseStamped]
-    _pose = Pose()
-    _vel = Twist()
+    _pose = Pose(
+        position=Point(x=0.0, y=0.0, z=0.0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+    )
+    _vel = Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
     _vel_time = 0.0
 
     @rpc
@@ -84,7 +86,11 @@ class SimpleRobot(Module):
         now = time.time()
         dt = 1.0 / self.config.update_rate
 
-        vel = self._vel if now - self._vel_time < self.config.cmd_timeout else Twist()
+        vel = (
+            self._vel
+            if now - self._vel_time < self.config.cmd_timeout
+            else Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+        )
 
         self._pose = apply_twist(self._pose, vel, dt)
 
@@ -128,14 +134,20 @@ if __name__ == "__main__":
             time.sleep(1)
             print("Forward...")
             for _ in range(8):
-                robot._on_twist(Twist(linear=Vector3(x=1.0)))
+                robot._on_twist(
+                    Twist(linear=Vector3(x=1.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+                )
                 time.sleep(0.25)
             print("Turn...")
             for _ in range(12):
-                robot._on_twist(Twist(linear=Vector3(x=0.5), angular=Vector3(z=0.5)))
+                robot._on_twist(
+                    Twist(linear=Vector3(x=0.5, y=0.0, z=0.0), angular=Vector3(z=0.5, x=0.0, y=0.0))
+                )
                 time.sleep(0.25)
             print("Stop")
-            robot._on_twist(Twist())
+            robot._on_twist(
+                Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+            )
             time.sleep(1)
         else:
             while True:

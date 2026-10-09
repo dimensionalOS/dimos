@@ -18,10 +18,12 @@ import argparse
 from pathlib import Path
 import subprocess
 
-from story_messages.builtin_interfaces.msg import Time
-from story_messages.std_msgs.msg import Header
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode, encode
 from story_messages.story_msgs.msg import DeviceReading
 
+from dimos.core.global_config import global_config
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
 
@@ -31,7 +33,7 @@ class ReadingProcessor(Module):
     processed: Out[DeviceReading]
 
     def handle_reading(self, message: DeviceReading) -> None:
-        result = DeviceReading.decode(message.encode())
+        result = decode(encode(message), DeviceReading)
         result.value += 1
         result.label += "/python"
         self.processed.publish(result)
@@ -41,6 +43,16 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--build", type=Path, required=True)
     args = parser.parse_args()
+    # This file-relay acceptance needs local RPC only, never LAN discovery.
+    global_config.update(
+        transport="zenoh",
+        robot_ip="",
+        robot_ips="",
+        zenoh_connect="",
+        zenoh_scouting=False,
+        zenoh_multicast=False,
+        zenoh_gossip=False,
+    )
     processor = ReadingProcessor()
     outputs: list[DeviceReading] = []
     unsubscribe = processor.processed.subscribe(outputs.append)
@@ -49,14 +61,15 @@ def main() -> None:
             header=Header(stamp=Time(sec=1700000000, nanosec=123456789), frame_id="sensor"),
             sequence=40,
             value=20.5,
+            label="new-local-type",
         )
-        processor.handle_reading(DeviceReading.decode(reading.encode()))
+        processor.handle_reading(decode(encode(reading), DeviceReading))
         assert len(outputs) == 1
         output = outputs[0]
-        print(f"Python module: {output.msg_name}, value={output.value}, label={output.label}")
+        print(f"Python module: {output.__msgtype__}, value={output.value}, label={output.label}")
         evidence = args.build / "evidence"
         evidence.mkdir(parents=True, exist_ok=True)
-        (evidence / "python.cdr").write_bytes(output.encode())
+        (evidence / "python.cdr").write_bytes(encode(output))
         subprocess.run(
             [
                 str(args.build / "cpp-consumer"),
@@ -73,7 +86,7 @@ def main() -> None:
             ],
             check=True,
         )
-        final = DeviceReading.decode((evidence / "rust.cdr").read_bytes())
+        final = decode((evidence / "rust.cdr").read_bytes(), DeviceReading)
         assert final.sequence == 42
         assert final.value == 23.5
         assert final.label == "new-local-type/python/cpp/rust"

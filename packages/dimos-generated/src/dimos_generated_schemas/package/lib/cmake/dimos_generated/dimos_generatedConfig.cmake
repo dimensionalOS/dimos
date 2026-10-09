@@ -1,6 +1,0 @@
-include(CMakeFindDependencyMacro)
-find_dependency(fastcdr 2.4.0 EXACT)
-if(NOT TARGET dimos_generated::messages)
-add_library(dimos_generated::messages INTERFACE IMPORTED)
-set_target_properties(dimos_generated::messages PROPERTIES INTERFACE_COMPILE_FEATURES "cxx_std_17" INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_CURRENT_LIST_DIR}/../../../include" INTERFACE_LINK_LIBRARIES "fastcdr;")
-endif()

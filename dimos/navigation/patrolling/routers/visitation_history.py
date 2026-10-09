@@ -108,7 +108,7 @@ class VisitationHistory:
         if grid is None or visited is None:
             return
         r = self._clearance_radius_cells
-        grid_pos = world_to_grid(grid, Point(x=x, y=y))
+        grid_pos = world_to_grid(grid, Point(x=x, y=y, z=0.0))
         col, row = int(np.floor(round(grid_pos[0], 9))), int(np.floor(round(grid_pos[1], 9)))
         if row + r < 0 or row - r >= grid.info.height or col + r < 0 or col - r >= grid.info.width:
             return

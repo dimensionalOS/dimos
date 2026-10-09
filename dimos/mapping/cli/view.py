@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from dimos_message_build.registry import decode as cdr_decode
 import typer
 
 
@@ -40,7 +41,7 @@ def main(
     from dimos.visualization.rerun.init import rerun_init
     from dimos.visualization.rerun.message_helpers import cloud_archetype
 
-    cloud = PointCloud2.decode(path.read_bytes())
+    cloud = cdr_decode(path.read_bytes(), PointCloud2)
     print(f"{path}: {cloud.width * cloud.height} points in {cloud.header.frame_id!r}")
 
     rerun_init("dimos map view")

@@ -33,7 +33,7 @@ from .project import Project, prepare
 @contextmanager
 def python_project() -> Iterator[None]:
     project = Project.load(Path.cwd())
-    output = prepare(project)
+    output = prepare(project, ("python",))
     dependencies = project.dependencies()
     write_distribution(
         output,

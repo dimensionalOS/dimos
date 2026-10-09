@@ -17,6 +17,7 @@ import threading
 import time
 from typing import Any
 
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseWithCovariance, Quaternion
 from dimos_generated.sensor_msgs.msg import Image
 from dimos_generated.std_msgs.msg import Header
 
@@ -277,7 +278,14 @@ class ObjectTracker2D(Module):
             ),
             results=[
                 ObjectHypothesisWithPose(
-                    hypothesis=ObjectHypothesis(class_id="tracked_object", score=1.0)
+                    hypothesis=ObjectHypothesis(class_id="tracked_object", score=1.0),
+                    pose=PoseWithCovariance(
+                        pose=Pose(
+                            position=Point(x=0.0, y=0.0, z=0.0),
+                            orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                        ),
+                        covariance=np.zeros(36, dtype=np.float64),
+                    ),
                 )
             ],
         )

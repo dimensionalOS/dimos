@@ -24,6 +24,7 @@ from typing import (
     cast,
 )
 
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 
 from dimos.core.stream import In, Stream, Transport
@@ -257,7 +258,7 @@ class SHMTransport(PubSubTransport[T]):
         if not self._started:
             self.start()
 
-        payload = cast("DimosMsg", msg).encode() if self._msg_type is not None else msg
+        payload = cdr_encode(msg) if self._msg_type is not None else msg
         self.shm.publish(self.topic, payload)
 
     def subscribe(
@@ -269,7 +270,8 @@ class SHMTransport(PubSubTransport[T]):
         if msg_type is None:
             return self.shm.subscribe(self.topic, lambda msg, topic: callback(cast("T", msg)))
         return self.shm.subscribe(
-            self.topic, lambda msg, topic: callback(cast("T", msg_type.decode(msg)))
+            self.topic,
+            lambda msg, topic: callback(cast("T", cdr_decode(msg, msg_type.__msgtype__))),
         )
 
     def start(self) -> None:
@@ -446,7 +448,7 @@ class WebRTCTransport(PubSubTransport[M]):
         assert self._pubsub is not None
         data: bytes | M
         if self._msg_type is not None:
-            if msg.msg_name != self._msg_type.msg_name:
+            if msg.__msgtype__ != self._msg_type.__msgtype__:
                 raise ValueError("message type does not match declared WebRTC channel type")
             with self._init_lock:
                 sequence = self._frame_sequence
@@ -457,9 +459,9 @@ class WebRTCTransport(PubSubTransport[M]):
                     seq=sequence,
                     ts=time.time(),
                     delivery="latest",
-                    meta={"type": self._msg_type.msg_name, "encoding": "cdr"},
+                    meta={"type": self._msg_type.__msgtype__, "encoding": "cdr"},
                 ),
-                msg.encode(),
+                cdr_encode(msg),
             )
         else:
             data = msg
@@ -485,10 +487,10 @@ class WebRTCTransport(PubSubTransport[M]):
                     if (
                         frame.header.ch != self.topic
                         or meta.get("encoding") != "cdr"
-                        or meta.get("type") != msg_type.msg_name
+                        or meta.get("type") != msg_type.__msgtype__
                     ):
                         return
-                    msg = msg_type.decode(frame.payload)
+                    msg = cdr_decode(frame.payload, msg_type.__msgtype__)
                 except (ProtocolError, ValueError):
                     return
                 callback(msg)  # type: ignore[arg-type]

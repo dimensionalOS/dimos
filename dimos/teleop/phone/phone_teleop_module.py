@@ -29,6 +29,7 @@ from typing import Any
 
 from dimos_generated.geometry_msgs.msg import Twist, TwistStamped, Vector3
 from dimos_generated.std_msgs.msg import Bool, Header
+from dimos_message_build.registry import decode as cdr_decode, schema as cdr_schema
 from fastapi import WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -108,7 +109,10 @@ class PhoneTeleopModule(Module):
         @self._web_server.app.get("/teleop/schema")
         async def command_schemas() -> dict[str, dict[str, str]]:
             return {
-                channel: {"type": message_type.msg_name, "definition": message_type.schema}
+                channel: {
+                    "type": message_type.__msgtype__,
+                    "definition": cdr_schema(message_type.__msgtype__),
+                }
                 for channel, message_type in self._command_types.items()
             }
 
@@ -142,7 +146,7 @@ class PhoneTeleopModule(Module):
             if (
                 message_type is None
                 or metadata.get("encoding") != "cdr"
-                or metadata.get("type") != message_type.msg_name
+                or metadata.get("type") != message_type.__msgtype__
             ):
                 return False
             self._decoders[frame.header.ch](frame.payload)
@@ -181,13 +185,13 @@ class PhoneTeleopModule(Module):
 
     def _on_sensors_bytes(self, data: bytes) -> None:
         """Decode generated CDR bytes into TwistStamped and update sensor state."""
-        msg = TwistStamped.decode(data)
+        msg = cdr_decode(data, TwistStamped)
         with self._lock:
             self._current_sensors = msg
 
     def _on_button_bytes(self, data: bytes) -> None:
         """Decode generated CDR bytes into Bool and update button state."""
-        msg = Bool.decode(data)
+        msg = cdr_decode(data, Bool)
         with self._lock:
             self._teleop_button = bool(msg.data)
 
@@ -279,7 +283,8 @@ class PhoneTeleopModule(Module):
                 x=current.twist.linear.x - initial.twist.linear.x,
                 y=current.twist.linear.y - initial.twist.linear.y,
                 z=current.twist.linear.z - initial.twist.linear.z,
-            )
+            ),
+            angular=Vector3(x=0.0, y=0.0, z=0.0),
         )
 
         # Handle yaw wraparound (linear.z = yaw, 0-360 degrees)

@@ -1,65 +1,32 @@
-from ..._types import (
-    std_msgs__msg__Bool as Bool,
-    std_msgs__msg__Byte as Byte,
-    std_msgs__msg__ByteMultiArray as ByteMultiArray,
-    std_msgs__msg__Char as Char,
-    std_msgs__msg__ColorRGBA as ColorRGBA,
-    std_msgs__msg__Empty as Empty,
-    std_msgs__msg__Float32 as Float32,
-    std_msgs__msg__Float32MultiArray as Float32MultiArray,
-    std_msgs__msg__Float64 as Float64,
-    std_msgs__msg__Float64MultiArray as Float64MultiArray,
-    std_msgs__msg__Header as Header,
-    std_msgs__msg__Int8 as Int8,
-    std_msgs__msg__Int8MultiArray as Int8MultiArray,
-    std_msgs__msg__Int16 as Int16,
-    std_msgs__msg__Int16MultiArray as Int16MultiArray,
-    std_msgs__msg__Int32 as Int32,
-    std_msgs__msg__Int32MultiArray as Int32MultiArray,
-    std_msgs__msg__Int64 as Int64,
-    std_msgs__msg__Int64MultiArray as Int64MultiArray,
-    std_msgs__msg__MultiArrayDimension as MultiArrayDimension,
-    std_msgs__msg__MultiArrayLayout as MultiArrayLayout,
-    std_msgs__msg__String as String,
-    std_msgs__msg__UInt8 as UInt8,
-    std_msgs__msg__UInt8MultiArray as UInt8MultiArray,
-    std_msgs__msg__UInt16 as UInt16,
-    std_msgs__msg__UInt16MultiArray as UInt16MultiArray,
-    std_msgs__msg__UInt32 as UInt32,
-    std_msgs__msg__UInt32MultiArray as UInt32MultiArray,
-    std_msgs__msg__UInt64 as UInt64,
-    std_msgs__msg__UInt64MultiArray as UInt64MultiArray,
-)
+from ..._types import store
 
-__all__ = [
-    "Bool",
-    "Byte",
-    "ByteMultiArray",
-    "Char",
-    "ColorRGBA",
-    "Empty",
-    "Float32",
-    "Float32MultiArray",
-    "Float64",
-    "Float64MultiArray",
-    "Header",
-    "Int8",
-    "Int8MultiArray",
-    "Int16",
-    "Int16MultiArray",
-    "Int32",
-    "Int32MultiArray",
-    "Int64",
-    "Int64MultiArray",
-    "MultiArrayDimension",
-    "MultiArrayLayout",
-    "String",
-    "UInt8",
-    "UInt8MultiArray",
-    "UInt16",
-    "UInt16MultiArray",
-    "UInt32",
-    "UInt32MultiArray",
-    "UInt64",
-    "UInt64MultiArray",
-]
+Header = store.types["std_msgs/msg/Header"]
+Bool = store.types["std_msgs/msg/Bool"]
+Byte = store.types["std_msgs/msg/Byte"]
+MultiArrayDimension = store.types["std_msgs/msg/MultiArrayDimension"]
+MultiArrayLayout = store.types["std_msgs/msg/MultiArrayLayout"]
+ByteMultiArray = store.types["std_msgs/msg/ByteMultiArray"]
+Char = store.types["std_msgs/msg/Char"]
+ColorRGBA = store.types["std_msgs/msg/ColorRGBA"]
+Empty = store.types["std_msgs/msg/Empty"]
+Float32 = store.types["std_msgs/msg/Float32"]
+Float32MultiArray = store.types["std_msgs/msg/Float32MultiArray"]
+Float64 = store.types["std_msgs/msg/Float64"]
+Float64MultiArray = store.types["std_msgs/msg/Float64MultiArray"]
+Int16 = store.types["std_msgs/msg/Int16"]
+Int16MultiArray = store.types["std_msgs/msg/Int16MultiArray"]
+Int32 = store.types["std_msgs/msg/Int32"]
+Int32MultiArray = store.types["std_msgs/msg/Int32MultiArray"]
+Int64 = store.types["std_msgs/msg/Int64"]
+Int64MultiArray = store.types["std_msgs/msg/Int64MultiArray"]
+Int8 = store.types["std_msgs/msg/Int8"]
+Int8MultiArray = store.types["std_msgs/msg/Int8MultiArray"]
+String = store.types["std_msgs/msg/String"]
+UInt16 = store.types["std_msgs/msg/UInt16"]
+UInt16MultiArray = store.types["std_msgs/msg/UInt16MultiArray"]
+UInt32 = store.types["std_msgs/msg/UInt32"]
+UInt32MultiArray = store.types["std_msgs/msg/UInt32MultiArray"]
+UInt64 = store.types["std_msgs/msg/UInt64"]
+UInt64MultiArray = store.types["std_msgs/msg/UInt64MultiArray"]
+UInt8 = store.types["std_msgs/msg/UInt8"]
+UInt8MultiArray = store.types["std_msgs/msg/UInt8MultiArray"]

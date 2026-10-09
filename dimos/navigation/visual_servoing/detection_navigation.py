@@ -205,6 +205,6 @@ class DetectionNavigation:
             )
 
         return Twist(
-            linear=Vector3(x=linear_x),
-            angular=Vector3(z=angular_z),
+            linear=Vector3(x=linear_x, y=0.0, z=0.0),
+            angular=Vector3(z=angular_z, x=0.0, y=0.0),
         )

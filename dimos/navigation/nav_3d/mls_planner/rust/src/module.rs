@@ -17,14 +17,19 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::mls_planner::{Config, Planner, RegionBounds};
 use crate::voxel::{surface_point_xyz, VoxelKey};
-use dimos_generated_messages::builtin_interfaces::msg::Time;
-use dimos_generated_messages::dimos_msgs::msg::{LineSegment3D, LineSegments3D};
-use dimos_generated_messages::geometry_msgs::msg::{
-    Point, PointStamped, Pose, PoseStamped, Quaternion,
+use dimos_generated_messages::builtin_interfaces::msg::time::Time;
+use dimos_generated_messages::dimos_msgs::msg::{
+    line_segment3_d::LineSegment3D, line_segments3_d::LineSegments3D,
 };
-use dimos_generated_messages::nav_msgs::msg::Path;
-use dimos_generated_messages::sensor_msgs::msg::{PointCloud2, PointField};
-use dimos_generated_messages::std_msgs::msg::Header;
+use dimos_generated_messages::geometry_msgs::msg::{
+    point::Point, point_stamped::PointStamped, pose::Pose, pose_stamped::PoseStamped,
+    quaternion::Quaternion,
+};
+use dimos_generated_messages::nav_msgs::msg::path::Path;
+use dimos_generated_messages::sensor_msgs::msg::{
+    point_cloud2::PointCloud2, point_field::PointField,
+};
+use dimos_generated_messages::std_msgs::msg::header::Header;
 use dimos_module::cdr;
 use dimos_module::pointcloud::xyz_points as extract_xyz;
 use dimos_module::{error_throttled, warn_throttled, Input, Module, Output, Tf};

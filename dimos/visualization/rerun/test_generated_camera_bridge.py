@@ -15,8 +15,10 @@
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from dimos_generated.sensor_msgs.msg import CameraInfo, CompressedImage, Image
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.sensor_msgs.msg import CameraInfo, CompressedImage, Image, RegionOfInterest
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 import rerun as rr
@@ -35,16 +37,33 @@ def test_generated_calibration_pairs_with_image(camera_first: bool, compressed: 
     bridge._min_intervals = {}
     bridge._camera_infos = {}
     bridge._image_entities = set()
-    header = Header(frame_id="optical")
+    header = Header(frame_id="optical", stamp=Time(sec=0, nanosec=0))
     image = image_from_array(np.zeros((4, 6, 3), dtype=np.uint8), encoding="rgb8", header=header)
     message = (
-        CompressedImage(header=header, format="jpeg", data=image_to_jpeg(image))
+        CompressedImage(
+            header=header, format="jpeg", data=np.frombuffer(image_to_jpeg(image), dtype=np.uint8)
+        )
         if compressed
         else image
     )
-    message = type(message).decode(message.encode())
-    info = CameraInfo(header=header, width=6, height=4, k=[10, 0, 3, 0, 11, 2, 0, 0, 1])
-    pairs = [(CameraInfo.decode(info.encode()), "/camera_info"), (message, "/image")]
+    message = cdr_decode(cdr_encode(message), type(message))
+    info = CameraInfo(
+        header=header,
+        width=6,
+        height=4,
+        k=np.array([10, 0, 3, 0, 11, 2, 0, 0, 1], dtype=np.float64),
+        distortion_model="",
+        d=np.array([], dtype=np.float64),
+        r=np.zeros(9, dtype=np.float64),
+        p=np.zeros(12, dtype=np.float64),
+        binning_x=0,
+        binning_y=0,
+        roi=RegionOfInterest(x_offset=0, y_offset=0, height=0, width=0, do_rectify=False),
+    )
+    pairs = [
+        (cdr_decode(cdr_encode(info), CameraInfo), "/camera_info"),
+        (message, "/image"),
+    ]
     if not camera_first:
         pairs.reverse()
     try:
@@ -65,14 +84,24 @@ def test_generated_calibration_pairs_with_image(camera_first: bool, compressed: 
 )
 def test_generated_depth_units(encoding, dtype, meter) -> None:
     message = image_from_array(np.ones((2, 3), dtype=dtype), encoding=encoding)
-    result = image_archetype(Image.decode(message.encode()))
+    result = image_archetype(cdr_decode(cdr_encode(message), Image))
     assert isinstance(result, rr.DepthImage)
     assert result.meter.as_arrow_array().to_pylist() == [meter]
 
 
 def test_camera_override_parents_frustum_without_mutating_header():
     info = CameraInfo(
-        header=Header(frame_id="original"), width=6, height=4, k=[10, 0, 3, 0, 11, 2, 0, 0, 1]
+        header=Header(frame_id="original", stamp=Time(sec=0, nanosec=0)),
+        width=6,
+        height=4,
+        k=np.array([10, 0, 3, 0, 11, 2, 0, 0, 1], dtype=np.float64),
+        distortion_model="",
+        d=np.array([], dtype=np.float64),
+        r=np.zeros(9, dtype=np.float64),
+        p=np.zeros(12, dtype=np.float64),
+        binning_x=0,
+        binning_y=0,
+        roi=RegionOfInterest(x_offset=0, y_offset=0, height=0, width=0, do_rectify=False),
     )
     result = camera_pinhole(info, optical_frame="d435_color_optical_frame")
     assert result.parent_frame.as_arrow_array().to_pylist() == ["tf#/d435_color_optical_frame"]

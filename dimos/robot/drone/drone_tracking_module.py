@@ -270,9 +270,11 @@ class DroneTrackingModule(Module):
 
                 # Publish velocity command via LCM
                 if self.cmd_vel.transport:
-                    twist = Twist()
-                    twist.linear = Vector3(x=vx, y=vy)
-                    twist.angular = Vector3()  # No rotation for now
+                    twist = Twist(
+                        linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)
+                    )
+                    twist.linear = Vector3(x=vx, y=vy, z=0.0)
+                    twist.angular = Vector3(x=0.0, y=0.0, z=0.0)  # No rotation for now
                     self.cmd_vel.publish(twist)
 
                 # Publish visualization if transport is set
@@ -283,7 +285,7 @@ class DroneTrackingModule(Module):
                     overlay_msg = image_from_array(
                         overlay,
                         encoding="bgr8",
-                        header=Header(stamp=time_from_seconds(time.time())),
+                        header=Header(stamp=time_from_seconds(time.time()), frame_id=""),
                     )
                     self.tracking_overlay.publish(overlay_msg)
 
@@ -308,9 +310,11 @@ class DroneTrackingModule(Module):
         finally:
             # Stop movement by publishing zero velocity
             if self.cmd_vel.transport:
-                stop_twist = Twist()
-                stop_twist.linear = Vector3()
-                stop_twist.angular = Vector3()
+                stop_twist = Twist(
+                    linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)
+                )
+                stop_twist.linear = Vector3(x=0.0, y=0.0, z=0.0)
+                stop_twist.angular = Vector3(x=0.0, y=0.0, z=0.0)
                 self.cmd_vel.publish(stop_twist)
             self._tracking_active = False
             logger.info(f"Visual servoing loop ended after {frame_count} frames")
@@ -382,9 +386,11 @@ class DroneTrackingModule(Module):
 
         # Send stop command via LCM
         if self.cmd_vel.transport:
-            stop_twist = Twist()
-            stop_twist.linear = Vector3()
-            stop_twist.angular = Vector3()
+            stop_twist = Twist(
+                linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)
+            )
+            stop_twist.linear = Vector3(x=0.0, y=0.0, z=0.0)
+            stop_twist.angular = Vector3(x=0.0, y=0.0, z=0.0)
             self.cmd_vel.publish(stop_twist)
 
         self._publish_status({"status": "stopped", "object": self._current_object})

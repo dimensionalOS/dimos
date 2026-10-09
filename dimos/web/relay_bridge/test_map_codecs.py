@@ -16,9 +16,10 @@
 
 import math
 
-from dimos_generated.geometry_msgs.msg import Point, PointStamped, Pose, PoseStamped
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Point, PointStamped, Pose, PoseStamped, Quaternion
 from dimos_generated.nav_msgs.msg import Path
-from dimos_generated.std_msgs.msg import Bool
+from dimos_generated.std_msgs.msg import Bool, Header
 import pytest
 
 from dimos.web.codecs import resolve_decoder, resolve_encoder
@@ -26,18 +27,29 @@ from dimos.web.relay_bridge.builtin_codecs import decode_bool, decode_point, enc
 
 
 def _pose(x: float, y: float) -> PoseStamped:
-    return PoseStamped(pose=Pose(position=Point(x=x, y=y)))
+    return PoseStamped(
+        pose=Pose(
+            position=Point(x=x, y=y, z=0.0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+        ),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+    )
 
 
 def test_path_encodes_a_rounded_xy_polyline() -> None:
-    path = Path(poses=[_pose(1.23456, -2.0), _pose(0.0004, 3.5)])
+    path = Path(
+        poses=[_pose(1.23456, -2.0), _pose(0.0004, 3.5)],
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+    )
     assert encode_path(path) == b"[[1.235,-2.0],[0.0,3.5]]"
     assert resolve_encoder("path.json.v1", Path).encode is encode_path
 
 
 def test_empty_path_encodes_as_a_clear() -> None:
     # The planner publishes Path() on cancel and arrival: the overlay must go.
-    assert encode_path(Path()) == b"[]"
+    assert (
+        encode_path(Path(header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""), poses=[]))
+        == b"[]"
+    )
 
 
 def test_point_decodes_a_click() -> None:

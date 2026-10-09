@@ -17,7 +17,9 @@ from dimos_generated.std_msgs.msg import Header
 
 
 def point_to_pose_stamped(point: Point, header: Header) -> PoseStamped:
-    return PoseStamped(header=header, pose=Pose(position=point, orientation=Quaternion(w=1)))
+    return PoseStamped(
+        header=header, pose=Pose(position=point, orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0))
+    )
 
 
 def pose_stamped_to_point(pose: PoseStamped) -> tuple[float, float]:

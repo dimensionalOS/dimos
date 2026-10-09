@@ -34,6 +34,7 @@ from typing import Any, TypeVar
 from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped
 from dimos_generated.sensor_msgs.msg import Joy
 from dimos_generated.std_msgs.msg import UInt32
+from dimos_message_build.registry import decode as cdr_decode, schema as cdr_schema
 from fastapi import WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -183,7 +184,10 @@ class WebXRTeleopModule(Module):
         @self._web_server.app.get("/teleop/schema")
         async def command_schemas() -> dict[str, dict[str, str]]:
             return {
-                channel: {"type": message_type.msg_name, "definition": message_type.schema}
+                channel: {
+                    "type": message_type.__msgtype__,
+                    "definition": cdr_schema(message_type.__msgtype__),
+                }
                 for channel, message_type in self._command_types.items()
             }
 
@@ -253,7 +257,7 @@ class WebXRTeleopModule(Module):
             if (
                 message_type is None
                 or metadata.get("encoding") != "cdr"
-                or metadata.get("type") != message_type.msg_name
+                or metadata.get("type") != message_type.__msgtype__
             ):
                 return False
             return self._decoders[frame.header.ch](frame.payload) is not False
@@ -460,7 +464,7 @@ class WebXRTeleopModule(Module):
 
     def _on_pose_bytes(self, data: bytes) -> None:
         """Decode CDR bytes into PoseStamped, transform to robot frame."""
-        msg = PoseStamped.decode(data)
+        msg = cdr_decode(data, PoseStamped)
         hand = self._resolve_hand(msg.header.frame_id)
         robot_pose = webxr_to_robot(msg, is_left_controller=(hand == Hand.LEFT))
         with self._lock:
@@ -469,13 +473,13 @@ class WebXRTeleopModule(Module):
 
     def _on_joy_bytes(self, data: bytes) -> bool:
         """Decode CDR bytes into Joy, parse into WebXRControllerState."""
-        msg = Joy.decode(data)
+        msg = cdr_decode(data, Joy)
         hand = self._resolve_hand(msg.header.frame_id)
         try:
             controller = WebXRControllerState.from_joy(msg, is_left=(hand == Hand.LEFT))
         except ValueError:
             logger.warning(
-                f"Malformed Joy for {hand.name}: axes={len(msg.axes or [])}, buttons={len(msg.buttons or [])}"
+                f"Malformed Joy for {hand.name}: axes={len(msg.axes)}, buttons={len(msg.buttons)}"
             )
             with self._lock:
                 self._controllers[hand] = None

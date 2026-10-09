@@ -147,8 +147,11 @@ class RobotStateMonitor:
                 joint_state = JointState(
                     header=msg.header,
                     name=self._joint_names,
-                    position=positions.tolist(),
-                    velocity=velocities.tolist() if velocities is not None else [],
+                    position=np.asarray(positions.tolist(), dtype=np.float64),
+                    velocity=np.asarray(
+                        velocities.tolist() if velocities is not None else [], dtype=np.float64
+                    ),
+                    effort=np.array([], dtype=np.float64),
                 )
                 self._latest_state = copy.deepcopy(joint_state)
 
@@ -226,8 +229,9 @@ class RobotStateMonitor:
             return JointState(
                 header=state.header,
                 name=state.name,
-                position=state.position,
-                velocity=state.velocity,
+                position=np.asarray(state.position, dtype=np.float64),
+                velocity=np.asarray(state.velocity, dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
             )
 
     def get_current_positions(self) -> NDArray[np.float64] | None:
