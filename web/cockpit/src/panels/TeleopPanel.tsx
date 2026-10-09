@@ -85,12 +85,19 @@ export function TeleopPanel({ spec, teleop, session }: PanelProps) {
 }
 
 /** Raw pad state for the optional joystick channel: axes to three decimals,
- * buttons as 0/1. Equal samples publish nothing. */
-function joySample(pad: Gamepad): { axes: number[]; buttons: number[] } {
-  return {
-    axes: pad.axes.map((a) => Math.round(a * 1000) / 1000),
-    buttons: pad.buttons.map((b) => (b.pressed ? 1 : 0)),
-  };
+ * buttons as 0/1. A "standard" pad reports its triggers as analog buttons 6/7;
+ * their 0..1 values go out as axes 4/5 (SDL order), since the right trigger
+ * boosts continuously and 0/1 would not replay it. Equal samples publish
+ * nothing. */
+export function joySample(
+  pad: Pick<Gamepad, "axes" | "buttons" | "mapping">,
+): { axes: number[]; buttons: number[] } {
+  const q = (a: number) => Math.round(a * 1000) / 1000;
+  const axes = pad.axes.map(q);
+  if (pad.mapping === "standard") {
+    axes.push(q(pad.buttons[6]?.value ?? 0), q(pad.buttons[7]?.value ?? 0));
+  }
+  return { axes, buttons: pad.buttons.map((b) => (b.pressed ? 1 : 0)) };
 }
 
 function TeleopControls({ spec, teleop, ch, session }: {

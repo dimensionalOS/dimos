@@ -497,8 +497,9 @@ class Teleop(Panel):
     boost: float = field(default=2.0, kw_only=True)
     publish_hz: float = field(default=15.0, kw_only=True)
     watchdog_ms: float = field(default=300.0, kw_only=True)
-    # Also publish the raw gamepad state (axes -1..1, buttons 0/1) as Joy on
-    # this stream, for recordings that want the operator's actual input.
+    # Also publish the raw gamepad state (axes -1..1, buttons 0/1, a standard
+    # pad's analog triggers as axes 4/5) as Joy on this stream, for recordings
+    # that want the operator's actual input.
     joystick: str | None = field(default=None, kw_only=True)
     title: str = field(default="", kw_only=True)
 

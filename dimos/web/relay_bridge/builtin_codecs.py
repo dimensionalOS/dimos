@@ -119,7 +119,8 @@ def decode_point(msg: dict[str, Any]) -> PointStamped:
     )
 
 
-# Raw gamepad state from the browser's Gamepad API: axes -1..1, buttons 0/1.
+# Raw gamepad state from the browser's Gamepad API: axes -1..1 (analog triggers
+# included as axes), buttons 0/1.
 _JOY_MAX_FIELDS = 32
 
 
