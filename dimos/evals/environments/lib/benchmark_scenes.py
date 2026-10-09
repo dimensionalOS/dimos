@@ -104,7 +104,7 @@ def cases_from_manifest(
     make_env = environment_factory or (
         lambda case, scene: xarm_table_env(scene, case.tracked_bodies)
     )
-    suite: Suite = []
+    suite: list[EvalCase] = []
     for case in manifest.cases:
         scene = scene_path(manifest.root, case.scene)
         suite.append(

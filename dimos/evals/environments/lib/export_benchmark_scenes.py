@@ -24,6 +24,7 @@ import argparse
 import os
 from pathlib import Path
 import shutil
+from typing import Any
 
 from dimos.evals.environments.lib.benchmark_scenes import write_manifest
 from dimos.utils.data import get_data_dir
@@ -117,7 +118,7 @@ def _write_pack(
     rgba: str,
     source: str,
     root: str,
-    case: dict,
+    case: dict[str, Any],
 ) -> Path:
     pack = out_root / "smoke"
     pack.mkdir(parents=True, exist_ok=True)
