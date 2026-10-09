@@ -1,26 +1,62 @@
-# Built-in message package generated from the same pinned inputs as Cargo/Python.
+# Build the checked-in ROSIDL source package with the same pinned upstream
+# projects as dimos build. Nix fetches archives before entering the build sandbox.
 { pkgs }:
 let
-  fastcdr = pkgs.stdenv.mkDerivation {
-    pname = "fastcdr";
-    version = "2.4.0";
-    src = pkgs.fetchurl {
-      url = "https://github.com/eProsima/Fast-CDR/archive/refs/tags/v2.4.0.tar.gz";
-      sha256 = "79d8466107dd6b7d1defe961c4aa31735038937cf9dd1175cf6b0da0df2209ab";
-    };
-    nativeBuildInputs = [ pkgs.cmake ];
-    cmakeFlags = [ "-DBUILD_TESTING=OFF" "-DBUILD_SHARED_LIBS=OFF" "-DCMAKE_POSITION_INDEPENDENT_CODE=ON" ];
+  lock = builtins.fromJSON (builtins.readFile ../../dimos/message_codegen/native_sources.json);
+  python = pkgs.python3.withPackages (p: [
+    p.pip p.setuptools p.wheel p.empy p.lark p.catkin-pkg p.pyyaml
+  ]);
+  archives = builtins.mapAttrs (_: source: pkgs.fetchurl {
+    url = source.archive_url;
+    sha256 = source.archive_sha256;
+  }) lock.repositories;
+  fastcdr = pkgs.fetchurl {
+    url = lock.fastcdr.url;
+    sha256 = lock.fastcdr.sha256;
+  };
+  unpack = name: archive: ''
+    mkdir -p upstream/${name}
+    tar -xf ${archive} --strip-components=1 -C upstream/${name}
+    chmod -R u+w upstream/${name}
+  '';
+  support = pkgs.stdenv.mkDerivation {
+    pname = "dimos-native-message-support";
+    version = "0.1.0";
+    dontUnpack = true;
+    nativeBuildInputs = [ pkgs.cmake python ];
+    configurePhase = ''
+      runHook preConfigure
+      mkdir source
+      cp ${../../dimos/message_codegen/templates/native-support.cmake} source/CMakeLists.txt
+      cp ${../../dimos/message_codegen/native_sources.json} source/native_sources.json
+      ${pkgs.lib.concatStringsSep "\n" (pkgs.lib.mapAttrsToList unpack archives)}
+      ${unpack "fastcdr" fastcdr}
+      export PIP_NO_INDEX=1 PIP_DISABLE_PIP_VERSION_CHECK=1
+      cmake -S source -B build \
+        -DPython3_EXECUTABLE=${python}/bin/python3 \
+        -DDIMOS_SUPPORT_PREFIX="$out" \
+        -DFETCHCONTENT_FULLY_DISCONNECTED=ON \
+        -DFETCHCONTENT_SOURCE_DIR_FASTCDR="$PWD/upstream/fastcdr" \
+        ${pkgs.lib.concatStringsSep " " (pkgs.lib.mapAttrsToList (name: _: "-DFETCHCONTENT_SOURCE_DIR_${pkgs.lib.toUpper name}=\"$PWD/upstream/${name}\"") archives)}
+      runHook postConfigure
+    '';
+    buildPhase = "cmake --build build --parallel $NIX_BUILD_CORES";
+    # ExternalProject installs each prerequisite as part of its build.
+    installPhase = "test -d $out/share/rosidl_generator_cpp";
   };
 in pkgs.stdenv.mkDerivation {
   pname = "dimos-generated-messages";
   version = "0.1.0";
-  src = pkgs.lib.fileset.toSource {
-    root = ../..;
-    fileset = pkgs.lib.fileset.unions [ ../../dimos/__init__.py ../../dimos/message_codegen ];
-  };
-  nativeBuildInputs = [ pkgs.cmake pkgs.python3 ];
-  propagatedBuildInputs = [ fastcdr ];
-  postPatch = "python3 -m dimos.message_codegen.generate --output generated";
-  cmakeDir = "../generated/cpp";
-  cmakeFlags = [ "-DDIMOS_BUILD_PYTHON=OFF" ];
+  src = ../../packages/dimos-generated/src/dimos_generated_schemas/package/cpp;
+  nativeBuildInputs = [ pkgs.cmake python ];
+  propagatedBuildInputs = [ support ];
+  preConfigure = ''
+    export PYTHONPATH="${support}/${pkgs.python3.sitePackages}:$PYTHONPATH"
+    export AMENT_PREFIX_PATH="${support}:$out"
+    cmakeFlags+=("-DCMAKE_PREFIX_PATH=${support};$out")
+  '';
+  cmakeFlags = [
+    "-DPython3_EXECUTABLE=${python}/bin/python3"
+    "-DDIMOS_RUNTIME_PATHS=${support}/lib"
+  ];
 }

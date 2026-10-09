@@ -30,6 +30,7 @@
             ../../../../Cargo.lock
             ../../../../Cargo.toml
             ../../../../dimos/message_codegen
+            ../../../../packages/dimos-generated/src/dimos_generated_schemas/package/rust
             ../../../../dimos/experimental/memory/rust
             ../../../../native/rust/dimos-module
             ../../../../native/rust/dimos-lcm-transport

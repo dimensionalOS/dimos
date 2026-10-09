@@ -101,7 +101,7 @@ def image_msg(array: np.ndarray, encoding: str, frame_id: str, ts: float) -> byt
     channels = 1 if array.ndim == 2 else array.shape[2]
     m.step = m.width * array.dtype.itemsize * channels
     view = memoryview(np.ascontiguousarray(array)).cast("B")
-    m.data = view
+    m.data = np.frombuffer(view, dtype=np.uint8)
     return bytes(cdr_encode(m))
 
 
@@ -124,11 +124,11 @@ def camera_info_msg(k: dict[str, float], frame_id: str, ts: float) -> bytes:
     m.header.frame_id = frame_id
     m.width, m.height = int(k["width"]), int(k["height"])
     m.distortion_model = "plumb_bob"
-    m.d = [0.0] * 5
+    m.d = np.zeros(5, dtype=np.float64)
     fx, fy, cx, cy = k["fx"], k["fy"], k["cx"], k["cy"]
-    m.k = [fx, 0.0, cx, 0.0, fy, cy, 0.0, 0.0, 1.0]
-    m.r = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
-    m.p = [fx, 0.0, cx, 0.0, 0.0, fy, cy, 0.0, 0.0, 0.0, 1.0, 0.0]
+    m.k = np.array([fx, 0.0, cx, 0.0, fy, cy, 0.0, 0.0, 1.0], dtype=np.float64)
+    m.r = np.array([1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0], dtype=np.float64)
+    m.p = np.array([fx, 0.0, cx, 0.0, 0.0, fy, cy, 0.0, 0.0, 0.0, 1.0, 0.0], dtype=np.float64)
     m.binning_x = m.binning_y = 0
     return bytes(cdr_encode(m))
 
@@ -170,7 +170,7 @@ def cloud_msg(points: np.ndarray, colors: np.ndarray, frame_id: str, ts: float) 
     if len(points) == 0:
         m.height = 0
         m.row_step = 0
-        m.data = b""
+        m.data = np.array([], dtype=np.uint8)
         return bytes(cdr_encode(m))
 
     # ROS convention: rgb is a float32 whose bytes are [padding, r, g, b].
@@ -182,7 +182,7 @@ def cloud_msg(points: np.ndarray, colors: np.ndarray, frame_id: str, ts: float) 
     data = np.column_stack([points.astype(np.float32), rgb_u32.view(np.float32)]).astype(np.float32)
     view = memoryview(np.ascontiguousarray(data)).cast("B")
     m.row_step = m.point_step * m.width
-    m.data = view
+    m.data = np.frombuffer(view, dtype=np.uint8)
     return bytes(cdr_encode(m))
 
 
@@ -217,11 +217,11 @@ def odometry_msg(
     p.x, p.y, p.z = [float(v) for v in position]
     q = m.pose.pose.orientation
     q.x, q.y, q.z, q.w = [float(v) for v in quat_xyzw]
-    m.pose.covariance = [0.0] * 36
+    m.pose.covariance = np.zeros(36, dtype=np.float64)
     m.twist.twist.linear.x = float(twist[0])
     m.twist.twist.linear.y = float(twist[1])
     m.twist.twist.angular.z = float(twist[2])
-    m.twist.covariance = [0.0] * 36
+    m.twist.covariance = np.zeros(36, dtype=np.float64)
     return bytes(cdr_encode(m))
 
 

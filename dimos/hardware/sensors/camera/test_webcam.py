@@ -15,7 +15,7 @@
 from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.sensor_msgs.msg import CameraInfo, Image, RegionOfInterest
 from dimos_generated.std_msgs.msg import Header
-from dimos_message_build.registry import decode as cdr_decode
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 
@@ -71,7 +71,7 @@ def test_capture_converts_bgr_and_crops_before_cdr_encoding(side, start, mocker)
     camera._capture = capture
     mocker.patch("dimos.msgs.time.time.time_ns", return_value=1700000000123456789)
     try:
-        message = cdr_decode(camera.capture_frame().encode(), Image)
+        message = cdr_decode(cdr_encode(camera.capture_frame()), Image)
     finally:
         camera.stop()
     assert message.encoding == "rgb8"

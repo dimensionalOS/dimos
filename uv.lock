@@ -2760,6 +2760,7 @@ requires-dist = [
     { name = "catkin-pkg", marker = "extra == 'native'", specifier = "==1.1.0" },
     { name = "empy", specifier = "==4.2" },
     { name = "lark", specifier = "==1.2.2" },
+    { name = "pip", marker = "extra == 'native'" },
     { name = "pyyaml", marker = "extra == 'native'", specifier = "==6.0.2" },
     { name = "rosbags", specifier = "==0.11.0" },
     { name = "setuptools", specifier = ">=70" },

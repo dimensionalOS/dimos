@@ -49,7 +49,7 @@ def test_generated_camera_to_twist(bbox, linear, angular):
     )
     controller = VisualServoing2D(cdr_decode(cdr_encode(camera), CameraInfo))
     output = controller.compute_twist(bbox, 640)
-    decoded = cdr_decode(output.encode(), Twist)
+    decoded = cdr_decode(cdr_encode(output), Twist)
     assert decoded.linear.x == pytest.approx(linear)
     assert decoded.angular.z == pytest.approx(angular)
     assert decoded.linear.y == decoded.linear.z == 0

@@ -506,10 +506,10 @@ class NativeModule(Module):
                 prefixes.extend(
                     value for value in installed_prefixes(prefix) if value not in prefixes
                 )
-            package = Path(__file__).resolve().parents[1]
-            sdk = package / "_native" / "cpp"
+            package_path = Path(__file__).resolve().parents[1]
+            sdk = package_path / "_native" / "cpp"
             if not (sdk / "CMakeLists.txt").is_file():
-                sdk = package.parent / "native" / "cpp"
+                sdk = package_path.parent / "native" / "cpp"
             if not (sdk / "CMakeLists.txt").is_file():
                 raise FileNotFoundError("DimOS native C++ source resources are missing")
             prefixes.append(str(sdk))

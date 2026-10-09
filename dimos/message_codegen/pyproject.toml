@@ -10,7 +10,7 @@ requires-python = ">=3.10"
 dependencies = ["rosbags==0.11.0", "empy==4.2", "lark==1.2.2", "setuptools>=70", "wheel", "tomli>=2; python_version < '3.11'"]
 
 [project.optional-dependencies]
-native = ["catkin-pkg==1.1.0", "PyYAML==6.0.2"]
+native = ["pip", "catkin-pkg==1.1.0", "PyYAML==6.0.2"]
 
 [tool.setuptools]
 packages = ["dimos_message_build", "dimos_message_build._vendor"]

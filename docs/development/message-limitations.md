@@ -23,7 +23,7 @@ Wire-rejection cases accept only the missing-exception assertion failure; unsupp
 schema cases accept only `NotImplementedError`. Unrelated exceptions fail normally.
 Run the original assertions without expected-failure handling using:
 
-```sh
+```sh expected-error
 python -m pytest --noconftest -o addopts='' --runxfail \
   dimos/message_codegen/test_python_source.py
 ```

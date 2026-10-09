@@ -594,21 +594,40 @@ mod tests {
     fn stamped(stamp: Time) -> Header {
         Header {
             stamp,
-            ..Default::default()
+            frame_id: String::new(),
         }
     }
 
     fn bounds_at(stamp: Time) -> PoseStamped {
         PoseStamped {
             header: stamped(stamp),
-            ..Default::default()
+            pose: Pose {
+                position: Point {
+                    x: 0.0,
+                    y: 0.0,
+                    z: 0.0,
+                },
+                orientation: Quaternion {
+                    x: 0.0,
+                    y: 0.0,
+                    z: 0.0,
+                    w: 0.0,
+                },
+            },
         }
     }
 
     fn cloud_at(stamp: Time) -> PointCloud2 {
         PointCloud2 {
             header: stamped(stamp),
-            ..Default::default()
+            height: 0,
+            width: 0,
+            fields: Vec::new(),
+            is_bigendian: false,
+            point_step: 0,
+            row_step: 0,
+            data: Vec::new(),
+            is_dense: false,
         }
     }
 
