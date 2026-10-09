@@ -160,6 +160,16 @@ def test_source_package_install_list_and_selected_target(tmp_path, install_kind)
     listed = subprocess.check_output([*cli, "list"], cwd=tmp_path, env=env, text=True)
     assert "dimos-native.probe" in listed
     assert "dimos-native.other" in listed
+    # Importing the declaration must also stay compiler-free and unprepared.
+    subprocess.run(
+        [python, "-c", site_setup + "import dimos_native.module"],
+        cwd=tmp_path,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
     assert not calls.exists()
     cache = tmp_path / "cache/dimos/native-packages"
     assert not cache.exists()

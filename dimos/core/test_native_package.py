@@ -25,7 +25,7 @@ import sys
 from pydantic import ValidationError
 import pytest
 
-from dimos.core import native_package
+from dimos.core import native_module
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 
 
@@ -61,8 +61,8 @@ def package_source(tmp_path, monkeypatch):
         "artifact.chmod(0o755)\n"
         "if Path(os.environ['FAIL_FLAG']).exists(): raise RuntimeError('requested failure')\n"
     )
-    monkeypatch.setattr(native_package, "files", lambda name: package)
-    monkeypatch.setattr(native_package, "CACHE_DIR", tmp_path / "cache")
+    monkeypatch.setattr(native_module, "files", lambda name: package)
+    monkeypatch.setattr(native_module, "CACHE_DIR", tmp_path / "cache")
     config = {
         "source_package": "native_fixture",
         "source_dir": "native",
@@ -264,3 +264,20 @@ def test_source_removal_preserves_generated_files_and_handles_directory_changes(
     (source / "replace").write_text("file again")
     module_factory(**config)._prepare_native()
     assert (workspace / "replace").read_text() == "file again"
+
+
+@pytest.mark.parametrize("field", ["source_dir", "build_command"])
+@pytest.mark.parametrize("value", [None, ""])
+def test_preparation_rejects_incomplete_mutated_package_config(
+    package_source, module_factory, field, value
+):
+    _, config = package_source
+    module = module_factory(**config)
+    module._prepare_native()
+    setattr(module.config, field, value)
+
+    with pytest.raises(ValueError, match="source_package requires source_dir and build_command"):
+        module._prepare_native(force=True)
+
+    assert not module._prepared
+    assert Path(config["extra_env"]["COUNTER"]).read_text() == "build\n"
