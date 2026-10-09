@@ -70,6 +70,12 @@ any Zenoh client works, e.g. `pip install eclipse-zenoh`.
 There is no other interface to this robot.
 """
 
+# The xArm7 gripper's geometry, stated the same way to every agent that drives it.
+XARM7_GRIPPER_NOTES = (
+    "Gripper: the TCP is 0.172 m along the gripper axis from its root; the finger pads sit "
+    "11-48 mm behind the TCP. The jaw gap runs from about 1.6 mm (closed) to 88.9 mm (open)."
+)
+
 RAW_ARM_README = """\
 Robot interface: a robot arm with a parallel gripper and a wrist RGB-D camera, as a Zenoh peer
 at {endpoint}. Connect to it directly in peer mode with multicast and gossip scouting off,

@@ -227,6 +227,8 @@ class LiveLocalizeModule(Module):
         """Locate objects in a window of the robot's memory.
 
         ``objects`` is one label, several separated by commas, or a list of labels.
+        Labels that describe how an object looks (colour and shape, e.g. "brown square
+        object") match better than object names.
 
         ``start`` and ``duration`` are seconds and name the window. A positive
         ``start`` counts forward from the beginning of the feed; a negative one
