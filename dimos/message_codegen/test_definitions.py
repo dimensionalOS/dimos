@@ -168,3 +168,44 @@ def test_upstream_python_empty_type_keeps_wire_sentinel_out_of_value_repr(tmp_pa
     )
     result = subprocess.run([sys.executable, "-I", "-c", consumer], capture_output=True, text=True)
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_library_decoder_preserves_padding_and_nan_and_rejects_bool_arrays(tmp_path):
+    write_message(tmp_path, "probe_msgs/msg/Value", "uint8 prefix\nfloat32 sample\nbool[] flags\n")
+    definitions = Definitions([tmp_path])
+    for name, source in python_codegen.generate(
+        definitions.resolve(), definitions, "probe"
+    ).items():
+        path = tmp_path / "probe" / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(source)
+    consumer = tmp_path / "consumer.py"
+    consumer.write_text("""import math
+import struct
+from probe.probe_msgs.msg import Value
+for little in (True, False):
+    value = Value(prefix=7, sample=1.0, flags=[False, True])
+    wire = bytearray(value.encode(little_endian=little))
+    wire[5:8] = b"\\xa5" * 3  # CDR padding is unspecified, not required to be zero.
+    wire[8:12] = struct.pack("<I" if little else ">I", 0x7f800001)
+    decoded = Value.decode(bytes(wire))
+    assert math.isnan(decoded.sample)
+    assert decoded.prefix == 7 and list(decoded.flags) == [False, True]
+    wire[-1] = 2
+    try:
+        Value.decode(bytes(wire))
+    except ValueError as error:
+        assert "bool" in str(error)
+    else:
+        raise AssertionError("noncanonical bool array accepted")
+""")
+    result = subprocess.run([sys.executable, str(consumer)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_upstream_serialization_template_matches_recorded_hashes():
+    root = Path(__file__).parent / "_vendor" / "rosidl" / "serialization"
+    manifest = json.loads((root / "sources.json").read_text())
+    assert manifest["revision"] == "b883555055cce17982a22172a42ef557ef40bac5"
+    for name, digest in manifest["files"].items():
+        assert sha256((root / name).read_bytes()).hexdigest() == digest, name
