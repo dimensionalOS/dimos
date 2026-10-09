@@ -108,7 +108,9 @@ Those are outside the supported source-only contract, not a prebuilt option.
 
 Editable installs keep source changes visible; new files or entry-point changes may
 require reinstalling. Restart the module after edits. Native source changes invalidate
-the preparation cache; unchanged inputs reuse the executable. Untracked toolchain
+the cached executable; generated intermediate outputs remain available for incremental
+builds. Source preparation holds the workspace lock while the existing native builder
+runs. Unchanged inputs reuse the executable. Untracked toolchain
 changes may require `--build-native`. Stop dependent processes before rebuilding or
 cleaning caches. `pip uninstall acme-probe` removes installed package files, not
 source checkouts or dimOS caches; use `dimos cache clean` separately when appropriate.

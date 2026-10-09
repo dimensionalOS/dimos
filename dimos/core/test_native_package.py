@@ -92,7 +92,7 @@ def test_package_source_is_lazy_and_reused_then_invalidated(package_source, modu
     changed = module_factory(**config)
     changed._prepare_native()
     assert Path(changed._executable).read_text() == "second"
-    assert changed._executable != str(first)
+    assert changed._executable == str(first)
     assert counter.read_text() == "build\nbuild\n"
 
 
@@ -212,3 +212,55 @@ def test_copied_artifact_does_not_skip_an_uncompleted_build(package_source, modu
     assert Path(module._executable).read_text() == "first"
     assert artifact.read_text() == "stale shipped artifact"
     assert Path(config["extra_env"]["COUNTER"]).read_text() == "build\n"
+
+
+def test_incremental_outputs_survive_edits_force_and_failed_retry(package_source, module_factory):
+    source, config = package_source
+    first = module_factory(**config)
+    first._prepare_native()
+    workspace = Path(first._cwd)
+    intermediate = workspace / "build/object.o"
+    intermediate.parent.mkdir()
+    intermediate.write_text("incremental output")
+    unchanged_time = (workspace / "build.py").stat().st_mtime_ns
+    (source / "input.txt").write_text("second")
+    module_factory(**config)._prepare_native()
+    assert intermediate.read_text() == "incremental output"
+    assert (workspace / "build.py").stat().st_mtime_ns == unchanged_time
+
+    failure = Path(config["extra_env"]["FAIL_FLAG"])
+    failure.touch()
+    forced = module_factory(**config, auto_build=True)
+    with pytest.raises(RuntimeError, match="Build command failed"):
+        forced._prepare_native()
+    assert not forced._prepared
+    failure.unlink()
+    module_factory(**config)._prepare_native()
+    assert intermediate.read_text() == "incremental output"
+    assert Path(config["extra_env"]["COUNTER"]).read_text() == "build\n" * 4
+
+
+def test_source_removal_preserves_generated_files_and_handles_directory_changes(
+    package_source, module_factory
+):
+    source, config = package_source
+    (source / "old").mkdir()
+    (source / "old/input").write_text("owned")
+    (source / "replace").write_text("file")
+    first = module_factory(**config)
+    first._prepare_native()
+    workspace = Path(first._cwd)
+    (workspace / "old/generated").write_text("keep")
+    (source / "old/input").unlink()
+    (source / "replace").unlink()
+    (source / "replace").mkdir()
+    (source / "replace/child").write_text("directory")
+    module_factory(**config)._prepare_native()
+    assert not (workspace / "old/input").exists()
+    assert (workspace / "old/generated").read_text() == "keep"
+    assert (workspace / "replace/child").read_text() == "directory"
+    (source / "replace/child").unlink()
+    (source / "replace").rmdir()
+    (source / "replace").write_text("file again")
+    module_factory(**config)._prepare_native()
+    assert (workspace / "replace").read_text() == "file again"

@@ -57,15 +57,20 @@ are unsupported. Symlinks are rejected. `.git`, `.venv`, `__pycache__`, `target`
 `build` and `dist` directories are excluded from snapshots. Network dependencies
 are controlled by the build command; this example uses `--locked --offline`.
 
-Each source/recipe/environment fingerprint gets its own cache and process lock.
-The fingerprint includes file bytes and modes, lockfiles, executable, command,
-platform, explicit extra environment, common compiler settings and versions of
-recognized toolchains. Editable source changes invalidate it without a version
-bump. Arbitrary shell-command dependencies cannot all be inferred: after changing
-an untracked external build input, stop dependent runs and use the existing
-`--build-native` option to rebuild. Failed or interrupted builds have no completion
-marker and retry from a fresh source snapshot. This is trusted build execution,
-not a sandbox or signature check.
+Each source location and explicit recipe (executable, command, extra environment,
+and platform) gets its own workspace and process lock. Source bytes and modes,
+including lockfiles, detect editable changes without a version bump. Preparation
+updates source-owned files and invalidates the executable; generated intermediate
+outputs and unchanged input timestamps survive for Cargo/CMake incremental builds.
+Removed source files are removed from the workspace, without deleting unrelated
+outputs. The existing native builder alone decides whether to run the command.
+
+DimOS does not guess toolchain versions or parse build commands. After changing
+an untracked external build input or ambient toolchain setting, stop dependent
+runs and use the existing `--build-native` option to rebuild. Failed or interrupted
+builds have no completion marker; retry invalidates their executable while keeping
+intermediate outputs. Stop dependent runs before editing sources or rebuilding a
+shared workspace. This is trusted build execution, not a sandbox or signature check.
 
 Stop dependent runs before uninstalling or removing a cache. Uninstall removes
 the package's declarations and source files but leaves its regenerable cache and

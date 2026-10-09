@@ -41,6 +41,7 @@ Example usage::
 
 from __future__ import annotations
 
+from contextlib import AbstractContextManager, nullcontext
 import enum
 import functools
 import json
@@ -59,7 +60,7 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.native_package import prepare_package_source
+from dimos.core.native_package import package_source_workspace
 from dimos.core.transport_factory import session_config
 from dimos.protocol.service.lcmservice import LCMConfig
 from dimos.protocol.service.spec import SessionConfig
@@ -298,32 +299,26 @@ class NativeModule(Module):
     def _prepare_native(self, *, force: bool = False) -> None:
         if self._prepared and not force:
             return
+        self._prepared = False
+        workspace: AbstractContextManager[tuple[str | None, str]]
         if self.config.source_package is not None:
             assert self.config.source_dir is not None
             assert self.config.build_command is not None
-            self._prepared = False
-            self._cwd, self._executable = prepare_package_source(
+            workspace = package_source_workspace(
                 self.config.source_package,
                 self.config.source_dir,
                 self.config.executable,
                 self.config.build_command,
                 self.config.extra_env,
-                self._build_package_source,
-                rebuild=self.config.auto_build or self.config.g.build_native,
             )
-            self._prepared = True
-            return
-        if not self._executable:
-            self._cwd, self._executable = self.config.resolve_paths()
-        self._prepared = False
-        self._maybe_build()
+        else:
+            paths = (
+                (self._cwd, self._executable) if self._executable else self.config.resolve_paths()
+            )
+            workspace = nullcontext(paths)
+        with workspace as (self._cwd, self._executable):
+            self._maybe_build()
         self._prepared = True
-
-    def _build_package_source(self, directory: Path, executable: Path) -> None:
-        self._cwd, self._executable = str(directory), str(executable)
-        # A copied artifact is not a completed build for this cache recipe.
-        executable.unlink(missing_ok=True)
-        self._maybe_build()
 
     def _spawn_env(self) -> dict[str, str]:
         env = {**os.environ, **self.config.extra_env}
