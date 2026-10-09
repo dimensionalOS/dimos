@@ -22,7 +22,10 @@ use ahash::AHashMap;
 use rayon::prelude::*;
 
 use crate::adjacency::{CellId, Edge, SurfaceCells, SurfaceLookup, NO_CELL};
-use crate::dijkstra::{dijkstra, dijkstra_clusters, window_clusters, DijkstraState, Weight};
+use crate::dijkstra::{
+    chain_source, dijkstra, dijkstra_clusters, window_clusters, ClusterIndex, DijkstraState,
+    Frontier, Weight,
+};
 use crate::edges::NodeId;
 use crate::edges::RepairWindow;
 use crate::surfaces::{is_standable, ColumnIz};
@@ -298,6 +301,7 @@ pub fn place_nodes(
         &state.dist,
         params.voxel_size,
         &clusters,
+        None,
         index,
         out_nodes,
     );
@@ -359,6 +363,7 @@ pub fn place_nodes_region(
     added: &[CellId],
     window: &RepairWindow,
     wall_state: &mut DijkstraState,
+    voronoi: &DijkstraState,
     scratch: &mut NodeScratch,
     index: &mut NodeIndex,
     nodes: &mut Vec<NodeData>,
@@ -379,8 +384,10 @@ pub fn place_nodes_region(
         window.index,
         wall_state,
         Weight::Base,
+        Frontier::Any,
     );
     let clusters = window.clusters;
+    let cluster_index = window.index;
     let window = window.cells;
 
     index.prepare(params);
@@ -425,6 +432,10 @@ pub fn place_nodes_region(
         &wall_state.dist,
         params.voxel_size,
         clusters,
+        Some(Beyond {
+            window: cluster_index,
+            owner: voronoi,
+        }),
         index,
         nodes,
     );
@@ -695,14 +706,34 @@ pub(crate) fn penalty_of(d: f32, clearance_m: f32, buffer_m: f32, weight: f32) -
     1.0 + weight * t * t
 }
 
+/// The surface beyond a repair window: which cells are outside it, and the
+/// node each of them was last owned by.
+#[derive(Clone, Copy)]
+pub struct Beyond<'a> {
+    pub window: &'a ClusterIndex,
+    pub owner: &'a DijkstraState,
+}
+
+impl Beyond<'_> {
+    /// Whether a cell outside the window is reachable from a live node along
+    /// a cached chain that stays outside the window, so this repair cannot
+    /// cut it.
+    fn has_node(&self, cells: &SurfaceCells, id: CellId, index: &NodeIndex) -> bool {
+        chain_source(cells, self.owner, self.window, id, &|c| index.has(c)).is_some()
+    }
+}
+
 /// Seed a node in every cluster the clearance floor left empty, so a thin or
 /// sparse component is still reachable. The clusters are the connected pieces
-/// of every live cell for a full rebuild, or of the window for a repair.
+/// of every live cell for a full rebuild, or of the window for a repair, where
+/// a piece that continues into node-owned surface beyond the window is already
+/// reachable.
 fn ensure_node_per_component(
     cells: &SurfaceCells,
     dist: &[f32],
     voxel_size: f32,
     clusters: &[Vec<CellId>],
+    beyond: Option<Beyond>,
     index: &mut NodeIndex,
     out_nodes: &mut Vec<NodeData>,
 ) {
@@ -718,7 +749,11 @@ fn ensure_node_per_component(
                     return None;
                 }
                 let served = cluster.iter().any(|&id| {
-                    index.has(id) || cells.neighbors(id).iter().any(|e| index.has(e.dest))
+                    index.has(id)
+                        || cells.neighbors(id).iter().any(|e| {
+                            index.has(e.dest)
+                                || beyond.is_some_and(|b| b.has_node(cells, e.dest, index))
+                        })
                 });
                 if served {
                     return None;
@@ -947,6 +982,7 @@ mod tests {
             &[near_wall, open],
             &repair,
             &mut state,
+            &DijkstraState::default(),
             &mut scratch,
             &mut index,
             &mut nodes,

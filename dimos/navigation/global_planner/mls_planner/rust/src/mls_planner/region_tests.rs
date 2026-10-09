@@ -1232,3 +1232,140 @@ fn a_voxel_that_goes_under_filled_surface_raises_the_wall_across_the_gap() {
     assert_eq!(wall_distance(&full), 0.0, "a full rebuild sees the drop");
     assert_eq!(wall_distance(&p), 0.0);
 }
+
+#[test]
+fn flicker_between_nodes_does_not_seed_more_nodes() {
+    let cfg = test_config();
+    let vs = cfg.voxel_size;
+    let half = vs * 0.5;
+    let mut floor = Vec::new();
+    for ix in 0..60 {
+        for iy in 0..60 {
+            floor.push((ix as f32 * vs + half, iy as f32 * vs + half, half));
+        }
+    }
+    let mut p = Planner::new(cfg.worker_threads);
+    p.update_global_map(&floor, &cfg);
+    let before = p.graph().nodes.len();
+    assert!(before > 4, "the open floor holds several nodes: {before}");
+
+    // A bump appears and clears again at spots all over the floor.
+    for k in 0..40 {
+        let (bx, by) = (5 + (k * 7) % 50, 5 + (k * 13) % 50);
+        let spot = RegionBounds {
+            origin_x: bx as f32 * vs + half,
+            origin_y: by as f32 * vs + half,
+            radius: 0.3,
+            z_min: 0.0,
+            z_max: 0.5,
+        };
+        let mut bumped = floor.clone();
+        bumped.push((bx as f32 * vs + half, by as f32 * vs + half, vs + half));
+        p.update_region(&slice(&bumped, &spot, vs), &spot, &cfg);
+        p.update_region(&slice(&floor, &spot, vs), &spot, &cfg);
+    }
+    let after = p.graph().nodes.len();
+    assert!(
+        after <= before + 2,
+        "flicker grew the graph from {before} to {after} nodes"
+    );
+}
+
+/// Every labeled cell's cached chain walks live, adjacent cells back to the
+/// node it is labeled with, and no cell a labeled neighbor can step into is
+/// left unreached.
+fn assert_chains_reach_their_nodes(p: &Planner) {
+    let g = p.graph();
+    for id in g.cells.ids() {
+        let i = id as usize;
+        let labeled = |c: CellId| {
+            g.cell_state
+                .dist
+                .get(c as usize)
+                .is_some_and(|d| d.is_finite())
+        };
+        if !labeled(id) {
+            assert!(
+                !g.cells
+                    .neighbors(id)
+                    .iter()
+                    .any(|e| e.cost.is_finite() && labeled(e.dest)),
+                "cell {:?} is unreached although a labeled neighbor can step into it",
+                g.cells.coord(id)
+            );
+            continue;
+        }
+        let mut cur = id;
+        let mut steps = 0;
+        loop {
+            let pred = g.cell_state.pred[cur as usize];
+            if pred == crate::adjacency::NO_CELL {
+                break;
+            }
+            assert!(
+                g.cells.is_live(pred),
+                "chain of {:?} hits a dead cell",
+                g.cells.coord(id)
+            );
+            assert!(
+                g.cells.neighbors(cur).iter().any(|e| e.dest == pred),
+                "chain of {:?} jumps between non-neighbors",
+                g.cells.coord(id)
+            );
+            cur = pred;
+            steps += 1;
+            assert!(steps < 10_000, "chain of {:?} loops", g.cells.coord(id));
+        }
+        assert!(
+            g.node_index.has(cur),
+            "chain of {:?} ends off a node at {:?}",
+            g.cells.coord(id),
+            g.cells.coord(cur)
+        );
+        assert_eq!(
+            g.cell_state.source[i],
+            cur,
+            "cell {:?} is labeled with another node than its chain reaches",
+            g.cells.coord(id)
+        );
+    }
+}
+
+#[test]
+fn chains_reach_their_nodes_through_a_stream_of_changes() {
+    let cfg = test_config();
+    let vs = cfg.voxel_size;
+    let half = vs * 0.5;
+    let all = big_world();
+    let mut p = Planner::new(cfg.worker_threads);
+    load_by_regions(&mut p, &all, (4.0, 4.0), &cfg);
+    assert_chains_reach_their_nodes(&p);
+
+    // Bumps appear and clear all over the map, each through a small region.
+    let mut world = all.clone();
+    for k in 0..60 {
+        let (bx, by) = (6 + (k * 17) % 85, 6 + (k * 29) % 85);
+        let spot = RegionBounds {
+            origin_x: bx as f32 * vs + half,
+            origin_y: by as f32 * vs + half,
+            radius: 0.35,
+            z_min: -1.0,
+            z_max: 2.0,
+        };
+        let before = world.len();
+        for dz in 1..4 {
+            world.push((
+                bx as f32 * vs + half,
+                by as f32 * vs + half,
+                dz as f32 * vs + half,
+            ));
+        }
+        p.update_region(&slice(&world, &spot, vs), &spot, &cfg);
+        assert_chains_reach_their_nodes(&p);
+        if k % 3 == 0 {
+            world.truncate(before);
+            p.update_region(&slice(&world, &spot, vs), &spot, &cfg);
+            assert_chains_reach_their_nodes(&p);
+        }
+    }
+}

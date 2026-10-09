@@ -278,6 +278,12 @@ impl ClusterIndex {
         }
     }
 
+    /// Whether a cell is in the window the clusters were assigned from.
+    #[inline]
+    pub fn in_window(&self, id: CellId) -> bool {
+        self.cluster(id) != NO_CLUSTER
+    }
+
     #[inline]
     fn cluster(&self, id: CellId) -> u32 {
         self.cluster_of
@@ -299,10 +305,54 @@ struct ClusterLabels {
     source: Vec<u32>,
 }
 
+/// Which cached labels just outside the window may seed a search.
+#[derive(Clone, Copy)]
+pub enum Frontier<'a> {
+    /// Every labeled neighbor. For fields where only the value matters.
+    Any,
+    /// Only a neighbor whose cached chain reaches a live source without
+    /// entering the window, labeled with that source. A chain through the
+    /// window was built on the labels this search replaces. The closure says
+    /// whether a cell is a live source.
+    Chained(&'a (dyn Fn(CellId) -> bool + Sync)),
+}
+
+/// Longest cached chain followed before it counts as broken.
+const MAX_CHAIN: usize = 4096;
+
+/// The live source a cell's cached chain reaches without entering the window,
+/// or None when the chain enters the window, hits a dead cell or ends
+/// elsewhere. Chains are kept valid by every repair, so hops are not checked
+/// for adjacency here.
+pub fn chain_source(
+    cells: &SurfaceCells,
+    state: &DijkstraState,
+    index: &ClusterIndex,
+    from: CellId,
+    is_source: &dyn Fn(CellId) -> bool,
+) -> Option<CellId> {
+    let mut cur = from;
+    for _ in 0..MAX_CHAIN {
+        let i = cur as usize;
+        if index.in_window(cur)
+            || !cells.is_live(cur)
+            || !state.dist.get(i).is_some_and(|d| d.is_finite())
+        {
+            return None;
+        }
+        let pred = state.pred[i];
+        if pred == NO_CELL {
+            return is_source(cur).then_some(cur);
+        }
+        cur = pred;
+    }
+    None
+}
+
 /// dijkstra_region run cluster by cluster in parallel. A cluster's search
 /// relaxes only its own cells and reads the cached labels just outside the
-/// window, so the clusters never interact and the labels match the
-/// whole-window search.
+/// window, so the clusters never interact. Returns the window cells that lost
+/// their source or changed it.
 pub fn dijkstra_clusters(
     cells: &SurfaceCells,
     sources: &[CellId],
@@ -310,7 +360,8 @@ pub fn dijkstra_clusters(
     index: &ClusterIndex,
     state: &mut DijkstraState,
     weight: Weight,
-) {
+    frontier: Frontier,
+) -> Vec<CellId> {
     state.ensure_capacity(cells.slot_capacity());
     let mut by_cluster: Vec<Vec<CellId>> = vec![Vec::new(); clusters.len()];
     for &s in sources {
@@ -325,15 +376,25 @@ pub fn dijkstra_clusters(
     let labels: Vec<ClusterLabels> = clusters
         .par_iter()
         .zip(by_cluster.par_iter())
-        .map(|(cluster, srcs)| dijkstra_cluster(cells, srcs, cluster, index, state, weight))
+        .map(|(cluster, srcs)| {
+            dijkstra_cluster(cells, srcs, cluster, index, state, weight, frontier)
+        })
         .collect();
+    let mut changed: Vec<CellId> = Vec::new();
     for (cluster, l) in clusters.iter().zip(labels) {
         for (i, &id) in cluster.iter().enumerate() {
-            state.dist[id as usize] = l.dist[i];
-            state.pred[id as usize] = l.pred[i];
-            state.source[id as usize] = l.source[i];
+            let slot = id as usize;
+            if state.dist[slot].is_finite()
+                && (!l.dist[i].is_finite() || l.source[i] != state.source[slot])
+            {
+                changed.push(id);
+            }
+            state.dist[slot] = l.dist[i];
+            state.pred[slot] = l.pred[i];
+            state.source[slot] = l.source[i];
         }
     }
+    changed
 }
 
 fn dijkstra_cluster(
@@ -343,6 +404,7 @@ fn dijkstra_cluster(
     index: &ClusterIndex,
     state: &DijkstraState,
     weight: Weight,
+    frontier: Frontier,
 ) -> ClusterLabels {
     let me = index.cluster(cluster[0]);
     let k = cluster.len();
@@ -357,18 +419,28 @@ fn dijkstra_cluster(
         heap.push(Scored(0.0, heap_key(cells.coord(s), s)));
     }
 
-    let mut frontier: Vec<CellId> = Vec::new();
+    // Outside neighbors with the source each one seeds, sorted by cell.
+    let mut outside: Vec<CellId> = Vec::new();
     for &w in cluster {
         for edge in cells.neighbors(w) {
             let n = edge.dest;
             if index.cluster(n) == NO_CLUSTER && state.dist[n as usize].is_finite() {
-                frontier.push(n);
+                outside.push(n);
             }
         }
     }
-    frontier.sort_unstable();
-    frontier.dedup();
-    for &n in &frontier {
+    outside.sort_unstable();
+    outside.dedup();
+    let seeds: Vec<(CellId, u32)> = outside
+        .into_iter()
+        .filter_map(|n| match frontier {
+            Frontier::Any => Some((n, state.source[n as usize])),
+            Frontier::Chained(is_source) => {
+                chain_source(cells, state, index, n, is_source).map(|s| (n, s))
+            }
+        })
+        .collect();
+    for &(n, _) in &seeds {
         heap.push(Scored(state.dist[n as usize], heap_key(cells.coord(n), n)));
     }
 
@@ -378,7 +450,10 @@ fn dijkstra_cluster(
             let i = index.local(u);
             (dist[i], source[i])
         } else {
-            (state.dist[u as usize], state.source[u as usize])
+            let at = seeds
+                .binary_search_by_key(&u, |&(n, _)| n)
+                .expect("only seeds are pushed from outside the cluster");
+            (state.dist[u as usize], seeds[at].1)
         };
         if d > du {
             continue;
@@ -399,6 +474,117 @@ fn dijkstra_cluster(
         }
     }
     ClusterLabels { dist, pred, source }
+}
+
+/// Cells a labeled neighbor can step into that are still unreached after the
+/// cluster searches, and the unreached cells passable from those. Inside the
+/// window a cluster strands cells whose only way in runs through a neighbor
+/// that hangs off another cluster. Beyond it, surface that had no way to a
+/// node can gain one through the window.
+pub fn stranded(
+    cells: &SurfaceCells,
+    window: &[CellId],
+    state: &DijkstraState,
+    weight: Weight,
+) -> Vec<CellId> {
+    let reached = |c: CellId| state.dist.get(c as usize).is_some_and(|d| d.is_finite());
+    // The unreached end of every passable hop between a labeled and an
+    // unreached cell that touches the window.
+    let mut out: Vec<CellId> = window
+        .par_iter()
+        .flat_map_iter(|&u| {
+            let labeled = reached(u);
+            cells
+                .neighbors(u)
+                .iter()
+                .filter(move |e| weight.of(e).is_finite() && labeled != reached(e.dest))
+                .map(move |e| if labeled { e.dest } else { u })
+        })
+        .collect();
+    out.sort_unstable();
+    out.dedup();
+    let mut seen: AHashSet<CellId> = out.iter().copied().collect();
+    let mut next = 0;
+    while next < out.len() {
+        let u = out[next];
+        next += 1;
+        for e in cells.neighbors(u) {
+            let v = e.dest;
+            if weight.of(e).is_finite() && !reached(v) && seen.insert(v) {
+                out.push(v);
+            }
+        }
+    }
+    out
+}
+
+/// Re-attach the cells outside the window whose cached chain ran through a
+/// window cell that lost or changed its source, together with the window
+/// cells the cluster searches left unreached. The first had labels built on
+/// that cell. The second may only be reachable through a neighbor that was
+/// waiting on another cluster. Both are searched again from the settled
+/// cells around them. Returns the cells it searched.
+pub fn reattach_descendants(
+    cells: &SurfaceCells,
+    changed: &[CellId],
+    unreached: &[CellId],
+    index: &ClusterIndex,
+    state: &mut DijkstraState,
+    weight: Weight,
+) -> Vec<CellId> {
+    // A cell has one pred, so the walk over children reaches each once.
+    let mut patch: Vec<CellId> = unreached.to_vec();
+    let mut stack: Vec<CellId> = changed.to_vec();
+    while let Some(u) = stack.pop() {
+        for edge in cells.neighbors(u) {
+            let v = edge.dest;
+            if !index.in_window(v) && state.pred[v as usize] == u {
+                patch.push(v);
+                stack.push(v);
+            }
+        }
+    }
+    if patch.is_empty() {
+        return patch;
+    }
+    let inside: AHashSet<CellId> = patch.iter().copied().collect();
+    for &c in &patch {
+        let i = c as usize;
+        state.dist[i] = f32::INFINITY;
+        state.pred[i] = NO_CELL;
+        state.source[i] = 0;
+    }
+    let mut heap: BinaryHeap<Scored<u128>> = BinaryHeap::new();
+    let mut seeded: AHashSet<CellId> = AHashSet::new();
+    for &c in &patch {
+        for edge in cells.neighbors(c) {
+            let n = edge.dest;
+            if !inside.contains(&n) && state.dist[n as usize].is_finite() && seeded.insert(n) {
+                heap.push(Scored(state.dist[n as usize], heap_key(cells.coord(n), n)));
+            }
+        }
+    }
+    while let Some(Scored(d, key)) = heap.pop() {
+        let u = heap_id(key);
+        if d > state.dist[u as usize] {
+            continue;
+        }
+        let su = state.source[u as usize];
+        for edge in cells.neighbors(u) {
+            let v = edge.dest;
+            if !inside.contains(&v) {
+                continue;
+            }
+            let nd = d + weight.of(edge);
+            if nd < state.dist[v as usize] {
+                state.dist[v as usize] = nd;
+                state.pred[v as usize] = u;
+                state.source[v as usize] = su;
+                heap.push(Scored(nd, heap_key(cells.coord(v), v)));
+            }
+        }
+    }
+    patch
 }
 
 /// Reconstruct the path back to the nearest source.
@@ -519,6 +705,7 @@ mod tests {
             &index,
             &mut clustered,
             Weight::Penalized,
+            Frontier::Any,
         );
 
         for id in sc.ids() {

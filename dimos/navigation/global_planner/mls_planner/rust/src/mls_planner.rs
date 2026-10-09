@@ -382,6 +382,7 @@ impl Planner {
             &added_ids,
             &repair,
             &mut self.graph.wall_state,
+            &self.graph.cell_state,
             &mut self.graph.node_scratch,
             &mut self.graph.node_index,
             &mut self.graph.nodes,
