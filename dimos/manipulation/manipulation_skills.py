@@ -255,7 +255,7 @@ class ManipulationSkills(Module):
         result = self.manipulation.set_home_to_current()
         if not result.succeeded:
             raise RuntimeError(f"Could not set home: {result.message}")
-        return SkillResult.ok("Home is now the current pose of every arm.")
+        return SkillResult("Home is now the current pose of every arm.")
 
     @skill(uses=[CAP_MOVEMENT])
     def go_init(self, planning_group: PlanningGroupID | None = None) -> SkillResult:

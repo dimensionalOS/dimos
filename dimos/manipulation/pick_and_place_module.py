@@ -95,6 +95,10 @@ class _UnplannableLegError(Exception):
 
 # Wrist turns about vertical tried for the place pose, the grasp's own heading first.
 _PLACE_YAW_DELTAS = (0.0, math.pi / 2, -math.pi / 2, math.pi, math.pi / 4, -math.pi / 4)
+# Tilts about the jaw axis, in the tool frame, tried after every heading has
+# failed upright. A tilted wrist reaches farther than a vertical one, and the
+# jaws stay level so the object stays held.
+_PLACE_TILT_DELTAS = (0.0, 0.35, -0.35, 0.9, -0.9)
 
 
 def _merge_joint_state(start: JointState, end: JointState) -> JointState:
@@ -292,19 +296,19 @@ class PickAndPlaceModule(Module):
         """
         self._staged = None
         if self._holding_object:
-            return SkillResult.ok(
+            return SkillResult(
                 f"Still holding object {self._selected_object_id}; put it down before staging "
                 f"a pick of object {object_id}."
             )
         if object_id not in self._objects:
             scanned = ", ".join(self._objects) or "none"
-            return SkillResult.ok(
+            return SkillResult(
                 f"No object with id {object_id} in the latest scan. Scanned ids: {scanned}. "
                 "Use scan_objects to refresh the list."
             )
         pointcloud = self._scene.get_object_pointcloud_by_object_id(object_id)
         if pointcloud is None:
-            return SkillResult.ok(
+            return SkillResult(
                 f"Object {object_id} has no point cloud in the latest scan. Use scan_objects again."
             )
         candidates = self._grasp_generator.propose_grasps(pointcloud)
@@ -322,11 +326,11 @@ class PickAndPlaceModule(Module):
                 f"the planning frame is {self.config.planning_frame!r}"
             )
         if not candidates.candidates:
-            return SkillResult.ok(f"Generated 0 grasp candidates for object {object_id}.")
+            return SkillResult(f"Generated 0 grasp candidates for object {object_id}.")
         group = self._gripper_group(planning_group)
         start = self._manipulation.get_current_joint_state()
         if start is None:
-            return SkillResult.ok("No joint state yet; nothing was staged.")
+            return SkillResult("No joint state yet; nothing was staged.")
         place = Vector3(x, y, z)
         last_failure = ""
         for rank, candidate in enumerate(candidates.candidates[: self.config.max_grasp_attempts]):
@@ -356,20 +360,22 @@ class PickAndPlaceModule(Module):
             self.grasp_target.publish(grasp)
             self._manipulation.preview_plans([leg.plan for leg in legs if leg.plan is not None])
             self._staged = program
-            return SkillResult.ok(
+            return SkillResult(
                 f"Staged a pick of object {object_id} with {group} and a place at "
                 f"({x:.2f}, {y:.2f}, {z:.2f}): {len(legs)} legs, {program.motion_seconds:.1f} s "
                 f"of motion, grasp candidate {rank} of {program.candidates} "
                 f"(score {candidate.score:.2f}). The viewer is playing the full motion. "
                 "Nothing has moved; call proceed to run it or discard_staged to drop it.",
-                object_id=object_id,
-                planning_group=group,
-                legs=[leg.label for leg in legs],
-                motion_seconds=round(program.motion_seconds, 1),
-                rank=rank,
+                metadata={
+                    "object_id": object_id,
+                    "planning_group": group,
+                    "legs": [leg.label for leg in legs],
+                    "motion_seconds": round(program.motion_seconds, 1),
+                    "rank": rank,
+                },
             )
         attempted = min(len(candidates.candidates), self.config.max_grasp_attempts)
-        return SkillResult.ok(
+        return SkillResult(
             f"Could not stage a pick of object {object_id}: none of the {attempted} grasp "
             f"candidate(s) tried plans all the way through; last failure: {last_failure}."
         )
@@ -414,27 +420,33 @@ class PickAndPlaceModule(Module):
         legs.append(_StagedLeg("close and verify the grasp", gripper="close"))
         linear("lift", grasp, pregrasp)
         # The object's heading does not matter for a drop, so the wrist may turn
-        # about vertical until the carry and the lowering both plan.
+        # about vertical, and then tilt, until the carry and the lowering both plan.
         checkpoint = (len(legs), state)
         failures: list[str] = []
-        for delta in _PLACE_YAW_DELTAS:
-            place = PoseStamped(
-                frame_id=self.config.planning_frame,
-                position=place_position,
-                orientation=Quaternion.from_euler(Vector3(0.0, 0.0, delta)) * grasp.orientation,
-            )
-            preplace = self._offset_pose(place, self._preplace_offset())
-            try:
-                planned(
-                    "carry above the place",
-                    self._manipulation.plan_to_poses({group: preplace}, start=state),
+        for tilt in _PLACE_TILT_DELTAS:
+            for delta in _PLACE_YAW_DELTAS:
+                place = PoseStamped(
+                    frame_id=self.config.planning_frame,
+                    position=place_position,
+                    orientation=Quaternion.from_euler(Vector3(0.0, 0.0, delta))
+                    * grasp.orientation
+                    * Quaternion.from_euler(Vector3(0.0, tilt, 0.0)),
                 )
-                linear("lower to the place", preplace, place)
-                break
-            except _UnplannableLegError as exc:
-                failures.append(f"yaw {delta:+.2f}: {exc}")
-                del legs[checkpoint[0] :]
-                state = checkpoint[1]
+                preplace = self._offset_pose(place, self._preplace_offset())
+                try:
+                    planned(
+                        "carry above the place",
+                        self._manipulation.plan_to_poses({group: preplace}, start=state),
+                    )
+                    linear("lower to the place", preplace, place)
+                    break
+                except _UnplannableLegError as exc:
+                    failures.append(f"yaw {delta:+.2f} tilt {tilt:+.2f}: {exc}")
+                    del legs[checkpoint[0] :]
+                    state = checkpoint[1]
+            else:
+                continue
+            break
         else:
             raise _UnplannableLegError("; ".join(failures[-2:]))
         legs.append(_StagedLeg("release", gripper="release"))
@@ -451,7 +463,7 @@ class PickAndPlaceModule(Module):
         first leg that fails."""
         program = self._staged
         if program is None:
-            return SkillResult.ok("Nothing is staged. Use stage_pick_and_place first.")
+            return SkillResult("Nothing is staged. Use stage_pick_and_place first.")
         self._staged = None
         group = program.planning_group
         for index, leg in enumerate(program.legs, 1):
@@ -466,7 +478,7 @@ class PickAndPlaceModule(Module):
                 self._holding_object = True
             elif leg.gripper == "release":
                 if not_open := self._open_gripper(group, "to release the object"):
-                    return SkillResult.ok(f"{not_open.message} The arm stayed at the place pose.")
+                    return SkillResult(f"{not_open.message} The arm stayed at the place pose.")
                 self._holding_object = False
                 self._clear_selection()
             elif leg.plan is not None:
@@ -477,22 +489,24 @@ class PickAndPlaceModule(Module):
                         f"pick and place of object {program.object_id}",
                         execution,
                     )
-        return SkillResult.ok(
+        return SkillResult(
             "Pick and place complete",
-            object_id=program.object_id,
-            legs=len(program.legs),
-            rank=program.rank,
-            score=program.score,
+            metadata={
+                "object_id": program.object_id,
+                "legs": len(program.legs),
+                "rank": program.rank,
+                "score": program.score,
+            },
         )
 
     @skill
     def discard_staged(self) -> SkillResult:
         """Drop the staged pick and place without moving."""
         if self._staged is None:
-            return SkillResult.ok("Nothing was staged.")
+            return SkillResult("Nothing was staged.")
         self._staged = None
         self._manipulation.clear_planned_path()
-        return SkillResult.ok("Discarded the staged pick and place. Nothing moved.")
+        return SkillResult("Discarded the staged pick and place. Nothing moved.")
 
     @rpc
     def get_grasp_candidates(self) -> GraspCandidateArray:

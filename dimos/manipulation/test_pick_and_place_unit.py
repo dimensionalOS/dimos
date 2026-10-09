@@ -458,7 +458,7 @@ def test_pregrasp_along_tool_z_backs_off_the_other_way(module: PickAndPlaceModul
 
     result = module.place_at(0.4, 0.0, 0.2)
 
-    assert result.is_success()
+    assert result.message == "Place complete"
     preplace = manipulation.plan_to_poses.call_args_list[0].args[0]["arm/tool"]
     assert preplace.position.z == pytest.approx(0.1)
 
@@ -631,6 +631,39 @@ def test_stage_turns_the_wrist_for_the_place_when_the_grasp_heading_cannot_reach
     first_carry, second_carry = poses_tried[1], poses_tried[2]
     assert first_carry.position.x == pytest.approx(second_carry.position.x)
     assert first_carry.orientation != second_carry.orientation
+
+
+def test_stage_tilts_the_wrist_for_the_place_when_no_upright_heading_reaches(
+    staged: PickAndPlaceModule,
+) -> None:
+    from dimos.manipulation.pick_and_place_module import _PLACE_YAW_DELTAS
+    from dimos.msgs.geometry_msgs.Vector3 import Vector3
+
+    manipulation: Any = staged._manipulation
+    carries: list[Any] = []
+
+    def plan_to_poses(targets: dict[str, PoseStamped], **kw: Any) -> PlanResult:
+        pose = next(iter(targets.values()))
+        carries.append(pose)
+        # the approach plans; every upright carry heading fails, the first tilt plans
+        if 1 < len(carries) <= 1 + len(_PLACE_YAW_DELTAS):
+            return NO_PATH
+        return _planned("pose")
+
+    manipulation.plan_to_poses.side_effect = plan_to_poses
+
+    result = staged.stage_pick_and_place("cup-1", 0.46, 0.05, 0.12)
+
+    assert result.message.startswith("Staged a pick of object cup-1")
+    assert len(carries) == 2 + len(_PLACE_YAW_DELTAS)
+    upright, tilted = carries[1], carries[-1]
+    up = Vector3(0.0, 0.0, 1.0)
+    assert upright.orientation.rotate_vector(up).z == pytest.approx(
+        carries[2].orientation.rotate_vector(up).z
+    )
+    assert tilted.orientation.rotate_vector(up).z != pytest.approx(
+        upright.orientation.rotate_vector(up).z
+    )
 
 
 def test_preplace_offset_shortens_the_lift_over_the_place(module: PickAndPlaceModule) -> None:

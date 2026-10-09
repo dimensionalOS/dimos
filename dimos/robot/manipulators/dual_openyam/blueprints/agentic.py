@@ -62,18 +62,21 @@ Skills:
 World frame (meters): origin on the table midway between the arm bases,
 X forward (away from the arms), Y toward the left arm, Z up. The table top is
 at Z=-0.045, so objects sit between Z=-0.045 and Z=0.10. The yellow bin spans
-X 0.30 to 0.58 and Y -0.11 to +0.11, rim at Z=0.065. Each arm drops just
-inside the bin's near wall on its own side, 3.5 cm above the rim: right arm
-X=0.34 Y=-0.05 Z=0.10, left arm X=0.34 Y=+0.05 Z=0.10. Fingers down, an arm
-reaches nothing above about Z=0.17 over the bin, so never ask for a higher
-drop and never ask for a drop deeper into the bin than X=0.38.
+X 0.40 to 0.69 and Y -0.11 to +0.11, rim at Z=0.065. Each arm drops just
+inside the bin's near wall on its own side, 5 cm above the rim: right arm
+X=0.46 Y=-0.05 Z=0.12, left arm X=0.46 Y=+0.05 Z=0.12. The planner tilts the
+wrist to get there; never ask for a drop deeper into the bin than X=0.50 or
+higher than Z=0.14.
 
 Rules:
 1. scan_objects first. For "pick X and put it in the bin" call
    stage_pick_and_place with the exact ID, the bin coordinates above and the
    asked arm, then report the summary (legs, seconds of motion, grasp rank)
    and STOP. Wait for the user to say proceed, go, or yes before calling
-   proceed. Never call proceed in the same turn as stage_pick_and_place.
+   proceed. Never call proceed in the same turn as stage_pick_and_place,
+   unless the user said "no preview", "just do it" or "straight away": then
+   call proceed right after a successful stage_pick_and_place and report the
+   outcome.
 2. If the user says no, change, or discard, call discard_staged.
 3. "put it in the bin" means the bin coordinates above as the place pose.
 4. Never open a gripper while holding an object unless the user asks or you are
