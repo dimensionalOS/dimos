@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from dimos.core.coordination.python_worker import Actor, MethodCallProxy
 from dimos.core.stream import RemoteStream
 from dimos.core.transport_factory import rpc_backend
-from dimos.protocol.rpc.spec import RPCSpec
+from dimos.protocol.rpc.spec import Args, RPCSpec
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -32,12 +32,33 @@ if TYPE_CHECKING:
 logger = setup_logger()
 
 
+def _by_name(signature: inspect.Signature, args: tuple[Any, ...], kwargs: dict[str, Any]) -> Args:
+    """Use named arguments when possible and keep positional-only calls positional."""
+    bound = signature.bind(*args, **kwargs)
+    named: dict[str, Any] = {}
+    for name, value in bound.arguments.items():
+        kind = signature.parameters[name].kind
+        if kind is inspect.Parameter.POSITIONAL_ONLY:
+            positional = list(bound.args)
+            if bound.kwargs:
+                raise TypeError("JSON-RPC calls cannot mix positional and named arguments")
+            return (positional, {})
+        if kind is inspect.Parameter.VAR_KEYWORD:
+            named.update(value)
+        elif kind is inspect.Parameter.VAR_POSITIONAL:
+            return (list(args), kwargs)  # no names to send; a mix is rejected on encoding
+        else:
+            named[name] = value
+    return ([], named)
+
+
 class RpcCall:
     _rpc: RPCSpec | None
     _name: str
     _remote_name: str
     _unsub_fns: list  # type: ignore[type-arg]
     _stop_rpc_client: Callable[[], None] | None = None
+    __signature__: inspect.Signature | None = None
 
     def __init__(
         self,
@@ -82,17 +103,21 @@ class RpcCall:
             logger.warning("RPC client not initialized")
             return None
 
+        arguments = (list(args), kwargs)
+        if self._rpc.named_params is True and self.__signature__ is not None:
+            arguments = _by_name(self.__signature__, args, kwargs)
+
         # For stop, use call_nowait to avoid deadlock
         # (the remote side stops its RPC service before responding)
         if self._name == "stop":
-            self._rpc.call_nowait(f"{self._remote_name}/{self._name}", (args, kwargs))  # type: ignore[arg-type]
+            self._rpc.call_nowait(f"{self._remote_name}/{self._name}", arguments)
             if self._stop_rpc_client:
                 self._stop_rpc_client()
             return None
 
         result, unsub_fn = self._rpc.call_sync(
             f"{self._remote_name}/{self._name}",
-            (args, kwargs),  # type: ignore[arg-type]
+            arguments,
         )
         self._unsub_fns.append(unsub_fn)
         return result

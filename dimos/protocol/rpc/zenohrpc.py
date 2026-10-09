@@ -39,6 +39,8 @@ EXCEPTION_ENCODING = zenoh.Encoding("dimos/rpc-exception")
 
 
 class ZenohRPC(RPCSpec, ZenohService):
+    key_prefix = "dimos/rpc"
+
     def __init__(
         self,
         rpc_timeouts: dict[str, float] | None = None,
@@ -115,15 +117,27 @@ class ZenohRPC(RPCSpec, ZenohService):
             method, self.default_rpc_timeout
         )
         call_id = next(self._call_counter)
+        payload = self._encode(name, arguments, call_id)
         self._pending[call_id] = cb
-        self._issue_query(
-            call_id, f"dimos/rpc/{name}", pickle.dumps(arguments), time.monotonic() + timeout
-        )
+        self._issue_query(call_id, f"{self.key_prefix}/{name}", payload, time.monotonic() + timeout)
 
         def unsubscribe_callback() -> None:
             self._pending.pop(call_id, None)
 
         return unsubscribe_callback
+
+    def _encode(self, name: str, arguments: Args, call_id: int | None) -> bytes:
+        """The query payload of a call; call_id is None for call_nowait."""
+        return pickle.dumps(arguments)
+
+    def _decode(self, payload: bytes) -> Any:
+        """The value, or the exception, that a successful reply delivers."""
+        return pickle.loads(payload)
+
+    def _decode_error(self, payload: bytes, encoding: zenoh.Encoding) -> Any:
+        if encoding != EXCEPTION_ENCODING:
+            return ValueError(f"Unexpected RPC transport error encoding: {encoding}")
+        return deserialize_exception(pickle.loads(payload))
 
     def _issue_query(self, call_id: int, key: str, payload: bytes, deadline: float) -> None:
         def on_reply(reply: zenoh.Reply) -> None:
@@ -131,14 +145,15 @@ class ZenohRPC(RPCSpec, ZenohService):
             if err is None:
                 cb = self._pending.pop(call_id, None)
                 if cb is not None:
-                    cb(pickle.loads(reply.ok.payload.to_bytes()))  # type: ignore[union-attr]
+                    cb(self._decode(reply.ok.payload.to_bytes()))  # type: ignore[union-attr]
                 return
-            if err.encoding == EXCEPTION_ENCODING:
-                cb = self._pending.pop(call_id, None)
-                if cb is not None:
-                    cb(deserialize_exception(pickle.loads(err.payload.to_bytes())))
-                return
-            self._pending.pop(call_id, None)
+            try:
+                result = self._decode_error(err.payload.to_bytes(), err.encoding)
+            except Exception as error:
+                result = ValueError(f"Invalid RPC transport error: {error!r}")
+            cb = self._pending.pop(call_id, None)
+            if cb is not None:
+                cb(result)
 
         def on_finalize() -> None:
             if call_id not in self._pending:
@@ -167,13 +182,13 @@ class ZenohRPC(RPCSpec, ZenohService):
             method, self.default_rpc_timeout
         )
         self.session.get(
-            f"dimos/rpc/{name}",
+            f"{self.key_prefix}/{name}",
             lambda _: None,
             target=zenoh.QueryTarget.ALL,
             consolidation=zenoh.ConsolidationMode.NONE,
             congestion_control=zenoh.CongestionControl.BLOCK,
             timeout=timeout,
-            payload=pickle.dumps(arguments),
+            payload=self._encode(name, arguments, None),
             attachment=b"nowait",
         )
 
@@ -183,7 +198,9 @@ class ZenohRPC(RPCSpec, ZenohService):
         def on_query(query: zenoh.Query) -> None:
             self._get_call_thread_pool().submit(self._execute_rpc, f, rpc_name, query)
 
-        queryable = self.session.declare_queryable(f"dimos/rpc/{rpc_name}", on_query, complete=True)
+        queryable = self.session.declare_queryable(
+            f"{self.key_prefix}/{rpc_name}", on_query, complete=True
+        )
         self._queryables.append(queryable)
 
         def unsubscribe() -> None:
