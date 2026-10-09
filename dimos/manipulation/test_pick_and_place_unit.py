@@ -726,6 +726,40 @@ def test_proceed_completes_when_the_object_left_its_start_position(
     assert result.message == "Pick and place complete"
 
 
+def test_proceed_replans_a_leg_the_controller_rejects_from_the_live_state(
+    staged: PickAndPlaceModule,
+) -> None:
+    from dimos.msgs.geometry_msgs.Pose import Pose
+
+    manipulation: Any = staged._manipulation
+    manipulation.get_ee_pose.return_value = Pose(
+        position=Vector3(0.33, -0.10, 0.23), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)
+    )
+    rejected = ExecutionResult(
+        ExecutionStatus.REJECTED,
+        "Trajectory start for joint 'right_joint4' differs from current position by 0.0504",
+    )
+    executions = iter([COMPLETED, rejected] + [COMPLETED] * 20)
+    manipulation.execute_plan.side_effect = lambda plan, **kw: next(executions)
+    linear_calls: list[tuple[float, float, float, Any]] = []
+
+    def plan_linear(dx: float, dy: float, dz: float, *a: Any, **kw: Any) -> PlanResult:
+        linear_calls.append((round(dx, 3), round(dy, 3), round(dz, 3), kw.get("start")))
+        return _planned("linear")
+
+    manipulation.plan_linear.side_effect = plan_linear
+
+    assert staged.stage_pick_and_place("cup-1", 0.46, 0.05, 0.12).message.startswith("Staged")
+    result = staged.proceed()
+
+    assert result.message == "Pick and place complete"
+    # the descend was planned once when staged and once more, from the live
+    # tool pose, after the controller rejected the staged trajectory
+    live = [c for c in linear_calls if c[3] is None]
+    assert len(live) == 1
+    assert live[0][2] < 0  # heads down to the grasp from the live tool pose
+
+
 def test_preplace_offset_shortens_the_lift_over_the_place(module: PickAndPlaceModule) -> None:
     from dimos.msgs.sensor_msgs.JointState import JointState
 

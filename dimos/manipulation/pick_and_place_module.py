@@ -36,7 +36,12 @@ from dimos.manipulation.grasp_verification import (
     open_failure,
 )
 from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec
-from dimos.manipulation.manipulation_spec import ExecutionResult, ManipulationSpec, PlanResult
+from dimos.manipulation.manipulation_spec import (
+    ExecutionResult,
+    ExecutionStatus,
+    ManipulationSpec,
+    PlanResult,
+)
 from dimos.manipulation.planning.spec.models import GeneratedPlan, PlanningGroupID
 from dimos.msgs.geometry_msgs.PoseArray import PoseArray
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -46,6 +51,7 @@ from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Header import Header
 from dimos.perception.experimental.object_scene_registration_spec import ObjectSceneRegistrationSpec
+from dimos.utils.logging_config import setup_logger
 
 
 class PickAndPlaceModuleConfig(ModuleConfig):
@@ -75,11 +81,18 @@ class PickAndPlaceModuleConfig(ModuleConfig):
 
 @dataclass
 class _StagedLeg:
-    """One step of a staged job: a planned motion, or a gripper action."""
+    """One step of a staged job: a planned motion, or a gripper action.
+
+    A motion leg keeps its goal so it can be planned again from wherever the
+    arm actually is when the controller refuses the staged trajectory.
+    """
 
     label: str
     plan: GeneratedPlan | None = None
     gripper: Literal["open", "close", "release"] | None = None
+    mode: Literal["pose", "linear", "joints"] | None = None
+    target: PoseStamped | None = None
+    joints: JointState | None = None
 
 
 @dataclass
@@ -104,6 +117,8 @@ class _UnplannableLegError(Exception):
 
 
 # Wrist turns about vertical tried for the place pose, the grasp's own heading first.
+logger = setup_logger()
+
 _PLACE_YAW_DELTAS = (0.0, math.pi / 2, -math.pi / 2, math.pi, math.pi / 4, -math.pi / 4)
 # Tilts about the jaw axis, in the tool frame, tried after every heading has
 # failed upright. A tilted wrist reaches farther than a vertical one, and the
@@ -412,11 +427,20 @@ class PickAndPlaceModule(Module):
         legs: list[_StagedLeg] = [_StagedLeg("open the gripper", gripper="open")]
         state = start
 
-        def planned(label: str, result: PlanResult) -> None:
+        def planned(
+            label: str,
+            result: PlanResult,
+            *,
+            mode: Literal["pose", "linear", "joints"] | None = None,
+            target: PoseStamped | None = None,
+            joints: JointState | None = None,
+        ) -> None:
             nonlocal state
             if result.plan is None or not result.plan.path:
                 raise _UnplannableLegError(f"{label}: {_status(result)}")
-            legs.append(_StagedLeg(label, plan=result.plan))
+            legs.append(
+                _StagedLeg(label, plan=result.plan, mode=mode, target=target, joints=joints)
+            )
             state = _merge_joint_state(state, result.plan.path[-1])
 
         def linear(label: str, a: PoseStamped, b: PoseStamped) -> None:
@@ -430,11 +454,15 @@ class PickAndPlaceModule(Module):
                     check_collision=False,
                     start=state,
                 ),
+                mode="linear",
+                target=b,
             )
 
         planned(
             "approach above the object",
             self._manipulation.plan_to_poses({group: pregrasp}, start=state),
+            mode="pose",
+            target=pregrasp,
         )
         linear("descend to the grasp", pregrasp, grasp)
         legs.append(_StagedLeg("close and verify the grasp", gripper="close"))
@@ -457,6 +485,8 @@ class PickAndPlaceModule(Module):
                     planned(
                         "carry above the place",
                         self._manipulation.plan_to_poses({group: preplace}, start=state),
+                        mode="pose",
+                        target=preplace,
                     )
                     linear("lower to the place", preplace, place)
                     break
@@ -474,8 +504,41 @@ class PickAndPlaceModule(Module):
         group_state = self._manipulation.get_state().groups.get(group)
         home = group_state.joint_presets.get("home") if group_state is not None else None
         if home is not None:
-            planned("return home", self._manipulation.plan_to_joints({group: home}, start=state))
+            planned(
+                "return home",
+                self._manipulation.plan_to_joints({group: home}, start=state),
+                mode="joints",
+                joints=home,
+            )
         return legs
+
+    def _replan_leg(self, group: PlanningGroupID, leg: _StagedLeg) -> GeneratedPlan | None:
+        """Plan a staged leg again from the arm's live state, or None when it cannot."""
+        if leg.mode == "pose" and leg.target is not None:
+            result = self._manipulation.plan_to_poses({group: leg.target})
+        elif leg.mode == "linear" and leg.target is not None:
+            current = self._manipulation.get_ee_pose(group)
+            if current is None:
+                result = self._manipulation.plan_to_poses({group: leg.target})
+            else:
+                result = self._manipulation.plan_linear(
+                    leg.target.position.x - current.position.x,
+                    leg.target.position.y - current.position.y,
+                    leg.target.position.z - current.position.z,
+                    group,
+                    check_collision=False,
+                )
+        elif leg.mode == "joints" and leg.joints is not None:
+            result = self._manipulation.plan_to_joints({group: leg.joints})
+        else:
+            return None
+        if result.plan is None or not result.plan.path:
+            logger.warning(
+                "Could not plan %s again from the live state: %s", leg.label, _status(result)
+            )
+            return None
+        logger.info("Planned %s again from the live state", leg.label)
+        return result.plan
 
     @skill(uses=[CAP_MOVEMENT])
     def proceed(self) -> SkillResult:
@@ -521,6 +584,12 @@ class PickAndPlaceModule(Module):
                 self._clear_selection()
             elif leg.plan is not None:
                 execution = self._manipulation.execute_plan(leg.plan, blocking=True)
+                if execution.status == ExecutionStatus.REJECTED:
+                    # The arm settled short of the previous leg's end; plan this
+                    # leg again from where it actually is.
+                    replanned = self._replan_leg(group, leg)
+                    if replanned is not None:
+                        execution = self._manipulation.execute_plan(replanned, blocking=True)
                 if not execution.succeeded:
                     return self._stopped(
                         f"Leg {index} of {len(program.legs)} ({leg.label}) of the staged "
