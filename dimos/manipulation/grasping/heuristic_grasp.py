@@ -31,6 +31,9 @@ from dimos.msgs.manipulation_msgs.GraspCandidate import GraspCandidate
 from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.Header import Header
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 
 class HeuristicGraspConfig(ModuleConfig):
@@ -91,10 +94,26 @@ class HeuristicGraspModule(Module, GraspGenSpec):
         center_xy = np.median(xy, axis=0)
         position = Vector3(float(center_xy[0]), float(center_xy[1]), float((low_z + high_z) / 2.0))
         base_yaw, ambiguous = self._narrow_axis_yaw(xy)
+        centered = xy - np.mean(xy, axis=0)
+        along = centered @ np.array([math.cos(base_yaw), math.sin(base_yaw)])
+        across = centered @ np.array([-math.sin(base_yaw), math.cos(base_yaw)])
+        # 5th to 95th percentile: a mask that spills onto the table adds a few
+        # far points that must not decide the grasp.
+        wide = float(np.diff(np.quantile(along, [0.05, 0.95]))[0])
+        narrow = float(np.diff(np.quantile(across, [0.05, 0.95]))[0])
         if not ambiguous:
-            centered = xy - np.mean(xy, axis=0)
-            wide = float(np.ptp(centered @ np.array([math.cos(base_yaw), math.sin(base_yaw)])))
             ambiguous = wide <= self.config.jaw_opening
+        logger.info(
+            "Grasp cross-section: height %.3f m, %d points%s, wide %.3f m, narrow %.3f m, "
+            "yaw %.0f deg, %s",
+            high_z - low_z,
+            len(xy),
+            " (top slice)" if len(xy) < len(points) else "",
+            wide,
+            narrow,
+            math.degrees(base_yaw),
+            "all yaws offered" if ambiguous else "narrow-axis yaws only",
+        )
         candidates = [
             GraspCandidate(
                 Pose(
