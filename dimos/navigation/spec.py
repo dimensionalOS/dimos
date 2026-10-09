@@ -94,11 +94,8 @@ class NavigationInterfaceSpec(Spec, Protocol):
         The goal's stamp identifies it, so stamp each goal afresh.
         """
 
-    def get_state(self) -> NavigationState:
-        """Whether the planner is following a path or idle."""
-
-    def is_goal_reached(self) -> bool:
-        """True once the current goal is reached."""
+    def get_status(self) -> GoalStatus | None:
+        """The newest goal's latest status. None before any goal."""
 
     def cancel_goal(self) -> bool:
         """Cancel the current goal. False if none was held."""

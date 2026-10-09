@@ -49,7 +49,6 @@ class GlobalPlanner(Resource):
 
     _current_odom: PoseStamped | None = None
     _current_goal: PoseStamped | None = None
-    _goal_reached: bool = False
     _thread: Thread | None = None
 
     _global_config: GlobalConfig
@@ -135,7 +134,6 @@ class GlobalPlanner(Resource):
         logger.info("Got new goal", goal=str(goal))
         with self._lock:
             self._current_goal = goal
-            self._goal_reached = False
         self._replan_limiter.reset()
         self._plan_path()
 
@@ -160,7 +158,6 @@ class GlobalPlanner(Resource):
 
             if not but_will_try_again:
                 self._current_goal = None
-                self._goal_reached = arrived
                 self._replan_limiter.reset()
 
         self.path.on_next(Path())
@@ -172,13 +169,6 @@ class GlobalPlanner(Resource):
     def set_replanning_enabled(self, enabled: bool) -> None:
         with self._lock:
             self._replanning_enabled = enabled
-
-    def get_state(self) -> NavigationState:
-        return self._local_planner.get_state()
-
-    def is_goal_reached(self) -> bool:
-        with self._lock:
-            return self._goal_reached
 
     @property
     def cmd_vel(self) -> Subject[Twist]:

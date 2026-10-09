@@ -23,7 +23,6 @@ from dimos.core.module import Module
 from dimos.core.stream import Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.navigation.spec import NavigationState
 from dimos.types.robot_location import RobotLocation
 
 
@@ -57,12 +56,8 @@ class StubNavigation(Module):
         return True
 
     @rpc
-    def get_state(self) -> NavigationState:
-        return NavigationState.IDLE
-
-    @rpc
-    def is_goal_reached(self) -> bool:
-        return False
+    def get_status(self) -> GoalStatus | None:
+        return None
 
     @rpc
     def cancel_goal(self) -> bool:

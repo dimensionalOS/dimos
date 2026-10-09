@@ -30,7 +30,7 @@ from dimos.core.stream import Stream, Transport
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPlannerNative
-from dimos.navigation.spec import NavigationInterfaceSpec, NavigationState, goal_id
+from dimos.navigation.spec import NavigationInterfaceSpec, goal_id
 from dimos.robot.unitree.unitree_skill_container import UnitreeSkillContainer
 from dimos.spec.utils import spec_annotation_compliance
 
@@ -73,12 +73,16 @@ def _status(goal_id: str, status: int) -> GoalStatus:
     return GoalStatus(goal_id=GoalID(id=goal_id), status=status)
 
 
-def test_idle_and_not_reached_before_any_goal(
+def _latest(module: MLSPlannerNative) -> tuple[str, int] | None:
+    status = module.get_status()
+    return None if status is None else (status.goal_id.id, status.status)
+
+
+def test_no_status_before_any_goal(
     planner: tuple[MLSPlannerNative, list[PointStamped]],
 ) -> None:
     module, _ = planner
-    assert module.get_state() == NavigationState.IDLE
-    assert not module.is_goal_reached()
+    assert module.get_status() is None
 
 
 def test_set_goal_sends_the_pose_position(
@@ -90,30 +94,16 @@ def test_set_goal_sends_the_pose_position(
     assert (goal.x, goal.y, goal.z, goal.ts, goal.frame_id) == (1.0, 2.0, 3.0, 5.0, "map")
 
 
-@pytest.mark.parametrize(
-    ("status", "state", "reached"),
-    [
-        (GoalStatus.PENDING, NavigationState.FOLLOWING_PATH, False),
-        (GoalStatus.ACTIVE, NavigationState.FOLLOWING_PATH, False),
-        (GoalStatus.SUCCEEDED, NavigationState.IDLE, True),
-        (GoalStatus.ABORTED, NavigationState.IDLE, False),
-        (GoalStatus.PREEMPTED, NavigationState.IDLE, False),
-        (GoalStatus.REJECTED, NavigationState.IDLE, False),
-    ],
-)
-def test_each_status_maps_to_a_state(
+def test_get_status_is_the_planners_latest_report(
     planner: tuple[MLSPlannerNative, list[PointStamped]],
-    status: int,
-    state: NavigationState,
-    reached: bool,
 ) -> None:
     module, _ = planner
-    module._on_nav_status(_status("1", status))
-    assert module.get_state() == state
-    assert module.is_goal_reached() == reached
+    report = _status("1", GoalStatus.ACTIVE)
+    module._on_nav_status(report)
+    assert module.get_status() is report
 
 
-def test_a_new_goal_is_following_until_the_planner_answers_it(
+def test_a_new_goal_is_pending_under_its_id_until_the_planner_answers_it(
     planner: tuple[MLSPlannerNative, list[PointStamped]],
 ) -> None:
     module, _ = planner
@@ -123,13 +113,11 @@ def test_a_new_goal_is_following_until_the_planner_answers_it(
 
     # The heartbeat still repeats the goal that came before.
     module._on_nav_status(_status("1", GoalStatus.SUCCEEDED))
-    assert module.get_state() == NavigationState.FOLLOWING_PATH
-    assert not module.is_goal_reached()
-
     assert goal_id(goal) == "5.250000000"
+    assert _latest(module) == ("5.250000000", GoalStatus.PENDING)
+
     module._on_nav_status(_status(goal_id(goal), GoalStatus.SUCCEEDED))
-    assert module.get_state() == NavigationState.IDLE
-    assert module.is_goal_reached()
+    assert _latest(module) == ("5.250000000", GoalStatus.SUCCEEDED)
 
 
 def test_cancel_goal_sends_the_nan_point_and_reports_whether_a_goal_was_held(
@@ -144,11 +132,11 @@ def test_cancel_goal_sends_the_nan_point_and_reports_whether_a_goal_was_held(
 
     # The heartbeat still repeats the canceled goal.
     module._on_nav_status(_status("1", GoalStatus.ACTIVE))
-    assert module.get_state() == NavigationState.IDLE
+    assert _latest(module) == ("1", GoalStatus.PREEMPTED)
 
     module._on_nav_status(_status("1", GoalStatus.PREEMPTED))
     module._on_nav_status(_status("2", GoalStatus.ACTIVE))
-    assert module.get_state() == NavigationState.FOLLOWING_PATH
+    assert _latest(module) == ("2", GoalStatus.ACTIVE)
 
 
 def test_a_cancel_with_no_goal_held_keeps_the_last_status(
@@ -158,7 +146,7 @@ def test_a_cancel_with_no_goal_held_keeps_the_last_status(
     module._on_nav_status(_status("1", GoalStatus.SUCCEEDED))
     assert not module.cancel_goal()
     assert math.isnan(sent[-1].x)
-    assert module.is_goal_reached()
+    assert _latest(module) == ("1", GoalStatus.SUCCEEDED)
 
 
 def test_cancel_goal_holds_no_goal_once_the_planner_aborted_it(
