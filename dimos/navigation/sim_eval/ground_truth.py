@@ -34,7 +34,7 @@ from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components, dijkstra
 
 from dimos.robot.unitree.go2.constants import ROBOT_WIDTH
-from dimos.simulation.scenes.mjcf import add_boxes
+from dimos.simulation.scenes.mjcf import SCENE_GROUPS, add_boxes
 from dimos.simulation.scenes.procedural import WALL_THICKNESS, Box, Scene
 from dimos.simulation.sensors.mujoco_raycaster import MujocoRaycaster
 
@@ -173,7 +173,7 @@ class GroundTruth:
     def _ground(self, z_top: float, depth: float) -> NDArray[np.float64]:
         """Per column, the lowest surface with the body's headroom above it. The outside is not ground."""
         probe = Probe(self.scene, self.body.height, self.cell / 4)
-        caster = MujocoRaycaster(probe.model, probe.data)
+        caster = MujocoRaycaster(probe.model, probe.data, SCENE_GROUPS)
         height = np.full(self.shape, np.nan)
         origin = np.array([0.0, 0.0, z_top])
         for ix in range(self.shape[0]):
