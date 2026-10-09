@@ -1,9 +1,8 @@
 # Independent DimOS packages
 
-Start with [lazy-native](lazy-native/README.md), the canonical minimal Rust probe,
+Start with [native](native/README.md), the canonical minimal Rust probe,
 and the [package authoring guide](/docs/usage/packages.md). Each directory is a
 separate ordinary Python distribution with a single `tool.dimos` declaration.
-The `native` directory is only a legacy prebuilt compatibility fixture.
 
 `rust` and `cpp` extend the same source-only recipe with real SDK typed ports.
 Their wheels carry source, not compiled executables. Building/installing the Python
