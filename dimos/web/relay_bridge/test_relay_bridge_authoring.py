@@ -742,7 +742,7 @@ def test_publish_frame_with_unusable_meta_is_dropped(monkeypatch) -> None:
         push(module, clients[0], _pub_frame(json.dumps("ok").encode(), _pub_meta(id="z")))
         assert wait_until(lambda: seen == ["ok"])
         assert [m.id for m in clients[0].control_frames if isinstance(m, PubAck)] == ["z"]
-        assert module._pub_invalid == 8
+        assert module._publish.invalid == 8
     finally:
         stop_module(module)
 

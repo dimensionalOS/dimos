@@ -49,7 +49,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.simulation.mujoco.constants import VIDEO_FPS
-from dimos.web.relay_bridge import builtin_codecs, relay_bridge_module
+from dimos.web.relay_bridge import builtin_codecs, relay_bridge_module, teleop
 from dimos.web.relay_bridge.config import RelayBridgeConfig, default_manifest, resolve_robot_info
 from dimos.web.relay_bridge.e2e_support import stop_module
 from dimos.web.relay_bridge.manifest import ManifestError, parse_manifest
@@ -1372,7 +1372,7 @@ def test_teleop_watchdog_deadline_and_high_water_survives_silence(teleop_bridge)
     assert wait_until(lambda: len(twists) == 2)
     elapsed = time.monotonic() - started
     assert twists[1].is_zero()
-    deadline = _TELEOP_TEST_WATCHDOG_MS / 1000 + relay_bridge_module._TELEOP_POLL_S + 0.5
+    deadline = _TELEOP_TEST_WATCHDOG_MS / 1000 + teleop._TELEOP_POLL_S + 0.5
     assert elapsed < deadline, f"deadman zero took {elapsed:.3f}s (deadline {deadline:.3f}s)"
     time.sleep(3 * _TELEOP_TEST_WATCHDOG_MS / 1000)
     settle(module)
@@ -1670,7 +1670,7 @@ def test_teleop_watchdog_runs_during_replay_encode(monkeypatch) -> None:
         elapsed = time.monotonic() - started
         assert not release_encode.is_set()
         assert twists[1].is_zero()
-        deadline = _TELEOP_TEST_WATCHDOG_MS / 1000 + relay_bridge_module._TELEOP_POLL_S + 0.5
+        deadline = _TELEOP_TEST_WATCHDOG_MS / 1000 + teleop._TELEOP_POLL_S + 0.5
         assert elapsed < deadline, f"deadman zero took {elapsed:.3f}s during a replay encode"
         push(module, clients[0], wire_twist(0.3, 0.0, 0.0, seq=2))
         assert wait_until(lambda: len(twists) == 3)
