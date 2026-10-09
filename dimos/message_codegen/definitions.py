@@ -23,11 +23,12 @@ from io import StringIO
 from pathlib import Path
 from typing import Any
 
-from dimos.message_codegen._vendor.rosidl_parser import (
+from ._vendor.rosidl_parser import (
     InvalidSpecification,
     InvalidValue,
     parse_message_string,
 )
+from .providers import schema_roots
 
 BUNDLED_SCHEMAS = Path(__file__).with_name("schemas")
 
@@ -142,9 +143,15 @@ def parse_message(path: Path) -> Message:
 class Definitions:
     """A closed set of local definitions with dependency-first resolution."""
 
-    def __init__(self, roots: Iterable[Path], *, bundled: bool = False) -> None:
+    def __init__(
+        self, roots: Iterable[Path], *, bundled: bool = True, installed: bool = False
+    ) -> None:
         self._messages: dict[str, Message] = {}
-        for root in ([BUNDLED_SCHEMAS] if bundled else []) + list(roots):
+        for root in (
+            ([BUNDLED_SCHEMAS] if bundled else [])
+            + list(roots)
+            + (list(schema_roots()) if installed else [])
+        ):
             if not root.is_dir():
                 raise ValueError(f"Schema root does not exist: {root}")
             for path in sorted(root.rglob("*.msg")):
@@ -189,5 +196,8 @@ class Definitions:
         sections = [root.text.rstrip() + "\n"]
         for message in sorted(closure, key=lambda item: item.name):
             if message.name != name:
-                sections.append(f"{'=' * 80}\nMSG: {message.name}\n{message.text.rstrip()}\n")
+                # Concatenated .msg sections use the package/resource spelling
+                # used by field references. The outer schema name stays pkg/msg/T.
+                resource_name = message.name.replace("/msg/", "/")
+                sections.append(f"{'=' * 80}\nMSG: {resource_name}\n{message.text.rstrip()}\n")
         return "".join(sections)

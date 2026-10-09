@@ -1,11 +1,52 @@
 [
   {
+    "repository": "ros2/common_interfaces",
+    "revision": "a941f14bb318d8d904505ed935ccbb97f24a70a4",
+    "files": {
+      "schemas/geometry_msgs/msg/Point.msg": "eb4c07e591cf0269ccb17245dcd4f998162feb09cc8add85fa082c8a30bfc91d",
+      "schemas/sensor_msgs/msg/Image.msg": "575cd3434771916c2b551db8ac484522ecef1d6105196e043a305887d2730704",
+      "schemas/sensor_msgs/msg/PointCloud2.msg": "22699bfd6c68be148363a2e889408833a5a37d3464ea20032d1c757336b80f2a",
+      "schemas/sensor_msgs/msg/PointField.msg": "6e6d5d51d2e464d3074b44b112f219e67fcdc0b280260d93f8cefd9710ec972e",
+      "schemas/std_msgs/msg/Bool.msg": "d989b95f2ba14d15eff5b274b5d1f379b938aaea2157d8bd707f942457ae18bf",
+      "schemas/std_msgs/msg/Header.msg": "d2cea14630e39ed0fa5b432ba9160a7c38855b9427d3344f99e83e83facb53c2",
+      "schemas/std_msgs/msg/MultiArrayDimension.msg": "94927d0ee40f1a1d9bf7bdddbca803e8b6e6d315d70c7295a9b0d2d6c380abed",
+      "schemas/std_msgs/msg/MultiArrayLayout.msg": "8f059b66610c5fe0532e3f12ff1022a10671caebf773f00816fd4c9303626914",
+      "schemas/std_msgs/msg/String.msg": "2022b3f1c32b578ff8d54a9948a51a10778761e0ad4ba60e50ae51292ca16884",
+      "schemas/std_msgs/msg/UInt32MultiArray.msg": "3a25d8463602c0f3eff61a14c3c17c10ef819aadf7ef19179e95cfdaea07b3ce"
+    },
+    "patches": {}
+  },
+  {
+    "repository": "ros2/rcl_interfaces",
+    "revision": "7aa3caf43377ea6ad615bc1040832e2c7566bfbe",
+    "files": {
+      "schemas/builtin_interfaces/msg/Time.msg": "dc5a01ddde3aecffee21eb24974fe77cc969f873218a2b1811aa0ac8a456b8bd",
+      "schemas/licenses/ros2_rcl_interfaces/LICENSE": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    },
+    "patches": {}
+  },
+  {
+    "repository": "ros2/geometry2",
+    "revision": "f702874b1c8535d6a038230ab2cda0ba5d521ebd",
+    "files": {
+      "schemas/licenses/ros2_geometry2/LICENSE": "1b1e5ebcad699924203feced7205a4bbdf4f153d34065a19a8a4e107cf1e154b"
+    },
+    "patches": {}
+  },
+  {
+    "repository": "ros-perception/vision_msgs",
+    "revision": "adbf56af9f77e3c8ab2552e25dc99e4a8a77fb27",
+    "files": {
+      "schemas/licenses/ros-perception_vision_msgs/LICENSE": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+    },
+    "patches": {}
+  },
+  {
     "repository": "ros2/rosidl",
     "revision": "85fa592b698b0f665e3120f48fac0d35e2f7d8a4",
     "files": {
       "_vendor/rosidl_parser.py": "4ca3bc4ecbfca7f48a07f1d9630bfb5d006f55857e75a3d3207380386431572e",
-      "_vendor/LICENSE": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
-      "_vendor/rosidl_adapter.package.xml": "653c797d2b4e2f5e6ad7b18812632bf6bf55aa924dfbca0405439389a5273989"
+      "schemas/licenses/ros2_rosidl/LICENSE": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
     },
     "patches": {
       "_vendor/rosidl_parser.py": {
@@ -13,5 +54,13 @@
         "description": "Equivalent linear-time constant-name validation regex"
       }
     }
+  },
+  {
+    "repository": "foxglove/schemas",
+    "revision": "e86a94e9d4d259cdde71872f18336a7a055bf9ba",
+    "files": {
+      "schemas/licenses/foxglove_schemas/LICENSE": "da11235665c17d4c1634072dae92b8ba1b38d6fdde2ccf19a6bbede33253f58d"
+    },
+    "patches": {}
   }
 ]
