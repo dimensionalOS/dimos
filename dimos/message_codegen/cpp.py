@@ -24,8 +24,8 @@ import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from ._vendor.rosidl.rosidl_adapter import convert_to_idl
-from ._vendor.rosidl.rosidl_pycommon import generate_files
+from ._vendor.rosidl.rosidl_adapter.api import convert_to_idl
+from ._vendor.rosidl.rosidl_pycommon.api import generate_files
 from .definitions import Message
 
 
