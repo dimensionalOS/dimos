@@ -99,7 +99,11 @@ class FakeTransport:
             "quota": {"state": "ok"},
         }
 
-    def put(self, url: str, body: bytes) -> None:
+    def put(
+        self, url: str, body: bytes, progress: Callable[[int, int], None] | None = None
+    ) -> None:
+        if progress is not None:
+            progress(len(body), len(body))
         path, _, epoch = url.partition("?e=")
         uid, n = path.split("/")
         if self.expire_at and len(self.parts[uid]) + 1 == self.expire_at:
@@ -174,9 +178,11 @@ def test_resume_sends_only_missing_parts(tmp_path: Path, monkeypatch: pytest.Mon
     sent: list[int] = []
     real_put = t.put
 
-    def spying_put(url: str, body: bytes) -> None:
+    def spying_put(
+        url: str, body: bytes, progress: Callable[[int, int], None] | None = None
+    ) -> None:
         sent.append(int(url.split("/")[1].partition("?")[0]))
-        real_put(url, body)
+        real_put(url, body, progress)
 
     monkeypatch.setattr(t, "put", spying_put)
     assert cloud.upload(db)["state"] == "complete"
@@ -449,3 +455,15 @@ def test_matching_suffix_uploads_raw_and_unstamped(
     assert t.uploads[r["upload_id"]]["content_encoding"] is None
     out = cloud.pull(r["upload_id"], dest=db.parent / "artifact.back.lz4")
     assert out.read_bytes() == raw.read_bytes()
+
+
+def test_body_pieces_report_cumulative_bytes() -> None:
+    from dimos.cloud.cloud_request import PUT_PIECE, body_pieces
+
+    seen: list[tuple[int, int]] = []
+    body = bytes(PUT_PIECE * 2 + 5)
+    assert b"".join(body_pieces(body, lambda d, t: seen.append((d, t)))) == body
+    assert seen == [(PUT_PIECE, len(body)), (2 * PUT_PIECE, len(body)), (len(body), len(body))]
+    seen.clear()
+    assert list(body_pieces(b"", lambda d, t: seen.append((d, t)))) == []
+    assert seen == [(0, 0)]

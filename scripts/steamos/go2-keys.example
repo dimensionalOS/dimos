@@ -1,0 +1,4 @@
+# Unitree AES-128 keys, one robot per line: SERIAL KEY ALIAS
+# Install as ~/.config/dimos/go2-keys (mode 600) on each handheld. Never commit the real file.
+# The alias is the robot's name in the Unitree app and the prefix of its WiFi access point name.
+B42D1000XXXXXXXX 0123456789abcdef0123456789abcdef Go2_12345

@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Go2 Cockpit (sim)
+Comment=Same cockpit on a simulated Go2, no robot needed
+Exec=/home/deck/go2-app.sh sim
+Icon=applications-simulation
+Terminal=false
+Categories=Game;

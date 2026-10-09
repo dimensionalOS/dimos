@@ -1,0 +1,7 @@
+[Unit]
+Description=Retry pending Go2 recording uploads
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=3min
+[Install]
+WantedBy=timers.target

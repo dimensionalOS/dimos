@@ -71,3 +71,14 @@ def test_bool_decodes_to_std_msgs_bool() -> None:
     assert resolve_decoder("bool.json.v1", Bool).decode is decode_bool
     with pytest.raises(ValueError, match="bool.json.v1"):
         decode_bool(1)
+
+
+def test_decode_joy_clamps_axes_and_normalizes_buttons() -> None:
+    from dimos.web.relay_bridge.builtin_codecs import decode_joy
+
+    joy = decode_joy({"axes": [0.25, -2.0, 1.5], "buttons": [1, 0, True, 2]})
+    assert joy.axes == [0.25, -1.0, 1.0]
+    assert joy.buttons == [1, 0, 1, 1]
+    for bad in ("x", {"axes": "no"}, {"axes": [float("nan")]}, {"axes": [0.0] * 33}):
+        with pytest.raises(ValueError):
+            decode_joy(bad)  # type: ignore[arg-type]

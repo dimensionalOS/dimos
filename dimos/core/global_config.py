@@ -67,6 +67,7 @@ class GlobalConfig(BaseSettings):
     replay_db: str = "go2_short"
     # Exit once every subscribed replay stream finishes (with --replay).
     replay_exit: bool = False
+    replay_loop: bool = False  # restart the replay dataset when it ends
     record: Literal["", "sqlite", "mcap"] = ""
     record_engine: Literal["python", "rust"] = Field(default="python", validate_default=True)
     record_topics: str = "*"  # comma-separated globs on the topic slug (/a/b -> a_b)

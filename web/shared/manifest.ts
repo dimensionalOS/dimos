@@ -394,10 +394,11 @@ export function parseManifest(value: unknown): Manifest {
     const mapEncoding = MAP_ENCODINGS.get(panel.kind);
     if (mapEncoding !== undefined) checkMapPanel(panel, chIds, mapEncoding);
     if (panel.kind === "teleop") {
-      if (panel.channels.length !== 1) {
+      // the twist command, plus optionally the raw gamepad state as Joy
+      if (panel.channels.length !== 1 && panel.channels.length !== 2) {
         throw new ManifestError(
           "invalid_teleop_panel",
-          `teleop panel ${panel.id} must bind exactly one channel`,
+          `teleop panel ${panel.id} must bind one or two channels`,
         );
       }
       const cmd = chIds.get(panel.channels[0])!;
@@ -406,6 +407,15 @@ export function parseManifest(value: unknown): Manifest {
           "invalid_teleop_panel",
           `teleop panel ${panel.id} needs a twist.json.v1 latest tx channel`,
         );
+      }
+      if (panel.channels.length === 2) {
+        const joy = chIds.get(panel.channels[1])!;
+        if (joy.encoding !== "joy.json.v1" || dirOf(joy) !== "tx" || joy.publish !== "shared") {
+          throw new ManifestError(
+            "invalid_teleop_panel",
+            `teleop panel ${panel.id} joystick needs a joy.json.v1 shared tx channel`,
+          );
+        }
       }
     }
     if (panel.kind === "chat") {
@@ -449,6 +459,23 @@ export function parseManifest(value: unknown): Manifest {
         throw new ManifestError(
           "invalid_chat_panel",
           `chat panel ${panel.id} needs an audio.json.v1 reliable shared tx channel fourth`,
+        );
+      }
+    }
+    if (panel.kind === "battery") {
+      if (panel.channels.length !== 1) {
+        throw new ManifestError(
+          "invalid_battery_panel",
+          `battery panel ${panel.id} must bind exactly one channel`,
+        );
+      }
+      const batt = chIds.get(panel.channels[0])!;
+      if (
+        batt.encoding !== "battery.json.v1" || batt.delivery !== "latest" || dirOf(batt) !== "rx"
+      ) {
+        throw new ManifestError(
+          "invalid_battery_panel",
+          `battery panel ${panel.id} needs a battery.json.v1 latest rx channel`,
         );
       }
     }

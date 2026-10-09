@@ -6,7 +6,7 @@ import type { Msg, PanelSpec } from "@dimos/shared";
 import type { Manifest } from "@dimos/shared/manifest";
 import { ChannelStore, StatusStore } from "@dimos/sdk";
 import type { TeleopHooks } from "@dimos/sdk/internal/teleop";
-import { TeleopPanel } from "./TeleopPanel.tsx";
+import { joySample, TeleopPanel } from "./TeleopPanel.tsx";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -134,13 +134,13 @@ describe("TeleopPanel", () => {
     expect(pad().dataset.state).toBe("armed");
   });
 
-  it("drives from key events and reflects them in cluster and readout", () => {
+  it("drives from key events and reflects them in the sticks and readout", () => {
     armPanel();
     key("keydown", "KeyW");
     expect(hooks.datagrams.at(-1)).toMatchObject({ t: "twist", vx: 0.8, vy: 0, wz: 0 });
-    const wKey = container.querySelector('[data-testid="teleop-key-W"]');
-    expect(wKey?.getAttribute("data-pressed")).toBe("true");
-    expect(container.textContent).toContain("vx 0.80");
+    const left = container.querySelector(`[data-testid="teleop-${CH}-stick-left"]`);
+    expect(left?.getAttribute("data-vx")).toBe("1.00");
+    expect(container.textContent).toContain("0.80");
     key("keyup", "KeyW");
     expect(hooks.datagrams.at(-1)).toMatchObject({ t: "twist", vx: 0, vy: 0, wz: 0 });
   });
@@ -189,5 +189,25 @@ describe("TeleopPanel", () => {
     expect(container.textContent).toContain("connection lost");
     act(() => pad().focus());
     expect(hooks.controls).toHaveLength(0);
+  });
+});
+
+describe("joySample", () => {
+  it("keeps a standard pad's analog triggers as axes 4/5, buttons stay 0/1", () => {
+    const btn = (value: number) => ({ value, pressed: value > 0.5, touched: value > 0 });
+    const pad = {
+      mapping: "standard" as const,
+      axes: [0.12345, -1, 0, 0],
+      buttons: [btn(0), btn(1), ...Array(4).fill(btn(0)), btn(0.25), btn(0.75)],
+    };
+    expect(joySample(pad)).toEqual({
+      axes: [0.123, -1, 0, 0, 0.25, 0.75],
+      buttons: [0, 1, 0, 0, 0, 0, 0, 1],
+    });
+    // a raw (unmapped) pad already carries its trigger as an axis
+    expect(
+      joySample({ mapping: "" as const, axes: [0, 0, 0, 0, 0, 0.5], buttons: [btn(0.75)] }).axes,
+    )
+      .toHaveLength(6);
   });
 });

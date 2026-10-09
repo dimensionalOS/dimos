@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Root helper: give the seat user the built-in gamepad back after Steam masked it (Steam leaves an
+# ACL mask of --- on the joystick nodes). Installed to /etc/go2/sticks-unlock with a NOPASSWD rule.
+for d in /dev/input/event* /dev/input/js*; do
+  udevadm info -q property "$d" 2>/dev/null | grep -q "^ID_INPUT_JOYSTICK=1" || continue
+  chmod 660 "$d"; chgrp input "$d"; setfacl -b "$d"; setfacl -m u:deck:rw,m::rw "$d"
+done

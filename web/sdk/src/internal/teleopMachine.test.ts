@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Msg } from "@dimos/shared";
 import type { ChannelSpec } from "@dimos/shared/manifest";
 import {
+  STICK_AT_REST,
+  stickFromGamepad,
   TELEOP_DEFAULTS,
   teleopConfigFromChannel,
   TeleopMachine,
@@ -213,5 +215,59 @@ describe("teleopConfigFromChannel", () => {
     };
     expect(teleopConfigFromChannel(junk)).toEqual(TELEOP_DEFAULTS);
     expect(teleopConfigFromChannel(undefined)).toEqual(TELEOP_DEFAULTS);
+  });
+});
+
+describe("stick", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it("maps the standard gamepad layout with a dead zone", () => {
+    const rest = stickFromGamepad([0.1, -0.1, 0.05], [{ value: 0 }]);
+    expect(rest).toEqual(STICK_AT_REST);
+    const full = stickFromGamepad([-1, -1, -1], Array(8).fill({ value: 1 }));
+    expect(full).toEqual({ vx: 1, vy: 1, wz: 1, boost: 1 });
+  });
+
+  it("reads raw xpad order when the browser has no mapping", () => {
+    // evdev order: LX LY LT RX RY RT, triggers rest at -1
+    const raw = stickFromGamepad([0, -1, -1, -1, 0, 1], [], "");
+    expect(raw).toEqual({ vx: 1, vy: 0, wz: 1, boost: 1 });
+    expect(stickFromGamepad([0, 0, -1, 0, 0, -1], [], "").boost).toBe(0);
+  });
+
+  it("drives at publishHz while deflected and bursts zeros at rest", () => {
+    const { machine, sent } = armed();
+    machine.stick({ vx: 1, vy: 0, wz: -0.5, boost: 0 });
+    expect(twists(sent).at(-1)).toMatchObject({
+      vx: TELEOP_DEFAULTS.maxLinear,
+      vy: 0,
+      wz: -0.5 * TELEOP_DEFAULTS.maxAngular,
+    });
+    vi.advanceTimersByTime(1000 / TELEOP_DEFAULTS.publishHz * 2 + 1);
+    expect(twists(sent).length).toBe(3);
+    machine.stick(STICK_AT_REST);
+    vi.advanceTimersByTime(250);
+    const tail = twists(sent).slice(-3);
+    expect(tail.every((t) => t.vx === 0 && t.vy === 0 && t.wz === 0)).toBe(true);
+    expect(twists(sent).length).toBe(6);
+  });
+
+  it("scales speed with the trigger and ignores samples while disarmed", () => {
+    const { machine, sent } = armed();
+    machine.stick({ vx: 1, vy: 0, wz: 0, boost: 1 });
+    expect(twists(sent).at(-1)?.vx).toBeCloseTo(TELEOP_DEFAULTS.maxLinear * TELEOP_DEFAULTS.boost);
+    expect(snap(machine).boosted).toBe(true);
+    machine.disarm("test");
+    sent.length = 0;
+    machine.stick({ vx: 1, vy: 0, wz: 0, boost: 0 });
+    expect(sent).toEqual([]);
+  });
+
+  it("repeated identical samples send nothing extra", () => {
+    const { machine, sent } = armed();
+    machine.stick({ vx: 0.5, vy: 0, wz: 0, boost: 0 });
+    machine.stick({ vx: 0.5, vy: 0, wz: 0, boost: 0 });
+    expect(twists(sent).length).toBe(1);
   });
 });

@@ -82,6 +82,52 @@ const BOOST_CODES = new Set(["ShiftLeft", "ShiftRight"]);
 /** Codes the panel intercepts (preventDefault) while it has focus. */
 export const HANDLED_CODES = new Set([...MOTION_CODES, ...BOOST_CODES, "Space", "Escape"]);
 
+/** Analog input from a gamepad, each axis -1..1 after the deadzone, boost 0..1
+ * (the right trigger). Zero on every field means "stick at rest". */
+export interface StickInput {
+  vx: number;
+  vy: number;
+  wz: number;
+  boost: number;
+}
+
+export const STICK_AT_REST: StickInput = { vx: 0, vy: 0, wz: 0, boost: 0 };
+
+/** Dead zone of the browser's standard gamepad mapping, rescaled so the
+ * edge of the zone reads 0 and full deflection 1. */
+export const STICK_DEADZONE = 0.15;
+
+function deadzone(value: number): number {
+  const magnitude = Math.abs(value);
+  if (magnitude < STICK_DEADZONE) return 0;
+  return Math.sign(value) * (magnitude - STICK_DEADZONE) / (1 - STICK_DEADZONE);
+}
+
+/** Gamepad sample to a StickInput: left stick drives (up = forward, left =
+ * +y), right stick X yaws (left = +wz), right trigger boosts. The browser's
+ * "standard" mapping puts the right stick on axes 2/3 and the trigger on
+ * button 7. A pad the browser does not recognise (a handheld's built-in
+ * xpad sticks, say) comes raw in evdev order: right stick X on axis 3 and
+ * the trigger on axis 5 running -1..1. */
+export function stickFromGamepad(
+  axes: readonly number[],
+  buttons: readonly { value: number }[],
+  mapping = "standard",
+): StickInput {
+  const standard = mapping === "standard";
+  const boost = standard ? buttons[7]?.value ?? 0 : ((axes[5] ?? -1) + 1) / 2;
+  return {
+    vx: 0 - deadzone(axes[1] ?? 0),
+    vy: 0 - deadzone(axes[0] ?? 0),
+    wz: 0 - deadzone(axes[standard ? 2 : 3] ?? 0),
+    boost: Math.min(1, Math.max(0, boost)),
+  };
+}
+
+export function stickActive(stick: StickInput): boolean {
+  return stick.vx !== 0 || stick.vy !== 0 || stick.wz !== 0;
+}
+
 /** Release/e-stop burst schedule: send now, repeat twice over 200 ms. */
 const BURST_DELAYS_MS = [100, 200];
 
@@ -104,6 +150,7 @@ export class TeleopMachine {
   #phase: TeleopPhase = "disarmed";
   #reason: string | null = null;
   #pressed = new Set<string>();
+  #stick: StickInput = STICK_AT_REST;
   #seq = 0;
   #command = { vx: 0, vy: 0, wz: 0, boosted: false };
   #interval: ReturnType<typeof setInterval> | null = null;
@@ -144,6 +191,7 @@ export class TeleopMachine {
       // is nothing of ours to zero or release).
       this.#stopTimers();
       this.#pressed.clear();
+      this.#stick = STICK_AT_REST;
       this.#phase = "disarmed";
       this.#reason = "teleop held by another viewer";
       this.#emit();
@@ -157,6 +205,7 @@ export class TeleopMachine {
     const wasArmed = this.#phase === "armed";
     this.#stopTimers();
     this.#pressed.clear();
+    this.#stick = STICK_AT_REST;
     this.#phase = "disarmed";
     this.#reason = reason;
     if (wasArmed) {
@@ -174,6 +223,7 @@ export class TeleopMachine {
     if (connected || this.#phase === "disarmed") return;
     this.#stopTimers();
     this.#pressed.clear();
+    this.#stick = STICK_AT_REST;
     this.#phase = "disarmed";
     this.#reason = "connection lost";
     this.#emit();
@@ -185,6 +235,7 @@ export class TeleopMachine {
     if (this.#phase !== "armed") return;
     this.#stopTimers();
     this.#pressed.clear();
+    this.#stick = STICK_AT_REST;
     this.#send.control({ t: "stop", seq: ++this.#seq, ts: Date.now() / 1000 });
     this.#sendStop();
     this.#burstTimers = BURST_DELAYS_MS.map((ms) => setTimeout(() => this.#sendStop(), ms));
@@ -218,7 +269,33 @@ export class TeleopMachine {
     this.#emit();
   }
 
+  /** Gamepad sample. Same cadence rules as the keys: motion starts the
+   * publish interval, the return to rest sends the zero burst. Samples that
+   * change nothing are free, so the panel can poll at any rate. */
+  stick(input: StickInput): void {
+    if (this.#phase !== "armed") return;
+    const prev = this.#stick;
+    if (
+      prev.vx === input.vx && prev.vy === input.vy && prev.wz === input.wz &&
+      prev.boost === input.boost
+    ) return;
+    this.#stick = input;
+    if (this.#anyMotionHeld()) {
+      this.#cancelBurst();
+      this.#sendCurrent();
+      this.#interval ??= setInterval(() => this.#sendCurrent(), 1000 / this.config.publishHz);
+    } else if (this.#interval !== null) {
+      this.#stopInterval();
+      this.#sendTwist(0, 0, 0);
+      this.#burstTimers = BURST_DELAYS_MS.map((ms) =>
+        setTimeout(() => this.#sendTwist(0, 0, 0), ms)
+      );
+    }
+    this.#emit();
+  }
+
   #anyMotionHeld(): boolean {
+    if (stickActive(this.#stick)) return true;
     for (const code of this.#pressed) if (MOTION_CODES.has(code)) return true;
     return false;
   }
@@ -234,9 +311,13 @@ export class TeleopMachine {
     if (held.has("KeyE")) vy = -this.config.maxLinear;
     if (held.has("KeyA")) wz = this.config.maxAngular;
     if (held.has("KeyD")) wz = -this.config.maxAngular;
-    const boosted = held.has("ShiftLeft") || held.has("ShiftRight");
-    const k = boosted ? this.config.boost : 1;
-    this.#sendTwist(vx * k, vy * k, wz * k, boosted);
+    const stick = this.#stick;
+    if (stick.vx !== 0) vx = stick.vx * this.config.maxLinear;
+    if (stick.vy !== 0) vy = stick.vy * this.config.maxLinear;
+    if (stick.wz !== 0) wz = stick.wz * this.config.maxAngular;
+    const shift = held.has("ShiftLeft") || held.has("ShiftRight");
+    const k = shift ? this.config.boost : 1 + (this.config.boost - 1) * stick.boost;
+    this.#sendTwist(vx * k, vy * k, wz * k, shift || stick.boost > 0.5);
   }
 
   #sendTwist(vx: number, vy: number, wz: number, boosted = false): void {

@@ -21,6 +21,8 @@ import contextlib
 from datetime import datetime, timezone
 import functools
 from pathlib import Path
+import sys
+import time
 from typing import Any
 
 import typer
@@ -62,6 +64,20 @@ def handle_fail(fn: Callable[..., None]) -> Callable[..., None]:
 
 @contextlib.contextmanager
 def _bar(name: str) -> Iterator[Callable[[str, int, int], None]]:
+    if not sys.stdout.isatty():
+        # No terminal (a script, a GUI, a timer): one tab-separated line per update,
+        # `progress <phase> <done> <total> <name>`, at most ~4 a second plus the last one.
+        last = [0.0]
+
+        def plain(phase: str, done: int, total: int) -> None:
+            now = time.monotonic()
+            if done != total and now - last[0] < 0.25:
+                return
+            last[0] = now
+            typer.echo(f"progress\t{phase}\t{done}\t{total}\t{name}")
+
+        yield plain
+        return
     from rich.progress import (
         BarColumn,
         DownloadColumn,

@@ -1,0 +1,108 @@
+.page {
+  container-type: size;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  height: 100%;
+  padding: 14px 18px;
+  transition: opacity 0.3s;
+  width: 100%;
+}
+
+.page[data-stale] {
+  opacity: 0.45;
+}
+
+.hint {
+  color: var(--fg-muted);
+  font-size: 12px;
+}
+
+.error {
+  color: var(--danger);
+  font-size: 11px;
+}
+
+.cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.card {
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  display: flex;
+  flex: 1 1 140px;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 140px;
+  padding: 10px 14px;
+}
+
+.label {
+  color: var(--fg-muted);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.value {
+  font-family: var(--font-mono);
+  font-size: 26px;
+  font-weight: 500;
+  line-height: 1.1;
+}
+
+.big {
+  font-size: 40px;
+}
+
+.muted {
+  color: var(--fg-faint);
+  font-size: 24px;
+  line-height: 1.8;
+}
+
+.ok {
+  color: var(--ok);
+}
+
+.warn {
+  color: var(--warn);
+}
+
+.danger {
+  color: var(--danger);
+}
+
+.chart {
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  flex: 1;
+  min-height: 120px;
+  position: relative;
+}
+
+.canvas {
+  height: 100%;
+  width: 100%;
+}
+
+/* a strip-height panel: charge and time left, no chart */
+@container (max-height: 260px) {
+  .chart,
+  .card:nth-child(n+3) {
+    display: none;
+  }
+
+  .big {
+    font-size: 32px;
+  }
+
+  .muted {
+    font-size: 20px;
+  }
+}

@@ -47,7 +47,7 @@ A channel is one stream crossing the wire in one direction with one encoding. `r
 | `global_costmap` | `OccupancyGrid` | `costmap.zlib.v1` | latest, the last grid is replayed to a new viewer |
 | `tele_cmd_vel` (tx) | `Twist` | `twist.json.v1` | latest |
 
-Every other stream needs a `Channel` declaration. It becomes a port typed with the declared message type and wired by `autoconnect` like any module port. The Map2D, Map3D, Chat and Stats panels declare the channels for their own extra streams (`path`, `click`, `stop`, `cloud`, the chat streams, `resource_stats`). A Video panel, or a Map2D costmap or pose, on a stream that is not a built-in port needs a `Channel` from you, see [Panels](/docs/web/cockpit.md#panels) on the cockpit page.
+Every other stream needs a `Channel` declaration. It becomes a port typed with the declared message type and wired by `autoconnect` like any module port. The Map2D, Map3D, Chat, Stats and Battery panels declare the channels for their own extra streams (`path`, `click`, `stop`, `cloud`, the chat streams, `resource_stats`, `battery`). A Video panel, or a Map2D costmap or pose, on a stream that is not a built-in port needs a `Channel` from you, see [Panels](/docs/web/cockpit.md#panels) on the cockpit page.
 
 The relay keeps the bridge informed of which channels have at least one subscribed viewer. The bridge encodes and sends a channel only while that holds: it subscribes to the stream when the first viewer arrives and unsubscribes when the last one leaves. Replayable channels (`resend_on_subscribe`, and the built-in `global_costmap`) also keep a raw-message cache, so they stay subscribed to their stream without viewers, but nothing is encoded for them. Two settings shape what crosses the wire:
 
@@ -116,6 +116,7 @@ An encoding id names a codec pair: the encoder in the bridge and the decoder in 
 | `pose.json.v1` | `PoseStamped` | rx | the Map2D pose marker |
 | `path.json.v1` | `Path` | rx | the Map2D path overlay |
 | `stats.json.v1` | `dict` | rx | Stats |
+| `battery.json.v1` | `BatteryState` | rx | Battery |
 | `chat.json.v1` | LangChain `BaseMessage` | rx | Chat |
 | `text.json.v1` | `str` | tx | the Chat input |
 | `point.json.v1` | `PointStamped` | tx | Map2D clicks |

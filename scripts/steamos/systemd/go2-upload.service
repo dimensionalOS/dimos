@@ -1,0 +1,5 @@
+[Unit]
+Description=Upload pending Go2 recordings to Dimensional
+[Service]
+Type=oneshot
+ExecStart=/home/deck/go2-upload.sh --quiet
