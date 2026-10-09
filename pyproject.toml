@@ -52,6 +52,13 @@ exclude = [
     "**/*.pyi",
     "message_codegen/schemas/**/*",
     "message_codegen/templates/*",
+    "message_codegen/_vendor/rosidl/**/*.em",
+    "message_codegen/_vendor/rosidl/**/*.lark",
+    "message_codegen/_vendor/rosidl/include/**/*",
+    "message_codegen/_vendor/rosidl/notices/**/*",
+    "message_codegen/_vendor/rosidl/LICENSE",
+    "message_codegen/_vendor/rosidl/sources.json",
+
 ]
 
 [tool.setuptools.exclude-package-data]
@@ -384,7 +391,7 @@ all = [
 
 [dependency-groups]
 # Lightweight, locked environment for deterministic built-in source alignment.
-message-codegen = ["ruff==0.14.3", "pytest==8.3.5", "rosbags==0.11.0", "tomli>=2; python_version < '3.11'"]
+message-codegen = ["empy==4.2", "lark==1.2.2", "ruff==0.14.3", "pytest==8.3.5", "rosbags==0.11.0", "tomli>=2; python_version < '3.11'"]
 
 # For autofix.yml
 autofix = ["ruff==0.14.3"]
@@ -419,6 +426,8 @@ project-deps = [
 ]
 
 tests = [
+    "empy==4.2",
+    "lark==1.2.2",
     # Independent CDR/schema references used by message and MCAP tests.
     "rosbags==0.11.0",
     "mcap>=1.2.0",
