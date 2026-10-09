@@ -45,8 +45,10 @@ from dimos.msgs.nav_msgs.Path import Path as NavPath
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.web.cockpit import Channel, Chat, Map2D, Stats, Video, cockpit
 from dimos.web.codecs import EncodedPayload, PublishContext, web_decoder, web_encoder
-from dimos.web.relay_bridge import builtin_codecs, relay_bridge_module
+from dimos.web.relay_bridge import builtin_codecs, pacing, relay_bridge_module
 from dimos.web.relay_bridge.audio_codec import AudioChunk
+from dimos.web.relay_bridge.channels import RuntimeChannelSpec
+from dimos.web.relay_bridge.config import RelayBridgeConfig
 from dimos.web.relay_bridge.e2e_support import stop_module
 from dimos.web.relay_bridge.module_test_support import (
     FakeClient,
@@ -65,12 +67,7 @@ from dimos.web.relay_bridge.protocol import (
     PubNack,
     Subs,
 )
-from dimos.web.relay_bridge.relay_bridge_module import (
-    RelayBridgeConfig,
-    RelayBridgeModule,
-    RuntimeChannelSpec,
-    with_relay_bridge,
-)
+from dimos.web.relay_bridge.relay_bridge_module import RelayBridgeModule, with_relay_bridge
 
 
 # Composition helpers live at module level: under PEP 563 (`from __future__
@@ -509,7 +506,7 @@ def test_paced_sender_spaces_frames_in_order_and_bounds_its_queue(monkeypatch) -
             if len(sent) == 3:
                 drained.set()
 
-        pacer = relay_bridge_module._PacedSender(loop, 0.02, send)
+        pacer = pacing.PacedSender(loop, 0.02, send)
         try:
             for i in range(3):
                 pacer(bytes([i]), None, None)
@@ -521,7 +518,7 @@ def test_paced_sender_spaces_frames_in_order_and_bounds_its_queue(monkeypatch) -
             # A loaded runner may finish draining just before the waiter wakes.
             with monkeypatch.context() as clock:
                 clock.setattr(loop, "time", lambda: sent[2][1] + 1.0)
-                for i in range(relay_bridge_module._PACED_QUEUE_MAX + 10):
+                for i in range(pacing._PACED_QUEUE_MAX + 10):
                     pacer(bytes([i % 256]), None, None)
                 assert pacer.dropped == 9
                 pacer.close()

@@ -27,6 +27,7 @@ from pathlib import Path
 import queue
 import shutil
 import signal
+import socket
 import subprocess
 import tempfile
 import threading
@@ -265,6 +266,22 @@ def _swap_dist(package: Path, new_dist: Path) -> None:
         os.rename(dist, old)
     os.rename(new_dist, dist)
     shutil.rmtree(old, ignore_errors=True)
+
+
+def probe_local_port(port: int) -> None:
+    """Fail fast when the local relay's HTTP port is taken (0 = ephemeral)."""
+    if port == 0:
+        return
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            # SO_REUSEADDR matches how the relay itself binds: a live
+            # listener still fails the probe, but the FIN_WAIT/TIME_WAIT
+            # remnants of a just-killed relay (a browser tab was
+            # attached) must not block an immediate restart.
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            probe.bind(("127.0.0.1", port))
+    except OSError as e:
+        raise RuntimeError(f"cannot start local relay: port {port} is unavailable") from e
 
 
 @dataclass
