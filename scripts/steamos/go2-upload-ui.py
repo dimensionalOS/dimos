@@ -144,7 +144,6 @@ class App(tk.Tk):
         self.after(500, self.check_net)
         self.after(1500, self.start)  # one tap: the icon opens the window and it goes
 
-    # --- state --------------------------------------------------------------
     def refresh(self) -> None:
         self.recs = sorted(
             (Recording(p) for p in RECORDINGS.glob("*/") if (p / "memory.db").exists()),
@@ -176,7 +175,6 @@ class App(tk.Tk):
         threading.Thread(target=probe, daemon=True).start()
         self.after(10000, self.check_net)
 
-    # --- upload worker --------------------------------------------------------
     def start(self) -> None:
         if self.worker and self.worker.is_alive():
             return
@@ -244,7 +242,6 @@ class App(tk.Tk):
             r.status, r.note = "failed", (tail[-1][:60] if tail else "see ~/go2-app.log")
         self.events.put(("row", r, None))
 
-    # --- UI pump ----------------------------------------------------------------
     def pump(self) -> None:
         try:
             while True:
