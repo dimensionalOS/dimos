@@ -29,6 +29,7 @@ INSTALL_MODE="${DIMOS_INSTALL_MODE:-}"
 EXTRAS="${DIMOS_EXTRAS:-}"
 NON_INTERACTIVE="${DIMOS_NO_PROMPT:-0}"
 GIT_BRANCH="${DIMOS_BRANCH:-main}"
+GIT_COMMIT="${DIMOS_COMMIT:-}"
 NO_CUDA="${DIMOS_NO_CUDA:-0}"
 NO_SYSCTL="${DIMOS_NO_SYSCTL:-0}"
 DRY_RUN="${DIMOS_DRY_RUN:-0}"
@@ -267,6 +268,7 @@ ${BOLD}OPTIONS${RESET}
     --mode library|dev     Install mode (default: interactive prompt)
     --extras <list>        Comma-separated pip extras
     --branch <branch>      Git branch for dev mode (default: main)
+    --commit <commit>      Pin dev checkout to this exact revision (also DIMOS_COMMIT)
     --project-dir <path>   Project directory
     --non-interactive      Accept defaults, no prompts
     --no-cuda              Skip optional CUDA extras and GPU verification
@@ -290,7 +292,7 @@ EOF
 parse_args() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --mode|--extras|--branch|--project-dir)
+            --mode|--extras|--branch|--commit|--project-dir)
                 [[ $# -ge 2 && -n "$2" && "$2" != --* ]] || die "$1 requires a value"
                 ;;
         esac
@@ -298,6 +300,7 @@ parse_args() {
             --mode)            INSTALL_MODE="$2"; shift 2 ;;
             --extras)          EXTRAS="$2"; shift 2 ;;
             --branch)          GIT_BRANCH="$2"; shift 2 ;;
+            --commit)          GIT_COMMIT="$2"; shift 2 ;;
             --project-dir)     PROJECT_DIR="$2"; shift 2 ;;
             --non-interactive) NON_INTERACTIVE=1; shift ;;
             --no-cuda)         NO_CUDA=1; shift ;;
@@ -526,8 +529,10 @@ verify_nix_develop() {
 install_steamos_deps() (
     local -a privilege=(/usr/bin/env) packages=()
     if [[ $(id -u) != 0 ]]; then privilege=(sudo); fi
-    if has_cmd cc && has_cmd make && has_cmd pkg-config && \
-            [[ -f /usr/include/stdio.h && -f /usr/include/linux/types.h && -f /usr/include/portaudio.h ]]; then
+    if has_cmd cc && has_cmd g++ && has_cmd make && has_cmd pkg-config && \
+            [[ -f /usr/include/stdio.h && -f /usr/include/linux/types.h && -f /usr/include/portaudio.h ]] && \
+            printf '#include <vector>\nint main() { return std::vector<int>{1}.at(0) - 1; }\n' | \
+                g++ -x c++ -c -o /dev/null - >/dev/null 2>&1; then
         ok "compiler and development headers already installed"
         return
     fi
@@ -802,6 +807,21 @@ do_install_dev() {
         info "using existing checkout at $(git -C "$dir" rev-parse --short HEAD)"
     else
         run_cmd /usr/bin/env GIT_LFS_SKIP_SMUDGE=1 git clone -b "$GIT_BRANCH" https://github.com/dimensionalOS/dimos.git "$dir"
+    fi
+    if [[ -n "$GIT_COMMIT" ]]; then
+        if [[ "$DRY_RUN" == 1 ]]; then
+            run_cmd git -C "$dir" fetch origin "$GIT_COMMIT"
+            run_cmd git -C "$dir" checkout --detach "$GIT_COMMIT"
+        else
+            if ! git -C "$dir" cat-file -e "${GIT_COMMIT}^{commit}" 2>/dev/null; then
+                run_cmd git -C "$dir" fetch origin "$GIT_COMMIT"
+            fi
+            local expected
+            expected=$(git -C "$dir" rev-parse --verify "${GIT_COMMIT}^{commit}")
+            # No reset/force: Git refuses a checkout that would overwrite local changes.
+            run_cmd /usr/bin/env GIT_LFS_SKIP_SMUDGE=1 git -C "$dir" checkout --detach "$expected"
+            [[ "$(git -C "$dir" rev-parse HEAD)" == "$expected" ]] || die "checkout does not match requested commit $GIT_COMMIT"
+        fi
     fi
     if [[ "$USE_NIX" == 1 ]]; then verify_nix_develop; fi
     local -a sync_args=(--locked --python "$INSTALL_PYTHON" --group tests --group lint)
