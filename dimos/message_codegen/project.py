@@ -171,13 +171,13 @@ def prepare(project: Project) -> Path:
     toolkit_hash = sha256()
     toolkit_paths = (
         list(toolkit.glob("*.py"))
-        + list((toolkit / "_vendor").glob("*.py"))
+        + list((toolkit / "_vendor").rglob("*"))
         + list((toolkit / "templates").glob("*"))
     )
     for path in sorted(toolkit_paths):
         if (
             path.is_file()
-            and (path.suffix in {".py", ".hpp", ".rs"})
+            and (path.suffix in {".py", ".hpp", ".h", ".rs", ".em", ".lark", ".json"})
             and "__pycache__" not in path.parts
         ):
             toolkit_hash.update(path.relative_to(toolkit).as_posix().encode())

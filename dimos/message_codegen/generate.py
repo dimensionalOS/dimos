@@ -130,8 +130,8 @@ def generate(
     )
     crate = output / "rust"
     (crate / "src").mkdir(parents=True, exist_ok=True)
-    (crate / "src" / "lib.rs").write_text(
-        rust.generate(owned, definitions, {name: owner.crate for name, owner in owners.items()})
+    rust.write_crate(
+        crate, owned, definitions, {name: owner.crate for name, owner in owners.items()}
     )
     codec_owner = (
         (dependencies[0].codec_owner or dependencies[0].module) if dependencies else module
@@ -143,7 +143,7 @@ def generate(
     (crate / "Cargo.toml").write_text(
         f'[package]\nname = "{module.replace("_", "-")}-messages"\nversion = "{version}"\nedition = "2024"\n'
         'license = "Apache-2.0"\ndescription = "Native CDR messages generated from ROS2 definitions"\n'
-        'include = ["src/*.rs", "schemas.json", "schemas/**", "Cargo.toml"]\n'
+        'include = ["src/*.rs", "build.rs", "interfaces/**", "schemas.json", "schemas/**", "Cargo.toml"]\n'
         '[workspace]\n[dependencies]\nserde = { version = "1.0", features = ["derive"] }\n'
         'serde-big-array = "=0.5.1"\nre_cdr = "=0.1.0"\n'
         + "".join(
@@ -151,6 +151,8 @@ def generate(
             for dep in dependencies
         )
     )
+    with (crate / "Cargo.toml").open("a") as stream:
+        stream.write('[build-dependencies]\nros2msg = "=0.5.3"\nheck = "=0.5.0"\n')
     metadata = {message.name: definitions.schema(message.name) for message in messages}
     (output / "schemas.json").write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n")
     shutil.copyfile(output / "schemas.json", crate / "schemas.json")

@@ -58,6 +58,7 @@ exclude = [
     "message_codegen/_vendor/rosidl/notices/**/*",
     "message_codegen/_vendor/rosidl/LICENSE",
     "message_codegen/_vendor/rosidl/sources.json",
+    "message_codegen/_vendor/rosidl/serialization/*",
 
 ]
 
