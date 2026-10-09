@@ -22,8 +22,9 @@ use ahash::AHashMap;
 use rayon::prelude::*;
 
 use crate::adjacency::{CellId, Edge, SurfaceCells, SurfaceLookup, NO_CELL};
-use crate::dijkstra::{dijkstra, dijkstra_region, DijkstraState, Weight};
+use crate::dijkstra::{dijkstra, dijkstra_clusters, window_clusters, DijkstraState, Weight};
 use crate::edges::NodeId;
+use crate::edges::RepairWindow;
 use crate::surfaces::{is_standable, ColumnIz};
 use crate::voxel::{surface_point_xyz, VoxelKey};
 
@@ -290,13 +291,13 @@ pub fn place_nodes(
         .collect();
     place_from_candidates(cells, candidates, &state.dist, params, index, out_nodes);
 
-    let domain: Vec<CellId> = cells.ids().collect();
+    let live: Vec<CellId> = cells.ids().collect();
+    let clusters = window_clusters(cells, &live, &mut scratch.seen);
     ensure_node_per_component(
         cells,
         &state.dist,
         params.voxel_size,
-        &domain,
-        scratch,
+        &clusters,
         index,
         out_nodes,
     );
@@ -356,7 +357,7 @@ pub fn place_nodes_region(
     by_col: &ColumnIz,
     params: &PlacementParams,
     added: &[CellId],
-    window: &[CellId],
+    window: &RepairWindow,
     wall_state: &mut DijkstraState,
     scratch: &mut NodeScratch,
     index: &mut NodeIndex,
@@ -368,10 +369,19 @@ pub fn place_nodes_region(
         by_col,
         params.clearance_cells,
         params.step_cells,
-        window,
+        window.cells,
         &mut wall_seeds,
     );
-    dijkstra_region(cells, &wall_seeds, window, wall_state, Weight::Base);
+    dijkstra_clusters(
+        cells,
+        &wall_seeds,
+        window.clusters,
+        window.index,
+        wall_state,
+        Weight::Base,
+    );
+    let clusters = window.clusters;
+    let window = window.cells;
 
     index.prepare(params);
     let node_floor = params.wall_clearance_m;
@@ -410,18 +420,11 @@ pub fn place_nodes_region(
         .filter(|&id| cells.is_live(id) && wall_state.dist[id as usize] >= spawn_floor)
         .collect();
     place_from_candidates(cells, candidates, &wall_state.dist, params, index, nodes);
-
-    let domain: Vec<CellId> = window
-        .iter()
-        .copied()
-        .filter(|&id| cells.is_live(id))
-        .collect();
     ensure_node_per_component(
         cells,
         &wall_state.dist,
         params.voxel_size,
-        &domain,
-        scratch,
+        clusters,
         index,
         nodes,
     );
@@ -692,86 +695,54 @@ pub(crate) fn penalty_of(d: f32, clearance_m: f32, buffer_m: f32, weight: f32) -
     1.0 + weight * t * t
 }
 
-/// Seed a node in every connected component in `domain` that the clearance
-/// floor left empty, so a thin or sparse component is still reachable. `domain`
-/// is every live cell for a full rebuild, or the window for an incremental one.
+/// Seed a node in every cluster the clearance floor left empty, so a thin or
+/// sparse component is still reachable. The clusters are the connected pieces
+/// of every live cell for a full rebuild, or of the window for a repair.
 fn ensure_node_per_component(
     cells: &SurfaceCells,
     dist: &[f32],
     voxel_size: f32,
-    domain: &[CellId],
-    scratch: &mut NodeScratch,
+    clusters: &[Vec<CellId>],
     index: &mut NodeIndex,
     out_nodes: &mut Vec<NodeData>,
 ) {
-    if domain.is_empty() {
-        return;
-    }
-    scratch.ensure_capacity(cells.slot_capacity());
-
-    // Union the domain into components. make() also marks in-domain membership,
-    // which contains() below tests.
-    for &id in domain {
-        scratch.uf.make(id);
-    }
-    for &id in domain {
-        for e in cells.neighbors(id) {
-            if scratch.uf.contains(e.dest) {
-                scratch.uf.union(id, e.dest);
-            }
-        }
-    }
-
-    // A component is served when it holds or borders a node. Indexed by root.
-    for &id in domain {
-        let touches_node = index.has(id) || cells.neighbors(id).iter().any(|e| index.has(e.dest));
-        if touches_node {
-            let root = scratch.uf.find(id) as usize;
-            scratch.served[root] = true;
-        }
-    }
-
-    // Clearest cell and size per still-unserved component, indexed by root.
-    for &id in domain {
-        let root = scratch.uf.find(id) as usize;
-        if scratch.served[root] {
-            continue;
-        }
-        scratch.size[root] += 1;
-        let cur = scratch.best[root];
-        if cur == NO_CELL || is_clearer(cells, dist, id, cur) {
-            scratch.best[root] = id;
-        }
-    }
-
-    // Emit one node per unserved component: the cell that won its root's slot.
-    // Fragments below the size floor are transient sensor noise, not places to
-    // grow graph structure.
-    for &id in domain {
-        let root = scratch.uf.find(id) as usize;
-        if !scratch.served[root]
-            && scratch.best[root] == id
-            && scratch.size[root] >= MIN_COMPONENT_CELLS
-        {
-            let (ix, iy, iz) = cells.coord(id);
-            index.push(
-                cells,
-                out_nodes,
-                NodeData {
-                    cell_id: id,
-                    pos: surface_point_xyz(ix, iy, iz, voxel_size),
-                },
-            );
-        }
-    }
-
-    // Leave every buffer all-default for the next call by resetting only the
-    // slots this pass touched.
-    for &id in domain {
-        scratch.uf.clear(id);
-        scratch.served[id as usize] = false;
-        scratch.best[id as usize] = NO_CELL;
-        scratch.size[id as usize] = 0;
+    // A cluster is served when it holds or borders a node. Fragments below
+    // the size floor are transient sensor noise, not places to grow graph
+    // structure.
+    let seeds: Vec<CellId> = {
+        let index = &*index;
+        clusters
+            .par_iter()
+            .filter_map(|cluster| {
+                if (cluster.len() as u32) < MIN_COMPONENT_CELLS {
+                    return None;
+                }
+                let served = cluster.iter().any(|&id| {
+                    index.has(id) || cells.neighbors(id).iter().any(|e| index.has(e.dest))
+                });
+                if served {
+                    return None;
+                }
+                cluster.iter().copied().reduce(|best, id| {
+                    if is_clearer(cells, dist, id, best) {
+                        id
+                    } else {
+                        best
+                    }
+                })
+            })
+            .collect()
+    };
+    for id in seeds {
+        let (ix, iy, iz) = cells.coord(id);
+        index.push(
+            cells,
+            out_nodes,
+            NodeData {
+                cell_id: id,
+                pos: surface_point_xyz(ix, iy, iz, voxel_size),
+            },
+        );
     }
 }
 
@@ -784,86 +755,17 @@ fn is_clearer(cells: &SurfaceCells, dist: &[f32], a: CellId, b: CellId) -> bool 
     }
 }
 
-/// Reusable dense scratch for node placement, left all-default between calls.
+/// Reusable dense visited mask for the window walks, left all-false between
+/// calls.
 #[derive(Default)]
 pub struct NodeScratch {
-    uf: UnionFind,
-    served: Vec<bool>,
-    best: Vec<CellId>,
-    size: Vec<u32>,
     pub(crate) seen: Vec<bool>,
 }
 
 impl NodeScratch {
     pub(crate) fn ensure_capacity(&mut self, n: usize) {
-        self.uf.ensure_capacity(n);
-        if self.served.len() < n {
-            self.served.resize(n, false);
-            self.best.resize(n, NO_CELL);
-            self.size.resize(n, 0);
+        if self.seen.len() < n {
             self.seen.resize(n, false);
-        }
-    }
-}
-
-/// Array-backed union-find indexed by CellId. Unenrolled slots are NO_CELL.
-#[derive(Default)]
-struct UnionFind {
-    parent: Vec<CellId>,
-    rank: Vec<u8>,
-}
-
-impl UnionFind {
-    fn ensure_capacity(&mut self, n: usize) {
-        if self.parent.len() < n {
-            self.parent.resize(n, NO_CELL);
-            self.rank.resize(n, 0);
-        }
-    }
-
-    fn clear(&mut self, x: CellId) {
-        let i = x as usize;
-        self.parent[i] = NO_CELL;
-        self.rank[i] = 0;
-    }
-
-    fn make(&mut self, x: CellId) {
-        let i = x as usize;
-        if self.parent[i] == NO_CELL {
-            self.parent[i] = x;
-        }
-    }
-
-    fn contains(&self, x: CellId) -> bool {
-        self.parent[x as usize] != NO_CELL
-    }
-
-    fn find(&mut self, x: CellId) -> CellId {
-        let mut root = x;
-        while self.parent[root as usize] != root {
-            root = self.parent[root as usize];
-        }
-        let mut cur = x;
-        while cur != root {
-            let next = self.parent[cur as usize];
-            self.parent[cur as usize] = root;
-            cur = next;
-        }
-        root
-    }
-
-    fn union(&mut self, a: CellId, b: CellId) {
-        let mut ra = self.find(a);
-        let mut rb = self.find(b);
-        if ra == rb {
-            return;
-        }
-        if self.rank[ra as usize] < self.rank[rb as usize] {
-            std::mem::swap(&mut ra, &mut rb);
-        }
-        self.parent[rb as usize] = ra;
-        if self.rank[ra as usize] == self.rank[rb as usize] {
-            self.rank[ra as usize] += 1;
         }
     }
 }
@@ -872,6 +774,7 @@ impl UnionFind {
 mod tests {
     use super::*;
     use crate::adjacency::{build_surface_cells, build_surface_lookup, SurfaceLookup};
+    use crate::dijkstra::{window_clusters, ClusterIndex};
 
     const VOXEL: f32 = 0.1;
 
@@ -1029,12 +932,20 @@ mod tests {
         };
         let mut index = NodeIndex::default();
         index.rebuild(&sc, &nodes, &p);
+        let clusters = window_clusters(&sc, &window, &mut scratch.seen);
+        let mut cluster_index = ClusterIndex::default();
+        cluster_index.assign(sc.slot_capacity(), &clusters);
+        let repair = RepairWindow {
+            cells: &window,
+            clusters: &clusters,
+            index: &cluster_index,
+        };
         place_nodes_region(
             &mut sc,
             &ColumnIz::default(),
             &p,
             &[near_wall, open],
-            &window,
+            &repair,
             &mut state,
             &mut scratch,
             &mut index,

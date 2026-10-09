@@ -23,7 +23,10 @@ use rayon::prelude::*;
 use validator::ValidationError;
 
 use crate::adjacency::{build_surface_cells, build_surface_lookup, rebuild_edges_around, CellId};
-use crate::edges::{build_node_edges, build_node_edges_region, edges_to_segments, PlannerGraph};
+use crate::dijkstra::window_clusters;
+use crate::edges::{
+    build_node_edges, build_node_edges_region, edges_to_segments, PlannerGraph, RepairWindow,
+};
 use crate::nodes::{
     place_nodes, place_nodes_region, relocate_dead_nodes, PlacementParams, HOLE_SPAN_CELLS,
 };
@@ -354,12 +357,25 @@ impl Planner {
             &mut self.graph.node_index,
         );
         let window = self.node_window(&seeds, &affected, config);
+        let clusters = window_clusters(
+            &self.graph.cells,
+            &window,
+            &mut self.graph.node_scratch.seen,
+        );
+        self.graph
+            .cluster_index
+            .assign(self.graph.cells.slot_capacity(), &clusters);
+        let repair = RepairWindow {
+            cells: &window,
+            clusters: &clusters,
+            index: &self.graph.cluster_index,
+        };
         gone_nodes.extend(place_nodes_region(
             &mut self.graph.cells,
             &self.by_col,
             &params,
             &added_ids,
-            &window,
+            &repair,
             &mut self.graph.wall_state,
             &mut self.graph.node_scratch,
             &mut self.graph.node_index,
@@ -369,12 +385,13 @@ impl Planner {
             &self.graph.cells,
             &self.graph.nodes,
             &self.graph.node_index,
-            &window,
+            &repair,
             &removed_ids,
             &gone_nodes,
             &mut self.graph.cell_state,
             &mut self.graph.node_edges,
         );
+        self.graph.cluster_index.clear(&clusters);
     }
 
     /// Replace the cylinder's voxels with the local map points, ignoring

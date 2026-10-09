@@ -19,6 +19,7 @@ use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
 use ahash::AHashSet;
+use rayon::prelude::*;
 
 use crate::adjacency::{CellId, SurfaceCells, NO_CELL};
 use crate::voxel::VoxelKey;
@@ -28,11 +29,6 @@ pub struct DijkstraState {
     pub dist: Vec<f32>,
     pub pred: Vec<CellId>,
     pub source: Vec<u32>,
-    // Window and frontier membership for the regional search, left all-false
-    // between calls.
-    in_window: Vec<bool>,
-    in_frontier: Vec<bool>,
-    frontier: Vec<CellId>,
     heap: BinaryHeap<Scored<u128>>,
 }
 
@@ -58,10 +54,6 @@ impl DijkstraState {
         self.pred.resize(n, NO_CELL);
         self.source.clear();
         self.source.resize(n, 0);
-        self.in_window.clear();
-        self.in_window.resize(n, false);
-        self.in_frontier.clear();
-        self.in_frontier.resize(n, false);
         self.heap.clear();
     }
 
@@ -72,10 +64,6 @@ impl DijkstraState {
             self.dist.resize(n, f32::INFINITY);
             self.pred.resize(n, NO_CELL);
             self.source.resize(n, 0);
-        }
-        if self.in_window.len() < n {
-            self.in_window.resize(n, false);
-            self.in_frontier.resize(n, false);
         }
     }
 }
@@ -140,8 +128,9 @@ pub fn dijkstra(
 }
 
 /// Multi-source Dijkstra that re-labels only cells in the window, seeded from
-/// in-window sources and the cached frontier just outside it. Correct while the
-/// window margin exceeds the reach of the change.
+/// in-window sources and the cached frontier just outside it. The reference
+/// dijkstra_clusters must match.
+#[cfg(test)]
 pub fn dijkstra_region(
     cells: &SurfaceCells,
     sources: &[CellId],
@@ -152,18 +141,21 @@ pub fn dijkstra_region(
     let n_slots = cells.slot_capacity();
     state.ensure_capacity(n_slots);
     state.heap.clear();
+    let mut in_window = vec![false; n_slots];
+    let mut in_frontier = vec![false; n_slots];
+    let mut frontier: Vec<CellId> = Vec::new();
 
     // Dense membership mask over the window cells.
     for &w in window {
         let i = w as usize;
-        state.in_window[i] = true;
+        in_window[i] = true;
         state.dist[i] = f32::INFINITY;
         state.pred[i] = NO_CELL;
         state.source[i] = 0;
     }
 
     for &s in sources {
-        if !cells.is_live(s) || !state.in_window[s as usize] {
+        if !cells.is_live(s) || !in_window[s as usize] {
             continue;
         }
         state.dist[s as usize] = 0.0;
@@ -171,22 +163,20 @@ pub fn dijkstra_region(
         state.heap.push(Scored(0.0, heap_key(cells.coord(s), s)));
     }
 
-    state.frontier.clear();
     for &w in window {
         for edge in cells.neighbors(w) {
             let n = edge.dest;
-            if !state.in_window[n as usize]
-                && !state.in_frontier[n as usize]
+            if !in_window[n as usize]
+                && !in_frontier[n as usize]
                 && state.dist[n as usize].is_finite()
             {
-                state.in_frontier[n as usize] = true;
-                state.frontier.push(n);
+                in_frontier[n as usize] = true;
+                frontier.push(n);
             }
         }
     }
-    for i in 0..state.frontier.len() {
-        let n = state.frontier[i];
-        state.in_frontier[n as usize] = false;
+    for &n in &frontier {
+        in_frontier[n as usize] = false;
         state
             .heap
             .push(Scored(state.dist[n as usize], heap_key(cells.coord(n), n)));
@@ -200,7 +190,7 @@ pub fn dijkstra_region(
         let su = state.source[u as usize];
         for edge in cells.neighbors(u) {
             let v = edge.dest;
-            if !state.in_window[v as usize] {
+            if !in_window[v as usize] {
                 continue;
             }
             let nd = d + weight.of(edge);
@@ -214,8 +204,201 @@ pub fn dijkstra_region(
     }
 
     for &w in window {
-        state.in_window[w as usize] = false;
+        in_window[w as usize] = false;
     }
+}
+
+/// The window split into its connected pieces over cell adjacency. Pieces
+/// never touch, so each one repairs on its own.
+pub fn window_clusters(
+    cells: &SurfaceCells,
+    window: &[CellId],
+    seen: &mut Vec<bool>,
+) -> Vec<Vec<CellId>> {
+    if seen.len() < cells.slot_capacity() {
+        seen.resize(cells.slot_capacity(), false);
+    }
+    for &w in window {
+        seen[w as usize] = true;
+    }
+    let mut clusters: Vec<Vec<CellId>> = Vec::new();
+    let mut stack: Vec<CellId> = Vec::new();
+    for &w in window {
+        if !seen[w as usize] {
+            continue;
+        }
+        seen[w as usize] = false;
+        stack.push(w);
+        let mut cluster: Vec<CellId> = Vec::new();
+        while let Some(u) = stack.pop() {
+            cluster.push(u);
+            for e in cells.neighbors(u) {
+                let v = e.dest as usize;
+                if seen[v] {
+                    seen[v] = false;
+                    stack.push(e.dest);
+                }
+            }
+        }
+        clusters.push(cluster);
+    }
+    clusters
+}
+
+pub const NO_CLUSTER: u32 = u32::MAX;
+
+/// Which cluster each window cell belongs to and its position in it, dense
+/// per slot. Cells outside the window read NO_CLUSTER.
+#[derive(Default)]
+pub struct ClusterIndex {
+    cluster_of: Vec<u32>,
+    local: Vec<u32>,
+}
+
+impl ClusterIndex {
+    pub fn assign(&mut self, n_slots: usize, clusters: &[Vec<CellId>]) {
+        if self.cluster_of.len() < n_slots {
+            self.cluster_of.resize(n_slots, NO_CLUSTER);
+            self.local.resize(n_slots, 0);
+        }
+        for (c, cluster) in clusters.iter().enumerate() {
+            for (i, &id) in cluster.iter().enumerate() {
+                self.cluster_of[id as usize] = c as u32;
+                self.local[id as usize] = i as u32;
+            }
+        }
+    }
+
+    /// Back to all-outside for the next window.
+    pub fn clear(&mut self, clusters: &[Vec<CellId>]) {
+        for cluster in clusters {
+            for &id in cluster {
+                self.cluster_of[id as usize] = NO_CLUSTER;
+            }
+        }
+    }
+
+    #[inline]
+    fn cluster(&self, id: CellId) -> u32 {
+        self.cluster_of
+            .get(id as usize)
+            .copied()
+            .unwrap_or(NO_CLUSTER)
+    }
+
+    #[inline]
+    fn local(&self, id: CellId) -> usize {
+        self.local[id as usize] as usize
+    }
+}
+
+/// One cluster's labels, indexed like the cluster's cell list.
+struct ClusterLabels {
+    dist: Vec<f32>,
+    pred: Vec<CellId>,
+    source: Vec<u32>,
+}
+
+/// dijkstra_region run cluster by cluster in parallel. A cluster's search
+/// relaxes only its own cells and reads the cached labels just outside the
+/// window, so the clusters never interact and the labels match the
+/// whole-window search.
+pub fn dijkstra_clusters(
+    cells: &SurfaceCells,
+    sources: &[CellId],
+    clusters: &[Vec<CellId>],
+    index: &ClusterIndex,
+    state: &mut DijkstraState,
+    weight: Weight,
+) {
+    state.ensure_capacity(cells.slot_capacity());
+    let mut by_cluster: Vec<Vec<CellId>> = vec![Vec::new(); clusters.len()];
+    for &s in sources {
+        if !cells.is_live(s) {
+            continue;
+        }
+        let c = index.cluster(s);
+        if c != NO_CLUSTER {
+            by_cluster[c as usize].push(s);
+        }
+    }
+    let labels: Vec<ClusterLabels> = clusters
+        .par_iter()
+        .zip(by_cluster.par_iter())
+        .map(|(cluster, srcs)| dijkstra_cluster(cells, srcs, cluster, index, state, weight))
+        .collect();
+    for (cluster, l) in clusters.iter().zip(labels) {
+        for (i, &id) in cluster.iter().enumerate() {
+            state.dist[id as usize] = l.dist[i];
+            state.pred[id as usize] = l.pred[i];
+            state.source[id as usize] = l.source[i];
+        }
+    }
+}
+
+fn dijkstra_cluster(
+    cells: &SurfaceCells,
+    sources: &[CellId],
+    cluster: &[CellId],
+    index: &ClusterIndex,
+    state: &DijkstraState,
+    weight: Weight,
+) -> ClusterLabels {
+    let me = index.cluster(cluster[0]);
+    let k = cluster.len();
+    let mut dist = vec![f32::INFINITY; k];
+    let mut pred = vec![NO_CELL; k];
+    let mut source = vec![0u32; k];
+    let mut heap: BinaryHeap<Scored<u128>> = BinaryHeap::new();
+    for &s in sources {
+        let i = index.local(s);
+        dist[i] = 0.0;
+        source[i] = s;
+        heap.push(Scored(0.0, heap_key(cells.coord(s), s)));
+    }
+
+    let mut frontier: Vec<CellId> = Vec::new();
+    for &w in cluster {
+        for edge in cells.neighbors(w) {
+            let n = edge.dest;
+            if index.cluster(n) == NO_CLUSTER && state.dist[n as usize].is_finite() {
+                frontier.push(n);
+            }
+        }
+    }
+    frontier.sort_unstable();
+    frontier.dedup();
+    for &n in &frontier {
+        heap.push(Scored(state.dist[n as usize], heap_key(cells.coord(n), n)));
+    }
+
+    while let Some(Scored(d, key)) = heap.pop() {
+        let u = heap_id(key);
+        let (du, su) = if index.cluster(u) == me {
+            let i = index.local(u);
+            (dist[i], source[i])
+        } else {
+            (state.dist[u as usize], state.source[u as usize])
+        };
+        if d > du {
+            continue;
+        }
+        for edge in cells.neighbors(u) {
+            let v = edge.dest;
+            if index.cluster(v) != me {
+                continue;
+            }
+            let vi = index.local(v);
+            let nd = d + weight.of(edge);
+            if nd < dist[vi] {
+                dist[vi] = nd;
+                pred[vi] = u;
+                source[vi] = su;
+                heap.push(Scored(nd, heap_key(cells.coord(v), v)));
+            }
+        }
+    }
+    ClusterLabels { dist, pred, source }
 }
 
 /// Reconstruct the path back to the nearest source.
@@ -283,6 +466,82 @@ mod tests {
             cur = state.pred[cur as usize];
         }
         cur
+    }
+
+    #[test]
+    fn clusters_label_like_the_whole_window_search() {
+        let sc = grid(12);
+        let sources = [sc.id((0, 0, 0)).unwrap(), sc.id((11, 11, 0)).unwrap()];
+        let mut full = DijkstraState::default();
+        dijkstra(&sc, &sources, &mut full, Weight::Penalized);
+
+        // Two pieces that do not touch, re-labeled from new sources inside
+        // them and the cached labels around them.
+        let window: Vec<CellId> = sc
+            .ids()
+            .filter(|&id| {
+                let (x, y, _) = sc.coord(id);
+                (2..5).contains(&x) && (2..6).contains(&y)
+                    || (7..10).contains(&x) && (5..9).contains(&y)
+            })
+            .collect();
+        let new_sources = [sc.id((3, 3, 0)).unwrap(), sc.id((8, 7, 0)).unwrap()];
+
+        let mut reference = DijkstraState {
+            dist: full.dist.clone(),
+            pred: full.pred.clone(),
+            source: full.source.clone(),
+            ..Default::default()
+        };
+        dijkstra_region(
+            &sc,
+            &new_sources,
+            &window,
+            &mut reference,
+            Weight::Penalized,
+        );
+
+        let mut seen: Vec<bool> = Vec::new();
+        let clusters = window_clusters(&sc, &window, &mut seen);
+        assert_eq!(clusters.len(), 2);
+        let mut index = ClusterIndex::default();
+        index.assign(sc.slot_capacity(), &clusters);
+        let mut clustered = DijkstraState {
+            dist: full.dist.clone(),
+            pred: full.pred.clone(),
+            source: full.source.clone(),
+            ..Default::default()
+        };
+        dijkstra_clusters(
+            &sc,
+            &new_sources,
+            &clusters,
+            &index,
+            &mut clustered,
+            Weight::Penalized,
+        );
+
+        for id in sc.ids() {
+            let i = id as usize;
+            assert_eq!(
+                clustered.dist[i],
+                reference.dist[i],
+                "dist at {:?}",
+                sc.coord(id)
+            );
+            assert_eq!(
+                clustered.pred[i],
+                reference.pred[i],
+                "pred at {:?}",
+                sc.coord(id)
+            );
+            assert_eq!(
+                clustered.source[i],
+                reference.source[i],
+                "source at {:?}",
+                sc.coord(id)
+            );
+        }
     }
 
     #[test]

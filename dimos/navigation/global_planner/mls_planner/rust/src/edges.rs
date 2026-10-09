@@ -25,7 +25,9 @@ use rayon::prelude::*;
 use smallvec::SmallVec;
 
 use crate::adjacency::{CellId, SurfaceCells, SurfaceLookup, NO_CELL};
-use crate::dijkstra::{dijkstra, dijkstra_region, walk_preds, DijkstraState, Weight};
+use crate::dijkstra::{
+    dijkstra, dijkstra_clusters, walk_preds, ClusterIndex, DijkstraState, Weight,
+};
 use crate::nodes::{NodeData, NodeIndex, NodeScratch};
 use crate::voxel::VoxelKey;
 
@@ -123,6 +125,14 @@ fn corridor_cost(cells: &SurfaceCells, edge: &NodeEdge) -> Option<f32> {
         prev = cur;
     }
     Some(total)
+}
+
+/// The cells a repair re-labels, split into the connected clusters the
+/// searches run over, with the cluster index assigned for them.
+pub struct RepairWindow<'a> {
+    pub cells: &'a [CellId],
+    pub clusters: &'a [Vec<CellId>],
+    pub index: &'a ClusterIndex,
 }
 
 /// The node graph's edges, their per-node adjacency, and per surface cell
@@ -285,6 +295,8 @@ pub struct PlannerGraph {
     pub node_scratch: NodeScratch,
     /// Which cell holds which node, and node cells by spacing bin.
     pub node_index: NodeIndex,
+    /// The repair window's clusters, assigned for the duration of a repair.
+    pub cluster_index: ClusterIndex,
 }
 
 impl PlannerGraph {
@@ -323,7 +335,7 @@ pub fn build_node_edges_region(
     cells: &SurfaceCells,
     nodes: &[NodeData],
     index: &NodeIndex,
-    window: &[CellId],
+    window: &RepairWindow,
     removed: &[CellId],
     gone: &[NodeId],
     state: &mut DijkstraState,
@@ -334,8 +346,21 @@ pub fn build_node_edges_region(
         out.clear();
         return;
     }
-    let sources: Vec<CellId> = window.iter().copied().filter(|&w| index.has(w)).collect();
-    dijkstra_region(cells, &sources, window, state, Weight::Penalized);
+    let sources: Vec<CellId> = window
+        .cells
+        .iter()
+        .copied()
+        .filter(|&w| index.has(w))
+        .collect();
+    dijkstra_clusters(
+        cells,
+        &sources,
+        window.clusters,
+        window.index,
+        state,
+        Weight::Penalized,
+    );
+    let window = &window.cells;
     out.ensure_capacity(cells.slot_capacity());
 
     // A gone node's edges go whatever their corridors say. The rest are
@@ -492,6 +517,7 @@ pub fn edges_to_segments(node_edges: &[NodeEdge]) -> Vec<(VoxelKey, VoxelKey, f3
 mod tests {
     use super::*;
     use crate::adjacency::{build_surface_cells, build_surface_lookup};
+    use crate::dijkstra::window_clusters;
     use crate::nodes::{NodeData, PlacementParams};
     use crate::voxel::surface_point_xyz;
 
@@ -709,11 +735,21 @@ mod tests {
             node_index,
             node_edges,
             cell_state,
+            node_scratch,
+            cluster_index,
             ..
         } = pg;
+        let clusters = window_clusters(cells, window, &mut node_scratch.seen);
+        cluster_index.assign(cells.slot_capacity(), &clusters);
+        let repair = RepairWindow {
+            cells: window,
+            clusters: &clusters,
+            index: cluster_index,
+        };
         build_node_edges_region(
-            cells, nodes, node_index, window, removed, gone, cell_state, node_edges,
+            cells, nodes, node_index, &repair, removed, gone, cell_state, node_edges,
         );
+        cluster_index.clear(&clusters);
         assert_indexed(cells, node_edges);
     }
 
