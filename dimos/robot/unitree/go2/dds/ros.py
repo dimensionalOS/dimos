@@ -25,6 +25,7 @@ from dimos_generated.foxglove_msgs.msg import CompressedVideo
 from dimos_generated.geometry_msgs.msg import Quaternion
 from dimos_generated.nav_msgs.msg import Odometry
 from dimos_generated.sensor_msgs.msg import CompressedImage, Imu, PointCloud2
+from dimos_message_build.registry import decode as cdr_decode
 import numpy as np
 
 from dimos.robot.unitree.go2.dds import cdr
@@ -32,26 +33,26 @@ from dimos.robot.unitree.go2.dds.msgs.HeightMap import HeightMap
 
 
 def decode_imu(buf: bytes) -> Imu:
-    message = Imu.decode(buf)
+    message = cdr_decode(buf, Imu)
     firmware = message.orientation
     message.orientation = Quaternion(x=firmware.y, y=firmware.z, z=firmware.w, w=firmware.x)
     return message
 
 
 def decode_odometry(buf: bytes) -> Odometry:
-    return Odometry.decode(buf)
+    return cdr_decode(buf, Odometry)
 
 
 def decode_pointcloud2(buf: bytes) -> PointCloud2:
-    return PointCloud2.decode(buf)
+    return cdr_decode(buf, PointCloud2)
 
 
 def decode_compressed_image(buf: bytes) -> CompressedImage:
-    return CompressedImage.decode(buf)
+    return cdr_decode(buf, CompressedImage)
 
 
 def decode_compressed_video(buf: bytes) -> CompressedVideo:
-    return CompressedVideo.decode(buf)
+    return cdr_decode(buf, CompressedVideo)
 
 
 # unitree_go/HeightMap (rt/utlidar/height_map_array)

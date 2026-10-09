@@ -70,7 +70,9 @@ class BBoxNavigationModule(Module):
         )
         goal = PoseStamped(
             header=det.header,
-            pose=Pose(position=Point(x=z, y=-x, z=-y), orientation=Quaternion(w=1)),
+            pose=Pose(
+                position=Point(x=z, y=-x, z=-y), orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0)
+            ),
         )
         logger.debug(
             f"BBox center: ({center_x:.1f}, {center_y:.1f}) → "

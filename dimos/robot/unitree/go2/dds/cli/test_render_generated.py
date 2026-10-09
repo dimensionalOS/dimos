@@ -18,9 +18,11 @@
 import math
 from types import SimpleNamespace
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Vector3
 from dimos_generated.sensor_msgs.msg import Imu
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 
 from dimos.memory.type.observation import Observation
@@ -39,8 +41,13 @@ from dimos.robot.unitree.go2.dds.extrinsics import EXT_R, EXT_T, LIDAR_TO_BASE
 
 def test_world_acceleration_and_integrators_keep_world_axes_and_clock():
     imu = Imu(
-        orientation=Quaternion(z=math.sqrt(0.5), w=math.sqrt(0.5)),
-        linear_acceleration=Vector3(x=1, z=9.81),
+        orientation=Quaternion(z=math.sqrt(0.5), w=math.sqrt(0.5), x=0.0, y=0.0),
+        linear_acceleration=Vector3(x=1, z=9.81, y=0.0),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        orientation_covariance=np.zeros(9, dtype=np.float64),
+        angular_velocity=Vector3(x=0.0, y=0.0, z=0.0),
+        angular_velocity_covariance=np.zeros(9, dtype=np.float64),
+        linear_acceleration_covariance=np.zeros(9, dtype=np.float64),
     )
     observations = [Observation(ts=ts, _data=imu) for ts in (2.0, 3.0)]
     np.testing.assert_allclose(world_accel(observations[0]), [0, 1, 9.81], atol=1e-12)
@@ -65,7 +72,9 @@ def test_path_accumulation_keeps_previous_snapshot_and_exact_pose_headers():
     poses = [
         PoseStamped(
             header=Header(frame_id="world", stamp=time_from_seconds(ts)),
-            pose=Pose(position=Point(x=ts), orientation=Quaternion(w=1)),
+            pose=Pose(
+                position=Point(x=ts, y=0.0, z=0.0), orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0)
+            ),
         )
         for ts in (1.0, 2.0)
     ]
@@ -87,14 +96,14 @@ def test_sportmode_wxyz_is_converted_to_generated_xyzw():
     assert pose.header.stamp == time_from_seconds(4.25)
     q = pose.pose.orientation
     assert (q.x, q.y, q.z, q.w) == (-0.5, 0.5, -0.5, 0.5)
-    assert PoseStamped.decode(pose.encode()).pose.position.y == 2.0
+    assert cdr_decode(cdr_encode(pose), PoseStamped).pose.position.y == 2.0
 
 
 def test_measured_lidar_mount_retains_coordinates_and_cloud_stamp():
     cloud = pointcloud_from_xyz(
         np.array([[1.0, 0.0, 0.0]]), header=Header(frame_id="lidar", stamp=time_from_seconds(12.25))
     )
-    original = cloud.encode()
+    original = cdr_encode(cloud)
     transformed = transform_cloud(cloud, LIDAR_TO_BASE)
     matrix = transform_matrix(LIDAR_TO_BASE.transform)
     np.testing.assert_allclose(matrix[:3, :3], EXT_R, atol=1e-6)
@@ -103,4 +112,4 @@ def test_measured_lidar_mount_retains_coordinates_and_cloud_stamp():
     )
     assert transformed.header.stamp == cloud.header.stamp
     assert transformed.header.frame_id == "base_link"
-    assert cloud.encode() == original
+    assert cdr_encode(cloud) == original

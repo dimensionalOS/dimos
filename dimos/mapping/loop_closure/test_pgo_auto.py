@@ -14,6 +14,7 @@
 
 from dimos_generated.geometry_msgs.msg import Transform, TransformStamped, Vector3
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 
@@ -38,7 +39,9 @@ def _pose(x: float, frame: str, ts: float) -> TransformStamped:
     return TransformStamped(
         header=Header(frame_id=frame, stamp=time_from_seconds(ts)),
         child_frame_id=FRAME_BODY,
-        transform=Transform(translation=Vector3(x=x), rotation=quaternion_from_euler(0, 0, 0)),
+        transform=Transform(
+            translation=Vector3(x=x, y=0.0, z=0.0), rotation=quaternion_from_euler(0, 0, 0)
+        ),
     )
 
 
@@ -54,7 +57,7 @@ def test_generated_corrections_preserve_frames_time_and_nearest_neighbor() -> No
         corrections = keyframes_to_corrections(keyframes)
         lookup = make_interpolator(corrections)
         for ts, expected in [(-1, 2), (0.9, 2), (1.1, 4), (3, 4)]:
-            correction = TransformStamped.decode(lookup(ts).encode())
+            correction = cdr_decode(lookup(ts).encode(), TransformStamped)
             assert correction.transform.translation.x == expected
             assert correction.header.frame_id == FRAME_WORLD_CORRECTED
             assert correction.child_frame_id == FRAME_WORLD_RAW
@@ -88,7 +91,7 @@ def test_pgo_consumes_generated_cloud_without_mutating_input() -> None:
         np.array([[1.0, 0, 0], [1, 1, 0], [1, 0, 1]]),
         header=Header(frame_id=FRAME_WORLD_RAW, stamp=time_from_seconds(12.25)),
     )
-    before = cloud.encode()
+    before = cdr_encode(cloud)
     quaternion = quaternion_from_euler(0, 0, 0.1)
     observation = Observation(
         ts=12.25,
@@ -102,4 +105,4 @@ def test_pgo_consumes_generated_cloud_without_mutating_input() -> None:
     correction = graph.correction_at(12.25)
     assert correction.transform.translation.x == pytest.approx(0, abs=1e-6)
     assert correction.transform.rotation.w == pytest.approx(1)
-    assert cloud.encode() == before
+    assert cdr_encode(cloud) == before

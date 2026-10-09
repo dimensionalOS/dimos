@@ -22,6 +22,8 @@ import contextlib
 from io import BytesIO
 import json
 from pathlib import Path
+import shlex
+import sys
 import time
 from types import SimpleNamespace
 from typing import Any
@@ -492,3 +494,41 @@ def test_json_mode_malformed_falls_back_to_plain_text() -> None:
     )
     assert calls[0][0] == "info"
     assert calls[0][1] == "not json at all"
+
+
+def test_cmake_preparation_uses_writable_cache_and_existing_build_hook(tmp_path, monkeypatch):
+    source = tmp_path / "sources"
+    source.mkdir()
+    (source / "build_it.py").write_text(
+        "import os\nfrom pathlib import Path\n"
+        "Path('build').mkdir(exist_ok=True)\n"
+        "Path('build/app').write_text(os.environ['CMAKE_PREFIX_PATH'])\n"
+    )
+    source.chmod(0o555)
+    prefix = tmp_path / "prepared"
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    prepare = Mock(return_value=prefix)
+    monkeypatch.setattr(native_module_mod, "prepare_cpp", prepare)
+    monkeypatch.setattr(native_module_mod, "installed_prefixes", lambda root: [str(root)])
+    backend = rpc_backend()
+    monkeypatch.setattr(backend, "start", Mock())
+    monkeypatch.setattr(backend, "serve_module_rpc", Mock())
+    monkeypatch.setattr(backend, "stop", Mock())
+    module = StubBuildModule(
+        cwd=str(source),
+        executable="build/app",
+        build_command=shlex.join([sys.executable, "build_it.py"]),
+        cmake_message_packages=["dimos_generated"],
+    )
+    try:
+        module._maybe_build()
+        executable = Path(module.config.executable)
+        assert executable.is_relative_to(tmp_path / "cache")
+        assert str(prefix) in executable.read_text()
+        assert not (source / "build").exists()
+        assert prepare.call_count == 1
+        module._maybe_build()
+        assert prepare.call_count == 1
+    finally:
+        module.stop()
+        source.chmod(0o755)

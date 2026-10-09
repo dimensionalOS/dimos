@@ -19,9 +19,11 @@ from __future__ import annotations
 import math
 from typing import Any
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Point, PointStamped, Pose, PoseStamped, Quaternion
 from dimos_generated.nav_msgs.msg import Path
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 
 from dimos.msgs.time import time_from_seconds
 from dimos.navigation.dannav.local_planner.module import (
@@ -31,21 +33,28 @@ from dimos.navigation.dannav.local_planner.module import (
 
 
 def _path_from_points(points: list[tuple[float, float]]) -> Path:
-    value = Path(header=Header(frame_id="world"), poses=[_odom(x, y) for x, y in points])
-    return Path.decode(value.encode())
+    value = Path(
+        header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+        poses=[_odom(x, y) for x, y in points],
+    )
+    return cdr_decode(cdr_encode(value), Path)
 
 
 def _odom(x: float, y: float, *, ts: float = 1.0) -> PoseStamped:
     value = PoseStamped(
         header=Header(stamp=time_from_seconds(ts), frame_id="world"),
-        pose=Pose(position=Point(x=x, y=y), orientation=Quaternion(w=1.0)),
+        pose=Pose(
+            position=Point(x=x, y=y, z=0.0), orientation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0)
+        ),
     )
-    return PoseStamped.decode(value.encode())
+    return cdr_decode(cdr_encode(value), PoseStamped)
 
 
 def _point(x: float, y: float) -> PointStamped:
-    value = PointStamped(point=Point(x=x, y=y), header=Header(frame_id="world"))
-    return PointStamped.decode(value.encode())
+    value = PointStamped(
+        point=Point(x=x, y=y, z=0.0), header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0))
+    )
+    return cdr_decode(cdr_encode(value), PointStamped)
 
 
 def _gate(**config: Any) -> _ReplanGate:
@@ -107,7 +116,7 @@ def test_empty_path_published_and_resets_gate() -> None:
 
     # An empty path (nothing safe ahead) forwards immediately as a stop and
     # drops the committed path.
-    empty = Path(header=Header(frame_id="world"), poses=[])
+    empty = Path(header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)), poses=[])
     assert gate.on_planner_path(empty) is empty
     assert gate._committed is None
 
@@ -151,7 +160,7 @@ def test_smoothing_preserves_cdr_header_and_endpoints() -> None:
     path.header.stamp.nanosec = 123456789
     output = gate.on_planner_path(path)
     assert output is not None
-    decoded = Path.decode(output.encode())
+    decoded = cdr_decode(output.encode(), Path)
     assert decoded.header.frame_id == "world"
     assert decoded.header.stamp.sec == 1700000000
     assert decoded.header.stamp.nanosec == 123456789

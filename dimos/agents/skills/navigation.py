@@ -289,6 +289,7 @@ class NavigationSkillContainer(Module):
         return PoseStamped(
             header=header_now("map"),
             pose=Pose(
-                position=Point(x=pos_x, y=pos_y), orientation=quaternion_from_euler(0, 0, theta)
+                position=Point(x=pos_x, y=pos_y, z=0.0),
+                orientation=quaternion_from_euler(0, 0, theta),
             ),
         )

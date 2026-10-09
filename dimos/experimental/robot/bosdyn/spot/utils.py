@@ -20,6 +20,7 @@ import math
 from pathlib import Path
 from typing import Any
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Transform, TransformStamped, Vector3
 from dimos_generated.sensor_msgs.msg import CameraInfo, Image
 from dimos_generated.std_msgs.msg import Header
@@ -87,7 +88,7 @@ def decode_image(response: Any, frame_id: str, time_converter: Any) -> Image | N
 
 def joint_to_transform(joint: JointDescription) -> TransformStamped:
     return TransformStamped(
-        header=Header(frame_id=joint.parent_link),
+        header=Header(frame_id=joint.parent_link, stamp=Time(sec=0, nanosec=0)),
         child_frame_id=joint.child_link,
         transform=Transform(
             translation=Vector3(
@@ -140,9 +141,12 @@ def roll_optical_frame(transform: TransformStamped, quarter_turns: int) -> Trans
     if not quarter_turns:
         return transform
     roll = TransformStamped(
-        header=Header(frame_id=transform.child_frame_id),
+        header=Header(frame_id=transform.child_frame_id, stamp=Time(sec=0, nanosec=0)),
         child_frame_id=transform.child_frame_id,
-        transform=Transform(rotation=quaternion_from_euler(0, 0, quarter_turns * math.pi / 2)),
+        transform=Transform(
+            rotation=quaternion_from_euler(0, 0, quarter_turns * math.pi / 2),
+            translation=Vector3(x=0.0, y=0.0, z=0.0),
+        ),
     )
     return compose_transforms(transform, roll)
 

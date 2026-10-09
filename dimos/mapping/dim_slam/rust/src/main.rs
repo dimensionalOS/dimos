@@ -17,8 +17,10 @@ mod msg_convert;
 use dim_slam::{
     CameraConfig, DimSlamCore, DimSlamCoreConfig, ImuConfig, InitialStds, SourceConfig,
 };
-use dimos_generated_messages::nav_msgs::msg::Odometry;
-use dimos_generated_messages::sensor_msgs::msg::{CameraInfo, Image, Imu, PointCloud2};
+use dimos_generated_messages::nav_msgs::msg::odometry::Odometry;
+use dimos_generated_messages::sensor_msgs::msg::{
+    camera_info::CameraInfo, image::Image, imu::Imu, point_cloud2::PointCloud2,
+};
 use dimos_module::cdr;
 use dimos_module::{native_config, run_with_transport, Input, Module, Output, Tf};
 use msg_convert::{

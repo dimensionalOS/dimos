@@ -13,8 +13,10 @@
 # limitations under the License.
 
 import cv2
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Point, Pose, Quaternion
 from dimos_generated.nav_msgs.msg import MapMetaData, OccupancyGrid
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 import pytest
 
@@ -32,9 +34,14 @@ def _grid(cells, resolution=0.05):
             width=cells.shape[1],
             height=cells.shape[0],
             resolution=resolution,
-            origin=Pose(orientation=Quaternion(w=1)),
+            origin=Pose(
+                orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0),
+                position=Point(x=0.0, y=0.0, z=0.0),
+            ),
+            map_load_time=Time(sec=0, nanosec=0),
         ),
-        data=cells.astype(np.int8).ravel(),
+        data=np.asarray(cells.astype(np.int8).ravel(), dtype=np.int8),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
     )
 
 
@@ -45,8 +52,10 @@ def costmap() -> OccupancyGrid:
 
 @pytest.mark.parametrize("method", ["simple", "smooth"])
 def test_resample_path(costmap, method) -> None:
-    start = Point(x=4, y=2)
-    goal_pose = Pose(position=Point(x=6.15, y=10), orientation=Quaternion(w=1))
+    start = Point(x=4, y=2, z=0.0)
+    goal_pose = Pose(
+        position=Point(x=6.15, y=10, z=0.0), orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0)
+    )
     expected = cv2.imread(str(get_data(f"resample_path_{method}.png")), cv2.IMREAD_COLOR)
     path = min_cost_astar(costmap, goal_pose.position, start, use_cpp=False)
 

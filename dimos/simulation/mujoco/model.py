@@ -18,6 +18,7 @@
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.std_msgs.msg import Header
 from etils import epath
 import mujoco
@@ -149,7 +150,9 @@ def _add_person_object(root: ET.Element) -> None:
 def load_scene_xml(config: GlobalConfig) -> str:
     if config.mujoco_room_from_occupancy:
         path = Path(config.mujoco_room_from_occupancy)
-        return generate_mujoco_scene(occupancy_from_file(path, header=Header(frame_id="world")))
+        return generate_mujoco_scene(
+            occupancy_from_file(path, header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)))
+        )
 
     mujoco_room = config.mujoco_room or "office1"
     xml_file = (_get_data_dir() / f"scene_{mujoco_room}.xml").as_posix()

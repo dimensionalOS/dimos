@@ -24,6 +24,7 @@ from __future__ import annotations
 import math
 
 from dimos_generated.geometry_msgs.msg import Point, Pose, Quaternion, Twist, Vector3
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import pytest
 
 from dimos.navigation.dannav.holonomic_tc.command_limits import (
@@ -41,7 +42,8 @@ from dimos.utils.trigonometry import angle_diff
 
 def _pose_xy_yaw(x: float, y: float, yaw: float) -> Pose:
     return Pose(
-        position=Point(x=x, y=y), orientation=Quaternion(z=math.sin(yaw / 2), w=math.cos(yaw / 2))
+        position=Point(x=x, y=y, z=0.0),
+        orientation=Quaternion(z=math.sin(yaw / 2), w=math.cos(yaw / 2), x=0.0, y=0.0),
     )
 
 
@@ -63,31 +65,52 @@ def test_tracking_feedforward_frame_and_pose_correction() -> None:
     aligned_pose = _pose_xy_yaw(1.0, -2.0, math.pi / 6)
 
     feedforward = HolonomicTrackingController(k_position_per_s=0.0, k_yaw_per_s=0.0)
-    out = feedforward.control(_ref(aligned_pose, ref_twist), _meas(aligned_pose, Twist()))
+    out = feedforward.control(
+        _ref(aligned_pose, ref_twist),
+        _meas(
+            aligned_pose,
+            Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)),
+        ),
+    )
     assert out.linear.x == pytest.approx(ref_twist.linear.x)
     assert out.linear.y == pytest.approx(ref_twist.linear.y)
     assert out.angular.z == pytest.approx(ref_twist.angular.z)
 
     ref_rotated = _pose_xy_yaw(0.0, 1.0, math.pi / 2.0)
     frame_out = feedforward.control(
-        _ref(ref_rotated, Twist(linear=Vector3(x=0.5, y=0.0, z=0.0))),
-        _meas(origin, Twist()),
+        _ref(
+            ref_rotated,
+            Twist(linear=Vector3(x=0.5, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)),
+        ),
+        _meas(
+            origin, Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+        ),
     )
     assert frame_out.linear.x == pytest.approx(0.0, abs=1e-12)
     assert frame_out.linear.y == pytest.approx(0.5)
 
     position = HolonomicTrackingController(k_position_per_s=1.0, k_yaw_per_s=0.0)
     position_out = position.control(
-        _ref(_pose_xy_yaw(1.0, 0.0, 0.0), Twist()),
-        _meas(origin, Twist()),
+        _ref(
+            _pose_xy_yaw(1.0, 0.0, 0.0),
+            Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)),
+        ),
+        _meas(
+            origin, Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+        ),
     )
     assert position_out.linear.x == pytest.approx(1.0)
     assert position_out.linear.y == pytest.approx(0.0)
 
     heading = HolonomicTrackingController(k_position_per_s=0.0, k_yaw_per_s=2.0)
     heading_out = heading.control(
-        _ref(_pose_xy_yaw(0.0, 0.0, 0.5), Twist()),
-        _meas(origin, Twist()),
+        _ref(
+            _pose_xy_yaw(0.0, 0.0, 0.5),
+            Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)),
+        ),
+        _meas(
+            origin, Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+        ),
     )
     e_psi = angle_diff(0.0, 0.5)
     assert heading_out.angular.z == pytest.approx(-2.0 * e_psi)
@@ -135,12 +158,22 @@ def test_tracking_damping_is_one_sided_and_respects_limits() -> None:
         ),
     )
     planar_out = capped.control(
-        _ref(_pose_xy_yaw(10.0, 0.0, 0.0), Twist()),
-        _meas(origin, Twist()),
+        _ref(
+            _pose_xy_yaw(10.0, 0.0, 0.0),
+            Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)),
+        ),
+        _meas(
+            origin, Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+        ),
     )
     yaw_out = capped.control(
-        _ref(_pose_xy_yaw(0.0, 0.0, 10.0), Twist()),
-        _meas(origin, Twist()),
+        _ref(
+            _pose_xy_yaw(0.0, 0.0, 10.0),
+            Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)),
+        ),
+        _meas(
+            origin, Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+        ),
     )
     assert _planar_speed(planar_out) == pytest.approx(max_planar_m_s)
     assert abs(yaw_out.angular.z) == pytest.approx(max_yaw_rad_s)
@@ -148,9 +181,15 @@ def test_tracking_damping_is_one_sided_and_respects_limits() -> None:
 
 def test_samples_own_values_and_control_survives_cdr() -> None:
     pose = _pose_xy_yaw(1.0, 0.0, 0.0)
-    twist = Twist(linear=Vector3(x=0.25))
-    reference = _ref(Pose.decode(pose.encode()), Twist.decode(twist.encode()))
-    measurement = _meas(_pose_xy_yaw(0.0, 0.0, math.pi / 2), Twist())
+    twist = Twist(linear=Vector3(x=0.25, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+    reference = _ref(
+        cdr_decode(pose.encode(), Pose),
+        cdr_decode(cdr_encode(twist), Twist),
+    )
+    measurement = _meas(
+        _pose_xy_yaw(0.0, 0.0, math.pi / 2),
+        Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)),
+    )
     sample = _ref(pose, twist)
     pose.position.x = 99.0
     twist.linear.x = 99.0
@@ -158,6 +197,6 @@ def test_samples_own_values_and_control_survives_cdr() -> None:
     assert sample.twist_body.linear.x == 0.25
     controller = HolonomicTrackingController(k_position_per_s=1.0, k_yaw_per_s=0.0)
     output = controller.control(reference, measurement)
-    decoded = Twist.decode(output.encode())
+    decoded = cdr_decode(output.encode(), Twist)
     assert decoded.linear.x == pytest.approx(0.0, abs=1e-12)
     assert decoded.linear.y == pytest.approx(-1.25)

@@ -18,10 +18,12 @@ use crate::live::{LiveConfig, LiveSource, Ports};
 use crate::pcap::PcapSource;
 use crate::pipeline::{imu_records, Frame, ImuRecord, PacketSource};
 use crate::wire::{DataPacket, DataType};
-use dimos_generated_messages::builtin_interfaces::msg::Time;
-use dimos_generated_messages::geometry_msgs::msg::{Quaternion, Vector3};
-use dimos_generated_messages::sensor_msgs::msg::{Imu, PointCloud2, PointField};
-use dimos_generated_messages::std_msgs::msg::Header;
+use dimos_generated_messages::builtin_interfaces::msg::time::Time;
+use dimos_generated_messages::geometry_msgs::msg::{quaternion::Quaternion, vector3::Vector3};
+use dimos_generated_messages::sensor_msgs::msg::{
+    imu::Imu, point_cloud2::PointCloud2, point_field::PointField,
+};
+use dimos_generated_messages::std_msgs::msg::header::Header;
 use dimos_module::cdr;
 use dimos_module::{native_config, Module, Output};
 use serde::{Deserialize, Serialize};

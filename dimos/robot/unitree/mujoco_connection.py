@@ -31,6 +31,7 @@ import time
 from typing import Any, TypeVar
 import weakref
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Twist
 from dimos_generated.sensor_msgs.msg import CameraInfo, Image, PointCloud2
 from dimos_generated.std_msgs.msg import Header
@@ -102,7 +103,7 @@ class MujocoConnection:
         width=VIDEO_WIDTH,
         height=VIDEO_HEIGHT,
         axis="vertical",
-        header=Header(frame_id="camera_optical"),
+        header=Header(frame_id="camera_optical", stamp=Time(sec=0, nanosec=0)),
     )
 
     def start(self) -> None:

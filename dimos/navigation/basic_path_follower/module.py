@@ -101,7 +101,9 @@ class BasicPathFollower(Module):
         self._stop_event.set()
         if self._thread is not None:
             self._thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
-        self.nav_cmd_vel.publish(Twist())
+        self.nav_cmd_vel.publish(
+            Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+        )
         super().stop()
 
     def _lookup_pose(self) -> PoseStamped | None:
@@ -118,7 +120,9 @@ class BasicPathFollower(Module):
         if len(path.poses) == 0:
             with self._lock:
                 self._waypoints = None
-            self.nav_cmd_vel.publish(Twist())
+            self.nav_cmd_vel.publish(
+                Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+            )
             return
         waypoints = np.array(
             [[p.pose.position.x, p.pose.position.y] for p in path.poses], dtype=np.float32
@@ -130,7 +134,9 @@ class BasicPathFollower(Module):
         if msg.data:
             with self._lock:
                 self._waypoints = None
-            self.nav_cmd_vel.publish(Twist())
+            self.nav_cmd_vel.publish(
+                Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+            )
 
     def _follow(self) -> None:
         period = 1.0 / self.config.control_frequency
@@ -147,7 +153,9 @@ class BasicPathFollower(Module):
     def _step(self, pose: PoseStamped, waypoints: NDArray[np.float32]) -> None:
         position = np.array([pose.pose.position.x, pose.pose.position.y], dtype=np.float32)
         if float(np.linalg.norm(waypoints[-1] - position)) < self.config.goal_tolerance:
-            self.nav_cmd_vel.publish(Twist())
+            self.nav_cmd_vel.publish(
+                Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+            )
             with self._lock:
                 if self._waypoints is waypoints:
                     self._waypoints = None
@@ -166,7 +174,9 @@ class BasicPathFollower(Module):
             min(self.config.max_angular, self.config.heading_gain * yaw_error),
         )
         linear = self.config.speed * max(0.0, math.cos(yaw_error))
-        self.nav_cmd_vel.publish(Twist(linear=Vector3(x=linear), angular=Vector3(z=angular)))
+        self.nav_cmd_vel.publish(
+            Twist(linear=Vector3(x=linear, y=0.0, z=0.0), angular=Vector3(z=angular, x=0.0, y=0.0))
+        )
 
     def _lookahead_point(
         self, waypoints: NDArray[np.float32], position: NDArray[np.float32]

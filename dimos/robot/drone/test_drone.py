@@ -23,6 +23,7 @@ import time
 import unittest
 from unittest.mock import MagicMock, patch
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import PoseStamped, Vector3
 from dimos_generated.sensor_msgs.msg import Image
 from dimos_generated.std_msgs.msg import Header
@@ -508,7 +509,9 @@ class TestDronePerception(unittest.TestCase):
 
         def subscribe_side_effect(callback) -> None:
             for frame in video_frames:
-                img = image_from_array(frame, encoding="bgr8", header=Header())
+                img = image_from_array(
+                    frame, encoding="bgr8", header=Header(stamp=Time(sec=0, nanosec=0), frame_id="")
+                )
                 callback(img)
                 received_frames.append(img)
 
@@ -520,7 +523,9 @@ class TestDronePerception(unittest.TestCase):
 
         def piped_subscribe(callback):
             for frame in video_frames:
-                img = image_from_array(frame, encoding="rgb8", header=Header())  # After format fix
+                img = image_from_array(
+                    frame, encoding="rgb8", header=Header(stamp=Time(sec=0, nanosec=0), frame_id="")
+                )  # After format fix
                 callback(img)
                 piped_captured.append(img)
 

@@ -22,8 +22,10 @@ import threading
 import time
 from typing import TYPE_CHECKING, Any
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped
 from dimos_generated.std_msgs.msg import Bool, Header
+from dimos_message_build.registry import decode as cdr_decode
 import pytest
 
 from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
@@ -144,8 +146,8 @@ def serve_channel() -> Iterator[Callable[..., str]]:
 
 def _pose(x: float, y: float, theta: float) -> PoseStamped:
     return PoseStamped(
-        header=Header(frame_id="map"),
-        pose=Pose(position=Point(x=x, y=y), orientation=quaternion_from_euler(0, 0, theta)),
+        header=Header(frame_id="map", stamp=Time(sec=0, nanosec=0)),
+        pose=Pose(position=Point(x=x, y=y, z=0.0), orientation=quaternion_from_euler(0, 0, theta)),
     )
 
 
@@ -309,7 +311,7 @@ def spawn_wall_on_pose(lcm_spy: LcmSpy, dim_sim: DimSimClient):
         def on_odom(data):
             if triggered.is_set():
                 return
-            pose = PoseStamped.decode(data)
+            pose = cdr_decode(data, PoseStamped)
             dx = pose.pose.position.x - px
             dy = pose.pose.position.y - py
             if dx * dx + dy * dy < threshold_sq:

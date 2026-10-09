@@ -17,7 +17,7 @@ from threading import Event, RLock, Thread
 import time
 from typing import Any
 
-from dimos_generated.geometry_msgs.msg import Twist
+from dimos_generated.geometry_msgs.msg import Twist, Vector3
 from dimos_generated.sensor_msgs.msg import CameraInfo, Image, PointCloud2
 from dimos_generated.tf2_msgs.msg import TFMessage
 import numpy as np
@@ -203,7 +203,9 @@ class PersonFollowSkillContainer(Module):
         """
         self._stop_following()
 
-        self.cmd_vel.publish(Twist())
+        self.cmd_vel.publish(
+            Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+        )
 
         if self._thread is not None:
             self._thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
@@ -246,7 +248,9 @@ class PersonFollowSkillContainer(Module):
         )
 
         if len(initial_detections) == 0:
-            self.cmd_vel.publish(Twist())
+            self.cmd_vel.publish(
+                Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+            )
             return f"EdgeTAM failed to segment '{query}'."
 
         logger.info(f"EdgeTAM initialized with {len(initial_detections)} detections")
@@ -278,7 +282,9 @@ class PersonFollowSkillContainer(Module):
             detections = tracker.process_image(latest_image)
 
             if len(detections) == 0:
-                self.cmd_vel.publish(Twist())
+                self.cmd_vel.publish(
+                    Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+                )
 
                 lost_count += 1
                 if lost_count > self._max_lost_frames:
@@ -320,7 +326,9 @@ class PersonFollowSkillContainer(Module):
         self._should_stop.set()
 
     def _send_stop_reason(self, query: str, reason: str) -> None:
-        self.cmd_vel.publish(Twist())
+        self.cmd_vel.publish(
+            Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+        )
         self.tool_update(
             "follow_person",
             f"Person follow stopped for '{query}'. Reason: {reason}.",

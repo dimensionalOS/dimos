@@ -18,6 +18,7 @@ from multiprocessing.shared_memory import SharedMemory
 from typing import Any
 
 from dimos_generated.sensor_msgs.msg import PointCloud2
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 from numpy.typing import NDArray
 
@@ -147,7 +148,7 @@ class ShmReader:
         self._increment_seq(2)
 
     def write_lidar(self, lidar_msg: PointCloud2) -> None:
-        data = lidar_msg.encode()
+        data = cdr_encode(lidar_msg)
         data_len = len(data)
 
         if data_len > self.shm.lidar.size:
@@ -262,7 +263,7 @@ class ShmWriter:
                     return None, 0
 
                 try:
-                    lidar_msg = PointCloud2.decode(data)
+                    lidar_msg = cdr_decode(data, PointCloud2)
                     return lidar_msg, seq
                 except Exception as e:
                     logger.error(f"Failed to deserialize lidar message: {e}")

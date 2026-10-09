@@ -16,7 +16,8 @@
 
 from pathlib import Path
 
-from dimos_generated.geometry_msgs.msg import Pose, PoseStamped
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from dimos_generated.sensor_msgs.msg import JointState
 from dimos_generated.std_msgs.msg import Header
 import numpy as np
@@ -96,10 +97,20 @@ def _config(
 def _solver(mocker: MockerFixture, positions: list[float] | None = None) -> PinkPoseTargetSolver:
     solver = mocker.Mock(spec=PinkPoseTargetSolver)
     solver.step.return_value = JointState(
-        name=["arm/a", "arm/b"], position=positions or [0.01, -0.01]
+        name=["arm/a", "arm/b"],
+        position=np.asarray(positions or [0.01, -0.01], dtype=np.float64),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
     )
     solver.frame_poses.return_value = {
-        "tool": PoseStamped(header=Header(frame_id="base"), pose=Pose())
+        "tool": PoseStamped(
+            header=Header(frame_id="base", stamp=Time(sec=0, nanosec=0)),
+            pose=Pose(
+                position=Point(x=0.0, y=0.0, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+        )
     }
     return solver
 
@@ -119,7 +130,16 @@ def _snapshot(
     extra_joint_positions: dict[str, float] | None = None,
 ) -> FrameTargetSnapshot:
     return FrameTargetSnapshot(
-        targets=targets or {"tool": PoseStamped(header=Header(frame_id="world"), pose=Pose())},
+        targets=targets
+        or {
+            "tool": PoseStamped(
+                header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+                pose=Pose(
+                    position=Point(x=0.0, y=0.0, z=0.0),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+            )
+        },
         last_update_time=last_update_time,
         extra_joint_positions=extra_joint_positions or {},
     )
@@ -142,18 +162,47 @@ def test_pose_target_solver_advances_from_last_command_not_delayed_feedback(
         return _StreamingStepResult(
             command=JointState(
                 name=list(command.name),
-                position=[position + 0.1 for position in command.position],
+                position=np.asarray(
+                    [position + 0.1 for position in command.position], dtype=np.float64
+                ),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
             ),
             bounded_increment=np.array([0.1, 0.1]),
         )
 
     step = mocker.patch.object(solver, "_step_frame_targets", side_effect=advance)
-    targets = {"tool": PoseStamped(header=Header(frame_id=""), pose=Pose())}
+    targets = {
+        "tool": PoseStamped(
+            header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
+            pose=Pose(
+                position=Point(x=0.0, y=0.0, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+        )
+    }
 
-    assert solver.step(targets, JointState(name=["arm/a", "arm/b"], position=[0.0, 0.0]), 0.01)
     assert solver.step(
         targets,
-        JointState(name=["arm/a", "arm/b"], position=[-0.3, -0.3]),
+        JointState(
+            name=["arm/a", "arm/b"],
+            position=np.array([0.0, 0.0], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        ),
+        0.01,
+    )
+    assert solver.step(
+        targets,
+        JointState(
+            name=["arm/a", "arm/b"],
+            position=np.array([-0.3, -0.3], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        ),
         0.01,
     )
 
@@ -174,22 +223,58 @@ def test_pose_target_solver_reset_reseeds_from_feedback(mocker: MockerFixture) -
         "_step_frame_targets",
         side_effect=[
             _StreamingStepResult(
-                command=JointState(name=["arm/a", "arm/b"], position=[0.1, 0.1]),
+                command=JointState(
+                    name=["arm/a", "arm/b"],
+                    position=np.array([0.1, 0.1], dtype=np.float64),
+                    header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                    velocity=np.array([], dtype=np.float64),
+                    effort=np.array([], dtype=np.float64),
+                ),
                 bounded_increment=np.array([0.1, 0.1]),
             ),
             _StreamingStepResult(
-                command=JointState(name=["arm/a", "arm/b"], position=[-0.2, -0.2]),
+                command=JointState(
+                    name=["arm/a", "arm/b"],
+                    position=np.array([-0.2, -0.2], dtype=np.float64),
+                    header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                    velocity=np.array([], dtype=np.float64),
+                    effort=np.array([], dtype=np.float64),
+                ),
                 bounded_increment=np.array([0.1, 0.1]),
             ),
         ],
     )
-    targets = {"tool": PoseStamped(header=Header(frame_id=""), pose=Pose())}
+    targets = {
+        "tool": PoseStamped(
+            header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
+            pose=Pose(
+                position=Point(x=0.0, y=0.0, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+        )
+    }
 
-    assert solver.step(targets, JointState(name=["arm/a", "arm/b"], position=[0.0, 0.0]), 0.01)
+    assert solver.step(
+        targets,
+        JointState(
+            name=["arm/a", "arm/b"],
+            position=np.array([0.0, 0.0], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        ),
+        0.01,
+    )
     solver.reset()
     assert solver.step(
         targets,
-        JointState(name=["arm/a", "arm/b"], position=[-0.3, -0.3]),
+        JointState(
+            name=["arm/a", "arm/b"],
+            position=np.array([-0.3, -0.3], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        ),
         0.01,
     )
 
@@ -205,15 +290,35 @@ def test_pose_target_solver_reset_during_step_discards_command_and_filter_histor
     def reset_during_step(**_kwargs: object) -> _StreamingStepResult:
         solver.reset()
         return _StreamingStepResult(
-            command=JointState(name=["arm/a", "arm/b"], position=[0.1, 0.1]),
+            command=JointState(
+                name=["arm/a", "arm/b"],
+                position=np.array([0.1, 0.1], dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            ),
             bounded_increment=np.array([0.1, 0.1]),
         )
 
     mocker.patch.object(solver, "_step_frame_targets", side_effect=reset_during_step)
 
     result = solver.step(
-        {"tool": PoseStamped(header=Header(frame_id=""), pose=Pose())},
-        JointState(name=["arm/a", "arm/b"], position=[0.0, 0.0]),
+        {
+            "tool": PoseStamped(
+                header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
+                pose=Pose(
+                    position=Point(x=0.0, y=0.0, z=0.0),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+            )
+        },
+        JointState(
+            name=["arm/a", "arm/b"],
+            position=np.array([0.0, 0.0], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        ),
         0.01,
     )
 
@@ -365,7 +470,15 @@ def test_current_frame_poses_uses_live_coordinator_seed(mocker: MockerFixture) -
 
     poses = task.current_frame_poses(_state(positions={"arm/a": 0.2, "arm/b": 0.3}), ["tool"])
 
-    assert poses == {"tool": PoseStamped(header=Header(frame_id="base"), pose=Pose())}
+    assert poses == {
+        "tool": PoseStamped(
+            header=Header(frame_id="base", stamp=Time(sec=0, nanosec=0)),
+            pose=Pose(
+                position=Point(x=0.0, y=0.0, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+        )
+    }
     seed = solver.frame_poses.call_args.args[0]
     assert seed.name == ["arm/a", "arm/b"]
     assert seed.position == [0.2, 0.3]

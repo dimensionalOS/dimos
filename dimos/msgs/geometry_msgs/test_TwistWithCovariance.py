@@ -18,13 +18,17 @@ Legacy polymorphic positional constructors and presentation methods are retired.
 """
 
 from dimos_generated.geometry_msgs.msg import Twist, TwistWithCovariance, Vector3
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 from rosbags.typesys import Stores, get_typestore
 
 
 def test_default_fields_and_covariance() -> None:
-    source = TwistWithCovariance()
+    source = TwistWithCovariance(
+        twist=Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)),
+        covariance=np.zeros(36, dtype=np.float64),
+    )
     value = source.twist
     np.testing.assert_array_equal(
         [
@@ -49,11 +53,11 @@ def test_default_fields_and_covariance() -> None:
 def test_explicit_construction_and_independent_cdr(as_list: bool, covariance: np.ndarray) -> None:
     source = TwistWithCovariance(
         twist=Twist(linear=Vector3(x=1, y=2, z=3), angular=Vector3(x=0.1, y=0.2, z=0.3)),
-        covariance=covariance.tolist() if as_list else covariance,
+        covariance=np.asarray(covariance.tolist() if as_list else covariance, dtype=np.float64),
     )
-    decoded = TwistWithCovariance.decode(source.encode())
+    decoded = cdr_decode(cdr_encode(source), TwistWithCovariance)
     independent = get_typestore(Stores.ROS2_JAZZY).deserialize_cdr(
-        source.encode(), TwistWithCovariance.msg_name
+        cdr_encode(source), TwistWithCovariance.__msgtype__
     )
     for result in (source, decoded, independent):
         value = result.twist
@@ -79,9 +83,9 @@ def test_explicit_construction_and_independent_cdr(as_list: bool, covariance: np
 def test_copy_equality_and_independent_storage() -> None:
     original = TwistWithCovariance(
         twist=Twist(linear=Vector3(x=1, y=2, z=3), angular=Vector3(x=0.1, y=0.2, z=0.3)),
-        covariance=np.arange(36, dtype=float),
+        covariance=np.asarray(np.arange(36, dtype=float), dtype=np.float64),
     )
-    copied = TwistWithCovariance.decode(original.encode())
+    copied = cdr_decode(cdr_encode(original), TwistWithCovariance)
     assert copied == original
     assert copied is not original
     assert copied.twist is not original.twist
@@ -94,7 +98,10 @@ def test_copy_equality_and_independent_storage() -> None:
 
 
 def test_matrix_assignment() -> None:
-    source = TwistWithCovariance(covariance=np.arange(36, dtype=float))
+    source = TwistWithCovariance(
+        covariance=np.asarray(np.arange(36, dtype=float), dtype=np.float64),
+        twist=Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)),
+    )
     matrix = np.asarray(source.covariance).reshape(6, 6)
     assert matrix[0, 0] == 0
     assert matrix[5, 5] == 35
@@ -106,7 +113,10 @@ def test_matrix_assignment() -> None:
 @pytest.mark.parametrize("size", [0, 35, 37])
 def test_fixed_covariance_rejects_invalid_length(size: int) -> None:
     with pytest.raises((ValueError, TypeError, RuntimeError)):
-        TwistWithCovariance(covariance=np.zeros(size))
+        TwistWithCovariance(
+            covariance=np.asarray(np.zeros(size), dtype=np.float64),
+            twist=Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)),
+        )
 
 
 @pytest.mark.parametrize(
@@ -125,7 +135,8 @@ def test_parameterized_values(
         twist=Twist(
             linear=Vector3(x=xyz[0], y=xyz[1], z=xyz[2]),
             angular=Vector3(x=angular[0], y=angular[1], z=angular[2]),
-        )
+        ),
+        covariance=np.zeros(36, dtype=np.float64),
     )
     assert (source.twist.linear.x, source.twist.linear.y, source.twist.linear.z) == xyz
     assert (source.twist.angular.x, source.twist.angular.y, source.twist.angular.z) == angular

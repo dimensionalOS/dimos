@@ -17,9 +17,11 @@
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from dimos_generated.geometry_msgs.msg import Pose, PoseStamped
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from dimos_generated.sensor_msgs.msg import JointState
 from dimos_generated.std_msgs.msg import Header
+import numpy as np
 import pytest
 from pytest_mock import MockerFixture
 
@@ -65,7 +67,13 @@ def _selection() -> PlanningGroupSelection:
 def _world(*, velocity: float = 2.0, acceleration: float = 6.0) -> WorldSpec:
     config = RobotModelConfig(
         model=RobotModel.from_file(Path("/robot.urdf")),
-        base_pose=PoseStamped(header=Header(frame_id=""), pose=Pose()),
+        base_pose=PoseStamped(
+            header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
+            pose=Pose(
+                position=Point(x=0.0, y=0.0, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+        ),
         joint_names=["arm/a", "arm/b"],
         base_link="base",
     )
@@ -98,9 +106,27 @@ def _result() -> PlanningResult:
     return PlanningResult(
         status=PlanningStatus.SUCCESS,
         path=[
-            JointState(name=names, position=[0.0, 0.0]),
-            JointState(name=names, position=[0.2, 0.1]),
-            JointState(name=names, position=[0.4, 0.0]),
+            JointState(
+                name=names,
+                position=np.array([0.0, 0.0], dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            ),
+            JointState(
+                name=names,
+                position=np.array([0.2, 0.1], dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            ),
+            JointState(
+                name=names,
+                position=np.array([0.4, 0.0], dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            ),
         ],
     )
 

@@ -15,16 +15,21 @@
 # Copyright 2026 Dimensional Inc.
 # SPDX-License-Identifier: Apache-2.0
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import (
     Point,
     Pose,
     PoseStamped,
     PoseWithCovariance,
+    Quaternion,
     Transform,
     TransformStamped,
+    Twist,
+    TwistWithCovariance,
     Vector3,
 )
 from dimos_generated.nav_msgs.msg import Odometry
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 import pytest
 
@@ -34,14 +39,43 @@ from dimos.memory.store.memory import MemoryStore
 @pytest.mark.parametrize(
     "center",
     [
-        Point(x=1),
-        Vector3(x=1),
+        Point(x=1, y=0.0, z=0.0),
+        Vector3(x=1, y=0.0, z=0.0),
         (1, 0, 0),
         np.array([1, 0, 0]),
-        Pose(position=Point(x=1)),
-        PoseStamped(pose=Pose(position=Point(x=1))),
-        TransformStamped(transform=Transform(translation=Vector3(x=1))),
-        Odometry(pose=PoseWithCovariance(pose=Pose(position=Point(x=1)))),
+        Pose(position=Point(x=1, y=0.0, z=0.0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)),
+        PoseStamped(
+            pose=Pose(
+                position=Point(x=1, y=0.0, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        ),
+        TransformStamped(
+            transform=Transform(
+                translation=Vector3(x=1, y=0.0, z=0.0),
+                rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            child_frame_id="",
+        ),
+        Odometry(
+            pose=PoseWithCovariance(
+                pose=Pose(
+                    position=Point(x=1, y=0.0, z=0.0),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+                covariance=np.zeros(36, dtype=np.float64),
+            ),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            child_frame_id="",
+            twist=TwistWithCovariance(
+                twist=Twist(
+                    linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)
+                ),
+                covariance=np.zeros(36, dtype=np.float64),
+            ),
+        ),
     ],
 )
 def test_near_accepts_generated_nested_positions_and_retains_radius_boundary(center):

@@ -73,7 +73,9 @@ class CompressedCodec(PubSubTransport[Image]):
             msg
             if isinstance(msg, CompressedImage)
             else CompressedImage(
-                header=msg.header, format="jpeg", data=image_to_jpeg(msg, quality=self.quality)
+                header=msg.header,
+                format="jpeg",
+                data=np.asarray(image_to_jpeg(msg, quality=self.quality), dtype=np.uint8),
             )
         )
         self.inner.broadcast(None, compressed)

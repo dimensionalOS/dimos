@@ -16,12 +16,14 @@ use std::time::Duration;
 
 use crate::mapper::{Mapper, Pose};
 use crate::voxel_ray_tracer::Config;
-use dimos_generated_messages::builtin_interfaces::msg::Time;
+use dimos_generated_messages::builtin_interfaces::msg::time::Time;
 use dimos_generated_messages::geometry_msgs::msg::{
-    Point, Pose as PoseMsg, PoseStamped, Quaternion,
+    point::Point, pose::Pose as PoseMsg, pose_stamped::PoseStamped, quaternion::Quaternion,
 };
-use dimos_generated_messages::sensor_msgs::msg::{PointCloud2, PointField};
-use dimos_generated_messages::std_msgs::msg::Header;
+use dimos_generated_messages::sensor_msgs::msg::{
+    point_cloud2::PointCloud2, point_field::PointField,
+};
+use dimos_generated_messages::std_msgs::msg::header::Header;
 use dimos_module::cdr;
 use dimos_module::pointcloud::xyz_points as extract_xyz;
 use dimos_module::{error_throttled, warn_throttled, Input, Module, Output, Tf};

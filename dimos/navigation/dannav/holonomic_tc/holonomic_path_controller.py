@@ -36,7 +36,7 @@ from dimos.utils.transform_utils import normalize_angle
 
 def _pose_from_xy_yaw(x: float, y: float, yaw: float) -> Pose:
     return Pose(
-        position=Point(x=x, y=y),
+        position=Point(x=x, y=y, z=0.0),
         orientation=quaternion_from_euler(0.0, 0.0, float(yaw)),
     )
 
@@ -76,7 +76,9 @@ class HolonomicPathController:
         )
         self._limits = self._make_limits()
         self._inner.configure(self._limits)
-        self._previous_cmd = Twist()
+        self._previous_cmd = Twist(
+            linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)
+        )
 
     def set_speed(self, speed_m_s: float) -> None:
         self._speed = float(speed_m_s)
@@ -104,7 +106,11 @@ class HolonomicPathController:
         current_odom: PoseStamped,
         measured_body_twist: Twist | None = None,
     ) -> Twist:
-        twist = Twist() if measured_body_twist is None else measured_body_twist
+        twist = (
+            Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+            if measured_body_twist is None
+            else measured_body_twist
+        )
         meas = TrajectoryMeasuredSample(0.0, _pose_from_pose_stamped(current_odom), twist)
         return self._limit_output(self._inner.control(reference, meas))
 
@@ -133,15 +139,23 @@ class HolonomicPathController:
             float(current_odom.pose.position.y),
             target_yaw,
         )
-        ref = TrajectoryReferenceSample(0.0, p, Twist())
-        twist = Twist() if measured_body_twist is None else measured_body_twist
+        ref = TrajectoryReferenceSample(
+            0.0, p, Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+        )
+        twist = (
+            Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+            if measured_body_twist is None
+            else measured_body_twist
+        )
         meas = TrajectoryMeasuredSample(0.0, _pose_from_pose_stamped(current_odom), twist)
         out = self._inner.control(ref, meas)
         return self._limit_output(self._apply_sim_angular(out))
 
     def reset_errors(self) -> None:
         self._inner.reset()
-        self._previous_cmd = Twist()
+        self._previous_cmd = Twist(
+            linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)
+        )
 
     def _apply_sim_angular(self, t: Twist) -> Twist:
         wz = float(t.angular.z)

@@ -18,6 +18,7 @@
 from pathlib import Path
 
 from dimos_generated.std_msgs.msg import Int32
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 
 from dimos.experimental.isolated_python.bootstrap import load_class
 from dimos.experimental.isolated_python.example.contract import ExampleExternal
@@ -33,10 +34,10 @@ def test_external_example_uses_generated_contract_and_cdr(monkeypatch):
     try:
         streams = {s.name: s.type for s in ExampleExternal.blueprint().blueprints[0].streams}
         assert streams["value"] is Int32 and streams["doubled"] is Int32
-        runtime._publish_doubled(Int32.decode(Int32(data=-7).encode()))
+        runtime._publish_doubled(cdr_decode(cdr_encode(Int32(data=-7)), Int32))
         assert len(received) == 1
         assert type(received[0]) is Int32
-        assert Int32.decode(received[0].encode()).data == -21
+        assert cdr_decode(cdr_encode(received[0]), Int32).data == -21
         assert runtime.get_multiplier() == 3
     finally:
         runtime.stop()

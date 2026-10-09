@@ -32,6 +32,7 @@ from collections.abc import Iterator
 from typing import Any
 
 from dimos_generated.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+import numpy as np
 import pytest
 
 import dimos.control.coordinator as coord_mod
@@ -129,8 +130,20 @@ def _trajectory() -> JointTrajectory:
         header=header_now(),
         joint_names=["arm/joint1", "arm/joint2"],
         points=[
-            JointTrajectoryPoint(time_from_start=duration_from_seconds(0.0), positions=[0.0, 0.0]),
-            JointTrajectoryPoint(time_from_start=duration_from_seconds(1.0), positions=[0.1, 0.2]),
+            JointTrajectoryPoint(
+                time_from_start=duration_from_seconds(0.0),
+                positions=np.array([0.0, 0.0], dtype=np.float64),
+                velocities=np.array([], dtype=np.float64),
+                accelerations=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            ),
+            JointTrajectoryPoint(
+                time_from_start=duration_from_seconds(1.0),
+                positions=np.array([0.1, 0.2], dtype=np.float64),
+                velocities=np.array([], dtype=np.float64),
+                accelerations=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            ),
         ],
     )
 

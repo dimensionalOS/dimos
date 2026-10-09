@@ -17,6 +17,8 @@ from __future__ import annotations
 import importlib
 from typing import Any, Protocol, TypeVar, runtime_checkable
 
+from dimos_message_build.registry import message_types
+
 from dimos.memory.codecs.cdr import CdrCodec
 from dimos.memory.codecs.lz4 import Lz4Codec
 from dimos.memory.codecs.pickle import PickleCodec
@@ -34,9 +36,7 @@ class Codec(Protocol[T]):
 
 def codec_for(payload_type: type[Any] | None = None) -> Codec[Any]:
     """Auto-select codec based on payload type."""
-    if payload_type is not None and all(
-        hasattr(payload_type, name) for name in ("encode", "decode", "msg_name", "schema")
-    ):
+    if payload_type is not None and all(hasattr(payload_type, name) for name in ("__msgtype__",)):
         return CdrCodec(payload_type)
     return PickleCodec()
 
@@ -77,6 +77,11 @@ def _class_to_id(codec: Any) -> str:
 
 
 def resolve_payload_type(payload_module: str) -> type[Any]:
+    if payload_module.startswith("rosbags.usertypes."):
+        for cls in message_types().values():
+            if payload_module == f"{cls.__module__}.{cls.__qualname__}":
+                return cls
+        raise ValueError(f"Unknown native message payload type: {payload_module}")
     parts = payload_module.rsplit(".", 1)
     if len(parts) != 2:
         raise ValueError(f"Cannot resolve payload type from {payload_module!r}")

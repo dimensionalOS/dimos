@@ -809,7 +809,7 @@ class WavefrontFrontierExplorer(Module):
                 # Publish goal to navigator
                 goal_msg = PoseStamped(
                     header=self.latest_costmap.header,
-                    pose=Pose(position=goal, orientation=Quaternion(w=1)),
+                    pose=Pose(position=goal, orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0)),
                 )
 
                 self.goal_request.publish(goal_msg)

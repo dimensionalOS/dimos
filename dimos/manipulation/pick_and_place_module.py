@@ -19,6 +19,7 @@ from __future__ import annotations
 import math
 from typing import Any, Literal
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.dimos_msgs.msg import GraspCandidateArray
 from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Vector3
 from dimos_generated.std_msgs.msg import Header
@@ -70,7 +71,9 @@ class PickAndPlaceModule(Module):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._objects: dict[str, dict[str, Any]] = {}
-        self._grasp_candidates = GraspCandidateArray()
+        self._grasp_candidates = GraspCandidateArray(
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""), candidates=[]
+        )
         self._selected_object_id: str | None = None
         self._selected_grasp: PoseStamped | None = None
         self._holding_object = False
@@ -227,7 +230,7 @@ class PickAndPlaceModule(Module):
                 "ROBOT_NOT_FOUND", "Gripper-capable planning group is missing or ambiguous"
             )
         place = PoseStamped(
-            header=Header(frame_id=self.config.planning_frame),
+            header=Header(frame_id=self.config.planning_frame, stamp=Time(sec=0, nanosec=0)),
             pose=Pose(
                 position=Point(x=x, y=y, z=z), orientation=self._selected_grasp.pose.orientation
             ),
@@ -244,8 +247,14 @@ class PickAndPlaceModule(Module):
         return self._servo(place, preplace, group) or SkillResult.ok("Place complete")
 
     def _clear_selection(self) -> None:
-        self._grasp_candidates = GraspCandidateArray()
-        self._manipulation.show_grasp_proposals(GraspCandidateArray())
+        self._grasp_candidates = GraspCandidateArray(
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""), candidates=[]
+        )
+        self._manipulation.show_grasp_proposals(
+            GraspCandidateArray(
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""), candidates=[]
+            )
+        )
         self._selected_object_id = None
         self._selected_grasp = None
 
@@ -279,7 +288,7 @@ class PickAndPlaceModule(Module):
     def _offset_pose(pose: PoseStamped, offset: float) -> PoseStamped:
         return PoseStamped(
             header=pose.header,
-            pose=translate_pose_local(pose.pose, Vector3(z=-offset)),
+            pose=translate_pose_local(pose.pose, Vector3(z=-offset, x=0.0, y=0.0)),
         )
 
     def _servo(

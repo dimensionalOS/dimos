@@ -18,6 +18,7 @@ from dimos_generated.geometry_msgs.msg import Quaternion, Vector3
 from dimos_generated.sensor_msgs.msg import Image
 from dimos_generated.std_msgs.msg import Header
 from dimos_generated.vision_msgs.msg import Detection3DArray
+from dimos_message_build.registry import decode as cdr_decode
 import numpy as np
 import pytest
 
@@ -90,7 +91,7 @@ def test_to_ros_detection3d_array_serializes_plain_bbox_results() -> None:
     assert len(msg.detections) == 1
     assert len(msg.detections[0].results) == 1
 
-    decoded = Detection3DArray.decode(msg.encode())
+    decoded = cdr_decode(msg.encode(), Detection3DArray)
     decoded_det = decoded.detections[0]
     assert len(decoded_det.results) == 1
     assert decoded_det.results[0].hypothesis.class_id == "9"
@@ -126,7 +127,7 @@ def test_to_ros_detection3d_array_preserves_marker_wire_identity() -> None:
     assert first.bbox.size.x == pytest.approx(0.16)
     assert first.bbox.size.z == pytest.approx(0.0)
 
-    decoded = Detection3DArray.decode(msg.encode())
+    decoded = cdr_decode(msg.encode(), Detection3DArray)
     assert decoded.header.frame_id == "world"
     assert len(decoded.detections) == 2
     assert decoded.detections[1].id == "42"
@@ -180,7 +181,7 @@ def test_marker_pose_and_array_keep_exact_source_stamp() -> None:
     pose = marker.pose
     message = marker.to_detection3d_msg()
     array = ImageDetections3D(image, [marker]).to_ros_detection3d_array()
-    decoded = Detection3DArray.decode(array.encode())
+    decoded = cdr_decode(array.encode(), Detection3DArray)
     assert pose.header.stamp == image.header.stamp
     assert message.header.stamp == image.header.stamp
     assert decoded.header.stamp == image.header.stamp

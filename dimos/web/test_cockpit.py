@@ -28,6 +28,7 @@ from dimos_generated.std_msgs.msg import Bool
 from dimos_generated.tf2_msgs.msg import TFMessage
 from dimos_generated.trajectory_msgs.msg import JointTrajectory
 from dimos_generated.visualization_msgs.msg import MarkerArray
+from dimos_message_build.registry import schema as cdr_schema
 from langchain_core.messages import BaseMessage
 import pytest
 
@@ -797,7 +798,7 @@ def test_cdr_channel_blueprint() -> None:
     assert parse_manifest(manifest).model_dump() == manifest
     (spec,) = atom.kwargs["channels"]
     assert spec.encoder is encode_cdr_v1 and spec.encoder_takes_params is True
-    assert spec.params["cdr"]["definition"] == PoseStamped.schema
+    assert spec.params["cdr"]["definition"] == cdr_schema(PoseStamped.__msgtype__)
     assert any(
         s.name == "pose" and s.type is PoseStamped and s.direction == "in" for s in atom.streams
     )
@@ -825,8 +826,8 @@ def test_cdr_schema_joins_user_params_in_the_request_only() -> None:
     channel = Channel("pose", PoseStamped, params={"note": "x"})
     assert dict(channel.params) == {"note": "x"}
     (wire,) = cockpit(channels=[channel]).blueprints[0].kwargs["manifest"]["channels"]
-    assert (
-        wire["params"]["note"] == "x" and wire["params"]["cdr"]["definition"] == PoseStamped.schema
+    assert wire["params"]["note"] == "x" and wire["params"]["cdr"]["definition"] == cdr_schema(
+        PoseStamped.__msgtype__
     )
     with pytest.raises(ValueError, match="'pose': params key 'cdr' is reserved"):
         cockpit(channels=[Channel("pose", PoseStamped, params={"cdr": {}})])

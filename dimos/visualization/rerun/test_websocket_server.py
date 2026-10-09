@@ -21,7 +21,8 @@ import json
 import threading
 from typing import Any
 
-from dimos_generated.geometry_msgs.msg import PointStamped, Twist
+from dimos_generated.geometry_msgs.msg import PointStamped, Twist, Vector3
+from dimos_message_build.registry import decode as cdr_decode
 import pytest
 import websockets.asyncio.client as ws_client
 
@@ -131,7 +132,7 @@ def test_click_publishes_point_stamped(
     unsub()
 
     assert len(received) == 1
-    point = PointStamped.decode(received[0].encode())
+    point = cdr_decode(received[0].encode(), PointStamped)
     assert point.point.x == pytest.approx(1.5)
     assert point.point.y == pytest.approx(2.5)
     assert point.point.z == pytest.approx(0.0)
@@ -171,7 +172,9 @@ def test_stop_publishes_zero_twist(
     unsub()
 
     assert len(received) == 1
-    assert Twist.decode(received[0].encode()) == Twist()
+    assert cdr_decode(received[0].encode(), Twist) == Twist(
+        linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)
+    )
 
 
 def test_invalid_json_does_not_crash(server: RerunWebSocketServer) -> None:
@@ -189,7 +192,9 @@ def test_invalid_json_does_not_crash(server: RerunWebSocketServer) -> None:
     try:
         asyncio.run(_send_bad())
         assert done.wait(timeout=2.0)
-        assert received == [Twist()]
+        assert received == [
+            Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+        ]
     finally:
         unsubscribe()
 

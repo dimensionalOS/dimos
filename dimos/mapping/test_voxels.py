@@ -16,8 +16,10 @@
 
 from collections.abc import Generator
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.sensor_msgs.msg import PointCloud2
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 
@@ -38,15 +40,19 @@ def grid() -> Generator[VoxelGrid, None, None]:
 def lidar_frame() -> PointCloud2:
     axis = np.arange(20) * 0.05 + 0.025
     points = np.stack(np.meshgrid(axis, axis, axis, indexing="ij"), axis=-1).reshape(-1, 3)
-    message = pointcloud_from_xyz(points, header=Header(frame_id="world"))
-    return PointCloud2.decode(message.encode())
+    message = pointcloud_from_xyz(
+        points, header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0))
+    )
+    return cdr_decode(cdr_encode(message), PointCloud2)
 
 
 def test_ingest_a_few(grid: VoxelGrid) -> None:
     for offset in (0.0, 1.0, 2.0):
         points = np.array([[offset + 0.025, 0.025, 0.025], [offset + 0.075, 0.025, 0.025]])
-        frame = pointcloud_from_xyz(points, header=Header(frame_id="world"))
-        grid.add_frame(PointCloud2.decode(frame.encode()))
+        frame = pointcloud_from_xyz(
+            points, header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0))
+        )
+        grid.add_frame(cdr_decode(cdr_encode(frame), PointCloud2))
     assert grid.get_global_pointcloud2().width == 6
     np.testing.assert_allclose(
         np.sort(pointcloud_xyz(grid.get_global_pointcloud2())[:, 0]),
@@ -69,7 +75,7 @@ def test_roundtrip(lidar_frame: PointCloud2, voxel_size: float, expected_points:
                 np.sort(pointcloud_xyz(lidar_frame), axis=0),
                 atol=1e-6,
             )
-        grid.add_frame(PointCloud2.decode(first.encode()))
+        grid.add_frame(cdr_decode(first.encode(), PointCloud2))
         assert grid.get_global_pointcloud2().width == expected_points
         np.testing.assert_array_equal(
             pointcloud_xyz(grid.get_global_pointcloud2()), pointcloud_xyz(first)

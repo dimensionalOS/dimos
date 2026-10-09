@@ -39,7 +39,9 @@ TOPIC = "/lcm_channel_e2e/lcm_pose"
 
 POSE = PoseStamped(
     header=Header(stamp=time_from_seconds(42.5), frame_id="map"),
-    pose=Pose(position=Point(x=1.5, y=-2.5, z=0.25), orientation=Quaternion(w=1)),
+    pose=Pose(
+        position=Point(x=1.5, y=-2.5, z=0.25), orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0)
+    ),
 )
 
 # A page whose SDK and relay live on another origin, reading the decoded CDR

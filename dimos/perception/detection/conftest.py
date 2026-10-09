@@ -22,6 +22,7 @@ from dimos_generated.geometry_msgs.msg import PoseStamped, TransformStamped
 from dimos_generated.sensor_msgs.msg import CameraInfo, Image, PointCloud2
 from dimos_generated.vision_msgs.msg import Detection2DArray
 from dimos_generated.visualization_msgs.msg import MarkerArray
+from dimos_message_build.registry import decode as cdr_decode
 import pytest
 
 from dimos.core.transport import LCMTransport
@@ -78,10 +79,10 @@ def get_moment(tf):
             assert hashlib.sha256(data).hexdigest() == stream["cdr_sha256"]
             return data
 
-        lidar_frame = PointCloud2.decode(payload("lidar"))
-        image_frame = Image.decode(payload("video"))
+        lidar_frame = cdr_decode(payload("lidar"), PointCloud2)
+        image_frame = cdr_decode(payload("video"), Image)
         image_frame.header.frame_id = "camera_optical"
-        odom_frame = PoseStamped.decode(payload("odom"))
+        odom_frame = cdr_decode(payload("odom"), PoseStamped)
         # Match the Go2 connection's configured global parent for this recording.
         odom_frame.header.frame_id = "world"
 

@@ -18,7 +18,8 @@ import threading
 from types import MappingProxyType
 from typing import Any, Protocol
 
-from dimos_generated.geometry_msgs.msg import TransformStamped
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos_generated.sensor_msgs.msg import Image
 from dimos_generated.std_msgs.msg import Header
 from dimos_generated.tf2_msgs.msg import TFMessage
@@ -1125,7 +1126,16 @@ class IoTfPublisher(Module):
     def send(self, child: str) -> None:
         self.tf.publish(
             TFMessage(
-                transforms=[TransformStamped(header=Header(frame_id="world"), child_frame_id=child)]
+                transforms=[
+                    TransformStamped(
+                        header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+                        child_frame_id=child,
+                        transform=Transform(
+                            translation=Vector3(x=0.0, y=0.0, z=0.0),
+                            rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                        ),
+                    )
+                ]
             )
         )
 
@@ -1147,7 +1157,16 @@ class IoTfEcho(Module):
     def send(self, child: str) -> None:
         self.tf.publish(
             TFMessage(
-                transforms=[TransformStamped(header=Header(frame_id="world"), child_frame_id=child)]
+                transforms=[
+                    TransformStamped(
+                        header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+                        child_frame_id=child,
+                        transform=Transform(
+                            translation=Vector3(x=0.0, y=0.0, z=0.0),
+                            rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                        ),
+                    )
+                ]
             )
         )
 

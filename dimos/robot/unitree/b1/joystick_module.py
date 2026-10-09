@@ -78,7 +78,9 @@ class JoystickModule(Module):
         self.pygame_ready = False
 
         # Send stop command
-        stop_twist = Twist()
+        stop_twist = Twist(
+            linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)
+        )
         stop_twist_stamped = TwistStamped(
             header=Header(stamp=time_from_seconds(time.time()), frame_id="base_link"),
             twist=Twist(linear=stop_twist.linear, angular=stop_twist.angular),
@@ -118,19 +120,19 @@ class JoystickModule(Module):
                     # Mode changes - publish to mode_out for connection module
                     if event.key == pygame.K_0:
                         self.current_mode = 0
-                        mode_msg = Int32()
+                        mode_msg = Int32(data=0)
                         mode_msg.data = 0
                         self.mode_out.publish(mode_msg)
                         print("Mode: IDLE")
                     elif event.key == pygame.K_1:
                         self.current_mode = 1
-                        mode_msg = Int32()
+                        mode_msg = Int32(data=0)
                         mode_msg.data = 1
                         self.mode_out.publish(mode_msg)
                         print("Mode: STAND")
                     elif event.key == pygame.K_2:
                         self.current_mode = 2
-                        mode_msg = Int32()
+                        mode_msg = Int32(data=0)
                         mode_msg.data = 2
                         self.mode_out.publish(mode_msg)
                         print("Mode: WALK")
@@ -138,11 +140,14 @@ class JoystickModule(Module):
                         self.keys_held.clear()
                         # Send IDLE mode for emergency stop
                         self.current_mode = 0
-                        mode_msg = Int32()
+                        mode_msg = Int32(data=0)
                         mode_msg.data = 0
                         self.mode_out.publish(mode_msg)
                         # Also send zero twist
-                        stop_twist = Twist()
+                        stop_twist = Twist(
+                            linear=Vector3(x=0.0, y=0.0, z=0.0),
+                            angular=Vector3(x=0.0, y=0.0, z=0.0),
+                        )
                         stop_twist.linear = Vector3(x=0, y=0, z=0)
                         stop_twist.angular = Vector3(x=0, y=0, z=0)
                         stop_twist_stamped = TwistStamped(
@@ -161,7 +166,7 @@ class JoystickModule(Module):
                     self.keys_held.discard(event.key)
 
             # Generate Twist message from held keys
-            twist = Twist()
+            twist = Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
             twist.linear = Vector3(x=0, y=0, z=0)
             twist.angular = Vector3(x=0, y=0, z=0)
 

@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos_generated.sensor_msgs.msg import CameraInfo, Image
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.sensor_msgs.msg import CameraInfo, Image, RegionOfInterest
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode
 import numpy as np
 import pytest
 
@@ -30,12 +32,28 @@ def test_webcam_without_intrinsics_reports_a_nominal_pinhole() -> None:
 
 
 def test_webcam_keeps_configured_intrinsics() -> None:
-    configured = camera_info_from_fov(90.0, 640, 480, header=Header())
+    configured = camera_info_from_fov(
+        90.0, 640, 480, header=Header(stamp=Time(sec=0, nanosec=0), frame_id="")
+    )
     assert Webcam(camera_info=configured).camera_info is configured
 
 
 def test_webcam_with_size_but_no_focal_length_gets_a_nominal_pinhole() -> None:
-    info = Webcam(camera_info=CameraInfo(width=1280, height=720)).camera_info
+    info = Webcam(
+        camera_info=CameraInfo(
+            width=1280,
+            height=720,
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            distortion_model="",
+            d=np.array([], dtype=np.float64),
+            k=np.zeros(9, dtype=np.float64),
+            r=np.zeros(9, dtype=np.float64),
+            p=np.zeros(12, dtype=np.float64),
+            binning_x=0,
+            binning_y=0,
+            roi=RegionOfInterest(x_offset=0, y_offset=0, height=0, width=0, do_rectify=False),
+        )
+    ).camera_info
     assert info.k[0] > 0
 
 
@@ -53,7 +71,7 @@ def test_capture_converts_bgr_and_crops_before_cdr_encoding(side, start, mocker)
     camera._capture = capture
     mocker.patch("dimos.msgs.time.time.time_ns", return_value=1700000000123456789)
     try:
-        message = Image.decode(camera.capture_frame().encode())
+        message = cdr_decode(camera.capture_frame().encode(), Image)
     finally:
         camera.stop()
     assert message.encoding == "rgb8"

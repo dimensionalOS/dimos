@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import (
     Point,
     Pose,
@@ -58,8 +59,8 @@ def _stamped_transform(translation=None, rotation=None, ts=0.0, frame_id="", chi
         header=Header(frame_id=frame_id, stamp=time_from_seconds(ts)),
         child_frame_id=child_frame_id,
         transform=Transform(
-            translation=translation if translation is not None else Vector3(),
-            rotation=rotation if rotation is not None else Quaternion(w=1.0),
+            translation=translation if translation is not None else Vector3(x=0.0, y=0.0, z=0.0),
+            rotation=rotation if rotation is not None else Quaternion(w=1.0, x=0.0, y=0.0, z=0.0),
         ),
     )
 
@@ -124,8 +125,11 @@ class TestTransformHelpers:
         from dimos.memory.type.observation import Observation
 
         ps = PoseStamped(
-            header=Header(stamp=time_from_seconds(1.0)),
-            pose=Pose(position=Point(x=1.0, y=2.0, z=3.0), orientation=Quaternion(w=1.0)),
+            header=Header(stamp=time_from_seconds(1.0), frame_id=""),
+            pose=Pose(
+                position=Point(x=1.0, y=2.0, z=3.0),
+                orientation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0),
+            ),
         )
         obs: Observation[int] = Observation(id=0, ts=1.0, pose=ps, _data=0)
         assert obs.pose_tuple == (1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 1.0)
@@ -297,7 +301,10 @@ class TestApplyAsTransformer:
         lidar: Stream[PointCloud2] = mem.stream("lidar", PointCloud2)
         for i in range(3):
             lidar.append(
-                pointcloud_from_xyz(np.zeros((1, 3), dtype=np.float32), header=Header()),
+                pointcloud_from_xyz(
+                    np.zeros((1, 3), dtype=np.float32),
+                    header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                ),
                 ts=float(i + 1),
                 pose=(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0),
             )
@@ -318,7 +325,10 @@ class TestApplyAsTransformer:
         mem = MemoryStore()
         lidar: Stream[PointCloud2] = mem.stream("lidar", PointCloud2)
         lidar.append(
-            pointcloud_from_xyz(np.zeros((1, 3), dtype=np.float32), header=Header()),
+            pointcloud_from_xyz(
+                np.zeros((1, 3), dtype=np.float32),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            ),
             ts=1.0,
             pose=None,
         )

@@ -31,17 +31,29 @@ import sys
 import time
 from typing import Any
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseWithCovariance,
     Quaternion,
     Transform,
     TransformStamped,
     Twist,
+    TwistWithCovariance,
     Vector3,
 )
 from dimos_generated.nav_msgs.msg import Odometry
-from dimos_generated.sensor_msgs.msg import CameraInfo, Image, PointCloud2, PointField
+from dimos_generated.sensor_msgs.msg import (
+    CameraInfo,
+    Image,
+    PointCloud2,
+    PointField,
+    RegionOfInterest,
+)
 from dimos_generated.std_msgs.msg import Header
 from dimos_generated.tf2_msgs.msg import TFMessage
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import zenoh
 
@@ -71,8 +83,16 @@ def _stamp(header: Header, ts: float) -> None:
 
 
 def image_msg(array: np.ndarray, encoding: str, frame_id: str, ts: float) -> bytes:
-    m = Image()
-    m.header = Header()
+    m = Image(
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        height=0,
+        width=0,
+        encoding="",
+        is_bigendian=0,
+        step=0,
+        data=np.array([], dtype=np.uint8),
+    )
+    m.header = Header(stamp=Time(sec=0, nanosec=0), frame_id="")
     _stamp(m.header, ts)
     m.header.frame_id = frame_id
     m.height, m.width = int(array.shape[0]), int(array.shape[1])
@@ -82,12 +102,24 @@ def image_msg(array: np.ndarray, encoding: str, frame_id: str, ts: float) -> byt
     m.step = m.width * array.dtype.itemsize * channels
     view = memoryview(np.ascontiguousarray(array)).cast("B")
     m.data = view
-    return bytes(m.encode())
+    return bytes(cdr_encode(m))
 
 
 def camera_info_msg(k: dict[str, float], frame_id: str, ts: float) -> bytes:
-    m = CameraInfo()
-    m.header = Header()
+    m = CameraInfo(
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        height=0,
+        width=0,
+        distortion_model="",
+        d=np.array([], dtype=np.float64),
+        k=np.zeros(9, dtype=np.float64),
+        r=np.zeros(9, dtype=np.float64),
+        p=np.zeros(12, dtype=np.float64),
+        binning_x=0,
+        binning_y=0,
+        roi=RegionOfInterest(x_offset=0, y_offset=0, height=0, width=0, do_rectify=False),
+    )
+    m.header = Header(stamp=Time(sec=0, nanosec=0), frame_id="")
     _stamp(m.header, ts)
     m.header.frame_id = frame_id
     m.width, m.height = int(k["width"]), int(k["height"])
@@ -98,16 +130,16 @@ def camera_info_msg(k: dict[str, float], frame_id: str, ts: float) -> bytes:
     m.r = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
     m.p = [fx, 0.0, cx, 0.0, 0.0, fy, cy, 0.0, 0.0, 0.0, 1.0, 0.0]
     m.binning_x = m.binning_y = 0
-    return bytes(m.encode())
+    return bytes(cdr_encode(m))
 
 
 def _xyzrgb_fields() -> list[Any]:
     fields = []
     for i, name in enumerate(["x", "y", "z"]):
-        f = PointField()
+        f = PointField(name="", offset=0, datatype=0, count=0)
         f.name, f.offset, f.datatype, f.count = name, i * 4, 7, 1
         fields.append(f)
-    f = PointField()
+    f = PointField(name="", offset=0, datatype=0, count=0)
     f.name, f.offset, f.datatype, f.count = "rgb", 12, 7, 1
     fields.append(f)
     return fields
@@ -115,8 +147,18 @@ def _xyzrgb_fields() -> list[Any]:
 
 def cloud_msg(points: np.ndarray, colors: np.ndarray, frame_id: str, ts: float) -> bytes:
     """xyz + packed-rgb PointCloud2, matching dimos PointCloud2.lcm_encode's layout."""
-    m = PointCloud2()
-    m.header = Header()
+    m = PointCloud2(
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        height=0,
+        width=0,
+        fields=[],
+        is_bigendian=False,
+        point_step=0,
+        row_step=0,
+        data=np.array([], dtype=np.uint8),
+        is_dense=False,
+    )
+    m.header = Header(stamp=Time(sec=0, nanosec=0), frame_id="")
     _stamp(m.header, ts)
     m.header.frame_id = frame_id
     m.fields = _xyzrgb_fields()
@@ -129,7 +171,7 @@ def cloud_msg(points: np.ndarray, colors: np.ndarray, frame_id: str, ts: float) 
         m.height = 0
         m.row_step = 0
         m.data = b""
-        return bytes(m.encode())
+        return bytes(cdr_encode(m))
 
     # ROS convention: rgb is a float32 whose bytes are [padding, r, g, b].
     rgb_u32 = (
@@ -141,7 +183,7 @@ def cloud_msg(points: np.ndarray, colors: np.ndarray, frame_id: str, ts: float) 
     view = memoryview(np.ascontiguousarray(data)).cast("B")
     m.row_step = m.point_step * m.width
     m.data = view
-    return bytes(m.encode())
+    return bytes(cdr_encode(m))
 
 
 def odometry_msg(
@@ -152,8 +194,22 @@ def odometry_msg(
     child_frame_id: str,
     ts: float,
 ) -> bytes:
-    m = Odometry()
-    m.header = Header()
+    m = Odometry(
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        child_frame_id="",
+        pose=PoseWithCovariance(
+            pose=Pose(
+                position=Point(x=0.0, y=0.0, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+            covariance=np.zeros(36, dtype=np.float64),
+        ),
+        twist=TwistWithCovariance(
+            twist=Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)),
+            covariance=np.zeros(36, dtype=np.float64),
+        ),
+    )
+    m.header = Header(stamp=Time(sec=0, nanosec=0), frame_id="")
     _stamp(m.header, ts)
     m.header.frame_id = frame_id
     m.child_frame_id = child_frame_id
@@ -166,23 +222,33 @@ def odometry_msg(
     m.twist.twist.linear.y = float(twist[1])
     m.twist.twist.angular.z = float(twist[2])
     m.twist.covariance = [0.0] * 36
-    return bytes(m.encode())
+    return bytes(cdr_encode(m))
 
 
 def tf_msg(links: list[tuple[str, str, Any, Any]], ts: float) -> bytes:
     """links: (parent, child, translation xyz, rotation xyzw)."""
-    m = TFMessage()
+    m = TFMessage(transforms=[])
     out = []
     for parent, child, xyz, quat in links:
-        t = TransformStamped()
+        t = TransformStamped(
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            child_frame_id="",
+            transform=Transform(
+                translation=Vector3(x=0.0, y=0.0, z=0.0),
+                rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+        )
         # Each edge owns independent generated nested values.
-        t.header = Header()
+        t.header = Header(stamp=Time(sec=0, nanosec=0), frame_id="")
         _stamp(t.header, ts)
         t.header.frame_id = parent
         t.child_frame_id = child
-        transform = Transform()
-        transform.translation = Vector3()
-        transform.rotation = Quaternion()
+        transform = Transform(
+            translation=Vector3(x=0.0, y=0.0, z=0.0),
+            rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+        )
+        transform.translation = Vector3(x=0.0, y=0.0, z=0.0)
+        transform.rotation = Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
         (transform.translation.x, transform.translation.y, transform.translation.z) = (
             float(v) for v in xyz
         )
@@ -195,7 +261,7 @@ def tf_msg(links: list[tuple[str, str, Any, Any]], ts: float) -> bytes:
         t.transform = transform
         out.append(t)
     m.transforms = out
-    return bytes(m.encode())
+    return bytes(cdr_encode(m))
 
 
 def unproject(
@@ -360,7 +426,7 @@ def main() -> None:
 
     def on_cmd_vel(sample: Any) -> None:
         try:
-            t = Twist.decode(bytes(sample.payload.to_bytes()))
+            t = cdr_decode(bytes(sample.payload.to_bytes()), Twist)
             cmd["vx"], cmd["vy"], cmd["wz"] = t.linear.x, t.linear.y, t.angular.z
             cmd["ts"] = time.time()
         except Exception as exc:

@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Point, Pose, Quaternion
 from dimos_generated.nav_msgs.msg import MapMetaData, OccupancyGrid
 from dimos_generated.std_msgs.msg import Header
@@ -30,11 +31,18 @@ def test_find_wide_path_with_start_inside_inflation() -> None:
     grid = np.zeros((60, 60), dtype=np.int8)
     grid[20:40, 30] = 100  # wall at x=1.5m spanning y=1.0..2.0m
     costmap = OccupancyGrid(
-        header=Header(frame_id="world"),
+        header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
         info=MapMetaData(
-            width=60, height=60, resolution=resolution, origin=Pose(orientation=Quaternion(w=1))
+            width=60,
+            height=60,
+            resolution=resolution,
+            origin=Pose(
+                orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0),
+                position=Point(x=0.0, y=0.0, z=0.0),
+            ),
+            map_load_time=Time(sec=0, nanosec=0),
         ),
-        data=grid.ravel(),
+        data=np.asarray(grid.ravel(), dtype=np.int8),
     )
 
     planner = GlobalPlanner(GlobalConfig())
@@ -42,9 +50,9 @@ def test_find_wide_path_with_start_inside_inflation() -> None:
 
     # 7 cm in front of the wall: within the inflation radius
     # (robot_width * 1.1 / 2 = 0.165m), so the start cell is engulfed.
-    robot = Point(x=1.43, y=1.5)
+    robot = Point(x=1.43, y=1.5, z=0.0)
     # On the other side of the wall; the path must round a wall end.
-    goal = Point(x=2.75, y=1.5)
+    goal = Point(x=2.75, y=1.5, z=0.0)
 
     path = planner._find_wide_path(goal, robot)
 

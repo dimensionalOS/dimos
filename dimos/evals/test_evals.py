@@ -29,6 +29,7 @@ import time
 from types import SimpleNamespace
 from typing import Any
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from dimos_generated.std_msgs.msg import Header
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
@@ -84,8 +85,10 @@ from dimos.memory.store.sqlite import SqliteStore
 
 def _pose(x: float, y: float) -> PoseStamped:
     return PoseStamped(
-        header=Header(frame_id="world"),
-        pose=Pose(position=Point(x=x, y=y), orientation=Quaternion(w=1.0)),
+        header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+        pose=Pose(
+            position=Point(x=x, y=y, z=0.0), orientation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0)
+        ),
     )
 
 

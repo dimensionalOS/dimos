@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from dimos_generated.std_msgs.msg import Header
 
@@ -54,7 +55,10 @@ class DimSimClient:
     def publish_goal(self, x: float, y: float) -> None:
         self._goal_request.publish(
             PoseStamped(
-                header=Header(frame_id="world"),
-                pose=Pose(position=Point(x=x, y=y), orientation=Quaternion(w=1.0)),
+                header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+                pose=Pose(
+                    position=Point(x=x, y=y, z=0.0),
+                    orientation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0),
+                ),
             )
         )

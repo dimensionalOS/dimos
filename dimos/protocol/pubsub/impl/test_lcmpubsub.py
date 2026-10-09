@@ -17,6 +17,7 @@ from typing import Any
 
 from dimos_generated.geometry_msgs.msg import Point, Pose, Quaternion, Vector3
 from dimos_generated.std_msgs.msg import String
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import pytest
 
 from dimos.protocol.pubsub.impl.lcmpubsub import (
@@ -60,7 +61,7 @@ def test_LCMPubSubBase_pubsub(lcm_pub_sub_base: LCMPubSubBase) -> None:
     test_message = String(data="test_data")
 
     lcm.subscribe(topic, collector)
-    lcm.publish(topic, test_message.encode())
+    lcm.publish(topic, cdr_encode(test_message))
     collector.wait()
 
     assert len(collector.results) == 1
@@ -69,7 +70,7 @@ def test_LCMPubSubBase_pubsub(lcm_pub_sub_base: LCMPubSubBase) -> None:
     received_topic = collector.results[0][1]
 
     assert isinstance(received_data, bytes)
-    assert String.decode(received_data).data == "test_data"
+    assert cdr_decode(received_data, String).data == "test_data"
 
     assert isinstance(received_topic, Topic)
     assert received_topic == topic
@@ -91,7 +92,7 @@ def test_lcm_autodecoder_pubsub(lcm: LCM) -> None:
     received_topic = collector.results[0][1]
 
     assert isinstance(received_data, String)
-    assert received_data.encode() == test_message.encode()
+    assert received_data.encode() == cdr_encode(test_message)
 
     assert isinstance(received_topic, Topic)
     assert received_topic == topic
@@ -111,7 +112,7 @@ def test_invalid_cdr_does_not_stop_the_subscriber(lcm: LCM) -> None:
 
 def test_different_message_types_cannot_be_published_on_a_typed_topic(lcm: LCM) -> None:
     with pytest.raises(ValueError, match="does not match"):
-        lcm.publish(Topic("/point", Vector3), Quaternion(w=1))
+        lcm.publish(Topic("/point", Vector3), Quaternion(w=1, x=0.0, y=0.0, z=0.0))
 
 
 def test_explicit_unknown_type_does_not_use_default_decoder() -> None:
@@ -130,7 +131,7 @@ def test_invalid_lcm_channel_fails_before_sending(lcm: LCM, channel: str) -> Non
 test_msgs = [
     (Vector3(x=1, y=2, z=3)),
     (Quaternion(x=1, y=2, z=3, w=4)),
-    (Pose(position=Point(x=1, y=2, z=3), orientation=Quaternion(w=1))),
+    (Pose(position=Point(x=1, y=2, z=3), orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0))),
 ]
 
 

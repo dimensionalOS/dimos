@@ -25,7 +25,9 @@ from dataclasses import dataclass, field
 import time
 from typing import TYPE_CHECKING
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 
 from dimos.manipulation.planning.groups.models import PlanningGroupSelection
@@ -471,8 +473,20 @@ class RRTConnectPlanner:
             new_config = nearest.config + step_size * (diff / dist)
 
         # Check validity of edge using context-free method
-        start_state = JointState(name=joint_names, position=nearest.config.tolist())
-        end_state = JointState(name=joint_names, position=new_config.tolist())
+        start_state = JointState(
+            name=joint_names,
+            position=np.asarray(nearest.config.tolist(), dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        )
+        end_state = JointState(
+            name=joint_names,
+            position=np.asarray(new_config.tolist(), dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        )
         if world.check_edge_collision_free(start_state, end_state, self._collision_step_size):
             new_node = TreeNode(config=new_config, parent=nearest)
             nearest.children.append(new_node)
@@ -519,7 +533,16 @@ class RRTConnectPlanner:
         full_path_arrays = start_path + list(reversed(goal_path))
 
         # Convert to list of JointState
-        return [JointState(name=joint_names, position=q.tolist()) for q in full_path_arrays]
+        return [
+            JointState(
+                name=joint_names,
+                position=np.asarray(q.tolist(), dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            )
+            for q in full_path_arrays
+        ]
 
     def _simplify_path(
         self,

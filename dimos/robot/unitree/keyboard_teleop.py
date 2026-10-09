@@ -126,9 +126,11 @@ class KeyboardTeleop(Module):
 
     @rpc
     def stop(self) -> None:
-        stop_twist = Twist()
-        stop_twist.linear = Vector3()
-        stop_twist.angular = Vector3()
+        stop_twist = Twist(
+            linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)
+        )
+        stop_twist.linear = Vector3(x=0.0, y=0.0, z=0.0)
+        stop_twist.angular = Vector3(x=0.0, y=0.0, z=0.0)
         self.cmd_vel.publish(stop_twist)
 
         self._stop_event.set()
@@ -159,9 +161,12 @@ class KeyboardTeleop(Module):
                     if event.key == pygame.K_SPACE:
                         # Emergency stop - clear all keys and send zero twist
                         self._keys_held.clear()
-                        stop_twist = Twist()
-                        stop_twist.linear = Vector3()
-                        stop_twist.angular = Vector3()
+                        stop_twist = Twist(
+                            linear=Vector3(x=0.0, y=0.0, z=0.0),
+                            angular=Vector3(x=0.0, y=0.0, z=0.0),
+                        )
+                        stop_twist.linear = Vector3(x=0.0, y=0.0, z=0.0)
+                        stop_twist.angular = Vector3(x=0.0, y=0.0, z=0.0)
                         self.cmd_vel.publish(stop_twist)
                         logger.warning("EMERGENCY STOP!")
                     elif event.key == pygame.K_ESCAPE:
@@ -181,9 +186,9 @@ class KeyboardTeleop(Module):
                     self._keys_held.discard(event.key)
 
             # Generate Twist message from held keys
-            twist = Twist()
-            twist.linear = Vector3()
-            twist.angular = Vector3()
+            twist = Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+            twist.linear = Vector3(x=0.0, y=0.0, z=0.0)
+            twist.angular = Vector3(x=0.0, y=0.0, z=0.0)
 
             # Movement keys (WASD/QE) — guarded by disable_movement so the
             # window can run as a pure e_max slider (0-9 keys stay live in

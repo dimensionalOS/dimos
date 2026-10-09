@@ -19,7 +19,8 @@ from dataclasses import dataclass
 import math
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 
-from dimos_generated.geometry_msgs.msg import Pose, Quaternion
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Point, Pose, Quaternion
 from dimos_generated.nav_msgs.msg import MapMetaData, OccupancyGrid
 from dimos_generated.sensor_msgs.msg import PointCloud2
 from numba import njit, prange  # type: ignore[import-untyped]
@@ -131,9 +132,15 @@ def _grid_message(
             resolution=config.resolution,
             width=cells.shape[1],
             height=cells.shape[0],
-            origin=origin if origin is not None else Pose(orientation=Quaternion(w=1.0)),
+            origin=origin
+            if origin is not None
+            else Pose(
+                orientation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0),
+                position=Point(x=0.0, y=0.0, z=0.0),
+            ),
+            map_load_time=Time(sec=0, nanosec=0),
         ),
-        data=cells.ravel(),
+        data=np.asarray(cells.ravel(), dtype=np.int8),
     )
 
 
@@ -207,7 +214,9 @@ def height_cost_occupancy(cloud: PointCloud2, **kwargs: Any) -> OccupancyGrid:
     height = int(np.ceil((max_y - min_y) / cfg.resolution))
 
     # Create origin pose
-    origin = Pose()
+    origin = Pose(
+        position=Point(x=0.0, y=0.0, z=0.0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+    )
     origin.position.x = min_x
     origin.position.y = min_y
     origin.position.z = 0.0
@@ -353,7 +362,9 @@ def general_occupancy(cloud: PointCloud2, **kwargs: Any) -> OccupancyGrid:
     height = int(np.ceil((max_y - min_y) / cfg.resolution))
 
     # Create origin pose (bottom-left corner of the grid)
-    origin = Pose()
+    origin = Pose(
+        position=Point(x=0.0, y=0.0, z=0.0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+    )
     origin.position.x = min_x
     origin.position.y = min_y
     origin.position.z = 0.0
@@ -456,7 +467,9 @@ def simple_occupancy(cloud: PointCloud2, **kwargs: Any) -> OccupancyGrid:
     height = int(np.ceil((max_y - min_y) / cfg.resolution))
 
     # Create origin pose (bottom-left corner of the grid)
-    origin = Pose()
+    origin = Pose(
+        position=Point(x=0.0, y=0.0, z=0.0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+    )
     origin.position.x = min_x
     origin.position.y = min_y
     origin.position.z = 0.0

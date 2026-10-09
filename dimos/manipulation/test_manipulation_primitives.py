@@ -18,10 +18,12 @@ from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from dimos_generated.geometry_msgs.msg import TransformStamped
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos_generated.sensor_msgs.msg import JointState
 from dimos_generated.std_msgs.msg import Header
 from dimos_generated.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+import numpy as np
 import pytest
 from pytest_mock import MockerFixture
 
@@ -73,8 +75,20 @@ def _plan() -> GeneratedPlan:
             header=header_now(),
             joint_names=names,
             points=[
-                JointTrajectoryPoint(positions=[0.0], time_from_start=duration_from_seconds(0.0)),
-                JointTrajectoryPoint(positions=[0.1], time_from_start=duration_from_seconds(1.0)),
+                JointTrajectoryPoint(
+                    positions=np.array([0.0], dtype=np.float64),
+                    time_from_start=duration_from_seconds(0.0),
+                    velocities=np.array([], dtype=np.float64),
+                    accelerations=np.array([], dtype=np.float64),
+                    effort=np.array([], dtype=np.float64),
+                ),
+                JointTrajectoryPoint(
+                    positions=np.array([0.1], dtype=np.float64),
+                    time_from_start=duration_from_seconds(1.0),
+                    velocities=np.array([], dtype=np.float64),
+                    accelerations=np.array([], dtype=np.float64),
+                    effort=np.array([], dtype=np.float64),
+                ),
             ],
         ),
     )
@@ -105,7 +119,14 @@ def test_move_linear_uses_world_relative_target_and_default_speed(
     assert result.succeeded
     targets, config = generate.call_args.args
     start, relative = targets["tool"]
-    assert start == TransformStamped(header=Header(frame_id="world"), child_frame_id="")
+    assert start == TransformStamped(
+        header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+        child_frame_id="",
+        transform=Transform(
+            translation=Vector3(x=0.0, y=0.0, z=0.0),
+            rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+        ),
+    )
     assert relative.transform.translation.x == pytest.approx(0.02)
     assert relative.transform.translation.y == pytest.approx(0.0)
     assert relative.transform.translation.z == pytest.approx(-0.01)
@@ -117,9 +138,19 @@ def test_move_linear_uses_world_relative_target_and_default_speed(
 def test_get_state_returns_every_group_with_presets(module_factory) -> None:
     module = module_factory()
     _set_groups(module, _model(gripper=True, home=[0.3]))
-    module._init_joints = JointState(name=["j0"], position=[-0.2])
+    module._init_joints = JointState(
+        name=["j0"],
+        position=np.array([-0.2], dtype=np.float64),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
+    )
     module._world_monitor.current_group_joint_state.return_value = JointState(
-        name=["j0"], position=[0.1]
+        name=["j0"],
+        position=np.array([0.1], dtype=np.float64),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
     )
     module._world_monitor.get_group_ee_pose.return_value = None
     module._control_coordinator.task_invoke.return_value = [0.04]
@@ -127,7 +158,13 @@ def test_get_state_returns_every_group_with_presets(module_factory) -> None:
     snapshot = module.get_state()
 
     group = snapshot.groups["tool"]
-    assert group.joints == JointState(name=["j0"], position=[0.1])
+    assert group.joints == JointState(
+        name=["j0"],
+        position=np.array([0.1], dtype=np.float64),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
+    )
     assert group.gripper_position == pytest.approx(0.04)
     assert group.joint_presets["home"].position == [0.3]
     assert group.joint_presets["init"].position == [-0.2]
@@ -140,7 +177,11 @@ def test_get_state_skips_gripper_telemetry_without_control_hardware(module_facto
     module = module_factory()
     _set_groups(module, _model(gripper=False))
     module._world_monitor.current_group_joint_state.return_value = JointState(
-        name=["j0"], position=[0.1]
+        name=["j0"],
+        position=np.array([0.1], dtype=np.float64),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
     )
     module._world_monitor.get_group_ee_pose.return_value = None
 

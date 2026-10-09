@@ -13,18 +13,44 @@
 # limitations under the License.
 
 from dimos_generated.builtin_interfaces.msg import Time
-from dimos_generated.geometry_msgs.msg import Point, Pose, Quaternion
+from dimos_generated.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseWithCovariance,
+    Quaternion,
+    Twist,
+    TwistWithCovariance,
+    Vector3,
+)
 from dimos_generated.nav_msgs.msg import Odometry, Path
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
+import numpy as np
 import pytest
 
 from dimos.mapping.odometry_hist import OdometryHist, path_at_true_height
 
 
 def odometry(x: float, nanosec: int, sec: int = 1700000000) -> Odometry:
-    message = Odometry(header=Header(stamp=Time(sec=sec, nanosec=nanosec), frame_id="odom"))
-    message.pose.pose = Pose(position=Point(x=x, y=2, z=3), orientation=Quaternion(w=1))
-    return Odometry.decode(message.encode())
+    message = Odometry(
+        header=Header(stamp=Time(sec=sec, nanosec=nanosec), frame_id="odom"),
+        child_frame_id="",
+        pose=PoseWithCovariance(
+            pose=Pose(
+                position=Point(x=0.0, y=0.0, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+            covariance=np.zeros(36, dtype=np.float64),
+        ),
+        twist=TwistWithCovariance(
+            twist=Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)),
+            covariance=np.zeros(36, dtype=np.float64),
+        ),
+    )
+    message.pose.pose = Pose(
+        position=Point(x=x, y=2, z=3), orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0)
+    )
+    return cdr_decode(cdr_encode(message), Odometry)
 
 
 @pytest.mark.asyncio
@@ -32,7 +58,7 @@ async def test_history_retains_exact_stamp_and_one_nanosecond_interval(request):
     module = OdometryHist(min_publish_interval_seconds=1e-9)
     request.addfinalizer(module.stop)
     paths = []
-    module.odom_hist.subscribe(lambda path: paths.append(Path.decode(path.encode())))
+    module.odom_hist.subscribe(lambda path: paths.append(cdr_decode(cdr_encode(path), Path)))
     source = odometry(1, 123456789)
     await module.handle_odometry(source)
     source.pose.pose.position.x = 100
@@ -60,4 +86,4 @@ async def test_history_throttles_bounds_and_restarts_at_zero(request):
     assert paths[-1].header.frame_id == "world"
     assert all(p.header.frame_id == "world" for p in paths[-1].poses)
     await module.handle_odometry(odometry(4, 0, sec=0))
-    assert len(paths) == 3 and paths[-1].header.stamp == Time()
+    assert len(paths) == 3 and paths[-1].header.stamp == Time(sec=0, nanosec=0)

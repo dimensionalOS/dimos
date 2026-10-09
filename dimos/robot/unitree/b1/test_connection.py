@@ -300,7 +300,7 @@ class TestB1Connection:
         assert conn._current_cmd.ly == 0.0  # Watchdog zeroed it
 
         # Now change mode to STAND
-        mode_msg = Int32()
+        mode_msg = Int32(data=0)
         mode_msg.data = 1  # STAND
         conn.handle_mode(mode_msg)
         assert conn.current_mode == 1

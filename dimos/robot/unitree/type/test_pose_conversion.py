@@ -17,6 +17,7 @@ import copy
 from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import PoseStamped
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import pytest
 
 from dimos.robot.unitree.type.odometry import pose_from_webrtc_odometry, raw_odometry_msg_sample
@@ -27,7 +28,7 @@ def test_device_pose_preserves_original_ros_header(seconds, nanoseconds):
     raw = copy.deepcopy(raw_odometry_msg_sample)
     raw["data"]["header"]["stamp"] = {"sec": seconds, "nanosec": nanoseconds}
     message = pose_from_webrtc_odometry(raw)
-    decoded = PoseStamped.decode(message.encode())
+    decoded = cdr_decode(cdr_encode(message), PoseStamped)
     assert decoded.header == Header(frame_id="odom", stamp=Time(sec=seconds, nanosec=nanoseconds))
     assert decoded.pose.position.x == 5.961965
     assert decoded.pose.position.y == -2.916958

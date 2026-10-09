@@ -110,7 +110,7 @@ class TestSpatialMemory:
                 nonlocal frame_counter
 
                 # Generate a unique position for this frame to ensure minimum distance threshold is met
-                pos = Vector3(x=frame_counter * 0.5, y=frame_counter * 0.5)
+                pos = Vector3(x=frame_counter * 0.5, y=frame_counter * 0.5, z=0.0)
                 transform = {"position": pos, "timestamp": time.time()}
                 frame_counter += 1
 

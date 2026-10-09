@@ -16,7 +16,15 @@ import time
 from types import SimpleNamespace
 from unittest.mock import Mock
 
-from dimos_generated.geometry_msgs.msg import Point, Pose, PoseWithCovariance
+from dimos_generated.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseWithCovariance,
+    Quaternion,
+    Twist,
+    TwistWithCovariance,
+    Vector3,
+)
 from dimos_generated.nav_msgs.msg import Odometry
 from dimos_generated.sensor_msgs.msg import Image
 from dimos_generated.std_msgs.msg import Header
@@ -152,7 +160,20 @@ def test_readiness_and_pose_normalization():
             env.wait_ready(store, deadline=time.monotonic())
         odom = Odometry(
             header=Header(frame_id="world", stamp=time_from_seconds(time.time())),
-            pose=PoseWithCovariance(pose=Pose(position=Point(x=1, y=2, z=3))),
+            pose=PoseWithCovariance(
+                pose=Pose(
+                    position=Point(x=1, y=2, z=3),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+                covariance=np.zeros(36, dtype=np.float64),
+            ),
+            child_frame_id="",
+            twist=TwistWithCovariance(
+                twist=Twist(
+                    linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)
+                ),
+                covariance=np.zeros(36, dtype=np.float64),
+            ),
         )
         store.stream("odometry", Odometry).append(odom)
         store.stream("color_image", Image).append(

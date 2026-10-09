@@ -21,7 +21,7 @@ import re
 from typing import Any, Literal
 
 from dimos_generated.builtin_interfaces.msg import Time
-from dimos_generated.sensor_msgs.msg import CameraInfo
+from dimos_generated.sensor_msgs.msg import CameraInfo, RegionOfInterest
 from dimos_generated.std_msgs.msg import Header
 import numpy as np
 from numpy.typing import NDArray
@@ -48,10 +48,13 @@ def camera_info_from_intrinsics(
         width=width,
         height=height,
         distortion_model="plumb_bob",
-        d=[0.0] * 5,
-        k=[fx, 0, cx, 0, fy, cy, 0, 0, 1],
-        r=[1, 0, 0, 0, 1, 0, 0, 0, 1],
-        p=[fx, 0, cx, 0, 0, fy, cy, 0, 0, 0, 1, 0],
+        d=np.asarray([0.0] * 5, dtype=np.float64),
+        k=np.array([fx, 0, cx, 0, fy, cy, 0, 0, 1], dtype=np.float64),
+        r=np.array([1, 0, 0, 0, 1, 0, 0, 0, 1], dtype=np.float64),
+        p=np.array([fx, 0, cx, 0, 0, fy, cy, 0, 0, 0, 1, 0], dtype=np.float64),
+        binning_x=0,
+        binning_y=0,
+        roi=RegionOfInterest(x_offset=0, y_offset=0, height=0, width=0, do_rectify=False),
     )
 
 
@@ -109,10 +112,13 @@ def camera_info_from_yaml(path: str | Path, *, header: Header) -> CameraInfo:
         width=width,
         height=height,
         distortion_model=data["distortion_model"],
-        k=_matrix(data, "camera_matrix", 3, 3),
-        d=_matrix(data, "distortion_coefficients", 1, None),
-        r=_matrix(data, "rectification_matrix", 3, 3),
-        p=_matrix(data, "projection_matrix", 3, 4),
+        k=np.asarray(_matrix(data, "camera_matrix", 3, 3), dtype=np.float64),
+        d=np.asarray(_matrix(data, "distortion_coefficients", 1, None), dtype=np.float64),
+        r=np.asarray(_matrix(data, "rectification_matrix", 3, 3), dtype=np.float64),
+        p=np.asarray(_matrix(data, "projection_matrix", 3, 4), dtype=np.float64),
+        binning_x=0,
+        binning_y=0,
+        roi=RegionOfInterest(x_offset=0, y_offset=0, height=0, width=0, do_rectify=False),
     )
 
 
@@ -155,7 +161,9 @@ class CalibrationProvider:
         for key in (name, snake):
             path = self._calibration_dir / f"{key}.yaml"
             if path.is_file():
-                value = camera_info_from_yaml(path, header=Header(frame_id=self._frame_id))
+                value = camera_info_from_yaml(
+                    path, header=Header(frame_id=self._frame_id, stamp=Time(sec=0, nanosec=0))
+                )
                 self._cache[name] = value
                 self._cache[snake] = value
                 return value

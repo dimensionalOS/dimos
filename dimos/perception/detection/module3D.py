@@ -166,7 +166,7 @@ class Detection3DModule(Detection2DModule):
             header=Header(stamp=detections.image.header.stamp, frame_id="world"),
             pose=Pose(
                 position=Point(x=position.x, y=position.y, z=position.z),
-                orientation=Quaternion(w=1),
+                orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0),
             ),
         )
 

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from dimos_generated.std_msgs.msg import Header
 import pytest
@@ -84,7 +85,7 @@ def _task(artifact_path: str, **params) -> RPPPathFollowerTask:
 
 def _odom(x=0.0, y=0.0, yaw=0.0) -> PoseStamped:
     return PoseStamped(
-        header=Header(frame_id=""),
+        header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
         pose=Pose(
             position=Point(x=x, y=y, z=0.0), orientation=quaternion_from_euler(0.0, 0.0, yaw)
         ),
@@ -246,7 +247,7 @@ from dimos.control.tasks.rpp_path_follower_task.rpp_path_follower_task import (
 def _ident_path(points):
     """Path with identity orientation on every pose (what MLSPlannerNative emits)."""
     return Path(
-        header=Header(frame_id="odom"),
+        header=Header(frame_id="odom", stamp=Time(sec=0, nanosec=0)),
         poses=[
             PoseStamped(
                 header=Header(frame_id="", stamp=time_from_seconds(0.0)),
@@ -281,7 +282,7 @@ def test_positions_unchanged_by_synthesis():
 def test_path_with_real_headings_is_untouched():
     # A planner that already provides per-pose orientations must be left alone.
     oriented = Path(
-        header=Header(frame_id="odom"),
+        header=Header(frame_id="odom", stamp=Time(sec=0, nanosec=0)),
         poses=[
             PoseStamped(
                 header=Header(frame_id="", stamp=time_from_seconds(0.0)),

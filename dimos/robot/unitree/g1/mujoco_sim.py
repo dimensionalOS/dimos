@@ -107,16 +107,26 @@ class G1SimConnection(G1ConnectionBase):
             TransformStamped(
                 header=Header(stamp=msg.header.stamp, frame_id="base_link"),
                 child_frame_id="camera_link",
-                transform=Transform(translation=Vector3(x=0.05, z=0.6)),
+                transform=Transform(
+                    translation=Vector3(x=0.05, z=0.6, y=0.0),
+                    rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
             ),
             TransformStamped(
                 header=Header(stamp=msg.header.stamp, frame_id="camera_link"),
                 child_frame_id="camera_optical",
-                transform=Transform(rotation=Quaternion(x=-0.5, y=0.5, z=-0.5, w=0.5)),
+                transform=Transform(
+                    rotation=Quaternion(x=-0.5, y=0.5, z=-0.5, w=0.5),
+                    translation=Vector3(x=0.0, y=0.0, z=0.0),
+                ),
             ),
             TransformStamped(
                 header=Header(stamp=msg.header.stamp, frame_id="map"),
                 child_frame_id="world",
+                transform=Transform(
+                    translation=Vector3(x=0.0, y=0.0, z=0.0),
+                    rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
             ),
         ]
         self.tf.publish(TFMessage(transforms=transforms))

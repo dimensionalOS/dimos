@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from dimos_generated.geometry_msgs.msg import Vector3
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 
@@ -27,7 +28,7 @@ from dimos.msgs.geometry import (
 
 def test_vector_default_init() -> None:
     """Test that default initialization of Vector() has x,y,z components all zero."""
-    v = Vector3()
+    v = Vector3(x=0.0, y=0.0, z=0.0)
     assert v.x == 0.0
     assert v.y == 0.0
     assert v.z == 0.0
@@ -38,7 +39,7 @@ def test_vector_default_init() -> None:
 
 def test_vector_specific_init() -> None:
     """Test initialization with specific values and different input types."""
-    v1 = Vector3(x=1.0, y=2.0)
+    v1 = Vector3(x=1.0, y=2.0, z=0.0)
     assert v1.x == 1.0
     assert v1.y == 2.0
     assert v1.z == 0.0
@@ -59,7 +60,7 @@ def test_vector_specific_init() -> None:
     assert v5.y == 13.0
     assert v5.z == 14.0
     original = vector_from_array([15.0, 16.0, 17.0])
-    v6 = Vector3.decode(original.encode())
+    v6 = cdr_decode(cdr_encode(original), Vector3)
     assert v6.x == 15.0
     assert v6.y == 16.0
     assert v6.z == 17.0
@@ -119,7 +120,7 @@ def test_vector_dot_product() -> None:
 
 def test_vector_length() -> None:
     """Test vector length calculation."""
-    v1 = Vector3(x=3.0, y=4.0)
+    v1 = Vector3(x=3.0, y=4.0, z=0.0)
     assert np.linalg.norm(vector_array(v1)) == 5.0
     v2 = Vector3(x=2.0, y=3.0, z=6.0)
     assert np.linalg.norm(vector_array(v2)) == pytest.approx(7.0, 0.001)
@@ -153,12 +154,12 @@ def test_vector_normalize() -> None:
 def test_vector_to_2d() -> None:
     """Test conversion to 2D vector."""
     v = Vector3(x=2.0, y=3.0, z=6.0)
-    v_2d = Vector3(x=v.x, y=v.y)
+    v_2d = Vector3(x=v.x, y=v.y, z=0.0)
     assert v_2d.x == 2.0
     assert v_2d.y == 3.0
     assert v_2d.z == 0.0
-    v2 = Vector3(x=4.0, y=5.0)
-    v2_2d = Vector3(x=v2.x, y=v2.y)
+    v2 = Vector3(x=4.0, y=5.0, z=0.0)
+    v2_2d = Vector3(x=v2.x, y=v2.y, z=0.0)
     assert v2_2d.x == 4.0
     assert v2_2d.y == 5.0
     assert v2_2d.z == 0.0
@@ -189,8 +190,8 @@ def test_vector_cross_product() -> None:
     assert c.x == -3.0
     assert c.y == 6.0
     assert c.z == -3.0
-    v_2d1 = Vector3(x=1.0, y=2.0)
-    v_2d2 = Vector3(x=3.0, y=4.0)
+    v_2d1 = Vector3(x=1.0, y=2.0, z=0.0)
+    v_2d2 = Vector3(x=3.0, y=4.0, z=0.0)
     cross_2d = vector_from_array(np.cross(vector_array(v_2d1), vector_array(v_2d2)))
     assert cross_2d.x == 0.0
     assert cross_2d.y == 0.0
@@ -199,7 +200,7 @@ def test_vector_cross_product() -> None:
 
 def test_vector_zeros() -> None:
     """Test Vector3.zeros class method."""
-    v_zeros = Vector3()
+    v_zeros = Vector3(x=0.0, y=0.0, z=0.0)
     assert v_zeros.x == 0.0
     assert v_zeros.y == 0.0
     assert v_zeros.z == 0.0
@@ -231,18 +232,18 @@ def test_vector_equality() -> None:
     v3 = Vector3(x=4, y=5, z=6)
     assert v1 == v2
     assert v1 != v3
-    assert v1 != Vector3(x=1, y=2)
+    assert v1 != Vector3(x=1, y=2, z=0.0)
     assert v1 != Vector3(x=1.1, y=2, z=3)
     assert v1 != [1, 2, 3]
 
 
 def test_vector_is_zero() -> None:
     """Test is_zero method for vectors."""
-    v0 = Vector3()
+    v0 = Vector3(x=0.0, y=0.0, z=0.0)
     assert np.allclose(vector_array(v0), 0)
     v1 = Vector3(x=0.0, y=0.0, z=0.0)
     assert np.allclose(vector_array(v1), 0)
-    v2 = Vector3(x=0.0, y=0.0)
+    v2 = Vector3(x=0.0, y=0.0, z=0.0)
     assert np.allclose(vector_array(v2), 0)
     v3 = Vector3(x=1.0, y=0.0, z=0.0)
     assert not np.allclose(vector_array(v3), 0)
@@ -258,7 +259,7 @@ def test_vector_is_zero() -> None:
 
 def test_vector_bool_conversion():
     """Test boolean conversion of vectors."""
-    v0 = Vector3()
+    v0 = Vector3(x=0.0, y=0.0, z=0.0)
     assert not not np.allclose(vector_array(v0), 0)
     v1 = Vector3(x=0.0, y=0.0, z=0.0)
     assert not not np.allclose(vector_array(v1), 0)
@@ -292,13 +293,13 @@ def test_vector_add() -> None:
     assert v_add_op.x == 5.0
     assert v_add_op.y == 7.0
     assert v_add_op.z == 9.0
-    v_zero = Vector3()
+    v_zero = Vector3(x=0.0, y=0.0, z=0.0)
     assert vector_from_array(vector_array(v1) + vector_array(v_zero)) == v1
 
 
 def test_vector_add_dim_mismatch() -> None:
     """Test vector addition with different input dimensions (now all vectors are 3D)."""
-    v1 = Vector3(x=1.0, y=2.0)
+    v1 = Vector3(x=1.0, y=2.0, z=0.0)
     v2 = Vector3(x=4.0, y=5.0, z=6.0)
     v_add_op = vector_from_array(vector_array(v1) + vector_array(v2))
     assert v_add_op.x == 5.0
@@ -312,11 +313,11 @@ def test_yaw_pitch_roll_accessors() -> None:
     assert v.x == 1.0
     assert v.y == 2.0
     assert v.z == 3.0
-    v_2d = Vector3(x=4.0, y=5.0)
+    v_2d = Vector3(x=4.0, y=5.0, z=0.0)
     assert v_2d.x == 4.0
     assert v_2d.y == 5.0
     assert v_2d.z == 0.0
-    v_empty = Vector3()
+    v_empty = Vector3(x=0.0, y=0.0, z=0.0)
     assert v_empty.x == 0.0
     assert v_empty.y == 0.0
     assert v_empty.z == 0.0
@@ -353,8 +354,8 @@ def test_vector_to_quaternion() -> None:
 
 def test_cdr_encode_decode() -> None:
     v_source = Vector3(x=1.0, y=2.0, z=3.0)
-    binary_msg = v_source.encode()
-    v_dest = Vector3.decode(binary_msg)
+    binary_msg = cdr_encode(v_source)
+    v_dest = cdr_decode(binary_msg, Vector3)
     assert isinstance(v_dest, Vector3)
     assert v_dest is not v_source
     assert v_dest == v_source

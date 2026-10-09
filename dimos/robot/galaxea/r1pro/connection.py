@@ -55,6 +55,7 @@ from dimos_generated.nav_msgs.msg import Odometry
 from dimos_generated.sensor_msgs.msg import CompressedImage, Image, Imu, JointState, PointCloud2
 from dimos_generated.std_msgs.msg import Header
 from dimos_generated.tf2_msgs.msg import TFMessage
+import numpy as np
 from pydantic import Field
 from reactivex.disposable import Disposable
 
@@ -530,9 +531,9 @@ class R1ProConnection(Module):
             cmd = JointState(
                 header=header,
                 name=[""],
-                position=list(msg.q)[sl],
-                velocity=self._tracking_velocities(list(msg.dq)[sl]),
-                effort=[0.0],
+                position=np.asarray(list(msg.q)[sl], dtype=np.float64),
+                velocity=np.asarray(self._tracking_velocities(list(msg.dq)[sl]), dtype=np.float64),
+                effort=np.array([0.0], dtype=np.float64),
             )
             ros.publish(topic, dimos_to_ros(cmd, topic.ros_type))
 
@@ -548,7 +549,8 @@ class R1ProConnection(Module):
         cmd = TwistStamped(
             header=header_now(),
             twist=Twist(
-                linear=Vector3(x=msg.linear.x, y=msg.linear.y), angular=Vector3(z=msg.angular.z)
+                linear=Vector3(x=msg.linear.x, y=msg.linear.y, z=0.0),
+                angular=Vector3(z=msg.angular.z, x=0.0, y=0.0),
             ),
         )
         ros.publish(self._speed_topic, dimos_to_ros(cmd, self._speed_topic.ros_type))
@@ -618,8 +620,8 @@ class R1ProConnection(Module):
         pose = PoseStamped(
             header=header,
             pose=Pose(
-                position=Point(x=self._odom_x, y=self._odom_y),
-                orientation=Quaternion(z=math.sin(half), w=math.cos(half)),
+                position=Point(x=self._odom_x, y=self._odom_y, z=0.0),
+                orientation=Quaternion(z=math.sin(half), w=math.cos(half), x=0.0, y=0.0),
             ),
         )
         self.odom.publish(pose)
@@ -627,9 +629,12 @@ class R1ProConnection(Module):
             Odometry(
                 header=header,
                 child_frame_id=base,
-                pose=PoseWithCovariance(pose=pose.pose),
+                pose=PoseWithCovariance(pose=pose.pose, covariance=np.zeros(36, dtype=np.float64)),
                 twist=TwistWithCovariance(
-                    twist=Twist(linear=Vector3(x=vx, y=vy), angular=Vector3(z=wz))
+                    twist=Twist(
+                        linear=Vector3(x=vx, y=vy, z=0.0), angular=Vector3(z=wz, x=0.0, y=0.0)
+                    ),
+                    covariance=np.zeros(36, dtype=np.float64),
                 ),
             )
         )
@@ -644,7 +649,8 @@ class R1ProConnection(Module):
                         transform=Transform(
                             translation=Vector3(
                                 x=_LIDAR_MOUNT_XYZ[0], y=_LIDAR_MOUNT_XYZ[1], z=_LIDAR_MOUNT_XYZ[2]
-                            )
+                            ),
+                            rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
                         ),
                     ),
                 ]
@@ -695,9 +701,9 @@ class R1ProConnection(Module):
                     JointState(
                         header=Header(stamp=time_from_nanoseconds(ts), frame_id=frame_id),
                         name=R1PRO_UPPER_BODY_JOINTS,
-                        position=positions,  # type: ignore[arg-type]
-                        velocity=velocities,
-                        effort=efforts,
+                        position=np.asarray(positions, dtype=np.float64),  # type: ignore[arg-type]
+                        velocity=np.asarray(velocities, dtype=np.float64),
+                        effort=np.asarray(efforts, dtype=np.float64),
                     )
                 )
                 if imu_chassis is not None:

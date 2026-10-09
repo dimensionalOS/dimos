@@ -21,6 +21,7 @@ field values, covariance matrices, and time conversion remain checked explicitly
 import pickle
 import time
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import (
     Twist,
     TwistWithCovariance,
@@ -28,6 +29,7 @@ from dimos_generated.geometry_msgs.msg import (
     Vector3,
 )
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 from rosbags.typesys import Stores, get_typestore
@@ -36,7 +38,13 @@ from dimos.msgs.time import header_now, time_from_nanoseconds, time_from_seconds
 
 
 def test_generated_defaults() -> None:
-    source = TwistWithCovarianceStamped()
+    source = TwistWithCovarianceStamped(
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        twist=TwistWithCovariance(
+            twist=Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)),
+            covariance=np.zeros(36, dtype=np.float64),
+        ),
+    )
     assert source.header.frame_id == ""
     assert to_nanoseconds(source.header.stamp) == 0
     assert isinstance(source.twist, TwistWithCovariance)
@@ -66,12 +74,12 @@ def test_fields_covariance_and_independent_cdr(stamp: int, covariance: np.ndarra
         header=Header(stamp=time_from_nanoseconds(stamp), frame_id="camera_link"),
         twist=TwistWithCovariance(
             twist=Twist(linear=Vector3(x=1, y=2, z=3), angular=Vector3(x=0.1, y=0.2, z=0.3)),
-            covariance=covariance,
+            covariance=np.asarray(covariance, dtype=np.float64),
         ),
     )
-    decoded = TwistWithCovarianceStamped.decode(source.encode())
+    decoded = cdr_decode(cdr_encode(source), TwistWithCovarianceStamped)
     independent = get_typestore(Stores.ROS2_JAZZY).deserialize_cdr(
-        source.encode(), TwistWithCovarianceStamped.msg_name
+        cdr_encode(source), TwistWithCovarianceStamped.__msgtype__
     )
     for result in (decoded, independent):
         assert result.header.frame_id == "camera_link"
@@ -93,14 +101,20 @@ def test_fields_covariance_and_independent_cdr(stamp: int, covariance: np.ndarra
         assert matrix.shape == (6, 6)
         assert np.trace(matrix) == np.trace(covariance.reshape(6, 6))
     copied = pickle.loads(pickle.dumps(source))
-    assert copied.encode() == source.encode()
+    assert copied.encode() == cdr_encode(source)
     copied.twist.covariance[0] = 999
     assert source.twist.covariance[0] == covariance[0]
 
 
 def test_explicit_current_header() -> None:
     before = time.time_ns()
-    source = TwistWithCovarianceStamped(header=header_now("test"))
+    source = TwistWithCovarianceStamped(
+        header=header_now("test"),
+        twist=TwistWithCovariance(
+            twist=Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)),
+            covariance=np.zeros(36, dtype=np.float64),
+        ),
+    )
     assert before <= to_nanoseconds(source.header.stamp) <= time.time_ns()
     assert source.header.frame_id == "test"
 

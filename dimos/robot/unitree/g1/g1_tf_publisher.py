@@ -26,6 +26,7 @@ import threading
 import time
 from typing import Any
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Transform, TransformStamped, Vector3
 from dimos_generated.std_msgs.msg import Header
 from dimos_generated.tf2_msgs.msg import TFMessage
@@ -61,7 +62,7 @@ def _mount(
     yaw: float = 0.0,
 ) -> TransformStamped:
     return TransformStamped(
-        header=Header(frame_id=parent),
+        header=Header(frame_id=parent, stamp=Time(sec=0, nanosec=0)),
         child_frame_id=child,
         transform=Transform(
             translation=Vector3(x=xyz[0], y=xyz[1], z=xyz[2]),

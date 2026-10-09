@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import enum
 import functools
+from importlib.util import find_spec
 import inspect
 import json
 import os
@@ -61,6 +62,12 @@ from dimos.core.core import rpc
 from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.transport_factory import session_config
+from dimos.message_codegen.native_build import (
+    build_environment,
+    installed_prefixes,
+    prepare_cpp,
+    stage_module,
+)
 from dimos.protocol.service.spec import SessionConfig
 from dimos.utils.logging_config import setup_logger
 
@@ -119,6 +126,8 @@ class NativeModuleConfig(ModuleConfig):
 
     executable: str
     build_command: str | None = None
+    # Opt-in CMake source preparation; Rust/Nix modules keep their own build commands.
+    cmake_message_packages: list[str] = Field(default_factory=list)
     cwd: str | None = None
     extra_args: list[str] = Field(default_factory=list)
     extra_env: dict[str, str] = Field(default_factory=dict)
@@ -486,11 +495,35 @@ class NativeModule(Module):
             build_command=self.config.build_command,
         )
         build_start = time.perf_counter()
+        build_env = {**os.environ, **self.config.extra_env}
+        if self.config.cmake_message_packages:
+            prefixes: list[str] = []
+            for package in self.config.cmake_message_packages:
+                provider = find_spec(package + "_schemas")
+                if provider is None or provider.origin is None:
+                    raise ValueError(f"Missing installed message source package: {package}")
+                prefix = prepare_cpp(Path(provider.origin).parent / "package")
+                prefixes.extend(
+                    value for value in installed_prefixes(prefix) if value not in prefixes
+                )
+            package = Path(__file__).resolve().parents[1]
+            sdk = package / "_native" / "cpp"
+            if not (sdk / "CMakeLists.txt").is_file():
+                sdk = package.parent / "native" / "cpp"
+            if not (sdk / "CMakeLists.txt").is_file():
+                raise FileNotFoundError("DimOS native C++ source resources are missing")
+            prefixes.append(str(sdk))
+            if self.config.cwd is None:
+                raise ValueError("CMake source preparation requires cwd")
+            source, exe = stage_module(Path(self.config.cwd), exe)
+            self.config.cwd = str(source)
+            self.config.executable = str(exe)
+            build_env = build_environment([Path(prefix) for prefix in prefixes], build_env)
         proc = subprocess.Popen(
             self.config.build_command,
             shell=True,
             cwd=self.config.cwd,
-            env={**os.environ, **self.config.extra_env},
+            env=build_env,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
         )

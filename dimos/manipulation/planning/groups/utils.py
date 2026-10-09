@@ -34,7 +34,11 @@ def filter_joint_state_to_selected_joints(
     return JointState(
         header=joint_state.header,
         name=list(joint_names),
-        position=[float(positions_by_name[name]) for name in joint_names],
+        position=np.asarray(
+            [float(positions_by_name[name]) for name in joint_names], dtype=np.float64
+        ),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
     )
 
 
@@ -47,7 +51,11 @@ def normalize_joint_target(group: PlanningGroup, target: JointState) -> JointSta
                 f"expected {len(group.joint_names)}"
             )
         return JointState(
-            header=target.header, name=list(group.joint_names), position=list(target.position)
+            header=target.header,
+            name=list(group.joint_names),
+            position=np.asarray(list(target.position), dtype=np.float64),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
         )
     if len(target.name) != len(target.position):
         raise ValueError(
@@ -64,7 +72,11 @@ def normalize_joint_target(group: PlanningGroup, target: JointState) -> JointSta
     return JointState(
         header=target.header,
         name=list(group.joint_names),
-        position=[float(positions[name]) for name in group.joint_names],
+        position=np.asarray(
+            [float(positions[name]) for name in group.joint_names], dtype=np.float64
+        ),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
     )
 
 

@@ -17,6 +17,7 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import TYPE_CHECKING
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.sensor_msgs.msg import PointCloud2
 from dimos_generated.std_msgs.msg import Header
 
@@ -73,7 +74,7 @@ class VoxelGrid:
         if show_startup_log:
             logger.info(f"VoxelGrid using device: {device if use_cuda else 'CPU:0 (packed-numpy)'}")
 
-        self._latest_header = Header(frame_id=frame_id)
+        self._latest_header = Header(frame_id=frame_id, stamp=Time(sec=0, nanosec=0))
         self._disposed = False
 
     def _check_disposed(self) -> None:

@@ -14,9 +14,15 @@
 
 """Explicit line messages replace the old Path/orientation weight encoding."""
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.dimos_msgs.msg import LineSegment3D, LineSegments3D
 from dimos_generated.geometry_msgs.msg import Point
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import (
+    decode as cdr_decode,
+    encode as cdr_encode,
+    schema as cdr_schema,
+)
 import numpy as np
 import pytest
 from rosbags.typesys import Stores, get_types_from_msg, get_typestore
@@ -37,7 +43,7 @@ def test_cdr_segment_layout_and_independent_schema(count: int) -> None:
             for i in range(count)
         ],
     )
-    decoded = LineSegments3D.decode(source.encode())
+    decoded = cdr_decode(cdr_encode(source), LineSegments3D)
     assert decoded.header.frame_id == "odom"
     assert to_nanoseconds(decoded.header.stamp) == 12500000000
     assert len(decoded.segments) == count
@@ -51,8 +57,10 @@ def test_cdr_segment_layout_and_independent_schema(count: int) -> None:
     np.testing.assert_array_equal(coordinates, expected)
     np.testing.assert_allclose([s.weight for s in decoded.segments], np.arange(count) * 0.1)
     store = get_typestore(Stores.ROS2_JAZZY)
-    store.register(get_types_from_msg(LineSegments3D.schema, LineSegments3D.msg_name))
-    independent = store.deserialize_cdr(source.encode(), LineSegments3D.msg_name)
+    store.register(
+        get_types_from_msg(cdr_schema(LineSegments3D.__msgtype__), LineSegments3D.__msgtype__)
+    )
+    independent = store.deserialize_cdr(cdr_encode(source), LineSegments3D.__msgtype__)
     assert len(independent.segments) == count
     assert independent.header.frame_id == "odom"
     for i, segment in enumerate(independent.segments):
@@ -63,7 +71,14 @@ def test_cdr_segment_layout_and_independent_schema(count: int) -> None:
 
 @pytest.mark.parametrize("frame", ["odom", "map", "base_link"])
 def test_explicit_segment_schema_accepts_variable_frame_lengths(frame: str) -> None:
-    source = LineSegments3D(header=Header(frame_id=frame), segments=[LineSegment3D(weight=0.7)])
-    decoded = LineSegments3D.decode(source.encode())
+    source = LineSegments3D(
+        header=Header(frame_id=frame, stamp=Time(sec=0, nanosec=0)),
+        segments=[
+            LineSegment3D(
+                weight=0.7, start=Point(x=0.0, y=0.0, z=0.0), end=Point(x=0.0, y=0.0, z=0.0)
+            )
+        ],
+    )
+    decoded = cdr_decode(cdr_encode(source), LineSegments3D)
     assert decoded.header.frame_id == frame
     assert decoded.segments[0].weight == pytest.approx(0.7)

@@ -16,8 +16,10 @@ import struct
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.sensor_msgs.msg import PointCloud2, PointField
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 import rerun as rr
@@ -41,17 +43,18 @@ def test_padded_big_endian_cloud_keeps_color_alignment_and_frame() -> None:
         + b"pad!"
     )
     cloud = PointCloud2(
-        header=Header(frame_id="lidar"),
+        header=Header(frame_id="lidar", stamp=Time(sec=0, nanosec=0)),
         height=2,
         width=1,
         point_step=16,
         row_step=20,
         is_bigendian=True,
         fields=fields,
-        data=data,
+        data=np.frombuffer(data, dtype=np.uint8),
+        is_dense=False,
     )
-    decoded = PointCloud2.decode(cloud.encode())
-    before = decoded.encode()
+    decoded = cdr_decode(cdr_encode(cloud), PointCloud2)
+    before = cdr_encode(decoded)
     bridge = RerunBridgeModule()
     bridge._min_intervals = {}
     try:
@@ -66,14 +69,19 @@ def test_padded_big_endian_cloud_keeps_color_alignment_and_frame() -> None:
             ]
     finally:
         bridge.stop()
-    assert decoded.encode() == before
+    assert cdr_encode(decoded) == before
 
 
 def test_height_colors_and_empty_cloud() -> None:
-    cloud = pointcloud_from_xyz(np.array([[0, 0, 0], [0, 0, 2]], dtype=np.float32), header=Header())
+    cloud = pointcloud_from_xyz(
+        np.array([[0, 0, 0], [0, 0, 2]], dtype=np.float32),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+    )
     rendered = cloud_archetype(cloud)
     assert len(set(rendered.colors.as_arrow_array().to_pylist())) == 2
-    empty = pointcloud_from_xyz(np.empty((0, 3)), header=Header())
+    empty = pointcloud_from_xyz(
+        np.empty((0, 3)), header=Header(stamp=Time(sec=0, nanosec=0), frame_id="")
+    )
     assert cloud_archetype(empty).positions.as_arrow_array().to_pylist() == []
 
 
@@ -82,23 +90,23 @@ def test_cloud_modes_filter_height_without_losing_rgb_alignment(mode):
     cloud = pointcloud_from_xyz_rgb(
         np.array([[0, 0, -1], [1, 2, 3]], dtype=np.float32),
         np.array([[255, 0, 0], [0x12, 0x34, 0x56]], dtype=np.uint8),
-        header=Header(frame_id="map"),
+        header=Header(frame_id="map", stamp=Time(sec=0, nanosec=0)),
     )
-    before = cloud.encode()
+    before = cdr_encode(cloud)
     rendered = cloud_archetype(cloud, mode=mode, bottom_cutoff=0, voxel_size=0.2)
     positions = rendered.centers if mode == "boxes" else rendered.positions
     assert positions.as_arrow_array().to_pylist() == [[1, 2, 3]]
     assert rendered.colors.as_arrow_array().to_pylist() == [0x123456FF]
     if mode == "points":
         assert rendered.radii.as_arrow_array().to_pylist() == [-2.0]
-    assert cloud.encode() == before
+    assert cdr_encode(cloud) == before
 
 
 @pytest.mark.parametrize("mode", ["points", "boxes"])
 def test_explicit_cloud_colors_follow_finite_and_height_filters(mode):
     cloud = pointcloud_from_xyz(
         np.array([[0, 0, -1], [np.nan, 0, 1], [1, 2, 3]], dtype=np.float32),
-        header=Header(),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
     )
     rendered = cloud_archetype(
         cloud,
@@ -113,6 +121,9 @@ def test_explicit_cloud_colors_follow_finite_and_height_filters(mode):
 
 @pytest.mark.parametrize("colors", [[256, 0, 0], [-1, 0, 0], [0.5, 0, 0], [[1, 2]]])
 def test_explicit_cloud_colors_reject_invalid_channels(colors):
-    cloud = pointcloud_from_xyz(np.array([[0, 0, 1]], dtype=np.float32), header=Header())
+    cloud = pointcloud_from_xyz(
+        np.array([[0, 0, 1]], dtype=np.float32),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+    )
     with pytest.raises(ValueError, match="color"):
         cloud_archetype(cloud, colors=colors)

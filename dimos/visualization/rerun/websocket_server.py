@@ -228,4 +228,6 @@ class RerunWebSocketServer(Module):
             )
 
         elif msg_type == "stop":
-            self.tele_cmd_vel.publish(Twist())
+            self.tele_cmd_vel.publish(
+                Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+            )

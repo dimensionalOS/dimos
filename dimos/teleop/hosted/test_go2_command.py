@@ -31,6 +31,7 @@ from unittest.mock import MagicMock
 
 from dimos_generated.geometry_msgs.msg import PoseStamped, Twist, TwistStamped, Vector3
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode
 import pytest
 
 from dimos.core.module import Module
@@ -64,7 +65,10 @@ def module(monkeypatch: pytest.MonkeyPatch) -> Iterator[Go2CommandModule]:
 
 def _twist(ts: float, *, vx: float = 0.3) -> TwistStamped:
     """A drive frame at time ``ts`` (vx=0.3 moving, vx=0 idle-joystick)."""
-    t = TwistStamped(header=Header(stamp=time_from_seconds(ts)), twist=Twist(linear=Vector3(x=vx)))
+    t = TwistStamped(
+        header=Header(stamp=time_from_seconds(ts), frame_id=""),
+        twist=Twist(linear=Vector3(x=vx, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)),
+    )
     return t
 
 
@@ -191,9 +195,9 @@ def test_drive_drops_invalid_nanoseconds(module: Go2CommandModule) -> None:
 def test_drive_orders_frames_one_nanosecond_apart(module: Go2CommandModule) -> None:
     first = _twist(time.time() - 0.1)
     stamp_ns = to_nanoseconds(first.header.stamp)
-    second = TwistStamped.decode(first.encode())
+    second = cdr_decode(first.encode(), TwistStamped)
     second.header.stamp = time_from_nanoseconds(stamp_ns + 1)
-    module._on_cmd_vel_in(TwistStamped.decode(first.encode()))
+    module._on_cmd_vel_in(cdr_decode(first.encode(), TwistStamped))
     module._on_cmd_vel_in(second)
     assert module.tele_cmd_vel.publish.call_count == 2
     assert module._last_cmd_ns == stamp_ns + 1
@@ -390,7 +394,7 @@ def test_nav_goal_publishes_and_acks(
 
     (pose,) = module.goal_request.publish.call_args.args
     assert pose.pose.position.x == pytest.approx(2.5)
-    assert PoseStamped.decode(pose.encode()).header.frame_id == "world"
+    assert cdr_decode(pose.encode(), PoseStamped).header.frame_id == "world"
     assert acks == [(11, True)]
 
 

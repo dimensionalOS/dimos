@@ -17,12 +17,14 @@
 
 """NumPy conversions for generated PointCloud2 messages."""
 
+from copy import deepcopy
 import math
 from typing import Any
 
 from dimos_generated.geometry_msgs.msg import TransformStamped
 from dimos_generated.sensor_msgs.msg import CameraInfo, Image, PointCloud2, PointField
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 from numpy.typing import NDArray
 
@@ -63,12 +65,14 @@ def pointcloud_view(message: PointCloud2) -> NDArray[Any]:
     dtype = np.dtype(
         {"names": names, "formats": formats, "offsets": offsets, "itemsize": message.point_step}
     )
-    return np.ndarray(
+    view = np.ndarray(
         (message.height, message.width),
         dtype=dtype,
-        buffer=message.data.view(),
+        buffer=message.data,
         strides=(message.row_step, message.point_step),
     )
+    view.setflags(write=False)
+    return view
 
 
 def pointcloud_xyz(message: PointCloud2) -> NDArray[np.float64]:
@@ -97,7 +101,7 @@ def pointcloud_from_xyz(points: NDArray[Any], *, header: Header) -> PointCloud2:
     packed = np.ascontiguousarray(values, dtype="<f4")
     height, width = (1, packed.shape[0]) if packed.ndim == 2 else packed.shape[:2]
     return PointCloud2(
-        header=header,
+        header=deepcopy(header),
         height=height,
         width=width,
         fields=[
@@ -107,7 +111,7 @@ def pointcloud_from_xyz(points: NDArray[Any], *, header: Header) -> PointCloud2:
         is_bigendian=False,
         point_step=12,
         row_step=width * 12,
-        data=packed.view(np.uint8).reshape(-1),
+        data=np.asarray(packed.view(np.uint8).reshape(-1), dtype=np.uint8),
         is_dense=bool(finite.all()),
     )
 
@@ -124,20 +128,20 @@ def select_points(message: PointCloud2, keep: NDArray[np.bool_]) -> PointCloud2:
     records: NDArray[np.uint8] = np.ndarray(
         (message.height, message.width, message.point_step),
         dtype=np.uint8,
-        buffer=message.data.view(),
+        buffer=message.data,
         strides=(message.row_step, message.point_step, 1),
     )
     selected = records.reshape(message.height * message.width, message.point_step)[keep]
     width = len(selected)
     return PointCloud2(
-        header=message.header,
+        header=deepcopy(message.header),
         height=1,
         width=width,
-        fields=message.fields,
+        fields=deepcopy(message.fields),
         is_bigendian=message.is_bigendian,
         point_step=message.point_step,
         row_step=width * message.point_step,
-        data=selected.tobytes(),
+        data=np.asarray(np.frombuffer(selected.tobytes(), dtype=np.uint8).copy(), dtype=np.uint8),
         is_dense=message.is_dense,
     )
 
@@ -169,9 +173,9 @@ def concatenate_clouds(first: PointCloud2, second: PointCloud2) -> PointCloud2:
     pointcloud_view(first)
     pointcloud_view(second)
     if not first.width * first.height:
-        return PointCloud2.decode(second.encode())
+        return cdr_decode(cdr_encode(second), PointCloud2)
     if not second.width * second.height:
-        return PointCloud2.decode(first.encode())
+        return cdr_decode(cdr_encode(first), PointCloud2)
     if first.header.frame_id != second.header.frame_id:
         raise ValueError("cannot concatenate point clouds in different frames")
     if (
@@ -187,11 +191,11 @@ def concatenate_clouds(first: PointCloud2, second: PointCloud2) -> PointCloud2:
         header=Header(frame_id=first.header.frame_id, stamp=stamp),
         height=1,
         width=a.width + b.width,
-        fields=first.fields,
+        fields=deepcopy(first.fields),
         is_bigendian=first.is_bigendian,
         point_step=first.point_step,
         row_step=a.row_step + b.row_step,
-        data=bytes(a.data) + bytes(b.data),
+        data=np.asarray(np.concatenate((a.data, b.data)), dtype=np.uint8),
         is_dense=first.is_dense and second.is_dense,
     )
 
@@ -225,9 +229,9 @@ def transform_cloud(message: PointCloud2, transform: TransformStamped) -> PointC
     )
     for index, name in enumerate(("x", "y", "z")):
         writable[name] = transformed[:, index].reshape(message.height, message.width)
-    output = PointCloud2.decode(message.encode())
-    output.data = bytes(payload)
-    output.header = Header(stamp=message.header.stamp, frame_id=transform.header.frame_id)
+    output = cdr_decode(cdr_encode(message), PointCloud2)
+    output.data = np.frombuffer(payload, dtype=np.uint8).copy()
+    output.header = Header(stamp=deepcopy(message.header.stamp), frame_id=transform.header.frame_id)
     return output
 
 
@@ -246,7 +250,7 @@ def pointcloud_from_xyz_rgb(
     cloud.fields.append(PointField(name="rgb", offset=12, datatype=PointField.UINT32, count=1))
     cloud.point_step = 16
     cloud.row_step = cloud.width * cloud.point_step
-    cloud.data = records.tobytes()
+    cloud.data = np.frombuffer(records.tobytes(), dtype=np.uint8).copy()
     return cloud
 
 

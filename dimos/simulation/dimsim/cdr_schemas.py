@@ -21,6 +21,7 @@ import json
 
 from dimos_generated.geometry_msgs.msg import PoseStamped, Twist
 from dimos_generated.sensor_msgs.msg import Image, PointCloud2
+from dimos_message_build.registry import schema as cdr_schema
 
 from dimos.constants import DIMOS_PROJECT_ROOT
 
@@ -28,7 +29,9 @@ SCHEMA_PATH = DIMOS_PROJECT_ROOT / "misc/DimSim/cli/bridge/cdr_schemas.ts"
 
 
 def schema_source() -> str:
-    definitions = {t.msg_name: t.schema for t in (Image, PointCloud2, PoseStamped, Twist)}
+    definitions = {
+        t.__msgtype__: cdr_schema(t.__msgtype__) for t in (Image, PointCloud2, PoseStamped, Twist)
+    }
     return (
         "// Generated from the canonical .msg definitions; do not edit by hand.\n"
         "export const schemas: Record<string, string> = "

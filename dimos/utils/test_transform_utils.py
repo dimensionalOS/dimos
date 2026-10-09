@@ -12,11 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import (
     Point,
     Pose,
     PoseStamped,
     Quaternion,
+    Transform,
     TransformStamped,
     Vector3,
 )
@@ -208,9 +210,16 @@ class TestApplyTransform:
 
     def test_transform_with_transform_object(self) -> None:
         pose = Pose(position=Point(x=1, y=0, z=0), orientation=Quaternion(x=0, y=0, z=0, w=1))
-        pose = PoseStamped(header=Header(frame_id="base"), pose=pose)
+        pose = PoseStamped(header=Header(frame_id="base", stamp=Time(sec=0, nanosec=0)), pose=pose)
 
-        transform = TransformStamped()
+        transform = TransformStamped(
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            child_frame_id="",
+            transform=Transform(
+                translation=Vector3(x=0.0, y=0.0, z=0.0),
+                rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+        )
         transform.header.frame_id = "world"
         transform.child_frame_id = "base"
         transform.transform.translation = Vector3(x=2, y=3, z=4)
@@ -225,9 +234,16 @@ class TestApplyTransform:
 
     def test_transform_frame_mismatch_raises(self) -> None:
         pose = Pose(position=Point(x=1, y=0, z=0), orientation=Quaternion(x=0, y=0, z=0, w=1))
-        pose = PoseStamped(header=Header(frame_id="base"), pose=pose)
+        pose = PoseStamped(header=Header(frame_id="base", stamp=Time(sec=0, nanosec=0)), pose=pose)
 
-        transform = TransformStamped()
+        transform = TransformStamped(
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            child_frame_id="",
+            transform=Transform(
+                translation=Vector3(x=0.0, y=0.0, z=0.0),
+                rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+        )
         transform.header.frame_id = "world"
         transform.child_frame_id = "different_frame"
         transform.transform.translation = Vector3(x=2, y=3, z=4)

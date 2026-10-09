@@ -20,6 +20,7 @@ from contextlib import nullcontext
 import math
 from pathlib import Path
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import (
     Point,
     Pose,
@@ -56,8 +57,10 @@ from dimos.robot.assets.model import LoadedRobotModel, PlanarBaseDefinition, Rob
 
 def _pose() -> PoseStamped:
     return PoseStamped(
-        header=Header(frame_id=""),
-        pose=Pose(position=Point(), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)),
+        header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
+        pose=Pose(
+            position=Point(x=0.0, y=0.0, z=0.0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+        ),
     )
 
 
@@ -112,7 +115,13 @@ class _World:
         return nullcontext(None)
 
     def get_joint_state(self, ctx: object) -> JointState:
-        return JointState(name=["arm/joint_a", "arm/joint_b", "arm/gripper"], position=self.current)
+        return JointState(
+            name=["arm/joint_a", "arm/joint_b", "arm/gripper"],
+            position=np.asarray(self.current, dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        )
 
     def get_joint_limits(self) -> tuple[np.ndarray, np.ndarray]:
         return np.array([-1.0, -1.0, -1.0]), np.array([1.0, 1.0, 1.0])
@@ -191,7 +200,13 @@ class _PlanarWorld(_World):
         return np.array([2.0, 1.0, 4.0])
 
     def get_joint_state(self, ctx: object) -> JointState:
-        return JointState(name=list(self.config.joint_names), position=self.current)
+        return JointState(
+            name=list(self.config.joint_names),
+            position=np.asarray(self.current, dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        )
 
 
 class _WallPlanarWorld(_PlanarWorld):
@@ -204,14 +219,38 @@ class _WallPlanarWorld(_PlanarWorld):
     ("start", "goal", "expected_start", "expected_goal"),
     [
         (
-            JointState(position=[0.1, 0.2]),
-            JointState(position=[0.3, 0.4]),
+            JointState(
+                position=np.array([0.1, 0.2], dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                name=[],
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            ),
+            JointState(
+                position=np.array([0.3, 0.4], dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                name=[],
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            ),
             [0.1, 0.2],
             [0.3, 0.4],
         ),
         (
-            JointState(name=["arm/joint_b", "arm/joint_a"], position=[0.2, 0.1]),
-            JointState(name=["arm/joint_b", "arm/joint_a"], position=[0.4, 0.3]),
+            JointState(
+                name=["arm/joint_b", "arm/joint_a"],
+                position=np.array([0.2, 0.1], dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            ),
+            JointState(
+                name=["arm/joint_b", "arm/joint_a"],
+                position=np.array([0.4, 0.3], dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            ),
             [0.1, 0.2],
             [0.3, 0.4],
         ),
@@ -236,20 +275,56 @@ def test_plan_selected_joint_path_normalizes_target_forms(
     ("start", "goal", "status", "message"),
     [
         (
-            JointState(name=["arm/joint_a"], position=[0.0]),
-            JointState(position=[0.0, 0.0]),
+            JointState(
+                name=["arm/joint_a"],
+                position=np.array([0.0], dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            ),
+            JointState(
+                position=np.array([0.0, 0.0], dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                name=[],
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            ),
             PlanningStatus.INVALID_START,
             "missing",
         ),
         (
-            JointState(position=[0.0, 0.0]),
-            JointState(name=["arm/joint_a", "arm/joint_b", "arm/extra"], position=[0.0, 0.0, 0.0]),
+            JointState(
+                position=np.array([0.0, 0.0], dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                name=[],
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            ),
+            JointState(
+                name=["arm/joint_a", "arm/joint_b", "arm/extra"],
+                position=np.array([0.0, 0.0, 0.0], dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            ),
             PlanningStatus.INVALID_GOAL,
             "extra",
         ),
         (
-            JointState(name=["arm/joint_a", "joint_b"], position=[0.0, 0.0]),
-            JointState(position=[0.0, 0.0]),
+            JointState(
+                name=["arm/joint_a", "joint_b"],
+                position=np.array([0.0, 0.0], dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            ),
+            JointState(
+                position=np.array([0.0, 0.0], dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                name=[],
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            ),
             PlanningStatus.INVALID_START,
             "missing",
         ),
@@ -275,8 +350,20 @@ def test_plan_selected_joint_path_rejects_noncanonical_names() -> None:
     result = RRTConnectPlanner().plan_selected_joint_path(
         _World(),
         selection,
-        JointState(name=["joint_a", "gripper"], position=[0.0, 0.0]),
-        JointState(position=[0.1, 0.2]),
+        JointState(
+            name=["joint_a", "gripper"],
+            position=np.array([0.0, 0.0], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        ),
+        JointState(
+            position=np.array([0.1, 0.2], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            name=[],
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        ),
     )
 
     assert result.status == PlanningStatus.INVALID_START
@@ -290,8 +377,20 @@ def test_plan_selected_joint_path_direct_edge_projects_full_state_with_unselecte
     result = RRTConnectPlanner().plan_selected_joint_path(
         world,
         PlanningGroupSelection.from_groups((group,)),
-        JointState(position=[0.1, 0.2]),
-        JointState(position=[0.3, 0.4]),
+        JointState(
+            position=np.array([0.1, 0.2], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            name=[],
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        ),
+        JointState(
+            position=np.array([0.3, 0.4], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            name=[],
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        ),
     )
 
     assert result.status == PlanningStatus.SUCCESS
@@ -310,13 +409,29 @@ def test_plan_cartesian_path_is_explicitly_unsupported() -> None:
     result = RRTConnectPlanner().plan_cartesian_path(
         _World(),
         selection,
-        JointState(position=[0.0, 0.0]),
+        JointState(
+            position=np.array([0.0, 0.0], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            name=[],
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        ),
         {
             group.id: (
-                TransformStamped(header=Header(frame_id="world"), child_frame_id=""),
                 TransformStamped(
-                    header=Header(frame_id="world"),
-                    transform=Transform(translation=Vector3(x=0.1, y=0.0, z=0.0)),
+                    header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+                    child_frame_id="",
+                    transform=Transform(
+                        translation=Vector3(x=0.0, y=0.0, z=0.0),
+                        rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                    ),
+                ),
+                TransformStamped(
+                    header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+                    transform=Transform(
+                        translation=Vector3(x=0.1, y=0.0, z=0.0),
+                        rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                    ),
                     child_frame_id="",
                 ),
             )
@@ -352,8 +467,20 @@ def test_planar_direct_path_lifts_yaw_across_wrap_boundary() -> None:
     result = RRTConnectPlanner().plan_selected_joint_path(
         world,
         PlanningGroupSelection.from_groups((group,)),
-        JointState(position=[0.0, 0.0, math.pi - 0.1]),
-        JointState(position=[0.0, 0.0, -math.pi + 0.1]),
+        JointState(
+            position=np.array([0.0, 0.0, math.pi - 0.1], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            name=[],
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        ),
+        JointState(
+            position=np.array([0.0, 0.0, -math.pi + 0.1], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            name=[],
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        ),
     )
 
     assert result.status == PlanningStatus.SUCCESS
@@ -377,8 +504,20 @@ def test_planar_rrt_finds_obstacle_detour(
     ).plan_selected_joint_path(
         world,
         PlanningGroupSelection.from_groups((group,)),
-        JointState(position=[-2.0, 0.0, 0.0]),
-        JointState(position=[2.0, 0.0, 0.0]),
+        JointState(
+            position=np.array([-2.0, 0.0, 0.0], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            name=[],
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        ),
+        JointState(
+            position=np.array([2.0, 0.0, 0.0], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            name=[],
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        ),
         timeout=10.0,
         max_iterations=2000,
     )
@@ -418,8 +557,20 @@ def test_planar_rrt_counts_connection_growth_against_global_budget(
     result = planner.plan_selected_joint_path(
         world,
         PlanningGroupSelection.from_groups((group,)),
-        JointState(position=[-2.0, 0.0, 0.0]),
-        JointState(position=[2.0, 0.0, 0.0]),
+        JointState(
+            position=np.array([-2.0, 0.0, 0.0], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            name=[],
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        ),
+        JointState(
+            position=np.array([2.0, 0.0, 0.0], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            name=[],
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        ),
         max_iterations=max_iterations,
     )
 

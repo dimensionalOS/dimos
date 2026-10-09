@@ -174,9 +174,9 @@ def _record_session(db_path: Path) -> None:
                     JointState(
                         header=Header(frame_id="arm", stamp=time_from_seconds(ts)),
                         name=["joint_0", "joint_1"],
-                        position=[base + frame, base + 100.0 + frame],
-                        velocity=[0.0, 0.0],
-                        effort=[0.0, 0.0],
+                        position=np.array([base + frame, base + 100.0 + frame], dtype=np.float64),
+                        velocity=np.array([0.0, 0.0], dtype=np.float64),
+                        effort=np.array([0.0, 0.0], dtype=np.float64),
                     ),
                 )
             if success:

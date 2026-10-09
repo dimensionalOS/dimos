@@ -19,6 +19,8 @@ from __future__ import annotations
 import importlib
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
+from dimos_message_build.registry import decode, encode
+
 try:
     import rclpy.serialization as ros_serialization
 except ImportError:
@@ -34,9 +36,11 @@ MessageT = TypeVar("MessageT", bound="DimosMsg")
 
 def derive_ros_type(dimos_type: type[DimosMsg]) -> type[ROSMessage]:
     """Resolve the matching installed ROS type by canonical package/msg/Type name."""
-    parts = dimos_type.msg_name.split("/")
+    parts = dimos_type.__msgtype__.split("/")
     if len(parts) != 3 or parts[1] != "msg" or not all(part.isidentifier() for part in parts):
-        raise ValueError(f"Invalid message name {dimos_type.msg_name!r}; expected package/msg/Type")
+        raise ValueError(
+            f"Invalid message name {dimos_type.__msgtype__!r}; expected package/msg/Type"
+        )
     package, _, name = parts
     return cast("type[ROSMessage]", getattr(importlib.import_module(f"{package}.msg"), name))
 
@@ -46,8 +50,8 @@ def dimos_to_ros(msg: DimosMsg, ros_type: type[ROSMessage]) -> ROSMessage:
     if ros_serialization is None:
         raise ImportError("ROS message conversion requires rclpy; install and source ROS 2.")
     if derive_ros_type(type(msg)) is not ros_type:
-        raise TypeError(f"ROS target does not match {msg.msg_name}")
-    return cast("ROSMessage", ros_serialization.deserialize_message(msg.encode(), ros_type))
+        raise TypeError(f"ROS target does not match {msg.__msgtype__}")
+    return cast("ROSMessage", ros_serialization.deserialize_message(encode(msg), ros_type))
 
 
 def ros_to_dimos(msg: Any, dimos_type: type[MessageT]) -> MessageT:
@@ -55,5 +59,7 @@ def ros_to_dimos(msg: Any, dimos_type: type[MessageT]) -> MessageT:
     if ros_serialization is None:
         raise ImportError("ROS message conversion requires rclpy; install and source ROS 2.")
     if type(msg) is not derive_ros_type(dimos_type):
-        raise TypeError(f"ROS source does not match {dimos_type.msg_name}")
-    return dimos_type.decode(ros_serialization.serialize_message(msg))
+        raise TypeError(f"ROS source does not match {dimos_type.__msgtype__}")
+    return cast(
+        "MessageT", decode(ros_serialization.serialize_message(msg), dimos_type.__msgtype__)
+    )

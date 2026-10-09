@@ -18,8 +18,10 @@ from contextlib import ExitStack
 import threading
 import uuid
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Point
 from dimos_generated.sensor_msgs.msg import Image
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 import pytest
 
@@ -78,7 +80,15 @@ def test_generated_message_round_trip(transport_pair, retry_until):
 def test_large_generated_image_preserves_pixels_and_header(transport_pair, retry_until):
     publisher, subscriber = transport_pair(Image)
     pixels = np.arange(640 * 480 * 3, dtype=np.uint8)
-    message = Image(width=640, height=480, encoding="rgb8", step=1920, data=pixels)
+    message = Image(
+        width=640,
+        height=480,
+        encoding="rgb8",
+        step=1920,
+        data=np.asarray(pixels, dtype=np.uint8),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        is_bigendian=0,
+    )
     message.header.frame_id = "camera"
     message.header.stamp.sec = 1_700_000_000
     message.header.stamp.nanosec = 123_456_789

@@ -17,6 +17,7 @@
 
 from typing import Any
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import (
     PoseStamped,
     Transform,
@@ -108,10 +109,10 @@ _camera = (
     autoconnect(
         CameraModule.blueprint(
             transform=TransformStamped(
-                header=Header(frame_id="sensor"),
+                header=Header(frame_id="sensor", stamp=Time(sec=0, nanosec=0)),
                 child_frame_id="camera_link",
                 transform=Transform(
-                    translation=Vector3(x=0.05, z=0.6),
+                    translation=Vector3(x=0.05, z=0.6, y=0.0),
                     rotation=quaternion_from_euler(0.0, 0.2, 0.0),
                 ),
             ),

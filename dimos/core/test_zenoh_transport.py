@@ -19,7 +19,9 @@ import threading
 from types import SimpleNamespace
 from typing import cast
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.sensor_msgs.msg import Image
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 from pydantic import ValidationError
 import pytest
@@ -196,7 +198,15 @@ def test_zenoh_transport_broadcast_and_subscribe(retry_until, session_pool, coll
     t.start()
     t.subscribe(collector.callback)
 
-    test_img = Image(width=2, height=2, step=6, encoding="rgb8", data=np.zeros(12, dtype=np.uint8))
+    test_img = Image(
+        width=2,
+        height=2,
+        step=6,
+        encoding="rgb8",
+        data=np.zeros(12, dtype=np.uint8),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        is_bigendian=0,
+    )
     retry_until(collector.event, lambda: t.broadcast(None, test_img))
     assert isinstance(collector.received[0], Image)
     t.stop()

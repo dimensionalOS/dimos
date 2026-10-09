@@ -61,8 +61,10 @@ def test_client_receives_sensor_topics_and_robot_receives_commands(
     time.sleep(0.5)  # subscriptions propagate over the link
 
     pose = PoseStamped(
-        header=Header(stamp=time_from_seconds(3.5)),
-        pose=Pose(position=Point(x=1, y=2, z=0.5), orientation=Quaternion(w=1)),
+        header=Header(stamp=time_from_seconds(3.5), frame_id=""),
+        pose=Pose(
+            position=Point(x=1, y=2, z=0.5), orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0)
+        ),
     )
     robot.put("odom/json", odom_json(pose))
     robot.put("camera/jpeg", b"\xff\xd8jpeg", ts=4.25)
@@ -82,7 +84,7 @@ def test_encoders_are_plain_formats() -> None:
         io.BytesIO(
             jpeg_bytes(
                 image_from_array(
-                    frame, encoding="rgb8", header=Header(stamp=time_from_seconds(1.0))
+                    frame, encoding="rgb8", header=Header(stamp=time_from_seconds(1.0), frame_id="")
                 )
             )
         )
@@ -90,13 +92,19 @@ def test_encoders_are_plain_formats() -> None:
     assert decoded.format == "JPEG" and decoded.size == (8, 6)
 
     points = np.arange(12, dtype=np.float32).reshape(4, 3)
-    raw = xyz_f32(pointcloud_from_xyz(points, header=Header(stamp=time_from_seconds(2.0))))
+    raw = xyz_f32(
+        pointcloud_from_xyz(points, header=Header(stamp=time_from_seconds(2.0), frame_id=""))
+    )
     assert np.frombuffer(raw, dtype="<f4").reshape(-1, 3).tolist() == points.tolist()
 
     fields = json.loads(
         odom_json(
             PoseStamped(
-                header=Header(stamp=time_from_seconds(9.0)), pose=Pose(orientation=Quaternion(w=1))
+                header=Header(stamp=time_from_seconds(9.0), frame_id=""),
+                pose=Pose(
+                    orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0),
+                    position=Point(x=0.0, y=0.0, z=0.0),
+                ),
             )
         )
     )

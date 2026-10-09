@@ -13,23 +13,29 @@
 // limitations under the License.
 
 use anyhow::{Context, Result};
-use dimos_generated_messages::dimos_msgs::msg::LineSegments3D;
-use dimos_generated_messages::foxglove_msgs::msg::CompressedVideo;
+use dimos_generated_messages::dimos_msgs::msg::line_segments3_d::LineSegments3D;
+use dimos_generated_messages::foxglove_msgs::msg::compressed_video::CompressedVideo;
 use dimos_generated_messages::geometry_msgs::msg::{
-    PointStamped, PoseStamped, PoseWithCovarianceStamped, TransformStamped, TwistStamped,
-    TwistWithCovarianceStamped, WrenchStamped,
+    point_stamped::PointStamped, pose_stamped::PoseStamped,
+    pose_with_covariance_stamped::PoseWithCovarianceStamped, transform_stamped::TransformStamped,
+    twist_stamped::TwistStamped, twist_with_covariance_stamped::TwistWithCovarianceStamped,
+    wrench_stamped::WrenchStamped,
 };
-use dimos_generated_messages::nav_msgs::msg::{OccupancyGrid, Odometry, Path};
+use dimos_generated_messages::nav_msgs::msg::{
+    occupancy_grid::OccupancyGrid, odometry::Odometry, path::Path,
+};
 use dimos_generated_messages::sensor_msgs::msg::{
-    CameraInfo, CompressedImage, Image, Imu, JointState, Joy, PointCloud2,
+    camera_info::CameraInfo, compressed_image::CompressedImage, image::Image, imu::Imu,
+    joint_state::JointState, joy::Joy, point_cloud2::PointCloud2,
 };
-use dimos_generated_messages::tf2_msgs::msg::TFMessage;
+use dimos_generated_messages::tf2_msgs::msg::tf_message::TFMessage;
 use dimos_generated_messages::vision_msgs::msg::{
-    Detection2D, Detection2DArray, Detection3D, Detection3DArray,
+    detection2_d::Detection2D, detection2_d_array::Detection2DArray, detection3_d::Detection3D,
+    detection3_d_array::Detection3DArray,
 };
 
 use crate::StreamConfig;
-use dimos_generated_messages::codec::Message;
+use dimos_module::cdr;
 
 /// One decoded and timestamped observation before storage encoding.
 #[derive(Debug)]
@@ -55,17 +61,16 @@ pub(crate) fn decode(
 }
 
 fn decode_tf(data: &[u8], _reception_ts: i64) -> Result<Vec<DecodedObservation>> {
-    let message = TFMessage::decode(data).context("invalid CDR TFMessage")?;
+    let message = cdr::decode::<TFMessage>(data).context("invalid CDR TFMessage")?;
     message
         .transforms
         .into_iter()
         .map(|transform| {
             Ok(DecodedObservation {
                 ts: header_timestamp(transform.header.stamp.sec, transform.header.stamp.nanosec)?,
-                payload: TFMessage {
+                payload: cdr::encode(&TFMessage {
                     transforms: vec![transform],
-                }
-                .encode()?,
+                })?,
             })
         })
         .collect()
@@ -78,7 +83,7 @@ fn decode_tf(data: &[u8], _reception_ts: i64) -> Result<Vec<DecodedObservation>>
 fn source_timestamp(payload_type: &str, data: &[u8], reception_ts: i64) -> Result<i64> {
     macro_rules! stamped {
         ($message_type:ty) => {{
-            let message = <$message_type>::decode(data)
+            let message = cdr::decode::<$message_type>(data)
                 .with_context(|| format!("invalid CDR {payload_type}"))?;
             (message.header.stamp.sec, message.header.stamp.nanosec)
         }};
@@ -118,7 +123,7 @@ fn source_timestamp(payload_type: &str, data: &[u8], reception_ts: i64) -> Resul
             stamped!(Detection3DArray)
         }
         "foxglove_msgs/msg/CompressedVideo" => {
-            let message = CompressedVideo::decode(data)
+            let message = cdr::decode::<CompressedVideo>(data)
                 .context("invalid CDR foxglove_msgs.CompressedVideo")?;
             (message.timestamp.sec, message.timestamp.nanosec)
         }

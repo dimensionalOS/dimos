@@ -24,8 +24,9 @@ import sys
 from typing import Any
 
 from dimos_generated.dimos_msgs.msg import GraspCandidate, GraspCandidateArray
-from dimos_generated.geometry_msgs.msg import Point, Pose
+from dimos_generated.geometry_msgs.msg import Point, Pose, Quaternion
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 
@@ -70,18 +71,29 @@ def test_public_adapter_import_does_not_load_optional_runtime() -> None:
 def test_messages_round_trip_empty_and_score() -> None:
     value = GraspCandidateArray(
         header=Header(stamp=time_from_seconds(3.0), frame_id="camera"),
-        candidates=[GraspCandidate(pose=Pose(position=Point(x=1, y=2)), score=0.25)],
+        candidates=[
+            GraspCandidate(
+                pose=Pose(
+                    position=Point(x=1, y=2, z=0.0),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+                score=0.25,
+            )
+        ],
     )
-    decoded = GraspCandidateArray.decode(value.encode())
+    decoded = cdr_decode(cdr_encode(value), GraspCandidateArray)
 
     assert decoded.header.frame_id == "camera"
     assert decoded.header.stamp == time_from_seconds(3.0)
     assert decoded.candidates[0].score == pytest.approx(0.25)
     assert (
-        GraspCandidateArray.decode(
-            GraspCandidateArray(
-                header=Header(stamp=time_from_seconds(3.0), frame_id="camera"), candidates=[]
-            ).encode()
+        cdr_decode(
+            cdr_encode(
+                GraspCandidateArray(
+                    header=Header(stamp=time_from_seconds(3.0), frame_id="camera"), candidates=[]
+                )
+            ),
+            GraspCandidateArray,
         ).candidates
         == []
     )

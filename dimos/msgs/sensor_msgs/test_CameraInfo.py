@@ -13,8 +13,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos_generated.sensor_msgs.msg import CameraInfo
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.sensor_msgs.msg import CameraInfo, RegionOfInterest
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 from rosbags.typesys import Stores, get_typestore
 
@@ -32,38 +34,45 @@ def test_encode_decode() -> None:
         height=480,
         width=640,
         distortion_model="plumb_bob",
-        d=[-0.1, 0.05, 0.001, -0.002, 0.0],  # 5 distortion coefficients
-        k=[
-            500.0,
-            0.0,
-            320.0,  # fx, 0, cx
-            0.0,
-            500.0,
-            240.0,  # 0, fy, cy
-            0.0,
-            0.0,
-            1.0,
-        ],  # 0, 0, 1
-        r=[1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
-        p=[
-            500.0,
-            0.0,
-            320.0,
-            0.0,  # fx, 0, cx, Tx
-            0.0,
-            500.0,
-            240.0,
-            0.0,  # 0, fy, cy, Ty
-            0.0,
-            0.0,
-            1.0,
-            0.0,
-        ],  # 0, 0, 1, 0
+        d=np.array([-0.1, 0.05, 0.001, -0.002, 0.0], dtype=np.float64),  # 5 distortion coefficients
+        k=np.array(
+            [
+                500.0,
+                0.0,
+                320.0,  # fx, 0, cx
+                0.0,
+                500.0,
+                240.0,  # 0, fy, cy
+                0.0,
+                0.0,
+                1.0,
+            ],
+            dtype=np.float64,
+        ),  # 0, 0, 1
+        r=np.array([1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0], dtype=np.float64),
+        p=np.array(
+            [
+                500.0,
+                0.0,
+                320.0,
+                0.0,  # fx, 0, cx, Tx
+                0.0,
+                500.0,
+                240.0,
+                0.0,  # 0, fy, cy, Ty
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+            ],
+            dtype=np.float64,
+        ),  # 0, 0, 1, 0
         binning_x=2,
         binning_y=2,
         header=Header(
             frame_id="camera_optical_frame", stamp=time_from_nanoseconds(1234567890123456789)
         ),
+        roi=RegionOfInterest(x_offset=0, y_offset=0, height=0, width=0, do_rectify=False),
     )
 
     # Set ROI
@@ -74,9 +83,11 @@ def test_encode_decode() -> None:
     original.roi.do_rectify = True
 
     # Encode and decode
-    binary_msg = original.encode()
-    decoded = CameraInfo.decode(binary_msg)
-    independent = get_typestore(Stores.ROS2_JAZZY).deserialize_cdr(binary_msg, CameraInfo.msg_name)
+    binary_msg = cdr_encode(original)
+    decoded = cdr_decode(binary_msg, CameraInfo)
+    independent = get_typestore(Stores.ROS2_JAZZY).deserialize_cdr(
+        binary_msg, CameraInfo.__msgtype__
+    )
     assert independent.header.stamp.nanosec == 123456789
     assert independent.roi.x_offset == 100
     np.testing.assert_array_equal(independent.k, original.k)
@@ -153,7 +164,19 @@ def test_numpy_matrix_operations() -> None:
     """Test numpy matrix getter/setter operations."""
     print("\nTesting numpy matrix operations...")
 
-    camera_info = CameraInfo()
+    camera_info = CameraInfo(
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        height=0,
+        width=0,
+        distortion_model="",
+        d=np.array([], dtype=np.float64),
+        k=np.zeros(9, dtype=np.float64),
+        r=np.zeros(9, dtype=np.float64),
+        p=np.zeros(12, dtype=np.float64),
+        binning_x=0,
+        binning_y=0,
+        roi=RegionOfInterest(x_offset=0, y_offset=0, height=0, width=0, do_rectify=False),
+    )
 
     # Test K matrix
     K = np.array([[525.0, 0.0, 319.5], [0.0, 525.0, 239.5], [0.0, 0.0, 1.0]])
@@ -194,24 +217,42 @@ def test_equality() -> None:
         height=480,
         width=640,
         distortion_model="plumb_bob",
-        d=[-0.1, 0.05, 0.0, 0.0, 0.0],
-        header=Header(frame_id="camera1"),
+        d=np.array([-0.1, 0.05, 0.0, 0.0, 0.0], dtype=np.float64),
+        header=Header(frame_id="camera1", stamp=Time(sec=0, nanosec=0)),
+        k=np.zeros(9, dtype=np.float64),
+        r=np.zeros(9, dtype=np.float64),
+        p=np.zeros(12, dtype=np.float64),
+        binning_x=0,
+        binning_y=0,
+        roi=RegionOfInterest(x_offset=0, y_offset=0, height=0, width=0, do_rectify=False),
     )
 
     info2 = CameraInfo(
         height=480,
         width=640,
         distortion_model="plumb_bob",
-        d=[-0.1, 0.05, 0.0, 0.0, 0.0],
-        header=Header(frame_id="camera1"),
+        d=np.array([-0.1, 0.05, 0.0, 0.0, 0.0], dtype=np.float64),
+        header=Header(frame_id="camera1", stamp=Time(sec=0, nanosec=0)),
+        k=np.zeros(9, dtype=np.float64),
+        r=np.zeros(9, dtype=np.float64),
+        p=np.zeros(12, dtype=np.float64),
+        binning_x=0,
+        binning_y=0,
+        roi=RegionOfInterest(x_offset=0, y_offset=0, height=0, width=0, do_rectify=False),
     )
 
     info3 = CameraInfo(
         height=720,
         width=1280,  # Different resolution
         distortion_model="plumb_bob",
-        d=[-0.1, 0.05, 0.0, 0.0, 0.0],
-        header=Header(frame_id="camera1"),
+        d=np.array([-0.1, 0.05, 0.0, 0.0, 0.0], dtype=np.float64),
+        header=Header(frame_id="camera1", stamp=Time(sec=0, nanosec=0)),
+        k=np.zeros(9, dtype=np.float64),
+        r=np.zeros(9, dtype=np.float64),
+        p=np.zeros(12, dtype=np.float64),
+        binning_x=0,
+        binning_y=0,
+        roi=RegionOfInterest(x_offset=0, y_offset=0, height=0, width=0, do_rectify=False),
     )
 
     assert info1 == info2, "Identical CameraInfo objects should be equal"
@@ -236,7 +277,9 @@ def test_camera_info_from_yaml() -> None:
     )
 
     # Load CameraInfo from YAML
-    camera_info = camera_info_from_yaml(yaml_path, header=Header(frame_id="camera_optical"))
+    camera_info = camera_info_from_yaml(
+        yaml_path, header=Header(frame_id="camera_optical", stamp=Time(sec=0, nanosec=0))
+    )
 
     # Verify loaded values
     assert camera_info.width == 640

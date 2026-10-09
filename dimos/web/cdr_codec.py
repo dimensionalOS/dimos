@@ -18,17 +18,18 @@ from collections.abc import Mapping
 import re
 from typing import Any
 
+from dimos_message_build.registry import encode, message_types, schema
+
 CDR_V1_SUFFIX = ".cdr.v1"
 _TYPE_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_]*/msg/[A-Za-z][A-Za-z0-9_]*$")
 
 
 def cdr_type_name(message_type: type[Any]) -> str | None:
-    name = getattr(message_type, "msg_name", None)
+    name = getattr(message_type, "__msgtype__", None)
     if (
         isinstance(name, str)
         and _TYPE_NAME.fullmatch(name)
-        and isinstance(getattr(message_type, "schema", None), str)
-        and callable(getattr(message_type, "encode", None))
+        and message_types().get(name) is message_type
     ):
         return name
     return None
@@ -49,7 +50,7 @@ def export_schema(message_type: type[Any]) -> dict[str, str]:
     name = cdr_type_name(message_type)
     if name is None:
         raise ValueError(f"{message_type.__qualname__} has no generated CDR schema")
-    return {"type": name, "definition": message_type.schema}
+    return {"type": name, "definition": schema(name)}
 
 
 def check_cdr_params(params: Mapping[str, Any]) -> None:
@@ -70,5 +71,4 @@ def encode_cdr_v1(msg: Any, params: Mapping[str, Any]) -> bytes:
         raise ValueError(
             f"message type does not match declared channel type {params['cdr']['type']}"
         )
-    payload: bytes = msg.encode()
-    return payload
+    return encode(msg)

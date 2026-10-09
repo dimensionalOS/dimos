@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING, NamedTuple
 
 from dimos_generated.sensor_msgs.msg import JointState
 from dimos_generated.std_msgs.msg import Header
+import numpy as np
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.control.task import (
@@ -433,9 +434,13 @@ class TickLoop:
         msg = JointState(
             header=Header(stamp=time_from_seconds(snapshot.timestamp), frame_id=self._frame_id),
             name=names,
-            position=[snapshot.joint_positions[n] for n in names],
-            velocity=[snapshot.joint_velocities.get(n, 0.0) for n in names],
-            effort=[snapshot.joint_efforts.get(n, 0.0) for n in names],
+            position=np.asarray([snapshot.joint_positions[n] for n in names], dtype=np.float64),
+            velocity=np.asarray(
+                [snapshot.joint_velocities.get(n, 0.0) for n in names], dtype=np.float64
+            ),
+            effort=np.asarray(
+                [snapshot.joint_efforts.get(n, 0.0) for n in names], dtype=np.float64
+            ),
         )
         if self._publish_callback:
             self._publish_callback(msg)
@@ -454,9 +459,9 @@ class TickLoop:
             msg = JointState(
                 header=Header(stamp=time_from_seconds(timestamp), frame_id=hw_id),
                 name=names,
-                position=[state[n].position for n in names],
-                velocity=[state[n].velocity for n in names],
-                effort=[state[n].effort for n in names],
+                position=np.asarray([state[n].position for n in names], dtype=np.float64),
+                velocity=np.asarray([state[n].velocity for n in names], dtype=np.float64),
+                effort=np.asarray([state[n].effort for n in names], dtype=np.float64),
             )
             try:
                 publish(hw_id, msg)

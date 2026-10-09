@@ -31,6 +31,7 @@ from dimos_generated.dimos_msgs.msg import MotorCommandArray
 from dimos_generated.geometry_msgs.msg import Quaternion, Vector3
 from dimos_generated.sensor_msgs.msg import Imu, JointState
 from dimos_generated.std_msgs.msg import Header
+import numpy as np
 from pydantic import Field
 from reactivex.disposable import Disposable
 
@@ -77,6 +78,9 @@ def _imu_from_unitree_wxyz(
         angular_velocity=Vector3(x=gyroscope[0], y=gyroscope[1], z=gyroscope[2]),
         linear_acceleration=Vector3(x=accelerometer[0], y=accelerometer[1], z=accelerometer[2]),
         header=header,
+        orientation_covariance=np.zeros(9, dtype=np.float64),
+        angular_velocity_covariance=np.zeros(9, dtype=np.float64),
+        linear_acceleration_covariance=np.zeros(9, dtype=np.float64),
     )
 
 
@@ -339,9 +343,9 @@ class G1WholeBodyConnection(Module):
             JointState(
                 header=header,
                 name=G1_JOINT_NAMES,
-                position=sample.positions,
-                velocity=sample.velocities,
-                effort=sample.efforts,
+                position=np.asarray(sample.positions, dtype=np.float64),
+                velocity=np.asarray(sample.velocities, dtype=np.float64),
+                effort=np.asarray(sample.efforts, dtype=np.float64),
             )
         )
         # Unitree reports quaternions as (w,x,y,z); Imu/Quaternion stores (x,y,z,w).

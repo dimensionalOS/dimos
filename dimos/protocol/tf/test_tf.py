@@ -141,7 +141,9 @@ def test_tf_main() -> None:
     random_t = TransformStamped(
         header=Header(frame_id="sensor", stamp=time_from_seconds(time.time())),
         child_frame_id="random_object",
-        transform=Transform(translation=Vector3(x=1, y=0, z=0)),
+        transform=Transform(
+            translation=Vector3(x=1, y=0, z=0), rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+        ),
     )
 
     # we broadcast our object location
@@ -219,7 +221,10 @@ class TestTBuffer:
             transform = TransformStamped(
                 header=Header(frame_id="world", stamp=time_from_seconds(base_time + i * 0.5)),
                 child_frame_id="robot",
-                transform=Transform(translation=Vector3(x=float(i), y=0.0, z=0.0)),
+                transform=Transform(
+                    translation=Vector3(x=float(i), y=0.0, z=0.0),
+                    rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
             )
             buffer.add(transform)
 
@@ -245,7 +250,10 @@ class TestTBuffer:
         old_transform = TransformStamped(
             header=Header(frame_id="world", stamp=time_from_seconds(old_time)),
             child_frame_id="robot",
-            transform=Transform(translation=Vector3(x=1.0, y=0.0, z=0.0)),
+            transform=Transform(
+                translation=Vector3(x=1.0, y=0.0, z=0.0),
+                rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
         )
         buffer.add(old_transform)
 
@@ -253,7 +261,10 @@ class TestTBuffer:
         recent_transform = TransformStamped(
             header=Header(frame_id="world", stamp=time_from_seconds(time.time())),
             child_frame_id="robot",
-            transform=Transform(translation=Vector3(x=2.0, y=0.0, z=0.0)),
+            transform=Transform(
+                translation=Vector3(x=2.0, y=0.0, z=0.0),
+                rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
         )
         buffer.add(recent_transform)
 
@@ -272,13 +283,19 @@ class TestMultiTBuffer:
         transform1 = TransformStamped(
             header=Header(frame_id="world", stamp=time_from_seconds(time.time())),
             child_frame_id="robot1",
-            transform=Transform(translation=Vector3(x=1.0, y=0.0, z=0.0)),
+            transform=Transform(
+                translation=Vector3(x=1.0, y=0.0, z=0.0),
+                rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
         )
 
         transform2 = TransformStamped(
             header=Header(frame_id="world", stamp=time_from_seconds(time.time())),
             child_frame_id="robot2",
-            transform=Transform(translation=Vector3(x=2.0, y=0.0, z=0.0)),
+            transform=Transform(
+                translation=Vector3(x=2.0, y=0.0, z=0.0),
+                rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
         )
 
         ttbuffer.receive_transform(transform1, transform2)
@@ -295,13 +312,19 @@ class TestMultiTBuffer:
         transform1 = TransformStamped(
             header=Header(frame_id="world", stamp=time_from_seconds(time.time())),
             child_frame_id="robot1",
-            transform=Transform(translation=Vector3(x=1.0, y=0.0, z=0.0)),
+            transform=Transform(
+                translation=Vector3(x=1.0, y=0.0, z=0.0),
+                rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
         )
 
         transform2 = TransformStamped(
             header=Header(frame_id="world", stamp=time_from_seconds(time.time())),
             child_frame_id="robot2",
-            transform=Transform(translation=Vector3(x=2.0, y=0.0, z=0.0)),
+            transform=Transform(
+                translation=Vector3(x=2.0, y=0.0, z=0.0),
+                rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
         )
 
         ttbuffer.receive_transform(transform1, transform2)
@@ -318,7 +341,10 @@ class TestMultiTBuffer:
                 TransformStamped(
                     header=Header(frame_id="world", stamp=time_from_seconds(base_time)),
                     child_frame_id="robot",
-                    transform=Transform(translation=Vector3(x=1.0, y=0.0, z=0.0)),
+                    transform=Transform(
+                        translation=Vector3(x=1.0, y=0.0, z=0.0),
+                        rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                    ),
                 )
             )
 
@@ -351,7 +377,10 @@ class TestMultiTBuffer:
             TransformStamped(
                 header=Header(frame_id="world", stamp=time_from_seconds(base_time)),
                 child_frame_id="robot",
-                transform=Transform(translation=Vector3(x=2.0, y=0.0, z=0.0)),
+                transform=Transform(
+                    translation=Vector3(x=2.0, y=0.0, z=0.0),
+                    rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
             )
         )
 
@@ -371,7 +400,10 @@ class TestMultiTBuffer:
             TransformStamped(
                 header=Header(frame_id="world", stamp=time_from_seconds(base_time)),
                 child_frame_id="robot",
-                transform=Transform(translation=Vector3(x=1.0, y=0.0, z=0.0)),
+                transform=Transform(
+                    translation=Vector3(x=1.0, y=0.0, z=0.0),
+                    rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
             )
         )
 
@@ -381,7 +413,10 @@ class TestMultiTBuffer:
                 TransformStamped(
                     header=Header(frame_id="robot", stamp=time_from_seconds(base_time)),
                     child_frame_id="sensor",
-                    transform=Transform(translation=Vector3(x=0.0, y=2.0, z=0.0)),
+                    transform=Transform(
+                        translation=Vector3(x=0.0, y=2.0, z=0.0),
+                        rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                    ),
                 )
             )
 
@@ -405,7 +440,10 @@ class TestMultiTBuffer:
         transform = TransformStamped(
             header=Header(frame_id="world", stamp=time_from_seconds(base_time)),
             child_frame_id="robot",
-            transform=Transform(translation=Vector3(x=1.0, y=0.0, z=0.0)),
+            transform=Transform(
+                translation=Vector3(x=1.0, y=0.0, z=0.0),
+                rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
         )
         ttbuffer.receive_transform(transform)
 
@@ -423,12 +461,18 @@ class TestMultiTBuffer:
         transform1 = TransformStamped(
             header=Header(frame_id="world", stamp=time_from_seconds(base_time)),
             child_frame_id="robot",
-            transform=Transform(translation=Vector3(x=1.0, y=0.0, z=0.0)),
+            transform=Transform(
+                translation=Vector3(x=1.0, y=0.0, z=0.0),
+                rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
         )
         transform2 = TransformStamped(
             header=Header(frame_id="robot", stamp=time_from_seconds(base_time)),
             child_frame_id="sensor",
-            transform=Transform(translation=Vector3(x=0.0, y=2.0, z=0.0)),
+            transform=Transform(
+                translation=Vector3(x=0.0, y=2.0, z=0.0),
+                rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
         )
         ttbuffer.receive_transform(transform1, transform2)
 
@@ -450,27 +494,42 @@ class TestMultiTBuffer:
             TransformStamped(
                 header=Header(frame_id="world", stamp=time_from_seconds(base_time)),
                 child_frame_id="base",
-                transform=Transform(translation=Vector3(x=1.0, y=0.0, z=0.0)),
+                transform=Transform(
+                    translation=Vector3(x=1.0, y=0.0, z=0.0),
+                    rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
             ),
             TransformStamped(
                 header=Header(frame_id="base", stamp=time_from_seconds(base_time)),
                 child_frame_id="arm",
-                transform=Transform(translation=Vector3(x=0.0, y=1.0, z=0.0)),
+                transform=Transform(
+                    translation=Vector3(x=0.0, y=1.0, z=0.0),
+                    rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
             ),
             TransformStamped(
                 header=Header(frame_id="arm", stamp=time_from_seconds(base_time)),
                 child_frame_id="hand",
-                transform=Transform(translation=Vector3(x=0.0, y=0.0, z=1.0)),
+                transform=Transform(
+                    translation=Vector3(x=0.0, y=0.0, z=1.0),
+                    rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
             ),
             TransformStamped(
                 header=Header(frame_id="world", stamp=time_from_seconds(base_time)),
                 child_frame_id="robot",
-                transform=Transform(translation=Vector3(x=2.0, y=0.0, z=0.0)),
+                transform=Transform(
+                    translation=Vector3(x=2.0, y=0.0, z=0.0),
+                    rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
             ),
             TransformStamped(
                 header=Header(frame_id="robot", stamp=time_from_seconds(base_time)),
                 child_frame_id="sensor",
-                transform=Transform(translation=Vector3(x=0.0, y=2.0, z=0.0)),
+                transform=Transform(
+                    translation=Vector3(x=0.0, y=2.0, z=0.0),
+                    rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
             ),
         ]
 
@@ -493,12 +552,18 @@ class TestMultiTBuffer:
         transform1 = TransformStamped(
             header=Header(frame_id="world", stamp=time_from_seconds(base_time)),
             child_frame_id="robot",
-            transform=Transform(),
+            transform=Transform(
+                translation=Vector3(x=0.0, y=0.0, z=0.0),
+                rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
         )
         transform2 = TransformStamped(
             header=Header(frame_id="base", stamp=time_from_seconds(base_time)),
             child_frame_id="sensor",
-            transform=Transform(),
+            transform=Transform(
+                translation=Vector3(x=0.0, y=0.0, z=0.0),
+                rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
         )
         ttbuffer.receive_transform(transform1, transform2)
 
@@ -514,12 +579,18 @@ class TestMultiTBuffer:
         old_transform = TransformStamped(
             header=Header(frame_id="world", stamp=time_from_seconds(base_time - 10.0)),
             child_frame_id="robot",
-            transform=Transform(translation=Vector3(x=1.0, y=0.0, z=0.0)),
+            transform=Transform(
+                translation=Vector3(x=1.0, y=0.0, z=0.0),
+                rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
         )
         new_transform = TransformStamped(
             header=Header(frame_id="world", stamp=time_from_seconds(base_time)),
             child_frame_id="robot",
-            transform=Transform(translation=Vector3(x=2.0, y=0.0, z=0.0)),
+            transform=Transform(
+                translation=Vector3(x=2.0, y=0.0, z=0.0),
+                rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
         )
         ttbuffer.receive_transform(old_transform, new_transform)
 
@@ -545,22 +616,34 @@ class TestMultiTBuffer:
             TransformStamped(
                 header=Header(frame_id="world", stamp=time_from_seconds(base_time)),
                 child_frame_id="A",
-                transform=Transform(),
+                transform=Transform(
+                    translation=Vector3(x=0.0, y=0.0, z=0.0),
+                    rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
             ),
             TransformStamped(
                 header=Header(frame_id="A", stamp=time_from_seconds(base_time)),
                 child_frame_id="B",
-                transform=Transform(),
+                transform=Transform(
+                    translation=Vector3(x=0.0, y=0.0, z=0.0),
+                    rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
             ),
             TransformStamped(
                 header=Header(frame_id="B", stamp=time_from_seconds(base_time)),
                 child_frame_id="target",
-                transform=Transform(),
+                transform=Transform(
+                    translation=Vector3(x=0.0, y=0.0, z=0.0),
+                    rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
             ),
             TransformStamped(
                 header=Header(frame_id="world", stamp=time_from_seconds(base_time)),
                 child_frame_id="target",
-                transform=Transform(),
+                transform=Transform(
+                    translation=Vector3(x=0.0, y=0.0, z=0.0),
+                    rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
             ),
         ]
 
@@ -588,7 +671,10 @@ class TestMultiTBuffer:
             transform = TransformStamped(
                 header=Header(frame_id="world", stamp=time_from_seconds(base_time + i * 0.1)),
                 child_frame_id="robot",
-                transform=Transform(translation=Vector3(x=float(i), y=0.0, z=0.0)),
+                transform=Transform(
+                    translation=Vector3(x=float(i), y=0.0, z=0.0),
+                    rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
             )
             buffer.add(transform)
 
@@ -603,17 +689,26 @@ class TestMultiTBuffer:
             TransformStamped(
                 header=Header(frame_id="world", stamp=time_from_seconds(base_time)),
                 child_frame_id="robot1",
-                transform=Transform(),
+                transform=Transform(
+                    translation=Vector3(x=0.0, y=0.0, z=0.0),
+                    rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
             ),
             TransformStamped(
                 header=Header(frame_id="world", stamp=time_from_seconds(base_time + 0.5)),
                 child_frame_id="robot2",
-                transform=Transform(),
+                transform=Transform(
+                    translation=Vector3(x=0.0, y=0.0, z=0.0),
+                    rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
             ),
             TransformStamped(
                 header=Header(frame_id="robot1", stamp=time_from_seconds(base_time + 1.0)),
                 child_frame_id="sensor",
-                transform=Transform(),
+                transform=Transform(
+                    translation=Vector3(x=0.0, y=0.0, z=0.0),
+                    rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
             ),
         ]
 
@@ -640,7 +735,9 @@ def _t(parent: str, child: str, x: float, ts: float) -> TransformStamped:
     return TransformStamped(
         header=Header(frame_id=parent, stamp=time_from_seconds(ts)),
         child_frame_id=child,
-        transform=Transform(translation=Vector3(x=x, y=0.0, z=0.0)),
+        transform=Transform(
+            translation=Vector3(x=x, y=0.0, z=0.0), rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+        ),
     )
 
 
@@ -854,10 +951,18 @@ def test_buffer_retains_distinct_nanoseconds_and_owns_its_snapshots():
     first = TransformStamped(
         header=Header(frame_id="a", stamp=Time(sec=1700000000, nanosec=123456789)),
         child_frame_id="b",
+        transform=Transform(
+            translation=Vector3(x=0.0, y=0.0, z=0.0),
+            rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+        ),
     )
     second = TransformStamped(
         header=Header(frame_id="a", stamp=Time(sec=1700000000, nanosec=123456790)),
         child_frame_id="b",
+        transform=Transform(
+            translation=Vector3(x=0.0, y=0.0, z=0.0),
+            rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+        ),
     )
     buffer.add(first)
     buffer.add(second)
@@ -878,7 +983,16 @@ def test_buffer_retains_distinct_nanoseconds_and_owns_its_snapshots():
 def test_buffer_drops_out_of_order_data_older_than_retained_window():
     buffer = TBuffer(buffer_size=1)
     for sec in (10, 11, 1):
-        buffer.add(TransformStamped(header=Header(stamp=Time(sec=sec))))
+        buffer.add(
+            TransformStamped(
+                header=Header(stamp=Time(sec=sec, nanosec=0), frame_id=""),
+                child_frame_id="",
+                transform=Transform(
+                    translation=Vector3(x=0.0, y=0.0, z=0.0),
+                    rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+            )
+        )
     assert len(buffer) == 2
     first = buffer.first()
     assert first is not None
@@ -887,7 +1001,16 @@ def test_buffer_drops_out_of_order_data_older_than_retained_window():
 
 def test_buffer_preserves_negative_stamp():
     buffer = TBuffer()
-    buffer.add(TransformStamped(header=Header(stamp=Time(sec=-1, nanosec=500000000))))
+    buffer.add(
+        TransformStamped(
+            header=Header(stamp=Time(sec=-1, nanosec=500000000), frame_id=""),
+            child_frame_id="",
+            transform=Transform(
+                translation=Vector3(x=0.0, y=0.0, z=0.0),
+                rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+        )
+    )
     result = buffer.get(time_point=-0.5, time_tolerance=0)
     assert result is not None
     assert result.header.stamp == Time(sec=-1, nanosec=500000000)

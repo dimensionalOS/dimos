@@ -17,6 +17,9 @@
 from pathlib import Path
 from unittest.mock import MagicMock
 
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.std_msgs.msg import Header
+import numpy as np
 import pytest
 
 from dimos.msgs.time import duration_from_seconds, header_now
@@ -69,11 +72,25 @@ def test_preview_timing_uses_one_model_track() -> None:
 def test_visualizer_builds_full_model_preview_from_selected_canonical_joints() -> None:
     visualizer = ViserManipulationVisualizer()
     visualizer._model_config = _model()
-    visualizer._current_state = JointState(name=["left/j1", "right/j1"], position=[0.1, 0.2])
+    visualizer._current_state = JointState(
+        name=["left/j1", "right/j1"],
+        position=np.array([0.1, 0.2], dtype=np.float64),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
+    )
     trajectory = JointTrajectory(
         header=header_now(),
         joint_names=["right/j1"],
-        points=[JointTrajectoryPoint(positions=[0.8], time_from_start=duration_from_seconds(1.0))],
+        points=[
+            JointTrajectoryPoint(
+                positions=np.array([0.8], dtype=np.float64),
+                time_from_start=duration_from_seconds(1.0),
+                velocities=np.array([], dtype=np.float64),
+                accelerations=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            )
+        ],
     )
     preview = visualizer._raw_preview_animation(trajectory)
     assert preview == PreviewAnimation(("left/j1", "right/j1"), (PreviewFrame(1.0, (0.1, 0.8)),))
@@ -82,14 +99,24 @@ def test_visualizer_builds_full_model_preview_from_selected_canonical_joints() -
 def test_visualizer_rejects_unknown_or_duplicate_trajectory_joints() -> None:
     visualizer = ViserManipulationVisualizer()
     visualizer._model_config = _model()
-    visualizer._current_state = JointState(name=["left/j1", "right/j1"], position=[0.1, 0.2])
+    visualizer._current_state = JointState(
+        name=["left/j1", "right/j1"],
+        position=np.array([0.1, 0.2], dtype=np.float64),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
+    )
     for names in (["unknown"], ["left/j1", "left/j1"]):
         trajectory = JointTrajectory(
             header=header_now(),
             joint_names=names,
             points=[
                 JointTrajectoryPoint(
-                    positions=[0.0] * len(names), time_from_start=duration_from_seconds(1.0)
+                    positions=np.asarray([0.0] * len(names), dtype=np.float64),
+                    time_from_start=duration_from_seconds(1.0),
+                    velocities=np.array([], dtype=np.float64),
+                    accelerations=np.array([], dtype=np.float64),
+                    effort=np.array([], dtype=np.float64),
                 )
             ],
         )
@@ -104,6 +131,12 @@ def test_visualizer_initializes_and_updates_one_scene_model() -> None:
     visualizer._initialize_scene(PlanningSceneInfo(model=_model()))
     scene.register_model.assert_called_once()
 
-    state = JointState(name=["left/j1", "right/j1"], position=[0.1, 0.2])
+    state = JointState(
+        name=["left/j1", "right/j1"],
+        position=np.array([0.1, 0.2], dtype=np.float64),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
+    )
     visualizer.update_state(VisualizationStateFrame(joint_state=state))
     scene.update_current_model.assert_called_once_with(state)

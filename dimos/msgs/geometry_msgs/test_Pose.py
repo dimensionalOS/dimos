@@ -15,6 +15,7 @@
 import pickle
 
 from dimos_generated.geometry_msgs.msg import Point, Pose, Quaternion, Vector3
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 from rosbags.typesys import Stores, get_typestore
@@ -32,7 +33,9 @@ from dimos.msgs.geometry import (
 
 def test_pose_default_init() -> None:
     """Test that default initialization creates a pose at origin with identity orientation."""
-    pose = Pose()
+    pose = Pose(
+        position=Point(x=0.0, y=0.0, z=0.0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+    )
     assert pose.position.x == 0.0
     assert pose.position.y == 0.0
     assert pose.position.z == 0.0
@@ -47,7 +50,9 @@ def test_pose_default_init() -> None:
 
 def test_pose_pose_init() -> None:
     """Test initialization with position coordinates only (identity orientation)."""
-    pose_data = Pose(position=Point(x=1.0, y=2.0, z=3.0))
+    pose_data = Pose(
+        position=Point(x=1.0, y=2.0, z=3.0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+    )
     pose = pose_data
     assert pose.position.x == 1.0
     assert pose.position.y == 2.0
@@ -63,7 +68,9 @@ def test_pose_pose_init() -> None:
 
 def test_pose_position_init() -> None:
     """Test initialization with position coordinates only (identity orientation)."""
-    pose = Pose(position=Point(x=1.0, y=2.0, z=3.0))
+    pose = Pose(
+        position=Point(x=1.0, y=2.0, z=3.0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+    )
     assert pose.position.x == 1.0
     assert pose.position.y == 2.0
     assert pose.position.z == 3.0
@@ -96,7 +103,10 @@ def test_pose_full_init() -> None:
 def test_pose_vector_position_init() -> None:
     """Test initialization with Vector3 position (identity orientation)."""
     position = Vector3(x=4.0, y=5.0, z=6.0)
-    pose = Pose(position=point_from_array(vector_array(position)))
+    pose = Pose(
+        position=point_from_array(vector_array(position)),
+        orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+    )
     assert pose.position.x == 4.0
     assert pose.position.y == 5.0
     assert pose.position.z == 6.0
@@ -175,7 +185,7 @@ def test_pose_copy_init() -> None:
     original = Pose(
         position=Point(x=1.0, y=2.0, z=3.0), orientation=Quaternion(x=0.1, y=0.2, z=0.3, w=0.9)
     )
-    copy = Pose.decode(original.encode())
+    copy = cdr_decode(cdr_encode(original), Pose)
     assert copy.position.x == 1.0
     assert copy.position.y == 2.0
     assert copy.position.z == 3.0
@@ -189,7 +199,9 @@ def test_pose_copy_init() -> None:
 
 def test_pose_mutated_value_copy() -> None:
     """Test initialization from a generated Pose."""
-    source_pose = Pose()
+    source_pose = Pose(
+        position=Point(x=0.0, y=0.0, z=0.0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+    )
     source_pose.position.x = 1.0
     source_pose.position.y = 2.0
     source_pose.position.z = 3.0
@@ -197,7 +209,7 @@ def test_pose_mutated_value_copy() -> None:
     source_pose.orientation.y = 0.2
     source_pose.orientation.z = 0.3
     source_pose.orientation.w = 0.9
-    pose = Pose.decode(source_pose.encode())
+    pose = cdr_decode(cdr_encode(source_pose), Pose)
     assert pose.position.x == 1.0
     assert pose.position.y == 2.0
     assert pose.position.z == 3.0
@@ -223,7 +235,9 @@ def test_pose_properties() -> None:
 
 def test_pose_euler_properties_identity() -> None:
     """Test pose Euler angle properties with identity orientation."""
-    pose = Pose(position=Point(x=1.0, y=2.0, z=3.0))
+    pose = Pose(
+        position=Point(x=1.0, y=2.0, z=3.0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+    )
     assert np.isclose(quaternion_euler(pose.orientation)[0], 0.0, atol=1e-10)
     assert np.isclose(quaternion_euler(pose.orientation)[1], 0.0, atol=1e-10)
     assert np.isclose(quaternion_euler(pose.orientation)[2], 0.0, atol=1e-10)
@@ -237,7 +251,7 @@ def test_pose_independent_cdr_fields() -> None:
         position=Point(x=1.234, y=2.567, z=3.891),
         orientation=Quaternion(x=0.1, y=0.2, z=0.3, w=0.9),
     )
-    decoded = get_typestore(Stores.ROS2_JAZZY).deserialize_cdr(source.encode(), Pose.msg_name)
+    decoded = get_typestore(Stores.ROS2_JAZZY).deserialize_cdr(cdr_encode(source), Pose.__msgtype__)
     assert (decoded.position.x, decoded.position.y, decoded.position.z) == (1.234, 2.567, 3.891)
     assert (
         decoded.orientation.x,
@@ -307,7 +321,7 @@ def test_pose_with_mixed_types() -> None:
 
 
 def test_pose_nested_value_copy() -> None:
-    source = Pose(position=Point(x=1, y=2, z=3))
+    source = Pose(position=Point(x=1, y=2, z=3), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0))
     copied = Pose(position=source.position, orientation=source.orientation)
     copied.position.x = 10
     assert source.position == Point(x=1, y=2, z=3)
@@ -361,7 +375,9 @@ def test_pose_euler_roundtrip() -> None:
 
 def test_pose_zero_position() -> None:
     """Test pose with zero position vector."""
-    pose = Pose(position=Point(x=0.0, y=0.0, z=0.0))
+    pose = Pose(
+        position=Point(x=0.0, y=0.0, z=0.0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+    )
     assert pose.position.x == 0.0
     assert pose.position.y == 0.0
     assert pose.position.z == 0.0
@@ -372,15 +388,24 @@ def test_pose_zero_position() -> None:
 
 def test_pose_unit_vectors() -> None:
     """Test pose with unit vector positions."""
-    pose_x = Pose(position=point_from_array(vector_array(Vector3(x=1))))
+    pose_x = Pose(
+        position=point_from_array(vector_array(Vector3(x=1, y=0.0, z=0.0))),
+        orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+    )
     assert pose_x.position.x == 1.0
     assert pose_x.position.y == 0.0
     assert pose_x.position.z == 0.0
-    pose_y = Pose(position=point_from_array(vector_array(Vector3(y=1))))
+    pose_y = Pose(
+        position=point_from_array(vector_array(Vector3(y=1, x=0.0, z=0.0))),
+        orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+    )
     assert pose_y.position.x == 0.0
     assert pose_y.position.y == 1.0
     assert pose_y.position.z == 0.0
-    pose_z = Pose(position=point_from_array(vector_array(Vector3(z=1))))
+    pose_z = Pose(
+        position=point_from_array(vector_array(Vector3(z=1, x=0.0, y=0.0))),
+        orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+    )
     assert pose_z.position.x == 0.0
     assert pose_z.position.y == 0.0
     assert pose_z.position.z == 1.0
@@ -404,7 +429,10 @@ def test_pose_negative_coordinates() -> None:
 def test_pose_large_coordinates() -> None:
     """Test pose with large coordinate values."""
     large_value = 1000.0
-    pose = Pose(position=Point(x=large_value, y=large_value, z=large_value))
+    pose = Pose(
+        position=Point(x=large_value, y=large_value, z=large_value),
+        orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+    )
     assert pose.position.x == large_value
     assert pose.position.y == large_value
     assert pose.position.z == large_value
@@ -420,7 +448,7 @@ def test_pose_large_coordinates() -> None:
 )
 def test_pose_parametrized_positions(x, y, z) -> None:
     """Parametrized test for various position values."""
-    pose = Pose(position=Point(x=x, y=y, z=z))
+    pose = Pose(position=Point(x=x, y=y, z=z), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0))
     assert pose.position.x == x
     assert pose.position.y == y
     assert pose.position.z == z
@@ -459,8 +487,8 @@ def test_cdr_encode_decode() -> None:
         pose_source = Pose(
             position=Point(x=1.0, y=2.0, z=3.0), orientation=Quaternion(x=0.1, y=0.2, z=0.3, w=0.9)
         )
-        binary_msg = pose_source.encode()
-        pose_dest = Pose.decode(binary_msg)
+        binary_msg = cdr_encode(pose_source)
+        pose_dest = cdr_decode(binary_msg, Pose)
         assert isinstance(pose_dest, Pose)
         assert pose_dest is not pose_source
         assert pose_dest == pose_source
@@ -492,8 +520,12 @@ def test_pickle_encode_decode() -> None:
 
 def test_pose_addition_translation_only() -> None:
     """Test pose addition with translation only (identity rotations)."""
-    pose1 = Pose(position=Point(x=1.0, y=2.0, z=3.0))
-    pose2 = Pose(position=Point(x=4.0, y=5.0, z=6.0))
+    pose1 = Pose(
+        position=Point(x=1.0, y=2.0, z=3.0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+    )
+    pose2 = Pose(
+        position=Point(x=4.0, y=5.0, z=6.0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+    )
     result = compose_poses(pose1, pose2)
     assert result.position.x == 5.0
     assert result.position.y == 7.0
@@ -511,7 +543,9 @@ def test_pose_addition_with_rotation() -> None:
         position=Point(x=0.0, y=0.0, z=0.0),
         orientation=Quaternion(x=0.0, y=0.0, z=np.sin(angle / 2), w=np.cos(angle / 2)),
     )
-    pose2 = Pose(position=Point(x=1.0, y=0.0, z=0.0))
+    pose2 = Pose(
+        position=Point(x=1.0, y=0.0, z=0.0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+    )
     result = compose_poses(pose1, pose2)
     assert np.isclose(result.position.x, 0.0, atol=1e-10)
     assert np.isclose(result.position.y, 1.0, atol=1e-10)
@@ -549,7 +583,9 @@ def test_pose_addition_full_transform() -> None:
         position=Point(x=2.0, y=1.0, z=0.0),
         orientation=Quaternion(x=0.0, y=0.0, z=np.sin(robot_yaw / 2), w=np.cos(robot_yaw / 2)),
     )
-    object_in_robot = Pose(position=Point(x=3.0, y=-1.0, z=0.0))
+    object_in_robot = Pose(
+        position=Point(x=3.0, y=-1.0, z=0.0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+    )
     object_in_world = compose_poses(robot_pose, object_in_robot)
     assert np.isclose(object_in_world.position.x, 3.0, atol=1e-10)
     assert np.isclose(object_in_world.position.y, 4.0, atol=1e-10)
@@ -559,9 +595,15 @@ def test_pose_addition_full_transform() -> None:
 
 def test_pose_addition_chain() -> None:
     """Test chaining multiple pose additions."""
-    pose1 = Pose(position=Point(x=1.0, y=0.0, z=0.0))
-    pose2 = Pose(position=Point(x=0.0, y=1.0, z=0.0))
-    pose3 = Pose(position=Point(x=0.0, y=0.0, z=1.0))
+    pose1 = Pose(
+        position=Point(x=1.0, y=0.0, z=0.0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+    )
+    pose2 = Pose(
+        position=Point(x=0.0, y=1.0, z=0.0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+    )
+    pose3 = Pose(
+        position=Point(x=0.0, y=0.0, z=1.0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+    )
     result = compose_poses(compose_poses(pose1, pose2), pose3)
     assert result.position.x == 1.0
     assert result.position.y == 1.0
@@ -570,7 +612,9 @@ def test_pose_addition_chain() -> None:
 
 def test_pose_addition_with_convertible() -> None:
     """Test pose addition with convertible types."""
-    pose1 = Pose(position=Point(x=1.0, y=2.0, z=3.0))
+    pose1 = Pose(
+        position=Point(x=1.0, y=2.0, z=3.0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+    )
     pose_tuple = ([4.0, 5.0, 6.0], [0.0, 0.0, 0.0, 1.0])
     result1 = compose_poses(
         pose1,
@@ -600,7 +644,9 @@ def test_pose_identity_addition() -> None:
     pose = Pose(
         position=Point(x=1.0, y=2.0, z=3.0), orientation=Quaternion(x=0.1, y=0.2, z=0.3, w=0.9)
     )
-    identity = Pose()
+    identity = Pose(
+        position=Point(x=0.0, y=0.0, z=0.0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+    )
     result = compose_poses(pose, identity)
     assert result.position.x == pose.position.x
     assert result.position.y == pose.position.y
@@ -618,7 +664,9 @@ def test_pose_addition_3d_rotation() -> None:
         position=Point(x=1.0, y=0.0, z=0.0),
         orientation=Quaternion(x=np.sin(roll / 2), y=0.0, z=0.0, w=np.cos(roll / 2)),
     )
-    pose2 = Pose(position=Point(x=0.0, y=1.0, z=1.0))
+    pose2 = Pose(
+        position=Point(x=0.0, y=1.0, z=1.0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+    )
     result = compose_poses(pose1, pose2)
     cos45 = np.cos(roll)
     sin45 = np.sin(roll)

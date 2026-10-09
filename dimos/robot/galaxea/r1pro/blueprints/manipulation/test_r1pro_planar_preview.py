@@ -15,6 +15,7 @@
 """R1 Pro real-hardware and planar-preview blueprint contracts."""
 
 from dimos_generated.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+import numpy as np
 import pytest
 
 from dimos.control.components import HardwareType, make_twist_base_joints
@@ -49,13 +50,17 @@ def _forward(distance: float, duration: float) -> JointTrajectory:
         points=[
             JointTrajectoryPoint(
                 time_from_start=duration_from_seconds(0.0),
-                positions=[0.0, 0.0, 0.0],
-                velocities=velocity,
+                positions=np.array([0.0, 0.0, 0.0], dtype=np.float64),
+                velocities=np.asarray(velocity, dtype=np.float64),
+                accelerations=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
             ),
             JointTrajectoryPoint(
                 time_from_start=duration_from_seconds(duration),
-                positions=[distance, 0.0, 0.0],
-                velocities=velocity,
+                positions=np.array([distance, 0.0, 0.0], dtype=np.float64),
+                velocities=np.asarray(velocity, dtype=np.float64),
+                accelerations=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
             ),
         ],
     )

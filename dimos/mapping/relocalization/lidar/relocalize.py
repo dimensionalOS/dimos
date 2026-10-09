@@ -37,6 +37,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, NamedTuple
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import TransformStamped
 from dimos_generated.std_msgs.msg import Header
 import numpy as np
@@ -266,7 +267,7 @@ class LidarRelocalizer:
         if result.fitness < self.config.fitness_threshold:
             return None
         placement = TransformStamped(
-            header=Header(frame_id=map_frame),
+            header=Header(frame_id=map_frame, stamp=Time(sec=0, nanosec=0)),
             child_frame_id=world_frame,
             transform=transform_from_matrix(np.asarray(result.transformation)),
         )

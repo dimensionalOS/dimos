@@ -18,7 +18,7 @@ import time
 import traceback
 from typing import Literal, TypeAlias
 
-from dimos_generated.geometry_msgs.msg import PoseStamped, Twist
+from dimos_generated.geometry_msgs.msg import PoseStamped, Twist, Vector3
 from dimos_generated.nav_msgs.msg import OccupancyGrid, Path
 import numpy as np
 from reactivex import Subject
@@ -130,7 +130,9 @@ class LocalPlanner(Resource):
         with self._lock:
             self._thread = None
         self._reset_state()
-        self.cmd_vel.on_next(Twist())
+        self.cmd_vel.on_next(
+            Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+        )
 
     def get_state(self) -> NavigationState:
         with self._lock:
@@ -157,7 +159,9 @@ class LocalPlanner(Resource):
             self.stopped_navigating.on_next("error")
         finally:
             self._reset_state()
-            self.cmd_vel.on_next(Twist())
+            self.cmd_vel.on_next(
+                Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+            )
 
     def _change_state(self, new_state: PlannerState) -> None:
         if new_state == self._state:
@@ -310,7 +314,7 @@ class LocalPlanner(Resource):
             logger.info("Final rotation complete, goal reached")
             with self._lock:
                 self._change_state("arrived")
-            return Twist()
+            return Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
 
         return self._controller.rotate(yaw_error)
 

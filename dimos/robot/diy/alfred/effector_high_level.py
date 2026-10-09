@@ -178,7 +178,7 @@ class AlfredHighLevel(Module):
         self, x: float, y: float = 0.0, yaw: float = 0.0, duration: float = 0.0
     ) -> str:
         """Move the Alfred at the given velocity for ``duration`` seconds."""
-        twist = Twist(linear=Vector3(x=x, y=y), angular=Vector3(z=yaw))
+        twist = Twist(linear=Vector3(x=x, y=y, z=0.0), angular=Vector3(z=yaw, x=0.0, y=0.0))
         await self.move(twist, duration=duration)
         return f"Started moving with velocity=({x}, {y}, {yaw}) for {duration} seconds"
 
@@ -213,7 +213,9 @@ class AlfredHighLevel(Module):
                 # Odometry comes back in the inverted-Y frame move() sends into.
                 y, yaw = -y, -yaw
                 # The controller reports no velocity, so difference consecutive poses.
-                twist = Twist()
+                twist = Twist(
+                    linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)
+                )
                 if previous is not None:
                     last_ts, last_x, last_y, last_yaw = previous
                     dt = ts - last_ts
@@ -225,8 +227,8 @@ class AlfredHighLevel(Module):
                         forward = math.cos(heading) * dx + math.sin(heading) * dy
                         left = -math.sin(heading) * dx + math.cos(heading) * dy
                         twist = Twist(
-                            linear=Vector3(x=forward / dt, y=left / dt),
-                            angular=Vector3(z=turn / dt),
+                            linear=Vector3(x=forward / dt, y=left / dt, z=0.0),
+                            angular=Vector3(z=turn / dt, x=0.0, y=0.0),
                         )
                 previous = (ts, x, y, yaw)
 
@@ -238,11 +240,14 @@ class AlfredHighLevel(Module):
                         child_frame_id=self.config.base_frame_id,
                         pose=PoseWithCovariance(
                             pose=Pose(
-                                position=Point(x=x, y=y),
+                                position=Point(x=x, y=y, z=0.0),
                                 orientation=quaternion_from_euler(0.0, 0.0, yaw),
-                            )
+                            ),
+                            covariance=np.zeros(36, dtype=np.float64),
                         ),
-                        twist=TwistWithCovariance(twist=twist),
+                        twist=TwistWithCovariance(
+                            twist=twist, covariance=np.zeros(36, dtype=np.float64)
+                        ),
                     )
                 )
             except asyncio.CancelledError:

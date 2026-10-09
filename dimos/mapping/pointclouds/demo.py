@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.nav_msgs.msg import OccupancyGrid
 from dimos_generated.std_msgs.msg import Header
 import numpy as np
@@ -49,7 +50,10 @@ def _get_occupancy_grid() -> OccupancyGrid:
     min_height = 0.15
     max_height = 0.6
     occupancygrid = simple_occupancy(
-        pointcloud_from_xyz(np.asarray(_get_sum_map().points), header=Header(frame_id="world")),
+        pointcloud_from_xyz(
+            np.asarray(_get_sum_map().points),
+            header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+        ),
         resolution=resolution,
         min_height=min_height,
         max_height=max_height,

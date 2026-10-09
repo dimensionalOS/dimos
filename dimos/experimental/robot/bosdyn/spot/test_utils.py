@@ -19,9 +19,10 @@ from types import ModuleType, SimpleNamespace
 
 import cv2
 from dimos_generated.builtin_interfaces.msg import Time
-from dimos_generated.geometry_msgs.msg import Transform, TransformStamped, Vector3
+from dimos_generated.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos_generated.sensor_msgs.msg import Image
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 
@@ -74,7 +75,9 @@ def test_optical_roll_preserves_mount_and_exact_stamp(turns):
     edge = TransformStamped(
         header=Header(frame_id="body", stamp=Time(sec=1700000000, nanosec=123456789)),
         child_frame_id="optical",
-        transform=Transform(translation=Vector3(x=1, y=2, z=3)),
+        transform=Transform(
+            translation=Vector3(x=1, y=2, z=3), rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+        ),
     )
     rolled = roll_optical_frame(edge, turns)
     assert rolled.header == edge.header
@@ -130,7 +133,7 @@ def test_sdk_raw_camera_boundary_emits_generated_pixels(
     clock = SimpleNamespace(local_seconds_from_robot_timestamp=lambda stamp: 1700000000.25)
     value = decode_image(response, "camera-optical", clock)
     assert type(value) is Image and value.encoding == encoding
-    decoded = Image.decode(value.encode())
+    decoded = cdr_decode(value.encode(), Image)
     assert decoded.header.frame_id == "camera-optical"
     assert decoded.header.stamp == Time(sec=1700000000, nanosec=250000000)
     np.testing.assert_array_equal(image_view(decoded), pixels)
@@ -145,7 +148,7 @@ def test_sdk_jpeg_camera_boundary_decodes_generated_image(image_sdk):
     clock = SimpleNamespace(local_seconds_from_robot_timestamp=lambda stamp: 1700000000.25)
     value = decode_image(response, "camera-optical", clock)
     assert type(value) is Image and value.encoding == "bgr8"
-    np.testing.assert_allclose(image_view(Image.decode(value.encode())), pixels, atol=2)
+    np.testing.assert_allclose(image_view(cdr_decode(value.encode(), Image)), pixels, atol=2)
 
 
 @pytest.mark.parametrize("turns", [-1, 0, 1, 2, 4])
@@ -154,7 +157,7 @@ def test_generated_camera_rotation_preserves_depth_header_and_intrinsics(turns):
     pixels = np.arange(6, dtype=np.uint16).reshape(2, 3) * 1000
     image = image_from_array(pixels, encoding="16UC1", header=header)
     info = camera_info_from_intrinsics(10, 20, 1, 0.5, 3, 2, header=header)
-    before_image, before_info = image.encode(), info.encode()
+    before_image, before_info = cdr_encode(image), cdr_encode(info)
     rotated = rotate_image_quarter_turns(image, turns)
     calibration = rotate_camera_info_quarter_turns(info, turns)
     np.testing.assert_array_equal(image_view(rotated), np.rot90(pixels, k=turns))
@@ -166,7 +169,7 @@ def test_generated_camera_rotation_preserves_depth_header_and_intrinsics(turns):
         cx, cy = cy, width - 1 - cx
         width, height = height, width
     assert list(calibration.k) == [expected_fx, 0, cx, 0, expected_fy, cy, 0, 0, 1]
-    assert image.encode() == before_image and info.encode() == before_info
+    assert cdr_encode(image) == before_image and cdr_encode(info) == before_info
 
 
 def test_sdk_calibration_boundary_emits_plain_generated_value():

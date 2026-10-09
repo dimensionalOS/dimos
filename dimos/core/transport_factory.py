@@ -82,7 +82,7 @@ def default_zenoh_qos_for(name: str, msg_name: str) -> ZenohQoS | None:
 
 def default_zenoh_qos(name: str, msg_type: type | None = None) -> ZenohQoS | None:
     """Default publisher QoS for a logical channel; None = zenoh defaults."""
-    return default_zenoh_qos_for(name, getattr(msg_type, "msg_name", ""))
+    return default_zenoh_qos_for(name, getattr(msg_type, "__msgtype__", ""))
 
 
 def make_transport(

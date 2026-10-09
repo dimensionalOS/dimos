@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import sys
+
 from mcap.reader import make_reader
 from mcap.records import Chunk
 from mcap.stream_reader import StreamReader
@@ -20,6 +22,20 @@ from rosbags.typesys import Stores, get_types_from_msg, get_typestore
 
 from dimos.message_codegen.definitions import Definitions
 from dimos.protocol.cdr_mcap import CdrMcapWriter
+
+
+@pytest.fixture(autouse=True)
+def restore_reference_types_module():
+    # Independent oracle stores own a process-global module. Restore it so they
+    # do not invalidate the canonical registry's native class pickle identities.
+    previous = sys.modules.get("rosbags.usertypes")
+    try:
+        yield
+    finally:
+        if previous is None:
+            sys.modules.pop("rosbags.usertypes", None)
+        else:
+            sys.modules["rosbags.usertypes"] = previous
 
 
 @pytest.fixture

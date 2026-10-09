@@ -16,8 +16,11 @@
 
 from unittest.mock import MagicMock
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.std_msgs.msg import Header
 from dimos_generated.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+import numpy as np
 import pytest
 
 from dimos.manipulation.planning.groups.models import (
@@ -65,9 +68,27 @@ def _selection() -> PlanningGroupSelection:
 def _path() -> list[JointState]:
     names = ["arm/a", "arm/b"]
     return [
-        JointState(name=names, position=[0.0, 0.0]),
-        JointState(name=names, position=[0.2, 0.1]),
-        JointState(name=names, position=[0.4, 0.0]),
+        JointState(
+            name=names,
+            position=np.array([0.0, 0.0], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        ),
+        JointState(
+            name=names,
+            position=np.array([0.2, 0.1], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        ),
+        JointState(
+            name=names,
+            position=np.array([0.4, 0.0], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        ),
     ]
 
 
@@ -78,13 +99,17 @@ def _output() -> JointTrajectory:
         points=[
             JointTrajectoryPoint(
                 time_from_start=duration_from_seconds(0.0),
-                positions=[0.0, 0.0],
-                velocities=[0.0, 0.0],
+                positions=np.array([0.0, 0.0], dtype=np.float64),
+                velocities=np.array([0.0, 0.0], dtype=np.float64),
+                accelerations=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
             ),
             JointTrajectoryPoint(
                 time_from_start=duration_from_seconds(0.5),
-                positions=[0.4, 0.0],
-                velocities=[0.0, 0.0],
+                positions=np.array([0.4, 0.0], dtype=np.float64),
+                velocities=np.array([0.0, 0.0], dtype=np.float64),
+                accelerations=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
             ),
         ],
     )
@@ -123,13 +148,17 @@ def test_timed_planner_result_bypasses_backend_path_conversion() -> None:
     path = [
         JointState(
             name=["arm/a", "arm/b"],
-            position=[0.0, 0.0],
-            velocity=[0.0, 0.0],
+            position=np.array([0.0, 0.0], dtype=np.float64),
+            velocity=np.array([0.0, 0.0], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            effort=np.array([], dtype=np.float64),
         ),
         JointState(
             name=["arm/a", "arm/b"],
-            position=[0.4, 0.0],
-            velocity=[0.3, 0.0],
+            position=np.array([0.4, 0.0], dtype=np.float64),
+            velocity=np.array([0.3, 0.0], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            effort=np.array([], dtype=np.float64),
         ),
     ]
 
@@ -202,22 +231,58 @@ def test_rejects_backend_trajectory_that_changes_path_goal() -> None:
     [
         (
             [
-                JointState(name=["arm/a", "arm/b"], position=[0.0, 0.0]),
-                JointState(name=["wrong/a", "wrong/b"], position=[0.4, 0.0]),
+                JointState(
+                    name=["arm/a", "arm/b"],
+                    position=np.array([0.0, 0.0], dtype=np.float64),
+                    header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                    velocity=np.array([], dtype=np.float64),
+                    effort=np.array([], dtype=np.float64),
+                ),
+                JointState(
+                    name=["wrong/a", "wrong/b"],
+                    position=np.array([0.4, 0.0], dtype=np.float64),
+                    header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                    velocity=np.array([], dtype=np.float64),
+                    effort=np.array([], dtype=np.float64),
+                ),
             ],
             "joint names",
         ),
         (
             [
-                JointState(name=["arm/a", "arm/b"], position=[0.0, 0.0]),
-                JointState(name=["arm/a", "arm/b"], position=[0.4]),
+                JointState(
+                    name=["arm/a", "arm/b"],
+                    position=np.array([0.0, 0.0], dtype=np.float64),
+                    header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                    velocity=np.array([], dtype=np.float64),
+                    effort=np.array([], dtype=np.float64),
+                ),
+                JointState(
+                    name=["arm/a", "arm/b"],
+                    position=np.array([0.4], dtype=np.float64),
+                    header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                    velocity=np.array([], dtype=np.float64),
+                    effort=np.array([], dtype=np.float64),
+                ),
             ],
             "dimension",
         ),
         (
             [
-                JointState(name=["arm/a", "arm/b"], position=[0.0, 0.0]),
-                JointState(name=["arm/a", "arm/b"], position=[float("nan"), 0.0]),
+                JointState(
+                    name=["arm/a", "arm/b"],
+                    position=np.array([0.0, 0.0], dtype=np.float64),
+                    header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                    velocity=np.array([], dtype=np.float64),
+                    effort=np.array([], dtype=np.float64),
+                ),
+                JointState(
+                    name=["arm/a", "arm/b"],
+                    position=np.array([float("nan"), 0.0], dtype=np.float64),
+                    header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                    velocity=np.array([], dtype=np.float64),
+                    effort=np.array([], dtype=np.float64),
+                ),
             ],
             "non-finite",
         ),

@@ -26,6 +26,7 @@ import math
 from pathlib import Path as _FsPath
 from typing import Any, Literal
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped
 from dimos_generated.nav_msgs.msg import Path
 from dimos_generated.std_msgs.msg import Float32, Header
@@ -79,7 +80,7 @@ def _clamp(v: float, limit: float) -> float:
 
 def _pose_stamped(pose: tuple[float, float, float]) -> PoseStamped:
     return PoseStamped(
-        header=Header(frame_id=""),
+        header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
         pose=Pose(
             position=Point(x=pose[0], y=pose[1], z=0.0),
             orientation=quaternion_from_euler(0.0, 0.0, pose[2]),

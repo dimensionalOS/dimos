@@ -18,10 +18,12 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-from dimos_generated.geometry_msgs.msg import Pose, PoseStamped
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from dimos_generated.sensor_msgs.msg import JointState
 from dimos_generated.std_msgs.msg import Header
 from dimos_generated.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+import numpy as np
 
 from dimos.manipulation.manipulation_spec import (
     CommandResult,
@@ -63,13 +65,27 @@ def _plan() -> GeneratedPlan:
         header=header_now(),
         joint_names=["left/j1", "left/j2"],
         points=[
-            JointTrajectoryPoint(positions=[0.4, 0.5], time_from_start=duration_from_seconds(1.0))
+            JointTrajectoryPoint(
+                positions=np.array([0.4, 0.5], dtype=np.float64),
+                time_from_start=duration_from_seconds(1.0),
+                velocities=np.array([], dtype=np.float64),
+                accelerations=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            )
         ],
     )
     return GeneratedPlan(
         group_ids=("left_arm",),
         trajectory=trajectory,
-        path=[JointState(name=trajectory.joint_names, position=[0.4, 0.5])],
+        path=[
+            JointState(
+                name=trajectory.joint_names,
+                position=np.array([0.4, 0.5], dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            )
+        ],
         status=PlanningStatus.SUCCESS,
     )
 
@@ -85,7 +101,13 @@ def _operator() -> tuple[ManipulationOperator, MagicMock, MagicMock]:
     module.get_init_joints.return_value = None
     module.inverse_kinematics.return_value = IKResult(
         status=IKStatus.SUCCESS,
-        joint_state=JointState(name=["left/j1", "left/j2"], position=[0.4, 0.5]),
+        joint_state=JointState(
+            name=["left/j1", "left/j2"],
+            position=np.array([0.4, 0.5], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        ),
     )
     module.generate_plan_to_joint_targets.return_value = _plan()
     module.generate_plan_to_pose_targets.return_value = _plan()
@@ -98,11 +120,18 @@ def _operator() -> tuple[ManipulationOperator, MagicMock, MagicMock]:
     monitor = MagicMock()
     monitor.planning_groups = PlanningGroupRegistry(config.planning_groups)
     monitor.get_current_joint_state.return_value = JointState(
-        name=config.joint_names, position=[0.0, 0.0, 0.0]
+        name=config.joint_names,
+        position=np.array([0.0, 0.0, 0.0], dtype=np.float64),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
     )
     monitor.is_state_valid.return_value = True
     monitor.get_group_ee_pose.return_value = PoseStamped(
-        header=Header(frame_id="world"), pose=Pose()
+        header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+        pose=Pose(
+            position=Point(x=0.0, y=0.0, z=0.0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+        ),
     )
     return ManipulationOperator(module, monitor), module, monitor
 
@@ -118,7 +147,13 @@ def test_joint_evaluation_overlays_selected_target_on_complete_model_state() -> 
     operator, _, monitor = _operator()
     request = JointTargetRequest(
         ("left_arm",),
-        JointState(name=["left/j1", "left/j2"], position=[0.1, 0.2]),
+        JointState(
+            name=["left/j1", "left/j2"],
+            position=np.array([0.1, 0.2], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        ),
     )
     result = operator.evaluate_joint_target(request)
     assert result.success
@@ -130,12 +165,34 @@ def test_joint_evaluation_overlays_selected_target_on_complete_model_state() -> 
 def test_joint_evaluation_rejects_noncanonical_unknown_and_overlapping_selection() -> None:
     operator, _, _ = _operator()
     noncanonical = JointTargetRequest(
-        ("left_arm",), JointState(name=["j1", "j2"], position=[0.1, 0.2])
+        ("left_arm",),
+        JointState(
+            name=["j1", "j2"],
+            position=np.array([0.1, 0.2], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        ),
     )
-    unknown = JointTargetRequest(("missing",), JointState(name=["left/j1"], position=[0.1]))
+    unknown = JointTargetRequest(
+        ("missing",),
+        JointState(
+            name=["left/j1"],
+            position=np.array([0.1], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        ),
+    )
     duplicate = JointTargetRequest(
         ("left_arm", "left_arm"),
-        JointState(name=["left/j1", "left/j2"], position=[0.1, 0.2]),
+        JointState(
+            name=["left/j1", "left/j2"],
+            position=np.array([0.1, 0.2], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        ),
     )
     assert all(
         not operator.evaluate_joint_target(request).success
@@ -145,8 +202,19 @@ def test_joint_evaluation_rejects_noncanonical_unknown_and_overlapping_selection
 
 def test_pose_evaluation_routes_group_id_and_canonical_seed() -> None:
     operator, module, _ = _operator()
-    pose = PoseStamped(header=Header(frame_id="world"), pose=Pose())
-    seed = JointState(name=["left/j1", "left/j2"], position=[0.0, 0.0])
+    pose = PoseStamped(
+        header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+        pose=Pose(
+            position=Point(x=0.0, y=0.0, z=0.0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+        ),
+    )
+    seed = JointState(
+        name=["left/j1", "left/j2"],
+        position=np.array([0.0, 0.0], dtype=np.float64),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
+    )
     result = operator.evaluate_pose_target(PoseTargetRequest({"left_arm": pose}, seed=seed))
     assert result.success
     module.inverse_kinematics.assert_called_once_with(
@@ -157,11 +225,33 @@ def test_pose_evaluation_routes_group_id_and_canonical_seed() -> None:
 def test_pose_evaluation_rejects_non_world_frame_and_ambiguous_local_seed() -> None:
     operator, _, _ = _operator()
     bad_frame = PoseTargetRequest(
-        {"left_arm": PoseStamped(header=Header(frame_id="camera"), pose=Pose())}
+        {
+            "left_arm": PoseStamped(
+                header=Header(frame_id="camera", stamp=Time(sec=0, nanosec=0)),
+                pose=Pose(
+                    position=Point(x=0.0, y=0.0, z=0.0),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+            )
+        }
     )
     bad_seed = PoseTargetRequest(
-        {"left_arm": PoseStamped(header=Header(frame_id="world"), pose=Pose())},
-        seed=JointState(name=["j1", "j2"], position=[0.0, 0.0]),
+        {
+            "left_arm": PoseStamped(
+                header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+                pose=Pose(
+                    position=Point(x=0.0, y=0.0, z=0.0),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+            )
+        },
+        seed=JointState(
+            name=["j1", "j2"],
+            position=np.array([0.0, 0.0], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        ),
     )
     assert not operator.evaluate_pose_target(bad_frame).success
     assert not operator.evaluate_pose_target(bad_seed).success
@@ -170,10 +260,25 @@ def test_pose_evaluation_rejects_non_world_frame_and_ambiguous_local_seed() -> N
 def test_planning_and_actions_return_exact_generated_plan() -> None:
     operator, module, _ = _operator()
     joint_request = JointTargetRequest(
-        ("left_arm",), JointState(name=["left/j1", "left/j2"], position=[0.1, 0.2])
+        ("left_arm",),
+        JointState(
+            name=["left/j1", "left/j2"],
+            position=np.array([0.1, 0.2], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        ),
     )
     pose_request = PoseTargetRequest(
-        {"left_arm": PoseStamped(header=Header(frame_id="world"), pose=Pose())}
+        {
+            "left_arm": PoseStamped(
+                header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+                pose=Pose(
+                    position=Point(x=0.0, y=0.0, z=0.0),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+            )
+        }
     )
     assert (
         operator.plan_to_joints(joint_request) is module.generate_plan_to_joint_targets.return_value
@@ -187,7 +292,12 @@ def test_planning_and_actions_return_exact_generated_plan() -> None:
 
 def test_cartesian_planning_uses_current_group_pose() -> None:
     operator, module, monitor = _operator()
-    target = PoseStamped(header=Header(frame_id="world"), pose=Pose())
+    target = PoseStamped(
+        header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+        pose=Pose(
+            position=Point(x=0.0, y=0.0, z=0.0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+        ),
+    )
     config = RoboPlanCartesianPathConfig()
     result = operator.plan_cartesian(CartesianTargetRequest({"left_arm": target}, config))
     assert result is module.generate_cartesian_plan.return_value

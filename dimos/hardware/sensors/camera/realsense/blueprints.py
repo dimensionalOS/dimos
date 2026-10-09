@@ -25,7 +25,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from dimos_generated.geometry_msgs.msg import Quaternion, Transform, TransformStamped
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos_generated.sensor_msgs.msg import PointCloud2
 from dimos_generated.std_msgs.msg import Header
 
@@ -50,9 +51,12 @@ class RealSenseMountTf(StaticTfPublisher):
     def transforms(self) -> list[TransformStamped]:
         return [
             TransformStamped(
-                header=Header(frame_id="world"),
+                header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
                 child_frame_id="camera_link",
-                transform=Transform(rotation=Quaternion(w=1.0)),
+                transform=Transform(
+                    rotation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0),
+                    translation=Vector3(x=0.0, y=0.0, z=0.0),
+                ),
             )
         ]
 

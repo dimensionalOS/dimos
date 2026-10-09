@@ -34,6 +34,7 @@ import shutil
 import subprocess
 from typing import TYPE_CHECKING, Any, cast
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import (
     Point,
     Pose,
@@ -145,7 +146,9 @@ def integrate_velocity(
             vel = vel + a_world * (obs.ts - prev)
         twist = TwistStamped(
             header=Header(frame_id=WORLD, stamp=time_from_seconds(obs.ts)),
-            twist=Twist(linear=Vector3(x=vel[0], y=vel[1], z=vel[2])),
+            twist=Twist(
+                linear=Vector3(x=vel[0], y=vel[1], z=vel[2]), angular=Vector3(x=0.0, y=0.0, z=0.0)
+            ),
         )
         return (vel, obs.ts), twist
 
@@ -160,14 +163,17 @@ def integrate_position(state: Any, obs: Observation[Any]) -> tuple[Any, PoseStam
         pos = pos + np.array([v.x, v.y, v.z]) * (obs.ts - prev)
     pose = PoseStamped(
         header=Header(frame_id=WORLD, stamp=time_from_seconds(obs.ts)),
-        pose=Pose(position=Point(x=pos[0], y=pos[1], z=pos[2]), orientation=Quaternion(w=1)),
+        pose=Pose(
+            position=Point(x=pos[0], y=pos[1], z=pos[2]),
+            orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0),
+        ),
     )
     return (pos, obs.ts), pose
 
 
 def accumulate_path(upstream: Iterator[Observation[PoseStamped]]) -> Iterator[Observation[Path]]:
     """transform: yield the growing nav_msgs/Path as each pose streams in."""
-    path = Path(header=Header(frame_id=WORLD))
+    path = Path(header=Header(frame_id=WORLD, stamp=Time(sec=0, nanosec=0)), poses=[])
     for obs in upstream:
         path = Path(header=obs.data.header, poses=[*path.poses, obs.data])
         yield obs.derive(data=path)

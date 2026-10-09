@@ -34,8 +34,10 @@ from dimos.utils.data import get_data
     ],
 )
 def test_make_path_mask(occupancy_gradient, pose_index, max_length, expected_image) -> None:
-    start = Point(x=4, y=2)
-    goal_pose = Pose(position=Point(x=6.15, y=10), orientation=Quaternion(w=1))
+    start = Point(x=4, y=2, z=0.0)
+    goal_pose = Pose(
+        position=Point(x=6.15, y=10, z=0.0), orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0)
+    )
     expected = cv2.imread(str(get_data(expected_image)), cv2.IMREAD_COLOR)
     path = min_cost_astar(occupancy_gradient, goal_pose.position, start, use_cpp=False)
     path = smooth_resample_path(path, goal_pose, 0.1)

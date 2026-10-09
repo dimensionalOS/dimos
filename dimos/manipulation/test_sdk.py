@@ -15,6 +15,7 @@
 import atexit
 from dataclasses import replace
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from dimos_generated.sensor_msgs.msg import JointState
 from dimos_generated.std_msgs.msg import Header
@@ -60,9 +61,15 @@ def rpc(mocker):
         execution_status=ExecutionStatus.IDLE,
         groups={
             "arm": PlanningGroupState(
-                joints=JointState(name=["j0", "j1"], position=[0.1, 0.2]),
+                joints=JointState(
+                    name=["j0", "j1"],
+                    position=np.array([0.1, 0.2], dtype=np.float64),
+                    header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                    velocity=np.array([], dtype=np.float64),
+                    effort=np.array([], dtype=np.float64),
+                ),
                 end_effector_pose=PoseStamped(
-                    header=Header(frame_id="world"),
+                    header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
                     pose=Pose(
                         position=Point(x=0.4, y=0.0, z=0.3),
                         orientation=Quaternion(x=0.0, y=1.0, z=0.0, w=0.0),
@@ -70,8 +77,20 @@ def rpc(mocker):
                 ),
                 gripper_position=0.5,
                 joint_presets={
-                    "home": JointState(name=["j0", "j1"], position=[0.0, 0.5]),
-                    "init": JointState(name=["j0", "j1"], position=[0.1, 0.2]),
+                    "home": JointState(
+                        name=["j0", "j1"],
+                        position=np.array([0.0, 0.5], dtype=np.float64),
+                        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                        velocity=np.array([], dtype=np.float64),
+                        effort=np.array([], dtype=np.float64),
+                    ),
+                    "init": JointState(
+                        name=["j0", "j1"],
+                        position=np.array([0.1, 0.2], dtype=np.float64),
+                        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                        velocity=np.array([], dtype=np.float64),
+                        effort=np.array([], dtype=np.float64),
+                    ),
                 },
             ),
         },
@@ -80,18 +99,14 @@ def rpc(mocker):
         PlanStatus.SUCCEEDED,
         plan=GeneratedPlan(
             ("arm",),
-            JointTrajectory(
-                header=header_now(),
-            ),
+            JointTrajectory(header=header_now(), joint_names=[], points=[]),
         ),
     )
     proxy.plan_to_poses.return_value = PlanResult(
         PlanStatus.SUCCEEDED,
         plan=GeneratedPlan(
             ("arm",),
-            JointTrajectory(
-                header=header_now(),
-            ),
+            JointTrajectory(header=header_now(), joint_names=[], points=[]),
         ),
     )
     proxy.execute.return_value = ExecutionResult(ExecutionStatus.COMPLETED)
@@ -450,7 +465,13 @@ def test_home_uses_server_preset_and_preserves_names(arm, rpc):
 
 def test_init_preset_is_fetched_fresh_each_time(arm, rpc):
     first = rpc.get_state.return_value
-    new_target = JointState(name=["j1", "j0"], position=[0.7, 0.8])
+    new_target = JointState(
+        name=["j1", "j0"],
+        position=np.array([0.7, 0.8], dtype=np.float64),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
+    )
     second = replace(
         first, groups={"arm": replace(first.groups["arm"], joint_presets={"init": new_target})}
     )

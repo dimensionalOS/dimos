@@ -49,7 +49,7 @@ def test_publish_transforms(lcm: LCM) -> None:
     world_to_base = TransformStamped(
         transform=Transform(
             translation=Vector3(x=4.0, y=3.0, z=0.0),
-            rotation=Quaternion(z=0.382683, w=0.923880),  # 45 degrees around Z
+            rotation=Quaternion(z=0.382683, w=0.923880, x=0.0, y=0.0),  # 45 degrees around Z
         ),
         header=Header(frame_id="world", stamp=time_from_seconds(current_time)),
         child_frame_id="base_link",
@@ -59,7 +59,7 @@ def test_publish_transforms(lcm: LCM) -> None:
     base_to_arm = TransformStamped(
         transform=Transform(
             translation=Vector3(x=0.2, y=0.0, z=1.5),
-            rotation=Quaternion(y=0.258819, w=0.965926),  # 30 degrees around Y
+            rotation=Quaternion(y=0.258819, w=0.965926, x=0.0, z=0.0),  # 30 degrees around Y
         ),
         header=Header(frame_id="base_link", stamp=time_from_seconds(current_time)),
         child_frame_id="arm_link",
@@ -69,7 +69,7 @@ def test_publish_transforms(lcm: LCM) -> None:
     arm_to_gripper = TransformStamped(
         transform=Transform(
             translation=Vector3(x=0.5, y=0.0, z=0.0),
-            rotation=Quaternion(w=1.0),  # No rotation
+            rotation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0),  # No rotation
         ),
         header=Header(frame_id="arm_link", stamp=time_from_seconds(current_time)),
         child_frame_id="gripper_link",

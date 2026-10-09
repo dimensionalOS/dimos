@@ -23,6 +23,9 @@ from dimos_generated.geometry_msgs.msg import (
     Pose,
     PoseWithCovariance,
     Quaternion,
+    Twist,
+    TwistWithCovariance,
+    Vector3,
 )
 from dimos_generated.nav_msgs.msg import Odometry
 from dimos_generated.sensor_msgs.msg import PointCloud2
@@ -465,8 +468,18 @@ def _write_recording(
                     header=Header(stamp=time_from_seconds(ts), frame_id="world"),
                     pose=PoseWithCovariance(
                         pose=Pose(
-                            position=MessagePoint(x=x, y=y, z=z), orientation=Quaternion(w=1.0)
-                        )
+                            position=MessagePoint(x=x, y=y, z=z),
+                            orientation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0),
+                        ),
+                        covariance=np.zeros(36, dtype=np.float64),
+                    ),
+                    child_frame_id="",
+                    twist=TwistWithCovariance(
+                        twist=Twist(
+                            linear=Vector3(x=0.0, y=0.0, z=0.0),
+                            angular=Vector3(x=0.0, y=0.0, z=0.0),
+                        ),
+                        covariance=np.zeros(36, dtype=np.float64),
                     ),
                 ),
                 ts=ts,
@@ -514,8 +527,17 @@ def test_recording_reads_frames_trajectory_and_rotation(tmp_path: Path) -> None:
                 header=Header(stamp=time_from_seconds(1.0), frame_id="world"),
                 pose=PoseWithCovariance(
                     pose=Pose(
-                        position=MessagePoint(x=5.0), orientation=Quaternion(z=quarter, w=quarter)
-                    )
+                        position=MessagePoint(x=5.0, y=0.0, z=0.0),
+                        orientation=Quaternion(z=quarter, w=quarter, x=0.0, y=0.0),
+                    ),
+                    covariance=np.zeros(36, dtype=np.float64),
+                ),
+                child_frame_id="",
+                twist=TwistWithCovariance(
+                    twist=Twist(
+                        linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)
+                    ),
+                    covariance=np.zeros(36, dtype=np.float64),
                 ),
             ),
             ts=1.0,

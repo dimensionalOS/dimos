@@ -23,6 +23,7 @@ from types import ModuleType
 from typing import Any
 from unittest.mock import ANY
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from dimos_generated.std_msgs.msg import Header
 from pydantic import ValidationError
@@ -75,7 +76,11 @@ def robot_config() -> RobotModelConfig:
     return RobotModelConfig(
         model=RobotModel.from_file(Path("/path/to/robot.urdf")),
         base_pose=PoseStamped(
-            header=Header(frame_id=""), pose=Pose(position=Point(), orientation=Quaternion())
+            header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
+            pose=Pose(
+                position=Point(x=0.0, y=0.0, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
         ),  # type: ignore[call-arg]
         joint_names=["joint1", "joint2"],
         planning_groups=[

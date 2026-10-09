@@ -14,8 +14,11 @@
 
 """Objective tests for single-arm OpenYAM Quest teleoperation."""
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Pose, PoseStamped, Quaternion
 from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.std_msgs.msg import Header
+import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation
 
@@ -52,7 +55,13 @@ def _solver(
 @pytest.mark.self_hosted
 def test_solver_weights_large_joints_above_wrist_joints() -> None:
     solver = _solver()
-    state = JointState(name=OPENYAM_ARM_JOINTS, position=OPENYAM_HOME_JOINTS)
+    state = JointState(
+        name=OPENYAM_ARM_JOINTS,
+        position=np.asarray(OPENYAM_HOME_JOINTS, dtype=np.float64),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
+    )
     targets = solver.frame_poses(state, (_TARGET_FRAME,))
 
     assert solver.step(targets, state, 0.01) is not None
@@ -67,7 +76,13 @@ def _orientation_target_motion(
     solver_type: type[PinkPoseTargetSolver],
 ) -> tuple[float, float]:
     solver = _solver(solver_type)
-    initial = JointState(name=OPENYAM_ARM_JOINTS, position=OPENYAM_HOME_JOINTS)
+    initial = JointState(
+        name=OPENYAM_ARM_JOINTS,
+        position=np.asarray(OPENYAM_HOME_JOINTS, dtype=np.float64),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
+    )
     pose = solver.frame_poses(initial, (_TARGET_FRAME,))[_TARGET_FRAME]
     q = pose.pose.orientation
     rotated = (

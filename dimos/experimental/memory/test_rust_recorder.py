@@ -17,8 +17,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, TypeVar
 
-from dimos_generated.geometry_msgs.msg import PoseStamped
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from dimos_generated.sensor_msgs.msg import Image
+from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import schema as cdr_schema
 import pytest
 
 from dimos.core.stream import In
@@ -102,16 +105,16 @@ def test_specs_use_native_defaults_remapping_and_configured_workers(
             "port": "color_image",
             "name": "color_image",
             "payload_type": f"{Image.__module__}.{Image.__qualname__}",
-            "schema_name": Image.msg_name,
-            "schema_definition": Image.schema,
+            "schema_name": Image.__msgtype__,
+            "schema_definition": cdr_schema(Image.__msgtype__),
             "codec": "lz4+cdr",
         },
         {
             "port": "odometry",
             "name": "pose",
             "payload_type": f"{PoseStamped.__module__}.{PoseStamped.__qualname__}",
-            "schema_name": PoseStamped.msg_name,
-            "schema_definition": PoseStamped.schema,
+            "schema_name": PoseStamped.__msgtype__,
+            "schema_definition": cdr_schema(PoseStamped.__msgtype__),
             "codec": "cdr",
         },
     ]
@@ -143,8 +146,26 @@ def test_store_preparation_creates_a_python_readable_registry(
 def test_append_replaces_only_the_recorded_streams(tmp_path: Path, make_recorder: Any) -> None:
     path = tmp_path / "recording.db"
     with SqliteStore(path=str(path)) as store:
-        store.stream("keep", PoseStamped).append(PoseStamped(), ts=1.0)
-        store.stream("odometry", PoseStamped).append(PoseStamped(), ts=2.0)
+        store.stream("keep", PoseStamped).append(
+            PoseStamped(
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                pose=Pose(
+                    position=Point(x=0.0, y=0.0, z=0.0),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+            ),
+            ts=1.0,
+        )
+        store.stream("odometry", PoseStamped).append(
+            PoseStamped(
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                pose=Pose(
+                    position=Point(x=0.0, y=0.0, z=0.0),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+            ),
+            ts=2.0,
+        )
 
     recorder = make_recorder(
         SampleRustRecorder,

@@ -15,6 +15,7 @@
 from pathlib import Path
 from types import SimpleNamespace
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos_generated.sensor_msgs.msg import CameraInfo, Image
 from dimos_generated.std_msgs.msg import Header
@@ -40,13 +41,15 @@ def _info(frame_id: str) -> CameraInfo:
         cy=240.0,
         width=640,
         height=480,
-        header=Header(frame_id=frame_id),
+        header=Header(frame_id=frame_id, stamp=Time(sec=0, nanosec=0)),
     )
 
 
 def _image(frame_id: str) -> Image:
     return image_from_array(
-        np.zeros((4, 4, 3), dtype=np.uint8), encoding="bgr8", header=Header(frame_id=frame_id)
+        np.zeros((4, 4, 3), dtype=np.uint8),
+        encoding="bgr8",
+        header=Header(frame_id=frame_id, stamp=Time(sec=0, nanosec=0)),
     )
 
 
@@ -111,7 +114,10 @@ def _tf(child: str, ts: float) -> TFMessage:
             TransformStamped(
                 header=Header(frame_id="world", stamp=time_from_seconds(ts)),
                 child_frame_id=child,
-                transform=Transform(translation=Vector3(x=1), rotation=Quaternion(w=1)),
+                transform=Transform(
+                    translation=Vector3(x=1, y=0.0, z=0.0),
+                    rotation=Quaternion(w=1, x=0.0, y=0.0, z=0.0),
+                ),
             )
         ]
     )

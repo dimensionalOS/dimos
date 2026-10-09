@@ -13,9 +13,11 @@
 # limitations under the License.
 
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from dimos_generated.nav_msgs.msg import Path
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 from rosbags.typesys import Stores, get_typestore
 
 from dimos.msgs.time import time_from_nanoseconds
@@ -24,14 +26,14 @@ from dimos.msgs.time import time_from_nanoseconds
 def create_test_pose(x: float, y: float, z: float, frame_id: str = "map") -> PoseStamped:
     """Helper to create a test PoseStamped."""
     return PoseStamped(
-        header=Header(frame_id=frame_id),
-        pose=Pose(position=Point(x=x, y=y, z=z), orientation=Quaternion(w=1)),
+        header=Header(frame_id=frame_id, stamp=Time(sec=0, nanosec=0)),
+        pose=Pose(position=Point(x=x, y=y, z=z), orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0)),
     )
 
 
 def test_init_empty() -> None:
     """Test creating an empty path."""
-    path = Path(header=Header(frame_id="map"))
+    path = Path(header=Header(frame_id="map", stamp=Time(sec=0, nanosec=0)), poses=[])
     assert path.header.frame_id == "map"
     assert len(path.poses) == 0
     assert not list(path.poses)  # Should be falsy when empty
@@ -41,7 +43,7 @@ def test_init_empty() -> None:
 def test_init_with_poses() -> None:
     """Test creating a path with initial poses."""
     poses = [create_test_pose(i, i, 0) for i in range(3)]
-    path = Path(header=Header(frame_id="map"), poses=poses)
+    path = Path(header=Header(frame_id="map", stamp=Time(sec=0, nanosec=0)), poses=poses)
     assert len(path.poses) == 3
     assert bool(list(path.poses))  # Should be truthy when has poses
     assert path.poses == poses
@@ -50,46 +52,46 @@ def test_init_with_poses() -> None:
 def test_head() -> None:
     """Test getting the first pose."""
     poses = [create_test_pose(i, i, 0) for i in range(3)]
-    path = Path(poses=poses)
+    path = Path(poses=poses, header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""))
     assert (path.poses[0] if path.poses else None) == poses[0]
 
     # Test empty path
-    empty_path = Path()
+    empty_path = Path(header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""), poses=[])
     assert (empty_path.poses[0] if empty_path.poses else None) is None
 
 
 def test_last() -> None:
     """Test getting the last pose."""
     poses = [create_test_pose(i, i, 0) for i in range(3)]
-    path = Path(poses=poses)
+    path = Path(poses=poses, header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""))
     assert (path.poses[-1] if path.poses else None) == poses[-1]
 
     # Test empty path
-    empty_path = Path()
+    empty_path = Path(header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""), poses=[])
     assert (empty_path.poses[-1] if empty_path.poses else None) is None
 
 
 def test_tail() -> None:
     """Test getting all poses except the first."""
     poses = [create_test_pose(i, i, 0) for i in range(3)]
-    path = Path(poses=poses)
+    path = Path(poses=poses, header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""))
     tail = Path(header=path.header, poses=list(path.poses)[1:])
     assert len(tail.poses) == 2
     assert tail.poses == poses[1:]
     assert tail.header.frame_id == path.header.frame_id
 
     # Test single element path
-    single_path = Path(poses=[poses[0]])
+    single_path = Path(poses=[poses[0]], header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""))
     assert len(list(single_path.poses)[1:]) == 0
 
     # Test empty path
-    empty_path = Path()
+    empty_path = Path(header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""), poses=[])
     assert len(list(empty_path.poses)[1:]) == 0
 
 
 def test_push_immutable() -> None:
     """Test immutable push operation."""
-    path = Path(header=Header(frame_id="map"))
+    path = Path(header=Header(frame_id="map", stamp=Time(sec=0, nanosec=0)), poses=[])
     pose1 = create_test_pose(1, 1, 0)
     pose2 = create_test_pose(2, 2, 0)
 
@@ -108,7 +110,7 @@ def test_push_immutable() -> None:
 
 def test_push_mutable() -> None:
     """Test mutable push operation."""
-    path = Path(header=Header(frame_id="map"))
+    path = Path(header=Header(frame_id="map", stamp=Time(sec=0, nanosec=0)), poses=[])
     pose1 = create_test_pose(1, 1, 0)
     pose2 = create_test_pose(2, 2, 0)
 
@@ -125,7 +127,7 @@ def test_push_mutable() -> None:
 def test_indexing() -> None:
     """Test indexing and slicing."""
     poses = [create_test_pose(i, i, 0) for i in range(5)]
-    path = Path(poses=poses)
+    path = Path(poses=poses, header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""))
 
     # Single index
     assert next(iter(path.poses)) == poses[0]
@@ -140,7 +142,7 @@ def test_indexing() -> None:
 def test_iteration() -> None:
     """Test iterating over poses."""
     poses = [create_test_pose(i, i, 0) for i in range(3)]
-    path = Path(poses=poses)
+    path = Path(poses=poses, header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""))
 
     collected = []
     for pose in path.poses:
@@ -151,7 +153,7 @@ def test_iteration() -> None:
 def test_slice_method() -> None:
     """Test slice method."""
     poses = [create_test_pose(i, i, 0) for i in range(5)]
-    path = Path(header=Header(frame_id="map"), poses=poses)
+    path = Path(header=Header(frame_id="map", stamp=Time(sec=0, nanosec=0)), poses=poses)
 
     sliced = Path(header=path.header, poses=list(path.poses)[1:4])
     assert len(sliced.poses) == 3
@@ -168,8 +170,8 @@ def test_extend_immutable() -> None:
     poses1 = [create_test_pose(i, i, 0) for i in range(2)]
     poses2 = [create_test_pose(i + 2, i + 2, 0) for i in range(2)]
 
-    path1 = Path(header=Header(frame_id="map"), poses=poses1)
-    path2 = Path(header=Header(frame_id="odom"), poses=poses2)
+    path1 = Path(header=Header(frame_id="map", stamp=Time(sec=0, nanosec=0)), poses=poses1)
+    path2 = Path(header=Header(frame_id="odom", stamp=Time(sec=0, nanosec=0)), poses=poses2)
 
     extended = Path(header=path1.header, poses=[*path1.poses, *path2.poses])
     assert len(path1.poses) == 2  # Original unchanged
@@ -184,9 +186,9 @@ def test_extend_mutable() -> None:
     poses2 = [create_test_pose(i + 2, i + 2, 0) for i in range(2)]
 
     path1 = Path(
-        header=Header(frame_id="map"), poses=poses1.copy()
+        header=Header(frame_id="map", stamp=Time(sec=0, nanosec=0)), poses=poses1.copy()
     )  # Use copy to avoid modifying original
-    path2 = Path(header=Header(frame_id="odom"), poses=poses2)
+    path2 = Path(header=Header(frame_id="odom", stamp=Time(sec=0, nanosec=0)), poses=poses2)
 
     path1.poses.extend(path2.poses)
     assert len(path1.poses) == 4
@@ -200,7 +202,7 @@ def test_extend_mutable() -> None:
 def test_reverse() -> None:
     """Test reverse operation."""
     poses = [create_test_pose(i, i, 0) for i in range(3)]
-    path = Path(poses=poses)
+    path = Path(poses=poses, header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""))
 
     reversed_path = Path(header=path.header, poses=list(reversed(list(path.poses))))
     assert len(path.poses) == 3  # Original unchanged
@@ -210,7 +212,7 @@ def test_reverse() -> None:
 def test_clear() -> None:
     """Test clear operation."""
     poses = [create_test_pose(i, i, 0) for i in range(3)]
-    path = Path(poses=poses)
+    path = Path(poses=poses, header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""))
 
     path.poses.clear()
     assert len(path.poses) == 0
@@ -235,11 +237,13 @@ def test_cdr_roundtrip_preserves_per_pose_frames_and_stamps() -> None:
         header=Header(stamp=time_from_nanoseconds(1234567890500000000), frame_id="world"),
         poses=poses,
     )
-    decoded = Path.decode(source.encode())
+    decoded = cdr_decode(cdr_encode(source), Path)
     assert decoded is not source
     assert decoded.header == source.header
     assert list(decoded.poses) == poses
-    independent = get_typestore(Stores.ROS2_JAZZY).deserialize_cdr(source.encode(), Path.msg_name)
+    independent = get_typestore(Stores.ROS2_JAZZY).deserialize_cdr(
+        cdr_encode(source), Path.__msgtype__
+    )
     assert independent.header.frame_id == "world"
     assert independent.header.stamp.sec == 1234567890
     assert independent.header.stamp.nanosec == 500000000
@@ -261,7 +265,7 @@ def test_cdr_roundtrip_preserves_per_pose_frames_and_stamps() -> None:
 
 
 def test_cdr_empty_path() -> None:
-    source = Path(header=Header(frame_id="base_link"))
-    decoded = Path.decode(source.encode())
+    source = Path(header=Header(frame_id="base_link", stamp=Time(sec=0, nanosec=0)), poses=[])
+    decoded = cdr_decode(cdr_encode(source), Path)
     assert decoded.header.frame_id == "base_link"
     assert len(decoded.poses) == 0

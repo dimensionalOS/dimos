@@ -171,7 +171,7 @@ class Observation(Generic[T]):
             return None
         x, y, z, qx, qy, qz, qw = self.pose_tuple
         return PoseStamped(
-            header=Header(stamp=time_from_seconds(self.ts)),
+            header=Header(stamp=time_from_seconds(self.ts), frame_id=""),
             pose=Pose(
                 position=Point(x=x, y=y, z=z), orientation=Quaternion(x=qx, y=qy, z=qz, w=qw)
             ),

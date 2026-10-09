@@ -16,9 +16,11 @@
 
 from unittest.mock import patch
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos_generated.std_msgs.msg import Header
 from dimos_generated.tf2_msgs.msg import TFMessage
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 
 from dimos.memory.type.observation import Observation
 from dimos.navigation.nav_3d.mls_planner.utils.plan_rrd import _log_odometry, _TfSync
@@ -27,11 +29,13 @@ from dimos.visualization.rerun.message_helpers import register_colormap_annotati
 
 def test_tf_sync_generated_edges_and_odometry() -> None:
     edge = TransformStamped(
-        header=Header(frame_id="world"),
+        header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
         child_frame_id="base_link",
-        transform=Transform(translation=Vector3(x=2), rotation=Quaternion(w=1)),
+        transform=Transform(
+            translation=Vector3(x=2, y=0.0, z=0.0), rotation=Quaternion(w=1, x=0.0, y=0.0, z=0.0)
+        ),
     )
-    message = TFMessage.decode(TFMessage(transforms=[edge]).encode())
+    message = cdr_decode(cdr_encode(TFMessage(transforms=[edge])), TFMessage)
     sync = _TfSync([Observation(id=0, ts=1.0, _data=message)])
     with patch("rerun.log") as log:
         sync.up_to(0.5)

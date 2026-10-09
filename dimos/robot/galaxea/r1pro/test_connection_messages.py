@@ -19,6 +19,8 @@ from dimos_generated.dimos_msgs.msg import MotorCommandArray
 from dimos_generated.geometry_msgs.msg import Twist, TwistStamped, Vector3
 from dimos_generated.sensor_msgs.msg import JointState
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode
+import numpy as np
 import pytest
 
 from dimos.hardware.whole_body.spec import VEL_STOP
@@ -37,8 +39,8 @@ def robot():
 
 def speed(sec, nanosec, *, vx=1.0, vy=0.0, wz=0.0):
     return TwistStamped(
-        header=Header(stamp=Time(sec=sec, nanosec=nanosec)),
-        twist=Twist(linear=Vector3(x=vx, y=vy), angular=Vector3(z=wz)),
+        header=Header(stamp=Time(sec=sec, nanosec=nanosec), frame_id=""),
+        twist=Twist(linear=Vector3(x=vx, y=vy, z=0.0), angular=Vector3(z=wz, x=0.0, y=0.0)),
     )
 
 
@@ -54,7 +56,7 @@ def test_integrated_pose_odometry_and_tf_preserve_nanoseconds(robot, monkeypatch
     assert pose.pose.position.y == pytest.approx(0.05)
     assert pose.pose.orientation.z == pytest.approx(math.sin(0.01))
     assert odometry.pose.pose == pose.pose
-    assert odometry.twist.twist.linear == Vector3(x=1.0, y=0.5)
+    assert odometry.twist.twist.linear == Vector3(x=1.0, y=0.5, z=0.0)
     assert [edge.child_frame_id for edge in tf.transforms] == [
         robot.config.frame_id,
         robot.config.lidar_frame_id,
@@ -77,7 +79,9 @@ def test_clock_jump_does_not_move_base(robot, monkeypatch, second_stamp):
     assert robot._odom_x == 0.0
 
 
-@pytest.mark.parametrize("oldest", [Time(), Time(sec=1700000000, nanosec=123456788)])
+@pytest.mark.parametrize(
+    "oldest", [Time(sec=0, nanosec=0), Time(sec=1700000000, nanosec=123456788)]
+)
 def test_joint_snapshot_uses_oldest_exact_stamp_and_all_segments(robot, monkeypatch, oldest):
     for callback, count, stamp, value in [
         (robot._on_feedback_torso, 4, oldest, 1.0),
@@ -86,10 +90,11 @@ def test_joint_snapshot_uses_oldest_exact_stamp_and_all_segments(robot, monkeypa
     ]:
         callback(
             JointState(
-                header=Header(stamp=stamp),
-                position=[value] * count,
-                velocity=[0.5] * count,
-                effort=[0.2] * count,
+                header=Header(stamp=stamp, frame_id=""),
+                position=np.asarray([value] * count, dtype=np.float64),
+                velocity=np.asarray([0.5] * count, dtype=np.float64),
+                effort=np.asarray([0.2] * count, dtype=np.float64),
+                name=[],
             ),
             None,
         )
@@ -106,7 +111,7 @@ def test_joint_snapshot_uses_oldest_exact_stamp_and_all_segments(robot, monkeypa
     assert list(state.velocity) == [0.5] * 18
     assert list(state.name) == connection.R1PRO_UPPER_BODY_JOINTS
     assert state.header.stamp == oldest
-    assert JointState.decode(state.encode()) == state
+    assert cdr_decode(state.encode(), JointState) == state
 
 
 @pytest.fixture()
@@ -114,7 +119,9 @@ def command_sink(robot, monkeypatch, mocker):
     ros = mocker.Mock(spec=RawROS)
     monkeypatch.setattr(robot, "_ros", ros)
     monkeypatch.setattr(connection, "dimos_to_ros", lambda msg, _: msg)
-    monkeypatch.setattr(connection, "header_now", lambda: Header(stamp=Time(sec=9, nanosec=123)))
+    monkeypatch.setattr(
+        connection, "header_now", lambda: Header(stamp=Time(sec=9, nanosec=123), frame_id="")
+    )
     for name in ("_cmd_torso_topic", "_cmd_left_topic", "_cmd_right_topic", "_speed_topic"):
         monkeypatch.setattr(robot, name, RawROSTopic(name, JointState))
     return ros.publish
@@ -122,7 +129,12 @@ def command_sink(robot, monkeypatch, mocker):
 
 def motor_command():
     return MotorCommandArray(
-        q=list(range(18)), dq=[0.0, VEL_STOP, 0.2] * 6, kp=[0.0] * 18, kd=[0.0] * 18, tau=[0.0] * 18
+        q=np.asarray(list(range(18)), dtype=np.float64),
+        dq=np.asarray([0.0, VEL_STOP, 0.2] * 6, dtype=np.float64),
+        kp=np.asarray([0.0] * 18, dtype=np.float64),
+        kd=np.asarray([0.0] * 18, dtype=np.float64),
+        tau=np.asarray([0.0] * 18, dtype=np.float64),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
     )
 
 
@@ -152,6 +164,6 @@ def test_base_command_only_forwards_supported_axes(robot, command_sink):
     )
     message = command_sink.call_args.args[1]
     assert message == TwistStamped(
-        header=Header(stamp=Time(sec=9, nanosec=123)),
-        twist=Twist(linear=Vector3(x=1.0, y=2.0), angular=Vector3(z=6.0)),
+        header=Header(stamp=Time(sec=9, nanosec=123), frame_id=""),
+        twist=Twist(linear=Vector3(x=1.0, y=2.0, z=0.0), angular=Vector3(z=6.0, x=0.0, y=0.0)),
     )

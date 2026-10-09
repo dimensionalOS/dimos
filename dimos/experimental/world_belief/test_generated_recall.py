@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos_generated.geometry_msgs.msg import Pose, Quaternion
+from dimos_generated.geometry_msgs.msg import Point, Pose, Quaternion
 from dimos_generated.sensor_msgs.msg import Image
 from dimos_generated.std_msgs.msg import Header
 import numpy as np
@@ -42,7 +42,9 @@ def test_index_selects_sharp_generated_frame_and_preserves_stamp_and_thumbnail()
         image = image_from_array(
             sharp, encoding="rgb8", header=Header(stamp=time_from_seconds(0.2), frame_id="camera")
         )
-        identity = Pose(orientation=Quaternion(w=1.0))
+        identity = Pose(
+            orientation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0), position=Point(x=0.0, y=0.0, z=0.0)
+        )
         frames.append(
             image_from_array(np.full_like(sharp, 150), encoding="rgb8", header=image.header),
             ts=0.1,

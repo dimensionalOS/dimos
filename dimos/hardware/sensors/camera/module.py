@@ -16,7 +16,8 @@ from collections.abc import Callable
 from copy import copy
 import time
 
-from dimos_generated.geometry_msgs.msg import Quaternion, Transform, TransformStamped
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos_generated.sensor_msgs.msg import CameraInfo, Image
 from dimos_generated.std_msgs.msg import Header
 from dimos_generated.tf2_msgs.msg import TFMessage
@@ -39,9 +40,12 @@ from dimos.visualization.vis_module import vis_module
 
 def default_transform() -> TransformStamped:
     return TransformStamped(
-        header=Header(frame_id="base_link"),
+        header=Header(frame_id="base_link", stamp=Time(sec=0, nanosec=0)),
         child_frame_id="camera_link",
-        transform=Transform(rotation=Quaternion(w=1.0)),
+        transform=Transform(
+            rotation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0),
+            translation=Vector3(x=0.0, y=0.0, z=0.0),
+        ),
     )
 
 
@@ -95,7 +99,10 @@ class CameraModule(Module, perception.Camera):
         camera_optical = TransformStamped(
             header=Header(frame_id=camera_link.child_frame_id, stamp=camera_info.header.stamp),
             child_frame_id=camera_info.header.frame_id,
-            transform=Transform(rotation=Quaternion(x=-0.5, y=0.5, z=-0.5, w=0.5)),
+            transform=Transform(
+                rotation=Quaternion(x=-0.5, y=0.5, z=-0.5, w=0.5),
+                translation=Vector3(x=0.0, y=0.0, z=0.0),
+            ),
         )
         self.tf.publish(TFMessage(transforms=[camera_link, camera_optical]))
 

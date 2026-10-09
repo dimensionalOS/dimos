@@ -365,7 +365,9 @@ class Go2CommandModule(Module):
             return
         pose = PoseStamped(
             header=header_now("world"),
-            pose=Pose(position=Point(x=x, y=y), orientation=Quaternion(w=1)),
+            pose=Pose(
+                position=Point(x=x, y=y, z=0.0), orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0)
+            ),
         )
         try:
             self.goal_request.publish(pose)
@@ -383,7 +385,7 @@ class Go2CommandModule(Module):
 
     def _cancel_nav(self) -> None:
         try:
-            msg = Bool()
+            msg = Bool(data=False)
             msg.data = True
             self.stop_movement.publish(msg)
         except Exception:

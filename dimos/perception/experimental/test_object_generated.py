@@ -15,10 +15,11 @@
 """Object geometry and deduplication use generated ROS values."""
 
 from dimos_generated.builtin_interfaces.msg import Time
-from dimos_generated.geometry_msgs.msg import PoseStamped, Vector3
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Vector3
 from dimos_generated.sensor_msgs.msg import Image, PointCloud2
 from dimos_generated.std_msgs.msg import Header
 from dimos_generated.vision_msgs.msg import Detection3D
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 
 from dimos.msgs.image import image_from_array
@@ -31,26 +32,48 @@ def _object(object_id, x, timestamp):
     return Object(
         object_id=object_id,
         name="cup",
-        center=Vector3(x=x),
+        center=Vector3(x=x, y=0.0, z=0.0),
         size=Vector3(x=0.1, y=0.2, z=0.3),
         pose=PoseStamped(
-            header=Header(frame_id="world", stamp=Time(sec=1700000000, nanosec=123456789))
+            header=Header(frame_id="world", stamp=Time(sec=1700000000, nanosec=123456789)),
+            pose=Pose(
+                position=Point(x=0.0, y=0.0, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
         ),
-        pointcloud=PointCloud2(),
+        pointcloud=PointCloud2(
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            height=0,
+            width=0,
+            fields=[],
+            is_bigendian=False,
+            point_step=0,
+            row_step=0,
+            data=np.array([], dtype=np.uint8),
+            is_dense=False,
+        ),
         bbox=(0.0, 0.0, 1.0, 1.0),
         track_id=-1,
         class_id=0,
         confidence=0.9,
         ts=timestamp,
         frame_id="world",
-        image=Image(),
+        image=Image(
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            height=0,
+            width=0,
+            encoding="",
+            is_bigendian=0,
+            step=0,
+            data=np.array([], dtype=np.uint8),
+        ),
     )
 
 
 def test_detection_cdr_preserves_source_pose_header_and_current_center():
     obj = _object("cup-1", 0.2, 1.0)
     obj.set_center(Vector3(x=0.4, y=0.5, z=0.6))
-    decoded = Detection3D.decode(obj.to_detection3d_msg().encode())
+    decoded = cdr_decode(obj.to_detection3d_msg().encode(), Detection3D)
     assert decoded.header == obj.pose.header
     assert decoded.bbox.center == obj.pose.pose
     assert decoded.bbox.size == obj.size
@@ -70,8 +93,8 @@ def test_spatial_deduplication_and_nearest_lookup_use_generated_centers():
     assert database.add_objects([nearby]) == [first]
     assert first.center.x == 0.1
     assert database.add_objects([distant]) == [distant]
-    assert database.find_nearest(Vector3(x=1.8)) is distant
-    assert database.find_nearest(Vector3(x=0.2)) is first
+    assert database.find_nearest(Vector3(x=1.8, y=0.0, z=0.0)) is distant
+    assert database.find_nearest(Vector3(x=0.2, y=0.0, z=0.0)) is first
 
 
 def test_generated_object_cloud_aggregation_and_dictionary_preserve_values():
@@ -89,7 +112,7 @@ def test_generated_object_cloud_aggregation_and_dictionary_preserve_values():
     np.testing.assert_allclose(exported["pointcloud"][1], [[1.0, 128 / 255.0, 0.0]])
     np.testing.assert_array_equal(exported["image"], pixels)
     merged = aggregate_pointclouds([obj])
-    decoded = PointCloud2.decode(merged.encode())
+    decoded = cdr_decode(cdr_encode(merged), PointCloud2)
     assert decoded.header.stamp == stamp and decoded.header.frame_id == "world"
     np.testing.assert_array_equal(pointcloud_xyz(decoded), [[1.0, 2.0, 3.0]])
     assert pointcloud_rgb(decoded) is not None

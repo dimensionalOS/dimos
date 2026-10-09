@@ -19,11 +19,13 @@ import time
 from typing import Any
 
 import av
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.foxglove_msgs.msg import CompressedVideo
 from dimos_generated.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos_generated.sensor_msgs.msg import CameraInfo
 from dimos_generated.std_msgs.msg import Header
 from dimos_generated.tf2_msgs.msg import TFMessage
+import numpy as np
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
@@ -56,7 +58,7 @@ _FRONT_CAMERA_INFO = camera_info_from_intrinsics(
     cy=_CAMERA_HEIGHT * 0.5,
     width=_CAMERA_WIDTH,
     height=_CAMERA_HEIGHT,
-    header=Header(frame_id="front_camera_optical"),
+    header=Header(frame_id="front_camera_optical", stamp=Time(sec=0, nanosec=0)),
 )
 _REAR_CAMERA_INFO = camera_info_from_intrinsics(
     fx=_CAMERA_FOCAL_LENGTH,
@@ -65,7 +67,7 @@ _REAR_CAMERA_INFO = camera_info_from_intrinsics(
     cy=_CAMERA_HEIGHT * 0.5,
     width=_CAMERA_WIDTH,
     height=_CAMERA_HEIGHT,
-    header=Header(frame_id="rear_camera_optical"),
+    header=Header(frame_id="rear_camera_optical", stamp=Time(sec=0, nanosec=0)),
 )
 
 
@@ -126,7 +128,7 @@ class M20CameraRelay(Module):
                                     y=_FRONT_CAMERA_XYZ[1],
                                     z=_FRONT_CAMERA_XYZ[2],
                                 ),
-                                rotation=Quaternion(w=1.0),
+                                rotation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0),
                             ),
                         ),
                         TransformStamped(
@@ -134,7 +136,9 @@ class M20CameraRelay(Module):
                                 frame_id="front_camera_link", stamp=time_from_seconds(now)
                             ),
                             child_frame_id="front_camera_optical",
-                            transform=Transform(rotation=_OPTICAL_ROT),
+                            transform=Transform(
+                                rotation=_OPTICAL_ROT, translation=Vector3(x=0.0, y=0.0, z=0.0)
+                            ),
                         ),
                         TransformStamped(
                             header=Header(frame_id="base_link", stamp=time_from_seconds(now)),
@@ -145,7 +149,7 @@ class M20CameraRelay(Module):
                                     y=_REAR_CAMERA_XYZ[1],
                                     z=_REAR_CAMERA_XYZ[2],
                                 ),
-                                rotation=Quaternion(z=1.0),
+                                rotation=Quaternion(z=1.0, x=0.0, y=0.0, w=1.0),
                             ),
                         ),
                         TransformStamped(
@@ -153,7 +157,9 @@ class M20CameraRelay(Module):
                                 frame_id="rear_camera_link", stamp=time_from_seconds(now)
                             ),
                             child_frame_id="rear_camera_optical",
-                            transform=Transform(rotation=_OPTICAL_ROT),
+                            transform=Transform(
+                                rotation=_OPTICAL_ROT, translation=Vector3(x=0.0, y=0.0, z=0.0)
+                            ),
                         ),
                     ]
                 )
@@ -188,7 +194,7 @@ class M20CameraRelay(Module):
                             continue
                         output.publish(
                             CompressedVideo(
-                                data=bytes(packet),
+                                data=np.frombuffer(bytes(packet), dtype=np.uint8),
                                 format="h265",
                                 frame_id="",
                                 timestamp=time_from_seconds(time.time()),

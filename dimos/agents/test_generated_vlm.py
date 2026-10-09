@@ -18,6 +18,7 @@ import base64
 
 import cv2
 from dimos_generated.sensor_msgs.msg import Image
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 from langchain_core.messages import AIMessage, HumanMessage
 import numpy as np
 import pytest
@@ -44,7 +45,7 @@ def test_generated_image_reaches_model_as_jpeg(agent, use_stream):
     pixels = np.zeros((12, 16, 3), dtype=np.uint8)
     pixels[..., 0] = 255
     original = image_from_array(pixels, encoding="rgb8")
-    image = Image.decode(original.encode())
+    image = cdr_decode(cdr_encode(original), Image)
     answers = []
     unsubscribe = value.answer_stream.subscribe(answers.append)
     try:
@@ -63,7 +64,7 @@ def test_generated_image_reaches_model_as_jpeg(agent, use_stream):
         )
         assert decoded.shape == (12, 16, 3)
         assert decoded[0, 0].tolist() == [0, 0, 254]
-        assert image.encode() == original.encode()
+        assert cdr_encode(image) == cdr_encode(original)
     finally:
         unsubscribe()
 

@@ -20,9 +20,11 @@ import math
 from threading import RLock
 from typing import Any, TypeAlias, cast
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from dimos_generated.sensor_msgs.msg import JointState
 from dimos_generated.std_msgs.msg import Header
+import numpy as np
 
 from dimos.manipulation.planning.groups.models import PlanningGroup
 from dimos.manipulation.planning.planners.roboplan_config import RoboPlanCartesianPathConfig
@@ -206,7 +208,11 @@ class ViserPanelGui:
             return {}
         return {
             group.id: JointState(
-                name=list(group.joint_names), position=[values[name] for name in group.joint_names]
+                name=list(group.joint_names),
+                position=np.asarray([values[name] for name in group.joint_names], dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
             )
         }
 
@@ -233,7 +239,16 @@ class ViserPanelGui:
             names.extend(str(name) for name in target.name)
             positions.extend(float(value) for value in target.position)
         return self.operator.evaluate_joint_target(
-            JointTargetRequest(tuple(group_ids), JointState(name=names, position=positions))
+            JointTargetRequest(
+                tuple(group_ids),
+                JointState(
+                    name=names,
+                    position=np.asarray(positions, dtype=np.float64),
+                    header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                    velocity=np.array([], dtype=np.float64),
+                    effort=np.array([], dtype=np.float64),
+                ),
+            )
         )
 
     def evaluate_pose_target_set(
@@ -265,7 +280,16 @@ class ViserPanelGui:
             names.extend(str(name) for name in target.name)
             positions.extend(float(value) for value in target.position)
         plan = self.operator.plan_to_joints(
-            JointTargetRequest(tuple(group_ids), JointState(name=names, position=positions))
+            JointTargetRequest(
+                tuple(group_ids),
+                JointState(
+                    name=names,
+                    position=np.asarray(positions, dtype=np.float64),
+                    header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                    velocity=np.array([], dtype=np.float64),
+                    effort=np.array([], dtype=np.float64),
+                ),
+            )
         )
         self.state.plan_state.plan = plan
         return plan is not None
@@ -689,7 +713,12 @@ class ViserPanelGui:
                 continue
             self.state.group_joint_targets[group_id] = JointState(
                 name=list(group.joint_names),
-                position=[float(values[str(name)]) for name in group.joint_names],
+                position=np.asarray(
+                    [float(values[str(name)]) for name in group.joint_names], dtype=np.float64
+                ),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
             )
             if group.has_pose_target and group_id not in self.state.pose_targets:
                 pose = self.get_group_ee_pose(group_id)
@@ -720,7 +749,17 @@ class ViserPanelGui:
             if target is not None:
                 names.extend(str(name) for name in target.name)
                 positions.extend(float(value) for value in target.position)
-        self.state.target_joints = JointState(name=names, position=positions) if names else None
+        self.state.target_joints = (
+            JointState(
+                name=names,
+                position=np.asarray(positions, dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            )
+            if names
+            else None
+        )
 
     def _active_pose_targets(self) -> dict[PlanningGroupID, PoseStamped]:
         return {
@@ -789,7 +828,13 @@ class ViserPanelGui:
                 )
                 return
             positions = [float(values[str(name)]) for name in group.joint_names]
-            targets[group_id] = JointState(name=list(group.joint_names), position=positions)
+            targets[group_id] = JointState(
+                name=list(group.joint_names),
+                position=np.asarray(positions, dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            )
             slider_values.append((group_id, group.joint_names, positions))
         self.state.group_joint_targets.update(targets)
         with self._joint_controls_lock:
@@ -837,7 +882,13 @@ class ViserPanelGui:
                         self._set_error(f"Missing target slider for {group_id}/{joint_name}")
                         return None
                     positions.append(float(handle.value))
-                targets[group_id] = JointState(name=list(group.joint_names), position=positions)
+                targets[group_id] = JointState(
+                    name=list(group.joint_names),
+                    position=np.asarray(positions, dtype=np.float64),
+                    header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                    velocity=np.array([], dtype=np.float64),
+                    effort=np.array([], dtype=np.float64),
+                )
             return targets
 
     def _on_joint_slider_update(self, _group_id: PlanningGroupID, _joint_name: str) -> None:
@@ -925,7 +976,11 @@ class ViserPanelGui:
         if not all(name in values for name in config.joint_names):
             return None
         return JointState(
-            name=list(config.joint_names), position=[values[name] for name in config.joint_names]
+            name=list(config.joint_names),
+            position=np.asarray([values[name] for name in config.joint_names], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
         )
 
     def _sync_target_ghost_visibility(self) -> None:
@@ -1004,7 +1059,12 @@ class ViserPanelGui:
                 continue
             self.state.group_joint_targets[group_id] = JointState(
                 name=list(group.joint_names),
-                position=[positions[str(name)] for name in group.joint_names],
+                position=np.asarray(
+                    [positions[str(name)] for name in group.joint_names], dtype=np.float64
+                ),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
             )
 
     def _sync_pose_targets_from_group_poses(self) -> None:
@@ -1393,7 +1453,7 @@ class ViserPanelGui:
         px, py, pz = (float(value) for value in target.position)
         qw, qx, qy, qz = (float(value) for value in target.wxyz)
         return PoseStamped(
-            header=Header(frame_id="world"),
+            header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
             pose=Pose(
                 position=Point(x=px, y=py, z=pz), orientation=Quaternion(x=qx, y=qy, z=qz, w=qw)
             ),

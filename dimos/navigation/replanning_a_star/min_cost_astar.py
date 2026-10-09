@@ -83,7 +83,10 @@ def _reconstruct_path_from_coords(
         poses=[
             PoseStamped(
                 header=costmap.header,
-                pose=Pose(position=grid_to_world(costmap, coordinate), orientation=Quaternion(w=1)),
+                pose=Pose(
+                    position=grid_to_world(costmap, coordinate),
+                    orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0),
+                ),
             )
             for coordinate in path_coords
         ],
@@ -99,7 +102,9 @@ def min_cost_astar(
     use_cpp: bool = True,
 ) -> Path | None:
     cells = occupancy_view(costmap)
-    start_vector = world_to_grid(costmap, start if start is not None else Point())
+    start_vector = world_to_grid(
+        costmap, start if start is not None else Point(x=0.0, y=0.0, z=0.0)
+    )
     goal_vector = world_to_grid(costmap, goal)
     # Ignore sub-nanocell rotation roundoff before assigning a point to its cell.
     start_tuple = (math.floor(round(start_vector[0], 9)), math.floor(round(start_vector[1], 9)))

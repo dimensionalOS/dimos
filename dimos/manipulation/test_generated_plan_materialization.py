@@ -17,6 +17,7 @@
 from pathlib import Path
 from unittest.mock import MagicMock
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import (
     Point,
     Pose,
@@ -29,6 +30,7 @@ from dimos_generated.geometry_msgs.msg import (
 from dimos_generated.sensor_msgs.msg import JointState
 from dimos_generated.std_msgs.msg import Header
 from dimos_generated.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+import numpy as np
 import pytest
 
 from dimos.manipulation.manipulation_module import ManipulationState
@@ -76,11 +78,14 @@ class RecordingGenerator:
             points=[
                 JointTrajectoryPoint(
                     time_from_start=duration_from_seconds(float(index)),
-                    positions=list(point),
-                    velocities=[0.0] * self.num_joints,
+                    positions=np.asarray(list(point), dtype=np.float64),
+                    velocities=np.asarray([0.0] * self.num_joints, dtype=np.float64),
+                    accelerations=np.array([], dtype=np.float64),
+                    effort=np.array([], dtype=np.float64),
                 )
                 for index, point in enumerate(waypoints)
             ],
+            joint_names=[],
         )
 
 
@@ -88,7 +93,11 @@ def _model() -> RobotModelConfig:
     return RobotModelConfig(
         model=RobotModel.from_file(Path("/robot.urdf")),
         base_pose=PoseStamped(
-            header=Header(frame_id=""), pose=Pose(position=Point(), orientation=Quaternion())
+            header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
+            pose=Pose(
+                position=Point(x=0.0, y=0.0, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
         ),
         joint_names=["left/a", "left/b", "right/c"],
         base_link="base",
@@ -151,7 +160,22 @@ def _module(monkeypatch: pytest.MonkeyPatch, module_factory):
 
 
 def _path(names: list[str], first: list[float], second: list[float]) -> list[JointState]:
-    return [JointState(name=names, position=first), JointState(name=names, position=second)]
+    return [
+        JointState(
+            name=names,
+            position=np.asarray(first, dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        ),
+        JointState(
+            name=names,
+            position=np.asarray(second, dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        ),
+    ]
 
 
 def test_materializes_once_with_reordered_groups_heterogeneous_limits_and_distinct_path(
@@ -178,10 +202,28 @@ def test_cartesian_plan_preserves_planner_timestamps_and_velocities(monkeypatch,
     module = _module(monkeypatch, module_factory)
     module._state = ManipulationState.IDLE
     names = ["left/b", "left/a"]
-    start = JointState(name=names, position=[0.0, 0.0])
+    start = JointState(
+        name=names,
+        position=np.array([0.0, 0.0], dtype=np.float64),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
+    )
     path = [
-        JointState(name=names, position=[0.0, 0.0], velocity=[0.0, 0.0]),
-        JointState(name=names, position=[0.2, 0.1], velocity=[0.4, 0.2]),
+        JointState(
+            name=names,
+            position=np.array([0.0, 0.0], dtype=np.float64),
+            velocity=np.array([0.0, 0.0], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            effort=np.array([], dtype=np.float64),
+        ),
+        JointState(
+            name=names,
+            position=np.array([0.2, 0.1], dtype=np.float64),
+            velocity=np.array([0.4, 0.2], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            effort=np.array([], dtype=np.float64),
+        ),
     ]
     module._world_monitor.current_model_joint_state.return_value = start
     module._planner.plan_cartesian_path.return_value = PlanningResult(
@@ -193,10 +235,20 @@ def test_cartesian_plan_preserves_planner_timestamps_and_velocities(monkeypatch,
     plan = module.generate_cartesian_plan(
         {
             "left_arm": (
-                TransformStamped(header=Header(frame_id="world"), child_frame_id=""),
                 TransformStamped(
-                    header=Header(frame_id="world"),
-                    transform=Transform(translation=Vector3(x=0.01, y=0.0, z=0.0)),
+                    header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+                    child_frame_id="",
+                    transform=Transform(
+                        translation=Vector3(x=0.0, y=0.0, z=0.0),
+                        rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                    ),
+                ),
+                TransformStamped(
+                    header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+                    transform=Transform(
+                        translation=Vector3(x=0.01, y=0.0, z=0.0),
+                        rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                    ),
                     child_frame_id="",
                 ),
             )
@@ -210,7 +262,7 @@ def test_cartesian_plan_preserves_planner_timestamps_and_velocities(monkeypatch,
 
     assert plan is not None
     assert [to_seconds(point.time_from_start) for point in plan.trajectory.points] == [0.0, 0.25]
-    assert [point.velocities for point in plan.trajectory.points] == [
+    assert [point.velocities.tolist() for point in plan.trajectory.points] == [
         [0.0, 0.0],
         [0.4, 0.2],
     ]

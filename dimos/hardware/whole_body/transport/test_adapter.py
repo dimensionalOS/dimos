@@ -12,8 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Quaternion, Vector3
 from dimos_generated.sensor_msgs.msg import Imu, JointState
+from dimos_generated.std_msgs.msg import Header
+import numpy as np
 import pytest
 
 from dimos.hardware.whole_body.spec import IMUState, MotorCommand, MotorState
@@ -30,7 +33,13 @@ def test_unconnected_adapter_does_not_send_commands():
 @pytest.mark.parametrize("field", ["position", "velocity", "effort"])
 def test_short_feedback_preserves_last_complete_snapshot(field):
     adapter = TransportWholeBodyAdapter(dof=2)
-    message = JointState(position=[1.0, 2.0], velocity=[3.0, 4.0], effort=[5.0, 6.0])
+    message = JointState(
+        position=np.array([1.0, 2.0], dtype=np.float64),
+        velocity=np.array([3.0, 4.0], dtype=np.float64),
+        effort=np.array([5.0, 6.0], dtype=np.float64),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        name=[],
+    )
     adapter._on_motor_states(message)
     setattr(message, field, [0.0])
     adapter._on_motor_states(message)
@@ -47,6 +56,10 @@ def test_generated_imu_converts_xyzw_to_hardware_wxyz():
             orientation=Quaternion(x=0.1, y=0.2, z=0.3, w=0.4),
             angular_velocity=Vector3(x=1.0, y=2.0, z=3.0),
             linear_acceleration=Vector3(x=4.0, y=5.0, z=6.0),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            orientation_covariance=np.zeros(9, dtype=np.float64),
+            angular_velocity_covariance=np.zeros(9, dtype=np.float64),
+            linear_acceleration_covariance=np.zeros(9, dtype=np.float64),
         )
     )
     assert adapter.read_imu() == IMUState(
