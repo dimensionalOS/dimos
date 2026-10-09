@@ -711,6 +711,24 @@ def test_proceed_stops_after_the_lift_when_the_camera_still_sees_the_object(
     assert scene.scan_scene.call_args.kwargs == {"text": ["cup"]}
 
 
+def test_proceed_stops_when_the_object_was_pushed_aside_on_the_table(
+    staged: PickAndPlaceModule,
+) -> None:
+    staged._objects["cup-1"] = {"object_id": "cup-1", "name": "cup", "x": 0.3, "y": 0.2, "z": 0.0}
+    scene: Any = staged._scene
+    # found 8 cm away but still at table height: pushed, not lifted
+    scene.scan_scene.return_value = _scan_with([("cup-1", 0.38, 0.2, 0.0)])
+    manipulation: Any = staged._manipulation
+    manipulation.get_state.return_value.groups["arm/tool"].gripper_position = 0.02
+
+    assert staged.stage_pick_and_place("cup-1", 0.46, 0.05, 0.12).message.startswith("Staged")
+    result = staged.proceed()
+
+    assert "STOPPED at leg 5" in result.message and "pushed" in result.message
+    assert staged._holding_object is False
+    assert staged.forget_held_object().message == "No object was recorded as held."
+
+
 def test_proceed_completes_when_the_object_left_its_start_position(
     staged: PickAndPlaceModule,
 ) -> None:

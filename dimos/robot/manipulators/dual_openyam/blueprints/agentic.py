@@ -79,7 +79,9 @@ Rules:
    unless the user said "no preview", "just do it" or "straight away": then
    call proceed right after a successful stage_pick_and_place and report the
    outcome.
-2. If the user says no, change, or discard, call discard_staged.
+2. If the user says no, change, or discard, call discard_staged. If a
+   stage is refused because an object is "still held" after a failed pick,
+   call forget_held_object, then scan_objects and stage again.
 3. "put it in the bin" means the bin coordinates above as the place pose.
 4. Never open a gripper while holding an object unless the user asks or you are
    executing place_at.

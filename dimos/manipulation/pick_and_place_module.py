@@ -75,6 +75,9 @@ class PickAndPlaceModuleConfig(ModuleConfig):
     # How far the object must have moved from its scanned position to count
     # as lifted, in metres, in the plane of the table.
     grasp_displacement_tolerance: float = Field(default=0.03, gt=0.0)
+    # How far from its scanned position an object may be found, still at table
+    # height, and count as pushed aside rather than lifted.
+    pushed_search_radius: float = Field(default=0.15, gt=0.0)
     yaw_policy: Literal["generated", "preserve_current"] = "generated"
     grasp_verification: GraspVerificationConfig = Field(default_factory=GraspVerificationConfig)
 
@@ -604,10 +607,10 @@ class PickAndPlaceModule(Module):
                         return SkillResult(
                             f"Pick and place of object {program.object_id} STOPPED at leg "
                             f"{index} of {len(program.legs)} ({leg.label}): after the lift the "
-                            f"camera still sees the {program.name or 'object'} "
-                            f"{still_there:.3f} m from where it was scanned, so the grasp "
-                            f"missed it ({jaw_note}). The object was not picked; the arm is "
-                            "at the lift pose with the gripper closed on nothing.",
+                            f"camera still sees the {program.name or 'object'} on the table "
+                            f"{still_there:.3f} m from where it was scanned, so the jaws "
+                            f"missed or pushed it ({jaw_note}). The object was not picked; "
+                            "the arm is at the lift pose with the gripper closed on nothing.",
                             metadata={"stopped_at_leg": index, "legs": len(program.legs)},
                         )
         return SkillResult(
@@ -618,6 +621,20 @@ class PickAndPlaceModule(Module):
                 "rank": program.rank,
                 "score": program.score,
             },
+        )
+
+    @skill
+    def forget_held_object(self) -> SkillResult:
+        """Clear the record of a held object after it was dropped or never gripped,
+        so a new pick can be staged. Nothing moves."""
+        held = self._selected_object_id
+        self._holding_object = False
+        self._clear_selection()
+        self._staged = None
+        return SkillResult(
+            f"Forgot held object {held}. Scan again before the next pick."
+            if held
+            else "No object was recorded as held."
         )
 
     @skill
@@ -849,15 +866,22 @@ class PickAndPlaceModule(Module):
 
     def _object_still_at_start(self, program: _StagedProgram) -> float | None:
         """Rescan for the object; its distance from the scanned position when it is
-        still on the table within the tolerance, else None."""
+        still on the table near there, else None.
+
+        A lifted object leaves the table, so anything of its kind found within
+        pushed_search_radius of the start and still at the scanned height was
+        pushed aside by the jaws, not picked."""
         assert program.start is not None
         detections = self._scene.scan_scene(text=[program.name] if program.name else None)
         nearest: float | None = None
         for detection in detections.detections:
             position = detection.bbox.center.position
             distance = math.hypot(position.x - program.start.x, position.y - program.start.y)
-            if distance <= self.config.grasp_displacement_tolerance and (
-                nearest is None or distance < nearest
+            on_table = abs(position.z - program.start.z) <= self.config.grasp_displacement_tolerance
+            if (
+                distance <= self.config.pushed_search_radius
+                and on_table
+                and (nearest is None or distance < nearest)
             ):
                 nearest = distance
         return nearest

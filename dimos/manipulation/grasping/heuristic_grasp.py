@@ -49,6 +49,13 @@ class HeuristicGraspConfig(ModuleConfig):
     # arbitrary, so these are the same physical grasp reached differently -
     # which matters when one wrist angle falls outside an arm's envelope.
     yaw_candidates: int = 1
+    # A camera looking down from one side sees a tall object's top and its
+    # near face, so the cloud's median sits toward the camera, off the
+    # object's axis, and a jaw closing there pushes the object away. For an
+    # object taller than tall_object_height the centre and the narrow axis
+    # come from the top top_slice of the cloud instead, which lies on the axis.
+    tall_object_height: float = 0.04
+    top_slice: float = 0.02
 
 
 class HeuristicGraspModule(Module, GraspGenSpec):
@@ -71,9 +78,13 @@ class HeuristicGraspModule(Module, GraspGenSpec):
         if not np.all(np.isfinite(points)):
             raise ValueError("object pointcloud XYZ values must be finite floats in metres")
 
-        xy = points[:, :2]
-        center_xy = np.median(xy, axis=0)
         low_z, high_z = np.quantile(points[:, 2], [0.05, 0.95])
+        xy = points[:, :2]
+        if high_z - low_z > self.config.tall_object_height:
+            top = points[points[:, 2] >= high_z - self.config.top_slice]
+            if len(top) >= 3:
+                xy = top[:, :2]
+        center_xy = np.median(xy, axis=0)
         position = Vector3(float(center_xy[0]), float(center_xy[1]), float((low_z + high_z) / 2.0))
         base_yaw, ambiguous = self._narrow_axis_yaw(xy)
         candidates = [
