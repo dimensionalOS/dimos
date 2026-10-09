@@ -24,8 +24,8 @@ import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from dimos.message_codegen._vendor.rosidl.rosidl_adapter import convert_to_idl
-from dimos.message_codegen._vendor.rosidl.rosidl_pycommon import generate_files
+from dimos.message_codegen._vendor.rosidl.rosidl_adapter.api import convert_to_idl
+from dimos.message_codegen._vendor.rosidl.rosidl_pycommon.api import generate_files
 from dimos.message_codegen.definitions import Message
 
 

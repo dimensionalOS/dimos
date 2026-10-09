@@ -83,6 +83,12 @@ upstream template hash, extracted fragment hash and namespace/inline patches.
 Two bool checks preserve rejection before the upstream uint8-to-bool conversion.
 No ROS transport or service/action support is implied.
 
+Vendored package entry points live in ordinary `api.py` modules, with matching
+typing stubs. Imports and EmPy templates reference those modules directly; the
+empty upstream parser initializer is omitted. This preserves namespace-package
+policy without exempting vendored files from the repository test. Source manifests
+retain original upstream paths/hashes and record the layout/import patch.
+
 Rust declarations, primitive/nested/array type mappings and constants now come
 from pinned **ros2msg 0.5.3** during the crate's normal Cargo `build.rs` step.
 DimOS supplies only defaults, schema/codec metadata, bounds validation and
@@ -130,3 +136,8 @@ Counts include blank lines and comments. Tests, schema inputs, vendored sources
 and generated outputs are not counted as handwritten generator/runtime code.
 The point of this change is removing duplicate generation rules, not relocating
 those rules into an uncounted helper.
+
+The core-only reduction is 1,463 to 1,380 (83 lines). Including maintained typing
+stubs inside `_vendor` changes the comparison to 1,493 to 1,444 (49 lines): the
+old stub had 30 lines; the current three stubs total 64. These PR1 counts exclude
+the later layers' ownership, build and packaging implementation.
