@@ -551,6 +551,33 @@ install_steamos_deps() (
     run_cmd "${privilege[@]}" pacman -S --noconfirm "${packages[@]}"
 )
 
+# A Command Line Tools update can leave a default SDK newer than the linker ("tapi error: unknown
+# architecture"), which fails every native extension. Fall back to an older installed SDK that links.
+select_macos_sdk() {
+    has_cmd c++ || return 0
+    local probe sdk developer_dir
+    probe=$(mktemp -d) || die "could not create a temporary directory"
+    printf '#include <vector>\nint main() { return std::vector<int>{1}.at(0) - 1; }\n' > "$probe/probe.cpp"
+    if c++ "$probe/probe.cpp" -o "$probe/probe" >/dev/null 2>&1; then
+        rm -rf "$probe"
+        return
+    fi
+    developer_dir=$(xcode-select -p 2>/dev/null || true)
+    while IFS= read -r sdk; do
+        if SDKROOT="$sdk" c++ "$probe/probe.cpp" -o "$probe/probe" >/dev/null 2>&1; then
+            rm -rf "$probe"
+            export SDKROOT="$sdk"
+            warn "the default macOS SDK can't link with this linker; building with $sdk"
+            dim "  to fix for good, update the Command Line Tools: softwareupdate --list, then install the newest 'Command Line Tools'"
+            return
+        fi
+    done < <(find "$developer_dir/SDKs" "$developer_dir/Platforms/MacOSX.platform/Developer/SDKs" \
+        -maxdepth 1 -name 'MacOSX[0-9]*.sdk' 2>/dev/null | sort -rV)
+    { c++ "$probe/probe.cpp" -o "$probe/probe" 2>&1 || true; } | tail -n 5 >&2
+    rm -rf "$probe"
+    die "the C++ compiler can't link a test program with any installed macOS SDK; update the Command Line Tools (softwareupdate --list) and re-run"
+}
+
 # ─── system dependencies ─────────────────────────────────────────────────────
 install_system_deps() {
     info "checking system dependencies..."
@@ -1027,6 +1054,7 @@ main() {
         export UV_PYTHON_PREFERENCE=only-managed
     fi
     if [[ "$SETUP_METHOD" != "nix" ]]; then install_system_deps; fi
+    if [[ "$DETECTED_OS" == "macos" && "$USE_NIX" != 1 && "$DRY_RUN" != 1 ]]; then select_macos_sdk; fi
     install_uv
 
     if [[ -z "$DETECTED_PYTHON" ]]; then

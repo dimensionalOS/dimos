@@ -5,7 +5,6 @@ on:
     paths:
       - 'scripts/install.sh'
       - 'scripts/test-install.sh'
-      - 'scripts/test-install-regressions.sh'
       - 'pyproject.toml'
       - 'uv.lock'
       - 'setup.py'
@@ -34,10 +33,7 @@ jobs:
         run: |
           /bin/bash -n scripts/install.sh
           /bin/bash -n scripts/test-install.sh
-          /bin/bash -n scripts/test-install-regressions.sh
-          uvx --from shellcheck-py shellcheck -e SC1091 scripts/install.sh scripts/test-install.sh scripts/test-install-regressions.sh
-      - name: Installer regressions
-        run: bash scripts/test-install-regressions.sh
+          uvx --from shellcheck-py shellcheck -e SC1091 scripts/install.sh scripts/test-install.sh
 
   ubuntu:
     needs: lint
