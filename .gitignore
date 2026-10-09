@@ -58,6 +58,9 @@ CLAUDE.MD
 .slim/deepwork/
 .codegraph/
 
+# Local scratch (viewer hacks, one-off scripts — not for PRs)
+/sketch/
+
 # Test data: ignore data/ but keep the compressed LFS archives
 data/*
 !data/.lfs/
