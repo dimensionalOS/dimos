@@ -12,196 +12,108 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Run against the generated example extension; see its README build commands."""
+"""Installed native value/catalog acceptance, without a generated demo extension."""
 
 import gc
 import pickle
-import weakref
 
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.sensor_msgs.msg import Image
+from dimos_generated.std_msgs.msg import Header
+from dimos_generated_schemas.provider import message_types
+from dimos_message_build.registry import decode, encode, initialize
 import numpy as np
 import pytest
-from rosbags.typesys import Stores, get_types_from_msg, get_typestore
 
-generated = pytest.importorskip("dimos_generated", reason="Build examples/message-codegen first")
-if not hasattr(generated, "demo_msgs"):
-    pytest.skip(
-        "Build examples/message-codegen and add its extension to PYTHONPATH",
-        allow_module_level=True,
+STORE = initialize()
+CLASSES = message_types()
+
+
+def field_value(field):
+    kind, spec = field
+    if kind.name == "NAME":
+        return value_for(spec)
+    if kind.name == "BASE":
+        name, _ = spec
+        if name == "string":
+            return "map"
+        if name == "bool":
+            return True
+        return 1.25 if name.startswith("float") else 1
+    item, count = spec
+    values = [field_value(item) for _ in range(count if kind.name == "ARRAY" else 1)]
+    if item[0].name == "BASE" and item[1][0] != "string":
+        dtype = {"byte": "uint8", "char": "uint8"}.get(item[1][0], item[1][0])
+        return np.array(values, dtype=dtype)
+    return values
+
+
+def value_for(name):
+    fields = STORE.fielddefs[name][1]
+    return (
+        CLASSES[name](**{key: field_value(field) for key, field in fields})
+        if fields
+        else CLASSES[name](0)
     )
-Telemetry = generated.demo_msgs.msg.Telemetry
-ImageEnvelope = generated.demo_msgs.msg.ImageEnvelope
-Image = generated.sensor_msgs.msg.Image
 
 
-def test_all_generated_types_match_independent_codec():
-    reference = get_typestore(Stores.ROS2_JAZZY)
-    message_types = [
-        value
-        for package in vars(generated).values()
-        if hasattr(package, "msg")
-        for value in vars(package.msg).values()
-        if isinstance(value, type) and hasattr(value, "msg_name")
-    ]
-    assert len(message_types) >= 142
-    for message_type in message_types:
-        reference.register(get_types_from_msg(message_type.schema, message_type.msg_name))
-        for little_endian in (True, False):
-            encoded = message_type().encode(little_endian=little_endian)
-            decoded = reference.deserialize_cdr(encoded, message_type.msg_name)
-            canonical = bytes(
-                reference.serialize_cdr(decoded, message_type.msg_name, little_endian=little_endian)
-            )
-            assert encoded == canonical, message_type.msg_name
-            assert message_type.decode(canonical).encode(little_endian=little_endian) == encoded
+@pytest.mark.parametrize("little_endian", [False, True])
+@pytest.mark.parametrize(
+    "name",
+    [
+        pytest.param(
+            name,
+            marks=pytest.mark.xfail(
+                strict=True,
+                raises=NotImplementedError,
+                reason="CDR-L07 catalog: docs/development/message-limitations.md#cdr-l07",
+            ),
+        )
+        if name == "shape_msgs/msg/SolidPrimitive"
+        else name
+        for name in sorted(CLASSES)
+    ],
+)
+def test_catalog_native_values_roundtrip_in_both_byte_orders(name, little_endian):
+    value = value_for(name)
+    wire = encode(value, little_endian=little_endian)
+    restored = decode(wire, CLASSES[name])
+    assert type(restored) is CLASSES[name]
+    assert encode(restored, little_endian=little_endian) == wire
 
 
-def test_native_defaults_match_definition():
-    value = Telemetry()
-
-    assert list(value.hops) == []
-    assert list(value.axes) == [1.0, 2.0, 3.0]
-    assert value.reading.temperature == 21.5
-    assert value.reading.active is True
-    assert value.label == "start"
-
-
-def test_sequence_and_nested_edits_survive_serialization():
-    value = Telemetry()
-    value.hops.append(4)
-    value.hops.extend([5, 6])
-    value.axes[1] = -2.0
-    value.reading.temperature = 37.5
-
-    decoded = Telemetry.decode(value.encode())
-
-    assert list(decoded.hops) == [4, 5, 6]
-    assert list(decoded.axes) == [1.0, -2.0, 3.0]
-    assert decoded.reading.temperature == 37.5
+def test_large_image_preserves_header_type_data_and_worker_pickle():
+    image = Image(
+        header=Header(stamp=Time(sec=17, nanosec=123), frame_id="camera"),
+        height=480,
+        width=640,
+        encoding="rgb8",
+        is_bigendian=0,
+        step=1920,
+        data=np.arange(921600, dtype=np.uint8),
+    )
+    restored = decode(encode(image), Image)
+    assert type(restored.header) is Header
+    assert restored.header == image.header
+    np.testing.assert_array_equal(restored.data, image.data)
+    assert encode(pickle.loads(pickle.dumps(image))) == encode(image)
 
 
-def test_numpy_views_are_readonly_and_share_native_storage():
-    value = Image(data=np.arange(16, dtype=np.uint8))
-    first = value.data.view()
-    second = value.data.view()
-
-    assert np.shares_memory(first, second)
-    assert not first.flags.writeable
-    np.testing.assert_array_equal(first, np.arange(16, dtype=np.uint8))
-    with pytest.raises(ValueError, match="read-only"):
-        first[0] = 7
-
-
-def test_mutable_copy_is_independent():
-    value = Image(data=[1, 2, 3])
-    view = value.data.view()
-    copied = value.data.copy()
+def test_native_array_copy_is_independent_and_view_survives_message_release():
+    image = Image(
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        height=1,
+        width=3,
+        encoding="mono8",
+        is_bigendian=0,
+        step=3,
+        data=np.array([1, 2, 3], dtype=np.uint8),
+    )
+    view = image.data.view()
+    copied = image.data.copy()
     copied[0] = 9
-
-    assert copied.flags.writeable
+    np.testing.assert_array_equal(image.data, [1, 2, 3])
     assert not np.shares_memory(view, copied)
-    assert list(value.data) == [1, 2, 3]
-
-
-def test_view_retains_owner_until_released():
-    value = Image(data=[1, 2, 3])
-    owner = weakref.ref(value)
-    view = value.data.view()
-    del value
-    gc.collect()
-
-    assert owner() is not None
-    np.testing.assert_array_equal(view, [1, 2, 3])
-    del view
-    gc.collect()
-    assert owner() is None
-
-
-def test_all_views_must_be_released_before_resize():
-    value = Image(data=[1, 2, 3])
-    first = value.data.view()
-    second = value.data.view()
-
-    with pytest.raises(BufferError, match="borrowed"):
-        value.data.append(4)
-    with pytest.raises(BufferError, match="borrowed"):
-        value.data = [9, 8]
-    del first
-    with pytest.raises(BufferError, match="borrowed"):
-        value.data.clear()
-    del second
-    value.data.append(4)
-    assert list(value.data) == [1, 2, 3, 4]
-
-
-def test_nested_buffer_prevents_parent_replacement():
-    parent = ImageEnvelope(image=Image(data=[1, 2, 3]))
-    view = parent.image.data.view()
-
-    with pytest.raises(BufferError, match="borrowed"):
-        parent.image = Image(data=[9])
-    del parent
+    del image
     gc.collect()
     np.testing.assert_array_equal(view, [1, 2, 3])
-
-
-def test_fixed_array_view_tracks_element_edits():
-    value = Telemetry()
-    view = value.axes.view()
-    value.axes[0] = 7
-
-    assert view[0] == 7
-    with pytest.raises(BufferError, match="borrowed"):
-        value.axes = [4, 5, 6]
-
-
-def test_bounds_are_checked_on_encoding():
-    value = Telemetry()
-    value.hops.extend(range(9))
-
-    with pytest.raises(ValueError, match="sequence bound"):
-        value.encode()
-    value.hops.clear()
-    value.label = "x" * 33
-    with pytest.raises(ValueError, match="string bound"):
-        value.encode()
-
-
-def test_fixed_array_rejects_wrong_length():
-    with pytest.raises((TypeError, ValueError, RuntimeError)):
-        Telemetry(axes=[1, 2])
-
-
-def test_pickle_preserves_values_for_worker_ipc():
-    value = Telemetry(sequence=99, hops=[1, 2], payload=[0, 255])
-    value.header.frame_id = "map"
-
-    restored = pickle.loads(pickle.dumps(value))
-
-    assert restored.encode() == value.encode()
-    restored.hops.append(3)
-    assert list(value.hops) == [1, 2]
-
-
-def test_standard_string_message_round_trips():
-    value = generated.std_msgs.msg.String(data="hello")
-
-    assert value.decode(value.encode()).data == "hello"
-
-
-def test_binary_sequence_copies_bytes_and_bytearray_without_scalar_conversion():
-    payload = bytes(range(256)) * 3600
-    image = Image(height=480, width=640, encoding="rgb8", step=1920, data=payload)
-    assert bytes(image.data.view()) == payload
-    assert bytes(Image.decode(image.encode()).data.view()) == payload
-    mutable = bytearray(payload)
-    image.data = mutable
-    mutable[0] = 255
-    assert image.data[0] == 0
-
-
-def test_borrowed_numeric_view_cannot_reenable_writes():
-    message = Image(data=bytes([1, 2, 3, 4]))
-    view = message.data.view()
-    with pytest.raises(ValueError, match="WRITEABLE"):
-        view.setflags(write=True)
-    assert bytes(view) == b"\x01\x02\x03\x04"

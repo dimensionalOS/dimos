@@ -1,21 +1,10 @@
-from ..._types import (
-    nav_msgs__msg__Goals as Goals,
-    nav_msgs__msg__GridCells as GridCells,
-    nav_msgs__msg__MapMetaData as MapMetaData,
-    nav_msgs__msg__OccupancyGrid as OccupancyGrid,
-    nav_msgs__msg__Odometry as Odometry,
-    nav_msgs__msg__Path as Path,
-    nav_msgs__msg__Trajectory as Trajectory,
-    nav_msgs__msg__TrajectoryPoint as TrajectoryPoint,
-)
+from ..._types import store
 
-__all__ = [
-    "Goals",
-    "GridCells",
-    "MapMetaData",
-    "OccupancyGrid",
-    "Odometry",
-    "Path",
-    "Trajectory",
-    "TrajectoryPoint",
-]
+Goals = store.types["nav_msgs/msg/Goals"]
+GridCells = store.types["nav_msgs/msg/GridCells"]
+MapMetaData = store.types["nav_msgs/msg/MapMetaData"]
+OccupancyGrid = store.types["nav_msgs/msg/OccupancyGrid"]
+Odometry = store.types["nav_msgs/msg/Odometry"]
+Path = store.types["nav_msgs/msg/Path"]
+TrajectoryPoint = store.types["nav_msgs/msg/TrajectoryPoint"]
+Trajectory = store.types["nav_msgs/msg/Trajectory"]

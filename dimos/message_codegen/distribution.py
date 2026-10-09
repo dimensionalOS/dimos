@@ -18,12 +18,19 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 import shutil
-from typing import Any
+
+from .ownership import Dependency
 
 
 def write_distribution(
-    output: Path, module: str, names: tuple[str, ...], version: str = "0.1.0", **options: Any
+    output: Path,
+    module: str,
+    names: tuple[str, ...],
+    version: str = "0.1.0",
+    *,
+    dependencies: tuple[Dependency, ...] = (),
 ) -> None:
     project = output / "python"
     support = module + "_schemas"
@@ -44,6 +51,9 @@ def write_distribution(
                 resources / directory,
                 ignore=shutil.ignore_patterns("target", "Cargo.lock"),
             )
+    cargo_manifest = resources / "rust/Cargo.toml"
+    if cargo_manifest.is_file():
+        cargo_manifest.write_text(re.sub(r', path = "[^"\n]*"', "", cargo_manifest.read_text()))
     if (output / "message-package.json").is_file():
         shutil.copyfile(output / "message-package.json", resources / "message-package.json")
     shutil.copyfile(output / "schemas.json", resources / "schemas.json")
@@ -64,8 +74,7 @@ def write_distribution(
         f"    names = {list(owned)!r}\n"
         "    return {name: getattr(getattr(values, name.split('/')[0]).msg, name.split('/')[-1]) for name in names}\n"
     )
-    dependencies = options.get("dependencies", ())
-    requirements = ["numpy>=1.26.4", "rosbags==0.11.0"] + [
+    requirements = ["numpy>=1.26.4", "rosbags==0.11.0", "dimos-message-build==0.1.0"] + [
         dep.module.replace("_", "-") + "==" + dep.version for dep in dependencies
     ]
     (project / "pyproject.toml").write_text(
@@ -75,7 +84,7 @@ def write_distribution(
         "from setuptools import find_packages, setup\n"
         f"setup(name={module.replace('_', '-')!r}, version={version!r}, packages=find_packages(),\n"
         f"      install_requires={requirements!r},\n"
-        f"      package_data={{{module!r}: ['py.typed'], {support!r}: ['schemas.json', 'schemas/**/*', 'package/**/*']}},\n"
+        f"      package_data={{{module!r}: ['py.typed', '**/*.pyi', '*.pyi'], {support!r}: ['schemas.json', 'schemas/**/*', 'package/**/*']}},\n"
         f"      entry_points={{'dimos.messages': [{(module + '=' + support + '.provider')!r}]}})\n"
     )
     (project / "MANIFEST.in").write_text(

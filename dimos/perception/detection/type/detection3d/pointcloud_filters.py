@@ -48,6 +48,38 @@ def statistical(nb_neighbors: int = 40, std_ratio: float = 0.5) -> PointCloudFil
     return filter_func
 
 
+def range_cluster(gap: float = 0.3) -> PointCloudFilter:
+    """Keep the camera-range cluster containing the median range.
+
+    The projected-cloud analog of the depth-gap split in ``from_depth``:
+    points a mask collects across a range discontinuity are background seen
+    through or around the object, not the object.
+    """
+    import numpy as np
+
+    def filter_func(
+        det: Detection2DBBox, pc: PointCloud2, ci: CameraInfo, tf: Transform
+    ) -> PointCloud2 | None:
+        points, _ = pc.as_numpy()
+        if len(points) == 0:
+            return None
+        camera = tf.inverse().translation.to_numpy()
+        ranges = np.linalg.norm(points - camera, axis=1)
+        order = np.argsort(ranges)
+        ranges_sorted = ranges[order]
+        gaps = np.nonzero(np.diff(ranges_sorted) > gap)[0]
+        starts = np.concatenate(([0], gaps + 1))
+        ends = np.concatenate((gaps + 1, [len(ranges_sorted)]))
+        median_idx = np.searchsorted(ranges_sorted, np.median(ranges_sorted))
+        for start, end in zip(starts, ends, strict=False):
+            if start <= median_idx < end:
+                keep = order[start:end]
+                return PointCloud2.from_numpy(points[keep], frame_id=pc.frame_id, timestamp=pc.ts)
+        return pc
+
+    return filter_func
+
+
 def raycast() -> PointCloudFilter:
     def filter_func(
         det: Detection2DBBox, pc: PointCloud2, ci: CameraInfo, tf: Transform

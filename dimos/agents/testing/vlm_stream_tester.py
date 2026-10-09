@@ -14,6 +14,7 @@
 
 import threading
 import time
+from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage
 from reactivex.disposable import Disposable
@@ -45,8 +46,9 @@ class VlmStreamTester(Module):
         query_interval_s: float = 2.0,
         max_image_age_s: float = 1.5,
         max_image_gap_s: float = 1.5,
+        **kwargs: Any,
     ) -> None:
-        super().__init__()
+        super().__init__(**kwargs)
         self._prompt = prompt
         self._num_queries = num_queries
         self._query_interval_s = query_interval_s

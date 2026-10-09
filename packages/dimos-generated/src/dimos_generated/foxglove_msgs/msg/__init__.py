@@ -1,3 +1,3 @@
-from ..._types import foxglove_msgs__msg__CompressedVideo as CompressedVideo
+from ..._types import store
 
-__all__ = ["CompressedVideo"]
+CompressedVideo = store.types["foxglove_msgs/msg/CompressedVideo"]

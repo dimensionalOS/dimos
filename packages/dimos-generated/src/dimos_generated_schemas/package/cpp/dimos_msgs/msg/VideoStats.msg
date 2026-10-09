@@ -1,0 +1,11 @@
+std_msgs/Header header
+float64 fps
+float64 kbps
+uint32 width
+uint32 height
+float64 loss_pct
+float64 jitter_buffer_ms
+float64 decode_ms
+uint64 frames_dropped
+uint64 freezes
+float64 e2e_latency_ms

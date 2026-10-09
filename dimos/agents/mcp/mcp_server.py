@@ -37,6 +37,7 @@ from dimos.core.module import Module
 from dimos.core.rpc_client import RpcCall, RPCClient
 from dimos.core.transport_factory import make_transport
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.safe_thread_map import safe_thread_map
 
 if TYPE_CHECKING:
     from dimos.core.module import SkillInfo
@@ -74,6 +75,11 @@ def _jsonrpc_result(req_id: Any, result: Any) -> dict[str, Any]:
 
 def _jsonrpc_result_text(req_id: Any, text: str) -> dict[str, Any]:
     return _jsonrpc_result(req_id, {"content": [{"type": "text", "text": text}]})
+
+
+def _jsonrpc_tool_error(req_id: Any, text: str) -> dict[str, Any]:
+    """Tool-call result flagged as failed (MCP ``isError``), with ``text`` as its content."""
+    return _jsonrpc_result(req_id, {"content": [{"type": "text", "text": text}], "isError": True})
 
 
 def _jsonrpc_error(req_id: Any, code: int, message: str) -> dict[str, Any]:
@@ -201,7 +207,9 @@ async def _handle_tools_call(
             )
         except Exception as e:
             logger.exception("MCP tool error", tool=name, duration=f"{time.monotonic() - t0:.3f}s")
-            return _jsonrpc_result_text(req_id, f"Error running tool '{name}': {e}")
+            return _jsonrpc_tool_error(
+                req_id, f"Error running tool '{name}': {type(e).__name__}: {e}"
+            )
 
         if lifecycle == "background":
             # Hand ownership of the caps off to the tool-stream lifecycle.
@@ -381,9 +389,10 @@ class McpServer(Module):
     def on_system_modules(self, modules: list[RPCClient]) -> None:
         # TODO: this is a bit hacky, also not thread-safe
         assert self.rpc is not None
-        app.state.skills = [
-            skill_info for module in modules for skill_info in (module.get_skills() or [])
-        ]
+        # One RPC per module, in parallel: a worker still warming up blocks
+        # its call on the langchain import.
+        per_module = safe_thread_map(modules, lambda module: module.get_skills() or [])
+        app.state.skills = [skill_info for skills in per_module for skill_info in skills]
         app.state.skills_by_name = {s.func_name: s for s in app.state.skills}
         app.state.rpc_calls = {
             skill_info.func_name: RpcCall(

@@ -133,6 +133,7 @@ Config(
         dimsim_scene='apartment',
         dimsim_port=8090,
         dimsim_headless=True,
+        mujoco_scene=None,
         local_relay=False,
         relay_url=None,
         relay_ca=None,

@@ -18,7 +18,7 @@ from importlib import import_module
 from pathlib import Path
 from typing import Any
 
-from dimos.message_codegen.definitions import Definitions
+from .definitions import Definitions
 
 
 def schema_root() -> Path:

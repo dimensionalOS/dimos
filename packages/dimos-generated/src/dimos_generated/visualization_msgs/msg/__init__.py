@@ -1,29 +1,14 @@
-from ..._types import (
-    visualization_msgs__msg__ImageMarker as ImageMarker,
-    visualization_msgs__msg__InteractiveMarker as InteractiveMarker,
-    visualization_msgs__msg__InteractiveMarkerControl as InteractiveMarkerControl,
-    visualization_msgs__msg__InteractiveMarkerFeedback as InteractiveMarkerFeedback,
-    visualization_msgs__msg__InteractiveMarkerInit as InteractiveMarkerInit,
-    visualization_msgs__msg__InteractiveMarkerPose as InteractiveMarkerPose,
-    visualization_msgs__msg__InteractiveMarkerUpdate as InteractiveMarkerUpdate,
-    visualization_msgs__msg__Marker as Marker,
-    visualization_msgs__msg__MarkerArray as MarkerArray,
-    visualization_msgs__msg__MenuEntry as MenuEntry,
-    visualization_msgs__msg__MeshFile as MeshFile,
-    visualization_msgs__msg__UVCoordinate as UVCoordinate,
-)
+from ..._types import store
 
-__all__ = [
-    "ImageMarker",
-    "InteractiveMarker",
-    "InteractiveMarkerControl",
-    "InteractiveMarkerFeedback",
-    "InteractiveMarkerInit",
-    "InteractiveMarkerPose",
-    "InteractiveMarkerUpdate",
-    "Marker",
-    "MarkerArray",
-    "MenuEntry",
-    "MeshFile",
-    "UVCoordinate",
-]
+ImageMarker = store.types["visualization_msgs/msg/ImageMarker"]
+MeshFile = store.types["visualization_msgs/msg/MeshFile"]
+UVCoordinate = store.types["visualization_msgs/msg/UVCoordinate"]
+Marker = store.types["visualization_msgs/msg/Marker"]
+InteractiveMarkerControl = store.types["visualization_msgs/msg/InteractiveMarkerControl"]
+MenuEntry = store.types["visualization_msgs/msg/MenuEntry"]
+InteractiveMarker = store.types["visualization_msgs/msg/InteractiveMarker"]
+InteractiveMarkerFeedback = store.types["visualization_msgs/msg/InteractiveMarkerFeedback"]
+InteractiveMarkerInit = store.types["visualization_msgs/msg/InteractiveMarkerInit"]
+InteractiveMarkerPose = store.types["visualization_msgs/msg/InteractiveMarkerPose"]
+InteractiveMarkerUpdate = store.types["visualization_msgs/msg/InteractiveMarkerUpdate"]
+MarkerArray = store.types["visualization_msgs/msg/MarkerArray"]

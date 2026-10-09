@@ -1,3 +1,9 @@
+# Historical evidence — superseded implementation
+
+This records earlier wrapper-based experiments, not acceptance of the current
+direct-library generator. Current results come from the exact-HEAD standalone
+CI matrix and its uploaded evidence.
+
 # Stage 1 local verification
 
 Captured on 2026-09-21 on Linux x86_64 with Python 3.12, GCC 16, and Rust 1.98.

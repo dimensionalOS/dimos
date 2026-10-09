@@ -37,7 +37,7 @@ from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.Bool import Bool
-from dimos.navigation.frontier_exploration.wavefront_frontier_goal_selector import (
+from dimos.navigation.experimental.frontier_exploration.wavefront_frontier_goal_selector import (
     WavefrontFrontierExplorer,
 )
 from dimos.robot.unitree.g1.g1_rerun import g1_costmap
