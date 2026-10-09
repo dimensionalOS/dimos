@@ -27,7 +27,9 @@ from .definitions import Definitions, FieldType, Message
 
 
 def string_literal(value: str) -> str:
-    return re.sub(r"\\u([0-9a-fA-F]{4})", r"\\u{\1}", json.dumps(value, ensure_ascii=False))
+    return re.sub(
+        r"\\u([0-9a-fA-F]{4})", r"\\u{\1}", json.dumps(value, ensure_ascii=False)
+    ).replace("@", r"\u{40}")
 
 
 def literal(value: Any, type_: FieldType) -> str:
