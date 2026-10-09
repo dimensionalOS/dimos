@@ -73,6 +73,18 @@ class Rules:
     goal_z_m: float = 0.3
     timeout_s_per_m: float = 6.0
     timeout_base_s: float = 20.0
+    fall_rad: float = 1.0
+    stuck_s: float = 10.0
+    stuck_progress_m: float = 0.3
+    stalled_s: float = 10.0
+    moving_cmd: float = 0.05
+    reroute_m: float = 0.5
+    yaw_reversal_rad_s: float = 0.2
+
+    def timeout_s(self, route_length: float | None) -> float | None:
+        if route_length is None:
+            return None
+        return self.timeout_base_s + self.timeout_s_per_m * route_length
 
 
 @dataclass(frozen=True)
