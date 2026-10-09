@@ -79,10 +79,12 @@ DUAL_OPENYAM_BASE_SPACING = 0.43
 # where it really is. The lasting fix is re-zeroing those motors.
 DUAL_OPENYAM_BASE_YAW = {"left": -0.046, "right": -0.194}
 # Where each arm's real base sits relative to the nominal (0, +-spacing/2), in
-# metres, from the tag-touch check of the same day: with the tool commanded
-# over a tag the closed jaws landed this much nearer the table than the model
-# put them, on both arms, after the joint 1 error above is accounted for.
-DUAL_OPENYAM_BASE_OFFSET = {"left": (-0.026, 0.0), "right": (-0.045, 0.0)}
+# world metres, from the tag-touch checks of the same day: with the tool
+# commanded over a tag centre the closed jaws landed this far from it, so the
+# base moves by the opposite amount. After the joint 1 fix both arms were
+# still 7 mm toward the left arm (a shared camera-to-arms offset) and the
+# right 10 mm too far, the left 5 mm too near.
+DUAL_OPENYAM_BASE_OFFSET = {"left": (-0.021, -0.007), "right": (-0.055, -0.007)}
 
 # Wrist camera: a D405 on a 6 cm bracket that leaves the top of the wrist tube
 # at 45 deg, leaning toward the wrist (sketch of 2026-10-06). It sits on the
@@ -229,7 +231,7 @@ def dual_openyam_grasp_model_config() -> RobotModelConfig:
         dx, dy = DUAL_OPENYAM_BASE_OFFSET[side]
         model = model.with_joint_origin(
             f"{side}_arm_fixed_joint",
-            xyz=(dx, sign * (DUAL_OPENYAM_BASE_SPACING / 2 + dy), 0.0),
+            xyz=(dx, sign * DUAL_OPENYAM_BASE_SPACING / 2 + dy, 0.0),
             rpy=(0.0, 0.0, DUAL_OPENYAM_BASE_YAW[side]),
         )
         for name, size, xyz in DUAL_OPENYAM_WRIST_CAMERA_BOXES:
