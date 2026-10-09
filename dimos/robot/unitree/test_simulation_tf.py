@@ -65,7 +65,7 @@ def g1_connection(mocker):
 
 def test_g1_simulator_tf_uses_pose_time_for_all_mounts(g1_connection, source_pose):
     g1_connection._publish_tf(source_pose)
-    message = cdr_decode(g1_connection.tf.publish.call_args.args[0].encode(), TFMessage)
+    message = cdr_decode(cdr_encode(g1_connection.tf.publish.call_args.args[0]), TFMessage)
     assert [(edge.header.frame_id, edge.child_frame_id) for edge in message.transforms] == [
         ("world", "base_link"),
         ("base_link", "camera_link"),
@@ -97,7 +97,9 @@ def test_g1_camera_info_stamps_each_publication_without_mutating_template(g1_con
         g1_connection._stop_event, "wait", side_effect=lambda _: g1_connection._stop_event.set()
     )
     g1_connection._publish_camera_info_loop()
-    message = cdr_decode(g1_connection.camera_info.publish.call_args.args[0].encode(), CameraInfo)
+    message = cdr_decode(
+        cdr_encode(g1_connection.camera_info.publish.call_args.args[0]), CameraInfo
+    )
     assert message.header.stamp == Time(sec=1700000000, nanosec=123456789)
     assert message.header.frame_id == "camera_optical"
     assert template.header.stamp == Time(sec=0, nanosec=0)

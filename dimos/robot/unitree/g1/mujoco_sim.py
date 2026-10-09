@@ -95,7 +95,7 @@ class G1SimConnection(G1ConnectionBase):
     def _publish_camera_info_loop(self) -> None:
         assert self.connection is not None
         while not self._stop_event.is_set():
-            info = copy.copy(self.connection.camera_info_static)
+            info = copy.deepcopy(self.connection.camera_info_static)
             info.header.stamp = time_from_nanoseconds(time.time_ns())
             self.camera_info.publish(info)
             self._stop_event.wait(1.0)

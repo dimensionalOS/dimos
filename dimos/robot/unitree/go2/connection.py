@@ -311,7 +311,7 @@ class GO2Connection(Module, Camera, Pointcloud):
 
         if self.config.frame_id_prefix and self.camera_info_static.header.frame_id:
             # Copy so the class-level default is not mutated.
-            self.camera_info_static = copy.copy(self.camera_info_static)
+            self.camera_info_static = copy.deepcopy(self.camera_info_static)
             self.camera_info_static.header.frame_id = _prefixed(
                 self.config.frame_id_prefix, self.camera_info_static.header.frame_id
             )
@@ -396,7 +396,7 @@ class GO2Connection(Module, Camera, Pointcloud):
         ]
 
     def _publish_tf(self, msg: PoseStamped) -> None:
-        message = copy.copy(msg)
+        message = copy.deepcopy(msg)
         message.header.frame_id = self.config.odom_frame_id
         if self.config.publish_tf:
             transforms = self._odom_to_tf(message, prefix=self.config.frame_id_prefix or "")
@@ -406,7 +406,7 @@ class GO2Connection(Module, Camera, Pointcloud):
 
     def publish_camera_info(self) -> None:
         while True:
-            message = copy.copy(self.camera_info_static)
+            message = copy.deepcopy(self.camera_info_static)
             message.header.stamp = time_from_nanoseconds(time.time_ns())
             self.camera_info.publish(message)
             time.sleep(1.0)

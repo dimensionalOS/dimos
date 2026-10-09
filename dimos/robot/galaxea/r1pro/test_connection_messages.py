@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import asdict
 import math
 
 from dimos_generated.builtin_interfaces.msg import Time
@@ -19,7 +20,7 @@ from dimos_generated.dimos_msgs.msg import MotorCommandArray
 from dimos_generated.geometry_msgs.msg import Twist, TwistStamped, Vector3
 from dimos_generated.sensor_msgs.msg import JointState
 from dimos_generated.std_msgs.msg import Header
-from dimos_message_build.registry import decode as cdr_decode
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 
@@ -66,7 +67,9 @@ def test_integrated_pose_odometry_and_tf_preserve_nanoseconds(robot, monkeypatch
     for message in (pose, odometry, *tf.transforms):
         assert message.header.stamp == Time(sec=1700000000, nanosec=223456789)
     for message in (pose, odometry, tf):
-        assert type(message).decode(message.encode()) == message
+        np.testing.assert_equal(
+            asdict(cdr_decode(cdr_encode(message), type(message))), asdict(message)
+        )
 
 
 @pytest.mark.parametrize("second_stamp", [(0, 0), (-1, 0), (2, 1)])
@@ -111,7 +114,7 @@ def test_joint_snapshot_uses_oldest_exact_stamp_and_all_segments(robot, monkeypa
     assert list(state.velocity) == [0.5] * 18
     assert list(state.name) == connection.R1PRO_UPPER_BODY_JOINTS
     assert state.header.stamp == oldest
-    assert cdr_decode(state.encode(), JointState) == state
+    np.testing.assert_equal(asdict(cdr_decode(cdr_encode(state), JointState)), asdict(state))
 
 
 @pytest.fixture()

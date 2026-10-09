@@ -722,15 +722,15 @@ class MujocoEngine(SimulationEngine):
         return self.joint_efforts
 
     def write_joint_command(self, command: JointState) -> None:
-        if command.position:
+        if len(command.position):
             self._command_mode = "position"
             self._set_position_targets(list(command.position))
             return
-        if command.velocity:
+        if len(command.velocity):
             self._command_mode = "velocity"
             self._set_velocity_targets(list(command.velocity))
             return
-        if command.effort:
+        if len(command.effort):
             self._command_mode = "effort"
             self._set_effort_targets(list(command.effort))
             return

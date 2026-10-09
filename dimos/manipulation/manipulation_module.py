@@ -745,7 +745,7 @@ class ManipulationModule(Module):
             if seed_state is None:
                 selection = self._world_monitor.planning_groups.select(group_ids)
                 current = self._world_monitor.current_model_joint_state()
-                if not current.name and not current.position:
+                if not current.name and not len(current.position):
                     return IKResult(status=IKStatus.NO_SOLUTION, message="No joint state")
                 seed_state = filter_joint_state_to_selected_joints(current, selection.joint_names)
         except (KeyError, ValueError) as exc:

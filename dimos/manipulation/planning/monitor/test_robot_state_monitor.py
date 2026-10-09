@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import asdict
 import threading
 
 from dimos_generated.builtin_interfaces.msg import Time
@@ -57,14 +58,16 @@ def test_generated_feedback_reorders_joints_and_preserves_source_header(monitor)
         velocity=np.array([0.1, 0.2], dtype=np.float64),
         effort=np.array([], dtype=np.float64),
     )
-    world.sync_from_joint_state.assert_called_once_with(expected)
-    assert received == [expected]
+    world.sync_from_joint_state.assert_called_once()
+    np.testing.assert_equal(asdict(world.sync_from_joint_state.call_args.args[0]), asdict(expected))
+    assert len(received) == 1
+    np.testing.assert_equal(asdict(received[0]), asdict(expected))
     snapshot = monitor.get_current_joint_state()
-    assert snapshot == expected
+    np.testing.assert_equal(asdict(snapshot), asdict(expected))
     snapshot.header.stamp.nanosec = 0
     snapshot.position[0] = 99
     received[0].position[0] = 42
-    assert monitor.get_current_joint_state() == expected
+    np.testing.assert_equal(asdict(monitor.get_current_joint_state()), asdict(expected))
     source.header.stamp.nanosec = 0
     assert received[0].header.stamp.nanosec == 123456789
 
