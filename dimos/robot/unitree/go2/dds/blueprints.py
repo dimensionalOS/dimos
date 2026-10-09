@@ -95,9 +95,10 @@ go2_dds_mid360 = GO2DDS.blueprint(
 # over the raycaster's local map. GO2DDS's native process is the zenoh router (the Go2
 # forwards 7447 to the Jetson, so the viewer dials go22); every other process dials it on
 # loopback. Headless: go2-dds-mid360-viewer on another machine is the screen.
+# The Mid-360 IP comes from MID360__LIDAR_IP; host_ip is auto-detected.
 go2_dds_nav = autoconnect(
     go2_dds_mid360,
-    mid360_for_pointlio(lidar_ip="192.168.123.157", host_ip="192.168.123.5"),
+    mid360_for_pointlio(),
     RayTracingVoxelMap.blueprint(**ray_tracing_config.model_dump(exclude_unset=True)),
     _mls_planner_motion,
     LocalPlannerNative.blueprint(body_dilate_m=MOTION_BODY_DILATE_M),

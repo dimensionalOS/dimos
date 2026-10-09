@@ -97,7 +97,7 @@ Over the internet the JPEG video path is the slow part: every frame crosses the 
 }
 ```
 
-3. Add the flag. In the compose file set `command:` to the image's file flags plus `--rtc-file /etc/relay/rtc.json` (the commented example in [`compose.yaml`](/docker/relay/compose.yaml#L14)), or append the flag to the systemd `ExecStart` in [Without Docker](#without-docker). Restart the relay.
+3. Add the flag. In the compose file set `command:` to the image's file flags plus `--rtc-file /etc/relay/rtc.json` (the commented example in [`docker/relay/compose.yaml`](/docker/relay/compose.yaml#L14)), or append the flag to the systemd `ExecStart` in [Without Docker](#without-docker). Restart the relay.
 
 `/api/info` now answers `"rtc": true` and the log says `WebRTC video through the Cloudflare Realtime SFU: on`. A robot needs the `webrtc` extra (`uv sync --extra webrtc`, or `pip install 'dimos[webrtc]'`, which brings aiortc). Without it the bridge logs once and keeps sending JPEG. `--rtc false` on the robot keeps JPEG on purpose (a comparison, or a robot without the CPU for H.264). A track channel sends nothing through the relay: `/api/stats` lists the SFU sessions and pulls under `rtc`, and the per-channel counters of `color_image` stay at zero. Cloudflare bills egress past 1 TB a month. The relay's own traffic drops to control messages.
 

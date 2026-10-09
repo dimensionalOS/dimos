@@ -313,6 +313,55 @@ describe("VideoPanel", () => {
     expect(badge().getAttribute("data-state")).toBe("error");
   });
 
+  it("plays a track value in a <video> and drives the badge from its frames", () => {
+    // happy-dom's MediaStreamTrack has an illegal constructor; a prototype
+    // instance still passes the panel's instanceof check, and its real
+    // MediaStream accepts it (the srcObject setter insists on the real class).
+    const track = Object.create(MediaStreamTrack.prototype, {
+      kind: { value: "video" },
+    }) as MediaStreamTrack;
+    const frameCallbacks: (() => void)[] = [];
+    const proto = HTMLVideoElement.prototype as unknown as Record<string, unknown>;
+    proto.requestVideoFrameCallback = (cb: () => void) => {
+      frameCallbacks.push(cb);
+      return frameCallbacks.length;
+    };
+    proto.cancelVideoFrameCallback = vi.fn();
+    vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue();
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    act(() => root.render(<VideoPanel spec={SPEC} store={store} />));
+    expect(container.querySelector("canvas")).not.toBeNull();
+    act(() => {
+      store.ingest(CH, header(1, now / 1000), track, true);
+      store.publishUi();
+    });
+    const video = container.querySelector<HTMLVideoElement>(`[data-testid="video-${CH}-track"]`)!;
+    expect(container.querySelector("canvas")).toBeNull();
+    expect((video.srcObject as MediaStream).getVideoTracks()).toEqual([track]);
+    // Connecting: the store saw the track, but no frame was presented yet.
+    expect(badge().textContent).toBe("waiting");
+
+    // Three presented frames within a second (600 ms: the slot age crosses a
+    // 500 ms bucket, which is what republishes the badge).
+    act(() => {
+      for (let i = 0; i < 3; i++) {
+        now += 200;
+        frameCallbacks.shift()!();
+      }
+      store.publishUi();
+    });
+    expect(badge().textContent).toBe("3.0 fps");
+    expect(badge().getAttribute("data-state")).toBe("live");
+
+    // Silence past the threshold reads as stale, off the sink's clock.
+    act(() => {
+      now += 5000;
+      store.publishUi();
+    });
+    expect(badge().textContent).toMatch(/^stale/);
+    expect(badge().getAttribute("data-state")).toBe("stale");
+  });
+
   it("renders a visible note instead of a canvas when no channel is bound", () => {
     act(() =>
       root.render(
