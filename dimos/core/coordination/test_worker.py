@@ -13,10 +13,12 @@
 # limitations under the License.
 
 import threading
+import time
 from typing import TYPE_CHECKING
 
 import pytest
 
+from dimos.agents.annotation import skill
 from dimos.core.coordination.worker_manager_python import WorkerManagerPython
 from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig, global_config
@@ -401,3 +403,68 @@ def test_dedicated_workers_trigger_autoscale(manager_and_modules):
     # at least match the dedicated count.
     assert len(manager._workers) == 4
     assert sum(1 for w in manager._workers if w.dedicated) == 2
+
+
+class WarmedMsg:
+    """Stand-in for a message type with heavy decode dependencies."""
+
+    warmed_on: str | None = None  # thread name, set in the worker process
+
+    @classmethod
+    def lcm_warmup(cls) -> None:
+        cls.warmed_on = threading.current_thread().name
+
+
+class WarmedModule(Module):
+    input: In[WarmedMsg]
+    skills_built_on: str | None = None
+
+    @rpc
+    def start(self) -> None:
+        pass
+
+    @skill
+    def wave(self) -> str:
+        """Wave at the operator."""
+        return "waved"
+
+    def _build_skills(self):
+        self.skills_built_on = threading.current_thread().name
+        return super()._build_skills()
+
+    @rpc
+    def warmed_on(self) -> tuple[str | None, str | None]:
+        return WarmedMsg.warmed_on, self.skills_built_on
+
+
+class UnwarmedInputsModule(WarmedModule):
+    warm_up_inputs = False
+
+
+def _wait_for_warm_up(module) -> tuple[str | None, str | None]:
+    # Skills are warmed up last, so once they are built the whole warm-up ran.
+    deadline = time.monotonic() + 5
+    while module.warmed_on()[1] is None and time.monotonic() < deadline:
+        time.sleep(0.05)
+    return module.warmed_on()
+
+
+@pytest.mark.skipif_macos_bug
+def test_deploy_warms_up_inputs_and_skills_on_a_background_thread(create_worker_manager):
+    worker_manager = create_worker_manager(n_workers=1)
+    module = worker_manager.deploy(WarmedModule, global_config, {})
+    module.start()
+
+    assert _wait_for_warm_up(module) == ("warmup-WarmedModule", "warmup-WarmedModule")
+    assert [s.func_name for s in module.get_skills()] == ["wave"]
+    module.stop()
+
+
+@pytest.mark.skipif_macos_bug
+def test_module_can_opt_out_of_input_warm_up(create_worker_manager):
+    worker_manager = create_worker_manager(n_workers=1)
+    module = worker_manager.deploy(UnwarmedInputsModule, global_config, {})
+    module.start()
+
+    assert _wait_for_warm_up(module) == (None, "warmup-UnwarmedInputsModule")
+    module.stop()
