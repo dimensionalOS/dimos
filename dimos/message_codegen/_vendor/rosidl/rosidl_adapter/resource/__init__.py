@@ -59,10 +59,12 @@ def evaluate_template(template_name, data):
                 rawErrors=True,
                 useProxy=True)
             _interpreter = em.Interpreter(
+                globals={"__package__": __package__.rsplit(".", 2)[0]},
                 config=config,
                 dispatcher=False)
         else:
             _interpreter = em.Interpreter(
+                globals={"__package__": __package__.rsplit(".", 2)[0]},
                 output=output,
                 options={
                     em.BUFFERED_OPT: True,

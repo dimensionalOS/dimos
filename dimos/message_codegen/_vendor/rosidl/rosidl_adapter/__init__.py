@@ -15,17 +15,17 @@
 
 def convert_to_idl(package_dir, package_name, interface_file, output_dir):
     if interface_file.suffix == '.msg':
-        from dimos.message_codegen._vendor.rosidl.rosidl_adapter.msg import convert_msg_to_idl
+        from .msg import convert_msg_to_idl
         return convert_msg_to_idl(
             package_dir, package_name, interface_file, output_dir / 'msg')
 
     if interface_file.suffix == '.srv':
-        from dimos.message_codegen._vendor.rosidl.rosidl_adapter.srv import convert_srv_to_idl
+        from .srv import convert_srv_to_idl
         return convert_srv_to_idl(
             package_dir, package_name, interface_file, output_dir / 'srv')
 
     if interface_file.suffix == '.action':
-        from dimos.message_codegen._vendor.rosidl.rosidl_adapter.action import convert_action_to_idl
+        from .action import convert_action_to_idl
         return convert_action_to_idl(
             package_dir, package_name, interface_file, output_dir / 'action')
 

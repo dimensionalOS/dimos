@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.message_codegen._vendor.rosidl_parser import parse_message_string
-from dimos.message_codegen._vendor.rosidl.rosidl_adapter.resource import expand_template
+from ....rosidl_parser import parse_message_string
+from ..resource import expand_template
 
 
 def convert_msg_to_idl(package_dir, package_name, input_file, output_dir):
