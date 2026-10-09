@@ -90,16 +90,19 @@ DUAL_OPENYAM_BASE_OFFSET = {
     "right": (-0.036, 0.003, 0.0),
 }
 
-# Wrist camera: a D405 on a 6 cm bracket that leaves the top of the wrist tube
-# at 45 deg, leaning toward the wrist (sketch of 2026-10-06). It sits on the
-# gripper link's -X side, the side that points up at the rest pose. Boxes in
+# Wrist camera: a D405 on a 6 cm bracket that leaves the gripper body at
+# 45 deg, leaning toward the fingers. It sits on the gripper link's -X side,
+# the side that points up at the rest pose. Measured off a photo against a
+# 10 cm tag (2026-10-09): the camera centre is 10 cm above the closed tips
+# and 10 cm to the side of the gripper axis, which puts it 8 cm below the
+# gripper link along the fingers, not above it as first sketched. Boxes in
 # the gripper frame with 1.5 cm of margin per side and 2 cm for the USB plug.
 _WRIST_TUBE_HALF_WIDTH = 0.0325
-_BRACKET_RPY = (0.0, -math.pi / 4, 0.0)
+_BRACKET_RPY = (0.0, math.pi / 4, 0.0)
 DUAL_OPENYAM_WRIST_CAMERA_BOXES = [
     # name, size, xyz: the bracket, then the camera body at its end.
-    ("wrist_camera_bracket", (0.034, 0.055, 0.090), (-0.054, 0.0, 0.021)),
-    ("wrist_camera", (0.072, 0.072, 0.073), (-0.090, 0.0, 0.058)),
+    ("wrist_camera_bracket", (0.034, 0.055, 0.090), (-0.055, 0.0, -0.045)),
+    ("wrist_camera", (0.072, 0.072, 0.073), (-0.095, 0.0, -0.080)),
 ]
 
 # The workcell in the world frame, table of 2026-10-08: 130 x 80 cm, its top
