@@ -62,7 +62,7 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.transport_factory import session_config
 from dimos.protocol.service.lcmservice import LCMConfig
 from dimos.protocol.service.spec import SessionConfig
-from dimos.protocol.service.zenohservice import ZenohConfig
+from dimos.protocol.service.zenohservice import ZENOH_LOG_DIRECTIVES, ZenohConfig
 from dimos.utils.data import get_project_root
 from dimos.utils.logging_config import setup_logger
 
@@ -114,6 +114,9 @@ _PYTHON_TO_RUST_LEVELS = {
     "ERROR": "error",
     "CRITICAL": "error",
 }
+
+
+_NO_MESSAGE = "<no message>"
 
 
 def _check_legacy_cwd(values: Any) -> Any:
@@ -249,6 +252,7 @@ class NativeModule(Module):
     """
 
     config: NativeModuleConfig
+    warm_up_inputs = False  # the native process subscribes and decodes itself
 
     _process: subprocess.Popen[bytes] | None = None
     _watchdog: threading.Thread | None = None
@@ -291,9 +295,8 @@ class NativeModule(Module):
 
         env["DIMOS_TRANSPORT"] = global_config.transport
 
-        env["RUST_LOG"] = _PYTHON_TO_RUST_LEVELS.get(
-            os.environ.get("DIMOS_LOG_LEVEL", "").upper(), "info"
-        )
+        level = _PYTHON_TO_RUST_LEVELS.get(os.environ.get("DIMOS_LOG_LEVEL", "").upper(), "info")
+        env["RUST_LOG"] = f"{level},{ZENOH_LOG_DIRECTIVES}"
         return env
 
     def _session(self) -> SessionConfig:
@@ -504,7 +507,7 @@ class NativeModule(Module):
                     fields = data.pop("fields", None)
                     if fields:
                         data.update(fields)
-                    message = data.pop("message", None) or line
+                    message = data.pop("message", None) or _NO_MESSAGE
                     msg_level = data.pop("level", None)
                     method = (
                         _NATIVE_TO_PYTHON_LEVELS.get(msg_level.lower(), level)

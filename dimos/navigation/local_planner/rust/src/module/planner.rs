@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 
 use crate::planner::{plan_explored, Emb, COMMIT_MARGIN};
 use crate::{clearance, stamps};
-use dimos_module::{native_config, warn_throttled, Input, Module, Output, Tf};
+use dimos_module::{debug_throttled, native_config, warn_throttled, Input, Module, Output, Tf};
 use lcm_msgs::nav_msgs::Path;
 use lcm_msgs::sensor_msgs::PointCloud2;
 use tracing::{debug, info, warn};
@@ -303,7 +303,8 @@ pub fn plan_once(
     let xy: Vec<[f64; 2]> = states.iter().map(|s| [s[0], s[1]]).collect();
     let room = clearance::path_clearance(&xy, points, emb::half_width(emb));
     let ts = stamps::encode_precision(&states, &room, t0, &emb::governor(emb));
-    debug!(
+    debug_throttled!(
+        Duration::from_secs(5),
         waypoints = states.len(),
         plan_ms = ms_since(started),
         "path planned"
