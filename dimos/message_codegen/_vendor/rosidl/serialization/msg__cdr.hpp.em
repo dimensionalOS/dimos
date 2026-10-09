@@ -8,8 +8,8 @@ from .rosidl_parser.definition import AbstractNestedType, AbstractWString, Array
 #   suffix: the suffix name of the method. Will be used in case of recursion
 
 def generate_member_for_cdr_serialize(member, suffix):
-  from .rosidl_generator_cpp import msg_type_only_to_cpp
-  from .rosidl_generator_cpp import msg_type_to_cpp
+  from .rosidl_generator_cpp.api import msg_type_only_to_cpp
+  from .rosidl_generator_cpp.api import msg_type_to_cpp
   from .rosidl_parser.definition import AbstractGenericString
   from .rosidl_parser.definition import AbstractNestedType
   from .rosidl_parser.definition import AbstractSequence
@@ -214,8 +214,8 @@ cdr_deserialize(
 #   suffix: the suffix name of the method. Will be used in case of recursion
 
 def generate_member_for_get_serialized_size(member, suffix):
-  from .rosidl_generator_cpp import msg_type_only_to_cpp
-  from .rosidl_generator_cpp import msg_type_to_cpp
+  from .rosidl_generator_cpp.api import msg_type_only_to_cpp
+  from .rosidl_generator_cpp.api import msg_type_to_cpp
   from .rosidl_parser.definition import AbstractGenericString
   from .rosidl_parser.definition import AbstractNestedType
   from .rosidl_parser.definition import AbstractSequence

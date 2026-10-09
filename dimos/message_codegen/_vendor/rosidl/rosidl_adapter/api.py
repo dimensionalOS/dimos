@@ -15,7 +15,7 @@
 
 def convert_to_idl(package_dir, package_name, interface_file, output_dir):
     if interface_file.suffix == '.msg':
-        from .msg import convert_msg_to_idl
+        from .msg.api import convert_msg_to_idl
         return convert_msg_to_idl(
             package_dir, package_name, interface_file, output_dir / 'msg')
 
