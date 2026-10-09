@@ -56,6 +56,10 @@ class HeuristicGraspConfig(ModuleConfig):
     # come from the top top_slice of the cloud instead, which lies on the axis.
     tall_object_height: float = 0.04
     top_slice: float = 0.02
+    # An object whose cross-section fits between the open jaws along its wide
+    # axis too can be grasped at any wrist yaw, so every yaw is offered for it;
+    # a partly seen round lid rarely looks round enough for the axis test alone.
+    jaw_opening: float = 0.09
 
 
 class HeuristicGraspModule(Module, GraspGenSpec):
@@ -87,6 +91,10 @@ class HeuristicGraspModule(Module, GraspGenSpec):
         center_xy = np.median(xy, axis=0)
         position = Vector3(float(center_xy[0]), float(center_xy[1]), float((low_z + high_z) / 2.0))
         base_yaw, ambiguous = self._narrow_axis_yaw(xy)
+        if not ambiguous:
+            centered = xy - np.mean(xy, axis=0)
+            wide = float(np.ptp(centered @ np.array([math.cos(base_yaw), math.sin(base_yaw)])))
+            ambiguous = wide <= self.config.jaw_opening
         candidates = [
             GraspCandidate(
                 Pose(
