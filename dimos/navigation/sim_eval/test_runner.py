@@ -23,6 +23,7 @@ import typer
 
 from dimos.navigation.sim_eval.cli import override_flag, seeds_of
 from dimos.navigation.sim_eval.ground_truth import Difficulty
+from dimos.navigation.sim_eval.replay import REPLAY_FILE
 from dimos.navigation.sim_eval.runner import (
     RECORDING_FILE,
     RESULTS_FILE,
@@ -138,6 +139,7 @@ def test_run_scores_every_episode_of_the_split_in_parallel(
     assert (episode / SCORE_FILE).exists()
     assert 'scene 1 {"door_width": 0.5} --set-x=1' in (episode / "run.log").read_text()
     assert not any((tmp_path / "recordings").iterdir())
+    assert (episode / REPLAY_FILE).stat().st_size > 1000
     meta = json.loads((run_dir / RUN_FILE).read_text())
     assert meta["finished"] is True
     assert meta["episodes"] == 6
@@ -150,7 +152,8 @@ def test_rescore_reproduces_the_results(
     run_dir = run(
         RunConfig(
             suite=suite,
-            split="held_out",
+            split=None,
+            cases=("mined-s1-dd",),
             out_dir=tmp_path / "run",
             overrides=(f"--fake-recordings={tmp_path / 'recordings'}",),
             command=fake_blueprint,
