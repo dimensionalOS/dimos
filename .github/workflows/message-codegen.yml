@@ -43,7 +43,7 @@ jobs:
         run: |
           test ! -d /opt/ros
           uv venv .venv --python 3.12
-          uv pip install --python .venv/bin/python rosbags==0.11.0 numpy ruff==0.14.3 pytest pytest-asyncio pytest-env lcm-dimos-fork setuptools wheel mcap==1.4.0 rerun-sdk==0.32.0 pillow mypy==1.19.0
+          uv pip install --python .venv/bin/python rosbags==0.11.0 empy==4.2 lark==1.2.2 numpy ruff==0.14.3 pytest pytest-asyncio pytest-env lcm-dimos-fork setuptools wheel mcap==1.4.0 rerun-sdk==0.32.0 pillow mypy==1.19.0
           .venv/bin/python -c "import importlib.util; assert importlib.util.find_spec('rclpy') is None"
       - name: Reject checked-in generated source drift
         run: .venv/bin/python -m scripts.generate_builtin_messages --check
