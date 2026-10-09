@@ -91,16 +91,28 @@ class HeuristicGraspModule(Module, GraspGenSpec):
             top = points[points[:, 2] >= high_z - self.config.top_slice]
             if len(top) >= 3:
                 xy = top[:, :2]
-        center_xy = np.median(xy, axis=0)
-        position = Vector3(float(center_xy[0]), float(center_xy[1]), float((low_z + high_z) / 2.0))
         base_yaw, ambiguous = self._narrow_axis_yaw(xy)
-        centered = xy - np.mean(xy, axis=0)
-        along = centered @ np.array([math.cos(base_yaw), math.sin(base_yaw)])
-        across = centered @ np.array([-math.sin(base_yaw), math.cos(base_yaw)])
+        mean_xy = np.mean(xy, axis=0)
+        centered = xy - mean_xy
+        u_along = np.array([math.cos(base_yaw), math.sin(base_yaw)])
+        u_across = np.array([-math.sin(base_yaw), math.cos(base_yaw)])
+        along = centered @ u_along
+        across = centered @ u_across
         # 5th to 95th percentile: a mask that spills onto the table adds a few
         # far points that must not decide the grasp.
-        wide = float(np.diff(np.quantile(along, [0.05, 0.95]))[0])
+        along_lo, along_hi = np.quantile(along, [0.05, 0.95])
+        wide = float(along_hi - along_lo)
         narrow = float(np.diff(np.quantile(across, [0.05, 0.95]))[0])
+        # Grasp the middle of the object's length, not the median point: a
+        # camera to one side sees one end of a tube more densely than the
+        # other, and the median then sits near that end, where the jaws close
+        # on a cap or a crimp. Across the jaws the median is the right centre.
+        center_xy = (
+            mean_xy
+            + float((along_lo + along_hi) / 2.0) * u_along
+            + float(np.median(across)) * u_across
+        )
+        position = Vector3(float(center_xy[0]), float(center_xy[1]), float((low_z + high_z) / 2.0))
         if not ambiguous:
             ambiguous = wide <= self.config.jaw_opening
         logger.info(
