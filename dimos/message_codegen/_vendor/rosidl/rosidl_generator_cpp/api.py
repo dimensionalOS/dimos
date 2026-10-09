@@ -25,7 +25,7 @@ from ..rosidl_parser.definition import BoundedSequence
 from ..rosidl_parser.definition import FLOATING_POINT_TYPES
 from ..rosidl_parser.definition import NamespacedType
 from ..rosidl_parser.definition import UnboundedSequence
-from ..rosidl_pycommon import generate_files
+from ..rosidl_pycommon.api import generate_files
 
 
 def generate_cpp(generator_arguments_file):
