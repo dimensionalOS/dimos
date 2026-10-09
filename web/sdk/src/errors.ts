@@ -1,7 +1,12 @@
 // Structured session-level errors surfaced through SessionStatus.lastError,
 // and the rejection type for watch() promises that can no longer resolve.
 
-export type SessionErrorCode = "invalid_manifest" | "unknown_channel" | "relay_error";
+export type SessionErrorCode =
+  | "invalid_manifest"
+  | "unknown_channel"
+  | "relay_error"
+  // The WebRTC video path failed; the WebTransport session is unaffected.
+  | "rtc_failed";
 
 export interface SessionError {
   code: SessionErrorCode;
