@@ -78,13 +78,17 @@ DUAL_OPENYAM_BASE_SPACING = 0.43
 # turns each base by the opposite angle so the reported angles place the arm
 # where it really is. The lasting fix is re-zeroing those motors.
 DUAL_OPENYAM_BASE_YAW = {"left": -0.046, "right": -0.194}
-# Where each arm's real base sits relative to the nominal (0, +-spacing/2), in
-# world metres, from the tag-touch checks of the same day: with the tool
-# commanded over a tag centre the closed jaws landed this far from it, so the
-# base moves by the opposite amount. After the joint 1 fix both arms were
-# still 7 mm toward the left arm (a shared camera-to-arms offset) and the
-# right 10 mm too far, the left 5 mm too near.
-DUAL_OPENYAM_BASE_OFFSET = {"left": (-0.021, -0.007), "right": (-0.055, -0.007)}
+# Where each arm's real base sits relative to the nominal (0, +-spacing/2, 0),
+# in world metres, fitted from the tag-touch checks of 2026-10-09: with the
+# tool commanded over a tag centre the closed jaws land at the command plus
+# (real base minus model base), so the model base moves by the measured
+# error. Two rounds of readings per arm agree within 5 mm. Both arms also
+# sit about 3.5 cm lower than the URDF zero: tips commanded 3.5 cm above the
+# table touched it.
+DUAL_OPENYAM_BASE_OFFSET = {
+    "left": (-0.033, 0.008, -0.035),
+    "right": (-0.036, 0.003, -0.035),
+}
 
 # Wrist camera: a D405 on a 6 cm bracket that leaves the top of the wrist tube
 # at 45 deg, leaning toward the wrist (sketch of 2026-10-06). It sits on the
@@ -123,10 +127,14 @@ DUAL_OPENYAM_STATIC_BOXES = [
     {"name": "overhead_camera", "size": (0.10, 0.10, 0.08), "xyz": (-0.016, 0.001, 0.41)},
 ]
 
-# Home is the pose the arms rest in on their supports, which is the URDF zero
-# with joint 2 held one degree above its hard stop. go_home and go_init then
-# agree, and a session ends where it started.
-DUAL_OPENYAM_REST_PER_ARM = [0.0, 0.02, 0.0, 0.0, 0.0, 0.0]
+# Home is the pose the arms rest in on their supports: the URDF zero with
+# joint 2 held one degree above its hard stop. Joint 1 is the reading at
+# which each arm lies straight (see DUAL_OPENYAM_BASE_YAW), so the arms rest
+# parallel until the motors are re-zeroed.
+DUAL_OPENYAM_REST_PER_ARM = {
+    "left": [0.046, 0.02, 0.0, 0.0, 0.0, 0.0],
+    "right": [0.194, 0.02, 0.0, 0.0, 0.0, 0.0],
+}
 
 # {side}_grasp_frame is 10 cm below the gripper link on its axis. The finger
 # pads (tip_left.stl, tip_right.stl at the URDF's closed zero position) meet on
@@ -228,10 +236,10 @@ def dual_openyam_grasp_model_config() -> RobotModelConfig:
     config = dual_openyam_model_config(base_pose=PoseStamped(frame_id="world"))
     model = config.model.with_collision_from_visuals()
     for side, sign in zip(DUAL_OPENYAM_SIDES, (1.0, -1.0), strict=True):
-        dx, dy = DUAL_OPENYAM_BASE_OFFSET[side]
+        dx, dy, dz = DUAL_OPENYAM_BASE_OFFSET[side]
         model = model.with_joint_origin(
             f"{side}_arm_fixed_joint",
-            xyz=(dx, sign * DUAL_OPENYAM_BASE_SPACING / 2 + dy, 0.0),
+            xyz=(dx, sign * DUAL_OPENYAM_BASE_SPACING / 2 + dy, dz),
             rpy=(0.0, 0.0, DUAL_OPENYAM_BASE_YAW[side]),
         )
         for name, size, xyz in DUAL_OPENYAM_WRIST_CAMERA_BOXES:
@@ -242,7 +250,7 @@ def dual_openyam_grasp_model_config() -> RobotModelConfig:
             f"{side}_tcp", f"{side}_grasp_frame", xyz=DUAL_OPENYAM_TCP_OFFSET
         )
     config.model = model
-    config.home_joints = [*DUAL_OPENYAM_REST_PER_ARM, *DUAL_OPENYAM_REST_PER_ARM]
+    config.home_joints = [*DUAL_OPENYAM_REST_PER_ARM["left"], *DUAL_OPENYAM_REST_PER_ARM["right"]]
     # The pads meet at the URDF's closed zero position, so the two fingertip
     # hulls always touch, and the wrist assembly nests inside the gripper body
     # so their hulls overlap by 6 cm at every pose; both pairs are rigidly
