@@ -17,12 +17,13 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use ahash::{AHashMap, AHashSet};
+use ahash::AHashSet;
 use dimos_module::{native_config, worker_pool};
 use rayon::prelude::*;
 use validator::ValidationError;
 
 use crate::adjacency::{build_surface_cells, build_surface_lookup, rebuild_edges_around, CellId};
+use crate::columns::TILE_EDGE;
 use crate::dijkstra::window_clusters;
 use crate::edges::{
     build_node_edges, build_node_edges_region, edges_to_segments, PlannerGraph, RepairWindow,
@@ -499,14 +500,10 @@ impl Planner {
         write: &ColumnMask,
         new_cells: &[VoxelKey],
     ) -> (Vec<VoxelKey>, Vec<VoxelKey>) {
-        let mut new_by_col: AHashMap<(i32, i32), Vec<i32>> = AHashMap::new();
-        for &(ix, iy, iz) in new_cells {
-            new_by_col.entry((ix, iy)).or_default().push(iz);
-        }
-        for zs in new_by_col.values_mut() {
-            zs.sort_unstable();
-            zs.dedup();
-        }
+        let Some(bbox) = write.bounds() else {
+            return (Vec::new(), Vec::new());
+        };
+        let new_by_col = ColumnBuckets::new(new_cells, bbox);
 
         let lookup = &self.graph.surface_lookup;
         let changed: Vec<((i32, i32), Vec<i32>)> = write
@@ -516,7 +513,7 @@ impl Planner {
                 let mut local: Vec<((i32, i32), Vec<i32>)> = Vec::new();
                 for col in write.row_columns(row) {
                     let old = lookup.get(&col).map(Vec::as_slice).unwrap_or(&[]);
-                    let new = new_by_col.get(&col).map(Vec::as_slice).unwrap_or(&[]);
+                    let new = new_by_col.column(col);
                     if old != new {
                         local.push((col, new.to_vec()));
                     }
@@ -826,59 +823,61 @@ struct ColumnEdit {
 }
 
 /// Incoming voxels bucketed by column over a column bbox, each column's z
-/// values sorted and deduped. A counting sort, so no hashing per voxel.
+/// values sorted and deduped. Keys are split into bands of TILE_EDGE rows in
+/// parallel, then each band is counting-sorted by column in parallel, so no
+/// voxel is hashed and no step runs over the whole cylinder on one thread.
 struct ColumnBuckets {
     x0: i32,
     y0: i32,
     w: usize,
     h: usize,
+    bands: Vec<Band>,
+}
+
+/// The columns of TILE_EDGE consecutive rows of a bbox.
+struct Band {
+    rows: usize,
     starts: Vec<usize>,
     lens: Vec<usize>,
     zs: Vec<i32>,
 }
 
+const BAND_ROWS: usize = TILE_EDGE as usize;
+
 impl ColumnBuckets {
     fn new(keys: &[VoxelKey], (x0, x1, y0, y1): (i32, i32, i32, i32)) -> Self {
         let w = (x1 - x0 + 1).max(0) as usize;
         let h = (y1 - y0 + 1).max(0) as usize;
-        let index = |&(ix, iy, _): &VoxelKey| {
-            let (x, y) = (ix - x0, iy - y0);
-            debug_assert!(x >= 0 && y >= 0 && (x as usize) < w && (y as usize) < h);
-            y as usize * w + x as usize
+        let n_bands = h.div_ceil(BAND_ROWS);
+        let band_of = |&(_, iy, _): &VoxelKey| {
+            let y = iy - y0;
+            debug_assert!(y >= 0 && (y as usize) < h);
+            y as usize / BAND_ROWS
         };
-        let mut starts = vec![0usize; w * h + 1];
-        for k in keys {
-            starts[index(k) + 1] += 1;
-        }
-        for i in 0..w * h {
-            starts[i + 1] += starts[i];
-        }
-        let mut fill = starts.clone();
-        let mut zs = vec![0i32; keys.len()];
-        for k in keys {
-            let i = index(k);
-            zs[fill[i]] = k.2;
-            fill[i] += 1;
-        }
-        let mut columns: Vec<&mut [i32]> = Vec::with_capacity(w * h);
-        let mut rest = zs.as_mut_slice();
-        for i in 0..w * h {
-            let (head, tail) = rest.split_at_mut(starts[i + 1] - starts[i]);
-            columns.push(head);
-            rest = tail;
-        }
-        let lens: Vec<usize> = columns
-            .par_iter_mut()
-            .map(|col| {
-                col.sort_unstable();
-                let mut n = 0;
-                for i in 0..col.len() {
-                    if n == 0 || col[i] != col[n - 1] {
-                        col[n] = col[i];
-                        n += 1;
+        let grouped: Vec<Vec<VoxelKey>> = keys
+            .par_iter()
+            .fold(
+                || vec![Vec::new(); n_bands],
+                |mut groups, k| {
+                    groups[band_of(k)].push(*k);
+                    groups
+                },
+            )
+            .reduce(
+                || vec![Vec::new(); n_bands],
+                |mut a, b| {
+                    for (into, from) in a.iter_mut().zip(b) {
+                        into.extend(from);
                     }
-                }
-                n
+                    a
+                },
+            );
+        let bands: Vec<Band> = grouped
+            .into_par_iter()
+            .enumerate()
+            .map(|(bi, band_keys)| {
+                let rows = BAND_ROWS.min(h - bi * BAND_ROWS);
+                Band::new(&band_keys, x0, y0 + (bi * BAND_ROWS) as i32, w, rows)
             })
             .collect();
         Self {
@@ -886,9 +885,7 @@ impl ColumnBuckets {
             y0,
             w,
             h,
-            starts,
-            lens,
-            zs,
+            bands,
         }
     }
 
@@ -898,7 +895,53 @@ impl ColumnBuckets {
         if x < 0 || y < 0 || x as usize >= self.w || y as usize >= self.h {
             return &[];
         }
-        let i = y as usize * self.w + x as usize;
+        let (x, y) = (x as usize, y as usize);
+        self.bands[y / BAND_ROWS].column(x, y % BAND_ROWS, self.w)
+    }
+}
+
+impl Band {
+    fn new(keys: &[VoxelKey], x0: i32, y0: i32, w: usize, rows: usize) -> Self {
+        let n = w * rows;
+        let index = |&(ix, iy, _): &VoxelKey| (iy - y0) as usize * w + (ix - x0) as usize;
+        let mut starts = vec![0usize; n + 1];
+        for k in keys {
+            starts[index(k) + 1] += 1;
+        }
+        for i in 0..n {
+            starts[i + 1] += starts[i];
+        }
+        let mut fill = starts.clone();
+        let mut zs = vec![0i32; keys.len()];
+        for k in keys {
+            let i = index(k);
+            zs[fill[i]] = k.2;
+            fill[i] += 1;
+        }
+        let mut lens = vec![0usize; n];
+        for i in 0..n {
+            let col = &mut zs[starts[i]..starts[i + 1]];
+            col.sort_unstable();
+            let mut kept = 0;
+            for j in 0..col.len() {
+                if kept == 0 || col[j] != col[kept - 1] {
+                    col[kept] = col[j];
+                    kept += 1;
+                }
+            }
+            lens[i] = kept;
+        }
+        Self {
+            rows,
+            starts,
+            lens,
+            zs,
+        }
+    }
+
+    fn column(&self, x: usize, row: usize, w: usize) -> &[i32] {
+        debug_assert!(row < self.rows);
+        let i = row * w + x;
         &self.zs[self.starts[i]..self.starts[i] + self.lens[i]]
     }
 }
