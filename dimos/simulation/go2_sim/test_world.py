@@ -14,11 +14,16 @@
 
 from __future__ import annotations
 
+import time
+
 import mujoco
 import numpy as np
 from numpy.typing import NDArray
 import pytest
 
+from dimos.core.transport import LCMTransport
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sim_msgs.Contacts import Contact
 from dimos.simulation.go2_legged.policy import OnnxGo2Policy
 from dimos.simulation.go2_legged.robot import CONTROL_DT
@@ -30,6 +35,7 @@ from dimos.simulation.go2_sim.world import (
     TICKS_PER_FRAME,
     Go2Sim,
     LidarFrame,
+    SimGo2World,
     scene_edges,
 )
 from dimos.simulation.scenes.procedural import Scene, office
@@ -151,6 +157,34 @@ def test_sensor_sits_on_the_mount_above_the_base(sim: Go2Sim) -> None:
     assert 0.1 < sensor[2] - base[2] < 0.2
     forward = rotation @ np.array([1.0, 0.0, 0.0])
     assert forward[2] < -0.8
+
+
+def test_reset_pose_moves_the_robot_through_the_sim_thread(scene: Scene) -> None:
+    world = SimGo2World()
+    world.cmd_vel.transport = LCMTransport("/test_go2_sim_world/cmd_vel", Twist)
+    poses: list[PoseStamped] = []
+    world.ground_truth.subscribe(poses.append)
+    world.start()
+    try:
+        deadline = time.monotonic() + 10.0
+        while len(poses) < 5 and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert poses[-1].position.x == pytest.approx(scene.start[0], abs=0.1)
+        world.reset_pose(3.0, 2.0, scene.params["z0"], 1.0)
+
+        # the bundled policy lurches a few decimeters as it is set down, so take the first pose there
+        def near() -> PoseStamped | None:
+            return next((p for p in poses if abs(p.position.x - 3.0) < 0.5), None)
+
+        while near() is None and time.monotonic() < deadline:
+            time.sleep(0.02)
+        first = near()
+        assert first is not None
+        assert (first.position.x, first.position.y) == pytest.approx((3.0, 2.0), abs=0.15)
+        assert first.orientation.to_euler().z == pytest.approx(1.0, abs=0.2)
+        assert first.ts > poses[0].ts
+    finally:
+        world.stop()
 
 
 def test_scene_edges_cover_every_box(scene: Scene) -> None:
