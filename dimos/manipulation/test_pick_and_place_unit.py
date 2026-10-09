@@ -676,6 +676,56 @@ def test_stage_tilts_the_wrist_for_the_place_when_no_upright_heading_reaches(
     )
 
 
+def _scan_with(detections: list[tuple[str, float, float, float]]) -> Any:
+    return SimpleNamespace(
+        detections_length=len(detections),
+        detections=[
+            SimpleNamespace(
+                id=det_id,
+                results=[SimpleNamespace(hypothesis=SimpleNamespace(class_id="cup"))],
+                bbox=SimpleNamespace(
+                    center=SimpleNamespace(position=SimpleNamespace(x=x, y=y, z=z))
+                ),
+            )
+            for det_id, x, y, z in detections
+        ],
+    )
+
+
+def test_proceed_stops_after_the_lift_when_the_camera_still_sees_the_object(
+    staged: PickAndPlaceModule,
+) -> None:
+    staged._objects["cup-1"] = {"object_id": "cup-1", "name": "cup", "x": 0.3, "y": 0.2, "z": 0.0}
+    scene: Any = staged._scene
+    scene.scan_scene.return_value = _scan_with([("cup-1", 0.31, 0.2, 0.0)])
+    manipulation: Any = staged._manipulation
+    manipulation.get_state.return_value.groups["arm/tool"].gripper_position = 0.05
+
+    assert staged.stage_pick_and_place("cup-1", 0.46, 0.05, 0.12).message.startswith("Staged")
+    result = staged.proceed()
+
+    assert "STOPPED at leg 5" in result.message and "lift" in result.message
+    assert "still sees the cup" in result.message
+    assert staged._holding_object is False
+    # the jaws closed once and were not reopened by a jaw verdict
+    assert scene.scan_scene.call_args.kwargs == {"text": ["cup"]}
+
+
+def test_proceed_completes_when_the_object_left_its_start_position(
+    staged: PickAndPlaceModule,
+) -> None:
+    staged._objects["cup-1"] = {"object_id": "cup-1", "name": "cup", "x": 0.3, "y": 0.2, "z": 0.0}
+    scene: Any = staged._scene
+    scene.scan_scene.return_value = _scan_with([])
+    manipulation: Any = staged._manipulation
+    manipulation.get_state.return_value.groups["arm/tool"].gripper_position = 0.05
+
+    assert staged.stage_pick_and_place("cup-1", 0.46, 0.05, 0.12).message.startswith("Staged")
+    result = staged.proceed()
+
+    assert result.message == "Pick and place complete"
+
+
 def test_preplace_offset_shortens_the_lift_over_the_place(module: PickAndPlaceModule) -> None:
     from dimos.msgs.sensor_msgs.JointState import JointState
 

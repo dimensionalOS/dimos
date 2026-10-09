@@ -61,6 +61,14 @@ class PickAndPlaceModuleConfig(ModuleConfig):
     # A learned provider returns a ranked spread whose best-scoring pose is not
     # always kinematically reachable; a single-candidate provider is unaffected.
     max_grasp_attempts: int = Field(default=5, gt=0)
+    # Judge a staged grasp by the camera after the lift instead of by the jaws
+    # after the close: the object is held when it is no longer at its start
+    # position. Soft objects squash to the empty reading, so the jaws alone
+    # cannot tell a held banana from an empty close.
+    verify_lift_by_scan: bool = True
+    # How far the object must have moved from its scanned position to count
+    # as lifted, in metres, in the plane of the table.
+    grasp_displacement_tolerance: float = Field(default=0.03, gt=0.0)
     yaw_policy: Literal["generated", "preserve_current"] = "generated"
     grasp_verification: GraspVerificationConfig = Field(default_factory=GraspVerificationConfig)
 
@@ -83,6 +91,8 @@ class _StagedProgram:
     rank: int
     score: float
     candidates: int
+    name: str = ""
+    start: Vector3 | None = None
 
     @property
     def motion_seconds(self) -> float:
@@ -353,6 +363,7 @@ class PickAndPlaceModule(Module):
             except _UnplannableLegError as exc:
                 last_failure = str(exc)
                 continue
+            scanned = self._objects.get(object_id, {})
             program = _StagedProgram(
                 object_id=object_id,
                 planning_group=group,
@@ -361,6 +372,10 @@ class PickAndPlaceModule(Module):
                 rank=rank,
                 score=candidate.score,
                 candidates=len(candidates.candidates),
+                name=str(scanned.get("name", "")),
+                start=Vector3(scanned["x"], scanned["y"], scanned["z"])
+                if {"x", "y", "z"} <= set(scanned)
+                else None,
             )
             self.grasp_target.publish(grasp)
             self._manipulation.preview_plans([leg.plan for leg in legs if leg.plan is not None])
@@ -471,12 +486,19 @@ class PickAndPlaceModule(Module):
             return SkillResult("Nothing is staged. Use stage_pick_and_place first.")
         self._staged = None
         group = program.planning_group
+        jaw_note = ""
         for index, leg in enumerate(program.legs, 1):
             if leg.gripper == "open":
                 if not_open := self._open_gripper(group, "before grasping"):
                     return not_open
             elif leg.gripper == "close":
-                if not_held := self._close_and_verify(group, program.object_id):
+                if self._lift_check_by_scan(program):
+                    # The camera judges the grasp after the lift; the jaws only close.
+                    settle = self._command_and_settle(
+                        self.config.grasp_verification.closed_position, group
+                    )
+                    jaw_note = _gripper_reading(settle)
+                elif not_held := self._close_and_verify(group, program.object_id):
                     return SkillResult(
                         f"Pick and place of object {program.object_id} STOPPED at leg {index} "
                         f"of {len(program.legs)} ({leg.label}): {not_held.message} The object "
@@ -505,6 +527,20 @@ class PickAndPlaceModule(Module):
                         f"pick and place of object {program.object_id}",
                         execution,
                     )
+                if leg.label == "lift" and self._lift_check_by_scan(program):
+                    still_there = self._object_still_at_start(program)
+                    if still_there is not None:
+                        self._holding_object = False
+                        self._clear_selection()
+                        return SkillResult(
+                            f"Pick and place of object {program.object_id} STOPPED at leg "
+                            f"{index} of {len(program.legs)} ({leg.label}): after the lift the "
+                            f"camera still sees the {program.name or 'object'} "
+                            f"{still_there:.3f} m from where it was scanned, so the grasp "
+                            f"missed it ({jaw_note}). The object was not picked; the arm is "
+                            "at the lift pose with the gripper closed on nothing.",
+                            metadata={"stopped_at_leg": index, "legs": len(program.legs)},
+                        )
         return SkillResult(
             "Pick and place complete",
             metadata={
@@ -737,6 +773,25 @@ class PickAndPlaceModule(Module):
         if settle.position is None or open_failure(settle, self.config.grasp_verification) is None:
             return None
         return SkillResult(f"Commanded the gripper open {step}. {_gripper_reading(settle)}")
+
+    def _lift_check_by_scan(self, program: _StagedProgram) -> bool:
+        """Whether this staged job is judged by the camera after the lift."""
+        return self.config.verify_lift_by_scan and program.start is not None
+
+    def _object_still_at_start(self, program: _StagedProgram) -> float | None:
+        """Rescan for the object; its distance from the scanned position when it is
+        still on the table within the tolerance, else None."""
+        assert program.start is not None
+        detections = self._scene.scan_scene(text=[program.name] if program.name else None)
+        nearest: float | None = None
+        for detection in detections.detections:
+            position = detection.bbox.center.position
+            distance = math.hypot(position.x - program.start.x, position.y - program.start.y)
+            if distance <= self.config.grasp_displacement_tolerance and (
+                nearest is None or distance < nearest
+            ):
+                nearest = distance
+        return nearest
 
     def _close_and_verify(
         self, planning_group: PlanningGroupID, object_id: str

@@ -203,7 +203,10 @@ release, retreat, return home) without moving. Viser plays the whole motion as
 a ghost and Rerun draws the full tool path. The agent reports the legs, the
 seconds of motion and the grasp rank, then waits. Say "proceed" and it calls
 `proceed`, which runs the legs in order and stops at the first that fails; say
-"discard" and nothing moves. The agent passes the arm as `planning_group` on
+"discard" and nothing moves. After the lift the overhead camera scans again:
+if the object is still where it was, the grasp missed and the job stops there
+(`--pickandplacemodule.verify-lift-by-scan false` falls back to the jaw
+readback, which a soft object like the fake banana defeats). The agent passes the arm as `planning_group` on
 every motion skill and picks the arm on the object's side when none is stated.
 
 
