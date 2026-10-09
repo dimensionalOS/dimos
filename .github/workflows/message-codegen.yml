@@ -58,6 +58,12 @@ jobs:
         run: bash scripts/test_builtin_message_source.sh
       - name: Install the native generation prerequisites
         run: uv pip install --python .venv/bin/python './dimos/message_codegen[native]' ./packages/dimos-generated
+      - name: Prepare standalone Cargo dependencies for offline acceptance
+        run: |
+          # Resolve only the message crate, not the dimOS runtime workspace.
+          # Keep Cargo's generated lock outside the checked-in package artifacts.
+          cp -R packages/dimos-generated/src/dimos_generated_schemas/package/rust "$RUNNER_TEMP/dimos-message-rust"
+          cargo fetch --manifest-path "$RUNNER_TEMP/dimos-message-rust/Cargo.toml"
       - name: Generate, build, test, and demonstrate all three languages
         run: bash scripts/test_message_codegen.sh
       - name: Build standalone message authoring and built-in packages
