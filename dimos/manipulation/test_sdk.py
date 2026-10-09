@@ -238,7 +238,7 @@ def test_joint_inputs_plan_before_blocking_execution(arm, rpc):
 
     target = rpc.plan_to_joints.call_args.args[0]["arm"]
     assert target.name == ["j0", "j1"]
-    assert target.position == [0.3, 0.4]
+    np.testing.assert_array_equal(target.position, [0.3, 0.4])
     assert rpc.plan_to_joints.call_args.kwargs == {"speed_scale": 0.2}
     assert [call[0] for call in rpc.method_calls][-2:] == ["plan_to_joints", "execute"]
     rpc.execute.assert_called_once_with(

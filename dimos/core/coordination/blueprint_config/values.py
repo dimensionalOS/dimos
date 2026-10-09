@@ -20,7 +20,7 @@ from collections.abc import Mapping
 import copy
 from dataclasses import fields, is_dataclass
 from types import MappingProxyType
-from typing import Any, cast
+from typing import Any, ClassVar, cast, get_origin
 
 from pydantic import BaseModel
 
@@ -61,6 +61,11 @@ def plain(value: Any, *, exclude_unset: bool = False) -> Any:
         return {
             info.name: plain(getattr(value, info.name), exclude_unset=exclude_unset)
             for info in fields(value)
+            if get_origin(info.type) is not ClassVar
+            and not (
+                isinstance(info.type, str)
+                and info.type.startswith(("ClassVar[", "typing.ClassVar["))
+            )
         }
     if isinstance(value, Mapping):
         return {

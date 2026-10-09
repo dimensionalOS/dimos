@@ -20,6 +20,7 @@ from types import SimpleNamespace
 from typing import cast
 
 from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Vector3 as TypedMsg
 from dimos_generated.sensor_msgs.msg import Image
 from dimos_generated.std_msgs.msg import Header
 import numpy as np
@@ -48,21 +49,6 @@ from dimos.protocol.pubsub.impl.zenohpubsub import (
     Topic as ZenohTopic,
 )
 from dimos.protocol.service.zenohservice import ZenohSessionPool
-
-
-class TypedMsg:
-    """A generated-message codec contract for transport selection tests."""
-
-    msg_name = "test_msgs/msg/TypedMsg"
-    schema = ""
-
-    @staticmethod
-    def encode() -> bytes:
-        return b""
-
-    @staticmethod
-    def decode(data: bytes):
-        return TypedMsg()
 
 
 class UntypedMsg:

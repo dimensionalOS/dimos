@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 import math
 
 from dimos_generated.dimos_msgs.msg import GraspCandidate, GraspCandidateArray
@@ -59,7 +60,7 @@ class HeuristicGraspModule(Module, GraspGenSpec):
             orientation=quaternion_from_euler(-math.pi, 0.0, self._narrow_axis_yaw(xy)),
         )
         return GraspCandidateArray(
-            header=object_pointcloud.header,
+            header=deepcopy(object_pointcloud.header),
             candidates=[GraspCandidate(pose=pose, score=1.0)],
         )
 

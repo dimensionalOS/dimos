@@ -151,14 +151,17 @@ def test_simple_parametrizer_materializes_segmented_trapezoid_plan() -> None:
     assert plan.group_ids == ("manipulator",)
     assert plan.trajectory.joint_names == ["arm/a", "arm/b"]
     assert len(plan.trajectory.points) == 9
-    assert plan.trajectory.points[0].positions == [0.0, 0.0]
-    assert plan.trajectory.points[4].positions == [0.2, 0.1]
-    assert plan.trajectory.points[-1].positions == [0.4, 0.0]
-    assert [state.position for state in result.path] == [
-        [0.0, 0.0],
-        [0.2, 0.1],
-        [0.4, 0.0],
-    ]
+    np.testing.assert_array_equal(plan.trajectory.points[0].positions, [0.0, 0.0])
+    np.testing.assert_array_equal(plan.trajectory.points[4].positions, [0.2, 0.1])
+    np.testing.assert_array_equal(plan.trajectory.points[-1].positions, [0.4, 0.0])
+    np.testing.assert_array_equal(
+        [state.position for state in result.path],
+        [
+            [0.0, 0.0],
+            [0.2, 0.1],
+            [0.4, 0.0],
+        ],
+    )
 
 
 def test_simple_parametrizer_reports_generator_failure(mocker: MockerFixture) -> None:

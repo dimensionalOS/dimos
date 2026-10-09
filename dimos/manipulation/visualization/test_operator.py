@@ -14,6 +14,7 @@
 
 """Focused tests for the single-model visualization operator."""
 
+from dataclasses import asdict
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -159,7 +160,7 @@ def test_joint_evaluation_overlays_selected_target_on_complete_model_state() -> 
     assert result.success
     complete = monitor.is_state_valid.call_args.args[0]
     assert complete.name == ["left/j1", "left/j2", "right/j1"]
-    assert complete.position == [0.1, 0.2, 0.0]
+    np.testing.assert_array_equal(complete.position, [0.1, 0.2, 0.0])
 
 
 def test_joint_evaluation_rejects_noncanonical_unknown_and_overlapping_selection() -> None:
@@ -217,8 +218,17 @@ def test_pose_evaluation_routes_group_id_and_canonical_seed() -> None:
     )
     result = operator.evaluate_pose_target(PoseTargetRequest({"left_arm": pose}, seed=seed))
     assert result.success
-    module.inverse_kinematics.assert_called_once_with(
-        pose_targets={"left_arm": pose}, auxiliary_group_ids=(), seed=seed, check_collision=True
+    module.inverse_kinematics.assert_called_once()
+    assert module.inverse_kinematics.call_args.args == ()
+    kwargs = module.inverse_kinematics.call_args.kwargs
+    np.testing.assert_equal(
+        {**kwargs, "seed": asdict(kwargs["seed"])},
+        dict(
+            pose_targets={"left_arm": pose},
+            auxiliary_group_ids=(),
+            seed=asdict(seed),
+            check_collision=True,
+        ),
     )
 
 

@@ -188,10 +188,13 @@ class TestJointCommandRouting:
         )
 
         assert execute.call_count == 1
-        assert trajectory._trajectory.points[-1].positions == [
-            0.1,
-            0.2,
-        ]
+        np.testing.assert_array_equal(
+            trajectory._trajectory.points[-1].positions,
+            [
+                0.1,
+                0.2,
+            ],
+        )
         assert coordinator.get_task("vel1")._velocities is None
 
     def test_velocity_only_updates_velocity_task(self, make_coordinator):
@@ -223,12 +226,13 @@ class TestJointCommandRouting:
             )
         )
 
-        assert coordinator.get_task(JOINT_TRAJECTORY_TASK_NAME)._trajectory.points[
-            -1
-        ].positions == [
-            0.1,
-            0.2,
-        ]
+        np.testing.assert_array_equal(
+            coordinator.get_task(JOINT_TRAJECTORY_TASK_NAME)._trajectory.points[-1].positions,
+            [
+                0.1,
+                0.2,
+            ],
+        )
         assert coordinator.get_task("vel1")._velocities is None
 
     def test_unclaimed_joints_route_to_nobody(self, make_coordinator):
@@ -823,7 +827,7 @@ class TestCardRoutingContract:
             )
         )
         assert task._trajectory is not None
-        assert task._trajectory.points[-1].positions == [0.3, 0.4]
+        np.testing.assert_array_equal(task._trajectory.points[-1].positions, [0.3, 0.4])
 
     def test_runtime_registered_card_routes_with_zero_coordinator_edits(
         self, make_coordinator, probe_card_type

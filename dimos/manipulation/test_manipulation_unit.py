@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from pathlib import Path
 import pickle
 import time
@@ -831,7 +832,7 @@ class TestPlanningInitialization:
         _, kwargs = module._kinematics.solve_pose_targets.call_args
         assert kwargs["world"] is module._world_monitor.world
         assert kwargs["seed"].name == current_model_state.name
-        assert kwargs["seed"].position == current.position
+        np.testing.assert_array_equal(kwargs["seed"].position, current.position)
         assert kwargs["check_collision"] is True
         [(group, target_pose)] = kwargs["pose_targets"].items()
         assert group.id == "manipulator"
@@ -993,8 +994,13 @@ class TestPlanningGroupApis:
         assert plan is not None
         assert module._last_plan is not None
         assert module._last_plan.group_ids == ("manipulator",)
-        assert module._last_plan.path == result_path
-        assert module._last_plan.trajectory.points[-1].positions == [0.1, 0.2, 0.3]
+        np.testing.assert_equal(
+            [asdict(value) for value in module._last_plan.path],
+            [asdict(value) for value in result_path],
+        )
+        np.testing.assert_array_equal(
+            module._last_plan.trajectory.points[-1].positions, [0.1, 0.2, 0.3]
+        )
         module._planner.plan_selected_joint_path.assert_called_once()
         _, kwargs = module._planner.plan_selected_joint_path.call_args
         assert kwargs["selection"].group_ids == ("manipulator",)
@@ -1178,7 +1184,7 @@ class TestPlanningGroupApis:
         preset = module.get_state().groups["left_arm"].joint_presets["init"]
 
         assert preset.name == ["left/j1"]
-        assert preset.position == [0.1]
+        np.testing.assert_array_equal(preset.position, [0.1])
 
     def test_tf_loop_publishes_every_pose_group_for_bimanual_model(
         self, module_factory, mocker: MockerFixture

@@ -109,7 +109,10 @@ def test_ranked_spec_is_canonical_during_legacy_contract_transition() -> None:
         "scene_pointcloud",
     ]
     assert list(signature.parameters) == ["self", "object_pointcloud"]
-    assert signature.parameters["object_pointcloud"].annotation.__name__ == "PointCloud2"
+    assert (
+        signature.parameters["object_pointcloud"].annotation.__msgtype__
+        == "sensor_msgs/msg/PointCloud2"
+    )
     assert signature.return_annotation is GraspCandidateArray
 
 

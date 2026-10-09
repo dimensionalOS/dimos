@@ -707,7 +707,7 @@ def test_context_cloning_and_joint_state_round_trip(
     with world.scratch_context() as scratch:
         scratch_state = world.get_joint_state(scratch)
         assert scratch_state.name == ["joint1", "joint2"]
-        assert scratch_state.position == [0.1, 0.2]
+        np.testing.assert_array_equal(scratch_state.position, [0.1, 0.2])
         world.set_joint_state(
             scratch,
             JointState(
@@ -720,7 +720,7 @@ def test_context_cloning_and_joint_state_round_trip(
         )
 
     live_round_trip = world.get_joint_state(world.get_live_context())
-    assert live_round_trip.position == [0.1, 0.2]
+    np.testing.assert_array_equal(live_round_trip.position, [0.1, 0.2])
 
 
 def test_obstacle_mutation_updates_scene_and_stored_pose(
@@ -1628,7 +1628,9 @@ def test_native_planner_converts_path(fake_roboplan: None, robot_config: RobotMo
     result = _planner_for(world).plan_joint_path(world, start, goal, timeout=1.0)
 
     assert result.status == PlanningStatus.SUCCESS
-    assert [state.position for state in result.path] == [[0.0, 0.0], [0.2, 0.1], [0.4, 0.2]]
+    np.testing.assert_array_equal(
+        [state.position for state in result.path], [[0.0, 0.0], [0.2, 0.1], [0.4, 0.2]]
+    )
     assert [state.name for state in result.path] == [["joint1", "joint2"]] * 3
 
 
@@ -1679,7 +1681,9 @@ def test_native_planner_shortcuts_path_with_configured_options(
         timeout=1.0,
     )
 
-    assert [state.position for state in result.path] == [[0.0, 0.0], [0.4, 0.2]]
+    np.testing.assert_array_equal(
+        [state.position for state in result.path], [[0.0, 0.0], [0.4, 0.2]]
+    )
     options = FakePathShortcutter.instances[-1].options
     assert options.group_name == "__dimos_all_configured__"
     assert options.max_step_size == 0.02
@@ -1721,7 +1725,9 @@ def test_native_planner_can_disable_path_shortcutting(
         timeout=1.0,
     )
 
-    assert [state.position for state in result.path] == [[0.0, 0.0], [0.2, 0.1], [0.4, 0.2]]
+    np.testing.assert_array_equal(
+        [state.position for state in result.path], [[0.0, 0.0], [0.2, 0.1], [0.4, 0.2]]
+    )
     shortcut.assert_not_called()
 
 
@@ -1758,7 +1764,9 @@ def test_native_planner_uses_raw_path_when_shortcutting_fails(
     )
 
     assert result.status == PlanningStatus.SUCCESS
-    assert [state.position for state in result.path] == [[0.0, 0.0], [0.2, 0.1], [0.4, 0.2]]
+    np.testing.assert_array_equal(
+        [state.position for state in result.path], [[0.0, 0.0], [0.2, 0.1], [0.4, 0.2]]
+    )
 
 
 def test_native_planner_surfaces_unexpected_shortcutting_error(
@@ -1836,7 +1844,9 @@ def test_native_planner_uses_raw_path_when_shortcutting_changes_endpoint(
     )
 
     assert result.status == PlanningStatus.SUCCESS
-    assert [state.position for state in result.path] == [[0.0, 0.0], [0.2, 0.1], [0.4, 0.2]]
+    np.testing.assert_array_equal(
+        [state.position for state in result.path], [[0.0, 0.0], [0.2, 0.1], [0.4, 0.2]]
+    )
 
 
 def test_native_planner_uses_raw_path_when_shortcutting_returns_empty_path(
@@ -1872,7 +1882,9 @@ def test_native_planner_uses_raw_path_when_shortcutting_returns_empty_path(
     )
 
     assert result.status == PlanningStatus.SUCCESS
-    assert [state.position for state in result.path] == [[0.0, 0.0], [0.2, 0.1], [0.4, 0.2]]
+    np.testing.assert_array_equal(
+        [state.position for state in result.path], [[0.0, 0.0], [0.2, 0.1], [0.4, 0.2]]
+    )
 
 
 def test_roboplan_planner_is_distinct_and_bound_to_world(
@@ -2019,7 +2031,9 @@ def test_native_selected_planner_returns_canonical_selected_joint_names(
 
     assert result.status == PlanningStatus.SUCCESS
     assert [state.name for state in result.path] == [["joint1", "joint2"]] * 3
-    assert [state.position for state in result.path] == [[0.0, 0.0], [0.2, 0.1], [0.4, 0.2]]
+    np.testing.assert_array_equal(
+        [state.position for state in result.path], [[0.0, 0.0], [0.2, 0.1], [0.4, 0.2]]
+    )
 
 
 def test_native_selected_planner_uses_explicit_start_after_live_state_advances(

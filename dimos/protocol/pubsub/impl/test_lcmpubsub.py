@@ -103,7 +103,12 @@ def test_invalid_cdr_does_not_stop_the_subscriber(lcm: LCM) -> None:
     collector = CallbackCollector(1)
     lcm.subscribe(topic, collector)
 
-    lcm.publish(topic, b"invalid CDR")
+    # Exercise decode-error recovery with an actually truncated native payload;
+    # native rosbags does not validate arbitrary encapsulation bytes strictly.
+    truncated = cdr_encode(String(data="truncated"))[:4]
+    with pytest.raises(ValueError, match="Invalid CDR"):
+        cdr_decode(truncated, String)
+    lcm.publish(topic, truncated)
     lcm.publish(topic, String(data="after malformed payload"))
     collector.wait()
 

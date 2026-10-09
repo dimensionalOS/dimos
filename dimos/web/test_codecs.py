@@ -321,7 +321,9 @@ def test_resolve_cdr_v1_family() -> None:
     definition = resolve_encoder("geometry_msgs/msg/PoseStamped.cdr.v1", PoseStamped)
     assert definition.encode is encode_cdr_v1 and definition.takes_params is True
     assert definition.check_params is check_cdr_params
-    with pytest.raises(ValueError, match="encodes nav_msgs/msg/Odometry, not PoseStamped"):
+    with pytest.raises(
+        ValueError, match=f"encodes nav_msgs/msg/Odometry, not {PoseStamped.__qualname__}"
+    ):
         resolve_encoder("nav_msgs/msg/Odometry.cdr.v1", PoseStamped)
     with pytest.raises(ValueError, match="encodes x, not dict"):
         resolve_encoder("x.cdr.v1", dict)

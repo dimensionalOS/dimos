@@ -15,6 +15,7 @@
 """Generated messages advertise the same schema to recordings and browsers."""
 
 import base64
+from dataclasses import asdict
 import json
 import subprocess
 import sys
@@ -23,7 +24,8 @@ from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from dimos_generated.sensor_msgs.msg import Image
 from dimos_generated.std_msgs.msg import Header
-from dimos_message_build.registry import encode as cdr_encode
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
+import numpy as np
 import pytest
 
 from dimos.web.cdr_codec import check_cdr_params, default_encoding, encode_cdr_v1, export_schema
@@ -65,8 +67,12 @@ def test_browser_fixtures_match_generated_codecs() -> None:
     expected = json.loads((find_web_dir() / "shared/fixtures/cdr_frames.json").read_text())
     assert {"vectors": build_vectors()} == expected
     for (_, msg), vector in zip(build_messages(), expected["vectors"], strict=True):
-        assert type(msg).decode(base64.b64decode(vector["payload_b64"])) == msg
-        assert type(msg).decode(base64.b64decode(vector["big_endian_b64"])) == msg
+        np.testing.assert_equal(
+            asdict(cdr_decode(base64.b64decode(vector["payload_b64"]), type(msg))), asdict(msg)
+        )
+        np.testing.assert_equal(
+            asdict(cdr_decode(base64.b64decode(vector["big_endian_b64"]), type(msg))), asdict(msg)
+        )
 
 
 def test_codec_import_is_light() -> None:

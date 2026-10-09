@@ -23,6 +23,7 @@ and the optional latency-stamp strip. ``mux_image`` binds to a
 from __future__ import annotations
 
 from collections.abc import Callable
+from copy import deepcopy
 import json
 import threading
 import time
@@ -160,7 +161,9 @@ class CameraMuxModule(Module):
                         image_from_array(
                             np.hstack(tiles),
                             encoding=imgs[0].encoding,
-                            header=Header(stamp=latest.header.stamp, frame_id="camera_mux"),
+                            header=Header(
+                                stamp=deepcopy(latest.header.stamp), frame_id="camera_mux"
+                            ),
                         )
                     )
                 )
@@ -181,7 +184,7 @@ class CameraMuxModule(Module):
             return img
         data = data[: h - (h % 2), : w - (w % 2)]
         return image_from_array(
-            np.ascontiguousarray(data), encoding=img.encoding, header=img.header
+            np.ascontiguousarray(data), encoding=img.encoding, header=deepcopy(img.header)
         )
 
     def _downscale(self, img: Image) -> Image:
@@ -196,7 +199,7 @@ class CameraMuxModule(Module):
         if w <= max_w:
             return img
         out = cv2.resize(image_view(img), (max_w, max(1, int(h * max_w / w))))
-        return image_from_array(out, encoding=img.encoding, header=img.header)
+        return image_from_array(out, encoding=img.encoding, header=deepcopy(img.header))
 
     def _stamp(self, img: Image) -> Image:
         """Append (not overwrite) a bottom strip encoding capture time as B/W
@@ -228,7 +231,7 @@ class CameraMuxModule(Module):
             if bit:
                 strip[:, i * s : (i + 1) * s] = 255
         out = np.vstack([data, strip])
-        return image_from_array(out, encoding=img.encoding, header=img.header)
+        return image_from_array(out, encoding=img.encoding, header=deepcopy(img.header))
 
     def _set_cam_selection(self, data: bytes) -> None:
         """camera_select kind → filter to known cams, republish immediately so

@@ -484,17 +484,17 @@ def _columns(trajectory: JointTrajectory, columns: list[int]) -> JointTrajectory
                     [point.positions[index] for index in columns], dtype=np.float64
                 ),
                 velocities=np.asarray(
-                    [point.velocities[index] for index in columns] if point.velocities else [],
+                    [point.velocities[index] for index in columns] if len(point.velocities) else [],
                     dtype=np.float64,
                 ),
                 accelerations=np.asarray(
                     [point.accelerations[index] for index in columns]
-                    if point.accelerations
+                    if len(point.accelerations)
                     else [],
                     dtype=np.float64,
                 ),
                 effort=np.asarray(
-                    [point.effort[index] for index in columns] if point.effort else [],
+                    [point.effort[index] for index in columns] if len(point.effort) else [],
                     dtype=np.float64,
                 ),
             )

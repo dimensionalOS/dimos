@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from dataclasses import asdict
 from types import SimpleNamespace
 
 from dimos_generated.builtin_interfaces.msg import Time
@@ -168,7 +169,9 @@ def test_generated_feedback_has_one_exact_header_and_ros_quaternion(connection, 
     assert imu[0].angular_velocity.x == 1.0
     assert imu[0].linear_acceleration.z == 6.0
     for message in [joints[0], imu[0]]:
-        assert cdr_decode(cdr_encode(message), type(message)) == message
+        np.testing.assert_equal(
+            asdict(cdr_decode(cdr_encode(message), type(message))), asdict(message)
+        )
     header.stamp.nanosec = 0
     assert joints[0].header.stamp.nanosec == 123456789
 

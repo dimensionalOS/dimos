@@ -276,9 +276,9 @@ class TestConnectedHardware:
         assert "arm/joint1" in state
         assert len(state) == 6
         joint_state = state["arm/joint1"]
-        assert joint_state.position == 0.0
-        assert joint_state.velocity == 0.0
-        assert joint_state.effort == 0.0
+        np.testing.assert_array_equal(joint_state.position, 0.0)
+        np.testing.assert_array_equal(joint_state.velocity, 0.0)
+        np.testing.assert_array_equal(joint_state.effort, 0.0)
 
     def test_write_command(self, connected_hardware, mock_adapter):
         commands = {
@@ -398,7 +398,7 @@ class TestControlCoordinatorLifecycle:
         assert stream == "joint_command"
         assert isinstance(joint_state, JointState)
         assert joint_state.name == ["base/vx", "base/vy", "base/wz"]
-        assert joint_state.velocity == [1.0, 2.0, 3.0]
+        np.testing.assert_array_equal(joint_state.velocity, [1.0, 2.0, 3.0])
 
     def test_reset_runtime_state_calls_task_hooks(self, make_coordinator):
         class ResettableTask(BaseControlTask):
@@ -617,7 +617,7 @@ class TestJointTrajectoryTask:
         assert accepted
         assert trajectory_task._trajectory is not None
         assert trajectory_task._trajectory.joint_names == ["arm/joint2"]
-        assert trajectory_task._trajectory.points[-1].positions == [0.25]
+        np.testing.assert_array_equal(trajectory_task._trajectory.points[-1].positions, [0.25])
 
     @pytest.mark.parametrize(
         "command",
@@ -989,7 +989,7 @@ class TestJointTrajectoryTask:
 
         # On completion, returns final position (not None) to hold at goal
         assert output is not None
-        assert output.positions == [1.0, 0.5, 0.25]  # Final trajectory point
+        np.testing.assert_array_equal(output.positions, [1.0, 0.5, 0.25])  # Final trajectory point
         assert not trajectory_task.is_active()
         assert trajectory_task.get_state() == TrajectoryState.COMPLETED
 

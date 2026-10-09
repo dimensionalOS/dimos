@@ -267,8 +267,8 @@ def test_plan_selected_joint_path_normalizes_target_forms(
     assert result.status == PlanningStatus.SUCCESS
     assert result.path is not None
     assert result.path[0].name == ["arm/joint_a", "arm/joint_b"]
-    assert result.path[0].position == expected_start
-    assert result.path[-1].position == expected_goal
+    np.testing.assert_array_equal(result.path[0].position, expected_start)
+    np.testing.assert_array_equal(result.path[-1].position, expected_goal)
 
 
 @pytest.mark.parametrize(
