@@ -19,6 +19,7 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import numpy as np
+import pytest
 
 from dimos.cloud import preview
 from dimos.cloud.constants import PREVIEW_SCALE
@@ -26,6 +27,7 @@ from dimos.memory.store.base import Store
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.Joy import Joy
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 
@@ -114,3 +116,34 @@ def test_path_from_denser_odometry() -> None:
     doc = preview.build(store(color_image=frames, odom=odom, lidar=lidar))
     assert doc is not None and len(doc["scans"]) == 1 and doc["duration_s"] == 4
     assert [r[1] for r in doc["trajectory"]] == [0, 1, 2, 3, 4] and len(doc["camera"]) == 1
+
+
+def test_joystick_samples_ride_along() -> None:
+    odom = [
+        (100.0 + i, PoseStamped(position=[i, 0, 0.3], frame_id="world"), None) for i in range(3)
+    ]
+    sticks = [
+        (100.5, Joy(axes=[0.0, 0.4567, -1.0, 0.0], buttons=[1, 0, 0]), None),
+        (101.5, Joy(axes=[0.0, 0.0, 0.0, 0.0], buttons=[0, 0, 1]), None),
+    ]
+    doc = preview.build(store(odom=odom, joystick=sticks))
+    assert doc is not None and doc["streams"]["joystick"] == {"name": "joystick", "count": 2}
+    assert doc["joy"] == [
+        [0.5, [0.0, 0.46, -1.0, 0.0], [1, 0, 0]],
+        [1.5, [0.0, 0.0, 0.0, 0.0], [0, 0, 1]],
+    ]
+    bare = preview.build(store(odom=odom))
+    assert bare is not None and bare["joy"] == [] and "joystick" not in bare["streams"]
+
+
+def test_joystick_is_capped_evenly(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(preview, "PREVIEW_JOY_SAMPLES", 3)
+    odom = [(100.0, PoseStamped(position=[0, 0, 0.3], frame_id="world"), None)]
+    sticks = [(100.0 + i, Joy(axes=[i / 10], buttons=[]), None) for i in range(10)]
+    doc = preview.build(store(odom=odom, joystick=sticks))
+    assert doc is not None and doc["streams"]["joystick"]["count"] == 10
+    assert [r[0] for r in doc["joy"]] == [0, 4, 9] and [r[1] for r in doc["joy"]] == [
+        [0.0],
+        [0.4],
+        [0.9],
+    ]

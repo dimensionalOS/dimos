@@ -14,7 +14,7 @@
 
 """Console preview of a recording, built by `dimos data upload` while the recording is at hand:
 LiDAR map and timed scans with the robot's path (from the poses the store keeps with every
-LiDAR observation), timed camera thumbnails, and an H.264 timelapse."""
+LiDAR observation), timed camera thumbnails, joystick input, and an H.264 timelapse."""
 
 from __future__ import annotations
 
@@ -35,6 +35,7 @@ from dimos.cloud.constants import (
     PREVIEW_BAND,
     PREVIEW_FORMAT,
     PREVIEW_FRAMES,
+    PREVIEW_JOY_SAMPLES,
     PREVIEW_MAP_POINTS,
     PREVIEW_MAP_SCANS,
     PREVIEW_MAP_VOXEL,
@@ -50,6 +51,7 @@ from dimos.cloud.constants import (
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.Joy import Joy
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 if TYPE_CHECKING:
@@ -90,6 +92,7 @@ def build(store: Store) -> dict[str, Any] | None:
     """`dimos-spatial-preview-v2`, or None for a recording without LiDAR, camera or poses."""
     lidar, camera = _stream(store, PointCloud2, "lidar"), _stream(store, Image, "color")
     odom = _stream(store, Pose, "odom")
+    joy = _stream(store, Joy, "joy")
     poses, scans, world, ends = [], [], None, []
     if lidar is not None:
         shown = _evenly(lidar.count(), PREVIEW_FRAMES)
@@ -114,6 +117,10 @@ def build(store: Store) -> dict[str, Any] | None:
         poses
     ):  # denser than the LiDAR poses, or the only path
         poses = [(o.ts, o.data) for o in odom]
+    sticks = []
+    if joy is not None:
+        picked = _evenly(joy.count(), PREVIEW_JOY_SAMPLES)
+        sticks = [o for i, o in enumerate(joy) if i in picked]
     shots = []
     if camera is not None:
         picked = _evenly(camera.count(), PREVIEW_FRAMES)
@@ -135,7 +142,12 @@ def build(store: Store) -> dict[str, Any] | None:
     if not len(pts):  # no map: frame the path
         pts = np.array([r[1:4] for r in traj] or [[0.0, 0.0, z]])
     origin = np.round(pts.mean(axis=0), 2)
-    streams = {"lidar": lidar, "camera": camera, "odom": odom if lidar is None else None}
+    streams = {
+        "lidar": lidar,
+        "camera": camera,
+        "odom": odom if lidar is None else None,
+        "joystick": joy,
+    }
     return {
         "format": PREVIEW_FORMAT,
         "duration_s": round(t1 - t0, 3),
@@ -158,6 +170,10 @@ def build(store: Store) -> dict[str, Any] | None:
             for o in shots
         ],
         "thumb": int(np.argmax([o.data.brightness for o in shots])) if shots else None,
+        "joy": [
+            [round(o.ts - t0, 3), [round(a, 2) for a in o.data.axes], list(o.data.buttons)]
+            for o in sticks
+        ],
     }
 
 
