@@ -19,6 +19,8 @@ from typing import (
     TYPE_CHECKING,
     Any,
     Generic,
+    Literal,
+    TypeAlias,
     TypeVar,
 )
 
@@ -42,6 +44,10 @@ T = TypeVar("T")
 
 
 logger = setup_logger()
+
+
+# How a module declares a stream: In, Out or IO.
+StreamDirection: TypeAlias = Literal["in", "out", "inout"]
 
 
 class ObservableMixin(Generic[T]):
@@ -85,6 +91,9 @@ class Transport(Resource, ObservableMixin[T]):
     # config class; the blueprint config flow picks them up automatically. None
     # means "no overridable config" (LCM/SHM transports).
     _config_cls: type[BaseModel] | None = None
+
+    def prepare_for_clients(self) -> None:
+        """Ensure deployed resources exist before advertising this transport."""
 
     # used by any local publishing stream (Out/IO); selfstream is None when
     # publishing without a source stream

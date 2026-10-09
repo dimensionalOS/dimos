@@ -27,6 +27,7 @@ from dimos.protocol.rpc.spec import RPCSpec
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
+    from dimos.core.introspection.module.info import StreamDescriptor
     from dimos.core.module import ModuleBase, SkillInfo
 
 logger = setup_logger()
@@ -116,6 +117,7 @@ class ModuleProxyProtocol(Protocol):
     def start(self) -> None: ...
     def stop(self) -> None: ...
     def get_skills(self) -> list[SkillInfo]: ...
+    def get_stream_descriptors(self) -> list[StreamDescriptor]: ...
     def set_transport(self, stream_name: str, transport: Any) -> bool: ...
 
 
@@ -128,6 +130,7 @@ class RPCClient:
         rpcs: Iterable[str] | None = None,
         *,
         rpc: RPCSpec | None = None,
+        stream_lookup: Callable[[str], RemoteStream[Any]] | None = None,
     ) -> None:
         if rpc is None:
             self.rpc = rpc_backend()()
@@ -147,6 +150,8 @@ class RPCClient:
         self.actor_instance = actor_instance
         self.rpcs = frozenset(rpcs)
         self._unsub_fns: list = []  # type: ignore[type-arg]
+        # Resolves stream attributes in remote mode, where there is no Actor to ask.
+        self._stream_lookup = stream_lookup
 
     @classmethod
     def remote(
@@ -196,6 +201,7 @@ class RPCClient:
             "remote_name",
             "remote_instance",
             "actor_instance",
+            "_stream_lookup",
         }:
             raise AttributeError(f"{name} is not found.")
 
@@ -211,6 +217,8 @@ class RPCClient:
             )
 
         if self.actor_instance is None:
+            if self._stream_lookup is not None and not name.startswith("_"):
+                return self._stream_lookup(name)
             raise AttributeError(
                 f"{self.remote_name!r} has no @rpc method named {name!r}; "
                 f"this client was constructed without a parent-side Actor "

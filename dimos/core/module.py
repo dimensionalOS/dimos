@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from functools import partial
 import inspect
 import json
+import pickle
 import sys
 import threading
 from typing import (
@@ -36,11 +37,12 @@ from reactivex.disposable import CompositeDisposable, Disposable
 
 from dimos.core.core import T, rpc
 from dimos.core.global_config import GlobalConfig, global_config
-from dimos.core.introspection.module.info import extract_module_info
+from dimos.core.introspection.module.info import StreamDescriptor, extract_module_info
 from dimos.core.introspection.module.render import render_module_io
 from dimos.core.resource import CompositeResource
 from dimos.core.rpc_client import RpcCall
 from dimos.core.stream import IO, In, Out, RemoteOut, Transport
+from dimos.core.transport import PubSubTransport
 from dimos.core.transport_factory import rpc_backend
 from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUT, DEFAULT_RPC_TIMEOUTS, RPCSpec
 from dimos.protocol.service.spec import BaseConfig, Configurable
@@ -351,6 +353,38 @@ class ModuleBase(Configurable, CompositeResource):
             rpcs=self.rpcs,
             color=color,
         )
+
+    @rpc
+    def get_stream_descriptors(self) -> list[StreamDescriptor]:
+        """Describe current instance wiring, including transports set after deployment."""
+        descriptors = []
+        streams: dict[str, In[Any] | Out[Any] | IO[Any]] = {
+            **self.inputs,
+            **self.outputs,
+            **self.ios,
+        }
+        for stream in streams.values():
+            transport = stream.transport
+            if transport is None:
+                continue
+            transport.prepare_for_clients()
+            descriptors.append(
+                StreamDescriptor(
+                    module=self.config.instance_name or type(self).__name__,
+                    name=stream.name,
+                    direction="inout"
+                    if isinstance(stream, IO)
+                    else "in"
+                    if isinstance(stream, In)
+                    else "out",
+                    type_name=f"{stream.type.__module__}.{stream.type.__qualname__}",
+                    channel=transport.channel
+                    if isinstance(transport, PubSubTransport)
+                    else type(transport).__name__,
+                    transport=pickle.dumps((stream.type, transport)),
+                )
+            )
+        return descriptors
 
     @classmethod
     def _io_class(cls, color: bool = True) -> str:

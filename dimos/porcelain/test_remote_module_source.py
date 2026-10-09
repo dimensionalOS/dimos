@@ -17,15 +17,22 @@ from __future__ import annotations
 from contextlib import contextmanager
 import importlib
 import inspect
+import socket
+import threading
 from typing import Protocol
+import uuid
 
 import pytest
+from reactivex.disposable import Disposable
 
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.demos.stress_test_module import StressTestModule
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module
+from dimos.core.stream import IO, In, Out
+from dimos.core.transport import LCMTransport, SHMTransport, pLCMTransport, pSHMTransport
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.porcelain.dimos import Dimos
 from dimos.porcelain.module_handle import RemoteModuleProxy
 from dimos.porcelain.remote_module_source import RemoteModuleSource
@@ -48,6 +55,25 @@ class NamedSpec(Spec, Protocol):
 
 class WrongReturnSpec(Spec, Protocol):
     def ping_name(self) -> int: ...
+
+
+class StreamModule(Module):
+    messages: Out[bytes]
+    commands: In[bytes]
+    state: IO[bytes]
+    unwired: In[str]
+
+    @rpc
+    def emit(self, name: str, message: bytes) -> None:
+        getattr(self, name).transport.publish(message)
+
+
+class VectorStreamModule(Module):
+    messages: Out[Vector3]
+
+    @rpc
+    def emit(self, message: Vector3) -> None:
+        self.messages.publish(message)
 
 
 @contextmanager
@@ -270,3 +296,131 @@ def test_remote_proxy_fallback_when_class_unimportable(client, monkeypatch):
     info = client.describe("StressTestModule.ping")
     assert info.signature is None
     assert info.documentation is None
+
+
+@pytest.fixture
+def stream_module(running_app, client):
+    module = running_app._coordinator.deploy(StreamModule, instance_name="remote/streams")
+    for name in ("messages", "commands", "state"):
+        module.set_transport(name, pLCMTransport(f"/remote_{uuid.uuid4().hex}/{name}"))
+    module.start()
+    return module
+
+
+@pytest.fixture
+def collected():
+    received = []
+    event = threading.Event()
+
+    def callback(message):
+        received.append(message)
+        event.set()
+
+    return received, event, callback
+
+
+def test_connect_discovers_only_wired_streams(running_app, client, stream_module):
+    for app in (running_app, client):
+        streams = app.list_streams("remote/streams")
+        assert {(s.name, s.type_name, s.module_name, s.direction) for s in streams} == {
+            ("messages", "bytes", "remote/streams", "out"),
+            ("commands", "bytes", "remote/streams", "in"),
+            ("state", "bytes", "remote/streams", "inout"),
+        }
+        assert all(s.channel.endswith(f"/{s.name}") for s in streams)
+    assert client.list_streams(client.get_module("remote/streams")) == streams
+    assert {s.module_name for s in client.list_streams()} >= {"remote/streams"}
+
+
+@pytest.mark.parametrize("name", ["messages", "commands", "state"])
+def test_connect_subscribes_to_every_stream_direction(client, stream_module, collected, name):
+    module = client.get_module("remote/streams")
+    stream = getattr(module, name)
+    received, event, callback = collected
+    with Disposable(stream.subscribe(callback)):
+        stream_module.emit(name, b"hello")
+        assert event.wait(timeout=5.0)
+        assert received == [b"hello"]
+    assert getattr(module, name) is stream
+    with pytest.raises(AttributeError, match="missing"):
+        _ = module.missing
+
+
+def test_unsubscribe_and_client_stop_leave_daemon_running(
+    running_app, client, stream_module, collected, wait_until
+):
+    stream = client.get_module("remote/streams").messages
+    received, event, callback = collected
+    unsubscribed = []
+    with Disposable(stream.subscribe(callback)):
+        with Disposable(stream.subscribe(unsubscribed.append)):
+            stream_module.emit("messages", b"first")
+            assert event.wait(timeout=5.0)
+            wait_until(lambda: unsubscribed == [b"first"], timeout=5.0)
+        event.clear()
+        stream_module.emit("messages", b"second")
+        assert event.wait(timeout=5.0)
+        assert unsubscribed == [b"first"]
+        assert received == [b"first", b"second"]
+        client.stop()
+        stream_module.emit("messages", b"after close")
+    assert not client.is_running
+    assert running_app.skills.ping() == "pong"
+    assert received == [b"first", b"second"]
+
+
+@pytest.fixture(params=[pLCMTransport, LCMTransport])
+def custom_lcm_transport(request):
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as reservation:
+        reservation.bind(("127.0.0.1", 0))
+        port = reservation.getsockname()[1]
+    args = () if request.param is pLCMTransport else (Vector3,)
+    transport = request.param(
+        f"/custom_{uuid.uuid4().hex}", *args, url=f"udpm://239.255.76.68:{port}?ttl=0"
+    )
+    try:
+        yield transport
+    finally:
+        transport.stop()
+
+
+def test_connected_stream_uses_configured_lcm_bus(
+    running_app, client, custom_lcm_transport, collected
+):
+    running_app.run(VectorStreamModule)
+    owner = running_app.VectorStreamModule
+    owner.set_transport("messages", custom_lcm_transport)
+    received, event, callback = collected
+    with Disposable(client.VectorStreamModule.messages.subscribe(callback)):
+        owner.emit(Vector3(1.0, 2.0, 3.0))
+        assert event.wait(timeout=5.0)
+        assert received == [Vector3(1.0, 2.0, 3.0)]
+
+
+@pytest.fixture(params=[pSHMTransport, SHMTransport])
+def shm_transport(request):
+    transport = request.param(f"/early_{uuid.uuid4().hex}", default_capacity=1024)
+    try:
+        yield transport
+    finally:
+        transport.stop()
+
+
+def test_early_shm_subscription_can_close_and_reconnect(
+    running_app, client, stream_module, shm_transport, collected
+):
+    stream_module.set_transport("messages", shm_transport)
+    received, event, callback = collected
+    with Disposable(client.get_module("remote/streams").messages.subscribe(callback)):
+        stream_module.emit("messages", b"first")
+        assert event.wait(timeout=5.0)
+        client.stop()
+    second = Dimos.connect()
+    try:
+        event.clear()
+        with Disposable(second.get_module("remote/streams").messages.subscribe(callback)):
+            stream_module.emit("messages", b"second")
+            assert event.wait(timeout=5.0)
+            assert received == [b"first", b"second"]
+    finally:
+        second.stop()
