@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from pathlib import Path
 import subprocess
 import sys
 from types import ModuleType
@@ -119,15 +118,3 @@ def test_registry_rejects_conflicting_installed_definitions(tmp_path, monkeypatc
 
     with pytest.raises(ValueError, match="Conflicting definition geometry_msgs/msg/Point"):
         registry.message_types()
-
-
-def test_cargo_generator_runs_as_isolated_namespace_package(tmp_path):
-    source = Path(__file__).parent / "build_rust.py"
-    output = tmp_path / "rust"
-    subprocess.run(
-        [sys.executable, "-I", "-B", str(source), str(output)],
-        check=True,
-        cwd=tmp_path,
-    )
-    assert "struct Image" in (output / "messages.rs").read_text()
-    assert (output / "codec.rs").read_bytes() == (source.parent / "templates/codec.rs").read_bytes()

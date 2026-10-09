@@ -1,0 +1,12 @@
+{
+  "repository": "https://github.com/ros2/rosidl_typesupport_fastrtps",
+  "revision": "b883555055cce17982a22172a42ef557ef40bac5",
+  "source": "rosidl_typesupport_fastrtps_cpp/resource/msg__type_support.cpp.em",
+  "upstream_sha256": "51d27e8ebd35e726e6ded80cbc0666ddb9025c83ff1d0f014f7bda1dc22c2f97",
+  "patch": "Extract the serialization/deserialization/size fragment; relocate imports, inline functions, reject noncanonical uint8 bool values before conversion.",
+  "files": {
+    "msg__cdr.hpp.em": "c2438b06c73b8e50bf07e39664a90bf07939740ded14bf142d3557a6b3991399",
+    "LICENSE": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+    "package.xml": "a910b8c7bc4ab334a5fa07ffdec90a98de06e550b43de289e7699ce27ede6f42"
+  }
+}

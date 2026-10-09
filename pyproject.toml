@@ -58,6 +58,7 @@ exclude = [
     "message_codegen/_vendor/rosidl/notices/**/*",
     "message_codegen/_vendor/rosidl/LICENSE",
     "message_codegen/_vendor/rosidl/sources.json",
+    "message_codegen/_vendor/rosidl/serialization/*",
 
 ]
 
@@ -772,7 +773,7 @@ ignore = [
     "packages/dimos-generated/src/dimos_generated/_types.py",
     "packages/dimos-generated/src/dimos_generated_schemas/schemas.json",
     "packages/dimos-generated/src/dimos_generated_schemas/**/schemas.json",
-    "packages/dimos-generated/src/dimos_generated_schemas/package/rust/src/lib.rs",
+    "packages/dimos-generated/src/dimos_generated_schemas/package/rust/build.rs",
     "packages/dimos-generated/src/dimos_generated_schemas/package/cpp/messages.hpp",
     "packages/dimos-generated/src/dimos_generated_schemas/package/include/dimos_generated/messages.hpp",
     "*/package-lock.json",

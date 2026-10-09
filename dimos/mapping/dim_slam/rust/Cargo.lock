@@ -593,7 +593,9 @@ dependencies = [
 name = "dimos-generated-messages"
 version = "0.1.0"
 dependencies = [
+ "heck",
  "re_cdr",
+ "ros2msg",
  "serde",
  "serde-big-array",
 ]
@@ -1007,6 +1009,12 @@ name = "hashbrown"
 version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
+
+[[package]]
+name = "heck"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
 name = "hermit-abi"
@@ -1944,6 +1952,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "prettyplease"
+version = "0.2.37"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "479ca8adacdd7ce8f1fb39ce9ecccbfe93a3f1344b3d0d97f20bc0196208f62b"
+dependencies = [
+ "proc-macro2",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "proc-macro-crate"
 version = "3.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2307,6 +2325,23 @@ dependencies = [
  "serde_derive",
  "typeid",
  "unicode-ident",
+]
+
+[[package]]
+name = "ros2msg"
+version = "0.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2fe291be5cb6d4b8e6bf9c9de80c40bd1cb09ecac50deafa2fdcae0027e04988"
+dependencies = [
+ "heck",
+ "pest",
+ "pest_derive",
+ "prettyplease",
+ "proc-macro2",
+ "quote",
+ "regex",
+ "syn 2.0.119",
+ "thiserror",
 ]
 
 [[package]]
