@@ -13,6 +13,7 @@ cp examples/message-codegen/relay.rs build/message-codegen/demo/rust/src/bin/rel
 cargo build --manifest-path build/message-codegen/demo/rust/Cargo.toml
 export PYTHONPATH="$PWD/build/message-codegen/demo/python${PYTHONPATH:+:$PYTHONPATH}"
 .venv/bin/python -m pytest dimos/message_codegen --noconftest -o addopts='' -q \
+  --cov=dimos.message_codegen --cov-report=xml:build/message-codegen/demo/evidence/coverage.xml \
   | tee build/message-codegen/demo/evidence/pytest.txt
 .venv/bin/python examples/message-codegen/demo_relay.py --build build/message-codegen/demo \
   | tee build/message-codegen/demo/evidence/relay.txt

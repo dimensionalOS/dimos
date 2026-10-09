@@ -16,7 +16,7 @@ build/test dependencies into the checkout's virtual environment:
 
 ```bash
 uv venv .venv --python 3.12
-uv pip install --python .venv/bin/python rosbags==0.11.0 pytest pytest-asyncio pytest-env numpy lcm-dimos-fork
+uv pip install --python .venv/bin/python rosbags==0.11.0 pytest pytest-cov pytest-asyncio pytest-env numpy lcm-dimos-fork
 ```
 
 Install Fast CDR 2.4.0 into a local build prefix. This setup step downloads source;

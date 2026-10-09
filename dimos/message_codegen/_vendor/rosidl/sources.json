@@ -1,7 +1,7 @@
 {
   "repository": "https://github.com/ros2/rosidl",
   "revision": "85fa592b698b0f665e3120f48fac0d35e2f7d8a4",
-  "patch": "Relocate imports relative to the bundled namespace and provide the package context to EmPy; reuse the existing pinned MSG parser. No type/default generation rules changed. Relocate package entry points and typing stubs from __init__ to api modules, updating imports; omit the empty parser initializer to preserve DimOS namespace-package policy.",
+  "patch": "Relocate imports relative to the bundled namespace and provide the package context to EmPy; reuse the existing pinned MSG parser. No type/default generation rules changed. Relocate package entry points and typing stubs from __init__ to api modules, updating imports; omit the empty parser initializer to preserve DimOS namespace-package policy. Parser conformance tests retain upstream assertions and only relocate parser imports.",
   "files": {
     "rosidl_adapter/api.py": {
       "source": "rosidl_adapter/rosidl_adapter/__init__.py",
@@ -107,6 +107,81 @@
       "source": "rosidl_runtime_c/package.xml",
       "upstream_sha256": "3fa7043a7d337c9dd27aeb976684d84750cb15df01f1606207f3e01b6485fc64",
       "sha256": "3fa7043a7d337c9dd27aeb976684d84750cb15df01f1606207f3e01b6485fc64"
+    },
+    "parser_tests/test_base_type.py": {
+      "source": "rosidl_adapter/test/test_base_type.py",
+      "upstream_sha256": "4a9f7115145052d0624b4fade78faf6d57d8e626fff93a678f3cb0b613f27dcb",
+      "sha256": "8a379c1c04512816b2bbb49c1767969a5c1cf60330872a07cb382c5023060fc1"
+    },
+    "parser_tests/test_constant.py": {
+      "source": "rosidl_adapter/test/test_constant.py",
+      "upstream_sha256": "b13b8e404fbba7c260fb5cc72e1430299a9c3a74f3d5f3b2aabe97dec170b358",
+      "sha256": "d46a434a9b1df0953004195e6cee9f03dd292581f456e9bba180a1f6e8703d16"
+    },
+    "parser_tests/test_extract_message_comments.py": {
+      "source": "rosidl_adapter/test/test_extract_message_comments.py",
+      "upstream_sha256": "a2ed28de7dd4262dd9c9285b491f9ae47d61328d98a0963e5e388e09cf485f16",
+      "sha256": "a0e63c7fc0e2a8b1608ef0937a3c9a04082f5cf3e3039096524cfe48839a5ec9"
+    },
+    "parser_tests/test_field.py": {
+      "source": "rosidl_adapter/test/test_field.py",
+      "upstream_sha256": "e966aa2ba66b0cca81db89089db38a3d748ee28a122e5624f713c8e672790932",
+      "sha256": "7ea0f06a44fc3ee1f1ea0d430e28718fafffbad000757a23a8b3c06077f609f6"
+    },
+    "parser_tests/test_message_specification.py": {
+      "source": "rosidl_adapter/test/test_message_specification.py",
+      "upstream_sha256": "7f4b5e848f5416b6ca5560ad43909a17552e5f1f8464c4a581e9c21060e0e4f1",
+      "sha256": "d2fc18e39ced3d25d65bd31445099be98df04baefef444de4210f42f9c7ea627"
+    },
+    "parser_tests/test_parse_action_string.py": {
+      "source": "rosidl_adapter/test/test_parse_action_string.py",
+      "upstream_sha256": "dc8b24625957d34a2e8d816f12ed9c594491b4aa4317526d07b1edfabe283db2",
+      "sha256": "97dc0aeefc95d3e50b857995c26b0e42827267372dab204782660dcee8329791"
+    },
+    "parser_tests/test_parse_message_file.py": {
+      "source": "rosidl_adapter/test/test_parse_message_file.py",
+      "upstream_sha256": "1f58c83eb1d96f963bc8395b5995d73677fe359c0a943f2b0c85e4ab6b535b3b",
+      "sha256": "544cec5447916ba1a72c4529a37da2adf22a58a742dda82d8b23be8c286eb09a"
+    },
+    "parser_tests/test_parse_message_string.py": {
+      "source": "rosidl_adapter/test/test_parse_message_string.py",
+      "upstream_sha256": "64dc4750ad1612d9f4b8147b353a0c803975b6146cc8496751bc337e126157a3",
+      "sha256": "c80763ff9ab8c0d93c13b19b99b837c2abdcc776e19680d52341b2bd260753ce"
+    },
+    "parser_tests/test_parse_primitive_value_string.py": {
+      "source": "rosidl_adapter/test/test_parse_primitive_value_string.py",
+      "upstream_sha256": "041779cb8ff7e9eb2a32e1e81ea3ebd6de2fd5729fe9f719593dad1d3d170118",
+      "sha256": "11653b805accc61ff02d8c4dc37b37c45c8a29f3b806839ca176fd49f3f2364c"
+    },
+    "parser_tests/test_parse_service_string.py": {
+      "source": "rosidl_adapter/test/test_parse_service_string.py",
+      "upstream_sha256": "fa1e6b9958f364ea8534c955d2576c9f5e0fb091c9e7a78645f17c3d61700514",
+      "sha256": "b60639dd0e9bf5dce7163a093e76ad89ff60e8d59a6b892af46e6f9463be2d5d"
+    },
+    "parser_tests/test_parse_unicode.py": {
+      "source": "rosidl_adapter/test/test_parse_unicode.py",
+      "upstream_sha256": "4261e7c248adc362e068c0c262ae0450e9648dcf97b51fda73c0c3e2e46b1360",
+      "sha256": "a8aebc3902c74fb235f1560761b92fc5515aa48714992ec3a6e2f44551e31ae2"
+    },
+    "parser_tests/test_parse_value_string.py": {
+      "source": "rosidl_adapter/test/test_parse_value_string.py",
+      "upstream_sha256": "556a8b1785ea04fbfbfec58f148a7a295edfe3ab0d1469391539a01d13fd4552",
+      "sha256": "cc0f6e643517aed14d795ec56efb2726974b1ba1c73f58f0ff5ccca15b116d78"
+    },
+    "parser_tests/test_type.py": {
+      "source": "rosidl_adapter/test/test_type.py",
+      "upstream_sha256": "7ee1e582d3c40de593016e8ab4abefb1c0a59077f62007458d253f397fc94fd2",
+      "sha256": "d32736c07a98ef4bf5fea501504af33cb2574a1e531e1c4e2d865a84b3e5222b"
+    },
+    "parser_tests/test_valid_names.py": {
+      "source": "rosidl_adapter/test/test_valid_names.py",
+      "upstream_sha256": "41257abbd46567d1d790eb091cf20ada3b3496691bd521c229fba2bc1bd9638a",
+      "sha256": "0fd84728561124a03adceea41c6793568207405391927af665f3ff5a3a6a93fc"
+    },
+    "parser_tests/test_validate_field_types.py": {
+      "source": "rosidl_adapter/test/test_validate_field_types.py",
+      "upstream_sha256": "de703bbad62313344cf05cd009c080167774aa104d742ebfc87c009d37212001",
+      "sha256": "bd92f1bc49900c8dfc72904f6a72c409a4a87cb5fd796c1b69fbf79589378e3a"
     }
   },
   "omitted": {
