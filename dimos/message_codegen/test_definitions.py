@@ -224,7 +224,9 @@ def test_library_decoder_preserves_padding_and_nan(tmp_path):
 
 @pytest.mark.parametrize("little", [True, False])
 @pytest.mark.xfail(
-    strict=True, reason="CDR-L06 bool arrays: docs/development/message-limitations.md#cdr-l06"
+    strict=True,
+    raises=pytest.fail.Exception,
+    reason="CDR-L06 bool arrays: docs/development/message-limitations.md#cdr-l06",
 )
 def test_library_decoder_rejects_noncanonical_bool_array(tmp_path, little):
     write_message(tmp_path, "probe_msgs/msg/Value", "uint8 prefix\nfloat32 sample\nbool[] flags\n")

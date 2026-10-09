@@ -51,19 +51,25 @@ def test_every_truncation_of_nested_message_is_rejected(little):
         pytest.param(
             b"\0",
             marks=pytest.mark.xfail(
-                strict=True, reason="CDR-L01: docs/development/message-limitations.md#cdr-l01"
+                strict=True,
+                raises=pytest.fail.Exception,
+                reason="CDR-L01: docs/development/message-limitations.md#cdr-l01",
             ),
         ),
         pytest.param(
             b"\0\0",
             marks=pytest.mark.xfail(
-                strict=True, reason="CDR-L01: docs/development/message-limitations.md#cdr-l01"
+                strict=True,
+                raises=pytest.fail.Exception,
+                reason="CDR-L01: docs/development/message-limitations.md#cdr-l01",
             ),
         ),
         pytest.param(
             b"\0\0\0",
             marks=pytest.mark.xfail(
-                strict=True, reason="CDR-L01: docs/development/message-limitations.md#cdr-l01"
+                strict=True,
+                raises=pytest.fail.Exception,
+                reason="CDR-L01: docs/development/message-limitations.md#cdr-l01",
             ),
         ),
         b"\0\0\0\0",
@@ -82,14 +88,18 @@ def test_trailing_bytes_are_rejected(suffix):
             0,
             b"",
             marks=pytest.mark.xfail(
-                strict=True, reason="CDR-L02: docs/development/message-limitations.md#cdr-l02"
+                strict=True,
+                raises=pytest.fail.Exception,
+                reason="CDR-L02: docs/development/message-limitations.md#cdr-l02",
             ),
         ),
         pytest.param(
             2,
             b"ab",
             marks=pytest.mark.xfail(
-                strict=True, reason="CDR-L03: docs/development/message-limitations.md#cdr-l03"
+                strict=True,
+                raises=pytest.fail.Exception,
+                reason="CDR-L03: docs/development/message-limitations.md#cdr-l03",
             ),
         ),
         (2, b"\xff\0"),
@@ -97,7 +107,9 @@ def test_trailing_bytes_are_rejected(suffix):
             0xFFFFFFFF,
             b"\0",
             marks=pytest.mark.xfail(
-                strict=True, reason="CDR-L04: docs/development/message-limitations.md#cdr-l04"
+                strict=True,
+                raises=pytest.fail.Exception,
+                reason="CDR-L04: docs/development/message-limitations.md#cdr-l04",
             ),
         ),
     ],
@@ -115,13 +127,21 @@ def test_standard_string_roundtrip(little):
     assert decode(encode(value, little_endian=little), String) == value
 
 
-@pytest.mark.xfail(strict=True, reason="CDR-L05: docs/development/message-limitations.md#cdr-l05")
+@pytest.mark.xfail(
+    strict=True,
+    raises=pytest.fail.Exception,
+    reason="CDR-L05: docs/development/message-limitations.md#cdr-l05",
+)
 def test_invalid_encapsulation_is_rejected():
     with pytest.raises(ValueError):
         decode(b"\0\3\0\0\1", Bool)
 
 
-@pytest.mark.xfail(strict=True, reason="CDR-L06: docs/development/message-limitations.md#cdr-l06")
+@pytest.mark.xfail(
+    strict=True,
+    raises=pytest.fail.Exception,
+    reason="CDR-L06: docs/development/message-limitations.md#cdr-l06",
+)
 def test_noncanonical_bool_is_rejected():
     with pytest.raises(ValueError):
         decode(b"\0\1\0\0\2", Bool)
@@ -137,7 +157,11 @@ def test_huge_sequence_is_rejected():
         decode(bytes(encoded), UInt32MultiArray)
 
 
-@pytest.mark.xfail(strict=True, reason="CDR-L07: docs/development/message-limitations.md#cdr-l07")
+@pytest.mark.xfail(
+    strict=True,
+    raises=NotImplementedError,
+    reason="CDR-L07: docs/development/message-limitations.md#cdr-l07",
+)
 def test_bounded_standard_type_supports_valid_values():
     # Required catalog gate: an unsupported-type error is not successful validation.
     value = SolidPrimitive(
@@ -147,7 +171,11 @@ def test_bounded_standard_type_supports_valid_values():
     np.testing.assert_array_equal(restored.dimensions, value.dimensions)
 
 
-@pytest.mark.xfail(strict=True, reason="CDR-L08: docs/development/message-limitations.md#cdr-l08")
+@pytest.mark.xfail(
+    strict=True,
+    raises=NotImplementedError,
+    reason="CDR-L08: docs/development/message-limitations.md#cdr-l08",
+)
 def test_bounded_standard_type_rejects_oversize_values():
     value = SolidPrimitive(
         type=SolidPrimitive.BOX, dimensions=np.ones(4), polygon=Polygon(points=[])

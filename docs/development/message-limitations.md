@@ -19,6 +19,8 @@ unintended values.
 The assertions remain in `dimos/message_codegen/test_python_source.py`. Only the
 exact failing parameters carry `xfail(strict=True)` with these identifiers. An
 unexpected pass fails the check and requires reviewing the pin and limitation.
+Wire-rejection cases accept only the missing-exception assertion failure; unsupported
+schema cases accept only `NotImplementedError`. Unrelated exceptions fail normally.
 Run the original assertions without expected-failure handling using:
 
 ```sh
