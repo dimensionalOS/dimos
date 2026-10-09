@@ -14,15 +14,18 @@
 
 """Installed cpp native module with typed ports."""
 
-from pathlib import Path
-
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Twist import Twist
 
 
 class CppPongConfig(NativeModuleConfig):
-    executable: str = str(Path(__file__).resolve().parent / "bin" / "package_pong")
+    source_package: str | None = "dimos_package_cpp"
+    source_dir: str | None = "native"
+    executable: str = "build/package_pong"
+    build_command: str | None = (
+        "cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --target package_pong -j2"
+    )
     stdin_config: bool = True
     sample_config: int = 42
 

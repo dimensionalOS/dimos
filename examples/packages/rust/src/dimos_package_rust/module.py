@@ -14,15 +14,18 @@
 
 """Installed rust native module with typed ports."""
 
-from pathlib import Path
-
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Twist import Twist
 
 
 class RustPingConfig(NativeModuleConfig):
-    executable: str = str(Path(__file__).resolve().parent / "bin" / "package_ping")
+    source_package: str | None = "dimos_package_rust"
+    source_dir: str | None = "native"
+    executable: str = "target/release/package_ping"
+    build_command: str | None = (
+        "cargo build --release --locked --bin package_ping --target-dir target"
+    )
     stdin_config: bool = True
 
 

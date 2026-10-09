@@ -24,12 +24,15 @@ unzip -q "$prefix/zenohcpp-1.10.1-standalone.zip" -d "$prefix"
 sed -i "s|^prefix=.*|prefix=$prefix|" "$prefix/lib/pkgconfig/zenohc.pc"
 export CMAKE_PREFIX_PATH="$prefix${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}"
 export LD_LIBRARY_PATH="$prefix/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-export CARGO_TARGET_DIR="$workspace/target"
+
 # SDK sources do not consume the monorepo's recordings or other LFS assets.
 export GIT_LFS_SKIP_SMUDGE=1
 
-uv pip install --python .venv/bin/python 'build>=1,<2' 'scikit-build-core>=0.11,<2' \
+uv pip install --python .venv/bin/python 'build>=1,<2' 'scikit-build-core>=1.0,<2' \
   'setuptools>=70' wheel 'pybind11>=2.12'
+uv run python -m build --wheel --no-isolation --outdir "$wheels" packages/dimos-build-config
+uv pip install --python .venv/bin/python --no-deps "$wheels"/dimos_build_config-*.whl
+uv run --no-sync pytest packages/dimos-build-config/src/dimos_build_config/test_config.py -o addopts='' -q
 export DIMOS_ALLOW_MISSING_COCKPIT=1
 uv run python -m build --wheel --no-isolation --outdir "$wheels"
 for project in rust cpp python; do
@@ -47,4 +50,6 @@ uv pip install --python .venv/bin/python --target "$RUNNER_TEMP/package-child-de
 {
   echo "DIMOS_PACKAGE_WHEELHOUSE=$wheels"
   echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH"
+  echo "CMAKE_PREFIX_PATH=$CMAKE_PREFIX_PATH"
+  echo "GIT_LFS_SKIP_SMUDGE=1"
 } >> "$GITHUB_ENV"

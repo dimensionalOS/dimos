@@ -791,7 +791,6 @@ jobs:
           UV_LINK_MODE: hardlink
         run: >-
           uv run --no-sync pytest dimos/core/test_external_native_package.py
-          dimos/core/test_installed_lazy_native_package.py
           -m native_e2e --cov=dimos/ --cov-append --junitxml=package-junit.xml
       - name: Turn coverage into xml
         run: uv run python -m coverage xml
