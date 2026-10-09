@@ -551,31 +551,42 @@ install_steamos_deps() (
     run_cmd "${privilege[@]}" pacman -S --noconfirm "${packages[@]}"
 )
 
-# A Command Line Tools update can leave a default SDK newer than the linker ("tapi error: unknown
-# architecture"), which fails every native extension. Fall back to an older installed SDK that links.
+# A default SDK newer than the linker ("tapi error: unknown architecture") fails every native extension.
+# Update the Command Line Tools (needs sudo); failing that, build with an older installed SDK that links.
+cxx_links() { c++ -x c++ - -o /dev/null >/dev/null 2>&1 <<< 'int main() { return 0; }'; }
+
+update_command_line_tools() {
+    local label
+    local -a privilege=(/usr/bin/env)
+    if [[ $(id -u) != 0 ]]; then privilege=(sudo); fi
+    info "the C++ linker can't use the default macOS SDK; checking for a Command Line Tools update..."
+    label=$(softwareupdate --list 2>/dev/null | sed -n 's/^ *\* Label: \(Command Line Tools.*\)$/\1/p' | sort -V | tail -n 1)
+    if [[ -z "$label" ]]; then
+        warn "no Command Line Tools update available"
+        return 1
+    fi
+    prompt_confirm "Install $label (about 1 GB, needs your password)?" yes || return 1
+    run_cmd "${privilege[@]}" softwareupdate --install "$label" --agree-to-license || return 1
+    cxx_links
+}
+
 select_macos_sdk() {
     has_cmd c++ || return 0
-    local probe sdk developer_dir
-    probe=$(mktemp -d) || die "could not create a temporary directory"
-    printf '#include <vector>\nint main() { return std::vector<int>{1}.at(0) - 1; }\n' > "$probe/probe.cpp"
-    if c++ "$probe/probe.cpp" -o "$probe/probe" >/dev/null 2>&1; then
-        rm -rf "$probe"
-        return
-    fi
+    cxx_links && return
+    update_command_line_tools && { ok "Command Line Tools updated"; return; }
+    local sdk developer_dir
     developer_dir=$(xcode-select -p 2>/dev/null || true)
     while IFS= read -r sdk; do
-        if SDKROOT="$sdk" c++ "$probe/probe.cpp" -o "$probe/probe" >/dev/null 2>&1; then
-            rm -rf "$probe"
+        if SDKROOT="$sdk" cxx_links; then
             export SDKROOT="$sdk"
-            warn "the default macOS SDK can't link with this linker; building with $sdk"
-            dim "  to fix for good, update the Command Line Tools: softwareupdate --list, then install the newest 'Command Line Tools'"
+            warn "building with $sdk, since the default macOS SDK doesn't link"
+            dim "  native builds outside this installer will fail until the Command Line Tools are updated (softwareupdate --list)"
             return
         fi
     done < <(find "$developer_dir/SDKs" "$developer_dir/Platforms/MacOSX.platform/Developer/SDKs" \
         -maxdepth 1 -name 'MacOSX[0-9]*.sdk' 2>/dev/null | sort -rV)
-    { c++ "$probe/probe.cpp" -o "$probe/probe" 2>&1 || true; } | tail -n 5 >&2
-    rm -rf "$probe"
-    die "the C++ compiler can't link a test program with any installed macOS SDK; update the Command Line Tools (softwareupdate --list) and re-run"
+    { c++ -x c++ - -o /dev/null <<< 'int main() { return 0; }' 2>&1 || true; } | tail -n 5 >&2
+    die "the C++ compiler can't link with any installed macOS SDK; update the Command Line Tools (softwareupdate --list) and re-run"
 }
 
 # ─── system dependencies ─────────────────────────────────────────────────────
