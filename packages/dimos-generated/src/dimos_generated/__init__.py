@@ -1,7 +1,8 @@
 __dimos_version__ = "0.1.0"
-__dimos_abi__ = "dimos-cdr-source-rosbags-0.11.0-v1"
+__dimos_abi__ = "dimos-native-rosbags-0.11.0-v2"
 from . import (
     builtin_interfaces as builtin_interfaces,
+    dimos_msgs as dimos_msgs,
     foxglove_msgs as foxglove_msgs,
     geometry_msgs as geometry_msgs,
     nav_msgs as nav_msgs,

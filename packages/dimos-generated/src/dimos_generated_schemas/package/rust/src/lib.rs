@@ -12,5 +12,5 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub mod codec;
-include!(concat!(env!("OUT_DIR"), "/messages.rs"));
+pub const ROS2MSG_SCHEMAS: &str = include_str!("../schemas.json");
+include!(concat!(env!("OUT_DIR"), "/mod.rs"));

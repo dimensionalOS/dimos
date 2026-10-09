@@ -4,6 +4,12 @@
 name: release-build-check
 
 on:
+  workflow_dispatch:
+    inputs:
+      full-matrix:
+        type: boolean
+        default: false
+        description: Build and test all supported release wheels without publishing
   pull_request:
     paths:
       - .github/workflows/release.yml
@@ -13,6 +19,8 @@ on:
       - .github/scripts/wheel_smoke.py
       - pyproject.toml
       - setup.py
+      - packages/dimos-generated/**
+      - .github/scripts/message_wheel_smoke.py
       - dimos/message_codegen/**
       - scripts/setup_message_codegen.sh
       - MANIFEST.in
@@ -27,23 +35,83 @@ permissions: {}
 
 jobs:
   build-one-wheel:
+    if: github.event_name != 'workflow_dispatch' || !inputs.full-matrix
     runs-on: ubuntu-latest
     permissions:
       contents: read
     env:
       # Keep in sync with the build-wheels env in release.yml
       CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_34
-      CIBW_BEFORE_BUILD: "bash {project}/scripts/setup_message_codegen.sh"
+      CIBW_BEFORE_TEST: "pip install {project}/wheelhouse/dimos_generated-*.whl {project}/wheelhouse/dimos_message_build-*.whl"
       CIBW_TEST_COMMAND: "python {project}/.github/scripts/wheel_smoke.py"
     steps:
       - name: Checkout
         uses: actions/checkout@v7
       - name: Build cockpit dist
         uses: ./.github/actions/build-cockpit
+      - uses: astral-sh/setup-uv@v10.0.1
+      - name: Build message backend wheel and prepare its test dependencies
+        run: |
+          uv build dimos/message_codegen --wheel --out-dir wheelhouse
+          uv venv --seed build/message-wheel-download
+          build/message-wheel-download/bin/python -m pip download --only-binary=:all: --platform any --implementation py --python-version 3.10 --dest build/message-test-dependencies setuptools==77.0.3 wheel==0.48.0 packaging==25.0 tomli==2.4.0
+      - name: Build and smoke-test compiler-free built-in source wheel
+        run: |
+          uv build packages/dimos-generated --wheel --out-dir wheelhouse
+          uv venv build/message-smoke
+          uv pip install --python build/message-smoke/bin/python wheelhouse/dimos_generated-*.whl wheelhouse/dimos_message_build-*.whl
+          build/message-smoke/bin/python -I .github/scripts/message_wheel_smoke.py
       - name: Build one wheel
         uses: pypa/cibuildwheel@v4.2.0
         with:
           only: cp312-manylinux_x86_64
+
+  build-wheel-matrix:
+    if: github.event_name == 'workflow_dispatch' && inputs.full-matrix
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, arch: x86_64 }
+          - { os: ubuntu-24.04-arm, arch: aarch64 }
+          - { os: macos-14, arch: arm64 }
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    env:
+      # Same build and installed-wheel smoke test as release.yml, without publish jobs.
+      CIBW_ARCHS: ${{ matrix.arch }}
+      CIBW_BUILD: "cp310-* cp311-* cp312-*"
+      CIBW_SKIP: "*-musllinux_*"
+      CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_34
+      CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_34
+      CIBW_BEFORE_TEST: "pip install {project}/wheelhouse/dimos_generated-*.whl {project}/wheelhouse/dimos_message_build-*.whl"
+      CIBW_TEST_COMMAND: "python {project}/.github/scripts/wheel_smoke.py"
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Build cockpit dist
+        uses: ./.github/actions/build-cockpit
+      - uses: astral-sh/setup-uv@v10.0.1
+      - name: Build message backend wheel and prepare its test dependencies
+        run: |
+          uv build dimos/message_codegen --wheel --out-dir wheelhouse
+          uv venv --seed build/message-wheel-download
+          build/message-wheel-download/bin/python -m pip download --only-binary=:all: --platform any --implementation py --python-version 3.10 --dest build/message-test-dependencies setuptools==77.0.3 wheel==0.48.0 packaging==25.0 tomli==2.4.0
+      - name: Build and smoke-test compiler-free built-in source wheel
+        run: |
+          uv build packages/dimos-generated --wheel --out-dir wheelhouse
+          uv venv build/message-smoke
+          uv pip install --python build/message-smoke/bin/python wheelhouse/dimos_generated-*.whl wheelhouse/dimos_message_build-*.whl
+          build/message-smoke/bin/python -I .github/scripts/message_wheel_smoke.py
+      - name: Build and test supported wheels
+        uses: pypa/cibuildwheel@v4.2.0
+      - name: Upload review wheels
+        uses: actions/upload-artifact@v7
+        with:
+          name: checked-wheels-${{ matrix.os }}-${{ matrix.arch }}
+          path: wheelhouse/*.whl
 
   build-sdist:
     runs-on: ubuntu-latest
@@ -61,5 +129,12 @@ jobs:
           prune-cache: true
       - name: Build sdist
         run: uv build --sdist
+      - name: Build lightweight backend artifacts
+        run: uv build dimos/message_codegen --out-dir message-dist
+      - name: Upload build backend for review
+        uses: actions/upload-artifact@v7
+        with:
+          name: checked-message-backend
+          path: message-dist/*
       - name: Check sdist contents
         run: python3 .github/scripts/check_sdist.py dist/*.tar.gz

@@ -19,7 +19,7 @@
 //! phase: the handshake commands `lidar_ip:cmd_port` directly with retries,
 //! the same information the SDK2 search step would produce.
 
-use crate::pipeline::PacketSource;
+use crate::pipeline::{unix_now_secs, PacketSource, Received};
 use crate::wire::{
     self, build_param_set_body, host_ip_config_value, AsyncControlAck, ControlFrame, KeyValue,
 };
@@ -85,7 +85,7 @@ impl Failure {
 
 /// Receives the point and IMU streams after driving the config handshake.
 pub struct LiveSource {
-    rx: mpsc::Receiver<Vec<u8>>,
+    rx: mpsc::Receiver<(f64, Vec<u8>)>,
     stop: Arc<AtomicBool>,
     failure: Failure,
     threads: Vec<std::thread::JoinHandle<()>>,
@@ -99,7 +99,7 @@ impl LiveSource {
             reason: Arc::new(OnceLock::new()),
             stop: stop.clone(),
         };
-        let (tx, rx) = mpsc::sync_channel::<Vec<u8>>(QUEUE_DEPTH);
+        let (tx, rx) = mpsc::sync_channel::<(f64, Vec<u8>)>(QUEUE_DEPTH);
         let mut threads = Vec::new();
 
         // bind sockets before spawning threads
@@ -110,10 +110,9 @@ impl LiveSource {
         } else {
             None
         };
-        let cmd = UdpSocket::bind(SocketAddrV4::new(
-            config.host_ip,
-            config.ports.host_cmd_data,
-        ))?;
+        let cmd = shared_socket()?;
+        cmd.bind(&SocketAddrV4::new(config.host_ip, config.ports.host_cmd_data).into())?;
+        let cmd: UdpSocket = cmd.into();
 
         threads.push(spawn_reader(
             "point",
@@ -140,16 +139,16 @@ impl LiveSource {
 }
 
 impl PacketSource for LiveSource {
-    fn recv(&mut self, buf: &mut [u8]) -> Option<usize> {
+    fn recv(&mut self, buf: &mut [u8]) -> Option<Received> {
         loop {
             if self.stop.load(Ordering::Relaxed) {
                 return None;
             }
             match self.rx.recv_timeout(RECV_POLL) {
-                Ok(packet) => {
+                Ok((arrival_secs, packet)) => {
                     let len = packet.len().min(buf.len());
                     buf[..len].copy_from_slice(&packet[..len]);
-                    return Some(len);
+                    return Some(Received { len, arrival_secs });
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => continue,
                 Err(mpsc::RecvTimeoutError::Disconnected) => return None,
@@ -171,10 +170,18 @@ impl Drop for LiveSource {
     }
 }
 
+/// `SO_REUSEADDR` (+ `SO_REUSEPORT` for macOS) so the ports can be shared with an SDK2 process, which binds the same way.
+fn shared_socket() -> io::Result<Socket> {
+    let raw = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
+    raw.set_reuse_address(true)?;
+    raw.set_reuse_port(true)?;
+    Ok(raw)
+}
+
 /// Bind a data-plane receive socket, joining the multicast group when the
 /// device streams to one.
 fn data_socket(config: &LiveConfig, port: u16) -> io::Result<UdpSocket> {
-    let raw = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
+    let raw = shared_socket()?;
     if let Err(err) = raw.set_recv_buffer_size(RECV_BUFFER_BYTES) {
         tracing::warn!(port, "kernel refused the receive buffer request: {err}");
     }
@@ -191,7 +198,7 @@ fn spawn_reader(
     label: &'static str,
     socket: UdpSocket,
     lidar_ip: Ipv4Addr,
-    tx: mpsc::SyncSender<Vec<u8>>,
+    tx: mpsc::SyncSender<(f64, Vec<u8>)>,
     failure: Failure,
 ) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
@@ -205,7 +212,7 @@ fn spawn_reader(
                     if from.ip() != std::net::IpAddr::V4(lidar_ip) {
                         continue;
                     }
-                    match tx.try_send(buf[..len].to_vec()) {
+                    match tx.try_send((unix_now_secs(), buf[..len].to_vec())) {
                         Ok(()) => {}
                         Err(mpsc::TrySendError::Full(_)) => {
                             dropped += 1;
@@ -392,23 +399,19 @@ fn wait_for_ack(cmd: &UdpSocket, device: SocketAddrV4, seq: u32, stop: &AtomicBo
 mod tests {
     use super::*;
     use crate::wire::{build_imu_samples, build_points_high, DataPacket, DataType, ImuSample};
+    use serial_test::file_serial;
     use std::collections::HashSet;
 
-    /// Distinct per test slot and per process, so parallel checkouts running
-    /// cargo test at once don't fight over loopback ports.
-    fn test_ports(slot: u16) -> Ports {
-        let base = 40000 + (std::process::id() % 1000) as u16 * 24 + slot * 8;
-        Ports {
-            cmd_data: base,
-            point_data: base + 1,
-            imu_data: base + 2,
-            host_cmd_data: base + 3,
-            host_point_data: base + 4,
-            host_imu_data: base + 5,
-            push_msg: base + 6,
-            host_push_msg: base + 7,
-        }
-    }
+    const TEST_PORTS: Ports = Ports {
+        cmd_data: 10000,
+        point_data: 10001,
+        imu_data: 10002,
+        host_cmd_data: 10003,
+        host_point_data: 10004,
+        host_imu_data: 10005,
+        push_msg: 10006,
+        host_push_msg: 10007,
+    };
 
     /// A minimal in-test device: ACK every param-set, then stream one point
     /// packet and one IMU packet once work mode is set.
@@ -494,8 +497,9 @@ mod tests {
     }
 
     #[test]
+    #[file_serial(livox_loopback)]
     fn handshake_and_stream_over_loopback() {
-        let ports = test_ports(0);
+        let ports = TEST_PORTS;
         let device = spawn_fake_device(ports);
 
         let stop = Arc::new(AtomicBool::new(false));
@@ -520,9 +524,11 @@ mod tests {
         let mut buf = [0u8; 4096];
         let mut types_seen = HashSet::new();
         for _ in 0..2 {
-            let len = source.recv(&mut buf).expect("packet before shutdown");
-            let packet = DataPacket::parse(&buf[..len]).unwrap();
+            let received = source.recv(&mut buf).expect("packet before shutdown");
+            let packet = DataPacket::parse(&buf[..received.len]).unwrap();
             types_seen.insert(packet.data_type);
+            // Live packets arrive on the host clock, the anchor for every stamp.
+            assert!((received.arrival_secs - unix_now_secs()).abs() < 5.0);
         }
         assert!(types_seen.contains(&DataType::CartesianHigh));
         assert!(types_seen.contains(&DataType::Imu));
@@ -542,8 +548,9 @@ mod tests {
     }
 
     #[test]
+    #[file_serial(livox_loopback)]
     fn packets_from_unexpected_senders_are_ignored() {
-        let ports = test_ports(3);
+        let ports = TEST_PORTS;
         let stop = Arc::new(AtomicBool::new(false));
         // A dropped loopback datagram fails the test instead of hanging it.
         let watchdog = stop.clone();
@@ -590,14 +597,15 @@ mod tests {
         // The channel is FIFO: had the forged packet been accepted, it would
         // arrive first.
         let mut buf = [0u8; 4096];
-        let len = source.recv(&mut buf).expect("genuine packet delivered");
-        let delivered = DataPacket::parse(&buf[..len]).unwrap();
+        let received = source.recv(&mut buf).expect("genuine packet delivered");
+        let delivered = DataPacket::parse(&buf[..received.len]).unwrap();
         assert_eq!(delivered.timestamp_ns, 42);
     }
 
     #[test]
+    #[file_serial(livox_loopback)]
     fn recv_ends_on_stop() {
-        let ports = test_ports(1);
+        let ports = TEST_PORTS;
         let stop = Arc::new(AtomicBool::new(false));
         let mut source = LiveSource::start(
             LiveConfig {
@@ -617,8 +625,9 @@ mod tests {
     }
 
     #[test]
+    #[file_serial(livox_loopback)]
     fn rejected_handshake_fails_the_source() {
-        let ports = test_ports(2);
+        let ports = TEST_PORTS;
         let device = std::thread::spawn(move || {
             let cmd =
                 UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, ports.cmd_data)).unwrap();

@@ -23,12 +23,12 @@ from io import StringIO
 from pathlib import Path
 from typing import Any
 
-from dimos.message_codegen._vendor.rosidl_parser import (
+from ._vendor.rosidl_parser import (
     InvalidSpecification,
     InvalidValue,
     parse_message_string,
 )
-from dimos.message_codegen.providers import schema_roots
+from .providers import schema_roots
 
 BUNDLED_SCHEMAS = Path(__file__).with_name("schemas")
 
@@ -196,5 +196,8 @@ class Definitions:
         sections = [root.text.rstrip() + "\n"]
         for message in sorted(closure, key=lambda item: item.name):
             if message.name != name:
-                sections.append(f"{'=' * 80}\nMSG: {message.name}\n{message.text.rstrip()}\n")
+                # Concatenated .msg sections use the package/resource spelling
+                # used by field references. The outer schema name stays pkg/msg/T.
+                resource_name = message.name.replace("/msg/", "/")
+                sections.append(f"{'=' * 80}\nMSG: {resource_name}\n{message.text.rstrip()}\n")
         return "".join(sections)

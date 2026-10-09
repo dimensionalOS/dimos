@@ -15,6 +15,18 @@
 import numpy as np
 from numpy.typing import NDArray
 
+class SeededRegion:
+    """One region of a seed as the map now holds it.
+
+    The cylinder covering its chunks and the support-gated (M, 3) float32 points inside.
+    """
+
+    center: tuple[float, float]
+    radius: float
+    z_min: float
+    z_max: float
+    points: NDArray[np.float32]
+
 class VoxelRayMapper:
     """Voxel map with raycast clearing of dynamic objects."""
 
@@ -34,6 +46,7 @@ class VoxelRayMapper:
         region_percentile: float = 95.0,
         worker_threads: int = 4,
         emit_every: int = 0,
+        region_m: float = 4.0,
     ) -> None: ...
     @property
     def voxel_size(self) -> float: ...
@@ -59,6 +72,13 @@ class VoxelRayMapper:
         """Fold an already world-frame cloud into the map, raycasting from origin."""
         ...
 
+    def seed_points(self, points: NDArray[np.float32]) -> int:
+        """Bulk-seed a world-frame map cloud, creating only absent voxels.
+
+        Points are (N, 3) float32. Returns how many voxels were created.
+        """
+        ...
+
     def registered_points(self) -> NDArray[np.float32]:
         """Return the last frame's registered points as (N, 3) float32."""
         ...
@@ -73,6 +93,24 @@ class VoxelRayMapper:
 
     def global_map(self) -> NDArray[np.float32]:
         """Return the centers of all healthy voxels as (M, 3) float32."""
+        ...
+
+    def start_seed(
+        self,
+        points: NDArray[np.float32],
+        origin: tuple[float, float, float],
+    ) -> int:
+        """Partition a world-frame map cloud into regions nearest origin first.
+
+        Points are (N, 3) float32. Returns the region count.
+        """
+        ...
+
+    def seed_next_region(self) -> SeededRegion | None:
+        """Seed the next pending region and return it as the map now holds it.
+
+        None once every region has landed.
+        """
         ...
 
     def global_map_normals(self) -> tuple[NDArray[np.float32], NDArray[np.float32]]:
@@ -125,4 +163,4 @@ class VoxelRayMapper:
     def __len__(self) -> int: ...
     def __repr__(self) -> str: ...
 
-__all__ = ["VoxelRayMapper"]
+__all__ = ["SeededRegion", "VoxelRayMapper"]

@@ -3,13 +3,11 @@ name = "dimos-generated-messages"
 version = "0.1.0"
 edition = "2024"
 license = "Apache-2.0"
-description = "Native CDR messages generated from ROS2 definitions"
-include = ["src/*.rs", "build.rs", "interfaces/**", "schemas.json", "schemas/**", "Cargo.toml"]
 [workspace]
 [dependencies]
-serde = { version = "1.0", features = ["derive"] }
+serde = {version = "1", features = ["derive"]}
 serde-big-array = "=0.5.1"
 re_cdr = "=0.1.0"
+heapless = {version = "=0.8.0", features = ["serde"]}
 [build-dependencies]
 ros2msg = "=0.5.3"
-heck = "=0.5.0"

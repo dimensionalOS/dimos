@@ -42,12 +42,21 @@ def main() -> None:
     target = root / "packages/dimos-generated/src"
     with tempfile.TemporaryDirectory(prefix="dimos-source-") as temporary:
         output = Path(temporary)
-        names = generate([], output, version=version)
+        names = generate([], output, shared=True, version=version)
         write_distribution(output, "dimos_generated", names, version=version)
         source = output / "python"
         packages = [source / "dimos_generated", source / "dimos_generated_schemas"]
         # Formatting is a maintainer codegen prerequisite, never an install/import step.
-        python_files = [str(path) for package in packages for path in package.rglob("*.py")]
+        # Maintainer-only license for our registry alias, not upstream declarations.
+        alias = source / "dimos_generated/_types.py"
+        header = "\n".join(Path(__file__).read_text().splitlines()[:13]) + "\n\n"
+        alias.write_text(header + alias.read_text())
+        python_files = [
+            str(path)
+            for package in packages
+            for path in package.rglob("*")
+            if path.suffix in {".py", ".pyi"}
+        ]
         subprocess.run(
             [
                 sys.executable,
@@ -74,9 +83,14 @@ def main() -> None:
             check=True,
         )
         rust_root = source / "dimos_generated_schemas/package/rust/src"
-        license_text = "\n".join(
-            (root / "dimos/message_codegen/templates/codec.rs").read_text().splitlines()[:13]
-        ) + "\n\n"
+        license_text = (
+            "\n".join(
+                (root / "dimos/message_codegen/templates/message_build.rs")
+                .read_text()
+                .splitlines()[:13]
+            )
+            + "\n\n"
+        )
         library = rust_root / "lib.rs"
         library.write_text(license_text + library.read_text())
         subprocess.run(
