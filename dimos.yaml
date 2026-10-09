@@ -1,0 +1,22 @@
+# What dimOS Desktop reads to install and run this version of dimos (fetched over HTTP per tag, no git needed).
+name: dimos
+version: "0.0.14"
+requires:
+  dimos-desktop: ">=0.2 <0.3"
+  dimcode: ">=0.1 <0.2"
+# env: REF (this tag/branch), COMMIT (its commit), DIMOS_DIR (checkout to create), NON_INTERACTIVE=1 when no one can answer prompts
+install: |
+  set -euo pipefail
+  script="$(mktemp)"
+  # at an exact commit the raw file is never stale; a branch's raw file stays cached for minutes after a push, so
+  # without a commit ask GitHub's API (rate-limited without a token), then fall back to raw
+  raw="https://raw.githubusercontent.com/dimensionalOS/dimos/${COMMIT:-$REF}/scripts/install.sh"
+  if [ -n "${COMMIT:-}" ] && [ "$COMMIT" != "$REF" ]; then
+    curl -fsSL "$raw" -o "$script"
+  else
+    curl -fsSL -H "Accept: application/vnd.github.raw" ${GITHUB_TOKEN:+-H "Authorization: Bearer $GITHUB_TOKEN"} \
+      "https://api.github.com/repos/dimensionalOS/dimos/contents/scripts/install.sh?ref=$REF" -o "$script" \
+      || curl -fsSL "$raw" -o "$script"
+  fi
+  DIMOS_COMMIT="${COMMIT:-}" bash "$script" --mode dev --branch "$REF" --project-dir "$DIMOS_DIR" --skip-tests ${NON_INTERACTIVE:+--non-interactive}
+  "$DIMOS_DIR/.venv/bin/python" -c "import dimos" && echo "dimos is installed in $DIMOS_DIR"
