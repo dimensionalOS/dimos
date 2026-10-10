@@ -25,6 +25,9 @@ dimos --simulation run learning-collect-webxr-xarm7
 
 # Piper on real hardware
 dimos run learning-collect-webxr-piper
+
+# Dual OpenYAM on real hardware (both arms, one Quest)
+dimos run learning-collect-webxr-dual-openyam --left-can-port can0 --right-can-port can1
 ```
 
 This brings up teleop, a RealSense (real only), the episode monitor, and the

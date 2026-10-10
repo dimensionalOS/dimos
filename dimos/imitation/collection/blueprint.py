@@ -29,6 +29,7 @@ from dimos.core.global_config import global_config
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
 from dimos.imitation.collection.recorder import CollectionRecorder
+from dimos.robot.manipulators.dual_openyam.blueprints.teleop import teleop_webxr_dual_openyam
 from dimos.teleop.webxr.blueprints import (
     teleop_webxr_piper,
     teleop_webxr_xarm7,
@@ -76,5 +77,17 @@ learning_collect_webxr_piper = autoconnect(
     ),
     EpisodeMonitorModule.blueprint(task="Teleoperate the Piper"),
     teleop_webxr_piper,
+    *_camera_if_real(),
+)
+
+
+learning_collect_webxr_dual_openyam = autoconnect(
+    CollectionRecorder.blueprint(
+        db_path=_session_db("dual_openyam"),
+        poseless_streams=["color_image", "coordinator_joint_state", "status"],
+        record_tf=False,
+    ),
+    EpisodeMonitorModule.blueprint(task="Teleoperate the dual OpenYAM"),
+    teleop_webxr_dual_openyam,
     *_camera_if_real(),
 )
