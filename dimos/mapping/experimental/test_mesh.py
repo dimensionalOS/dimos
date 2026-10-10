@@ -62,3 +62,12 @@ def test_colours_recolour_every_chunk_once_the_range_moves() -> None:
     assert len(colours(chunk((0, 0, 0), 0.0))) == 2  # geometry + its colours
     assert len(colours(chunk((1, 0, 0), 0.1))) == 2  # range barely moved
     assert len(colours(chunk((2, 0, 0), 5.0))) == 4  # range moved: all three recoloured
+
+
+def test_an_emptied_chunk_clears_below_min_change() -> None:
+    q = _queue()
+    q.update(7, _region(130, 160), 0.0)
+    q.take()
+    assert q.update(7, _region(140, 150), 0.0)  # 20 changes, 10 voxels left
+    q.take()
+    assert q.update(7, _region(0, 0), 0.0)  # the last 10 go

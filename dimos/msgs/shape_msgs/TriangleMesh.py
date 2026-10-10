@@ -50,7 +50,7 @@ class TriangleMesh(Timestamped):
             else np.ascontiguousarray(normals, dtype=np.float32).reshape(-1, 3)
         )
         self.key = key
-        self.ts = ts or time.time()
+        self.ts = time.time() if ts is None else ts
 
     def lcm_encode(self) -> bytes:
         header = _HEADER.pack(self.ts, *self.key, len(self.vertices), len(self.faces))

@@ -300,7 +300,9 @@ class ChunkQueue:
 
     def _due(self, c: int) -> bool:
         n = len(self._pending[c][0])
-        return n >= self.min_change and n >= self.min_fraction * self._size.get(c, 0)
+        size = self._size.get(c, 0)
+        # an emptied chunk clears at once, its old mesh would otherwise stay up
+        return (n > 0 and size == 0) or (n >= self.min_change and n >= self.min_fraction * size)
 
 
 class MeshModule(Module):
@@ -323,7 +325,12 @@ class MeshModule(Module):
 
     @rpc
     def start(self) -> None:
+        from dimos.mapping.experimental.simplify import parse_chain
+
         super().start()
+        cfg = self.config
+        # built here so a missing warp or a CUDA failure fails the start
+        self._mesher = OccupancyMesher(cfg.voxel_size, cfg.iso, cfg.device, parse_chain(cfg.chain))
         self.register_disposable(Disposable(self.map_regions.subscribe(self._on_region)))
         self._worker.start()
 
@@ -331,6 +338,8 @@ class MeshModule(Module):
     def stop(self) -> None:
         self._stopping = True
         self._dirty.set()
+        if self._worker.is_alive():
+            self._worker.join(timeout=5.0)
         super().stop()
 
     def _on_region(self, msg: PointCloud2) -> None:
@@ -339,10 +348,7 @@ class MeshModule(Module):
                 self._dirty.set()
 
     def _run(self) -> None:
-        from dimos.mapping.experimental.simplify import parse_chain
-
         cfg = self.config
-        mesher = OccupancyMesher(cfg.voxel_size, cfg.iso, cfg.device, parse_chain(cfg.chain))
         while True:
             self._dirty.wait()
             if self._stopping:
@@ -359,7 +365,9 @@ class MeshModule(Module):
                 lo, hi = cfg.z_band
                 points = points[(points[:, 2] >= lo) & (points[:, 2] < hi)]
             ts = time.time()
-            for key, v, n, f in mesher.mesh_chunks(points, np.array(chunks, np.int64)):
+            for key, v, n, f in self._mesher.mesh_chunks(points, np.array(chunks, np.int64)):
+                if self._stopping:
+                    return
                 self.mesh.publish(TriangleMesh(v, f, n, key, ts))
 
 
