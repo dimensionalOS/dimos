@@ -271,6 +271,13 @@ autoconnect(
 )
 ```
 
+## Independently installed native packages
+
+Use the [package authoring guide](/docs/usage/packages.md) for source-only wheels,
+blueprint metadata and lazy preparation. NativeModuleConfig adds only
+`source_package` to select installed package sources; build targets remain in Python.
+Existing prebuilt executable declarations remain compatible.
+
 ## Native sources in pip installations
 
 An editable checkout uses its local sources. An installed wheel uses the same
