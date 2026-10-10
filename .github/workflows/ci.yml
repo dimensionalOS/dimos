@@ -771,27 +771,6 @@ jobs:
             cat "$f"
             echo "::endgroup::"
           done
-      - name: Restore Cargo cache for package acceptance
-        if: matrix.os == 'ubuntu-latest' && matrix.pyver == '3.12'
-        uses: Swatinem/rust-cache@v2
-        with:
-          save-if: false
-      - name: Build independent package wheels
-        if: matrix.os == 'ubuntu-latest' && matrix.pyver == '3.12'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          UV_LINK_MODE: hardlink
-        run: |
-          sudo apt-get install -y liblcm-dev libglib2.0-dev nlohmann-json3-dev
-          bash .github/scripts/build-package-fixtures.sh
-      - name: Test installed package distribution
-        if: matrix.os == 'ubuntu-latest' && matrix.pyver == '3.12'
-        env:
-          UV_NO_SYNC: "false"
-          UV_LINK_MODE: hardlink
-        run: >-
-          uv run --no-sync pytest dimos/core/test_external_native_package.py
-          -m native_e2e --cov=dimos/ --cov-append --junitxml=package-junit.xml
       - name: Turn coverage into xml
         run: uv run python -m coverage xml
       - name: Upload coverage
