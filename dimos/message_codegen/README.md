@@ -10,7 +10,9 @@ Later layers provide built-in packages, project/CLI frontends and runtime integr
 
 There are no generated Message/Sequence wrapper classes. The retained ROSIDL
 MSG parser and its upstream conformance tests have pinned source hashes; it is
-not a replacement parser. Bulk standard message packages belong to the next layer.
+not a replacement parser. This package layer adds the complete standard/built-in schema catalog and a
+compiler-free `dimos-generated` distribution. CI checks regenerated source drift
+and installs the wheel, source and editable package with C/C++ compilers disabled.
 
 ## Generate one package
 

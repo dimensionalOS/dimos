@@ -23,6 +23,8 @@ pinned DENO_VERSION there, exactly as it does on a customer machine.
 
 import json
 from pathlib import Path
+import subprocess
+import sys
 import urllib.request
 
 from dimos.navigation.go2.replanning_a_star.min_cost_astar_ext import (
@@ -46,6 +48,10 @@ RELAY_READY_TIMEOUT_S = 120.0
 
 
 def main() -> None:
+    # The message wheel is installed separately from the robot runtime.
+    subprocess.run(
+        [sys.executable, str(Path(__file__).with_name("message_wheel_smoke.py"))], check=True
+    )
     dist = Path(locate.__file__).resolve().parent / "_relay_dist"
     for rel in REQUIRED:
         if not (dist / rel).is_file():

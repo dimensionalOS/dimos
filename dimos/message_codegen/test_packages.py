@@ -1,0 +1,147 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from hashlib import sha256
+import json
+from pathlib import Path
+import subprocess
+import sys
+from types import ModuleType
+
+import pytest
+
+from dimos.message_codegen import providers, registry
+from dimos.message_codegen.definitions import Definitions
+from dimos.message_codegen.distribution import write_distribution
+from dimos.message_codegen.generate import generate
+from dimos.message_codegen.ownership import Dependency
+
+
+def test_generation_is_reproducible_and_removes_stale_schemas(tmp_path):
+    first, second = tmp_path / "one", tmp_path / "two"
+    generate([], first, ["sensor_msgs/msg/Image"])
+    generate([], second, ["sensor_msgs/msg/Image"])
+
+    def contents(root):
+        return {str(p.relative_to(root)): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+
+    assert contents(first) == contents(second)
+
+    generate([], first, ["geometry_msgs/msg/Point"])
+
+    assert not (first / "schemas/sensor_msgs/msg/Image.msg").exists()
+    assert not (first / "rust/schemas/sensor_msgs/msg/Image.msg").exists()
+    assert (first / "schemas/geometry_msgs/msg/Point.msg").exists()
+
+
+def test_invalid_definition_does_not_create_output(tmp_path):
+    source = tmp_path / "input/custom_msgs/msg/Value.msg"
+    source.parent.mkdir(parents=True)
+    source.write_text("missing_msgs/Absent value\n")
+    output = tmp_path / "output"
+
+    with pytest.raises(ValueError, match="unresolved"):
+        generate([tmp_path / "input"], output, ["custom_msgs/msg/Value"])
+
+    assert not output.exists()
+
+
+def test_distribution_carries_source_closure_without_native_build(tmp_path):
+    names = generate([], tmp_path, ["sensor_msgs/msg/Image"], module="example_messages")
+    write_distribution(tmp_path, "example_messages", names)
+    project = tmp_path / "python"
+
+    assert (project / "example_messages_schemas/schemas/std_msgs/msg/Header.msg").is_file()
+    assert (project / "example_messages/_types.py").is_file()
+    assert not (project / "_codegen").exists()
+    assert "dimos.messages" in (project / "setup.py").read_text()
+    assert "pybind11" not in (project / "pyproject.toml").read_text()
+    assert "rosbags==0.11.0" in (project / "setup.py").read_text()
+    assert "ext_modules" not in (project / "setup.py").read_text()
+
+
+def test_generated_source_imports_without_dimos_or_native_tools(tmp_path):
+    names = generate(
+        [], tmp_path / "messages", ["geometry_msgs/msg/Point"], module="example_messages"
+    )
+    write_distribution(tmp_path / "messages", "example_messages", names)
+    installed = tmp_path / "installed" / "dimos"
+    installed.mkdir(parents=True)
+    (installed / "__init__.py").write_text("raise RuntimeError('wrong installed generator')\n")
+    (installed.parent / "dimos_message_build").symlink_to(
+        Path(__file__).parent, target_is_directory=True
+    )
+    bundled = tmp_path / "messages/python"
+    subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-c",
+            "import sys; sys.path[:0] = sys.argv[1:]; "
+            "from dimos_message_build import registry; registry.providers = lambda: (); "
+            "from example_messages.geometry_msgs.msg import Point; "
+            "value = Point(x=1.25, y=-2.5, z=3); "
+            "assert registry.decode(registry.encode(value), Point) == value; "
+            "assert not any(name == 'dimos' or name.startswith('dimos.') for name in sys.modules)",
+            str(bundled),
+            str(installed.parent),
+        ],
+        check=True,
+        cwd=tmp_path,
+    )
+
+
+def test_installed_schema_discovery_does_not_import_native_types(tmp_path, monkeypatch):
+    source = tmp_path / "custom_msgs/msg/Value.msg"
+    source.parent.mkdir(parents=True)
+    source.write_text("geometry_msgs/Point position\n")
+    provider = ModuleType("external_provider")
+    monkeypatch.setattr(provider, "schema_root", lambda: tmp_path, raising=False)
+    monkeypatch.setattr(providers, "providers", lambda: (provider,))
+
+    names = [
+        message.name
+        for message in Definitions([], installed=True).resolve(["custom_msgs/msg/Value"])
+    ]
+
+    assert names == ["geometry_msgs/msg/Point", "custom_msgs/msg/Value"]
+
+
+def test_registry_rejects_conflicting_installed_definitions(tmp_path, monkeypatch):
+    base = tmp_path / "base"
+    generate(
+        [], base, ["geometry_msgs/msg/Point"], "base_messages", shared=True, languages=("python",)
+    )
+    source = tmp_path / "interfaces/custom_msgs/msg/Reading.msg"
+    source.parent.mkdir(parents=True)
+    source.write_text("geometry_msgs/Point point\n")
+    custom = tmp_path / "custom"
+    generate(
+        [source.parents[2]],
+        custom,
+        ["custom_msgs/msg/Reading"],
+        "custom_messages",
+        dependencies=(Dependency.load(base),),
+        languages=("python",),
+    )
+    monkeypatch.syspath_prepend(str(base / "python"))
+    schemas = json.loads((custom / "schemas.json").read_text())
+    schemas["geometry_msgs/msg/Point"] = "int32 x\n"
+    (custom / "schemas.json").write_text(json.dumps(schemas))
+    manifest = json.loads((custom / "message-package.json").read_text())
+    manifest["schemas"]["geometry_msgs/msg/Point"] = sha256(b"int32 x\n").hexdigest()
+    (custom / "message-package.json").write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError, match="Dependency schema mismatch: geometry_msgs/msg/Point"):
+        registry.initialize((base, custom), discover=False)

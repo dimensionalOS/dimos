@@ -1,0 +1,14 @@
+[
+  "builtin_interfaces",
+  "std_msgs",
+  "geometry_msgs",
+  "vision_msgs",
+  "dimos_msgs",
+  "foxglove_msgs",
+  "nav_msgs",
+  "sensor_msgs",
+  "shape_msgs",
+  "tf2_msgs",
+  "trajectory_msgs",
+  "visualization_msgs"
+]

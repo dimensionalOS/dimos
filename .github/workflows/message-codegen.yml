@@ -4,6 +4,9 @@ on:
   pull_request:
     paths:
       - dimos/message_codegen/**
+      - packages/dimos-generated/**
+      - scripts/generate_builtin_messages.py
+      - scripts/test_builtin_message_source.sh
       - examples/message-codegen/**
       - scripts/*message*codegen*
       - .github/workflows/message-codegen.yml
@@ -31,12 +34,19 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.92.0"
+          components: rustfmt
       - name: Set up a ROS-free Python environment
         run: |
           test ! -d /opt/ros
           uv venv .venv --python 3.12 --seed
-          uv pip install --python .venv/bin/python "./dimos/message_codegen[native]" numpy pytest pytest-cov pytest-asyncio pytest-env mypy==1.19.0
+          uv pip install --python .venv/bin/python "./dimos/message_codegen[native]" ./packages/dimos-generated ruff==0.14.3 numpy pytest pytest-cov pytest-asyncio pytest-env mypy==1.19.0
           .venv/bin/python -c "import importlib.util; assert importlib.util.find_spec('rclpy') is None"
+      - name: Verify built-in generated resources
+        run: .venv/bin/python -m scripts.generate_builtin_messages --check
+      - name: Verify compiler-free package installation
+        run: bash scripts/test_builtin_message_source.sh
+      - name: Test built-in messages and native semantics
+        run: .venv/bin/python -m pytest --noconftest -o addopts='' -q dimos/message_codegen/test_native.py dimos/message_codegen/test_python_source.py dimos/message_codegen/test_packages.py
       - name: Generate, build, test, and demonstrate all three languages
         run: bash scripts/test_message_codegen.sh
       - name: Upload standalone generator coverage

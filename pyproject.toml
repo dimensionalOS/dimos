@@ -3,6 +3,7 @@ requires = [
     "setuptools>=70",
     "wheel",
     "pybind11>=2.12",
+    "cmake>=3.20",
     "tomli>=2.0; python_version < '3.11'",
 ]
 build-backend = "setuptools.build_meta"
@@ -49,6 +50,11 @@ exclude = [
     "**/*.svg",
     "**/*.tcss",
     "**/*.pyi",
+    "message_codegen/schemas/**/*",
+    "message_codegen/templates/*",
+    "message_codegen/native_sources.json",
+    "message_codegen/sources.json",
+    "message_codegen/py.typed",
 ]
 
 [tool.setuptools.exclude-package-data]
@@ -99,6 +105,8 @@ classifiers = [
 ]
 
 dependencies = [
+    "dimos-generated==0.1.0",
+    "dimos-message-build==0.1.0",
     "matplotlib>=3.7.1", # Rerun initializes point-cloud colormaps for all streams.
     # Transport Protocols
     "dimos-lcm>=0.1.4",
@@ -162,6 +170,7 @@ dependencies = [
     # at module load; DimSim is a non-extra-gated robot connection backend.
     "websocket-client>=1.8",
 ]
+
 
 
 [project.scripts]
@@ -379,6 +388,9 @@ all = [
 ]
 
 [dependency-groups]
+# Lightweight, locked environment for deterministic built-in source alignment.
+message-codegen = ["empy==4.2", "lark==1.2.2", "ruff==0.14.3", "pytest==8.3.5", "rosbags==0.11.0", "tomli>=2; python_version < '3.11'"]
+
 # For autofix.yml
 autofix = ["ruff==0.14.3"]
 
@@ -555,6 +567,8 @@ override-dependencies = [
 ]
 
 [tool.uv.sources]
+dimos-message-build = { path = "dimos/message_codegen" }
+dimos-generated = { path = "packages/dimos-generated", editable = true }
 # CUDA builds are not published for macOS or non-x86_64 Linux. Those platforms
 # fall back to PyPI.
 torch = [
@@ -755,6 +769,12 @@ ignore = [
     # an evolved planner: one generated rust file, not hand-edited source
     "dimos/navigation/local_planner/rust/src/planner.rs",
     "*/uv.lock",
+    # Deterministic source/schema snapshots checked by generate_builtin_messages.py --check.
+    "packages/dimos-generated/src/dimos_generated/_types.pyi",
+    "packages/dimos-generated/src/dimos_generated_schemas/schemas.json",
+    "packages/dimos-generated/src/dimos_generated_schemas/**/schemas.json",
+    "packages/dimos-generated/src/dimos_generated_schemas/package/rust/build.rs",
+    "packages/dimos-generated/src/dimos_generated_schemas/package/cpp/messages.hpp",
     "*/package-lock.json",
     "Cargo.lock",
     "*/Cargo.lock",

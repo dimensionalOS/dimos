@@ -162,6 +162,7 @@ def test_all_bundled_schemas_resolve():
     closure = Definitions([]).resolve()
 
     assert "sensor_msgs/msg/PointCloud2" in {message.name for message in closure}
+    assert "visualization_msgs/msg/MarkerArray" in {message.name for message in closure}
     assert all(
         dependency in {item.name for item in closure}
         for message in closure

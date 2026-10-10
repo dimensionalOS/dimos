@@ -1,0 +1,18 @@
+from ..._types import store
+
+Point2D = store.types["vision_msgs/msg/Point2D"]
+Pose2D = store.types["vision_msgs/msg/Pose2D"]
+BoundingBox2D = store.types["vision_msgs/msg/BoundingBox2D"]
+BoundingBox3D = store.types["vision_msgs/msg/BoundingBox3D"]
+BoundingBox2DArray = store.types["vision_msgs/msg/BoundingBox2DArray"]
+BoundingBox3DArray = store.types["vision_msgs/msg/BoundingBox3DArray"]
+ObjectHypothesis = store.types["vision_msgs/msg/ObjectHypothesis"]
+Classification = store.types["vision_msgs/msg/Classification"]
+ObjectHypothesisWithPose = store.types["vision_msgs/msg/ObjectHypothesisWithPose"]
+Detection2D = store.types["vision_msgs/msg/Detection2D"]
+Detection2DArray = store.types["vision_msgs/msg/Detection2DArray"]
+Detection3D = store.types["vision_msgs/msg/Detection3D"]
+Detection3DArray = store.types["vision_msgs/msg/Detection3DArray"]
+VisionClass = store.types["vision_msgs/msg/VisionClass"]
+LabelInfo = store.types["vision_msgs/msg/LabelInfo"]
+VisionInfo = store.types["vision_msgs/msg/VisionInfo"]

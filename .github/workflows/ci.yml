@@ -272,6 +272,30 @@ jobs:
           path: .cachix-marker
           key: cachix-published-${{ runner.os }}-${{ runner.arch }}-${{ needs.cachix-build-check.outputs.inputs-hash }}
 
+  message-alignment:
+    name: Built-in message alignment
+    env:
+      DIMOS_MESSAGE_ALIGNMENT_REQUIRED: "1"
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.92.0'
+          components: rustfmt
+      - name: Install locked generation/check dependencies only
+        run: uv sync --only-group message-codegen --frozen
+      - name: Reject built-in Python/C++/Rust/schema drift
+        run: .venv/bin/python -m scripts.generate_builtin_messages --check
+      - name: Verify drift rejection for changed inputs and output inventories
+        run: .venv/bin/python -m pytest -c /dev/null --rootdir . --noconftest -q dimos/message_codegen/test_builtin_alignment.py
+
   lint:
     timeout-minutes: 10
     runs-on: ubuntu-latest
@@ -308,6 +332,8 @@ jobs:
           prune-cache: true
       - name: Install lint dependencies
         run: uv sync --only-group lint --frozen
+      - name: Install native build typing dependencies
+        run: uv pip install --no-deps pybind11==3.0.1 types-setuptools==77.0.2.20250328
       - name: Mypy
         run: uv run mypy
 
@@ -1122,7 +1148,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             `# Compiler toolchain for the in-tree pybind11 C++ extension.` \
-            build-essential \
+            build-essential cmake \
             `# Runtime lib for opencv-python (cv2 loads libGL.so.1 on import).` \
             libgl1 \
             `# Runtime lib for PyTurboJPEG (fast JPEG encode/decode).` \
@@ -1390,6 +1416,7 @@ jobs:
     needs:
     - commit-messages
     - lint
+    - message-alignment
     - rust
     - native
     - md-babel

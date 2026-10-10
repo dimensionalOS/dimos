@@ -53,15 +53,15 @@ bundled Jazzy .msg + local/installed .msg
         All outputs use the same CDR wire contract.
 ```
 
-Use generated plain Python values with rosbags CDR serialization, and Fast CDR-backed generated C++ serialization. Python source does not require per-message native compilation; independent C++/Rust and Jazzy conformance verify the shared wire contract. Rust uses generated native types with a Serde-compatible CDR backend. The generator also emits qualified type metadata and complete schema text for recording and introspection.
+Use Fast CDR-backed generated C++ serialization and generated Python source bindings for Python. Python and C++ share the implementation rather than maintaining separate Python wire layouts. Rust uses generated native types with a Serde-compatible CDR backend. The generator also emits qualified type metadata and complete schema text for recording and introspection.
 
-The implementation uses the pinned upstream `rosidl_adapter` parser, a shared normalized definition model, a C++ struct/Fast CDR customization emitter, generated Python source values, and a Rust struct emitter plus `re_cdr`. Fast CDR owns sizing, alignment, primitive representation, and containers; the emitter only supplies the declared fields, defaults, validation, and library calls. There is no second handwritten wire engine.
+The implementation uses the pinned upstream `rosidl_adapter` parser, a shared normalized definition model, a C++ struct/Fast CDR customization emitter, generated Python source bindings, and a Rust struct emitter plus `re_cdr`. Fast CDR owns sizing, alignment, primitive representation, and containers; the emitter only supplies the declared fields, defaults, validation, and library calls. There is no second handwritten wire engine.
 
 The Fast-DDS-Gen 4.3.0 candidate was built successfully without ROS, but its IDL default annotation did not accept a ROS fixed-array default (`@default({1.0, 2.0})`). Using it would require additional default handling and a second schema transformation. Directly emitting the small native value types from the same normalized model preserves scalar and array defaults across all languages and removes Java/Gradle from the user build requirements. The currently validated dependencies are Fast CDR 2.4.0, rosbags 0.11.0, and `re_cdr` 0.1.0. The full 142-type build, independent-codec checks, Jazzy reference, bounds, and buffer tests now pass locally; CI repeats these gates. Packaging is stage 2.
 
 Use encapsulated plain CDR/XCDR1 with little-endian emission as the initial wire profile; decode the supported big- and little-endian representations according to the encapsulation header and reject unsupported representations. Check layout against ROS2 Jazzy serialization in CI. No LCM fingerprint or DimOS schema-hash prefix is part of the CDR payload.
 
-Provide transport-neutral Python `encode()` and class-level `decode()` operations, equivalent generated codec operations in C++ and Rust, and immutable type/schema metadata. Keep generated wire types free of visualization or geometry dependencies. Nested fields and sequences must have documented mutation semantics in Python; preserve safe read-only NumPy views and explicit copies without native bindings.
+Provide transport-neutral Python `encode()` and class-level `decode()` operations, equivalent generated codec operations in C++ and Rust, and immutable type/schema metadata. Keep generated wire types free of visualization or geometry dependencies. Nested fields and sequences must have documented mutation semantics in Python; do not rely on pybind11's implicit STL copies as if they were live views.
 
 **Alternatives considered:** handwritten codecs, a dynamic Python-only codec system, and a single FFI runtime for all languages. Handwritten layouts recreate the maintenance bottleneck; Python-only generation misses the native-language requirement; sharing the C++ backend with Python while keeping native Rust limits FFI complexity.
 
@@ -138,7 +138,7 @@ Rollback is source/release rollback as a unit; old and new processes or recordin
 
 No outstanding product decisions require another user interview. The stage-1 checks below are resolved by the implementation evidence that follows; CI repeats the executable checks:
 
-1. Exact pinned parser, C++ generator/Fast CDR, Python/rosbags, and Rust codec versions that pass the complete `.msg` and CDR conformance suite without ROS installed.
+1. Exact pinned parser, C++ generator/Fast CDR, pybind11, and Rust codec versions that pass the complete `.msg` and CDR conformance suite without ROS installed.
 2. Measured Python buffer-copy and owner-lifetime behavior, with any unavoidable copies documented.
 3. The license/provenance and build viability of extracting Rust's existing raw LCM transport, or the concrete maintained replacement if extraction is unsuitable.
 4. The consumer inventory and any necessary subdivision of stage 4 into independently runnable PRs, each retaining the demo requirement.
@@ -181,4 +181,32 @@ These references informed exploration; pinned versions and executable conformanc
 - [Foxglove custom schema encodings](https://docs.foxglove.dev/docs/getting-started/custom/custom-schema-encodings)
 - [Rerun 0.32 MCAP message formats](https://github.com/rerun-io/rerun/blob/0.32.0/docs/content/concepts/logging-and-ingestion/mcap/message-formats.md)
 
-The user-approved source-only Python revision supersedes the original pybind design. Python classes are generated source; a shared pure-Python runtime delegates serialization to rosbags and validates malformed data, defaults, bounds and borrowed-buffer ownership. C++/Rust compile generated source with consumers. Historical native-Python evidence remains pinned to its old HEAD; this revision requires fresh conformance/install acceptance.
+### Stage 2 packaging evidence
+
+`--package` emits a standard setuptools project with native bindings, schema
+closure, notices, and a `dimos.messages` provider. Its sdist contains the pinned
+generator and inputs; the wheel contains compiled code and schema resources.
+CMake exports a relocatable target and headers/schema installation; Cargo packages
+the native source crate and schemas. Per-definition C++ guards allow two packages
+to include the same standard types without duplicate definitions; conflicting
+layouts still fail rather than silently overriding one another.
+
+The external application adds `application_note` in its own copied definition,
+builds a wheel from the sdist, installs it into an isolated environment, installs
+CMake packages, and builds a Rust consumer from the `.crate` archive. The field
+returns as `added-locally/cpp/rust`. A second clean environment installed the full
+DimOS wheel and external wheel together: 141 types were discovered, the external
+schema resolved through installed providers, and a standard Point from the built-in
+package was accepted by the external native Telemetry type. The full DimOS wheel
+includes its existing web assets; the sdist content check passed at 10.7 MB.
+
+The official setuptools build invokes the same generator and native build helper.
+Release CI retains its existing platform/Python matrix, builds the pinned Fast
+CDR dependency before native extensions, and adds CMake/Cargo source artifacts to
+GitHub releases. PyPI jobs download only Python distribution artifacts. Ordinary
+wheel users do not run setup downloads, message generation, or a ROS build.
+Source developers install Fast CDR during explicit environment setup, including
+the existing developer installer. Release publishing itself remains tied to the
+normal release workflow; this implementation has not published a release.
+
+Python messages are generated plain source with rosbags CDR; native message extensions are removed. Historical pybind evidence is retained at its original HEAD and superseded by fresh source/install and cross-language acceptance.

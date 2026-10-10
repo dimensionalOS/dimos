@@ -22,6 +22,9 @@ from pybind11.setup_helpers import Pybind11Extension, build_ext
 from setuptools import find_packages, setup
 from setuptools.command.build_py import build_py as _build_py
 
+# PEP 517 does not put the source tree on sys.path when executing setup.py.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 
 def python_is_macos_universal_binary(executable: str | None = None) -> bool:
     """

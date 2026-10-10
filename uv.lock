@@ -1717,7 +1717,9 @@ dependencies = [
     { name = "bleak" },
     { name = "cmeel-tinyxml2" },
     { name = "cryptography" },
+    { name = "dimos-generated" },
     { name = "dimos-lcm" },
+    { name = "dimos-message-build" },
     { name = "dimos-viewer" },
     { name = "eclipse-zenoh" },
     { name = "filelock" },
@@ -2207,6 +2209,14 @@ lint = [
     { name = "watchdog" },
     { name = "xacro" },
 ]
+message-codegen = [
+    { name = "empy" },
+    { name = "lark" },
+    { name = "pytest" },
+    { name = "rosbags" },
+    { name = "ruff" },
+    { name = "tomli", marker = "python_full_version < '3.11'" },
+]
 project-deps = [
     { name = "can-motor-control" },
     { name = "chromadb" },
@@ -2377,7 +2387,9 @@ requires-dist = [
     { name = "dimos", extras = ["control"], marker = "extra == 'planning'" },
     { name = "dimos", extras = ["planning", "base", "sim", "cpu"], marker = "extra == 'manipulation'" },
     { name = "dimos", extras = ["unitree"], marker = "extra == 'unitree-dds'" },
+    { name = "dimos-generated", editable = "packages/dimos-generated" },
     { name = "dimos-lcm", specifier = ">=0.1.4" },
+    { name = "dimos-message-build", directory = "dimos/message_codegen" },
     { name = "dimos-viewer", specifier = "==0.32.0a2" },
     { name = "dimos-viewer", marker = "extra == 'visualization'", specifier = "==0.32.0a2" },
     { name = "drake", marker = "platform_machine != 'aarch64' and sys_platform == 'darwin' and extra == 'planning'", specifier = "==1.45.0" },
@@ -2552,6 +2564,14 @@ lint = [
     { name = "watchdog", specifier = ">=3.0.0" },
     { name = "xacro" },
 ]
+message-codegen = [
+    { name = "empy", specifier = "==4.2" },
+    { name = "lark", specifier = "==1.2.2" },
+    { name = "pytest", specifier = "==8.3.5" },
+    { name = "rosbags", specifier = "==0.11.0" },
+    { name = "ruff", specifier = "==0.14.3" },
+    { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2" },
+]
 project-deps = [
     { name = "can-motor-control", specifier = ">=0.0.8" },
     { name = "chromadb", specifier = ">=1.0.0" },
@@ -2701,6 +2721,24 @@ tests-self-hosted = [
 ]
 
 [[package]]
+name = "dimos-generated"
+version = "0.1.0"
+source = { editable = "packages/dimos-generated" }
+dependencies = [
+    { name = "dimos-message-build" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "rosbags" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "dimos-message-build", specifier = "==0.1.0" },
+    { name = "numpy", specifier = ">=1.26.4" },
+    { name = "rosbags", specifier = "==0.11.0" },
+]
+
+[[package]]
 name = "dimos-lcm"
 version = "0.1.4"
 source = { registry = "https://pypi.org/simple" }
@@ -2714,6 +2752,33 @@ sdist = { url = "https://files.pythonhosted.org/packages/4b/05/2c1d03a588ede64ea
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d0/d0/f93e2a2d9062ad0b3981b80db12b34494d231917243ab213265e926b5fa9/dimos_lcm-0.1.4-py3-none-any.whl", hash = "sha256:65efc67a5055b8d53a885bb46a7f49cc6bd07929cbd18403784efe65e186d3a2", size = 593548, upload-time = "2026-09-22T20:19:45.404Z" },
 ]
+
+[[package]]
+name = "dimos-message-build"
+version = "0.1.0"
+source = { directory = "dimos/message_codegen" }
+dependencies = [
+    { name = "empy" },
+    { name = "lark" },
+    { name = "rosbags" },
+    { name = "setuptools" },
+    { name = "tomli", marker = "python_full_version < '3.11'" },
+    { name = "wheel" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "catkin-pkg", marker = "extra == 'native'", specifier = "==1.1.0" },
+    { name = "empy", specifier = "==4.2" },
+    { name = "lark", specifier = "==1.2.2" },
+    { name = "pip", marker = "extra == 'native'" },
+    { name = "pyyaml", marker = "extra == 'native'", specifier = "==6.0.2" },
+    { name = "rosbags", specifier = "==0.11.0" },
+    { name = "setuptools", specifier = ">=70" },
+    { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2" },
+    { name = "wheel" },
+]
+provides-extras = ["native"]
 
 [[package]]
 name = "dimos-viewer"
@@ -11062,6 +11127,18 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/06/28/55bc3e107a56fdcf7d5022cb32b8c21d98a9cc2df5cd9f3b93e10419099e/whatthepatch-1.0.7.tar.gz", hash = "sha256:9eefb4ebea5200408e02d413d2b4bc28daea6b78bb4b4d53431af7245f7d7edf", size = 34612, upload-time = "2024-11-16T17:21:22.153Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/8e/93/af1d6ccb69ab6b5a00e03fa0cefa563f9862412667776ea15dd4eece3a90/whatthepatch-1.0.7-py3-none-any.whl", hash = "sha256:1b6f655fd31091c001c209529dfaabbabdbad438f5de14e3951266ea0fc6e7ed", size = 11964, upload-time = "2024-11-16T17:21:20.761Z" },
+]
+
+[[package]]
+name = "wheel"
+version = "0.48.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "packaging" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d0/20/50ed6bdf27dec98b568a8ae25dc599f35baa3d9709f9e83fd1edb56b9a90/wheel-0.48.0.tar.gz", hash = "sha256:94800765601e9171bf5d58d066e640662842bcedcbab982b2c90787a2c987322", size = 66471, upload-time = "2026-08-11T22:02:27.327Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2e/29/69cfbb602cd91690c55d38ba9fe53e6a7e76a6fa647bf38f19c138d25449/wheel-0.48.0-py3-none-any.whl", hash = "sha256:3217dcc807155e45db462d7ef2431f5ddda0d7273b700d05a67b271ceb1287ab", size = 33320, upload-time = "2026-08-11T22:02:26.1Z" },
 ]
 
 [[package]]

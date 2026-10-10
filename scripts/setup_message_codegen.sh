@@ -8,7 +8,12 @@ mkdir -p build/message-codegen
 curl --fail --location --retry 3 \
   https://github.com/eProsima/Fast-CDR/archive/refs/tags/v2.4.0.tar.gz \
   -o build/message-codegen/fastcdr.tar.gz
-echo '79d8466107dd6b7d1defe961c4aa31735038937cf9dd1175cf6b0da0df2209ab  build/message-codegen/fastcdr.tar.gz' | sha256sum -c -
+python3 - <<'VERIFY'
+from hashlib import sha256
+from pathlib import Path
+archive = Path("build/message-codegen/fastcdr.tar.gz")
+assert sha256(archive.read_bytes()).hexdigest() == "79d8466107dd6b7d1defe961c4aa31735038937cf9dd1175cf6b0da0df2209ab"
+VERIFY
 tar -xzf build/message-codegen/fastcdr.tar.gz -C build/message-codegen
 cmake -S build/message-codegen/Fast-CDR-2.4.0 -B build/message-codegen/fastcdr-build \
   -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$PWD/build/message-codegen/install" \
