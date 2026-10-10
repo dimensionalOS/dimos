@@ -139,7 +139,7 @@ def test_extras_install_runs_as_a_job(
     job = client.post("/dimos/extras/install", json={"extras": ["sim"]}).json()["job"]
     until(lambda: client.get(f"/dimos/jobs/{job}/log").json()["done"])
     log = client.get(f"/dimos/jobs/{job}/log").json()
-    assert log["ok"] and any("--extra=sim" in line for line in log["lines"])
+    assert log["ok"] and any("--extra sim" in line for line in log["lines"])
     assert client.get("/dimos/jobs/none/log").status_code == 404
 
 
@@ -154,3 +154,46 @@ def test_custom_robot_guide(client: TestClient, checkout: Path) -> None:
     assert guide["title"] == "Add your own robot"
     assert "https://docs.example/b/" in guide["markdown"]
     assert guide["html"].startswith("<h1>")
+
+
+def test_unitree_dds_on_a_machine_without_a_wheel_builds_cyclonedds_with_nix_first(
+    client: TestClient, state: State, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (state.dimos_dir / "pyproject.toml").write_text(
+        '[project]\nname = "dimos"\nversion = "1"\n[project.optional-dependencies]\n'
+        'unitree-dds = ["cyclonedds>=0.10"]\n'
+    )
+    (state.dimos_dir / "uv.lock").write_text(
+        '[[package]]\nname = "cyclonedds"\nversion = "0.10.5"\nwheels = [{ url = "https://x/cyclonedds-0.10.5-cp310-cp310-macosx_11_0_arm64.whl" }]\n'
+    )
+    link = state.dimos_dir / ".venv" / "cyclonedds"
+    nix = tmp_path / "nix"
+    nix.write_text(f"#!/bin/sh\nmkdir -p {tmp_path}/store/lib && ln -sfn {tmp_path}/store {link}\n")
+    nix.chmod(0o755)
+    uv = tmp_path / "uv"
+    uv.write_text('#!/bin/sh\necho "CYCLONEDDS_HOME=$CYCLONEDDS_HOME" "$@"\n')
+    uv.chmod(0o755)
+    monkeypatch.setattr(discovery, "find_uv", lambda: str(uv))
+    monkeypatch.setattr(discovery, "find_nix", lambda: str(nix))
+    monkeypatch.delenv("CYCLONEDDS_HOME", raising=False)
+    environment = {
+        "platform_system": "Darwin",
+        "platform_machine": "arm64",
+        "python_version": "3.12",
+    }
+
+    async def packages(args: list[str], stdin: Any = None) -> Any:
+        return {"python": sys.executable, "environment": environment, "packages": {}}
+
+    monkeypatch.setattr(state, "introspected", packages)
+    monkeypatch.setattr(state.scanner, "refresh", lambda reason="": None)
+    job = client.post("/dimos/extras/install", json={"extras": ["unitree-dds"]}).json()["job"]
+    until(lambda: client.get(f"/dimos/jobs/{job}/log").json()["done"])
+    log = client.get(f"/dimos/jobs/{job}/log").json()
+    assert log["ok"], log
+    assert log["lines"][0].startswith(
+        f"$ {nix} --extra-experimental-features nix-command flakes build --out-link {link} "
+    )
+    assert f"CYCLONEDDS_HOME={(tmp_path / 'store').resolve()} sync --locked --inexact" in "\n".join(
+        log["lines"]
+    )

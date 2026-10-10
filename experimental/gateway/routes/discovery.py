@@ -68,7 +68,8 @@ async def extras(state: GatewayState) -> dict[str, Any]:
 
 @router.post("/dimos/extras/install")
 async def install_extras(state: GatewayState, request: ExtrasInstall) -> dict[str, Any]:
-    declared = discovery.declared(state.dimos_dir, await probe(state))
+    probed = await probe(state)
+    declared = discovery.declared(state.dimos_dir, probed)
     unknown = [name for name in request.extras if name not in declared]
     if unknown:
         raise ApiError(
@@ -92,9 +93,10 @@ async def install_extras(state: GatewayState, request: ExtrasInstall) -> dict[st
         state.cache.forget("packages")
         state.scanner.refresh("extras installed")
 
-    job = state.jobs.start(
-        f"Install extras: {', '.join(wanted)}", "extras", command, state.dimos_dir, env, then
-    )
+    builds = await asyncio.to_thread(discovery.builds_cyclonedds, state.dimos_dir, probed, wanted)
+    prepare = discovery.prepare_cyclonedds(state.dimos_dir) if builds else None
+    title = f"Install extras: {', '.join(wanted)}"
+    job = state.jobs.start(title, "extras", command, state.dimos_dir, env, then, prepare)
     return {"shell": None, "job": job.id, "command": command}
 
 

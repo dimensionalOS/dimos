@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 import hashlib
 import itertools
@@ -466,7 +466,7 @@ def install_command(dimos_dir: Path, extras: list[str], uv: str) -> list[str]:
             "--locked",
             "--inexact",
             "--no-progress",
-            *(f"--extra={e}" for e in extras),
+            *(arg for e in extras for arg in ("--extra", e)),
         ]
     version = store.checkout_version(dimos_dir)[1]
     return [
@@ -496,6 +496,7 @@ class Job:
     started_at: str = field(default_factory=now_iso)
     finished_at: str | None = None
     ended: float | None = None
+    code: str | None = None
 
     def log(self, after: int = 0) -> dict[str, Any]:
         return {
@@ -511,8 +512,15 @@ class Job:
             "next": len(self.lines),
             "error": self.error,
             "failure": self.failure,
-            "code": None,
+            "code": self.code,
         }
+
+
+Prepare = Callable[[Callable[[list[str]], Awaitable[int]]], Awaitable[dict[str, str]]]
+
+
+class MissingForJobError(Exception):
+    pass
 
 
 class Jobs:
@@ -538,38 +546,151 @@ class Jobs:
         cwd: Path,
         env: dict[str, str],
         then: Callable[[], None],
+        prepare: Prepare | None = None,
     ) -> Job:
         job = Job(f"{kind}-{next(self.ids)}-{int(time.time())}", title, kind, command)
         self.jobs[job.id] = job
-        asyncio.get_running_loop().create_task(self.run(job, cwd, env, then))
+        asyncio.get_running_loop().create_task(self.run(job, cwd, env, then, prepare))
         return job
 
-    async def run(self, job: Job, cwd: Path, env: dict[str, str], then: Callable[[], None]) -> None:
-        job.lines.append("$ " + " ".join(job.command))
+    async def step(self, job: Job, command: list[str], cwd: Path, env: dict[str, str]) -> int:
+        job.lines.append("$ " + " ".join(command))
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            cwd=cwd,
+            env={**os.environ, "NO_COLOR": "1", **env},
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            start_new_session=True,
+        )
+        assert process.stdout
+        async for raw in process.stdout:
+            job.lines += ANSI.sub("", raw.decode("utf-8", "replace")).rstrip("\r\n").split("\r")
+        return await process.wait()
+
+    async def run(
+        self,
+        job: Job,
+        cwd: Path,
+        env: dict[str, str],
+        then: Callable[[], None],
+        prepare: Prepare | None,
+    ) -> None:
         try:
-            process = await asyncio.create_subprocess_exec(
-                *job.command,
-                cwd=cwd,
-                env={**os.environ, "NO_COLOR": "1", **env},
-                stdin=asyncio.subprocess.DEVNULL,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-                start_new_session=True,
-            )
-            assert process.stdout
-            async for raw in process.stdout:
-                job.lines += ANSI.sub("", raw.decode("utf-8", "replace")).rstrip("\r\n").split("\r")
-            code = await process.wait()
+            if prepare is not None:
+                env = {**env, **await prepare(lambda command: self.step(job, command, cwd, env))}
+            code = await self.step(job, job.command, cwd, env)
             job.ok = code == 0
             if code != 0:
                 job.error = f"{job.title} failed (exit {code})"
                 job.failure = [line for line in job.lines if line.strip()][-15:]
+        except MissingForJobError as error:
+            job.ok, job.code, job.error = False, "cyclonedds_missing", str(error)
+            job.failure = [job.error]
+            job.lines.append(job.error)
         except Exception as error:
             job.ok = False
             job.error = f"{job.title} couldn't start: {type(error).__name__}: {error}"
             job.failure = [job.error]
         job.done, job.finished_at, job.ended = True, now_iso(), time.monotonic()
         then()
+
+
+BREWED_CYCLONEDDS = (Path("/opt/homebrew/opt/cyclonedds"), Path("/usr/local/opt/cyclonedds"))
+
+
+def has_wheel_here(entry: dict[str, Any], environment: dict[str, str]) -> bool:
+    system = {"Darwin": "macosx", "Linux": "linux"}.get(
+        environment.get("platform_system", ""), "win"
+    )
+    machine = environment.get("platform_machine", "").lower()
+    cpus = {"arm64": ("arm64", "universal2"), "aarch64": ("aarch64",)}.get(machine, (machine,))
+    python = "cp" + "".join(environment.get("python_version", "3.12").split(".")[:2])
+    for wheel in entry.get("wheels", []):
+        file = str(wheel.get("url", "")).rsplit("/", 1)[-1]
+        tags = file.removesuffix(".whl").split("-")[-3:] if file.endswith(".whl") else []
+        if len(tags) != 3:
+            continue
+        py_ok = tags[0].startswith(("py3", "py2.py3")) or python in tags[0] or tags[1] == "abi3"
+        plat_ok = tags[2] == "any" or (system in tags[2] and any(c in tags[2] for c in cpus))
+        if py_ok and plat_ok:
+            return True
+    return False
+
+
+def builds_cyclonedds(dimos_dir: Path, probe: dict[str, Any], wanted: list[str]) -> bool:
+    statuses = extras_status(dimos_dir, probe)
+    if not any("cyclonedds" in e["missing"] for e in statuses if e["name"] in wanted):
+        return False
+    try:
+        lock = tomllib.loads((dimos_dir / "uv.lock").read_text())
+    except (OSError, tomllib.TOMLDecodeError):
+        return True
+    entry = next((e for e in lock.get("package", []) if e["name"] == "cyclonedds"), None)
+    return entry is None or not has_wheel_here(entry, probe.get("environment", {}))
+
+
+def find_nix() -> str | None:
+    fixed = [Path("/nix/var/nix/profiles/default/bin/nix"), Path("/run/current-system/sw/bin/nix")]
+    return shutil.which("nix") or next((str(p) for p in fixed if p.is_file()), None)
+
+
+def nixpkgs_ref(dimos_dir: Path) -> str:
+    try:
+        lock = json.loads((dimos_dir / "flake.lock").read_text())
+        nodes = lock["nodes"]
+        locked = nodes[nodes[lock["root"]]["inputs"]["nixpkgs"]]["locked"]
+        if locked.get("type") == "github":
+            return f"github:{locked['owner']}/{locked['repo']}/{locked['rev']}"
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    return "nixpkgs"
+
+
+def cyclonedds_env(home: Path) -> dict[str, str]:
+    prefix = os.pathsep.join(p for p in (str(home), os.environ.get("CMAKE_PREFIX_PATH", "")) if p)
+    return {"CYCLONEDDS_HOME": str(home), "CMAKE_PREFIX_PATH": prefix}
+
+
+def cyclonedds_build(dimos_dir: Path, nix: str) -> list[str]:
+    link = store.venv_dir(dimos_dir) / "cyclonedds"
+    flake = f"{nixpkgs_ref(dimos_dir)}#cyclonedds"
+    return [
+        nix,
+        "--extra-experimental-features",
+        "nix-command flakes",
+        "build",
+        "--out-link",
+        str(link),
+        flake,
+    ]
+
+
+def prepare_cyclonedds(dimos_dir: Path) -> Prepare:
+    async def prepare(step: Callable[[list[str]], Awaitable[int]]) -> dict[str, str]:
+        given = os.environ.get("CYCLONEDDS_HOME")
+        if given and (Path(given) / "lib").is_dir():
+            return cyclonedds_env(Path(given))
+        link = store.venv_dir(dimos_dir) / "cyclonedds"
+        nix = find_nix()
+        if (
+            nix is not None
+            and await step(cyclonedds_build(dimos_dir, nix)) == 0
+            and (link / "lib").is_dir()
+        ):
+            return cyclonedds_env(link.resolve())
+        for brewed in BREWED_CYCLONEDDS:
+            if (brewed / "lib").is_dir():
+                return cyclonedds_env(brewed.resolve())
+        raise MissingForJobError(
+            "The cyclonedds package is built here against the CycloneDDS C library, and none was found"
+            + (" (nix couldn't build it, see above)" if nix else "")
+            + ": install nix, or `brew install cyclonedds`, or set CYCLONEDDS_HOME to an install of"
+            " CycloneDDS 0.10, then install again."
+        )
+
+    return prepare
 
 
 LINK = re.compile(r"(!?\[[^\]]*\]\()([^)\s]+)(\s+\"[^\"]*\")?\)")
