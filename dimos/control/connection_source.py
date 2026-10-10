@@ -191,10 +191,12 @@ class ConnectionSource:
         self._received_at = 0.0
         # When the last reading arrived, by time.monotonic().
         self._freshness = Freshness()
-        # Readings came back after stopping for longer than the deadman
-        # timeout. The tick loop drops the holds when it sees this.
-        self._resumed = False
-        # Described again: send nothing until the robot reports again.
+        # The holds are out of date: readings came back after stopping for
+        # longer than the deadman timeout, or drop_holds was called. The tick
+        # loop drops the holds when it sees this.
+        self._drop_holds = False
+        # Described again, or holds dropped: send nothing until the robot
+        # reports again.
         self._awaiting_reading = False
         # Joint name -> the position it is held at. Only the tick loop touches it.
         self._holds: dict[str, float] = {}
@@ -261,7 +263,7 @@ class ConnectionSource:
                 # Back after a silence: wait for a whole new reading, and take
                 # the holds again from it.
                 latest = {}
-                self._resumed = True
+                self._drop_holds = True
             # Replaced whole, so the tick loop never sees half of one update.
             self._latest = {**latest, **mine}
             self._received_at = time.time()
@@ -276,12 +278,20 @@ class ConnectionSource:
         """
         with other._lock:
             latest, received_at = other._latest, other._received_at
-            last_receipt, resumed = other._freshness.last_receipt, other._resumed
+            last_receipt, drop_holds = other._freshness.last_receipt, other._drop_holds
         with self._lock:
             self._latest, self._received_at = latest, received_at
-            self._freshness.last_receipt, self._resumed = last_receipt, resumed
+            self._freshness.last_receipt, self._drop_holds = last_receipt, drop_holds
             self._awaiting_reading = True
         self._holds = dict(other._holds)
+
+    def drop_holds(self) -> None:
+        """Forget every held position, and send nothing until the robot reports
+        again. The next command then holds each joint where that new reading
+        has it, not where it was last told to be."""
+        with self._lock:
+            self._drop_holds = True
+            self._awaiting_reading = True
 
     def ready_for_control(self, now: float | None = None) -> bool:
         """Whether a command can be sent: everything the robot reports has
@@ -344,8 +354,8 @@ class ConnectionSource:
         """
         with self._lock:
             latest = self._latest
-            if self._resumed:
-                self._resumed = False
+            if self._drop_holds:
+                self._drop_holds = False
                 self._holds.clear()
         interface = _INTERFACE_BY_MODE.get(mode) if mode is not None else None
         sendable = interface in _JOINT_COMMAND_PORTS

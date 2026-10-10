@@ -198,6 +198,12 @@ class FailingWrite(MockConnectionModule):
         raise RuntimeError("motor said no")
 
 
+class FailingHalt(MockConnectionModule):
+    def halt(self) -> None:
+        super().halt()
+        raise RuntimeError("brake said no")
+
+
 class Watched(MockConnectionModule):
     """Remembers whether ``connect`` was called."""
 
@@ -494,6 +500,45 @@ def test_stopping_halts_once_and_a_second_stop_is_harmless(rig: Callable[..., Ri
     r.move(joint1=0.1)
     time.sleep(0.05)
     assert writes(r) == []
+
+
+def test_halt_robot_halts_at_once_every_time_it_is_called(rig: Callable[..., Rig]) -> None:
+    # A driver overrides halt, so halting on request needs an RPC of its own.
+    assert "halt_robot" in MockConnectionModule.rpcs
+    r = rig()
+    assert r.module.halt_robot()
+    assert r.module.halt_robot()
+    assert r.module.halts == 2
+
+
+def test_halt_robot_says_so_when_halt_fails(rig: Callable[..., Rig]) -> None:
+    r = rig(FailingHalt)
+    assert r.module.halt_robot() is False
+    assert "brake said no" in str(r.module.status().last_error)
+
+
+def test_halt_robot_waits_for_a_write_in_progress(rig: Callable[..., Rig]) -> None:
+    r = rig(SlowWrite, deadman_timeout_s=10.0)
+    module = r.module
+    assert isinstance(module, SlowWrite)
+    r.move(joint1=0.1)
+    assert module.inside.wait(2.0)
+
+    halting = threading.Thread(target=module.halt_robot)
+    halting.start()
+    time.sleep(0.05)
+    assert module.halts == 0
+    module.release.set()
+    halting.join(2.0)
+    assert module.halts == 1
+    assert writes(r) == [{JOINT1: 0.1}]
+
+
+def test_halt_robot_after_stop_does_nothing(rig: Callable[..., Rig]) -> None:
+    r = rig()
+    r.module.stop()
+    assert r.module.halt_robot() is False
+    assert r.module.halts == 1
 
 
 def test_describe_control_and_status_are_rpcs_that_cross_processes(
