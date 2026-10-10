@@ -44,10 +44,10 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.Bool import Bool
-from dimos.navigation.sim_eval.ground_truth import GroundTruth
-from dimos.navigation.sim_eval.oracle import RouteTracker
-from dimos.navigation.sim_eval.scorer import GOAL_ECHO_M
-from dimos.navigation.sim_eval.suite import Manifest
+from dimos.navigation.bench.ground_truth import GroundTruth
+from dimos.navigation.bench.oracle import RouteTracker
+from dimos.navigation.bench.scorer import GOAL_ECHO_M
+from dimos.navigation.bench.suite import Manifest
 from dimos.simulation.go2_sim.world_spec import SimWorldSpec
 from dimos.utils.logging_config import setup_logger
 

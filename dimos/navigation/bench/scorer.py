@@ -37,7 +37,7 @@ from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path as PathMsg
 from dimos.msgs.sim_msgs.Contacts import Contact, Contacts
 from dimos.msgs.std_msgs.Bool import Bool
-from dimos.navigation.sim_eval.suite import Point, Rules
+from dimos.navigation.bench.suite import Point, Rules
 
 Outcome = Literal[
     "success",

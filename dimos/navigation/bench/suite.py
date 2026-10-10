@@ -36,7 +36,7 @@ from numpy.typing import NDArray
 from pydantic import TypeAdapter
 
 from dimos.constants import DIMOS_PROJECT_ROOT
-from dimos.navigation.sim_eval.ground_truth import (
+from dimos.navigation.bench.ground_truth import (
     CLUTTER_NEAR,
     GO2,
     Difficulty,

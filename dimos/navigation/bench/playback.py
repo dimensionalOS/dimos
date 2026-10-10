@@ -30,9 +30,9 @@ from numpy.typing import NDArray
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.navigation.sim_eval.driver import TERMINAL_FILE
-from dimos.navigation.sim_eval.runner import RECORDING_FILE, REPLAY_SUFFIX, RUN_FILE
-from dimos.navigation.sim_eval.suite import Manifest
+from dimos.navigation.bench.driver import TERMINAL_FILE
+from dimos.navigation.bench.runner import RECORDING_FILE, REPLAY_FILE, RUN_FILE
+from dimos.navigation.bench.suite import Manifest
 from dimos.simulation.go2_legged.robot import BASE_QUAT
 from dimos.simulation.go2_sim.world import build_model, open_viewer
 from dimos.simulation.scenes.procedural import Scene
@@ -142,7 +142,7 @@ def play(episode_dir: Path, speed: float = 1.0, loop: bool = True, rerun: bool =
     puppet = Puppet(episode_scene(episode_dir))
     recorded = frames(episode_dir / RECORDING_FILE)
     puppet.pose(recorded[0])
-    replay = episode_dir.with_suffix(REPLAY_SUFFIX)
+    replay = episode_dir / REPLAY_FILE
     if rerun and replay.exists():
         open_rerun(replay)
     viewer = open_viewer(puppet.model, puppet.data, puppet.trunk_position())

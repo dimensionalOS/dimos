@@ -238,7 +238,7 @@ all_modules = {
     "drone-tracking-module": "dimos.robot.drone.drone_tracking_module.DroneTrackingModule",
     "dual-open-yam-coordinator": "dimos.robot.manipulators.dual_openyam.blueprints.basic.DualOpenYamCoordinator",
     "emitter-module": "dimos.utils.demo_image_encoding.EmitterModule",
-    "episode-driver": "dimos.navigation.sim_eval.driver.EpisodeDriver",
+    "episode-driver": "dimos.navigation.bench.driver.EpisodeDriver",
     "episode-monitor-module": "dimos.imitation.collection.episode_monitor.EpisodeMonitorModule",
     "eval-module": "dimos.evals.module.EvalModule",
     "fast-lio2": "dimos.hardware.sensors.lidar.fastlio2.module.FastLio2",

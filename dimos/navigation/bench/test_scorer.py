@@ -28,7 +28,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Path import Path as PathMsg
 from dimos.msgs.sim_msgs.Contacts import Contact, Contacts
 from dimos.msgs.std_msgs.Bool import Bool
-from dimos.navigation.sim_eval.scorer import (
+from dimos.navigation.bench.scorer import (
     Commands,
     ContactSample,
     PathSample,
@@ -36,7 +36,7 @@ from dimos.navigation.sim_eval.scorer import (
     Recording,
     score,
 )
-from dimos.navigation.sim_eval.suite import Rules
+from dimos.navigation.bench.suite import Rules
 
 RULES = Rules()
 START = np.array([1.0, 1.0, 0.3])

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""``dimos sim-eval``: freeze a suite, run it against a blueprint, score runs again, play episodes back."""
+"""``dimos nav-bench``: freeze a suite, run it against a blueprint, score runs again, play episodes back."""
 
 from __future__ import annotations
 
@@ -22,9 +22,9 @@ from pathlib import Path
 
 import typer
 
-from dimos.navigation.sim_eval.playback import play
-from dimos.navigation.sim_eval.runner import RESULTS_FILE, RunConfig, rescore, run as run_suite
-from dimos.navigation.sim_eval.suite import FreezeConfig, freeze
+from dimos.navigation.bench.playback import play
+from dimos.navigation.bench.runner import RESULTS_FILE, RunConfig, rescore, run as run_suite
+from dimos.navigation.bench.suite import FreezeConfig, freeze
 
 app = typer.Typer(help="Closed-loop navigation benchmark in the simulated world.")
 
