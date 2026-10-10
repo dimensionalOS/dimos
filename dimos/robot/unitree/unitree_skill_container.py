@@ -222,6 +222,12 @@ class UnitreeSkillContainer(Module):
     tf: In[TFMessage]
 
     @rpc
+    def start(self) -> None:
+        super().start()
+        # Subscribe before the first skill call so its initial pose lookup has history.
+        _ = self.tfbuffer
+
+    @rpc
     def stop(self) -> None:
         super().stop()
 
