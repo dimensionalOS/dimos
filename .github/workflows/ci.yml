@@ -309,9 +309,7 @@ jobs:
       - name: Install lint dependencies
         run: uv sync --only-group lint --frozen
       - name: Mypy
-        run: |
-          uv run mypy
-          uv run python -m experimental.gateway.utils.check_endpoint_types
+        run: uv run mypy
 
       # The deno-fmt pre-commit hook needs deno on PATH.
       - name: Extract Deno version

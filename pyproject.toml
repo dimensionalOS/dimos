@@ -27,6 +27,7 @@ include = ["dimos*", "experimental.gateway*"]
 # (MANIFEST.in already prunes these from the sdist; this keeps their stray
 # .py modules out of the wheel too).
 exclude = [
+    "experimental.gateway.tests*",
     "dimos.web.websocket_vis.node_modules*",
     "dimos.web.command-center-extension*",
     "dimos.web.dimos_interface.src*",
@@ -51,7 +52,7 @@ exclude = [
     "**/*.pyi",
 ]
 
-"experimental.gateway" = ["annotations*.json", "annotations.yaml", "openapi.json", "endpoints/**/*.py", "endpoints/inventory.json", "assets/**/*"]
+"experimental.gateway" = ["annotations.yaml"]
 
 [tool.setuptools.exclude-package-data]
 # Trims data the recursive globs above would otherwise pull in: test fixtures
@@ -485,7 +486,6 @@ lint = [
     "types-PyYAML>=6.0.12.20250915,<7",
     "types-reportlab>=4.5.0",
     "types-requests>=2.32.4.20260107,<3",
-    "types-jsonschema",
 
     {include-group = "project-deps"},
 ]
@@ -605,6 +605,7 @@ ignore = [
 # (camelCase, pinned to the TS side by the golden fixtures).
 "dimos/web/relay_bridge/protocol.py" = ["N815"]
 "dimos/web/relay_bridge/manifest.py" = ["N815"]
+"experimental/gateway/routes/*.py" = ["N815"]
 # Polyfill module: re-exports ROS message types (with a dimos_lcm fallback).
 "dimos/types/ros_polyfill.py" = ["F401"]
 
@@ -617,7 +618,7 @@ force-sort-within-sections = true
 runtime-evaluated-base-classes = ["dimos.core.module.Module"]
 
 [tool.mypy]
-files = ["dimos/", "experimental/gateway/server/", "experimental/gateway/utils/"]
+files = ["dimos/", "experimental/gateway/"]
 mypy_path = "stubs/"
 python_version = "3.12"
 incremental = true
@@ -748,10 +749,6 @@ ignore = [
     "uv.lock",
     # an evolved planner: one generated rust file, not hand-edited source
     "dimos/navigation/local_planner/rust/src/planner.rs",
-    # the dimos gateway's OpenAPI document, generated (`python -m experimental.gateway --write-openapi`)
-    "experimental/gateway/openapi.json",
-    # every robot and blueprint, described: grows with each blueprint (checked by experimental/gateway/utils/robots.py)
-    "experimental/gateway/annotations.json",
     "*/uv.lock",
     "*/package-lock.json",
     "Cargo.lock",

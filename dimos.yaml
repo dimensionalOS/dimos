@@ -23,8 +23,6 @@ install: |
 # Desktop's gateway contract; its implementation and metadata stay experimental.
 api:
   version: "1.18.0"
-  openapi: experimental/gateway/openapi.json
-robots: experimental/gateway/annotations.json
 start: |
   "$DIMOS_DIR/.venv/bin/python" -m experimental.gateway --detach --dimos-dir "$DIMOS_DIR" --socket "$DIMOS_SERVER_SOCKET"
 socket: |
