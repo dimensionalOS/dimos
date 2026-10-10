@@ -1,0 +1,88 @@
+name: message-codegen
+
+on:
+  pull_request:
+    paths:
+      - dimos/message_codegen/**
+      - examples/message-codegen/**
+      - scripts/*message*codegen*
+      - .github/workflows/message-codegen.yml
+      - .github/docker/message-codegen-reference.Dockerfile
+      - Cargo.toml
+      - Cargo.lock
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  standalone:
+    permissions:
+      contents: read
+      id-token: write  # Codecov OIDC, matching the main CI coverage uploads.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.0.1
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.92.0"
+      - name: Set up a ROS-free Python environment
+        run: |
+          test ! -d /opt/ros
+          uv venv .venv --python 3.12 --seed
+          uv pip install --python .venv/bin/python "./dimos/message_codegen[native]" numpy pytest pytest-cov pytest-asyncio pytest-env mypy==1.19.0
+          .venv/bin/python -c "import importlib.util; assert importlib.util.find_spec('rclpy') is None"
+      - name: Generate, build, test, and demonstrate all three languages
+        run: bash scripts/test_message_codegen.sh
+      - name: Upload standalone generator coverage
+        uses: codecov/codecov-action@v7
+        with:
+          use_oidc: true
+          files: build/message-codegen/demo/evidence/coverage.xml
+          flags: MessageCodegen-${{ matrix.os }}
+          fail_ci_if_error: true
+          use_pypi: true
+          version: "11.2.8"
+      - name: Retain executable demo evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: message-codegen-evidence-${{ matrix.os }}
+          path: build/message-codegen/demo/evidence/
+          if-no-files-found: error
+
+  jazzy-reference:
+    needs: standalone
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: message-codegen-evidence-ubuntu-latest
+          path: build/message-codegen/demo/evidence/
+      - name: Build independent ROS2 reference environment
+        run: docker build -f .github/docker/message-codegen-reference.Dockerfile -t dimos-cdr-jazzy-reference .github/docker
+      - name: Compare native payloads with independently generated ROS2 types
+        run: |
+          docker run --rm \
+            -v "$PWD:/source:ro" \
+            -v "$PWD/build/message-codegen/demo:/demo" \
+            dimos-cdr-jazzy-reference '
+              set -e
+              source /opt/ros/jazzy/setup.bash
+              mkdir -p /tmp/reference/src
+              cp -r /demo/evidence/custom_msgs /tmp/reference/src/
+              cd /tmp/reference
+              colcon build --packages-select custom_msgs --event-handlers console_direct+
+              source install/setup.bash
+              python3 /source/examples/message-codegen/demo_ros_reference.py --build /demo
+            ' | tee build/message-codegen/demo/evidence/jazzy-reference.txt
+      - uses: actions/upload-artifact@v7
+        with:
+          name: message-codegen-jazzy-reference
+          path: build/message-codegen/demo/evidence/

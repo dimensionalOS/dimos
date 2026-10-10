@@ -276,7 +276,7 @@ unitree-dds = [
 control = [
     "piper-sdk",
     "xarm-python-sdk>=1.17.0",
-    "a750-control; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "a750-control; python_version >= '3.12' and sys_platform == 'linux' and platform_machine == 'x86_64'",
     "can-motor-control>=0.0.8",
     "python-can>=4",
     "pygame>=2.6.1",
@@ -413,6 +413,11 @@ project-deps = [
 ]
 
 tests = [
+    "empy==4.2",
+    "lark==1.2.2",
+    # Independent CDR/schema references used by message and MCAP tests.
+    "rosbags==0.11.0",
+    "mcap>=1.2.0",
     # Test runner
     "pytest==8.3.5",
     "pytest-asyncio==1.4.0",
@@ -463,6 +468,8 @@ browser-tests = [
 
 # Lint / format / type-check tooling for the dedicated `lint` CI job.
 lint = [
+    # Generated source codec template is checked before the runtime cutover.
+    "rosbags==0.11.0",
     # Lint / format / type-check
     "ruff==0.14.3",
     "mypy==1.19.0",
@@ -564,6 +571,7 @@ explicit = true
 
 [tool.ruff]
 line-length = 100
+extend-exclude = ["dimos/message_codegen/_vendor"]
 exclude = [
     ".git",
     ".pytest_cache",
@@ -622,7 +630,8 @@ strict = true
 warn_unused_ignores = false
 untyped_calls_exclude = ["zenoh"]
 explicit_package_bases = true
-exclude = "^dimos/models/Detic(/|$)|.*/test_.|.*/tool_.|.*/conftest.py*"
+# Upstream vendored sources retain their original typing; our adapters remain strict.
+exclude = "^dimos/models/Detic(/|$)|^dimos/message_codegen/_vendor/|.*/test_.|.*/tool_.|.*/conftest.py*"
 
 [[tool.mypy.overrides]]
 module = [
