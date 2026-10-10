@@ -12,65 +12,104 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""``panda-libero-sim``: the ``xarm-perception-sim`` stack on LIBERO's own Panda.
+"""The ``xarm-perception-sim`` stack on a LIBERO task, with LIBERO running the robot.
 
-Same planner, skills, perception and coordinator as the xArm sim, with the Panda's
-planning model; ``LiberoSim`` takes ``MujocoSimModule``'s place and the arm is driven
-over topics instead of shared memory. Pick the task with ``LIBEROSIM__BDDL=<file.bddl>``.
+- ``panda-libero-sim``: LIBERO's own Panda, with the Panda's planning model;
+- ``xarm-libero-sim``: dimos's xArm7 in the Panda's place, with the xArm sim's model.
+
+Same planner, skills, perception and coordinator as the xArm sim; ``LiberoSim`` takes
+``MujocoSimModule``'s place and the arm is driven over topics instead of shared memory.
+Pick the task with ``LIBEROSIM__BDDL=<file.bddl>``.
 """
 
 from __future__ import annotations
 
+from typing import Any
+
+from dimos.control.components import HardwareComponent
 from dimos.control.coordinator import TaskConfig
-from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.blueprints import Blueprint, TransportSpec, autoconnect
+from dimos.core.stream import Transport
 from dimos.core.transport_factory import make_transport
 from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspModule
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.manipulation_skills import ManipulationSkills
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
+from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
 from dimos.robot.manipulators.common.blueprints import coordinator, trajectory_task
 from dimos.robot.manipulators.panda.config import make_panda_hardware, make_panda_model_config
+from dimos.robot.manipulators.xarm.config import (
+    XARM7_SIM_HOME,
+    make_xarm7_sim_robot_config,
+    make_xarm_hardware,
+)
 from dimos.simulation.libero.module import LiberoSim
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 
-_hardware = make_panda_hardware("arm")
+
+def _arm_stack(model: RobotModelConfig, hardware: HardwareComponent) -> Blueprint:
+    """Everything but the simulator: planner, skills, perception, coordinator, viewer."""
+    return autoconnect(
+        ManipulationModule.blueprint(
+            model=model,
+            planning_timeout=10.0,
+            visualization={"backend": "viser"},
+        ),
+        ManipulationSkills.blueprint(),
+        PickAndPlaceModule.blueprint(planning_frame="world"),
+        HeuristicGraspModule.blueprint(),
+        ObjectSceneRegistrationModule.blueprint(
+            target_frame="world",
+            detector_backend="moondream",
+            segmentation_backend="edgetam",
+            detect_on_request=True,
+        ),
+        coordinator(
+            hardware=[hardware],
+            tasks=[
+                trajectory_task(hardware),
+                TaskConfig(
+                    name="arm_gripper",
+                    type="gripper",
+                    joint_names=["arm/gripper"],
+                    priority=20,
+                ),
+            ],
+        ),
+        RerunBridgeModule.blueprint(),
+    )
+
+
+# The sim_transport adapter's topics for hardware "arm".
+_SIM_TRANSPORTS: dict[tuple[str, type], TransportSpec | Transport[Any]] = {
+    ("sim_state", JointState): make_transport("/arm/sim_state", JointState),
+    ("sim_command", JointState): make_transport("/arm/sim_command", JointState),
+}
 
 panda_libero_sim = autoconnect(
-    ManipulationModule.blueprint(
-        # LiberoSim publishes poses with the Panda's link0 at the world origin.
-        model=make_panda_model_config(gripper_hardware_id="arm", tf_extra_links=["link7"]),
-        planning_timeout=10.0,
-        visualization={"backend": "viser"},
+    # LiberoSim publishes poses with the Panda's link0 at the world origin.
+    _arm_stack(
+        make_panda_model_config(gripper_hardware_id="arm", tf_extra_links=["link7"]),
+        make_panda_hardware("arm"),
     ),
-    ManipulationSkills.blueprint(),
-    PickAndPlaceModule.blueprint(planning_frame="world"),
-    HeuristicGraspModule.blueprint(),
-    LiberoSim.blueprint(),
-    ObjectSceneRegistrationModule.blueprint(
-        target_frame="world",
-        detector_backend="moondream",
-        segmentation_backend="edgetam",
-        detect_on_request=True,
+    LiberoSim.blueprint(robot="Panda"),
+).transports(_SIM_TRANSPORTS)
+
+xarm_libero_sim = autoconnect(
+    # LiberoSim publishes poses with link_base where the default xArm sim mounts it.
+    _arm_stack(
+        make_xarm7_sim_robot_config(),
+        make_xarm_hardware(
+            "arm",
+            7,
+            adapter_type="sim_transport",
+            gripper=True,
+            home_joints=XARM7_SIM_HOME,
+            # The driver joint's range, as in the xArm sim: 0 closed .. 0.85 open.
+            adapter_kwargs={"gripper_range": (0.0, 0.85)},
+        ),
     ),
-    coordinator(
-        hardware=[_hardware],
-        tasks=[
-            trajectory_task(_hardware),
-            TaskConfig(
-                name="arm_gripper",
-                type="gripper",
-                joint_names=["arm/gripper"],
-                priority=20,
-            ),
-        ],
-    ),
-    RerunBridgeModule.blueprint(),
-).transports(
-    {
-        # The sim_transport adapter's topics for hardware "arm".
-        ("sim_state", JointState): make_transport("/arm/sim_state", JointState),
-        ("sim_command", JointState): make_transport("/arm/sim_command", JointState),
-    }
-)
+    LiberoSim.blueprint(robot="XArm7"),
+).transports(_SIM_TRANSPORTS)

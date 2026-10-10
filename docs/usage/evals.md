@@ -534,6 +534,15 @@ comparable to published VLA numbers. Tasks the pinned commit cannot build are le
 (see `UNAVAILABLE_OBJECTS` and `BROKEN_UPSTREAM`). Run one task by hand with
 `LIBEROSIM__BDDL=<file.bddl> dimos run panda-libero-sim mcp-server`.
 
+`dimos.evals.suites.libero_pro_xarm` runs the same cases with dimos's xArm7
+(`xarm-libero-sim`). `LiberoSim(robot="XArm7")` registers the xArm7 MJCF as a LIBERO
+robot and LIBERO builds each task with it in the Panda's place, its position servos
+taking the joint targets directly, with poses in a frame that puts `link_base` where the
+default xArm sim does. The xArm7 reaches less than the Panda, so it stands
+`base_forward_m` (0.15 m) closer to the workspace, on a collision-free copy of the
+Panda's mount, and starts from LIBERO's sampled layouts, as the recorded initial states
+are Panda states. Its scores are not comparable to the Panda suite's.
+
 ## Running
 
 - **CLI**: `dimos evals run <dotted.suite> --agent <agent-module> [--set model=gpt-4o] [--tags nav] [--limit 5]`
