@@ -23,7 +23,14 @@ from pathlib import Path
 import typer
 
 from dimos.navigation.bench.playback import play
-from dimos.navigation.bench.runner import RESULTS_FILE, RunConfig, rescore, run as run_suite
+from dimos.navigation.bench.runner import (
+    RESULTS_FILE,
+    Progress,
+    Report,
+    RunConfig,
+    rescore,
+    run as run_suite,
+)
 from dimos.navigation.bench.suite import FreezeConfig, freeze
 
 app = typer.Typer(help="Closed-loop navigation benchmark in the simulated world.")
@@ -57,16 +64,16 @@ def freeze_command(
     cases_per_bin: int = typer.Option(3, help="Mined cases kept per difficulty bin."),
 ) -> None:
     """Generate, validate and bin the suite's cases into a manifest."""
-    manifest = freeze(
-        FreezeConfig(
-            suite=suite,
-            seeds=seeds_of(seeds),
-            sampling_seed=sampling_seed,
-            stressor_samples=stressor_samples,
-            samples_per_scene=samples_per_scene,
-            cases_per_bin=cases_per_bin,
-        )
+    config = FreezeConfig(
+        suite=suite,
+        seeds=seeds_of(seeds),
+        sampling_seed=sampling_seed,
+        stressor_samples=stressor_samples,
+        samples_per_scene=samples_per_scene,
+        cases_per_bin=cases_per_bin,
     )
+    with _Bar(suite) as bar:
+        manifest = freeze(config, bar.tick)
     out.parent.mkdir(parents=True, exist_ok=True)
     manifest.save(out)
     tags = Counter(c.tag for c in manifest.cases)
@@ -83,7 +90,6 @@ def run_command(
     case: list[str] = typer.Option(
         [], "--case", help="Only cases whose id starts with this, e.g. narrow_door or a full id."
     ),
-    repeats: int = typer.Option(1, min=1),
     procs: int = typer.Option(4, min=1, help="Episodes running at once."),
     out: Path | None = typer.Option(None, "--out", help="Run directory, new."),
     policy: Path | None = typer.Option(None, help="Body policy file for the sim world."),
@@ -98,20 +104,19 @@ def run_command(
     """Run every case of the split, several at a time, and score each recording."""
     if split not in ("dev", "held_out", "all"):
         raise typer.BadParameter("split must be dev, held_out or all")
-    run_dir = run_suite(
-        RunConfig(
-            suite=suite,
-            blueprint=blueprint,
-            split=None if split == "all" else split,  # type: ignore[arg-type]
-            cases=tuple(case),
-            repeats=repeats,
-            procs=procs,
-            out_dir=out,
-            overrides=tuple(override_flag(s) for s in setting),
-            policy=policy,
-            viewer=viewer,
-        )
+    config = RunConfig(
+        suite=suite,
+        blueprint=blueprint,
+        split=None if split == "all" else split,  # type: ignore[arg-type]
+        cases=tuple(case),
+        procs=procs,
+        out_dir=out,
+        overrides=tuple(override_flag(s) for s in setting),
+        policy=policy,
+        viewer=viewer,
     )
+    with _Bar(suite.stem) as bar:
+        run_dir = run_suite(config, _report(bar))
     typer.echo(f"run finished -> {run_dir}")
     _summary(run_dir / RESULTS_FILE)
 
@@ -133,6 +138,54 @@ def replay_command(
 ) -> None:
     """Play the episode back: body motion in a MuJoCo viewer, the replay file in Rerun."""
     play(episode_dir, speed=speed, loop=loop, rerun=rerun)
+
+
+class _Bar:
+    """A bar over a long command's steps, with a status beside it and lines printed above it."""
+
+    def __init__(self, name: str) -> None:
+        from rich.progress import (
+            BarColumn,
+            MofNCompleteColumn,
+            Progress as Bar,
+            TextColumn,
+            TimeElapsedColumn,
+            TimeRemainingColumn,
+        )
+
+        self._bar = Bar(
+            TextColumn("{task.description}"),
+            BarColumn(),
+            MofNCompleteColumn(),
+            TimeElapsedColumn(),
+            TimeRemainingColumn(),
+            TextColumn("{task.fields[status]}"),
+        )
+        self._task = self._bar.add_task(name, total=None, status="")
+
+    def __enter__(self) -> _Bar:
+        self._bar.start()
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self._bar.stop()
+
+    def tick(self, done: int, total: int, status: str) -> None:
+        self._bar.update(self._task, total=total, completed=done, status=status)
+
+    def say(self, line: str) -> None:
+        self._bar.console.print(line, highlight=False, markup=False)
+
+
+def _report(bar: _Bar) -> Report:
+    def report(progress: Progress) -> None:
+        if progress.finished is not None:
+            episode, verdict = progress.finished
+            bar.say(f"{episode:44} {verdict}")
+        tally = "  ".join(f"{k} {n}" for k, n in progress.outcomes.most_common())
+        bar.tick(progress.done, progress.total, f"{tally}  running {len(progress.running)}")
+
+    return report
 
 
 def _summary(results: Path) -> None:

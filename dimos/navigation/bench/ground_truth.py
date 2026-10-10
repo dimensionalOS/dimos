@@ -30,8 +30,13 @@ import mujoco
 import numpy as np
 from numpy.typing import NDArray
 from scipy import ndimage
-from scipy.sparse import coo_matrix
-from scipy.sparse.csgraph import connected_components, dijkstra
+from scipy.sparse import coo_matrix, csr_matrix
+from scipy.sparse.csgraph import (
+    breadth_first_order,
+    connected_components,
+    dijkstra,
+    minimum_spanning_tree,
+)
 
 from dimos.robot.unitree.go2.constants import ROBOT_WIDTH
 from dimos.simulation.go2_sim.world import MOUNT_R, MOUNT_XYZ
@@ -47,6 +52,7 @@ GO2_STAND_HEIGHT = 0.3
 PREMAP_STEP_M = 0.1
 PREMAP_SPEED = 0.5
 PREMAP_SEED = 0
+SEARCH_CACHE = 256
 PROBE_GROUP = 5
 # the Mid-360 on its mount tops out near 0.55 m when the sim Go2 stands
 GO2_CLEARANCE_HEIGHT = 0.6
@@ -109,6 +115,10 @@ class GroundTruth:
         self.clearance = ndimage.distance_transform_edt(ground) * cell
         self.walkable = ground & (self.clearance >= body.radius)
         self._walk = self._edges(self.walkable)
+        self._graphs: dict[bool, csr_matrix] = {}
+        self._searches: dict[tuple[int, bool], NDArray[np.int32]] = {}
+        self._tree: csr_matrix | None = None
+        self._tree_walks: dict[int, NDArray[np.int32]] = {}
 
     def index(self, point: tuple[float, ...] | NDArray[np.float64]) -> tuple[int, int]:
         ix = int((point[0] - self.origin[0]) / self.cell)
@@ -138,14 +148,9 @@ class GroundTruth:
         """The shortest route over walkable cells, or the one that keeps away from obstacles."""
         if not (self.stands(start) and self.stands(goal)):
             return None
-        i, j, w = self._walk
-        if centered:
-            w = w * CENTERING_CLEARANCE / np.clip(self.clearance.flat[j], None, CENTERING_CLEARANCE)
-        n = self.shape[0] * self.shape[1]
-        graph = coo_matrix((w, (i, j)), shape=(n, n)).tocsr()
-        source = np.ravel_multi_index(self.index(start), self.shape)
-        target = np.ravel_multi_index(self.index(goal), self.shape)
-        _, predecessors = dijkstra(graph, indices=source, return_predecessors=True)
+        source = int(np.ravel_multi_index(self.index(start), self.shape))
+        target = int(np.ravel_multi_index(self.index(goal), self.shape))
+        predecessors = self._search(source, centered)
         if target != source and predecessors[target] == NO_PREDECESSOR:
             return None
         nodes = [target]
@@ -163,15 +168,15 @@ class GroundTruth:
         """The largest clearance that every cell of some route from start to goal has."""
         source = int(np.ravel_multi_index(self.index(start), self.shape))
         target = int(np.ravel_multi_index(self.index(goal), self.shape))
-        levels = np.unique(self.clearance[self.walkable])
-        lo, hi = 0, len(levels) - 1
-        while lo < hi:
-            mid = (lo + hi + 1) // 2
-            if self._connected_above(levels[mid], source, target):
-                lo = mid
-            else:
-                hi = mid - 1
-        return float(levels[lo])
+        predecessors = self._tree_walk(source)
+        if target != source and predecessors[target] == NO_PREDECESSOR:
+            return float(self.clearance.flat[[source, target]].min())
+        narrowest = float(self.clearance.flat[source])
+        node = target
+        while node != source:
+            narrowest = min(narrowest, float(self.clearance.flat[node]))
+            node = int(predecessors[node])
+        return narrowest
 
     def premap_cloud(self, route: NDArray[np.float64]) -> NDArray[np.float32]:
         """What the body's Mid-360 returns walking the route, in the world frame.
@@ -218,19 +223,56 @@ class GroundTruth:
                 height[ix, iy] = _lowest_surface(caster, probe, origin, depth)
         return height
 
+    def _search(self, source: int, centered: bool) -> NDArray[np.int32]:
+        """Shortest-route predecessors from the source over the walkable graph, kept for reuse."""
+        key = (source, centered)
+        if key not in self._searches:
+            if centered not in self._graphs:
+                i, j, w = self._walk
+                if centered:
+                    w = (
+                        w
+                        * CENTERING_CLEARANCE
+                        / np.clip(self.clearance.flat[j], None, CENTERING_CLEARANCE)
+                    )
+                n = self.shape[0] * self.shape[1]
+                self._graphs[centered] = coo_matrix((w, (i, j)), shape=(n, n)).tocsr()
+            _, predecessors = dijkstra(
+                self._graphs[centered], indices=source, return_predecessors=True
+            )
+            if len(self._searches) >= SEARCH_CACHE:
+                self._searches.pop(next(iter(self._searches)))
+            self._searches[key] = np.asarray(predecessors, dtype=np.int32)
+        return self._searches[key]
+
+    def _widest_tree(self) -> csr_matrix:
+        """A spanning tree over the walkable cells whose paths keep the most clearance."""
+        if self._tree is None:
+            i, j, _ = self._walk
+            level = np.minimum(self.clearance.flat[i], self.clearance.flat[j])
+            n = self.shape[0] * self.shape[1]
+            graph = coo_matrix((level.max() + 1.0 - level, (i, j)), shape=(n, n)).tocsr()
+            tree = minimum_spanning_tree(graph)
+            self._tree = (tree + tree.T).tocsr()
+        return self._tree
+
+    def _tree_walk(self, source: int) -> NDArray[np.int32]:
+        """Predecessors from the source along the widest tree, kept for reuse."""
+        if source not in self._tree_walks:
+            _, predecessors = breadth_first_order(
+                self._widest_tree(), source, directed=False, return_predecessors=True
+            )
+            if len(self._tree_walks) >= SEARCH_CACHE:
+                self._tree_walks.pop(next(iter(self._tree_walks)))
+            self._tree_walks[source] = np.asarray(predecessors, dtype=np.int32)
+        return self._tree_walks[source]
+
     def _reachable(self, ground: NDArray[np.bool_], start: tuple[int, int]) -> NDArray[np.bool_]:
         """The ground connected to the start by steps within the body's limit."""
         i, j, _ = self._edges(ground)
         labels = self._components(i, j)
         reachable: NDArray[np.bool_] = labels == labels[start]
         return reachable & ground
-
-    def _connected_above(self, level: float, source: int, target: int) -> bool:
-        """Whether walkable cells with at least this clearance join source and target."""
-        i, j, _ = self._walk
-        keep = (self.clearance.flat[i] >= level) & (self.clearance.flat[j] >= level)
-        labels = self._components(i[keep], j[keep])
-        return bool(labels.flat[source] == labels.flat[target])
 
     def _components(self, i: NDArray[np.intp], j: NDArray[np.intp]) -> NDArray[np.int32]:
         """A component label per cell, over the given edges."""

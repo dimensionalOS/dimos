@@ -23,10 +23,13 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Callable
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, field
 import hashlib
 import json
 import math
+import multiprocessing
+import os
 from pathlib import Path
 import subprocess
 from typing import Literal
@@ -305,39 +308,45 @@ class FreezeConfig:
     rules: Rules = Rules()
 
 
-def freeze(config: FreezeConfig) -> Manifest:
-    """Generate, validate and bin the suite's cases. Deterministic in the config."""
-    rng = np.random.default_rng(config.sampling_seed)
-    truths = _Truths()
+Tick = Callable[[int, int, str], None]
+
+
+@dataclass
+class _Mined:
+    """One scene's share of the suite before the mined pool is spread over bins."""
+
+    cases: list[Case]
+    rejections: list[Rejection]
+    pool: list[Case]
+    tally: Counter[str]
+
+
+def freeze(config: FreezeConfig, tick: Tick | None = None) -> Manifest:
+    """Generate, validate and bin the suite's cases, one process per scene. Deterministic in the config."""
+    total = len(config.seeds) + 1
+    if tick is not None:
+        tick(0, total, "scenes")
+    mined: dict[int, _Mined] = {}
+    workers = max(1, min(len(config.seeds), os.cpu_count() or 1))
+    with ProcessPoolExecutor(workers, mp_context=multiprocessing.get_context("forkserver")) as pool:
+        futures = {pool.submit(_freeze_scene, config, seed): seed for seed in config.seeds}
+        for future in as_completed(futures):
+            mined[futures[future]] = future.result()
+            if tick is not None:
+                tick(len(mined), total, f"scene {futures[future]} done")
     cases: list[Case] = []
     rejections: list[Rejection] = []
-    for seed in config.seeds:
-        for stressor in STRESSORS:
-            gt = truths.get(config.family, seed, stressor.params)
-            candidate = _stressor_candidate(gt, stressor, seed, rng, config)
-            if candidate is None:
-                rejections.append(
-                    Rejection(
-                        config.family, seed, stressor.params, stressor.name, "no goal matched"
-                    )
-                )
-                continue
-            case = _validate(gt, candidate, rng, config)
-            if isinstance(case, Case):
-                cases.append(case)
-            else:
-                rejections.append(_rejection(candidate, case))
-    pool: list[Case] = []
+    pooled: list[Case] = []
     tally: Counter[str] = Counter()
     for seed in config.seeds:
-        gt = truths.get(config.family, seed, {})
-        for candidate in _mined_candidates(gt, seed, rng, config):
-            case = _validate(gt, candidate, rng, config)
-            if isinstance(case, Case):
-                pool.append(case)
-            else:
-                tally[case] += 1
-    cases += _spread_over_bins(pool, rng, config.cases_per_bin)
+        cases += mined[seed].cases
+        rejections += mined[seed].rejections
+        pooled += mined[seed].pool
+        tally += mined[seed].tally
+    rng = np.random.default_rng(config.sampling_seed)
+    cases += _spread_over_bins(pooled, rng, config.cases_per_bin)
+    if tick is not None:
+        tick(total, total, "done")
     git_sha, git_dirty = _git_state()
     return Manifest(
         suite=config.suite,
@@ -349,6 +358,34 @@ def freeze(config: FreezeConfig) -> Manifest:
         rejections=rejections,
         mined_rejected=dict(sorted(tally.items())),
     )
+
+
+def _freeze_scene(config: FreezeConfig, seed: int) -> _Mined:
+    """Every stressor placed in one scene and its mined candidates validated, from the scene's own random stream."""
+    rng = np.random.default_rng([config.sampling_seed, seed])
+    truths = _Truths()
+    found = _Mined([], [], [], Counter())
+    for stressor in STRESSORS:
+        gt = truths.get(config.family, seed, stressor.params)
+        candidate = _stressor_candidate(gt, stressor, seed, rng, config)
+        if candidate is None:
+            found.rejections.append(
+                Rejection(config.family, seed, stressor.params, stressor.name, "no goal matched")
+            )
+            continue
+        case = _validate(gt, candidate, rng, config)
+        if isinstance(case, Case):
+            found.cases.append(case)
+        else:
+            found.rejections.append(_rejection(candidate, case))
+    gt = truths.get(config.family, seed, {})
+    for candidate in _mined_candidates(gt, seed, rng, config):
+        case = _validate(gt, candidate, rng, config)
+        if isinstance(case, Case):
+            found.pool.append(case)
+        else:
+            found.tally[case] += 1
+    return found
 
 
 class _Truths:
