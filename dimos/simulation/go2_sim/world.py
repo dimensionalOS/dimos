@@ -412,6 +412,8 @@ class SimGo2World(Module):
                 self._reset = None
                 sim.reset(*pose)
                 t0 = time.time()
+                last_contacts = None
+                next_contacts_publish = next_scene_publish = 0.0
             frame = sim.tick(self._hold.current(time.monotonic()))
             if viewer is not None:
                 viewer.sync()

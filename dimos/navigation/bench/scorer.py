@@ -356,10 +356,12 @@ def _path_metrics(samples: list[PathSample] | None, rules: Rules, t0: float, t1:
 
 def _path_change(old: NDArray[np.float64], new: NDArray[np.float64]) -> float:
     """How far the new path strays from the old one: the largest distance to the old path's segments."""
-    if len(old) == 1:
-        return float(np.linalg.norm(new[:, :2] - old[0, :2], axis=1).max())
     a, b = old[:-1, :2], old[1:, :2]
     ab = b - a
+    spans = (ab**2).sum(axis=1) > 0
+    if not spans.any():
+        return float(np.linalg.norm(new[:, :2] - old[0, :2], axis=1).max())
+    a, ab = a[spans], ab[spans]
     ap = new[:, None, :2] - a[None]
     along = np.clip((ap * ab[None]).sum(axis=2) / (ab**2).sum(axis=1)[None], 0.0, 1.0)
     nearest = a[None] + along[:, :, None] * ab[None]

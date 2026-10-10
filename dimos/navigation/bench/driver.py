@@ -97,6 +97,7 @@ class EpisodeDriver(Module):
         self._pose: tuple[float, NDArray[np.float64], NDArray[np.float64]] | None = None
         self._recent: deque[tuple[float, NDArray[np.float64]]] = deque()
         self._moving: deque[tuple[float, bool]] = deque()
+        self._last_moving: float | None = None
         self._echo: float | None = None
         self._arrival: float | None = None
         self._stop_event = Event()
@@ -137,6 +138,8 @@ class EpisodeDriver(Module):
         )
         now = time.time()
         self._moving.append((now, moving))
+        if moving:
+            self._last_moving = now
         while self._moving and self._moving[0][0] < now - self._rules.stuck_s:
             self._moving.popleft()
 
@@ -211,6 +214,8 @@ class EpisodeDriver(Module):
 
     def _watch(self, t0: float, timeout_s: float | None) -> str:
         rules = self._rules
+        if self._last_moving is None or self._last_moving < t0:
+            self._last_moving = t0
         while not self._stop_event.is_set():
             now = time.time()
             if self._arrival is not None:
@@ -220,8 +225,8 @@ class EpisodeDriver(Module):
                 return "fall"
             if timeout_s is not None and now - t0 >= timeout_s:
                 return "timeout"
-            if now - t0 >= rules.stuck_s and self._stuck_or_stalled(now) is not None:
-                return str(self._stuck_or_stalled(now))
+            if now - t0 >= rules.stuck_s and (verdict := self._stuck_or_stalled(now)) is not None:
+                return verdict
             self._stop_event.wait(WATCH_DT)
         return "stopped"
 
@@ -229,14 +234,14 @@ class EpisodeDriver(Module):
         # the callbacks keep appending, so work on copies
         commands, recent = list(self._moving), list(self._recent)
         moving = [m for t, m in commands if t >= now - self._rules.stuck_s]
-        since_moving = now - max((t for t, m in commands if m), default=now - self._rules.stalled_s)
+        stalled = self._last_moving is not None and now - self._last_moving >= self._rules.stalled_s
         if not moving or not recent:
-            return "stalled" if since_moving >= self._rules.stalled_s else None
+            return "stalled" if stalled else None
         if sum(moving) / len(moving) >= 0.8:
-            start = recent[0][1][:2]
-            progress = max(float(np.linalg.norm(xyz[:2] - start)) for _, xyz in recent)
+            xy = np.array([xyz[:2] for _, xyz in recent])
+            progress = float(np.linalg.norm(xy - xy[0], axis=1).max())
             return "stuck" if progress < self._rules.stuck_progress_m else None
-        return "stalled" if since_moving >= self._rules.stalled_s else None
+        return "stalled" if stalled else None
 
     def _wait(self, done: Callable[[], bool], timeout_s: float) -> bool:
         deadline = time.time() + timeout_s

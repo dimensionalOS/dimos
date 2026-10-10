@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from collections import deque
 import json
 import math
 from pathlib import Path
@@ -252,3 +253,29 @@ def test_driver_reports_a_lost_goal(manifest_path: Path, tmp_path: Path) -> None
         _close(io)
     assert record["reason"] == "goal_lost"
     assert len(io["clicks"]) >= 10
+
+
+def _judging(
+    rules: Rules, now: float, last_moving: float, moving: list[bool], xy: list[tuple[float, float]]
+) -> str | None:
+    """The driver's live verdict over a command and pose history, with no threads or transports."""
+    driver = EpisodeDriver.__new__(EpisodeDriver)
+    driver._rules = rules
+    driver._last_moving = last_moving
+    driver._moving = deque((now - rules.stuck_s + k * 0.05, m) for k, m in enumerate(moving))
+    driver._recent = deque(
+        (now - rules.stuck_s + k * 0.02, np.array([x, y, 0.3])) for k, (x, y) in enumerate(xy)
+    )
+    return driver._stuck_or_stalled(now)
+
+
+def test_live_stuck_and_stalled_rules() -> None:
+    rules = Rules(stuck_s=10.0, stalled_s=20.0)
+    still = [(0.0, 0.0)] * 50
+    assert _judging(rules, 1000.0, 999.0, [True] * 200, still) == "stuck"
+    assert (
+        _judging(rules, 1000.0, 999.0, [True] * 200, [(0.01 * k, 0.0) for k in range(50)]) is None
+    )
+    assert _judging(rules, 1000.0, 1000.0 - 12.0, [False] * 200, still) is None
+    assert _judging(rules, 1000.0, 1000.0 - 20.0, [False] * 200, still) == "stalled"
+    assert _judging(rules, 1000.0, 1000.0 - 20.0, [], []) == "stalled"

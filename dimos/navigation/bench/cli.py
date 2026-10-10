@@ -19,19 +19,20 @@ from __future__ import annotations
 from collections import Counter
 import json
 from pathlib import Path
+from typing import TYPE_CHECKING
 
+from rich.progress import (
+    BarColumn,
+    MofNCompleteColumn,
+    Progress as Bar,
+    TextColumn,
+    TimeElapsedColumn,
+    TimeRemainingColumn,
+)
 import typer
 
-from dimos.navigation.bench.playback import play
-from dimos.navigation.bench.runner import (
-    RESULTS_FILE,
-    Progress,
-    Report,
-    RunConfig,
-    rescore,
-    run as run_suite,
-)
-from dimos.navigation.bench.suite import FreezeConfig, freeze
+if TYPE_CHECKING:
+    from dimos.navigation.bench.runner import Progress, Report
 
 app = typer.Typer(help="Closed-loop navigation benchmark in the simulated world.")
 
@@ -64,6 +65,8 @@ def freeze_command(
     cases_per_bin: int = typer.Option(3, help="Mined cases kept per difficulty bin."),
 ) -> None:
     """Generate, validate and bin the suite's cases into a manifest."""
+    from dimos.navigation.bench.suite import FreezeConfig, freeze
+
     config = FreezeConfig(
         suite=suite,
         seeds=seeds_of(seeds),
@@ -102,6 +105,8 @@ def run_command(
     ),
 ) -> None:
     """Run every case of the split, several at a time, and score each recording."""
+    from dimos.navigation.bench.runner import RESULTS_FILE, RunConfig, run as run_suite
+
     if split not in ("dev", "held_out", "all"):
         raise typer.BadParameter("split must be dev, held_out or all")
     config = RunConfig(
@@ -126,6 +131,8 @@ def score_command(
     run_dir: Path = typer.Argument(..., exists=True, help="A run directory."),
 ) -> None:
     """Score every episode of a run again from its recording."""
+    from dimos.navigation.bench.runner import rescore
+
     _summary(rescore(run_dir))
 
 
@@ -137,6 +144,8 @@ def replay_command(
     rerun: bool = typer.Option(True, help="Also open the episode's replay file in Rerun."),
 ) -> None:
     """Play the episode back: body motion in a MuJoCo viewer, the replay file in Rerun."""
+    from dimos.navigation.bench.playback import play
+
     play(episode_dir, speed=speed, loop=loop, rerun=rerun)
 
 
@@ -144,15 +153,6 @@ class _Bar:
     """A bar over a long command's steps, with a status beside it and lines printed above it."""
 
     def __init__(self, name: str) -> None:
-        from rich.progress import (
-            BarColumn,
-            MofNCompleteColumn,
-            Progress as Bar,
-            TextColumn,
-            TimeElapsedColumn,
-            TimeRemainingColumn,
-        )
-
         self._bar = Bar(
             TextColumn("{task.description}"),
             BarColumn(),
