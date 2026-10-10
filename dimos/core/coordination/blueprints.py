@@ -355,7 +355,9 @@ def transport_config_name(cls: type) -> str:
 
 
 def autoconnect(*blueprints: Blueprint) -> Blueprint:
-    all_blueprints = tuple(_eliminate_duplicates([bp for bs in blueprints for bp in bs.blueprints]))
+    all_blueprints = tuple(
+        _merge_module_instances([bp for bs in blueprints for bp in bs.blueprints])
+    )
     all_transports = dict(  # type: ignore[var-annotated]
         reduce(operator.iadd, [list(x.transport_map.items()) for x in blueprints], [])
     )
@@ -381,20 +383,28 @@ def autoconnect(*blueprints: Blueprint) -> Blueprint:
     )
 
 
-def _eliminate_duplicates(blueprints: list[BlueprintAtom]) -> list[BlueprintAtom]:
-    # The duplicates are eliminated in reverse so that newer blueprints override older ones.
-    seen = set()
+def _merge_module_instances(blueprints: list[BlueprintAtom]) -> list[BlueprintAtom]:
+    """Keep the last configuration per instance and reject conflicting classes."""
+    seen: dict[str, type[ModuleBase]] = {}
     unique_blueprints = []
     for bp in reversed(blueprints):
-        if bp.name not in seen:
-            seen.add(bp.name)
+        previous = seen.get(bp.name)
+        if previous is not None and previous is not bp.module:
+            raise ValueError(
+                f"Module instance name {bp.name!r} is shared by "
+                f"{previous.__module__}.{previous.__qualname__} and "
+                f"{bp.module.__module__}.{bp.module.__qualname__}; "
+                "use distinct instance_name values or namespace() each blueprint"
+            )
+        if previous is None:
+            seen[bp.name] = bp.module
             unique_blueprints.append(bp)
     return list(reversed(unique_blueprints))
 
 
 def config_key(instance_name: str) -> str:
     """Escape an instance name into a valid config/CLI/env identifier."""
-    return instance_name.replace("/", "_")
+    return instance_name.replace("/", "_").replace(".", "_")
 
 
 def _reprefix_transport(

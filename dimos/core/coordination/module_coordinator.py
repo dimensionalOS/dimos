@@ -166,7 +166,7 @@ class ModuleCoordinator(Resource):
                         class_name=cls.__name__,
                         qualified_path=qualified,
                         rpc_names=list(cls.rpcs.keys()),
-                        rpc_name=_rpc_name(name, cls),
+                        rpc_name=self._deployed_modules[name].remote_name,
                     )
                 )
             return descriptors
@@ -179,7 +179,7 @@ class ModuleCoordinator(Resource):
 
     def list_module_names(self) -> list[str]:
         with self._modules_lock:
-            return [_rpc_name(name, cls) for name, cls in self._instance_classes.items()]
+            return [module.remote_name for module in self._deployed_modules.values()]
 
     def health_check(self) -> bool:
         return all(m.health_check() for m in self._managers.values())
@@ -700,11 +700,6 @@ class ModuleCoordinator(Resource):
             return
         finally:
             self.stop()
-
-
-def _rpc_name(instance_key: str, cls: type[ModuleBase]) -> str:
-    """The module's RPC topic prefix: class name unless an instance name is set."""
-    return cls.__name__ if instance_key == cls.name else instance_key
 
 
 def stream_name_types(blueprint: Blueprint) -> set[tuple[str, type]]:

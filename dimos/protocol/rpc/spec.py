@@ -18,6 +18,8 @@ import threading
 from types import MappingProxyType
 from typing import Any, Protocol, overload
 
+from dimos.core.module_identity import external_module_name
+
 
 class Empty: ...
 
@@ -108,9 +110,8 @@ class RPCServer(Protocol):
     def serve_rpc(self, f: Callable, name: str) -> Callable[[], None]: ...  # type: ignore[type-arg]
 
     def serve_module_rpc(self, module: RPCInspectable, name: str | None = None) -> None:
+        name = name or external_module_name(type(module)) or module.__class__.__name__
         for fname in module.rpcs.keys():
-            if not name:
-                name = module.__class__.__name__
 
             def override_f(*args, fname=fname, **kwargs):  # type: ignore[no-untyped-def]
                 return getattr(module, fname)(*args, **kwargs)

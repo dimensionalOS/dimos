@@ -21,6 +21,7 @@ import inspect
 from typing import TYPE_CHECKING, Any, Protocol
 
 from dimos.core.coordination.python_worker import Actor, MethodCallProxy
+from dimos.core.module_identity import external_module_name
 from dimos.core.stream import RemoteStream
 from dimos.core.transport_factory import rpc_backend
 from dimos.protocol.rpc.spec import RPCSpec
@@ -140,7 +141,7 @@ class RPCClient:
             # Unpickled in another process; the class stays out of the pickle (see __reduce__).
             assert remote_name is not None and rpcs is not None
         else:
-            remote_name = remote_name or actor_class.__name__
+            remote_name = remote_name or external_module_name(actor_class) or actor_class.__name__
             rpcs = actor_class.rpcs if rpcs is None else rpcs
         self.actor_class = actor_class
         self.remote_name = remote_name
