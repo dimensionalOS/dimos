@@ -18,7 +18,7 @@ import numpy as np
 from numpy.typing import NDArray
 import pytest
 
-from dimos.navigation.sim_eval.ground_truth import GO2, GroundTruth
+from dimos.navigation.bench.ground_truth import GO2, GroundTruth
 from dimos.simulation.scenes.procedural import Door, Scene, office
 
 

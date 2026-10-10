@@ -20,7 +20,7 @@ import pytest
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.navigation.sim_eval.playback import Puppet, frames, paced
+from dimos.navigation.bench.playback import Puppet, frames, paced
 from dimos.simulation.go2_legged.policy import OnnxGo2Policy
 from dimos.simulation.scenes.procedural import office
 

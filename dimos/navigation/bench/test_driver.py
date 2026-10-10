@@ -29,9 +29,9 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.Bool import Bool
-from dimos.navigation.sim_eval.driver import TERMINAL_FILE, EpisodeDriver
-from dimos.navigation.sim_eval.ground_truth import GroundTruth
-from dimos.navigation.sim_eval.suite import Case, Manifest, Rules
+from dimos.navigation.bench.driver import TERMINAL_FILE, EpisodeDriver
+from dimos.navigation.bench.ground_truth import GroundTruth
+from dimos.navigation.bench.suite import Case, Manifest, Rules
 from dimos.simulation.scenes.procedural import office
 
 RULES = Rules(premap="walk", stuck_s=1.0, stalled_s=1.0)

@@ -19,8 +19,8 @@ from pathlib import Path
 
 import pytest
 
-from dimos.navigation.sim_eval.ground_truth import GO2, GroundTruth
-from dimos.navigation.sim_eval.suite import (
+from dimos.navigation.bench.ground_truth import GO2, GroundTruth
+from dimos.navigation.bench.suite import (
     MINED,
     NARROW_DOOR_M,
     OBSTRUCTED,

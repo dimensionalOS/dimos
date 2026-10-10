@@ -40,21 +40,21 @@ import time
 
 from dimos.constants import STATE_DIR
 from dimos.core.coordination.blueprint_config.sources import configuration_environment
-from dimos.navigation.sim_eval.driver import TERMINAL_FILE
-from dimos.navigation.sim_eval.scorer import Recording, score
-from dimos.navigation.sim_eval.suite import Case, Manifest, Split, _git_state
+from dimos.navigation.bench.driver import TERMINAL_FILE
+from dimos.navigation.bench.scorer import Recording, score
+from dimos.navigation.bench.suite import Case, Manifest, Split, _git_state
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-RUNS_DIR = STATE_DIR / "sim-eval"
+RUNS_DIR = STATE_DIR / "nav-bench"
 SLOTS_DIR = RUNS_DIR / "slots"
 MAX_SLOTS = 64
 RESULTS_FILE = "results.jsonl"
 RUN_FILE = "run.json"
 SCORE_FILE = "score.json"
 RECORDING_FILE = "memory.db"
-REPLAY_SUFFIX = ".rrd"
+REPLAY_FILE = "rerun.rrd"
 RECORD_TOPICS = (
     "ground_truth,joint_state,odometry,tf,scene,contacts,goal,planner_path,path,cmd_vel,"
     "goal_reached,lidar,local_map,surface_map"
@@ -96,8 +96,7 @@ class Episode:
 
     @property
     def replay(self) -> Path:
-        """The episode's rerun file, beside its directory so a run's files open together."""
-        return self.dir.with_suffix(REPLAY_SUFFIX)
+        return self.dir / REPLAY_FILE
 
 
 @dataclass
@@ -342,7 +341,7 @@ def _stop(process: subprocess.Popen[bytes]) -> None:
 
 
 def _collect_recording(log: Path, episode: Episode) -> None:
-    """Move the run's recording into the episode and its rerun file beside it, found from the log."""
+    """Move the run's recording and rerun file into the episode, found from the log."""
     match = RECORDING_LINE.search(log.read_text(errors="replace"))
     if match is None:
         return
@@ -352,7 +351,7 @@ def _collect_recording(log: Path, episode: Episode) -> None:
     for file in source.parent.iterdir():
         if file.name.startswith(RECORDING_FILE):
             shutil.move(str(file), episode.dir / file.name)
-        elif file.name == "rerun.rrd":
+        elif file.name == REPLAY_FILE:
             shutil.move(str(file), episode.replay)
     if not any(source.parent.iterdir()):
         source.parent.rmdir()

@@ -19,8 +19,8 @@ import math
 import numpy as np
 import pytest
 
-from dimos.navigation.sim_eval.ground_truth import GroundTruth
-from dimos.navigation.sim_eval.oracle import RouteTracker, Tracking, walk
+from dimos.navigation.bench.ground_truth import GroundTruth
+from dimos.navigation.bench.oracle import RouteTracker, Tracking, walk
 from dimos.simulation.go2_legged.policy import OnnxGo2Policy
 from dimos.simulation.go2_sim.world import Go2Sim
 from dimos.simulation.scenes.procedural import office

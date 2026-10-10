@@ -23,9 +23,9 @@ import time
 import pytest
 import typer
 
-from dimos.navigation.sim_eval.cli import override_flag, seeds_of
-from dimos.navigation.sim_eval.ground_truth import Difficulty
-from dimos.navigation.sim_eval.runner import (
+from dimos.navigation.bench.cli import override_flag, seeds_of
+from dimos.navigation.bench.ground_truth import Difficulty
+from dimos.navigation.bench.runner import (
     RECORDING_FILE,
     RESULTS_FILE,
     RUN_FILE,
@@ -39,7 +39,7 @@ from dimos.navigation.sim_eval.runner import (
     run,
     stop_all,
 )
-from dimos.navigation.sim_eval.suite import Case, Manifest, Rules
+from dimos.navigation.bench.suite import Case, Manifest, Rules
 from dimos.simulation.scenes.procedural import office
 
 FAKE_BLUEPRINT = """
@@ -146,7 +146,7 @@ def test_run_scores_every_episode_of_the_split_in_parallel(
     episode = run_dir / "narrow_door-s1-bbbbbb-r1"
     assert (episode / RECORDING_FILE).exists()
     assert (episode / SCORE_FILE).exists()
-    assert (run_dir / "narrow_door-s1-bbbbbb-r1.rrd").read_bytes() == b"rrd"
+    assert (run_dir / "narrow_door-s1-bbbbbb-r1" / "rerun.rrd").read_bytes() == b"rrd"
     assert 'scene 1 {"door_width": 0.5} --set-x=1' in (episode / "run.log").read_text()
     assert not any((tmp_path / "recordings").iterdir())
     meta = json.loads((run_dir / RUN_FILE).read_text())
