@@ -36,6 +36,7 @@ from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Twist
 from dimos_generated.sensor_msgs.msg import JointState
 from dimos_generated.std_msgs.msg import Float32, Header
+from dimos_generated.tf2_msgs.msg import TFMessage
 from dimos_generated.trajectory_msgs.msg import JointTrajectory
 import numpy as np
 
@@ -71,7 +72,6 @@ from dimos.hardware.drive_trains.spec import (
 )
 from dimos.hardware.manipulators.spec import ManipulatorAdapter
 from dimos.hardware.whole_body.spec import WholeBodyAdapter
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:

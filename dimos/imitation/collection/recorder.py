@@ -55,11 +55,6 @@ class CollectionRecorder(Recorder):
             return EpisodeStatus.from_json(msg.data).ts
         return super()._resolve_ts(name, msg)
 
-    def _resolve_ts(self, name: str, msg: object) -> float:
-        if isinstance(msg, EpisodeStatus):
-            return msg.ts
-        return super()._resolve_ts(name, msg)
-
     async def _resolve_pose(self, name: str, msg: object, ts: float) -> Pose | None:
         if name in self.config.poseless_streams:
             return None

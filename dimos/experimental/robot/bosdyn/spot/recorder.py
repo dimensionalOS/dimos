@@ -32,7 +32,6 @@ from pydantic import Field
 from dimos.core.stream import In
 from dimos.experimental.robot.bosdyn.spot.config import CAMERA_STREAM_SUFFIXES
 from dimos.memory.module import Recorder, RecorderConfig
-from dimos.memory.recording_policy import OnExisting
 from dimos.memory.type.recording import OnExisting
 
 # jpeg codec quantises depth it to ~25cm and adds block artifacts (horrible)

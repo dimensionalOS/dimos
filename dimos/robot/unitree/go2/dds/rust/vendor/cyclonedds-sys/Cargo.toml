@@ -18,8 +18,8 @@ shm = []
 default = []
 
 [build-dependencies]
-# 0.55 chokes on anonymous unions with clang >= 16; 0.70 names them.
-bindgen = "0.70"
+# 0.72 retains complete struct definitions with current Clang, including Clang 22.
+bindgen = "0.72"
 glob = "0.3"
 cc = "1.0"
 

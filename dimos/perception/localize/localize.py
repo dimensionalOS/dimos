@@ -27,11 +27,16 @@ from dataclasses import dataclass, field
 import math
 from typing import TYPE_CHECKING, Any, cast
 
+from dimos_generated.sensor_msgs.msg import PointCloud2
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 
 from dimos.memory.embed import EmbedImages
 from dimos.memory.transform import QualityWindow, peaks
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.geometry import inverse_transform
+from dimos.msgs.image import image_sharpness
+from dimos.msgs.pointcloud import pointcloud_from_xyz, pointcloud_to_open3d, pointcloud_xyz
+from dimos.msgs.time import time_from_seconds, to_seconds
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.localize.rig import Rig
@@ -100,9 +105,9 @@ class Groups:
 
     def add(self, det: Detection3DPC, radius: float, voxel: float) -> int:
         """Assign one sighting to its object, folding its cloud in."""
-        points = np.asarray(det.pointcloud.pointcloud.points)
+        points = pointcloud_xyz(det.pointcloud)
         centroid = points.mean(axis=0)
-        camera = (-det.transform).translation
+        camera = inverse_transform(det.transform).transform.translation
 
         hit = next(
             (i for i, c in enumerate(self.centers) if np.linalg.norm(c - centroid) <= radius), -1
@@ -118,7 +123,7 @@ class Groups:
             self.members.append([])
             self.trace.append([])
         else:
-            self._fuse(hit, det.pointcloud.ts, points, centroid, voxel)
+            self._fuse(hit, to_seconds(det.pointcloud.header.stamp), points, centroid, voxel)
             if det.ts > self.latest_ts[hit]:
                 self.latest[hit] = det.pointcloud
                 self.latest_ts[hit] = det.ts
@@ -137,13 +142,13 @@ class Groups:
         weighted mean over every viewpoint rather than a mean of means, and the
         running center follows the same counts.
         """
-        held = np.asarray(self.clouds[i].pointcloud.points)
+        held = pointcloud_xyz(self.clouds[i])
         na, nb = self.raw[i], float(len(points))
         self.centers[i] = (na * self.centers[i] + nb * centroid) / (na + nb)
         self.raw[i] = na + nb
         merged = np.vstack([held, points])
-        ts = max(self.clouds[i].ts, ts)
-        frame = self.clouds[i].frame_id
+        ts = max(to_seconds(self.clouds[i].header.stamp), ts)
+        frame = self.clouds[i].header.frame_id
 
         if voxel > 0:
             w = np.ones(len(merged))
@@ -159,7 +164,9 @@ class Groups:
             np.add.at(psum, inverse, merged * w[:, None])
             merged = psum / wsum[:, None]
             self.weights[i] = wsum
-        self.clouds[i] = PointCloud2.from_numpy(merged, frame_id=frame, timestamp=ts)
+        self.clouds[i] = pointcloud_from_xyz(
+            merged, header=Header(stamp=time_from_seconds(ts), frame_id=frame)
+        )
 
     def rows(self, i: int) -> np.ndarray:
         return np.asarray(self.members[i]).reshape(-1, M_WIDTH)
@@ -200,17 +207,17 @@ def _lift(
     detections: ImageDetections2D[Any], rig: Rig, policy: LocalizePolicy, plane: Any | None
 ) -> list[Detection3DPC]:
     """Gate a frame's lifted detections."""
-    pose = rig.camera_pose(detections.ts, detections.image.frame_id)
+    pose = rig.camera_pose(detections.ts, detections.image.header.frame_id)
     if pose is None:
         return []
     lifted = rig.lift(detections, plane)
     if lifted is None:
         return []
-    camera = np.array([pose.position.x, pose.position.y, pose.position.z])
+    camera = np.array([pose.pose.position.x, pose.pose.position.y, pose.pose.position.z])
 
     valid: list[Detection3DPC] = []
     for det3d in lifted:
-        points = np.asarray(det3d.pointcloud.pointcloud.points)
+        points = pointcloud_xyz(det3d.pointcloud)
         if len(points) < policy.min_points:
             continue
         if float((points.max(axis=0) - points.min(axis=0)).max()) > policy.max_object_extent_m:
@@ -249,13 +256,13 @@ def embed_index(
         rig.color.after(t0)
         .before(t1)
         .filter(lambda obs: obs.data.brightness > 0.1)
-        .transform(QualityWindow(lambda img: img.sharpness, window=1.0 / rig.embed_hz))
+        .transform(QualityWindow(image_sharpness, window=1.0 / rig.embed_hz))
         .map(lambda obs: obs.derive(data=obs.data, pose=rig.index_pose(obs)))
         .filter(lambda obs: obs.pose is not None)
         .transform(EmbedImages(siglip))
         .map(
             lambda obs: obs.derive(
-                data=IndexFrame(obs.ts, obs.data.frame_id, float(obs.data.sharpness))
+                data=IndexFrame(obs.ts, obs.data.header.frame_id, image_sharpness(obs.data))
             )
         )
         .materialize()
@@ -339,7 +346,7 @@ def localize(
             expanded.add(peak.ts)
             gathered: Stream[Any, Any] = source.near(
                 peak.pose_stamped, radius=policy.verify_radius_m
-            ).transform(QualityWindow(lambda f: f.sharpness, window=policy.verify_window_s))
+            ).transform(QualityWindow(image_sharpness, window=policy.verify_window_s))
             candidate_ids.update(obs.id for obs in gathered)
         logger.info(f"localize {q!r}: {len(sightings)} semantic peaks of {index_count} embedded")
 
@@ -401,7 +408,7 @@ def localize(
                         class_id=j,
                         confidence=float(score),
                         name=queries[j],
-                        ts=img.ts,
+                        ts=to_seconds(img.header.stamp),
                         image=img,
                     )
                     if det.is_valid():
@@ -449,7 +456,9 @@ def _orientation(cloud: PointCloud2) -> tuple[float, float, float, float]:
     from scipy.spatial.transform import Rotation
 
     try:
-        x, y, z, w = Rotation.from_matrix(np.asarray(cloud.oriented_bounding_box.R)).as_quat()
+        x, y, z, w = Rotation.from_matrix(
+            np.asarray(pointcloud_to_open3d(cloud).get_oriented_bounding_box().R)
+        ).as_quat()
     except Exception:
         return (0.0, 0.0, 0.0, 1.0)
     return (float(x), float(y), float(z), float(w))
@@ -521,7 +530,7 @@ def _finalize(
         margin = score - max(rivals) if rivals else 1.0
 
         union = group.clouds[i]
-        points = np.asarray(union.pointcloud.points)
+        points = pointcloud_xyz(union)
         aabb_min, aabb_max = points.min(axis=0), points.max(axis=0)
         centroids = mine[:, M_CX : M_CZ + 1]
         offsets = mine[:, M_KX : M_KZ + 1] - centroids.mean(axis=0)  # center to camera

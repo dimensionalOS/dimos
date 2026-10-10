@@ -13,15 +13,23 @@
 # limitations under the License.
 
 
+from dimos_generated.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseStamped,
+    Quaternion,
+    Transform,
+    TransformStamped,
+    Vector3,
+)
+from dimos_generated.nav_msgs.msg import Path
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 import pytest
 
 from dimos.core.module import ModuleConfig
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.nav_msgs.Path import Path
+from dimos.core.transport_factory import rpc_backend
+from dimos.msgs.time import time_from_seconds
 from dimos.navigation.local_planner.obstacles import path_clearance
 from dimos.navigation.tf_pose import TfPose
 from dimos.navigation.trajectory_follower.fancy.laws import seed
@@ -35,6 +43,12 @@ from dimos.protocol.tf.tf import MultiTBuffer
 
 # The real constructor stands up an LCM RPC transport per instance; the fixture stops them.
 _BUILT: list[TrajectoryFollower] = []
+
+
+@pytest.fixture(autouse=True)
+def isolate_rpc_boundary(mocker):
+    for method in ("start", "serve_module_rpc", "stop"):
+        mocker.patch.object(rpc_backend(), method)
 
 
 @pytest.fixture(autouse=True)
@@ -91,16 +105,28 @@ def _follower(**config):
 
 def _base_at(z: float) -> PoseStamped:
     """The tf-resolved base pose; the ground sits emb.base_height under it."""
-    return PoseStamped(ts=0.0, frame_id="odom", position=Vector3(0.0, 0.0, z))
+    return PoseStamped(
+        header=Header(stamp=time_from_seconds(0.0), frame_id="odom"),
+        pose=Pose(position=Point(0.0, 0.0, z), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
+    )
 
 
 def _straight_path(end_x: float = 0.5) -> Path:
     return Path(
-        ts=0.0,
-        frame_id="odom",
+        header=Header(stamp=time_from_seconds(0.0), frame_id="odom"),
         poses=[
-            PoseStamped(ts=0.0, frame_id="odom", position=Vector3(0.0, 0.0, 0.0)),
-            PoseStamped(ts=0.0, frame_id="odom", position=Vector3(end_x, 0.0, 0.0)),
+            PoseStamped(
+                header=Header(stamp=time_from_seconds(0.0), frame_id="odom"),
+                pose=Pose(
+                    position=Point(0.0, 0.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)
+                ),
+            ),
+            PoseStamped(
+                header=Header(stamp=time_from_seconds(0.0), frame_id="odom"),
+                pose=Pose(
+                    position=Point(end_x, 0.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)
+                ),
+            ),
         ],
     )
 
@@ -154,7 +180,10 @@ def test_a_stale_path_outranks_an_arrival():
     out, reached = _driven(follower), _reached(follower)
     path = _straight_path(0.5)
     follower._on_path(path)
-    at_goal = PoseStamped(ts=0.0, frame_id="odom", position=Vector3(0.5, 0.0, 0.01))
+    at_goal = PoseStamped(
+        header=Header(stamp=time_from_seconds(0.0), frame_id="odom"),
+        pose=Pose(position=Point(0.5, 0.0, 0.01), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
+    )
     follower.step(at_goal, path, age=9.0)
     assert out[-1].linear.x == 0.0
     assert not reached
@@ -175,12 +204,12 @@ def _on_tf(follower: TrajectoryFollower, frame: str = "odom") -> tuple[MultiTBuf
     tf, clock = MultiTBuffer(), _Clock()
     follower._pose_src = TfPose(tf, "base_link", follower.config.max_path_age_s, clock=clock)
     tf.receive_transform(
-        Transform(
-            translation=Vector3(0.0, 0.0, 0.01),
-            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-            frame_id=frame,
+        TransformStamped(
+            header=Header(stamp=time_from_seconds(5.0), frame_id=frame),
             child_frame_id="base_link",
-            ts=5.0,
+            transform=Transform(
+                translation=Vector3(0.0, 0.0, 0.01), rotation=Quaternion(0.0, 0.0, 0.0, 1.0)
+            ),
         )
     )
     return tf, clock
@@ -193,7 +222,12 @@ def test_the_pose_comes_off_tf_in_the_path_frame(heard):
     follower._on_path(_straight_path(5.0))  # an odom plan; the edge on tf is map -> base_link
     follower.tick()
     assert (out[-1].linear.x, out[-1].linear.y, out[-1].angular.z) == (0.0, 0.0, 0.0)
-    follower._on_path(Path(ts=0.0, frame_id="map", poses=_straight_path(5.0).poses))
+    follower._on_path(
+        Path(
+            header=Header(stamp=time_from_seconds(0.0), frame_id="map"),
+            poses=_straight_path(5.0).poses,
+        )
+    )
     clock.t += TfPose.RETRY_PERIOD_S  # the miss parked lookups for a period
     follower.tick()
     assert out[-1].linear.x > 0.0
@@ -218,7 +252,9 @@ def test_an_empty_path_drops_the_plan_and_zeroes_the_twist():
     follower._on_path(path)
     follower.step(pose, path, age=0.0)
     assert out[-1].linear.x > 0.0
-    follower._on_path(Path(ts=0.0, frame_id=path.frame_id, poses=[]))
+    follower._on_path(
+        Path(header=Header(stamp=time_from_seconds(0.0), frame_id=path.header.frame_id), poses=[])
+    )
     assert (out[-1].linear.x, out[-1].linear.y, out[-1].angular.z) == (0.0, 0.0, 0.0)
     assert follower._path is None
 

@@ -247,9 +247,16 @@ def test_tracked_bodies_are_published_on_tf_in_world() -> None:
         ]
         assert children[3:] == ["apple"]
         apple = messages[-1].transforms[3]
-        assert apple.frame_id == "world"
-        assert apple.ts == pytest.approx(time.time(), abs=5.0)
-        assert np.allclose(apple.translation.to_numpy(), [0.4, 0.08, 0.17])
+        assert apple.header.frame_id == "world"
+        assert to_seconds(apple.header.stamp) == pytest.approx(time.time(), abs=5.0)
+        assert np.allclose(
+            [
+                apple.transform.translation.x,
+                apple.transform.translation.y,
+                apple.transform.translation.z,
+            ],
+            [0.4, 0.08, 0.17],
+        )
     finally:
         module.stop()
 

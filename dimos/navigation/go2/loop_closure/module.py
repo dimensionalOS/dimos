@@ -16,18 +16,16 @@ from __future__ import annotations
 
 import time
 
+from dimos_generated.dimos_msgs.msg import LineSegment3D, LineSegments3D
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseArray, PoseStamped, Quaternion
+from dimos_generated.sensor_msgs.msg import PointCloud2
+from dimos_generated.std_msgs.msg import Float32, Header
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.PoseArray import PoseArray
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.nav_msgs.LineSegments3D import LineSegments3D
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.std_msgs.Float32 import Float32
-from dimos.msgs.std_msgs.Header import Header
+from dimos.msgs.time import time_from_seconds, to_seconds
 from dimos.navigation.go2.loop_closure.pgo import PGOConfig
 from dimos.navigation.go2.loop_closure.pgo_map import LIVE_PGO, PGOMap
 from dimos.robot.unitree.type.lidar import repair_stale_ts
@@ -95,7 +93,7 @@ class PGOVoxelMapper(Module):
     def _on_lidar(self, cloud: PointCloud2) -> None:
         assert self._map is not None
         t0, loops = time.perf_counter(), self._map.n_loops
-        rebuilt = self._map.add(cloud, self._pose)
+        rebuilt = self._map.add(cloud, self._pose.pose if self._pose is not None else None)
         self._frames += 1
         emit = rebuilt or self._frames % self.config.emit_every == 0
         global_map = self._map.global_map() if emit else None
@@ -105,7 +103,7 @@ class PGOVoxelMapper(Module):
             self.global_map.publish(global_map)
         if self._map.n_keyframes != self._graph_keyframes:
             self._graph_keyframes = self._map.n_keyframes
-            self._publish_graph(cloud.ts)
+            self._publish_graph(to_seconds(cloud.header.stamp))
         if self.config.telemetry:
             self.mapper_frame_ms.publish(Float32(frame_ms))
             if self._map.n_loops != loops:
@@ -119,14 +117,20 @@ class PGOVoxelMapper(Module):
         positions, quats = self._map.keyframe_poses()
         self.pgo_keyframes.publish(
             PoseArray(
-                Header(ts, frame_id),
+                Header(stamp=time_from_seconds(ts), frame_id=frame_id),
                 [
-                    Pose(*xyz, *quat)
+                    Pose(position=Point(*xyz), orientation=Quaternion(*quat))
                     for xyz, quat in zip(positions.tolist(), quats.tolist(), strict=True)
                 ],
             )
         )
         segments, scores = self._map.loop_segments()
         self.pgo_loops.publish(
-            LineSegments3D(ts=ts, frame_id=frame_id, segments=segments, weights=scores)
+            LineSegments3D(
+                header=Header(stamp=time_from_seconds(ts), frame_id=frame_id),
+                segments=[
+                    LineSegment3D(start=Point(*start), end=Point(*end), weight=float(score))
+                    for (start, end), score in zip(segments.tolist(), scores.tolist(), strict=True)
+                ],
+            )
         )

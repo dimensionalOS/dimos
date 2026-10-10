@@ -19,11 +19,14 @@ from __future__ import annotations
 
 from typing import Any
 
+from dimos_generated.geometry_msgs.msg import Pose
+from dimos_generated.nav_msgs.msg import Path
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.nav_msgs.Path import Path
+from dimos.msgs.geometry import yaw
+from dimos.msgs.time import time_from_seconds
 from dimos.navigation.embodiment.base import Embodiment
 
 from .base import RESOLUTION, densify_states, pose_stamped, states_of
@@ -57,8 +60,12 @@ class TargetEpisode:
         # what ships. Port se2.py when parity on it is wanted.
         band = np.asarray(obstacles, dtype=float).reshape(-1, 2)
 
-        xs = [pose.x, goal.x] + ([] if not len(band) else [band[:, 0].min(), band[:, 0].max()])
-        ys = [pose.y, goal.y] + ([] if not len(band) else [band[:, 1].min(), band[:, 1].max()])
+        xs = [pose.position.x, goal.position.x] + (
+            [] if not len(band) else [band[:, 0].min(), band[:, 0].max()]
+        )
+        ys = [pose.position.y, goal.position.y] + (
+            [] if not len(band) else [band[:, 1].min(), band[:, 1].max()]
+        )
         # Anchored on the world lattice: a new return may add rows, never move a sample.
         x0, y0 = anchor(min(xs) - PAD), anchor(min(ys) - PAD)
         x1, y1 = max(xs) + PAD, max(ys) + PAD
@@ -69,17 +76,21 @@ class TargetEpisode:
         states = se2_search(
             grid,
             (x0, y0, x1, y1),
-            (pose.x, pose.y, pose.yaw),
-            (goal.x, goal.y),
+            (pose.position.x, pose.position.y, yaw(pose.orientation)),
+            (goal.position.x, goal.position.y),
             self._emb,
             self._emb.precision,
             incumbent=states_of(incumbent),
         )
         if states is None:
-            return Path(ts=0.0, frame_id="world", poses=[pose_stamped(pose.x, pose.y, pose.yaw)])
+            return Path(
+                header=Header(stamp=time_from_seconds(0.0), frame_id="world"),
+                poses=[pose_stamped(pose.position.x, pose.position.y, yaw(pose.orientation))],
+            )
         dense = densify_states(states, self._res)
         return Path(
-            ts=0.0, frame_id="world", poses=[pose_stamped(x, y, yaw) for x, y, yaw in dense]
+            header=Header(stamp=time_from_seconds(0.0), frame_id="world"),
+            poses=[pose_stamped(x, y, yaw) for x, y, yaw in dense],
         )
 
 
@@ -110,8 +121,8 @@ class RustTargetEpisode:
         inc = states_of(incumbent)
         out = self._mod.plan(
             pts,
-            (pose.x, pose.y, pose.yaw),
-            (goal.x, goal.y),
+            (pose.position.x, pose.position.y, yaw(pose.orientation)),
+            (goal.position.x, goal.position.y),
             self._emb,
             self._res,
             None if inc is None else np.ascontiguousarray(inc, dtype=np.float64),
@@ -122,8 +133,14 @@ class RustTargetEpisode:
             unseen_cost,
         )
         if out is None or not len(out):
-            return Path(ts=0.0, frame_id="world", poses=[pose_stamped(pose.x, pose.y, pose.yaw)])
-        return Path(ts=0.0, frame_id="world", poses=[pose_stamped(x, y, yaw) for x, y, yaw in out])
+            return Path(
+                header=Header(stamp=time_from_seconds(0.0), frame_id="world"),
+                poses=[pose_stamped(pose.position.x, pose.position.y, yaw(pose.orientation))],
+            )
+        return Path(
+            header=Header(stamp=time_from_seconds(0.0), frame_id="world"),
+            poses=[pose_stamped(x, y, yaw) for x, y, yaw in out],
+        )
 
 
 def make_py(emb: Embodiment, resolution: float = RESOLUTION, **_: Any) -> TargetEpisode:

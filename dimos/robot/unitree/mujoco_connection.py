@@ -45,6 +45,7 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.global_config import GlobalConfig
 from dimos.msgs.camera_info import camera_info_from_fov
 from dimos.msgs.image import image_from_array
+from dimos.msgs.pointcloud import pointcloud_from_xyz
 from dimos.msgs.time import header_now, time_from_seconds
 from dimos.simulation.mujoco.constants import (
     LAUNCHER_PATH,
@@ -353,7 +354,9 @@ class MujocoConnection:
         if seq > self._last_lidar_seq and lidar is not None:
             self._last_lidar_seq = seq
             points, ts = lidar
-            return PointCloud2.from_numpy(points, frame_id="world", timestamp=ts)
+            return pointcloud_from_xyz(
+                points, header=Header(stamp=time_from_seconds(ts), frame_id="world")
+            )
 
         return None
 

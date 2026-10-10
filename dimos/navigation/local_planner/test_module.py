@@ -15,18 +15,26 @@
 from dataclasses import replace
 import math
 
+from dimos_generated.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseStamped,
+    Quaternion,
+    Transform,
+    TransformStamped,
+    Vector3,
+)
+from dimos_generated.nav_msgs.msg import Path
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 from numpy.typing import NDArray
 import pytest
 
 from dimos.core.module import ModuleConfig
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.nav_msgs.Path import Path
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.core.transport_factory import rpc_backend
+from dimos.msgs.geometry import quaternion_from_euler, yaw
+from dimos.msgs.pointcloud import pointcloud_from_xyz
+from dimos.msgs.time import time_from_seconds
 from dimos.navigation.embodiment.base import Embodiment
 from dimos.navigation.embodiment.go2 import GO2
 from dimos.navigation.local_planner import module as planner_module
@@ -49,6 +57,12 @@ _BUILT: list[LocalPlanner] = []
 
 
 @pytest.fixture(autouse=True)
+def isolate_rpc_boundary(mocker):
+    for method in ("start", "serve_module_rpc", "stop"):
+        mocker.patch.object(rpc_backend(), method)
+
+
+@pytest.fixture(autouse=True)
 def _stop_modules():
     yield
     while _BUILT:
@@ -63,18 +77,26 @@ def _planner(**config) -> LocalPlanner:
 
 def test_stamped_preserves_positions_and_yaw():
     ref = Path(
-        frame_id="world", poses=[pose_stamped(0.0, 0.0, 0.0), pose_stamped(1.0, 2.0, math.pi / 2)]
+        header=Header(stamp=time_from_seconds(0.0), frame_id="world"),
+        poses=[pose_stamped(0.0, 0.0, 0.0), pose_stamped(1.0, 2.0, math.pi / 2)],
     )
     nav = stamped(ref, ts=3.0, frame_id="odom")
-    assert nav.frame_id == "odom"
+    assert nav.header.frame_id == "odom"
     assert len(nav.poses) == 2
-    assert nav.poses[1].position.x == 1.0
-    assert nav.poses[1].position.y == 2.0
-    assert abs(nav.poses[1].yaw - math.pi / 2) < 1e-9
+    assert nav.poses[1].pose.position.x == 1.0
+    assert nav.poses[1].pose.position.y == 2.0
+    assert abs(yaw(nav.poses[1].pose.orientation) - math.pi / 2) < 1e-9
 
 
 def test_stamped_empty():
-    assert len(stamped(Path(frame_id="world", poses=[])).poses) == 0
+    assert (
+        len(
+            stamped(
+                Path(header=Header(stamp=time_from_seconds(0.0), frame_id="world"), poses=[])
+            ).poses
+        )
+        == 0
+    )
 
 
 def test_carrot_walks_arc_from_closest_waypoint():
@@ -108,20 +130,23 @@ def test_hold_publishes_single_pose_stub_at_the_current_pose():
     planner, published = _holding_planner()
     planner.hold(
         PoseStamped(
-            position=(1.5, -2.0, 0.0), orientation=Quaternion.from_euler(Vector3(0, 0, math.pi / 2))
+            header=Header(stamp=time_from_seconds(0.0), frame_id=""),
+            pose=Pose(
+                position=Point(1.5, -2.0, 0.0), orientation=quaternion_from_euler(0, 0, math.pi / 2)
+            ),
         ),
         age=7.0,
     )
     assert len(published) == 1
     path = published[0]
-    assert path.frame_id == "odom"
+    assert path.header.frame_id == "odom"
     # a single pose is the planner's refusal shape
     assert len(path.poses) == 1
-    assert path.poses[0].position.x == 1.5
-    assert path.poses[0].position.y == -2.0
-    assert abs(path.poses[0].yaw - math.pi / 2) < 1e-9
+    assert path.poses[0].pose.position.x == 1.5
+    assert path.poses[0].pose.position.y == -2.0
+    assert abs(yaw(path.poses[0].pose.orientation) - math.pi / 2) < 1e-9
     # the stub stands on the ground like every planned pose
-    assert abs(path.poses[0].position.z - (0.0 - GO2.base_height)) < 1e-9
+    assert abs(path.poses[0].pose.position.z - (0.0 - GO2.base_height)) < 1e-9
 
 
 def test_a_route_that_vanished_clears_the_plan_once():
@@ -129,17 +154,29 @@ def test_a_route_that_vanished_clears_the_plan_once():
     # a route that never existed is "waiting", not a clear
     planner.clear()
     assert published == []
-    planner.hold(PoseStamped(position=(1.5, -2.0, 0.0)), age=7.0)
+    planner.hold(
+        PoseStamped(
+            header=Header(stamp=time_from_seconds(0.0), frame_id=""),
+            pose=Pose(position=Point(1.5, -2.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
+        ),
+        age=7.0,
+    )
     planner.clear()
     planner.clear()
     assert len(published) == 2
-    assert published[1].poses == [] and published[1].frame_id == "odom"
+    assert published[1].poses == [] and published[1].header.frame_id == "odom"
     assert planner._planned is None and planner._incumbent is None
 
 
 def test_hold_stub_stops_the_controller():
     planner, published = _holding_planner()
-    planner.hold(PoseStamped(position=(1.5, -2.0, 0.0)), age=7.0)
+    planner.hold(
+        PoseStamped(
+            header=Header(stamp=time_from_seconds(0.0), frame_id=""),
+            pose=Pose(position=Point(1.5, -2.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
+        ),
+        age=7.0,
+    )
     pose = pose_stamped(1.5, -2.0, 0.0)
     twist = PursuitController().update(pose, published[0], t=0.0)
     assert (twist.linear.x, twist.linear.y, twist.angular.z) == (0.0, 0.0, 0.0)
@@ -152,7 +189,15 @@ def test_hold_warns_once_per_stale_episode(monkeypatch):
     )
     planner, _published = _holding_planner()
     for _ in range(3):
-        planner.hold(PoseStamped(position=(0.0, 0.0, 0.0)), age=7.0)
+        planner.hold(
+            PoseStamped(
+                header=Header(stamp=time_from_seconds(0.0), frame_id=""),
+                pose=Pose(
+                    position=Point(0.0, 0.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)
+                ),
+            ),
+            age=7.0,
+        )
     assert len(warnings) == 1
 
 
@@ -169,17 +214,25 @@ def test_a_stale_pose_is_a_missing_pose(monkeypatch):
     tf, clock = MultiTBuffer(), _Clock()
     planner._pose_src = TfPose(tf, "base_link", planner.config.max_map_age_s, clock=clock)
     tf.receive_transform(
-        Transform(
-            translation=Vector3(0.0, 0.0, 0.3),
-            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-            frame_id="odom",
+        TransformStamped(
+            header=Header(stamp=time_from_seconds(5.0), frame_id="odom"),
             child_frame_id="base_link",
-            ts=5.0,
+            transform=Transform(
+                translation=Vector3(0.0, 0.0, 0.3), rotation=Quaternion(0.0, 0.0, 0.0, 1.0)
+            ),
         )
     )
-    planner._on_local_map(PointCloud2.from_numpy(np.zeros((0, 3), np.float32), frame_id="odom"))
+    planner._on_local_map(
+        pointcloud_from_xyz(
+            np.zeros((0, 3), np.float32),
+            header=Header(stamp=time_from_seconds(0.0), frame_id="odom"),
+        )
+    )
     planner._on_planner_path(
-        Path(frame_id="odom", poses=[pose_stamped(0.0, 0.0, 0.0), pose_stamped(3.0, 0.0, 0.0)])
+        Path(
+            header=Header(stamp=time_from_seconds(0.0), frame_id="odom"),
+            poses=[pose_stamped(0.0, 0.0, 0.0), pose_stamped(3.0, 0.0, 0.0)],
+        )
     )
     planner.tick()
     assert len(published) == 1
@@ -230,7 +283,7 @@ def test_the_band_rides_the_body_not_the_map_origin():
 def test_a_map_with_a_non_finite_return_still_plans():
     planner, published = _holding_planner()
     room = np.concatenate([_room(-0.28), np.array([[np.nan, 0.0, -0.08]], dtype=np.float32)])
-    cloud = PointCloud2.from_numpy(room, frame_id="odom")
+    cloud = pointcloud_from_xyz(room, header=Header(stamp=time_from_seconds(0.0), frame_id="odom"))
     planner._on_local_map(cloud)
     assert planner.plan_once(cloud, pose_stamped(0.0, 0.0, 0.0), (0.5, 0.0), ground_z=-0.28)
     assert len(published) == 1 and len(published[0].poses) >= 2
@@ -249,10 +302,14 @@ def _detour(emb: Embodiment, cloud: NDArray[np.float64], ground_z: float) -> flo
     hard = hard_points(load_model("body_band", emb), cloud, ground_z)
     episode = make_py(emb)
     episode.reset()
-    path = episode.plan(hard[:, :2], Pose(0.0, 0.0, 0.0), Pose(3.0, 0.0, 0.0))
+    path = episode.plan(
+        hard[:, :2],
+        Pose(position=Point(0.0, 0.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
+        Pose(position=Point(3.0, 0.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
+    )
     if len(path.poses) < 2:
         return math.inf  # a refusal is the strongest form of "it saw the wall"
-    return max(abs(p.position.y) for p in path.poses)
+    return max(abs(p.pose.position.y) for p in path.poses)
 
 
 def test_a_tall_body_plans_around_what_the_old_band_cut_off():

@@ -16,17 +16,23 @@
     0.0
   ],
   "camera_info": {
-    "frame_id": "camera_optical",
+    "header": {
+      "stamp": {
+        "sec": 0,
+        "nanosec": 0
+      },
+      "frame_id": "camera_optical"
+    },
     "height": 720,
     "width": 1280,
     "distortion_model": "equidistant",
-    "D": [
+    "d": [
       -0.07309428880537933,
       -0.02341140740909078,
       -0.0069305931780026956,
       0.009238684474464793
     ],
-    "K": [
+    "k": [
       797.4756164864929,
       0.0,
       643.5352167821186,
@@ -37,7 +43,7 @@
       0.0,
       1.0
     ],
-    "R": [
+    "r": [
       1.0,
       0.0,
       0.0,
@@ -48,7 +54,7 @@
       0.0,
       1.0
     ],
-    "P": [
+    "p": [
       797.4756164864929,
       0.0,
       643.5352167821186,
@@ -63,7 +69,14 @@
       0.0
     ],
     "binning_x": 0,
-    "binning_y": 0
+    "binning_y": 0,
+    "roi": {
+      "x_offset": 0,
+      "y_offset": 0,
+      "height": 0,
+      "width": 0,
+      "do_rectify": false
+    }
   },
   "camera_info_hz": 1.0,
   "tf_root": "base_link",

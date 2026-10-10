@@ -31,11 +31,13 @@ import math
 import sys
 import time
 
+from dimos_generated.geometry_msgs.msg import Pose
+from dimos_generated.sensor_msgs.msg import PointCloud2
 import numpy as np
 
 from dimos.mapping.voxels.grid import VoxelGrid
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.pointcloud import pointcloud_xyz
+from dimos.msgs.time import time_from_seconds, to_seconds
 from dimos.navigation.go2.loop_closure.pgo import PGOConfig, PoseGraph, _PGOState, _pose_to_pose3
 from dimos.utils.logging_config import setup_logger
 
@@ -79,18 +81,24 @@ class PGOMap:
     def add(self, cloud: PointCloud2, pose: Pose | None) -> bool:
         """Insert a world-frame lidar frame taken at odom `pose`. True if the map was rebuilt."""
         self._grid.add_frame(cloud)
-        if pose is not None and not (pose.position.is_zero() or pose.orientation.is_zero()):
+        if pose is not None and not (
+            all(getattr(pose.position, axis) == 0 for axis in ("x", "y", "z"))
+            or all(getattr(pose.orientation, axis) == 0 for axis in ("x", "y", "z", "w"))
+        ):
             t0, loops = time.perf_counter(), self.n_loops
-            self._pgo.process(_pose_to_pose3(pose), cloud.ts, cloud)
+            self._pgo.process(_pose_to_pose3(pose), to_seconds(cloud.header.stamp), cloud)
             if self.n_loops != loops:
                 self.loop_ms = (time.perf_counter() - t0) * 1e3
 
         # frame time, not wall time, so replay and tests pace the same as the robot
-        if self.n_loops == self._placed_loops or cloud.ts - self._last_rebuild_ts < self._cooldown:
+        if (
+            self.n_loops == self._placed_loops
+            or to_seconds(cloud.header.stamp) - self._last_rebuild_ts < self._cooldown
+        ):
             return False
         t0 = time.perf_counter()
         self._grid.reproject(self.graph().place)
-        self._placed_loops, self._last_rebuild_ts = self.n_loops, cloud.ts
+        self._placed_loops, self._last_rebuild_ts = self.n_loops, to_seconds(cloud.header.stamp)
         self.rebuild_ms = (time.perf_counter() - t0) * 1e3
         logger.info(
             "PGO map rebuilt",
@@ -144,7 +152,9 @@ def main(dataset: str) -> None:
     def frames() -> Iterator[tuple[PointCloud2, Pose | None]]:
         for obs in lidar:
             cloud = obs.data
-            cloud.ts = obs.ts  # old recordings carry Unitree's stale lidar stamps
+            cloud.header.stamp = time_from_seconds(
+                obs.ts
+            )  # old recordings carry Unitree's stale lidar stamps
             yield cloud, obs.pose
 
     live = PGOMap()
@@ -163,7 +173,10 @@ def main(dataset: str) -> None:
     for cloud, _ in frames():
         gold.add_frame(graph.place(cloud))
 
-    got, want = live.global_map().points_f32(), gold.get_global_pointcloud2().points_f32()
+    got, want = (
+        pointcloud_xyz(live.global_map()).astype(np.float32),
+        pointcloud_xyz(gold.get_global_pointcloud2()).astype(np.float32),
+    )
     missing = 1 - _within_one_voxel(want, got, 0.05)
     extra = 1 - _within_one_voxel(got, want, 0.05)
     steps = np.array(step_ms)

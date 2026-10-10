@@ -39,6 +39,9 @@
           mkdir -p $out/native/rust
           cp -r ${../../../../native/rust/dimos-module} $out/native/rust/dimos-module
           cp -r ${../../../../native/rust/dimos-module-macros} $out/native/rust/dimos-module-macros
+          cp -r ${../../../../native/rust/dimos-lcm-transport} $out/native/rust/dimos-lcm-transport
+          mkdir -p $out/packages/dimos-generated/src/dimos_generated_schemas/package
+          cp -r ${../../../../packages/dimos-generated/src/dimos_generated_schemas/package/rust} $out/packages/dimos-generated/src/dimos_generated_schemas/package/rust
         '';
 
         generatedCargoNix = crate2nix.tools.${system}.generatedCargoNix {

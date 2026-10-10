@@ -21,15 +21,19 @@ same operations, same order, same libm.
 from dataclasses import replace
 import math
 
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 import pytest
 
+from dimos.msgs.geometry import quaternion_from_euler
+from dimos.msgs.time import time_from_seconds, to_seconds
+
 pytest.importorskip("dimos_trajectory_follower")
 
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.nav_msgs.Path import Path
+from dimos_generated.geometry_msgs.msg import PoseStamped
+from dimos_generated.nav_msgs.msg import Path
+
 from dimos.navigation.embodiment.go2 import GO2
 from dimos.navigation.local_planner.obstacles import path_clearance as follower_clearance
 from dimos.navigation.local_planner.profile import encode_precision
@@ -51,14 +55,16 @@ GOVERNOR = GO2.to_json()
 
 def _pose(x: float, y: float, yaw: float = 0.0) -> PoseStamped:
     return PoseStamped(
-        frame_id="world",
-        position=Vector3(x, y, 0.0),
-        orientation=Quaternion.from_euler(Vector3(0, 0, yaw)),
+        header=Header(stamp=time_from_seconds(0.0), frame_id="world"),
+        pose=Pose(position=Point(x, y, 0.0), orientation=quaternion_from_euler(0, 0, yaw)),
     )
 
 
 def _path(states: list[tuple[float, float, float]]) -> Path:
-    return Path(frame_id="world", poses=[_pose(*s) for s in states])
+    return Path(
+        header=Header(stamp=time_from_seconds(0.0), frame_id="world"),
+        poses=[_pose(*s) for s in states],
+    )
 
 
 def _straight(rng: np.random.Generator) -> list[tuple[float, float, float]]:
@@ -141,7 +147,9 @@ def _cases(seed: int = 20260802, n: int = CASES):  # type: ignore[no-untyped-def
             encode_precision(path, enc, GO2, t0=float(srng.uniform(0.0, 1e9)))
             if k % 8 == 3:
                 for q in path.poses:
-                    q.ts = 5.0  # flat: not the dialect, both must ignore it
+                    q.header.stamp = time_from_seconds(
+                        5.0
+                    )  # flat: not the dialect, both must ignore it
 
         # non-default gains and plant every fifth case: the params tuple order is load-bearing
         emb = GO2
@@ -199,9 +207,9 @@ def test_rust_matches_python(law: str) -> None:
             seen["held"] += 1
         if abs(a[2]) >= emb.max_yaw_rate - 1e-12 or math.hypot(a[0], a[1]) >= top - 1e-12:
             seen["clamped"] += 1
-        if case[3] is not None and len(case[3]) == len(case[2]):
+        if case[3] is not None and len(case[3]) == len(case[2].poses):
             seen["governed"] += 1
-        if len(case[2]) > 2 and math.hypot(a[0], a[1]) < 1e-3 and abs(a[2]) > 1e-3:
+        if len(case[2].poses) > 2 and math.hypot(a[0], a[1]) < 1e-3 and abs(a[2]) > 1e-3:
             seen["fan"] += 1
     # the sweep is only worth its tolerance if it actually reached the branches
     assert all(v > 0 for v in seen.values()), f"unexercised branches: {seen}"
@@ -243,7 +251,7 @@ def test_encode_precision_matches_python() -> None:
         clr = np.asarray([] if clearance is None else clearance, dtype=np.float64)
         # a t0 well off zero: an offset that cancels in the diff would hide a base-stamp divergence
         t0 = 1754212345.75
-        want = [p.ts for p in encode_precision(path, clr, GO2, t0=t0).poses]
+        want = [to_seconds(p.header.stamp) for p in encode_precision(path, clr, GO2, t0=t0).poses]
         got = rs.encode_precision(path_xy_yaw(path), clr if len(clr) else None, t0, GOVERNOR)
         assert len(got) == len(want)
         for k, (x, y) in enumerate(zip(want, got, strict=True)):

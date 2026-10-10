@@ -199,7 +199,7 @@ class Owlv2Detector(HuggingFaceModel):
         logit shift and scale, and clipped pixel ``(x1, y1, x2, y2)`` boxes.
         A miss runs the image tower once; a hit runs nothing.
         """
-        key = image.ts
+        key = to_seconds(image.header.stamp)
         if key in self._features:
             self._features.move_to_end(key)
             return self._features[key]

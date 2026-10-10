@@ -340,30 +340,34 @@ def visible_objects(
 
 
 def objects_msg(objects: Sequence[VisibleObject], ts: float) -> bytes:
-    m = Detection3DArray()
-    m.header = Header()
-    _stamp(m.header, ts)
-    m.header.frame_id = "world"
-    m.detections = []
+    def header() -> Header:
+        value = Header(stamp=Time(sec=0, nanosec=0), frame_id="world")
+        _stamp(value, ts)
+        return value
+
+    detections = []
     for label, center, size in objects:
-        # Generated constructors share default nested objects: build every level fresh.
-        d = Detection3D()
-        d.header = Header()
-        _stamp(d.header, ts)
-        d.header.frame_id = "world"
-        d.results = [
-            ObjectHypothesisWithPose(hypothesis=ObjectHypothesis(class_id=label, score=1.0))
-        ]
-        d.results_length = 1
         cx, cy, cz = (float(v) for v in center)
         sx, sy, sz = (float(v) for v in size)
-        d.bbox = BoundingBox3D(
-            center=Pose(position=Vector3(x=cx, y=cy, z=cz), orientation=Quaternion(w=1.0)),
-            size=Vector3(x=sx, y=sy, z=sz),
+        pose = Pose(
+            position=Point(x=cx, y=cy, z=cz), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
         )
-        m.detections.append(d)
-    m.detections_length = len(m.detections)
-    return bytes(m.lcm_encode())
+        detections.append(
+            Detection3D(
+                header=header(),
+                id=label,
+                results=[
+                    ObjectHypothesisWithPose(
+                        hypothesis=ObjectHypothesis(class_id=label, score=1.0),
+                        pose=PoseWithCovariance(
+                            pose=pose, covariance=np.zeros(36, dtype=np.float64)
+                        ),
+                    )
+                ],
+                bbox=BoundingBox3D(center=pose, size=Vector3(x=sx, y=sy, z=sz)),
+            )
+        )
+    return bytes(cdr_encode(Detection3DArray(header=header(), detections=detections)))
 
 
 class MotionType(str, Enum):

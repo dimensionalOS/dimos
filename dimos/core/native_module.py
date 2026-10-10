@@ -41,6 +41,7 @@ Example usage::
 
 from __future__ import annotations
 
+from dataclasses import asdict, is_dataclass
 import enum
 import functools
 from importlib.util import find_spec
@@ -54,6 +55,7 @@ import threading
 import time
 from typing import IO, Any
 
+import numpy as np
 from pydantic import Field, model_validator
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
@@ -93,6 +95,21 @@ else:
     from typing import TypeVar
 
 logger = setup_logger()
+
+
+def _json_values(value: Any) -> Any:
+    """Convert generated value fields to JSON without changing their schema names."""
+    if is_dataclass(value) and not isinstance(value, type):
+        return _json_values(asdict(value))
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, dict):
+        return {key: _json_values(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_values(item) for item in value]
+    return value
 
 
 class LogFormat(enum.Enum):
@@ -211,7 +228,7 @@ class NativeModuleConfig(ModuleConfig):
         # An opted-in base field is sent even when None, so the native struct
         # reports a null it can name rather than a field that looks unset.
         return {
-            k: v
+            k: _json_values(v)
             for k, v in self.model_dump().items()
             if k not in ignore_fields and (v is not None or k in self.base_fields)
         }

@@ -40,14 +40,14 @@ import itertools
 import math
 from typing import Any, Protocol
 
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped
+from dimos_generated.nav_msgs.msg import Path
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.nav_msgs.Path import Path
+from dimos.msgs.geometry import quaternion_from_euler, yaw
+from dimos.msgs.time import time_from_seconds
 
 RESOLUTION = 0.1  # waypoint spacing of the published route (m)
 # Largest yaw change one published waypoint may command (rad). A consumer that
@@ -81,7 +81,7 @@ def states_of(path: Path | None) -> NDArray[np.float64] | None:
     if path is None or not path.poses:
         return None
     return np.array(
-        [[p.position.x, p.position.y, p.orientation.euler[2]] for p in path.poses]
+        [[p.pose.position.x, p.pose.position.y, yaw(p.pose.orientation)] for p in path.poses]
     ).reshape(-1, 3)
 
 
@@ -104,8 +104,9 @@ def densify_states(states: NDArray[np.float64], res: float) -> list[NDArray[np.f
 
 def pose_stamped(x: float, y: float, yaw: float) -> PoseStamped:
     return PoseStamped(
-        ts=0.0,  # deterministic: nothing here reads a stamp, and caches get pickled
-        frame_id="world",
-        position=[float(x), float(y), 0.0],
-        orientation=Quaternion.from_euler(Vector3(0.0, 0.0, float(yaw))),
+        header=Header(stamp=time_from_seconds(0.0), frame_id="world"),
+        pose=Pose(
+            position=Point(x=float(x), y=float(y), z=0.0),
+            orientation=quaternion_from_euler(0.0, 0.0, float(yaw)),
+        ),
     )

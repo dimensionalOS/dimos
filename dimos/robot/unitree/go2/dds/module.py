@@ -24,15 +24,18 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, Literal
 
+from dimos_generated.sensor_msgs.msg import (
+    BatteryState,
+    CompressedImage,
+    Imu,
+    JointState,
+    Joy,
+    PointCloud2,
+)
+
 from dimos.core.core import rpc
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import Out
-from dimos.msgs.sensor_msgs.BatteryState import BatteryState
-from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
-from dimos.msgs.sensor_msgs.Imu import Imu
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.sensor_msgs.Joy import Joy
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.unitree.go2.base import Go2Base, Go2BaseConfig
 
 

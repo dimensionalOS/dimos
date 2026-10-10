@@ -35,8 +35,17 @@ import threading
 import time
 from typing import Any
 
-from dimos_lcm.geometry_msgs import Pose
-from dimos_lcm.vision_msgs import BoundingBox3D, ObjectHypothesis, ObjectHypothesisWithPose
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseWithCovariance, Quaternion, Vector3
+from dimos_generated.sensor_msgs.msg import CameraInfo, Image, PointCloud2
+from dimos_generated.std_msgs.msg import Header
+from dimos_generated.tf2_msgs.msg import TFMessage
+from dimos_generated.vision_msgs.msg import (
+    BoundingBox3D,
+    Detection3D,
+    Detection3DArray,
+    ObjectHypothesis,
+    ObjectHypothesisWithPose,
+)
 import numpy as np
 
 from dimos.agents.annotation import skill
@@ -46,15 +55,12 @@ from dimos.core.stream import In, Out
 from dimos.memory.blobstore.memory import MemoryBlobStore
 from dimos.memory.observationstore.memory import ListObservationStore
 from dimos.memory.store.memory import MemoryStore
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.std_msgs.Header import Header
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.msgs.vision_msgs.Detection3D import Detection3D
-from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
+from dimos.msgs.geometry import (
+    transform_matrix,
+)
+from dimos.msgs.image import image_to_rgb
+from dimos.msgs.pointcloud import pointcloud_from_xyz, pointcloud_from_xyz_rgb, pointcloud_xyz
+from dimos.msgs.time import time_from_seconds, to_seconds
 from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC
 from dimos.perception.localize.dandetect import DanDetector
 from dimos.perception.localize.localize import Groups, LocalizeTrace
@@ -67,7 +73,7 @@ logger = setup_logger()
 INDEX_STREAM = "color_image_embedded"
 DEPTH_STREAM = "depth_memory"
 COLOR_CODEC = "jpeg"
-DEPTH_CODEC = "lz4+lcm"
+DEPTH_CODEC = "lz4+cdr"
 
 
 class LiveLocalizeModuleConfig(ModuleConfig):
@@ -142,8 +148,12 @@ class LiveLocalizeModule(Module):
                 self._camera_seen.set()
 
         self._unsubs = [
-            self.color_image.subscribe(lambda img: self._color_feed.append(img, ts=img.ts)),
-            self.depth_image.subscribe(lambda img: self._depth_feed.append(img, ts=img.ts)),
+            self.color_image.subscribe(
+                lambda img: self._color_feed.append(img, ts=to_seconds(img.header.stamp))
+            ),
+            self.depth_image.subscribe(
+                lambda img: self._depth_feed.append(img, ts=to_seconds(img.header.stamp))
+            ),
             self.camera_info.subscribe(on_camera_info),
         ]
         self._thread = threading.Thread(target=self._warm, name="localize-warmup", daemon=True)
@@ -184,7 +194,7 @@ class LiveLocalizeModule(Module):
         camera = self._camera
         assert camera is not None
         self.rig = Rig(
-            cameras={camera.frame_id: camera},
+            cameras={camera.header.frame_id: camera},
             color=self.index,
             world_frame=self.config.world_frame,
             tf=self._tf_buffer,
@@ -271,13 +281,13 @@ class LiveLocalizeModule(Module):
 
 def _image_colors(det: Detection3DPC, camera: CameraInfo) -> np.ndarray:
     """Each cloud point's colour sampled from the sighting's own image at its reprojection."""
-    points = det.pointcloud.points_f32()
-    matrix = det.transform.to_matrix()
+    points = pointcloud_xyz(det.pointcloud).astype(np.float32)
+    matrix = transform_matrix(det.transform.transform)
     in_camera = points @ matrix[:3, :3].T + matrix[:3, 3]
     pixels = Detection3DPC.project_pixels(in_camera, camera)
     cols = np.round(pixels[:, 0]).astype(int)
     rows = np.round(pixels[:, 1]).astype(int)
-    rgb = det.image.to_rgb().data
+    rgb = image_to_rgb(det.image)
     height, width = rgb.shape[:2]
     sampled: np.ndarray = rgb[np.clip(rows, 0, height - 1), np.clip(cols, 0, width - 1)]
     return sampled.astype(np.float32) / 255.0
@@ -287,21 +297,19 @@ def as_textured_cloud(
     traces: list[LocalizeTrace], camera: CameraInfo, frame_id: str
 ) -> PointCloud2:
     """Every verified instance's sightings as one cloud, each point wearing its own image's pixel."""
-    import open3d as o3d
-    import open3d.core as o3c
-
     members = [det for trace in traces for answer in trace.answers for det in answer]
-    pcd = o3d.t.geometry.PointCloud()
-    if members:
-        positions = np.vstack([det.pointcloud.points_f32() for det in members])
-        colors = np.vstack([_image_colors(det, camera) for det in members])
-        pcd.point["positions"] = o3c.Tensor(positions, dtype=o3c.float32)
-        pcd.point["colors"] = o3c.Tensor(colors, dtype=o3c.float32)
-        latest = max(det.ts for det in members)
-    else:
-        pcd.point["positions"] = o3c.Tensor(np.zeros((0, 3), dtype=np.float32), dtype=o3c.float32)
-        latest = 0.0
-    return PointCloud2(pointcloud=pcd, frame_id=frame_id, ts=latest)
+    if not members:
+        return pointcloud_from_xyz(
+            np.zeros((0, 3)), header=Header(stamp=time_from_seconds(0.0), frame_id=frame_id)
+        )
+    positions = np.vstack([pointcloud_xyz(det.pointcloud) for det in members])
+    colors = np.vstack([_image_colors(det, camera) for det in members])
+    latest = max(det.ts for det in members)
+    return pointcloud_from_xyz_rgb(
+        positions,
+        np.clip(np.rint(colors * 255), 0, 255).astype(np.uint8),
+        header=Header(stamp=time_from_seconds(latest), frame_id=frame_id),
+    )
 
 
 def as_detection_array(queries: list[str], results: list[Any], frame_id: str) -> Detection3DArray:
@@ -312,22 +320,29 @@ def as_detection_array(queries: list[str], results: list[Any], frame_id: str) ->
         for hit in hits:
             if hit.point_cloud is None:
                 continue
-            points = hit.point_cloud.as_numpy()[0]
+            points = pointcloud_xyz(hit.point_cloud)
             low, high = points.min(axis=0), points.max(axis=0)
             middle, extent = (low + high) / 2, high - low
-            center = Vector3(*(float(v) for v in middle))
+            center = Point(*(float(v) for v in middle))
             size = Vector3(*(max(float(v), 1e-3) for v in extent))
             latest = max(latest, hit.last_seen_timestamp)
             boxes.append(
                 Detection3D(
-                    header=Header(hit.last_seen_timestamp, frame_id),
+                    header=Header(
+                        stamp=time_from_seconds(hit.last_seen_timestamp), frame_id=frame_id
+                    ),
                     id=hit.instance_id,
                     results=[
                         ObjectHypothesisWithPose(
-                            hypothesis=ObjectHypothesis(class_id=query, score=hit.semantic_score)
+                            hypothesis=ObjectHypothesis(class_id=query, score=hit.semantic_score),
+                            pose=PoseWithCovariance(
+                                pose=Pose(
+                                    position=center, orientation=Quaternion(0.0, 0.0, 0.0, 1.0)
+                                ),
+                                covariance=np.zeros(36, dtype=np.float64),
+                            ),
                         )
                     ],
-                    results_length=1,
                     bbox=BoundingBox3D(
                         center=Pose(position=center, orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
                         size=size,
@@ -335,7 +350,6 @@ def as_detection_array(queries: list[str], results: list[Any], frame_id: str) ->
                 )
             )
     return Detection3DArray(
-        detections_length=len(boxes),
-        header=Header(latest, frame_id),
+        header=Header(stamp=time_from_seconds(latest), frame_id=frame_id),
         detections=boxes,
     )

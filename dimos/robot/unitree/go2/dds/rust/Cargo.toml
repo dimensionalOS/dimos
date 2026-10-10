@@ -17,7 +17,7 @@ path = "src/bin/go2_dds.rs"
 # Our forks, vendored: the robot has no GitHub access. See vendor/*/Cargo.toml.
 cyclonedds-rs = { path = "vendor/cyclonedds-rs", default-features = false }
 dimos-module = { path = "../../../../../../native/rust/dimos-module" }
-lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
+dimos-generated-messages = { path = "../../../../../../packages/dimos-generated/src/dimos_generated_schemas/package/rust" }
 serde = { version = "1", features = ["derive"] }
 serde-big-array = "0.5"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
@@ -33,22 +33,22 @@ path = "dimos_go2_dds::module::Go2Dds"
 python = "dimos.robot.unitree.go2.dds.module:GO2DDS"
 
 [package.metadata.dimos.module.go2_dds.inputs]
-cmd_vel = "geometry_msgs.Twist"
-command = "std_msgs.String"
-tf = "tf2_msgs.TFMessage"
+cmd_vel = "geometry_msgs/msg/Twist"
+command = "std_msgs/msg/String"
+tf = "tf2_msgs/msg/TFMessage"
 
 [package.metadata.dimos.module.go2_dds.outputs]
-odometry = "nav_msgs.Odometry"
-lidar = "sensor_msgs.PointCloud2"
-video = "foxglove_msgs.CompressedVideo"
-image = "sensor_msgs.CompressedImage"
-lidar_raw = "sensor_msgs.PointCloud2"
-lidar_imu = "sensor_msgs.Imu"
-joint_state = "sensor_msgs.JointState"
-imu = "sensor_msgs.Imu"
-battery = "sensor_msgs.BatteryState"
-joy = "sensor_msgs.Joy"
-camera_info = "sensor_msgs.CameraInfo"
+odometry = "nav_msgs/msg/Odometry"
+lidar = "sensor_msgs/msg/PointCloud2"
+video = "foxglove_msgs/msg/CompressedVideo"
+image = "sensor_msgs/msg/CompressedImage"
+lidar_raw = "sensor_msgs/msg/PointCloud2"
+lidar_imu = "sensor_msgs/msg/Imu"
+joint_state = "sensor_msgs/msg/JointState"
+imu = "sensor_msgs/msg/Imu"
+battery = "sensor_msgs/msg/BatteryState"
+joy = "sensor_msgs/msg/Joy"
+camera_info = "sensor_msgs/msg/CameraInfo"
 
 [profile.release]
 lto = "thin"

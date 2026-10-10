@@ -31,8 +31,10 @@ import threading
 import time
 from typing import TYPE_CHECKING, NamedTuple
 
+from dimos_generated.geometry_msgs.msg import Transform, TransformStamped, Vector3
 from dimos_generated.sensor_msgs.msg import JointState
 from dimos_generated.std_msgs.msg import Header
+from dimos_generated.tf2_msgs.msg import TFMessage
 import numpy as np
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
@@ -43,19 +45,18 @@ from dimos.control.task import (
     JointStateSnapshot,
     ResourceClaim,
 )
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.time import time_from_seconds
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from dimos_generated.geometry_msgs.msg import PoseStamped
+
     from dimos.control.components import HardwareId, JointName, JointState as JointReading, TaskName
     from dimos.control.hardware_interface import ConnectedHardware
     from dimos.hardware.manipulators.spec import ControlMode
     from dimos.hardware.whole_body.spec import IMUState
-    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 logger = setup_logger()
 
@@ -477,18 +478,21 @@ class TickLoop:
         ts = state.joints.timestamp
         self._publish_tf_callback(
             TFMessage(
-                *(
-                    Transform(
-                        translation=pose.position,
-                        rotation=pose.orientation,
-                        # IK solvers return world coordinates (base pose applied), but
-                        # stamp them with the base link's name.
-                        frame_id="world",
+                transforms=[
+                    TransformStamped(
+                        header=Header(stamp=time_from_seconds(ts), frame_id="world"),
                         child_frame_id=frame,
-                        ts=ts,
+                        transform=Transform(
+                            translation=Vector3(
+                                x=pose.pose.position.x,
+                                y=pose.pose.position.y,
+                                z=pose.pose.position.z,
+                            ),
+                            rotation=pose.pose.orientation,
+                        ),
                     )
                     for frame, pose in poses.items()
-                )
+                ]
             )
         )
 

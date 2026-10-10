@@ -25,21 +25,20 @@ from __future__ import annotations
 import threading
 from typing import Any, Literal
 
+from dimos_generated.foxglove_msgs.msg import CompressedVideo
+from dimos_generated.geometry_msgs.msg import Twist
+from dimos_generated.nav_msgs.msg import Odometry
+from dimos_generated.sensor_msgs.msg import CameraInfo, PointCloud2
+from dimos_generated.std_msgs.msg import String
 from pydantic import Field, field_validator
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
-from dimos.msgs.foxglove_msgs.CompressedVideo import CompressedVideo
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.std_msgs.String import String
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.tf.static_tf_publisher import StaticTfPublisherConfig
-from dimos.robot.unitree.go2.connection import _camera_info_static
+from dimos.robot.unitree.go2.camera_calibration import front_camera_calibration
 from dimos.robot.unitree.go2.go2_mid360_static_transforms import (
     CAMERA_XYZ,
     MID360_MOUNT_PRESETS,
@@ -55,7 +54,7 @@ class Go2BaseConfig(StaticTfPublisherConfig):
     # yaw) tuple or a name from MID360_MOUNT_PRESETS.
     mid360_mount: tuple[float, float, float] | str = MID360_MOUNT_PRESETS["SF"]
     # The front camera's calibration, published at camera_info_hz.
-    camera_info: CameraInfo = Field(default_factory=_camera_info_static)
+    camera_info: CameraInfo = Field(default_factory=front_camera_calibration)
     camera_info_hz: float = Field(default=1.0, gt=0.0)
     # The frame the live odometry moves; the mount edges above it are inverted so it
     # never gets two parents. GO2DDS publishes its own odom edge only for base_link.
@@ -107,7 +106,7 @@ class Go2Base(Module):
     @rpc
     def send_command(self, verb: str) -> None:
         """Fire an action verb at the robot side."""
-        self.command.transport.publish(String(verb))
+        self.command.transport.publish(String(data=verb))
 
     @rpc
     def sport_command(self, api_id: int) -> None:

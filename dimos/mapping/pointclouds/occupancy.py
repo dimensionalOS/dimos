@@ -24,6 +24,7 @@ from dimos_generated.geometry_msgs.msg import Point, Pose, Quaternion
 from dimos_generated.nav_msgs.msg import MapMetaData, OccupancyGrid
 from dimos_generated.sensor_msgs.msg import PointCloud2
 import numpy as np
+from numpy.typing import NDArray
 from scipy import ndimage
 
 from dimos.msgs.pointcloud import pointcloud_xyz

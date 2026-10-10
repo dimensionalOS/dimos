@@ -41,8 +41,24 @@ import time
 from typing import TYPE_CHECKING, Any
 import zlib
 
-from dimos_lcm.geometry_msgs import Pose
-from dimos_lcm.vision_msgs import BoundingBox3D, ObjectHypothesis, ObjectHypothesisWithPose
+from dimos_generated.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseStamped,
+    PoseWithCovariance,
+    Quaternion,
+    Vector3,
+)
+from dimos_generated.sensor_msgs.msg import CameraInfo, Image, PointCloud2
+from dimos_generated.std_msgs.msg import Header
+from dimos_generated.tf2_msgs.msg import TFMessage
+from dimos_generated.vision_msgs.msg import (
+    BoundingBox3D,
+    Detection3D,
+    Detection3DArray,
+    ObjectHypothesis,
+    ObjectHypothesisWithPose,
+)
 import numpy as np
 
 from dimos.agents.annotation import skill
@@ -56,17 +72,15 @@ from dimos.memory.module import MemoryModule, MemoryModuleConfig
 from dimos.memory.replay import resolve_db_path
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tf import StreamTF
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.std_msgs.Header import Header
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.msgs.vision_msgs.Detection3D import Detection3D
-from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
+from dimos.msgs.geometry import (
+    compose_transforms,
+    inverse_transform,
+    transform_from_pose,
+    transform_matrix,
+)
+from dimos.msgs.image import image_to_rgb
+from dimos.msgs.pointcloud import pointcloud_from_xyz_rgb, pointcloud_xyz
+from dimos.msgs.time import time_from_seconds
 from dimos.perception.detection.type.detection3d.pointcloud import (
     Detection3DPC,
     lattice_quantum,
@@ -193,16 +207,16 @@ class LoopFeeder(MemoryModule):
                     return
                 self._stop.wait(max(0.0, (ts - lo) - (time.time() - wall_start)))
                 data = obs.data
-                data.ts = ts + offset
+                data.header.stamp = time_from_seconds(ts + offset)
                 if name == "odom":
-                    data.frame_id = "world"
+                    data.header.frame_id = "world"
                     base = data
                     transforms = GO2Connection._odom_to_tf(data)
-                    tf_stream.append(TFMessage(*transforms), ts=data.ts, pose=None)
-                    self.tf.publish(TFMessage(*transforms))
+                    tf_stream.append(TFMessage(transforms=transforms), ts=ts + offset, pose=None)
+                    self.tf.publish(TFMessage(transforms=transforms))
                 elif name == "color_image":
                     image = data
-                targets[name].append(data, ts=data.ts, pose=obs.pose)
+                targets[name].append(data, ts=ts + offset, pose=obs.pose)
                 # The store keeps the raw scan; only the viewer sees the texture.
                 if name == "lidar" and image is not None and base is not None:
                     self.lidar.publish(_textured(data, image, base))
@@ -220,13 +234,16 @@ def _textured(cloud: PointCloud2, image: Image, pose: PoseStamped) -> PointCloud
     the static mount, then the camera's own distortion model. Voxels behind
     the camera or outside the image keep a neutral grey.
     """
-    import open3d as o3d
-    import open3d.core as o3c
-
-    points = cloud.points_f32()
-    matrix = (-(Transform.from_pose("base_link", pose) + BASE_TO_OPTICAL)).to_matrix()
+    points = pointcloud_xyz(cloud).astype(np.float32)
+    matrix = transform_matrix(
+        inverse_transform(
+            compose_transforms(
+                transform_from_pose(pose, child_frame_id="base_link"), BASE_TO_OPTICAL
+            )
+        ).transform
+    )
     camera = points @ matrix[:3, :3].T + matrix[:3, 3]
-    rgb = image.to_rgb().data
+    rgb = image_to_rgb(image)
     height, width = rgb.shape[:2]
 
     colors = np.full((len(points), 3), UNSEEN_GREY, dtype=np.float32)
@@ -238,10 +255,9 @@ def _textured(cloud: PointCloud2, image: Image, pose: PoseStamped) -> PointCloud
         inside = (cols >= 0) & (cols < width) & (rows >= 0) & (rows < height)
         colors[ahead[inside]] = rgb[rows[inside], cols[inside]] / 255.0
 
-    pcd = o3d.t.geometry.PointCloud()
-    pcd.point["positions"] = o3c.Tensor(points, dtype=o3c.float32)
-    pcd.point["colors"] = o3c.Tensor(colors, dtype=o3c.float32)
-    return PointCloud2(pointcloud=pcd, frame_id=cloud.frame_id, ts=cloud.ts)
+    return pointcloud_from_xyz_rgb(
+        points, np.clip(np.rint(colors * 255), 0, 255).astype(np.uint8), header=cloud.header
+    )
 
 
 class LocalizeModuleConfig(MemoryModuleConfig):
@@ -408,22 +424,29 @@ def _as_detection_array(queries: list[str], results: list[Any], frame_id: str) -
         for hit in hits:
             if hit.point_cloud is None:
                 continue
-            points = hit.point_cloud.as_numpy()[0]
+            points = pointcloud_xyz(hit.point_cloud)
             low, high = points.min(axis=0), points.max(axis=0)
             middle, extent = (low + high) / 2, high - low
-            center = Vector3(*(float(v) for v in middle))
+            center = Point(*(float(v) for v in middle))
             size = Vector3(*(max(float(v), 1e-3) for v in extent))
             latest = max(latest, hit.last_seen_timestamp)
             boxes.append(
                 Detection3D(
-                    header=Header(hit.last_seen_timestamp, frame_id),
+                    header=Header(
+                        stamp=time_from_seconds(hit.last_seen_timestamp), frame_id=frame_id
+                    ),
                     id=hit.instance_id,
                     results=[
                         ObjectHypothesisWithPose(
-                            hypothesis=ObjectHypothesis(class_id=query, score=hit.semantic_score)
+                            hypothesis=ObjectHypothesis(class_id=query, score=hit.semantic_score),
+                            pose=PoseWithCovariance(
+                                pose=Pose(
+                                    position=center, orientation=Quaternion(0.0, 0.0, 0.0, 1.0)
+                                ),
+                                covariance=np.zeros(36, dtype=np.float64),
+                            ),
                         )
                     ],
-                    results_length=1,
                     bbox=BoundingBox3D(
                         center=Pose(position=center, orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
                         size=size,
@@ -431,8 +454,7 @@ def _as_detection_array(queries: list[str], results: list[Any], frame_id: str) -
                 )
             )
     return Detection3DArray(
-        detections_length=len(boxes),
-        header=Header(latest, frame_id),
+        header=Header(stamp=time_from_seconds(latest), frame_id=frame_id),
         detections=boxes,
     )
 
@@ -513,7 +535,9 @@ def _lidar_cubes(cloud: Any) -> Any:
     """The lidar lattice as solid voxel cubes wearing the camera's pixels."""
     _, colors = cloud.as_numpy()
     rgb = (colors * 255).astype(np.uint8) if colors is not None else None
-    return cloud.to_rerun(mode="boxes", colors=rgb, **_cube_size(cloud.points_f32()))
+    return cloud.to_rerun(
+        mode="boxes", colors=rgb, **_cube_size(pointcloud_xyz(cloud).astype(np.float32))
+    )
 
 
 def _convert_camera_info(camera_info: Any) -> Any:

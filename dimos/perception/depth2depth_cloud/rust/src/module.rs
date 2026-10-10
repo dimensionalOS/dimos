@@ -31,10 +31,15 @@ use std::time::{Duration, Instant};
 use depth2depth::{
     Calibration, CalibrationConfig, CloudOptions, Config as ModelConfig, Depth2Depth,
 };
+use dimos_generated_messages::builtin_interfaces::msg::time::Time;
+use dimos_generated_messages::sensor_msgs::msg::camera_info::CameraInfo;
+use dimos_generated_messages::sensor_msgs::msg::compressed_image::CompressedImage;
+use dimos_generated_messages::sensor_msgs::msg::point_cloud2::PointCloud2;
+use dimos_generated_messages::sensor_msgs::msg::point_field::PointField;
+use dimos_generated_messages::std_msgs::msg::header::Header;
+use dimos_module::cdr;
 use dimos_module::pointcloud::extract_xyz;
 use dimos_module::{native_config, warn_throttled, Input, Module, Output, Tf};
-use lcm_msgs::sensor_msgs::{CameraInfo, CompressedImage, PointCloud2, PointField};
-use lcm_msgs::std_msgs::{Header, Time};
 use nalgebra::{Isometry3, Point3};
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
@@ -119,19 +124,19 @@ pub struct Config {
 #[derive(Module)]
 #[module(name = "depth2depth_cloud", setup = start, teardown = stop)]
 pub struct Depth2DepthCloud {
-    #[input(decode = CompressedImage::decode, handler = on_image)]
+    #[input(decode = cdr::decode, handler = on_image)]
     image: Input<CompressedImage>,
 
-    #[input(decode = CameraInfo::decode, handler = on_camera_info)]
+    #[input(decode = cdr::decode, handler = on_camera_info)]
     camera_info: Input<CameraInfo>,
 
-    #[input(decode = PointCloud2::decode, handler = on_lidar)]
+    #[input(decode = cdr::decode, handler = on_lidar)]
     lidar: Input<PointCloud2>,
 
     #[tf]
     tf: Tf,
 
-    #[output(encode = PointCloud2::encode)]
+    #[output(encode = cdr::encode)]
     depth_cloud: Output<PointCloud2>,
 
     #[config]
@@ -415,8 +420,8 @@ impl Worker {
             };
             let decoded = Instant::now();
             if !undistort.as_ref().is_some_and(|(held, held_width, _)| {
-                held.K == info.K
-                    && held.D == info.D
+                held.k == info.k
+                    && held.d == info.d
                     && held.distortion_model == info.distortion_model
                     && held.width == info.width
                     && *held_width == width
@@ -703,10 +708,10 @@ fn decode_rgb(image: &CompressedImage, scale: usize) -> Option<(Vec<u8>, usize, 
 }
 
 fn make_cloud(points: &[[f32; 3]], source: &Header, frame_id: String) -> PointCloud2 {
-    let field = |name: &str, offset: i32| PointField {
+    let field = |name: &str, offset: u32| PointField {
         name: name.into(),
         offset,
-        datatype: PointField::FLOAT32 as u8,
+        datatype: PointField::FLOAT32,
         count: 1,
     };
     let data: Vec<u8> = points
@@ -716,16 +721,15 @@ fn make_cloud(points: &[[f32; 3]], source: &Header, frame_id: String) -> PointCl
         .collect();
     PointCloud2 {
         header: Header {
-            seq: source.seq,
             stamp: source.stamp.clone(),
             frame_id,
         },
         height: 1,
-        width: points.len() as i32,
+        width: points.len() as u32,
         fields: vec![field("x", 0), field("y", 4), field("z", 8)],
         is_bigendian: false,
         point_step: 12,
-        row_step: 12 * points.len() as i32,
+        row_step: 12 * points.len() as u32,
         data,
         is_dense: true,
     }
@@ -745,7 +749,7 @@ fn or_derived(configured: usize, derived: usize) -> usize {
 }
 
 fn seconds(stamp: &Time) -> f64 {
-    stamp.sec as f64 + stamp.nsec as f64 * 1e-9
+    stamp.sec as f64 + stamp.nanosec as f64 * 1e-9
 }
 
 /// Config, then calibration, then image frame, since drivers stamp frames nobody publishes a transform for.
@@ -836,8 +840,12 @@ mod tests {
     #[test]
     fn a_non_jpeg_format_is_refused_rather_than_fed_to_the_decoder() {
         let png = CompressedImage {
+            header: Header {
+                stamp: Time { sec: 0, nanosec: 0 },
+                frame_id: String::new(),
+            },
             format: "png".into(),
-            ..Default::default()
+            data: Vec::new(),
         };
         assert!(decode_rgb(&png, 1).is_none());
     }
@@ -845,8 +853,7 @@ mod tests {
     #[test]
     fn the_cloud_carries_the_points_and_the_source_stamp() {
         let header = Header {
-            seq: 7,
-            stamp: Time { sec: 3, nsec: 4 },
+            stamp: Time { sec: 3, nanosec: 4 },
             frame_id: "image".into(),
         };
         let cloud = make_cloud(
@@ -858,7 +865,7 @@ mod tests {
             (
                 cloud.width,
                 cloud.header.frame_id.as_str(),
-                cloud.header.stamp.nsec
+                cloud.header.stamp.nanosec
             ),
             (2, "camera", 4)
         );

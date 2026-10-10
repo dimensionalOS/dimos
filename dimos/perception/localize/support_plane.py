@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from dimos.msgs.pointcloud import pointcloud_xyz, voxel_downsample_cloud
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -57,14 +58,11 @@ def fit_support_plane(rig: Rig, keyframes: list[Observation[Image]]) -> SupportP
     for obs in keyframes[:: max(1, len(keyframes) // 5)][:5]:
         cloud = rig.backdrop(obs.ts)
         if cloud is not None:
-            clouds.append(cloud.voxel_downsample(0.01))
+            clouds.append(pointcloud_xyz(voxel_downsample_cloud(cloud, 0.01)))
     if not clouds:
         return None
 
-    merged = clouds[0]
-    for cloud in clouds[1:]:
-        merged = merged + cloud
-    points = np.asarray(merged.pointcloud.points)
+    points = np.concatenate(clouds)
     if len(points) < 500:
         return None
 

@@ -1032,18 +1032,18 @@ class MujocoSimModule(
                         child_frame_id=self._camera_link,
                         ts=ts,
                     ),
-                ]
-                * self._body_transforms(),
+                    *self._body_transforms(),
+                ],
             )
         )
 
-    def _body_transforms(self) -> list[Transform]:
+    def _body_transforms(self) -> list[TransformStamped]:
         """World poses of ``tracked_bodies``; a name missing from the model is skipped after one warning."""
         engine = self._engine
         if engine is None or not self.config.tracked_bodies:
             return []
         ts = time.time()
-        transforms: list[Transform] = []
+        transforms: list[TransformStamped] = []
         for name in self.config.tracked_bodies:
             pose = engine.get_body_pose(name)
             if pose is None:
@@ -1053,12 +1053,15 @@ class MujocoSimModule(
                 continue
             position, (qx, qy, qz, qw) = pose
             transforms.append(
-                Transform(
-                    translation=Vector3(float(position[0]), float(position[1]), float(position[2])),
-                    rotation=Quaternion(float(qx), float(qy), float(qz), float(qw)),
-                    frame_id="world",
+                TransformStamped(
+                    header=Header(stamp=time_from_seconds(ts), frame_id="world"),
                     child_frame_id=name,
-                    ts=ts,
+                    transform=Transform(
+                        translation=Vector3(
+                            float(position[0]), float(position[1]), float(position[2])
+                        ),
+                        rotation=Quaternion(float(qx), float(qy), float(qz), float(qw)),
+                    ),
                 )
             )
         return transforms

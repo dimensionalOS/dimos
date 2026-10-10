@@ -30,7 +30,6 @@ from dimos_generated.sensor_msgs.msg import PointCloud2
 
 from dimos.core.stream import In
 from dimos.memory.module import Recorder, RecorderConfig, pose_setter_for
-from dimos.memory.recording_policy import OnExisting
 from dimos.memory.type.recording import OnExisting
 
 

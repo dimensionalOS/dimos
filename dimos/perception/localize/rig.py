@@ -31,10 +31,34 @@ from collections import OrderedDict
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, cast
 
+from dimos_generated.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseStamped,
+    Quaternion,
+    TransformStamped as Transform,
+)
+from dimos_generated.sensor_msgs.msg import CameraInfo, Image, PointCloud2
+from dimos_generated.std_msgs.msg import Header
+from dimos_generated.tf2_msgs.msg import TFMessage
 import numpy as np
 
 from dimos.memory.tf import StreamTF
-from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry import (
+    compose_transforms,
+    inverse_transform,
+    pose_from_transform,
+    transform_from_pose,
+    transform_matrix,
+)
+from dimos.msgs.image import image_to_bgr, image_view
+from dimos.msgs.pointcloud import (
+    pointcloud_from_rgbd,
+    pointcloud_from_xyz,
+    pointcloud_xyz,
+    transform_cloud,
+)
+from dimos.msgs.time import time_from_seconds, to_seconds
 from dimos.perception.detection.type.detection3d.imageDetections3DPC import ImageDetections3DPC
 from dimos.perception.detection.type.detection3d.pointcloud import lattice_quantum
 from dimos.perception.detection.type.detection3d.pointcloud_filters import (
@@ -46,13 +70,7 @@ from dimos.perception.localize.types import LocalizePolicy
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from dimos_lcm.sensor_msgs import CameraInfo
-
     from dimos.memory.type.observation import Observation
-    from dimos.msgs.geometry_msgs.Pose import Pose
-    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-    from dimos.msgs.sensor_msgs.Image import Image
-    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
     from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
     from dimos.perception.localize.support_plane import SupportPlane
     from dimos.protocol.tf.tf import TFLookup
@@ -141,7 +159,9 @@ def _tf_root(store: Any, tf_name: str, tf: StreamTF, optical: str) -> str | None
     midpoints, where an anchor stamped at the ends cannot answer.
     """
     edges = {
-        (t.frame_id, t.child_frame_id) for obs in store.stream(tf_name) for t in obs.data.transforms
+        (t.header.frame_id, t.child_frame_id)
+        for obs in store.stream(tf_name)
+        for t in obs.data.transforms
     }
     if not edges:
         return None  # live store, nothing recorded yet
@@ -167,7 +187,9 @@ def _camera_span(rig: Rig) -> float:
     except LookupError:
         return 0.0  # live store, nothing recorded yet
     seen = [rig.camera_pose(t0 + (t1 - t0) * k / 11) for k in range(12)]
-    positions = [[p.position.x, p.position.y, p.position.z] for p in seen if p is not None]
+    positions = [
+        [p.pose.position.x, p.pose.position.y, p.pose.position.z] for p in seen if p is not None
+    ]
     if len(positions) < 2:
         return 0.0
     spread = np.array(positions)
@@ -185,7 +207,7 @@ def _heading_series(rig: Rig, spans: list[tuple[float, float]]) -> tuple[np.ndar
     headings: list[float] = []
     if rig.poses is not None:
         for obs in rig.poses.after(spans[0][0]).before(spans[-1][1]):
-            q = obs.pose_stamped.orientation
+            q = obs.pose_stamped.pose.orientation
             times.append(obs.ts)
             headings.append(
                 np.arctan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
@@ -200,7 +222,7 @@ def _heading_series(rig: Rig, spans: list[tuple[float, float]]) -> tuple[np.ndar
                 transform = rig.world_to_optical(float(t))
                 if transform is None:
                     continue
-                axis = (-transform).to_matrix()[:3, 2]
+                axis = transform_matrix(inverse_transform(transform).transform)[:3, 2]
                 times.append(float(t))
                 headings.append(np.arctan2(axis[1], axis[0]))
     if len(times) < 3:
@@ -226,7 +248,7 @@ def estimate_color_delay(rig: Rig) -> float:
     except LookupError:
         return 0.0
 
-    fx = rig.cameras[rig.optical_frame].K[0]
+    fx = rig.cameras[rig.optical_frame].k[0]
     flow_ts: list[float] = []
     flow_rate: list[float] = []
     flow_dt: list[float] = []
@@ -237,7 +259,7 @@ def estimate_color_delay(rig: Rig) -> float:
         previous: np.ndarray | None = None
         previous_ts = 0.0
         for obs in rig.color.after(lo).before(hi):
-            frame = obs.data.to_opencv()
+            frame = image_to_bgr(obs.data)
             scale = 640 / frame.shape[1]
             gray = cv2.resize(
                 cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), (640, int(frame.shape[0] * scale))
@@ -308,7 +330,7 @@ def _images(store: Any, names: list[str]) -> tuple[dict[str, str], list[tuple[st
         if stream.count() == 0:
             continue
         image = stream.first().data
-        frame, data = image.frame_id, image.data
+        frame, data = image.header.frame_id, image_view(image)
         if data.dtype == np.uint16 or data.dtype.kind == "f":
             depth.append((frame, name))
         elif (
@@ -331,18 +353,17 @@ def _cameras(
     Several infos in one frame (a colour/depth pair) resolve by name order, so
     the colour one wins; infos in different frames are different cameras.
     """
-    from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo as CameraInfoMsg
 
     role = roles.get("camera_info")
     found = (
         [role]
         if role is not None
-        else sorted(n for n in names if types[n] is CameraInfoMsg and store.stream(n).count())
+        else sorted(n for n in names if types[n] is CameraInfo and store.stream(n).count())
     )
     cameras: dict[str, CameraInfo] = {}
     for name in found:  # sorted, so a color info wins over its depth twin
         info = store.stream(name).first().data
-        cameras.setdefault(info.frame_id, info)
+        cameras.setdefault(info.header.frame_id, info)
     return cameras
 
 
@@ -404,9 +425,6 @@ class Rig:
         static base-to-optical transform, required when the store has no tf and
         its poses are base poses.
         """
-        from dimos.msgs.sensor_msgs.Image import Image as ImageMsg
-        from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2 as PointCloudMsg
-        from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 
         names = store.list_streams()
         types = {name: store.stream(name).data_type for name in names}
@@ -419,11 +437,11 @@ class Rig:
         tf = StreamTF.from_store(store, tf_name) if tf_name is not None else None
 
         cameras = (
-            {camera_info.frame_id: camera_info}
+            {camera_info.header.frame_id: camera_info}
             if camera_info is not None
             else _cameras(store, roles, names, types)
         )
-        image_names = [n for n in names if types[n] is ImageMsg and n not in claimed]
+        image_names = [n for n in names if types[n] is Image and n not in claimed]
         by_frame_color, depth_streams = _images(store, image_names)
 
         color_name = roles.get("color")
@@ -439,7 +457,7 @@ class Rig:
         claimed.add(color_name)
 
         color = store.stream(color_name)
-        color_frame: str | None = color.first().data.frame_id if color.count() else None
+        color_frame: str | None = color.first().data.header.frame_id if color.count() else None
         depth_name = roles.get("depth")
         if depth_name is None:
             # aligned depth shares the colour frame; otherwise the only depth stream
@@ -455,7 +473,7 @@ class Rig:
 
         cloud_name = roles.get("cloud")
         if cloud_name is None and depth_name is None:
-            cloud_names = [n for n in names if types[n] is PointCloudMsg and n not in claimed]
+            cloud_names = [n for n in names if types[n] is PointCloud2 and n not in claimed]
             if len(cloud_names) > 1:
                 raise ValueError(f"several pointcloud streams {cloud_names}; pass --cloud")
             cloud_name = cloud_names[0] if cloud_names else None
@@ -485,7 +503,7 @@ class Rig:
             world_frame = _tf_root(store, cast("str", tf_name), tf, optical) or world_frame
         elif cloud is not None:
             try:
-                world_frame = cloud.first().data.frame_id
+                world_frame = cloud.first().data.header.frame_id
             except LookupError:
                 pass  # live store, nothing recorded yet
 
@@ -576,7 +594,11 @@ class Rig:
         if pose is None:
             return None
         mount = self.mounts[frame]
-        return -(Transform.from_pose(mount.frame_id, pose) + mount)
+        return inverse_transform(
+            compose_transforms(
+                transform_from_pose(pose, child_frame_id=mount.header.frame_id), mount
+            )
+        )
 
     def pose_at(self, ts: float) -> PoseStamped | None:
         """World base pose at ts, interpolated between bracketing samples.
@@ -585,7 +607,6 @@ class Rig:
         sample misplaces the projection. Outside the bracketed span the
         nearest sample in the tolerance window stands.
         """
-        from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
         candidates = list(self.poses.at(ts, self.tf_tolerance))
         if not candidates:
@@ -594,32 +615,48 @@ class Rig:
         later = [o for o in candidates if o.ts > ts]
         if not earlier or not later:
             pose: PoseStamped | None = min(candidates, key=lambda o: abs(o.ts - ts)).pose_stamped
+            if pose is not None:
+                pose.header.frame_id = self.world_frame
             return pose
         a = max(earlier, key=lambda o: o.ts).pose_stamped
         b = min(later, key=lambda o: o.ts).pose_stamped
-        alpha = (ts - a.ts) / (b.ts - a.ts)
-        qa = np.array([a.orientation.x, a.orientation.y, a.orientation.z, a.orientation.w])
-        qb = np.array([b.orientation.x, b.orientation.y, b.orientation.z, b.orientation.w])
+        assert a is not None and b is not None
+        alpha = (ts - to_seconds(a.header.stamp)) / (
+            to_seconds(b.header.stamp) - to_seconds(a.header.stamp)
+        )
+        qa = np.array(
+            [a.pose.orientation.x, a.pose.orientation.y, a.pose.orientation.z, a.pose.orientation.w]
+        )
+        qb = np.array(
+            [b.pose.orientation.x, b.pose.orientation.y, b.pose.orientation.z, b.pose.orientation.w]
+        )
         if float(qa @ qb) < 0:
             qb = -qb
         q = (1 - alpha) * qa + alpha * qb
         q /= np.linalg.norm(q)
         return PoseStamped(
-            ts=ts,
-            frame_id=a.frame_id,
-            position=a.position + (b.position - a.position) * alpha,
-            orientation=(float(q[0]), float(q[1]), float(q[2]), float(q[3])),
+            header=Header(stamp=time_from_seconds(ts), frame_id=self.world_frame),
+            pose=Pose(
+                position=Point(
+                    **{
+                        axis: getattr(a.pose.position, axis)
+                        + (getattr(b.pose.position, axis) - getattr(a.pose.position, axis)) * alpha
+                        for axis in ("x", "y", "z")
+                    }
+                ),
+                orientation=Quaternion(x=float(q[0]), y=float(q[1]), z=float(q[2]), w=float(q[3])),
+            ),
         )
 
     def camera_pose(self, ts: float, frame: str | None = None) -> PoseStamped | None:
         """World pose of a camera's optical frame at ts."""
         transform = self.world_to_optical(ts, frame)
-        return (-transform).to_pose() if transform is not None else None
+        return pose_from_transform(inverse_transform(transform)) if transform is not None else None
 
     def index_pose(self, obs: Observation[Any]) -> Pose | PoseStamped | None:
         """tf rigs stamp the optical pose; pose-stamped rigs keep the base one."""
         if self.tf is not None:
-            return self.camera_pose(obs.ts, obs.data.frame_id)
+            return self.camera_pose(obs.ts, obs.data.header.frame_id)
         return obs.pose
 
     # geometry
@@ -631,7 +668,6 @@ class Rig:
         frame selection needs, so its pixels come back from the colour stream,
         which must still hold the frame the index was built from.
         """
-        from dimos.msgs.sensor_msgs.Image import Image
 
         if isinstance(obs.data, Image):
             return obs.data
@@ -652,8 +688,8 @@ class Rig:
         if key in self._scans:
             self._scans.move_to_end(key)
             return self._scans[key]
-        points: np.ndarray | None = scan.data.as_numpy()[0]
-        frame = scan.data.frame_id
+        points: np.ndarray | None = pointcloud_xyz(scan.data)
+        frame = scan.data.header.frame_id
         if frame != self.world_frame:
             transform = (
                 self.tf.get(self.world_frame, frame, scan.ts, self.tf_tolerance)
@@ -663,7 +699,8 @@ class Rig:
             if transform is None:
                 points = None
             else:
-                matrix = transform.to_matrix()
+                matrix = transform_matrix(transform.transform)
+                assert points is not None
                 points = points @ matrix[:3, :3].T + matrix[:3, 3]
         self._scans[key] = points
         if len(self._scans) > _SCAN_CACHE_MAX:
@@ -687,7 +724,6 @@ class Rig:
         if held is not None:
             self._clouds.move_to_end(ts)
             return held[0]
-        from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
         scans = self.cloud.after(ts - self.cloud_accum_s).before(ts + self.cloud_accum_s)
         pairs = [
@@ -728,7 +764,9 @@ class Rig:
                     lo[0] - base[0] : hi[0] + 1 - base[0], lo[1] - base[1] : hi[1] + 1 - base[1]
                 ] = True
             points = np.vstack(kept)
-        merged = PointCloud2.from_numpy(points, frame_id=self.world_frame, timestamp=ts)
+        merged = pointcloud_from_xyz(
+            points, header=Header(stamp=time_from_seconds(ts), frame_id=self.world_frame)
+        )
         self._clouds[ts] = (merged, quantum)
         if len(self._clouds) > _CLOUD_CACHE_MAX:
             self._clouds.popitem(last=False)
@@ -745,14 +783,14 @@ class Rig:
         """
         cloud = self.cloud_at(ts)
         quantum = self._clouds[ts][1] if cloud is not None else None
-        if quantum is None:
+        if quantum is None or cloud is None:
             return None
         key = (ts, id(plane))
         held = self._shells.get(key)
         if held is not None:
             self._shells.move_to_end(key)
             return held[1]
-        points = cloud.as_numpy()[0]  # type: ignore[union-attr]
+        points = pointcloud_xyz(cloud)
         anchor = points[0, :2]
         keys = _column_keys(points, quantum, anchor)
         heights = plane.height_above(points)
@@ -794,12 +832,13 @@ class Rig:
         """
 
         def filter_func(det: Any, pc: Any, ci: Any, tf: Any) -> Any:
-            points, _ = pc.as_numpy()
+            points = pointcloud_xyz(pc)
             local = self.support_heights(ts, plane, points)
             above = local > shell
             if not above.any():
                 return pc
-            camera = tf.inverse().translation.to_numpy()
+            camera_transform = inverse_transform(tf).transform.translation
+            camera = np.array([camera_transform.x, camera_transform.y, camera_transform.z])
             ranges = np.linalg.norm(points - camera, axis=1)
             stance = np.sort(ranges[above])
             splits = np.nonzero(np.diff(stance) > gap)[0]
@@ -811,9 +850,8 @@ class Rig:
             )
             in_stance = (ranges >= stance[start]) & (ranges <= stance[end - 1])
             keep = above | ((local >= -shell) & in_stance)
-            from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
-            return PointCloud2.from_numpy(points[keep], frame_id=pc.frame_id, timestamp=pc.ts)
+            return pointcloud_from_xyz(points[keep], header=pc.header)
 
         return filter_func
 
@@ -827,7 +865,7 @@ class Rig:
         halfway to the third, and a continuous source's is the fit's inlier
         distance.
         """
-        frame = self.camera_frame(detections.image.frame_id)
+        frame = self.camera_frame(detections.image.header.frame_id)
         transform = self.world_to_optical(detections.ts, frame)
         if transform is None:
             return None
@@ -851,7 +889,6 @@ class Rig:
         """World-frame scene cloud around ts, for plane fits and rendering."""
         if self.depth is None:
             return self.cloud_at(ts)
-        from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
         depth = self.depth_at(ts)
         if depth is None:
@@ -860,13 +897,16 @@ class Rig:
             color = self.color.at(ts, 0.1).first().data
         except LookupError:
             return None
-        frame = self.camera_frame(color.frame_id)
+        frame = self.camera_frame(color.header.frame_id)
         transform = self.world_to_optical(ts, frame)
         if transform is None:
             return None
-        return PointCloud2.from_rgbd(
-            color, depth, self.cameras[frame], depth_scale=0.001, depth_trunc=depth_trunc
-        ).transform(-transform)
+        return transform_cloud(
+            pointcloud_from_rgbd(
+                color, depth, self.cameras[frame], depth_scale=0.001, depth_trunc=depth_trunc
+            ),
+            inverse_transform(transform),
+        )
 
     def default_localize_policy(self) -> LocalizePolicy:
         base = ROOM_LOCALIZE_POLICY if self.mobile else LocalizePolicy()

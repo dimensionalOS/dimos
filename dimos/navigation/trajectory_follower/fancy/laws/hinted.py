@@ -22,13 +22,13 @@ from __future__ import annotations
 import math
 from typing import Any
 
+from dimos_generated.geometry_msgs.msg import PoseStamped, Twist, Vector3
+from dimos_generated.nav_msgs.msg import Path
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.nav_msgs.Path import Path
+from dimos.msgs.geometry import yaw
+from dimos.msgs.time import to_seconds
 from dimos.navigation.embodiment.base import Embodiment
 from dimos.navigation.embodiment.go2 import GO2
 from dimos.navigation.local_planner.profile import decode_ceilings
@@ -76,12 +76,12 @@ class HintedController:
         self, pose: PoseStamped, path: Path, t: float, clearance: NDArray[np.float64] | None = None
     ) -> Twist:
         cfg, emb = self.config, self.emb
-        if len(path) < 2:
+        if len(path.poses) < 2:
             # empty path or single-pose veto stub: the planner says stop
             return Twist(Vector3(0, 0, 0), Vector3(0, 0, 0))
-        xy = np.array([[p.position.x, p.position.y] for p in path.poses])
-        yaws = np.array([p.yaw for p in path.poses])
-        px, py, pyaw = pose.position.x, pose.position.y, pose.yaw
+        xy = np.array([[p.pose.position.x, p.pose.position.y] for p in path.poses])
+        yaws = np.array([yaw(p.pose.orientation) for p in path.poses])
+        px, py, pyaw = pose.pose.position.x, pose.pose.position.y, yaw(pose.pose.orientation)
         n = len(xy)
 
         seg = np.linalg.norm(np.diff(xy, axis=0), axis=1) if n > 1 else np.zeros(1)
@@ -198,10 +198,14 @@ class RustHintedController:
         clr = None if clearance is None else np.ascontiguousarray(clearance, dtype=np.float64)
         # the law reads only stamp deltas: a precision profile, not a schedule
         ts = np.ascontiguousarray(
-            np.array([p.ts for p in path.poses], dtype=np.float64).reshape(-1)
+            np.array([to_seconds(p.header.stamp) for p in path.poses], dtype=np.float64).reshape(-1)
         )
         vx, vy, wz = self._mod.update_hinted(
-            (float(pose.position.x), float(pose.position.y), float(pose.yaw)),
+            (
+                float(pose.pose.position.x),
+                float(pose.pose.position.y),
+                float(yaw(pose.pose.orientation)),
+            ),
             path_xy_yaw(path),
             clr,
             ts,

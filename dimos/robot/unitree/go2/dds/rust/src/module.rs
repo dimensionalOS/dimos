@@ -26,18 +26,30 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use cyclonedds_rs::{DdsWriter, SampleBuffer};
+use dimos_generated_messages::builtin_interfaces::msg::time::Time as VideoTime;
+use dimos_generated_messages::builtin_interfaces::msg::time::Time;
+use dimos_generated_messages::foxglove_msgs::msg::compressed_video::CompressedVideo;
+use dimos_generated_messages::geometry_msgs::msg::point::Point;
+use dimos_generated_messages::geometry_msgs::msg::pose::Pose;
+use dimos_generated_messages::geometry_msgs::msg::pose_with_covariance::PoseWithCovariance;
+use dimos_generated_messages::geometry_msgs::msg::quaternion::Quaternion;
+use dimos_generated_messages::geometry_msgs::msg::twist::Twist;
+use dimos_generated_messages::geometry_msgs::msg::twist_with_covariance::TwistWithCovariance;
+use dimos_generated_messages::geometry_msgs::msg::vector3::Vector3;
+use dimos_generated_messages::nav_msgs::msg::odometry::Odometry;
+use dimos_generated_messages::sensor_msgs::msg::battery_state::BatteryState;
+use dimos_generated_messages::sensor_msgs::msg::camera_info::CameraInfo;
+use dimos_generated_messages::sensor_msgs::msg::compressed_image::CompressedImage;
+use dimos_generated_messages::sensor_msgs::msg::imu::Imu;
+use dimos_generated_messages::sensor_msgs::msg::joint_state::JointState;
+use dimos_generated_messages::sensor_msgs::msg::joy::Joy;
+use dimos_generated_messages::sensor_msgs::msg::point_cloud2::PointCloud2;
+use dimos_generated_messages::sensor_msgs::msg::point_field::PointField;
+use dimos_generated_messages::std_msgs::msg as std_msgs;
+use dimos_generated_messages::std_msgs::msg::header::Header;
+use dimos_module::cdr;
 use dimos_module::nalgebra::{Isometry3, Quaternion as NQuaternion, Translation3, UnitQuaternion};
 use dimos_module::{native_config, Input, Module, Output, Tf, Transform};
-use lcm_msgs::builtin_interfaces::Time as VideoTime;
-use lcm_msgs::foxglove_msgs::CompressedVideo;
-use lcm_msgs::geometry_msgs::{
-    Point, Pose, PoseWithCovariance, Quaternion, Twist, TwistWithCovariance, Vector3,
-};
-use lcm_msgs::nav_msgs::Odometry;
-use lcm_msgs::sensor_msgs::{
-    BatteryState, CameraInfo, CompressedImage, Imu, JointState, Joy, PointCloud2, PointField,
-};
-use lcm_msgs::std_msgs::{self, Header, Time};
 use tokio::runtime::Handle;
 use tracing::{info, warn};
 
@@ -93,7 +105,6 @@ pub struct Config {
     /// front_camera -> mid360_link, fixed-axis rpy in degrees.
     pub mid360_mount: [f64; 3],
     /// The front camera's calibration, published at `camera_info_hz`.
-    #[serde(with = "camera_info_dict")]
     pub camera_info: CameraInfo,
     /// Mount tree rate on `tf`.
     #[validate(range(exclusive_min = 0.0))]
@@ -120,66 +131,6 @@ pub struct Config {
     /// StopMove once `cmd_vel` has been silent this long.
     #[validate(range(min = 1))]
     pub deadman_ms: u64,
-}
-
-/// python's `CameraInfo` config dict <-> the message; the stamp is set per publish.
-mod camera_info_dict {
-    use lcm_msgs::sensor_msgs::CameraInfo;
-    use lcm_msgs::std_msgs::Header;
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
-
-    #[derive(Serialize, Deserialize)]
-    #[allow(non_snake_case)]
-    struct Dict {
-        frame_id: String,
-        height: i32,
-        width: i32,
-        distortion_model: String,
-        D: Vec<f64>,
-        K: [f64; 9],
-        R: [f64; 9],
-        P: [f64; 12],
-        #[serde(default)]
-        binning_x: i32,
-        #[serde(default)]
-        binning_y: i32,
-    }
-
-    pub fn deserialize<'de, De: Deserializer<'de>>(d: De) -> Result<CameraInfo, De::Error> {
-        let c = Dict::deserialize(d)?;
-        Ok(CameraInfo {
-            header: Header {
-                frame_id: c.frame_id,
-                ..Default::default()
-            },
-            height: c.height,
-            width: c.width,
-            distortion_model: c.distortion_model,
-            D: c.D,
-            K: c.K,
-            R: c.R,
-            P: c.P,
-            binning_x: c.binning_x,
-            binning_y: c.binning_y,
-            ..Default::default()
-        })
-    }
-
-    pub fn serialize<S: Serializer>(c: &CameraInfo, s: S) -> Result<S::Ok, S::Error> {
-        Dict {
-            frame_id: c.header.frame_id.clone(),
-            height: c.height,
-            width: c.width,
-            distortion_model: c.distortion_model.clone(),
-            D: c.D.clone(),
-            K: c.K,
-            R: c.R,
-            P: c.P,
-            binning_x: c.binning_x,
-            binning_y: c.binning_y,
-        }
-        .serialize(s)
-    }
 }
 
 fn known_encoding(v: &str) -> Result<(), validator::ValidationError> {
@@ -298,43 +249,43 @@ pub fn parse_verb(verb: &str) -> Option<Vec<Cmd>> {
 #[derive(Module)]
 #[module(name = "go2_dds", setup = start, teardown = stop)]
 pub struct Go2Dds {
-    #[input(decode = Twist::decode, handler = on_cmd_vel)]
+    #[input(decode = cdr::decode, handler = on_cmd_vel)]
     cmd_vel: Input<Twist>,
 
-    #[input(decode = std_msgs::String::decode, handler = on_command)]
-    command: Input<std_msgs::String>,
+    #[input(decode = cdr::decode, handler = on_command)]
+    command: Input<std_msgs::string::String>,
 
-    #[output(encode = Odometry::encode)]
+    #[output(encode = cdr::encode)]
     odometry: Output<Odometry>,
 
-    #[output(encode = PointCloud2::encode)]
+    #[output(encode = cdr::encode)]
     lidar: Output<PointCloud2>,
 
-    #[output(encode = CompressedVideo::encode)]
+    #[output(encode = cdr::encode)]
     video: Output<CompressedVideo>,
 
-    #[output(encode = CompressedImage::encode)]
+    #[output(encode = cdr::encode)]
     image: Output<CompressedImage>,
 
-    #[output(encode = PointCloud2::encode)]
+    #[output(encode = cdr::encode)]
     lidar_raw: Output<PointCloud2>,
 
-    #[output(encode = Imu::encode)]
+    #[output(encode = cdr::encode)]
     lidar_imu: Output<Imu>,
 
-    #[output(encode = JointState::encode)]
+    #[output(encode = cdr::encode)]
     joint_state: Output<JointState>,
 
-    #[output(encode = Imu::encode)]
+    #[output(encode = cdr::encode)]
     imu: Output<Imu>,
 
-    #[output(encode = BatteryState::encode)]
+    #[output(encode = cdr::encode)]
     battery: Output<BatteryState>,
 
-    #[output(encode = Joy::encode)]
+    #[output(encode = cdr::encode)]
     joy: Output<Joy>,
 
-    #[output(encode = CameraInfo::encode)]
+    #[output(encode = cdr::encode)]
     camera_info: Output<CameraInfo>,
 
     #[config]
@@ -414,7 +365,7 @@ impl Go2Dds {
         });
     }
 
-    async fn on_command(&mut self, msg: std_msgs::String) {
+    async fn on_command(&mut self, msg: std_msgs::string::String) {
         match parse_verb(&msg.data) {
             Some(cmds) => {
                 info!(verb = %msg.data, ?cmds, "command");
@@ -446,7 +397,7 @@ fn time_of_secs(ts: f64) -> Time {
     let sec = ts.trunc();
     Time {
         sec: sec as i32,
-        nsec: ((ts - sec) * 1e9) as i32,
+        nanosec: ((ts - sec) * 1e9) as u32,
     }
 }
 
@@ -497,7 +448,6 @@ impl Cadence {
 
 fn header(frame_id: &str, ts: f64) -> Header {
     Header {
-        seq: 0,
         stamp: time_of_secs(ts),
         frame_id: frame_id.into(),
     }
@@ -580,9 +530,9 @@ pub fn battery(s: &types::LowState, ts: f64) -> BatteryState {
         capacity: f32::NAN,
         design_capacity: f32::NAN,
         percentage: b.soc as f32 / 100.0,
-        power_supply_status: status as u8,
-        power_supply_health: BatteryState::POWER_SUPPLY_HEALTH_UNKNOWN as u8,
-        power_supply_technology: BatteryState::POWER_SUPPLY_TECHNOLOGY_LION as u8,
+        power_supply_status: status,
+        power_supply_health: BatteryState::POWER_SUPPLY_HEALTH_UNKNOWN,
+        power_supply_technology: BatteryState::POWER_SUPPLY_TECHNOLOGY_LION,
         present: true,
         cell_voltage: b
             .cell_vol
@@ -612,7 +562,6 @@ pub fn odometry(s: &types::Odometry, ts: f64) -> (Odometry, Transform) {
     let (l, a) = (&s.twist.twist.linear, &s.twist.twist.angular);
     let odom = Odometry {
         header: Header {
-            seq: 0,
             stamp: time_of_secs(ts),
             frame_id: s.header.frame_id.clone(),
         },
@@ -660,25 +609,24 @@ pub fn odometry(s: &types::Odometry, ts: f64) -> (Odometry, Transform) {
 pub fn pointcloud(s: &types::PointCloud2, ts: f64) -> PointCloud2 {
     PointCloud2 {
         header: Header {
-            seq: 0,
             stamp: time_of_secs(ts),
             frame_id: s.header.frame_id.clone(),
         },
-        height: s.height as i32,
-        width: s.width as i32,
+        height: s.height,
+        width: s.width,
         fields: s
             .fields
             .iter()
             .map(|f| PointField {
                 name: f.name.clone(),
-                offset: f.offset as i32,
+                offset: f.offset,
                 datatype: f.datatype,
-                count: f.count as i32,
+                count: f.count,
             })
             .collect(),
         is_bigendian: s.is_bigendian,
-        point_step: s.point_step as i32,
-        row_step: s.row_step as i32,
+        point_step: s.point_step,
+        row_step: s.row_step,
         data: s.data.clone(),
         is_dense: s.is_dense,
     }
@@ -918,7 +866,6 @@ impl DdsLoop {
                 if let Some(data) = newest_jpeg(replies) {
                     let msg = CompressedImage {
                         header: Header {
-                            seq: 0,
                             stamp: time_of_secs(now_secs()),
                             frame_id: CAMERA_FRAME.to_string(),
                         },
@@ -999,7 +946,7 @@ impl VideoLoop {
                 let msg = CompressedVideo {
                     timestamp: VideoTime {
                         sec: (ts_ns / 1_000_000_000) as i32,
-                        nanosec: (ts_ns % 1_000_000_000) as i32,
+                        nanosec: (ts_ns % 1_000_000_000) as u32,
                     },
                     frame_id: CAMERA_FRAME.to_string(),
                     data: au.data,
@@ -1115,7 +1062,7 @@ mod tests {
         assert_eq!(b.cell_voltage, vec![4.1]);
         assert_eq!(
             b.power_supply_status,
-            BatteryState::POWER_SUPPLY_STATUS_DISCHARGING as u8
+            BatteryState::POWER_SUPPLY_STATUS_DISCHARGING
         );
         let remote = types::WirelessController {
             lx: 0.5,
@@ -1152,8 +1099,8 @@ mod tests {
         let info = config().camera_info;
         assert_eq!((info.width, info.height), (1280, 720));
         assert_eq!(info.header.frame_id, CAMERA_FRAME);
-        assert_eq!(info.K[0], 797.4756164864929);
-        assert_eq!(info.D.len(), 4);
+        assert_eq!(info.k[0], 797.4756164864929);
+        assert_eq!(info.d.len(), 4);
     }
 
     #[test]
@@ -1207,7 +1154,7 @@ mod tests {
             odom.header.stamp,
             Time {
                 sec: 1234,
-                nsec: 500_000_000
+                nanosec: 500_000_000
             }
         );
         assert_eq!(
