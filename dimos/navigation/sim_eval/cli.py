@@ -128,10 +128,11 @@ def score_command(
 def replay_command(
     episode_dir: Path = typer.Argument(..., exists=True, help="An episode directory of a run."),
     speed: float = typer.Option(1.0, min=0.01, help="Playback pace relative to the recording."),
-    loop: bool = typer.Option(False, help="Start over at the end."),
+    loop: bool = typer.Option(True, help="Start over at the end."),
+    rerun: bool = typer.Option(True, help="Also open the episode's replay file in Rerun."),
 ) -> None:
-    """Play the episode's recorded body motion back in a MuJoCo viewer of its scene."""
-    play(episode_dir, speed=speed, loop=loop)
+    """Play the episode back: body motion in a MuJoCo viewer, the replay file in Rerun."""
+    play(episode_dir, speed=speed, loop=loop, rerun=rerun)
 
 
 def _summary(results: Path) -> None:
