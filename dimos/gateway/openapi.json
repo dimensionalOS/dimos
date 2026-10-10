@@ -6085,7 +6085,7 @@
   "info": {
     "description": "The dimos gateway's HTTP API: blueprints, global config, runs and their logs, events, Dimensional cloud uploads,\ndiscovery (blueprints, modules, message types), docs, extras and jobs.\n\ndimOS Desktop starts the gateway (`python -m dimos.gateway`, on a unix socket) and forwards `/dimos/...` to it unchanged.\nEvery answer is JSON unless the operation says otherwise; every error is `{\"error\": \"<message>\"}` (ErrorResponse).\nState is HTTP; changes are events, published on zenoh at `<ns>/dimos/events/<type>` (the `events` tag).\n\nExtensions: `x-family: dimos` on every operation; `x-agent: true` marks what Desktop's agent finds through\nsearch_endpoints; `x-mcp-tool` names an MCP tool that does the same; `x-zenoh-key` on an event schema is its key.\n",
     "title": "dimos gateway",
-    "version": "1.19.0"
+    "version": "1.19.1"
   },
   "openapi": "3.1.0",
   "paths": {
