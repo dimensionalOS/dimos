@@ -60,6 +60,11 @@ from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.galaxea.r1pro.joints import UPPER_BODY_JOINTS, coordinator_name
+from dimos.robot.galaxea.r1pro.vendor_stack import (
+    VENDOR_PROFILE,
+    VENDOR_STARTUP_SCRIPT,
+    boot_vendor_stack,
+)
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -147,6 +152,11 @@ class R1ProConnectionConfig(ModuleConfig):
     enable_wrist_color: bool = Field(default=True)
     # Max Hz per color camera (0 = no cap); the cameras arrive at ~28 Hz, so 30 passes every frame.
     color_publish_hz: float = Field(default=30.0)
+    # Boot the vendor stack (HDAS, mobiman) if it is not running; it serves every ROS topic used here.
+    boot_vendor_stack: bool = Field(default=True)
+    vendor_startup_script: str = Field(default=VENDOR_STARTUP_SCRIPT)
+    # Session profile dir; absolute, or relative to the startup script, e.g. ../sessions.d/ATCStandard/R1PROBody.d/
+    vendor_profile: str = Field(default=VENDOR_PROFILE)
 
 
 class R1ProConnection(Module):
@@ -230,6 +240,13 @@ class R1ProConnection(Module):
         self._publish_thread: Thread | None = None
 
     # Lifecycle
+
+    @rpc
+    def build(self) -> None:
+        super().build()
+        # In build, so the vendor stack is up before any module starts.
+        if self.config.boot_vendor_stack:
+            boot_vendor_stack(self.config.vendor_startup_script, self.config.vendor_profile)
 
     @rpc
     def start(self) -> None:
