@@ -26,19 +26,22 @@ from __future__ import annotations
 from dimos_generated.geometry_msgs.msg import PoseStamped, TwistStamped
 
 from dimos.control.coordinator import ControlCoordinator
-from dimos.core.stream import In
+from dimos.core.stream import In, Out
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 
 
 class ArmPoseCoordinator(ControlCoordinator):
     """Arm driven by target poses; the cartesian_ik / teleop_ik cards name-match."""
 
     cartesian_command: In[PoseStamped]
+    tf: Out[TFMessage]
 
 
 class ArmTwistCoordinator(ControlCoordinator):
     """Arm driven by EEF twists; the eef_twist card name-matches."""
 
     ee_twist_command: In[TwistStamped]
+    tf: Out[TFMessage]
 
 
 class ArmPoseTwistCoordinator(ArmPoseCoordinator):

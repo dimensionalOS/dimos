@@ -149,8 +149,9 @@ class Project:
         return tuple(result[module] for module in sorted(result))
 
 
-def prepare(project: Project) -> Path:
+def prepare(project: Project, languages: tuple[str, ...] | None = None) -> Path:
     """Generate a complete owned package atomically; never invoke compilers or networks."""
+    selected = languages or project.languages
     dependencies = project.dependencies()
     paths = sorted(project.source.rglob("*.msg")) if project.source.is_dir() else []
     if not paths and not project.internal:
@@ -171,19 +172,21 @@ def prepare(project: Project) -> Path:
     toolkit_hash = sha256()
     toolkit_paths = (
         list(toolkit.glob("*.py"))
+        + list(toolkit.glob("*.json"))
         + list((toolkit / "_vendor").rglob("*"))
         + list((toolkit / "templates").glob("*"))
     )
     for path in sorted(toolkit_paths):
         if (
             path.is_file()
-            and (path.suffix in {".py", ".hpp", ".h", ".rs", ".em", ".lark", ".json"})
+            and (path.suffix in {".py", ".hpp", ".h", ".rs", ".em", ".lark", ".json", ".cmake"})
             and "__pycache__" not in path.parts
         ):
             toolkit_hash.update(path.relative_to(toolkit).as_posix().encode())
             toolkit_hash.update(path.read_bytes())
     inputs: dict[str, Any] = {
         "abi": ABI,
+        "languages": selected,
         "toolkit": toolkit_hash.hexdigest(),
         "module": project.module,
         "version": project.version,
@@ -222,11 +225,7 @@ def prepare(project: Project) -> Path:
         version=project.version,
         dependencies=dependencies,
         shared=True,
-    )
-    (staging / "toolchain.cmake").write_text(
-        'list(PREPEND CMAKE_PREFIX_PATH "${CMAKE_CURRENT_LIST_DIR}"'
-        + "".join(" " + json.dumps(str(dep.root)) for dep in dependencies)
-        + ")\n"
+        languages=selected,
     )
     files = {
         path.relative_to(staging).as_posix(): sha256(path.read_bytes()).hexdigest()

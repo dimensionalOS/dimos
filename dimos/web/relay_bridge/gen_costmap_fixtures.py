@@ -32,8 +32,10 @@ import json
 import math
 from typing import Any
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Point, Pose, Quaternion
 from dimos_generated.nav_msgs.msg import MapMetaData, OccupancyGrid
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 
 from dimos.web.relay_bridge.builtin_codecs import encode_costmap
@@ -43,12 +45,20 @@ from dimos.web.relay_bridge.locate import find_web_dir
 def grid_msg(rows: list[list[int]], res: float, x: float, y: float, yaw: float) -> OccupancyGrid:
     """Fixture-shaped OccupancyGrid; also used by test_costmap_encoding.py."""
     origin = Pose(
-        position=Point(x=x, y=y), orientation=Quaternion(z=math.sin(yaw / 2), w=math.cos(yaw / 2))
+        position=Point(x=x, y=y, z=0.0),
+        orientation=Quaternion(z=math.sin(yaw / 2), w=math.cos(yaw / 2), x=0.0, y=0.0),
     )
     grid = np.array(rows, dtype=np.int8)
     return OccupancyGrid(
-        info=MapMetaData(width=grid.shape[1], height=grid.shape[0], resolution=res, origin=origin),
-        data=grid.ravel(),
+        info=MapMetaData(
+            width=grid.shape[1],
+            height=grid.shape[0],
+            resolution=res,
+            origin=origin,
+            map_load_time=Time(sec=0, nanosec=0),
+        ),
+        data=np.asarray(grid.ravel(), dtype=np.int8),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
     )
 
 

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import math
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import (
     Point as GeoPoint,
     Pose,
@@ -48,19 +49,19 @@ def _xy_to_path(executed_xy: list[tuple[float, float]]) -> Path:
     """Wrap (x, y) tuples in a nav_msgs.Path so memory Polyline can render them."""
     poses = [
         PoseStamped(
-            header=Header(frame_id=""),
+            header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
             pose=Pose(
                 position=GeoPoint(x=x, y=y, z=0.0), orientation=quaternion_from_euler(0.0, 0.0, 0.0)
             ),
         )
         for x, y in executed_xy
     ]
-    return Path(poses=poses)
+    return Path(poses=poses, header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""))
 
 
 def _pose(x: float, y: float, yaw: float) -> PoseStamped:
     return PoseStamped(
-        header=Header(frame_id=""),
+        header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
         pose=Pose(
             position=GeoPoint(x=x, y=y, z=0.0), orientation=quaternion_from_euler(0.0, 0.0, yaw)
         ),
@@ -80,7 +81,7 @@ def _path_from_xy(xs: list[float], ys: list[float]) -> Path:
             dy = ys[i] - ys[i - 1]
         yaw = math.atan2(dy, dx)
         poses.append(_pose(xs[i], ys[i], yaw))
-    return Path(poses=poses)
+    return Path(poses=poses, header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""))
 
 
 # Path generators
@@ -205,7 +206,10 @@ def straight_rotate(
 ) -> Path:
     """Translate straight along +x while the commanded yaw ramps 0 -> yaw_end."""
     n = round(length / step)
-    return Path(poses=[_pose(i * step, 0.0, yaw_end * i / n) for i in range(n + 1)])
+    return Path(
+        poses=[_pose(i * step, 0.0, yaw_end * i / n) for i in range(n + 1)],
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+    )
 
 
 def strafe_line(length: float = 2.0, step: float = 0.05) -> Path:
@@ -216,7 +220,10 @@ def strafe_line(length: float = 2.0, step: float = 0.05) -> Path:
     turning wrong: it must be executed as pure lateral translation.
     """
     n = round(length / step)
-    return Path(poses=[_pose(0.0, i * step, 0.0) for i in range(n + 1)])
+    return Path(
+        poses=[_pose(0.0, i * step, 0.0) for i in range(n + 1)],
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+    )
 
 
 def circle_offset_heading(
@@ -235,7 +242,7 @@ def circle_offset_heading(
         y = radius * (1.0 - math.cos(theta))
         tangent = math.atan2(math.sin(theta), math.cos(theta))
         poses.append(_pose(x, y, tangent + offset))
-    return Path(poses=poses)
+    return Path(poses=poses, header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""))
 
 
 def hold_heading(path: Path, yaw: float = 0.0) -> Path:
@@ -379,7 +386,7 @@ def sidestep_1m(distance: float = 1.0, n_points: int = 20) -> Path:
     for i in range(n_points + 1):
         a = i / n_points
         poses.append(_pose(0.0, a * distance, 0.0))
-    return Path(poses=poses)
+    return Path(poses=poses, header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""))
 
 
 def short_battery() -> dict[str, Path]:
@@ -465,8 +472,8 @@ def trajectory_to_svg(
     sp.add(Polyline(msg=_xy_to_path(executed_xy), color=_EXE_COLOR, width=_EXE_WIDTH))
     sx, sy = executed_xy[0]
     ex, ey = executed_xy[-1]
-    sp.add(Point(msg=GeoPoint(x=sx, y=sy), color=_START_COLOR, radius=_MARKER_RADIUS))
-    sp.add(Point(msg=GeoPoint(x=ex, y=ey), color=_END_COLOR, radius=_MARKER_RADIUS))
+    sp.add(Point(msg=GeoPoint(x=sx, y=sy, z=0.0), color=_START_COLOR, radius=_MARKER_RADIUS))
+    sp.add(Point(msg=GeoPoint(x=ex, y=ey, z=0.0), color=_END_COLOR, radius=_MARKER_RADIUS))
     return sp.to_svg()
 
 
@@ -512,7 +519,7 @@ def multi_trajectory_to_svg(
         if xy:
             sp.add(Polyline(msg=_xy_to_path(xy), color=color, width=_EXE_WIDTH))
             sx, sy = xy[0]
-            sp.add(Point(msg=GeoPoint(x=sx, y=sy), color=color, radius=_MARKER_RADIUS * 0.7))
+            sp.add(Point(msg=GeoPoint(x=sx, y=sy, z=0.0), color=color, radius=_MARKER_RADIUS * 0.7))
         # Legend row (world coords below the plot).
         ly = y_min - 0.4 - i * 0.25
         sp.add(
@@ -520,20 +527,21 @@ def multi_trajectory_to_svg(
                 msg=Path(
                     poses=[
                         PoseStamped(
-                            header=Header(frame_id=""),
+                            header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
                             pose=Pose(
                                 position=GeoPoint(x=x_min, y=ly, z=0.0),
                                 orientation=quaternion_from_euler(0, 0, 0),
                             ),
                         ),
                         PoseStamped(
-                            header=Header(frame_id=""),
+                            header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
                             pose=Pose(
                                 position=GeoPoint(x=x_min + 0.4, y=ly, z=0.0),
                                 orientation=quaternion_from_euler(0, 0, 0),
                             ),
                         ),
-                    ]
+                    ],
+                    header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
                 ),
                 color=color,
                 width=_EXE_WIDTH,

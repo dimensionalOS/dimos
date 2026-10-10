@@ -14,7 +14,8 @@
 
 from unittest.mock import patch
 
-from dimos_generated.geometry_msgs.msg import Point, Pose, Quaternion, Vector3
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseWithCovariance, Quaternion, Vector3
 from dimos_generated.std_msgs.msg import Header
 from dimos_generated.tf2_msgs.msg import TFMessage
 from dimos_generated.vision_msgs.msg import (
@@ -24,6 +25,8 @@ from dimos_generated.vision_msgs.msg import (
     ObjectHypothesis,
     ObjectHypothesisWithPose,
 )
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
+import numpy as np
 import pytest
 
 from dimos.msgs.geometry import quaternion_from_euler
@@ -45,7 +48,18 @@ def _detection_array(
     if orientation is None:
         orientation = Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
 
-    det = Detection3D()
+    det = Detection3D(
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        results=[],
+        bbox=BoundingBox3D(
+            center=Pose(
+                position=Point(x=0.0, y=0.0, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+            size=Vector3(x=0.0, y=0.0, z=0.0),
+        ),
+        id="",
+    )
     det.header = Header(stamp=time_from_seconds(ts), frame_id="world")
     det.id = marker_id
     det.results = [
@@ -53,7 +67,14 @@ def _detection_array(
             hypothesis=ObjectHypothesis(
                 class_id=class_id,
                 score=1.0,
-            )
+            ),
+            pose=PoseWithCovariance(
+                pose=Pose(
+                    position=Point(x=0.0, y=0.0, z=0.0),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+                covariance=np.zeros(36, dtype=np.float64),
+            ),
         )
     ]
     det.bbox = BoundingBox3D(
@@ -188,7 +209,9 @@ def test_marker_namespace_prefix_child_frames() -> None:
 def test_marker_tf_wire_preserves_exact_timestamp():
     module = MarkerTfModule()
     outputs = []
-    unsubscribe = module.tf.subscribe(lambda msg: outputs.append(TFMessage.decode(msg.encode())))
+    unsubscribe = module.tf.subscribe(
+        lambda msg: outputs.append(cdr_decode(cdr_encode(msg), TFMessage))
+    )
     detections = _detection_array(ts=0)
     detections.header.stamp.sec = 1700000000
     detections.header.stamp.nanosec = 123456789

@@ -17,8 +17,10 @@
 import pickle
 import time
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Vector3, Wrench, WrenchStamped
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 from rosbags.typesys import Stores, get_typestore
@@ -28,7 +30,12 @@ from dimos.msgs.time import header_now, time_from_seconds, to_nanoseconds
 
 
 def test_wrench_empty_is_zero() -> None:
-    np.testing.assert_array_equal(wrench_array(Wrench()), np.zeros(6))
+    np.testing.assert_array_equal(
+        wrench_array(
+            Wrench(force=Vector3(x=0.0, y=0.0, z=0.0), torque=Vector3(x=0.0, y=0.0, z=0.0))
+        ),
+        np.zeros(6),
+    )
 
 
 def test_wrench_from_array_and_vectors() -> None:
@@ -39,15 +46,19 @@ def test_wrench_from_array_and_vectors() -> None:
 
 
 def test_wrench_keywords() -> None:
-    assert Wrench(force=Vector3(x=1, y=2, z=3)).torque == Vector3()
-    assert Wrench(torque=Vector3(x=4, y=5, z=6)).force == Vector3()
+    assert Wrench(
+        force=Vector3(x=1, y=2, z=3), torque=Vector3(x=0.0, y=0.0, z=0.0)
+    ).torque == Vector3(x=0.0, y=0.0, z=0.0)
+    assert Wrench(
+        torque=Vector3(x=4, y=5, z=6), force=Vector3(x=0.0, y=0.0, z=0.0)
+    ).force == Vector3(x=0.0, y=0.0, z=0.0)
     with pytest.raises(TypeError):
-        Wrench(bogus=1)
+        Wrench(bogus=1, force=Vector3(x=0.0, y=0.0, z=0.0), torque=Vector3(x=0.0, y=0.0, z=0.0))
 
 
 def test_wrench_copy_storage() -> None:
     source = wrench_from_array([1, 2, 3, 4, 5, 6])
-    copied = Wrench.decode(source.encode())
+    copied = cdr_decode(cdr_encode(source), Wrench)
     assert copied == source
     copied.force.x = 10
     assert source.force.x == 1
@@ -89,9 +100,22 @@ def test_stamped_nested_wrench_and_explicit_header() -> None:
 
 def test_explicit_current_time_and_zero_default() -> None:
     before = time.time_ns()
-    source = WrenchStamped(header=header_now())
+    source = WrenchStamped(
+        header=header_now(),
+        wrench=Wrench(force=Vector3(x=0.0, y=0.0, z=0.0), torque=Vector3(x=0.0, y=0.0, z=0.0)),
+    )
     assert before <= to_nanoseconds(source.header.stamp) <= time.time_ns()
-    assert to_nanoseconds(WrenchStamped().header.stamp) == 0
+    assert (
+        to_nanoseconds(
+            WrenchStamped(
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                wrench=Wrench(
+                    force=Vector3(x=0.0, y=0.0, z=0.0), torque=Vector3(x=0.0, y=0.0, z=0.0)
+                ),
+            ).header.stamp
+        )
+        == 0
+    )
 
 
 @pytest.mark.parametrize("stamp", [0, 5.25])
@@ -100,11 +124,11 @@ def test_cdr_and_independent_decoding(stamp: float) -> None:
         header=Header(stamp=time_from_seconds(stamp), frame_id="ft_sensor"),
         wrench=wrench_from_array([1, 2, 3, 0.1, 0.2, 0.3]),
     )
-    decoded = WrenchStamped.decode(source.encode())
+    decoded = cdr_decode(cdr_encode(source), WrenchStamped)
     assert decoded is not source
     assert decoded == source
     independent = get_typestore(Stores.ROS2_JAZZY).deserialize_cdr(
-        source.encode(), WrenchStamped.msg_name
+        cdr_encode(source), WrenchStamped.__msgtype__
     )
     assert independent.header.frame_id == "ft_sensor"
     assert independent.header.stamp.sec * 1000000000 + independent.header.stamp.nanosec == int(

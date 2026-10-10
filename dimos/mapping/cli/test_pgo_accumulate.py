@@ -12,12 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos_generated.geometry_msgs.msg import Transform, TransformStamped, Vector3
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos_generated.std_msgs.msg import Header
 import numpy as np
 
 from dimos.mapping.cli.map import _accumulate
-from dimos.mapping.loop_closure.pgo import PoseGraph
+from dimos.navigation.go2.loop_closure.pgo import PoseGraph
 from dimos.memory.store.memory import MemoryStore
 from dimos.msgs.pointcloud import pointcloud_from_xyz, pointcloud_xyz
 from dimos.msgs.time import time_from_nanoseconds
@@ -26,9 +27,12 @@ from dimos.msgs.time import time_from_nanoseconds
 def test_pgo_accumulate_applies_generated_correction_before_mapping(mocker):
     graph = mocker.Mock(spec=PoseGraph)
     graph.correction_at.return_value = TransformStamped(
-        header=Header(frame_id="world_corrected"),
+        header=Header(frame_id="world_corrected", stamp=Time(sec=0, nanosec=0)),
         child_frame_id="world",
-        transform=Transform(translation=Vector3(x=2.0)),
+        transform=Transform(
+            translation=Vector3(x=2.0, y=0.0, z=0.0),
+            rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+        ),
     )
     mapper = mocker.Mock(side_effect=lambda observations: observations)
     mocker.patch("dimos.mapping.voxels.module.VoxelMapTransformer", return_value=mapper)

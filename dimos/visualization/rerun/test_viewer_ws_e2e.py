@@ -31,6 +31,8 @@ from dimos.core.global_config import global_config
 from dimos.msgs.time import to_seconds
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 
+pytestmark = pytest.mark.self_hosted
+
 
 @pytest.fixture()
 def server(wait_for_server: Any) -> RerunWebSocketServer:

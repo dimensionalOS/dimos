@@ -128,7 +128,8 @@ class PersonTracker(Module):
         pose_in_camera = PoseStamped(
             header=Header(frame_id="camera_link", stamp=detections2D.image.header.stamp),
             pose=Pose(
-                position=Point(x=vector.x, y=vector.y, z=vector.z), orientation=Quaternion(w=1)
+                position=Point(x=vector.x, y=vector.y, z=vector.z),
+                orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0),
             ),
         )
 

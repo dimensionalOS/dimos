@@ -19,8 +19,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.dimos_msgs.msg import ImuInfo
 from dimos_generated.sensor_msgs.msg import CameraInfo, Image, Imu, PointCloud2
+from dimos_generated.std_msgs.msg import Header
 from dimos_generated.tf2_msgs.msg import TFMessage
 from pydantic import Field
 
@@ -31,7 +33,7 @@ from dimos.spec import perception
 
 
 class RealSenseCameraConfig(NativeModuleConfig, DepthCameraConfig):
-    cwd: str | None = "rust"
+    source_dir: str | None = "dimos/hardware/sensors/camera/realsense/rust"
     executable: str = "target/release/realsense_native"
     # Own flake: librealsense2 isn't in the root shell.
     build_command: str | None = "nix develop path:. -c cargo build --release"
@@ -64,6 +66,8 @@ class RealSenseCameraConfig(NativeModuleConfig, DepthCameraConfig):
             gyro_random_walk=1.0e-5,
             accel_noise_density=1.8e-3,
             accel_random_walk=1.0e-4,
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            frequency=0.0,
         )
     )
     pointcloud_fps: float = 5.0

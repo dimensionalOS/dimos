@@ -21,6 +21,7 @@ from dimos_generated.geometry_msgs.msg import (
     Pose,
     PoseStamped,
     Quaternion,
+    Transform,
     TransformStamped,
     Vector3,
 )
@@ -30,9 +31,12 @@ from dimos_generated.sensor_msgs.msg import (
     Image,
     PointCloud2,
     PointField,
+    RegionOfInterest,
 )
 from dimos_generated.std_msgs.msg import Header
 from dimos_generated.tf2_msgs.msg import TFMessage
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
+import numpy as np
 import pytest
 
 from dimos.protocol.pubsub.impl import rospubsub_conversion as conversion
@@ -44,24 +48,38 @@ def messages():
     header = Header(stamp=Time(sec=1700000000, nanosec=123456789), frame_id="map/相機")
     return [
         Point(x=1.25, y=-2.5, z=3.75),
-        PointStamped(header=header, point=Point(x=2.0)),
-        PoseStamped(header=header, pose=Pose(orientation=Quaternion(z=0.6, w=0.8))),
+        PointStamped(header=header, point=Point(x=2.0, y=0.0, z=0.0)),
+        PoseStamped(
+            header=header,
+            pose=Pose(
+                orientation=Quaternion(z=0.6, w=0.8, x=0.0, y=0.0),
+                position=Point(x=0.0, y=0.0, z=0.0),
+            ),
+        ),
         Image(
             header=header,
             height=1,
             width=2,
             encoding="rgb8",
             step=6,
-            data=bytes([0, 1, 2, 253, 254, 255]),
+            data=np.frombuffer(bytes([0, 1, 2, 253, 254, 255]), dtype=np.uint8),
+            is_bigendian=0,
         ),
-        CompressedImage(header=header, format="jpeg", data=bytes([0, 255, 127])),
+        CompressedImage(
+            header=header, format="jpeg", data=np.frombuffer(bytes([0, 255, 127]), dtype=np.uint8)
+        ),
         CameraInfo(
             header=header,
             width=640,
             height=480,
             distortion_model="plumb_bob",
-            d=[0.1, -0.2],
-            k=[1.0, 0.0, 3.0, 0.0, 2.0, 4.0, 0.0, 0.0, 1.0],
+            d=np.array([0.1, -0.2], dtype=np.float64),
+            k=np.array([1.0, 0.0, 3.0, 0.0, 2.0, 4.0, 0.0, 0.0, 1.0], dtype=np.float64),
+            r=np.zeros(9, dtype=np.float64),
+            p=np.zeros(12, dtype=np.float64),
+            binning_x=0,
+            binning_y=0,
+            roi=RegionOfInterest(x_offset=0, y_offset=0, height=0, width=0, do_rectify=False),
         ),
         PointCloud2(
             header=header,
@@ -71,21 +89,43 @@ def messages():
             is_bigendian=True,
             point_step=8,
             row_step=12,
-            data=bytes([9, 8, 7, 6, 0x3F, 0x80, 0, 0, 5, 4, 3, 2]),
+            data=np.frombuffer(bytes([9, 8, 7, 6, 0x3F, 0x80, 0, 0, 5, 4, 3, 2]), dtype=np.uint8),
+            is_dense=False,
         ),
-        PointCloud2(header=header),
-        TFMessage(),
-        TFMessage(transforms=[TransformStamped(header=header, child_frame_id="camera")]),
+        PointCloud2(
+            header=header,
+            height=0,
+            width=0,
+            fields=[],
+            is_bigendian=False,
+            point_step=0,
+            row_step=0,
+            data=np.array([], dtype=np.uint8),
+            is_dense=False,
+        ),
+        TFMessage(transforms=[]),
+        TFMessage(
+            transforms=[
+                TransformStamped(
+                    header=header,
+                    child_frame_id="camera",
+                    transform=Transform(
+                        translation=Vector3(x=0.0, y=0.0, z=0.0),
+                        rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                    ),
+                )
+            ]
+        ),
     ]
 
 
 @requires_ros
-@pytest.mark.parametrize("original", messages(), ids=lambda msg: msg.msg_name)
+@pytest.mark.parametrize("original", messages(), ids=lambda msg: msg.__msgtype__)
 def test_generated_fields_survive_ros_serialization(original):
     ros_type = conversion.derive_ros_type(type(original))
     ros_message = conversion.dimos_to_ros(original, ros_type)
     converted = conversion.ros_to_dimos(ros_message, type(original))
-    assert converted == original
+    assert cdr_encode(converted) == cdr_encode(original)
 
 
 @requires_ros
@@ -111,15 +151,15 @@ def test_matching_layout_does_not_allow_wrong_type():
     from_type = conversion.derive_ros_type(Point)
     to_type = conversion.derive_ros_type(Vector3)
     with pytest.raises(TypeError, match="target does not match"):
-        conversion.dimos_to_ros(Point(), to_type)
+        conversion.dimos_to_ros(Point(x=0.0, y=0.0, z=0.0), to_type)
     with pytest.raises(TypeError, match="source does not match"):
         conversion.ros_to_dimos(from_type(), Vector3)
 
 
 def test_missing_ros_is_explicit_and_does_not_affect_generated_messages(monkeypatch):
     monkeypatch.setattr(conversion, "ros_serialization", None)
-    message = Point(x=1.0)
-    assert Point.decode(message.encode()) == message
+    message = Point(x=1.0, y=0.0, z=0.0)
+    assert cdr_decode(cdr_encode(message), Point) == message
     with pytest.raises(ImportError, match="requires rclpy"):
         conversion.dimos_to_ros(message, Point)
     with pytest.raises(ImportError, match="requires rclpy"):
@@ -128,6 +168,6 @@ def test_missing_ros_is_explicit_and_does_not_affect_generated_messages(monkeypa
 
 @pytest.mark.parametrize("name", ["geometry_msgs.Point", "geometry_msgs/srv/Point", "../msg/Point"])
 def test_invalid_type_name_fails_before_import(name):
-    invalid = type("Invalid", (), {"msg_name": name})
+    invalid = type("Invalid", (), {"__msgtype__": name})
     with pytest.raises(ValueError, match="expected package/msg/Type"):
         conversion.derive_ros_type(invalid)

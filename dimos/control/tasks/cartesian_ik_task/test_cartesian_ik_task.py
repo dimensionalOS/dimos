@@ -16,9 +16,11 @@
 
 from pathlib import Path
 
-from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from dimos_generated.sensor_msgs.msg import JointState
 from dimos_generated.std_msgs.msg import Header
+import numpy as np
 import pytest
 from pytest_mock import MockerFixture
 
@@ -55,10 +57,19 @@ def test_cartesian_leaf_maps_absolute_pose_to_configured_frame(
     mocker: MockerFixture,
 ) -> None:
     solver = mocker.Mock(spec=PinkPoseTargetSolver)
-    solver.step.return_value = JointState(name=["arm/joint"], position=[0.01])
+    solver.step.return_value = JointState(
+        name=["arm/joint"],
+        position=np.array([0.01], dtype=np.float64),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
+    )
     task = CartesianIKTask("cartesian", _config(), solver=solver)
     target = PoseStamped(
-        header=Header(frame_id="world"), pose=Pose(position=Point(x=0.4, y=0.2, z=0.1))
+        header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+        pose=Pose(
+            position=Point(x=0.4, y=0.2, z=0.1), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+        ),
     )
 
     task.on_cartesian_command(target, t_now=2.0)
@@ -77,7 +88,16 @@ def test_cartesian_leaf_maps_absolute_pose_to_configured_frame(
 def test_cartesian_leaf_clears_after_timeout(mocker: MockerFixture) -> None:
     solver = mocker.Mock(spec=PinkPoseTargetSolver)
     task = CartesianIKTask("cartesian", _config(), solver=solver)
-    task.on_cartesian_command(PoseStamped(header=Header(frame_id=""), pose=Pose()), t_now=1.0)
+    task.on_cartesian_command(
+        PoseStamped(
+            header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
+            pose=Pose(
+                position=Point(x=0.0, y=0.0, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+        ),
+        t_now=1.0,
+    )
 
     output = task.compute(
         CoordinatorState(
@@ -94,19 +114,49 @@ def test_cartesian_leaf_clears_after_timeout(mocker: MockerFixture) -> None:
 
 def test_cartesian_clear_reseeds_command_from_feedback(mocker: MockerFixture) -> None:
     solver = mocker.Mock(spec=PinkPoseTargetSolver)
-    solver.step.return_value = JointState(name=["arm/joint"], position=[0.1])
+    solver.step.return_value = JointState(
+        name=["arm/joint"],
+        position=np.array([0.1], dtype=np.float64),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
+    )
     task = CartesianIKTask("cartesian", _config(), solver=solver)
     state = CoordinatorState(
         joints=JointStateSnapshot(joint_positions={"arm/joint": 0.0}),
         t_now=1.0,
         dt=0.01,
     )
-    task.on_cartesian_command(PoseStamped(header=Header(frame_id=""), pose=Pose()), t_now=1.0)
+    task.on_cartesian_command(
+        PoseStamped(
+            header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
+            pose=Pose(
+                position=Point(x=0.0, y=0.0, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+        ),
+        t_now=1.0,
+    )
     assert task.compute(state) is not None
 
     task.clear()
-    task.on_cartesian_command(PoseStamped(header=Header(frame_id=""), pose=Pose()), t_now=1.1)
-    solver.step.return_value = JointState(name=["arm/joint"], position=[0.01])
+    task.on_cartesian_command(
+        PoseStamped(
+            header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
+            pose=Pose(
+                position=Point(x=0.0, y=0.0, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+        ),
+        t_now=1.1,
+    )
+    solver.step.return_value = JointState(
+        name=["arm/joint"],
+        position=np.array([0.01], dtype=np.float64),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
+    )
     assert task.compute(state) is not None
 
     assert solver.reset.call_count == 1

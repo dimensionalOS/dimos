@@ -16,7 +16,10 @@
 
 import math
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped
+from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import pytest
 
 from dimos.agents.skills.navigation import NavigationSkillContainer
@@ -41,9 +44,10 @@ def test_tagged_location_preserves_euler_orientation_through_cdr_goal(skill):
     value, memory, navigator = skill
     angles = (0.2, -0.3, math.pi / 2)
     pose = PoseStamped(
-        pose=Pose(position=Point(x=1, y=2, z=3), orientation=quaternion_from_euler(*angles))
+        pose=Pose(position=Point(x=1, y=2, z=3), orientation=quaternion_from_euler(*angles)),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
     )
-    value._on_odom(PoseStamped.decode(pose.encode()))
+    value._on_odom(cdr_decode(cdr_encode(pose), PoseStamped))
     assert "Tagged 'desk'" in value.tag_location("desk")
     tagged = memory.tag_location.call_args.args[0]
     assert tagged.position == (1, 2, 3)
@@ -51,7 +55,7 @@ def test_tagged_location_preserves_euler_orientation_through_cdr_goal(skill):
     memory.query_tagged_location.return_value = tagged
     assert "Found a tagged location" in value._navigate_by_tagged_location("desk")
     goal = navigator.set_goal.call_args.args[0]
-    decoded = PoseStamped.decode(goal.encode())
+    decoded = cdr_decode(cdr_encode(goal), PoseStamped)
     assert decoded.header.frame_id == "map"
     assert decoded.pose.position == pose.pose.position
     assert quaternion_euler(decoded.pose.orientation) == pytest.approx(angles)
@@ -63,8 +67,8 @@ def test_semantic_result_builds_generated_map_goal(skill):
     goal = value._get_goal_pose_from_result(result)
     assert goal is not None
     value._navigate_to(goal, "Found desk")
-    decoded = PoseStamped.decode(navigator.set_goal.call_args.args[0].encode())
+    decoded = cdr_decode(cdr_encode(navigator.set_goal.call_args.args[0]), PoseStamped)
     assert decoded.header.frame_id == "map"
-    assert decoded.pose.position == Point(x=4, y=-2)
+    assert decoded.pose.position == Point(x=4, y=-2, z=0.0)
     assert quaternion_euler(decoded.pose.orientation) == pytest.approx((0, 0, math.pi / 2))
     assert value._get_goal_pose_from_result({"distance": 0.9}) is None

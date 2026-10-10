@@ -17,6 +17,7 @@ import re
 from unittest.mock import MagicMock
 
 import cv2
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.sensor_msgs.msg import Image
 from dimos_generated.std_msgs.msg import Header
 import numpy as np
@@ -160,7 +161,9 @@ def test_cli_folder_with_synthetic_images_writes_yaml_preview_and_camera_info(
     assert preview_image is not None
     assert preview_image.shape == (480, 640, 3)
 
-    dimos_info = camera_info_from_yaml(out, header=Header(frame_id="camera_optical"))
+    dimos_info = camera_info_from_yaml(
+        out, header=Header(frame_id="camera_optical", stamp=Time(sec=0, nanosec=0))
+    )
     assert dimos_info.width == 640
     assert dimos_info.height == 480
     assert dimos_info.distortion_model == "plumb_bob"
@@ -230,7 +233,9 @@ def test_cli_folder_writes_only_explicit_yaml_and_prints_rms(tmp_path: Path) -> 
     assert out.exists()
     preview = tmp_path / "camera_info.preview.png"
     assert not preview.exists()
-    dimos_info = camera_info_from_yaml(out, header=Header(frame_id="camera_optical"))
+    dimos_info = camera_info_from_yaml(
+        out, header=Header(frame_id="camera_optical", stamp=Time(sec=0, nanosec=0))
+    )
     assert dimos_info.width == 640
     assert dimos_info.height == 480
     assert dimos_info.distortion_model == "plumb_bob"
@@ -803,7 +808,9 @@ def test_write_camera_info_yaml_round_trip_matches_k_d_size_and_model(tmp_path: 
         D=D,
         distortion_model="plumb_bob",
     )
-    dimos_info = camera_info_from_yaml(path, header=Header(frame_id="camera_optical"))
+    dimos_info = camera_info_from_yaml(
+        path, header=Header(frame_id="camera_optical", stamp=Time(sec=0, nanosec=0))
+    )
     assert dimos_info.width == 640
     assert dimos_info.height == 480
     assert dimos_info.distortion_model == "plumb_bob"
@@ -832,7 +839,9 @@ def test_write_camera_info_yaml_round_trip(tmp_path: Path) -> None:
         P=P,
         distortion_model="plumb_bob",
     )
-    dimos_info = camera_info_from_yaml(path, header=Header(frame_id="camera_optical"))
+    dimos_info = camera_info_from_yaml(
+        path, header=Header(frame_id="camera_optical", stamp=Time(sec=0, nanosec=0))
+    )
     assert dimos_info.width == 800
     assert dimos_info.height == 600
     assert dimos_info.distortion_model == "plumb_bob"
@@ -860,7 +869,9 @@ def test_write_camera_info_yaml_custom_r_p_and_distortion_model(tmp_path: Path) 
         P=P,
         distortion_model="rational_polynomial",
     )
-    dimos_info = camera_info_from_yaml(path, header=Header(frame_id="camera_optical"))
+    dimos_info = camera_info_from_yaml(
+        path, header=Header(frame_id="camera_optical", stamp=Time(sec=0, nanosec=0))
+    )
     assert dimos_info.width == 320
     assert dimos_info.height == 240
     assert dimos_info.distortion_model == "rational_polynomial"

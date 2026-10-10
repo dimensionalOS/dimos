@@ -24,6 +24,7 @@ covered in test_relay_bridge_authoring.py.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import replace
 import json
 from pathlib import Path
@@ -35,6 +36,7 @@ import time
 from typing import Any
 import zlib
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Twist, Vector3
 from dimos_generated.nav_msgs.msg import MapMetaData, OccupancyGrid
 from dimos_generated.sensor_msgs.msg import Image
@@ -202,8 +204,10 @@ def test_encode_paths_and_max_hz_gate(bridge) -> None:
     )
 
     pose = PoseStamped(
-        header=Header(stamp=time_from_seconds(42.5)),
-        pose=Pose(position=Point(x=1.5, y=-2.5, z=0.25), orientation=Quaternion(w=1)),
+        header=Header(stamp=time_from_seconds(42.5), frame_id=""),
+        pose=Pose(
+            position=Point(x=1.5, y=-2.5, z=0.25), orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0)
+        ),
     )
     odom_transport(module).publish(pose)
     assert module.encoded["odom"] == 1
@@ -282,11 +286,18 @@ def test_no_jpeg_encode_while_unsubscribed(bridge, monkeypatch) -> None:
 # Covers every value class of the wire contract: -1 unknown -> 255, 0 free,
 # graded cost, 100 lethal.
 COSTMAP_GRID = OccupancyGrid(
-    data=[-1, 0, 50, 100, 0, -1],
+    data=np.array([-1, 0, 50, 100, 0, -1], dtype=np.int8),
     info=MapMetaData(
-        width=3, height=2, resolution=0.05, origin=Pose(position=Point(x=-1.25, y=2.5))
+        width=3,
+        height=2,
+        resolution=0.05,
+        origin=Pose(
+            position=Point(x=-1.25, y=2.5, z=0.0),
+            orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+        ),
+        map_load_time=Time(sec=0, nanosec=0),
     ),
-    header=Header(stamp=time_from_seconds(42.5)),
+    header=Header(stamp=time_from_seconds(42.5), frame_id=""),
 )
 COSTMAP_CELLS = bytes([255, 0, 50, 100, 0, 255])
 
@@ -323,7 +334,22 @@ def test_costmap_empty_grid_is_skipped(costmap_bridge) -> None:
     push(module, clients[0], Subs(chs=["global_costmap"], n=1))
     assert wait_until(lambda: len(costmap_transport(module).subscribers) == 2)
 
-    costmap_transport(module).publish(OccupancyGrid())
+    costmap_transport(module).publish(
+        OccupancyGrid(
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            info=MapMetaData(
+                map_load_time=Time(sec=0, nanosec=0),
+                resolution=0.0,
+                width=0,
+                height=0,
+                origin=Pose(
+                    position=Point(x=0.0, y=0.0, z=0.0),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+            ),
+            data=np.array([], dtype=np.int8),
+        )
+    )
     flush_loop(module)
     assert module.encoded["global_costmap"] == 0
     assert clients[0].writers["global_costmap"].offers == []
@@ -348,10 +374,11 @@ def test_no_costmap_encode_while_unsubscribed(costmap_bridge, monkeypatch) -> No
     assert module.encoded["global_costmap"] == 0
 
     push(module, clients[0], Subs(chs=["global_costmap"], n=1))
+    # The subscribe replays the cached grid (compressed on a worker thread)...
+    assert wait_until(lambda: calls["n"] == 1)
     assert wait_until(lambda: len(costmap_transport(module).subscribers) == 2)
+    # ... then the live frame encodes on the transport thread.
     costmap_transport(module).publish(COSTMAP_GRID)
-    # Two compresses: the subscribe replayed the cached grid, then the live
-    # frame encoded.
     assert calls["n"] == 2
     assert module.encoded["global_costmap"] == 1
 
@@ -428,11 +455,18 @@ def test_costmap_replay_uses_message_published_while_unsubscribed(costmap_bridge
     push(module, client, Subs(chs=[], n=2))
     assert wait_until(lambda: len(costmap_transport(module).subscribers) == 1)
     grid_b = OccupancyGrid(
-        data=[100, 100, 100, 0, 0, 0],
+        data=np.array([100, 100, 100, 0, 0, 0], dtype=np.int8),
         info=MapMetaData(
-            width=3, height=2, resolution=0.05, origin=Pose(position=Point(x=-1.25, y=2.5))
+            width=3,
+            height=2,
+            resolution=0.05,
+            origin=Pose(
+                position=Point(x=-1.25, y=2.5, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+            map_load_time=Time(sec=0, nanosec=0),
         ),
-        header=Header(stamp=time_from_seconds(43)),
+        header=Header(stamp=time_from_seconds(43), frame_id=""),
     )
     costmap_transport(module).publish(grid_b)
 
@@ -446,9 +480,27 @@ def test_costmap_replay_uses_message_published_while_unsubscribed(costmap_bridge
 def test_costmap_empty_cached_grid_is_not_replayed(costmap_bridge) -> None:
     module, clients = costmap_bridge
     client = clients[0]
-    costmap_transport(module).publish(OccupancyGrid())
+    costmap_transport(module).publish(
+        OccupancyGrid(
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            info=MapMetaData(
+                map_load_time=Time(sec=0, nanosec=0),
+                resolution=0.0,
+                width=0,
+                height=0,
+                origin=Pose(
+                    position=Point(x=0.0, y=0.0, z=0.0),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+            ),
+            data=np.array([], dtype=np.int8),
+        )
+    )
     push(module, client, Subs(chs=["global_costmap"], n=1))
     assert wait_until(lambda: len(costmap_transport(module).subscribers) == 2)
+    session = module._session
+    assert session is not None
+    assert wait_until(lambda: session.replays["global_costmap"].done())
     flush_loop(module)
     assert client.writers["global_costmap"].offers == []
 
@@ -529,8 +581,11 @@ def test_encode_started_in_old_session_is_not_sent_to_replacement(
         target=odom_transport(module).publish,
         args=(
             PoseStamped(
-                header=Header(stamp=time_from_seconds(42.5)),
-                pose=Pose(position=Point(x=1.5, y=-2.5, z=0.25), orientation=Quaternion(w=1)),
+                header=Header(stamp=time_from_seconds(42.5), frame_id=""),
+                pose=Pose(
+                    position=Point(x=1.5, y=-2.5, z=0.25),
+                    orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0),
+                ),
             ),
         ),
     )
@@ -1279,9 +1334,11 @@ def test_failed_start_stops_spawned_relay(monkeypatch) -> None:
 
 # Teleop (the tele_cmd_vel tx channel).
 
-# Short deadman window so silence tests stay fast; well above the 50 ms
+# Short deadman window so the one silence test stays fast; well above the 50 ms
 # watchdog poll.
 _TELEOP_TEST_WATCHDOG_MS = 120.0
+# Every other teleop test exercises gen/seq gating, not the deadman.
+_TELEOP_INERT_WATCHDOG_MS = 3_600_000.0
 
 
 def teleop_manifest(**params: Any) -> dict[str, Any]:
@@ -1316,8 +1373,11 @@ def wire_twist(vx: float, vy: float, wz: float, seq: float, gen: int | None = 1)
 
 
 @pytest.fixture
-def teleop_bridge(monkeypatch):
-    module, clients = make_bridge(monkeypatch, manifest=teleop_manifest())
+def teleop_bridge(monkeypatch, request):
+    # Disarm the deadman by default (see _TELEOP_INERT_WATCHDOG_MS); the deadman
+    # test overrides watchdogMs through indirect parametrization.
+    watchdog_ms = getattr(request, "param", _TELEOP_INERT_WATCHDOG_MS)
+    module, clients = make_bridge(monkeypatch, manifest=teleop_manifest(watchdogMs=watchdog_ms))
     twists: list[Twist] = []
     module.tele_cmd_vel.subscribe(twists.append)
     try:
@@ -1337,7 +1397,9 @@ def test_teleop_twist_publishes_geometry_twist(teleop_bridge) -> None:
     module, clients, twists = teleop_bridge
     push(module, clients[0], wire_twist(0.4, 0.2, -0.5, seq=1))
     assert wait_until(lambda: len(twists) == 1)
-    assert twists[0] == Twist(linear=Vector3(x=0.4, y=0.2), angular=Vector3(z=-0.5))
+    assert twists[0] == Twist(
+        linear=Vector3(x=0.4, y=0.2, z=0.0), angular=Vector3(z=-0.5, x=0.0, y=0.0)
+    )
 
 
 def test_teleop_clamps_to_boost_bounds(teleop_bridge) -> None:
@@ -1345,7 +1407,9 @@ def test_teleop_clamps_to_boost_bounds(teleop_bridge) -> None:
     push(module, clients[0], wire_twist(100.0, -100.0, -100.0, seq=1))
     assert wait_until(lambda: len(twists) == 1)
     # maxLinear 0.8 * boost 2.0; maxAngular 1.0 * boost 2.0.
-    assert twists[0] == Twist(linear=Vector3(x=1.6, y=-1.6), angular=Vector3(z=-2.0))
+    assert twists[0] == Twist(
+        linear=Vector3(x=1.6, y=-1.6, z=0.0), angular=Vector3(z=-2.0, x=0.0, y=0.0)
+    )
 
 
 def test_teleop_seq_guard_drops_stale_within_live_stream(teleop_bridge) -> None:
@@ -1358,6 +1422,7 @@ def test_teleop_seq_guard_drops_stale_within_live_stream(teleop_bridge) -> None:
     assert [t.linear.x for t in twists] == [0.1, 0.2]
 
 
+@pytest.mark.parametrize("teleop_bridge", [_TELEOP_TEST_WATCHDOG_MS], indirect=True)
 def test_teleop_watchdog_deadline_and_high_water_survives_silence(teleop_bridge) -> None:
     module, clients, twists = teleop_bridge
     push(module, clients[0], wire_twist(0.5, 0.0, 0.0, seq=100))
@@ -1368,7 +1433,9 @@ def test_teleop_watchdog_deadline_and_high_water_survives_silence(teleop_bridge)
     # wait_until poll and thread scheduling).
     assert wait_until(lambda: len(twists) == 2)
     elapsed = time.monotonic() - started
-    assert twists[1] == Twist()
+    assert twists[1] == Twist(
+        linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)
+    )
     deadline = _TELEOP_TEST_WATCHDOG_MS / 1000 + relay_bridge_module._TELEOP_POLL_S + 0.5
     assert elapsed < deadline, f"deadman zero took {elapsed:.3f}s (deadline {deadline:.3f}s)"
     time.sleep(3 * _TELEOP_TEST_WATCHDOG_MS / 1000)
@@ -1398,7 +1465,9 @@ def test_teleop_zero_only_on_release_edge(teleop_bridge) -> None:
     assert wait_until(lambda: len(twists) == 2)
     settle(module)
     assert len(twists) == 2
-    assert twists[1] == Twist()
+    assert twists[1] == Twist(
+        linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)
+    )
 
 
 def test_teleop_stop_is_unconditional(teleop_bridge) -> None:
@@ -1408,7 +1477,10 @@ def test_teleop_stop_is_unconditional(teleop_bridge) -> None:
     push(module, clients[0], WireStop(seq=1, ts=time.time(), gen=1))
     push(module, clients[0], WireStop(seq=2, ts=time.time(), gen=1))
     assert wait_until(lambda: len(twists) == 2)
-    assert all(t == Twist() for t in twists)
+    assert all(
+        t == Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+        for t in twists
+    )
 
 
 def test_teleop_stop_blocks_stale_reordered_twist(teleop_bridge) -> None:
@@ -1430,7 +1502,9 @@ def test_teleop_lease_end_zeroes_once_and_resets_seq(teleop_bridge) -> None:
     assert wait_until(lambda: len(twists) == 1)
     push(module, clients[0], WireTeleopStop(gen=1))
     assert wait_until(lambda: len(twists) == 2)
-    assert twists[1] == Twist()
+    assert twists[1] == Twist(
+        linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)
+    )
     push(module, clients[0], WireTeleopStop(gen=1))  # repeat: dead on the gen gate
     settle(module)
     assert len(twists) == 2
@@ -1445,7 +1519,11 @@ def test_teleop_session_drop_zeroes(teleop_bridge) -> None:
     push(module, clients[0], wire_twist(0.5, 0.0, 0.0, seq=1))
     assert wait_until(lambda: len(twists) == 1)
     kill_session(module, clients[0])
-    assert wait_until(lambda: len(twists) == 2 and twists[1] == Twist())
+    assert wait_until(
+        lambda: len(twists) == 2
+        and twists[1]
+        == Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+    )
     assert wait_until(lambda: len(clients) == 2)  # supervisor reconnected
     settle(module)
     assert len(twists) == 2
@@ -1456,7 +1534,11 @@ def test_teleop_lease_end_blocks_stale_gen_twist_permanently(teleop_bridge) -> N
     push(module, clients[0], wire_twist(0.5, 0.0, 0.0, seq=50))
     assert wait_until(lambda: len(twists) == 1)
     push(module, clients[0], WireTeleopStop(gen=1))
-    assert wait_until(lambda: len(twists) == 2 and twists[1] == Twist())
+    assert wait_until(
+        lambda: len(twists) == 2
+        and twists[1]
+        == Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+    )
     # Past the watchdog window, delayed twists from the released lease must
     # stay dead regardless of seq: a reordered pre-stop command must never
     # restart the robot after a stop.
@@ -1491,7 +1573,11 @@ def test_teleop_start_adopts_new_gen_and_zeroes_lost_stop(teleop_bridge) -> None
     # The lease changed hands but its teleop_stop datagram was lost: the
     # next grant's announcement stops the robot and voids the old lease.
     push(module, clients[0], WireTeleopStart(gen=2))
-    assert wait_until(lambda: len(twists) == 2 and twists[1] == Twist())
+    assert wait_until(
+        lambda: len(twists) == 2
+        and twists[1]
+        == Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+    )
     push(module, clients[0], wire_twist(0.5, 0.0, 0.0, seq=51))  # old lease
     settle(module)
     assert len(twists) == 2
@@ -1512,7 +1598,11 @@ def test_teleop_estop_does_not_lower_high_water(teleop_bridge) -> None:
     # A stale reordered e-stop still zeroes (safe direction) but must not
     # lower the high-water and let the superseded twist 11 re-apply.
     push(module, clients[0], WireStop(seq=10, ts=time.time(), gen=1))
-    assert wait_until(lambda: len(twists) == 2 and twists[1] == Twist())
+    assert wait_until(
+        lambda: len(twists) == 2
+        and twists[1]
+        == Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+    )
     push(module, clients[0], wire_twist(0.9, 0.0, 0.0, seq=11))
     settle(module)
     assert len(twists) == 2
@@ -1607,3 +1697,210 @@ def test_default_manifest_teleop_degradations() -> None:
     with_video = default_manifest(config, ("color_image", "tele_cmd_vel"))
     assert [p["kind"] for p in with_video["panels"]] == ["video", "teleop"]
     assert with_video["layout"] == {"row": ["p0", "p1"], "shares": [2, 1]}
+
+
+# Replay encodes run off the loop.
+
+
+def swap_costmap_encoder(module: RelayBridgeModule, encoder: Callable[[Any], bytes]) -> None:
+    """Swap the resolved costmap spec's encoder before any viewer subscribes
+    (the runtime specs are the encoder source)."""
+    module._channel_specs = tuple(
+        replace(spec, encoder=encoder, encoder_takes_params=False)
+        if spec.ch == "global_costmap"
+        else spec
+        for spec in module._channel_specs
+    )
+
+
+def test_teleop_watchdog_runs_during_replay_encode(monkeypatch) -> None:
+    # A cached map replays on the first subscribe; its encode (seconds for a
+    # big cloud) must not stall the loop: the deadman still zeroes a silent
+    # driver within its window and control messages keep flowing meanwhile.
+    manifest = teleop_manifest()
+    manifest["channels"].append(
+        {
+            "ch": "global_costmap",
+            "dir": "rx",
+            "encoding": "costmap.zlib.v1",
+            "delivery": "latest",
+            "maxHz": 5.0,
+            "params": {},
+        }
+    )
+    module, clients = make_bridge(monkeypatch, manifest=manifest, wire=("global_costmap",))
+    encode_started = threading.Event()
+    release_encode = threading.Event()
+
+    def blocking_encode(msg: OccupancyGrid) -> bytes:
+        encode_started.set()
+        assert release_encode.wait(timeout=5.0)
+        return b"replayed-grid"
+
+    swap_costmap_encoder(module, blocking_encode)
+    twists: list[Twist] = []
+    module.tele_cmd_vel.subscribe(twists.append)
+    offers = clients[0].writers["global_costmap"].offers
+    try:
+        t0 = time.time()
+        costmap_transport(module).publish(COSTMAP_GRID)  # cached; nobody watching
+        t1 = time.time()
+        push(module, clients[0], wire_twist(0.5, 0.0, 0.0, seq=1))
+        assert wait_until(lambda: len(twists) == 1)
+        started = time.monotonic()
+        push(module, clients[0], Subs(chs=["global_costmap"], n=1))
+        assert encode_started.wait(timeout=5.0)
+        # Silence while driving, with the replay encode still blocked: the
+        # deadman zero lands within the window (same bound as the plain
+        # watchdog test) instead of after the encode.
+        assert wait_until(lambda: len(twists) == 2)
+        elapsed = time.monotonic() - started
+        assert not release_encode.is_set()
+        assert twists[1].is_zero()
+        deadline = _TELEOP_TEST_WATCHDOG_MS / 1000 + relay_bridge_module._TELEOP_POLL_S + 0.5
+        assert elapsed < deadline, f"deadman zero took {elapsed:.3f}s during a replay encode"
+        push(module, clients[0], wire_twist(0.3, 0.0, 0.0, seq=2))
+        assert wait_until(lambda: len(twists) == 3)
+        assert offers == []
+
+        release_encode.set()
+        assert wait_until(lambda: offers == [(b"replayed-grid", None)])
+        assert module.encoded["global_costmap"] == 0  # a replay is not a live encode
+        ts = clients[0].writers["global_costmap"].tss[0]
+        assert ts is not None and t0 <= ts <= t1  # arrival time, not replay time
+    finally:
+        release_encode.set()  # stop_module waits for the worker thread
+        stop_module(module)
+
+
+def test_live_frame_during_replay_encode_wins(costmap_bridge) -> None:
+    # The live subscribe no longer waits for the replay: a frame published
+    # during the encode reaches the viewer at once, and the older replay,
+    # finishing later, is dropped instead of overwriting it in the mailbox.
+    module, clients = costmap_bridge
+    replay_started = threading.Event()
+    release_replay = threading.Event()
+    calls = {"n": 0}
+
+    def encode(msg: OccupancyGrid) -> bytes:
+        calls["n"] += 1
+        if calls["n"] > 1:
+            return b"live"
+        replay_started.set()
+        assert release_replay.wait(timeout=5.0)
+        return b"replay"
+
+    swap_costmap_encoder(module, encode)
+    offers = clients[0].writers["global_costmap"].offers
+    try:
+        costmap_transport(module).publish(COSTMAP_GRID)
+        push(module, clients[0], Subs(chs=["global_costmap"], n=1))
+        assert replay_started.wait(timeout=5.0)
+        assert len(costmap_transport(module).subscribers) == 2  # subscribed mid-encode
+        costmap_transport(module).publish(COSTMAP_GRID)  # live, encoded on this thread
+        assert module.encoded["global_costmap"] == 1
+        assert wait_until(lambda: offers == [(b"live", None)])
+
+        session = module._session
+        assert session is not None
+        replay = session.replays["global_costmap"]
+        release_replay.set()
+        assert wait_until(replay.done)
+        flush_loop(module)
+        assert offers == [(b"live", None)]  # the stale replay never reached the mailbox
+    finally:
+        release_replay.set()
+
+
+def test_replay_rearmed_on_newer_cache_replays_that_message(costmap_bridge) -> None:
+    # The viewers leave and return while the replay of grid A still encodes,
+    # and grid B arrives in between (nobody watching, so no live encode): the
+    # re-armed replay must deliver B, not the A it started on.
+    module, clients = costmap_bridge
+    replay_started = threading.Event()
+    release_replay = threading.Event()
+    calls = {"n": 0}
+
+    def encode(msg: OccupancyGrid) -> bytes:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            replay_started.set()
+            assert release_replay.wait(timeout=5.0)
+        return msg.grid.tobytes()
+
+    swap_costmap_encoder(module, encode)
+    grid_b = OccupancyGrid(
+        grid=np.array([[100, 100, 100], [0, 0, 0]], dtype=np.int8),
+        resolution=0.05,
+        origin=Pose(-1.25, 2.5, 0.0),
+        ts=43.0,
+    )
+    writer = clients[0].writers["global_costmap"]
+    try:
+        costmap_transport(module).publish(COSTMAP_GRID)
+        push(module, clients[0], Subs(chs=["global_costmap"], n=1))
+        assert replay_started.wait(timeout=5.0)
+        push(module, clients[0], Subs(chs=[], n=2))
+        assert wait_until(lambda: len(costmap_transport(module).subscribers) == 1)
+        t0 = time.time()
+        costmap_transport(module).publish(grid_b)  # cached only: nobody is watching
+        t1 = time.time()
+        push(module, clients[0], Subs(chs=["global_costmap"], n=3))
+        assert wait_until(lambda: len(costmap_transport(module).subscribers) == 2)
+        session = module._session
+        assert session is not None
+        replay = session.replays["global_costmap"]
+        assert not replay.done()  # re-armed, not doubled
+
+        release_replay.set()
+        assert wait_until(replay.done)
+        flush_loop(module)
+        # B only: A's encode finished on a moved cache and never reached the
+        # mailbox, and B came from the cache, not from a live encode.
+        assert writer.offers == [(grid_b.grid.tobytes(), None)]
+        assert calls["n"] == 2
+        assert module.encoded["global_costmap"] == 0
+        ts = writer.tss[0]
+        assert ts is not None and t0 <= ts <= t1  # B's arrival time
+    finally:
+        release_replay.set()
+
+
+def test_replay_in_flight_when_session_dies_is_dropped(costmap_bridge) -> None:
+    module, clients = costmap_bridge
+    replay_started = threading.Event()
+    release_replay = threading.Event()
+    encode_finished = threading.Event()
+
+    def encode(msg: OccupancyGrid) -> bytes:
+        replay_started.set()
+        assert release_replay.wait(timeout=5.0)
+        encode_finished.set()
+        return b"replay"
+
+    swap_costmap_encoder(module, encode)
+    try:
+        costmap_transport(module).publish(COSTMAP_GRID)
+        push(module, clients[0], Subs(chs=["global_costmap"], n=1))
+        assert replay_started.wait(timeout=5.0)
+        old = module._session
+        assert old is not None
+        replay = old.replays["global_costmap"]
+        kill_session(module, clients[0])
+        # Reconnected while the worker thread is still blocked: teardown never
+        # waits out an encode, and the dead session's replay is cancelled.
+        assert wait_until(lambda: len(clients) == 2)
+        assert replay.cancelled() and old.replays == {}
+
+        release_replay.set()
+        assert encode_finished.wait(timeout=5.0)
+        flush_loop(module)
+        assert clients[0].writers["global_costmap"].offers == []
+        assert clients[1].writers["global_costmap"].offers == []
+        # The replacement replays from the raw cache on its own first subscribe.
+        push(module, clients[1], Subs(chs=["global_costmap"], n=1))
+        assert wait_until(
+            lambda: clients[1].writers["global_costmap"].offers == [(b"replay", None)]
+        )
+    finally:
+        release_replay.set()

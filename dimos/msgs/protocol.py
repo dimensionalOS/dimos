@@ -14,21 +14,9 @@
 
 from typing import ClassVar, Protocol, runtime_checkable
 
-from typing_extensions import Self
-
 
 @runtime_checkable
 class DimosMsg(Protocol):
-    """Transport-neutral contract implemented by generated CDR messages."""
+    """Native rosbags value identity; serialization belongs to the typestore."""
 
-    msg_name: ClassVar[str]
-    schema: ClassVar[str]
-
-    @classmethod
-    def decode(cls, data: bytes) -> Self:
-        """Decode bytes into a message instance."""
-        ...
-
-    def encode(self, little_endian: bool = True) -> bytes:
-        """Encode this message instance into bytes."""
-        ...
+    __msgtype__: ClassVar[str]

@@ -46,8 +46,10 @@ def write_go2_cdr_replay(path: Path, *, duration_s: int = 180) -> None:
             pose = PoseStamped(
                 header=header,
                 pose=Pose(
-                    position=Point(x=math.cos(angle), y=math.sin(angle)),
-                    orientation=Quaternion(z=math.sin(angle / 2), w=math.cos(angle / 2)),
+                    position=Point(x=math.cos(angle), y=math.sin(angle), z=0.0),
+                    orientation=Quaternion(
+                        z=math.sin(angle / 2), w=math.cos(angle / 2), x=0.0, y=0.0
+                    ),
                 ),
             )
             pixels = np.full((240, 320, 3), index % 256, dtype=np.uint8)

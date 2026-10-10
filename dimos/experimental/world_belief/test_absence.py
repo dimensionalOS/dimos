@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos_generated.std_msgs.msg import Header
 import numpy as np
@@ -32,32 +33,36 @@ from dimos.msgs.camera_info import camera_info_from_intrinsics
 )
 def test_visibility_inverts_generated_camera_transform(depth, expected):
     calibration = camera_info_from_intrinsics(
-        100, 100, 16, 16, 32, 32, header=Header(frame_id="camera")
+        100, 100, 16, 16, 32, 32, header=Header(frame_id="camera", stamp=Time(sec=0, nanosec=0))
     )
     world_from_camera = TransformStamped(
-        header=Header(frame_id="world"),
+        header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
         child_frame_id="camera",
-        transform=Transform(translation=Vector3(x=10), rotation=Quaternion(w=1)),
+        transform=Transform(
+            translation=Vector3(x=10, y=0.0, z=0.0), rotation=Quaternion(w=1, x=0.0, y=0.0, z=0.0)
+        ),
     )
     # In world coordinates x=10; after inverse transform it is on the optical axis.
-    center = Vector3(x=10, z=1)
+    center = Vector3(x=10, z=1, y=0.0)
     depth_m = np.full((32, 32), depth, dtype=np.float32)
     assert classify_visibility(center, calibration, world_from_camera, depth_m) == expected
     assert (
-        classify_visibility(Vector3(x=10, z=-1), calibration, world_from_camera, depth_m)
+        classify_visibility(Vector3(x=10, z=-1, y=0.0), calibration, world_from_camera, depth_m)
         == OUT_OF_VIEW
     )
 
 
 def test_visibility_requires_all_valid_depth_samples_to_show_absence():
     calibration = camera_info_from_intrinsics(
-        100, 100, 16, 16, 32, 32, header=Header(frame_id="camera")
+        100, 100, 16, 16, 32, 32, header=Header(frame_id="camera", stamp=Time(sec=0, nanosec=0))
     )
     identity = TransformStamped(
-        header=Header(frame_id="world"),
+        header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
         child_frame_id="camera",
-        transform=Transform(rotation=Quaternion(w=1)),
+        transform=Transform(
+            rotation=Quaternion(w=1, x=0.0, y=0.0, z=0.0), translation=Vector3(x=0.0, y=0.0, z=0.0)
+        ),
     )
     depth = np.full((32, 32), 3, dtype=np.float32)
     depth[16, 16] = 1
-    assert classify_visibility(Vector3(z=1), calibration, identity, depth) == PRESENT
+    assert classify_visibility(Vector3(z=1, x=0.0, y=0.0), calibration, identity, depth) == PRESENT

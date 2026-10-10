@@ -17,9 +17,12 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
-from dimos_generated.geometry_msgs.msg import PoseStamped
-from pydantic import Field
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos_generated.std_msgs.msg import Header
+from pydantic import Field, field_validator
 
 from dimos.core.module import ModuleConfig
 from dimos.manipulation.grasp_verification import GraspVerificationConfig
@@ -47,7 +50,15 @@ class RobotModelConfig(ModuleConfig):
 
     model: RobotModel
     srdf_path: Path | None = None
-    base_pose: PoseStamped = Field(default_factory=PoseStamped)
+    base_pose: PoseStamped = Field(
+        default_factory=lambda: PoseStamped(
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            pose=Pose(
+                position=Point(x=0.0, y=0.0, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+        )
+    )
     joint_names: list[str]
     base_link: str = "base_link"
     planning_groups: list[PlanningGroupDefinition] = Field(default_factory=list)
@@ -62,6 +73,12 @@ class RobotModelConfig(ModuleConfig):
     pre_grasp_offset: float = 0.10
     # Gripper feedback thresholds for pick/place.
     grasp_verification: GraspVerificationConfig = Field(default_factory=GraspVerificationConfig)
+
+    @field_validator("base_pose", mode="before")
+    @classmethod
+    def _parse_base_pose(cls, value: Any) -> Any:
+        """Accept a pose object or its JSON configuration across the launcher boundary."""
+        return PoseStamped(**value) if isinstance(value, dict) else value
 
     def model_post_init(self, __context: object) -> None:
         """Validate canonical joint-name constraints."""

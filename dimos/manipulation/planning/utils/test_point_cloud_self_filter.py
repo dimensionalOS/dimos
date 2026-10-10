@@ -20,6 +20,7 @@ import platform
 import sys
 from typing import Any, cast
 
+from dimos_generated.geometry_msgs.msg import Quaternion
 import numpy as np
 import pytest
 
@@ -85,7 +86,10 @@ def _place_arm(module: PointCloudSelfFilter, at: tuple[float, float, float], ts:
     for parent in ("camera", "world"):
         module.tfbuffer.receive_transform(
             TransformStamped(
-                transform=Transform(translation=Vector3(x=at[0], y=at[1], z=at[2])),
+                transform=Transform(
+                    translation=Vector3(x=at[0], y=at[1], z=at[2]),
+                    rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
                 header=Header(frame_id=parent, stamp=time_from_seconds(ts)),
                 child_frame_id="arm",
             )

@@ -14,7 +14,10 @@
 
 import math
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Twist, Vector3
+from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import pytest
 
 from dimos.hardware.drive_trains.transport.adapter import TransportTwistAdapter
@@ -26,9 +29,10 @@ def test_nested_pose_becomes_planar_odometry_without_sharing_state():
     adapter._on_odom(
         PoseStamped(
             pose=Pose(
-                position=Point(x=2.0, y=-1.0),
-                orientation=Quaternion(z=math.sqrt(0.5), w=math.sqrt(0.5)),
-            )
+                position=Point(x=2.0, y=-1.0, z=0.0),
+                orientation=Quaternion(z=math.sqrt(0.5), w=math.sqrt(0.5), x=0.0, y=0.0),
+            ),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
         )
     )
     odometry = adapter.read_odometry()
@@ -40,9 +44,21 @@ def test_nested_pose_becomes_planar_odometry_without_sharing_state():
 @pytest.mark.parametrize(
     "dof,values,expected",
     [
-        (1, [0.1], Twist(linear=Vector3(x=0.1))),
-        (2, [0.1, 0.2], Twist(linear=Vector3(x=0.1, y=0.2))),
-        (3, [0.1, 0.2, 0.3], Twist(linear=Vector3(x=0.1, y=0.2), angular=Vector3(z=0.3))),
+        (
+            1,
+            [0.1],
+            Twist(linear=Vector3(x=0.1, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)),
+        ),
+        (
+            2,
+            [0.1, 0.2],
+            Twist(linear=Vector3(x=0.1, y=0.2, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)),
+        ),
+        (
+            3,
+            [0.1, 0.2, 0.3],
+            Twist(linear=Vector3(x=0.1, y=0.2, z=0.0), angular=Vector3(z=0.3, x=0.0, y=0.0)),
+        ),
     ],
 )
 def test_generated_commands_preserve_enable_and_stop_contract(
@@ -56,8 +72,10 @@ def test_generated_commands_preserve_enable_and_stop_contract(
     adapter.write_enable(True)
     assert adapter.write_velocities(values)
     message = transport.publish.call_args.args[0]
-    assert Twist.decode(message.encode()) == expected
+    assert cdr_decode(cdr_encode(message), Twist) == expected
     assert adapter.read_velocities() == values
     adapter.write_enable(False)
-    assert transport.publish.call_args.args[0] == Twist()
+    assert transport.publish.call_args.args[0] == Twist(
+        linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)
+    )
     assert adapter.read_velocities() == [0.0] * dof

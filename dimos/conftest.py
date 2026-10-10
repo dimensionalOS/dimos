@@ -20,6 +20,7 @@ import os
 import pathlib
 import platform
 import shutil
+import sys
 import tempfile
 import threading
 import time
@@ -84,6 +85,7 @@ with suppress(ImportError, ValueError, OSError):
     if soft < target:
         resource.setrlimit(resource.RLIMIT_NOFILE, (target, hard))
 
+from dimos_message_build.registry import message_types
 from dotenv import dotenv_values
 import pytest
 import tqdm
@@ -215,9 +217,15 @@ def pytest_configure(config):
         "markers",
         "bake_e2e: dimos bake e2e (builds rust); runs in the CI rust job",
     )
+    config.addinivalue_line(
+        "markers",
+        "native_e2e: native module e2e (builds rust); "
+        "runs in the CI rust job and the macOS self-hosted-tests job",
+    )
     config.addinivalue_line("markers", "skipif_in_ci: skip when CI env var is set")
     config.addinivalue_line("markers", "skipif_no_openai: skip when OPENAI_API_KEY is not set")
     config.addinivalue_line("markers", "skipif_no_alibaba: skip when ALIBABA_API_KEY is not set")
+    config.addinivalue_line("markers", "skipif_no_typesafe: skip when TYPESAFE_API_KEY is not set")
     config.addinivalue_line("markers", "skipif_no_ros: skip when ROS dependencies are not present")
     config.addinivalue_line(
         "markers",
@@ -242,6 +250,18 @@ def pytest_configure(config):
             os.environ[DIMOS_PYTEST_RUN_ID_ENV],
             env_var=DIMOS_PYTEST_RUN_ID_ENV,
         )
+
+
+@pytest.fixture(autouse=True)
+def _restore_reference_types_module():
+    # Reference typestores replace rosbags' process-global class module. Keep
+    # their test-local identities from invalidating canonical message pickles.
+    message_types()
+    previous = sys.modules["rosbags.usertypes"]
+    try:
+        yield
+    finally:
+        sys.modules["rosbags.usertypes"] = previous
 
 
 def _global_config_guard():
@@ -312,6 +332,7 @@ def pytest_collection_modifyitems(config, items):
         "skipif_in_ci": (bool(os.getenv("CI")), "Skipped in CI"),
         "skipif_no_openai": (not os.getenv("OPENAI_API_KEY"), "OPENAI_API_KEY not set"),
         "skipif_no_alibaba": (not os.getenv("ALIBABA_API_KEY"), "ALIBABA_API_KEY not set"),
+        "skipif_no_typesafe": (not os.getenv("TYPESAFE_API_KEY"), "TYPESAFE_API_KEY not set"),
         "skipif_no_ros": (not _has_ros(), "ROS dependencies are not present"),
         "skipif_no_turbojpeg": (
             not _has_turbojpeg() and not os.getenv("CI"),

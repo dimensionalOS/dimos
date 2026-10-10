@@ -15,6 +15,7 @@
 import time
 
 from dimos_generated.geometry_msgs.msg import Vector3
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import lcm
 
 
@@ -22,7 +23,7 @@ def test_runpublish() -> None:
     for i in range(10):
         msg = Vector3(x=-5 + i, y=-5 + i, z=i)
         lc = lcm.LCM()
-        lc.publish("thing1_vector3#geometry_msgs/msg/Vector3", msg.encode())
+        lc.publish("thing1_vector3#geometry_msgs/msg/Vector3", cdr_encode(msg))
         time.sleep(0.1)
         print(f"Published: {msg}")
 
@@ -31,7 +32,7 @@ def test_receive() -> None:
     lc = lcm.LCM()
 
     def receive(channel: str, msg: bytes) -> None:
-        print(Vector3.decode(msg))
+        print(cdr_decode(msg, Vector3))
 
     lc.subscribe("thing1_vector3#geometry_msgs/msg/Vector3", receive)
 

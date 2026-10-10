@@ -14,8 +14,10 @@
 
 from collections.abc import Callable
 import functools
+import threading
 from typing import Any
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import (
     PoseStamped,
     Quaternion,
@@ -42,6 +44,9 @@ logger = setup_logger()
 _WIDTH = 640
 _HEIGHT = 288
 _FOV_DEG = 46
+# The bridge publishes odom at 50 Hz from the moment it reports ready, so the
+# first message is a quick end-to-end check that the sim's bus reaches us.
+_FIRST_ODOM_TIMEOUT = 30.0
 
 
 class DimSimConnection:
@@ -50,24 +55,41 @@ class DimSimConnection:
         width=_WIDTH,
         height=_HEIGHT,
         axis="horizontal",
-        header=Header(frame_id="camera_optical"),
+        header=Header(frame_id="camera_optical", stamp=Time(sec=0, nanosec=0)),
     )
 
     def __init__(self, global_config: GlobalConfig) -> None:
+        self._global_config = global_config
         self._dimsim_process: DimSimProcess = DimSimProcess(global_config)
         self._odom_transport: PubSubTransport[PoseStamped] = make_transport("/odom", PoseStamped)
         self._tf_transport: PubSubTransport[TFMessage] = make_transport("/tf", TFMessage)
         self._unsubscribe_odom: Callable[[], None] | None = None
+        self._first_odom = threading.Event()
 
     def start(self) -> None:
-        self._dimsim_process.start()
+        # Subscribe before the sim comes up so its first odom can't be missed.
+        self._first_odom.clear()
         self._odom_transport.start()
         self._unsubscribe_odom = self._odom_transport.subscribe(self._handle_odom)
+        try:
+            self._dimsim_process.start()
+            if self._global_config.dimsim_headless and not self._first_odom.wait(
+                _FIRST_ODOM_TIMEOUT
+            ):
+                raise TimeoutError(
+                    f"DimSim reported ready but no /odom arrived within {_FIRST_ODOM_TIMEOUT:.0f} s. "
+                    "DimSim publishes over LCM only; the transport is "
+                    f"{self._global_config.transport!r}."
+                )
+        except BaseException:
+            self.stop()
+            raise
 
     def stop(self) -> None:
         if self._unsubscribe_odom is not None:
             self._unsubscribe_odom()
-        self._odom_transport.stop()
+            self._unsubscribe_odom = None
+            self._odom_transport.stop()
         self._dimsim_process.stop()
 
     @functools.cache
@@ -121,6 +143,7 @@ class DimSimConnection:
         return {}
 
     def _handle_odom(self, msg: PoseStamped) -> None:
+        self._first_odom.set()
         self._tf_transport.publish(TFMessage(transforms=_odom_to_tf(msg)))
 
 
@@ -131,15 +154,25 @@ def _odom_to_tf(odom: PoseStamped) -> list[TransformStamped]:
         TransformStamped(
             header=Header(stamp=odom.header.stamp, frame_id="base_link"),
             child_frame_id="camera_link",
-            transform=Transform(translation=Vector3(x=0.3)),
+            transform=Transform(
+                translation=Vector3(x=0.3, y=0.0, z=0.0),
+                rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
         ),
         TransformStamped(
             header=Header(stamp=odom.header.stamp, frame_id="camera_link"),
             child_frame_id="camera_optical",
-            transform=Transform(rotation=Quaternion(x=-0.5, y=0.5, z=-0.5, w=0.5)),
+            transform=Transform(
+                rotation=Quaternion(x=-0.5, y=0.5, z=-0.5, w=0.5),
+                translation=Vector3(x=0.0, y=0.0, z=0.0),
+            ),
         ),
         TransformStamped(
             header=Header(stamp=odom.header.stamp, frame_id="base_link"),
             child_frame_id="lidar_link",
+            transform=Transform(
+                translation=Vector3(x=0.0, y=0.0, z=0.0),
+                rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
         ),
     ]

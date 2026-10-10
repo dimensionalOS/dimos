@@ -26,6 +26,7 @@ from typing import Any
 
 from dimos_generated.geometry_msgs.msg import PoseStamped, Twist, TwistStamped, Vector3
 from dimos_generated.std_msgs.msg import Float32, Header
+from dimos_message_build.registry import decode as cdr_decode
 from reactivex.disposable import Disposable
 
 from dimos.control.coordinator import ControlCoordinator
@@ -111,7 +112,7 @@ class ArmCommandModule(ArmTeleopModule):
 
     def _on_pose_bytes(self, data: bytes) -> None:
         """Controller pose → robot frame; stale/future/out-of-order dropped."""
-        msg = PoseStamped.decode(data)
+        msg = cdr_decode(data, PoseStamped)
         try:
             hand = self._resolve_hand(msg.header.frame_id)
         except ValueError:
@@ -143,7 +144,7 @@ class ArmCommandModule(ArmTeleopModule):
         """Browser keyboard EE-twist → coordinator's eef_twist task."""
         if self._estopped:
             return
-        msg = TwistStamped.decode(data)
+        msg = cdr_decode(data, TwistStamped)
         ts = to_seconds(msg.header.stamp)
         if not math.isfinite(ts):
             return
@@ -167,7 +168,7 @@ class ArmCommandModule(ArmTeleopModule):
             scale = self._translation_scale
         self.ee_twist_command.publish(
             TwistStamped(
-                header=Header(stamp=msg.header.stamp),
+                header=Header(stamp=msg.header.stamp, frame_id=""),
                 twist=Twist(
                     linear=Vector3(
                         x=msg.twist.linear.x * scale,

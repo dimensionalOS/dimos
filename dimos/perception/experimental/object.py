@@ -19,10 +19,12 @@ import time
 from typing import TYPE_CHECKING, Any
 import uuid
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import (
     Point,
     Pose,
     PoseStamped,
+    PoseWithCovariance,
     Quaternion,
     TransformStamped,
     Vector3,
@@ -158,7 +160,18 @@ class Object(Detection3D):
         """Convert to ROS Detection3D message."""
         center, orientation, size = self._detection3d_bbox_components()
 
-        msg = ROSDetection3D()
+        msg = ROSDetection3D(
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            results=[],
+            bbox=BoundingBox3D(
+                center=Pose(
+                    position=Point(x=0.0, y=0.0, z=0.0),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+                size=Vector3(x=0.0, y=0.0, z=0.0),
+            ),
+            id="",
+        )
         msg.header = self.pose.header
         msg.id = self.object_id
         msg.results = [
@@ -166,7 +179,14 @@ class Object(Detection3D):
                 hypothesis=ObjectHypothesis(
                     class_id=self.name,
                     score=self.confidence,
-                )
+                ),
+                pose=PoseWithCovariance(
+                    pose=Pose(
+                        position=Point(x=0.0, y=0.0, z=0.0),
+                        orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                    ),
+                    covariance=np.zeros(36, dtype=np.float64),
+                ),
             )
         ]
         msg.bbox = BoundingBox3D(
@@ -339,7 +359,7 @@ class Object(Detection3D):
                 aabb_extent = aabb.max_bound - aabb.min_bound
                 center = Vector3(x=aabb_center[0], y=aabb_center[1], z=aabb_center[2])
                 sx, sy, sz = float(aabb_extent[0]), float(aabb_extent[1]), float(aabb_extent[2])
-                orientation = Quaternion(w=1.0)
+                orientation = Quaternion(w=1.0, x=0.0, y=0.0, z=0.0)
             else:
                 obb = pcd_filtered.get_oriented_bounding_box()
                 center = Vector3(x=obb.center[0], y=obb.center[1], z=obb.center[2])
@@ -397,7 +417,7 @@ def aggregate_pointclouds(objects: list[Object]) -> PointCloud2:
         Combined PointCloud2 with all points colored by object (empty if no points).
     """
     header = (
-        Header()
+        Header(stamp=Time(sec=0, nanosec=0), frame_id="")
         if not objects
         else Header(frame_id=objects[0].frame_id, stamp=objects[0].pointcloud.header.stamp)
     )

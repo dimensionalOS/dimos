@@ -37,7 +37,7 @@ Encoders take the message (plus, optionally, the channel's params mapping) and
 return `bytes`, an `EncodedPayload` when the frame needs header meta, or None
 to skip the sample. Two codecs apply without registration: json.v1 for
 JSON-shaped message types, and `<msg_name>.cdr.v1` (dimos/web/cdr_codec.py)
-for generated messages (the frame is `msg.encode()`,
+for generated messages (the frame is registry-encoded CDR,
 the schema rides the channel's params["cdr"]). Anything else potentially
 large (images, arrays, bytes) needs an explicit @web_encoder.
 """
@@ -461,7 +461,7 @@ def resolve_encoder(encoding: str, message_type: type[Any]) -> EncoderDef:
         # issubclass() is unavailable, and importing dimos.msgs here would
         # defeat this module's import-lightness. Some wire messages (Image)
         # are dataclasses too - the marker must win.
-        is_dimos_msg = callable(getattr(message_type, "encode", None))
+        is_dimos_msg = isinstance(getattr(message_type, "__msgtype__", None), str)
         plain_dataclass = dataclasses.is_dataclass(message_type) and not is_dimos_msg
         if message_type not in _JSON_V1_TYPES and not plain_dataclass:
             raise ValueError(

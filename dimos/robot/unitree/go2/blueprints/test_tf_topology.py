@@ -22,32 +22,51 @@ so the static mount tree owns base_link, and the static tree is rooted at
 mid360_link so it never writes the frame PointLio owns.
 """
 
-from dimos_generated.geometry_msgs.msg import PoseStamped
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from dimos_generated.std_msgs.msg import Header
 import pytest
 
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
+from dimos.mapping.relocalization.module import RelocalizationModule
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_mid360_record import (
     unitree_go2_mid360_record,
 )
+from dimos.robot.unitree.go2.blueprints.navigation.go2_sim_nav import go2_sim_nav
 from dimos.robot.unitree.go2.blueprints.navigation.unitree_go2_nav_3d import (
     unitree_go2_nav_3d,
+    unitree_go2_nav_3d_relocalization,
+)
+from dimos.robot.unitree.go2.blueprints.navigation.unitree_go2_nav_3d_relocalization_replay import (
+    unitree_go2_nav_3d_relocalization_replay,
 )
 from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.robot.unitree.go2.go2_mid360_static_transforms import (
     Go2Mid360StaticTf,
     mount_transforms,
 )
+from dimos.simulation.go2_sim.world import SENSOR_FRAME_ID, SimGo2World
 
-BLUEPRINTS = [unitree_go2_nav_3d, unitree_go2_mid360_record]
+BLUEPRINTS = [
+    unitree_go2_nav_3d,
+    unitree_go2_nav_3d_relocalization,
+    unitree_go2_nav_3d_relocalization_replay,
+    unitree_go2_mid360_record,
+    go2_sim_nav,
+]
 
 
 def _tf_children_by_publisher(blueprint: Blueprint) -> dict[str, set[str]]:
     """Child frames each tf publisher the blueprint actually enables will write."""
-    odom = PoseStamped(header=Header(frame_id="go2_odom"))
+    odom = PoseStamped(
+        header=Header(frame_id="go2_odom", stamp=Time(sec=0, nanosec=0)),
+        pose=Pose(
+            position=Point(x=0.0, y=0.0, z=0.0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+        ),
+    )
     children: dict[str, set[str]] = {}
-    for atom in blueprint.blueprints:
+    for atom in blueprint.active_blueprints:
         if atom.module is GO2Connection and atom.kwargs.get("publish_tf", True):
             children["GO2Connection"] = {t.child_frame_id for t in GO2Connection._odom_to_tf(odom)}
         if atom.module is Go2Mid360StaticTf:
@@ -55,6 +74,10 @@ def _tf_children_by_publisher(blueprint: Blueprint) -> dict[str, set[str]]:
         if atom.module is PointLio:
             sensor_frame = atom.kwargs.get("sensor_frame_id", "mid360_link")
             children["PointLio"] = {sensor_frame}
+        if atom.module is SimGo2World:
+            children["SimGo2World"] = {SENSOR_FRAME_ID}
+        if issubclass(atom.module, RelocalizationModule):
+            children[atom.module.__name__] = {atom.kwargs.get("map_frame", "map")}
     return children
 
 
@@ -67,6 +90,12 @@ def test_no_frame_has_two_tf_parents(blueprint: Blueprint) -> None:
         clash = claimed & frames
         assert not clash, f"{publisher} also writes {sorted(clash)}"
         claimed |= frames
+
+
+def test_replay_leaves_the_mount_tree_to_the_recording() -> None:
+    """The recording carries the mount tf, so the static publisher must stay disabled."""
+    by_publisher = _tf_children_by_publisher(unitree_go2_nav_3d_relocalization_replay)
+    assert "Go2Mid360StaticTf" not in by_publisher
 
 
 def test_static_tree_does_not_write_the_pointlio_frame() -> None:

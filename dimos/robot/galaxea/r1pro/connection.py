@@ -55,6 +55,7 @@ from dimos_generated.nav_msgs.msg import Odometry
 from dimos_generated.sensor_msgs.msg import CompressedImage, Image, Imu, JointState, PointCloud2
 from dimos_generated.std_msgs.msg import Header
 from dimos_generated.tf2_msgs.msg import TFMessage
+import numpy as np
 from pydantic import Field
 from reactivex.disposable import Disposable
 
@@ -85,10 +86,8 @@ _FEEDBACK_DISCOVERY_TIMEOUT_S = 5.0
 R1PRO_UPPER_BODY_JOINTS: list[str] = [coordinator_name(j) for j in UPPER_BODY_JOINTS]
 assert len(R1PRO_UPPER_BODY_JOINTS) == _NUM_MOTORS
 
-# JPEG color streams: stream name → ROS topic.
+# JPEG color streams gated by config.enable_wrist_color: stream name → ROS topic.
 _COLOR_CAMERAS: dict[str, str] = {
-    "head_left_color": "/hdas/camera_head/left_raw/image_raw_color/compressed",
-    "head_right_color": "/hdas/camera_head/right_raw/image_raw_color/compressed",
     "wrist_left_color": "/hdas/camera_wrist_left/color/image_raw/compressed",
     "wrist_right_color": "/hdas/camera_wrist_right/color/image_raw/compressed",
 }
@@ -101,7 +100,7 @@ _WRIST_DEPTH_CAMERAS: dict[str, str] = {
 _HEAD_DEPTH_TOPIC = "/hdas/camera_head/depth/depth_registered"
 _LIDAR_TOPIC = "/hdas/lidar_chassis_left"
 # base_link -> lidar_chassis_left_link, the fixed joint origin in the vendor URDF.
-_LIDAR_MOUNT_XYZ = (0.15711, 0.26215, 0.29465)
+_LIDAR_MOUNT_XYZ = (0.15711, 0.21215, 0.29465)
 
 
 @dataclass
@@ -146,8 +145,10 @@ class R1ProConnectionConfig(ModuleConfig):
     # Wrist depth is raw 16-bit at up to 30 Hz per wrist — too heavy for the
     # on-robot CPU budget by default; enable when manipulation needs it.
     enable_wrist_depth: bool = Field(default=False)
-    # Max Hz per color camera (0 = no cap).
-    color_publish_hz: float = Field(default=5.0)
+    # Each wrist copies and publishes JPEG frames even when unread; turn off if nothing reads them.
+    enable_wrist_color: bool = Field(default=True)
+    # Max Hz per color camera (0 = no cap); the cameras arrive at ~28 Hz, so 30 passes every frame.
+    color_publish_hz: float = Field(default=30.0)
 
 
 class R1ProConnection(Module):
@@ -172,8 +173,6 @@ class R1ProConnection(Module):
     tf: Out[TFMessage]
 
     # Perception.
-    head_left_color: Out[CompressedImage]
-    head_right_color: Out[CompressedImage]
     head_depth: Out[Image]
     lidar: Out[PointCloud2]
     wrist_left_color: Out[CompressedImage]
@@ -403,8 +402,9 @@ class R1ProConnection(Module):
                 Thread(target=worker, args=(stream, q, *args), daemon=True, name=f"r1pro-{stream}")
             )
 
-        for stream, topic in _COLOR_CAMERAS.items():
-            add_stream(stream, topic, RosCompressedImage, self._compressed_image_loop)
+        if self.config.enable_wrist_color:
+            for stream, topic in _COLOR_CAMERAS.items():
+                add_stream(stream, topic, RosCompressedImage, self._compressed_image_loop)
 
         add_stream("head_depth", _HEAD_DEPTH_TOPIC, RosImage, self._convert_loop, Image)
         add_stream("lidar", _LIDAR_TOPIC, RosPointCloud2, self._convert_loop, PointCloud2)
@@ -530,9 +530,9 @@ class R1ProConnection(Module):
             cmd = JointState(
                 header=header,
                 name=[""],
-                position=list(msg.q)[sl],
-                velocity=self._tracking_velocities(list(msg.dq)[sl]),
-                effort=[0.0],
+                position=np.asarray(list(msg.q)[sl], dtype=np.float64),
+                velocity=np.asarray(self._tracking_velocities(list(msg.dq)[sl]), dtype=np.float64),
+                effort=np.array([0.0], dtype=np.float64),
             )
             ros.publish(topic, dimos_to_ros(cmd, topic.ros_type))
 
@@ -548,7 +548,8 @@ class R1ProConnection(Module):
         cmd = TwistStamped(
             header=header_now(),
             twist=Twist(
-                linear=Vector3(x=msg.linear.x, y=msg.linear.y), angular=Vector3(z=msg.angular.z)
+                linear=Vector3(x=msg.linear.x, y=msg.linear.y, z=0.0),
+                angular=Vector3(z=msg.angular.z, x=0.0, y=0.0),
             ),
         )
         ros.publish(self._speed_topic, dimos_to_ros(cmd, self._speed_topic.ros_type))
@@ -585,10 +586,10 @@ class R1ProConnection(Module):
     ) -> None:
         n = min(len(msg.position), len(q_dst))
         q_dst[:n] = list(msg.position)[:n]
-        if msg.velocity:
+        if len(msg.velocity):
             nv = min(len(msg.velocity), len(dq_dst))
             dq_dst[:nv] = list(msg.velocity)[:nv]
-        if msg.effort:
+        if len(msg.effort):
             ne = min(len(msg.effort), len(eff_dst))
             eff_dst[:ne] = list(msg.effort)[:ne]
 
@@ -618,8 +619,8 @@ class R1ProConnection(Module):
         pose = PoseStamped(
             header=header,
             pose=Pose(
-                position=Point(x=self._odom_x, y=self._odom_y),
-                orientation=Quaternion(z=math.sin(half), w=math.cos(half)),
+                position=Point(x=self._odom_x, y=self._odom_y, z=0.0),
+                orientation=Quaternion(z=math.sin(half), w=math.cos(half), x=0.0, y=0.0),
             ),
         )
         self.odom.publish(pose)
@@ -627,9 +628,12 @@ class R1ProConnection(Module):
             Odometry(
                 header=header,
                 child_frame_id=base,
-                pose=PoseWithCovariance(pose=pose.pose),
+                pose=PoseWithCovariance(pose=pose.pose, covariance=np.zeros(36, dtype=np.float64)),
                 twist=TwistWithCovariance(
-                    twist=Twist(linear=Vector3(x=vx, y=vy), angular=Vector3(z=wz))
+                    twist=Twist(
+                        linear=Vector3(x=vx, y=vy, z=0.0), angular=Vector3(z=wz, x=0.0, y=0.0)
+                    ),
+                    covariance=np.zeros(36, dtype=np.float64),
                 ),
             )
         )
@@ -644,7 +648,8 @@ class R1ProConnection(Module):
                         transform=Transform(
                             translation=Vector3(
                                 x=_LIDAR_MOUNT_XYZ[0], y=_LIDAR_MOUNT_XYZ[1], z=_LIDAR_MOUNT_XYZ[2]
-                            )
+                            ),
+                            rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
                         ),
                     ),
                 ]
@@ -695,9 +700,9 @@ class R1ProConnection(Module):
                     JointState(
                         header=Header(stamp=time_from_nanoseconds(ts), frame_id=frame_id),
                         name=R1PRO_UPPER_BODY_JOINTS,
-                        position=positions,  # type: ignore[arg-type]
-                        velocity=velocities,
-                        effort=efforts,
+                        position=np.asarray(positions, dtype=np.float64),  # type: ignore[arg-type]
+                        velocity=np.asarray(velocities, dtype=np.float64),
+                        effort=np.asarray(efforts, dtype=np.float64),
                     )
                 )
                 if imu_chassis is not None:

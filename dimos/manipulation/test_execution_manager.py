@@ -21,6 +21,8 @@ from dimos_generated.dimos_msgs.msg import TrajectoryStatus
 from dimos_generated.sensor_msgs.msg import JointState
 from dimos_generated.std_msgs.msg import Header
 from dimos_generated.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
+import numpy as np
 import pytest
 
 from dimos.control.coordinator import ControlCoordinator
@@ -45,16 +47,33 @@ def _plan(
 ) -> GeneratedPlan:
     points = [
         JointTrajectoryPoint(
-            positions=[0.0] * len(names), time_from_start=duration_from_seconds(0.0)
+            positions=np.asarray([0.0] * len(names), dtype=np.float64),
+            time_from_start=duration_from_seconds(0.0),
+            velocities=np.array([], dtype=np.float64),
+            accelerations=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
         ),
         JointTrajectoryPoint(
-            positions=[1.0] * len(names), time_from_start=duration_from_seconds(1.0)
+            positions=np.asarray([1.0] * len(names), dtype=np.float64),
+            time_from_start=duration_from_seconds(1.0),
+            velocities=np.array([], dtype=np.float64),
+            accelerations=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
         ),
     ]
     return GeneratedPlan(
         group_ids=("both_arms",),
         trajectory=JointTrajectory(header=header_now(), joint_names=list(names), points=points),
-        path=[JointState(name=list(names), position=point.positions) for point in points],
+        path=[
+            JointState(
+                name=list(names),
+                position=np.asarray(point.positions, dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            )
+            for point in points
+        ],
         status=status,
     )
 
@@ -69,7 +88,14 @@ def _coordinator() -> MagicMock:
             return TrajectoryExecutionResult(TrajectoryExecutionStatus.ACCEPTED)
         if method == "cancel":
             return TrajectoryCancellationResult(TrajectoryCancellationStatus.ALREADY_STOPPED)
-        return TrajectoryStatus(header=header_now(), state=TrajectoryState.IDLE)
+        return TrajectoryStatus(
+            header=header_now(),
+            state=TrajectoryState.IDLE,
+            progress=0.0,
+            time_elapsed=Duration(sec=0, nanosec=0),
+            time_remaining=Duration(sec=0, nanosec=0),
+            error="",
+        )
 
     coordinator.task_invoke.side_effect = invoke
     return coordinator
@@ -177,7 +203,12 @@ class _WholeBody:
                 task, TrajectoryCancellationResult(TrajectoryCancellationStatus.CANCELLED)
             )
         return TrajectoryStatus(
-            header=header_now(), state=self.states[task], error=self.errors.get(task, "")
+            header=header_now(),
+            state=self.states[task],
+            error=self.errors.get(task, ""),
+            progress=0.0,
+            time_elapsed=Duration(sec=0, nanosec=0),
+            time_remaining=Duration(sec=0, nanosec=0),
         )
 
     def manager(self) -> PlanExecutionManager:
@@ -283,7 +314,7 @@ def test_split_cdr_plan_preserves_header_durations_and_optional_point_fields():
     plan.trajectory.points = points
     try:
         assert manager.execute(plan, blocking=False).status == ExecutionStatus.ACCEPTED
-        part = JointTrajectory.decode(robot.dispatched["base_traj"].encode())
+        part = cdr_decode(cdr_encode(robot.dispatched["base_traj"]), JointTrajectory)
         assert part.header == plan.trajectory.header
         assert part.points[-1].time_from_start == Duration(sec=1, nanosec=9)
         assert list(part.points[-1].velocities) == [0.3, 0.4, 0.1]

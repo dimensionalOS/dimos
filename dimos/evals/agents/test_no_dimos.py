@@ -29,7 +29,7 @@ from dimos.evals.agents.lib.plain_recording import plain_recording
 from dimos.evals.agents.mcp_client_adapter import McpClientAdapter
 from dimos.evals.agents.pi import PiAdapter
 from dimos.evals.agents.question_answer import QuestionAnswer
-from dimos.evals.constants import NO_DIMOS_KEYWORDS
+from dimos.evals.constants import NO_DIMOS_KEYWORDS, RAW_README
 from dimos.evals.types import RunningEnvironment
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.image import image_from_array, image_to_rgb
@@ -67,6 +67,7 @@ def test_robot_environment_needs_raw_topics(tmp_path: Path) -> None:
             streams=(),
             artifacts={"recording": tmp_path / "memory.db"},
             raw_endpoint="tcp/127.0.0.1:7448",
+            raw_guide=RAW_README,
         ),
         tmp_path,
     )
@@ -91,7 +92,10 @@ def test_recorded_observations_are_exported_as_plain_files(tmp_path: Path) -> No
             ts=1.0,
         )
         lidar.append(
-            pointcloud_from_xyz(points * 2, header=Header(stamp=time_from_seconds(2.0))), ts=2.0
+            pointcloud_from_xyz(
+                points * 2, header=Header(stamp=time_from_seconds(2.0), frame_id="")
+            ),
+            ts=2.0,
         )
         images = store.stream("camera", Image)
         images.append(image_from_array(pixels, encoding="rgb8"), ts=3.0)

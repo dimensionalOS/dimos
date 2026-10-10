@@ -24,8 +24,10 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.sensor_msgs.msg import Image
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 
@@ -215,10 +217,10 @@ def test_generated_crop_scale_stamp_preserve_zero_source_header() -> None:
     source = image_from_array(
         np.zeros((721, 1280, 3), np.uint8),
         encoding="bgr8",
-        header=Header(frame_id="camera_optical"),
+        header=Header(frame_id="camera_optical", stamp=Time(sec=0, nanosec=0)),
     )
-    mux._on_cam("cam1", Image.decode(source.encode()))
-    output = Image.decode(mux.published[0].encode())
+    mux._on_cam("cam1", cdr_decode(cdr_encode(source), Image))
+    output = cdr_decode(cdr_encode(mux.published[0]), Image)
     assert output.width % 2 == 0 and output.height % 2 == 0
     assert output.header.frame_id == "camera_optical"
     assert to_nanoseconds(output.header.stamp) == 0

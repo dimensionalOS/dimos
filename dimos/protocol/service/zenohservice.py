@@ -31,7 +31,9 @@ from dimos.core.global_config import TransportBackend, ZenohMode, global_config
 from dimos.protocol.service.spec import Service, SessionConfig
 from dimos.utils.logging_config import setup_logger
 
-zenoh.init_log_from_env_or("warn,zenoh_shm::watchdog::periodic_task=error")
+ZENOH_LOG_DIRECTIVES = "zenoh=warn,zenoh_shm::watchdog::periodic_task=error"
+
+zenoh.init_log_from_env_or(f"warn,{ZENOH_LOG_DIRECTIVES}")
 
 logger = setup_logger()
 
@@ -240,6 +242,8 @@ def _zenoh_config(config: ZenohConfig) -> zenoh.Config:
         if not value and name in _ZENOH_DEFAULTED_WHEN_EMPTY:
             continue
         zconfig.insert_json5(_ZENOH_KEYS[name], json.dumps(value))
+    # Off: shared-memory transfer silently loses payloads over 3 kB between some sessions.
+    zconfig.insert_json5("transport/shared_memory/enabled", "false")
     return zconfig
 
 

@@ -13,9 +13,10 @@
 # limitations under the License.
 
 from dimos_generated.builtin_interfaces.msg import Time
-from dimos_generated.geometry_msgs.msg import Vector3
+from dimos_generated.geometry_msgs.msg import Quaternion, Vector3
 from dimos_generated.sensor_msgs.msg import CompressedImage, Imu
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import encode as cdr_encode, schema as cdr_schema
 from mcap.writer import Writer
 import numpy as np
 import pytest
@@ -33,13 +34,26 @@ def test_cdr_channel_decodes_and_orders_by_declared_source_time(tmp_path, explic
     expected = Imu(
         header=Header(stamp=Time(sec=12, nanosec=500000000), frame_id="imu_link"),
         angular_velocity=Vector3(x=1, y=2, z=3),
+        orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+        orientation_covariance=np.zeros(9, dtype=np.float64),
+        angular_velocity_covariance=np.zeros(9, dtype=np.float64),
+        linear_acceleration=Vector3(x=0.0, y=0.0, z=0.0),
+        linear_acceleration_covariance=np.zeros(9, dtype=np.float64),
     )
-    earlier = Imu(header=Header(stamp=Time(sec=11, nanosec=500000000), frame_id="earlier"))
+    earlier = Imu(
+        header=Header(stamp=Time(sec=11, nanosec=500000000), frame_id="earlier"),
+        orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+        orientation_covariance=np.zeros(9, dtype=np.float64),
+        angular_velocity=Vector3(x=0.0, y=0.0, z=0.0),
+        angular_velocity_covariance=np.zeros(9, dtype=np.float64),
+        linear_acceleration=Vector3(x=0.0, y=0.0, z=0.0),
+        linear_acceleration_covariance=np.zeros(9, dtype=np.float64),
+    )
     with path.open("wb") as output:
         writer = Writer(output)
         writer.start(profile="ros2", library="test")
         schema = writer.register_schema(
-            name=Imu.msg_name, encoding="ros2msg", data=Imu.schema.encode()
+            name=Imu.__msgtype__, encoding="ros2msg", data=cdr_schema(Imu.__msgtype__).encode()
         )
         channel = writer.register_channel(
             topic="imu",
@@ -52,15 +66,20 @@ def test_cdr_channel_decodes_and_orders_by_declared_source_time(tmp_path, explic
                 channel_id=channel,
                 log_time=13000000000 + index * 1000000000,
                 publish_time=stamp,
-                data=message.encode(),
+                data=cdr_encode(message),
             )
         writer.finish()
     with McapStore(path=str(path), codecs={"imu": CdrCodec(Imu)} if explicit else None) as store:
         assert store.list_streams() == ["imu"]
         observations = list(store.stream("imu").order_by("ts"))
         assert [observation.ts for observation in observations] == [11.5, 12.5]
-        assert [observation.data for observation in observations] == [earlier, expected]
-        assert store.stream("imu").order_by("ts", desc=True).first().data == expected
+        assert [cdr_encode(observation.data) for observation in observations] == [
+            cdr_encode(earlier),
+            cdr_encode(expected),
+        ]
+        assert cdr_encode(store.stream("imu").order_by("ts", desc=True).first().data) == cdr_encode(
+            expected
+        )
 
 
 def test_standard_compressed_image_uses_cdr_and_generic_dataset_dispatch(tmp_path):
@@ -71,21 +90,23 @@ def test_standard_compressed_image_uses_cdr_and_generic_dataset_dispatch(tmp_pat
         header=Header(frame_id="camera", stamp=Time(sec=12, nanosec=123456789)),
     )
     expected = CompressedImage(
-        header=image.header, format="rgb8; jpeg compressed bgr8", data=image_to_jpeg(image)
+        header=image.header,
+        format="rgb8; jpeg compressed bgr8",
+        data=np.frombuffer(image_to_jpeg(image), dtype=np.uint8),
     )
     with CdrMcapWriter(path) as writer:
         writer.write(
             "color_image",
-            expected.encode(),
-            schema_name=expected.msg_name,
-            schema=expected.schema,
+            cdr_encode(expected),
+            schema_name=expected.__msgtype__,
+            schema=cdr_schema(expected.__msgtype__),
             log_time_ns=13000000000,
             publish_time_ns=12123456789,
         )
     with open_store(path) as store:
         observation = store.stream("color_image").first()
         assert observation.ts == 13.0
-        assert observation.data == expected
+        assert cdr_encode(observation.data) == cdr_encode(expected)
         assert observation.data.header.stamp.nanosec == 123456789
         assert observation.data.format == "rgb8; jpeg compressed bgr8"
 
@@ -121,22 +142,42 @@ def test_duplicate_topic_channels_count_together_or_reject_conflicting_schemas(
     tmp_path, second_type
 ):
     path = tmp_path / "channels.mcap"
+    header = Header(Time(0, 0), "")
+    imu = Imu(
+        header,
+        Quaternion(0.0, 0.0, 0.0, 1.0),
+        np.zeros(9),
+        Vector3(0.0, 0.0, 0.0),
+        np.zeros(9),
+        Vector3(0.0, 0.0, 0.0),
+        np.zeros(9),
+    )
+    second = (
+        imu if second_type is Imu else CompressedImage(header, "jpeg", np.array([], dtype=np.uint8))
+    )
     with path.open("wb") as output:
         writer = Writer(output)
         writer.start(profile="ros2")
-        for cls in [Imu, second_type]:
+        for message in [imu, second]:
             schema = writer.register_schema(
-                name=cls.msg_name, encoding="ros2msg", data=cls.schema.encode()
+                name=message.__msgtype__,
+                encoding="ros2msg",
+                data=cdr_schema(message.__msgtype__).encode(),
             )
             channel = writer.register_channel(
                 topic="sensor", message_encoding="cdr", schema_id=schema
             )
-            writer.add_message(channel_id=channel, log_time=1, publish_time=1, data=cls().encode())
+            writer.add_message(
+                channel_id=channel, log_time=1, publish_time=1, data=cdr_encode(message)
+            )
         writer.finish()
     if second_type is Imu:
         with McapStore(path=str(path)) as store:
             assert store.stream("sensor").count() == 2
-            assert [observation.data for observation in store.stream("sensor")] == [Imu(), Imu()]
+            assert [cdr_encode(observation.data) for observation in store.stream("sensor")] == [
+                cdr_encode(imu),
+                cdr_encode(imu),
+            ]
     else:
         with pytest.raises(ValueError, match="conflicting channel schemas"):
             McapStore(path=str(path))

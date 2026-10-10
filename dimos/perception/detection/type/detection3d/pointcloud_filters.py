@@ -21,7 +21,7 @@ from dimos_generated.geometry_msgs.msg import TransformStamped
 from dimos_generated.sensor_msgs.msg import CameraInfo, PointCloud2
 import numpy as np
 
-from dimos.msgs.geometry import inverse_transform
+from dimos.msgs.geometry import inverse_transform, transform_matrix
 from dimos.msgs.pointcloud import pointcloud_xyz, select_points
 
 if TYPE_CHECKING:
@@ -61,6 +61,37 @@ def statistical(nb_neighbors: int = 40, std_ratio: float = 0.5) -> PointCloudFil
             return _selected(pc, indices)
         except RuntimeError:
             return None
+
+    return filter_func
+
+
+def range_cluster(gap: float = 0.3) -> PointCloudFilter:
+    """Keep the camera-range cluster containing the median range.
+
+    The projected-cloud analog of the depth-gap split in ``from_depth``:
+    points a mask collects across a range discontinuity are background seen
+    through or around the object, not the object.
+    """
+
+    def filter_func(
+        det: Detection2DBBox, pc: PointCloud2, ci: CameraInfo, tf: TransformStamped
+    ) -> PointCloud2 | None:
+        points = pointcloud_xyz(pc)
+        if len(points) == 0:
+            return None
+        camera = transform_matrix(inverse_transform(tf).transform)[:3, 3]
+        ranges = np.linalg.norm(points - camera, axis=1)
+        order = np.argsort(ranges)
+        ranges_sorted = ranges[order]
+        gaps = np.nonzero(np.diff(ranges_sorted) > gap)[0]
+        starts = np.concatenate(([0], gaps + 1))
+        ends = np.concatenate((gaps + 1, [len(ranges_sorted)]))
+        median_idx = np.searchsorted(ranges_sorted, np.median(ranges_sorted))
+        for start, end in zip(starts, ends, strict=False):
+            if start <= median_idx < end:
+                keep = order[start:end]
+                return _selected(pc, keep.tolist())
+        return pc
 
     return filter_func
 

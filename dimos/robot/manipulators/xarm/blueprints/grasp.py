@@ -27,7 +27,9 @@ coordinator, pick-and-place, scene registration -- is the same stack either way.
 
 from __future__ import annotations
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import (
+    Point,
     Pose,
     PoseStamped,
     Quaternion,
@@ -115,7 +117,7 @@ XARM_GRASP_FRAME_TO_TCP = (
 # link7 is a frame the model already publishes, so ManipulationModule emits the
 # whole chain from one loop at one rate.
 XARM_WRIST_CAMERA_TRANSFORM = TransformStamped(
-    header=Header(frame_id="link7"),
+    header=Header(frame_id="link7", stamp=Time(sec=0, nanosec=0)),
     child_frame_id="camera_link",
     transform=Transform(
         translation=Vector3(x=0.06693724, y=-0.0309563, z=0.00691482),
@@ -129,7 +131,13 @@ if SIMULATED:
     # of the 12 cm pedestal data/xarm7 uses. Inheriting that offset would put the
     # planning model 12 cm above the arm MuJoCo simulates.
     _model = make_xarm7_sim_robot_config(
-        base_pose=PoseStamped(header=Header(frame_id="world"), pose=Pose()),
+        base_pose=PoseStamped(
+            header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+            pose=Pose(
+                position=Point(x=0.0, y=0.0, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+        ),
         # The self filter needs a capture-time transform for every collision link
         # and drops the whole cloud when one is missing.
         tf_extra_links=XARM7_COLLISION_LINKS,
@@ -139,7 +147,13 @@ else:
     _model = make_xarm7_model_config(
         add_gripper=True,
         gripper_hardware_id="arm",
-        base_pose=PoseStamped(header=Header(frame_id="world"), pose=Pose()),
+        base_pose=PoseStamped(
+            header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+            pose=Pose(
+                position=Point(x=0.0, y=0.0, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+        ),
         # The self filter needs a capture-time transform for every collision link
         # and drops the whole cloud when one is missing.
         tf_extra_links=XARM7_COLLISION_LINKS,

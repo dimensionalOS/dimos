@@ -12,63 +12,56 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Python NativeModule wrapper for the Point-LIO + Livox Mid-360 binary.
+"""Python NativeModule wrapper for the Rust Point-LIO binary.
 
-Usage::
+Point-LIO consumes the Mid360 driver's raw cloud and IMU streams and publishes
+its registered cloud, odometry and the odom -> sensor tf edge. Wire the driver
+in with ``mid360_for_pointlio`` from ``pointlio_blueprints``::
 
-    from dimos.hardware.sensors.lidar.pointlio.module import PointLio
     from dimos.core.coordination.blueprints import autoconnect
+    from dimos.hardware.sensors.lidar.pointlio.module import PointLio
+    from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
 
     from dimos.core.coordination.module_coordinator import ModuleCoordinator
     ModuleCoordinator.build(autoconnect(
-        PointLio.blueprint(host_ip="192.168.1.5", lidar_ip="192.168.1.155"),
+        mid360_for_pointlio(lidar_ip="192.168.1.155"),
+        PointLio.blueprint(),
         SomeConsumer.blueprint(),
     )).loop()
 
-Point-LIO tuning lives on PointLioTuning and is sent to the binary as stdin
-JSON. PointLio embeds the Livox SDK (C++); PointLioRust consumes the Rust
-Mid360 driver's PointCloud2/Imu messages instead.
+Every config field is sent to the binary as stdin JSON.
 """
 
 from __future__ import annotations
 
-import os
 from typing import TYPE_CHECKING, Literal
 
-from dimos_generated.nav_msgs.msg import Odometry
-from dimos_generated.sensor_msgs.msg import Imu, PointCloud2
-from dimos_generated.tf2_msgs.msg import TFMessage
-from pydantic import BaseModel, Field
-from reactivex.disposable import Disposable
+from pydantic import Field
 
-from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
-from dimos.hardware.sensors.lidar.livox.net import resolve_host_ip
-from dimos.hardware.sensors.lidar.livox.ports import (
-    SDK_CMD_DATA_PORT,
-    SDK_HOST_CMD_DATA_PORT,
-    SDK_HOST_IMU_DATA_PORT,
-    SDK_HOST_LOG_DATA_PORT,
-    SDK_HOST_POINT_DATA_PORT,
-    SDK_HOST_PUSH_MSG_PORT,
-    SDK_IMU_DATA_PORT,
-    SDK_LOG_DATA_PORT,
-    SDK_POINT_DATA_PORT,
-    SDK_PUSH_MSG_PORT,
-)
-from dimos.msgs.geometry import transform_from_odometry
+from dimos.msgs.nav_msgs.Odometry import Odometry
+from dimos.msgs.sensor_msgs.Imu import Imu
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.spec import perception
 
-# Human-readable enums; the C++ binary (main.cpp) maps these strings to
+# iVox local-map neighbor stencil. rust/src/module.rs maps the strings to
 # Point-LIO's int codes.
-# iVox local-map neighbour stencil.
 IvoxNearbyType = Literal["center", "nearby6", "nearby18", "nearby26"]
 
 
-class PointLioTuning(BaseModel):
-    """Estimator tuning shared by the C++ and Rust modules (sent as stdin JSON)."""
+class PointLioConfig(NativeModuleConfig):
+    stdin_config: bool = True
+    frame_id: str = "odom"
+    # frame_id_prefix too: the module composes the namespaced frame itself,
+    # since it publishes odometry and tf without going back through Python.
+    base_fields: frozenset[str] = frozenset({"frame_id", "frame_id_prefix"})
+    source_dir: str | None = "dimos/hardware/sensors/lidar/pointlio/rust"
+    # The crate is a workspace member, so cargo builds into the repo-root target dir.
+    executable: str = "../../../../../../target/release/pointlio_native"
+    build_command: str | None = "cargo build --release"
 
     # Odometry is published as frame_id (fixed) -> sensor_frame_id (moving sensor),
     # and also broadcast on TF. The point cloud is stamped with sensor_frame_id
@@ -81,7 +74,7 @@ class PointLioTuning(BaseModel):
     pointcloud_freq: float = 10.0
     odom_freq: float = 30.0
 
-    # Point-LIO tuning (read in main.cpp / rust/src/module.rs).
+    # Point-LIO tuning (read in rust/src/module.rs).
     # common
     con_frame: bool = False
     con_frame_num: int = 1
@@ -137,86 +130,13 @@ class PointLioTuning(BaseModel):
     odom_only: bool = False
 
 
-class PointLioConfig(NativeModuleConfig, PointLioTuning):
-    stdin_config: bool = True
-    frame_id: str = "odom"
-    base_fields: frozenset[str] = frozenset({"frame_id"})
-    cwd: str | None = "cpp"
-    executable: str = "result/bin/pointlio_native"
-    build_command: str | None = "nix build -L .#pointlio_native"
-    # lidar_ip required; host_ip optional (auto-derived from lidar_ip's subnet).
-    # Both fall back to DIMOS_POINTLIO_LIDAR_IP / DIMOS_POINTLIO_HOST_IP.
-    host_ip: str | None = Field(default_factory=lambda: os.environ.get("DIMOS_POINTLIO_HOST_IP"))
-    lidar_ip: str | None = Field(default_factory=lambda: os.environ.get("DIMOS_POINTLIO_LIDAR_IP"))
-    frequency: float = 10.0
-    debug: bool = False
-
-    # SDK port configuration (see livox/ports.py for defaults)
-    cmd_data_port: int = SDK_CMD_DATA_PORT
-    push_msg_port: int = SDK_PUSH_MSG_PORT
-    point_data_port: int = SDK_POINT_DATA_PORT
-    imu_data_port: int = SDK_IMU_DATA_PORT
-    log_data_port: int = SDK_LOG_DATA_PORT
-    host_cmd_data_port: int = SDK_HOST_CMD_DATA_PORT
-    host_push_msg_port: int = SDK_HOST_PUSH_MSG_PORT
-    host_point_data_port: int = SDK_HOST_POINT_DATA_PORT
-    host_imu_data_port: int = SDK_HOST_IMU_DATA_PORT
-    host_log_data_port: int = SDK_HOST_LOG_DATA_PORT
-
-
 class PointLio(NativeModule, perception.Lidar, perception.Odometry):
+    """Point-LIO fed by the Mid360 driver's messages. Publishes tf itself."""
+
     config: PointLioConfig
 
-    lidar: Out[PointCloud2]
-    odometry: Out[Odometry]
-    tf: Out[TFMessage]
-
-    @rpc
-    def start(self) -> None:
-        self._validate_network()
-        super().start()
-        self.register_disposable(
-            Disposable(self.odometry.transport.subscribe(self._on_odom_for_tf, self.odometry))
-        )
-
-    def _on_odom_for_tf(self, msg: Odometry) -> None:
-        self.tf.publish(TFMessage(transforms=[transform_from_odometry(msg)]))
-
-    @rpc
-    def stop(self) -> None:
-        super().stop()
-
-    def _validate_network(self) -> None:
-        lidar_ip = self.config.lidar_ip
-        if not lidar_ip:
-            raise RuntimeError(
-                "PointLio: lidar_ip not set — it's network-specific. Set it in the config "
-                "or via the DIMOS_POINTLIO_LIDAR_IP env var."
-            )
-        # host_ip optional: derive the local NIC on lidar_ip's /24 when unset or
-        # not one of our IPs (shared with the Mid360 driver).
-        self.config.host_ip = resolve_host_ip(lidar_ip, self.config.host_ip, label="PointLio")
-
-
-class PointLioRustConfig(NativeModuleConfig, PointLioTuning):
-    stdin_config: bool = True
-    frame_id: str = "odom"
-    # frame_id_prefix too: the Rust module composes the namespaced frame itself,
-    # since it publishes odometry and tf without going back through Python.
-    base_fields: frozenset[str] = frozenset({"frame_id", "frame_id_prefix"})
-    cwd: str | None = "rust"
-    # The crate is a workspace member, so cargo builds into the repo-root target dir.
-    executable: str = str(DIMOS_PROJECT_ROOT / "target" / "release" / "pointlio_native")
-    build_command: str | None = "cargo build --release"
-
-
-class PointLioRust(NativeModule, perception.Lidar, perception.Odometry):
-    """Rust Point-LIO fed by the Mid360 driver's messages; publishes tf itself."""
-
-    config: PointLioRustConfig
-
     lidar_raw: In[PointCloud2]
-    imu: In[Imu]
+    imu_raw: In[Imu]
 
     lidar: Out[PointCloud2]
     odometry: Out[Odometry]
@@ -234,4 +154,3 @@ class PointLioRust(NativeModule, perception.Lidar, perception.Odometry):
 # Verify protocol port compliance (mypy will flag missing ports)
 if TYPE_CHECKING:
     PointLio()
-    PointLioRust()

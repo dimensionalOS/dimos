@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from hashlib import sha256
+import json
+from pathlib import Path
 import subprocess
 import sys
 from types import ModuleType
@@ -22,6 +25,7 @@ from dimos.message_codegen import providers, registry
 from dimos.message_codegen.definitions import Definitions
 from dimos.message_codegen.distribution import write_distribution
 from dimos.message_codegen.generate import generate
+from dimos.message_codegen.ownership import Dependency
 
 
 def test_generation_is_reproducible_and_removes_stale_schemas(tmp_path):
@@ -75,6 +79,9 @@ def test_generated_source_imports_without_dimos_or_native_tools(tmp_path):
     installed = tmp_path / "installed" / "dimos"
     installed.mkdir(parents=True)
     (installed / "__init__.py").write_text("raise RuntimeError('wrong installed generator')\n")
+    (installed.parent / "dimos_message_build").symlink_to(
+        Path(__file__).parent, target_is_directory=True
+    )
     bundled = tmp_path / "messages/python"
     subprocess.run(
         [
@@ -82,9 +89,10 @@ def test_generated_source_imports_without_dimos_or_native_tools(tmp_path):
             "-I",
             "-c",
             "import sys; sys.path[:0] = sys.argv[1:]; "
+            "from dimos_message_build import registry; registry.providers = lambda: (); "
             "from example_messages.geometry_msgs.msg import Point; "
             "value = Point(x=1.25, y=-2.5, z=3); "
-            "assert Point.decode(value.encode()) == value; "
+            "assert registry.decode(registry.encode(value), Point) == value; "
             "assert not any(name == 'dimos' or name.startswith('dimos.') for name in sys.modules)",
             str(bundled),
             str(installed.parent),
@@ -111,10 +119,29 @@ def test_installed_schema_discovery_does_not_import_native_types(tmp_path, monke
 
 
 def test_registry_rejects_conflicting_installed_definitions(tmp_path, monkeypatch):
-    source = tmp_path / "geometry_msgs/msg/Point.msg"
+    base = tmp_path / "base"
+    generate(
+        [], base, ["geometry_msgs/msg/Point"], "base_messages", shared=True, languages=("python",)
+    )
+    source = tmp_path / "interfaces/custom_msgs/msg/Reading.msg"
     source.parent.mkdir(parents=True)
-    source.write_text("int32 x\n")
-    monkeypatch.setattr(registry, "schema_roots", lambda: (tmp_path,))
+    source.write_text("geometry_msgs/Point point\n")
+    custom = tmp_path / "custom"
+    generate(
+        [source.parents[2]],
+        custom,
+        ["custom_msgs/msg/Reading"],
+        "custom_messages",
+        dependencies=(Dependency.load(base),),
+        languages=("python",),
+    )
+    monkeypatch.syspath_prepend(str(base / "python"))
+    schemas = json.loads((custom / "schemas.json").read_text())
+    schemas["geometry_msgs/msg/Point"] = "int32 x\n"
+    (custom / "schemas.json").write_text(json.dumps(schemas))
+    manifest = json.loads((custom / "message-package.json").read_text())
+    manifest["schemas"]["geometry_msgs/msg/Point"] = sha256(b"int32 x\n").hexdigest()
+    (custom / "message-package.json").write_text(json.dumps(manifest))
 
-    with pytest.raises(ValueError, match="Conflicting definition geometry_msgs/msg/Point"):
-        registry.message_types()
+    with pytest.raises(ValueError, match="Dependency schema mismatch: geometry_msgs/msg/Point"):
+        registry.initialize((base, custom), discover=False)

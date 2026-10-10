@@ -21,6 +21,7 @@ import math
 
 from dimos_generated.sensor_msgs.msg import JointState
 from dimos_generated.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+import numpy as np
 
 from dimos.manipulation.planning.groups.models import PlanningGroupSelection
 from dimos.manipulation.planning.spec.models import GeneratedPlan, PlanningResult
@@ -139,8 +140,10 @@ class BaseTrajectoryParametrizer(ABC):
             points.append(
                 JointTrajectoryPoint(
                     time_from_start=duration_from_seconds(float(timestamp)),
-                    positions=list(state.position),
-                    velocities=velocities,
+                    positions=np.asarray(list(state.position), dtype=np.float64),
+                    velocities=np.asarray(velocities, dtype=np.float64),
+                    accelerations=np.array([], dtype=np.float64),
+                    effort=np.array([], dtype=np.float64),
                 )
             )
         return JointTrajectory(

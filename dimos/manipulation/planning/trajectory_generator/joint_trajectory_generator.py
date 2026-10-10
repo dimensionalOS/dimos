@@ -33,6 +33,7 @@ Trapezoidal Profile:
 import math
 
 from dimos_generated.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+import numpy as np
 
 from dimos.msgs.time import duration_from_seconds, header_now, to_seconds
 from dimos.msgs.trajectory import trajectory_duration
@@ -121,8 +122,10 @@ class JointTrajectoryGenerator:
         all_points.append(
             JointTrajectoryPoint(
                 time_from_start=duration_from_seconds(0.0),
-                positions=list(waypoints[0]),
-                velocities=[0.0] * self.num_joints,
+                positions=np.asarray(list(waypoints[0]), dtype=np.float64),
+                velocities=np.asarray([0.0] * self.num_joints, dtype=np.float64),
+                accelerations=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
             )
         )
 
@@ -138,7 +141,7 @@ class JointTrajectoryGenerator:
             all_points.extend(segment_points[1:])
             current_time += segment_duration
 
-        return JointTrajectory(header=header_now(), points=all_points)
+        return JointTrajectory(header=header_now(), points=all_points, joint_names=[])
 
     def _generate_segment(
         self,
@@ -208,8 +211,10 @@ class JointTrajectoryGenerator:
             points.append(
                 JointTrajectoryPoint(
                     time_from_start=duration_from_seconds(t),
-                    positions=positions,
-                    velocities=velocities,
+                    positions=np.asarray(positions, dtype=np.float64),
+                    velocities=np.asarray(velocities, dtype=np.float64),
+                    accelerations=np.array([], dtype=np.float64),
+                    effort=np.array([], dtype=np.float64),
                 )
             )
 

@@ -25,14 +25,12 @@ from __future__ import annotations
 
 import asyncio
 import math
-from pathlib import Path
 import time
 
 from dimos_generated.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos_generated.std_msgs.msg import Header
 from dimos_generated.tf2_msgs.msg import TFMessage
 
-from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
@@ -45,9 +43,7 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-_RUST_DIR = Path(__file__).parent / "rust"
 # The crate is a workspace member, so cargo builds into the repo-root target dir.
-_EXAMPLES = DIMOS_PROJECT_ROOT / "target" / "release"
 _BUILD = "cargo build --release"
 
 
@@ -76,8 +72,8 @@ class TfProducer(Module):
                             header=Header(frame_id="a", stamp=stamp),
                             child_frame_id="b",
                             transform=Transform(
-                                translation=Vector3(y=math.cos(t), z=math.sin(t)),
-                                rotation=Quaternion(w=1),
+                                translation=Vector3(y=math.cos(t), z=math.sin(t), x=0.0),
+                                rotation=Quaternion(w=1, x=0.0, y=0.0, z=0.0),
                             ),
                         ),
                     ]
@@ -108,9 +104,9 @@ class StaticMount(StaticTfPublisher):
 
 
 class TfListenerConfig(NativeModuleConfig):
-    executable: str = str(_EXAMPLES / "tf_listener")
+    executable: str = "../../../target/release/tf_listener"
     build_command: str = _BUILD
-    cwd: str = str(_RUST_DIR)
+    source_dir: str = "examples/native-modules/rust"
     stdin_config: bool = True
 
 
@@ -125,9 +121,9 @@ class TfListenerModule(NativeModule):
 
 
 class TfBroadcasterConfig(NativeModuleConfig):
-    executable: str = str(_EXAMPLES / "tf_broadcaster")
+    executable: str = "../../../target/release/tf_broadcaster"
     build_command: str = _BUILD
-    cwd: str = str(_RUST_DIR)
+    source_dir: str = "examples/native-modules/rust"
     stdin_config: bool = True
 
 

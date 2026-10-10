@@ -110,6 +110,49 @@ def test_frames_batch_only_when_emit_every_is_set() -> None:
     assert batching.take_local_bounds()[2] == 0.0
 
 
+def test_seed_points_creates_only_absent_voxels() -> None:
+    mapper = make_mapper()
+    mapper.add_frame(np.array([[5.5, 0.5, 0.5]], dtype=np.float32), ORIGIN, IDENTITY)
+
+    cloud = np.array([[5.6, 0.6, 0.6], [7.5, 0.5, 0.5]], dtype=np.float32)
+    assert mapper.seed_points(cloud) == 1
+    assert mapper.voxel_count() == 2
+    centers = np.sort(mapper.global_map(), axis=0)
+    np.testing.assert_allclose(centers, [[5.5, 0.5, 0.5], [7.5, 0.5, 0.5]])
+
+    assert mapper.seed_points(cloud) == 0
+
+
+def test_seed_regions_land_nearest_first_and_gate_support() -> None:
+    mapper = VoxelRayMapper(
+        voxel_size=1.0, max_range=100.0, min_health=0, support_min=4, region_m=16.0
+    )
+    coords = np.arange(5, dtype=np.float32) + 0.5
+    slab = np.array([(x, y, 0.5) for x in coords for y in coords], dtype=np.float32)
+    lone = np.array([[40.5, 40.5, 0.5]], dtype=np.float32)
+
+    assert mapper.start_seed(np.vstack([slab, lone]), (40.0, 40.0, 0.0)) == 2
+    first = mapper.seed_next_region()
+    assert first is not None
+    assert first.center == (44.0, 44.0), "the origin's region lands first"
+    assert first.z_min < 0.5 < first.z_max
+    assert first.points.shape == (0, 3), "an isolated voxel has no support"
+
+    second = mapper.seed_next_region()
+    assert second is not None
+    assert second.center == (4.0, 4.0)
+    assert second.radius == pytest.approx(np.hypot(4.0, 4.0) + 1.0), (
+        "one chunk box, reached corner to corner plus a voxel of margin"
+    )
+    assert second.points.dtype == np.float32
+    corners = {(0.5, 0.5), (0.5, 4.5), (4.5, 0.5), (4.5, 4.5)}
+    landed = {(float(x), float(y)) for x, y, _ in second.points}
+    assert len(second.points) == 21, "the corners have three neighbors, under the gate of four"
+    assert landed == {(x, y) for x in coords for y in coords} - corners
+    assert mapper.seed_next_region() is None
+    assert mapper.voxel_count() == 26
+
+
 def test_add_frame_world_registers_at_world_coordinates() -> None:
     mapper = make_mapper()
     points = np.array([[105.55, 200.05, 3.05]], dtype=np.float32)

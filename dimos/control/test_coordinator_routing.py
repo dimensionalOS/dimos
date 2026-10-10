@@ -28,9 +28,19 @@ from collections.abc import Callable, Iterator
 import threading
 from typing import Any
 
-from dimos_generated.geometry_msgs.msg import Pose, PoseStamped, Twist, TwistStamped, Vector3
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseStamped,
+    Quaternion,
+    Twist,
+    TwistStamped,
+    Vector3,
+)
 from dimos_generated.sensor_msgs.msg import JointState
 from dimos_generated.std_msgs.msg import Header
+import numpy as np
 import pytest
 
 from dimos.control._control_test_helpers import RecordingTask
@@ -167,19 +177,38 @@ class TestJointCommandRouting:
         trajectory = coordinator.get_task(JOINT_TRAJECTORY_TASK_NAME)
         execute = mocker.spy(trajectory, "execute")
 
-        taps["joint_command"].emit(JointState(name=ARM_JOINTS, position=[0.1, 0.2]))
+        taps["joint_command"].emit(
+            JointState(
+                name=ARM_JOINTS,
+                position=np.array([0.1, 0.2], dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            )
+        )
 
         assert execute.call_count == 1
-        assert trajectory._trajectory.points[-1].positions == [
-            0.1,
-            0.2,
-        ]
+        np.testing.assert_array_equal(
+            trajectory._trajectory.points[-1].positions,
+            [
+                0.1,
+                0.2,
+            ],
+        )
         assert coordinator.get_task("vel1")._velocities is None
 
     def test_velocity_only_updates_velocity_task(self, make_coordinator):
         coordinator, taps = _streaming_coordinator(make_coordinator)
 
-        taps["joint_command"].emit(JointState(name=ARM_JOINTS, velocity=[0.5, 0.6]))
+        taps["joint_command"].emit(
+            JointState(
+                name=ARM_JOINTS,
+                velocity=np.array([0.5, 0.6], dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                position=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            )
+        )
 
         assert coordinator.get_task("vel1")._velocities == [0.5, 0.6]
         assert coordinator.get_task(JOINT_TRAJECTORY_TASK_NAME)._trajectory is None
@@ -188,21 +217,36 @@ class TestJointCommandRouting:
         coordinator, taps = _streaming_coordinator(make_coordinator)
 
         taps["joint_command"].emit(
-            JointState(name=ARM_JOINTS, position=[0.1, 0.2], velocity=[0.5, 0.6])
+            JointState(
+                name=ARM_JOINTS,
+                position=np.array([0.1, 0.2], dtype=np.float64),
+                velocity=np.array([0.5, 0.6], dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                effort=np.array([], dtype=np.float64),
+            )
         )
 
-        assert coordinator.get_task(JOINT_TRAJECTORY_TASK_NAME)._trajectory.points[
-            -1
-        ].positions == [
-            0.1,
-            0.2,
-        ]
+        np.testing.assert_array_equal(
+            coordinator.get_task(JOINT_TRAJECTORY_TASK_NAME)._trajectory.points[-1].positions,
+            [
+                0.1,
+                0.2,
+            ],
+        )
         assert coordinator.get_task("vel1")._velocities is None
 
     def test_unclaimed_joints_route_to_nobody(self, make_coordinator):
         coordinator, taps = _streaming_coordinator(make_coordinator)
 
-        taps["joint_command"].emit(JointState(name=["other/joint9"], position=[1.0]))
+        taps["joint_command"].emit(
+            JointState(
+                name=["other/joint9"],
+                position=np.array([1.0], dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            )
+        )
 
         assert coordinator.get_task(JOINT_TRAJECTORY_TASK_NAME)._trajectory is None
         assert coordinator.get_task("vel1")._velocities is None
@@ -210,7 +254,15 @@ class TestJointCommandRouting:
     def test_empty_message_routes_to_nobody(self, make_coordinator):
         coordinator, taps = _streaming_coordinator(make_coordinator)
 
-        taps["joint_command"].emit(JointState(name=[], position=[]))
+        taps["joint_command"].emit(
+            JointState(
+                name=[],
+                position=np.array([], dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            )
+        )
 
         assert coordinator.get_task(JOINT_TRAJECTORY_TASK_NAME)._trajectory is None
         assert coordinator.get_task("vel1")._velocities is None
@@ -254,14 +306,30 @@ class TestPerInstanceCommandRouting:
         )
         coordinator.start()
 
-        taps["left_cartesian"].emit(PoseStamped(header=Header(frame_id=""), pose=Pose()))
+        taps["left_cartesian"].emit(
+            PoseStamped(
+                header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
+                pose=Pose(
+                    position=Point(x=0.0, y=0.0, z=0.0),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+            )
+        )
 
         left = coordinator.get_task("cartesian_left")
         right = coordinator.get_task("cartesian_right")
         assert len(left.cartesian_calls) == 1
         assert right.cartesian_calls == []
 
-        taps["right_cartesian"].emit(PoseStamped(header=Header(frame_id=""), pose=Pose()))
+        taps["right_cartesian"].emit(
+            PoseStamped(
+                header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
+                pose=Pose(
+                    position=Point(x=0.0, y=0.0, z=0.0),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+            )
+        )
 
         assert len(left.cartesian_calls) == 1
         assert len(right.cartesian_calls) == 1
@@ -274,7 +342,15 @@ class TestPerInstanceCommandRouting:
         )
         coordinator.start()
 
-        taps["cartesian_command"].emit(PoseStamped(header=Header(frame_id=""), pose=Pose()))
+        taps["cartesian_command"].emit(
+            PoseStamped(
+                header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
+                pose=Pose(
+                    position=Point(x=0.0, y=0.0, z=0.0),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+            )
+        )
 
         calls = coordinator.get_task("cart").cartesian_calls
         assert len(calls) == 1
@@ -293,9 +369,23 @@ class TestPerInstanceCommandRouting:
         warn = mocker.patch.object(coord_mod.logger, "warning")
 
         taps["cartesian_command"].emit(
-            PoseStamped(header=Header(frame_id="some_other_task"), pose=Pose())
+            PoseStamped(
+                header=Header(frame_id="some_other_task", stamp=Time(sec=0, nanosec=0)),
+                pose=Pose(
+                    position=Point(x=0.0, y=0.0, z=0.0),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+            )
         )
-        taps["cartesian_command"].emit(PoseStamped(header=Header(frame_id=""), pose=Pose()))
+        taps["cartesian_command"].emit(
+            PoseStamped(
+                header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
+                pose=Pose(
+                    position=Point(x=0.0, y=0.0, z=0.0),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+            )
+        )
 
         calls = coordinator.get_task("cart").cartesian_calls
         assert len(calls) == 2
@@ -678,7 +768,15 @@ class TestCardRoutingContract:
         bare = CardlessStreamTask("bare", frozenset(ARM_JOINTS))
         coordinator.add_task(bare)
 
-        taps["joint_command"].emit(JointState(name=ARM_JOINTS, position=[0.1, 0.2]))
+        taps["joint_command"].emit(
+            JointState(
+                name=ARM_JOINTS,
+                position=np.array([0.1, 0.2], dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            )
+        )
 
         assert coordinator.get_task(JOINT_TRAJECTORY_TASK_NAME)._trajectory is not None
         assert bare.position_targets == []
@@ -688,8 +786,24 @@ class TestCardRoutingContract:
         trajectory = coordinator.get_task(JOINT_TRAJECTORY_TASK_NAME)
         assert coordinator.remove_task(JOINT_TRAJECTORY_TASK_NAME)
 
-        taps["joint_command"].emit(JointState(name=ARM_JOINTS, position=[0.1, 0.2]))
-        taps["joint_command"].emit(JointState(name=ARM_JOINTS, velocity=[0.5, 0.6]))
+        taps["joint_command"].emit(
+            JointState(
+                name=ARM_JOINTS,
+                position=np.array([0.1, 0.2], dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            )
+        )
+        taps["joint_command"].emit(
+            JointState(
+                name=ARM_JOINTS,
+                velocity=np.array([0.5, 0.6], dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                position=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            )
+        )
 
         assert trajectory._trajectory is None
         assert coordinator.get_task("vel1")._velocities == [0.5, 0.6]
@@ -703,9 +817,17 @@ class TestCardRoutingContract:
         assert coordinator.add_task(task, task_type="trajectory")
 
         assert taps["joint_command"].subscribed
-        taps["joint_command"].emit(JointState(name=ARM_JOINTS, position=[0.3, 0.4]))
+        taps["joint_command"].emit(
+            JointState(
+                name=ARM_JOINTS,
+                position=np.array([0.3, 0.4], dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            )
+        )
         assert task._trajectory is not None
-        assert task._trajectory.points[-1].positions == [0.3, 0.4]
+        np.testing.assert_array_equal(task._trajectory.points[-1].positions, [0.3, 0.4])
 
     def test_runtime_registered_card_routes_with_zero_coordinator_edits(
         self, make_coordinator, probe_card_type
@@ -715,7 +837,15 @@ class TestCardRoutingContract:
         probe = ProbeTask("probe1", frozenset(ARM_JOINTS))
         assert coordinator.add_task(probe, task_type=probe_card_type)
 
-        taps["joint_command"].emit(JointState(name=ARM_JOINTS, position=[0.1, 0.2]))
+        taps["joint_command"].emit(
+            JointState(
+                name=ARM_JOINTS,
+                position=np.array([0.1, 0.2], dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            )
+        )
 
         assert len(probe.probe_commands) == 1
         msg, t_now = probe.probe_commands[0]
@@ -732,11 +862,35 @@ class TestCardRoutingContract:
         probe = ProbeTask("probe1", frozenset(ARM_JOINTS))
         assert coordinator.add_task(probe, task_type=probe_card_type)
 
-        taps["joint_command"].emit(JointState(name=["other/joint9"], position=[1.0]))
-        taps["joint_command"].emit(JointState(name=[], position=[]))
+        taps["joint_command"].emit(
+            JointState(
+                name=["other/joint9"],
+                position=np.array([1.0], dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            )
+        )
+        taps["joint_command"].emit(
+            JointState(
+                name=[],
+                position=np.array([], dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            )
+        )
         assert probe.probe_commands == []
 
-        taps["joint_command"].emit(JointState(name=ARM_JOINTS, position=[0.1, 0.2]))
+        taps["joint_command"].emit(
+            JointState(
+                name=ARM_JOINTS,
+                position=np.array([0.1, 0.2], dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            )
+        )
         assert len(probe.probe_commands) == 1
 
     def test_dispatch_isolates_raising_handler_from_siblings(
@@ -751,7 +905,15 @@ class TestCardRoutingContract:
 
         # raiser is first in the route list; its exception must neither abort
         # delivery to recorder nor propagate out of the port callback (emit).
-        taps["joint_command"].emit(JointState(name=ARM_JOINTS, position=[0.1, 0.2]))
+        taps["joint_command"].emit(
+            JointState(
+                name=ARM_JOINTS,
+                position=np.array([0.1, 0.2], dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            )
+        )
 
         assert len(recorder.probe_commands) == 1
 
@@ -852,7 +1014,13 @@ class TestSubclassDeclaredStreams:
         assert coordinator.add_task(probe, task_type=card)
 
         assert taps["custom_in"].subscribed
-        msg = JointState(name=ARM_JOINTS, position=[0.1, 0.2])
+        msg = JointState(
+            name=ARM_JOINTS,
+            position=np.array([0.1, 0.2], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        )
         taps["custom_in"].emit(msg)
 
         assert len(probe.probe_commands) == 1
@@ -866,7 +1034,15 @@ class TestSubclassDeclaredStreams:
         assert coordinator.add_task(probe, task_type=card)
 
         # Joints the task does not claim, and no frame_id: neither gate applies.
-        taps["custom_in"].emit(JointState(name=["other/joint9"], position=[1.0]))
+        taps["custom_in"].emit(
+            JointState(
+                name=["other/joint9"],
+                position=np.array([1.0], dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            )
+        )
 
         assert len(probe.probe_commands) == 1
 
@@ -923,12 +1099,28 @@ class TestStreamBind:
         assert coordinator.add_task(a, task_type=card, stream_bind={"sensor_in": "a_in"})
         assert coordinator.add_task(b, task_type=card, stream_bind={"sensor_in": "b_in"})
 
-        taps["a_in"].emit(JointState(name=ARM_JOINTS, position=[0.1, 0.2]))
+        taps["a_in"].emit(
+            JointState(
+                name=ARM_JOINTS,
+                position=np.array([0.1, 0.2], dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            )
+        )
 
         assert len(a.probe_commands) == 1
         assert b.probe_commands == []
 
-        taps["b_in"].emit(JointState(name=ARM_JOINTS, position=[0.3, 0.4]))
+        taps["b_in"].emit(
+            JointState(
+                name=ARM_JOINTS,
+                position=np.array([0.3, 0.4], dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            )
+        )
 
         assert len(a.probe_commands) == 1
         assert len(b.probe_commands) == 1
@@ -961,7 +1153,15 @@ class TestStreamBind:
         )
         coordinator.start()
 
-        taps["b_in"].emit(JointState(name=ARM_JOINTS, position=[0.1, 0.2]))
+        taps["b_in"].emit(
+            JointState(
+                name=ARM_JOINTS,
+                position=np.array([0.1, 0.2], dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            )
+        )
 
         assert coordinator.get_task("a").probe_commands == []
         assert len(coordinator.get_task("b").probe_commands) == 1
@@ -1059,6 +1259,14 @@ class TestStreamBind:
         assert "first" in logged and "second" in logged
         assert "stream_bind" in logged
 
-        taps["custom_in"].emit(JointState(name=ARM_JOINTS, position=[0.1, 0.2]))
+        taps["custom_in"].emit(
+            JointState(
+                name=ARM_JOINTS,
+                position=np.array([0.1, 0.2], dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            )
+        )
         assert len(first.probe_commands) == 1
         assert len(second.probe_commands) == 1

@@ -20,6 +20,8 @@ from pathlib import Path
 import subprocess
 from typing import TYPE_CHECKING, Any
 
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_message_build.registry import encode as cdr_encode
 import typer
 
 from dimos.mapping.cli.streams import select_stream
@@ -28,9 +30,9 @@ if TYPE_CHECKING:
     from dimos_generated.geometry_msgs.msg import TransformStamped
     from dimos_generated.sensor_msgs.msg import Image, PointCloud2
 
-    from dimos.mapping.loop_closure.pgo import PoseGraph
     from dimos.memory.stream import Stream
     from dimos.memory.type.observation import Observation
+    from dimos.navigation.go2.loop_closure.pgo import PoseGraph
 
 PATH_THICKNESS = 0.01
 # Pin pattern (from dimos/memory/vis/space/rerun.py): thin vertical line
@@ -462,12 +464,12 @@ def main(
     from dimos_generated.std_msgs.msg import Header
     import rerun as rr
 
-    from dimos.mapping.loop_closure.pgo import PGO
     from dimos.memory.cli.dataset import open_store, resolve_dataset, stream_payload_types
     from dimos.memory.transform import QualityWindow, SpeedLimit
     from dimos.memory.utils.progress import progress
     from dimos.msgs.camera_info import camera_info_from_yaml
     from dimos.msgs.image import image_sharpness
+    from dimos.navigation.go2.loop_closure.pgo import PGO
     from dimos.perception.fiducial.marker_transformer import DetectMarkers
     from dimos.robot.unitree.go2.camera_calibration import front_camera_calibration
     from dimos.robot.unitree.go2.connection import BASE_TO_OPTICAL
@@ -704,7 +706,9 @@ def main(
             print(f"re-posing color_image from {image_pose!r} + camera optical mount")
             color_image = pose_fill(color_image, src_pose, tolerance=0.1, mount=BASE_TO_OPTICAL)
         cam_info = (
-            camera_info_from_yaml(camera_info, header=Header(frame_id="camera_optical"))
+            camera_info_from_yaml(
+                camera_info, header=Header(frame_id="camera_optical", stamp=Time(sec=0, nanosec=0))
+            )
             if camera_info
             else front_camera_calibration()
         )
@@ -767,12 +771,13 @@ def main(
     if export and pgo_map is not None:
         out_path = Path.cwd() / f"{db_path.stem}.pc2.cdr"
         print(f"exporting PGO twopass map to {out_path}...")
-        out_path.write_bytes(pgo_map.encode())
+        out_path.write_bytes(cdr_encode(pgo_map))
         print(f"wrote {out_path}")
         print()
         print("load back with:")
         print("    from dimos_generated.sensor_msgs.msg import PointCloud2")
-        print(f'    pcd = PointCloud2.decode(open("{out_path.name}", "rb").read())')
+        print("    from dimos_message_build.registry import decode")
+        print(f'    pcd = decode(open("{out_path.name}", "rb").read(), PointCloud2)')
 
 
 if __name__ == "__main__":

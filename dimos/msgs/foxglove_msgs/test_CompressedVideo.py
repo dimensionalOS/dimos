@@ -12,7 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.foxglove_msgs.msg import CompressedVideo
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
+import numpy as np
 import pytest
 import rerun as rr
 
@@ -25,12 +28,12 @@ PACKET = b"\x00\x00\x00\x01\x65payload"
 
 def test_cdr_encode_decode() -> None:
     original = CompressedVideo(
-        data=PACKET,
+        data=np.frombuffer(PACKET, dtype=np.uint8),
         format="h264",
         frame_id="front_camera",
         timestamp=time_from_nanoseconds(1234567890123456789),
     )
-    decoded = CompressedVideo.decode(original.encode())
+    decoded = cdr_decode(cdr_encode(original), CompressedVideo)
 
     assert bytes(decoded.data) == PACKET
     assert decoded.format == "h264"
@@ -45,11 +48,25 @@ def test_resolves_generated_canonical_type() -> None:
 
 
 def test_to_rerun_video_stream() -> None:
-    stream = video_archetype(CompressedVideo(data=PACKET, format="h264"))
+    stream = video_archetype(
+        CompressedVideo(
+            data=np.frombuffer(PACKET, dtype=np.uint8),
+            format="h264",
+            timestamp=Time(sec=0, nanosec=0),
+            frame_id="",
+        )
+    )
     assert isinstance(stream, rr.VideoStream)
     assert bytes(stream.sample.as_arrow_array().to_pylist()[0]) == PACKET  # type: ignore[union-attr]
 
 
 def test_to_rerun_unknown_codec() -> None:
     with pytest.raises(ValueError, match="mjpeg"):
-        video_archetype(CompressedVideo(data=PACKET, format="mjpeg"))
+        video_archetype(
+            CompressedVideo(
+                data=np.frombuffer(PACKET, dtype=np.uint8),
+                format="mjpeg",
+                timestamp=Time(sec=0, nanosec=0),
+                frame_id="",
+            )
+        )

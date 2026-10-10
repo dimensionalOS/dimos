@@ -29,6 +29,7 @@ from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
+from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
 from dimos.memory.module import default_recording_dir
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.robot.unitree.g1.effectors.high_level.dds_sdk import G1HighLevelDdsSdk
@@ -109,11 +110,8 @@ _record_vis = vis_module(
 unitree_g1_record = autoconnect(
     MovementManager.blueprint(),
     G1HighLevelDdsSdk.blueprint(),
-    PointLio.blueprint(
-        frame_id="world",
-        host_ip="192.168.123.164",
-        lidar_ip="192.168.123.120",
-    ).remappings(
+    mid360_for_pointlio(host_ip="192.168.123.164", lidar_ip="192.168.123.120"),
+    PointLio.blueprint(frame_id="world").remappings(
         [
             (PointLio, "lidar", "pointlio_lidar"),
             (PointLio, "odometry", "pointlio_odometry"),
@@ -131,7 +129,7 @@ unitree_g1_record = autoconnect(
     G1TfPublisher.blueprint(),
     # Viewer keyboard teleop feeds MovementManager via tele_cmd_vel.
     _record_vis,
-).global_config(n_workers=12, robot_model="unitree_g1")
+).global_config(n_workers=13, robot_model="unitree_g1")
 
 
 if __name__ == "__main__":

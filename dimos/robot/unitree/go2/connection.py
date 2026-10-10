@@ -15,10 +15,11 @@
 import copy
 from enum import Enum
 import sys
-from threading import Thread
+from threading import Lock, Thread
 import time
 from typing import Any, Protocol
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import (
     PoseStamped,
     Quaternion,
@@ -31,7 +32,8 @@ from dimos_generated.sensor_msgs.msg import CameraInfo, Image, PointCloud2
 from dimos_generated.std_msgs.msg import Header
 from dimos_generated.tf2_msgs.msg import TFMessage
 from pydantic import Field
-from reactivex import empty
+from reactivex import defer, empty, operators as ops
+from reactivex.abc import SchedulerBase
 from reactivex.disposable import Disposable
 from reactivex.observable import Observable
 
@@ -117,14 +119,20 @@ def _prefixed(prefix: str | None, name: str) -> str:
 # TODO we need a standardized way to specify this for all cameras in dimos
 BASE_TO_OPTICAL = compose_transforms(
     TransformStamped(
-        header=Header(frame_id="base_link"),
+        header=Header(frame_id="base_link", stamp=Time(sec=0, nanosec=0)),
         child_frame_id="camera_link",
-        transform=Transform(translation=Vector3(x=0.3)),
+        transform=Transform(
+            translation=Vector3(x=0.3, y=0.0, z=0.0),
+            rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+        ),
     ),
     TransformStamped(
-        header=Header(frame_id="camera_link"),
+        header=Header(frame_id="camera_link", stamp=Time(sec=0, nanosec=0)),
         child_frame_id="camera_optical",
-        transform=Transform(rotation=Quaternion(x=-0.5, y=0.5, z=-0.5, w=0.5)),
+        transform=Transform(
+            rotation=Quaternion(x=-0.5, y=0.5, z=-0.5, w=0.5),
+            translation=Vector3(x=0.0, y=0.0, z=0.0),
+        ),
     ),
 )
 
@@ -138,8 +146,7 @@ def make_connection(
     connection_type = cfg.unitree_connection_type.lower()
 
     if ip in ("fake", "mock", "replay") or connection_type == "replay":
-        dataset = cfg.replay_db
-        return ReplayConnection(dataset=dataset)
+        return ReplayConnection(dataset=cfg.replay_db, exit_on_complete=cfg.replay_exit)
     elif ip == "mujoco" or connection_type in ("mujoco", "true"):
         from dimos.robot.unitree.mujoco_connection import MujocoConnection
 
@@ -159,16 +166,29 @@ def make_connection(
         raise ValueError(f"Unknown simulator {cfg.simulation!r}. Choose from: mujoco, dimsim")
 
 
-class ReplayConnection(UnitreeWebRTCConnection, CompositeResource):
-    def __init__(  # type: ignore[no-untyped-def]
+_T = TypeVar("_T")
+
+
+class ReplayConnection(CompositeResource):
+    def __init__(
         self,
         dataset: str = "go2_china_office",
-        **kwargs,
+        *,
+        seek: float | None = None,
+        duration: float | None = None,
+        loop: bool = False,
+        exit_on_complete: bool = False,
     ) -> None:
         self.dataset = dataset
-        self._loop = kwargs.get("loop", False)
-        self._seek = kwargs.get("seek")
-        self._duration = kwargs.get("duration")
+        self._seek = seek
+        self._duration = duration
+        self._loop = loop
+        self._exit_on_complete = exit_on_complete
+        self._completion_lock = Lock()
+        self._subscribed = 0
+        self._completed = 0
+        self._sealed = False
+        self._fired = False
 
     @cached_property
     def replay(self) -> Replay:
@@ -179,9 +199,6 @@ class ReplayConnection(UnitreeWebRTCConnection, CompositeResource):
         )
         store.start()
         return store.replay(loop=self._loop, seek=self._seek, duration=self._duration)
-
-    def connect(self) -> None:
-        pass
 
     def start(self) -> None:
         pass
@@ -205,9 +222,6 @@ class ReplayConnection(UnitreeWebRTCConnection, CompositeResource):
     def set_obstacle_avoidance(self, enabled: bool = True) -> bool:
         return True
 
-    def set_motion_mode(self, name: str) -> None:
-        pass
-
     def set_rage_mode(self, enable: bool) -> bool:
         return True
 
@@ -227,23 +241,89 @@ class ReplayConnection(UnitreeWebRTCConnection, CompositeResource):
                 return name
         raise KeyError(f"None of {names!r} in dataset {self.dataset!r}; available: {available}")
 
+    def _tracked(self, source: Observable[_T]) -> Observable[_T]:
+        """With exit_on_complete, count every subscription to a replay stream
+        and request coordinator shutdown once the last one finishes.
+
+        Completions only count once the module has sealed the subscription
+        set: subscriptions register one at a time, so without the seal a
+        stream that completes synchronously (an empty one, say) would match
+        the counters before the next stream ever subscribed.
+        """
+        if not self._exit_on_complete:
+            return source
+
+        def factory(_scheduler: SchedulerBase | None) -> Observable[_T]:
+            with self._completion_lock:
+                self._subscribed += 1
+            return source.pipe(ops.do_action(on_completed=self._stream_completed))
+
+        return defer(factory)
+
+    def seal_subscriptions(self) -> None:
+        """Mark the subscription set complete; exit-on-complete may now fire.
+
+        Called by the module once start() has wired every stream it is going
+        to. A no-op without exit_on_complete.
+        """
+        with self._completion_lock:
+            self._sealed = True
+        self._maybe_request_shutdown()
+
+    def _stream_completed(self) -> None:
+        with self._completion_lock:
+            self._completed += 1
+        self._maybe_request_shutdown()
+
+    def _maybe_request_shutdown(self) -> None:
+        with self._completion_lock:
+            done = (
+                self._exit_on_complete
+                and self._sealed
+                and not self._fired
+                and self._subscribed > 0
+                and self._completed == self._subscribed
+            )
+            if done:
+                self._fired = True
+        if not done:
+            return
+        logger.info("Replay finished; requesting coordinator shutdown")
+        # Off the replay emission thread: the RPC round trip must not block
+        # the stream's own teardown.
+        Thread(target=self._request_shutdown, daemon=True).start()
+
+    def _request_shutdown(self) -> None:
+        # Inline import: the connection must stay importable without the
+        # coordination stack.
+        from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
+
+        try:
+            client = CoordinatorRPC.connect(timeout=10.0)
+            try:
+                client.call("shutdown")
+            finally:
+                client.stop()
+        except Exception:
+            logger.error("Failed to request coordinator shutdown", exc_info=True)
+
     @simple_mcache
     def lidar_stream(self) -> Observable[PointCloud2]:
         stream: ReplayStream[PointCloud2] = self.replay.stream(
             self._stream_name("go2_lidar", "lidar")
         )
-        return stream.observable()
+        return self._tracked(stream.observable())
 
     @simple_mcache
     def odom_stream(self) -> Observable[PoseStamped]:
         stream: ReplayStream[PoseStamped] = self.replay.stream(
             self._stream_name("go2_odom", "odom")
         )
-        return stream.observable()
+        return self._tracked(stream.observable())
 
     @simple_mcache
     def video_stream(self) -> Observable[Image]:
-        return self.replay.streams.color_image.observable()
+        return self._tracked(self.replay.streams.color_image.observable())
 
     @simple_mcache
     def lowstate_stream(self) -> Observable:  # type: ignore[type-arg]
@@ -304,7 +384,7 @@ class GO2Connection(Module, Camera, Pointcloud):
 
         if self.config.frame_id_prefix and self.camera_info_static.header.frame_id:
             # Copy so the class-level default is not mutated.
-            self.camera_info_static = copy.copy(self.camera_info_static)
+            self.camera_info_static = copy.deepcopy(self.camera_info_static)
             self.camera_info_static.header.frame_id = _prefixed(
                 self.config.frame_id_prefix, self.camera_info_static.header.frame_id
             )
@@ -334,11 +414,18 @@ class GO2Connection(Module, Camera, Pointcloud):
             )
             self._camera_info_thread.start()
 
+        if isinstance(self.connection, ReplayConnection):
+            # Every stream this module will subscribe is wired; a finished
+            # replay may now shut the run down (--replay-exit).
+            self.connection.seal_subscriptions()
+
         if self.config.motion_mode and isinstance(self.connection, UnitreeWebRTCConnection):
             self.connection.set_motion_mode(self.config.motion_mode)
 
         self.standup()
-        time.sleep(3)
+        if isinstance(self.connection, UnitreeWebRTCConnection):
+            # The physical robot takes about 3 s to stand before it accepts BalanceStand.
+            time.sleep(3)
         self.connection.balance_stand()
 
         if self.config.mode == Go2Mode.RAGE:
@@ -373,17 +460,23 @@ class GO2Connection(Module, Camera, Pointcloud):
             TransformStamped(
                 header=Header(stamp=odom.header.stamp, frame_id=_prefixed(prefix, "base_link")),
                 child_frame_id=_prefixed(prefix, "camera_link"),
-                transform=Transform(translation=Vector3(x=0.3)),
+                transform=Transform(
+                    translation=Vector3(x=0.3, y=0.0, z=0.0),
+                    rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
             ),
             TransformStamped(
                 header=Header(stamp=odom.header.stamp, frame_id=_prefixed(prefix, "camera_link")),
                 child_frame_id=_prefixed(prefix, "camera_optical"),
-                transform=Transform(rotation=Quaternion(x=-0.5, y=0.5, z=-0.5, w=0.5)),
+                transform=Transform(
+                    rotation=Quaternion(x=-0.5, y=0.5, z=-0.5, w=0.5),
+                    translation=Vector3(x=0.0, y=0.0, z=0.0),
+                ),
             ),
         ]
 
     def _publish_tf(self, msg: PoseStamped) -> None:
-        message = copy.copy(msg)
+        message = copy.deepcopy(msg)
         message.header.frame_id = self.config.odom_frame_id
         if self.config.publish_tf:
             transforms = self._odom_to_tf(message, prefix=self.config.frame_id_prefix or "")
@@ -393,7 +486,7 @@ class GO2Connection(Module, Camera, Pointcloud):
 
     def publish_camera_info(self) -> None:
         while True:
-            message = copy.copy(self.camera_info_static)
+            message = copy.deepcopy(self.camera_info_static)
             message.header.stamp = time_from_nanoseconds(time.time_ns())
             self.camera_info.publish(message)
             time.sleep(1.0)

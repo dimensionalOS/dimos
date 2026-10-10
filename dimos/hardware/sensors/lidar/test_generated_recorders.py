@@ -15,10 +15,20 @@
 # Copyright 2026 Dimensional Inc.
 # SPDX-License-Identifier: Apache-2.0
 
-from dimos_generated.geometry_msgs.msg import Point, Pose, PoseWithCovariance, Quaternion
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseWithCovariance,
+    Quaternion,
+    Twist,
+    TwistWithCovariance,
+    Vector3,
+)
 from dimos_generated.nav_msgs.msg import Odometry
 from dimos_generated.sensor_msgs.msg import CameraInfo, Image, PointCloud2
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import encode as cdr_encode
 import numpy as np
 import pytest
 
@@ -37,10 +47,25 @@ from dimos.robot.unitree.g1.g1_recorder import G1Recorder, G1RecorderConfig
 async def test_generated_recorders_anchor_clouds_to_last_odometry(recorder_type, tmp_path):
     recorder = recorder_type(db_path=tmp_path / "unused.db")
     try:
-        cloud = pointcloud_from_xyz(np.array([[1, 2, 3]], dtype=np.float32), header=Header())
+        cloud = pointcloud_from_xyz(
+            np.array([[1, 2, 3]], dtype=np.float32),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        )
         assert await recorder._lidar_pose(cloud) is None
-        pose = Pose(position=Point(x=2, y=3), orientation=Quaternion(w=1))
-        odometry = Odometry(header=Header(frame_id="world"), pose=PoseWithCovariance(pose=pose))
+        pose = Pose(
+            position=Point(x=2, y=3, z=0.0), orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0)
+        )
+        odometry = Odometry(
+            header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+            pose=PoseWithCovariance(pose=pose, covariance=np.zeros(36, dtype=np.float64)),
+            child_frame_id="",
+            twist=TwistWithCovariance(
+                twist=Twist(
+                    linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)
+                ),
+                covariance=np.zeros(36, dtype=np.float64),
+            ),
+        )
         assert await recorder._odom_pose(odometry) == pose
         assert await recorder._lidar_pose(cloud) == pose
         assert not (tmp_path / "unused.db").exists()
@@ -78,11 +103,14 @@ def test_realsense_mount_is_an_identity_and_generated_cloud_views_are_typed():
         np.testing.assert_allclose(transform_matrix(edge.transform), np.eye(4))
     finally:
         mount.stop()
-    cloud = pointcloud_from_xyz(np.array([[1, 2, 3]], dtype=np.float32), header=Header())
-    before = cloud.encode()
+    cloud = pointcloud_from_xyz(
+        np.array([[1, 2, 3]], dtype=np.float32),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+    )
+    before = cdr_encode(cloud)
     assert _cloud(cloud).positions is not None
     assert _fine_points(cloud).positions is not None
-    assert cloud.encode() == before
+    assert cdr_encode(cloud) == before
 
 
 def test_g1_depth_recorder_declares_generated_lossless_cdr():

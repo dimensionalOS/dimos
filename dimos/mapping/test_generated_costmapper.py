@@ -18,6 +18,7 @@ from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Point, Pose
 from dimos_generated.nav_msgs.msg import MapMetaData, OccupancyGrid
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 
 from dimos.mapping.costmapper import CostMapper
@@ -33,7 +34,7 @@ def test_cost_mapper_generates_cdr_grid_with_exact_header(request):
     header = Header(stamp=Time(sec=1700000000, nanosec=123456789), frame_id="map")
     cloud = pointcloud_from_xyz(np.array([[0, 0, 0], [1, 1, 1]]), header=header)
     grid = mapper._calculate_costmap(cloud)
-    decoded = OccupancyGrid.decode(grid.encode())
+    decoded = cdr_decode(cdr_encode(grid), OccupancyGrid)
     assert decoded.header == header
     assert np.any(occupancy_view(decoded) == 100)
     assert np.any(occupancy_view(decoded) == 0)
@@ -48,10 +49,13 @@ def test_initial_safe_radius_respects_rotated_origin_and_replaces_readonly_data(
             height=3,
             resolution=1,
             origin=Pose(
-                position=Point(x=1, y=-1), orientation=quaternion_from_euler(0, 0, math.pi / 2)
+                position=Point(x=1, y=-1, z=0.0),
+                orientation=quaternion_from_euler(0, 0, math.pi / 2),
             ),
+            map_load_time=Time(sec=0, nanosec=0),
         ),
-        data=[100] * 9,
+        data=np.asarray([100] * 9, dtype=np.int8),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
     )
     mapper._apply_initial_safe_radius(grid)
     expected = np.full((3, 3), 100, dtype=np.int8)

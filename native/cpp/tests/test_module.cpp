@@ -1,6 +1,7 @@
 // Copyright 2026 Dimensional Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <std_msgs/msg/int32.hpp>
 #include <doctest/doctest.h>
 
 #include <atomic>

@@ -18,7 +18,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Protocol
 
-from dimos_generated.geometry_msgs.msg import Pose, Quaternion
+from dimos_generated.geometry_msgs.msg import Point, Pose, Quaternion
 from dimos_generated.sensor_msgs.msg import CameraInfo, Image, JointState
 
 from dimos.constants import STATE_DIR
@@ -89,4 +89,6 @@ class WorldBeliefRecorder(Recorder):
     @pose_setter_for("coordinator_joint_state")
     async def _proprio_pose(self, msg: Any) -> Any:
         """Use an identity pose for proprioceptive joint-state records."""
-        return Pose(orientation=Quaternion(w=1.0))
+        return Pose(
+            orientation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0), position=Point(x=0.0, y=0.0, z=0.0)
+        )

@@ -12,9 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from dimos_generated.std_msgs.msg import Header
 
+from dimos.core.global_config import global_config
 from dimos.core.transport import PubSubTransport
 from dimos.core.transport_factory import make_transport
 from dimos.simulation.dimsim.scene_client import SceneClient
@@ -35,13 +37,16 @@ class DimSimClient:
         self._goal_request.start()
 
     def stop(self) -> None:
-        self.client.stop()
+        # Only close a scene connection that was actually opened; going through
+        # `self.client` here would dial the bridge just to hang up.
+        if self._client is not None:
+            self._client.stop()
         self._goal_request.stop()
 
     @property
     def client(self) -> SceneClient:
         if self._client is None:
-            self._client = SceneClient()
+            self._client = SceneClient(port=global_config.dimsim_port)
             self._client.start()
         return self._client
 
@@ -54,7 +59,10 @@ class DimSimClient:
     def publish_goal(self, x: float, y: float) -> None:
         self._goal_request.publish(
             PoseStamped(
-                header=Header(frame_id="world"),
-                pose=Pose(position=Point(x=x, y=y), orientation=Quaternion(w=1.0)),
+                header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+                pose=Pose(
+                    position=Point(x=x, y=y, z=0.0),
+                    orientation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0),
+                ),
             )
         )

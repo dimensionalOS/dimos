@@ -15,6 +15,7 @@
 from abc import ABC
 from typing import Any, ClassVar, get_type_hints
 
+import numpy as np
 from pydantic import BaseModel
 from typing_extensions import Self
 
@@ -23,6 +24,15 @@ from dimos.core.global_config import TransportBackend
 
 class BaseConfig(BaseModel):
     model_config = {"arbitrary_types_allowed": True, "extra": "forbid"}
+
+    @classmethod
+    def __pydantic_init_subclass__(cls, **kwargs: Any) -> None:
+        super().__pydantic_init_subclass__(**kwargs)
+        if not cls.__pydantic_complete__:
+            # Native rosbags dataclasses keep these annotation names under
+            # TYPE_CHECKING. Resolve them through Pydantic's public API without
+            # altering their classes or generated module globals.
+            cls.model_rebuild(raise_errors=False, _types_namespace={"np": np, "ClassVar": ClassVar})
 
 
 class SessionConfig(BaseConfig):

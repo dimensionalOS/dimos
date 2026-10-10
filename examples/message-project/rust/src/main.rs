@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use dimos_module::{Input, Module, Output, cdr, run_with_transport};
-use story_messages_messages::story_msgs::msg::DeviceReading;
+use story_messages_messages::story_msgs::msg::device_reading::DeviceReading;
 
 #[derive(Module)]
 struct Processor {

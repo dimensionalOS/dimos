@@ -15,9 +15,11 @@
 
 """Generated occupancy grids with external array and coordinate operations."""
 
-from dimos_generated.geometry_msgs.msg import Point, Pose
-from dimos_generated.nav_msgs.msg import OccupancyGrid
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Point, Pose, Quaternion
+from dimos_generated.nav_msgs.msg import MapMetaData, OccupancyGrid
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 
@@ -37,7 +39,20 @@ from dimos.msgs.pointcloud import pointcloud_from_xyz
 
 def test_empty_grid() -> None:
     """Test creating an empty grid."""
-    grid = OccupancyGrid()
+    grid = OccupancyGrid(
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        info=MapMetaData(
+            map_load_time=Time(sec=0, nanosec=0),
+            resolution=0.0,
+            width=0,
+            height=0,
+            origin=Pose(
+                position=Point(x=0.0, y=0.0, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+        ),
+        data=np.array([], dtype=np.int8),
+    )
     assert grid.info.width == 0
     assert grid.info.height == 0
     assert occupancy_view(grid).shape == (0, 0)
@@ -48,7 +63,9 @@ def test_empty_grid() -> None:
 def test_grid_with_dimensions() -> None:
     """Test creating a grid with specified dimensions."""
     grid = occupancy_from_array(
-        np.full((10, 10), -1, dtype=np.int8), resolution=0.1, header=Header(frame_id="map")
+        np.full((10, 10), -1, dtype=np.int8),
+        resolution=0.1,
+        header=Header(frame_id="map", stamp=Time(sec=0, nanosec=0)),
     )
     assert grid.info.width == 10
     assert grid.info.height == 10
@@ -65,9 +82,14 @@ def test_grid_from_numpy_array() -> None:
     data = np.zeros((20, 30), dtype=np.int8)
     data[5:10, 10:20] = 100
     data[15:18, 5:8] = -1
-    origin = Pose(position=Point(x=1, y=2))
+    origin = Pose(
+        position=Point(x=1, y=2, z=0.0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+    )
     grid = occupancy_from_array(
-        data, resolution=0.05, origin=origin, header=Header(frame_id="odom")
+        data,
+        resolution=0.05,
+        origin=origin,
+        header=Header(frame_id="odom", stamp=Time(sec=0, nanosec=0)),
     )
     assert grid.info.width == 30
     assert grid.info.height == 20
@@ -87,11 +109,16 @@ def test_grid_from_numpy_array() -> None:
 def test_world_grid_coordinate_conversion() -> None:
     """Test converting between world and grid coordinates."""
     data = np.zeros((20, 30), dtype=np.int8)
-    origin = Pose(position=Point(x=1, y=2))
-    grid = occupancy_from_array(
-        data, resolution=0.05, origin=origin, header=Header(frame_id="odom")
+    origin = Pose(
+        position=Point(x=1, y=2, z=0.0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
     )
-    grid_pos = world_to_grid(grid, Point(x=2.5, y=3.0))
+    grid = occupancy_from_array(
+        data,
+        resolution=0.05,
+        origin=origin,
+        header=Header(frame_id="odom", stamp=Time(sec=0, nanosec=0)),
+    )
+    grid_pos = world_to_grid(grid, Point(x=2.5, y=3.0, z=0.0))
     assert grid_pos[0] == pytest.approx(30)
     assert grid_pos[1] == pytest.approx(20)
     world_pos = grid_to_world(grid, (10, 5))
@@ -104,16 +131,21 @@ def test_cdr_encode_decode() -> None:
     data = np.zeros((20, 30), dtype=np.int8)
     data[5:10, 10:20] = 100
     data[15:18, 5:8] = -1
-    origin = Pose(position=Point(x=1, y=2))
-    grid = occupancy_from_array(
-        data, resolution=0.05, origin=origin, header=Header(frame_id="odom")
+    origin = Pose(
+        position=Point(x=1, y=2, z=0.0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
     )
-    grid_pos = world_to_grid(grid, Point(x=1.5, y=2.25))
+    grid = occupancy_from_array(
+        data,
+        resolution=0.05,
+        origin=origin,
+        header=Header(frame_id="odom", stamp=Time(sec=0, nanosec=0)),
+    )
+    grid_pos = world_to_grid(grid, Point(x=1.5, y=2.25, z=0.0))
     grid.data[round(grid_pos[1]) * grid.info.width + round(grid_pos[0])] = 50
-    lcm_data = grid.encode()
+    lcm_data = cdr_encode(grid)
     assert isinstance(lcm_data, bytes)
     assert len(lcm_data) > 0
-    decoded = OccupancyGrid.decode(lcm_data)
+    decoded = cdr_decode(lcm_data, OccupancyGrid)
     assert np.array_equal(occupancy_view(grid), occupancy_view(decoded))
     assert grid.info.width == decoded.info.width
     assert grid.info.height == decoded.info.height
@@ -127,11 +159,14 @@ def test_cdr_encode_decode() -> None:
 def test_cdr_decode_origin_is_dimos_pose() -> None:
     """Generated origin orientation works with the external yaw helper."""
     quat = quaternion_from_euler(0, 0, 0.5)
-    origin = Pose(position=Point(x=1, y=2), orientation=quat)
+    origin = Pose(position=Point(x=1, y=2, z=0.0), orientation=quat)
     grid = occupancy_from_array(
-        np.zeros((2, 3), dtype=np.int8), resolution=0.05, origin=origin, header=Header(frame_id="")
+        np.zeros((2, 3), dtype=np.int8),
+        resolution=0.05,
+        origin=origin,
+        header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
     )
-    decoded = OccupancyGrid.decode(grid.encode())
+    decoded = cdr_decode(cdr_encode(grid), OccupancyGrid)
     assert isinstance(decoded.info.origin, Pose)
     assert yaw(decoded.info.origin.orientation) == pytest.approx(0.5)
 
@@ -139,14 +174,34 @@ def test_cdr_decode_origin_is_dimos_pose() -> None:
 def test_cdr_decode_empty_grid() -> None:
     """An empty grid (mapper warming up) must survive the wire; the decoder
     used to rebuild it as a 1-D array the constructor rejects."""
-    decoded = OccupancyGrid.decode(OccupancyGrid().encode())
+    decoded = cdr_decode(
+        cdr_encode(
+            OccupancyGrid(
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                info=MapMetaData(
+                    map_load_time=Time(sec=0, nanosec=0),
+                    resolution=0.0,
+                    width=0,
+                    height=0,
+                    origin=Pose(
+                        position=Point(x=0.0, y=0.0, z=0.0),
+                        orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                    ),
+                ),
+                data=np.array([], dtype=np.int8),
+            )
+        ),
+        OccupancyGrid,
+    )
     assert occupancy_view(decoded).size == 0
     assert isinstance(decoded.info.origin, Pose)
 
 
 def test_physical_extent() -> None:
     grid = occupancy_from_array(
-        np.full((10, 10), -1, dtype=np.int8), header=Header(frame_id="map"), resolution=0.1
+        np.full((10, 10), -1, dtype=np.int8),
+        header=Header(frame_id="map", stamp=Time(sec=0, nanosec=0)),
+        resolution=0.1,
     )
     assert occupancy_extent(grid) == pytest.approx((1, 1))
 
@@ -154,7 +209,9 @@ def test_physical_extent() -> None:
 def test_grid_property_sync() -> None:
     """Test that the grid property works correctly."""
     grid = occupancy_from_array(
-        np.full((5, 5), -1, dtype=np.int8), resolution=0.1, header=Header(frame_id="map")
+        np.full((5, 5), -1, dtype=np.int8),
+        resolution=0.1,
+        header=Header(frame_id="map", stamp=Time(sec=0, nanosec=0)),
     )
     grid.data[2 * grid.info.width + 3] = 100
     assert occupancy_view(grid)[2, 3] == 100
@@ -165,14 +222,18 @@ def test_grid_property_sync() -> None:
 def test_invalid_grid_dimensions() -> None:
     """Test handling of invalid grid dimensions."""
     with pytest.raises(ValueError, match="2D integer array"):
-        occupancy_from_array(np.zeros(10), resolution=0.1, header=Header(frame_id=""))
+        occupancy_from_array(
+            np.zeros(10), resolution=0.1, header=Header(frame_id="", stamp=Time(sec=0, nanosec=0))
+        )
 
 
 def test_from_pointcloud() -> None:
     """Test creating OccupancyGrid from PointCloud2."""
     x, y = np.meshgrid(np.arange(10) * 0.05, np.arange(10) * 0.05)
     points = np.column_stack((x.ravel(), y.ravel(), np.full(x.size, 0.5)))
-    pointcloud = pointcloud_from_xyz(points, header=Header(frame_id="world"))
+    pointcloud = pointcloud_from_xyz(
+        points, header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0))
+    )
     occupancygrid = general_occupancy(pointcloud, resolution=0.05, min_height=0.1, max_height=2.0)
     occupancygrid = simple_inflate(occupancygrid, 0.1)
     assert occupancygrid.info.width > 0
@@ -187,7 +248,9 @@ def test_filter_above() -> None:
     data = np.array(
         [[-1, 0, 20, 50], [10, 30, 60, 80], [40, 70, 90, 100], [-1, 15, 25, -1]], dtype=np.int8
     )
-    grid = occupancy_from_array(data, resolution=0.1, header=Header(frame_id=""))
+    grid = occupancy_from_array(
+        data, resolution=0.1, header=Header(frame_id="", stamp=Time(sec=0, nanosec=0))
+    )
     filtered = occupancy_from_array(
         np.where(occupancy_view(grid) > 50, occupancy_view(grid), -1).astype(np.int8),
         header=grid.header,
@@ -219,7 +282,9 @@ def test_filter_below() -> None:
     data = np.array(
         [[-1, 0, 20, 50], [10, 30, 60, 80], [40, 70, 90, 100], [-1, 15, 25, -1]], dtype=np.int8
     )
-    grid = occupancy_from_array(data, resolution=0.1, header=Header(frame_id=""))
+    grid = occupancy_from_array(
+        data, resolution=0.1, header=Header(frame_id="", stamp=Time(sec=0, nanosec=0))
+    )
     filtered = occupancy_from_array(
         np.where(occupancy_view(grid) < 50, occupancy_view(grid), -1).astype(np.int8),
         header=grid.header,
@@ -253,7 +318,9 @@ def test_max() -> None:
     data = np.array(
         [[-1, 0, 20, 50], [10, 30, 60, 80], [40, 70, 90, 100], [-1, 15, 25, -1]], dtype=np.int8
     )
-    grid = occupancy_from_array(data, resolution=0.1, header=Header(frame_id=""))
+    grid = occupancy_from_array(
+        data, resolution=0.1, header=Header(frame_id="", stamp=Time(sec=0, nanosec=0))
+    )
     maxed = occupancy_from_array(
         np.where(occupancy_view(grid) >= 0, 100, -1).astype(np.int8),
         header=grid.header,

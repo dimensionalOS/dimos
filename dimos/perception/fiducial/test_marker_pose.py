@@ -13,7 +13,8 @@
 # limitations under the License.
 
 import cv2
-from dimos_generated.sensor_msgs.msg import CameraInfo
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.sensor_msgs.msg import CameraInfo, RegionOfInterest
 from dimos_generated.std_msgs.msg import Header
 import numpy as np
 
@@ -27,12 +28,42 @@ from dimos.perception.fiducial.marker_pose import (
 
 
 def test_camera_optical_frame_id_resolution() -> None:
-    info_named = CameraInfo(header=Header(frame_id="cam_info_optical"))
-    info_empty = CameraInfo()
+    info_named = CameraInfo(
+        header=Header(frame_id="cam_info_optical", stamp=Time(sec=0, nanosec=0)),
+        height=0,
+        width=0,
+        distortion_model="",
+        d=np.array([], dtype=np.float64),
+        k=np.zeros(9, dtype=np.float64),
+        r=np.zeros(9, dtype=np.float64),
+        p=np.zeros(12, dtype=np.float64),
+        binning_x=0,
+        binning_y=0,
+        roi=RegionOfInterest(x_offset=0, y_offset=0, height=0, width=0, do_rectify=False),
+    )
+    info_empty = CameraInfo(
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        height=0,
+        width=0,
+        distortion_model="",
+        d=np.array([], dtype=np.float64),
+        k=np.zeros(9, dtype=np.float64),
+        r=np.zeros(9, dtype=np.float64),
+        p=np.zeros(12, dtype=np.float64),
+        binning_x=0,
+        binning_y=0,
+        roi=RegionOfInterest(x_offset=0, y_offset=0, height=0, width=0, do_rectify=False),
+    )
     pixels = np.zeros((480, 640, 3), dtype=np.uint8)
-    img_custom = image_from_array(pixels, encoding="bgr8", header=Header(frame_id="custom_optical"))
+    img_custom = image_from_array(
+        pixels,
+        encoding="bgr8",
+        header=Header(frame_id="custom_optical", stamp=Time(sec=0, nanosec=0)),
+    )
     img_whitespace = image_from_array(
-        pixels, encoding="bgr8", header=Header(frame_id="  custom_optical  ")
+        pixels,
+        encoding="bgr8",
+        header=Header(frame_id="  custom_optical  ", stamp=Time(sec=0, nanosec=0)),
     )
     img_empty = image_from_array(pixels, encoding="bgr8")
 

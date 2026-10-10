@@ -13,6 +13,8 @@
 # limitations under the License.
 
 from datetime import datetime, timezone
+import os
+import platform
 import time
 
 import pytest
@@ -279,7 +281,10 @@ def test_time_window_collection() -> None:
 
 
 @pytest.mark.self_hosted
-@pytest.mark.skipif_macos_bug
+@pytest.mark.skipif(
+    platform.system() == "Darwin" and bool(os.environ.get("CI")),
+    reason="the macOS CI runner replays too slowly for the alignment timing assertions",
+)
 def test_timestamp_alignment(test_scheduler) -> None:
     speed = 5.0
 

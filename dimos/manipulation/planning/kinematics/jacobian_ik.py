@@ -27,6 +27,8 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING
 
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 
 from dimos.manipulation.planning.groups.models import PlanningGroup
@@ -145,7 +147,13 @@ class JacobianIK:
             else:
                 # Random seed within joint limits
                 random_positions = np.random.uniform(lower_limits, upper_limits)
-                current_seed = JointState(name=joint_names, position=random_positions.tolist())
+                current_seed = JointState(
+                    name=joint_names,
+                    position=np.asarray(random_positions.tolist(), dtype=np.float64),
+                    header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                    velocity=np.array([], dtype=np.float64),
+                    effort=np.array([], dtype=np.float64),
+                )
 
             # Solve iterative IK
             result = self.solve_iterative(
@@ -210,7 +218,13 @@ class JacobianIK:
         if request is None:
             return _create_failure_result(IKStatus.NO_SOLUTION, "Invalid pose target request")
 
-        full_seed = JointState(name=request.joint_names, position=request.seed_positions.tolist())
+        full_seed = JointState(
+            name=request.joint_names,
+            position=np.asarray(request.seed_positions.tolist(), dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        )
         result = self.solve_iterative(
             world=world,
             target_pose=request.target_pose,
@@ -229,7 +243,13 @@ class JacobianIK:
             full_positions[request.group_indices] = np.asarray(
                 result.joint_state.position, dtype=np.float64
             )
-            full_state = JointState(name=request.joint_names, position=full_positions.tolist())
+            full_state = JointState(
+                name=request.joint_names,
+                position=np.asarray(full_positions.tolist(), dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            )
             if not world.check_config_collision_free(full_state):
                 return _create_failure_result(IKStatus.COLLISION, "IK solution is in collision")
         return result
@@ -274,7 +294,13 @@ class JacobianIK:
         for iteration in range(max_iterations):
             with world.scratch_context() as ctx:
                 # Set current position (convert to JointState for API)
-                current_state = JointState(name=joint_names, position=current_joints.tolist())
+                current_state = JointState(
+                    name=joint_names,
+                    position=np.asarray(current_joints.tolist(), dtype=np.float64),
+                    header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                    velocity=np.array([], dtype=np.float64),
+                    effort=np.array([], dtype=np.float64),
+                )
                 world.set_joint_state(ctx, current_state)
 
                 if group is None:
@@ -331,7 +357,13 @@ class JacobianIK:
 
         # Compute final error
         with world.scratch_context() as ctx:
-            final_state = JointState(name=joint_names, position=current_joints.tolist())
+            final_state = JointState(
+                name=joint_names,
+                position=np.asarray(current_joints.tolist(), dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            )
             world.set_joint_state(ctx, final_state)
             if group is None:
                 final_pose = pose_matrix(world.get_ee_pose(ctx).pose)
@@ -402,7 +434,13 @@ class JacobianIK:
         if max_ratio > 1.0:
             q_dot = q_dot / max_ratio
 
-        return JointState(name=joint_names, velocity=q_dot.tolist())
+        return JointState(
+            name=joint_names,
+            velocity=np.asarray(q_dot.tolist(), dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            position=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        )
 
     def solve_differential_position_only(
         self,
@@ -448,7 +486,13 @@ class JacobianIK:
 
         # Compute joint velocities
         q_dot = J_pinv @ vel_array
-        return JointState(name=joint_names, velocity=q_dot.tolist())
+        return JointState(
+            name=joint_names,
+            velocity=np.asarray(q_dot.tolist(), dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            position=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        )
 
 
 # Result Helpers
@@ -464,7 +508,13 @@ def _create_success_result(
     """Create a successful IK result."""
     return IKResult(
         status=IKStatus.SUCCESS,
-        joint_state=JointState(name=joint_names, position=joint_positions.tolist()),
+        joint_state=JointState(
+            name=joint_names,
+            position=np.asarray(joint_positions.tolist(), dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        ),
         position_error=position_error,
         orientation_error=orientation_error,
         iterations=iterations,

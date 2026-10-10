@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import pytest
 
 from dimos.msgs.time import (
@@ -32,7 +33,7 @@ def test_integer_time_round_trip_preserves_every_nanosecond(factory, value):
 
     assert 0 <= stamp.nanosec < 1_000_000_000
     assert to_nanoseconds(stamp) == value
-    assert to_nanoseconds(type(stamp).decode(stamp.encode())) == value
+    assert to_nanoseconds(cdr_decode(cdr_encode(stamp), stamp.__msgtype__)) == value
 
 
 @pytest.mark.parametrize("factory", [time_from_seconds, duration_from_seconds])

@@ -1,7 +1,7 @@
-* @leshy @paul-nechifor @spomichter @mustafab0 @Dreamsorcerer @aclauer
-/.github/ @Dreamsorcerer @leshy @paul-nechifor @spomichter
+* @leshy @paul-nechifor @spomichter @mustafab0 @Dreamsorcerer @aclauer @TomCC7
+/.github/ @Dreamsorcerer @leshy @paul-nechifor @spomichter @mustafab0
 /dimos/mapping/ @leshy @paul-nechifor @spomichter @aclauer
-/dimos/manipulation/ @leshy @paul-nechifor @spomichter @mustafab0 @TomCC7
+/dimos/navigation/ @leshy @paul-nechifor @aclauer
 
 # Any experimental/ dir, anywhere
 # Last match wins, so this must stay at the bottom.

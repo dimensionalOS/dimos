@@ -117,7 +117,7 @@ class Detection2DModule(Module):
                 )
             else:
                 # No detection at this index - publish zero transform
-                position_3d = Vector3()
+                position_3d = Vector3(x=0.0, y=0.0, z=0.0)
 
             transforms.append(
                 TransformStamped(
@@ -125,7 +125,9 @@ class Detection2DModule(Module):
                         frame_id=sensor_frame.child_frame_id, stamp=detections.image.header.stamp
                     ),
                     child_frame_id=f"det_{index}",
-                    transform=Transform(translation=position_3d, rotation=Quaternion(w=1)),
+                    transform=Transform(
+                        translation=position_3d, rotation=Quaternion(w=1, x=0.0, y=0.0, z=0.0)
+                    ),
                 )
             )
 

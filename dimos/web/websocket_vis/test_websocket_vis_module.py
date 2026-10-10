@@ -19,6 +19,7 @@ import base64
 import math
 import zlib
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import (
     Point,
     Pose,
@@ -28,6 +29,9 @@ from dimos_generated.geometry_msgs.msg import (
     TwistStamped,
 )
 from dimos_generated.nav_msgs.msg import MapMetaData, OccupancyGrid, Path
+from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
+import numpy as np
 import pytest
 
 from dimos.msgs.geometry import quaternion_from_euler
@@ -47,10 +51,14 @@ def module():
 def test_click_and_velocity_generate_cdr_messages(module):
     points, velocities, stamped = [], [], []
     subscriptions = [
-        module.goal_request.subscribe(lambda msg: points.append(PoseStamped.decode(msg.encode()))),
-        module.tele_cmd_vel.subscribe(lambda msg: velocities.append(Twist.decode(msg.encode()))),
+        module.goal_request.subscribe(
+            lambda msg: points.append(cdr_decode(cdr_encode(msg), PoseStamped))
+        ),
+        module.tele_cmd_vel.subscribe(
+            lambda msg: velocities.append(cdr_decode(cdr_encode(msg), Twist))
+        ),
         module.movecmd_stamped.subscribe(
-            lambda msg: stamped.append(TwistStamped.decode(msg.encode()))
+            lambda msg: stamped.append(cdr_decode(cdr_encode(msg), TwistStamped))
         ),
     ]
     try:
@@ -66,7 +74,9 @@ def test_click_and_velocity_generate_cdr_messages(module):
             )
         )
         assert points[0].header.frame_id == "world"
-        assert points[0].pose == Pose(position=Point(x=2.5, y=-1), orientation=Quaternion(w=1))
+        assert points[0].pose == Pose(
+            position=Point(x=2.5, y=-1, z=0.0), orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0)
+        )
         assert velocities[0].linear.x == 0.5
         assert velocities[0].angular.z == 0.8
         assert stamped[0].twist == velocities[0]
@@ -77,22 +87,30 @@ def test_click_and_velocity_generate_cdr_messages(module):
 
 
 def test_generated_pose_path_and_costmap_produce_browser_state(module):
-    pose = PoseStamped(pose=Pose(position=Point(x=2, y=3, z=4)))
-    module._on_robot_pose(PoseStamped.decode(pose.encode()))
-    module._on_path(Path(poses=[pose]))
+    pose = PoseStamped(
+        pose=Pose(
+            position=Point(x=2, y=3, z=4), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+        ),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+    )
+    module._on_robot_pose(cdr_decode(cdr_encode(pose), PoseStamped))
+    module._on_path(Path(poses=[pose], header=Header(stamp=Time(sec=0, nanosec=0), frame_id="")))
     grid = OccupancyGrid(
         info=MapMetaData(
             width=2,
             height=2,
             resolution=1,
             origin=Pose(
-                position=Point(x=5, y=-2), orientation=quaternion_from_euler(0, 0, math.pi / 2)
+                position=Point(x=5, y=-2, z=0.0),
+                orientation=quaternion_from_euler(0, 0, math.pi / 2),
             ),
+            map_load_time=Time(sec=0, nanosec=0),
         ),
-        data=[100, 0, 0, -1],
+        data=np.array([100, 0, 0, -1], dtype=np.int8),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
     )
-    wire = grid.encode()
-    module._on_global_costmap(OccupancyGrid.decode(wire))
+    wire = cdr_encode(grid)
+    module._on_global_costmap(cdr_decode(wire, OccupancyGrid))
     assert module.vis_state["robot_pose"] == {"type": "vector", "c": [2, 3, 4]}
     assert module.vis_state["path"] == {"type": "path", "points": [[2, 3]]}
     costmap = module.vis_state["costmap"]
@@ -101,4 +119,4 @@ def test_generated_pose_path_and_costmap_produce_browser_state(module):
     assert costmap["resolution"] == 1
     assert costmap["grid"]["shape"] == [2, 2]
     assert list(zlib.decompress(base64.b64decode(costmap["grid"]["data"]))) == [100, 100, 100, 255]
-    assert grid.encode() == wire
+    assert cdr_encode(grid) == wire

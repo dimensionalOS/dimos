@@ -25,20 +25,16 @@ With --topology pong is opened as router and ping is opened as client.
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
 
 from dimos_generated.geometry_msgs.msg import Twist
 
-from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
 from dimos.protocol.service.zenohservice import ZenohConfig
 
-_RUST_DIR = Path(__file__).parent / "rust"
 # The crate is a workspace member, so cargo builds into the repo-root target dir.
-_EXAMPLES = DIMOS_PROJECT_ROOT / "target" / "release"
 _BUILD = "cargo build --release"
 
 # Where pong listens when it runs as the router.
@@ -46,16 +42,16 @@ _ROUTER_ENDPOINT = "tcp/127.0.0.1:17450"
 
 
 class PingConfig(NativeModuleConfig):
-    executable: str = str(_EXAMPLES / "ping")
+    executable: str = "../../../target/release/ping"
     build_command: str = _BUILD
-    cwd: str = str(_RUST_DIR)
+    source_dir: str = "examples/native-modules/rust"
     stdin_config: bool = True
 
 
 class PongConfig(NativeModuleConfig):
-    executable: str = str(_EXAMPLES / "pong")
+    executable: str = "../../../target/release/pong"
     build_command: str = _BUILD
-    cwd: str = str(_RUST_DIR)
+    source_dir: str = "examples/native-modules/rust"
     stdin_config: bool = True
     sample_config: int = 42
 

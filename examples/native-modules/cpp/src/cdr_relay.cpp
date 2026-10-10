@@ -1,8 +1,10 @@
+#include <dimos_msgs/msg/line_segments3_d.hpp>
+#include <sensor_msgs/msg/image.hpp>
 // Copyright 2026 Dimensional Inc.
 // SPDX-License-Identifier: Apache-2.0
 
 #include "dimos/native.hpp"
-#include <dimos_generated/messages.hpp>
+
 
 using namespace dimos::native;
 using dimos_msgs::msg::LineSegments3D;

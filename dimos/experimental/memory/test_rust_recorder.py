@@ -17,16 +17,23 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, TypeVar
 
-from dimos_generated.geometry_msgs.msg import PoseStamped
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from dimos_generated.sensor_msgs.msg import Image
+from dimos_generated.std_msgs.msg import Header, String
+from dimos_message_build.registry import schema as cdr_schema
 import pytest
 
+from dimos.core.global_config import GlobalConfig
+from dimos.core.module import Module
 from dimos.core.stream import In
+from dimos.core.transport_factory import rpc_backend
 from dimos.experimental.memory.rust_recorder import (
     RustMcapStoreConfig,
     RustRecorder,
     RustRecorderConfig,
     RustSqliteStoreConfig,
+    RustStreamSpec,
 )
 from dimos.memory.recording_policy import OnExisting
 from dimos.memory.store.sqlite import SqliteStore
@@ -57,7 +64,9 @@ TRecorder = TypeVar("TRecorder", bound=RustRecorder)
 
 
 @pytest.fixture
-def make_recorder() -> Any:
+def make_recorder(mocker) -> Any:
+    for method in ("start", "serve_module_rpc", "stop"):
+        mocker.patch.object(rpc_backend(), method)
     recorders: list[RustRecorder] = []
 
     def make(recorder_type: type[TRecorder], **kwargs: Any) -> TRecorder:
@@ -102,20 +111,64 @@ def test_specs_use_native_defaults_remapping_and_configured_workers(
             "port": "color_image",
             "name": "color_image",
             "payload_type": f"{Image.__module__}.{Image.__qualname__}",
-            "schema_name": Image.msg_name,
-            "schema_definition": Image.schema,
+            "schema_name": Image.__msgtype__,
+            "schema_definition": cdr_schema(Image.__msgtype__),
             "codec": "lz4+cdr",
         },
         {
             "port": "odometry",
             "name": "pose",
             "payload_type": f"{PoseStamped.__module__}.{PoseStamped.__qualname__}",
-            "schema_name": PoseStamped.msg_name,
-            "schema_definition": PoseStamped.schema,
+            "schema_name": PoseStamped.__msgtype__,
+            "schema_definition": cdr_schema(PoseStamped.__msgtype__),
             "codec": "cdr",
         },
     ]
     assert set(config) == {"encoding_threads", "store", "streams"}
+
+
+def test_json_options_cross_the_native_boundary_only_when_configured() -> None:
+    schema = {"type": "object", "properties": {"sent": {"type": "number"}}}
+    config = RustRecorderConfig(
+        streams=[
+            RustStreamSpec(
+                port="events",
+                name="events",
+                payload_type=f"{String.__module__}.{String.__qualname__}",
+                schema_name=String.__msgtype__,
+                schema_definition=cdr_schema(String.__msgtype__),
+                codec="json",
+                timestamp_field="sent",
+                json_schema=schema,
+            )
+        ]
+    )
+
+    assert config.to_config_dict()["streams"] == [
+        {
+            "port": "events",
+            "name": "events",
+            "payload_type": f"{String.__module__}.{String.__qualname__}",
+            "schema_name": String.__msgtype__,
+            "schema_definition": cdr_schema(String.__msgtype__),
+            "codec": "json",
+            "timestamp_field": "sent",
+            "json_schema": schema,
+        }
+    ]
+
+
+@pytest.mark.parametrize("codec", ["cdr", "lz4+cdr", "json"])
+def test_unconfigured_json_options_are_omitted_from_native_streams(codec: str) -> None:
+    config = RustRecorderConfig(
+        streams=[
+            RustStreamSpec.from_type(port="samples", name="samples", payload_type=String, codec=codec)
+        ]
+    )
+
+    assert config.to_config_dict()["streams"] == [
+        {"port": "samples", "name": "samples", "payload_type": f"{String.__module__}.{String.__qualname__}", "schema_name": String.__msgtype__, "schema_definition": cdr_schema(String.__msgtype__), "codec": codec}
+    ]
 
 
 def test_store_preparation_creates_a_python_readable_registry(
@@ -143,8 +196,26 @@ def test_store_preparation_creates_a_python_readable_registry(
 def test_append_replaces_only_the_recorded_streams(tmp_path: Path, make_recorder: Any) -> None:
     path = tmp_path / "recording.db"
     with SqliteStore(path=str(path)) as store:
-        store.stream("keep", PoseStamped).append(PoseStamped(), ts=1.0)
-        store.stream("odometry", PoseStamped).append(PoseStamped(), ts=2.0)
+        store.stream("keep", PoseStamped).append(
+            PoseStamped(
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                pose=Pose(
+                    position=Point(x=0.0, y=0.0, z=0.0),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+            ),
+            ts=1.0,
+        )
+        store.stream("odometry", PoseStamped).append(
+            PoseStamped(
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                pose=Pose(
+                    position=Point(x=0.0, y=0.0, z=0.0),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+            ),
+            ts=2.0,
+        )
 
     recorder = make_recorder(
         SampleRustRecorder,
@@ -185,14 +256,6 @@ def test_default_store_path_is_resolved_from_the_project_root() -> None:
 
     assert Path(config.store.path).is_absolute()
     assert Path(config.store.path).name == "recording.db"
-
-
-def test_native_recorder_is_built_and_run_from_the_nix_package() -> None:
-    config = RustRecorderConfig()
-
-    assert config.cwd == "rust"
-    assert config.build_command == "nix build -L .#dimos-memory-recorder"
-    assert config.executable == "result/bin/dimos-memory-recorder"
 
 
 def test_invalid_codec_fails_during_preflight(tmp_path: Path, make_recorder: Any) -> None:
@@ -289,7 +352,7 @@ def test_recorder_launches_without_duplicate_topic_cli_args(
         store=RustSqliteStoreConfig(path=str(tmp_path / "recording.db")),
     )
 
-    assert recorder._argv({"odometry": "/odom"}) == [recorder.config.executable]
+    assert recorder._argv({"odometry": "/odom"}) == [recorder._executable]
 
 
 def test_recorder_rejects_native_cli_arguments() -> None:
@@ -325,3 +388,25 @@ def test_launch_topics_match_selected_streams_with_connected_tf(tmp_path, make_r
     expected = {"odometry": "/odom", "tf": "/tf"} if record_tf else {"odometry": "/odom"}
     assert topics == expected
     assert set(topics) == {spec.port for spec in recorder.config.streams}
+
+
+def test_replay_never_prepares_native_sources_or_process(tmp_path, make_recorder, mocker):
+    fetch = mocker.patch(
+        "dimos.core.native_module.get_project_root", side_effect=AssertionError("fetch")
+    )
+    spawn = mocker.patch(
+        "dimos.core.native_module.subprocess.Popen", side_effect=AssertionError("spawn")
+    )
+    start = mocker.patch.object(Module, "start")
+    path = tmp_path / "replay.db"
+    recorder = make_recorder(
+        SampleRustRecorder,
+        g=GlobalConfig(replay=True),
+        store=RustSqliteStoreConfig(path=str(path)),
+    )
+    recorder.build()
+    recorder.start()
+    fetch.assert_not_called()
+    spawn.assert_not_called()
+    start.assert_called_once_with(recorder)
+    assert not path.exists()

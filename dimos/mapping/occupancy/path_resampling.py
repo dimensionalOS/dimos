@@ -13,6 +13,7 @@
 # limitations under the License.
 
 
+from copy import deepcopy
 import math
 
 from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
@@ -57,7 +58,7 @@ def _add_orientations_to_path(path: Path, goal_orientation: Quaternion) -> None:
         path.poses[i] = current_pose
 
     # Set last pose orientation
-    identity_quat = Quaternion(w=1)
+    identity_quat = Quaternion(w=1, x=0.0, y=0.0, z=0.0)
     last_pose = path.poses[-1]
     if goal_orientation != identity_quat:
         # Use the provided goal orientation if it's not the identity
@@ -118,7 +119,9 @@ def simple_resample_path(path: Path, goal_pose: Pose, spacing: float) -> Path:
             new_y = prev.pose.position.y + dir_y * dist_along
             new_pose = PoseStamped(
                 header=path.header,
-                pose=Pose(position=Point(x=new_x, y=new_y), orientation=prev.pose.orientation),
+                pose=Pose(
+                    position=Point(x=new_x, y=new_y, z=0.0), orientation=prev.pose.orientation
+                ),
             )
             resampled.append(new_pose)
 
@@ -143,7 +146,7 @@ def simple_resample_path(path: Path, goal_pose: Pose, spacing: float) -> Path:
         else:
             resampled.append(last)
 
-    ret = Path(header=path.header, poses=resampled)
+    ret = Path(header=deepcopy(path.header), poses=deepcopy(resampled))
 
     _add_orientations_to_path(ret, goal_pose.orientation)
 
@@ -254,13 +257,13 @@ def smooth_resample_path(
         new_pose = PoseStamped(
             header=path.header,
             pose=Pose(
-                position=Point(x=float(sampled_x[i]), y=float(sampled_y[i])),
-                orientation=Quaternion(w=1),
+                position=Point(x=float(sampled_x[i]), y=float(sampled_y[i]), z=0.0),
+                orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0),
             ),
         )
         resampled.append(new_pose)
 
-    ret = Path(header=path.header, poses=resampled)
+    ret = Path(header=deepcopy(path.header), poses=deepcopy(resampled))
 
     _add_orientations_to_path(ret, goal_pose.orientation)
 

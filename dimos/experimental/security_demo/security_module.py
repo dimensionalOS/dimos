@@ -37,14 +37,16 @@ from dimos_generated.geometry_msgs.msg import Twist
 from dimos_generated.nav_msgs.msg import OccupancyGrid
 from dimos_generated.sensor_msgs.msg import CameraInfo
 from dimos_generated.sensor_msgs.msg import Image
-from dimos.navigation.patrolling.create_patrol_router import create_patrol_router
-from dimos.navigation.patrolling.routers.patrol_router import PatrolRouter
+from dimos.navigation.experimental.patrolling.create_patrol_router import create_patrol_router
+from dimos.navigation.experimental.patrolling.routers.patrol_router import PatrolRouter
 from dimos.agents.skills.speak_skill_spec import SpeakSkillSpec
-from dimos.navigation.replanning_a_star.module_spec import ReplanningAStarPlannerSpec
-from dimos.navigation.visual_servoing.visual_servoing_2d import VisualServoing2D
+from dimos.navigation.go2.replanning_a_star.module_spec import ReplanningAStarPlannerSpec
+from dimos.agents.skills.visual_servoing.visual_servoing_2d import VisualServoing2D
 from dimos.utils.logging_config import setup_logger
 from dimos.msgs.image import image_to_bgr, image_from_array
-from dimos.navigation.patrolling.constants import EXTRA_CLEARANCE
+from dimos.navigation.experimental.patrolling.constants import EXTRA_CLEARANCE
+
+from dimos_generated.geometry_msgs.msg import Vector3
 
 if TYPE_CHECKING:
     from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
@@ -254,7 +256,9 @@ class SecurityModule(Module):
                 case "FOLLOWING":
                     self._follow_step()
 
-        self.cmd_vel.publish(Twist())
+        self.cmd_vel.publish(
+            Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+        )
         self._transition_to("IDLE")
 
     def _patrol_step(self) -> None:
@@ -328,7 +332,9 @@ class SecurityModule(Module):
         detections = self._tracker.process_image(latest_image)
 
         if len(detections) == 0:
-            self.cmd_vel.publish(Twist())
+            self.cmd_vel.publish(
+                Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+            )
             self._speak_skill.speak("Lost sight of intruder, resuming patrol", blocking=False)
             self._router.reset()
             self._has_active_goal = False

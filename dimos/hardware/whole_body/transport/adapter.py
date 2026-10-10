@@ -26,6 +26,7 @@ from typing import Any
 
 from dimos_generated.dimos_msgs.msg import MotorCommandArray
 from dimos_generated.sensor_msgs.msg import Imu, JointState
+import numpy as np
 
 from dimos.core.transport_factory import make_transport
 from dimos.hardware.spec import JointLimits
@@ -137,11 +138,11 @@ class TransportWholeBodyAdapter:
 
         msg = MotorCommandArray(
             header=header_now(),
-            q=[c.q for c in commands],
-            dq=[c.dq for c in commands],
-            kp=[c.kp for c in commands],
-            kd=[c.kd for c in commands],
-            tau=[c.tau for c in commands],
+            q=np.asarray([c.q for c in commands], dtype=np.float64),
+            dq=np.asarray([c.dq for c in commands], dtype=np.float64),
+            kp=np.asarray([c.kp for c in commands], dtype=np.float64),
+            kd=np.asarray([c.kd for c in commands], dtype=np.float64),
+            tau=np.asarray([c.tau for c in commands], dtype=np.float64),
         )
         self._motor_command_transport.publish(msg)
         return True

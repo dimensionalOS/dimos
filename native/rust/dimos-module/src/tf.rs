@@ -23,26 +23,20 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::io;
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex, RwLock};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
-use dimos_generated_messages::codec::Message;
+use crate::cdr;
 use nalgebra::{Isometry3, Quaternion, Translation3, UnitQuaternion, Vector3};
 use tokio::sync::{mpsc, Notify};
 use tracing::warn;
 
 use crate::module::Route;
+use crate::time::now_secs;
 
 /// How many seconds of history each edge keeps.
 pub(crate) const DEFAULT_TF_WINDOW_SECS: f64 = 10.0;
 
 const WARN_INTERVAL: Duration = Duration::from_secs(1);
-
-fn now_secs() -> f64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs_f64())
-        .unwrap_or(0.0)
-}
 
 /// A rigid transform from `parent` to `child` at a point in time.
 ///
@@ -391,10 +385,10 @@ impl Tf {
                 buffer.receive(&t.parent, &t.child, t.ts, t.iso);
             }
         });
-        let msg = dimos_generated_messages::tf2_msgs::msg::TFMessage {
+        let msg = dimos_generated_messages::tf2_msgs::msg::tf_message::TFMessage {
             transforms: transforms.iter().map(to_stamped).collect(),
         };
-        let bytes = msg.encode()?;
+        let bytes = cdr::encode(&msg)?;
         crate::module::publish_encoded(&self.sender, bytes).await
     }
 }
@@ -488,7 +482,9 @@ impl Lookup<'_> {
     }
 }
 
-fn to_stamped(t: &Transform) -> dimos_generated_messages::geometry_msgs::msg::TransformStamped {
+fn to_stamped(
+    t: &Transform,
+) -> dimos_generated_messages::geometry_msgs::msg::transform_stamped::TransformStamped {
     let mut sec = t.ts.floor();
     let mut nsec = ((t.ts - sec) * 1e9).round();
     if nsec >= 1e9 {
@@ -497,22 +493,22 @@ fn to_stamped(t: &Transform) -> dimos_generated_messages::geometry_msgs::msg::Tr
     }
     let p = t.iso.translation.vector;
     let q = t.iso.rotation;
-    dimos_generated_messages::geometry_msgs::msg::TransformStamped {
-        header: dimos_generated_messages::std_msgs::msg::Header {
-            stamp: dimos_generated_messages::builtin_interfaces::msg::Time {
+    dimos_generated_messages::geometry_msgs::msg::transform_stamped::TransformStamped {
+        header: dimos_generated_messages::std_msgs::msg::header::Header {
+            stamp: dimos_generated_messages::builtin_interfaces::msg::time::Time {
                 sec: sec as i32,
                 nanosec: nsec as u32,
             },
             frame_id: t.parent.clone(),
         },
         child_frame_id: t.child.clone(),
-        transform: dimos_generated_messages::geometry_msgs::msg::Transform {
-            translation: dimos_generated_messages::geometry_msgs::msg::Vector3 {
+        transform: dimos_generated_messages::geometry_msgs::msg::transform::Transform {
+            translation: dimos_generated_messages::geometry_msgs::msg::vector3::Vector3 {
                 x: p.x,
                 y: p.y,
                 z: p.z,
             },
-            rotation: dimos_generated_messages::geometry_msgs::msg::Quaternion {
+            rotation: dimos_generated_messages::geometry_msgs::msg::quaternion::Quaternion {
                 x: q.i,
                 y: q.j,
                 z: q.k,
@@ -531,7 +527,9 @@ struct TfRoute {
 
 impl Route for TfRoute {
     fn try_dispatch(&self, data: &[u8]) {
-        let msg = match dimos_generated_messages::tf2_msgs::msg::TFMessage::decode(data) {
+        let msg = match cdr::decode::<dimos_generated_messages::tf2_msgs::msg::tf_message::TFMessage>(
+            data,
+        ) {
             Ok(msg) => msg,
             Err(e) => {
                 crate::error_throttled!(
@@ -876,34 +874,36 @@ mod tests {
         x: f64,
         quat: (f64, f64, f64, f64),
     ) -> Vec<u8> {
-        use dimos_generated_messages::builtin_interfaces::msg::Time;
+        use dimos_generated_messages::builtin_interfaces::msg::time::Time;
         use dimos_generated_messages::geometry_msgs::msg::{
-            Quaternion as LQuat, Transform as LTransform, TransformStamped, Vector3 as LVec3,
+            quaternion::Quaternion as LQuat, transform::Transform as LTransform,
+            transform_stamped::TransformStamped, vector3::Vector3 as LVec3,
         };
-        use dimos_generated_messages::std_msgs::msg::Header;
+        use dimos_generated_messages::std_msgs::msg::header::Header;
         let (x_q, y_q, z_q, w_q) = quat;
-        dimos_generated_messages::tf2_msgs::msg::TFMessage {
-            transforms: vec![TransformStamped {
-                header: Header {
-                    stamp: Time {
-                        sec: ts as i32,
-                        nanosec: 0,
+        cdr::encode(
+            &dimos_generated_messages::tf2_msgs::msg::tf_message::TFMessage {
+                transforms: vec![TransformStamped {
+                    header: Header {
+                        stamp: Time {
+                            sec: ts as i32,
+                            nanosec: 0,
+                        },
+                        frame_id: parent.to_string(),
                     },
-                    frame_id: parent.to_string(),
-                },
-                child_frame_id: child.to_string(),
-                transform: LTransform {
-                    translation: LVec3 { x, y: 0.0, z: 0.0 },
-                    rotation: LQuat {
-                        x: x_q,
-                        y: y_q,
-                        z: z_q,
-                        w: w_q,
+                    child_frame_id: child.to_string(),
+                    transform: LTransform {
+                        translation: LVec3 { x, y: 0.0, z: 0.0 },
+                        rotation: LQuat {
+                            x: x_q,
+                            y: y_q,
+                            z: z_q,
+                            w: w_q,
+                        },
                     },
-                },
-            }],
-        }
-        .encode()
+                }],
+            },
+        )
         .unwrap()
     }
 
@@ -1028,18 +1028,19 @@ mod tests {
 
     #[test]
     fn tf_route_decodes_into_graph() {
-        use dimos_generated_messages::builtin_interfaces::msg::Time;
+        use dimos_generated_messages::builtin_interfaces::msg::time::Time;
         use dimos_generated_messages::geometry_msgs::msg::{
-            Quaternion as LQuat, Transform as LTransform, Vector3 as LVec3,
+            quaternion::Quaternion as LQuat, transform::Transform as LTransform,
+            vector3::Vector3 as LVec3,
         };
-        use dimos_generated_messages::std_msgs::msg::Header;
-        use dimos_generated_messages::tf2_msgs::msg::TFMessage;
+        use dimos_generated_messages::std_msgs::msg::header::Header;
+        use dimos_generated_messages::tf2_msgs::msg::tf_message::TFMessage;
 
         let (tx, _rx) = mpsc::channel(8);
         let (tf, route) = tf_subscription("/tf".to_string(), DEFAULT_TF_WINDOW_SECS, tx);
         let msg = TFMessage {
             transforms: vec![
-                dimos_generated_messages::geometry_msgs::msg::TransformStamped {
+                dimos_generated_messages::geometry_msgs::msg::transform_stamped::TransformStamped {
                     header: Header {
                         stamp: Time {
                             sec: 5,
@@ -1064,7 +1065,7 @@ mod tests {
                 },
             ],
         };
-        route.try_dispatch(&msg.encode().unwrap());
+        route.try_dispatch(&cdr::encode(&msg).unwrap());
 
         let t = tf.get_latest("base_link", "mid360_link").unwrap();
         assert!((t.translation().x - 0.1).abs() < 1e-9);

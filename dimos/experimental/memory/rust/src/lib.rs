@@ -46,6 +46,7 @@ const FLUSH_INTERVAL: Duration = Duration::from_millis(100);
 #[serde(rename_all = "lowercase")]
 pub enum Codec {
     Cdr,
+    Json,
     #[serde(rename = "lz4+cdr")]
     Lz4Cdr,
 }
@@ -59,6 +60,10 @@ pub struct StreamConfig {
     pub schema_name: String,
     pub schema_definition: String,
     pub codec: Codec,
+    #[serde(default)]
+    pub timestamp_field: Option<String>,
+    #[serde(default)]
+    pub json_schema: Option<serde_json::Value>,
 }
 
 impl StreamConfig {
@@ -137,6 +142,13 @@ pub struct RecorderEngine {
 
 impl RecorderEngine {
     pub fn start(config: RecorderConfig) -> Result<Self> {
+        for stream in &config.streams {
+            anyhow::ensure!(
+                stream.codec == Codec::Json
+                    || (stream.timestamp_field.is_none() && stream.json_schema.is_none()),
+                "JSON options require the json codec"
+            );
+        }
         let (write_tx, write_rx) = bounded(QUEUE_CAPACITY);
         let (permit_tx, permit_rx) = bounded(QUEUE_CAPACITY);
         let (failure_tx, failure_rx) = bounded(1);
@@ -437,16 +449,79 @@ fn write_ready(
 mod tests {
     use std::io::Read;
 
-    use dimos_generated_messages::builtin_interfaces::msg::Time;
-    use dimos_generated_messages::codec::Message;
-    use dimos_generated_messages::sensor_msgs::msg::{CompressedImage, Image, Imu};
-    use dimos_generated_messages::std_msgs::msg::Header;
-    use dimos_generated_messages::tf2_msgs::msg::TFMessage;
+    use dimos_generated_messages::builtin_interfaces::msg::time::Time;
+    use dimos_generated_messages::geometry_msgs::msg::{
+        quaternion::Quaternion, transform::Transform, transform_stamped::TransformStamped,
+        vector3::Vector3,
+    };
+    use dimos_generated_messages::sensor_msgs::msg::{
+        compressed_image::CompressedImage, image::Image, imu::Imu,
+    };
+    use dimos_generated_messages::std_msgs::msg::header::Header;
+    use dimos_generated_messages::tf2_msgs::msg::tf_message::TFMessage;
+    use dimos_module::cdr;
     use lz4_flex::frame::FrameDecoder;
     use rusqlite::Connection;
     use tempfile::NamedTempFile;
 
     use super::*;
+
+    fn schema(name: &str) -> String {
+        let schemas: std::collections::BTreeMap<String, String> =
+            serde_json::from_str(dimos_generated_messages::ROS2MSG_SCHEMAS).unwrap();
+        schemas[name].clone()
+    }
+
+    fn imu() -> Imu {
+        Imu {
+            header: Header {
+                stamp: Time { sec: 0, nanosec: 0 },
+                frame_id: String::new(),
+            },
+            orientation: Quaternion {
+                x: 0.0,
+                y: 0.0,
+                z: 0.0,
+                w: 0.0,
+            },
+            orientation_covariance: [0.0; 9],
+            angular_velocity: Vector3 {
+                x: 0.0,
+                y: 0.0,
+                z: 0.0,
+            },
+            angular_velocity_covariance: [0.0; 9],
+            linear_acceleration: Vector3 {
+                x: 0.0,
+                y: 0.0,
+                z: 0.0,
+            },
+            linear_acceleration_covariance: [0.0; 9],
+        }
+    }
+
+    fn transform() -> TransformStamped {
+        TransformStamped {
+            header: Header {
+                stamp: Time { sec: 0, nanosec: 0 },
+                frame_id: String::new(),
+            },
+            child_frame_id: String::new(),
+            transform: Transform {
+                translation: Vector3 {
+                    x: 0.0,
+                    y: 0.0,
+                    z: 0.0,
+                },
+                rotation: Quaternion {
+                    x: 0.0,
+                    y: 0.0,
+                    z: 0.0,
+                    w: 0.0,
+                },
+            },
+        }
+    }
 
     fn stream(name: &str, codec: Codec, is_tf: bool) -> Arc<StreamConfig> {
         Arc::new(StreamConfig {
@@ -459,17 +534,18 @@ mod tests {
             },
             codec,
             schema_name: if is_tf {
-                TFMessage::NAME
+                "tf2_msgs/msg/TFMessage"
             } else {
                 "test_msgs/msg/Raw"
             }
             .to_string(),
+            timestamp_field: None,
+            json_schema: None,
             schema_definition: if is_tf {
-                TFMessage::SCHEMA
+                schema("tf2_msgs/msg/TFMessage")
             } else {
-                "uint8[] data\n"
-            }
-            .to_string(),
+                "uint8[] data\n".to_string()
+            },
         })
     }
 
@@ -480,13 +556,15 @@ mod tests {
             payload_type: payload_type.to_string(),
             schema_name: payload_type.to_string(),
             schema_definition: match payload_type {
-                Image::NAME => Image::SCHEMA,
-                Imu::NAME => Imu::SCHEMA,
-                CompressedImage::NAME => CompressedImage::SCHEMA,
-                _ => "uint8[] data\n",
+                "sensor_msgs/msg/Image" => schema("sensor_msgs/msg/Image"),
+                "sensor_msgs/msg/Imu" => schema("sensor_msgs/msg/Imu"),
+                "sensor_msgs/msg/CompressedImage" => schema("sensor_msgs/msg/CompressedImage"),
+                _ => "uint8[] data\n".to_string(),
             }
             .to_string(),
             codec,
+            timestamp_field: None,
+            json_schema: None,
         })
     }
 
@@ -519,8 +597,9 @@ mod tests {
         };
 
         let stream = typed_stream("camera", IMAGE_PAYLOAD_TYPE, Codec::Cdr);
-        let observations = process(&stream, &image.encode().unwrap(), 100_000_000_000).unwrap();
-        let decoded = Image::decode(&observations[0].data).unwrap();
+        let observations =
+            process(&stream, &cdr::encode(&image).unwrap(), 100_000_000_000).unwrap();
+        let decoded = cdr::decode::<Image>(&observations[0].data).unwrap();
 
         assert_eq!(observations[0].ts, 12_000_000_034);
         assert_eq!(decoded.header, image.header);
@@ -529,13 +608,13 @@ mod tests {
 
     #[test]
     fn tf_batches_become_individually_timestamped_observations() {
-        let mut first = dimos_generated_messages::geometry_msgs::msg::TransformStamped::default();
+        let mut first = transform();
         first.header.stamp = Time {
             sec: 10,
             nanosec: 5,
         };
         first.child_frame_id = "first".to_string();
-        let mut second = dimos_generated_messages::geometry_msgs::msg::TransformStamped::default();
+        let mut second = transform();
         second.header.stamp = Time {
             sec: 20,
             nanosec: 7,
@@ -545,7 +624,7 @@ mod tests {
             transforms: vec![first, second],
         };
         let stream = stream("tf", Codec::Cdr, true);
-        let data = message.encode().unwrap();
+        let data = cdr::encode(&message).unwrap();
 
         let observations = process(&stream, &data, 100_000_000_000).unwrap();
 
@@ -554,7 +633,7 @@ mod tests {
         assert_eq!(observations[1].ts, 20_000_000_007);
         let decoded: Vec<TFMessage> = observations
             .iter()
-            .map(|observation| TFMessage::decode(&observation.data).unwrap())
+            .map(|observation| cdr::decode::<TFMessage>(&observation.data).unwrap())
             .collect();
         assert_eq!(decoded[0].transforms.len(), 1);
         assert_eq!(decoded[0].transforms[0].child_frame_id, "first");
@@ -564,7 +643,7 @@ mod tests {
 
     #[test]
     fn stamped_sensor_messages_preserve_their_source_timestamp() {
-        let mut message = Imu::default();
+        let mut message = imu();
         message.header.stamp = Time {
             sec: 42,
             nanosec: 25,
@@ -573,13 +652,15 @@ mod tests {
             port: "imu".to_string(),
             name: "imu".to_string(),
             payload_type: "dimos_generated.sensor_msgs.msg.Imu".to_string(),
-            schema_name: Imu::NAME.to_string(),
-            schema_definition: Imu::SCHEMA.to_string(),
+            schema_name: "sensor_msgs/msg/Imu".to_string(),
+            schema_definition: schema("sensor_msgs/msg/Imu").to_string(),
             codec: Codec::Cdr,
+            timestamp_field: None,
+            json_schema: None,
         });
 
         let observations =
-            decoding::decode(&stream, &message.encode().unwrap(), 100_000_000_000).unwrap();
+            decoding::decode(&stream, &cdr::encode(&message).unwrap(), 100_000_000_000).unwrap();
         assert_eq!(observations[0].ts, 42_000_000_025);
     }
 
@@ -591,22 +672,23 @@ mod tests {
                     sec: 42,
                     nanosec: 25,
                 },
-                ..Header::default()
+                frame_id: String::new(),
             },
             height: 1,
             width: 1,
             encoding: "rgb8".to_string(),
             step: 3,
             data: vec![1, 2, 3],
-            ..Image::default()
+            is_bigendian: 0,
         };
         let stream = typed_stream("camera", IMAGE_PAYLOAD_TYPE, Codec::Cdr);
 
-        let observations = process(&stream, &image.encode().unwrap(), 100_000_000_000).unwrap();
+        let observations =
+            process(&stream, &cdr::encode(&image).unwrap(), 100_000_000_000).unwrap();
 
         assert_eq!(observations.len(), 1);
         assert_eq!(observations[0].ts, 42_000_000_025);
-        assert_eq!(Image::decode(&observations[0].data).unwrap(), image);
+        assert_eq!(cdr::decode::<Image>(&observations[0].data).unwrap(), image);
     }
 
     #[test]
@@ -829,16 +911,16 @@ mod tests {
     }
     #[test]
     fn stamped_cdr_preserves_zero_negative_and_exact_epoch_nanoseconds_in_both_endians() {
-        let stream = typed_stream("imu", Imu::NAME, Codec::Cdr);
+        let stream = typed_stream("imu", "sensor_msgs/msg/Imu", Codec::Cdr);
         for (sec, nanosec, expected) in [
             (0, 0, 0),
             (-1, 500_000_000, -500_000_000),
             (1_700_000_000, 123_456_789, 1_700_000_000_123_456_789),
         ] {
-            let mut message = Imu::default();
+            let mut message = imu();
             message.header.stamp = Time { sec, nanosec };
             for little_endian in [false, true] {
-                let bytes = message.encode_endian(little_endian).unwrap();
+                let bytes = cdr::encode_endian(&message, little_endian).unwrap();
                 let observations = process(&stream, &bytes, 99).unwrap();
                 assert_eq!(observations[0].ts, expected);
                 assert_eq!(observations[0].data, bytes);
@@ -851,16 +933,16 @@ mod tests {
         let message = CompressedImage {
             header: Header {
                 stamp: Time { sec: 2, nanosec: 3 },
-                ..Default::default()
+                frame_id: String::new(),
             },
             format: "rgb8; jpeg compressed bgr8".into(),
             data: vec![0xff, 0xd8, 0xff, 0xd9],
         };
-        let stream = typed_stream("camera", CompressedImage::NAME, Codec::Cdr);
-        let observations = process(&stream, &message.encode().unwrap(), 99).unwrap();
+        let stream = typed_stream("camera", "sensor_msgs/msg/CompressedImage", Codec::Cdr);
+        let observations = process(&stream, &cdr::encode(&message).unwrap(), 99).unwrap();
         assert_eq!(observations[0].ts, 2_000_000_003);
         assert_eq!(
-            CompressedImage::decode(&observations[0].data).unwrap(),
+            cdr::decode::<CompressedImage>(&observations[0].data).unwrap(),
             message
         );
     }
@@ -876,10 +958,10 @@ mod tests {
 
     #[test]
     fn invalid_ros_nanoseconds_are_rejected() {
-        let mut message = Imu::default();
+        let mut message = imu();
         message.header.stamp.nanosec = 1_000_000_000;
-        let stream = typed_stream("imu", Imu::NAME, Codec::Cdr);
-        assert!(process(&stream, &message.encode().unwrap(), 99).is_err());
+        let stream = typed_stream("imu", "sensor_msgs/msg/Imu", Codec::Cdr);
+        assert!(process(&stream, &cdr::encode(&message).unwrap(), 99).is_err());
     }
 
     #[test]

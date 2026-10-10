@@ -15,14 +15,17 @@
 from types import SimpleNamespace
 from typing import get_type_hints
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import TransformStamped
 from dimos_generated.std_msgs.msg import Header
 from dimos_generated.vision_msgs.msg import Detection3DArray
+from dimos_message_build.registry import encode as cdr_encode
 import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation
 
 from dimos.core.stream import In
+from dimos.core.transport_factory import rpc_backend
 from dimos.mapping.relocalization.lidar.module import LidarWindowRelocalization
 from dimos.mapping.relocalization.module import RelocalizationModule
 from dimos.msgs.geometry import inverse_transform, transform_from_matrix, transform_matrix
@@ -30,8 +33,11 @@ from dimos.msgs.pointcloud import pointcloud_from_xyz, pointcloud_xyz
 
 
 @pytest.fixture
-def module():
+def module(mocker):
     """Build a real module (and dispose it); `cls, **config` picks the class."""
+    backend = rpc_backend()
+    for method in ("start", "serve_module_rpc", "stop"):
+        mocker.patch.object(backend, method)
     built = []
 
     def build(cls=RelocalizationModule, **config):
@@ -56,7 +62,7 @@ def test_submit_publishes_and_checks_frames(module):
     m = module()
     got = fixes(m)
     tf = TransformStamped(
-        header=Header(frame_id="world"),
+        header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
         child_frame_id="map",
         transform=transform_from_matrix(np.eye(4)),
     )
@@ -68,7 +74,7 @@ def test_submit_publishes_and_checks_frames(module):
     with pytest.raises(AssertionError):
         m.submit(
             TransformStamped(
-                header=Header(frame_id="map"),
+                header=Header(frame_id="map", stamp=Time(sec=0, nanosec=0)),
                 child_frame_id="world",
                 transform=transform_from_matrix(np.eye(4)),
             )
@@ -78,7 +84,7 @@ def test_submit_publishes_and_checks_frames(module):
 def test_relocalize_once_stops_after_the_first_fix(module):
     """What the flag does, either way. Which one is the default is a policy call."""
     tf = TransformStamped(
-        header=Header(frame_id="world"),
+        header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
         child_frame_id="map",
         transform=transform_from_matrix(np.eye(4)),
     )
@@ -103,7 +109,7 @@ def test_the_fix_goes_out_the_moment_it_is_accepted(interval):
     fixes, sent = Subject(), []
     disposable = fix_stream(fixes, interval=interval).subscribe(sent.append)
     tf = TransformStamped(
-        header=Header(frame_id="world"),
+        header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
         child_frame_id="map",
         transform=transform_from_matrix(np.eye(4)),
     )
@@ -116,7 +122,12 @@ def test_premap_defines_the_map_frame_and_waits_for_a_fix(module, tmp_path):
     """Loading is the base's: every strategy reads a premap and publishes it, once placed."""
     path = tmp_path / "somewhere.pc2.cdr"
     path.write_bytes(
-        pointcloud_from_xyz(np.zeros((5, 3), dtype=np.float32), header=Header()).encode()
+        cdr_encode(
+            pointcloud_from_xyz(
+                np.zeros((5, 3), dtype=np.float32),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            )
+        )
     )
     m = module()
     published, disposables = [], []
@@ -132,7 +143,7 @@ def test_premap_defines_the_map_frame_and_waits_for_a_fix(module, tmp_path):
     assert published == []  # ... which stays silent until a fix lands
     m.submit(
         TransformStamped(
-            header=Header(frame_id="world"),
+            header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
             child_frame_id="map",
             transform=transform_from_matrix(np.eye(4)),
         )
@@ -157,6 +168,8 @@ def test_relocalizer_refuses_below_its_own_threshold(monkeypatch):
         )
 
     assert relocalizer(0.5).relocalize(None, "world", "map") is None
+    refused = relocalizer(0.5).attempt(None, "world", "map")
+    assert refused.fix is None and refused.result.fitness == 0.4
 
     # Accepted: open3d places the live cloud in the map, the TF tree wants the
     # other direction, and relocalize() is what turns one into the other.
@@ -192,7 +205,12 @@ def test_the_match_runs_on_a_window_of_the_last_scans():
     window(scans, cfg, interval=0.001).subscribe(matched.append)
 
     for i in range(5):
-        scans.on_next(pointcloud_from_xyz(np.full((4, 3), i, dtype=np.float32), header=Header()))
+        scans.on_next(
+            pointcloud_from_xyz(
+                np.full((4, 3), i, dtype=np.float32),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            )
+        )
         time.sleep(0.01)  # clear the throttle, so every scan gets its attempt
 
     # The first scan is below min_frames; from then on the window is full.
@@ -207,7 +225,7 @@ def test_from_matrix_inverse_matches_linalg_inv():
     T[:3, 3] = [1.5, -2.0, 0.3]
     tf = inverse_transform(
         TransformStamped(
-            header=Header(frame_id="map"),
+            header=Header(frame_id="map", stamp=Time(sec=0, nanosec=0)),
             child_frame_id="world",
             transform=transform_from_matrix(T),
         )

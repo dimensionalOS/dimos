@@ -17,7 +17,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import TYPE_CHECKING, cast
 
-from dimos.message_codegen.registry import message_types
+from dimos_message_build.registry import message_types
 
 if TYPE_CHECKING:
     from dimos.msgs.protocol import DimosMsg

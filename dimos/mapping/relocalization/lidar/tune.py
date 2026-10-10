@@ -39,8 +39,10 @@ from itertools import islice
 import time
 from typing import TYPE_CHECKING, Any, NamedTuple
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.sensor_msgs.msg import PointCloud2
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode
 import numpy as np
 import typer
 
@@ -52,6 +54,7 @@ from dimos.mapping.relocalization.lidar.relocalize import (
 )
 from dimos.msgs.pointcloud import pointcloud_from_xyz, pointcloud_to_open3d, pointcloud_xyz
 from dimos.msgs.time import time_from_seconds
+from dimos.mapping.relocalization.lidar.replay import main as replay_main
 from dimos.utils.data import get_data
 
 if TYPE_CHECKING:
@@ -285,7 +288,7 @@ def fixtures(name: str) -> tuple[PointCloud2, Any]:
     from dimos.memory.store.sqlite import SqliteStore
 
     ds = DATASETS[name]
-    premap = PointCloud2.decode(get_data(ds.premap).read_bytes())
+    premap = cdr_decode(get_data(ds.premap).read_bytes(), PointCloud2)
     store = SqliteStore(path=str(get_data(ds.recording)), must_exist=True)
     store.start()
     return premap, store
@@ -300,7 +303,9 @@ def premap_index(name: str, voxel: float = 0.2) -> Any:
 
 def premap_distance(name: str, points: np.ndarray) -> np.ndarray:
     """Per-point distance from ``points`` to the nearest premap point."""
-    cloud = pointcloud_from_xyz(points, header=Header(frame_id="world"))
+    cloud = pointcloud_from_xyz(
+        points, header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0))
+    )
     return np.asarray(pointcloud_to_open3d(cloud).compute_point_cloud_distance(premap_index(name)))
 
 
@@ -647,6 +652,7 @@ def view(name: str, probes: list[Probe], out: str | None) -> None:
 
 
 app = typer.Typer(help="Relocalization eval and tuning over a recording plus its premap")
+app.command("replay")(replay_main)
 
 
 def _register(

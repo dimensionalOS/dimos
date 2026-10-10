@@ -16,6 +16,7 @@ import pickle
 
 from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 from rosbags.typesys import Stores, get_typestore
 
 from dimos.msgs.time import time_from_nanoseconds
@@ -23,17 +24,17 @@ from dimos.msgs.time import time_from_nanoseconds
 
 def test_cdr_encode_decode() -> None:
     source = PoseStamped(
-        header=Header(stamp=time_from_nanoseconds(1234567890123456789)),
+        header=Header(stamp=time_from_nanoseconds(1234567890123456789), frame_id=""),
         pose=Pose(
             position=Point(x=1, y=2, z=3), orientation=Quaternion(x=0.1, y=0.2, z=0.3, w=0.9)
         ),
     )
-    binary = source.encode()
-    decoded = PoseStamped.decode(binary)
+    binary = cdr_encode(source)
+    decoded = cdr_decode(binary, PoseStamped)
     assert isinstance(decoded, PoseStamped)
     assert decoded is not source
-    assert decoded.encode() == binary
-    independent = get_typestore(Stores.ROS2_JAZZY).deserialize_cdr(binary, source.msg_name)
+    assert cdr_encode(decoded) == binary
+    independent = get_typestore(Stores.ROS2_JAZZY).deserialize_cdr(binary, source.__msgtype__)
     assert (independent.header.stamp.sec, independent.header.stamp.nanosec) == (
         1234567890,
         123456789,
@@ -53,7 +54,7 @@ def test_cdr_encode_decode() -> None:
 
 def test_pickle_encode_decode() -> None:
     source = PoseStamped(
-        header=Header(stamp=time_from_nanoseconds(1234567890123456789)),
+        header=Header(stamp=time_from_nanoseconds(1234567890123456789), frame_id=""),
         pose=Pose(
             position=Point(x=1, y=2, z=3), orientation=Quaternion(x=0.1, y=0.2, z=0.3, w=0.9)
         ),
@@ -61,4 +62,4 @@ def test_pickle_encode_decode() -> None:
     decoded = pickle.loads(pickle.dumps(source))
     assert isinstance(decoded, PoseStamped)
     assert decoded is not source
-    assert decoded.encode() == source.encode()
+    assert cdr_encode(decoded) == cdr_encode(source)

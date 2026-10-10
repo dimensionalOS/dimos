@@ -19,86 +19,14 @@ from dataclasses import dataclass
 import math
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 
-from dimos_generated.geometry_msgs.msg import Pose, Quaternion
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Point, Pose, Quaternion
 from dimos_generated.nav_msgs.msg import MapMetaData, OccupancyGrid
 from dimos_generated.sensor_msgs.msg import PointCloud2
-from numba import njit, prange  # type: ignore[import-untyped]
 import numpy as np
 from scipy import ndimage
 
 from dimos.msgs.pointcloud import pointcloud_xyz
-
-if TYPE_CHECKING:
-    from numpy.typing import NDArray
-
-
-@njit(cache=True)  # type: ignore[untyped-decorator]
-def _height_map_kernel(
-    points: NDArray[np.floating[Any]],
-    min_height_map: NDArray[np.floating[Any]],
-    max_height_map: NDArray[np.floating[Any]],
-    min_x: float,
-    min_y: float,
-    inv_res: float,
-    width: int,
-    height: int,
-) -> None:
-    """Build min/max height maps from points (faster than np.fmax/fmin.at)."""
-    n = points.shape[0]
-    for i in range(n):
-        x = points[i, 0]
-        y = points[i, 1]
-        z = points[i, 2]
-
-        gx = int((x - min_x) * inv_res + 0.5)
-        gy = int((y - min_y) * inv_res + 0.5)
-
-        if 0 <= gx < width and 0 <= gy < height:
-            cur_min = min_height_map[gy, gx]
-            cur_max = max_height_map[gy, gx]
-            # NaN comparisons are always False, so first point sets the value
-            if z < cur_min or cur_min != cur_min:  # cur_min != cur_min checks for NaN
-                min_height_map[gy, gx] = z
-            if z > cur_max or cur_max != cur_max:
-                max_height_map[gy, gx] = z
-
-
-@njit(cache=True, parallel=True)  # type: ignore[untyped-decorator]
-def _simple_occupancy_kernel(
-    points: NDArray[np.floating[Any]],
-    grid: NDArray[np.signedinteger[Any]],
-    min_x: float,
-    min_y: float,
-    inv_res: float,
-    width: int,
-    height: int,
-    min_height: float,
-    max_height: float,
-) -> None:
-    """Numba-accelerated kernel for simple_occupancy grid population."""
-    n = points.shape[0]
-    # Pass 1: Mark ground as free
-    for i in prange(n):
-        x = points[i, 0]
-        y = points[i, 1]
-        z = points[i, 2]
-        if z < min_height:
-            gx = int((x - min_x) * inv_res + 0.5)
-            gy = int((y - min_y) * inv_res + 0.5)
-            if 0 <= gx < width and 0 <= gy < height:
-                grid[gy, gx] = 0
-
-    # Pass 2: Mark obstacles (overwrites ground)
-    for i in prange(n):
-        x = points[i, 0]
-        y = points[i, 1]
-        z = points[i, 2]
-        if min_height <= z <= max_height:
-            gx = int((x - min_x) * inv_res + 0.5)
-            gy = int((y - min_y) * inv_res + 0.5)
-            if 0 <= gx < width and 0 <= gy < height:
-                grid[gy, gx] = 100
-
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -131,9 +59,15 @@ def _grid_message(
             resolution=config.resolution,
             width=cells.shape[1],
             height=cells.shape[0],
-            origin=origin if origin is not None else Pose(orientation=Quaternion(w=1.0)),
+            origin=origin
+            if origin is not None
+            else Pose(
+                orientation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0),
+                position=Point(x=0.0, y=0.0, z=0.0),
+            ),
+            map_load_time=Time(sec=0, nanosec=0),
         ),
-        data=cells.ravel(),
+        data=np.asarray(cells.ravel(), dtype=np.int8),
     )
 
 
@@ -207,7 +141,9 @@ def height_cost_occupancy(cloud: PointCloud2, **kwargs: Any) -> OccupancyGrid:
     height = int(np.ceil((max_y - min_y) / cfg.resolution))
 
     # Create origin pose
-    origin = Pose()
+    origin = Pose(
+        position=Point(x=0.0, y=0.0, z=0.0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+    )
     origin.position.x = min_x
     origin.position.y = min_y
     origin.position.z = 0.0
@@ -218,8 +154,10 @@ def height_cost_occupancy(cloud: PointCloud2, **kwargs: Any) -> OccupancyGrid:
     min_height_map = np.full((height, width), np.nan, dtype=np.float32)
     max_height_map = np.full((height, width), np.nan, dtype=np.float32)
 
-    # Use numba kernel (faster than np.fmax/fmin.at)
-    _height_map_kernel(
+    # numba: a 0.3 s import plus JIT, only paid when a grid is built.
+    from dimos.mapping.pointclouds.occupancy_kernels import height_map_kernel
+
+    height_map_kernel(
         points,
         min_height_map,
         max_height_map,
@@ -353,7 +291,9 @@ def general_occupancy(cloud: PointCloud2, **kwargs: Any) -> OccupancyGrid:
     height = int(np.ceil((max_y - min_y) / cfg.resolution))
 
     # Create origin pose (bottom-left corner of the grid)
-    origin = Pose()
+    origin = Pose(
+        position=Point(x=0.0, y=0.0, z=0.0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+    )
     origin.position.x = min_x
     origin.position.y = min_y
     origin.position.z = 0.0
@@ -456,7 +396,9 @@ def simple_occupancy(cloud: PointCloud2, **kwargs: Any) -> OccupancyGrid:
     height = int(np.ceil((max_y - min_y) / cfg.resolution))
 
     # Create origin pose (bottom-left corner of the grid)
-    origin = Pose()
+    origin = Pose(
+        position=Point(x=0.0, y=0.0, z=0.0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+    )
     origin.position.x = min_x
     origin.position.y = min_y
     origin.position.z = 0.0
@@ -465,8 +407,10 @@ def simple_occupancy(cloud: PointCloud2, **kwargs: Any) -> OccupancyGrid:
     # Initialize grid (all unknown)
     grid = np.full((height, width), -1, dtype=np.int8)
 
-    # Use numba kernel for fast grid population
-    _simple_occupancy_kernel(
+    # numba: a 0.3 s import plus JIT, only paid when a grid is built.
+    from dimos.mapping.pointclouds.occupancy_kernels import simple_occupancy_kernel
+
+    simple_occupancy_kernel(
         points,
         grid,
         min_x,

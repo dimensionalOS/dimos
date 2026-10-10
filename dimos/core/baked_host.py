@@ -97,7 +97,7 @@ class BakedHost(NativeModule):
 
         The binary rejects an unknown argument rather than ignoring it.
         """
-        return [self.config.executable, *self.config.extra_args]
+        return [self._executable, *self.config.extra_args]
 
     def _stdin_blob(self, topics: dict[str, str]) -> bytes:
         sections: dict[str, object] = {}

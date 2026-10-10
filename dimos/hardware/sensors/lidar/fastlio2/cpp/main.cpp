@@ -5,6 +5,8 @@
 // FAST-LIO-NON-ROS and publishes sensor-frame point clouds on lidar plus
 // odometry with covariance on odometry. No inputs, so it overrides handle().
 
+#include <nav_msgs/msg/odometry.hpp>
+#include <sensor_msgs/msg/point_cloud2.hpp>
 #include <boost/make_shared.hpp>
 #include <chrono>
 #include <cstdint>
@@ -21,7 +23,7 @@
 #include "point_cloud_utils.hpp"
 
 #include "dimos/native.hpp"
-#include <dimos_generated/messages.hpp>
+
 
 
 // FAST-LIO (header-only core, compiled sources linked via CMake)

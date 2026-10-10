@@ -13,7 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import asdict
+
 from dimos_generated.sensor_msgs.msg import CameraInfo
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
+import numpy as np
 
 from dimos.hardware.sensors.camera.zed import compat as zed
 
@@ -47,4 +51,4 @@ def test_calibration_is_generated_cdr_with_default_optical_frame():
     assert type(value) is CameraInfo
     assert value.header.frame_id == "camera_optical"
     assert value.k[0] == 379.45267
-    assert CameraInfo.decode(value.encode()) == value
+    np.testing.assert_equal(asdict(cdr_decode(cdr_encode(value), CameraInfo)), asdict(value))

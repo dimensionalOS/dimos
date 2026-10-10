@@ -22,8 +22,10 @@ import time
 from typing import Any
 
 from dimos_generated.geometry_msgs.msg import (
+    Point,
     Pose,
     PoseStamped,
+    Quaternion,
     Transform,
     TransformStamped,
     Twist,
@@ -189,7 +191,10 @@ class DroneConnectionModule(Module):
         camera_link = TransformStamped(
             header=Header(stamp=time_from_seconds(time.time()), frame_id="base_link"),
             child_frame_id="camera_link",
-            transform=Transform(translation=Vector3(x=0.1, z=-0.05)),
+            transform=Transform(
+                translation=Vector3(x=0.1, z=-0.05, y=0.0),
+                rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
         )
         self.tf.publish(TFMessage(transforms=[base_link, camera_link]))
 
@@ -225,7 +230,10 @@ class DroneConnectionModule(Module):
                         # Publish default pose
                         default_pose = PoseStamped(
                             header=Header(stamp=time_from_seconds(time.time()), frame_id="world"),
-                            pose=Pose(),
+                            pose=Pose(
+                                position=Point(x=0.0, y=0.0, z=0.0),
+                                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                            ),
                         )
                         self._publish_tf(default_pose)
                         logger.debug("Publishing default odometry")

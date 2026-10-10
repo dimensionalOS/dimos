@@ -488,7 +488,8 @@ class MujocoEngine(SimulationEngine):
         lidar_states: dict[str, _RaycastLidarState],
     ) -> None:
         """Raycast lidar frames from MuJoCo cameras. Must be called from sim thread."""
-        bodyexclude = self._robot_binding.root_body_id if self._robot_binding is not None else -1
+        root_body = self._robot_binding.root_body_id if self._robot_binding is not None else None
+        bodyexclude = -1 if root_body is None else root_body
         for state in lidar_states.values():
             if now - state.last_cast_time < state.interval:
                 continue
@@ -500,7 +501,7 @@ class MujocoEngine(SimulationEngine):
             n_rays = directions_world.shape[0]
             geom_ids = np.full(n_rays, -1, dtype=np.int32)
             distances = np.full(n_rays, -1.0, dtype=np.float64)
-            mujoco.mj_multiRay(  # type: ignore[attr-defined]
+            mujoco.mj_multiRay(
                 self._model,
                 self._data,
                 origin,
@@ -722,15 +723,15 @@ class MujocoEngine(SimulationEngine):
         return self.joint_efforts
 
     def write_joint_command(self, command: JointState) -> None:
-        if command.position:
+        if len(command.position):
             self._command_mode = "position"
             self._set_position_targets(list(command.position))
             return
-        if command.velocity:
+        if len(command.velocity):
             self._command_mode = "velocity"
             self._set_velocity_targets(list(command.velocity))
             return
-        if command.effort:
+        if len(command.effort):
             self._command_mode = "effort"
             self._set_effort_targets(list(command.effort))
             return
@@ -860,6 +861,18 @@ class MujocoEngine(SimulationEngine):
             return None
         position = self._data.qpos[qpos_adr : qpos_adr + 3].copy()
         qw, qx, qy, qz = self._data.qpos[qpos_adr + 3 : qpos_adr + 7].copy()
+        return position, np.array([qx, qy, qz, qw], dtype=np.float64)
+
+    def get_body_pose(
+        self, body_name: str
+    ) -> tuple[NDArray[np.float64], NDArray[np.float64]] | None:
+        """World position and xyzw orientation of a named body; None if the model has none."""
+        body_id = mujoco.mj_name2id(self._model, mujoco.mjtObj.mjOBJ_BODY, body_name)
+        if body_id < 0:
+            return None
+        with self._lock:
+            position = self._data.xpos[body_id].copy()
+            qw, qx, qy, qz = self._data.xquat[body_id].copy()
         return position, np.array([qx, qy, qz, qw], dtype=np.float64)
 
     def get_actuator_ctrl_range(self, joint_index: int) -> tuple[float, float] | None:

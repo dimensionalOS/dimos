@@ -28,6 +28,7 @@ from dimos_generated.std_msgs.msg import Bool
 from dimos_generated.tf2_msgs.msg import TFMessage
 from dimos_generated.trajectory_msgs.msg import JointTrajectory
 from dimos_generated.visualization_msgs.msg import MarkerArray
+from dimos_message_build.registry import schema as cdr_schema
 from langchain_core.messages import BaseMessage
 import pytest
 
@@ -40,6 +41,7 @@ from dimos.web.cockpit import (
     Chat,
     Col,
     Map2D,
+    Map3D,
     Panel,
     Row,
     Stats,
@@ -55,6 +57,7 @@ from dimos.web.relay_bridge.builtin_codecs import (
     decode_text,
     encode_path,
     encode_stats,
+    encode_voxels,
 )
 from dimos.web.relay_bridge.chat_codec import encode_chat
 from dimos.web.relay_bridge.manifest import ManifestError, parse_manifest
@@ -595,6 +598,95 @@ def test_map2d_nav_channels_blueprint() -> None:
     assert {s.ch: s.decoder for s in ratom.kwargs["channels"]}["clicked_point"] is decode_point
 
 
+def test_map3d_blueprint() -> None:
+    blueprint = cockpit(layout=Map3D())
+    (atom,) = blueprint.blueprints
+    manifest = atom.kwargs["manifest"]
+    assert [
+        (c["ch"], c["dir"], c["encoding"], c["delivery"], c["maxHz"], c["params"])
+        for c in manifest["channels"]
+    ] == [
+        ("odom", "rx", "pose.json.v1", "reliable", 20.0, {}),
+        ("global_map", "rx", "voxels.zlib.v1", "latest", 1.0, {"res": 0.05}),
+    ]
+    (panel,) = manifest["panels"]
+    assert panel["kind"] == "map3d"
+    assert panel["channels"] == ["global_map", "odom"]
+    assert panel["params"] == {}
+    assert parse_manifest(manifest).model_dump() == manifest
+    # The map is a generated port, wired to the mapper's global_map by name + type.
+    ports = {(s.name, s.direction): s.type for s in atom.streams}
+    assert ports[("global_map", "in")] is PointCloud2
+    spec = next(s for s in atom.kwargs["channels"] if s.ch == "global_map")
+    assert spec.encoder is encode_voxels
+    assert spec.resend_on_subscribe and not spec.paced
+    restored = pickle.loads(pickle.dumps(blueprint))
+    (ratom,) = restored.blueprints
+    assert {s.ch: s.encoder for s in ratom.kwargs["channels"]}["global_map"] is encode_voxels
+
+
+def test_map3d_without_pose_binds_one_slot() -> None:
+    (atom,) = cockpit(layout=Map3D(pose=None)).blueprints
+    manifest = atom.kwargs["manifest"]
+    assert [c["ch"] for c in manifest["channels"]] == ["global_map"]
+    assert manifest["panels"][0]["channels"] == ["global_map"]
+    assert parse_manifest(manifest).model_dump() == manifest
+
+
+def test_map3d_explicit_declaration_merges_rate_and_keeps_resend() -> None:
+    (atom,) = cockpit(
+        layout=Map3D(res=0.1),
+        channels=[
+            Channel(
+                "global_map",
+                PointCloud2,
+                encoding="voxels.zlib.v1",
+                delivery="latest",
+                max_hz=2.0,
+                params={"res": 0.1},
+            )
+        ],
+    ).blueprints
+    spec = next(s for s in atom.kwargs["channels"] if s.ch == "global_map")
+    assert spec.max_hz == 2.0
+    assert dict(spec.params) == {"res": 0.1}
+    assert spec.resend_on_subscribe
+
+
+def test_map3d_conflicting_res_raises() -> None:
+    with pytest.raises(ValueError, match="conflicting requirements for stream 'global_map'"):
+        cockpit(
+            layout=Map3D(res=0.1),
+            channels=[
+                Channel(
+                    "global_map",
+                    PointCloud2,
+                    encoding="voxels.zlib.v1",
+                    delivery="latest",
+                    params={"res": 0.05},
+                )
+            ],
+        )
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"res": 0},
+        {"res": -0.05},
+        {"res": float("nan")},
+        {"res": "0.05"},
+        {"max_hz": 0},
+        {"pose_hz": -1.0},
+        {"cloud": ""},
+        {"pose": ""},
+    ],
+)
+def test_map3d_rejects_bad_arguments(kwargs: dict[str, object]) -> None:
+    with pytest.raises(ValueError):
+        Map3D(**kwargs)  # type: ignore[arg-type]
+
+
 def test_map2d_path_flags_survive_an_explicit_declaration() -> None:
     (atom,) = cockpit(
         layout=Map2D(path="path"),
@@ -747,7 +839,9 @@ def test_explicit_channel_conflicts_with_panel_raise(channel: Channel) -> None:
 
 
 def test_builtin_stream_type_and_table_mismatches() -> None:
-    with pytest.raises(ValueError, match="does not match the bridge port type PoseStamped"):
+    with pytest.raises(
+        ValueError, match=f"does not match the bridge port type {PoseStamped.__qualname__}"
+    ):
         cockpit(channels=[Channel("odom", Twist, encoding="pose.json.v1")])
     with pytest.raises(
         ValueError, match="'odom' encodes pose.json.v1, not geometry_msgs/msg/PoseStamped.cdr.v1"
@@ -797,7 +891,7 @@ def test_cdr_channel_blueprint() -> None:
     assert parse_manifest(manifest).model_dump() == manifest
     (spec,) = atom.kwargs["channels"]
     assert spec.encoder is encode_cdr_v1 and spec.encoder_takes_params is True
-    assert spec.params["cdr"]["definition"] == PoseStamped.schema
+    assert spec.params["cdr"]["definition"] == cdr_schema(PoseStamped.__msgtype__)
     assert any(
         s.name == "pose" and s.type is PoseStamped and s.direction == "in" for s in atom.streams
     )
@@ -825,15 +919,17 @@ def test_cdr_schema_joins_user_params_in_the_request_only() -> None:
     channel = Channel("pose", PoseStamped, params={"note": "x"})
     assert dict(channel.params) == {"note": "x"}
     (wire,) = cockpit(channels=[channel]).blueprints[0].kwargs["manifest"]["channels"]
-    assert (
-        wire["params"]["note"] == "x" and wire["params"]["cdr"]["definition"] == PoseStamped.schema
+    assert wire["params"]["note"] == "x" and wire["params"]["cdr"]["definition"] == cdr_schema(
+        PoseStamped.__msgtype__
     )
     with pytest.raises(ValueError, match="'pose': params key 'cdr' is reserved"):
         cockpit(channels=[Channel("pose", PoseStamped, params={"cdr": {}})])
 
 
 def test_cdr_encoding_errors() -> None:
-    with pytest.raises(ValueError, match="encodes nav_msgs/msg/Odometry, not PoseStamped"):
+    with pytest.raises(
+        ValueError, match=f"encodes nav_msgs/msg/Odometry, not {PoseStamped.__qualname__}"
+    ):
         cockpit(channels=[Channel("pose", PoseStamped, encoding="nav_msgs/msg/Odometry.cdr.v1")])
     with pytest.raises(ValueError, match="no generated CDR schema"):
         cockpit(channels=[Channel("note", dict, encoding="geometry_msgs/msg/PoseStamped.cdr.v1")])
@@ -843,7 +939,12 @@ def test_all_generated_types_have_default_cdr_encoders() -> None:
     for message_type in (JointTrajectory, MotorCommandArray, PoseArray):
         (atom,) = cockpit(channels=[Channel("message", message_type)]).blueprints
         (channel,) = atom.kwargs["manifest"]["channels"]
-        assert channel["params"]["cdr"]["type"] == message_type.msg_name
+        assert channel["params"]["cdr"]["type"] == message_type.__msgtype__
+
+
+def test_untyped_bytes_have_no_default_json_encoder() -> None:
+    with pytest.raises(ValueError, match=r"'poses': .*not supported by json\.v1"):
+        cockpit(channels=[Channel("poses", bytes)])
 
 
 @web_encoder("t.ck.cdr.v1")

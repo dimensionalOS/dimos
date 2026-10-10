@@ -16,11 +16,13 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from pathlib import Path
 import pickle
 import time
 from unittest.mock import ANY, DEFAULT, MagicMock, call
 
+from dimos_generated.builtin_interfaces.msg import Duration, Time
 from dimos_generated.dimos_msgs.msg import TrajectoryStatus
 from dimos_generated.geometry_msgs.msg import (
     Point,
@@ -29,6 +31,7 @@ from dimos_generated.geometry_msgs.msg import (
     Quaternion,
     Transform,
     TransformStamped,
+    Vector3,
 )
 from dimos_generated.sensor_msgs.msg import JointState, PointCloud2
 from dimos_generated.std_msgs.msg import Header
@@ -102,7 +105,12 @@ def _control_coordinator(
 
     coordinator.task_invoke.side_effect = invoke
     coordinator.task_invoke.return_value = TrajectoryStatus(
-        header=header_now(), state=TrajectoryState.IDLE
+        header=header_now(),
+        state=TrajectoryState.IDLE,
+        progress=0.0,
+        time_elapsed=Duration(sec=0, nanosec=0),
+        time_remaining=Duration(sec=0, nanosec=0),
+        error="",
     )
     return coordinator
 
@@ -113,7 +121,11 @@ def robot_config():
     return RobotModelConfig(
         model=RobotModel.from_file(Path("/path/to/robot.urdf")),
         base_pose=PoseStamped(
-            header=Header(frame_id=""), pose=Pose(position=Point(), orientation=Quaternion())
+            header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
+            pose=Pose(
+                position=Point(x=0.0, y=0.0, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
         ),
         joint_names=["joint1", "joint2", "joint3"],
         base_link="link_base",
@@ -132,7 +144,11 @@ def _one_joint_config() -> RobotModelConfig:
     return RobotModelConfig(
         model=RobotModel.from_file(Path("/path")),
         base_pose=PoseStamped(
-            header=Header(frame_id=""), pose=Pose(position=Point(), orientation=Quaternion())
+            header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
+            pose=Pose(
+                position=Point(x=0.0, y=0.0, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
         ),
         joint_names=["j0"],
         base_link="base_link",
@@ -169,7 +185,10 @@ def _install_generated_plan(
     module._world_monitor.planning_groups = PlanningGroupRegistry(config.planning_groups)
     module._world_monitor.current_model_joint_state.return_value = JointState(
         name=config.joint_names,
-        position=[0.0 for _ in config.joint_names],
+        position=np.asarray([0.0 for _ in config.joint_names], dtype=np.float64),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
     )
     module._last_plan = GeneratedPlan(
         trajectory=JointTrajectory(
@@ -178,8 +197,10 @@ def _install_generated_plan(
             points=[
                 JointTrajectoryPoint(
                     time_from_start=duration_from_seconds(float(index)),
-                    positions=list(point),
-                    velocities=[0.0 for _ in config.joint_names],
+                    positions=np.asarray(list(point), dtype=np.float64),
+                    velocities=np.asarray([0.0 for _ in config.joint_names], dtype=np.float64),
+                    accelerations=np.array([], dtype=np.float64),
+                    effort=np.array([], dtype=np.float64),
                 )
                 for index, point in enumerate(points)
             ],
@@ -189,7 +210,10 @@ def _install_generated_plan(
         path=[
             JointState(
                 name=config.joint_names,
-                position=list(point),
+                position=np.asarray(list(point), dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
             )
             for point in points
         ],
@@ -204,8 +228,10 @@ def _generated_plan_trajectory(joint_names: list[str], *points: list[float]) -> 
         points=[
             JointTrajectoryPoint(
                 time_from_start=duration_from_seconds(float(index)),
-                positions=list(point),
-                velocities=[0.0 for _ in joint_names],
+                positions=np.asarray(list(point), dtype=np.float64),
+                velocities=np.asarray([0.0 for _ in joint_names], dtype=np.float64),
+                accelerations=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
             )
             for index, point in enumerate(points)
         ],
@@ -219,7 +245,11 @@ def _make_trajectory(*points: tuple[float, list[float]]) -> JointTrajectory:
         joint_names=joint_names,
         points=[
             JointTrajectoryPoint(
-                time_from_start=duration_from_seconds(time_from_start), positions=positions
+                time_from_start=duration_from_seconds(time_from_start),
+                positions=np.asarray(positions, dtype=np.float64),
+                velocities=np.array([], dtype=np.float64),
+                accelerations=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
             )
             for time_from_start, positions in points
         ],
@@ -342,7 +372,11 @@ class TestObstacleUpdates:
         module._world_monitor = MagicMock(spec=WorldMonitor)
         detected = MagicMock()
         pose = PoseStamped(
-            header=Header(frame_id=""), pose=Pose(position=Point(x=0.4, y=0.1, z=0.2))
+            header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
+            pose=Pose(
+                position=Point(x=0.4, y=0.1, z=0.2),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
         )
         obstacle = Obstacle(name="object-1", pose=pose, obstacle_type=ObstacleType.BOX)
         module._world_monitor.refresh_obstacles.return_value = [{"object_id": "object-1"}]
@@ -408,7 +442,15 @@ class TestObstacleUpdates:
         module._world_monitor = MagicMock(spec=WorldMonitor)
 
         with pytest.raises(ValueError, match="Unknown obstacle shape"):
-            module.update_obstacle("shape", Pose(), "capsule", [1.0])
+            module.update_obstacle(
+                "shape",
+                Pose(
+                    position=Point(x=0.0, y=0.0, z=0.0),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+                "capsule",
+                [1.0],
+            )
 
         module._world_monitor.update_obstacle.assert_not_called()
 
@@ -419,9 +461,25 @@ class TestObstacleUpdates:
         module._world_monitor = MagicMock(spec=WorldMonitor)
 
         with pytest.raises(ValueError, match="mesh_path required"):
-            module.update_obstacle("mesh", Pose(), "mesh")
+            module.update_obstacle(
+                "mesh",
+                Pose(
+                    position=Point(x=0.0, y=0.0, z=0.0),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+                "mesh",
+            )
         with pytest.raises(ValueError, match="four values"):
-            module.update_obstacle("box", Pose(), "box", [1.0, 1.0, 1.0], color=[1.0])
+            module.update_obstacle(
+                "box",
+                Pose(
+                    position=Point(x=0.0, y=0.0, z=0.0),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+                "box",
+                [1.0, 1.0, 1.0],
+                color=[1.0],
+            )
 
         module._world_monitor.update_obstacle.assert_not_called()
 
@@ -429,8 +487,28 @@ class TestObstacleUpdates:
         module = module_factory()
         module._world_monitor = None
 
-        assert module.update_obstacle("box", Pose(), "box", [1.0, 1.0, 1.0]) is False
-        assert module.update_obstacle_pose("box", Pose()) is False
+        assert (
+            module.update_obstacle(
+                "box",
+                Pose(
+                    position=Point(x=0.0, y=0.0, z=0.0),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+                "box",
+                [1.0, 1.0, 1.0],
+            )
+            is False
+        )
+        assert (
+            module.update_obstacle_pose(
+                "box",
+                Pose(
+                    position=Point(x=0.0, y=0.0, z=0.0),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+            )
+            is False
+        )
 
 
 class TestStateMachine:
@@ -456,9 +534,7 @@ class TestStateMachine:
         module = module_factory()
         module._state = ManipulationState.EXECUTING
         module._last_plan = GeneratedPlan(
-            trajectory=JointTrajectory(
-                header=header_now(),
-            ),
+            trajectory=JointTrajectory(header=header_now(), joint_names=[], points=[]),
             group_ids=("manipulator",),
             path=[],
         )
@@ -474,7 +550,12 @@ class TestStateMachine:
         _install_generated_plan(module, config, [0.0], [0.1])
         coordinator = _control_coordinator(cancel_status=TrajectoryCancellationStatus.CANCELLED)
         coordinator.task_invoke.return_value = TrajectoryStatus(
-            header=header_now(), state=TrajectoryState.ABORTED
+            header=header_now(),
+            state=TrajectoryState.ABORTED,
+            progress=0.0,
+            time_elapsed=Duration(sec=0, nanosec=0),
+            time_remaining=Duration(sec=0, nanosec=0),
+            error="",
         )
         module._control_coordinator = coordinator
         module._initialize_execution()
@@ -536,7 +617,12 @@ class TestStateMachine:
             cancel_status=TrajectoryCancellationStatus.CANCELLED
         )
         module._control_coordinator.task_invoke.return_value = TrajectoryStatus(
-            header=header_now(), state=TrajectoryState.ABORTED
+            header=header_now(),
+            state=TrajectoryState.ABORTED,
+            progress=0.0,
+            time_elapsed=Duration(sec=0, nanosec=0),
+            time_remaining=Duration(sec=0, nanosec=0),
+            error="",
         )
         module._initialize_execution()
         module.execute(blocking=False)
@@ -697,15 +783,30 @@ class TestPlanningInitialization:
         module._world_monitor.world = MagicMock()
         module._world_monitor.world.get_prepared_model.return_value = _prepared_model(robot_config)
         module._world_monitor.planning_groups = PlanningGroupRegistry(robot_config.planning_groups)
-        current = JointState(name=robot_config.joint_names, position=[0.0, 0.0, 0.0])
+        current = JointState(
+            name=robot_config.joint_names,
+            position=np.array([0.0, 0.0, 0.0], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        )
         current_model_state = JointState(
             name=["joint1", "joint2", "joint3"],
-            position=[0.0, 0.0, 0.0],
+            position=np.array([0.0, 0.0, 0.0], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
         )
         module._world_monitor.current_model_joint_state.return_value = current_model_state
         expected = IKResult(
             status=IKStatus.SUCCESS,
-            joint_state=JointState(name=robot_config.joint_names, position=[0.1, 0.2, 0.3]),
+            joint_state=JointState(
+                name=robot_config.joint_names,
+                position=np.array([0.1, 0.2, 0.3], dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            ),
             position_error=0.0001,
             orientation_error=0.0002,
             iterations=3,
@@ -715,8 +816,11 @@ class TestPlanningInitialization:
         module._kinematics.solve_pose_targets.return_value = expected
 
         pose = PoseStamped(
-            header=Header(frame_id="world"),
-            pose=Pose(position=Point(x=0.45, y=0.0, z=0.25), orientation=Quaternion()),
+            header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+            pose=Pose(
+                position=Point(x=0.45, y=0.0, z=0.25),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
         )
         module._state = operation_state
         result = module.inverse_kinematics({"manipulator": pose})
@@ -728,7 +832,7 @@ class TestPlanningInitialization:
         _, kwargs = module._kinematics.solve_pose_targets.call_args
         assert kwargs["world"] is module._world_monitor.world
         assert kwargs["seed"].name == current_model_state.name
-        assert kwargs["seed"].position == current.position
+        np.testing.assert_array_equal(kwargs["seed"].position, current.position)
         assert kwargs["check_collision"] is True
         [(group, target_pose)] = kwargs["pose_targets"].items()
         assert group.id == "manipulator"
@@ -744,13 +848,20 @@ class TestPlanningInitialization:
         module._world_monitor = MagicMock()
         module._world_monitor.planning_groups = PlanningGroupRegistry(robot_config.planning_groups)
         module._world_monitor.current_model_joint_state.return_value = JointState(
-            name=[], position=[]
+            name=[],
+            position=np.array([], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
         )
         module._kinematics = MagicMock()
 
         pose = PoseStamped(
-            header=Header(frame_id="world"),
-            pose=Pose(position=Point(x=0.45, y=0.0, z=0.25), orientation=Quaternion()),
+            header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+            pose=Pose(
+                position=Point(x=0.45, y=0.0, z=0.25),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
         )
         result = module.inverse_kinematics({"manipulator": pose})
 
@@ -770,10 +881,18 @@ class TestPlanningInitialization:
         module._world_monitor.world.get_prepared_model.return_value = _prepared_model(robot_config)
         module._world_monitor.planning_groups = PlanningGroupRegistry(robot_config.planning_groups)
         module._world_monitor.current_model_joint_state.return_value = None
-        explicit_seed = JointState(name=robot_config.joint_names, position=[0.2, 0.1, 0.0])
+        explicit_seed = JointState(
+            name=robot_config.joint_names,
+            position=np.array([0.2, 0.1, 0.0], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        )
         pending_plan = GeneratedPlan(
             group_ids=("manipulator",),
-            trajectory=JointTrajectory(header=header_now(), joint_names=robot_config.joint_names),
+            trajectory=JointTrajectory(
+                header=header_now(), joint_names=robot_config.joint_names, points=[]
+            ),
             path=[explicit_seed],
             status=PlanningStatus.SUCCESS,
         )
@@ -784,8 +903,11 @@ class TestPlanningInitialization:
         module._kinematics.solve_pose_targets.return_value = expected
 
         pose = PoseStamped(
-            header=Header(frame_id="world"),
-            pose=Pose(position=Point(x=0.45, y=0.0, z=0.25), orientation=Quaternion()),
+            header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+            pose=Pose(
+                position=Point(x=0.45, y=0.0, z=0.25),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
         )
         result = module.inverse_kinematics({"manipulator": pose}, seed=explicit_seed)
 
@@ -826,16 +948,25 @@ class TestPlanningGroupApis:
         module._world_monitor.planning_groups = registry
         module._world_monitor.current_model_joint_state.return_value = JointState(
             name=["joint1", "joint2", "joint3"],
-            position=[0.0, 0.0, 0.0],
+            position=np.array([0.0, 0.0, 0.0], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
         )
         result_path = [
             JointState(
                 name=["joint1", "joint2", "joint3"],
-                position=[0.0, 0.0, 0.0],
+                position=np.array([0.0, 0.0, 0.0], dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
             ),
             JointState(
                 name=["joint1", "joint2", "joint3"],
-                position=[0.1, 0.2, 0.3],
+                position=np.array([0.1, 0.2, 0.3], dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
             ),
         ]
         module._planner = MagicMock()
@@ -852,7 +983,10 @@ class TestPlanningGroupApis:
             {
                 "manipulator": JointState(
                     name=robot_config.joint_names,
-                    position=[0.1, 0.2, 0.3],
+                    position=np.array([0.1, 0.2, 0.3], dtype=np.float64),
+                    header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                    velocity=np.array([], dtype=np.float64),
+                    effort=np.array([], dtype=np.float64),
                 )
             }
         )
@@ -860,8 +994,13 @@ class TestPlanningGroupApis:
         assert plan is not None
         assert module._last_plan is not None
         assert module._last_plan.group_ids == ("manipulator",)
-        assert module._last_plan.path == result_path
-        assert module._last_plan.trajectory.points[-1].positions == [0.1, 0.2, 0.3]
+        np.testing.assert_equal(
+            [asdict(value) for value in module._last_plan.path],
+            [asdict(value) for value in result_path],
+        )
+        np.testing.assert_array_equal(
+            module._last_plan.trajectory.points[-1].positions, [0.1, 0.2, 0.3]
+        )
         module._planner.plan_selected_joint_path.assert_called_once()
         _, kwargs = module._planner.plan_selected_joint_path.call_args
         assert kwargs["selection"].group_ids == ("manipulator",)
@@ -875,7 +1014,10 @@ class TestPlanningGroupApis:
             {
                 "manipulator": JointState(
                     name=robot_config.joint_names,
-                    position=[0.1, 0.2, 0.3],
+                    position=np.array([0.1, 0.2, 0.3], dtype=np.float64),
+                    header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                    velocity=np.array([], dtype=np.float64),
+                    effort=np.array([], dtype=np.float64),
                 )
             }
         )
@@ -894,11 +1036,17 @@ class TestPlanningGroupApis:
         module._world_monitor.planning_groups = registry
         module._world_monitor.current_model_joint_state.return_value = JointState(
             name=["joint1", "joint2", "joint3"],
-            position=[0.0, 0.0, 0.0],
+            position=np.array([0.0, 0.0, 0.0], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
         )
         ik_goal = JointState(
             name=["joint1", "joint2", "joint3"],
-            position=[0.1, 0.2, 0.3],
+            position=np.array([0.1, 0.2, 0.3], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
         )
         module._kinematics = MagicMock()
         module._kinematics.solve_pose_targets.return_value = IKResult(
@@ -911,14 +1059,20 @@ class TestPlanningGroupApis:
             path=[
                 JointState(
                     name=["joint1", "joint2", "joint3"],
-                    position=[0.0, 0.0, 0.0],
+                    position=np.array([0.0, 0.0, 0.0], dtype=np.float64),
+                    header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                    velocity=np.array([], dtype=np.float64),
+                    effort=np.array([], dtype=np.float64),
                 ),
                 ik_goal,
             ],
         )
         pose = PoseStamped(
-            header=Header(frame_id="world"),
-            pose=Pose(position=Point(x=0.45, y=0.0, z=0.25), orientation=Quaternion()),
+            header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+            pose=Pose(
+                position=Point(x=0.45, y=0.0, z=0.25),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
         )
 
         plan = module.generate_plan_to_pose_targets({"manipulator": pose})
@@ -947,7 +1101,10 @@ class TestPlanningGroupApis:
         module._world_monitor.planning_groups = registry
         module._world_monitor.current_model_joint_state.return_value = JointState(
             name=["joint1", "joint2", "joint3"],
-            position=[0.0, 0.0, 0.0],
+            position=np.array([0.0, 0.0, 0.0], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
         )
         module._world_monitor.current_model_joint_state.return_value = None
         module._last_plan = GeneratedPlan(
@@ -961,11 +1118,17 @@ class TestPlanningGroupApis:
             path=[
                 JointState(
                     name=["joint1", "joint2", "joint3"],
-                    position=[0.0, 0.0, 0.0],
+                    position=np.array([0.0, 0.0, 0.0], dtype=np.float64),
+                    header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                    velocity=np.array([], dtype=np.float64),
+                    effort=np.array([], dtype=np.float64),
                 ),
                 JointState(
                     name=["joint1", "joint2", "joint3"],
-                    position=[0.2, 0.2, 0.2],
+                    position=np.array([0.2, 0.2, 0.2], dtype=np.float64),
+                    header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                    velocity=np.array([], dtype=np.float64),
+                    effort=np.array([], dtype=np.float64),
                 ),
             ],
         )
@@ -975,13 +1138,24 @@ class TestPlanningGroupApis:
             path=[
                 JointState(
                     name=["joint1", "joint2", "joint3"],
-                    position=[0.1, 0.2, 0.3],
+                    position=np.array([0.1, 0.2, 0.3], dtype=np.float64),
+                    header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                    velocity=np.array([], dtype=np.float64),
+                    effort=np.array([], dtype=np.float64),
                 )
             ],
         )
 
         plan = module.generate_plan_to_joint_targets(
-            {"manipulator": JointState(position=[0.1, 0.2, 0.3])}
+            {
+                "manipulator": JointState(
+                    position=np.array([0.1, 0.2, 0.3], dtype=np.float64),
+                    header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                    name=[],
+                    velocity=np.array([], dtype=np.float64),
+                    effort=np.array([], dtype=np.float64),
+                )
+            }
         )
 
         assert plan is None
@@ -995,7 +1169,13 @@ class TestPlanningGroupApis:
         model = _bimanual_config()
         module = module_factory()
         module.config.model = model
-        module._init_joints = JointState(name=model.joint_names, position=[0.1, -0.1])
+        module._init_joints = JointState(
+            name=model.joint_names,
+            position=np.array([0.1, -0.1], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        )
         module._world_monitor = MagicMock(spec=WorldMonitor)
         module._world_monitor.planning_groups = PlanningGroupRegistry(model.planning_groups)
         module._world_monitor.current_group_joint_state.return_value = None
@@ -1004,7 +1184,7 @@ class TestPlanningGroupApis:
         preset = module.get_state().groups["left_arm"].joint_presets["init"]
 
         assert preset.name == ["left/j1"]
-        assert preset.position == [0.1]
+        np.testing.assert_array_equal(preset.position, [0.1])
 
     def test_tf_loop_publishes_every_pose_group_for_bimanual_model(
         self, module_factory, mocker: MockerFixture
@@ -1015,9 +1195,19 @@ class TestPlanningGroupApis:
         module._world_monitor = MagicMock(spec=WorldMonitor)
         module._world_monitor.planning_groups = PlanningGroupRegistry(model.planning_groups)
         module._world_monitor.get_group_ee_pose.side_effect = [
-            PoseStamped(header=Header(frame_id=""), pose=Pose(position=Point(x=0.4, y=0.2, z=0.3))),
             PoseStamped(
-                header=Header(frame_id=""), pose=Pose(position=Point(x=0.4, y=-0.2, z=0.3))
+                header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
+                pose=Pose(
+                    position=Point(x=0.4, y=0.2, z=0.3),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+            ),
+            PoseStamped(
+                header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
+                pose=Pose(
+                    position=Point(x=0.4, y=-0.2, z=0.3),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
             ),
         ]
         publish = mocker.patch.object(module.tf, "publish")
@@ -1046,15 +1236,22 @@ class TestPlanningGroupApis:
         module.config.model = model
         module.config.static_transforms = [
             TransformStamped(
-                header=Header(frame_id="left/tool"),
+                header=Header(frame_id="left/tool", stamp=Time(sec=0, nanosec=0)),
                 child_frame_id="camera_link",
-                transform=Transform(),
+                transform=Transform(
+                    translation=Vector3(x=0.0, y=0.0, z=0.0),
+                    rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
             )
         ]
         module._world_monitor = MagicMock(spec=WorldMonitor)
         module._world_monitor.planning_groups = PlanningGroupRegistry(model.planning_groups)
         module._world_monitor.get_group_ee_pose.return_value = PoseStamped(
-            header=Header(frame_id=""), pose=Pose(position=Point(x=0.4, y=0.2, z=0.3))
+            header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
+            pose=Pose(
+                position=Point(x=0.4, y=0.2, z=0.3),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
         )
         publish = mocker.patch.object(module.tf, "publish")
 
@@ -1135,7 +1332,10 @@ class TestPlanningGroupApis:
         module._world_monitor.planning_groups = PlanningGroupRegistry(robot_config.planning_groups)
         module._world_monitor.current_model_joint_state.return_value = JointState(
             name=robot_config.joint_names,
-            position=[0.0, 0.0, 0.0],
+            position=np.array([0.0, 0.0, 0.0], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
         )
         module._kinematics = MagicMock()
         module._kinematics.solve_pose_targets.return_value = IKResult(
@@ -1143,7 +1343,15 @@ class TestPlanningGroupApis:
         )
 
         result = module.inverse_kinematics(
-            {"manipulator": PoseStamped(header=Header(frame_id="world"), pose=Pose())}
+            {
+                "manipulator": PoseStamped(
+                    header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+                    pose=Pose(
+                        position=Point(x=0.0, y=0.0, z=0.0),
+                        orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                    ),
+                )
+            }
         )
 
         assert result.status == IKStatus.NO_SOLUTION
@@ -1161,7 +1369,10 @@ class TestPlanningDiagnostics:
         module._world_monitor.planning_groups = PlanningGroupRegistry(robot_config.planning_groups)
         module._world_monitor.current_model_joint_state.return_value = JointState(
             name=robot_config.joint_names,
-            position=[0.0, 0.0, 0.0],
+            position=np.array([0.0, 0.0, 0.0], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
         )
         module._planner = MagicMock()
         module._planner.plan_selected_joint_path.return_value = PlanningResult(
@@ -1171,7 +1382,10 @@ class TestPlanningDiagnostics:
             {
                 "manipulator": JointState(
                     name=robot_config.joint_names,
-                    position=[1.0, 1.0, 1.0],
+                    position=np.array([1.0, 1.0, 1.0], dtype=np.float64),
+                    header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                    velocity=np.array([], dtype=np.float64),
+                    effort=np.array([], dtype=np.float64),
                 )
             }
         )

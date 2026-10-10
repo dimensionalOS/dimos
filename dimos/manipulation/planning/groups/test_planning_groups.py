@@ -20,6 +20,7 @@ from pathlib import Path
 from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.sensor_msgs.msg import JointState
 from dimos_generated.std_msgs.msg import Header
+import numpy as np
 import pytest
 
 from dimos.manipulation.planning.groups.discovery import (
@@ -164,20 +165,47 @@ def test_normalize_joint_target_accepts_exact_or_unnamed_target() -> None:
     group = PlanningGroup("left_arm", ("left/j1", "left/j2"), "base", "tool")
     named = normalize_joint_target(
         group,
-        JointState(name=["left/j1", "left/j2"], position=[1.0, 2.0]),
+        JointState(
+            name=["left/j1", "left/j2"],
+            position=np.array([1.0, 2.0], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        ),
     )
-    unnamed = normalize_joint_target(group, JointState(position=[3.0, 4.0]))
+    unnamed = normalize_joint_target(
+        group,
+        JointState(
+            position=np.array([3.0, 4.0], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            name=[],
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        ),
+    )
     assert list(named.name) == ["left/j1", "left/j2"]
     assert list(unnamed.name) == ["left/j1", "left/j2"]
     with pytest.raises(ValueError, match="missing joints"):
         normalize_joint_target(
             group,
-            JointState(name=["j1", "j2"], position=[1.0, 2.0]),
+            JointState(
+                name=["j1", "j2"],
+                position=np.array([1.0, 2.0], dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            ),
         )
 
 
 def test_state_projection_requires_exact_canonical_names() -> None:
-    state = JointState(name=["right/j1", "left/j2", "left/j1"], position=[3.0, 2.0, 1.0])
+    state = JointState(
+        name=["right/j1", "left/j2", "left/j1"],
+        position=np.array([3.0, 2.0, 1.0], dtype=np.float64),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
+    )
     projected = filter_joint_state_to_selected_joints(state, ("left/j1", "right/j1"))
     assert list(projected.name) == ["left/j1", "right/j1"]
     assert list(projected.position) == [1.0, 3.0]
@@ -193,7 +221,9 @@ def test_projection_and_target_normalization_copy_source_header():
     source = JointState(
         header=Header(stamp=Time(sec=-1, nanosec=999999999), frame_id="robot"),
         name=["arm/b", "arm/a"],
-        position=[2.0, 1.0],
+        position=np.array([2.0, 1.0], dtype=np.float64),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
     )
     projected = filter_joint_state_to_selected_joints(source, ["arm/a"])
     normalized = normalize_joint_target(group, source)

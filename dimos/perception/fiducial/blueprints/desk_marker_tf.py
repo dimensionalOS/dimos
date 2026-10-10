@@ -20,6 +20,7 @@ from pathlib import Path
 import threading
 import time
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos_generated.sensor_msgs.msg import CameraInfo
 from dimos_generated.std_msgs.msg import Header
@@ -65,7 +66,7 @@ def create_desk_camera_info(
     camera_info_yaml: str | Path = DEFAULT_DESK_CAMERA_INFO_YAML,
 ) -> CameraInfo:
     camera_info = camera_info_from_yaml(
-        camera_info_yaml, header=Header(frame_id=DESK_CAMERA_FRAME_ID)
+        camera_info_yaml, header=Header(frame_id=DESK_CAMERA_FRAME_ID, stamp=Time(sec=0, nanosec=0))
     )
     return camera_info
 
@@ -138,7 +139,10 @@ class DeskStaticTfModule(Module):
                     TransformStamped(
                         header=Header(stamp=stamp, frame_id=self.config.world_frame),
                         child_frame_id=self.config.base_frame,
-                        transform=Transform(rotation=Quaternion(w=1)),
+                        transform=Transform(
+                            rotation=Quaternion(w=1, x=0.0, y=0.0, z=0.0),
+                            translation=Vector3(x=0.0, y=0.0, z=0.0),
+                        ),
                     ),
                     TransformStamped(
                         header=Header(stamp=stamp, frame_id=self.config.base_frame),

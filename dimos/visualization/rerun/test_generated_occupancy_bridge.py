@@ -16,9 +16,11 @@ import math
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Point, Pose, Quaternion
 from dimos_generated.nav_msgs.msg import MapMetaData, OccupancyGrid
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 
@@ -30,19 +32,20 @@ pytestmark = pytest.mark.filterwarnings("error::rerun.error_utils.RerunWarning")
 
 def test_rotated_occupancy_cdr_mesh_and_texture() -> None:
     grid = OccupancyGrid(
-        header=Header(frame_id="map"),
+        header=Header(frame_id="map", stamp=Time(sec=0, nanosec=0)),
         info=MapMetaData(
             width=2,
             height=2,
             resolution=0.5,
             origin=Pose(
                 position=Point(x=10, y=20, z=3),
-                orientation=Quaternion(z=math.sqrt(0.5), w=math.sqrt(0.5)),
+                orientation=Quaternion(z=math.sqrt(0.5), w=math.sqrt(0.5), x=0.0, y=0.0),
             ),
+            map_load_time=Time(sec=0, nanosec=0),
         ),
-        data=[0, 100, -1, 50],
+        data=np.array([0, 100, -1, 50], dtype=np.int8),
     )
-    decoded = OccupancyGrid.decode(grid.encode())
+    decoded = cdr_decode(cdr_encode(grid), OccupancyGrid)
     bridge = RerunBridgeModule()
     bridge._min_intervals = {}
     try:
@@ -60,10 +63,45 @@ def test_rotated_occupancy_cdr_mesh_and_texture() -> None:
             ]
     finally:
         bridge.stop()
-    assert decoded.encode() == grid.encode()
+    assert cdr_encode(decoded) == cdr_encode(grid)
 
 
 def test_empty_and_invalid_occupancy_data() -> None:
-    assert occupancy_mesh(OccupancyGrid()).vertex_positions.as_arrow_array().to_pylist() == []
+    assert (
+        occupancy_mesh(
+            OccupancyGrid(
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                info=MapMetaData(
+                    map_load_time=Time(sec=0, nanosec=0),
+                    resolution=0.0,
+                    width=0,
+                    height=0,
+                    origin=Pose(
+                        position=Point(x=0.0, y=0.0, z=0.0),
+                        orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                    ),
+                ),
+                data=np.array([], dtype=np.int8),
+            )
+        )
+        .vertex_positions.as_arrow_array()
+        .to_pylist()
+        == []
+    )
     with pytest.raises(ValueError, match="dimensions"):
-        occupancy_mesh(OccupancyGrid(info=MapMetaData(width=2, height=2), data=[0]))
+        occupancy_mesh(
+            OccupancyGrid(
+                info=MapMetaData(
+                    width=2,
+                    height=2,
+                    map_load_time=Time(sec=0, nanosec=0),
+                    resolution=0.0,
+                    origin=Pose(
+                        position=Point(x=0.0, y=0.0, z=0.0),
+                        orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                    ),
+                ),
+                data=np.array([0], dtype=np.int8),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            )
+        )

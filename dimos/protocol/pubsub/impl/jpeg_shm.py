@@ -15,6 +15,7 @@
 from typing import Any
 
 from dimos_generated.sensor_msgs.msg import CompressedImage, Image
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 
 from dimos.msgs.image import compressed_image_from_image, image_from_compressed
 from dimos.protocol.pubsub.encoders import PubSubEncoderMixin
@@ -30,10 +31,10 @@ class JpegSharedMemoryEncoderMixin(PubSubEncoderMixin[str, Image, bytes]):
         if not isinstance(msg, Image):
             raise ValueError("Can only encode images.")
 
-        return compressed_image_from_image(msg, quality=self.quality).encode()
+        return cdr_encode(compressed_image_from_image(msg, quality=self.quality))
 
     def decode(self, msg: bytes, _topic: str) -> Image:
-        return image_from_compressed(CompressedImage.decode(msg))
+        return image_from_compressed(cdr_decode(msg, CompressedImage))
 
 
 class JpegSharedMemory(JpegSharedMemoryEncoderMixin, SharedMemoryPubSubBase):  # type: ignore[misc]

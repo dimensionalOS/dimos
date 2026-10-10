@@ -28,13 +28,16 @@ from __future__ import annotations
 from dimos_generated.geometry_msgs.msg import Pose
 from dimos_generated.sensor_msgs.msg import Image, JointState
 
+from typing import Any
 from dimos.core.stream import In
-from dimos.imitation.collection.episode_monitor import EpisodeStatus
+from dimos.imitation.collection.episode import EpisodeStatus
 from dimos.memory.module import Recorder, RecorderConfig
+from dimos.msgs.std_msgs.String import String
 
 
 class CollectionRecorderConfig(RecorderConfig):
     record_tf: bool = False
+    stream_codecs: dict[str, str] = {"status": "json"}
 
 
 class CollectionRecorder(Recorder):
@@ -44,7 +47,12 @@ class CollectionRecorder(Recorder):
 
     color_image: In[Image]  # observation (camera)
     coordinator_joint_state: In[JointState]  # observation + action (measured/next state)
-    status: In[EpisodeStatus]  # episode start/save/discard segmentation
+    status: In[String]  # episode start/save/discard segmentation
+
+    def _resolve_ts(self, name: str, msg: Any) -> float:
+        if name == "status":
+            return EpisodeStatus.from_json(msg.data).ts
+        return super()._resolve_ts(name, msg)
 
     def _resolve_ts(self, name: str, msg: object) -> float:
         if isinstance(msg, EpisodeStatus):

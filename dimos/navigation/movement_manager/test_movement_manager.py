@@ -20,6 +20,7 @@ import math
 import time
 
 from dimos_generated.geometry_msgs.msg import Point, PointStamped, Twist, Vector3
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import pytest
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
@@ -44,14 +45,16 @@ def _attach(module):
     captured = Captured()
     unsubs = [
         module.cmd_vel.subscribe(
-            lambda msg: captured.cmd_vel.append(type(msg).decode(msg.encode()))
+            lambda msg: captured.cmd_vel.append(cdr_decode(cdr_encode(msg), type(msg)))
         ),
         module.stop_movement.subscribe(
-            lambda msg: captured.stop_movement.append(type(msg).decode(msg.encode()))
+            lambda msg: captured.stop_movement.append(cdr_decode(cdr_encode(msg), type(msg)))
         ),
-        module.goal.subscribe(lambda msg: captured.goal.append(type(msg).decode(msg.encode()))),
+        module.goal.subscribe(
+            lambda msg: captured.goal.append(cdr_decode(cdr_encode(msg), type(msg)))
+        ),
         module.way_point.subscribe(
-            lambda msg: captured.way_point.append(type(msg).decode(msg.encode()))
+            lambda msg: captured.way_point.append(cdr_decode(cdr_encode(msg), type(msg)))
         ),
     ]
     return captured, unsubs

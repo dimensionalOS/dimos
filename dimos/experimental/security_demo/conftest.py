@@ -14,7 +14,9 @@
 
 from __future__ import annotations
 
-from dimos_generated.sensor_msgs.msg import CameraInfo
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.sensor_msgs.msg import CameraInfo, RegionOfInterest
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 from PIL import Image as PILImage
 import pytest
@@ -57,7 +59,21 @@ def security_module(mocker):
     mocker.patch("dimos.experimental.security_demo.security_module.EdgeTAMProcessor")
     mocker.patch("dimos.experimental.security_demo.security_module.DepthEstimator")
 
-    module = SecurityModule(camera_info=CameraInfo())
+    module = SecurityModule(
+        camera_info=CameraInfo(
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            height=0,
+            width=0,
+            distortion_model="",
+            d=np.array([], dtype=np.float64),
+            k=np.zeros(9, dtype=np.float64),
+            r=np.zeros(9, dtype=np.float64),
+            p=np.zeros(12, dtype=np.float64),
+            binning_x=0,
+            binning_y=0,
+            roi=RegionOfInterest(x_offset=0, y_offset=0, height=0, width=0, do_rectify=False),
+        )
+    )
 
     # Replace output streams with mocks for test assertions
     module.detection = mocker.MagicMock()

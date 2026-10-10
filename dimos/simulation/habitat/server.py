@@ -23,26 +23,42 @@ Reads one JSON line on stdin: ``topics`` (port -> zenoh key), ``config``, ``sess
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from enum import Enum
 import importlib.util
 import json
 import math
 from pathlib import Path
 import sys
 import time
-from typing import Any
+from typing import Any, NamedTuple
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseWithCovariance,
     Quaternion,
     Transform,
     TransformStamped,
     Twist,
+    TwistWithCovariance,
     Vector3,
 )
 from dimos_generated.nav_msgs.msg import Odometry
-from dimos_generated.sensor_msgs.msg import CameraInfo, Image, PointCloud2, PointField
+from dimos_generated.sensor_msgs.msg import (
+    CameraInfo,
+    Image,
+    PointCloud2,
+    PointField,
+    RegionOfInterest,
+)
 from dimos_generated.std_msgs.msg import Header
 from dimos_generated.tf2_msgs.msg import TFMessage
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
+from dimos_generated.vision_msgs.msg import (BoundingBox3D, Detection3D, Detection3DArray, ObjectHypothesis, ObjectHypothesisWithPose)
 import numpy as np
+import numpy.typing as npt
 import zenoh
 
 _spec = importlib.util.spec_from_file_location(
@@ -71,8 +87,16 @@ def _stamp(header: Header, ts: float) -> None:
 
 
 def image_msg(array: np.ndarray, encoding: str, frame_id: str, ts: float) -> bytes:
-    m = Image()
-    m.header = Header()
+    m = Image(
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        height=0,
+        width=0,
+        encoding="",
+        is_bigendian=0,
+        step=0,
+        data=np.array([], dtype=np.uint8),
+    )
+    m.header = Header(stamp=Time(sec=0, nanosec=0), frame_id="")
     _stamp(m.header, ts)
     m.header.frame_id = frame_id
     m.height, m.width = int(array.shape[0]), int(array.shape[1])
@@ -81,33 +105,45 @@ def image_msg(array: np.ndarray, encoding: str, frame_id: str, ts: float) -> byt
     channels = 1 if array.ndim == 2 else array.shape[2]
     m.step = m.width * array.dtype.itemsize * channels
     view = memoryview(np.ascontiguousarray(array)).cast("B")
-    m.data = view
-    return bytes(m.encode())
+    m.data = np.frombuffer(view, dtype=np.uint8)
+    return bytes(cdr_encode(m))
 
 
 def camera_info_msg(k: dict[str, float], frame_id: str, ts: float) -> bytes:
-    m = CameraInfo()
-    m.header = Header()
+    m = CameraInfo(
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        height=0,
+        width=0,
+        distortion_model="",
+        d=np.array([], dtype=np.float64),
+        k=np.zeros(9, dtype=np.float64),
+        r=np.zeros(9, dtype=np.float64),
+        p=np.zeros(12, dtype=np.float64),
+        binning_x=0,
+        binning_y=0,
+        roi=RegionOfInterest(x_offset=0, y_offset=0, height=0, width=0, do_rectify=False),
+    )
+    m.header = Header(stamp=Time(sec=0, nanosec=0), frame_id="")
     _stamp(m.header, ts)
     m.header.frame_id = frame_id
     m.width, m.height = int(k["width"]), int(k["height"])
     m.distortion_model = "plumb_bob"
-    m.d = [0.0] * 5
+    m.d = np.zeros(5, dtype=np.float64)
     fx, fy, cx, cy = k["fx"], k["fy"], k["cx"], k["cy"]
-    m.k = [fx, 0.0, cx, 0.0, fy, cy, 0.0, 0.0, 1.0]
-    m.r = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
-    m.p = [fx, 0.0, cx, 0.0, 0.0, fy, cy, 0.0, 0.0, 0.0, 1.0, 0.0]
+    m.k = np.array([fx, 0.0, cx, 0.0, fy, cy, 0.0, 0.0, 1.0], dtype=np.float64)
+    m.r = np.array([1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0], dtype=np.float64)
+    m.p = np.array([fx, 0.0, cx, 0.0, 0.0, fy, cy, 0.0, 0.0, 0.0, 1.0, 0.0], dtype=np.float64)
     m.binning_x = m.binning_y = 0
-    return bytes(m.encode())
+    return bytes(cdr_encode(m))
 
 
 def _xyzrgb_fields() -> list[Any]:
     fields = []
     for i, name in enumerate(["x", "y", "z"]):
-        f = PointField()
+        f = PointField(name="", offset=0, datatype=0, count=0)
         f.name, f.offset, f.datatype, f.count = name, i * 4, 7, 1
         fields.append(f)
-    f = PointField()
+    f = PointField(name="", offset=0, datatype=0, count=0)
     f.name, f.offset, f.datatype, f.count = "rgb", 12, 7, 1
     fields.append(f)
     return fields
@@ -115,8 +151,18 @@ def _xyzrgb_fields() -> list[Any]:
 
 def cloud_msg(points: np.ndarray, colors: np.ndarray, frame_id: str, ts: float) -> bytes:
     """xyz + packed-rgb PointCloud2, matching dimos PointCloud2.lcm_encode's layout."""
-    m = PointCloud2()
-    m.header = Header()
+    m = PointCloud2(
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        height=0,
+        width=0,
+        fields=[],
+        is_bigendian=False,
+        point_step=0,
+        row_step=0,
+        data=np.array([], dtype=np.uint8),
+        is_dense=False,
+    )
+    m.header = Header(stamp=Time(sec=0, nanosec=0), frame_id="")
     _stamp(m.header, ts)
     m.header.frame_id = frame_id
     m.fields = _xyzrgb_fields()
@@ -128,8 +174,8 @@ def cloud_msg(points: np.ndarray, colors: np.ndarray, frame_id: str, ts: float) 
     if len(points) == 0:
         m.height = 0
         m.row_step = 0
-        m.data = b""
-        return bytes(m.encode())
+        m.data = np.array([], dtype=np.uint8)
+        return bytes(cdr_encode(m))
 
     # ROS convention: rgb is a float32 whose bytes are [padding, r, g, b].
     rgb_u32 = (
@@ -140,8 +186,8 @@ def cloud_msg(points: np.ndarray, colors: np.ndarray, frame_id: str, ts: float) 
     data = np.column_stack([points.astype(np.float32), rgb_u32.view(np.float32)]).astype(np.float32)
     view = memoryview(np.ascontiguousarray(data)).cast("B")
     m.row_step = m.point_step * m.width
-    m.data = view
-    return bytes(m.encode())
+    m.data = np.frombuffer(view, dtype=np.uint8)
+    return bytes(cdr_encode(m))
 
 
 def odometry_msg(
@@ -152,8 +198,22 @@ def odometry_msg(
     child_frame_id: str,
     ts: float,
 ) -> bytes:
-    m = Odometry()
-    m.header = Header()
+    m = Odometry(
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        child_frame_id="",
+        pose=PoseWithCovariance(
+            pose=Pose(
+                position=Point(x=0.0, y=0.0, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+            covariance=np.zeros(36, dtype=np.float64),
+        ),
+        twist=TwistWithCovariance(
+            twist=Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)),
+            covariance=np.zeros(36, dtype=np.float64),
+        ),
+    )
+    m.header = Header(stamp=Time(sec=0, nanosec=0), frame_id="")
     _stamp(m.header, ts)
     m.header.frame_id = frame_id
     m.child_frame_id = child_frame_id
@@ -161,28 +221,38 @@ def odometry_msg(
     p.x, p.y, p.z = [float(v) for v in position]
     q = m.pose.pose.orientation
     q.x, q.y, q.z, q.w = [float(v) for v in quat_xyzw]
-    m.pose.covariance = [0.0] * 36
+    m.pose.covariance = np.zeros(36, dtype=np.float64)
     m.twist.twist.linear.x = float(twist[0])
     m.twist.twist.linear.y = float(twist[1])
     m.twist.twist.angular.z = float(twist[2])
-    m.twist.covariance = [0.0] * 36
-    return bytes(m.encode())
+    m.twist.covariance = np.zeros(36, dtype=np.float64)
+    return bytes(cdr_encode(m))
 
 
 def tf_msg(links: list[tuple[str, str, Any, Any]], ts: float) -> bytes:
     """links: (parent, child, translation xyz, rotation xyzw)."""
-    m = TFMessage()
+    m = TFMessage(transforms=[])
     out = []
     for parent, child, xyz, quat in links:
-        t = TransformStamped()
+        t = TransformStamped(
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            child_frame_id="",
+            transform=Transform(
+                translation=Vector3(x=0.0, y=0.0, z=0.0),
+                rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+        )
         # Each edge owns independent generated nested values.
-        t.header = Header()
+        t.header = Header(stamp=Time(sec=0, nanosec=0), frame_id="")
         _stamp(t.header, ts)
         t.header.frame_id = parent
         t.child_frame_id = child
-        transform = Transform()
-        transform.translation = Vector3()
-        transform.rotation = Quaternion()
+        transform = Transform(
+            translation=Vector3(x=0.0, y=0.0, z=0.0),
+            rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+        )
+        transform.translation = Vector3(x=0.0, y=0.0, z=0.0)
+        transform.rotation = Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
         (transform.translation.x, transform.translation.y, transform.translation.z) = (
             float(v) for v in xyz
         )
@@ -195,23 +265,115 @@ def tf_msg(links: list[tuple[str, str, Any, Any]], ts: float) -> bytes:
         t.transform = transform
         out.append(t)
     m.transforms = out
-    return bytes(m.encode())
+    return bytes(cdr_encode(m))
 
 
-def unproject(
-    depth: np.ndarray, rgb: np.ndarray, k: dict[str, float], trunc: float, stride: int
+def _pixels(
+    depth: np.ndarray, k: dict[str, float], trunc: float, stride: int
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Depth + colour to points in the camera optical frame (x right, y down, z fwd)."""
+    """Valid depth pixels as points in the camera optical frame, plus the mask that picked them."""
     d = depth[::stride, ::stride]
-    c = rgb[::stride, ::stride]
     fx, fy = k["fx"] / stride, k["fy"] / stride
     cx, cy = k["cx"] / stride, k["cy"] / stride
     h, w = d.shape
     u, v = np.meshgrid(np.arange(w, dtype=np.float32), np.arange(h, dtype=np.float32))
     valid = np.isfinite(d) & (d > 0.0) & (d < trunc)
     z = d[valid]
-    pts = np.stack([(u[valid] - cx) * z / fx, (v[valid] - cy) * z / fy, z], axis=1)
-    return pts.astype(np.float32), c[valid].astype(np.uint8)
+    return np.stack([(u[valid] - cx) * z / fx, (v[valid] - cy) * z / fy, z], axis=1), valid
+
+
+def unproject(
+    depth: np.ndarray, rgb: np.ndarray, k: dict[str, float], trunc: float, stride: int
+) -> tuple[np.ndarray, np.ndarray]:
+    """Depth + colour to points in the camera optical frame (x right, y down, z fwd)."""
+    pts, valid = _pixels(depth, k, trunc, stride)
+    return pts.astype(np.float32), rgb[::stride, ::stride][valid].astype(np.uint8)
+
+
+# Scene structure is not a navigation target.
+STRUCTURE = frozenset({"", "unknown", "wall", "floor", "ceiling"})
+
+FloatArray = npt.NDArray[np.floating[Any]]
+
+
+class VisibleObject(NamedTuple):
+    label: str
+    center: FloatArray  # world frame xyz
+    size: FloatArray  # world frame extent xyz
+
+
+def visible_objects(
+    depth: FloatArray,
+    semantic: npt.NDArray[np.integer[Any]],
+    k: dict[str, float],
+    trunc: float,
+    stride: int,
+    world: FloatArray,
+    labels: Sequence[str],
+    min_points: int = 20,
+) -> list[VisibleObject]:
+    """One box per annotated instance in view.
+
+    HM3D annotations carry no object boxes, so a box is the extent of the depth pixels
+    the instance covers in this frame. ``world`` is the 4x4 optical-to-world matrix.
+    """
+    points, valid = _pixels(depth, k, trunc, stride)
+    instance_ids = semantic[::stride, ::stride][valid]
+    points = points @ world[:3, :3].T + world[:3, 3]
+    out: list[VisibleObject] = []
+    for instance_id in np.unique(instance_ids):
+        label = labels[instance_id] if 0 <= instance_id < len(labels) else ""
+        if label in STRUCTURE:
+            continue
+        hits = points[instance_ids == instance_id]
+        if len(hits) < min_points:
+            continue
+        low, high = hits.min(axis=0), hits.max(axis=0)
+        out.append(VisibleObject(label, (low + high) / 2.0, high - low))
+    return out
+
+
+def objects_msg(objects: Sequence[VisibleObject], ts: float) -> bytes:
+    m = Detection3DArray()
+    m.header = Header()
+    _stamp(m.header, ts)
+    m.header.frame_id = "world"
+    m.detections = []
+    for label, center, size in objects:
+        # Generated constructors share default nested objects: build every level fresh.
+        d = Detection3D()
+        d.header = Header()
+        _stamp(d.header, ts)
+        d.header.frame_id = "world"
+        d.results = [
+            ObjectHypothesisWithPose(hypothesis=ObjectHypothesis(class_id=label, score=1.0))
+        ]
+        d.results_length = 1
+        cx, cy, cz = (float(v) for v in center)
+        sx, sy, sz = (float(v) for v in size)
+        d.bbox = BoundingBox3D(
+            center=Pose(position=Vector3(x=cx, y=cy, z=cz), orientation=Quaternion(w=1.0)),
+            size=Vector3(x=sx, y=sy, z=sz),
+        )
+        m.detections.append(d)
+    m.detections_length = len(m.detections)
+    return bytes(m.lcm_encode())
+
+
+class MotionType(str, Enum):
+    """habitat_sim.physics.MotionType by name; that enum only exists in the Habitat env."""
+
+    STATIC = "STATIC"
+    KINEMATIC = "KINEMATIC"
+
+
+class HabitatProp(NamedTuple):
+    glb_path: str
+    """Absolute path."""
+    position_ros: tuple[float, float, float]
+    """World position of the model's origin."""
+    motion_type: MotionType
+    """STATIC props are carved out of the navmesh; KINEMATIC ones are not."""
 
 
 class HabitatHost:
@@ -226,7 +388,7 @@ class HabitatHost:
         self.height = int(cfg["height"])
         self.hfov = float(cfg["hfov_deg"])
         self.camera_height = float(cfg["camera_height_m"])
-        self.publish_semantic = bool(cfg.get("publish_semantic", False))
+        self.publish_semantic = bool(cfg.get("publish_semantic") or cfg.get("publish_objects"))
         self._sim: Any = None
         self._agent: Any = None
         self.yaw = 0.0
@@ -262,7 +424,37 @@ class HabitatHost:
             self._sim.close()
         self._sim = hs.Simulator(hs.Configuration(backend, [agent_cfg]))
         self._agent = self._sim.initialize_agent(0)
+        self._add_props([HabitatProp(*prop) for prop in self.cfg.get("props", [])])
+        self.labels = [
+            o.category.name() if o is not None and o.category is not None else ""
+            for o in self._sim.semantic_scene.objects
+        ]
         self.reset_pose()
+
+    def _add_props(self, props: list[HabitatProp]) -> None:
+        """Add props and rebuild the navmesh around the STATIC ones."""
+        templates = self._sim.get_object_template_manager()
+        objects = self._sim.get_rigid_object_manager()
+        for prop in props:
+            template = templates.create_new_template(prop.glb_path)
+            template.compute_COM_from_shape = False
+            obj = objects.add_object_by_template_id(templates.register_template(template))
+            if obj is None:
+                raise FileNotFoundError(f"Could not load prop: {prop.glb_path}")
+            # Static objects cannot be moved, so place first.
+            obj.translation = frames.position_to_habitat(prop.position_ros)
+            obj.motion_type = getattr(
+                self.hs.physics.MotionType, MotionType(prop.motion_type).value
+            )
+        # Scenes that ship without a navmesh get one either way.
+        static = [prop for prop in props if prop.motion_type == MotionType.STATIC]
+        if not static and self._sim.pathfinder.is_loaded:
+            return
+        settings = self.hs.NavMeshSettings()
+        settings.include_static_objects = True
+        settings.cell_height = settings.cell_size
+        if not self._sim.recompute_navmesh(self._sim.pathfinder, settings):
+            raise RuntimeError("Could not build a navmesh with the scene's props")
 
     def reset_pose(self) -> None:
         self._sim.pathfinder.seed(int(self.cfg.get("seed", 0)))
@@ -360,7 +552,7 @@ def main() -> None:
 
     def on_cmd_vel(sample: Any) -> None:
         try:
-            t = Twist.decode(bytes(sample.payload.to_bytes()))
+            t = cdr_decode(bytes(sample.payload.to_bytes()), Twist)
             cmd["vx"], cmd["vy"], cmd["wz"] = t.linear.x, t.linear.y, t.angular.z
             cmd["ts"] = time.time()
         except Exception as exc:
@@ -387,6 +579,9 @@ def main() -> None:
             pub.put(payload)
 
     timeout = float(cfg.get("cmd_vel_timeout_s", 0.2))
+    objects_enabled = bool(cfg.get("publish_objects")) and "objects" in pubs
+    objects_period = 1.0 / float(cfg.get("objects_hz", 1.0))
+    next_objects = 0.0
     prev: tuple[np.ndarray, float, float] | None = None
     next_tick = last = time.time()
     while True:
@@ -435,6 +630,16 @@ def main() -> None:
         prev = (position.copy(), yaw, now)
 
         put("odometry", odometry_msg(position, quat, vel, "world", "base_link", now))
+        if objects_enabled and "semantic" in obs and now >= next_objects:
+            world = frames.pose_matrix(position + np.array([0.0, 0.0, cam_h]), yaw) @ optical
+            put(
+                "objects",
+                objects_msg(
+                    visible_objects(depth, obs["semantic"], k, trunc, stride, world, host.labels),
+                    now,
+                ),
+            )
+            next_objects = now + objects_period
         put(
             "tf",
             tf_msg(

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Twist, Vector3
 from dimos_generated.std_msgs.msg import Header
 import pytest
@@ -53,7 +54,7 @@ _JOINTS = ["go2/vx", "go2/vy", "go2/wz"]
 
 def _pose(x=0.0, y=0.0, yaw=0.0) -> PoseStamped:
     return PoseStamped(
-        header=Header(frame_id=""),
+        header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
         pose=Pose(
             position=Point(x=x, y=y, z=0.0), orientation=quaternion_from_euler(0.0, 0.0, yaw)
         ),

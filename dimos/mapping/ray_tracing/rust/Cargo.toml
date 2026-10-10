@@ -23,13 +23,17 @@ threads = 2
 [package.metadata.dimos.module.ray_tracing.inputs]
 lidar = "sensor_msgs/msg/PointCloud2"
 voxel_clear_mask = "sensor_msgs/msg/PointCloud2"
+loaded_map = "sensor_msgs/msg/PointCloud2"
 tf = "tf2_msgs/msg/TFMessage"
 
 [package.metadata.dimos.module.ray_tracing.outputs]
 global_map = "sensor_msgs/msg/PointCloud2"
 local_map = "sensor_msgs/msg/PointCloud2"
 local_map_fine = "sensor_msgs/msg/PointCloud2"
-region_bounds = "geometry_msgs/msg/PoseStamped"
+seed_map = "dimos_msgs/msg/RegionPointCloud2"
+seed_bounds = "dimos_msgs/msg/RegionBounds"
+region_bounds = "dimos_msgs/msg/RegionBounds"
+map_regions = "dimos_msgs/msg/RegionPointCloud2"
 
 [dependencies]
 dimos-module = { path = "../../../../native/rust/dimos-module" }

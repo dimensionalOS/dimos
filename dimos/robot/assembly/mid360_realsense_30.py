@@ -24,10 +24,10 @@ a memory db, with the rig's mount frames published continuously onto tf. Two var
 ``mid360_realsense_record`` (db only) and ``mid360_realsense_record_with_pcap`` (also
 captures a raw .pcap of the Mid-360 UDP stream).
 
-The lidar IPs come from each module's own config (``DIMOS_MID360_LIDAR_IP`` for the
-Mid-360 / pcap capture, ``DIMOS_POINTLIO_LIDAR_IP`` for Point-LIO)::
+The lidar IP is the driver's config, set in the blueprint or from the environment
+as ``MID360__LIDAR_IP``. Point-LIO reads the driver's cloud and IMU streams::
 
-    export DIMOS_MID360_LIDAR_IP=192.168.1.155 DIMOS_POINTLIO_LIDAR_IP=192.168.1.155
+    export MID360__LIDAR_IP=192.168.1.155
     dimos run mid360-realsense-record            # db only
     dimos run mid360-realsense-record-with-pcap  # db + raw pcap
 
@@ -52,8 +52,8 @@ from dimos_generated.sensor_msgs.msg import CameraInfo, Image, PointCloud2
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.stream import In
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
-from dimos.hardware.sensors.lidar.livox.module import Mid360
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
+from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
 from dimos.hardware.sensors.lidar.pointlio.recorder import PointlioRecorder
 from dimos.hardware.sensors.lidar.virtual_mid360.recorder import Mid360PcapRecorder
 from dimos.protocol.tf.static_tf_publisher import (
@@ -121,12 +121,7 @@ mid360_realsense_record = autoconnect(
             (RealSenseCamera, "depth_camera_info", "realsense_depth_camera_info"),
         ]
     ),
-    Mid360.blueprint().remappings(
-        [
-            (Mid360, "lidar", "livox_lidar"),
-            (Mid360, "imu", "livox_imu"),
-        ]
-    ),
+    mid360_for_pointlio(),
     PointLio.blueprint(frame_id="world").remappings(
         [
             (PointLio, "lidar", "pointlio_lidar"),

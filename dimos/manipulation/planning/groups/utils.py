@@ -15,6 +15,7 @@
 """Planning-group selection and canonical joint-state projection."""
 
 from collections.abc import Sequence
+from copy import deepcopy
 
 from dimos_generated.sensor_msgs.msg import JointState
 import numpy as np
@@ -32,9 +33,13 @@ def filter_joint_state_to_selected_joints(
     if missing:
         raise ValueError(f"Joint state is missing selected joints: {missing}")
     return JointState(
-        header=joint_state.header,
+        header=deepcopy(joint_state.header),
         name=list(joint_names),
-        position=[float(positions_by_name[name]) for name in joint_names],
+        position=np.asarray(
+            [float(positions_by_name[name]) for name in joint_names], dtype=np.float64
+        ),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
     )
 
 
@@ -47,7 +52,11 @@ def normalize_joint_target(group: PlanningGroup, target: JointState) -> JointSta
                 f"expected {len(group.joint_names)}"
             )
         return JointState(
-            header=target.header, name=list(group.joint_names), position=list(target.position)
+            header=deepcopy(target.header),
+            name=list(group.joint_names),
+            position=np.asarray(list(target.position), dtype=np.float64),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
         )
     if len(target.name) != len(target.position):
         raise ValueError(
@@ -62,9 +71,13 @@ def normalize_joint_target(group: PlanningGroup, target: JointState) -> JointSta
     if extra:
         raise ValueError(f"Target for '{group.id}' has extra joints: {sorted(extra)}")
     return JointState(
-        header=target.header,
+        header=deepcopy(target.header),
         name=list(group.joint_names),
-        position=[float(positions[name]) for name in group.joint_names],
+        position=np.asarray(
+            [float(positions[name]) for name in group.joint_names], dtype=np.float64
+        ),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
     )
 
 

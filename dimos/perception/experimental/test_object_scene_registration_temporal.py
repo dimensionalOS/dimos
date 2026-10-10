@@ -20,6 +20,7 @@ from threading import Event, Thread
 from typing import Any
 from unittest.mock import ANY, MagicMock, call
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos_generated.sensor_msgs.msg import Image
 from dimos_generated.std_msgs.msg import Header
@@ -62,7 +63,7 @@ def _image(timestamp: float) -> Image:
 def module() -> Iterator[ObjectSceneRegistrationModule]:
     module = ObjectSceneRegistrationModule(target_frame="map")
     module._camera_info = camera_info_from_intrinsics(
-        1, 1, 0, 0, 2, 2, header=Header(frame_id="camera")
+        1, 1, 0, 0, 2, 2, header=Header(frame_id="camera", stamp=Time(sec=0, nanosec=0))
     )
     module._latest_scene_snapshot = None
     yield module
@@ -146,9 +147,11 @@ def test_full_scene_pointcloud_uses_one_coherent_scene_snapshot(
 ) -> None:
     depth = _image(3.0)
     transform = TransformStamped(
-        header=Header(frame_id="map"),
+        header=Header(frame_id="map", stamp=Time(sec=0, nanosec=0)),
         child_frame_id="camera",
-        transform=Transform(translation=Vector3(x=1), rotation=Quaternion(w=1)),
+        transform=Transform(
+            translation=Vector3(x=1, y=0.0, z=0.0), rotation=Quaternion(w=1, x=0.0, y=0.0, z=0.0)
+        ),
     )
     module._tf = _FakeTF(transform)  # type: ignore[assignment]
     module._latest_scene_snapshot = (depth, transform)
@@ -454,9 +457,9 @@ def test_object_db_counts_each_source_frame_once(monkeypatch: Any) -> None:
         last_seen_ts=None,
         detections_count=1,
     )
-    first.center = Vector3()
+    first.center = Vector3(x=0.0, y=0.0, z=0.0)
     duplicate = MagicMock(object_id="duplicate-id", track_id=-1, ts=4.0)
-    duplicate.center = Vector3()
+    duplicate.center = Vector3(x=0.0, y=0.0, z=0.0)
 
     observed = object_db.add_objects([first, duplicate])
 
@@ -465,7 +468,7 @@ def test_object_db_counts_each_source_frame_once(monkeypatch: Any) -> None:
     assert first.last_seen_ts == 1000.0
 
     newer = MagicMock(object_id="newer-id", track_id=-1, ts=5.0)
-    newer.center = Vector3()
+    newer.center = Vector3(x=0.0, y=0.0, z=0.0)
     first.update_object.side_effect = lambda _: setattr(first, "detections_count", 2)
     now[0] = 1001.0
 

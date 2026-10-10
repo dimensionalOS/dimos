@@ -19,6 +19,11 @@ from collections.abc import Iterator
 from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Twist, TwistStamped, Vector3
 from dimos_generated.std_msgs.msg import Bool, Header
+from dimos_message_build.registry import (
+    decode as cdr_decode,
+    encode as cdr_encode,
+    schema as cdr_schema,
+)
 from fastapi.testclient import TestClient
 import pytest
 
@@ -35,9 +40,9 @@ def frame(channel: str, message: DimosMsg, *, type_name: str | None = None) -> b
             seq=1,
             ts=0,
             delivery="latest",
-            meta={"type": type_name or message.msg_name, "encoding": "cdr"},
+            meta={"type": type_name or message.__msgtype__, "encoding": "cdr"},
         ),
-        message.encode(),
+        cdr_encode(message),
     )
 
 
@@ -54,13 +59,27 @@ def test_websocket_and_schema_endpoint_use_generated_contract(module: PhoneTeleo
     with TestClient(module._web_server.app) as client:
         schemas = client.get("/teleop/schema").json()
         assert schemas["sensors"] == {
-            "type": TwistStamped.msg_name,
-            "definition": TwistStamped.schema,
+            "type": TwistStamped.__msgtype__,
+            "definition": cdr_schema(TwistStamped.__msgtype__),
         }
-        assert schemas["button"] == {"type": Bool.msg_name, "definition": Bool.schema}
+        assert schemas["button"] == {
+            "type": Bool.__msgtype__,
+            "definition": cdr_schema(Bool.__msgtype__),
+        }
         with client.websocket_connect("/ws") as ws:
             ws.send_bytes(frame("button", Bool(data=True)))
-            ws.send_bytes(frame("sensors", TwistStamped(header=Header(frame_id="phone"))))
+            ws.send_bytes(
+                frame(
+                    "sensors",
+                    TwistStamped(
+                        header=Header(frame_id="phone", stamp=Time(sec=0, nanosec=0)),
+                        twist=Twist(
+                            linear=Vector3(x=0.0, y=0.0, z=0.0),
+                            angular=Vector3(x=0.0, y=0.0, z=0.0),
+                        ),
+                    ),
+                )
+            )
         assert module._teleop_button is True
         assert module._current_sensors.header.frame_id == "phone"
 
@@ -69,7 +88,7 @@ def test_websocket_and_schema_endpoint_use_generated_contract(module: PhoneTeleo
     "wire",
     [
         b"",
-        Bool(data=True).encode(),
+        cdr_encode(Bool(data=True)),
         frame("unknown", Bool(data=True)),
         frame("button", Bool(data=True), type_name="std_msgs/msg/Int8"),
         frame("sensors", Bool(data=True)),
@@ -87,16 +106,19 @@ def test_wrong_identity_or_legacy_unframed_bytes_are_rejected(
 def test_generated_control_math_preserves_exact_stamp_and_wraps_yaw(
     module: PhoneTeleopModule,
 ) -> None:
-    initial = TwistStamped(twist=Twist(linear=Vector3(z=350)))
-    current = TwistStamped(
-        header=Header(stamp=Time(sec=1700000000, nanosec=123456789)),
-        twist=Twist(linear=Vector3(x=15, y=-30, z=10), angular=Vector3(z=60)),
+    initial = TwistStamped(
+        twist=Twist(linear=Vector3(z=350, x=0.0, y=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
     )
-    module._on_sensors_bytes(initial.encode())
+    current = TwistStamped(
+        header=Header(stamp=Time(sec=1700000000, nanosec=123456789), frame_id=""),
+        twist=Twist(linear=Vector3(x=15, y=-30, z=10), angular=Vector3(z=60, x=0.0, y=0.0)),
+    )
+    module._on_sensors_bytes(cdr_encode(initial))
     assert module._engage()
-    module._on_sensors_bytes(current.encode())
+    module._on_sensors_bytes(cdr_encode(current))
     output = module._get_output_twist()
-    decoded = TwistStamped.decode(output.encode())
+    decoded = cdr_decode(cdr_encode(output), TwistStamped)
     assert decoded.header.stamp.nanosec == 123456789
     assert decoded.header.frame_id == "phone"
     assert decoded.twist.linear.x == 1.0
@@ -110,8 +132,13 @@ def test_ground_robot_extension_publishes_generated_twist() -> None:
     outputs: list[Twist] = []
     unsubscribe = module.cmd_vel.subscribe(outputs.append)
     try:
-        module._publish_msg(TwistStamped(twist=Twist(linear=Vector3(x=1, y=2, z=3))))
-        result = Twist.decode(outputs[0].encode())
+        module._publish_msg(
+            TwistStamped(
+                twist=Twist(linear=Vector3(x=1, y=2, z=3), angular=Vector3(x=0.0, y=0.0, z=0.0)),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            )
+        )
+        result = cdr_decode(cdr_encode(outputs[0]), Twist)
         assert result.linear.x == 1
         assert result.linear.y == 2
         assert result.linear.z == 0

@@ -19,9 +19,12 @@ The echo script writes received CLI args to a temp file for assertions.
 """
 
 import contextlib
+import importlib
 from io import BytesIO
 import json
 from pathlib import Path
+import shlex
+import sys
 import time
 from types import SimpleNamespace
 from typing import Any
@@ -43,6 +46,7 @@ from dimos.core.native_module import LogFormat, NativeModule, NativeModuleConfig
 from dimos.core.stream import IO, In, Out
 from dimos.core.transport import LCMTransport, ZenohTransport
 from dimos.core.transport_factory import make_transport, rpc_backend, transport_topic
+from dimos.experimental.memory.rust_recorder import RustRecorderConfig
 from dimos.protocol.pubsub.impl.zenohpubsub import QOS_NEVER_DROP, Topic as ZenohTopic
 from dimos.protocol.service import zenohservice
 from dimos.protocol.service.zenohservice import ZenohConfig
@@ -278,13 +282,15 @@ def test_autoconnect(args_file: str) -> None:
     }
 
 
-def run_build(tmp_path: Path, *, build_native: bool) -> Path:
+def run_build(tmp_path: Path, mocker, *, build_native: bool) -> Path:
     """Builds a module whose executable already exists. Returns the build sentinel path."""
     sentinel = tmp_path / "build_ran"
     exe = tmp_path / "already_built"
     exe.touch()
+    mocker.patch("dimos.core.native_module.get_project_root", return_value=tmp_path)
     module = StubBuildModule(
-        executable=str(exe),
+        source_dir=".",
+        executable=exe.name,
         build_command=f"touch {sentinel}",
         g=GlobalConfig(build_native=build_native),
     )
@@ -295,12 +301,12 @@ def run_build(tmp_path: Path, *, build_native: bool) -> Path:
     return sentinel
 
 
-def test_existing_executable_skips_build(tmp_path: Path) -> None:
-    assert not run_build(tmp_path, build_native=False).exists()
+def test_existing_executable_skips_build(tmp_path: Path, mocker) -> None:
+    assert not run_build(tmp_path, mocker, build_native=False).exists()
 
 
-def test_build_native_forces_build(tmp_path: Path) -> None:
-    assert run_build(tmp_path, build_native=True).exists()
+def test_build_native_forces_build(tmp_path: Path, mocker) -> None:
+    assert run_build(tmp_path, mocker, build_native=True).exists()
 
 
 def _launch(monkeypatch, transport: TransportBackend, **config_kwargs: Any) -> dict[str, Any]:
@@ -387,7 +393,7 @@ def test_base_field_sent_when_opted_in() -> None:
 
 def test_framework_fields_never_sent() -> None:
     """Opting one base field in must not carry the subprocess plumbing with it."""
-    config = StubFrameIdConfig(frame_id="odom", cwd="/tmp", extra_args=["--x"])
+    config = StubFrameIdConfig(frame_id="odom", extra_args=["--x"])
     plumbing = set(NativeModuleConfig.model_fields) - {"frame_id"}
     assert not plumbing & set(config.to_config_dict())
     assert not plumbing & set(parse_cli_args(config.to_cli_args()))
@@ -484,6 +490,27 @@ def test_json_mode_missing_level_falls_back_to_stream_default() -> None:
     assert calls[0][1] == "no level here"
 
 
+def _spawn_env(extra_env: dict[str, str] | None = None) -> dict[str, str]:
+    fixture = SimpleNamespace(config=SimpleNamespace(extra_env=extra_env or {}))
+    return NativeModule._spawn_env(fixture)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(("dimos_level", "rust_level"), [("DEBUG", "debug"), ("INFO", "info")])
+def test_derived_rust_log_keeps_zenoh_quiet(monkeypatch, dimos_level: str, rust_level: str) -> None:
+    monkeypatch.delenv("RUST_LOG", raising=False)
+    monkeypatch.setenv("DIMOS_LOG_LEVEL", dimos_level)
+    assert _spawn_env()["RUST_LOG"] == (
+        f"{rust_level},zenoh=warn,zenoh_shm::watchdog::periodic_task=error"
+    )
+
+
+def test_rust_log_always_follows_dimos_log_level(monkeypatch) -> None:
+    monkeypatch.setenv("RUST_LOG", "trace,zenoh=debug")
+    monkeypatch.setenv("DIMOS_LOG_LEVEL", "WARNING")
+    env = _spawn_env({"RUST_LOG": "trace"})
+    assert env["RUST_LOG"] == "warn,zenoh=warn,zenoh_shm::watchdog::periodic_task=error"
+
+
 def test_json_mode_malformed_falls_back_to_plain_text() -> None:
     calls = _capture_logs(
         LogFormat.JSON,
@@ -492,3 +519,202 @@ def test_json_mode_malformed_falls_back_to_plain_text() -> None:
     )
     assert calls[0][0] == "info"
     assert calls[0][1] == "not json at all"
+
+
+def test_cmake_preparation_uses_writable_cache_and_existing_build_hook(tmp_path, monkeypatch):
+    source = tmp_path / "sources"
+    source.mkdir()
+    (source / "build_it.py").write_text(
+        "import os\nfrom pathlib import Path\n"
+        "Path('build').mkdir(exist_ok=True)\n"
+        "Path('build/app').write_text(os.environ['CMAKE_PREFIX_PATH'])\n"
+    )
+    source.chmod(0o555)
+    prefix = tmp_path / "prepared"
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    prepare = Mock(return_value=prefix)
+    monkeypatch.setattr(native_module_mod, "prepare_cpp", prepare)
+    monkeypatch.setattr(native_module_mod, "installed_prefixes", lambda root: [str(root)])
+    backend = rpc_backend()
+    monkeypatch.setattr(backend, "start", Mock())
+    monkeypatch.setattr(backend, "serve_module_rpc", Mock())
+    monkeypatch.setattr(backend, "stop", Mock())
+    monkeypatch.setattr(native_module_mod, "get_project_root", lambda: tmp_path)
+    module = StubBuildModule(
+        source_dir="sources",
+        executable="build/app",
+        build_command=shlex.join([sys.executable, "build_it.py"]),
+        cmake_message_packages=["dimos_generated"],
+    )
+    try:
+        module._prepare_native()
+        executable = Path(module._executable)
+        assert executable.is_relative_to(tmp_path / "cache")
+        assert str(prefix) in executable.read_text()
+        assert not (source / "build").exists()
+        assert prepare.call_count == 1
+        module._prepare_native()
+        assert prepare.call_count == 1
+    finally:
+        module.stop()
+        source.chmod(0o755)
+
+
+@pytest.mark.parametrize(
+    "module_path,class_name,executable",
+    [
+        ("dimos.hardware.sensors.lidar.livox.module", "Mid360", "target/release/mid360_native"),
+        (
+            "dimos.hardware.sensors.lidar.pointlio.module",
+            "PointLio",
+            "target/release/pointlio_native",
+        ),
+        (
+            "dimos.hardware.sensors.lidar.virtual_mid360.module",
+            "VirtualMid360",
+            "target/release/virtual_mid360",
+        ),
+        (
+            "dimos.mapping.ray_tracing.module",
+            "RayTracingVoxelMap",
+            "target/release/voxel_ray_tracing",
+        ),
+        (
+            "dimos.navigation.global_planner.mls_planner.mls_planner_native",
+            "MLSPlannerNative",
+            "target/release/mls_planner",
+        ),
+        ("dimos.hardware.sensors.camera.v4l2.module", "V4L2Camera", "target/release/v4l2_camera"),
+        (
+            "dimos.simulation.habitat.connection",
+            "HabitatConnection",
+            "target/habitat/habitat-native",
+        ),
+    ],
+)
+def test_builtin_build_outputs_use_shared_checkout(
+    module_path, class_name, executable, tmp_path, mocker
+):
+    mocker.patch("dimos.core.native_module.get_project_root", return_value=tmp_path)
+    module_class = getattr(importlib.import_module(module_path), class_name)
+    options = {"setup_network": False} if class_name == "VirtualMid360" else {}
+    module = module_class(**options)
+    try:
+        module.config.model_validate(module.config.model_dump())
+        mocker.patch.object(module, "_maybe_build")
+        module._prepare_native()
+        assert Path(module._cwd).is_relative_to(tmp_path)
+        assert Path(module._executable).resolve() == tmp_path / executable
+        if class_name == "HabitatConnection":
+            scene = Path(module._cwd) / module.config.scene_dataset_config
+            assert scene.resolve().is_relative_to(tmp_path / "target/habitat/data")
+    finally:
+        module.stop()
+    external = module_class(
+        **options,
+        source_dir=None,
+        build_command=None,
+        executable="/provided/bin/native",
+    )
+    try:
+        assert external._cwd == "/provided/bin"
+        assert external.config.executable == "/provided/bin/native"
+    finally:
+        external.stop()
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"build_command": "cargo build"},
+        {"source_dir": "/installed/package/rust"},
+        {"source_dir": "../outside"},
+        {"source_dir": "rust", "executable": "/installed/target/native"},
+        {"source_dir": "rust", "cwd": "/installed/package/rust"},
+        {"source_dir": "rust", "executable": "../../outside/native"},
+    ],
+)
+def test_source_build_rejects_nonportable_paths(kwargs):
+    with pytest.raises(ValueError):
+        NativeModuleConfig(**{"executable": "result/bin/native", **kwargs})
+
+
+def test_external_binary_does_not_fetch_checkout(mocker):
+    root = mocker.patch("dimos.core.native_module.get_project_root")
+    config = NativeModuleConfig(executable="/provided/bin/native")
+    assert config.resolve_paths() == ("/provided/bin", "/provided/bin/native")
+    root.assert_not_called()
+
+
+def test_source_config_is_lazy_and_subclass_location_independent(tmp_path, mocker):
+    root = mocker.patch("dimos.core.native_module.get_project_root", return_value=tmp_path)
+
+    class RobotRecorderConfig(RustRecorderConfig):
+        pass
+
+    config = RobotRecorderConfig()
+    root.assert_not_called()
+    cwd, executable = config.resolve_paths()
+    assert cwd == str(tmp_path / "dimos/experimental/memory/rust")
+    assert executable == str(
+        tmp_path / "dimos/experimental/memory/rust/result/bin/dimos-memory-recorder"
+    )
+    assert "source_dir" not in config.to_config_dict()
+
+
+def test_external_binary_paths_are_anchored_at_initialization(tmp_path, monkeypatch, mocker):
+    monkeypatch.chdir(tmp_path)
+    root = mocker.patch("dimos.core.native_module.get_project_root")
+    module = StubBuildModule(executable="bin/native")
+    try:
+        monkeypatch.chdir(tmp_path.parent)
+        assert module._cwd == str(tmp_path / "bin")
+        assert module._executable == str(tmp_path / "bin/native")
+        root.assert_not_called()
+    finally:
+        module.stop()
+
+
+@pytest.mark.parametrize("factory", [NativeModuleConfig, StubBuildModule])
+def test_legacy_cwd_has_migration_error(factory):
+    with pytest.raises(ValueError, match="cwd was removed"):
+        factory(executable="/provided/native", cwd="/tmp")
+
+
+def test_source_preparation_is_lazy_and_reused(tmp_path, mocker):
+    root = mocker.patch("dimos.core.native_module.get_project_root", return_value=tmp_path)
+    module = StubBuildModule(source_dir="rust", executable="bin/native")
+    try:
+        root.assert_not_called()
+        build = mocker.patch.object(module, "_maybe_build")
+        module.build()
+        module._prepare_native()
+        build.assert_called_once_with()
+        root.assert_called_once_with()
+        assert module._cwd == str(tmp_path / "rust")
+        assert module._executable == str(tmp_path / "rust/bin/native")
+        module.build()
+        assert build.call_count == 2
+    finally:
+        module.stop()
+
+
+@pytest.mark.parametrize("build_first", [False, True])
+def test_start_prepares_sources_once_before_spawn(tmp_path, mocker, build_first):
+    mocker.patch("dimos.core.native_module.get_project_root", return_value=tmp_path)
+    mocker.patch.object(Module, "start")
+    spawn = mocker.patch(
+        "dimos.core.native_module.subprocess.Popen", side_effect=RuntimeError("spawn boundary")
+    )
+    module = StubBuildModule(source_dir="rust", executable="bin/native")
+    try:
+        build = mocker.patch.object(module, "_maybe_build")
+        if build_first:
+            module.build()
+        with pytest.raises(RuntimeError, match="spawn boundary"):
+            module.start()
+        build.assert_called_once_with()
+        assert spawn.call_args.args[0][0] == str(tmp_path / "rust/bin/native")
+        assert spawn.call_args.kwargs["cwd"] == str(tmp_path / "rust")
+    finally:
+        module.stop()

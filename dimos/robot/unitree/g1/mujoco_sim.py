@@ -63,12 +63,11 @@ class G1SimConnection(G1ConnectionBase):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._stop_event = threading.Event()
+        self.connection = MujocoConnection(self.config.g)
 
     @rpc
     def start(self) -> None:
         super().start()
-
-        self.connection = MujocoConnection(self.config.g)
         assert self.connection is not None
         self.connection.start()
 
@@ -95,7 +94,7 @@ class G1SimConnection(G1ConnectionBase):
     def _publish_camera_info_loop(self) -> None:
         assert self.connection is not None
         while not self._stop_event.is_set():
-            info = copy.copy(self.connection.camera_info_static)
+            info = copy.deepcopy(self.connection.camera_info_static)
             info.header.stamp = time_from_nanoseconds(time.time_ns())
             self.camera_info.publish(info)
             self._stop_event.wait(1.0)
@@ -107,16 +106,26 @@ class G1SimConnection(G1ConnectionBase):
             TransformStamped(
                 header=Header(stamp=msg.header.stamp, frame_id="base_link"),
                 child_frame_id="camera_link",
-                transform=Transform(translation=Vector3(x=0.05, z=0.6)),
+                transform=Transform(
+                    translation=Vector3(x=0.05, z=0.6, y=0.0),
+                    rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
             ),
             TransformStamped(
                 header=Header(stamp=msg.header.stamp, frame_id="camera_link"),
                 child_frame_id="camera_optical",
-                transform=Transform(rotation=Quaternion(x=-0.5, y=0.5, z=-0.5, w=0.5)),
+                transform=Transform(
+                    rotation=Quaternion(x=-0.5, y=0.5, z=-0.5, w=0.5),
+                    translation=Vector3(x=0.0, y=0.0, z=0.0),
+                ),
             ),
             TransformStamped(
                 header=Header(stamp=msg.header.stamp, frame_id="map"),
                 child_frame_id="world",
+                transform=Transform(
+                    translation=Vector3(x=0.0, y=0.0, z=0.0),
+                    rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
             ),
         ]
         self.tf.publish(TFMessage(transforms=transforms))

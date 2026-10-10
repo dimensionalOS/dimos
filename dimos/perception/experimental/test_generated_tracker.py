@@ -25,6 +25,7 @@ from dimos_generated.vision_msgs.msg import (
     Point2D,
     Pose2D,
 )
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 
@@ -45,7 +46,9 @@ def test_tracker_publishes_generated_detection_and_clears_failed_track(succeeded
     module.tracked_overlay = MagicMock()
     try:
         module._process_tracking()
-        result = Detection2DArray.decode(module.detection2darray.publish.call_args.args[0].encode())
+        result = cdr_decode(
+            cdr_encode(module.detection2darray.publish.call_args.args[0]), Detection2DArray
+        )
         assert result.header.frame_id == "camera"
         if not succeeded:
             assert not result.detections
@@ -56,7 +59,7 @@ def test_tracker_publishes_generated_detection_and_clears_failed_track(succeeded
         assert (detection.bbox.center.position.x, detection.bbox.center.position.y) == (20, 20)
         assert (detection.bbox.size_x, detection.bbox.size_y) == (20, 16)
         assert detection.results[0].hypothesis.class_id == "tracked_object"
-        overlay = Image.decode(module.tracked_overlay.publish.call_args.args[0].encode())
+        overlay = cdr_decode(cdr_encode(module.tracked_overlay.publish.call_args.args[0]), Image)
         assert overlay.header == result.header
         assert image_view(overlay).shape == (64, 64, 3)
         assert overlay.encoding == "rgb8"
@@ -80,8 +83,10 @@ def test_tracker3d_generated_projection_preserves_depth_filter_and_source_stamp(
             Detection2D(
                 header=header,
                 bbox=BoundingBox2D(
-                    center=Pose2D(position=Point2D(x=32, y=32)), size_x=20, size_y=16
+                    center=Pose2D(position=Point2D(x=32, y=32), theta=0.0), size_x=20, size_y=16
                 ),
+                results=[],
+                id="",
             )
         ],
     )
@@ -91,12 +96,14 @@ def test_tracker3d_generated_projection_preserves_depth_filter_and_source_stamp(
             assert output is None
             module.tf.publish.assert_not_called()
             return
-        result = Detection3DArray.decode(output.encode())
+        result = cdr_decode(cdr_encode(output), Detection3DArray)
         assert result.header == header
         box = result.detections[0].bbox
         assert (box.center.position.x, box.center.position.y, box.center.position.z) == (2, 0, 0)
         assert np.allclose([box.size.x, box.size.y, box.size.z], [0.4, 0.32, 0.1])
-        transform = TFMessage.decode(module.tf.publish.call_args.args[0].encode()).transforms[0]
+        transform = cdr_decode(
+            cdr_encode(module.tf.publish.call_args.args[0]), TFMessage
+        ).transforms[0]
         assert transform.header == header
         assert transform.child_frame_id == "tracked_object"
         assert transform.transform.translation.x == 2.0

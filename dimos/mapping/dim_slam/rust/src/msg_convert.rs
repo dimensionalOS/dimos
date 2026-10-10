@@ -16,11 +16,14 @@
 
 use dim_slam::nalgebra::{Isometry3, Matrix6, Quaternion, Translation3, UnitQuaternion, Vector3};
 use dim_slam::{CameraModel, ImageFrame, ImuSample, OdometryEstimate, PointCloud, Twist};
-use dimos_generated_messages::builtin_interfaces::msg::Time;
+use dimos_generated_messages::builtin_interfaces::msg::time::Time;
 use dimos_generated_messages::geometry_msgs::msg as geometry_msgs;
-use dimos_generated_messages::nav_msgs::msg::Odometry;
-use dimos_generated_messages::sensor_msgs::msg::{CameraInfo, Image, Imu, PointCloud2, PointField};
-use dimos_generated_messages::std_msgs::msg::Header;
+use dimos_generated_messages::nav_msgs::msg::odometry::Odometry;
+use dimos_generated_messages::sensor_msgs::msg::{
+    camera_info::CameraInfo, image::Image, imu::Imu, point_cloud2::PointCloud2,
+    point_field::PointField,
+};
+use dimos_generated_messages::std_msgs::msg::header::Header;
 use dimos_module::{Tf, Transform};
 
 const NS_PER_SEC: i64 = 1_000_000_000;

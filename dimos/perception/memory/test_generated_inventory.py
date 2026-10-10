@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos_generated.std_msgs.msg import Header
 import numpy as np
@@ -56,11 +57,15 @@ def test_generated_support_merge_preserves_colors_and_source_time():
 
 
 def test_generated_support_projection_reads_nested_transform_and_intrinsics():
-    calibration = camera_info_from_intrinsics(10, 20, 5, 6, 100, 100, header=Header())
+    calibration = camera_info_from_intrinsics(
+        10, 20, 5, 6, 100, 100, header=Header(stamp=Time(sec=0, nanosec=0), frame_id="")
+    )
     transform = TransformStamped(
-        header=Header(frame_id="optical"),
+        header=Header(frame_id="optical", stamp=Time(sec=0, nanosec=0)),
         child_frame_id="world",
-        transform=Transform(translation=Vector3(x=-1), rotation=Quaternion(w=1)),
+        transform=Transform(
+            translation=Vector3(x=-1, y=0.0, z=0.0), rotation=Quaternion(w=1, x=0.0, y=0.0, z=0.0)
+        ),
     )
     assert _pixel_bbox(np.array([[1, 0, 2], [2, 1, 2]]), calibration, transform) == (5, 6, 10, 16)
 

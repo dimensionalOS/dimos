@@ -16,6 +16,7 @@ import cv2
 from dimos_generated.geometry_msgs.msg import Quaternion, Vector3
 from dimos_generated.std_msgs.msg import Header
 from dimos_generated.vision_msgs.msg import Detection3D
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 
@@ -114,7 +115,7 @@ def test_marker_detection3d_msg_preserves_marker_identity_on_wire() -> None:
     assert msg.bbox.size.y == pytest.approx(size.y)
     assert msg.bbox.size.z == pytest.approx(size.z)
 
-    decoded = Detection3D.decode(msg.encode())
+    decoded = cdr_decode(cdr_encode(msg), Detection3D)
     assert decoded.id == "42"
     assert len(decoded.results) == 1
     assert decoded.results[0].hypothesis.class_id == "DICT_APRILTAG_36h11:42"

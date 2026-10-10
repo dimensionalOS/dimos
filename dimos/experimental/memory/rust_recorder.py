@@ -20,7 +20,9 @@ import os
 from pathlib import Path
 from typing import Annotated, Any, Literal, TypeAlias
 
+from dimos_generated.std_msgs.msg import String
 from dimos_generated.tf2_msgs.msg import TFMessage
+from dimos_message_build.registry import schema as cdr_schema
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from dimos.constants import DIMOS_PROJECT_ROOT
@@ -35,7 +37,7 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-_SUPPORTED_NATIVE_CODECS = {"cdr", "lz4+cdr"}
+_SUPPORTED_NATIVE_CODECS = {"cdr", "lz4+cdr", "json"}
 
 
 class RustStreamSpec(BaseModel):
@@ -47,18 +49,29 @@ class RustStreamSpec(BaseModel):
     codec: str
     schema_name: str = Field(min_length=1)
     schema_definition: str = Field(min_length=1)
+    timestamp_field: str | None = None
+    json_schema: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def _json_options(self) -> RustStreamSpec:
+        if self.codec != "json" and (self.timestamp_field is not None or self.json_schema is not None):
+            raise ValueError("JSON options require the json codec")
+        return self
 
     @classmethod
     def from_type(
-        cls, *, port: str, name: str, payload_type: type[Any], codec: str
+        cls, *, port: str, name: str, payload_type: type[Any], codec: str,
+        timestamp_field: str | None = None, json_schema: dict[str, Any] | None = None
     ) -> RustStreamSpec:
         return cls(
             port=port,
             name=name,
             codec=codec,
+            timestamp_field=timestamp_field,
+            json_schema=json_schema,
             payload_type=f"{payload_type.__module__}.{payload_type.__qualname__}",
-            schema_name=payload_type.msg_name,
-            schema_definition=payload_type.schema,
+            schema_name=payload_type.__msgtype__,
+            schema_definition=cdr_schema(payload_type.__msgtype__),
         )
 
 
@@ -108,8 +121,8 @@ class RustRecorderConfig(NativeModuleConfig):
     """
 
     executable: str = "result/bin/dimos-memory-recorder"
-    build_command: str = "nix build -L .#dimos-memory-recorder"
-    cwd: str = "rust"
+    build_command: str | None = "nix build -L .#dimos-memory-recorder"
+    source_dir: str | None = "dimos/experimental/memory/rust"
     stdin_config: bool = True
 
     store: RustRecordingStoreConfig = Field(
@@ -137,6 +150,9 @@ class RustRecorderConfig(NativeModuleConfig):
         exclude=True,
         description="Map input port names to artifact stream names.",
     )
+    stream_timestamp_fields: dict[str, str] = Field(default_factory=dict, exclude=True)
+    stream_json_schemas: dict[str, dict[str, Any]] = Field(default_factory=dict, exclude=True)
+
     stream_codecs: dict[str, str] = Field(
         default_factory=dict,
         exclude=True,
@@ -158,6 +174,12 @@ class RustRecorderConfig(NativeModuleConfig):
         if self.extra_args:
             raise ValueError("RustRecorder is stdin-only and does not accept extra_args")
         return self
+
+    def to_config_dict(self) -> dict[str, Any]:
+        config = super().to_config_dict()
+        # Older recorder binaries reject unknown stream fields, even null ones.
+        config["streams"] = [stream.model_dump(exclude_none=True) for stream in self.streams]
+        return config
 
 
 class RustRecorder(NativeModule):
@@ -184,6 +206,13 @@ class RustRecorder(NativeModule):
     tf: In[TFMessage]
 
     @rpc
+    def build(self) -> None:
+        if self.config.g.replay:
+            Module.build(self)
+            return
+        super().build()
+
+    @rpc
     def start(self) -> None:
         if self.config.g.replay:
             Module.start(self)
@@ -201,17 +230,6 @@ class RustRecorder(NativeModule):
         self._prepare_store(specs)
         self.config.streams = specs
         super().start()
-
-    def _collect_topics(self) -> dict[str, str]:
-        """Launch only ports declared in the prepared recording configuration.
-
-        A coordinator can wire the inherited TF input even when record_tf is
-        false. Passing that extra topic makes the native module reject startup.
-        """
-        selected = {spec.port for spec in self.config.streams}
-        return {
-            name: topic for name, topic in super()._collect_topics().items() if name in selected
-        }
 
     def _stream_specs(self) -> list[RustStreamSpec]:
         specs: list[RustStreamSpec] = []
@@ -239,6 +257,8 @@ class RustRecorder(NativeModule):
                     name=stream_name,
                     payload_type=port.type,
                     codec=codec,
+                    timestamp_field=self.config.stream_timestamp_fields.get(stream_name),
+                    json_schema=self.config.stream_json_schemas.get(stream_name),
                 )
             )
 
@@ -250,11 +270,14 @@ class RustRecorder(NativeModule):
             logger.warning("Native recorder has no connected streams")
         return specs
 
+    def _collect_topics(self) -> dict[str, str]:
+        topics = super()._collect_topics()
+        enabled_ports = {spec.port for spec in self.config.streams}
+        return {port: topic for port, topic in topics.items() if port in enabled_ports}
+
     @staticmethod
     def _default_codec(payload_type: type[Any]) -> str:
-        if all(
-            hasattr(payload_type, member) for member in ("encode", "decode", "msg_name", "schema")
-        ):
+        if all(hasattr(payload_type, member) for member in ("__msgtype__",)):
             return "cdr"
         raise TypeError(
             f"RustRecorder requires a generated CDR message, got {payload_type.__qualname__}"
@@ -266,6 +289,8 @@ class RustRecorder(NativeModule):
             raise ValueError(
                 f"Unsupported native codec {codec!r} for stream {stream_name!r}; choose one of {sorted(_SUPPORTED_NATIVE_CODECS)}"
             )
+        if codec == "json" and payload_type is not String:
+            raise TypeError("JSON codec requires std_msgs.String")
         RustRecorder._default_codec(payload_type)
 
     def _prepare_store(self, specs: list[RustStreamSpec]) -> None:
@@ -310,4 +335,4 @@ class RustRecorder(NativeModule):
 
     def _argv(self, _topics: dict[str, str]) -> list[str]:
         """Launch the stdin-only recorder without topic or configuration arguments."""
-        return [self.config.executable]
+        return [self._executable]

@@ -21,6 +21,8 @@ from itertools import pairwise
 import time
 from typing import TYPE_CHECKING, Any
 
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 
 from dimos.msgs.geometry import transform_matrix
@@ -135,7 +137,13 @@ class RoboPlanPlanner:
         with self._world.scratch_context() as ctx:
             self._world.set_joint_state(
                 ctx,
-                JointState(name=list(config.joint_names), position=q_start.tolist()),
+                JointState(
+                    name=list(config.joint_names),
+                    position=np.asarray(q_start.tolist(), dtype=np.float64),
+                    header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                    velocity=np.array([], dtype=np.float64),
+                    effort=np.array([], dtype=np.float64),
+                ),
             )
             return self._plan_group(
                 ctx,
@@ -536,12 +544,22 @@ class RoboPlanPlanner:
             path.append(
                 JointState(
                     name=expected_names,
-                    position=[
-                        float(position_by_native[native_by_public[name]]) for name in expected_names
-                    ],
-                    velocity=[
-                        float(velocity_by_native[native_by_public[name]]) for name in expected_names
-                    ],
+                    position=np.asarray(
+                        [
+                            float(position_by_native[native_by_public[name]])
+                            for name in expected_names
+                        ],
+                        dtype=np.float64,
+                    ),
+                    velocity=np.asarray(
+                        [
+                            float(velocity_by_native[native_by_public[name]])
+                            for name in expected_names
+                        ],
+                        dtype=np.float64,
+                    ),
+                    header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                    effort=np.array([], dtype=np.float64),
                 )
             )
         return path, timestamps
@@ -559,7 +577,12 @@ class RoboPlanPlanner:
             for fraction in np.linspace(0.0, 1.0, steps + 1):
                 sample = JointState(
                     name=start.name,
-                    position=(q_start + fraction * (q_end - q_start)).tolist(),
+                    position=np.asarray(
+                        (q_start + fraction * (q_end - q_start)).tolist(), dtype=np.float64
+                    ),
+                    header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                    velocity=np.array([], dtype=np.float64),
+                    effort=np.array([], dtype=np.float64),
                 )
                 self._apply_selected_state(ctx, sample)
                 if not self._world.is_collision_free(ctx):
@@ -739,7 +762,12 @@ class RoboPlanPlanner:
             path.append(
                 JointState(
                     name=list(ordered_output_names),
-                    position=[float(positions[name]) for name in ordered_output_names],
+                    position=np.asarray(
+                        [float(positions[name]) for name in ordered_output_names], dtype=np.float64
+                    ),
+                    header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                    velocity=np.array([], dtype=np.float64),
+                    effort=np.array([], dtype=np.float64),
                 )
             )
         return path

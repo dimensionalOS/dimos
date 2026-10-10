@@ -30,16 +30,13 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.global_config import global_config
 from dimos.core.transport import LCMTransport, ZenohTransport
 from dimos.core.transport_factory import session_config
-from dimos.experimental.memory.rust_recorder import RustStreamSpec
+from dimos.experimental.memory.rust_recorder import RustRecorderConfig, RustStreamSpec
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tap import matching, recording_dir
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-_RUST_DIR = Path(__file__).resolve().parent / "rust"
-_EXECUTABLE = _RUST_DIR / "result/bin/dimos-memory-recorder"
-_BUILD_COMMAND = ("nix", "build", "-L", ".#dimos-memory-recorder")
 _READY_TIMEOUT = 10.0
 _DEFAULT_ENCODING_THREADS = 4
 _READY_MESSAGE = "memory recorder ready"
@@ -54,20 +51,24 @@ class RustRecordingPlan:
     streams: list[RustStreamSpec]
     payload_types: dict[str, type[Any]]
     path: Path
+    lcm_url: str | None = None
 
 
-def prepare_rust_recorder() -> None:
+def prepare_rust_recorder() -> Path:
     """Build the native recorder when it is unavailable or explicitly requested."""
-    if global_config.record_engine != "rust" or not global_config.record or global_config.replay:
-        return
-    if _EXECUTABLE.exists() and not global_config.build_native:
-        return
+    config = RustRecorderConfig()
+    rust_dir, executable_path = config.resolve_paths()
+    executable = Path(executable_path)
+    if executable.exists() and not global_config.build_native:
+        return executable
 
-    logger.info("Building experimental Rust recorder", executable=str(_EXECUTABLE))
+    logger.info("Building experimental Rust recorder", executable=str(executable))
     started = time.perf_counter()
+    assert config.build_command is not None
     process = subprocess.Popen(
-        _BUILD_COMMAND,
-        cwd=_RUST_DIR,
+        config.build_command,
+        shell=True,
+        cwd=rust_dir,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
     )
@@ -82,8 +83,10 @@ def prepare_rust_recorder() -> None:
             "Rust recorder build failed "
             f"after {time.perf_counter() - started:.2f}s (exit {returncode})"
         )
-    if not _EXECUTABLE.exists():
-        raise FileNotFoundError(f"Rust recorder build did not produce {_EXECUTABLE}")
+    if not executable.exists():
+        raise FileNotFoundError(f"Rust recorder build did not produce {executable}")
+
+    return executable
 
 
 def make_plan(transports: dict[tuple[str, type], Any]) -> RustRecordingPlan:
@@ -94,13 +97,12 @@ def make_plan(transports: dict[tuple[str, type], Any]) -> RustRecordingPlan:
     topics: dict[str, str] = {}
     payload_types: dict[str, type[Any]] = {}
     backends: set[str] = set()
+    lcm_urls: set[str] = set()
 
     for index, ((name, payload_type), transport) in enumerate(transports.items()):
         if name not in selected:
             continue
-        if not all(
-            hasattr(payload_type, member) for member in ("encode", "decode", "msg_name", "schema")
-        ):
+        if not all(hasattr(payload_type, member) for member in ("__msgtype__",)):
             logger.info(
                 "--record: stream is not a generated CDR message type; skipped",
                 stream=name,
@@ -109,6 +111,12 @@ def make_plan(transports: dict[tuple[str, type], Any]) -> RustRecordingPlan:
             continue
         if type(transport) is LCMTransport:
             backend = "lcm"
+            config = transport.lcm.config
+            if config.lcm is not None or not config.url:
+                raise ValueError(
+                    "Rust recording requires an explicit LCM URL, not an external LCM connection"
+                )
+            lcm_urls.add(config.url)
         elif type(transport) is ZenohTransport:
             backend = "zenoh"
         else:
@@ -149,9 +157,13 @@ def make_plan(transports: dict[tuple[str, type], Any]) -> RustRecordingPlan:
             "narrow --record-topics or use --record-engine python."
         )
 
+    if len(lcm_urls) > 1:
+        raise ValueError("The Rust recorder cannot record conflicting LCM URLs in one artifact")
+
     suffix = "db" if global_config.record == "sqlite" else "mcap"
     return RustRecordingPlan(
         backend=backends.pop(),
+        lcm_url=next(iter(lcm_urls), None),
         topics=topics,
         streams=streams,
         payload_types=payload_types,
@@ -182,7 +194,7 @@ class RustRecordingSession:
         self._threads: list[threading.Thread] = []
 
     def start(self) -> None:
-        prepare_rust_recorder()
+        executable = prepare_rust_recorder()
         _prepare_artifact(self.plan)
         store = {"kind": global_config.record, "path": str(self.plan.path)}
         launch = {
@@ -191,7 +203,7 @@ class RustRecordingSession:
                 "store": store,
                 "encoding_threads": global_config.record_encoding_threads
                 or _DEFAULT_ENCODING_THREADS,
-                "streams": [stream.model_dump() for stream in self.plan.streams],
+                "streams": [stream.model_dump(exclude_none=True) for stream in self.plan.streams],
             },
             "session": session_config().to_wire() if self.plan.backend == "zenoh" else {},
         }
@@ -200,9 +212,10 @@ class RustRecordingSession:
             "DIMOS_TRANSPORT": self.plan.backend,
             "RUST_LOG": os.environ.get("DIMOS_LOG_LEVEL", "info").lower(),
         }
+        if self.plan.lcm_url is not None:
+            env["LCM_DEFAULT_URL"] = self.plan.lcm_url
         self._process = subprocess.Popen(
-            [_EXECUTABLE],
-            cwd=_RUST_DIR,
+            [executable],
             env=env,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,

@@ -22,6 +22,7 @@ cv2 / rerun dependencies).
 from __future__ import annotations
 
 from dimos_generated.sensor_msgs.msg import CompressedImage, Image
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 
 from dimos.msgs.image import compressed_image_from_image, image_from_compressed
 from dimos.protocol.pubsub.encoders import DecodingError, PubSubEncoderMixin, TypedTopicProto
@@ -34,7 +35,7 @@ class JpegEncoderMixin(PubSubEncoderMixin[TypedTopicProto, Image, bytes]):
     def encode(self, msg: Image, topic: TypedTopicProto) -> bytes:
         if topic.msg_type is not CompressedImage:
             raise ValueError("JPEG wire topics must declare generated CompressedImage")
-        return compressed_image_from_image(msg).encode()
+        return cdr_encode(compressed_image_from_image(msg))
 
     def decode(self, msg: bytes, topic: TypedTopicProto) -> Image:
         if topic.topic == "LCM_SELF_TEST":
@@ -43,7 +44,7 @@ class JpegEncoderMixin(PubSubEncoderMixin[TypedTopicProto, Image, bytes]):
             raise DecodingError(f"Cannot decode: topic {topic.topic!r} has no msg_type")
         if topic.msg_type is not CompressedImage:
             raise DecodingError("JPEG wire topics must declare generated CompressedImage")
-        return image_from_compressed(CompressedImage.decode(msg))
+        return image_from_compressed(cdr_decode(msg, CompressedImage))
 
 
 class JpegLCM(  # type: ignore[misc]

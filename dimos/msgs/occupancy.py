@@ -31,7 +31,9 @@ def occupancy_view(msg: OccupancyGrid) -> NDArray[np.int8]:
     """Borrow a read-only row-major occupancy grid, retaining its owner."""
     if len(msg.data) != msg.info.height * msg.info.width:
         raise ValueError("occupancy data length does not match dimensions")
-    return msg.data.view().reshape(msg.info.height, msg.info.width)
+    view = msg.data.view().reshape(msg.info.height, msg.info.width)
+    view.setflags(write=False)
+    return view
 
 
 def block_max_reduce(cells: NDArray[np.int8], factor: int) -> NDArray[np.int8]:
@@ -126,7 +128,12 @@ def occupancy_from_array(
             resolution=resolution,
             height=cells.shape[0],
             width=cells.shape[1],
-            origin=origin if origin is not None else Pose(orientation=Quaternion(w=1)),
+            origin=origin
+            if origin is not None
+            else Pose(
+                orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0),
+                position=Point(x=0.0, y=0.0, z=0.0),
+            ),
         ),
-        data=cells.astype(np.int8).reshape(-1),
+        data=np.asarray(cells.astype(np.int8).reshape(-1), dtype=np.int8),
     )

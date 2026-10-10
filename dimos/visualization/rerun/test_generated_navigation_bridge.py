@@ -15,6 +15,7 @@
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import (
     Point,
     PointStamped,
@@ -22,9 +23,14 @@ from dimos_generated.geometry_msgs.msg import (
     PoseStamped,
     PoseWithCovariance,
     Quaternion,
+    Twist,
+    TwistWithCovariance,
+    Vector3,
 )
 from dimos_generated.nav_msgs.msg import Odometry, Path
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
+import numpy as np
 import pytest
 import rerun as rr
 
@@ -36,16 +42,26 @@ pytestmark = pytest.mark.filterwarnings("error::rerun.error_utils.RerunWarning")
 
 @pytest.mark.parametrize("kind", ["pose", "odom", "point", "path"])
 def test_navigation_bridge_preserves_coordinates_and_frame(kind: str) -> None:
-    header = Header(frame_id="map")
-    pose = Pose(position=Point(x=1, y=2, z=3), orientation=Quaternion(w=1))
+    header = Header(frame_id="map", stamp=Time(sec=0, nanosec=0))
+    pose = Pose(position=Point(x=1, y=2, z=3), orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0))
     messages = {
         "pose": PoseStamped(header=header, pose=pose),
-        "odom": Odometry(header=header, pose=PoseWithCovariance(pose=pose)),
+        "odom": Odometry(
+            header=header,
+            pose=PoseWithCovariance(pose=pose, covariance=np.zeros(36, dtype=np.float64)),
+            child_frame_id="",
+            twist=TwistWithCovariance(
+                twist=Twist(
+                    linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)
+                ),
+                covariance=np.zeros(36, dtype=np.float64),
+            ),
+        ),
         "point": PointStamped(header=header, point=pose.position),
         "path": Path(header=header, poses=[PoseStamped(header=header, pose=pose)]),
     }
     value = messages[kind]
-    decoded = type(value).decode(value.encode())
+    decoded = cdr_decode(cdr_encode(value), type(value))
     bridge = RerunBridgeModule()
     bridge._min_intervals = {}
     try:
@@ -66,15 +82,33 @@ def test_navigation_bridge_preserves_coordinates_and_frame(kind: str) -> None:
                     assert output.strips.as_arrow_array().to_pylist() == [[[1, 2, 3.5]]]
     finally:
         bridge.stop()
-    assert decoded.encode() == value.encode()
+    assert cdr_encode(decoded) == cdr_encode(value)
 
 
 def test_empty_generated_path_clears_geometry() -> None:
-    assert navigation_archetype(Path()).strips.as_arrow_array().to_pylist() == []
+    assert (
+        navigation_archetype(
+            Path(header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""), poses=[])
+        )
+        .strips.as_arrow_array()
+        .to_pylist()
+        == []
+    )
 
 
 def test_path_override_preserves_configured_display_height():
-    value = Path(poses=[PoseStamped(pose=Pose(position=Point(x=1, y=2, z=3)))])
+    value = Path(
+        poses=[
+            PoseStamped(
+                pose=Pose(
+                    position=Point(x=1, y=2, z=3),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            )
+        ],
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+    )
     result = navigation_archetype(value, z_offset=0.3)
     assert result.strips.as_arrow_array().to_pylist() == [[[1, 2, pytest.approx(3.3)]]]
     assert value.poses[0].pose.position.z == 3

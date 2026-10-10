@@ -18,8 +18,10 @@ import threading
 import time
 from typing import Annotated, Any, Literal
 
-from dimos_generated.sensor_msgs.msg import CameraInfo, Image
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.sensor_msgs.msg import CameraInfo, Image, RegionOfInterest
 from dimos_generated.std_msgs.msg import Header
+import numpy as np
 from pydantic import BeforeValidator, Field
 from reactivex import create
 from reactivex.observable import Observable
@@ -48,7 +50,21 @@ class WebcamConfig(CameraConfig):
     width: int = 640
     height: int = 480
     fps: float = 15.0
-    camera_info: CameraInfo = Field(default_factory=CameraInfo)
+    camera_info: CameraInfo = Field(
+        default_factory=lambda: CameraInfo(
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            height=0,
+            width=0,
+            distortion_model="",
+            d=np.array([], dtype=np.float64),
+            k=np.zeros(9, dtype=np.float64),
+            r=np.zeros(9, dtype=np.float64),
+            p=np.zeros(12, dtype=np.float64),
+            binning_x=0,
+            binning_y=0,
+            roi=RegionOfInterest(x_offset=0, y_offset=0, height=0, width=0, do_rectify=False),
+        )
+    )
     frame_id_prefix: str | None = None
     stereo_slice: Literal["left", "right"] | None = None  # For stereo cameras
 
@@ -198,7 +214,7 @@ class Webcam(CameraHardware):
             width,
             height,
             axis="horizontal",
-            header=Header(frame_id=self._frame("camera_optical")),
+            header=Header(frame_id=self._frame("camera_optical"), stamp=Time(sec=0, nanosec=0)),
         )
 
     def emit(self, image: Image) -> None: ...

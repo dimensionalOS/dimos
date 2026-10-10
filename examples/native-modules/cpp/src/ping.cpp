@@ -1,3 +1,4 @@
+#include <geometry_msgs/msg/twist.hpp>
 // Copyright 2026 Dimensional Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -6,7 +7,7 @@
 #include <thread>
 
 #include "dimos/native.hpp"
-#include <dimos_generated/messages.hpp>
+
 
 using dimos::native::Builder;
 using dimos::native::Config;
