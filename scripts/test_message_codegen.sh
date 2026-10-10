@@ -12,4 +12,4 @@ mkdir -p "$evidence"
   | tee "$evidence/pytest.txt"
 DIMOS_NATIVE_ACCEPTANCE=1 DIMOS_OWNERSHIP_EVIDENCE="$evidence" \
   "$python" -m pytest --noconftest -o addopts='' -q \
-  dimos/message_codegen/test_native_consumer.py | tee "$evidence/ownership.txt"
+  dimos/message_codegen/test_native_consumer.py dimos/message_codegen/test_region_native.py | tee "$evidence/ownership.txt"
