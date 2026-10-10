@@ -46,10 +46,10 @@ def _observation_blocks(obs: Observation[Any], stamp: str) -> Blocks:
 
 
 def _legend_block(obs: Observation[Any]) -> Blocks:
-    """A type that describes its encoding once, as a class constant, gets that
-    description delivered once rather than per frame."""
-    legend = getattr(type(obs.data), "AGENT_ENCODE_LEGEND", None)
-    return [{"type": "text", "text": f"format: {legend}"}] if isinstance(legend, str) else []
+    """A type that describes its encoding once, with ``agent_encode_legend()``,
+    gets that description delivered once rather than per frame."""
+    legend = getattr(type(obs.data), "agent_encode_legend", None)
+    return [{"type": "text", "text": f"format: {legend()}"}] if legend is not None else []
 
 
 class QuestionAnswerConfig(SingleCallAgentConfig):
