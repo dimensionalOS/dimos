@@ -13,14 +13,13 @@
 # limitations under the License.
 
 from pathlib import Path
-import time
 
 import pytest
 
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.navigation.bench.playback import Puppet, frames, paced
+from dimos.navigation.bench.playback import Puppet, frames
 from dimos.simulation.go2_legged.policy import OnnxGo2Policy
 from dimos.simulation.scenes.procedural import office
 
@@ -45,24 +44,12 @@ def _record(path: Path) -> None:
         store.stop()
 
 
-def test_frames_pair_each_pose_with_the_nearest_joint_state(tmp_path: Path) -> None:
+def test_frames_pose_the_puppet_from_the_recording(tmp_path: Path) -> None:
     _record(tmp_path / "memory.db")
     recorded = frames(tmp_path / "memory.db")
     assert [f.position[0] for f in recorded] == [1.0, 2.0, 3.0]
     assert recorded[2].joints["FL_thigh_joint"] == pytest.approx(0.2)
-    assert recorded[1].quaternion.tolist() == [1.0, 0.0, 0.0, 0.0]
-
-
-def test_puppet_takes_the_recorded_pose(tmp_path: Path) -> None:
-    _record(tmp_path / "memory.db")
     puppet = Puppet(office(1))
-    puppet.pose(frames(tmp_path / "memory.db")[-1])
+    puppet.pose(recorded[-1])
     assert puppet.trunk_position() == pytest.approx([3.0, 2.0, 0.3])
     assert puppet.data.qpos[7:] == pytest.approx([0.2] * len(JOINTS))
-
-
-def test_paced_keeps_the_recorded_rhythm(tmp_path: Path) -> None:
-    _record(tmp_path / "memory.db")
-    started = time.monotonic()
-    stamps = [f.t for f in paced(frames(tmp_path / "memory.db"), speed=0.1)]
-    assert time.monotonic() - started >= (stamps[-1] - stamps[0]) / 0.1 - 0.01

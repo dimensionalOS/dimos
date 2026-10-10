@@ -34,8 +34,10 @@ from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.nav_msgs.Path import Path as PathMsg
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.Bool import Bool
+from dimos.msgs.std_msgs.String import String
 from dimos.navigation.bench.ground_truth import GroundTruth
 from dimos.navigation.bench.scorer import GOAL_ECHO_M, Commands, Poses, stalled, stuck
 from dimos.navigation.bench.suite import Manifest
@@ -72,6 +74,8 @@ class EpisodeDriver(Module):
 
     clicked_point: Out[PointStamped]
     loaded_map: Out[PointCloud2]
+    reference_path: Out[PathMsg]
+    phase: Out[String]
 
     _world: SimWorldSpec
     _thread: Thread | None = None
@@ -137,12 +141,15 @@ class EpisodeDriver(Module):
         case, rules = self._case, self._rules
         if not self._wait(lambda: self._pose is not None, FIRST_POSE_WAIT_S):
             return {"reason": "no_ground_truth"}
+        self.phase.publish(String("reset"))
         self._reset_to_start()
         record: dict[str, object] = {"case_id": case.id}
         started = time.time()
         route = self._truth.route(case.start, case.goal, centered=True)
         if route is None:
             return {**record, "reason": "no_reference_route"}
+        self.reference_path.publish(_path(route.points))
+        self.phase.publish(String("premap"))
         cloud = self._truth.premap_cloud(route.points)
         self.loaded_map.publish(
             PointCloud2.from_numpy(cloud, frame_id=ODOM_FRAME_ID, timestamp=time.time())
@@ -150,11 +157,14 @@ class EpisodeDriver(Module):
         self._stop_event.wait(self.config.seed_settle_s)
         record["premap_points"] = len(cloud)
         record["premap_s"] = round(time.time() - started, 2)
+        self.phase.publish(String("goal"))
         t0 = self._send_goal()
         if t0 is None:
             return {**record, "reason": "goal_lost"}
         record["t0"] = t0
+        self.phase.publish(String("navigate"))
         reason = self._watch(t0, rules.timeout_s(case.route_length))
+        self.phase.publish(String(reason))
         return {**record, "reason": reason, "t_end": time.time()}
 
     def _reset_to_start(self) -> None:
@@ -219,3 +229,12 @@ class EpisodeDriver(Module):
         path = self.config.out_dir / TERMINAL_FILE
         path.write_text(json.dumps(record, indent=2) + "\n")
         logger.info("Episode terminal", **{k: v for k, v in record.items() if k != "t0"})
+
+
+def _path(points: NDArray[np.float64]) -> PathMsg:
+    now = time.time()
+    return PathMsg(
+        ts=now,
+        frame_id=ODOM_FRAME_ID,
+        poses=[PoseStamped(*map(float, p), ts=now, frame_id=ODOM_FRAME_ID) for p in points],
+    )

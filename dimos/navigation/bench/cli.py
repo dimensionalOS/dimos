@@ -139,15 +139,17 @@ def score_command(
 
 @app.command("replay")
 def replay_command(
-    episode_dir: Path = typer.Argument(..., exists=True, help="An episode directory of a run."),
+    episode: str = typer.Argument(
+        ..., help="An episode directory, or a case id to find in the newest run."
+    ),
     speed: float = typer.Option(1.0, min=0.01, help="Playback pace relative to the recording."),
     loop: bool = typer.Option(True, help="Start over at the end."),
     rerun: bool = typer.Option(True, help="Also open the episode's replay file in Rerun."),
 ) -> None:
     """Play the episode back: body motion in a MuJoCo viewer, the replay file in Rerun."""
-    from dimos.navigation.bench.playback import play
+    from dimos.navigation.bench.playback import find_episode, play
 
-    play(episode_dir, speed=speed, loop=loop, rerun=rerun)
+    play(find_episode(episode), speed=speed, loop=loop, rerun=rerun)
 
 
 class _Bar:

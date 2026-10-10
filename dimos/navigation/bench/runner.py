@@ -44,6 +44,7 @@ logger = setup_logger()
 
 RUNS_DIR = STATE_DIR / "nav-bench"
 SLOTS_DIR = RUNS_DIR / "slots"
+RUNS_INDEX = RUNS_DIR / "runs"
 MAX_SLOTS = 64
 RESULTS_FILE = "results.jsonl"
 RUN_FILE = "run.json"
@@ -52,7 +53,7 @@ RECORDING_FILE = "memory.db"
 REPLAY_FILE = "rerun.rrd"
 RECORD_TOPICS = (
     "ground_truth,joint_state,odometry,tf,scene,contacts,goal,planner_path,path,cmd_vel,"
-    "goal_reached,lidar,local_map,surface_map"
+    "goal_reached,reference_path,phase,lidar,local_map,surface_map"
 )
 LCM_PORT_BASE = 7800
 ZENOH_SCOUT_GROUP = "224.0.0.224"
@@ -131,6 +132,9 @@ def run(config: RunConfig, report: Report | None = None) -> Path:
         )
     run_dir = config.out_dir or RUNS_DIR / time.strftime(f"%Y%m%d-%H%M%S-{manifest.suite}")
     run_dir.mkdir(parents=True, exist_ok=False)
+    RUNS_INDEX.parent.mkdir(parents=True, exist_ok=True)
+    with RUNS_INDEX.open("a") as index:
+        index.write(f"{run_dir.resolve()}\n")
     episodes = [Episode(case, run_dir / case.id) for case in cases]
     _write_run(run_dir, config, manifest, len(episodes), finished=False)
     results = run_dir / RESULTS_FILE

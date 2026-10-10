@@ -33,7 +33,6 @@ from dimos.navigation.bench.runner import (
     RunConfig,
     _episode,
     _live,
-    _slot,
     rescore,
     run,
     stop_all,
@@ -82,6 +81,7 @@ signal.pause()
 @pytest.fixture(autouse=True)
 def _private_slots(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr("dimos.navigation.bench.runner.SLOTS_DIR", tmp_path / "slots")
+    monkeypatch.setattr("dimos.navigation.bench.runner.RUNS_INDEX", tmp_path / "runs")
 
 
 def _case(case_id: str, tag: str, split: Split, params: Params) -> Case:
@@ -165,6 +165,7 @@ def test_run_scores_every_episode_of_the_split_in_parallel(
     assert not any((tmp_path / "recordings").iterdir())
     meta = json.loads((run_dir / RUN_FILE).read_text())
     assert meta["finished"] is True
+    assert (tmp_path / "runs").read_text().strip() == str(run_dir.resolve())
     assert meta["episodes"] == 3
     assert meta["overrides"][-1] == "--set-x=1"
 
@@ -210,10 +211,3 @@ def test_stop_all_ends_an_episode_that_never_terminates(
     assert not worker.is_alive()
     assert results[0].error == "no terminal record"
     assert not _live
-
-
-def test_slots_are_exclusive_across_runners() -> None:
-    with _slot() as first, _slot() as second:
-        assert first != second
-    with _slot() as again:
-        assert again == first

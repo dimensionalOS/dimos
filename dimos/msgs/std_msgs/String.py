@@ -15,9 +15,14 @@
 
 """String message type."""
 
-from typing import ClassVar
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, ClassVar
 
 from dimos_lcm.std_msgs import String as LCMString
+
+if TYPE_CHECKING:
+    from rerun._baseclasses import Archetype
 
 
 class String(LCMString):  # type: ignore[misc]
@@ -28,3 +33,8 @@ class String(LCMString):  # type: ignore[misc]
     def __init__(self, data: str = "") -> None:
         """Initialize String with data value."""
         self.data = data
+
+    def to_rerun(self) -> Archetype:
+        import rerun as rr
+
+        return rr.TextLog(self.data)

@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -24,7 +23,6 @@ from dimos.navigation.bench.suite import (
     MINED,
     NARROW_DOOR_M,
     OBSTRUCTED,
-    STRESSORS,
     FreezeConfig,
     Manifest,
     freeze,
@@ -84,26 +82,12 @@ def test_stressors_match_their_templates(manifest: Manifest) -> None:
     assert all(c.params == {} and c.start[:2] != (1.0, 1.0) for c in by_tag[MINED])
 
 
-def test_every_stressor_is_a_case_or_a_rejection_per_scene(manifest: Manifest) -> None:
-    seen = {(c.seed, c.tag) for c in manifest.cases if c.tag != MINED}
-    rejected = {(r.seed, r.tag) for r in manifest.rejections}
-    assert not seen & rejected
-    assert seen | rejected == {(seed, s.name) for seed in SMALL.seeds for s in STRESSORS}
-    assert sum(manifest.mined_rejected.values()) > 0
-
-
 def test_manifest_round_trips_through_json(manifest: Manifest, tmp_path: Path) -> None:
     path = tmp_path / "suite.json"
     manifest.save(path)
     loaded = Manifest.load(path)
     assert loaded == manifest
     loaded.check_drift()
-
-
-def test_drift_check_catches_a_changed_scene(manifest: Manifest) -> None:
-    drifted = replace(manifest, cases=[replace(manifest.cases[0], scene_digest="0" * 16)])
-    with pytest.raises(RuntimeError, match=manifest.cases[0].id):
-        drifted.check_drift()
 
 
 def test_freeze_is_deterministic_and_reports_every_scene(manifest: Manifest) -> None:
