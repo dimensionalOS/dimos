@@ -17,8 +17,8 @@ from collections.abc import AsyncIterator
 import math
 
 from dimos_generated.geometry_msgs.msg import Point, PointStamped, PoseStamped
+from dimos_generated.std_msgs.msg import Bool
 from dimos_generated.tf2_msgs.msg import TFMessage
-from dimos_lcm.std_msgs import Bool
 
 from dimos.agents.annotation import skill
 from dimos.agents.capabilities import CAP_MOVEMENT
