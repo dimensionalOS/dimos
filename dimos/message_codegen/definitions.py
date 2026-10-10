@@ -21,13 +21,15 @@ from contextlib import redirect_stderr
 from dataclasses import dataclass
 from io import StringIO
 from pathlib import Path
+import re
 from typing import Any
 
-from ._vendor.rosidl_parser import (
+from rosidl_adapter.parser import (  # type: ignore[import-untyped]
     InvalidSpecification,
     InvalidValue,
     parse_message_string,
 )
+
 from .providers import schema_roots
 
 BUNDLED_SCHEMAS = Path(__file__).with_name("schemas")
@@ -93,6 +95,12 @@ def parse_message(path: Path) -> Message:
         raise ValueError(f"{path}: expected package/msg/Type.msg")
     package = path.parent.parent.name
     text = path.read_text(encoding="utf-8")
+    # Validate constant names before upstream's backtracking regex sees untrusted
+    # names. Keep upstream source unchanged; this guard has linear-time matching.
+    for line_number, line in enumerate(text.splitlines(), 1):
+        constant = re.match(r"^\s*\S+\s+([^\s=]+)\s*=", line.split("#", 1)[0])
+        if constant and not re.fullmatch(r"[A-Z](?:[A-Z0-9]|_[A-Z0-9])*", constant[1]):
+            raise ValueError(f"{path}:{line_number}: invalid constant name {constant[1]!r}")
     try:
         with redirect_stderr(StringIO()):
             parsed = parse_message_string(package, path.stem, text)
