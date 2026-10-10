@@ -138,3 +138,23 @@ Build commands and installed Python packages are trusted executable code, not sa
 References: [configuration providers](https://scikit-build-core.readthedocs.io/en/latest/configuration/entrypoint_config.html),
 [dynamic metadata](https://scikit-build-core.readthedocs.io/en/latest/configuration/dynamic.html),
 [editable installs](https://scikit-build-core.readthedocs.io/en/latest/configuration/editable.html).
+
+## Messages, resources and isolated dependencies
+
+Keep typed ports and Python contract declarations authoritative. Share one
+contract/message distribution across dependent packages; generated native
+bindings must use matching schemas and serialization. Python pickle is not a
+native interoperability format.
+
+Include small immutable resources as package data and use `importlib.resources`
+or an installed package-relative path with an appropriate lifetime. Give native
+processes absolute resource paths. Keep downloaded models, logs, recordings and
+mutable state out of installation directories.
+
+For isolated Python, use [PackageProject](/dimos/experimental/isolated_python/README.md#installed-package-projects).
+The runtime project declares its own dependencies and optional lock; dimOS and
+shared contract content must align with the host. An installed contract does not
+need to pull heavy implementation dependencies into the host. Normal uv index,
+wheelhouse and offline settings control dependency provisioning. Release projects
+should ship locks and deploy verified artifacts. Isolation separates dependencies;
+it does not isolate privileges or make untrusted Python/native code safe.
