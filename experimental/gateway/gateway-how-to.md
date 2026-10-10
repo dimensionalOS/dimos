@@ -1,8 +1,8 @@
 # Dimos gateway: how do I...?
 
 Snippets run in an app page served by Desktop at `/apps/<name>/`, so `../../dimos/` is the gateway. Each lists the
-line its `dimos.yaml` needs under `uses: "@dimos-gateway":` (paths relative to `/dimos`). Full reference:
-[gateway-api.md](/docs/usage/gateway-api.md).
+line its `dimos.yaml` needs under `uses: "@dimos-gateway":` (paths relative to `/dimos`). Every route is in
+`GET /dimos/openapi.json`.
 
 ```yaml
 uses:
@@ -64,14 +64,6 @@ const newer = await (await fetch(`../../dimos/runs/latest/log?after=${page.offse
 
 `- GET /runs/{runId}/log`
 
-## How do I list topics and their rates?
-
-```js
-const { topics } = await (await fetch("../../dimos/topics/rates")).json() // [{ topic, type, hz, bps, lastSeen }]
-```
-
-`- GET /topics/rates`
-
 ## How do I list a blueprint's modules, their streams and RPCs?
 
 ```js
@@ -108,29 +100,6 @@ const result = await (await fetch("../../dimos/skills/call", {
 ```
 
 `- POST /skills/call` (acts on the robot: only from a user's action)
-
-## How do I decode dimos messages in a page?
-
-```js
-import { DimApp } from "./dim-app/mod.js"
-
-const app = new DimApp({ msgDecodeEndpoint: "../../dimos/msgs.js" })
-app.subscribe("odom", (odom) => console.log(odom.pose.pose.position)) // decoded
-const twist = app.msgs.geometry_msgs.Twist.encode({ linear: { x: 0.3 } }) // bytes
-```
-
-`- GET /msgs.js`
-
-## How do I decode them in a Deno backend?
-
-```js
-import { dimContext } from "./dim-app/source/backend.js"
-
-const msgs = await import(new URL("/dimos/msgs.ts", dimContext().desktopUrl).href)
-const odom = msgs.decodeChannel("dimos/odom/nav_msgs.Odometry", bytes)
-```
-
-`- GET /msgs.ts`
 
 ## How do I list robots and their recommended blueprints?
 
