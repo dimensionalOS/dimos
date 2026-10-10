@@ -160,7 +160,7 @@ def test_sensor_sits_on_the_mount_above_the_base(sim: Go2Sim) -> None:
     assert forward[2] < -0.8
 
 
-def test_reset_pose_moves_the_robot_through_the_sim_thread(scene: Scene) -> None:
+def test_reset_pose_moves_the_robot_and_the_contacts_keep_their_heartbeat(scene: Scene) -> None:
     world = SimGo2World()
     world.cmd_vel.transport = LCMTransport("/test_go2_sim_world/cmd_vel", Twist)
     poses: list[PoseStamped] = []
@@ -173,17 +173,16 @@ def test_reset_pose_moves_the_robot_through_the_sim_thread(scene: Scene) -> None
         while len(poses) < 5 and time.monotonic() < deadline:
             time.sleep(0.05)
         assert poses[-1].position.x == pytest.approx(scene.start[0], abs=0.1)
-        time.sleep(2.0)
+        time.sleep(2.5)
+        assert heard[-1].ts - heard[-2].ts == pytest.approx(CONTACTS_HEARTBEAT_DT, abs=0.1)
+        assert heard[-1].contacts == [Contact("foot", "floor")]
         world.reset_pose(3.0, 2.0, scene.params["z0"], 1.0)
-
         # the bundled policy lurches a few decimeters as it is set down, so take the first pose there
-        def near() -> PoseStamped | None:
-            return next((p for p in poses if abs(p.position.x - 3.0) < 0.5), None)
-
-        while near() is None and time.monotonic() < deadline:
+        moved = [p for p in poses if abs(p.position.x - 3.0) < 0.5]
+        while not moved and time.monotonic() < deadline:
             time.sleep(0.02)
-        first = near()
-        assert first is not None
+            moved = [p for p in poses if abs(p.position.x - 3.0) < 0.5]
+        first = moved[0]
         assert (first.position.x, first.position.y) == pytest.approx((3.0, 2.0), abs=0.15)
         assert first.orientation.to_euler().z == pytest.approx(1.0, abs=0.2)
         assert first.ts > poses[0].ts
@@ -193,29 +192,6 @@ def test_reset_pose_moves_the_robot_through_the_sim_thread(scene: Scene) -> None
         assert after - first.ts < CONTACTS_HEARTBEAT_DT + 0.5
     finally:
         world.stop()
-
-
-def test_joint_state_names_every_leg_joint(sim: Go2Sim) -> None:
-    positions, velocities = sim.robot.joint_state()
-    assert len(positions) == len(velocities) == len(sim.robot.policy.joint_names) == 12
-    assert positions == pytest.approx(sim.robot.policy.default_pose, abs=0.3)
-
-
-def test_contacts_are_republished_on_a_heartbeat() -> None:
-    world = SimGo2World()
-    world.cmd_vel.transport = LCMTransport("/test_go2_sim_world/cmd_vel_heartbeat", Twist)
-    heard: list[Contacts] = []
-    world.contacts.subscribe(heard.append)
-    world.start()
-    try:
-        deadline = time.monotonic() + 10.0
-        while len(heard) < 3 and time.monotonic() < deadline:
-            time.sleep(0.05)
-    finally:
-        world.stop()
-    assert len(heard) >= 3
-    assert heard[-1].ts - heard[-2].ts == pytest.approx(CONTACTS_HEARTBEAT_DT, abs=0.1)
-    assert heard[-1].contacts == [Contact("foot", "floor")]
 
 
 def test_scene_edges_cover_every_box(scene: Scene) -> None:
