@@ -355,7 +355,9 @@ def transport_config_name(cls: type) -> str:
 
 
 def autoconnect(*blueprints: Blueprint) -> Blueprint:
-    all_blueprints = tuple(_eliminate_duplicates([bp for bs in blueprints for bp in bs.blueprints]))
+    all_blueprints = tuple(
+        _merge_module_instances([bp for bs in blueprints for bp in bs.blueprints])
+    )
     all_transports = dict(  # type: ignore[var-annotated]
         reduce(operator.iadd, [list(x.transport_map.items()) for x in blueprints], [])
     )
@@ -381,8 +383,8 @@ def autoconnect(*blueprints: Blueprint) -> Blueprint:
     )
 
 
-def _eliminate_duplicates(blueprints: list[BlueprintAtom]) -> list[BlueprintAtom]:
-    # The duplicates are eliminated in reverse so that newer blueprints override older ones.
+def _merge_module_instances(blueprints: list[BlueprintAtom]) -> list[BlueprintAtom]:
+    """Keep the last configuration per instance and reject conflicting classes."""
     seen: dict[str, type[ModuleBase]] = {}
     unique_blueprints = []
     for bp in reversed(blueprints):
