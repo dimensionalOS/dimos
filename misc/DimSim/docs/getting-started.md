@@ -77,6 +77,7 @@ docs/       guides
 | Run all evals, JUnit XML | `dimsim eval --headless --output junit > junit.xml` |
 | Direct workflow execution | `deno run -A scenes/<env>/evals/<name>.js` |
 | Build the frontend manually | `cd misc/DimSim && npm run build` |
+| Pre-build `dist/` + headless Chromium (CI, cold checkouts) | `bin/dimsim-prepare` from the dimos root, or `dimsim build` for `dist/` alone |
 
 ## Troubleshooting
 
