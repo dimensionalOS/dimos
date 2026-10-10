@@ -31,6 +31,7 @@ from experimental.gateway.discovery import Jobs, Scanner
 from experimental.gateway.skills import Skills
 from experimental.gateway.uploads import Uploads
 
+API_VERSION = "2.0.0"
 INTROSPECT_TTL_S = 600.0
 
 

@@ -25,7 +25,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from experimental.gateway import events
 from experimental.gateway.routes import blueprints, cloud, discovery, runs, server, skills
-from experimental.gateway.state import ApiError, State, site_dirs
+from experimental.gateway.state import API_VERSION, ApiError, State, site_dirs
 
 
 def create_app(state: State, background: bool = True) -> FastAPI:
@@ -47,7 +47,7 @@ def create_app(state: State, background: bool = True) -> FastAPI:
 
     app = FastAPI(
         title="dimos gateway",
-        version="1.18.0",
+        version=API_VERSION,
         lifespan=lifespan,
         openapi_url="/dimos/openapi.json",
         docs_url=None,

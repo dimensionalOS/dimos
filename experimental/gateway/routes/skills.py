@@ -22,7 +22,7 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, JsonValue
 
 from experimental.gateway.skills import MCP_PROTOCOL, MCP_TOOLS, SkillError, mcp_tool
-from experimental.gateway.state import ApiError, GatewayState
+from experimental.gateway.state import API_VERSION, ApiError, GatewayState
 
 router = APIRouter()
 
@@ -65,7 +65,7 @@ async def mcp(state: GatewayState, body: Any = Body(default=None)) -> Response:
             {
                 "protocolVersion": params.get("protocolVersion") or MCP_PROTOCOL,
                 "capabilities": {"tools": {}},
-                "serverInfo": {"name": "dimos-skills", "version": "1.18.0"},
+                "serverInfo": {"name": "dimos-skills", "version": API_VERSION},
                 "instructions": "The robot's skills: list_skills, then call_skill.",
             }
         )
