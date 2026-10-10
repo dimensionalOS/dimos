@@ -317,18 +317,18 @@ class Config(ModuleConfig):
 class RerunBridgeModule(Module):
     """Bridge that logs messages from pubsubs to Rerun.
 
-    Spawns its own Rerun viewer and subscribes to all topics on each provided
-    pubsub. Any message that has a to_rerun() method is automatically logged.
+        Spawns its own Rerun viewer and subscribes to all topics on each provided
+        pubsub. Any message that has a to_rerun() method is automatically logged.
 
-    Example:
-        from dimos.msgs.time import message_header
-from dimos.protocol.pubsub.impl.lcmpubsub import LCM
+        Example:
+            from dimos.msgs.time import message_header
+    from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 
-        lcm = LCM()
-        bridge = RerunBridgeModule(pubsubs=[lcm])
-        bridge.start()
-        # All messages with to_rerun() are now logged to Rerun
-        bridge.stop()
+            lcm = LCM()
+            bridge = RerunBridgeModule(pubsubs=[lcm])
+            bridge.start()
+            # All messages with to_rerun() are now logged to Rerun
+            bridge.stop()
     """
 
     config: Config

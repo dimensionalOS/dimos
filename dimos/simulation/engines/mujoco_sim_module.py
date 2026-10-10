@@ -1033,7 +1033,7 @@ class MujocoSimModule(
                         ts=ts,
                     ),
                 ]
-                *self._body_transforms(),
+                * self._body_transforms(),
             )
         )
 

@@ -25,10 +25,11 @@ and `coordinator_joint_state` (observation), `status` (episode segmentation).
 
 from __future__ import annotations
 
+from typing import Any
+
 from dimos_generated.geometry_msgs.msg import Pose
 from dimos_generated.sensor_msgs.msg import Image, JointState
 
-from typing import Any
 from dimos.core.stream import In
 from dimos.imitation.collection.episode import EpisodeStatus
 from dimos.memory.module import Recorder, RecorderConfig

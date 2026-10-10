@@ -24,7 +24,6 @@ stdin JSON.
 
 from __future__ import annotations
 
-
 from typing import TYPE_CHECKING
 
 from dimos_generated.nav_msgs.msg import Odometry

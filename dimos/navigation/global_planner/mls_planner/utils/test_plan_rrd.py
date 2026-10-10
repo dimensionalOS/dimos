@@ -60,6 +60,8 @@ def test_colormap_annotation_has_all_indices() -> None:
         assert log.call_args.kwargs == {"static": True}
         context = log.call_args.args[1].context.as_arrow_array().to_pylist()
         assert len(context[0]) == 256
+
+
 # Copyright 2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");

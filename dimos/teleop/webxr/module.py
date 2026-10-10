@@ -46,9 +46,9 @@ from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
+from dimos.imitation.collection.episode import EpisodeStatus
 from dimos.msgs.geometry import quaternion_from_matrix
 from dimos.msgs.protocol import DimosMsg
-from dimos.imitation.collection.episode import EpisodeStatus
 from dimos.msgs.std_msgs.String import String
 from dimos.teleop.utils.teleop_transforms import webxr_to_robot
 from dimos.teleop.webxr.body_tracking import BodyTrackingMode, BodyTrackingSnapshot

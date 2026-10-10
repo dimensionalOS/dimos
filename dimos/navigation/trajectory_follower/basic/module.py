@@ -30,8 +30,8 @@ from reactivex.disposable import Disposable
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.msgs.geometry import quaternion_euler
 from dimos.core.stream import IO, In, Out
+from dimos.msgs.geometry import quaternion_euler
 from dimos.navigation import spec
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.trigonometry import angle_diff

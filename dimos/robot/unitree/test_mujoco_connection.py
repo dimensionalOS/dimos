@@ -16,12 +16,11 @@ from collections.abc import Callable, Iterator
 import subprocess
 import sys
 import threading
-from unittest.mock import MagicMock
 from typing import Any
 
 from dimos_generated.geometry_msgs.msg import Point, PoseStamped, Quaternion
 from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
-import numpy as np
+
 # Imported before subprocess.Popen is patched: mujoco's own import spawns a subprocess.
 import mujoco  # noqa: F401
 import numpy as np

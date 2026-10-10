@@ -14,8 +14,8 @@
 
 from __future__ import annotations
 
-from copy import deepcopy
 from collections.abc import Callable
+from copy import deepcopy
 from typing import TYPE_CHECKING
 
 from dimos_generated.builtin_interfaces.msg import Time

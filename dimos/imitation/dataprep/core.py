@@ -37,7 +37,6 @@ from dimos_generated.sensor_msgs.msg import CompressedImage, Image
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.msgs.image import image_from_compressed, image_view
 from dimos.imitation.collection.episode import EpisodeStatus
 from dimos.imitation.dataprep.schema import (
     DEFAULT_FPS as DEFAULT_FPS,
@@ -59,6 +58,7 @@ from dimos.imitation.dataprep.schema import (
     validate_source_kinds as validate_source_kinds,
 )
 from dimos.memory.store.mcap import McapStore
+from dimos.msgs.image import image_from_compressed, image_view
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.String import String
 

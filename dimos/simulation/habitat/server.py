@@ -55,8 +55,14 @@ from dimos_generated.sensor_msgs.msg import (
 )
 from dimos_generated.std_msgs.msg import Header
 from dimos_generated.tf2_msgs.msg import TFMessage
+from dimos_generated.vision_msgs.msg import (
+    BoundingBox3D,
+    Detection3D,
+    Detection3DArray,
+    ObjectHypothesis,
+    ObjectHypothesisWithPose,
+)
 from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
-from dimos_generated.vision_msgs.msg import (BoundingBox3D, Detection3D, Detection3DArray, ObjectHypothesis, ObjectHypothesisWithPose)
 import numpy as np
 import numpy.typing as npt
 import zenoh

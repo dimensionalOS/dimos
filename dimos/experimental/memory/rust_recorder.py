@@ -54,14 +54,22 @@ class RustStreamSpec(BaseModel):
 
     @model_validator(mode="after")
     def _json_options(self) -> RustStreamSpec:
-        if self.codec != "json" and (self.timestamp_field is not None or self.json_schema is not None):
+        if self.codec != "json" and (
+            self.timestamp_field is not None or self.json_schema is not None
+        ):
             raise ValueError("JSON options require the json codec")
         return self
 
     @classmethod
     def from_type(
-        cls, *, port: str, name: str, payload_type: type[Any], codec: str,
-        timestamp_field: str | None = None, json_schema: dict[str, Any] | None = None
+        cls,
+        *,
+        port: str,
+        name: str,
+        payload_type: type[Any],
+        codec: str,
+        timestamp_field: str | None = None,
+        json_schema: dict[str, Any] | None = None,
     ) -> RustStreamSpec:
         return cls(
             port=port,

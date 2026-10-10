@@ -22,8 +22,8 @@ import numpy as np
 
 from dimos.mapping.ray_tracing.module import TF_MATCH_TOLERANCE_S
 from dimos.mapping.ray_tracing.voxel_map import VoxelRayMapper
-from dimos.msgs.pointcloud import pointcloud_from_xyz, pointcloud_xyz
 from dimos.memory.transform import FnTransformer, Transformer
+from dimos.msgs.pointcloud import pointcloud_from_xyz, pointcloud_xyz
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -40,7 +40,10 @@ def pose_from_tf(tf: StreamTF, world_frame: str) -> FnTransformer[PointCloud2, P
 
     def attach(obs: Observation[PointCloud2]) -> Observation[PointCloud2]:
         t = tf.get(
-            world_frame, obs.data.frame_id, time_point=obs.ts, time_tolerance=TF_MATCH_TOLERANCE_S
+            world_frame,
+            obs.data.header.frame_id,
+            time_point=obs.ts,
+            time_tolerance=TF_MATCH_TOLERANCE_S,
         )
         return obs.with_pose(t)
 

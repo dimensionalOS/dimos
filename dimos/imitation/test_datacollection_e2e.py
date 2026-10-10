@@ -50,8 +50,8 @@ from dimos.imitation.dataprep.schema import (
 )
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.image import image_from_array, image_view
-from dimos.msgs.time import time_from_seconds
 from dimos.msgs.std_msgs.String import String
+from dimos.msgs.time import time_from_seconds
 from dimos.utils.testing.waiting import wait_until
 
 pytestmark = [

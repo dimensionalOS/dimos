@@ -41,9 +41,9 @@ from dimos.mapping.ray_tracing.utils.loaded_map import (
     place_loaded_map,
 )
 from dimos.mapping.ray_tracing.viz import log_loaded_map, voxel_map_points
-from dimos.memory.transform import FnTransformer
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tf import StreamTF, tf_stream
+from dimos.memory.transform import FnTransformer
 from dimos.memory.type.observation import Observation
 from dimos.memory.vis.utils import DEFAULT_RENDER_VOXEL, default_render_voxel
 from dimos.msgs.pointcloud import pointcloud_xyz

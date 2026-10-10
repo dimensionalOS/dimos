@@ -52,9 +52,9 @@ from dimos.mapping.relocalization.lidar.relocalize import (
     LidarRelocalizer,
     RelocalizeConfig,
 )
+from dimos.mapping.relocalization.lidar.replay import main as replay_main
 from dimos.msgs.pointcloud import pointcloud_from_xyz, pointcloud_to_open3d, pointcloud_xyz
 from dimos.msgs.time import time_from_seconds
-from dimos.mapping.relocalization.lidar.replay import main as replay_main
 from dimos.utils.data import get_data
 
 if TYPE_CHECKING:

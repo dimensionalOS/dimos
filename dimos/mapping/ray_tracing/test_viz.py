@@ -32,13 +32,19 @@ def test_the_height_ramp_spans_the_range_and_clamps_outside_it() -> None:
 
 
 def test_map_regions_land_static_on_their_own_cell_entities() -> None:
-    region = RegionPointCloud2(region_id=(1 << 16) | (-2 & 0xFFFF), cloud=pointcloud_from_xyz(_at_heights([-1.0, 3.0]), header=header_now()))
+    region = RegionPointCloud2(
+        region_id=(1 << 16) | (-2 & 0xFFFF),
+        cloud=pointcloud_from_xyz(_at_heights([-1.0, 3.0]), header=header_now()),
+    )
     (path, arch, static) = render_map_region(region, 0.1, HEIGHT_RANGE)[0]
     assert path == "world/map_regions/1_-2" and static
     assert len(arch.positions.as_arrow_array()) == 2
     assert arch.class_ids.as_arrow_array().to_pylist() == [0, 255]
 
-    emptied = RegionPointCloud2(region_id=region.region_id, cloud=pointcloud_from_xyz(np.zeros((0, 3), dtype=np.float32), header=header_now()))
+    emptied = RegionPointCloud2(
+        region_id=region.region_id,
+        cloud=pointcloud_from_xyz(np.zeros((0, 3), dtype=np.float32), header=header_now()),
+    )
     (path, arch, static) = render_map_region(emptied, 0.1, HEIGHT_RANGE)[0]
     assert path == "world/map_regions/1_-2" and static
     assert len(arch.positions.as_arrow_array()) == 0

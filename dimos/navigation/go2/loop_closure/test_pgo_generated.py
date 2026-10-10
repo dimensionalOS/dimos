@@ -24,10 +24,16 @@ from dimos_message_build.registry import decode as cdr_decode, encode as cdr_enc
 import numpy as np
 import pytest
 
-from dimos.navigation.go2.loop_closure.pgo import Keyframe, PGOConfig, PoseGraph, _KeyPose, _PGOState
 from dimos.memory.type.observation import Observation
 from dimos.msgs.pointcloud import pointcloud_from_xyz, pointcloud_xyz
 from dimos.msgs.time import time_from_nanoseconds, time_from_seconds
+from dimos.navigation.go2.loop_closure.pgo import (
+    Keyframe,
+    PGOConfig,
+    PoseGraph,
+    _KeyPose,
+    _PGOState,
+)
 
 
 def test_generated_observation_pose_correction_applies_rotation_after_translation():

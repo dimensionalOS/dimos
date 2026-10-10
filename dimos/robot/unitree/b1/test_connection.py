@@ -29,9 +29,10 @@ import time
 
 from dimos_generated.geometry_msgs.msg import Twist, TwistStamped, Vector3
 from dimos_generated.std_msgs.msg import Header, Int32
+import pytest
 
 from dimos.msgs.time import time_from_seconds
-import pytest
+
 _IS_MACOS = sys.platform == "darwin"
 
 

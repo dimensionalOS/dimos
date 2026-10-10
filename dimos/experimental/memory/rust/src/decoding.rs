@@ -35,8 +35,11 @@ use dimos_generated_messages::vision_msgs::msg::{
 };
 
 use crate::{Codec, StreamConfig};
+use dimos_generated_messages::dimos_msgs::msg::{
+    contacts::Contacts, region_bounds::RegionBounds, region_line_segments3_d::RegionLineSegments3D,
+    region_point_cloud2::RegionPointCloud2,
+};
 use dimos_generated_messages::std_msgs::msg::string::String as StringMessage;
-use dimos_generated_messages::dimos_msgs::msg::{region_bounds::RegionBounds, region_point_cloud2::RegionPointCloud2, region_line_segments3_d::RegionLineSegments3D, contacts::Contacts};
 use dimos_module::cdr;
 
 /// One decoded and timestamped observation before storage encoding.
@@ -57,8 +60,7 @@ pub(crate) fn decode(
             stream.schema_name == "std_msgs/msg/String",
             "JSON codec requires std_msgs.String"
         );
-        let message =
-            cdr::decode::<StringMessage>(data).context("invalid CDR String envelope")?;
+        let message = cdr::decode::<StringMessage>(data).context("invalid CDR String envelope")?;
         let document: serde_json::Value =
             serde_json::from_str(&message.data).context("invalid JSON document")?;
         let ts = if let Some(field) = &stream.timestamp_field {
@@ -67,7 +69,10 @@ pub(crate) fn decode(
                 .and_then(serde_json::Value::as_f64)
                 .context("JSON timestamp field must be a number")?;
             anyhow::ensure!(ts.is_finite(), "JSON timestamp must be finite");
-            anyhow::ensure!(ts >= i64::MIN as f64 / 1e9 && ts < i64::MAX as f64 / 1e9, "JSON timestamp exceeds signed nanosecond range");
+            anyhow::ensure!(
+                ts >= i64::MIN as f64 / 1e9 && ts < i64::MAX as f64 / 1e9,
+                "JSON timestamp exceeds signed nanosecond range"
+            );
             (ts * 1e9).round() as i64
         } else {
             reception_ts
@@ -123,11 +128,17 @@ fn source_timestamp(payload_type: &str, data: &[u8], reception_ts: i64) -> Resul
         "dimos_msgs/msg/Contacts" => stamped!(Contacts),
         "dimos_msgs/msg/RegionPointCloud2" => {
             let message = cdr::decode::<RegionPointCloud2>(data)?;
-            (message.cloud.header.stamp.sec, message.cloud.header.stamp.nanosec)
+            (
+                message.cloud.header.stamp.sec,
+                message.cloud.header.stamp.nanosec,
+            )
         }
         "dimos_msgs/msg/RegionLineSegments3D" => {
             let message = cdr::decode::<RegionLineSegments3D>(data)?;
-            (message.lines.header.stamp.sec, message.lines.header.stamp.nanosec)
+            (
+                message.lines.header.stamp.sec,
+                message.lines.header.stamp.nanosec,
+            )
         }
         "geometry_msgs/msg/PointStamped" => stamped!(PointStamped),
         "geometry_msgs/msg/PoseStamped" => stamped!(PoseStamped),
@@ -196,13 +207,24 @@ mod tests {
     fn json_codec_preserves_document_and_explicit_source_time() {
         let text = r#"{"sent":42.25,"label":"拿起积木","counter":2147483647}"#;
         let message = StringMessage { data: text.into() };
-        let mut result = decode(&json_stream(Some("sent")), &cdr::encode(&message).unwrap(), 99_000_000_000).unwrap();
+        let mut result = decode(
+            &json_stream(Some("sent")),
+            &cdr::encode(&message).unwrap(),
+            99_000_000_000,
+        )
+        .unwrap();
         let obs = result.pop().unwrap();
         assert_eq!(obs.ts, 42_250_000_000);
         let data = obs.payload;
         assert_eq!(data, text.as_bytes());
         assert_eq!(
-            decode(&json_stream(None), &cdr::encode(&message).unwrap(), 99_000_000_000).unwrap()[0].ts,
+            decode(
+                &json_stream(None),
+                &cdr::encode(&message).unwrap(),
+                99_000_000_000
+            )
+            .unwrap()[0]
+                .ts,
             99_000_000_000
         );
     }
@@ -211,7 +233,12 @@ mod tests {
     fn json_codec_rejects_malformed_or_invalid_explicit_time() {
         for data in ["not json", r#"{"sent":"42"}"#, "{}", r#"{"sent":NaN}"#] {
             let message = StringMessage { data: data.into() };
-            assert!(decode(&json_stream(Some("sent")), &cdr::encode(&message).unwrap(), 99_000_000_000).is_err());
+            assert!(decode(
+                &json_stream(Some("sent")),
+                &cdr::encode(&message).unwrap(),
+                99_000_000_000
+            )
+            .is_err());
         }
     }
 
@@ -227,19 +254,53 @@ mod tests {
     }
     #[test]
     fn region_envelopes_use_nested_source_time_without_losing_signed_id() {
-        use dimos_generated_messages::std_msgs::msg::header::Header;
         use dimos_generated_messages::builtin_interfaces::msg::time::Time;
-        let header = Header { stamp: Time { sec: 0, nanosec: 34 }, frame_id: "map".into() };
-        let cloud = RegionPointCloud2 { region_id: -196603, cloud: PointCloud2 {
-            header: header.clone(), height: 1, width: 0, fields: vec![], is_bigendian: false,
-            point_step: 12, row_step: 0, data: vec![], is_dense: true,
-        }};
-        let lines = RegionLineSegments3D { region_id: cloud.region_id, lines: LineSegments3D {header, segments: vec![]} };
-        for (name, bytes) in [("dimos_msgs/msg/RegionPointCloud2", cdr::encode(&cloud).unwrap()),
-                             ("dimos_msgs/msg/RegionLineSegments3D", cdr::encode(&lines).unwrap())] {
+        use dimos_generated_messages::std_msgs::msg::header::Header;
+        let header = Header {
+            stamp: Time {
+                sec: 0,
+                nanosec: 34,
+            },
+            frame_id: "map".into(),
+        };
+        let cloud = RegionPointCloud2 {
+            region_id: -196603,
+            cloud: PointCloud2 {
+                header: header.clone(),
+                height: 1,
+                width: 0,
+                fields: vec![],
+                is_bigendian: false,
+                point_step: 12,
+                row_step: 0,
+                data: vec![],
+                is_dense: true,
+            },
+        };
+        let lines = RegionLineSegments3D {
+            region_id: cloud.region_id,
+            lines: LineSegments3D {
+                header,
+                segments: vec![],
+            },
+        };
+        for (name, bytes) in [
+            (
+                "dimos_msgs/msg/RegionPointCloud2",
+                cdr::encode(&cloud).unwrap(),
+            ),
+            (
+                "dimos_msgs/msg/RegionLineSegments3D",
+                cdr::encode(&lines).unwrap(),
+            ),
+        ] {
             assert_eq!(source_timestamp(name, &bytes, 99_000_000_000).unwrap(), 34);
         }
-        assert_eq!(cdr::decode::<RegionPointCloud2>(&cdr::encode(&cloud).unwrap()).unwrap().region_id, -196603);
+        assert_eq!(
+            cdr::decode::<RegionPointCloud2>(&cdr::encode(&cloud).unwrap())
+                .unwrap()
+                .region_id,
+            -196603
+        );
     }
-
 }

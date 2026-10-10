@@ -13,7 +13,9 @@
 // limitations under the License.
 
 use dimos_generated_messages::builtin_interfaces::msg::time::Time;
-use dimos_generated_messages::dimos_msgs::msg::{region_bounds::RegionBounds, region_point_cloud2::RegionPointCloud2};
+use dimos_generated_messages::dimos_msgs::msg::{
+    region_bounds::RegionBounds, region_point_cloud2::RegionPointCloud2,
+};
 use dimos_generated_messages::geometry_msgs::msg::point::Point;
 use dimos_generated_messages::sensor_msgs::msg::{
     point_cloud2::PointCloud2, point_field::PointField,

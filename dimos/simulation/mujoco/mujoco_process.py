@@ -29,8 +29,6 @@ import numpy as np
 from numpy.typing import NDArray
 
 from dimos.core.global_config import GlobalConfig
-from dimos.msgs.pointcloud import pointcloud_from_xyz
-from dimos.msgs.time import header_now
 from dimos.simulation.mujoco.constants import (
     DEPTH_CAMERA_FOV,
     LIDAR_FPS,

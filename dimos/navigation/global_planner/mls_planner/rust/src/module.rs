@@ -14,8 +14,7 @@
 
 use dimos_generated_messages::builtin_interfaces::msg::time::Time;
 use dimos_generated_messages::dimos_msgs::msg::{
-    line_segment3_d::LineSegment3D, line_segments3_d::LineSegments3D,
-    region_bounds::RegionBounds,
+    line_segment3_d::LineSegment3D, line_segments3_d::LineSegments3D, region_bounds::RegionBounds,
     region_line_segments3_d::RegionLineSegments3D, region_point_cloud2::RegionPointCloud2,
 };
 use dimos_generated_messages::geometry_msgs::msg::{
@@ -947,18 +946,45 @@ mod tests {
     }
 
     fn stamped(stamp: Time) -> Header {
-        Header { stamp, frame_id: String::new() }
+        Header {
+            stamp,
+            frame_id: String::new(),
+        }
     }
 
-    fn bounds_at(stamp: Time) -> RegionBounds { RegionBounds { header: stamped(stamp), region_id: 0, center: Point { x:0.0,y:0.0,z:0.0 }, radius:0.0,z_min:0.0,z_max:0.0 } }
+    fn bounds_at(stamp: Time) -> RegionBounds {
+        RegionBounds {
+            header: stamped(stamp),
+            region_id: 0,
+            center: Point {
+                x: 0.0,
+                y: 0.0,
+                z: 0.0,
+            },
+            radius: 0.0,
+            z_min: 0.0,
+            z_max: 0.0,
+        }
+    }
 
-    fn region_cloud_at(stamp: Time) -> RegionPointCloud2 { RegionPointCloud2 { region_id: 0, cloud: cloud_at(stamp) } }
+    fn region_cloud_at(stamp: Time) -> RegionPointCloud2 {
+        RegionPointCloud2 {
+            region_id: 0,
+            cloud: cloud_at(stamp),
+        }
+    }
 
     fn cloud_at(stamp: Time) -> PointCloud2 {
         PointCloud2 {
-            header: stamped(stamp), height: 1, width: 0, fields: Vec::new(),
-            is_bigendian: false, point_step: 0, row_step: 0,
-            data: Vec::new(), is_dense: true,
+            header: stamped(stamp),
+            height: 1,
+            width: 0,
+            fields: Vec::new(),
+            is_bigendian: false,
+            point_step: 0,
+            row_step: 0,
+            data: Vec::new(),
+            is_dense: true,
         }
     }
 
@@ -1044,13 +1070,19 @@ mod tests {
             surface: vec![((1, 2, 0), 0.5)],
             segments: vec![((1, 2, 0), (2, 2, 0), 1.5)],
         };
-        let (surface, edges) = region_messages(cell, content, 0.1, "odom", Time { sec: 0, nanosec: 0 });
+        let (surface, edges) =
+            region_messages(cell, content, 0.1, "odom", Time { sec: 0, nanosec: 0 });
         assert_eq!(surface.region_id, pack_cell(cell));
         assert_eq!(edges.region_id, pack_cell(cell));
         assert_eq!((surface.cloud.width, edges.lines.segments.len()), (1, 1));
 
-        let (surface, edges) =
-            region_messages(cell, RegionContent::default(), 0.1, "odom", Time { sec: 0, nanosec: 0 });
+        let (surface, edges) = region_messages(
+            cell,
+            RegionContent::default(),
+            0.1,
+            "odom",
+            Time { sec: 0, nanosec: 0 },
+        );
         assert_eq!(surface.region_id, pack_cell(cell));
         assert_eq!(edges.region_id, pack_cell(cell));
         assert_eq!((surface.cloud.width, edges.lines.segments.len()), (0, 0));

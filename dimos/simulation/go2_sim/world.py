@@ -117,7 +117,9 @@ BOX_EDGES = np.array(
 def _mount() -> tuple[NDArray[np.float64], NDArray[np.float64]]:
     """base_link -> mid360_link as a translation and rotation matrix, from the rig's frame tree."""
     edges = {t.child_frame_id: t for t in frames_to_edge_transforms(FRAMES)}
-    matrix = transform_matrix(edges["front_camera"].transform) @ transform_matrix(edges["mid360_link"].transform)
+    matrix = transform_matrix(edges["front_camera"].transform) @ transform_matrix(
+        edges["mid360_link"].transform
+    )
     return matrix[:3, 3].copy(), matrix[:3, :3].copy()
 
 
@@ -415,19 +417,32 @@ class SimGo2World(Module):
             self._publish_poses(sim, stamp)
             contacts = sim.contacts()
             if contacts != last_contacts:
-                self.contacts.publish(Contacts(header=Header(stamp=time_from_seconds(stamp), frame_id=""), contacts=contacts))
+                self.contacts.publish(
+                    Contacts(
+                        header=Header(stamp=time_from_seconds(stamp), frame_id=""),
+                        contacts=contacts,
+                    )
+                )
                 last_contacts = contacts
             if frame is not None:
                 self.lidar.publish(
-                    pointcloud_from_xyz(frame.points, header=Header(stamp=time_from_seconds(stamp), frame_id=SENSOR_FRAME_ID))
+                    pointcloud_from_xyz(
+                        frame.points,
+                        header=Header(stamp=time_from_seconds(stamp), frame_id=SENSOR_FRAME_ID),
+                    )
                 )
             if sim.t >= next_scene_publish:
                 self.scene.publish(
                     LineSegments3D(
                         header=Header(stamp=time_from_seconds(stamp), frame_id=ODOM_FRAME_ID),
-                        segments=[LineSegment3D(start=Point(x=float(a[0]), y=float(a[1]), z=float(a[2])),
-                                                end=Point(x=float(c[0]), y=float(c[1]), z=float(c[2])), weight=1.0)
-                                  for a, c in scene_edges(sim.scene)],
+                        segments=[
+                            LineSegment3D(
+                                start=Point(x=float(a[0]), y=float(a[1]), z=float(a[2])),
+                                end=Point(x=float(c[0]), y=float(c[1]), z=float(c[2])),
+                                weight=1.0,
+                            )
+                            for a, c in scene_edges(sim.scene)
+                        ],
                     )
                 )
                 next_scene_publish = sim.t + SCENE_PUBLISH_DT
@@ -442,21 +457,52 @@ class SimGo2World(Module):
         position, rotation = sim.sensor_pose()
         linear, angular = sim.sensor_velocity()
         q = Rotation.from_matrix(rotation).as_quat()
-        sensor = Pose(position=Point(x=float(position[0]), y=float(position[1]), z=float(position[2])),
-                      orientation=quaternion_from_array(q))
+        sensor = Pose(
+            position=Point(x=float(position[0]), y=float(position[1]), z=float(position[2])),
+            orientation=quaternion_from_array(q),
+        )
         header = Header(stamp=time_from_seconds(stamp), frame_id=ODOM_FRAME_ID)
         self.odometry.publish(
-            Odometry(header=header, child_frame_id=SENSOR_FRAME_ID,
-                     pose=PoseWithCovariance(pose=sensor, covariance=np.zeros(36, dtype=np.float64)),
-                     twist=TwistWithCovariance(twist=Twist(linear=vector_from_array(linear), angular=vector_from_array(angular)),
-                                               covariance=np.zeros(36, dtype=np.float64)))
+            Odometry(
+                header=header,
+                child_frame_id=SENSOR_FRAME_ID,
+                pose=PoseWithCovariance(pose=sensor, covariance=np.zeros(36, dtype=np.float64)),
+                twist=TwistWithCovariance(
+                    twist=Twist(
+                        linear=vector_from_array(linear), angular=vector_from_array(angular)
+                    ),
+                    covariance=np.zeros(36, dtype=np.float64),
+                ),
+            )
         )
-        self.tf.publish(TFMessage(transforms=[TransformStamped(header=header, child_frame_id=SENSOR_FRAME_ID,
-                             transform=Transform(translation=Vector3(x=sensor.position.x,y=sensor.position.y,z=sensor.position.z),
-                                                 rotation=sensor.orientation))]))
+        self.tf.publish(
+            TFMessage(
+                transforms=[
+                    TransformStamped(
+                        header=header,
+                        child_frame_id=SENSOR_FRAME_ID,
+                        transform=Transform(
+                            translation=Vector3(
+                                x=sensor.position.x, y=sensor.position.y, z=sensor.position.z
+                            ),
+                            rotation=sensor.orientation,
+                        ),
+                    )
+                ]
+            )
+        )
         base_position, base_rotation = sim.base_pose()
         base_q = Rotation.from_matrix(base_rotation).as_quat()
         self.ground_truth.publish(
-            PoseStamped(header=header, pose=Pose(position=Point(x=float(base_position[0]),y=float(base_position[1]),z=float(base_position[2])),
-                                                orientation=quaternion_from_array(base_q)))
+            PoseStamped(
+                header=header,
+                pose=Pose(
+                    position=Point(
+                        x=float(base_position[0]),
+                        y=float(base_position[1]),
+                        z=float(base_position[2]),
+                    ),
+                    orientation=quaternion_from_array(base_q),
+                ),
+            )
         )

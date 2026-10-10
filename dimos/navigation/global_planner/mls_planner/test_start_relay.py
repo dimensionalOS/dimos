@@ -25,11 +25,19 @@ from dimos_generated.geometry_msgs.msg import (
 from dimos_generated.std_msgs.msg import Header
 from dimos_generated.tf2_msgs.msg import TFMessage
 from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
+import pytest
 
+from dimos.core.transport_factory import rpc_backend
 from dimos.navigation.global_planner.mls_planner.start_relay import StartRelay
 from dimos.protocol.tf.tf import MultiTBuffer
 
 MOUNT_Z = 0.163
+
+
+@pytest.fixture(autouse=True)
+def isolate_rpc_boundary(mocker):
+    for method in ("start", "serve_module_rpc", "stop"):
+        mocker.patch.object(rpc_backend(), method)
 
 
 class FakeTF(MultiTBuffer):

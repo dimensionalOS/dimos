@@ -19,15 +19,11 @@ The Mid-360 driver needs the sensor's address. Pass ``--lidar-ip`` or set
 ``MID360__LIDAR_IP``.
 """
 
-from dimos_generated.geometry_msgs.msg import PoseStamped
-from dimos_generated.sensor_msgs.msg import PointCloud2
-
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
-
 from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPlannerNative
 from dimos.navigation.global_planner.viz import nav_static, nav_visual_override
 from dimos.navigation.movement_manager.movement_manager import MovementManager

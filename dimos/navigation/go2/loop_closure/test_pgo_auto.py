@@ -18,6 +18,11 @@ from dimos_message_build.registry import decode as cdr_decode, encode as cdr_enc
 import numpy as np
 import pytest
 
+from dimos.memory.store.memory import MemoryStore
+from dimos.memory.type.observation import Observation
+from dimos.msgs.geometry import quaternion_from_euler
+from dimos.msgs.pointcloud import pointcloud_from_xyz
+from dimos.msgs.time import time_from_seconds, to_seconds
 from dimos.navigation.go2.loop_closure.pgo_auto import (
     FRAME_BODY,
     FRAME_WORLD_CORRECTED,
@@ -28,11 +33,6 @@ from dimos.navigation.go2.loop_closure.pgo_auto import (
     keyframes_to_corrections,
     make_interpolator,
 )
-from dimos.memory.store.memory import MemoryStore
-from dimos.memory.type.observation import Observation
-from dimos.msgs.geometry import quaternion_from_euler
-from dimos.msgs.pointcloud import pointcloud_from_xyz
-from dimos.msgs.time import time_from_seconds, to_seconds
 
 
 def _pose(x: float, frame: str, ts: float) -> TransformStamped:

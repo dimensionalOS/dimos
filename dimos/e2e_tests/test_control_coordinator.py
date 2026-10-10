@@ -26,8 +26,8 @@ from dimos_generated.sensor_msgs.msg import JointState
 from dimos_generated.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from dimos_message_build.registry import decode as cdr_decode
 import numpy as np
-
 import pytest
+
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.tasks.trajectory_task.trajectory_task import (
     JOINT_TRAJECTORY_TASK_NAME,

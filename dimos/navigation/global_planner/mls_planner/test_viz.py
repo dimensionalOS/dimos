@@ -101,6 +101,8 @@ def test_weighted_edges_and_empty_messages() -> None:
         np.empty((0, 3)), header=Header(stamp=Time(sec=0, nanosec=0), frame_id="")
     )
     assert render_nodes(empty).positions.as_arrow_array().to_pylist() == []
+
+
 def _rgb(packed: int) -> tuple[int, int, int]:
     return (packed >> 24) & 0xFF, (packed >> 16) & 0xFF, (packed >> 8) & 0xFF
 
@@ -142,17 +144,34 @@ def test_graph_nodes_are_lifted_off_the_surface() -> None:
 
 
 def test_region_renders_are_static_and_an_empty_cell_still_lands() -> None:
-    cell = RegionPointCloud2(region_id=1 << 16, cloud=pointcloud_from_xyz(np.array([[1.0, 1.0, 0.0]], dtype=np.float32), header=Header(stamp=Time(sec=0, nanosec=0), frame_id="map")))
+    cell = RegionPointCloud2(
+        region_id=1 << 16,
+        cloud=pointcloud_from_xyz(
+            np.array([[1.0, 1.0, 0.0]], dtype=np.float32),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id="map"),
+        ),
+    )
     (path, arch, static) = viz.render_surface_region(cell, 0.1, 0.1, 1.0)[0]
     assert path == "world/surface_map/1_0" and static
     assert len(arch.positions.as_arrow_array()) == 1
 
-    emptied = RegionPointCloud2(region_id=1 << 16, cloud=pointcloud_from_xyz(np.zeros((0, 3), dtype=np.float32), header=Header(stamp=Time(sec=0, nanosec=0), frame_id="map")))
+    emptied = RegionPointCloud2(
+        region_id=1 << 16,
+        cloud=pointcloud_from_xyz(
+            np.zeros((0, 3), dtype=np.float32),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id="map"),
+        ),
+    )
     (path, arch, static) = viz.render_surface_region(emptied, 0.1, 0.1, 1.0)[0]
     assert path == "world/surface_map/1_0" and static
     assert len(arch.positions.as_arrow_array()) == 0
 
-    edges = RegionLineSegments3D(region_id=(2 << 16) | 3, lines=LineSegments3D(header=Header(stamp=Time(sec=0, nanosec=0), frame_id="map"), segments=[]))
+    edges = RegionLineSegments3D(
+        region_id=(2 << 16) | 3,
+        lines=LineSegments3D(
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id="map"), segments=[]
+        ),
+    )
     (path, arch, static) = viz.render_edge_region(edges)[0]
     assert path == "world/node_edges/2_3" and static
     assert arch.strips.as_arrow_array().to_pylist() == []

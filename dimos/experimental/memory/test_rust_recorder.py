@@ -162,12 +162,21 @@ def test_json_options_cross_the_native_boundary_only_when_configured() -> None:
 def test_unconfigured_json_options_are_omitted_from_native_streams(codec: str) -> None:
     config = RustRecorderConfig(
         streams=[
-            RustStreamSpec.from_type(port="samples", name="samples", payload_type=String, codec=codec)
+            RustStreamSpec.from_type(
+                port="samples", name="samples", payload_type=String, codec=codec
+            )
         ]
     )
 
     assert config.to_config_dict()["streams"] == [
-        {"port": "samples", "name": "samples", "payload_type": f"{String.__module__}.{String.__qualname__}", "schema_name": String.__msgtype__, "schema_definition": cdr_schema(String.__msgtype__), "codec": codec}
+        {
+            "port": "samples",
+            "name": "samples",
+            "payload_type": f"{String.__module__}.{String.__qualname__}",
+            "schema_name": String.__msgtype__,
+            "schema_definition": cdr_schema(String.__msgtype__),
+            "codec": codec,
+        }
     ]
 
 

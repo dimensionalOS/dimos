@@ -20,7 +20,9 @@ import pytest
 from dimos.msgs.time import time_from_seconds, to_seconds
 
 
-@pytest.mark.parametrize("contacts", [[], [Contact(part="foot", kind="floor"), Contact(part="trunk", kind="wall")]])
+@pytest.mark.parametrize(
+    "contacts", [[], [Contact(part="foot", kind="floor"), Contact(part="trunk", kind="wall")]]
+)
 def test_cdr_retains_semantic_contacts_and_source_stamp(contacts):
     value = Contacts(header=Header(stamp=time_from_seconds(12.5), frame_id=""), contacts=contacts)
     decoded = decode(encode(value), Contacts)
