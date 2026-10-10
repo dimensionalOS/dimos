@@ -1169,7 +1169,7 @@ mod tests {
         let id = sc.id((0, 0, 0)).unwrap();
         let mut by_col = ColumnIz::default();
         for col in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
-            by_col.insert(col, vec![0]);
+            by_col.add((col.0, col.1, 0));
         }
         assert!(!real_wall_adjacent(&sc, &by_col, id, 5, 2));
     }
@@ -1182,7 +1182,7 @@ mod tests {
         let id = sc.id((0, 0, 0)).unwrap();
         let mut by_col = ColumnIz::default();
         for col in [(1, 0), (0, -1), (0, 1)] {
-            by_col.insert(col, vec![0]);
+            by_col.add((col.0, col.1, 0));
         }
         assert!(real_wall_adjacent(&sc, &by_col, id, 5, 2));
     }
@@ -1194,9 +1194,9 @@ mod tests {
         let sc = build_cells(&[(0, 0, 0)], 2);
         let id = sc.id((0, 0, 0)).unwrap();
         let mut by_col = ColumnIz::default();
-        by_col.insert((1, 0), vec![10]);
+        by_col.add((1, 0, 10));
         for col in [(-1, 0), (0, -1), (0, 1)] {
-            by_col.insert(col, vec![0]);
+            by_col.add((col.0, col.1, 0));
         }
         assert!(real_wall_adjacent(&sc, &by_col, id, 5, 2));
     }
@@ -1208,9 +1208,9 @@ mod tests {
         let sc = build_cells(&[(0, 0, 0)], 2);
         let id = sc.id((0, 0, 0)).unwrap();
         let mut by_col = ColumnIz::default();
-        by_col.insert((2, 0), vec![0]);
+        by_col.add((2, 0, 0));
         for col in [(-1, 0), (0, -1), (0, 1)] {
-            by_col.insert(col, vec![0]);
+            by_col.add((col.0, col.1, 0));
         }
         assert!(!real_wall_adjacent(&sc, &by_col, id, 5, 2));
     }
@@ -1221,9 +1221,9 @@ mod tests {
         let sc = build_cells(&[(0, 0, 0)], 2);
         let id = sc.id((0, 0, 0)).unwrap();
         let mut by_col = ColumnIz::default();
-        by_col.insert((10, 0), vec![0]);
+        by_col.add((10, 0, 0));
         for col in [(-1, 0), (0, -1), (0, 1)] {
-            by_col.insert(col, vec![0]);
+            by_col.add((col.0, col.1, 0));
         }
         assert!(real_wall_adjacent(&sc, &by_col, id, 5, 2));
     }

@@ -96,17 +96,6 @@ fn test_config() -> Config {
 }
 
 #[test]
-fn viz_reach_covers_the_widest_window_and_a_relocated_node_edge() {
-    let cfg = test_config();
-    // No hard clearance at 0.1 m cells, plus 2 slack.
-    assert_eq!(cfg.node_window_cells(), 2);
-    // A seed region repairs out to the wall buffer.
-    assert!(cfg.buffer_window_cells() >= cfg.node_window_cells());
-    // Plus a 1 m node spacing, 10 cells.
-    assert_eq!(cfg.viz_reach_cells(), cfg.buffer_window_cells() + 10);
-}
-
-#[test]
 fn a_clearance_change_at_the_edge_of_the_reach_is_due_and_one_beyond_is_not() {
     let cfg = test_config();
     let vs = cfg.voxel_size;

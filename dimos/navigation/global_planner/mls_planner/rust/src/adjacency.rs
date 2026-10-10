@@ -101,7 +101,6 @@ impl SurfaceCells {
     }
 
     /// Remove a cell, tombstoning its slot and dropping its edges.
-    #[allow(dead_code)]
     pub fn remove(&mut self, k: VoxelKey) -> Option<CellId> {
         let id = self.by_coord.remove(&k)?;
         let outbound = std::mem::take(&mut self.edges[id as usize]);

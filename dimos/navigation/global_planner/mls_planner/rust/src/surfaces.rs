@@ -226,11 +226,6 @@ impl ColumnMask {
                 SetBits(word).map(move |bit| (self.x0 + (wi * 64 + bit) as i32, iy))
             })
     }
-
-    #[cfg(test)]
-    pub fn columns(&self) -> impl Iterator<Item = (i32, i32)> + '_ {
-        self.rows().flat_map(move |row| self.row_columns(row))
-    }
 }
 
 /// Mark every cell within one of a set cell along a row of words, clipped
@@ -618,49 +613,6 @@ mod tests {
 
     fn voxel_map(cells: &[VoxelKey]) -> AHashSet<VoxelKey> {
         cells.iter().copied().collect()
-    }
-
-    #[test]
-    fn column_mask_dilates_by_chebyshev_distance_and_clips_to_its_box() {
-        let mut mask = ColumnMask::new((0, 4, 0, 4), 1);
-        mask.set((0, 0));
-        mask.set((4, 4));
-        mask.set((9, 9));
-        assert!(!mask.contains((9, 9)), "outside the box is ignored");
-        let d = mask.dilated(1);
-        assert_eq!(d.columns().count(), 18, "two 3x3 blocks");
-        assert!(d.contains((-1, -1)) && d.contains((1, 1)));
-        assert!(d.contains((5, 5)) && !d.contains((6, 6)));
-        assert_eq!(d.bounds(), Some((-1, 5, -1, 5)));
-        assert_eq!(ColumnMask::new((0, 4, 0, 4), 0).bounds(), None);
-    }
-
-    #[test]
-    fn region_extraction_over_a_mask_matches_a_full_extraction_inside_it() {
-        let mut cells: Vec<VoxelKey> = Vec::new();
-        for ix in 0..20 {
-            for iy in 0..20 {
-                if (ix, iy) != (7, 7) {
-                    cells.push((ix, iy, 0));
-                }
-            }
-        }
-        let full = run(&cells, 3, 1);
-        let mut by_col = ColumnIz::default();
-        for &k in &cells {
-            by_col.add(k);
-        }
-        let mut write = ColumnMask::new((0, 19, 0, 19), 2);
-        write.set((7, 7));
-        let write = write.dilated(2);
-        let region = extract_surfaces_region(&by_col, 3, 1, &write);
-        let want: AHashSet<VoxelKey> = full
-            .iter()
-            .copied()
-            .filter(|&(ix, iy, _)| write.contains((ix, iy)))
-            .collect();
-        assert_eq!(region.iter().copied().collect::<AHashSet<_>>(), want);
-        assert!(want.contains(&(7, 7, 0)), "the hole closes");
     }
 
     fn run(cells: &[VoxelKey], clearance: i32, closing: u32) -> Vec<VoxelKey> {

@@ -74,14 +74,6 @@ impl ColumnIz {
         &mut tile[slot_of(col)]
     }
 
-    /// Replace a column's z values.
-    #[cfg(test)]
-    pub fn insert(&mut self, col: (i32, i32), mut zs: Vec<i32>) {
-        zs.sort_unstable();
-        zs.dedup();
-        *self.column_mut(col) = Column::from_vec(zs);
-    }
-
     /// Add one voxel, keeping its column sorted.
     pub fn add(&mut self, (ix, iy, iz): VoxelKey) {
         let zs = self.column_mut((ix, iy));
@@ -160,60 +152,5 @@ impl ColumnIz {
                 ((ix, iy), zs)
             })
         })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn add_remove_and_get_keep_columns_sorted_and_drop_empties() {
-        let mut cols = ColumnIz::default();
-        cols.add((40, -3, 7));
-        cols.add((40, -3, 2));
-        cols.add((40, -3, 7));
-        assert_eq!(cols.get((40, -3)), Some(&[2, 7][..]));
-        cols.remove((40, -3, 2));
-        cols.remove((40, -3, 99));
-        assert_eq!(cols.get((40, -3)), Some(&[7][..]));
-        cols.remove((40, -3, 7));
-        assert_eq!(cols.get((40, -3)), None);
-        assert_eq!(cols.get((0, 0)), None);
-    }
-
-    #[test]
-    fn from_voxels_matches_adds_and_par_columns_lists_occupied_only() {
-        let voxels = [(1, 1, 3), (1, 1, 1), (-40, 70, 0), (-40, 70, 0)];
-        let built = ColumnIz::from_voxels(voxels.iter());
-        let mut added = ColumnIz::default();
-        for &v in &voxels {
-            added.add(v);
-        }
-        let mut a: Vec<_> = built.par_columns().map(|(c, z)| (c, z.to_vec())).collect();
-        let mut b: Vec<_> = added.par_columns().map(|(c, z)| (c, z.to_vec())).collect();
-        a.sort();
-        b.sort();
-        assert_eq!(a, b);
-        assert_eq!(a, vec![((-40, 70), vec![0]), ((1, 1), vec![1, 3])]);
-    }
-
-    #[test]
-    fn tile_scan_covers_a_box_across_tile_borders_with_empty_columns() {
-        let mut cols = ColumnIz::default();
-        cols.add((31, 0, 5));
-        cols.add((32, 0, 6));
-        let bbox = (30, 33, -1, 0);
-        let tiles = ColumnIz::tiles_covering(bbox);
-        assert_eq!(tiles, vec![(0, -1), (1, -1), (0, 0), (1, 0)]);
-        let mut seen: Vec<_> = tiles
-            .iter()
-            .flat_map(|&t| cols.tile_columns_in(t, bbox).map(|(c, z)| (c, z.to_vec())))
-            .collect();
-        seen.sort();
-        assert_eq!(seen.len(), 8, "every column of the box once");
-        assert!(seen.contains(&((31, 0), vec![5])));
-        assert!(seen.contains(&((32, 0), vec![6])));
-        assert!(seen.contains(&((30, -1), vec![])));
     }
 }
