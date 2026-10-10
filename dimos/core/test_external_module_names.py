@@ -161,6 +161,7 @@ if __name__ == "__main__":
     try:
         coordinator.start()
         worker = coordinator.deploy(Worker)
+        coordinator.start_all_modules()
         assert Worker.name == worker.remote_name == worker.identity() == "__main__.Worker"
         assert coordinator.list_module_names() == ["__main__.Worker"]
     finally:
