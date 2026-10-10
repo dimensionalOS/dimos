@@ -107,3 +107,6 @@ optuna.db
 
 # policy blobs are loaded from outside the repository
 *.bin
+
+# Prepared, hash-verified upstream parser; included only in build artifacts.
+/dimos/message_codegen/.upstream/
