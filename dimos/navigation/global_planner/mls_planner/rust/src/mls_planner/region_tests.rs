@@ -54,8 +54,17 @@ fn seed_regions(
 /// Feed a world to the planner region by region, as a seed load arrives.
 fn load_by_regions(p: &mut Planner, points: &[(f32, f32, f32)], center: (f32, f32), cfg: &Config) {
     for (bounds, cloud) in seed_regions(points, 2.0, center, cfg.voxel_size) {
-        p.update_region(&cloud, &bounds, cfg);
+        p.update_seed_region(&cloud, &bounds, cfg);
     }
+}
+
+/// Wall clearance per cell, clamped to the band a repair keeps exact.
+fn clearance_map(p: &Planner, cfg: &Config) -> BTreeMap<VoxelKey, u32> {
+    let band = cfg.wall_clearance_m + cfg.wall_buffer_m;
+    p.surface_clearance()
+        .into_iter()
+        .map(|(c, d)| (c, d.min(band).to_bits()))
+        .collect()
 }
 
 /// Slack for comparing regional and full-rebuild path lengths. Node
@@ -84,15 +93,6 @@ fn test_config() -> Config {
         viz_sweep_regions: 0,
         worker_threads: 4,
     }
-}
-
-#[test]
-fn viz_reach_covers_the_node_window_and_a_relocated_node_edge() {
-    let cfg = test_config();
-    // 0.3 m of wall band at 0.1 m cells is 3 cells, plus 2 slack.
-    assert_eq!(cfg.node_window_cells(), 5);
-    // Plus a 1 m node spacing, 10 cells.
-    assert_eq!(cfg.viz_reach_cells(), 15);
 }
 
 #[test]
@@ -247,6 +247,7 @@ fn node_edge_pairs(p: &Planner) -> BTreeSet<(VoxelKey, VoxelKey, u32)> {
     let cells = &p.graph.cells;
     p.graph
         .node_edges
+        .edges
         .iter()
         .map(|e| {
             let a = cells.coord(e.a);
@@ -924,6 +925,79 @@ fn seed_regions_match_full_rebuild() {
     assert_plans_equivalent(&full, &seeded, &cfg);
 }
 
+/// A seed region repairs out to the whole wall buffer, so the clearance and
+/// the buffer costs around a wall on a region border match a full rebuild.
+#[test]
+fn seed_regions_keep_wall_buffer_costs_exact_across_borders() {
+    let mut cfg = test_config();
+    cfg.wall_clearance_m = 0.2;
+    cfg.wall_buffer_m = 0.8;
+    // big_world's wall stands at x = 4.05, just past the region border at 4.0.
+    let all = big_world();
+
+    let mut full = Planner::new(cfg.worker_threads);
+    full.update_global_map(&all, &cfg);
+
+    let mut seeded = Planner::new(cfg.worker_threads);
+    load_by_regions(&mut seeded, &all, (0.5, 0.5), &cfg);
+
+    assert_eq!(surface_set(&seeded), surface_set(&full), "surface mismatch");
+    assert_eq!(
+        clearance_map(&seeded, &cfg),
+        clearance_map(&full, &cfg),
+        "clearance mismatch"
+    );
+    assert_eq!(
+        cell_edges(&seeded),
+        cell_edges(&full),
+        "cell edges mismatch"
+    );
+}
+
+/// A region update that empties every surface cell near it leaves no node or
+/// edge behind, and the graph grows back cleanly when surface returns.
+#[test]
+fn wipe_then_regrow_leaves_no_ghost_graph() {
+    let cfg = test_config();
+    let vs = cfg.voxel_size;
+    let half = vs * 0.5;
+    let floor = |n: i32| -> Vec<(f32, f32, f32)> {
+        (0..n)
+            .flat_map(|ix| {
+                (0..n).map(move |iy| (ix as f32 * vs + half, iy as f32 * vs + half, half))
+            })
+            .collect()
+    };
+    let mut p = Planner::new(cfg.worker_threads);
+    p.update_global_map(&floor(80), &cfg);
+    assert!(!p.graph.nodes.is_empty());
+
+    let bounds = RegionBounds {
+        origin_x: 3.0,
+        origin_y: 3.0,
+        radius: 9.0,
+        z_min: -1.0,
+        z_max: 2.0,
+    };
+    p.update_region(&[], &bounds, &cfg);
+    assert!(p.graph.nodes.is_empty(), "nodes survived the wipe");
+    assert!(
+        p.graph.node_edges.edges.is_empty(),
+        "edges survived the wipe"
+    );
+
+    for n in [12, 20, 30, 45, 80] {
+        p.update_region(&floor(n), &bounds, &cfg);
+    }
+    let full = {
+        let mut full = Planner::new(cfg.worker_threads);
+        full.update_global_map(&floor(80), &cfg);
+        full
+    };
+    assert_eq!(cell_edges(&p), cell_edges(&full), "cell edges mismatch");
+    assert_plans_equivalent(&full, &p, &cfg);
+}
+
 /// Regions claim points by voxel center, so an off-center cloud seeds the
 /// same voxels a full rebuild quantizes.
 #[test]
@@ -1082,4 +1156,289 @@ fn goal_on_subclearance_spur_still_plans() {
         .expect("goal on a sub-clearance spur still reaches its component node");
     let last = *wp.last().expect("path has waypoints");
     assert!((last.0 - goal.0).abs() < 1e-3 && (last.1 - goal.1).abs() < 1e-3);
+}
+
+/// A ground plane with a deck 3 m above it. The deck has a three column gap
+/// at x 5..=7, and under the gap, on the row y = 3, the ground has only the
+/// middle column.
+fn deck_over_a_gap(with_middle: bool) -> Vec<(f32, f32, f32)> {
+    let vs = 0.1_f32;
+    let half = vs * 0.5;
+    let at = |ix: i32, iy: i32, iz: i32| {
+        (
+            ix as f32 * vs + half,
+            iy as f32 * vs + half,
+            iz as f32 * vs + half,
+        )
+    };
+    let mut pts = Vec::new();
+    for ix in 0..13 {
+        for iy in 0..7 {
+            let under_gap = iy == 3 && (5..=7).contains(&ix);
+            if !under_gap || (ix == 6 && with_middle) {
+                pts.push(at(ix, iy, 0));
+            }
+            if !(5..=7).contains(&ix) {
+                pts.push(at(ix, iy, 30));
+            }
+        }
+    }
+    pts
+}
+
+#[test]
+fn a_column_that_empties_under_filled_surface_frees_the_wall_across_the_gap() {
+    let mut cfg = test_config();
+    // One closing pass fills the single-column holes in the ground and leaves
+    // the three column gap in the deck open.
+    cfg.surface_closing_radius = 0.1;
+    let vs = cfg.voxel_size;
+    let deck_edge = (4, 3, 30);
+    let wall_distance = |p: &Planner| {
+        p.surface_clearance()
+            .into_iter()
+            .find(|&(c, _)| c == deck_edge)
+            .map(|(_, d)| d)
+            .expect("the deck edge is a surface cell")
+    };
+
+    // Looking across the gap from the deck edge, the scan passes the empty
+    // column at x 5 and stops on the ground voxel at x 6: a drop.
+    let mut p = Planner::new(cfg.worker_threads);
+    p.update_global_map(&deck_over_a_gap(true), &cfg);
+    assert_eq!(wall_distance(&p), 0.0);
+    let ground_before: BTreeSet<VoxelKey> =
+        surface_set(&p).into_iter().filter(|c| c.2 == 0).collect();
+
+    // The ground voxel goes. Closing still fills its cell, so no surface
+    // changes, but the scan now crosses the whole gap to the far deck.
+    let world = deck_over_a_gap(false);
+    let spot = RegionBounds {
+        origin_x: 0.65,
+        origin_y: 0.35,
+        radius: 0.15,
+        z_min: -0.5,
+        z_max: 0.5,
+    };
+    p.update_region(&slice(&world, &spot, vs), &spot, &cfg);
+    let ground_after: BTreeSet<VoxelKey> =
+        surface_set(&p).into_iter().filter(|c| c.2 == 0).collect();
+    assert_eq!(ground_after, ground_before, "the hole stays filled");
+
+    let mut full = Planner::new(cfg.worker_threads);
+    full.update_global_map(&world, &cfg);
+    assert!(
+        wall_distance(&full) > 0.0,
+        "a full rebuild sees no wall there"
+    );
+    assert_eq!(wall_distance(&p), wall_distance(&full));
+}
+
+/// Two decks a step apart with a one column slot between them on the row
+/// y = 3, and one post in the slot's far column reaching the upper deck's
+/// height above a lone voxel on the ground.
+fn decks_with_a_post(with_post_top: bool) -> Vec<(f32, f32, f32)> {
+    let vs = 0.1_f32;
+    let half = vs * 0.5;
+    let at = |ix: i32, iy: i32, iz: i32| {
+        (
+            ix as f32 * vs + half,
+            iy as f32 * vs + half,
+            iz as f32 * vs + half,
+        )
+    };
+    let mut pts = Vec::new();
+    for iy in 0..7 {
+        for ix in 0..=4 {
+            pts.push(at(ix, iy, 19));
+        }
+        let upper_from = if iy == 3 { 7 } else { 5 };
+        for ix in upper_from..=12 {
+            pts.push(at(ix, iy, 20));
+        }
+    }
+    pts.push(at(6, 3, 0));
+    if with_post_top {
+        pts.push(at(6, 3, 20));
+    }
+    pts
+}
+
+#[test]
+fn a_voxel_that_goes_under_filled_surface_raises_the_wall_across_the_gap() {
+    let mut cfg = test_config();
+    // One closing pass keeps the post's cell filled once its voxel is gone.
+    cfg.surface_closing_radius = 0.1;
+    let vs = cfg.voxel_size;
+    let lower_edge = (4, 3, 19);
+    let wall_distance = |p: &Planner| {
+        p.surface_clearance()
+            .into_iter()
+            .find(|&(c, _)| c == lower_edge)
+            .map(|(_, d)| d)
+            .expect("the lower deck's edge is a surface cell")
+    };
+
+    // From the lower deck's edge the scan crosses the empty slot column and
+    // reaches the post top, one step up: no wall.
+    let mut p = Planner::new(cfg.worker_threads);
+    p.update_global_map(&decks_with_a_post(true), &cfg);
+    assert!(wall_distance(&p) > 0.0);
+    let before = surface_set(&p);
+
+    // The post top goes. Its column still holds the ground voxel and closing
+    // keeps its cell, so no surface changes and no column empties, but the
+    // scan now ends on a column with nothing to step onto: a drop.
+    let world = decks_with_a_post(false);
+    let spot = RegionBounds {
+        origin_x: 0.65,
+        origin_y: 0.35,
+        radius: 0.15,
+        z_min: 1.5,
+        z_max: 2.5,
+    };
+    p.update_region(&slice(&world, &spot, vs), &spot, &cfg);
+    assert_eq!(surface_set(&p), before, "the post's cell stays filled");
+
+    let mut full = Planner::new(cfg.worker_threads);
+    full.update_global_map(&world, &cfg);
+    assert_eq!(wall_distance(&full), 0.0, "a full rebuild sees the drop");
+    assert_eq!(wall_distance(&p), 0.0);
+}
+
+#[test]
+fn flicker_between_nodes_does_not_seed_more_nodes() {
+    let cfg = test_config();
+    let vs = cfg.voxel_size;
+    let half = vs * 0.5;
+    let mut floor = Vec::new();
+    for ix in 0..60 {
+        for iy in 0..60 {
+            floor.push((ix as f32 * vs + half, iy as f32 * vs + half, half));
+        }
+    }
+    let mut p = Planner::new(cfg.worker_threads);
+    p.update_global_map(&floor, &cfg);
+    let before = p.graph().nodes.len();
+    assert!(before > 4, "the open floor holds several nodes: {before}");
+
+    // A bump appears and clears again at spots all over the floor.
+    for k in 0..40 {
+        let (bx, by) = (5 + (k * 7) % 50, 5 + (k * 13) % 50);
+        let spot = RegionBounds {
+            origin_x: bx as f32 * vs + half,
+            origin_y: by as f32 * vs + half,
+            radius: 0.3,
+            z_min: 0.0,
+            z_max: 0.5,
+        };
+        let mut bumped = floor.clone();
+        bumped.push((bx as f32 * vs + half, by as f32 * vs + half, vs + half));
+        p.update_region(&slice(&bumped, &spot, vs), &spot, &cfg);
+        p.update_region(&slice(&floor, &spot, vs), &spot, &cfg);
+    }
+    let after = p.graph().nodes.len();
+    assert!(
+        after <= before + 2,
+        "flicker grew the graph from {before} to {after} nodes"
+    );
+}
+
+/// Every labeled cell's cached chain walks live, adjacent cells back to the
+/// node it is labeled with, and no cell a labeled neighbor can step into is
+/// left unreached.
+fn assert_chains_reach_their_nodes(p: &Planner) {
+    let g = p.graph();
+    for id in g.cells.ids() {
+        let i = id as usize;
+        let labeled = |c: CellId| {
+            g.cell_state
+                .dist
+                .get(c as usize)
+                .is_some_and(|d| d.is_finite())
+        };
+        if !labeled(id) {
+            assert!(
+                !g.cells
+                    .neighbors(id)
+                    .iter()
+                    .any(|e| e.cost.is_finite() && labeled(e.dest)),
+                "cell {:?} is unreached although a labeled neighbor can step into it",
+                g.cells.coord(id)
+            );
+            continue;
+        }
+        let mut cur = id;
+        let mut steps = 0;
+        loop {
+            let pred = g.cell_state.pred[cur as usize];
+            if pred == crate::adjacency::NO_CELL {
+                break;
+            }
+            assert!(
+                g.cells.is_live(pred),
+                "chain of {:?} hits a dead cell",
+                g.cells.coord(id)
+            );
+            assert!(
+                g.cells.neighbors(cur).iter().any(|e| e.dest == pred),
+                "chain of {:?} jumps between non-neighbors",
+                g.cells.coord(id)
+            );
+            cur = pred;
+            steps += 1;
+            assert!(steps < 10_000, "chain of {:?} loops", g.cells.coord(id));
+        }
+        assert!(
+            g.node_index.has(cur),
+            "chain of {:?} ends off a node at {:?}",
+            g.cells.coord(id),
+            g.cells.coord(cur)
+        );
+        assert_eq!(
+            g.cell_state.source[i],
+            cur,
+            "cell {:?} is labeled with another node than its chain reaches",
+            g.cells.coord(id)
+        );
+    }
+}
+
+#[test]
+fn chains_reach_their_nodes_through_a_stream_of_changes() {
+    let cfg = test_config();
+    let vs = cfg.voxel_size;
+    let half = vs * 0.5;
+    let all = big_world();
+    let mut p = Planner::new(cfg.worker_threads);
+    load_by_regions(&mut p, &all, (4.0, 4.0), &cfg);
+    assert_chains_reach_their_nodes(&p);
+
+    // Bumps appear and clear all over the map, each through a small region.
+    let mut world = all.clone();
+    for k in 0..60 {
+        let (bx, by) = (6 + (k * 17) % 85, 6 + (k * 29) % 85);
+        let spot = RegionBounds {
+            origin_x: bx as f32 * vs + half,
+            origin_y: by as f32 * vs + half,
+            radius: 0.35,
+            z_min: -1.0,
+            z_max: 2.0,
+        };
+        let before = world.len();
+        for dz in 1..4 {
+            world.push((
+                bx as f32 * vs + half,
+                by as f32 * vs + half,
+                dz as f32 * vs + half,
+            ));
+        }
+        p.update_region(&slice(&world, &spot, vs), &spot, &cfg);
+        assert_chains_reach_their_nodes(&p);
+        if k % 3 == 0 {
+            world.truncate(before);
+            p.update_region(&slice(&world, &spot, vs), &spot, &cfg);
+            assert_chains_reach_their_nodes(&p);
+        }
+    }
 }

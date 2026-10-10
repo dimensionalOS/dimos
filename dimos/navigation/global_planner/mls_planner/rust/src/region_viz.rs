@@ -159,8 +159,9 @@ impl RegionViz {
         }
     }
 
-    /// The cells due this tick with their current content: the changed ones
-    /// first, then the ones that just emptied, then the sweep slice.
+    /// The cells due this tick with their content, in send order: the sweep
+    /// slice, then the changed cells, then the ones that just emptied. The
+    /// sweep goes first since congestion drops the tail of a burst.
     pub fn tick(
         &mut self,
         surface: impl Iterator<Item = (VoxelKey, f32)>,
@@ -177,7 +178,8 @@ impl RegionViz {
         };
         let cells = bucket(surface, segments, self.pitch, wanted.as_ref());
         let (mut due, unchanged) = self.classify(cells, wanted.as_ref());
-        self.sweep_into(&mut due, candidates, unchanged);
+        let swept = self.sweep_into(&mut due, candidates, unchanged);
+        due.rotate_right(swept);
         due
     }
 
@@ -212,13 +214,14 @@ impl RegionViz {
         (due, unchanged)
     }
 
-    /// Append the sweep slice: the first candidates not already due.
+    /// Append the sweep slice: the first candidates not already due. Returns
+    /// the number of cells appended.
     fn sweep_into(
         &mut self,
         due: &mut Vec<(Cell, RegionContent)>,
         candidates: Vec<Cell>,
         mut unchanged: AHashMap<Cell, RegionContent>,
-    ) {
+    ) -> usize {
         let busy: AHashSet<Cell> = due.iter().map(|(cell, _)| *cell).collect();
         let mut swept = 0;
         for cell in candidates {
@@ -241,6 +244,7 @@ impl RegionViz {
             swept += 1;
             self.cursor = Some(cell);
         }
+        swept
     }
 
     /// Published cells past the cursor, wrapping, up to the one that makes a
@@ -380,9 +384,9 @@ mod tests {
 
         viz.mark_window((15, 15, 0, 0));
         let due = tick(&mut viz, &[(0, 0)], &[]);
-        // Empty now, then the sweep slice starting at the first key.
-        assert_eq!(due_cells(&due), vec![(1, 0), (0, 0)]);
-        assert!(due[0].1.surface.is_empty() && due[0].1.segments.is_empty());
+        // The sweep slice starting at the first key, then the emptied cell, empty.
+        assert_eq!(due_cells(&due), vec![(0, 0), (1, 0)]);
+        assert!(due[1].1.surface.is_empty() && due[1].1.segments.is_empty());
 
         // The sweep reaches the emptied cell, sends it empty once more, forgets it.
         let due = tick(&mut viz, &[(0, 0)], &[]);
@@ -393,13 +397,13 @@ mod tests {
     }
 
     #[test]
-    fn changed_cells_come_first_and_the_sweep_runs_on_a_busy_tick() {
+    fn the_sweep_slice_goes_first_and_runs_on_a_busy_tick() {
         let mut viz = RegionViz::new(10, 0, 2);
         let map = [(0, 0), (15, 0), (0, 15), (15, 15), (25, 0)];
         viz.mark_all();
         tick(&mut viz, &map, &[]);
 
-        // Three changes still leave a full slice of two unchanged cells.
+        // Three changes still leave a full slice of two unchanged cells, sent first.
         let mut changed = surface(&map);
         for item in changed.iter_mut().take(3) {
             item.1 = 0.25;
@@ -407,7 +411,7 @@ mod tests {
         viz.mark_all();
         assert_eq!(
             due_cells(&viz.tick(changed.into_iter(), std::iter::empty())),
-            vec![(0, 0), (0, 1), (1, 0), (1, 1), (2, 0)]
+            vec![(1, 1), (2, 0), (0, 0), (0, 1), (1, 0)]
         );
     }
 
@@ -428,7 +432,7 @@ mod tests {
         let due = viz.tick(changed.into_iter(), std::iter::empty());
         assert_eq!(
             due_cells(&due),
-            vec![(0, 0), (0, 1), (1, 0), (1, 1), (2, 0)]
+            vec![(1, 1), (2, 0), (0, 0), (0, 1), (1, 0)]
         );
         assert!(due.iter().all(|(_, content)| content.surface.len() == 1));
     }

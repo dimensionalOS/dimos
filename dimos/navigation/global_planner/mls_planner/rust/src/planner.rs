@@ -18,7 +18,7 @@ use ahash::{AHashMap, AHashSet};
 
 use crate::adjacency::{rise, CellId, SurfaceCells, SurfaceLookup};
 use crate::dijkstra::{walk_preds, Scored};
-use crate::edges::{NodeEdgeIdx, NodeId, PlannerGraph, NO_NODE};
+use crate::edges::{NodeId, PlannerGraph, NO_NODE};
 use crate::mls_planner::Config;
 use crate::nodes::penalty_of;
 use crate::voxel::{surface_point_xyz, VoxelKey};
@@ -608,11 +608,11 @@ fn node_dijkstra(
         if d > dist.get(&u).copied().unwrap_or(f32::INFINITY) {
             continue;
         }
-        let Some(adj) = plg.node_adj.get(&u) else {
+        let Some(adj) = plg.node_edges.adj.get(&u) else {
             continue;
         };
         for &edge_idx in adj {
-            let edge = &plg.node_edges[edge_idx as usize];
+            let edge = &plg.node_edges.edges[edge_idx as usize];
             let neighbor = if edge.a == u { edge.b } else { edge.a };
             let nd = d + edge.cost;
             if nd < dist.get(&neighbor).copied().unwrap_or(f32::INFINITY) {
@@ -665,9 +665,11 @@ fn assemble_cells(
 
     for pair in node_seq.windows(2) {
         let (a, b) = (pair[0], pair[1]);
-        let edge_idx =
-            edge_between(plg, a, b).expect("consecutive nodes in path must share an edge");
-        let edge = &plg.node_edges[edge_idx as usize];
+        let edge_idx = plg
+            .node_edges
+            .between(a, b)
+            .expect("consecutive nodes in path must share an edge");
+        let edge = &plg.node_edges.edges[edge_idx as usize];
 
         // The stored corridor runs a to b. Dead cells are skipped: the update
         // safety walk drops broken corridors, so gaps here are rare races.
@@ -842,17 +844,6 @@ fn segment_metrics(
     Some((max_pen, rise(rise_cells, wc.voxel_size)))
 }
 
-fn edge_between(plg: &PlannerGraph, a: NodeId, b: NodeId) -> Option<NodeEdgeIdx> {
-    for &edge_idx in plg.node_adj.get(&a)? {
-        let edge = &plg.node_edges[edge_idx as usize];
-        let other = if edge.a == a { edge.b } else { edge.a };
-        if other == b {
-            return Some(edge_idx);
-        }
-    }
-    None
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -882,7 +873,6 @@ mod tests {
             &plg.nodes,
             &mut plg.cell_state,
             &mut plg.node_edges,
-            &mut plg.node_adj,
         );
         plg
     }

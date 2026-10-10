@@ -15,21 +15,24 @@
 //! Config and the owned-state Planner that builds and queries the MLS graph.
 
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
-use ahash::{AHashMap, AHashSet};
-use dimos_module::{native_config, worker_pool};
+use ahash::AHashSet;
+use dimos_module::{debug_throttled, native_config, worker_pool};
 use rayon::prelude::*;
 use validator::ValidationError;
 
 use crate::adjacency::{build_surface_cells, build_surface_lookup, rebuild_edges_around, CellId};
-use crate::edges::{build_node_edges, build_node_edges_region, edges_to_segments, PlannerGraph};
+use crate::columns::TILE_EDGE;
+use crate::dijkstra::window_clusters;
+use crate::edges::{
+    build_node_edges, build_node_edges_region, edges_to_segments, PlannerGraph, RepairWindow,
+};
 use crate::nodes::{
     place_nodes, place_nodes_region, relocate_dead_nodes, PlacementParams, HOLE_SPAN_CELLS,
 };
 use crate::planner;
-use crate::surfaces::{
-    add_to_by_col, extract_surfaces, extract_surfaces_region, remove_from_by_col, ColumnIz,
-};
+use crate::surfaces::{extract_surfaces, extract_surfaces_region, ColumnIz, ColumnMask};
 use crate::voxel::{voxelize, VoxelKey};
 
 #[native_config]
@@ -116,19 +119,26 @@ impl Config {
         (self.step_threshold_m / self.voxel_size).floor() as i32
     }
 
-    /// Cells a changed cell can touch through wall distances: the penalty
-    /// band plus slack, the radius of the node window's BFS ball.
+    /// Radius of the node window's BFS ball around a changed cell: the hard
+    /// clearance plus slack. Costs in the wider penalty band lag until a later
+    /// change reaches them, which only shifts path preference.
     pub fn node_window_cells(&self) -> i32 {
-        const SLACK_CELLS: i32 = 2;
-        let buffer_cells =
-            ((self.wall_clearance_m + self.wall_buffer_m) / self.voxel_size).ceil() as i32;
-        buffer_cells + SLACK_CELLS
+        (self.wall_clearance_m / self.voxel_size).ceil() as i32 + WINDOW_SLACK_CELLS
     }
 
-    /// Columns past a rewritten window the viz must reread: the node window,
-    /// plus one node spacing for the edges of a relocated node.
+    /// Radius of the ball for a repair that keeps wall buffer costs exact: the
+    /// whole penalty band plus slack.
+    pub fn buffer_window_cells(&self) -> i32 {
+        ((self.wall_clearance_m + self.wall_buffer_m) / self.voxel_size).ceil() as i32
+            + WINDOW_SLACK_CELLS
+    }
+
+    /// Columns past a rewritten window the viz must reread: the widest repair
+    /// window, which a seed region uses, plus one node spacing for the edges
+    /// of a relocated node.
     pub fn viz_reach_cells(&self) -> i32 {
-        self.node_window_cells() + (self.node_spacing_m / self.voxel_size).ceil() as i32
+        self.buffer_window_cells().max(self.node_window_cells())
+            + (self.node_spacing_m / self.voxel_size).ceil() as i32
     }
 
     /// Config-derived scalars for node placement.
@@ -148,6 +158,13 @@ impl Config {
 
 /// Inclusive column window, as x0, x1, y0, y1.
 pub type ColumnWindow = (i32, i32, i32, i32);
+
+/// Cells a repair window reaches past the band it must keep exact.
+const WINDOW_SLACK_CELLS: i32 = 2;
+
+fn ms_since(start: Instant) -> f64 {
+    start.elapsed().as_secs_f64() * 1e3
+}
 
 /// Cylindrical region the planner re-derives from a local map slice.
 #[derive(Clone, Copy)]
@@ -251,176 +268,253 @@ impl Planner {
         bounds: &RegionBounds,
         config: &Config,
     ) -> Option<ColumnWindow> {
+        self.update_with(local_points, bounds, config, config.node_window_cells())
+    }
+
+    /// update_region for a region of a seeded map. It repairs out to the full
+    /// wall buffer, so the costs around a seeded wall are exact across region
+    /// borders. Seed regions only run when no live cloud waits.
+    pub fn update_seed_region(
+        &mut self,
+        points: &[(f32, f32, f32)],
+        bounds: &RegionBounds,
+        config: &Config,
+    ) -> Option<ColumnWindow> {
+        self.update_with(points, bounds, config, config.buffer_window_cells())
+    }
+
+    fn update_with(
+        &mut self,
+        local_points: &[(f32, f32, f32)],
+        bounds: &RegionBounds,
+        config: &Config,
+        window_steps: i32,
+    ) -> Option<ColumnWindow> {
         let pool = Arc::clone(&self.pool);
         pool.install(|| {
             let voxel_size = config.voxel_size;
             let clearance = config.headroom_cells();
             let pad = (2 * config.closing_passes()) as i32;
 
+            let stage = Instant::now();
+            let (changed, edits) = self.replace_region_voxels(local_points, bounds, voxel_size);
+            let diff_ms = ms_since(stage);
             // No voxel changed, so surfaces and the graph are untouched.
-            let (bx0, bx1, by0, by1) =
-                self.replace_region_voxels(local_points, bounds, voxel_size)?;
+            if changed.is_empty() {
+                return None;
+            }
 
-            // A changed column shifts surfaces only within pad of it.
-            let write = (bx0 - pad, bx1 + pad, by0 - pad, by1 + pad);
+            // A changed column shifts surfaces only within pad of it, and
+            // the extraction reads one more pad around that.
+            let bbox = bounds.column_bbox(voxel_size);
+            let mut footprint = ColumnMask::new(bbox, 2 * pad);
+            for &col in &changed {
+                footprint.set(col);
+            }
+            let write = footprint.dilated(pad);
+            let stage = Instant::now();
             let new_cells =
-                extract_surfaces_region(&self.by_col, clearance, config.closing_passes(), write);
-            let (added, removed) = self.replace_surface_region(write, &new_cells);
+                extract_surfaces_region(&self.by_col, clearance, config.closing_passes(), &write);
+            let extract_ms = ms_since(stage);
+            let stage = Instant::now();
+            let (added, removed) = self.replace_surface_region(&write, &new_cells);
+            let replace_ms = ms_since(stage);
+            let (cells_added, cells_removed) = (added.len(), removed.len());
 
-            self.rebuild_region_graph(added, removed, config);
-            Some(write)
+            let stage = Instant::now();
+            self.rebuild_region_graph(added, removed, &edits, window_steps, config);
+            debug_throttled!(
+                Duration::from_secs(5),
+                diff_ms,
+                extract_ms,
+                replace_ms,
+                graph_ms = ms_since(stage),
+                bbox_columns = (bbox.1 - bbox.0 + 1) as i64 * (bbox.3 - bbox.2 + 1) as i64,
+                changed_columns = changed.len(),
+                cells_added,
+                cells_removed,
+                "region update stages"
+            );
+            write.bounds()
         })
     }
 
     /// Patch changed cells, then repair nodes and edges around the change.
-    /// A no-op when no surface cell changed.
+    /// A voxel edit can change a wall scan without changing any surface cell,
+    /// so the repair runs for the edits too.
     fn rebuild_region_graph(
         &mut self,
         added: Vec<VoxelKey>,
         removed: Vec<VoxelKey>,
+        edits: &VoxelEdits,
+        window_steps: i32,
         config: &Config,
     ) {
         let step = config.step_cells();
         // Removal frees cell ids and the insert loop below recycles them, so a
         // node id captured here is not stable. Capture doomed nodes by
         // coordinate while their ids still resolve.
-        let removed_set: AHashSet<VoxelKey> = removed.iter().copied().collect();
-        let dead_nodes: Vec<(usize, VoxelKey)> = self
-            .graph
-            .nodes
+        let dead_nodes: Vec<(usize, VoxelKey)> = removed
             .iter()
-            .enumerate()
-            .map(|(i, n)| (i, self.graph.cells.coord(n.cell_id)))
-            .filter(|(_, c)| removed_set.contains(c))
+            .filter_map(|&c| {
+                let i = self.graph.node_index.node_at(self.graph.cells.id(c)?)?;
+                Some((i, c))
+            })
             .collect();
-        for &c in &removed {
-            self.graph.cells.remove(c);
-        }
+        let removed_ids: Vec<CellId> = removed
+            .iter()
+            .filter_map(|&c| self.graph.cells.remove(c))
+            .collect();
         let mut added_ids: Vec<CellId> = Vec::with_capacity(added.len());
         for &c in &added {
             added_ids.push(self.graph.cells.insert(c));
         }
         let mut seeds = added;
         seeds.extend_from_slice(&removed);
-        if seeds.is_empty() {
+        if seeds.is_empty() && edits.changed.is_empty() && edits.flipped.is_empty() {
             return;
         }
 
+        let affected = self.changed_neighborhood(&seeds, step);
         rebuild_edges_around(
             &mut self.graph.cells,
             &self.graph.surface_lookup,
-            &seeds,
+            &affected,
             config.voxel_size,
             step,
         );
         let params = config.placement_params();
-        relocate_dead_nodes(
+        let mut gone_nodes = relocate_dead_nodes(
             &self.graph.cells,
             &self.graph.surface_lookup,
             &mut self.graph.nodes,
             &dead_nodes,
             &params,
+            &mut self.graph.node_index,
         );
-        let window = self.node_window(&seeds, config);
-        place_nodes_region(
+        let window = self.node_window(edits, &affected, window_steps, config);
+        if window.is_empty() && removed_ids.is_empty() && gone_nodes.is_empty() {
+            return;
+        }
+        let clusters = window_clusters(
+            &self.graph.cells,
+            &window,
+            &mut self.graph.node_scratch.seen,
+        );
+        self.graph
+            .cluster_index
+            .assign(self.graph.cells.slot_capacity(), &clusters);
+        let repair = RepairWindow {
+            cells: &window,
+            clusters: &clusters,
+            index: &self.graph.cluster_index,
+        };
+        gone_nodes.extend(place_nodes_region(
             &mut self.graph.cells,
             &self.by_col,
             &params,
             &added_ids,
-            &window,
+            &repair,
             &mut self.graph.wall_state,
+            &self.graph.cell_state,
             &mut self.graph.node_scratch,
+            &mut self.graph.node_index,
             &mut self.graph.nodes,
-        );
+        ));
         build_node_edges_region(
             &self.graph.cells,
             &self.graph.nodes,
-            &window,
+            &self.graph.node_index,
+            &repair,
+            &removed_ids,
+            &gone_nodes,
             &mut self.graph.cell_state,
             &mut self.graph.node_edges,
-            &mut self.graph.node_adj,
         );
+        self.graph.cluster_index.clear(&clusters);
     }
 
     /// Replace the cylinder's voxels with the local map points, ignoring
-    /// points outside it. Returns the column bbox of changed voxels.
+    /// points outside it. Returns the columns whose voxels changed and the
+    /// edits themselves.
     fn replace_region_voxels(
         &mut self,
         local_points: &[(f32, f32, f32)],
         bounds: &RegionBounds,
         voxel_size: f32,
-    ) -> Option<(i32, i32, i32, i32)> {
-        let new_set: AHashSet<VoxelKey> = local_points
-            .iter()
+    ) -> (Vec<(i32, i32)>, VoxelEdits) {
+        let incoming: Vec<VoxelKey> = local_points
+            .par_iter()
             .map(|&p| voxelize(p, voxel_size))
+            .filter(|&k| bounds.contains_voxel(k, voxel_size))
             .collect();
+        let bbox = bounds.column_bbox(voxel_size);
+        let buckets = ColumnBuckets::new(&incoming, bbox);
 
-        let (x0, x1, y0, y1) = bounds.column_bbox(voxel_size);
         let by_col = &self.by_col;
-        let stale: Vec<VoxelKey> = (x0..(x1 + 1))
+        let edits: Vec<ColumnEdit> = ColumnIz::tiles_covering(bbox)
             .into_par_iter()
-            .flat_map_iter(|ix| {
-                let mut local: Vec<VoxelKey> = Vec::new();
-                for iy in y0..=y1 {
-                    let Some(zs) = by_col.get(&(ix, iy)) else {
+            .flat_map_iter(|tile| {
+                let mut local: Vec<ColumnEdit> = Vec::new();
+                for (col, old) in by_col.tile_columns_in(tile, bbox) {
+                    let new = buckets.column(col);
+                    if old.is_empty() && new.is_empty() {
                         continue;
-                    };
-                    for &iz in zs {
-                        let k = (ix, iy, iz);
-                        if bounds.contains_voxel(k, voxel_size) && !new_set.contains(&k) {
-                            local.push(k);
-                        }
+                    }
+                    if let Some(edit) = diff_column(col, old, new, bounds, voxel_size) {
+                        local.push(edit);
                     }
                 }
                 local
             })
             .collect();
 
-        let mut bb = ChangeBounds::new();
-        for &k in &stale {
-            bb.add(k.0, k.1);
-            self.voxel_map.remove(&k);
-            remove_from_by_col(&mut self.by_col, k);
-        }
-        for &k in &new_set {
-            if !bounds.contains_voxel(k, voxel_size) {
-                continue;
+        let mut voxel_edits = VoxelEdits::default();
+        for edit in &edits {
+            let (ix, iy) = edit.col;
+            let was_empty = self.by_col.get(edit.col).is_none();
+            for &iz in &edit.removed {
+                self.voxel_map.remove(&(ix, iy, iz));
+                self.by_col.remove((ix, iy, iz));
             }
-            if self.voxel_map.insert(k) {
-                bb.add(k.0, k.1);
-                add_to_by_col(&mut self.by_col, k);
+            for &iz in &edit.added {
+                self.voxel_map.insert((ix, iy, iz));
+                self.by_col.add((ix, iy, iz));
+            }
+            if was_empty != self.by_col.get(edit.col).is_none() {
+                voxel_edits.flipped.push(edit.col);
+            } else {
+                let mut heights: Vec<i32> =
+                    edit.removed.iter().chain(&edit.added).copied().collect();
+                heights.sort_unstable();
+                voxel_edits.changed.push((edit.col, heights));
             }
         }
-        bb.bounds()
+        (edits.iter().map(|edit| edit.col).collect(), voxel_edits)
     }
 
-    /// Replace the surface_lookup entries for write-box columns whose cells
+    /// Replace the surface_lookup entries for write-mask columns whose cells
     /// changed, leaving identical columns untouched. Returns the added and
     /// removed cells so only the affected parts of the graph get patched.
     fn replace_surface_region(
         &mut self,
-        write: (i32, i32, i32, i32),
+        write: &ColumnMask,
         new_cells: &[VoxelKey],
     ) -> (Vec<VoxelKey>, Vec<VoxelKey>) {
-        let (x0, x1, y0, y1) = write;
-        let mut new_by_col: AHashMap<(i32, i32), Vec<i32>> = AHashMap::new();
-        for &(ix, iy, iz) in new_cells {
-            new_by_col.entry((ix, iy)).or_default().push(iz);
-        }
-        for zs in new_by_col.values_mut() {
-            zs.sort_unstable();
-            zs.dedup();
-        }
+        let Some(bbox) = write.bounds() else {
+            return (Vec::new(), Vec::new());
+        };
+        let new_by_col = ColumnBuckets::new(new_cells, bbox);
 
         let lookup = &self.graph.surface_lookup;
-        let changed: Vec<((i32, i32), Vec<i32>)> = (x0..(x1 + 1))
+        let changed: Vec<((i32, i32), Vec<i32>)> = write
+            .rows()
             .into_par_iter()
-            .flat_map_iter(|ix| {
+            .flat_map_iter(|row| {
                 let mut local: Vec<((i32, i32), Vec<i32>)> = Vec::new();
-                for iy in y0..=y1 {
-                    let col = (ix, iy);
+                for col in write.row_columns(row) {
                     let old = lookup.get(&col).map(Vec::as_slice).unwrap_or(&[]);
-                    let new = new_by_col.get(&col).map(Vec::as_slice).unwrap_or(&[]);
+                    let new = new_by_col.column(col);
                     if old != new {
                         local.push((col, new.to_vec()));
                     }
@@ -471,16 +565,53 @@ impl Planner {
         self.rebuild_nodes(config);
     }
 
+    /// The changed cells and the live cells one column step from them, each
+    /// once. Their adjacency is rebuilt and the node window grows from them.
+    fn changed_neighborhood(&mut self, changed: &[VoxelKey], step_dz: i32) -> Vec<CellId> {
+        let graph = &mut self.graph;
+        let lookup = &graph.surface_lookup;
+        let cells = &graph.cells;
+        graph.node_scratch.ensure_capacity(cells.slot_capacity());
+        let seen = &mut graph.node_scratch.seen;
+        let mut out: Vec<CellId> = Vec::new();
+        for &(ix, iy, iz) in changed {
+            for (dx, dy) in [(0, 0), (-1, 0), (1, 0), (0, -1), (0, 1)] {
+                let Some(zs) = lookup.get(&(ix + dx, iy + dy)) else {
+                    continue;
+                };
+                for &nz in zs {
+                    if (nz - iz).abs() > step_dz {
+                        continue;
+                    }
+                    if let Some(id) = cells.id((ix + dx, iy + dy, nz)) {
+                        if !seen[id as usize] {
+                            seen[id as usize] = true;
+                            out.push(id);
+                        }
+                    }
+                }
+            }
+        }
+        for &id in &out {
+            seen[id as usize] = false;
+        }
+        out
+    }
+
     /// Live cells within the node-graph margin of the changed cells, walked
-    /// as a BFS ball over cell adjacency from roots covering everything a
-    /// change can directly touch.
-    fn node_window(&mut self, changed: &[VoxelKey], config: &Config) -> Vec<CellId> {
-        // Wall distances only matter out to the penalty band, so the ball
-        // covers the buffer reach of the changed cells plus slack.
-        let steps = config.node_window_cells();
+    /// as a BFS ball over cell adjacency from the changed neighborhood and the
+    /// wall-seed columns a change can flip.
+    fn node_window(
+        &mut self,
+        edits: &VoxelEdits,
+        roots: &[CellId],
+        steps: i32,
+        config: &Config,
+    ) -> Vec<CellId> {
         let step_dz = config.step_cells();
 
         let graph = &mut self.graph;
+        let by_col = &self.by_col;
         let lookup = &graph.surface_lookup;
         let cells = &graph.cells;
         graph.node_scratch.ensure_capacity(cells.slot_capacity());
@@ -495,48 +626,42 @@ impl Planner {
             }
         };
 
-        // Roots: the changed cells themselves, plus the live column neighbors
-        // that carry the change when the cell itself was removed.
-        for &(ix, iy, iz) in changed {
-            for (dx, dy) in [(0, 0), (-1, 0), (1, 0), (0, -1), (0, 1)] {
-                let Some(zs) = lookup.get(&(ix + dx, iy + dy)) else {
-                    continue;
-                };
-                for &nz in zs {
-                    if (nz - iz).abs() > step_dz {
-                        continue;
-                    }
-                    if let Some(id) = cells.id((ix + dx, iy + dy, nz)) {
-                        insert(id, &mut ball, &mut frontier);
-                    }
-                }
-            }
+        for &id in roots {
+            insert(id, &mut ball, &mut frontier);
         }
 
-        // Wall-seed scans cross up to HOLE_SPAN_CELLS empty columns, so a
-        // change can flip wall adjacency that far away. Root the first
-        // surfaced column each direction, whole when its existence flipped.
-        let headroom = config.headroom_cells();
-        for &(ix, iy, iz) in changed {
-            let flipped = lookup.get(&(ix, iy)).is_none_or(|zs| zs.len() <= 1);
-            let (z_lo, z_hi) = (iz - headroom - step_dz, iz + step_dz);
+        // A voxel edit can flip the wall adjacency of surface cells up to
+        // HOLE_SPAN_CELLS away without any surface change, so those cells root too.
+        let reach = config.headroom_cells() + step_dz;
+        let reached = |heights: &[i32], nz: i32| {
+            let first = heights.partition_point(|&iz| iz < nz - step_dz);
+            heights.get(first).is_some_and(|&iz| iz <= nz + reach)
+        };
+        let mut scan_from = |ix: i32, iy: i32, heights: Option<&[i32]>| {
             for (dx, dy) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
                 for k in 1..=HOLE_SPAN_CELLS {
                     let col = (ix + dx * k, iy + dy * k);
-                    let Some(zs) = lookup.get(&col) else {
-                        continue;
-                    };
-                    for &nz in zs {
-                        if !flipped && !(z_lo..=z_hi).contains(&nz) {
-                            continue;
-                        }
-                        if let Some(id) = cells.id((col.0, col.1, nz)) {
-                            insert(id, &mut ball, &mut frontier);
+                    if let Some(zs) = lookup.get(&col) {
+                        for &nz in zs {
+                            if heights.is_some_and(|heights| !reached(heights, nz)) {
+                                continue;
+                            }
+                            if let Some(id) = cells.id((col.0, col.1, nz)) {
+                                insert(id, &mut ball, &mut frontier);
+                            }
                         }
                     }
-                    break;
+                    if by_col.get(col).is_some() {
+                        break;
+                    }
                 }
             }
+        };
+        for ((ix, iy), heights) in &edits.changed {
+            scan_from(*ix, *iy, Some(heights));
+        }
+        for &(ix, iy) in &edits.flipped {
+            scan_from(ix, iy, None);
         }
 
         for _ in 0..steps {
@@ -570,6 +695,7 @@ impl Planner {
             &config.placement_params(),
             &mut self.graph.wall_state,
             &mut self.graph.node_scratch,
+            &mut self.graph.node_index,
             &mut self.graph.nodes,
         );
 
@@ -578,7 +704,6 @@ impl Planner {
             &self.graph.nodes,
             &mut self.graph.cell_state,
             &mut self.graph.node_edges,
-            &mut self.graph.node_adj,
         );
     }
 
@@ -634,12 +759,12 @@ impl Planner {
     /// Corridor segments of every node edge, for visualization.
     pub fn edge_segments(&self) -> Vec<(VoxelKey, VoxelKey, f32)> {
         self.pool
-            .install(|| edges_to_segments(&self.graph.node_edges))
+            .install(|| edges_to_segments(&self.graph.node_edges.edges))
     }
 
     /// The same segments without materializing them.
     pub fn edge_segment_iter(&self) -> impl Iterator<Item = (VoxelKey, VoxelKey, f32)> + '_ {
-        self.graph.node_edges.iter().flat_map(|edge| {
+        self.graph.node_edges.edges.iter().flat_map(|edge| {
             edge.chain
                 .windows(2)
                 .map(move |pair| (pair[0], pair[1], edge.cost))
@@ -676,38 +801,179 @@ impl Planner {
     }
 }
 
-/// Running inclusive xy bounding box of changed columns.
-struct ChangeBounds {
-    min_x: i32,
-    max_x: i32,
-    min_y: i32,
-    max_y: i32,
-    any: bool,
+/// The heights a repair's edits added or removed per column, sorted, and the
+/// columns that gained their first voxel or lost their last.
+#[derive(Default)]
+struct VoxelEdits {
+    changed: Vec<((i32, i32), Vec<i32>)>,
+    flipped: Vec<(i32, i32)>,
 }
 
-impl ChangeBounds {
-    fn new() -> Self {
+/// One column's voxel changes from a region update.
+struct ColumnEdit {
+    col: (i32, i32),
+    removed: Vec<i32>,
+    added: Vec<i32>,
+}
+
+/// Incoming voxels bucketed by column over a column bbox, each column's z
+/// values sorted and deduped.
+struct ColumnBuckets {
+    x0: i32,
+    y0: i32,
+    w: usize,
+    h: usize,
+    bands: Vec<Band>,
+}
+
+/// The columns of TILE_EDGE consecutive rows of a bbox.
+struct Band {
+    rows: usize,
+    starts: Vec<usize>,
+    lens: Vec<usize>,
+    zs: Vec<i32>,
+}
+
+const BAND_ROWS: usize = TILE_EDGE as usize;
+
+impl ColumnBuckets {
+    fn new(keys: &[VoxelKey], (x0, x1, y0, y1): (i32, i32, i32, i32)) -> Self {
+        let w = (x1 - x0 + 1).max(0) as usize;
+        let h = (y1 - y0 + 1).max(0) as usize;
+        let n_bands = h.div_ceil(BAND_ROWS);
+        let band_of = |&(_, iy, _): &VoxelKey| {
+            let y = iy - y0;
+            debug_assert!(y >= 0 && (y as usize) < h);
+            y as usize / BAND_ROWS
+        };
+        let grouped: Vec<Vec<VoxelKey>> = keys
+            .par_iter()
+            .fold(
+                || vec![Vec::new(); n_bands],
+                |mut groups, k| {
+                    groups[band_of(k)].push(*k);
+                    groups
+                },
+            )
+            .reduce(
+                || vec![Vec::new(); n_bands],
+                |mut a, b| {
+                    for (into, from) in a.iter_mut().zip(b) {
+                        into.extend(from);
+                    }
+                    a
+                },
+            );
+        let bands: Vec<Band> = grouped
+            .into_par_iter()
+            .enumerate()
+            .map(|(bi, band_keys)| {
+                let rows = BAND_ROWS.min(h - bi * BAND_ROWS);
+                Band::new(&band_keys, x0, y0 + (bi * BAND_ROWS) as i32, w, rows)
+            })
+            .collect();
         Self {
-            min_x: i32::MAX,
-            max_x: i32::MIN,
-            min_y: i32::MAX,
-            max_y: i32::MIN,
-            any: false,
+            x0,
+            y0,
+            w,
+            h,
+            bands,
         }
     }
 
-    fn add(&mut self, ix: i32, iy: i32) {
-        self.any = true;
-        self.min_x = self.min_x.min(ix);
-        self.max_x = self.max_x.max(ix);
-        self.min_y = self.min_y.min(iy);
-        self.max_y = self.max_y.max(iy);
+    /// The sorted z values a column received, empty outside the bbox.
+    fn column(&self, (ix, iy): (i32, i32)) -> &[i32] {
+        let (x, y) = (ix - self.x0, iy - self.y0);
+        if x < 0 || y < 0 || x as usize >= self.w || y as usize >= self.h {
+            return &[];
+        }
+        let (x, y) = (x as usize, y as usize);
+        self.bands[y / BAND_ROWS].column(x, y % BAND_ROWS, self.w)
+    }
+}
+
+impl Band {
+    fn new(keys: &[VoxelKey], x0: i32, y0: i32, w: usize, rows: usize) -> Self {
+        let n = w * rows;
+        let index = |&(ix, iy, _): &VoxelKey| (iy - y0) as usize * w + (ix - x0) as usize;
+        let mut starts = vec![0usize; n + 1];
+        for k in keys {
+            starts[index(k) + 1] += 1;
+        }
+        for i in 0..n {
+            starts[i + 1] += starts[i];
+        }
+        let mut fill = starts.clone();
+        let mut zs = vec![0i32; keys.len()];
+        for k in keys {
+            let i = index(k);
+            zs[fill[i]] = k.2;
+            fill[i] += 1;
+        }
+        let mut lens = vec![0usize; n];
+        for i in 0..n {
+            let col = &mut zs[starts[i]..starts[i + 1]];
+            col.sort_unstable();
+            let mut kept = 0;
+            for j in 0..col.len() {
+                if kept == 0 || col[j] != col[kept - 1] {
+                    col[kept] = col[j];
+                    kept += 1;
+                }
+            }
+            lens[i] = kept;
+        }
+        Self {
+            rows,
+            starts,
+            lens,
+            zs,
+        }
     }
 
-    fn bounds(&self) -> Option<(i32, i32, i32, i32)> {
-        self.any
-            .then_some((self.min_x, self.max_x, self.min_y, self.max_y))
+    fn column(&self, x: usize, row: usize, w: usize) -> &[i32] {
+        debug_assert!(row < self.rows);
+        let i = row * w + x;
+        &self.zs[self.starts[i]..self.starts[i] + self.lens[i]]
     }
+}
+
+/// Merge a column's current voxels inside the bounds against its new ones.
+/// None when nothing changed.
+fn diff_column(
+    col: (i32, i32),
+    old: &[i32],
+    new: &[i32],
+    bounds: &RegionBounds,
+    voxel_size: f32,
+) -> Option<ColumnEdit> {
+    let (ix, iy) = col;
+    let mut removed: Vec<i32> = Vec::new();
+    let mut added: Vec<i32> = Vec::new();
+    let mut new_iter = new.iter().copied().peekable();
+    for &iz in old {
+        if !bounds.contains_voxel((ix, iy, iz), voxel_size) {
+            continue;
+        }
+        while let Some(&nz) = new_iter.peek() {
+            if nz >= iz {
+                break;
+            }
+            added.push(nz);
+            new_iter.next();
+        }
+        if new_iter.peek() == Some(&iz) {
+            new_iter.next();
+        } else {
+            removed.push(iz);
+        }
+    }
+    added.extend(new_iter);
+    (!removed.is_empty() || !added.is_empty()).then_some(ColumnEdit {
+        col,
+        removed,
+        added,
+    })
 }
 
 #[cfg(test)]

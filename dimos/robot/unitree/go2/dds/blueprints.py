@@ -157,10 +157,6 @@ def _rerun_config(visual_override: dict[str, Any] | None = None) -> dict[str, An
 # The router is named, not scouted: behind wifi multicast scouting finds nothing
 # (docs/usage/transports/zenoh.md). --robot-ip still adds its endpoint alongside.
 GO2_ROUTER = os.environ.get("DIMOS_GO2_ROUTER", "tcp/go22:7447")
-# Ceiling cut for map_regions in odom: the origin is the lidar at start, ~0.5m above the floor.
-MAP_CEILING_M = 1.5
-# The storey the surface_map shows, in odom: the floor sits ~0.5m below the start pose.
-SURFACE_Z_BAND = (-0.5, MAP_CEILING_M)
 
 go2_dds_nav_viewer = autoconnect(
     vis_module(
@@ -172,14 +168,12 @@ go2_dds_nav_viewer = autoconnect(
                         render_map_region,
                         voxel_size=voxel_size,
                         height_range=HEIGHT_RANGE,
-                        max_z=MAP_CEILING_M,
                     ),
                     SURFACE_MAP_ENTITY: partial(
                         render_surface_region,
                         voxel_size=voxel_size,
                         wall_clearance_m=WALL_CLEARANCE_M,
                         clearance_clamp_m=1.0,
-                        z_band=SURFACE_Z_BAND,
                     ),
                 }
             ),

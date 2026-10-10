@@ -34,6 +34,7 @@ use tracing::{info, warn};
 
 /// Messages queued to the worker in arrival order.
 enum Job {
+    /// A live cloud and when it was queued.
     Lidar(PointCloud2, Instant),
     ClearMask(PointCloud2),
     LoadedMap(PointCloud2),
@@ -45,9 +46,9 @@ enum Job {
 /// Messages the handlers can queue ahead of the worker before they wait.
 const JOB_QUEUE_CAPACITY: usize = 256;
 
-/// How long one worker pass may spend on seed tiles before it returns to the
-/// job queue.
-const SEED_PASS_BUDGET: Duration = Duration::from_millis(20);
+/// How long a load may go without a tile, with live clouds keeping the
+/// worker busy, before it is reported as stalled.
+const SEED_STALL_WARN_AFTER: Duration = Duration::from_secs(5);
 
 #[derive(Module)]
 #[module(name = "ray_tracing", setup = spawn_worker, teardown = stop_worker)]
@@ -165,8 +166,8 @@ impl RayTracingVoxelMap {
     }
 }
 
-/// A seed load in progress, applied a pass budget of tiles at a time and
-/// handed on region by region as each one completes.
+/// A seed load in progress, applied a tile at a time whenever no live work is
+/// queued and handed on region by region as each one completes.
 struct SeedLoad {
     regions: Vec<SeedRegion>,
     next_region: usize,
@@ -175,6 +176,7 @@ struct SeedLoad {
     tiles_done: usize,
     created: usize,
     started: Instant,
+    last_tile_at: Instant,
     max_tile_ms: f64,
     sum_tile_ms: f64,
     max_live_wait_ms: f64,
@@ -190,6 +192,7 @@ impl SeedLoad {
             tiles_done: 0,
             created: 0,
             started: Instant::now(),
+            last_tile_at: Instant::now(),
             max_tile_ms: 0.0,
             sum_tile_ms: 0.0,
             max_live_wait_ms: 0.0,
@@ -207,6 +210,7 @@ impl SeedLoad {
         let tile_start = Instant::now();
         self.created += tokio::task::block_in_place(|| mapper.seed_tile(tile));
         let tile_ms = tile_start.elapsed().as_secs_f64() * 1e3;
+        self.last_tile_at = Instant::now();
         self.tiles_done += 1;
         self.max_tile_ms = self.max_tile_ms.max(tile_ms);
         self.sum_tile_ms += tile_ms;
@@ -267,7 +271,8 @@ struct State {
 }
 
 /// Owns the mapper and does every map mutation and publish off the handle
-/// loop. Queued jobs go first, then one pass budget of seed tiles.
+/// loop. Queued jobs always go first. A seed tile is applied only when none
+/// is waiting.
 struct Worker {
     jobs: mpsc::Receiver<Job>,
     // Handed to the seed placement task so its result re-enters the queue.
@@ -294,8 +299,7 @@ impl Worker {
             viz: RegionSweep::default(),
         };
         loop {
-            let loading = matches!(state.seed, SeedState::Loading(_));
-            let job = if loading {
+            let job = if matches!(state.seed, SeedState::Loading(_)) {
                 match self.jobs.try_recv() {
                     Ok(job) => Some(job),
                     Err(TryRecvError::Empty) => None,
@@ -307,31 +311,44 @@ impl Worker {
                     None => return,
                 }
             };
-            if let Some(job) = job {
-                self.handle(&mut state, job).await;
-            }
-            self.seed_step(&mut state).await;
-            if loading {
-                tokio::task::yield_now().await;
+            match job {
+                Some(job) => self.handle(&mut state, job).await,
+                None => {
+                    self.seed_step(&mut state).await;
+                    tokio::task::yield_now().await;
+                }
             }
         }
     }
 
     async fn handle(&self, state: &mut State, job: Job) {
         match job {
-            Job::Lidar(msg, received) => self.ingest_frame(state, msg, received).await,
+            Job::Lidar(msg, received) => {
+                self.ingest_frame(state, msg, received).await;
+                if let SeedState::Loading(load) = &state.seed {
+                    if load.last_tile_at.elapsed() >= SEED_STALL_WARN_AFTER {
+                        warn_throttled!(
+                            SEED_STALL_WARN_AFTER,
+                            tiles_done = load.tiles_done,
+                            tiles = load.tile_count,
+                            max_live_wait_ms = load.max_live_wait_ms,
+                            "Premap load is stalled: live clouds have kept the worker busy since the last tile.",
+                        );
+                    }
+                }
+            }
             Job::ClearMask(msg) => self.apply_clear_mask(state, msg),
             Job::LoadedMap(msg) => self.place_loaded_map(state, msg).await,
             Job::SeedPrepared(partition) => {
                 if let Some(part) = &partition {
+                    let mapper = &mut state.mapper;
+                    tokio::task::block_in_place(|| mapper.reserve_chunks(part.tile_count()));
                     info!(
                         regions = part.regions.len(),
                         tiles = part.tile_count(),
                         voxels = part.voxels,
                         "Premap load started."
                     );
-                    let mapper = &mut state.mapper;
-                    tokio::task::block_in_place(|| mapper.reserve_chunks(part.tile_count()));
                 }
                 state.seed.placed(partition);
             }
@@ -451,7 +468,7 @@ impl Worker {
                 &mut state.mapper,
                 &mut state.viz,
                 self.config.voxel_size,
-                self.config.region_m,
+                self.config.viz_region_m,
                 self.config.viz_sweep_regions as usize,
             )
         });
@@ -552,38 +569,28 @@ impl Worker {
         });
     }
 
-    /// Apply seed tiles for one pass budget, handing each completed region
-    /// on as it lands.
+    /// Apply one seed tile, handing its region on if that completed one.
     async fn seed_step(&self, state: &mut State) {
         let SeedState::Loading(load) = &mut state.seed else {
             return;
         };
-        let pass_start = Instant::now();
-        while !load.finished() {
-            let completed = load.step(&mut state.mapper);
-            debug_throttled!(
-                Duration::from_millis(500),
-                tiles_done = load.tiles_done,
-                tiles = load.tile_count,
-                regions_done = load.next_region,
-                regions = load.regions.len(),
-                max_tile_ms = load.max_tile_ms,
-                mean_tile_ms = load.mean_tile_ms(),
-                max_live_wait_ms = load.max_live_wait_ms,
-                "Premap load in progress."
-            );
-            if let Some(cylinder) = completed {
-                let seq = load.next_region as i32;
-                self.publish_seed_region(&state.mapper, &cylinder, seq, &state.last_frame_stamp)
-                    .await;
-            }
-            if pass_start.elapsed() >= SEED_PASS_BUDGET {
-                break;
-            }
+        let completed = load.step(&mut state.mapper);
+        debug_throttled!(
+            Duration::from_millis(500),
+            tiles_done = load.tiles_done,
+            tiles = load.tile_count,
+            regions_done = load.next_region,
+            regions = load.regions.len(),
+            max_tile_ms = load.max_tile_ms,
+            mean_tile_ms = load.mean_tile_ms(),
+            max_live_wait_ms = load.max_live_wait_ms,
+            "Premap load in progress."
+        );
+        if let Some(cylinder) = completed {
+            let seq = load.next_region as i32;
+            self.publish_seed_region(&state.mapper, &cylinder, seq, &state.last_frame_stamp)
+                .await;
         }
-        let SeedState::Loading(load) = &state.seed else {
-            return;
-        };
         if !load.finished() {
             return;
         }
@@ -836,6 +843,7 @@ mod tests {
             tf_wait_timeout_s: 0.05,
             worker_threads: 4,
             region_m: 4.0,
+            viz_region_m: 4.0,
             viz_emit_every: 0,
             viz_sweep_regions: 0,
         }

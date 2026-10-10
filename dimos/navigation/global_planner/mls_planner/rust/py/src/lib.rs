@@ -172,7 +172,7 @@ impl MLSPlanner {
         };
         let config = &self.config;
         let planner = &mut self.planner;
-        py.allow_threads(|| planner.update_region(&pts, &bounds, config));
+        py.allow_threads(|| planner.update_seed_region(&pts, &bounds, config));
         Ok(())
     }
 

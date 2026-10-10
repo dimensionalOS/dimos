@@ -46,3 +46,4 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 validator = { version = "0.21", features = ["derive"] }
 rayon = "1"
+smallvec = "1"

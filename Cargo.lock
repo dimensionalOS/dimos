@@ -707,6 +707,7 @@ dependencies = [
  "lcm-msgs",
  "rayon",
  "serde",
+ "smallvec",
  "tokio",
  "tracing",
  "tracing-subscriber",

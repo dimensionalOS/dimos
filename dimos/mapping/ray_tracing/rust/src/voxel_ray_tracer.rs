@@ -115,13 +115,15 @@ pub struct Config {
     /// Worker threads for parallel map work.
     #[validate(range(min = 1))]
     pub worker_threads: u32,
-    /// Edge of the square regions a seed load is handed on in and the map
-    /// viz publishes by.
+    /// Edge of the square regions a seed load is handed on in.
     #[validate(range(exclusive_min = 0.0))]
     pub region_m: f32,
-    /// Publish the regions whose chunks changed every Nth frame. Zero disables it.
+    /// Edge of the square cells the map viz publishes by, at least a chunk edge.
+    #[validate(range(exclusive_min = 0.0))]
+    pub viz_region_m: f32,
+    /// Publish the cells whose chunks changed every Nth frame. Zero disables it.
     pub viz_emit_every: u32,
-    /// Unchanged regions republished per viz tick, round robin. Zero turns the sweep off.
+    /// Unchanged cells republished per viz tick, round robin. Zero turns the sweep off.
     pub viz_sweep_regions: u32,
 }
 

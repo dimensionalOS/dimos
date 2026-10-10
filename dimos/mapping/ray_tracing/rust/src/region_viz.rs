@@ -27,8 +27,8 @@ pub fn pack_cell((i, j): Cell) -> i32 {
     (i << 16) | (j & 0xffff)
 }
 
-/// Which cells a viewer has, so a tick sends the changed ones, an empty
-/// message for the ones that vanished, and the next slice of the sweep.
+/// Which cells a viewer has, so a tick sends the next slice of the sweep, an
+/// empty message for the cells that vanished, and the changed cells.
 #[derive(Default)]
 pub struct RegionSweep {
     /// Cells a viewer holds, and whether the map still has them. A vanished
@@ -38,8 +38,9 @@ pub struct RegionSweep {
 }
 
 impl RegionSweep {
-    /// The cells due this tick: the changed ones first, then the ones that
-    /// just vanished, then exactly `sweep` others from the cursor, wrapping.
+    /// The cells due this tick, in send order: `sweep` cells from the cursor,
+    /// then the vanished cells, then the changed ones. The sweep goes first
+    /// since congestion drops the tail of a burst.
     pub fn tick<T>(
         &mut self,
         changed: impl IntoIterator<Item = Cell>,
@@ -50,41 +51,42 @@ impl RegionSweep {
             .into_iter()
             .filter(|cell| present.contains_key(cell))
             .collect();
-        let mut due: Vec<Cell> = changed.iter().copied().collect();
+        let mut vanished: Vec<Cell> = Vec::new();
         for (cell, still) in self.known.iter_mut() {
             if *still && !present.contains_key(cell) {
                 *still = false;
-                due.push(*cell);
+                vanished.push(*cell);
             }
         }
         for cell in present.keys() {
             self.known.insert(*cell, true);
         }
 
-        let busy: BTreeSet<Cell> = due.iter().copied().collect();
+        let busy: BTreeSet<Cell> = vanished.iter().chain(&changed).copied().collect();
         let keys: Vec<Cell> = self.known.keys().copied().collect();
         let start = match self.cursor {
             Some(cursor) => keys.partition_point(|k| *k <= cursor),
             None => 0,
         };
-        let mut swept: Vec<Cell> = Vec::new();
+        let mut due: Vec<Cell> = Vec::new();
         for n in 0..keys.len() {
-            if swept.len() == sweep {
+            if due.len() == sweep {
                 break;
             }
             let cell = keys[(start + n) % keys.len()];
             if busy.contains(&cell) {
                 continue;
             }
-            swept.push(cell);
+            due.push(cell);
             self.cursor = Some(cell);
         }
-        for cell in &swept {
+        for cell in &due {
             if self.known.get(cell) == Some(&false) {
                 self.known.remove(cell);
             }
         }
-        due.extend(swept);
+        due.extend(vanished);
+        due.extend(changed);
         due
     }
 }
@@ -123,20 +125,20 @@ mod tests {
     }
 
     #[test]
-    fn changed_cells_come_first_and_the_sweep_runs_on_a_busy_tick() {
+    fn the_sweep_slice_goes_first_then_the_vanished_then_the_changed() {
         let mut sweep = RegionSweep::default();
         let map = present(&[(0, 0), (0, 1), (1, 0), (1, 1), (2, 0)]);
         sweep.tick([], &map, 0);
         let smaller = present(&[(0, 0), (0, 1), (1, 0), (1, 1)]);
-        // Changed, then the vanished one, then two swept cells skipping both.
+        // Two swept cells skipping the busy ones, the vanished one, then the changed.
         assert_eq!(
             sweep.tick([(1, 1), (0, 1)], &smaller, 2),
-            vec![(0, 1), (1, 1), (2, 0), (0, 0), (1, 0)]
+            vec![(0, 0), (1, 0), (2, 0), (0, 1), (1, 1)]
         );
-        // Three changes still leave a full slice of two.
+        // Three changes still leave a full slice of two, which retires the vanished cell.
         assert_eq!(
             sweep.tick([(0, 0), (0, 1), (1, 0)], &smaller, 2),
-            vec![(0, 0), (0, 1), (1, 0), (1, 1), (2, 0)]
+            vec![(1, 1), (2, 0), (0, 0), (0, 1), (1, 0)]
         );
     }
 
