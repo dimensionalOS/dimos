@@ -334,7 +334,11 @@ jobs:
         run: uv sync --only-group lint --frozen
       - name: Install native build typing dependencies
         run: uv pip install --no-deps pybind11==3.0.1 types-setuptools==77.0.2.20250328
+      - name: Generate CDR typing package
+        run: uv run python -m dimos.message_codegen.generate --output build/messages
       - name: Mypy
+        env:
+          MYPYPATH: build/messages/typing
         run: uv run mypy
 
       # The deno-fmt pre-commit hook needs deno on PATH.

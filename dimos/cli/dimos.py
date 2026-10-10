@@ -51,6 +51,7 @@ from dimos.cli.can import app as can_app
 from dimos.cli.cloud import login as cloud_login, logout as cloud_logout, whoami as cloud_whoami
 from dimos.cli.commands.apriltag import apriltag
 from dimos.cli.commands.bake import bake
+from dimos.cli.commands.build import build
 from dimos.cli.commands.cameracalibrate import cameracalibrate
 from dimos.cli.commands.data import data_app
 from dimos.cli.commands.dataprep import dataprep_app
@@ -108,6 +109,7 @@ hardware_app.add_typer(can_app, name="can")
 main.add_typer(hardware_app, name="hardware")
 main.add_typer(data_app, name="data")
 main.add_typer(go2tool_app, name="go2tool")
+main.command()(build)
 main.command()(shell)
 main.add_typer(cache_app, name="cache")
 main.command("login")(cloud_login)
