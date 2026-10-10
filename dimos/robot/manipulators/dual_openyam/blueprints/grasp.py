@@ -286,7 +286,13 @@ def dual_openyam_grasp_provider(graspgen: bool) -> Blueprint:
     # The half turn about Y turns the top-down grasp into the OpenYAM grasp
     # frame, which points back at the wrist; the extra yaws matter because the
     # two arms accept different wrist bands over the same object.
-    return HeuristicGraspModule.blueprint(tool_rotation_rpy=(0.0, math.pi, 0.0), yaw_candidates=8)
+    # Pads are 2 cm tall; keep the grasp point 1.5 cm above the table so a
+    # flat object is taken by its upper half instead of the pads hitting wood.
+    return HeuristicGraspModule.blueprint(
+        tool_rotation_rpy=(0.0, math.pi, 0.0),
+        yaw_candidates=8,
+        min_grasp_z=DUAL_OPENYAM_TABLE_TOP_Z + 0.015,
+    )
 
 
 def dual_openyam_grasp_view() -> Any:

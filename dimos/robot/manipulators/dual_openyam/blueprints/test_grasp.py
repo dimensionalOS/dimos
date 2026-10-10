@@ -187,7 +187,10 @@ def test_planning_model_carries_collision_geometry_cameras_and_measured_spacing(
     import xml.etree.ElementTree as ET
 
     from dimos.robot.manipulators.dual_openyam.blueprints.grasp import (
+        DUAL_OPENYAM_BASE_OFFSET,
         DUAL_OPENYAM_BASE_SPACING,
+        DUAL_OPENYAM_BASE_YAW,
+        DUAL_OPENYAM_REST_PER_ARM,
         DUAL_OPENYAM_WRIST_CAMERA_BOXES,
     )
 
@@ -206,16 +209,23 @@ def test_planning_model_carries_collision_geometry_cameras_and_measured_spacing(
         boxes = {c.get("name") for c in links[f"{side}_gripper"].findall("collision")}
         assert {f"{side}_{name}" for name, _, _ in DUAL_OPENYAM_WRIST_CAMERA_BOXES} <= boxes
 
-    # The bases stand where the tape says, not where the ABC bench had them.
+    # The bases stand where the tape and the tag-touch checks put them, turned
+    # by each arm's measured joint 1 zero.
     half = DUAL_OPENYAM_BASE_SPACING / 2
-    for side, expected in (("left", half), ("right", -half)):
+    for side, sign in (("left", 1.0), ("right", -1.0)):
         origin = root.find(f"joint[@name='{side}_arm_fixed_joint']/origin")
         assert origin is not None
         xyz = origin.get("xyz")
-        assert xyz is not None
-        assert float(xyz.split()[1]) == pytest.approx(expected)
+        rpy = origin.get("rpy")
+        assert xyz is not None and rpy is not None
+        dx, dy, dz = DUAL_OPENYAM_BASE_OFFSET[side]
+        assert [float(v) for v in xyz.split()] == pytest.approx([dx, sign * half + dy, dz])
+        assert float(rpy.split()[2]) == pytest.approx(DUAL_OPENYAM_BASE_YAW[side])
 
-    assert config.home_joints == [0.0, 0.02, 0.0, 0.0, 0.0, 0.0] * 2
+    assert config.home_joints == [
+        *DUAL_OPENYAM_REST_PER_ARM["left"],
+        *DUAL_OPENYAM_REST_PER_ARM["right"],
+    ]
     assert ("left_tip_left", "left_tip_right") in config.collision_exclusion_pairs
     assert ("right_link4", "right_gripper") in config.collision_exclusion_pairs
 

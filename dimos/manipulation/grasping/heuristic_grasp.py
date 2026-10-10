@@ -63,6 +63,10 @@ class HeuristicGraspConfig(ModuleConfig):
     # axis too can be grasped at any wrist yaw, so every yaw is offered for it;
     # a partly seen round lid rarely looks round enough for the axis test alone.
     jaw_opening: float = 0.09
+    # Lowest grasp point allowed, in the cloud's frame; None for no floor. Set
+    # it to the table top plus half the pad height so a flat object's grasp
+    # never puts the pads into the table.
+    min_grasp_z: float | None = None
 
 
 class HeuristicGraspModule(Module, GraspGenSpec):
@@ -112,7 +116,10 @@ class HeuristicGraspModule(Module, GraspGenSpec):
             + float((along_lo + along_hi) / 2.0) * u_along
             + float(np.median(across)) * u_across
         )
-        position = Vector3(float(center_xy[0]), float(center_xy[1]), float((low_z + high_z) / 2.0))
+        grasp_z = float((low_z + high_z) / 2.0)
+        if self.config.min_grasp_z is not None:
+            grasp_z = max(grasp_z, self.config.min_grasp_z)
+        position = Vector3(float(center_xy[0]), float(center_xy[1]), grasp_z)
         if not ambiguous:
             ambiguous = wide <= self.config.jaw_opening
         logger.info(
