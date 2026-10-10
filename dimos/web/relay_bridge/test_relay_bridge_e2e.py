@@ -52,6 +52,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.web.relay_bridge.config import RelayBridgeConfig, default_manifest
 from dimos.web.relay_bridge.e2e_support import (
     arm_teleop,
     attach_viewer,
@@ -65,11 +66,7 @@ from dimos.web.relay_bridge.protocol import (
     Twist as WireTwist,
     Unsub,
 )
-from dimos.web.relay_bridge.relay_bridge_module import (
-    RelayBridgeConfig,
-    RelayBridgeModule,
-    default_manifest,
-)
+from dimos.web.relay_bridge.relay_bridge_module import RelayBridgeModule
 from dimos.web.relay_bridge.relay_process import RelayProcess
 from dimos.web.relay_bridge.wt_client import RelayClient, RelayRejectedError, fetch_relay_info
 

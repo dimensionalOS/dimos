@@ -18,7 +18,8 @@ Relay discovery and `RelayClient.connect` are replaced by fakes and fake
 transports sit under the module's `In` streams (module_test_support.py), so lazy
 subscribe/unsubscribe, the maxHz gate, the encode path, and reconnect are all
 observable directly. cockpit()-authored channels and the publish path are
-covered in test_relay_bridge_authoring.py.
+covered in test_relay_bridge_authoring.py, WebRTC video in
+test_relay_bridge_rtc.py.
 """
 
 from __future__ import annotations
@@ -48,7 +49,8 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.simulation.mujoco.constants import VIDEO_FPS
-from dimos.web.relay_bridge import builtin_codecs, relay_bridge_module
+from dimos.web.relay_bridge import builtin_codecs, relay_bridge_module, teleop
+from dimos.web.relay_bridge.config import RelayBridgeConfig, default_manifest, resolve_robot_info
 from dimos.web.relay_bridge.e2e_support import stop_module
 from dimos.web.relay_bridge.manifest import ManifestError, parse_manifest
 from dimos.web.relay_bridge.module_test_support import (
@@ -65,6 +67,7 @@ from dimos.web.relay_bridge.module_test_support import (
     push,
     wait_until,
 )
+from dimos.web.relay_bridge.pacing import passes_rate_gate
 from dimos.web.relay_bridge.protocol import (
     PROTOCOL_VERSION,
     ProtocolError,
@@ -74,12 +77,7 @@ from dimos.web.relay_bridge.protocol import (
     TeleopStop as WireTeleopStop,
     Twist as WireTwist,
 )
-from dimos.web.relay_bridge.relay_bridge_module import (
-    RelayBridgeConfig,
-    RelayBridgeModule,
-    default_manifest,
-    resolve_robot_info,
-)
+from dimos.web.relay_bridge.relay_bridge_module import RelayBridgeModule
 from dimos.web.relay_bridge.wt_client import RelayInfo, RelayRejectedError
 
 
@@ -241,7 +239,7 @@ def test_default_image_gate_preserves_mujoco_video_rate() -> None:
     accepted = [
         now
         for now in times
-        if relay_bridge_module._passes_rate_gate(
+        if passes_rate_gate(
             last_input,
             "color_image",
             now,
@@ -992,7 +990,7 @@ def test_local_relay_ignores_relay_ca(monkeypatch) -> None:
         seen.append((kwargs.get("cafile"), kwargs.get("insecure")))
         return client
 
-    monkeypatch.setattr(relay_bridge_module, "_probe_local_port", lambda _: None)
+    monkeypatch.setattr(relay_bridge_module, "probe_local_port", lambda _: None)
     patch_relay(monkeypatch, fake_connect)
     monkeypatch.setattr(
         RelayBridgeModule,
@@ -1059,7 +1057,7 @@ def test_local_relay_ignores_relay_key(monkeypatch) -> None:
     async def fake_connect(url: str, role: str, **kwargs: Any) -> FakeClient:
         return client
 
-    monkeypatch.setattr(relay_bridge_module, "_probe_local_port", lambda _: None)
+    monkeypatch.setattr(relay_bridge_module, "probe_local_port", lambda _: None)
     patch_relay(monkeypatch, fake_connect)
     monkeypatch.setattr(
         RelayBridgeModule,
@@ -1374,7 +1372,7 @@ def test_teleop_watchdog_deadline_and_high_water_survives_silence(teleop_bridge)
     assert wait_until(lambda: len(twists) == 2)
     elapsed = time.monotonic() - started
     assert twists[1].is_zero()
-    deadline = _TELEOP_TEST_WATCHDOG_MS / 1000 + relay_bridge_module._TELEOP_POLL_S + 0.5
+    deadline = _TELEOP_TEST_WATCHDOG_MS / 1000 + teleop._TELEOP_POLL_S + 0.5
     assert elapsed < deadline, f"deadman zero took {elapsed:.3f}s (deadline {deadline:.3f}s)"
     time.sleep(3 * _TELEOP_TEST_WATCHDOG_MS / 1000)
     settle(module)
@@ -1672,7 +1670,7 @@ def test_teleop_watchdog_runs_during_replay_encode(monkeypatch) -> None:
         elapsed = time.monotonic() - started
         assert not release_encode.is_set()
         assert twists[1].is_zero()
-        deadline = _TELEOP_TEST_WATCHDOG_MS / 1000 + relay_bridge_module._TELEOP_POLL_S + 0.5
+        deadline = _TELEOP_TEST_WATCHDOG_MS / 1000 + teleop._TELEOP_POLL_S + 0.5
         assert elapsed < deadline, f"deadman zero took {elapsed:.3f}s during a replay encode"
         push(module, clients[0], wire_twist(0.3, 0.0, 0.0, seq=2))
         assert wait_until(lambda: len(twists) == 3)

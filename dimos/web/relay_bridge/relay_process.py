@@ -27,6 +27,7 @@ from pathlib import Path
 import queue
 import shutil
 import signal
+import socket
 import subprocess
 import tempfile
 import threading
@@ -267,6 +268,22 @@ def _swap_dist(package: Path, new_dist: Path) -> None:
     shutil.rmtree(old, ignore_errors=True)
 
 
+def probe_local_port(port: int) -> None:
+    """Fail fast when the local relay's HTTP port is taken (0 = ephemeral)."""
+    if port == 0:
+        return
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            # SO_REUSEADDR matches how the relay itself binds: a live
+            # listener still fails the probe, but the FIN_WAIT/TIME_WAIT
+            # remnants of a just-killed relay (a browser tab was
+            # attached) must not block an immediate restart.
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            probe.bind(("127.0.0.1", port))
+    except OSError as e:
+        raise RuntimeError(f"cannot start local relay: port {port} is unavailable") from e
+
+
 @dataclass
 class RelayReadyInfo:
     http_port: int
@@ -300,6 +317,7 @@ class RelayProcess:
         cert: Path | None = None,
         key: Path | None = None,
         auth_file: Path | None = None,
+        rtc_file: Path | None = None,
         timeout: float = 20.0,
     ) -> None:
         self._port = port
@@ -311,6 +329,7 @@ class RelayProcess:
         self._cert = cert
         self._key = key
         self._auth_file = auth_file
+        self._rtc_file = rtc_file
         self._timeout = timeout
         self._process: subprocess.Popen[str] | None = None
         self._threads: list[threading.Thread] = []
@@ -339,6 +358,7 @@ class RelayProcess:
             cert=self._cert,
             key=self._key,
             auth_file=self._auth_file,
+            rtc_file=self._rtc_file,
         )
         logger.info(f"starting relay: {' '.join(cmd)}")
         env = os.environ | {"NO_COLOR": "1"}
