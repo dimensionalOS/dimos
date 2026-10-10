@@ -102,6 +102,10 @@ def test_drift_check_catches_a_changed_scene(manifest: Manifest) -> None:
         drifted.check_drift()
 
 
-def test_freeze_is_deterministic() -> None:
+def test_freeze_is_deterministic_and_reports_every_step() -> None:
     config = FreezeConfig(seeds=(1,), stressor_samples=8, samples_per_scene=8, cases_per_bin=1)
-    assert freeze(config) == freeze(config)
+    steps: list[tuple[int, int, str]] = []
+    assert freeze(config, lambda *step: steps.append(step)) == freeze(config)
+    assert [done for done, _, _ in steps] == [0, 1, 2]
+    assert all(total == 2 for _, total, _ in steps)
+    assert steps[1][2] == "scene 1 done" and steps[-1][2] == "done"

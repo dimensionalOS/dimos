@@ -22,7 +22,8 @@ wall-clock cap, and is then stopped by its process group.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections import Counter
+from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
@@ -77,7 +78,6 @@ class RunConfig:
     blueprint: str = "go2-sim-nav-episode"
     split: Split | None = "dev"
     cases: tuple[str, ...] = ()
-    repeats: int = 1
     procs: int = 4
     out_dir: Path | None = None
     overrides: tuple[str, ...] = ()
@@ -91,7 +91,6 @@ class RunConfig:
 @dataclass(frozen=True)
 class Episode:
     case: Case
-    repeat: int
     dir: Path
 
     @property
@@ -104,7 +103,6 @@ class Result:
     case_id: str
     tag: str
     split: str
-    repeat: int
     episode: str
     terminal: str | None
     outcome: str | None
@@ -112,8 +110,22 @@ class Result:
     metrics: dict[str, object] = field(default_factory=dict)
 
 
-def run(config: RunConfig) -> Path:
-    """Run every selected case the given number of times and return the run directory."""
+@dataclass(frozen=True)
+class Progress:
+    """Where a run stands: episodes finished, the ones in flight, the outcomes so far and the one just in."""
+
+    done: int
+    total: int
+    running: tuple[str, ...]
+    outcomes: Counter[str]
+    finished: tuple[str, str] | None = None
+
+
+Report = Callable[[Progress], None]
+
+
+def run(config: RunConfig, report: Report | None = None) -> Path:
+    """Run every selected case once and return the run directory."""
     manifest = Manifest.load(config.suite)
     manifest.check_drift()
     cases = [
@@ -128,27 +140,37 @@ def run(config: RunConfig) -> Path:
         )
     run_dir = config.out_dir or RUNS_DIR / time.strftime(f"%Y%m%d-%H%M%S-{manifest.suite}")
     run_dir.mkdir(parents=True, exist_ok=False)
-    episodes = [
-        Episode(case, repeat, run_dir / f"{case.id}-r{repeat}")
-        for case in cases
-        for repeat in range(config.repeats)
-    ]
+    episodes = [Episode(case, run_dir / case.id) for case in cases]
     _write_run(run_dir, config, manifest, len(episodes), finished=False)
     results = run_dir / RESULTS_FILE
     lock = threading.Lock()
+    running: list[str] = []
+    outcomes: Counter[str] = Counter()
+
+    def progress(finished: tuple[str, str] | None = None) -> None:
+        if report is not None:
+            report(
+                Progress(
+                    sum(outcomes.values()),
+                    len(episodes),
+                    tuple(running),
+                    Counter(outcomes),
+                    finished,
+                )
+            )
 
     def one(episode: Episode) -> Result:
+        with lock:
+            running.append(episode.dir.name)
+            progress()
         with _slot() as slot:
             result = _episode(config, manifest, episode, slot)
         with lock, results.open("a") as out:
             out.write(json.dumps(asdict(result)) + "\n")
-        logger.info(
-            "Episode done",
-            case=episode.case.id,
-            repeat=episode.repeat,
-            outcome=result.outcome,
-            error=result.error,
-        )
+            running.remove(episode.dir.name)
+            verdict = str(result.outcome or result.error)
+            outcomes[verdict] += 1
+            progress((episode.dir.name, verdict))
         return result
 
     previous = signal.signal(signal.SIGTERM, _interrupt)
@@ -213,8 +235,7 @@ def rescore(run_dir: Path) -> Path:
     results.unlink(missing_ok=True)
     with results.open("a") as out:
         for episode_dir in sorted(_episode_dirs(run_dir)):
-            case_id, _, repeat = episode_dir.name.rpartition("-r")
-            episode = Episode(cases[case_id], int(repeat), episode_dir)
+            episode = Episode(cases[episode_dir.name], episode_dir)
             terminal = _terminal(episode_dir)
             out.write(json.dumps(asdict(_score(manifest, episode, terminal))) + "\n")
     return results
@@ -235,7 +256,6 @@ def _write_run(
         "blueprint": config.blueprint,
         "split": config.split,
         "cases": list(config.cases),
-        "repeats": config.repeats,
         "procs": config.procs,
         "overrides": list(config.overrides),
         "policy": str(config.policy) if config.policy else _environment_policy(),
@@ -371,7 +391,6 @@ def _score(manifest: Manifest, episode: Episode, terminal: dict[str, object] | N
         case_id=case.id,
         tag=case.tag,
         split=case.split,
-        repeat=episode.repeat,
         episode=str(episode.dir),
         terminal=str(terminal["reason"]) if terminal else None,
         outcome=None,

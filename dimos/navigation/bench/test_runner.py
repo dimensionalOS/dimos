@@ -31,6 +31,7 @@ from dimos.navigation.bench.runner import (
     RUN_FILE,
     SCORE_FILE,
     Episode,
+    Progress,
     RunConfig,
     _episode,
     _live,
@@ -120,38 +121,48 @@ def fake_blueprint(tmp_path: Path) -> tuple[str, ...]:
 def test_run_scores_every_episode_of_the_split_in_parallel(
     suite: Path, fake_blueprint: tuple[str, ...], tmp_path: Path
 ) -> None:
+    reports: list[Progress] = []
     run_dir = run(
         RunConfig(
             suite=suite,
             blueprint="fake",
-            repeats=2,
             procs=3,
             out_dir=tmp_path / "run",
             overrides=(f"--fake-recordings={tmp_path / 'recordings'}", "--set-x=1"),
             command=fake_blueprint,
-        )
+        ),
+        reports.append,
     )
     rows = [json.loads(line) for line in (run_dir / RESULTS_FILE).read_text().splitlines()]
-    assert len(rows) == 6
-    assert {(r["case_id"], r["repeat"]) for r in rows} == {
-        (c, r)
-        for c in ("mined-s1-aaaaaa", "narrow_door-s1-bbbbbb", "stay_put-s1-cccccc")
-        for r in (0, 1)
+    assert len(rows) == 3
+    assert reports[0].done == 0 and len(reports[0].running) == 1
+    assert reports[-1].done == reports[-1].total == 3 and not reports[-1].running
+    assert sum(reports[-1].outcomes.values()) == 3
+    assert sorted(r.finished for r in reports if r.finished) == [
+        ("mined-s1-aaaaaa", "success"),
+        ("narrow_door-s1-bbbbbb", "success"),
+        ("stay_put-s1-cccccc", "timeout"),
+    ]
+    assert max(len(r.running) for r in reports) <= 3
+    assert {r["case_id"] for r in rows} == {
+        "mined-s1-aaaaaa",
+        "narrow_door-s1-bbbbbb",
+        "stay_put-s1-cccccc",
     }
-    by_case = {(r["case_id"], r["repeat"]): r for r in rows}
-    assert by_case[("mined-s1-aaaaaa", 0)]["outcome"] == "success"
-    assert by_case[("mined-s1-aaaaaa", 0)]["terminal"] == "arrived"
-    assert by_case[("stay_put-s1-cccccc", 1)]["outcome"] == "timeout"
+    by_case = {r["case_id"]: r for r in rows}
+    assert by_case["mined-s1-aaaaaa"]["outcome"] == "success"
+    assert by_case["mined-s1-aaaaaa"]["terminal"] == "arrived"
+    assert by_case["stay_put-s1-cccccc"]["outcome"] == "timeout"
     assert all(r["error"] is None for r in rows)
-    episode = run_dir / "narrow_door-s1-bbbbbb-r1"
+    episode = run_dir / "narrow_door-s1-bbbbbb"
     assert (episode / RECORDING_FILE).exists()
     assert (episode / SCORE_FILE).exists()
-    assert (run_dir / "narrow_door-s1-bbbbbb-r1" / "rerun.rrd").read_bytes() == b"rrd"
+    assert (episode / "rerun.rrd").read_bytes() == b"rrd"
     assert 'scene 1 {"door_width": 0.5} --set-x=1' in (episode / "run.log").read_text()
     assert not any((tmp_path / "recordings").iterdir())
     meta = json.loads((run_dir / RUN_FILE).read_text())
     assert meta["finished"] is True
-    assert meta["episodes"] == 6
+    assert meta["episodes"] == 3
     assert meta["overrides"][-1] == "--set-x=1"
 
 
@@ -183,7 +194,7 @@ def test_stop_all_ends_an_episode_that_never_terminates(
         overrides=(f"--fake-recordings={tmp_path / 'recordings'}",),
         command=fake_blueprint,
     )
-    episode = Episode(case, 0, tmp_path / "hang" / "r0")
+    episode = Episode(case, tmp_path / "hang")
     results: list = []
     worker = threading.Thread(target=lambda: results.append(_episode(config, manifest, episode, 0)))
     worker.start()
