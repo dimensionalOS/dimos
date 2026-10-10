@@ -744,7 +744,7 @@ async fn publish_cloud(out: &Output<PointCloud2>, cloud: &PointCloud2) {
 mod tests {
     use super::*;
     use crate::voxel_ray_tracer::{
-        emit_points, metric_voxel_keys, update_map, LocalBounds, VoxelKey, VoxelMap, CHUNK_EDGE,
+        emit_points, update_map, LocalBounds, VoxelKey, VoxelMap, CHUNK_EDGE,
     };
     use ahash::AHashSet;
     use nalgebra::{Isometry3, Translation3, UnitQuaternion, Vector3};
@@ -938,7 +938,8 @@ mod tests {
         assert_eq!(sizes(due), vec![((0, 0), 1), (far, 1)]);
         assert!(map_regions_due(&mut mapper, &mut viz, 1.0, 4.0, 0).is_empty());
 
-        mapper.clear_metric([(1.5, 1.5, 0.5)]);
+        // A normal sensor ray carves the near seed and ends on the far seed.
+        mapper.add_frame_world(vec![(40.5, 40.5, 0.5)], (0.5, 0.5, 0.5));
         let due = map_regions_due(&mut mapper, &mut viz, 1.0, 4.0, 0);
         assert_eq!(sizes(due), vec![((0, 0), 0)]);
         assert!(map_regions_due(&mut mapper, &mut viz, 1.0, 4.0, 0).is_empty());
@@ -960,10 +961,10 @@ mod tests {
         assert!(!is_stale(100.0, Some(500.0), 0.0));
     }
 
-    /// Published occupied-cell centers must round-trip through cloud decoding
-    /// and floor quantization, including negative coordinates.
+    /// Published occupied-cell centers must round-trip through cloud decoding,
+    /// including negative coordinates.
     #[test]
-    fn occupied_cloud_round_trips_to_the_voxels_it_covers() {
+    fn occupied_cloud_preserves_voxel_centers() {
         let map = map_with_healthy(&[(3, -2, 1)]);
         let occupied: Vec<VoxelKey> = map.voxels.keys().collect();
         assert_eq!(occupied, vec![(3, -2, 1)]);
@@ -974,9 +975,12 @@ mod tests {
             panic!("occupied cloud must decode");
         };
         let points: Vec<(f32, f32, f32)> = points.into_iter().map(|[x, y, z]| (x, y, z)).collect();
-        let keys: Vec<VoxelKey> = metric_voxel_keys(points, 1.0).collect();
+        let centers: Vec<_> = occupied
+            .into_iter()
+            .map(|(x, y, z)| (x as f32 + 0.5, y as f32 + 0.5, z as f32 + 0.5))
+            .collect();
 
-        assert_eq!(keys, occupied);
+        assert_eq!(points, centers);
     }
 
     #[test]
