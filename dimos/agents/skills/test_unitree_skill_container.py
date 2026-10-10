@@ -16,7 +16,9 @@ import difflib
 import math
 from typing import Any
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped
+from dimos_generated.std_msgs.msg import Header
 from langchain_core.messages import HumanMessage
 import pytest
 
@@ -85,6 +87,7 @@ def _pose(x: float, y: float, yaw_deg: float) -> PoseStamped:
             position=Point(x=x, y=y, z=0.3),
             orientation=quaternion_from_euler(0, 0, math.radians(yaw_deg)),
         ),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
     )
 
 

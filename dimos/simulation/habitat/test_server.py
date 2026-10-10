@@ -24,11 +24,13 @@ from pathlib import Path
 from dimos_generated.nav_msgs.msg import Odometry
 from dimos_generated.sensor_msgs.msg import CameraInfo, Image, PointCloud2
 from dimos_generated.tf2_msgs.msg import TFMessage
+from dimos_message_build.registry import decode as cdr_decode
 import numpy as np
 from rosbags.typesys import Stores, get_typestore
 
 from dimos.msgs.image import image_view
 from dimos.msgs.pointcloud import pointcloud_xyz
+from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.simulation.habitat import server
 
 SERVER_PY = Path(server.__file__)
@@ -36,20 +38,20 @@ SERVER_PY = Path(server.__file__)
 
 def test_color_image_round_trip():
     rgb = np.arange(8 * 12 * 3, dtype=np.uint8).reshape(8, 12, 3)
-    out = Image.decode(server.image_msg(rgb, "rgb8", "camera_optical", 1.5))
+    out = cdr_decode(server.image_msg(rgb, "rgb8", "camera_optical", 1.5), Image)
     np.testing.assert_array_equal(image_view(out), rgb)
     assert out.header.frame_id == "camera_optical"
 
 
 def test_depth_image_round_trip():
     depth = np.linspace(0.2, 4.5, 8 * 12, dtype=np.float32).reshape(8, 12)
-    out = Image.decode(server.image_msg(depth, "32FC1", "camera_optical", 1.5))
+    out = cdr_decode(server.image_msg(depth, "32FC1", "camera_optical", 1.5), Image)
     np.testing.assert_allclose(image_view(out), depth, atol=1e-6)
 
 
 def test_camera_info_round_trip():
     k = {"fx": 320.0, "fy": 320.0, "cx": 320.0, "cy": 180.0, "width": 640.0, "height": 360.0}
-    out = CameraInfo.decode(server.camera_info_msg(k, "camera_optical", 1.5))
+    out = cdr_decode(server.camera_info_msg(k, "camera_optical", 1.5), CameraInfo)
     matrix = np.asarray(out.k).reshape(3, 3)
     assert (out.width, out.height) == (640, 360)
     np.testing.assert_allclose([matrix[0, 0], matrix[1, 1]], [320.0, 320.0])
@@ -59,15 +61,16 @@ def test_camera_info_round_trip():
 def test_cloud_round_trip_keeps_points_and_colour():
     pts = np.array([[1.0, 2.0, 3.0], [-4.0, 0.5, 0.25]], dtype=np.float32)
     colors = np.array([[255, 0, 0], [0, 128, 64]], dtype=np.uint8)
-    out = PointCloud2.decode(server.cloud_msg(pts, colors, "world", 1.5))
+    out = cdr_decode(server.cloud_msg(pts, colors, "world", 1.5), PointCloud2)
     got = pointcloud_xyz(out)
     assert out.header.frame_id == "world"
     np.testing.assert_allclose(np.sort(got, axis=0), np.sort(pts, axis=0), atol=1e-5)
 
 
 def test_empty_cloud_is_valid():
-    out = PointCloud2.decode(
-        server.cloud_msg(np.zeros((0, 3), np.float32), np.zeros((0, 3), np.uint8), "world", 1.0)
+    out = cdr_decode(
+        server.cloud_msg(np.zeros((0, 3), np.float32), np.zeros((0, 3), np.uint8), "world", 1.0),
+        PointCloud2,
     )
     assert out.width == 0 and len(out.data) == 0
 
@@ -75,8 +78,9 @@ def test_empty_cloud_is_valid():
 def test_odometry_round_trip():
     pos = np.array([1.0, -2.0, 0.5])
     quat = np.array([0.0, 0.0, 0.3826834, 0.9238795])  # 45 deg yaw
-    out = Odometry.decode(
-        server.odometry_msg(pos, quat, (0.4, 0.0, 0.2), "world", "base_link", 1.5)
+    out = cdr_decode(
+        server.odometry_msg(pos, quat, (0.4, 0.0, 0.2), "world", "base_link", 1.5),
+        Odometry,
     )
     np.testing.assert_allclose(
         [out.pose.pose.position.x, out.pose.pose.position.y, out.pose.pose.position.z],
@@ -87,13 +91,48 @@ def test_odometry_round_trip():
     assert out.child_frame_id == "base_link"
 
 
+def test_objects_round_trip_keeps_each_object():
+    msg = server.objects_msg(
+        [
+            ("chair", np.array([1.0, 2.0, 0.4]), np.array([0.5, 0.6, 0.9])),
+            ("table", np.array([-3.0, 0.0, 0.7]), np.array([1.2, 0.8, 0.7])),
+        ],
+        1.5,
+    )
+    assert Detection3DArray.lcm_decode(msg).to_json() == [
+        {
+            "label": "chair",
+            "score": 1.0,
+            "position": {"x": 1.0, "y": 2.0, "z": 0.4},
+            "size": {"x": 0.5, "y": 0.6, "z": 0.9},
+        },
+        {
+            "label": "table",
+            "score": 1.0,
+            "position": {"x": -3.0, "y": 0.0, "z": 0.7},
+            "size": {"x": 1.2, "y": 0.8, "z": 0.7},
+        },
+    ]
+
+
+def test_visible_objects_boxes_each_instance():
+    k = {"fx": 10.0, "fy": 10.0, "cx": 2.0, "cy": 1.0, "width": 4.0, "height": 2.0}
+    depth = np.full((2, 4), 2.0, dtype=np.float32)
+    semantic = np.array([[1, 1, 2, 2], [1, 1, 2, 2]], dtype=np.uint16)  # chair left, wall right
+    objs = server.visible_objects(
+        depth, semantic, k, 5.0, 1, np.eye(4), ["unknown", "chair", "wall"], min_points=1
+    )
+    assert [o[0] for o in objs] == ["chair"]
+    np.testing.assert_allclose(objs[0][1], [-0.3, -0.1, 2.0], atol=1e-6)  # u in {0,1}, v in {0,1}
+
+
 def test_tf_round_trip_carries_the_optical_link():
     links = [
         ("world", "base_link", (1.0, 2.0, 0.0), (0.0, 0.0, 0.0, 1.0)),
         ("base_link", "camera", (0.0, 0.0, 0.45), (0.0, 0.0, 0.0, 1.0)),
         ("camera", "camera_optical", (0.0, 0.0, 0.0), server.frames.OPTICAL_QUAT_XYZW),
     ]
-    out = TFMessage.decode(server.tf_msg(links, 1.5))
+    out = cdr_decode(server.tf_msg(links, 1.5), TFMessage)
     pairs = {(t.header.frame_id, t.child_frame_id) for t in out.transforms}
     assert ("camera", "camera_optical") in pairs
     assert len(out.transforms) == 3
@@ -111,7 +150,9 @@ def test_each_tf_link_keeps_its_own_pose():
         ("base_link", "camera", (0.0, 0.0, 0.45), (0.0, 0.0, 0.0, 1.0)),
         ("camera", "camera_optical", (0.0, 0.0, 0.0), server.frames.OPTICAL_QUAT_XYZW),
     ]
-    by_child = {t.child_frame_id: t for t in TFMessage.decode(server.tf_msg(links, 1.5)).transforms}
+    by_child = {
+        t.child_frame_id: t for t in cdr_decode(server.tf_msg(links, 1.5), TFMessage).transforms
+    }
 
     base = by_child["base_link"]
     np.testing.assert_allclose(
@@ -158,7 +199,9 @@ def test_tf_chain_puts_the_camera_looking_forward():
         ("base_link", "camera", (0.0, 0.0, 0.45), (0.0, 0.0, 0.0, 1.0)),
         ("camera", "camera_optical", (0.0, 0.0, 0.0), server.frames.OPTICAL_QUAT_XYZW),
     ]
-    by_child = {t.child_frame_id: t for t in TFMessage.decode(server.tf_msg(links, 1.5)).transforms}
+    by_child = {
+        t.child_frame_id: t for t in cdr_decode(server.tf_msg(links, 1.5), TFMessage).transforms
+    }
 
     def rot(t):
         x, y, z, w = (

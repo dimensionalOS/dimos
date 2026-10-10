@@ -18,7 +18,8 @@ import threading
 from types import MappingProxyType
 from typing import Any, Protocol
 
-from dimos_generated.geometry_msgs.msg import TransformStamped
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos_generated.sensor_msgs.msg import Image
 from dimos_generated.std_msgs.msg import Header
 from dimos_generated.tf2_msgs.msg import TFMessage
@@ -272,7 +273,7 @@ def test_build_does_not_mutate_parsed_config(mocker) -> None:
     mocker.patch.object(ModuleCoordinator, "_connect_streams")
     mocker.patch("dimos.core.coordination.module_coordinator._connect_module_refs")
     mocker.patch.object(ModuleCoordinator, "build_all_modules")
-    mocker.patch.object(ModuleCoordinator, "start_all_modules")
+    mocker.patch.object(ModuleCoordinator, "start_all_modules", return_value={})
     mocker.patch("dimos.core.coordination.module_coordinator._log_blueprint_graph")
 
     coordinator = ModuleCoordinator.build(blueprint, parsed)
@@ -993,13 +994,13 @@ def test_start_rpc_service_is_idempotent(dynamic_coordinator) -> None:
 def test_loop_starts_rpc_service_and_stops_on_interrupt(dynamic_coordinator, mocker) -> None:
     start_rpc = mocker.patch.object(dynamic_coordinator, "start_rpc_service")
     stop = mocker.patch.object(dynamic_coordinator, "stop")
-    event = mocker.patch("dimos.core.coordination.module_coordinator.threading.Event")
-    event.return_value.wait.side_effect = KeyboardInterrupt
+    wait = mocker.patch.object(dynamic_coordinator._shutdown_event, "wait")
+    wait.side_effect = KeyboardInterrupt
 
     dynamic_coordinator.loop()
 
     start_rpc.assert_called_once_with()
-    event.return_value.wait.assert_called_once_with()
+    wait.assert_called_once_with()
     stop.assert_called_once_with()
 
 
@@ -1125,7 +1126,16 @@ class IoTfPublisher(Module):
     def send(self, child: str) -> None:
         self.tf.publish(
             TFMessage(
-                transforms=[TransformStamped(header=Header(frame_id="world"), child_frame_id=child)]
+                transforms=[
+                    TransformStamped(
+                        header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+                        child_frame_id=child,
+                        transform=Transform(
+                            translation=Vector3(x=0.0, y=0.0, z=0.0),
+                            rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                        ),
+                    )
+                ]
             )
         )
 
@@ -1147,7 +1157,16 @@ class IoTfEcho(Module):
     def send(self, child: str) -> None:
         self.tf.publish(
             TFMessage(
-                transforms=[TransformStamped(header=Header(frame_id="world"), child_frame_id=child)]
+                transforms=[
+                    TransformStamped(
+                        header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+                        child_frame_id=child,
+                        transform=Transform(
+                            translation=Vector3(x=0.0, y=0.0, z=0.0),
+                            rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                        ),
+                    )
+                ]
             )
         )
 
@@ -1201,3 +1220,20 @@ def test_io_port_autoconnects_and_flows_both_ways(wait_until) -> None:
         wait_until(lambda: "from_echo" in echo.seen(), timeout=10.0)
     finally:
         coordinator.stop()
+
+
+def test_shutdown_unblocks_loop(monkeypatch: pytest.MonkeyPatch) -> None:
+    """shutdown() (the RPC handler) releases loop(), which stops everything."""
+    coordinator = ModuleCoordinator(g=GlobalConfig())
+    monkeypatch.setattr(coordinator, "start_rpc_service", lambda: None)
+    stopped = threading.Event()
+    monkeypatch.setattr(coordinator, "stop", stopped.set)
+
+    looper = threading.Thread(target=coordinator.loop, daemon=True)
+    looper.start()
+    assert not stopped.wait(0.1)
+
+    coordinator.shutdown()
+    looper.join(timeout=5)
+    assert not looper.is_alive()
+    assert stopped.is_set()

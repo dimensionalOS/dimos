@@ -34,6 +34,7 @@ from typing import Any, TypeVar
 from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped
 from dimos_generated.sensor_msgs.msg import Joy
 from dimos_generated.std_msgs.msg import UInt32
+from dimos_message_build.registry import decode as cdr_decode, schema as cdr_schema
 from fastapi import WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -45,9 +46,10 @@ from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.imitation.collection.episode_monitor import EpisodeStatus
+from dimos.imitation.collection.episode import EpisodeStatus
 from dimos.msgs.geometry import quaternion_from_matrix
 from dimos.msgs.protocol import DimosMsg
+from dimos.msgs.std_msgs.String import String
 from dimos.teleop.utils.teleop_transforms import webxr_to_robot
 from dimos.teleop.webxr.body_tracking import BodyTrackingMode, BodyTrackingSnapshot
 
@@ -121,7 +123,7 @@ class WebXRTeleopModule(Module):
     teleop_buttons: Out[UInt32]
     button_pressed: Out[UInt32]
     button_released: Out[UInt32]
-    status: In[EpisodeStatus]
+    status: In[String]
     body_tracking: Out[BodyTrackingSnapshot]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -183,7 +185,10 @@ class WebXRTeleopModule(Module):
         @self._web_server.app.get("/teleop/schema")
         async def command_schemas() -> dict[str, dict[str, str]]:
             return {
-                channel: {"type": message_type.msg_name, "definition": message_type.schema}
+                channel: {
+                    "type": message_type.__msgtype__,
+                    "definition": cdr_schema(message_type.__msgtype__),
+                }
                 for channel, message_type in self._command_types.items()
             }
 
@@ -253,7 +258,7 @@ class WebXRTeleopModule(Module):
             if (
                 message_type is None
                 or metadata.get("encoding") != "cdr"
-                or metadata.get("type") != message_type.msg_name
+                or metadata.get("type") != message_type.__msgtype__
             ):
                 return False
             return self._decoders[frame.header.ch](frame.payload) is not False
@@ -334,7 +339,12 @@ class WebXRTeleopModule(Module):
         for ws in clients:
             asyncio.run_coroutine_threadsafe(_ws_send_text(ws, data), loop)
 
-    def _on_episode_status(self, status: EpisodeStatus) -> None:
+    def _on_episode_status(self, message: String) -> None:
+        try:
+            status = EpisodeStatus.from_json(message.data)
+        except ValueError:
+            logger.warning("Ignoring invalid episode status JSON", exc_info=True)
+            return
         with self._lock:
             self._latest_episode_status = status
         self._broadcast_text(self._encode_episode_status(status))
@@ -460,7 +470,7 @@ class WebXRTeleopModule(Module):
 
     def _on_pose_bytes(self, data: bytes) -> None:
         """Decode CDR bytes into PoseStamped, transform to robot frame."""
-        msg = PoseStamped.decode(data)
+        msg = cdr_decode(data, PoseStamped)
         hand = self._resolve_hand(msg.header.frame_id)
         robot_pose = webxr_to_robot(msg, is_left_controller=(hand == Hand.LEFT))
         with self._lock:
@@ -469,13 +479,13 @@ class WebXRTeleopModule(Module):
 
     def _on_joy_bytes(self, data: bytes) -> bool:
         """Decode CDR bytes into Joy, parse into WebXRControllerState."""
-        msg = Joy.decode(data)
+        msg = cdr_decode(data, Joy)
         hand = self._resolve_hand(msg.header.frame_id)
         try:
             controller = WebXRControllerState.from_joy(msg, is_left=(hand == Hand.LEFT))
         except ValueError:
             logger.warning(
-                f"Malformed Joy for {hand.name}: axes={len(msg.axes or [])}, buttons={len(msg.buttons or [])}"
+                f"Malformed Joy for {hand.name}: axes={len(msg.axes)}, buttons={len(msg.buttons)}"
             )
             with self._lock:
                 self._controllers[hand] = None

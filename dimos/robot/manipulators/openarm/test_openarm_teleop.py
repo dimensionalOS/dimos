@@ -16,7 +16,8 @@
 
 from typing import Any, cast
 
-from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from dimos_generated.sensor_msgs.msg import JointState
 from dimos_generated.std_msgs.msg import Float32, Header
 import numpy as np
@@ -161,10 +162,18 @@ def test_openarm_webxr_commands_both_arms_and_grippers_through_coordinator(
         "frame_poses",
         return_value={
             "openarm_left_grasp_frame": PoseStamped(
-                header=Header(frame_id=""), pose=Pose(position=Point(x=0.5, y=0.2, z=0.4))
+                header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
+                pose=Pose(
+                    position=Point(x=0.5, y=0.2, z=0.4),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
             ),
             "openarm_right_grasp_frame": PoseStamped(
-                header=Header(frame_id=""), pose=Pose(position=Point(x=0.5, y=-0.2, z=0.4))
+                header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
+                pose=Pose(
+                    position=Point(x=0.5, y=-0.2, z=0.4),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
             ),
         },
     )
@@ -173,7 +182,10 @@ def test_openarm_webxr_commands_both_arms_and_grippers_through_coordinator(
         "step",
         return_value=JointState(
             name=list(OPENARM_ARM_JOINTS),
-            position=[0.01] * len(OPENARM_ARM_JOINTS),
+            position=np.asarray([0.01] * len(OPENARM_ARM_JOINTS), dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
         ),
     )
     mocker.patch.object(TickLoop, "start")
@@ -204,15 +216,21 @@ def test_openarm_webxr_commands_both_arms_and_grippers_through_coordinator(
         coordinator._dispatch(
             "left_cartesian_command",
             PoseStamped(
-                header=Header(frame_id=OPENARM_WEBXR_TASK_NAME),
-                pose=Pose(position=Point(x=1.0, y=0.0, z=0.0)),
+                header=Header(frame_id=OPENARM_WEBXR_TASK_NAME, stamp=Time(sec=0, nanosec=0)),
+                pose=Pose(
+                    position=Point(x=1.0, y=0.0, z=0.0),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
             ),
         )
         coordinator._dispatch(
             "right_cartesian_command",
             PoseStamped(
-                header=Header(frame_id=OPENARM_WEBXR_TASK_NAME),
-                pose=Pose(position=Point(x=-1.0, y=0.0, z=0.0)),
+                header=Header(frame_id=OPENARM_WEBXR_TASK_NAME, stamp=Time(sec=0, nanosec=0)),
+                pose=Pose(
+                    position=Point(x=-1.0, y=0.0, z=0.0),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
             ),
         )
 
@@ -251,7 +269,13 @@ def test_openarm_teleop_pink_objective_uses_robot_specific_tuning() -> None:
         lm_damping=0.01,
         gain=0.25,
     )
-    seed = JointState(name=OPENARM_ARM_JOINTS, position=[0.0] * len(OPENARM_ARM_JOINTS))
+    seed = JointState(
+        name=OPENARM_ARM_JOINTS,
+        position=np.asarray([0.0] * len(OPENARM_ARM_JOINTS), dtype=np.float64),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
+    )
     solver = OpenArmPinkPoseTargetSolver(_solver_config(model, frames, config))
     targets = solver.frame_poses(seed, frames)
 
@@ -273,7 +297,12 @@ def test_openarm_teleop_pink_objective_uses_robot_specific_tuning() -> None:
 
     moved_seed = JointState(
         name=OPENARM_ARM_JOINTS,
-        position=np.tile([0.1, -0.1, 0.2, 0.4, 0.1, -0.1, 0.2], 2).tolist(),
+        position=np.asarray(
+            np.tile([0.1, -0.1, 0.2, 0.4, 0.1, -0.1, 0.2], 2).tolist(), dtype=np.float64
+        ),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
     )
     solver.reset()
     solver.step(targets, moved_seed, 0.01)
@@ -297,11 +326,17 @@ def test_openarm_bimanual_pink_steps_from_canonical_zero_with_bounded_updates() 
         gain=0.25,
     )
     ik = OpenArmPinkPoseTargetSolver(_solver_config(model, frames, config))
-    seed = JointState(name=OPENARM_ARM_JOINTS, position=[0.0] * len(OPENARM_ARM_JOINTS))
+    seed = JointState(
+        name=OPENARM_ARM_JOINTS,
+        position=np.asarray([0.0] * len(OPENARM_ARM_JOINTS), dtype=np.float64),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
+    )
     initial = ik.frame_poses(seed, frames)
     targets = {
         name: PoseStamped(
-            header=Header(frame_id=pose.header.frame_id),
+            header=Header(frame_id=pose.header.frame_id, stamp=Time(sec=0, nanosec=0)),
             pose=Pose(
                 position=Point(
                     x=pose.pose.position.x, y=pose.pose.position.y, z=pose.pose.position.z + 0.01

@@ -18,15 +18,19 @@ import json
 import logging
 from typing import Any, cast
 
-from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from dimos_generated.sensor_msgs.msg import Joy
 from dimos_generated.std_msgs.msg import Header, UInt32
+from dimos_message_build.registry import encode as cdr_encode, schema as cdr_schema
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+import numpy as np
 import pytest
 import pytest_mock
 
-from dimos.imitation.collection.episode_monitor import EpisodeStatus
+from dimos.imitation.collection.episode import EpisodeStatus
+from dimos.msgs.std_msgs.String import String
 from dimos.msgs.time import time_from_seconds
 from dimos.teleop.webxr.body_tracking import BodyTrackingSnapshot
 from dimos.teleop.webxr.controller_types import (
@@ -43,7 +47,10 @@ from dimos.web.relay_bridge.protocol import FrameHeader, encode_data_frame
 def _pose(*, ts=0.0, frame_id="", position=(0.0, 0.0, 0.0)):
     return PoseStamped(
         header=Header(stamp=time_from_seconds(ts), frame_id=frame_id),
-        pose=Pose(position=Point(x=position[0], y=position[1], z=position[2])),
+        pose=Pose(
+            position=Point(x=position[0], y=position[1], z=position[2]),
+            orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+        ),
     )
 
 
@@ -54,9 +61,9 @@ def _command_frame(channel, message):
             seq=0,
             ts=0.0,
             delivery="latest",
-            meta={"encoding": "cdr", "type": message.msg_name},
+            meta={"encoding": "cdr", "type": message.__msgtype__},
         ),
-        message.encode(),
+        cdr_encode(message),
     )
 
 
@@ -206,8 +213,12 @@ def test_unknown_joy_controller_identity_is_rejected(
     module: WebXRTeleopModule, mocker: pytest_mock.MockerFixture
 ) -> None:
     mocker.patch(
-        "dimos.teleop.webxr.module.Joy.decode",
-        return_value=Joy(header=Header(frame_id="unknown")),
+        "dimos.teleop.webxr.module.cdr_decode",
+        return_value=Joy(
+            header=Header(frame_id="unknown", stamp=Time(sec=0, nanosec=0)),
+            axes=np.array([], dtype=np.float32),
+            buttons=np.array([], dtype=np.int32),
+        ),
     )
 
     with pytest.raises(ValueError, match="Unexpected frame_id"):
@@ -246,7 +257,7 @@ def test_episode_status_is_cached_and_broadcast(
     broadcast = mocker.patch.object(module, "_broadcast_text")
     mocker.patch("dimos.teleop.webxr.module.time.time", return_value=165.5)
 
-    module._on_episode_status(_episode_status())
+    module._on_episode_status(String(_episode_status().to_json()))
 
     assert module._latest_episode_status == _episode_status()
     payload = json.loads(broadcast.call_args.args[0])
@@ -583,11 +594,11 @@ def test_go2_accepts_pico_six_button_joystick(
     publish = mocker.patch.object(module.cmd_vel, "publish")
     joy = Joy(
         header=Header(stamp=time_from_seconds(1.0), frame_id="left"),
-        axes=[0.25, -0.75, 0.0, 0.0],
-        buttons=[0, 0, 0, 0, 0, 0],
+        axes=np.array([0.25, -0.75, 0.0, 0.0], dtype=np.float32),
+        buttons=np.array([0, 0, 0, 0, 0, 0], dtype=np.int32),
     )
     try:
-        assert module._on_joy_bytes(joy.encode()) is True
+        assert module._on_joy_bytes(cdr_encode(joy)) is True
 
         twist = publish.call_args.args[0]
         assert twist.linear.x == pytest.approx(0.75 * module.config.linear_speed)
@@ -604,12 +615,12 @@ def test_go2_rejects_short_controller_packet_safely(
     publish = mocker.patch.object(module.cmd_vel, "publish")
     joy = Joy(
         header=Header(stamp=time_from_seconds(1.0), frame_id="left"),
-        axes=[0.25, -0.75, 0.0, 0.0],
-        buttons=[0, 0, 0, 0, 0],
+        axes=np.array([0.25, -0.75, 0.0, 0.0], dtype=np.float32),
+        buttons=np.array([0, 0, 0, 0, 0], dtype=np.int32),
     )
     module._controllers[Hand.LEFT] = WebXRControllerState(thumbstick=ThumbstickState(y=-1.0))
     try:
-        assert module._on_joy_bytes(joy.encode()) is False
+        assert module._on_joy_bytes(cdr_encode(joy)) is False
 
         assert module._controllers[Hand.LEFT] is None
         publish.assert_called_once()
@@ -627,8 +638,12 @@ def test_go2_malformed_joy_clears_stale_state_and_publishes_zero_velocity(
     module = Go2TeleopModule()
     publish = mocker.patch.object(module.cmd_vel, "publish")
     mocker.patch(
-        "dimos.teleop.webxr.module.Joy.decode",
-        return_value=Joy(header=Header(frame_id="left")),
+        "dimos.teleop.webxr.module.cdr_decode",
+        return_value=Joy(
+            header=Header(frame_id="left", stamp=Time(sec=0, nanosec=0)),
+            axes=np.array([], dtype=np.float32),
+            buttons=np.array([], dtype=np.int32),
+        ),
     )
     module._controllers[Hand.LEFT] = WebXRControllerState(thumbstick=ThumbstickState(y=-1.0))
     try:
@@ -667,8 +682,12 @@ def test_go2_unknown_controller_identity_publishes_zero_velocity(
     module = Go2TeleopModule()
     publish = mocker.patch.object(module.cmd_vel, "publish")
     mocker.patch(
-        "dimos.teleop.webxr.module.Joy.decode",
-        return_value=Joy(header=Header(frame_id="unknown")),
+        "dimos.teleop.webxr.module.cdr_decode",
+        return_value=Joy(
+            header=Header(frame_id="unknown", stamp=Time(sec=0, nanosec=0)),
+            axes=np.array([], dtype=np.float32),
+            buttons=np.array([], dtype=np.int32),
+        ),
     )
     module._controllers[Hand.LEFT] = WebXRControllerState(thumbstick=ThumbstickState(y=-1.0))
     try:
@@ -880,8 +899,11 @@ def test_command_schema_route_matches_generated_wire_types(module, mocker):
         response = client.get("/teleop/schema")
     assert response.status_code == 200
     assert response.json() == {
-        "pose": {"type": PoseStamped.msg_name, "definition": PoseStamped.schema},
-        "joy": {"type": Joy.msg_name, "definition": Joy.schema},
+        "pose": {
+            "type": PoseStamped.__msgtype__,
+            "definition": cdr_schema(PoseStamped.__msgtype__),
+        },
+        "joy": {"type": Joy.__msgtype__, "definition": cdr_schema(Joy.__msgtype__)},
     }
 
 
@@ -894,11 +916,11 @@ def test_command_dispatch_rejects_invalid_frame_before_control_handler(module, m
     channel = "unknown" if invalid == "unknown_channel" else "pose"
     metadata = {
         "encoding": "pickle" if invalid == "wrong_encoding" else "cdr",
-        "type": Joy.msg_name if invalid == "wrong_type" else PoseStamped.msg_name,
+        "type": Joy.__msgtype__ if invalid == "wrong_type" else PoseStamped.__msgtype__,
     }
     frame = encode_data_frame(
         FrameHeader(ch=channel, seq=0, ts=0.0, delivery="latest", meta=metadata),
-        _pose().encode(),
+        cdr_encode(_pose()),
     )
     if invalid == "trailing":
         frame += b"extra"
@@ -906,3 +928,21 @@ def test_command_dispatch_rejects_invalid_frame_before_control_handler(module, m
         frame = frame[:-1]
     assert module._dispatch_binary_message(frame) is False
     handler.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        "not json",
+        '{"schema_version":2}',
+        '{"schema_version":true}',
+        '{"schema_version":1,"ts":null}',
+    ],
+)
+def test_invalid_episode_document_keeps_the_previous_hud_state(module, mocker, document):
+    broadcast = mocker.patch.object(module, "_broadcast_text")
+    module._on_episode_status(String(_episode_status().to_json()))
+    broadcast.reset_mock()
+    module._on_episode_status(String(document))
+    assert module._latest_episode_status == _episode_status()
+    broadcast.assert_not_called()

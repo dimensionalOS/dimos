@@ -25,6 +25,7 @@ from dimos_generated.geometry_msgs.msg import (
     Vector3,
 )
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 from rosbags.typesys import Stores, get_typestore
@@ -42,7 +43,9 @@ from dimos.msgs.geometry import (
 
 
 def test_transform_initialization() -> None:
-    tf = Transform()
+    tf = Transform(
+        translation=Vector3(x=0.0, y=0.0, z=0.0), rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+    )
     assert tf.translation.x == 0.0
     assert tf.translation.y == 0.0
     assert tf.translation.z == 0.0
@@ -55,33 +58,47 @@ def test_transform_initialization() -> None:
     tf2 = Transform(translation=trans, rotation=rot)
     assert tf2.translation == trans
     assert tf2.rotation == rot
-    tf5 = Transform(translation=Vector3(x=7.0, y=8.0, z=9.0))
+    tf5 = Transform(
+        translation=Vector3(x=7.0, y=8.0, z=9.0), rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+    )
     assert tf5.translation.x == 7.0
     assert tf5.translation.y == 8.0
     assert tf5.translation.z == 9.0
     assert tf5.rotation.w == 1.0
-    tf6 = Transform(rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0))
+    tf6 = Transform(
+        rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0), translation=Vector3(x=0.0, y=0.0, z=0.0)
+    )
     assert np.allclose(vector_array(tf6.translation), 0)
     assert tf6.rotation.w == 1.0
-    tf7 = Transform(translation=Vector3(x=1, y=2, z=3), rotation=Quaternion())
+    tf7 = Transform(
+        translation=Vector3(x=1, y=2, z=3), rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+    )
     assert tf7.translation == Vector3(x=1, y=2, z=3)
-    assert tf7.rotation == Quaternion()
-    tf8 = Transform(translation=Vector3(x=4, y=5, z=6))
+    assert tf7.rotation == Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+    tf8 = Transform(
+        translation=Vector3(x=4, y=5, z=6), rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+    )
     assert tf8.translation == Vector3(x=4, y=5, z=6)
     assert tf8.rotation.w == 1.0
-    tf9 = Transform(rotation=Quaternion(x=0, y=0, z=1, w=0))
+    tf9 = Transform(
+        rotation=Quaternion(x=0, y=0, z=1, w=0), translation=Vector3(x=0.0, y=0.0, z=0.0)
+    )
     assert np.allclose(vector_array(tf9.translation), 0)
     assert tf9.rotation == Quaternion(x=0, y=0, z=1, w=0)
 
 
 def test_transform_identity() -> None:
-    tf = Transform()
+    tf = Transform(
+        translation=Vector3(x=0.0, y=0.0, z=0.0), rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+    )
     assert np.allclose(vector_array(tf.translation), 0)
     assert tf.rotation.x == 0.0
     assert tf.rotation.y == 0.0
     assert tf.rotation.z == 0.0
     assert tf.rotation.w == 1.0
-    assert tf == Transform()
+    assert tf == Transform(
+        translation=Vector3(x=0.0, y=0.0, z=0.0), rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+    )
 
 
 def test_transform_equality() -> None:
@@ -97,9 +114,12 @@ def test_transform_equality() -> None:
 
 def test_transform_independent_cdr_fields() -> None:
     source = Transform(
-        translation=Vector3(x=1.5, y=-2.0, z=3.14), rotation=Quaternion(z=0.707107, w=0.707107)
+        translation=Vector3(x=1.5, y=-2.0, z=3.14),
+        rotation=Quaternion(z=0.707107, w=0.707107, x=0.0, y=0.0),
     )
-    decoded = get_typestore(Stores.ROS2_JAZZY).deserialize_cdr(source.encode(), Transform.msg_name)
+    decoded = get_typestore(Stores.ROS2_JAZZY).deserialize_cdr(
+        cdr_encode(source), Transform.__msgtype__
+    )
     assert [decoded.translation.x, decoded.translation.y, decoded.translation.z] == [
         1.5,
         -2.0,
@@ -114,7 +134,9 @@ def test_transform_independent_cdr_fields() -> None:
 
 
 def test_pose_add_transform() -> None:
-    initial_pose = Pose(position=Point(x=1.0, y=0.0, z=0.0))
+    initial_pose = Pose(
+        position=Point(x=1.0, y=0.0, z=0.0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+    )
     angle = np.pi / 2
     transform = Transform(
         translation=Vector3(x=2.0, y=1.0, z=0.0),
@@ -180,8 +202,8 @@ def test_encode_decode() -> None:
         translation=Vector3(x=2.0, y=1.0, z=0.0),
         rotation=Quaternion(x=0.0, y=0.0, z=np.sin(angle / 2), w=np.cos(angle / 2)),
     )
-    data = transform.encode()
-    decoded_transform = Transform.decode(data)
+    data = cdr_encode(transform)
+    decoded_transform = cdr_decode(data, Transform)
     assert decoded_transform == transform
 
 
@@ -218,27 +240,34 @@ def test_transform_addition() -> None:
 
 def test_transform_frame_tracking() -> None:
     first = TransformStamped(
-        header=Header(frame_id="world"),
+        header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
         child_frame_id="robot",
-        transform=Transform(translation=Vector3(x=1)),
+        transform=Transform(
+            translation=Vector3(x=1, y=0.0, z=0.0), rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+        ),
     )
     second = TransformStamped(
-        header=Header(frame_id="robot"),
+        header=Header(frame_id="robot", stamp=Time(sec=0, nanosec=0)),
         child_frame_id="sensor",
-        transform=Transform(translation=Vector3(x=2)),
+        transform=Transform(
+            translation=Vector3(x=2, y=0.0, z=0.0), rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+        ),
     )
     result = compose_transforms(first, second)
     assert result.header.frame_id == "world"
     assert result.child_frame_id == "sensor"
-    assert result.transform.translation == Vector3(x=3)
+    assert result.transform.translation == Vector3(x=3, y=0.0, z=0.0)
     with pytest.raises(TypeError):
         compose_transform_values(first.transform, "not a transform")
 
 
 def test_transform_from_pose() -> None:
-    pose = Pose(position=Point(x=1, y=2, z=3), orientation=Quaternion(z=0.707, w=0.707))
+    pose = Pose(
+        position=Point(x=1, y=2, z=3), orientation=Quaternion(z=0.707, w=0.707, x=0.0, y=0.0)
+    )
     result = transform_from_pose(
-        PoseStamped(header=Header(frame_id="world"), pose=pose), child_frame_id="base_link"
+        PoseStamped(header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)), pose=pose),
+        child_frame_id="base_link",
     )
     np.testing.assert_array_equal(
         vector_array(result.transform.translation), vector_array(pose.position)
@@ -254,7 +283,8 @@ def test_transform_from_ros() -> None:
         PoseStamped(
             header=Header(stamp=stamp, frame_id="base_link"),
             pose=Pose(
-                position=Point(x=1, y=-1), orientation=quaternion_from_euler(0, 0, math.pi / 6)
+                position=Point(x=1, y=-1, z=0.0),
+                orientation=quaternion_from_euler(0, 0, math.pi / 6),
             ),
         ),
         child_frame_id="arm_base_link",
@@ -263,7 +293,8 @@ def test_transform_from_ros() -> None:
         PoseStamped(
             header=Header(stamp=stamp, frame_id="arm_base_link"),
             pose=Pose(
-                position=Point(x=1, y=1), orientation=quaternion_from_euler(0, 0, math.pi / 6)
+                position=Point(x=1, y=1, z=0.0),
+                orientation=quaternion_from_euler(0, 0, math.pi / 6),
             ),
         ),
         child_frame_id="end",
@@ -277,7 +308,9 @@ def test_transform_from_ros() -> None:
 def test_transform_from_pose_stamped() -> None:
     pose = PoseStamped(
         header=Header(stamp=Time(sec=123, nanosec=456789123), frame_id="map"),
-        pose=Pose(position=Point(x=4, y=5, z=6), orientation=Quaternion(y=0.707, w=0.707)),
+        pose=Pose(
+            position=Point(x=4, y=5, z=6), orientation=Quaternion(y=0.707, w=0.707, x=0.0, z=0.0)
+        ),
     )
     result = transform_from_pose(pose, child_frame_id="robot_base")
     np.testing.assert_array_equal(
@@ -290,10 +323,15 @@ def test_transform_from_pose_stamped() -> None:
 
 @pytest.mark.parametrize("values", [[1.0, 2.0, 3.0], (7.0, 8.0, 9.0), [10.0, 11.0, 12.0]])
 def test_transform_from_coordinate_arrays(values) -> None:
-    pose = PoseStamped(pose=Pose(position=point_from_array(values)))
+    pose = PoseStamped(
+        pose=Pose(
+            position=point_from_array(values), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+        ),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+    )
     result = transform_from_pose(pose, child_frame_id="base_link")
     np.testing.assert_array_equal(vector_array(result.transform.translation), values)
-    assert result.transform.rotation == Quaternion()
+    assert result.transform.rotation == Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
 
 
 @pytest.mark.parametrize("value", ["not a pose", 42, None])

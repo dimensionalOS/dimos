@@ -15,6 +15,7 @@
 """URDF mount extraction emits generated transforms and excludes driver-owned frames."""
 
 from dimos_generated.tf2_msgs.msg import TFMessage
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 
 from dimos.robot.diy.alfred import mount_tf
 
@@ -34,7 +35,7 @@ def test_mounts_preserve_parent_and_translation_and_skip_imager_frames(tmp_path,
     monkeypatch.setattr(mount_tf, "ALFRED_URDF", urdf)
 
     edges = mount_tf.mount_transforms()
-    decoded = TFMessage.decode(TFMessage(transforms=edges).encode())
+    decoded = cdr_decode(cdr_encode(TFMessage(transforms=edges)), TFMessage)
 
     assert len(decoded.transforms) == 1
     edge = decoded.transforms[0]

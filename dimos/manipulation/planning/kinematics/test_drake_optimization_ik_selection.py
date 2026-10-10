@@ -17,7 +17,8 @@ from __future__ import annotations
 from contextlib import contextmanager
 from pathlib import Path
 
-from dimos_generated.geometry_msgs.msg import Pose, PoseStamped
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from dimos_generated.sensor_msgs.msg import JointState
 from dimos_generated.std_msgs.msg import Header
 import numpy as np
@@ -45,7 +46,10 @@ class FakeWorld:
         )
         self.current_state = JointState(
             name=["arm/base", "arm/shoulder", "arm/elbow", "arm/wrist"],
-            position=[1.0, 2.0, 3.0, 4.0],
+            position=np.array([1.0, 2.0, 3.0, 4.0], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
         )
         self.collision_checked_state: JointState | None = None
         self.prepared = PreparedRobotModel(
@@ -96,7 +100,10 @@ def test_solve_pose_targets_uses_group_tip_locks_seed_fallback_and_filters(monke
             status=IKStatus.SUCCESS,
             joint_state=JointState(
                 name=["arm/base", "arm/shoulder", "arm/elbow", "arm/wrist"],
-                position=[10.0, 20.0, 30.0, 40.0],
+                position=np.array([10.0, 20.0, 30.0, 40.0], dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
             ),
             position_error=0.0,
             orientation_error=0.0,
@@ -107,8 +114,22 @@ def test_solve_pose_targets_uses_group_tip_locks_seed_fallback_and_filters(monke
 
     result = DrakeOptimizationIK().solve_pose_targets(
         world=world,  # type: ignore[arg-type]
-        pose_targets={group: PoseStamped(header=Header(frame_id=""), pose=Pose())},
-        seed=JointState(name=["arm/shoulder"], position=[22.0]),
+        pose_targets={
+            group: PoseStamped(
+                header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
+                pose=Pose(
+                    position=Point(x=0.0, y=0.0, z=0.0),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+            )
+        },
+        seed=JointState(
+            name=["arm/shoulder"],
+            position=np.array([22.0], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        ),
         check_collision=False,
         max_attempts=1,
     )
@@ -116,7 +137,7 @@ def test_solve_pose_targets_uses_group_tip_locks_seed_fallback_and_filters(monke
     assert result.is_success()
     assert result.joint_state is not None
     assert result.joint_state.name == ["arm/shoulder", "arm/wrist"]
-    assert result.joint_state.position == [20.0, 40.0]
+    np.testing.assert_array_equal(result.joint_state.position, [20.0, 40.0])
     assert calls[0]["target_frame_name"] == "group_tip_link"
     np.testing.assert_allclose(calls[0]["seed"], [1.0, 22.0, 3.0, 4.0])
     assert calls[0]["locked_joint_positions"] == {0: 1.0, 2: 3.0}

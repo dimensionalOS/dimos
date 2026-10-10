@@ -31,8 +31,11 @@ import threading
 import time
 from typing import TYPE_CHECKING, NamedTuple
 
+from dimos_generated.geometry_msgs.msg import Transform, TransformStamped, Vector3
 from dimos_generated.sensor_msgs.msg import JointState
 from dimos_generated.std_msgs.msg import Header
+from dimos_generated.tf2_msgs.msg import TFMessage
+import numpy as np
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.control.task import (
@@ -47,6 +50,8 @@ from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    from dimos_generated.geometry_msgs.msg import PoseStamped
 
     from dimos.control.components import HardwareId, JointName, JointState as JointReading, TaskName
     from dimos.control.hardware_interface import ConnectedHardware
@@ -86,6 +91,8 @@ class TickLoop:
         joint_to_hardware: Dict mapping joint_name -> hardware_id
         publish_callback: Optional callback to publish the merged JointState
         publish_robot_callback: Optional callback, called with (hardware_id, msg)
+        publish_tf_callback: Optional callback publishing tasks' measured frame poses as TF
+        frame_pose_hz: Maximum rate for publish_tf_callback
         frame_id: Frame ID for published JointState
         log_ticks: Whether to log tick information
     """
@@ -100,6 +107,8 @@ class TickLoop:
         joint_to_hardware: dict[JointName, HardwareId],
         publish_callback: Callable[[JointState], None] | None = None,
         publish_robot_callback: Callable[[HardwareId, JointState], None] | None = None,
+        publish_tf_callback: Callable[[TFMessage], None] | None = None,
+        frame_pose_hz: float = 30.0,
         frame_id: str = "coordinator",
         log_ticks: bool = False,
     ) -> None:
@@ -111,6 +120,9 @@ class TickLoop:
         self._joint_to_hardware = joint_to_hardware
         self._publish_callback = publish_callback
         self._publish_robot_callback = publish_robot_callback
+        self._publish_tf_callback = publish_tf_callback
+        self._frame_pose_period = 1.0 / frame_pose_hz if publish_tf_callback else 0.0
+        self._last_frame_pose_time = float("-inf")
         self._frame_id = frame_id
         self._log_ticks = log_ticks
 
@@ -157,21 +169,24 @@ class TickLoop:
 
     def _loop(self) -> None:
         """Main control loop - deterministic read → compute → arbitrate → write."""
-        period = 1.0 / self._tick_rate
+        period_ns = round(1_000_000_000 / self._tick_rate)
+        next_tick_time = time.perf_counter_ns()
 
         while not self._stop_event.is_set():
-            tick_start = time.perf_counter()
-
             try:
                 self._tick()
             except Exception as e:
                 logger.error(f"TickLoop tick error: {e}")
 
-            # Rate control - recalculate sleep time to account for overhead
-            next_tick_time = tick_start + period
-            sleep_time = next_tick_time - time.perf_counter()
-            if sleep_time > 0:
-                time.sleep(sleep_time)
+            # We simply increment the time from the last loop so we correct for long
+            # sleeps (e.g. Mac OS typically oversleeps upto 25%).
+            next_tick_time += period_ns
+            sleep_ns = next_tick_time - time.perf_counter_ns()
+            if sleep_ns > 0:
+                time.sleep(sleep_ns / 1_000_000_000)
+            else:
+                # Over a full period behind, reset the timer.
+                next_tick_time = time.perf_counter_ns()
 
     def _tick(self) -> None:
         """Single tick: read → compute → arbitrate → route → write."""
@@ -199,6 +214,13 @@ class TickLoop:
 
         if self._publish_robot_callback:
             self._publish_robot_joint_states(per_hardware, joint_states.timestamp)
+
+        if (
+            self._publish_tf_callback
+            and t_now - self._last_frame_pose_time >= self._frame_pose_period
+        ):
+            self._last_frame_pose_time = t_now
+            self._publish_frame_poses(state)
 
         # Optional logging
         if self._log_ticks:
@@ -433,12 +455,46 @@ class TickLoop:
         msg = JointState(
             header=Header(stamp=time_from_seconds(snapshot.timestamp), frame_id=self._frame_id),
             name=names,
-            position=[snapshot.joint_positions[n] for n in names],
-            velocity=[snapshot.joint_velocities.get(n, 0.0) for n in names],
-            effort=[snapshot.joint_efforts.get(n, 0.0) for n in names],
+            position=np.asarray([snapshot.joint_positions[n] for n in names], dtype=np.float64),
+            velocity=np.asarray(
+                [snapshot.joint_velocities.get(n, 0.0) for n in names], dtype=np.float64
+            ),
+            effort=np.asarray(
+                [snapshot.joint_efforts.get(n, 0.0) for n in names], dtype=np.float64
+            ),
         )
         if self._publish_callback:
             self._publish_callback(msg)
+
+    def _publish_frame_poses(self, state: CoordinatorState) -> None:
+        """Publish each task's measured frame poses (FK on this tick's joints) as TF."""
+        with self._task_lock:
+            tasks = list(self._tasks.values())
+        poses: dict[str, PoseStamped] = {}
+        for task in tasks:
+            poses.update(task.measured_frame_poses(state))
+        if not poses or self._publish_tf_callback is None:
+            return
+        ts = state.joints.timestamp
+        self._publish_tf_callback(
+            TFMessage(
+                transforms=[
+                    TransformStamped(
+                        header=Header(stamp=time_from_seconds(ts), frame_id="world"),
+                        child_frame_id=frame,
+                        transform=Transform(
+                            translation=Vector3(
+                                x=pose.pose.position.x,
+                                y=pose.pose.position.y,
+                                z=pose.pose.position.z,
+                            ),
+                            rotation=pose.pose.orientation,
+                        ),
+                    )
+                    for frame, pose in poses.items()
+                ]
+            )
+        )
 
     def _publish_robot_joint_states(
         self,
@@ -454,9 +510,9 @@ class TickLoop:
             msg = JointState(
                 header=Header(stamp=time_from_seconds(timestamp), frame_id=hw_id),
                 name=names,
-                position=[state[n].position for n in names],
-                velocity=[state[n].velocity for n in names],
-                effort=[state[n].effort for n in names],
+                position=np.asarray([state[n].position for n in names], dtype=np.float64),
+                velocity=np.asarray([state[n].velocity for n in names], dtype=np.float64),
+                effort=np.asarray([state[n].effort for n in names], dtype=np.float64),
             )
             try:
                 publish(hw_id, msg)

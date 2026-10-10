@@ -15,7 +15,10 @@
 # Copyright 2026 Dimensional Inc.
 # SPDX-License-Identifier: Apache-2.0
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.sensor_msgs.msg import PointCloud2, PointField
+from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 
@@ -36,17 +39,34 @@ def test_packed_colors_preserve_bits_and_row_padding(bigendian, name, datatype):
         point_step=8,
         row_step=24,
         is_bigendian=bigendian,
-        data=bytes(data),
+        data=np.frombuffer(bytes(data), dtype=np.uint8),
         fields=[PointField(name=name, offset=4, count=1, datatype=datatype)],
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        is_dense=False,
     )
-    decoded = PointCloud2.decode(cloud.encode())
+    decoded = cdr_decode(cdr_encode(cloud), PointCloud2)
     np.testing.assert_array_equal(
         pointcloud_rgb(decoded), [[0x12, 0x34, 0x56], [0xAB, 0xCD, 0xEF], [255, 0, 0], [0, 255, 0]]
     )
 
 
 def test_missing_colors():
-    assert pointcloud_rgb(PointCloud2()) is None
+    assert (
+        pointcloud_rgb(
+            PointCloud2(
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                height=0,
+                width=0,
+                fields=[],
+                is_bigendian=False,
+                point_step=0,
+                row_step=0,
+                data=np.array([], dtype=np.uint8),
+                is_dense=False,
+            )
+        )
+        is None
+    )
 
 
 @pytest.mark.parametrize(
@@ -58,8 +78,11 @@ def test_invalid_color_layout(datatype, count):
         width=1,
         point_step=8,
         row_step=8,
-        data=bytes(8),
+        data=np.frombuffer(bytes(8), dtype=np.uint8),
         fields=[PointField(name="rgb", offset=0, count=count, datatype=datatype)],
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        is_bigendian=False,
+        is_dense=False,
     )
     with pytest.raises(ValueError, match="packed point cloud color"):
         pointcloud_rgb(cloud)

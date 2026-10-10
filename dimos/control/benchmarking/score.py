@@ -60,7 +60,9 @@ def _executed_from_recording(rec: RunRecording) -> ExecutedTrajectory:
                 cmd_twist=Twist(
                     linear=Vector3(x=cvx, y=cvy, z=0.0), angular=Vector3(x=0.0, y=0.0, z=cwz)
                 ),
-                actual_twist=Twist(),
+                actual_twist=Twist(
+                    linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)
+                ),
             )
         )
     return ExecutedTrajectory(ticks=ticks, arrived=rec.arrived)

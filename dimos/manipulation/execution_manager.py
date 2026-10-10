@@ -23,6 +23,7 @@ import time
 
 from dimos_generated.dimos_msgs.msg import TrajectoryStatus
 from dimos_generated.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+import numpy as np
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.control.coordinator import ControlCoordinator
@@ -479,14 +480,23 @@ def _columns(trajectory: JointTrajectory, columns: list[int]) -> JointTrajectory
         points=[
             JointTrajectoryPoint(
                 time_from_start=point.time_from_start,
-                positions=[point.positions[index] for index in columns],
-                velocities=[point.velocities[index] for index in columns]
-                if point.velocities
-                else [],
-                accelerations=[point.accelerations[index] for index in columns]
-                if point.accelerations
-                else [],
-                effort=[point.effort[index] for index in columns] if point.effort else [],
+                positions=np.asarray(
+                    [point.positions[index] for index in columns], dtype=np.float64
+                ),
+                velocities=np.asarray(
+                    [point.velocities[index] for index in columns] if len(point.velocities) else [],
+                    dtype=np.float64,
+                ),
+                accelerations=np.asarray(
+                    [point.accelerations[index] for index in columns]
+                    if len(point.accelerations)
+                    else [],
+                    dtype=np.float64,
+                ),
+                effort=np.asarray(
+                    [point.effort[index] for index in columns] if len(point.effort) else [],
+                    dtype=np.float64,
+                ),
             )
             for point in trajectory.points
         ],

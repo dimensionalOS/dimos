@@ -107,6 +107,10 @@ def test_async_module_rpc_sync_to_async(start_module, in_transport, out_transpor
     """
     queue = Queue()
     out_transport.subscribe(queue.put)
+    # Warm up: the first cross-process LCM message pays a ~50 ms cold-start; a
+    # throwaway round-trip absorbs it so the timed exchange below is on the warm path.
+    in_transport.publish(4)
+    queue.get(timeout=1.0)
     in_transport.publish(4)
     cubed = queue.get(timeout=0.1)
     assert cubed == 4400

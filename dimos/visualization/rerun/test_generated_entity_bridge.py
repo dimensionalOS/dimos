@@ -16,6 +16,7 @@ from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.dimos_msgs.msg import EntityMarker, EntityMarkers
 from dimos_generated.geometry_msgs.msg import Point
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import encode as cdr_encode, schema as cdr_schema
 import numpy as np
 import rerun as rr
 from rosbags.typesys import Stores, get_types_from_msg, get_typestore
@@ -37,14 +38,16 @@ def test_generated_entity_schema_independently_decodes_labels_positions_and_stam
         ],
     )
     independent = get_typestore(Stores.ROS2_HUMBLE)
-    independent.register(get_types_from_msg(EntityMarkers.schema, EntityMarkers.msg_name))
-    result = independent.deserialize_cdr(message.encode(), EntityMarkers.msg_name)
+    independent.register(
+        get_types_from_msg(cdr_schema(EntityMarkers.__msgtype__), EntityMarkers.__msgtype__)
+    )
+    result = independent.deserialize_cdr(cdr_encode(message), EntityMarkers.__msgtype__)
     assert result.header.frame_id == "world"
     assert (result.header.stamp.sec, result.header.stamp.nanosec) == (1700000000, 999999999)
     (marker,) = result.markers
     assert (marker.entity_id, marker.label, marker.entity_type) == ("E1", "机器人", "person")
     assert (marker.position.x, marker.position.y, marker.position.z) == (1, 2, 0.3)
-    assert resolve_msg_type(EntityMarkers.msg_name) is EntityMarkers
+    assert resolve_msg_type(EntityMarkers.__msgtype__) is EntityMarkers
 
 
 def test_generated_entity_viewer_helper_preserves_points_labels_and_radius() -> None:
@@ -59,7 +62,8 @@ def test_generated_entity_viewer_helper_preserves_points_labels_and_radius() -> 
             EntityMarker(
                 entity_id="E2", label="table", entity_type="object", position=Point(x=3, y=4, z=0.3)
             ),
-        ]
+        ],
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
     )
     archetype = entity_points(message)
     assert isinstance(archetype, rr.Points3D)

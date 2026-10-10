@@ -17,6 +17,7 @@
 import inspect
 from unittest.mock import MagicMock
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Point
 import numpy as np
 import pytest
@@ -118,7 +119,9 @@ def test_an_empty_array_clears_the_markers() -> None:
     scene = _scene()
     scene.show_grasp_proposals(_proposals(4))
 
-    scene.show_grasp_proposals(GraspCandidateArray())
+    scene.show_grasp_proposals(
+        GraspCandidateArray(header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""), candidates=[])
+    )
 
     assert scene._grasp_proposal_handles == []
 

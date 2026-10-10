@@ -14,7 +14,11 @@
 
 """R1 Pro real-hardware and planar-preview blueprint contracts."""
 
+import os
+import platform
+
 from dimos_generated.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+import numpy as np
 import pytest
 
 from dimos.control.components import HardwareType, make_twist_base_joints
@@ -49,13 +53,17 @@ def _forward(distance: float, duration: float) -> JointTrajectory:
         points=[
             JointTrajectoryPoint(
                 time_from_start=duration_from_seconds(0.0),
-                positions=[0.0, 0.0, 0.0],
-                velocities=velocity,
+                positions=np.array([0.0, 0.0, 0.0], dtype=np.float64),
+                velocities=np.asarray(velocity, dtype=np.float64),
+                accelerations=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
             ),
             JointTrajectoryPoint(
                 time_from_start=duration_from_seconds(duration),
-                positions=[distance, 0.0, 0.0],
-                velocities=velocity,
+                positions=np.array([distance, 0.0, 0.0], dtype=np.float64),
+                velocities=np.asarray(velocity, dtype=np.float64),
+                accelerations=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
             ),
         ],
     )
@@ -77,6 +85,10 @@ def test_planar_preview_plans_on_the_planar_base_limits() -> None:
     assert prepared.joint_space.acceleration_limits[:3] == R1PRO_PLANAR_BASE.acceleration_limits
 
 
+@pytest.mark.skipif(
+    platform.system() == "Darwin" and bool(os.environ.get("CI")),
+    reason="fails because Mac runner oversleeps by a large margin (10ms -> 30-80ms)",
+)
 def test_planar_preview_drives_its_mock_base_from_a_base_trajectory(wait_until) -> None:
     """The base half of a whole-body plan has to move this blueprint's mock chassis."""
     config = _coordinator_config(r1pro_planar_preview)

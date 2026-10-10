@@ -32,6 +32,7 @@ import threading
 import time
 from typing import Any
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import (
     Point,
     Pose,
@@ -117,7 +118,14 @@ def _transform_from_matrix(
 
 
 def _default_identity_transform() -> TransformStamped:
-    return TransformStamped(transform=Transform(rotation=Quaternion(w=1.0)))
+    return TransformStamped(
+        transform=Transform(
+            rotation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0),
+            translation=Vector3(x=0.0, y=0.0, z=0.0),
+        ),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        child_frame_id="",
+    )
 
 
 def _imu_from_mujoco_wxyz(
@@ -134,6 +142,9 @@ def _imu_from_mujoco_wxyz(
         orientation=Quaternion(x=x, y=y, z=z, w=w),
         angular_velocity=Vector3(x=gyroscope[0], y=gyroscope[1], z=gyroscope[2]),
         linear_acceleration=Vector3(x=accelerometer[0], y=accelerometer[1], z=accelerometer[2]),
+        orientation_covariance=np.zeros(9, dtype=np.float64),
+        angular_velocity_covariance=np.zeros(9, dtype=np.float64),
+        linear_acceleration_covariance=np.zeros(9, dtype=np.float64),
     )
 
 
@@ -168,11 +179,27 @@ class _WholeBodySimHooks:
             if shm.read_command_mode() == CMD_MODE_PD_TAU:
                 self._latest_pd_pos_target = pos_cmd
             else:
-                engine.write_joint_command(JointState(position=pos_cmd.tolist()))
+                engine.write_joint_command(
+                    JointState(
+                        position=np.asarray(pos_cmd.tolist(), dtype=np.float64),
+                        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                        name=[],
+                        velocity=np.array([], dtype=np.float64),
+                        effort=np.array([], dtype=np.float64),
+                    )
+                )
 
         vel_cmd = shm.read_velocity_command(dof)
         if vel_cmd is not None:
-            engine.write_joint_command(JointState(velocity=vel_cmd.tolist()))
+            engine.write_joint_command(
+                JointState(
+                    velocity=np.asarray(vel_cmd.tolist(), dtype=np.float64),
+                    header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                    name=[],
+                    position=np.array([], dtype=np.float64),
+                    effort=np.array([], dtype=np.float64),
+                )
+            )
 
         kp_cmd = shm.read_kp_command(dof)
         if kp_cmd is not None:
@@ -197,7 +224,15 @@ class _WholeBodySimHooks:
                 + self._latest_pd_kd * (-dq)
                 + tau_ff
             )
-            engine.write_joint_command(JointState(effort=tau.tolist()))
+            engine.write_joint_command(
+                JointState(
+                    effort=np.asarray(tau.tolist(), dtype=np.float64),
+                    header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                    name=[],
+                    position=np.array([], dtype=np.float64),
+                    velocity=np.array([], dtype=np.float64),
+                )
+            )
 
         if self._gripper_idx is not None:
             gripper_cmd = shm.read_gripper_command()
@@ -254,6 +289,7 @@ class MujocoSimModuleConfig(ModuleConfig, DepthCameraConfig):
     spawn_yaw: float | None = None
     reset_joint_positions: list[float] | None = None
     headless: bool = False
+    tracked_bodies: list[str] = Field(default_factory=list)
     dof: int = 7
 
     # Camera config (matches former MujocoCameraConfig).
@@ -350,6 +386,7 @@ class MujocoSimModule(
         self._camera_info_base: CameraInfo | None = None
         self._shm_ready_signaled = False
         self._latest_frame_ts: float | None = None
+        self._missing_bodies: set[str] = set()
 
         # IMU sensor slices into MjData.sensordata, resolved once at start.
         # None if the MJCF has no recognized IMU sensors (e.g. arm-only sims).
@@ -425,8 +462,8 @@ class MujocoSimModule(
         # Build engine with SHM hooks installed.
         engine_assets: dict[str, bytes] | None = None
         if self.config.inject_legacy_assets:
-            # Lazy import: get_assets pulls in mujoco_playground (heavy,
-            # optional) and is only needed when injecting bundled meshes.
+            # Lazy import: model.py pulls in the ONNX policy stack and is only
+            # needed when injecting bundled meshes.
             from dimos.simulation.mujoco.model import get_assets
 
             engine_assets = get_assets()
@@ -871,7 +908,7 @@ class MujocoSimModule(
             cy=h / 2.0,
             width=w,
             height=h,
-            header=Header(frame_id=self._color_optical_frame),
+            header=Header(frame_id=self._color_optical_frame, stamp=Time(sec=0, nanosec=0)),
         )
         with self._state_lock:
             self._camera_info_base = camera_info
@@ -995,9 +1032,39 @@ class MujocoSimModule(
                         child_frame_id=self._camera_link,
                         ts=ts,
                     ),
-                ]
+                    *self._body_transforms(),
+                ],
             )
         )
+
+    def _body_transforms(self) -> list[TransformStamped]:
+        """World poses of ``tracked_bodies``; a name missing from the model is skipped after one warning."""
+        engine = self._engine
+        if engine is None or not self.config.tracked_bodies:
+            return []
+        ts = time.time()
+        transforms: list[TransformStamped] = []
+        for name in self.config.tracked_bodies:
+            pose = engine.get_body_pose(name)
+            if pose is None:
+                if name not in self._missing_bodies:
+                    self._missing_bodies.add(name)
+                    logger.warning("MujocoSimModule: tracked body not in model", body=name)
+                continue
+            position, (qx, qy, qz, qw) = pose
+            transforms.append(
+                TransformStamped(
+                    header=Header(stamp=time_from_seconds(ts), frame_id="world"),
+                    child_frame_id=name,
+                    transform=Transform(
+                        translation=Vector3(
+                            float(position[0]), float(position[1]), float(position[2])
+                        ),
+                        rotation=Quaternion(float(qx), float(qy), float(qz), float(qw)),
+                    ),
+                )
+            )
+        return transforms
 
     def _generate_pointcloud(self) -> None:
         if self._engine is None:

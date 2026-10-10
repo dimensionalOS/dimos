@@ -54,7 +54,7 @@ class Topic:
     def __str__(self) -> str:
         if self.msg_type is None:
             return self.pattern
-        return f"{self.pattern}#{self.msg_type.msg_name}"
+        return f"{self.pattern}#{self.msg_type.__msgtype__}"
 
     @staticmethod
     def from_channel_str(channel: str, default_msg_type: type[DimosMsg] | None = None) -> Topic:

@@ -28,6 +28,7 @@ from dataclasses import dataclass, field, replace
 from threading import RLock
 from typing import TYPE_CHECKING, Any
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Point, Pose, Quaternion
 from dimos_generated.std_msgs.msg import Header
 import numpy as np
@@ -303,7 +304,13 @@ class RoboPlanWorld:
         q = ctx.q
         if not len(q):
             q = np.zeros(len(model_data.config.joint_names), dtype=np.float64)
-        return JointState(name=model_data.config.joint_names, position=q.astype(float).tolist())
+        return JointState(
+            name=model_data.config.joint_names,
+            position=np.asarray(q.astype(float).tolist(), dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        )
 
     # Collision Checking
 
@@ -357,7 +364,7 @@ class RoboPlanWorld:
         mat = self.get_link_pose(ctx, group.tip_link)
         pose = pose_from_matrix(mat)
         return PoseStamped(
-            header=Header(frame_id="world"),
+            header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
             pose=Pose(
                 position=Point(x=pose.position.x, y=pose.position.y, z=pose.position.z),
                 orientation=Quaternion(

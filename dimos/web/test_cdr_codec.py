@@ -15,12 +15,17 @@
 """Generated messages advertise the same schema to recordings and browsers."""
 
 import base64
+from dataclasses import asdict
 import json
 import subprocess
 import sys
 
-from dimos_generated.geometry_msgs.msg import Point, PoseStamped
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from dimos_generated.sensor_msgs.msg import Image
+from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
+import numpy as np
 import pytest
 
 from dimos.web.cdr_codec import check_cdr_params, default_encoding, encode_cdr_v1, export_schema
@@ -42,10 +47,15 @@ def test_schema_and_declared_type() -> None:
     assert "MSG: std_msgs/Header" in schema["definition"]
     params = {"cdr": schema}
     check_cdr_params(params)
-    msg = PoseStamped()
-    assert encode_cdr_v1(msg, params) == msg.encode()
+    msg = PoseStamped(
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        pose=Pose(
+            position=Point(x=0.0, y=0.0, z=0.0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+        ),
+    )
+    assert encode_cdr_v1(msg, params) == cdr_encode(msg)
     with pytest.raises(ValueError, match="declared channel type"):
-        encode_cdr_v1(Point(), params)
+        encode_cdr_v1(Point(x=0.0, y=0.0, z=0.0), params)
     for bad in [{}, {"cdr": {}}, {"cdr": {"type": "p.T", "definition": ""}}]:
         with pytest.raises(ValueError, match="params"):
             check_cdr_params(bad)
@@ -57,8 +67,12 @@ def test_browser_fixtures_match_generated_codecs() -> None:
     expected = json.loads((find_web_dir() / "shared/fixtures/cdr_frames.json").read_text())
     assert {"vectors": build_vectors()} == expected
     for (_, msg), vector in zip(build_messages(), expected["vectors"], strict=True):
-        assert type(msg).decode(base64.b64decode(vector["payload_b64"])) == msg
-        assert type(msg).decode(base64.b64decode(vector["big_endian_b64"])) == msg
+        np.testing.assert_equal(
+            asdict(cdr_decode(base64.b64decode(vector["payload_b64"]), type(msg))), asdict(msg)
+        )
+        np.testing.assert_equal(
+            asdict(cdr_decode(base64.b64decode(vector["big_endian_b64"]), type(msg))), asdict(msg)
+        )
 
 
 def test_codec_import_is_light() -> None:

@@ -37,6 +37,9 @@ import os
 import time
 import urllib.request
 
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import pytest
 
 from dimos.protocol.pubsub.impl.webrtc.providers.spec import WEBRTC_AVAILABLE
@@ -231,15 +234,29 @@ def test_operator_to_transport_e2e() -> None:
 
         # Robot → operator: telemetry through the broker-bridged back channel.
         for i in range(10):
-            back_transport.broadcast(None, TwistStamped(twist=Twist(linear=Vector3(z=1.0 + i))))
+            back_transport.broadcast(
+                None,
+                TwistStamped(
+                    twist=Twist(
+                        linear=Vector3(z=1.0 + i, x=0.0, y=0.0),
+                        angular=Vector3(x=0.0, y=0.0, z=0.0),
+                    ),
+                    header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                ),
+            )
             await asyncio.sleep(0.05)
         await _wait_for(lambda: bool(back_bytes), 5.0, "robot->operator telemetry")
-        back_msg = TwistStamped.decode(decode_data_frame(back_bytes[-1]).payload)
+        back_msg = cdr_decode(decode_data_frame(back_bytes[-1]).payload, TwistStamped)
         assert back_msg.twist.linear.z >= 1.0, back_msg.twist.linear
 
         sent = 0
         for i in range(40):
-            msg = TwistStamped(twist=Twist(linear=Vector3(x=0.5), angular=Vector3(z=i * 0.01)))
+            msg = TwistStamped(
+                twist=Twist(
+                    linear=Vector3(x=0.5, y=0.0, z=0.0), angular=Vector3(z=i * 0.01, x=0.0, y=0.0)
+                ),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            )
             ch.send(
                 encode_data_frame(
                     FrameHeader(
@@ -247,9 +264,9 @@ def test_operator_to_transport_e2e() -> None:
                         seq=i,
                         ts=time.time(),
                         delivery="latest",
-                        meta={"type": TwistStamped.msg_name, "encoding": "cdr"},
+                        meta={"type": TwistStamped.__msgtype__, "encoding": "cdr"},
                     ),
-                    msg.encode(),
+                    cdr_encode(msg),
                 )
             )
             sent += 1

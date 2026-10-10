@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from dimos_generated.geometry_msgs.msg import Point, Pose
+from dimos_generated.geometry_msgs.msg import Point, Pose, Quaternion
 
 
 @dataclass(frozen=True)
@@ -41,6 +41,8 @@ G1 = G1Config(
     width_clearance=0.6,
     internal_odom_offsets={
         # Mid-360 lidar: 1.2 m above ground.
-        "mid360_link": Pose(position=Point(x=0.0, y=0.0, z=1.2)),
+        "mid360_link": Pose(
+            position=Point(x=0.0, y=0.0, z=1.2), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+        ),
     },
 )

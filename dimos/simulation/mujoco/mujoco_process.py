@@ -16,6 +16,7 @@
 
 import base64
 import json
+import os
 import pickle
 import signal
 import sys
@@ -28,8 +29,6 @@ import numpy as np
 from numpy.typing import NDArray
 
 from dimos.core.global_config import GlobalConfig
-from dimos.msgs.pointcloud import pointcloud_from_xyz
-from dimos.msgs.time import header_now
 from dimos.simulation.mujoco.constants import (
     DEPTH_CAMERA_FOV,
     LIDAR_FPS,
@@ -38,7 +37,7 @@ from dimos.simulation.mujoco.constants import (
     VIDEO_HEIGHT,
     VIDEO_WIDTH,
 )
-from dimos.simulation.mujoco.depth_camera import depth_image_to_point_cloud
+from dimos.simulation.mujoco.depth_camera import depth_image_to_point_cloud, voxel_down_sample
 from dimos.simulation.mujoco.model import load_model, load_scene_xml
 from dimos.simulation.mujoco.person_on_track import PersonPositionController
 from dimos.simulation.mujoco.shared_memory import ShmReader
@@ -71,9 +70,40 @@ class MockController:
         pass
 
 
-def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
-    import open3d as o3d  # type: ignore[import-untyped]
+def _shadow_render_is_slow(model: mujoco.MjModel, data: mujoco.MjData) -> bool:
+    """Benchmark one offscreen camera render with shadow mapping enabled.
 
+    Shadow-mapping a mesh-heavy scene can cost 4x per render on integrated
+    GPUs, which pins the whole sim below realtime. The video camera renders at
+    VIDEO_FPS and shares the loop with physics and three depth cameras, so a
+    shadowed render that eats a large slice of the frame budget cannot keep up.
+    """
+    camera_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, "head_camera")
+    renderer = mujoco.Renderer(model, height=VIDEO_HEIGHT, width=VIDEO_WIDTH)
+    try:
+        for _ in range(3):  # warmup: first renders pay asset-upload cost
+            renderer.update_scene(data, camera=camera_id)
+            renderer.render()
+        n = 5
+        start = time.perf_counter()
+        for _ in range(n):
+            renderer.update_scene(data, camera=camera_id)
+            renderer.render()
+        render_ms = (time.perf_counter() - start) / n * 1e3
+    finally:
+        renderer.close()
+
+    budget_ms = 1.0 / VIDEO_FPS * 1e3
+    is_slow = render_ms > budget_ms * 0.3
+    if is_slow:
+        logger.warning(
+            f"Shadowed render took {render_ms:.1f} ms of the {budget_ms:.0f} ms frame "
+            "budget; disabling shadows (force with mujoco_shadows=on)"
+        )
+    return is_slow
+
+
+def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
     robot_name = config.robot_model or "unitree_go1"
     if robot_name == "unitree_go2":
         robot_name = "unitree_go1"
@@ -103,12 +133,19 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
 
     person_position_controller = PersonPositionController(model)
 
+    if config.mujoco_shadows == "off" or (
+        config.mujoco_shadows == "auto" and _shadow_render_is_slow(model, data)
+    ):
+        # Must happen before the viewer and renderers build their GL contexts:
+        # the shadow framebuffer is allocated at context creation, so the
+        # viewer would keep shadow-rendering the whole scene regardless of
+        # per-render flags.
+        model.vis.quality.shadowsize = 0
+
     lidar_left_camera_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, "lidar_left_camera")
     lidar_right_camera_id = mujoco.mj_name2id(
         model, mujoco.mjtObj.mjOBJ_CAMERA, "lidar_right_camera"
     )
-
-    shm.signal_ready()
 
     with viewer.launch_passive(model, data, show_left_ui=False, show_right_ui=False) as m_viewer:
         camera_size = (VIDEO_WIDTH, VIDEO_HEIGHT)
@@ -137,7 +174,21 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
         m_viewer.cam.azimuth = config.mujoco_camera_position_float[4]
         m_viewer.cam.elevation = config.mujoco_camera_position_float[5]
 
-        while m_viewer.is_running() and not shm.should_stop():
+        parent_pid = os.getppid()
+
+        def alive() -> bool:
+            # Also exit when the connection's process is gone, whatever killed it.
+            return m_viewer.is_running() and not shm.should_stop() and os.getppid() == parent_pid
+
+        shm.signal_ready()
+
+        # The world stands still until the connection's start(): the parent is
+        # still deploying and wiring the other modules.
+        while alive() and not shm.should_run():
+            m_viewer.sync()
+            time.sleep(0.05)
+
+        while alive():
             step_start = time.time()
 
             # Step simulation
@@ -208,15 +259,8 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
                         all_points.append(points)
 
                 if all_points:
-                    combined_points = np.vstack(all_points)
-                    pcd = o3d.geometry.PointCloud()
-                    pcd.points = o3d.utility.Vector3dVector(combined_points)
-                    pcd = pcd.voxel_down_sample(voxel_size=LIDAR_RESOLUTION)
-
-                    lidar_msg = pointcloud_from_xyz(
-                        np.asarray(pcd.points), header=header_now("world")
-                    )
-                    shm.write_lidar(lidar_msg)
+                    points = voxel_down_sample(np.vstack(all_points), LIDAR_RESOLUTION)
+                    shm.write_lidar(points, time.time())
 
                 last_lidar_time = current_time
 

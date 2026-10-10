@@ -27,6 +27,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 import attrs
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Pose, PoseStamped
 from dimos_generated.sensor_msgs.msg import JointState
 from dimos_generated.std_msgs.msg import Header
@@ -443,7 +444,13 @@ class PinkPoseTargetSolver(_PinkSolverCore):
             command_limit_margin=command_limit_margin,
         )
         return _StreamingStepResult(
-            command=JointState(name=list(joint_names), position=command_positions.tolist()),
+            command=JointState(
+                name=list(joint_names),
+                position=np.asarray(command_positions.tolist(), dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            ),
             bounded_increment=bounded_increment,
         )
 
@@ -515,7 +522,7 @@ class PinkPoseTargetSolver(_PinkSolverCore):
         for frame_name, frame_context in context.frames.items():
             pose = pose_from_matrix(base_world @ self._current_frame_matrix(frame_context, q))
             poses[frame_name] = PoseStamped(
-                header=Header(frame_id=robot_model.base_link),
+                header=Header(frame_id=robot_model.base_link, stamp=Time(sec=0, nanosec=0)),
                 pose=Pose(position=pose.position, orientation=pose.orientation),
             )
         return poses
@@ -766,6 +773,10 @@ class PoseTargetIKTask(BaseControlTask):
             return None
         return self._solver.frame_poses(measured_state, frame_names)
 
+    def measured_frame_poses(self, state: CoordinatorState) -> dict[str, PoseStamped]:
+        """Measured world poses of this task's target frames; empty without full feedback."""
+        return self.current_frame_poses(state, self._config.target_frames) or {}
+
     def on_preempted(self, by_task: str, joints: frozenset[str]) -> None:
         """Notify the leaf when any of its claimed joints are preempted."""
         if joints & self.claim().joints:
@@ -779,7 +790,13 @@ class PoseTargetIKTask(BaseControlTask):
             if position is None:
                 return None
             positions.append(position)
-        return JointState(name=list(self._joint_names), position=positions)
+        return JointState(
+            name=list(self._joint_names),
+            position=np.asarray(positions, dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        )
 
     def _reset_command_state(self) -> None:
         """Discard the active command trajectory and clear a tracking fault."""

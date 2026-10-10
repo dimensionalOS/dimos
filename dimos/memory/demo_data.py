@@ -52,8 +52,8 @@ def write_demo_recording(path: Path, *, samples: int = 720) -> SqliteStore:
         header = Header(stamp=stamp, frame_id="world")
         angle = index / 80.0
         pose = Pose(
-            position=Point(x=math.cos(angle), y=math.sin(angle)),
-            orientation=Quaternion(w=1.0),
+            position=Point(x=math.cos(angle), y=math.sin(angle), z=0.0),
+            orientation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0),
         )
         pixels = np.full((48, 64, 3), 40 + index % 180, dtype=np.uint8)
         pixels[:, 16:32, 1] = 230

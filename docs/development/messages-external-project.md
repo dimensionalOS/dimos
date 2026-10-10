@@ -11,9 +11,17 @@ API. Use matching review wheels for `dimos`, `dimos-generated` and
 `dimos-message-build`; `PIP_FIND_LINKS` can point pip at that wheel directory.
 Do not assume these proposal versions are available on a public package index.
 The `message-authoring-packages` CI artifact also contains matching built-in
-CMake headers (`dimos-messages-cmake-0.1.0.tar.gz`) and a Rust crate
+native source inputs (`dimos-messages-sources-0.1.0.tar.gz`) and a Rust crate
 (`dimos-generated-messages-0.1.0.crate`). These use the message package's version,
-independently of the dimOS runtime version; native consumers do not regenerate them.
+independently of the dimOS runtime version. The C++ archive is **not a prebuilt
+SDK**: the shared native build core still generates and compiles ROSIDL typesupport
+and its pinned support libraries. C++ distribution is source-only in this proposal;
+prebuilt native SDK archives are out of scope. Python wheel installation does not
+perform this native build.
+
+Read the [accepted native-library limitations](/docs/development/message-limitations.md) before using
+these packages: malformed inputs may be accepted and bounded Python messages are
+unsupported. These provisional non-blockers are not proof of parser safety.
 
 ## Prepare matching review packages
 
@@ -39,10 +47,10 @@ Direct wheel filenames select the proposal builds; an unqualified `pip install
 dimos` may select a released package with a different API. Pip does not consult
 `[tool.uv.sources]` from a dimOS checkout.
 
-For Python source message builds, prepare a C++ compiler, Python development
-headers and Fast CDR 2.4.0, then set `CMAKE_PREFIX_PATH` to its installation prefix.
-The compiler and library are explicit prerequisites; wheels need neither. A
-full three-language application also needs CMake, Rust/Cargo and the native SDK.
+Python message source builds generate ordinary Python classes and use setuptools;
+they require no C++ compiler, Python development headers, CMake or Fast CDR.
+Installed messages use NumPy and pinned rosbags 0.11.0 for CDR. A three-language
+application additionally needs CMake, Rust/Cargo, Fast CDR and the native SDK.
 The currently verified coordinator example runs on Linux x86_64.
 
 ## Prepare native consumers once
@@ -113,7 +121,9 @@ All `.msg` files under `interfaces/<package>/msg/` are discovered automatically.
 The default dependency is the compatible `dimos_generated` message package at
 version `0.1.0`; additional packages require explicit exact versions under
 `[tool.dimos.messages.dependencies]`. Conflicting owners, definitions, versions
-or binding ABIs are errors. Runtime never downloads schemas or generates code.
+or binding ABIs are errors. Runtime never downloads schemas or invokes a native toolchain. On first use,
+rosbags initializes native Python classes/codecs in memory from the installed
+schemas; there is no generated-file write or constructor/class postprocessing.
 
 ## Build or install
 
@@ -123,12 +133,13 @@ For a Python source checkout, this is sufficient:
 pip install .
 ```
 
-The normal PEP 517 backend generates and compiles only the Python extension,
-even when the project lists C++ and Rust. Build isolation installs the lightweight
-backend and its Python build requirements; it does not install dimOS or build the
-robot runtime. A C++ compiler, Python development headers and Fast CDR 2.4.0 are
-still prerequisites. CMake and pybind11 are declared build dependencies. Prepare
-native dependencies explicitly; there are no implicit OS package installations.
+The normal PEP 517 backend generates and packages Python source only, even when
+the project lists C++ and Rust. Build isolation installs the lightweight backend,
+setuptools/wheel and pinned message dependencies; it does not install dimOS or
+build the robot runtime. No message-native compiler is needed. Python installation
+resolves NumPy and rosbags dependencies normally; it performs no OS installation
+or native compilation at import. Rosbags initializes its Python classes/codecs
+in memory from the installed schemas.
 
 To build all configured language artifacts instead of installing Python:
 
@@ -144,12 +155,17 @@ messages invalidate the generated package. CMake and Cargo perform native builds
 ```sh skip
 dimos build --language cpp       # select one output language
 dimos build --install            # also install Python into the active virtualenv
-dimos build --offline            # require cached Cargo dependencies
+dimos build --offline            # require cached native sources and Cargo dependencies
 ```
 
 Use pip's `--no-index --find-links` with a prepared wheelhouse for offline Python
-builds. The compiler and Fast CDR must already be present. Missing prerequisites
-fail with an error; the command does not silently install system tools.
+builds. C++ message source preparation supports Linux and macOS and requires a C/C++
+compiler, CMake and `dimos-message-build[native]` in the active environment.
+It builds pinned upstream ROSIDL/FastRTPS/Fast CDR support in a writable local
+cache; it does not install ROS system packages. The first online native build
+fetches those explicitly selected source dependencies; `--offline` fails if they
+are absent. Rust selection requires Cargo and its dependency cache. Python-only builds need neither native
+toolchain. Missing prerequisites fail clearly without installing system tools.
 
 Editable installation is also supported:
 
@@ -194,9 +210,12 @@ class ReadingProcessor(Module):
 ```
 
 Automatic `handle_<input>` handlers are **async**. No manual CDR calls or
-`PYTHONPATH` changes are required after installation. The constructor copies the
-Header value while retaining its dependency package's Python type; it does not
-mutate the incoming message.
+`PYTHONPATH` changes are required after installation. These are native rosbags
+dataclasses: this constructor reuses the Header object and its dependency-owned
+Python type. It changes only the new reading's value. Use `copy.deepcopy` when
+your module needs an independently mutable nested message. Python and Rust
+constructors require every field explicitly; `.msg` defaults are not injected.
+Numeric Python array fields use NumPy arrays with the declared dtype.
 
 ## C++: use the installed message and SDK packages
 
@@ -205,7 +224,7 @@ mutate the incoming message.
 <!-- source: examples/message-project/cpp/processor.cpp -->
 ```cpp
 #include <dimos/native.hpp>
-#include <story_messages/messages.hpp>
+#include <story_msgs/msg/device_reading.hpp>
 
 using namespace dimos::native;
 using Reading = story_msgs::msg::DeviceReading;
@@ -242,7 +261,9 @@ target_link_libraries(processor PRIVATE dimos_native::dimos_native story_message
 Prepare the SDK and its pinned Zenoh/raw-LCM dependencies once. Its installation
 exports `dimos_native::dimos_native` and propagates required includes/libraries.
 `dimos build` emits a CMake toolchain file locating this project's message package
-and its dependencies. The example's standard CMake preset uses that file:
+and its dependencies, including the Python resources used by upstream ament
+CMake configuration. This file contains absolute local paths; rerun `dimos build`
+after moving the environment. The example's standard CMake preset uses that file:
 
 <!-- source: examples/message-project/cpp/CMakePresets.json -->
 ```json
@@ -282,7 +303,7 @@ cd ..
 <!-- source: examples/message-project/rust/src/main.rs -->
 ```rust
 use dimos_module::{Input, Module, Output, cdr, run_with_transport};
-use story_messages_messages::story_msgs::msg::DeviceReading;
+use story_messages_messages::story_msgs::msg::device_reading::DeviceReading;
 
 #[derive(Module)]
 struct Processor {

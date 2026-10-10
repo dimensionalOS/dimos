@@ -28,7 +28,7 @@ def main() -> None:
         "/camera/compressed": "EncodedImage:blob",
         "/robot/pose": "InstancePoses3D:translations",
         "/tf": "Transform3D:translation",
-        "/telemetry": "demo_msgs.msg.Telemetry:message",
+        "/telemetry": "story_msgs.msg.DeviceReading:message",
     }
     counts: Counter[str] = Counter()
     for line in summary.splitlines():
@@ -41,7 +41,7 @@ def main() -> None:
     assert counts == dict.fromkeys(expected, 30), counts
     telemetry = (evidence / "rerun-telemetry.txt").read_text()
     # This must be an Arrow struct with nested fields, not an opaque byte blob.
-    for field in ('"temperature": Float64', '"sequence": UInt32', '"hops": List(Int32)'):
+    for field in ('"value": Float64', '"sequence": UInt32', '"header": Struct'):
         assert field in telemetry, field
     for topic, count in counts.items():
         print(f"Rerun imported {count} {topic} rows as {expected[topic]}.")

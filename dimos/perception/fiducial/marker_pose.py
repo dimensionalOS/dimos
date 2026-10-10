@@ -42,7 +42,7 @@ def camera_info_to_cv_matrices(
 ) -> tuple[np.ndarray[Any, np.dtype[Any]], np.ndarray[Any, np.dtype[Any]]]:
     """Build OpenCV ``cameraMatrix`` and ``distCoeffs`` from ``CameraInfo``."""
     k = np.array(camera_info.k, dtype=np.float64).reshape(3, 3)
-    d = np.array(camera_info.d if camera_info.d else [], dtype=np.float64).reshape(-1, 1)
+    d = np.array(camera_info.d, dtype=np.float64).reshape(-1, 1)
     return k, d
 
 

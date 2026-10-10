@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 import functools
 import inspect
 from typing import TYPE_CHECKING, Any, Protocol
@@ -123,8 +123,9 @@ class RPCClient:
     def __init__(
         self,
         actor_instance: Actor | None,
-        actor_class: type[ModuleBase],
+        actor_class: type[ModuleBase] | None,
         remote_name: str | None = None,
+        rpcs: Iterable[str] | None = None,
         *,
         rpc: RPCSpec | None = None,
     ) -> None:
@@ -135,10 +136,16 @@ class RPCClient:
         else:
             self.rpc = rpc
             self._owns_rpc = False
+        if actor_class is None:
+            # Unpickled in another process; the class stays out of the pickle (see __reduce__).
+            assert remote_name is not None and rpcs is not None
+        else:
+            remote_name = remote_name or actor_class.__name__
+            rpcs = actor_class.rpcs if rpcs is None else rpcs
         self.actor_class = actor_class
-        self.remote_name = remote_name or actor_class.__name__
+        self.remote_name = remote_name
         self.actor_instance = actor_instance
-        self.rpcs = actor_class.rpcs.keys()
+        self.rpcs = frozenset(rpcs)
         self._unsub_fns: list = []  # type: ignore[type-arg]
 
     @classmethod
@@ -166,13 +173,13 @@ class RPCClient:
             self.rpc = None  # type: ignore[assignment]
 
     def __reduce__(self):  # type: ignore[no-untyped-def]
-        # Return the class and the arguments needed to reconstruct the object.
-        # remote_name must be included or proxies pickled into workers would
-        # fall back to class-name RPC topics.
-        return (
-            self.__class__,
-            (self.actor_instance, self.actor_class, self.remote_name),
-        )
+        # The module class stays out of the pickle: unpickling it in another
+        # worker would import the module and everything under it (a
+        # SpatialMemory proxy alone pulls in transformers and torch). A proxy
+        # only needs the rpc names; the class merely gives RpcCall a local
+        # signature. remote_name must be included or proxies pickled into
+        # workers would fall back to class-name RPC topics.
+        return (self.__class__, (self.actor_instance, None, self.remote_name, self.rpcs))
 
     def __dir__(self) -> list[str]:
         return sorted(set(super().__dir__()) | set(self.rpcs))

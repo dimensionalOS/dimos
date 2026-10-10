@@ -18,8 +18,10 @@ import importlib
 from pathlib import Path
 from typing import Any
 
-from dimos_generated.geometry_msgs.msg import Transform, TransformStamped
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Quaternion, Transform, TransformStamped
 from dimos_generated.std_msgs.msg import Header
+import numpy as np
 import pytest
 
 pytest.importorskip("roboplan.cartesian_planning")
@@ -60,7 +62,13 @@ def _sync_zero_state(
     joint_names: list[str],
 ) -> None:
     world.sync_from_joint_state(
-        JointState(name=joint_names, position=[0.0] * len(joint_names)),
+        JointState(
+            name=joint_names,
+            position=np.asarray([0.0] * len(joint_names), dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        ),
     )
 
 
@@ -81,7 +89,11 @@ def test_real_roboplan_plans_fixed_orientation_cartesian_path(
     group_id = "manipulator"
     selection = world._planning_groups.select((group_id,))
     start = JointState(
-        name=list(selection.joint_names), position=[0.0] * len(selection.joint_names)
+        name=list(selection.joint_names),
+        position=np.asarray([0.0] * len(selection.joint_names), dtype=np.float64),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
     )
     with world.scratch_context() as ctx:
         planner._apply_selected_state(ctx, start)
@@ -93,10 +105,20 @@ def test_real_roboplan_plans_fixed_orientation_cartesian_path(
         start,
         {
             group_id: (
-                TransformStamped(header=Header(frame_id="world"), child_frame_id=""),
                 TransformStamped(
-                    header=Header(frame_id="world"),
-                    transform=Transform(translation=Vector3(x=0.005, y=0.0, z=0.0)),
+                    header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+                    child_frame_id="",
+                    transform=Transform(
+                        translation=Vector3(x=0.0, y=0.0, z=0.0),
+                        rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                    ),
+                ),
+                TransformStamped(
+                    header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+                    transform=Transform(
+                        translation=Vector3(x=0.005, y=0.0, z=0.0),
+                        rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                    ),
                     child_frame_id="",
                 ),
             )
@@ -139,7 +161,11 @@ def test_real_roboplan_synchronizes_different_length_dual_arm_targets(
     right_group_id = "right_arm"
     selection = world._planning_groups.select((left_group_id, right_group_id))
     start = JointState(
-        name=list(selection.joint_names), position=[0.0] * len(selection.joint_names)
+        name=list(selection.joint_names),
+        position=np.asarray([0.0] * len(selection.joint_names), dtype=np.float64),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
     )
 
     result = planner.plan_cartesian_path(
@@ -148,23 +174,46 @@ def test_real_roboplan_synchronizes_different_length_dual_arm_targets(
         start,
         {
             left_group_id: (
-                TransformStamped(header=Header(frame_id="world"), child_frame_id=""),
                 TransformStamped(
-                    header=Header(frame_id="world"),
-                    transform=Transform(translation=Vector3(x=0.0015, y=0.001, z=0.0)),
+                    header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+                    child_frame_id="",
+                    transform=Transform(
+                        translation=Vector3(x=0.0, y=0.0, z=0.0),
+                        rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                    ),
+                ),
+                TransformStamped(
+                    header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+                    transform=Transform(
+                        translation=Vector3(x=0.0015, y=0.001, z=0.0),
+                        rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                    ),
                     child_frame_id="",
                 ),
                 TransformStamped(
-                    header=Header(frame_id="world"),
-                    transform=Transform(translation=Vector3(x=0.003, y=0.0, z=0.0)),
+                    header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+                    transform=Transform(
+                        translation=Vector3(x=0.003, y=0.0, z=0.0),
+                        rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                    ),
                     child_frame_id="",
                 ),
             ),
             right_group_id: (
-                TransformStamped(header=Header(frame_id="world"), child_frame_id=""),
                 TransformStamped(
-                    header=Header(frame_id="world"),
-                    transform=Transform(translation=Vector3(x=0.005, y=0.0, z=0.0)),
+                    header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+                    child_frame_id="",
+                    transform=Transform(
+                        translation=Vector3(x=0.0, y=0.0, z=0.0),
+                        rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                    ),
+                ),
+                TransformStamped(
+                    header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+                    transform=Transform(
+                        translation=Vector3(x=0.005, y=0.0, z=0.0),
+                        rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                    ),
                     child_frame_id="",
                 ),
             ),

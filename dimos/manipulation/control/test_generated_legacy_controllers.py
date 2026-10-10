@@ -15,10 +15,14 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.dimos_msgs.msg import JointCommand
 from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.std_msgs.msg import Header
 from dimos_generated.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
+import numpy as np
 import pytest
 
 from dimos.manipulation.control.servo_control.cartesian_motion_controller import (
@@ -38,9 +42,22 @@ def test_trajectory_loop_publishes_generated_sample_with_source_time(
     controller._trajectory = JointTrajectory(
         joint_names=["a", "b"],
         points=[
-            JointTrajectoryPoint(positions=[0.0, 0.0], time_from_start=duration_from_seconds(0)),
-            JointTrajectoryPoint(positions=[1.0, 2.0], time_from_start=duration_from_seconds(1)),
+            JointTrajectoryPoint(
+                positions=np.array([0.0, 0.0], dtype=np.float64),
+                time_from_start=duration_from_seconds(0),
+                velocities=np.array([], dtype=np.float64),
+                accelerations=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            ),
+            JointTrajectoryPoint(
+                positions=np.array([1.0, 2.0], dtype=np.float64),
+                time_from_start=duration_from_seconds(1),
+                velocities=np.array([], dtype=np.float64),
+                accelerations=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            ),
         ],
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
     )
     controller._state = TrajectoryState.EXECUTING
     controller._start_time = 100.0
@@ -56,8 +73,9 @@ def test_trajectory_loop_publishes_generated_sample_with_source_time(
     try:
         controller._execution_loop()
         controller.joint_position_command.publish.assert_called_once()
-        message = JointCommand.decode(
-            controller.joint_position_command.publish.call_args.args[0].encode()
+        message = cdr_decode(
+            cdr_encode(controller.joint_position_command.publish.call_args.args[0]),
+            JointCommand,
         )
         assert list(message.positions) == [0.5, 1.0]
         assert (message.header.stamp.sec, message.header.stamp.nanosec) == (100, 500000000)
@@ -73,9 +91,18 @@ def test_cartesian_generated_command_preserves_joint_count_and_pid_clamp(
     driver.get_forward_kinematics.return_value = (0, [0.0] * 6)
     driver.get_inverse_kinematics.return_value = (0, [0.1, 0.2, 0.3])
     controller._arm_driver = driver
-    controller._latest_joint_state = JointState(position=[0.0, 0.0])
+    controller._latest_joint_state = JointState(
+        position=np.array([0.0, 0.0], dtype=np.float64),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        name=[],
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
+    )
     controller._target_pose_ = PoseStamped(
-        pose=Pose(position=Point(x=0.1), orientation=Quaternion(w=1.0))
+        pose=Pose(
+            position=Point(x=0.1, y=0.0, z=0.0), orientation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0)
+        ),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
     )
     controller._is_tracking = True
     controller._last_target_time = 100.0
@@ -92,8 +119,9 @@ def test_cartesian_generated_command_preserves_joint_count_and_pid_clamp(
     try:
         controller._control_loop()
         controller.joint_position_command.publish.assert_called_once()
-        message = JointCommand.decode(
-            controller.joint_position_command.publish.call_args.args[0].encode()
+        message = cdr_decode(
+            cdr_encode(controller.joint_position_command.publish.call_args.args[0]),
+            JointCommand,
         )
         assert list(message.positions) == [0.1, 0.2]
         assert (message.header.stamp.sec, message.header.stamp.nanosec) == (100, 500000000)

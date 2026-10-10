@@ -16,6 +16,7 @@
 
 from importlib import resources
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.sensor_msgs.msg import CameraInfo
 from dimos_generated.std_msgs.msg import Header
 
@@ -25,4 +26,6 @@ from dimos.msgs.camera_info import camera_info_from_yaml
 def front_camera_calibration() -> CameraInfo:
     resource = resources.files("dimos.robot.unitree.go2").joinpath("front_camera_720.yaml")
     with resources.as_file(resource) as path:
-        return camera_info_from_yaml(path, header=Header(frame_id="camera_optical"))
+        return camera_info_from_yaml(
+            path, header=Header(frame_id="camera_optical", stamp=Time(sec=0, nanosec=0))
+        )

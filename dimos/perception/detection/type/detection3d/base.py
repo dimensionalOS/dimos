@@ -18,7 +18,9 @@ from abc import abstractmethod
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from dimos_generated.geometry_msgs.msg import Quaternion, Transform, TransformStamped
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
+from dimos_generated.std_msgs.msg import Header
 
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 
@@ -32,7 +34,14 @@ class Detection3D(Detection2DBBox):
 
     frame_id: str = ""
     transform: TransformStamped = field(
-        default_factory=lambda: TransformStamped(transform=Transform(rotation=Quaternion(w=1)))
+        default_factory=lambda: TransformStamped(
+            transform=Transform(
+                rotation=Quaternion(w=1, x=0.0, y=0.0, z=0.0),
+                translation=Vector3(x=0.0, y=0.0, z=0.0),
+            ),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            child_frame_id="",
+        )
     )
 
     @classmethod

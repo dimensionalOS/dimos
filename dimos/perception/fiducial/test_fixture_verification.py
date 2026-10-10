@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 import cv2
-from dimos_generated.geometry_msgs.msg import Quaternion, Transform, TransformStamped
+from dimos_generated.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos_generated.std_msgs.msg import Header
 import numpy as np
 import pytest
@@ -168,7 +168,9 @@ def test_marker_tf_replay_synthetic_packed_board_publishes_twelve_markers(
     world_T_optical = TransformStamped(
         header=Header(stamp=header.stamp, frame_id="world"),
         child_frame_id="camera_optical",
-        transform=Transform(rotation=Quaternion(w=1)),
+        transform=Transform(
+            rotation=Quaternion(w=1, x=0.0, y=0.0, z=0.0), translation=Vector3(x=0.0, y=0.0, z=0.0)
+        ),
     )
     detections = detect_markers_in_image(
         image,

@@ -177,7 +177,8 @@ def test_the_host_publishes_its_outputs_and_hides_the_suppressed_hop(baked, zeno
                             header=Header(stamp=time_from_nanoseconds(stamp_ns), frame_id="odom"),
                             child_frame_id="lidar",
                             transform=Transform(
-                                translation=Vector3(z=SENSOR_Z), rotation=Quaternion(w=1.0)
+                                translation=Vector3(z=SENSOR_Z, x=0.0, y=0.0),
+                                rotation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0),
                             ),
                         )
                     ]

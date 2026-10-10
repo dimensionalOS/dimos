@@ -18,10 +18,12 @@ import atexit
 import threading
 import time
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
-from dimos_generated.sensor_msgs.msg import CameraInfo, Image, PointCloud2
+from dimos_generated.sensor_msgs.msg import CameraInfo, Image, PointCloud2, RegionOfInterest
 from dimos_generated.std_msgs.msg import Header
 from dimos_generated.tf2_msgs.msg import TFMessage
+import numpy as np
 from pydantic import Field
 import pyzed.sl as sl
 import reactivex as rx
@@ -49,8 +51,8 @@ from dimos.utils.reactive import backpressure
 def default_base_transform() -> Transform:
     """Default identity transform for camera mounting."""
     return Transform(
-        translation=Vector3(),
-        rotation=Quaternion(w=1.0),
+        translation=Vector3(x=0.0, y=0.0, z=0.0),
+        rotation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0),
     )
 
 
@@ -236,11 +238,14 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
             height=self._stream_height,
             width=self._stream_width,
             distortion_model="plumb_bob",
-            d=D,
-            k=K,
-            r=[1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
-            p=P,
-            header=Header(frame_id=frame_id),
+            d=np.asarray(D, dtype=np.float64),
+            k=np.asarray(K, dtype=np.float64),
+            r=np.array([1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0], dtype=np.float64),
+            p=np.asarray(P, dtype=np.float64),
+            header=Header(frame_id=frame_id, stamp=Time(sec=0, nanosec=0)),
+            binning_x=0,
+            binning_y=0,
+            roi=RegionOfInterest(x_offset=0, y_offset=0, height=0, width=0, do_rectify=False),
         )
 
     def _get_extrinsics(self) -> None:
@@ -388,7 +393,9 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
                 TransformStamped(
                     header=Header(frame_id=frame, stamp=stamp),
                     child_frame_id=optical_frame,
-                    transform=Transform(rotation=OPTICAL_ROTATION),
+                    transform=Transform(
+                        rotation=OPTICAL_ROTATION, translation=Vector3(x=0.0, y=0.0, z=0.0)
+                    ),
                 )
             )
         tracking_tf = self._tracking_transform(ts)

@@ -319,7 +319,9 @@ class Go2TeleopModule(WebXRTeleopModule):
     cmd_vel: Out[Twist]
 
     def _publish_safe_command(self) -> None:
-        self.cmd_vel.publish(Twist())
+        self.cmd_vel.publish(
+            Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+        )
 
     def _deadzone(self, v: float) -> float:
         return 0.0 if abs(v) < self.config.deadzone else v
@@ -336,9 +338,9 @@ class Go2TeleopModule(WebXRTeleopModule):
         with self._lock:
             left = self._controllers.get(Hand.LEFT)
             right = self._controllers.get(Hand.RIGHT)
-        twist = Twist()
-        twist.linear = Vector3()
-        twist.angular = Vector3()
+        twist = Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+        twist.linear = Vector3(x=0.0, y=0.0, z=0.0)
+        twist.angular = Vector3(x=0.0, y=0.0, z=0.0)
         if left is not None:
             twist.linear.x = -self._deadzone(left.thumbstick.y) * self.config.linear_speed
             twist.linear.y = -self._deadzone(left.thumbstick.x) * self.config.linear_speed

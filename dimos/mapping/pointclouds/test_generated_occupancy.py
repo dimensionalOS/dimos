@@ -21,6 +21,7 @@ from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.nav_msgs.msg import OccupancyGrid
 from dimos_generated.sensor_msgs.msg import PointCloud2
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 from numpy.typing import NDArray
 import pytest
@@ -42,9 +43,9 @@ def test_generated_cloud_to_grid(algorithm: Callable[..., OccupancyGrid]) -> Non
     x, y = np.meshgrid(xy, xy)
     points = np.column_stack((x.ravel(), y.ravel(), np.zeros(x.size)))
     cloud = pointcloud_from_xyz(points, header=header)
-    decoded = PointCloud2.decode(cloud.encode())
+    decoded = cdr_decode(cdr_encode(cloud), PointCloud2)
     grid = algorithm(decoded, resolution=0.1)
-    restored = OccupancyGrid.decode(grid.encode())
+    restored = cdr_decode(cdr_encode(grid), OccupancyGrid)
     assert restored.header == header
     cells = occupancy_view(restored)
     assert cells.shape == (39, 39)
@@ -63,7 +64,9 @@ def test_empty_or_missing_points_remain_unknown(
     algorithm: Callable[..., OccupancyGrid],
     points: NDArray[np.float64],
 ) -> None:
-    cloud = pointcloud_from_xyz(points, header=Header(stamp=Time(nanosec=123), frame_id="map"))
+    cloud = pointcloud_from_xyz(
+        points, header=Header(stamp=Time(nanosec=123, sec=0), frame_id="map")
+    )
     grid = algorithm(cloud)
     assert grid.header == cloud.header
     assert occupancy_view(grid).tolist() == [[-1]]
@@ -72,14 +75,16 @@ def test_empty_or_missing_points_remain_unknown(
 
 @pytest.mark.parametrize("resolution", [0, -1, float("nan"), float("inf")])
 def test_invalid_resolution(resolution: float) -> None:
-    cloud = pointcloud_from_xyz(np.zeros((1, 3)), header=Header())
+    cloud = pointcloud_from_xyz(
+        np.zeros((1, 3)), header=Header(stamp=Time(sec=0, nanosec=0), frame_id="")
+    )
     with pytest.raises(ValueError, match="resolution"):
         general_occupancy(cloud, resolution=resolution)
 
 
 def test_inflation_preserves_metadata_and_source() -> None:
     cloud = pointcloud_from_xyz(
-        np.array([[0, 0, 1.0]]), header=Header(stamp=Time(nanosec=789), frame_id="map")
+        np.array([[0, 0, 1.0]]), header=Header(stamp=Time(nanosec=789, sec=0), frame_id="map")
     )
     grid = general_occupancy(cloud, resolution=0.1)
     original = occupancy_view(grid).copy()
@@ -90,7 +95,7 @@ def test_inflation_preserves_metadata_and_source() -> None:
     np.testing.assert_array_equal(occupancy_view(grid), original)
     inflated.header.frame_id = "changed"
     assert grid.header.frame_id == "map"
-    assert simple_inflate(grid, 0) == grid
+    assert cdr_encode(simple_inflate(grid, 0)) == cdr_encode(grid)
     for radius in [-1, float("nan"), float("inf")]:
         with pytest.raises(ValueError, match="radius"):
             simple_inflate(grid, radius)

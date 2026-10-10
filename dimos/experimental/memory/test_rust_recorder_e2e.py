@@ -26,10 +26,11 @@ from typing import cast
 import uuid
 
 from dimos_generated.builtin_interfaces.msg import Time
-from dimos_generated.geometry_msgs.msg import Transform, TransformStamped, Vector3
+from dimos_generated.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos_generated.sensor_msgs.msg import Image, Imu
 from dimos_generated.std_msgs.msg import Header
 from dimos_generated.tf2_msgs.msg import TFMessage
+from dimos_message_build.registry import encode as cdr_encode
 from mcap.reader import make_reader
 import numpy as np
 import pytest
@@ -157,6 +158,8 @@ def test_rust_artifact_is_readable_by_python_memory2(
     endpoint = f"tcp/127.0.0.1:{_free_port()}"
     monkeypatch.setattr(global_config, "transport", "zenoh")
     recorder = InteropRustRecorder(
+        source_dir=None,
+        build_command=None,
         executable=str(rust_recorder_executable),
         store=store,
         record_tf=False,
@@ -222,6 +225,11 @@ def test_rust_artifact_is_readable_by_python_memory2(
         expected = Imu(
             header=Header(stamp=Time(sec=1700000000, nanosec=123456789), frame_id="imu_link"),
             angular_velocity=Vector3(x=1.0, y=2.0, z=3.0),
+            orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            orientation_covariance=np.zeros(9, dtype=np.float64),
+            angular_velocity_covariance=np.zeros(9, dtype=np.float64),
+            linear_acceleration=Vector3(x=0.0, y=0.0, z=0.0),
+            linear_acceleration_covariance=np.zeros(9, dtype=np.float64),
         )
         expected_image = image_from_array(
             np.full((16, 16, 3), [20, 80, 140], dtype=np.uint8),
@@ -258,7 +266,7 @@ def test_rust_artifact_is_readable_by_python_memory2(
     with memory:
         observation = cast("Observation[Imu]", memory.stream("imu").first())
         assert observation.ts == 1700000000.123456789
-        assert observation.data.encode() == expected.encode()
+        assert cdr_encode(observation.data) == cdr_encode(expected)
         image_observation = cast("Observation[Image]", memory.stream("color_image").first())
         decoded_image = image_observation.data
         assert image_observation.ts == 12.75
@@ -287,8 +295,9 @@ def test_cli_recording_uses_existing_binary_for_both_formats(
     monkeypatch.setattr(global_config, "record_encoding_threads", 2)
     monkeypatch.setattr(global_config, "transport", "lcm")
     monkeypatch.setattr(global_config, "build_native", False)
-    monkeypatch.setattr(rust_cli_recorder, "_EXECUTABLE", rust_recorder_executable)
-    monkeypatch.setattr(rust_cli_recorder, "_RUST_DIR", _RUST_PACKAGE)
+    monkeypatch.setattr(
+        rust_cli_recorder, "prepare_rust_recorder", lambda: rust_recorder_executable
+    )
     monkeypatch.setattr(rust_cli_recorder, "recording_dir", lambda: tmp_path)
     channel = f"/rust-recorder-{uuid.uuid4().hex[:8]}"
     publisher: LCMTransport[Imu] = LCMTransport(channel, Imu, url=lcm_url)
@@ -296,6 +305,11 @@ def test_cli_recording_uses_existing_binary_for_both_formats(
     expected = Imu(
         header=Header(stamp=time_from_seconds(22.5), frame_id="imu_link"),
         angular_velocity=Vector3(x=1, y=2, z=3),
+        orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+        orientation_covariance=np.zeros(9, dtype=np.float64),
+        angular_velocity_covariance=np.zeros(9, dtype=np.float64),
+        linear_acceleration=Vector3(x=0.0, y=0.0, z=0.0),
+        linear_acceleration_covariance=np.zeros(9, dtype=np.float64),
     )
     try:
         publisher.start()
@@ -320,7 +334,7 @@ def test_cli_recording_uses_existing_binary_for_both_formats(
     with memory:
         observation = cast("Observation[Imu]", memory.stream("imu").first())
         assert observation.ts == 22.5
-        assert observation.data.encode() == expected.encode()
+        assert cdr_encode(observation.data) == cdr_encode(expected)
 
 
 def test_tf_records_over_zenoh_and_replays_through_python(
@@ -332,6 +346,8 @@ def test_tf_records_over_zenoh_and_replays_through_python(
     endpoint = f"tcp/127.0.0.1:{_free_port()}"
     monkeypatch.setattr(global_config, "transport", "zenoh")
     recorder = RustRecorder(
+        source_dir=None,
+        build_command=None,
         executable=str(rust_recorder_executable),
         store=RustSqliteStoreConfig(path=str(artifact)),
         record_tf=True,
@@ -380,12 +396,18 @@ def test_tf_records_over_zenoh_and_replays_through_python(
             TransformStamped(
                 header=Header(frame_id="world", stamp=time_from_seconds(10.25)),
                 child_frame_id="base_link",
-                transform=Transform(translation=Vector3(x=1, y=2, z=3)),
+                transform=Transform(
+                    translation=Vector3(x=1, y=2, z=3),
+                    rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
             ),
             TransformStamped(
                 header=Header(frame_id="base_link", stamp=time_from_seconds(11.5)),
                 child_frame_id="camera",
-                transform=Transform(translation=Vector3(x=4, y=5, z=6)),
+                transform=Transform(
+                    translation=Vector3(x=4, y=5, z=6),
+                    rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
             ),
         ]
     )

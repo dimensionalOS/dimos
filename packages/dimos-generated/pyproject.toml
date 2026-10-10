@@ -7,7 +7,7 @@ name = "dimos-generated"
 version = "0.1.0"
 description = "Generated Python message source and complete CDR schemas"
 requires-python = ">=3.10"
-dependencies = ["numpy>=1.26.4", "rosbags==0.11.0"]
+dependencies = ["numpy>=1.26.4", "rosbags==0.11.0", "dimos-message-build==0.1.0"]
 
 [project.entry-points."dimos.messages"]
 dimos_generated = "dimos_generated_schemas.provider"
@@ -19,5 +19,5 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.setuptools.package-data]
-dimos_generated = ["py.typed"]
+dimos_generated = ["py.typed", "*.pyi", "**/*.pyi"]
 dimos_generated_schemas = ["schemas.json", "schemas/**/*", "package/**/*"]

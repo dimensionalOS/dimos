@@ -14,6 +14,7 @@
 
 from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 
@@ -35,7 +36,7 @@ def test_cpu_accumulation_preserves_latest_exact_stamp_and_output_frame() -> Non
         grid.add_frame(first)
         grid.add_frame(second)
         result = grid.get_global_pointcloud2()
-        decoded = type(result).decode(result.encode())
+        decoded = cdr_decode(cdr_encode(result), type(result))
         assert decoded.header.frame_id == "map"
         assert decoded.header.stamp == second.header.stamp
         assert first.header.frame_id == second.header.frame_id == "lidar"

@@ -15,9 +15,10 @@
 import cv2
 from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
-from dimos_generated.sensor_msgs.msg import CameraInfo, Image
+from dimos_generated.sensor_msgs.msg import CameraInfo, Image, RegionOfInterest
 from dimos_generated.std_msgs.msg import Header
 from dimos_generated.vision_msgs.msg import Detection3D
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 
@@ -31,12 +32,26 @@ def test_generated_image_detects_real_aruco_and_composes_pose():
     pixels[100:300, 100:300] = cv2.aruco.generateImageMarker(dictionary, 7, 200)
     header = Header(frame_id="camera", stamp=Time(sec=1700000000, nanosec=123456789))
     image = image_from_array(pixels, encoding="mono8", header=header)
-    image = Image.decode(image.encode())
-    camera = CameraInfo(width=400, height=400, k=[400, 0, 200, 0, 400, 200, 0, 0, 1])
+    image = cdr_decode(cdr_encode(image), Image)
+    camera = CameraInfo(
+        width=400,
+        height=400,
+        k=np.array([400, 0, 200, 0, 400, 200, 0, 0, 1], dtype=np.float64),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        distortion_model="",
+        d=np.array([], dtype=np.float64),
+        r=np.zeros(9, dtype=np.float64),
+        p=np.zeros(12, dtype=np.float64),
+        binning_x=0,
+        binning_y=0,
+        roi=RegionOfInterest(x_offset=0, y_offset=0, height=0, width=0, do_rectify=False),
+    )
     tf = TransformStamped(
-        header=Header(frame_id="world"),
+        header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
         child_frame_id="camera",
-        transform=Transform(translation=Vector3(x=2), rotation=Quaternion(w=1)),
+        transform=Transform(
+            translation=Vector3(x=2, y=0.0, z=0.0), rotation=Quaternion(w=1, x=0.0, y=0.0, z=0.0)
+        ),
     )
     found = detect_markers_in_image(
         image,
@@ -46,7 +61,7 @@ def test_generated_image_detects_real_aruco_and_composes_pose():
         aruco_dictionary="DICT_4X4_50",
     )
     assert len(found) == 1
-    wire = Detection3D.decode(found[0].to_detection3d_msg().encode())
+    wire = cdr_decode(cdr_encode(found[0].to_detection3d_msg()), Detection3D)
     assert wire.id == "7"
     assert wire.results[0].hypothesis.class_id == "DICT_4X4_50:7"
     assert wire.header.stamp == header.stamp

@@ -26,6 +26,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from dimos_generated.sensor_msgs.msg import Image
 from dimos_generated.std_msgs.msg import Header
@@ -54,8 +55,10 @@ from dimos.msgs.time import time_from_seconds
 
 def _pose(x: float, y: float) -> PoseStamped:
     return PoseStamped(
-        header=Header(frame_id="world"),
-        pose=Pose(position=Point(x=x, y=y), orientation=Quaternion(w=1.0)),
+        header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+        pose=Pose(
+            position=Point(x=x, y=y, z=0.0), orientation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0)
+        ),
     )
 
 

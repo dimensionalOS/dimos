@@ -21,9 +21,11 @@ import time
 from typing import Any
 from unittest.mock import MagicMock
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import PoseStamped
 from dimos_generated.sensor_msgs.msg import Imu
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 
@@ -130,7 +132,7 @@ def test_ready_signal_happens_after_joint_state_and_imu_write() -> None:
         module._publish_shm_and_lcm(_FakeEngine)
 
         assert events == ["joint_state", "imu", "ready"]
-        pose = PoseStamped.decode(module.odom.publish.call_args.args[0].encode())
+        pose = cdr_decode(cdr_encode(module.odom.publish.call_args.args[0]), PoseStamped)
         assert pose.header.frame_id == "world"
         assert (pose.pose.position.x, pose.pose.position.y, pose.pose.position.z) == (
             0.0,
@@ -138,7 +140,7 @@ def test_ready_signal_happens_after_joint_state_and_imu_write() -> None:
             0.75,
         )
         assert pose.pose.orientation.w == 1.0
-        imu = Imu.decode(module.imu.publish.call_args.args[0].encode())
+        imu = cdr_decode(cdr_encode(module.imu.publish.call_args.args[0]), Imu)
         assert imu.orientation.w == 1.0
         assert (imu.angular_velocity.x, imu.angular_velocity.y, imu.angular_velocity.z) == (
             0.1,
@@ -205,6 +207,55 @@ def test_camera_tf_is_published_relative_to_configured_base_frame() -> None:
                 camera_link_tf.transform.translation.z,
             ],
             [0.0, 0.0, 1.0],
+        )
+    finally:
+        module.stop()
+
+
+def test_tracked_bodies_are_published_on_tf_in_world() -> None:
+    module = MujocoSimModule(tracked_bodies=["apple", "ghost"])
+    try:
+        module.config = MujocoSimModuleConfig(tracked_bodies=["apple", "ghost"])
+
+        class _FakeEngine:
+            def get_body_pose(self, body_name: str) -> tuple[np.ndarray, np.ndarray] | None:
+                if body_name == "apple":
+                    return np.array([0.4, 0.08, 0.17]), np.array([0.0, 0.0, 0.0, 1.0])
+                return None
+
+            def disconnect(self) -> None:
+                pass
+
+        messages: list[Any] = []
+        module._engine = _FakeEngine()
+        module.tf.subscribe(messages.append)
+        frame = CameraFrame(
+            rgb=np.zeros((1, 1, 3), dtype=np.uint8),
+            depth=np.ones((1, 1), dtype=np.float32),
+            cam_pos=np.array([1.0, 2.0, 3.0]),
+            cam_mat=np.eye(3),
+            fovy=60.0,
+            timestamp=1.0,
+        )
+        module._publish_tf(10.0, frame)
+        module._publish_tf(11.0, frame)
+        children = [t.child_frame_id for t in messages[-1].transforms]
+        assert children[:3] == [
+            "wrist_camera_color_optical_frame",
+            "wrist_camera_depth_optical_frame",
+            "wrist_camera_link",
+        ]
+        assert children[3:] == ["apple"]
+        apple = messages[-1].transforms[3]
+        assert apple.header.frame_id == "world"
+        assert to_seconds(apple.header.stamp) == pytest.approx(time.time(), abs=5.0)
+        assert np.allclose(
+            [
+                apple.transform.translation.x,
+                apple.transform.translation.y,
+                apple.transform.translation.z,
+            ],
+            [0.4, 0.08, 0.17],
         )
     finally:
         module.stop()
@@ -556,7 +607,7 @@ def test_publish_loop_stamps_messages_with_frame_timestamp() -> None:
             fy=1.0,
             cx=0.5,
             cy=0.5,
-            header=Header(frame_id="wrist_camera_color_frame"),
+            header=Header(frame_id="wrist_camera_color_frame", stamp=Time(sec=0, nanosec=0)),
         )
         color: list[Any] = []
         depth: list[Any] = []
@@ -592,7 +643,7 @@ def test_camera_info_falls_back_to_wall_clock_before_first_frame() -> None:
             fy=1.0,
             cx=0.5,
             cy=0.5,
-            header=Header(frame_id="wrist_camera_color_frame"),
+            header=Header(frame_id="wrist_camera_color_frame", stamp=Time(sec=0, nanosec=0)),
         )
         assert module._latest_frame_ts is None
         assert module._camera_info_ts() == pytest.approx(time.time(), abs=5.0)

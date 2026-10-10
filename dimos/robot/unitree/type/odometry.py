@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from copy import deepcopy
 from typing import Literal, TypedDict
 
 from dimos_generated.builtin_interfaces.msg import Time
@@ -82,7 +83,7 @@ def pose_from_webrtc_odometry(
     source_header = data["header"]
     pose = data["pose"]
     return GeneratedPoseStamped(
-        header=header
+        header=deepcopy(header)
         if header is not None
         else GeneratedHeader(
             stamp=Time(**source_header["stamp"]), frame_id=source_header["frame_id"]

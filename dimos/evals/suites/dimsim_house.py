@@ -40,7 +40,7 @@ from dimos.evals.types import EvalCase, Outcome, Suite, recording
 if TYPE_CHECKING:
     from dimos.e2e_tests.dim_sim_client import DimSimClient
 
-BED = Vector3(x=-3.567, y=-1.332)
+BED = Vector3(x=-3.567, y=-1.332, z=0.0)
 
 _HOUSE_TOUR = [
     (3.881, 4.803),

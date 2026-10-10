@@ -129,7 +129,7 @@ class Object3D(Detection3DPC):
             ),
             pose=Pose(
                 position=Point(x=self.center.x, y=self.center.y, z=self.center.z),
-                orientation=Quaternion(w=1),
+                orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0),
             ),
         )
 

@@ -141,7 +141,9 @@ class DJIDroneVideoStream:
 
                     # Create Image message (RGB format - matches GStreamer pipeline output)
                     img_msg = image_from_array(
-                        frame, encoding="rgb8", header=Header(stamp=time_from_seconds(time.time()))
+                        frame,
+                        encoding="rgb8",
+                        header=Header(stamp=time_from_seconds(time.time()), frame_id=""),
                     )
 
                     # Publish

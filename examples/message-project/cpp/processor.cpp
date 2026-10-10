@@ -1,7 +1,7 @@
 // Copyright 2026 Dimensional Inc.
 // SPDX-License-Identifier: Apache-2.0
 #include <dimos/native.hpp>
-#include <story_messages/messages.hpp>
+#include <story_msgs/msg/device_reading.hpp>
 
 using namespace dimos::native;
 using Reading = story_msgs::msg::DeviceReading;

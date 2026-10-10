@@ -17,8 +17,9 @@
 from __future__ import annotations
 
 import cv2
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
-from dimos_generated.sensor_msgs.msg import CameraInfo, Image
+from dimos_generated.sensor_msgs.msg import CameraInfo, Image, RegionOfInterest
 from dimos_generated.std_msgs.msg import Header
 import numpy as np
 
@@ -30,8 +31,15 @@ def camera_info(ts: float = 10.0) -> CameraInfo:
     info = CameraInfo(
         width=640,
         height=480,
-        k=[600, 0, 320, 0, 600, 240, 0, 0, 1],
-        header=Header(frame_id="camera_optical"),
+        k=np.array([600, 0, 320, 0, 600, 240, 0, 0, 1], dtype=np.float64),
+        header=Header(frame_id="camera_optical", stamp=Time(sec=0, nanosec=0)),
+        distortion_model="",
+        d=np.array([], dtype=np.float64),
+        r=np.zeros(9, dtype=np.float64),
+        p=np.zeros(12, dtype=np.float64),
+        binning_x=0,
+        binning_y=0,
+        roi=RegionOfInterest(x_offset=0, y_offset=0, height=0, width=0, do_rectify=False),
     )
     info.header.stamp = time_from_seconds(ts)
     return info

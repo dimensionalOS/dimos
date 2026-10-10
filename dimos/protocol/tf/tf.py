@@ -15,7 +15,7 @@
 # limitations under the License.
 
 from collections import deque
-from copy import copy
+from copy import deepcopy
 from functools import reduce
 import math
 import subprocess
@@ -23,7 +23,13 @@ import threading
 import time
 from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
-from dimos_generated.geometry_msgs.msg import PoseStamped, TransformStamped
+from dimos_generated.geometry_msgs.msg import (
+    PoseStamped,
+    Quaternion,
+    Transform,
+    TransformStamped,
+    Vector3,
+)
 from dimos_generated.std_msgs.msg import Header
 from dimos_generated.tf2_msgs.msg import TFMessage
 from sortedcontainers import SortedDict  # type: ignore[import-untyped]
@@ -71,21 +77,17 @@ class TBuffer:
 
     def add(self, transform: TransformStamped) -> None:
         stamp = to_nanoseconds(transform.header.stamp)
-        self._entries[stamp] = TransformStamped(
-            header=transform.header,
-            child_frame_id=transform.child_frame_id,
-            transform=transform.transform,
-        )
+        self._entries[stamp] = deepcopy(transform)
         if math.isfinite(self.buffer_size):
             oldest = self._entries.peekitem(-1)[0] - round(self.buffer_size * 1_000_000_000)
             while self._entries and self._entries.peekitem(0)[0] < oldest:
                 self._entries.popitem(0)
 
     def first(self) -> TransformStamped | None:
-        return copy(self._entries.peekitem(0)[1]) if self._entries else None
+        return deepcopy(self._entries.peekitem(0)[1]) if self._entries else None
 
     def last(self) -> TransformStamped | None:
-        return copy(self._entries.peekitem(-1)[1]) if self._entries else None
+        return deepcopy(self._entries.peekitem(-1)[1]) if self._entries else None
 
     def get(
         self, time_point: float | None = None, time_tolerance: float = 1.0
@@ -104,7 +106,7 @@ class TBuffer:
         nearest, result = min(candidates, key=lambda item: (abs(item[0] - stamp), -item[0]))
         if abs(nearest - stamp) / 1_000_000_000 > time_tolerance:
             return None
-        return copy(cast("TransformStamped", result))
+        return deepcopy(cast("TransformStamped", result))
 
     def __str__(self) -> str:
         first, last = self.first(), self.last()
@@ -171,6 +173,10 @@ class MultiTBuffer:
                     stamp=time_from_seconds(time_point if time_point is not None else time.time()),
                 ),
                 child_frame_id=child_frame,
+                transform=Transform(
+                    translation=Vector3(x=0.0, y=0.0, z=0.0),
+                    rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
             )
 
         # No explicit tolerance means "anything still buffered" — the buffer

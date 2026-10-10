@@ -18,7 +18,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 from numpy.typing import NDArray
 
@@ -58,7 +60,13 @@ class SelectedJointSpace:
         configurations = [self.joint_space.from_joint_state(state) for state in path]
         positions = self.joint_space.lifted_positions(configurations)
         return [
-            JointState(name=list(self.selected_joint_names), position=list(values))
+            JointState(
+                name=list(self.selected_joint_names),
+                position=np.asarray(list(values), dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            )
             for values in positions
         ]
 
@@ -69,7 +77,13 @@ class SelectedJointSpace:
         indices = {name: i for i, name in enumerate(self.model_joint_names)}
         for name, value in zip(self.selected_joint_names, selected_positions, strict=True):
             positions[indices[name]] = value
-        return JointState(name=list(self.model_joint_names), position=positions.tolist())
+        return JointState(
+            name=list(self.model_joint_names),
+            position=np.asarray(positions.tolist(), dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        )
 
     def config_collision_free(
         self, world: WorldSpec, selected_positions: NDArray[np.float64]
@@ -125,7 +139,13 @@ def normalize_selection_target(
             raise ValueError(
                 f"{label} target has {len(target.position)} positions, expected {len(names)}"
             )
-        return JointState(name=names, position=list(target.position))
+        return JointState(
+            name=names,
+            position=np.asarray(list(target.position), dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        )
     positions = dict(zip(target.name, target.position, strict=True))
     missing = [name for name in names if name not in positions]
     extra = sorted(set(positions) - set(names))
@@ -133,7 +153,13 @@ def normalize_selection_target(
         raise ValueError(f"{label} target is missing joints: {missing}")
     if extra:
         raise ValueError(f"{label} target has extra joints: {extra}")
-    return JointState(name=names, position=[float(positions[name]) for name in names])
+    return JointState(
+        name=names,
+        position=np.asarray([float(positions[name]) for name in names], dtype=np.float64),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
+    )
 
 
 def _ordered_positions(state: JointState, names: list[str], label: str) -> NDArray[np.float64]:

@@ -82,10 +82,12 @@ testcases: list[Case[Any, Any]] = [
         pubsub_context=lcm_typed_context,
         topic_values=[
             (Topic("/sensor/position", Vector3), Vector3(x=1, y=2, z=3)),
-            (Topic("/sensor/orientation", Quaternion), Quaternion(w=1)),
+            (Topic("/sensor/orientation", Quaternion), Quaternion(w=1, x=0.0, y=0.0, z=0.0)),
             (
                 Topic("/robot/arm", Pose),
-                Pose(position=Point(x=4, y=5, z=6), orientation=Quaternion(w=1)),
+                Pose(
+                    position=Point(x=4, y=5, z=6), orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0)
+                ),
             ),
         ],
         tags={"all", "glob", "regex"},

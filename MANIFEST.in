@@ -13,8 +13,11 @@ graft dimos/message_codegen/schemas
 graft dimos/message_codegen/templates
 include dimos/message_codegen/_vendor/*.pyi
 include scripts/setup_message_codegen.sh
+include dimos/message_codegen/pyproject.toml
 graft packages/dimos-generated
 prune packages/dimos-generated/build
+prune dimos/message_codegen/build
+prune dimos/message_codegen/dist
 
 # --- Exclusions (must come after the includes above so they win) ---
 # Test fixtures must never ship.
@@ -52,5 +55,3 @@ prune dimos/web/command-center-extension
 
 global-exclude test_*.py
 global-exclude conftest.py
-
-recursive-include dimos/message_codegen/_vendor/rosidl *.em *.lark *.hpp *.h *.xml *.json *.pyi LICENSE

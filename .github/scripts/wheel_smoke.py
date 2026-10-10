@@ -23,10 +23,13 @@ pinned DENO_VERSION there, exactly as it does on a customer machine.
 
 import json
 from pathlib import Path
+import subprocess
+import sys
 import urllib.request
 
-from dimos.message_codegen.registry import message_types
-from dimos.navigation.replanning_a_star.min_cost_astar_ext import min_cost_astar_cpp  # noqa: F401
+from dimos.navigation.go2.replanning_a_star.min_cost_astar_ext import (
+    min_cost_astar_cpp,  # noqa: F401
+)
 from dimos.web.relay_bridge import locate
 from dimos.web.relay_bridge.relay_process import RelayProcess
 
@@ -45,11 +48,10 @@ RELAY_READY_TIMEOUT_S = 120.0
 
 
 def main() -> None:
-    types = message_types()
-    image_type = types["sensor_msgs/msg/Image"]
-    value = image_type(height=1, width=2, step=2, encoding="mono8", data=[3, 7])
-    assert list(image_type.decode(value.encode()).data) == [3, 7]
-    assert "MSG: std_msgs/Header" in image_type.schema
+    # The message wheel is installed separately from the robot runtime.
+    subprocess.run(
+        [sys.executable, str(Path(__file__).with_name("message_wheel_smoke.py"))], check=True
+    )
     dist = Path(locate.__file__).resolve().parent / "_relay_dist"
     for rel in REQUIRED:
         if not (dist / rel).is_file():

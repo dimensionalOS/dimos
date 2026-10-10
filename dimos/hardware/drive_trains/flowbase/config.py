@@ -17,4 +17,6 @@
 from dimos_generated.geometry_msgs.msg import Point, Pose, Quaternion
 
 # Mid-360 mount pose on the FlowBase in the base frame.
-FLOWBASE_MID360_MOUNT = Pose(position=Point(x=0.20, y=-0.20, z=0.10), orientation=Quaternion(w=1.0))
+FLOWBASE_MID360_MOUNT = Pose(
+    position=Point(x=0.20, y=-0.20, z=0.10), orientation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0)
+)

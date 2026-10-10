@@ -15,6 +15,7 @@
 """Geometry operations on generated ROS value types."""
 
 from collections.abc import Sequence
+from copy import deepcopy
 import math
 
 from dimos_generated.geometry_msgs.msg import (
@@ -46,11 +47,11 @@ def transform_from_odometry(message: Odometry) -> TransformStamped:
     """Copy the pose and declared frames into TF, preserving the exact source stamp."""
     position = message.pose.pose.position
     return TransformStamped(
-        header=message.header,
+        header=deepcopy(message.header),
         child_frame_id=message.child_frame_id,
         transform=Transform(
             translation=Vector3(x=position.x, y=position.y, z=position.z),
-            rotation=message.pose.pose.orientation,
+            rotation=deepcopy(message.pose.pose.orientation),
         ),
     )
 
@@ -108,7 +109,7 @@ def compose_transforms(first: TransformStamped, second: TransformStamped) -> Tra
     rotation = _rotation(first.transform.rotation)
     translation = _translation(first.transform) + rotation.apply(_translation(second.transform))
     return TransformStamped(
-        header=first.header,
+        header=deepcopy(first.header),
         child_frame_id=second.child_frame_id,
         transform=_transform(translation, rotation * _rotation(second.transform.rotation)),
     )
@@ -118,7 +119,7 @@ def inverse_transform(message: TransformStamped) -> TransformStamped:
     """Return B←A from A←B, swapping frame names and preserving the exact stamp."""
     rotation = _rotation(message.transform.rotation).inv()
     return TransformStamped(
-        header=Header(stamp=message.header.stamp, frame_id=message.child_frame_id),
+        header=Header(stamp=deepcopy(message.header.stamp), frame_id=message.child_frame_id),
         child_frame_id=message.header.frame_id,
         transform=_transform(-rotation.apply(_translation(message.transform)), rotation),
     )
@@ -128,10 +129,10 @@ def pose_from_transform(message: TransformStamped) -> PoseStamped:
     """Copy the child frame's pose in the parent frame into a generated PoseStamped."""
     translation = message.transform.translation
     return PoseStamped(
-        header=message.header,
+        header=deepcopy(message.header),
         pose=Pose(
             position=Point(x=translation.x, y=translation.y, z=translation.z),
-            orientation=message.transform.rotation,
+            orientation=deepcopy(message.transform.rotation),
         ),
     )
 
@@ -142,11 +143,11 @@ def transform_from_pose(message: PoseStamped, *, child_frame_id: str) -> Transfo
         raise TypeError("Expected a generated PoseStamped")
     position = message.pose.position
     return TransformStamped(
-        header=message.header,
+        header=deepcopy(message.header),
         child_frame_id=child_frame_id,
         transform=Transform(
             translation=Vector3(x=position.x, y=position.y, z=position.z),
-            rotation=message.pose.orientation,
+            rotation=deepcopy(message.pose.orientation),
         ),
     )
 
@@ -193,7 +194,7 @@ def transform_from_matrix(matrix: NDArray[np.float64]) -> Transform:
     pose = pose_from_matrix(matrix)
     return Transform(
         translation=Vector3(x=pose.position.x, y=pose.position.y, z=pose.position.z),
-        rotation=pose.orientation,
+        rotation=deepcopy(pose.orientation),
     )
 
 
@@ -214,7 +215,7 @@ def translate_pose_local(pose: Pose, offset: Vector3) -> Pose:
         position=Point(
             x=pose.position.x + delta[0], y=pose.position.y + delta[1], z=pose.position.z + delta[2]
         ),
-        orientation=pose.orientation,
+        orientation=deepcopy(pose.orientation),
     )
 
 
@@ -271,7 +272,7 @@ def normalized_vector(value: Vector3) -> Vector3:
     """Return a unit vector; zero length remains zero."""
     array = vector_array(value)
     length = float(np.linalg.norm(array))
-    return vector_from_array(array / length) if length else Vector3()
+    return vector_from_array(array / length) if length else Vector3(x=0.0, y=0.0, z=0.0)
 
 
 def quaternion_array(value: Quaternion) -> NDArray[np.float64]:
@@ -284,7 +285,7 @@ def quaternion_from_array(values: Sequence[float] | NDArray[np.float64]) -> Quat
     array = np.asarray(values, dtype=np.float64)
     if array.shape != (4,):
         raise ValueError("Quaternion requires exactly 4 components")
-    return Quaternion(x=array[0], y=array[1], z=array[2], w=array[3])
+    return Quaternion(x=float(array[0]), y=float(array[1]), z=float(array[2]), w=float(array[3]))
 
 
 def quaternion_product(first: Quaternion, second: Quaternion) -> Quaternion:

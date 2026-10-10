@@ -90,7 +90,10 @@ class MarkerTfModule(Module):
             TransformStamped(
                 header=Header(stamp=stamp, frame_id=self.config.world_frame),
                 child_frame_id=markers_parent,
-                transform=Transform(rotation=Quaternion(w=1)),
+                transform=Transform(
+                    rotation=Quaternion(w=1, x=0.0, y=0.0, z=0.0),
+                    translation=Vector3(x=0.0, y=0.0, z=0.0),
+                ),
             )
         ]
 

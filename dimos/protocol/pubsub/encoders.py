@@ -20,6 +20,8 @@ from abc import ABC, abstractmethod
 import pickle
 from typing import TYPE_CHECKING, Generic, Protocol, TypeVar, cast
 
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
+
 from dimos.msgs.protocol import DimosMsg
 
 if TYPE_CHECKING:
@@ -107,16 +109,16 @@ class CDREncoderMixin(PubSubEncoderMixin[TypedTopicProto, DimosMsg, bytes]):
     def encode(self, msg: DimosMsg | bytes, topic: TypedTopicProto) -> bytes:
         if isinstance(msg, bytes):
             return msg
-        if topic.msg_type is not None and msg.msg_name != topic.msg_type.msg_name:
+        if topic.msg_type is not None and msg.__msgtype__ != topic.msg_type.__msgtype__:
             raise ValueError(
-                f"Message {msg.msg_name} does not match topic type {topic.msg_type.msg_name}"
+                f"Message {msg.__msgtype__} does not match topic type {topic.msg_type.__msgtype__}"
             )
-        return msg.encode()
+        return cdr_encode(msg)
 
     def decode(self, msg: bytes, topic: TypedTopicProto) -> DimosMsg:
         if topic.msg_type is None:
             raise DecodingError(f"Cannot decode: topic {topic.topic!r} has no msg_type")
         try:
-            return topic.msg_type.decode(msg)
+            return cast("DimosMsg", cdr_decode(msg, topic.msg_type.__msgtype__))
         except ValueError as exc:
             raise DecodingError(f"Invalid CDR on topic {topic.topic!r}") from exc

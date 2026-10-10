@@ -1,6 +1,4 @@
-from ..._types import (
-    builtin_interfaces__msg__Duration as Duration,
-    builtin_interfaces__msg__Time as Time,
-)
+from ..._types import store
 
-__all__ = ["Duration", "Time"]
+Duration = store.types["builtin_interfaces/msg/Duration"]
+Time = store.types["builtin_interfaces/msg/Time"]

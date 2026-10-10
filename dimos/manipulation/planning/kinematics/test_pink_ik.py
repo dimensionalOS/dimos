@@ -24,6 +24,7 @@ from pathlib import Path
 from types import MappingProxyType, ModuleType, SimpleNamespace
 from typing import Any, cast
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from dimos_generated.sensor_msgs.msg import JointState
 from dimos_generated.std_msgs.msg import Header
@@ -91,6 +92,16 @@ _LOCKED_WAIST_CHAIN_URDF = """\
   <joint name="tool_fixed" type="fixed"><origin xyz="0.0415 0.003 0"/><parent link="wrist_yaw_link"/><child link="tool"/></joint>
 </robot>
 """
+
+
+def _target_pose(x: float = 0.0, y: float = 0.0, z: float = 0.0) -> PoseStamped:
+    """Create an independent, identity-oriented target for each test call."""
+    return PoseStamped(
+        header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
+        pose=Pose(
+            position=Point(x=x, y=y, z=z), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+        ),
+    )
 
 
 class _StreamingTestPinkIK(PinkPoseTargetSolver):
@@ -395,10 +406,7 @@ def _install_fake_modules(mocker: MockerFixture, converge: bool = True) -> _Fake
 def _robot_config() -> RobotModelConfig:
     return RobotModelConfig(
         model=RobotModel.from_file(Path("/tmp/fake.urdf")),
-        base_pose=PoseStamped(
-            header=Header(frame_id=""),
-            pose=Pose(position=Point(), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)),
-        ),
+        base_pose=_target_pose(),
         joint_names=["joint_a", "joint_b", "joint_c"],
         base_link="base",
         planning_groups=[
@@ -550,7 +558,13 @@ class _FakeWorld:
 
     def get_joint_state(self, ctx: object) -> JointState:
         self.joint_state_calls += 1
-        return JointState(name=["joint_b", "joint_c", "joint_a"], position=[0.0, 0.0, 0.0])
+        return JointState(
+            name=["joint_b", "joint_c", "joint_a"],
+            position=np.array([0.0, 0.0, 0.0], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        )
 
     def get_joint_limits(self) -> tuple[np.ndarray, np.ndarray]:
         return np.array([-1.0, -1.0, -1.0]), np.array([1.0, 1.0, 1.0])
@@ -638,7 +652,13 @@ def test_pink_ik_config_overrides_are_applied(mocker: MockerFixture) -> None:
 
 def test_joint_order_mapping_uses_names_not_positions() -> None:
     mapping = _build_joint_mapping(_FakeModel(), _test_joint_space())
-    seed = JointState(name=["joint_b", "joint_c", "joint_a"], position=[20.0, 30.0, 10.0])
+    seed = JointState(
+        name=["joint_b", "joint_c", "joint_a"],
+        position=np.array([20.0, 30.0, 10.0], dtype=np.float64),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
+    )
 
     assert mapping.idx_q == [1, 0, 2]
     assert mapping.idx_v == [1, 0, 2]
@@ -769,7 +789,13 @@ def test_step_frame_targets_weighted_history_attenuates_alternating_increments(
         configuration.update(q)
 
     mocker.patch.object(ik, "_step_configuration", side_effect=apply_increment)
-    initial = JointState(name=["joint_a"], position=[0.0])
+    initial = JointState(
+        name=["joint_a"],
+        position=np.array([0.0], dtype=np.float64),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
+    )
     alpha = 1.0 - np.exp(-2.0 * np.pi * 5.0 * 0.01)
     commands = [initial]
 
@@ -777,7 +803,7 @@ def test_step_frame_targets_weighted_history_attenuates_alternating_increments(
         commands.append(
             ik.step_frame_targets(
                 robot_model=_robot_config(),
-                frame_targets={"tool": PoseStamped(header=Header(frame_id=""), pose=Pose())},
+                frame_targets={"tool": _target_pose()},
                 controlled_joints=["joint_a"],
                 command_state=commands[-1],
                 measured_state=initial,
@@ -810,7 +836,13 @@ def test_step_frame_targets_weighted_history_preserves_steady_increment(
         configuration.update(q)
 
     mocker.patch.object(ik, "_step_configuration", side_effect=apply_increment)
-    initial = JointState(name=["joint_a"], position=[0.0])
+    initial = JointState(
+        name=["joint_a"],
+        position=np.array([0.0], dtype=np.float64),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
+    )
     alpha = 1.0 - np.exp(-2.0 * np.pi * 5.0 * 0.01)
     commands = [initial]
 
@@ -818,7 +850,7 @@ def test_step_frame_targets_weighted_history_preserves_steady_increment(
         commands.append(
             ik.step_frame_targets(
                 robot_model=_robot_config(),
-                frame_targets={"tool": PoseStamped(header=Header(frame_id=""), pose=Pose())},
+                frame_targets={"tool": _target_pose()},
                 controlled_joints=["joint_a"],
                 command_state=commands[-1],
                 measured_state=initial,
@@ -852,10 +884,16 @@ def test_step_frame_targets_rechecks_tracking_envelope_after_history_filter(
         configuration.update(q)
 
     mocker.patch.object(ik, "_step_configuration", side_effect=apply_increment)
-    initial = JointState(name=["joint_a"], position=[0.0])
+    initial = JointState(
+        name=["joint_a"],
+        position=np.array([0.0], dtype=np.float64),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
+    )
     first = ik.step_frame_targets(
         robot_model=_robot_config(),
-        frame_targets={"tool": PoseStamped(header=Header(frame_id=""), pose=Pose())},
+        frame_targets={"tool": _target_pose()},
         controlled_joints=["joint_a"],
         command_state=initial,
         measured_state=initial,
@@ -867,10 +905,16 @@ def test_step_frame_targets_rechecks_tracking_envelope_after_history_filter(
 
     second = ik.step_frame_targets(
         robot_model=_robot_config(),
-        frame_targets={"tool": PoseStamped(header=Header(frame_id=""), pose=Pose())},
+        frame_targets={"tool": _target_pose()},
         controlled_joints=["joint_a"],
         command_state=first,
-        measured_state=JointState(name=["joint_a"], position=[-0.1]),
+        measured_state=JointState(
+            name=["joint_a"],
+            position=np.array([-0.1], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        ),
         max_command_tracking_error_rad=0.15,
         dt=0.01,
         max_joint_velocity_rad_s=100.0,
@@ -893,18 +937,22 @@ def test_step_frame_targets_preserves_controlled_joint_order(
 
     result = ik.step_frame_targets(
         robot_model=_robot_config(),
-        frame_targets={
-            "tool": PoseStamped(
-                header=Header(frame_id=""),
-                pose=Pose(
-                    position=Point(x=0.1, y=0.2, z=0.3),
-                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
-                ),
-            )
-        },
+        frame_targets={"tool": _target_pose(x=0.1, y=0.2, z=0.3)},
         controlled_joints=["joint_c", "joint_a"],
-        command_state=JointState(name=["joint_a", "joint_c"], position=[0.0, 0.0]),
-        measured_state=JointState(name=["joint_a", "joint_c"], position=[0.0, 0.0]),
+        command_state=JointState(
+            name=["joint_a", "joint_c"],
+            position=np.array([0.0, 0.0], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        ),
+        measured_state=JointState(
+            name=["joint_a", "joint_c"],
+            position=np.array([0.0, 0.0], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        ),
         max_command_tracking_error_rad=_TRACKING_ERROR_RAD,
         dt=0.02,
     )
@@ -936,21 +984,24 @@ def test_step_frame_targets_builds_both_frame_tasks_with_tuning(
     result = ik.step_frame_targets(
         robot_model=_robot_config(),
         frame_targets={
-            "tool": PoseStamped(
-                header=Header(frame_id=""),
-                pose=Pose(
-                    position=Point(x=0.1, y=0.2, z=0.3),
-                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
-                ),
-            ),
-            "base": PoseStamped(
-                header=Header(frame_id=""),
-                pose=Pose(position=Point(), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)),
-            ),
+            "tool": _target_pose(x=0.1, y=0.2, z=0.3),
+            "base": _target_pose(),
         },
         controlled_joints=["joint_a", "joint_b", "joint_c"],
-        command_state=JointState(name=["joint_a", "joint_b", "joint_c"], position=[0.0, 0.0, 0.0]),
-        measured_state=JointState(name=["joint_a", "joint_b", "joint_c"], position=[0.0, 0.0, 0.0]),
+        command_state=JointState(
+            name=["joint_a", "joint_b", "joint_c"],
+            position=np.array([0.0, 0.0, 0.0], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        ),
+        measured_state=JointState(
+            name=["joint_a", "joint_b", "joint_c"],
+            position=np.array([0.0, 0.0, 0.0], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        ),
         max_command_tracking_error_rad=_TRACKING_ERROR_RAD,
         dt=0.02,
     )
@@ -1016,25 +1067,27 @@ def test_streaming_reuses_task_stack_across_steps(
     context = _combined_control_context(("tool",), ["joint_a", "joint_b", "joint_c"])
     mocker.patch.object(ik, "_get_control_context", return_value=context)
     create_tasks = mocker.spy(ik, "_create_tasks")
-    first_target = PoseStamped(
-        header=Header(frame_id=""),
-        pose=Pose(
-            position=Point(x=0.1, y=0.2, z=0.3), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
-        ),
-    )
-    second_target = PoseStamped(
-        header=Header(frame_id=""),
-        pose=Pose(
-            position=Point(x=0.3, y=0.2, z=0.1), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
-        ),
-    )
+    first_target = _target_pose(x=0.1, y=0.2, z=0.3)
+    second_target = _target_pose(x=0.3, y=0.2, z=0.1)
 
     ik.step_frame_targets(
         _robot_config(),
         {"tool": first_target},
         ["joint_a", "joint_b", "joint_c"],
-        JointState(name=["joint_a", "joint_b", "joint_c"], position=[0.0, 0.0, 0.0]),
-        JointState(name=["joint_a", "joint_b", "joint_c"], position=[0.0, 0.0, 0.0]),
+        JointState(
+            name=["joint_a", "joint_b", "joint_c"],
+            position=np.array([0.0, 0.0, 0.0], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        ),
+        JointState(
+            name=["joint_a", "joint_b", "joint_c"],
+            position=np.array([0.0, 0.0, 0.0], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        ),
         _TRACKING_ERROR_RAD,
     )
     assert context.tasks is not None
@@ -1043,8 +1096,20 @@ def test_streaming_reuses_task_stack_across_steps(
         _robot_config(),
         {"tool": second_target},
         ["joint_a", "joint_b", "joint_c"],
-        JointState(name=["joint_a", "joint_b", "joint_c"], position=[0.1, 0.2, 0.3]),
-        JointState(name=["joint_a", "joint_b", "joint_c"], position=[0.1, 0.2, 0.3]),
+        JointState(
+            name=["joint_a", "joint_b", "joint_c"],
+            position=np.array([0.1, 0.2, 0.3], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        ),
+        JointState(
+            name=["joint_a", "joint_b", "joint_c"],
+            position=np.array([0.1, 0.2, 0.3], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        ),
         _TRACKING_ERROR_RAD,
     )
 
@@ -1063,18 +1128,22 @@ def test_task_hooks_receive_read_only_stack_and_successful_velocity(
 
     ik.step_frame_targets(
         _robot_config(),
-        {
-            "tool": PoseStamped(
-                header=Header(frame_id=""),
-                pose=Pose(
-                    position=Point(x=0.1, y=0.2, z=0.3),
-                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
-                ),
-            )
-        },
+        {"tool": _target_pose(x=0.1, y=0.2, z=0.3)},
         ["joint_a", "joint_b", "joint_c"],
-        JointState(name=["joint_a", "joint_b", "joint_c"], position=[0.0, 0.0, 0.0]),
-        JointState(name=["joint_a", "joint_b", "joint_c"], position=[0.0, 0.0, 0.0]),
+        JointState(
+            name=["joint_a", "joint_b", "joint_c"],
+            position=np.array([0.0, 0.0, 0.0], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        ),
+        JointState(
+            name=["joint_a", "joint_b", "joint_c"],
+            position=np.array([0.0, 0.0, 0.0], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        ),
         _TRACKING_ERROR_RAD,
         dt=0.05,
     )
@@ -1097,15 +1166,21 @@ def test_after_solve_hook_is_not_called_when_solver_raises(
     with pytest.raises(RuntimeError, match="no solution"):
         ik.step_frame_targets(
             _robot_config(),
-            {"tool": PoseStamped(header=Header(frame_id=""), pose=Pose())},
+            {"tool": _target_pose()},
             ["joint_a", "joint_b", "joint_c"],
             JointState(
                 name=["joint_a", "joint_b", "joint_c"],
-                position=[0.0, 0.0, 0.0],
+                position=np.array([0.0, 0.0, 0.0], dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
             ),
             JointState(
                 name=["joint_a", "joint_b", "joint_c"],
-                position=[0.0, 0.0, 0.0],
+                position=np.array([0.0, 0.0, 0.0], dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
             ),
             _TRACKING_ERROR_RAD,
         )
@@ -1151,15 +1226,21 @@ def test_step_frame_targets_normalizes_feedback_and_saturates_commands(
 
     result = ik.step_frame_targets(
         robot_model=_robot_config(),
-        frame_targets={"tool": PoseStamped(header=Header(frame_id=""), pose=Pose())},
+        frame_targets={"tool": _target_pose()},
         controlled_joints=["joint_a", "joint_b", "joint_c"],
         command_state=JointState(
             name=["joint_a", "joint_b", "joint_c"],
-            position=[-1.0005, 0.0, 0.0],
+            position=np.array([-1.0005, 0.0, 0.0], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
         ),
         measured_state=JointState(
             name=["joint_a", "joint_b", "joint_c"],
-            position=[-1.0005, 0.0, 0.0],
+            position=np.array([-1.0005, 0.0, 0.0], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
         ),
         max_command_tracking_error_rad=_TRACKING_ERROR_RAD,
     )
@@ -1181,10 +1262,22 @@ def test_step_frame_targets_rejects_feedback_beyond_tolerance(
     with pytest.raises(PinkJointLimitError, match="joint_a.*lower limit"):
         ik.step_frame_targets(
             robot_model=_robot_config(),
-            frame_targets={"tool": PoseStamped(header=Header(frame_id=""), pose=Pose())},
+            frame_targets={"tool": _target_pose()},
             controlled_joints=["joint_a"],
-            command_state=JointState(name=["joint_a"], position=[0.0]),
-            measured_state=JointState(name=["joint_a"], position=[-1.0011]),
+            command_state=JointState(
+                name=["joint_a"],
+                position=np.array([0.0], dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            ),
+            measured_state=JointState(
+                name=["joint_a"],
+                position=np.array([-1.0011], dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            ),
             max_command_tracking_error_rad=_TRACKING_ERROR_RAD,
         )
 
@@ -1209,10 +1302,22 @@ def test_step_frame_targets_velocity_limits_unbounded_position_joint(
 
     result = ik.step_frame_targets(
         robot_model=_robot_config(),
-        frame_targets={"tool": PoseStamped(header=Header(frame_id=""), pose=Pose())},
+        frame_targets={"tool": _target_pose()},
         controlled_joints=["joint_b"],
-        command_state=JointState(name=["joint_b"], position=[5.0]),
-        measured_state=JointState(name=["joint_b"], position=[5.0]),
+        command_state=JointState(
+            name=["joint_b"],
+            position=np.array([5.0], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        ),
+        measured_state=JointState(
+            name=["joint_b"],
+            position=np.array([5.0], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        ),
         max_command_tracking_error_rad=_TRACKING_ERROR_RAD,
     )
 
@@ -1256,10 +1361,22 @@ def test_step_frame_targets_rejects_unknown_frame(mocker: MockerFixture, tmp_pat
     with pytest.raises(ValueError, match="missing_frame"):
         _StreamingTestPinkIK(PinkIKConfig()).step_frame_targets(
             robot_model=config,
-            frame_targets={"missing_frame": PoseStamped(header=Header(frame_id=""), pose=Pose())},
+            frame_targets={"missing_frame": _target_pose()},
             controlled_joints=config.joint_names,
-            command_state=JointState(name=config.joint_names, position=[0.0, 0.0, 0.0]),
-            measured_state=JointState(name=config.joint_names, position=[0.0, 0.0, 0.0]),
+            command_state=JointState(
+                name=config.joint_names,
+                position=np.array([0.0, 0.0, 0.0], dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            ),
+            measured_state=JointState(
+                name=config.joint_names,
+                position=np.array([0.0, 0.0, 0.0], dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            ),
             max_command_tracking_error_rad=_TRACKING_ERROR_RAD,
         )
 
@@ -1369,7 +1486,13 @@ def test_pose_target_solve_constrains_joints_outside_planning_group(tmp_path: Pa
         tip_link="tool",
     )
     seed_positions = np.array([0.0, 0.0, 0.0, -0.4, 0.2, 0.0, 1.2, 0.0, 0.0, 0.0])
-    seed = JointState(name=joint_names, position=seed_positions.tolist())
+    seed = JointState(
+        name=joint_names,
+        position=np.asarray(seed_positions.tolist(), dtype=np.float64),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
+    )
     prepared = prepare_robot_model(config)
 
     class World:
@@ -1406,7 +1529,7 @@ def test_pose_target_solve_constrains_joints_outside_planning_group(tmp_path: Pa
         cast("Any", World()),
         {
             group: PoseStamped(
-                header=Header(frame_id=""),
+                header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
                 pose=Pose(position=target_pose.position, orientation=target_pose.orientation),
             )
         },
@@ -1429,13 +1552,7 @@ def test_solve_rejects_collision_candidate(mocker: MockerFixture) -> None:
 
     result = ik.solve(
         world=cast("Any", _FakeWorld(collision_free=False)),
-        target_pose=PoseStamped(
-            header=Header(frame_id=""),
-            pose=Pose(
-                position=Point(x=0.1, y=0.0, z=0.0),
-                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
-            ),
-        ),
+        target_pose=_target_pose(x=0.1),
         check_collision=True,
         max_attempts=1,
     )
@@ -1463,7 +1580,10 @@ def test_solve_retries_after_joint_limit_failure(mocker: MockerFixture) -> None:
             status=IKStatus.SUCCESS,
             joint_state=JointState(
                 name=["joint_a", "joint_b", "joint_c"],
-                position=[0.1, 0.2, 0.3],
+                position=np.array([0.1, 0.2, 0.3], dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
             ),
             position_error=0.0,
             orientation_error=0.0,
@@ -1474,13 +1594,7 @@ def test_solve_retries_after_joint_limit_failure(mocker: MockerFixture) -> None:
 
     result = ik.solve(
         world=cast("Any", _FakeWorld(collision_free=True)),
-        target_pose=PoseStamped(
-            header=Header(frame_id=""),
-            pose=Pose(
-                position=Point(x=0.1, y=0.0, z=0.0),
-                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
-            ),
-        ),
+        target_pose=_target_pose(x=0.1),
         check_collision=True,
         max_attempts=2,
     )
@@ -1546,7 +1660,11 @@ def test_solve_pose_targets_uses_group_tip_and_filters_group_joints(
         return_value=IKResult(
             status=IKStatus.SUCCESS,
             joint_state=JointState(
-                name=["joint_a", "joint_b", "joint_c"], position=[0.1, 0.2, 0.3]
+                name=["joint_a", "joint_b", "joint_c"],
+                position=np.array([0.1, 0.2, 0.3], dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
             ),
         ),
     )
@@ -1554,13 +1672,14 @@ def test_solve_pose_targets_uses_group_tip_and_filters_group_joints(
 
     result = ik.solve_pose_targets(
         world=cast("Any", world),
-        pose_targets={
-            world.groups["manipulator"]: PoseStamped(
-                header=Header(frame_id=""),
-                pose=Pose(position=Point(), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)),
-            )
-        },
-        seed=JointState(name=["joint_a", "joint_b", "joint_c"], position=[0.0, 0.0, 0.0]),
+        pose_targets={world.groups["manipulator"]: _target_pose()},
+        seed=JointState(
+            name=["joint_a", "joint_b", "joint_c"],
+            position=np.array([0.0, 0.0, 0.0], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        ),
         max_attempts=1,
     )
 
@@ -1568,7 +1687,7 @@ def test_solve_pose_targets_uses_group_tip_and_filters_group_joints(
     assert result.status == IKStatus.SUCCESS
     assert result.joint_state is not None
     assert result.joint_state.name == ["joint_a", "joint_b"]
-    assert result.joint_state.position == [0.1, 0.2]
+    np.testing.assert_array_equal(result.joint_state.position, [0.1, 0.2])
     assert world.joint_state_calls == 0
 
 
@@ -1578,12 +1697,7 @@ def test_solve_pose_targets_rejects_group_without_tip(mocker: MockerFixture) -> 
 
     result = ik.solve_pose_targets(
         world=cast("Any", world),
-        pose_targets={
-            world.groups["no_tip"]: PoseStamped(
-                header=Header(frame_id=""),
-                pose=Pose(position=Point(), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)),
-            )
-        },
+        pose_targets={world.groups["no_tip"]: _target_pose()},
     )
 
     assert result.status == IKStatus.UNSUPPORTED
@@ -1599,7 +1713,11 @@ def test_solve_pose_targets_partial_seed_reads_world_state(mocker: MockerFixture
         return_value=IKResult(
             status=IKStatus.SUCCESS,
             joint_state=JointState(
-                name=["joint_a", "joint_b", "joint_c"], position=[0.1, 0.2, 0.3]
+                name=["joint_a", "joint_b", "joint_c"],
+                position=np.array([0.1, 0.2, 0.3], dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
             ),
         ),
     )
@@ -1607,13 +1725,14 @@ def test_solve_pose_targets_partial_seed_reads_world_state(mocker: MockerFixture
 
     result = ik.solve_pose_targets(
         world=cast("Any", world),
-        pose_targets={
-            world.groups["manipulator"]: PoseStamped(
-                header=Header(frame_id=""),
-                pose=Pose(position=Point(), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)),
-            )
-        },
-        seed=JointState(name=["joint_a"], position=[0.0]),
+        pose_targets={world.groups["manipulator"]: _target_pose()},
+        seed=JointState(
+            name=["joint_a"],
+            position=np.array([0.0], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        ),
         max_attempts=1,
     )
 
@@ -1631,7 +1750,11 @@ def test_solve_pose_targets_multi_target_uses_multi_frame_solve(mocker: MockerFi
         return_value=IKResult(
             status=IKStatus.SUCCESS,
             joint_state=JointState(
-                name=["joint_a", "joint_b", "joint_c"], position=[0.1, 0.2, 0.3]
+                name=["joint_a", "joint_b", "joint_c"],
+                position=np.array([0.1, 0.2, 0.3], dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
             ),
             position_error=0.0,
             orientation_error=0.0,
@@ -1641,16 +1764,16 @@ def test_solve_pose_targets_multi_target_uses_multi_frame_solve(mocker: MockerFi
     result = ik.solve_pose_targets(
         world=cast("Any", world),
         pose_targets={
-            world.groups["manipulator"]: PoseStamped(
-                header=Header(frame_id=""),
-                pose=Pose(position=Point(), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)),
-            ),
-            world.groups["wrist"]: PoseStamped(
-                header=Header(frame_id=""),
-                pose=Pose(position=Point(), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)),
-            ),
+            world.groups["manipulator"]: _target_pose(),
+            world.groups["wrist"]: _target_pose(),
         },
-        seed=JointState(name=["joint_a", "joint_b", "joint_c"], position=[0.0, 0.0, 0.0]),
+        seed=JointState(
+            name=["joint_a", "joint_b", "joint_c"],
+            position=np.array([0.0, 0.0, 0.0], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        ),
         max_attempts=1,
     )
 
@@ -1658,7 +1781,7 @@ def test_solve_pose_targets_multi_target_uses_multi_frame_solve(mocker: MockerFi
     assert len(solve_targets.call_args.kwargs["targets"]) == 2
     assert result.joint_state is not None
     assert result.joint_state.name == ["joint_a", "joint_b", "joint_c"]
-    assert result.joint_state.position == [0.1, 0.2, 0.3]
+    np.testing.assert_array_equal(result.joint_state.position, [0.1, 0.2, 0.3])
 
 
 def test_solve_pose_targets_checks_multi_group_solution_together(
@@ -1673,7 +1796,11 @@ def test_solve_pose_targets_checks_multi_group_solution_together(
         return_value=IKResult(
             status=IKStatus.SUCCESS,
             joint_state=JointState(
-                name=["joint_a", "joint_b", "joint_c"], position=[0.1, 0.2, 0.3]
+                name=["joint_a", "joint_b", "joint_c"],
+                position=np.array([0.1, 0.2, 0.3], dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
             ),
         ),
     )
@@ -1681,16 +1808,16 @@ def test_solve_pose_targets_checks_multi_group_solution_together(
     result = ik.solve_pose_targets(
         world=cast("Any", world),
         pose_targets={
-            world.groups["manipulator"]: PoseStamped(
-                header=Header(frame_id=""),
-                pose=Pose(position=Point(), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)),
-            ),
-            world.groups["wrist"]: PoseStamped(
-                header=Header(frame_id=""),
-                pose=Pose(position=Point(), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)),
-            ),
+            world.groups["manipulator"]: _target_pose(),
+            world.groups["wrist"]: _target_pose(),
         },
-        seed=JointState(name=["joint_a", "joint_b", "joint_c"], position=[0.0, 0.0, 0.0]),
+        seed=JointState(
+            name=["joint_a", "joint_b", "joint_c"],
+            position=np.array([0.0, 0.0, 0.0], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        ),
         max_attempts=1,
     )
 
@@ -1709,17 +1836,29 @@ def test_solve_pose_targets_auxiliary_only_retains_seed_selection_order(
         world=cast("Any", world),
         pose_targets={},
         auxiliary_groups=[world.groups["no_tip"], world.groups["manipulator"]],
-        seed=JointState(name=["joint_a", "joint_b", "joint_c"], position=[0.1, 0.2, 0.3]),
+        seed=JointState(
+            name=["joint_a", "joint_b", "joint_c"],
+            position=np.array([0.1, 0.2, 0.3], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        ),
     )
 
     assert result.status == IKStatus.SUCCESS
     assert result.joint_state is not None
     assert result.joint_state.name == ["joint_c", "joint_a", "joint_b"]
-    assert result.joint_state.position == [0.3, 0.1, 0.2]
+    np.testing.assert_array_equal(result.joint_state.position, [0.3, 0.1, 0.2])
 
 
 def _solved_joint_state() -> JointState:
-    return JointState(name=["joint_a", "joint_b", "joint_c"], position=[0.1, 0.2, 0.3])
+    return JointState(
+        name=["joint_a", "joint_b", "joint_c"],
+        position=np.array([0.1, 0.2, 0.3], dtype=np.float64),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
+    )
 
 
 def _qp_infeasible() -> NoSolutionFound:
@@ -1753,13 +1892,7 @@ def test_solve_retries_after_no_solution_found(mocker: MockerFixture) -> None:
 
     result = ik.solve(
         world=cast("Any", _FakeWorld(collision_free=True)),
-        target_pose=PoseStamped(
-            header=Header(frame_id=""),
-            pose=Pose(
-                position=Point(x=0.1, y=0.0, z=0.0),
-                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
-            ),
-        ),
+        target_pose=_target_pose(x=0.1),
         check_collision=True,
         max_attempts=2,
     )
@@ -1782,13 +1915,7 @@ def test_solve_reports_first_no_solution_found_after_all_attempts(
 
     result = ik.solve(
         world=cast("Any", _FakeWorld(collision_free=True)),
-        target_pose=PoseStamped(
-            header=Header(frame_id=""),
-            pose=Pose(
-                position=Point(x=0.1, y=0.0, z=0.0),
-                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
-            ),
-        ),
+        target_pose=_target_pose(x=0.1),
         check_collision=True,
         max_attempts=3,
     )
@@ -1807,13 +1934,7 @@ def test_solve_does_not_retry_unexpected_exception(mocker: MockerFixture) -> Non
 
     result = ik.solve(
         world=cast("Any", _FakeWorld(collision_free=True)),
-        target_pose=PoseStamped(
-            header=Header(frame_id=""),
-            pose=Pose(
-                position=Point(x=0.1, y=0.0, z=0.0),
-                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
-            ),
-        ),
+        target_pose=_target_pose(x=0.1),
         check_collision=True,
         max_attempts=3,
     )
@@ -1832,13 +1953,7 @@ def test_solve_mapping_value_error_fails_without_retrying(mocker: MockerFixture)
 
     result = ik.solve(
         world=cast("Any", _FakeWorld(collision_free=True)),
-        target_pose=PoseStamped(
-            header=Header(frame_id=""),
-            pose=Pose(
-                position=Point(x=0.1, y=0.0, z=0.0),
-                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
-            ),
-        ),
+        target_pose=_target_pose(x=0.1),
         check_collision=True,
         max_attempts=5,
     )
@@ -1849,7 +1964,13 @@ def test_solve_mapping_value_error_fails_without_retrying(mocker: MockerFixture)
 
 
 def _pose_targets_seed() -> JointState:
-    return JointState(name=["joint_a", "joint_b", "joint_c"], position=[0.0, 0.0, 0.0])
+    return JointState(
+        name=["joint_a", "joint_b", "joint_c"],
+        position=np.array([0.0, 0.0, 0.0], dtype=np.float64),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
+    )
 
 
 def test_solve_pose_targets_retries_after_no_solution_found(mocker: MockerFixture) -> None:
@@ -1876,12 +1997,7 @@ def test_solve_pose_targets_retries_after_no_solution_found(mocker: MockerFixtur
 
     result = ik.solve_pose_targets(
         world=cast("Any", world),
-        pose_targets={
-            world.groups["manipulator"]: PoseStamped(
-                header=Header(frame_id=""),
-                pose=Pose(position=Point(), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)),
-            )
-        },
+        pose_targets={world.groups["manipulator"]: _target_pose()},
         seed=_pose_targets_seed(),
         max_attempts=2,
     )
@@ -1905,12 +2021,7 @@ def test_solve_pose_targets_reports_first_no_solution_found_after_all_attempts(
 
     result = ik.solve_pose_targets(
         world=cast("Any", world),
-        pose_targets={
-            world.groups["manipulator"]: PoseStamped(
-                header=Header(frame_id=""),
-                pose=Pose(position=Point(), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)),
-            )
-        },
+        pose_targets={world.groups["manipulator"]: _target_pose()},
         seed=_pose_targets_seed(),
         max_attempts=3,
     )
@@ -1932,12 +2043,7 @@ def test_solve_pose_targets_does_not_retry_unexpected_exception(
 
     result = ik.solve_pose_targets(
         world=cast("Any", world),
-        pose_targets={
-            world.groups["manipulator"]: PoseStamped(
-                header=Header(frame_id=""),
-                pose=Pose(position=Point(), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)),
-            )
-        },
+        pose_targets={world.groups["manipulator"]: _target_pose()},
         seed=_pose_targets_seed(),
         max_attempts=3,
     )
@@ -1959,12 +2065,7 @@ def test_solve_pose_targets_mapping_value_error_fails_without_retrying(
 
     result = ik.solve_pose_targets(
         world=cast("Any", world),
-        pose_targets={
-            world.groups["manipulator"]: PoseStamped(
-                header=Header(frame_id=""),
-                pose=Pose(position=Point(), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)),
-            )
-        },
+        pose_targets={world.groups["manipulator"]: _target_pose()},
         seed=_pose_targets_seed(),
         max_attempts=5,
     )

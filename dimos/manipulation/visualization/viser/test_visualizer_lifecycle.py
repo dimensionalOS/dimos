@@ -17,8 +17,10 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
-from dimos_generated.geometry_msgs.msg import Pose
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Point, Pose, Quaternion
 from dimos_generated.std_msgs.msg import Header
+import numpy as np
 import pytest
 
 from dimos.msgs.time import header_now
@@ -91,7 +93,13 @@ class FakeRuntimeServer(FakeServer):
 def fake_robot_config(name: str) -> RobotModelConfig:
     return RobotModelConfig(
         model=RobotModel.from_file(Path(f"{name}.urdf")),
-        base_pose=PoseStamped(header=Header(frame_id=""), pose=Pose()),
+        base_pose=PoseStamped(
+            header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
+            pose=Pose(
+                position=Point(x=0.0, y=0.0, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+        ),
         joint_names=[],
         planning_groups=[
             PlanningGroupDefinition(
@@ -429,7 +437,13 @@ def test_visualizer_publish_preview_and_close_paths(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[tuple[str, str]] = []
-    current = JointState(name=["joint1"], position=[0.5])
+    current = JointState(
+        name=["joint1"],
+        position=np.array([0.5], dtype=np.float64),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
+    )
 
     class FakeRuntime:
         url = "http://localhost:8095"
@@ -482,7 +496,7 @@ def test_visualizer_publish_preview_and_close_paths(
     visualizer.update_state(VisualizationStateFrame(current))
     visualizer.cancel_preview_animation()
     visualizer.animate_trajectory(
-        JointTrajectory(header=header_now(), joint_names=["arm/joint1"]), duration=1.5
+        JointTrajectory(header=header_now(), joint_names=["arm/joint1"], points=[]), duration=1.5
     )
     visualizer.close()
     visualizer.update_state(VisualizationStateFrame(current))
@@ -602,7 +616,15 @@ def test_selected_display_mode_survives_primary_recreation_and_joint_updates(
 
     scene.register_model(prepared)
     current = scene._urdfs["current"]
-    scene.update_current_model(JointState(name=["joint1"], position=[0.75]))
+    scene.update_current_model(
+        JointState(
+            name=["joint1"],
+            position=np.array([0.75], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        )
+    )
 
     assert current is not old_current
     assert scene.robot_display_mode == mode

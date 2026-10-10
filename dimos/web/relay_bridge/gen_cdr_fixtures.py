@@ -20,9 +20,11 @@ from typing import Any
 
 from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.dimos_msgs.msg import LineSegment3D, LineSegments3D
-from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Vector3
 from dimos_generated.sensor_msgs.msg import Image, Imu, JointState
 from dimos_generated.std_msgs.msg import Empty, Header, Int64, String
+from dimos_message_build.registry import encode as cdr_encode
+import numpy as np
 
 from dimos.message_codegen.definitions import Definitions
 from dimos.web.cdr_codec import CDR_V1_SUFFIX, export_schema
@@ -37,14 +39,20 @@ def build_messages() -> list[tuple[str, Any]]:
             PoseStamped(
                 header=header,
                 pose=Pose(
-                    position=Point(x=1.5, y=-2.5, z=0.25), orientation=Quaternion(z=0.6, w=0.8)
+                    position=Point(x=1.5, y=-2.5, z=0.25),
+                    orientation=Quaternion(z=0.6, w=0.8, x=0.0, y=0.0),
                 ),
             ),
         ),
         (
             "custom_segments",
             LineSegments3D(
-                header=header, segments=[LineSegment3D(start=Point(x=1), end=Point(y=2), weight=4)]
+                header=header,
+                segments=[
+                    LineSegment3D(
+                        start=Point(x=1, y=0.0, z=0.0), end=Point(y=2, x=0.0, z=0.0), weight=4
+                    )
+                ],
             ),
         ),
         (
@@ -55,11 +63,32 @@ def build_messages() -> list[tuple[str, Any]]:
                 height=1,
                 encoding="rgb8",
                 step=6,
-                data=[0, 1, 2, 253, 254, 255],
+                data=np.array([0, 1, 2, 253, 254, 255], dtype=np.uint8),
+                is_bigendian=0,
             ),
         ),
-        ("imu", Imu(header=header, orientation_covariance=range(9))),
-        ("joints", JointState(header=header, name=["joint_a", "joint_b"], position=[1.5, -2.5])),
+        (
+            "imu",
+            Imu(
+                header=header,
+                orientation_covariance=np.asarray(range(9), dtype=np.float64),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                angular_velocity=Vector3(x=0.0, y=0.0, z=0.0),
+                angular_velocity_covariance=np.zeros(9, dtype=np.float64),
+                linear_acceleration=Vector3(x=0.0, y=0.0, z=0.0),
+                linear_acceleration_covariance=np.zeros(9, dtype=np.float64),
+            ),
+        ),
+        (
+            "joints",
+            JointState(
+                header=header,
+                name=["joint_a", "joint_b"],
+                position=np.array([1.5, -2.5], dtype=np.float64),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            ),
+        ),
         ("int64", Int64(data=-9007199254740993)),
         ("empty", Empty()),
         ("string", String(data="robot 🦾 café")),
@@ -71,12 +100,16 @@ def build_vectors() -> list[dict[str, Any]]:
 
     def walk(msg: Any) -> dict[str, Any]:
         result: dict[str, Any] = {}
-        for field in definitions[msg.msg_name].fields:
+        for field in definitions[msg.__msgtype__].fields:
             value = getattr(msg, field.name)
             convert = (
                 walk
                 if field.type.nested
-                else (str if field.type.name in ("int64", "uint64") else lambda x: x)
+                else (
+                    str
+                    if field.type.name in ("int64", "uint64")
+                    else lambda x: x.item() if isinstance(x, np.generic) else x
+                )
             )
             result[field.name] = (
                 [convert(item) for item in value] if field.type.is_array else convert(value)
@@ -86,11 +119,11 @@ def build_vectors() -> list[dict[str, Any]]:
     return [
         {
             "name": name,
-            "encoding": msg.msg_name + CDR_V1_SUFFIX,
+            "encoding": msg.__msgtype__ + CDR_V1_SUFFIX,
             "schema": export_schema(type(msg)),
             "value": walk(msg),
-            "payload_b64": base64.b64encode(msg.encode()).decode(),
-            "big_endian_b64": base64.b64encode(msg.encode(little_endian=False)).decode(),
+            "payload_b64": base64.b64encode(cdr_encode(msg)).decode(),
+            "big_endian_b64": base64.b64encode(cdr_encode(msg, little_endian=False)).decode(),
         }
         for name, msg in build_messages()
     ]

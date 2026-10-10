@@ -16,6 +16,7 @@
 
 import math
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Transform, TransformStamped, Vector3
 from dimos_generated.std_msgs.msg import Header
 
@@ -71,10 +72,11 @@ def test_mid360_frame_is_upside_down() -> None:
 def test_flipped_level_sensor_yields_level_base() -> None:
     """A standing robot reports a flipped sensor pose. base_link must come out level, below it."""
     live = TransformStamped(
-        header=Header(frame_id="world"),
+        header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
         child_frame_id="mid360_link",
         transform=Transform(
-            translation=Vector3(z=LIDAR_HEIGHT), rotation=torso_to_mid360().transform.rotation
+            translation=Vector3(z=LIDAR_HEIGHT, x=0.0, y=0.0),
+            rotation=torso_to_mid360().transform.rotation,
         ),
     )
     base = _buffer(live=live).get("world", "base_link")

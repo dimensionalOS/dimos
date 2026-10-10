@@ -28,10 +28,10 @@ from dimos.mapping.pointclouds.occupancy import height_cost_occupancy
 from dimos.mapping.pointclouds.util import read_pointcloud
 from dimos.msgs.occupancy import occupancy_view, world_to_grid
 from dimos.msgs.pointcloud import pointcloud_from_xyz
-from dimos.navigation.patrolling.create_patrol_router import create_patrol_router
-from dimos.navigation.patrolling.routers.visitation_history import VisitationHistory
-from dimos.navigation.patrolling.utilities import point_to_pose_stamped
-from dimos.navigation.replanning_a_star.min_cost_astar import min_cost_astar
+from dimos.navigation.experimental.patrolling.create_patrol_router import create_patrol_router
+from dimos.navigation.experimental.patrolling.routers.visitation_history import VisitationHistory
+from dimos.navigation.experimental.patrolling.utilities import point_to_pose_stamped
+from dimos.navigation.go2.replanning_a_star.min_cost_astar import min_cost_astar
 from dimos.utils.data import get_data
 
 SCORING_STAMP_RADIUS_M = 0.2

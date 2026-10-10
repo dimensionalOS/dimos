@@ -19,8 +19,10 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, cast
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import PoseStamped
 from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 
 from dimos.manipulation.planning.groups.models import PlanningGroup
@@ -322,7 +324,13 @@ class DrakeOptimizationIK:
         joint_solution = np.clip(joint_solution, lower_limits, upper_limits)
 
         # Compute actual error using FK
-        solution_state = JointState(name=joint_names, position=joint_solution.tolist())
+        solution_state = JointState(
+            name=joint_names,
+            position=np.asarray(joint_solution.tolist(), dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        )
         with world.scratch_context() as ctx:
             world.set_joint_state(ctx, solution_state)
             actual_matrix = world.get_link_pose(ctx, target_frame_name)
@@ -350,7 +358,13 @@ def _create_success_result(
 ) -> IKResult:
     return IKResult(
         status=IKStatus.SUCCESS,
-        joint_state=JointState(name=joint_names, position=joint_positions.tolist()),
+        joint_state=JointState(
+            name=joint_names,
+            position=np.asarray(joint_positions.tolist(), dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        ),
         position_error=position_error,
         orientation_error=orientation_error,
         iterations=iterations,

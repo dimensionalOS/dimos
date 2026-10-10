@@ -81,7 +81,7 @@ def detect_markers_in_image(
         child_frame_id=optical_frame,
         transform=world_T_optical.transform,
     )
-    marker_size = Vector3(x=marker_length_m, y=marker_length_m)
+    marker_size = Vector3(x=marker_length_m, y=marker_length_m, z=0.0)
     detections: list[Detection3DMarker] = []
 
     for corner_set, mid_arr in zip(corners, ids, strict=True):

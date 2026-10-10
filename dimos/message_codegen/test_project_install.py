@@ -60,14 +60,21 @@ languages = ["python", "cpp", "rust"]
     def verify(code):
         subprocess.run([python, "-I", "-c", code], cwd=tmp_path, env=environment, check=True)
 
+    header_import = (
+        "from dimos_generated.std_msgs.msg import Header; "
+        "from dimos_generated.builtin_interfaces.msg import Time; "
+        "header = Header(stamp=Time(sec=0, nanosec=0), frame_id='sensor'); "
+    )
     pip("install", str(app))
     verify("""
 from importlib.metadata import distributions
 from dimos_generated.std_msgs.msg import Header
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_message_build.registry import encode, decode
 from story_messages.story_msgs.msg import DeviceReading
-message = DeviceReading(header=Header(frame_id='sensor'), value=20.5)
+message = DeviceReading(header=Header(stamp=Time(sec=0, nanosec=0), frame_id='sensor'), value=20.5)
 assert type(message.header) is Header
-assert DeviceReading.decode(message.encode()).value == 20.5
+assert decode(encode(message), DeviceReading).value == 20.5
 assert 'dimos' not in {dist.metadata['Name'] for dist in distributions()}
 """)
     assert not list((app / "build").rglob("target"))
@@ -80,7 +87,8 @@ assert 'dimos' not in {dist.metadata['Name'] for dist in distributions()}
     environment["PATH"] = str(venv / "bin")
     pip("install", "--only-binary=:all:", str(wheel))
     verify(
-        "from story_messages.story_msgs.msg import DeviceReading; assert DeviceReading(value=7).value == 7"
+        header_import
+        + "from story_messages.story_msgs.msg import DeviceReading; assert DeviceReading(header=header, value=7).value == 7"
     )
     environment["PATH"] = old_path
     # Source distribution builds outside the original project and has no generated output.
@@ -100,16 +108,19 @@ assert 'dimos' not in {dist.metadata['Name'] for dist in distributions()}
         assert not any("/build/" in name for name in archive.getnames())
     pip("install", "--force-reinstall", str(source))
     verify(
-        "from story_messages.story_msgs.msg import DeviceReading; assert DeviceReading(value=8).value == 8"
+        header_import
+        + "from story_messages.story_msgs.msg import DeviceReading; assert DeviceReading(header=header, value=8).value == 8"
     )
     pip("install", "-e", str(app))
     definition.write_text(definition.read_text() + 'string unit "C"\n')
     pip("install", "-e", str(app))
     verify(
-        "from story_messages.story_msgs.msg import DeviceReading; assert DeviceReading().unit == 'C'"
+        header_import
+        + "from story_messages.story_msgs.msg import DeviceReading; assert DeviceReading(header=header, value=0., unit='C').unit == 'C'"
     )
     definition.rename(definition.with_name("RenamedReading.msg"))
     pip("install", "-e", str(app))
     verify(
-        "import story_messages.story_msgs.msg as m; assert not hasattr(m, 'DeviceReading'); assert m.RenamedReading().unit == 'C'"
+        header_import
+        + "import story_messages.story_msgs.msg as m; assert not hasattr(m, 'DeviceReading'); assert m.RenamedReading(header=header, value=0., unit='C').unit == 'C'"
     )

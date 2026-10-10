@@ -30,7 +30,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 
 if TYPE_CHECKING:
@@ -81,7 +83,15 @@ def interpolate_path(
             for step in range(1, num_steps + 1):
                 alpha = step / num_steps
                 q_interp = q_start + alpha * diff
-                interpolated.append(JointState(name=joint_names, position=q_interp.tolist()))
+                interpolated.append(
+                    JointState(
+                        name=joint_names,
+                        position=np.asarray(q_interp.tolist(), dtype=np.float64),
+                        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                        velocity=np.array([], dtype=np.float64),
+                        effort=np.array([], dtype=np.float64),
+                    )
+                )
 
     return interpolated
 
@@ -127,7 +137,15 @@ def interpolate_segment(
     for i in range(num_steps + 1):
         alpha = i / num_steps
         q_interp = q_start + alpha * diff
-        segment.append(JointState(name=joint_names, position=q_interp.tolist()))
+        segment.append(
+            JointState(
+                name=joint_names,
+                position=np.asarray(q_interp.tolist(), dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            )
+        )
 
     return segment
 
@@ -247,7 +265,15 @@ def clip_path_to_limits(
     for state in path:
         q = np.array(state.position, dtype=np.float64)
         q_clipped = np.clip(q, lower_limits, upper_limits)
-        clipped.append(JointState(name=state.name, position=q_clipped.tolist()))
+        clipped.append(
+            JointState(
+                name=state.name,
+                position=np.asarray(q_clipped.tolist(), dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            )
+        )
     return clipped
 
 

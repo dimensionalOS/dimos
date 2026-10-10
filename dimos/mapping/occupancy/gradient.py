@@ -80,7 +80,9 @@ def gradient(
 
     # Create new OccupancyGrid with gradient
     gradient_grid = OccupancyGrid(
-        header=occupancy_grid.header, info=occupancy_grid.info, data=gradient_data.ravel()
+        header=occupancy_grid.header,
+        info=occupancy_grid.info,
+        data=np.asarray(gradient_data.ravel(), dtype=np.int8),
     )
 
     return gradient_grid
@@ -130,7 +132,9 @@ def voronoi_gradient(
         gradient_data = np.zeros_like(occupancy_view(occupancy_grid), dtype=np.int8)
         gradient_data[unknown_mask] = -1
         return OccupancyGrid(
-            header=occupancy_grid.header, info=occupancy_grid.info, data=gradient_data.ravel()
+            header=occupancy_grid.header,
+            info=occupancy_grid.info,
+            data=np.asarray(gradient_data.ravel(), dtype=np.int8),
         )
 
     # Label connected obstacle regions (clusters)
@@ -195,5 +199,7 @@ def voronoi_gradient(
     gradient_data[unknown_mask] = -1
 
     return OccupancyGrid(
-        header=occupancy_grid.header, info=occupancy_grid.info, data=gradient_data.ravel()
+        header=occupancy_grid.header,
+        info=occupancy_grid.info,
+        data=np.asarray(gradient_data.ravel(), dtype=np.int8),
     )

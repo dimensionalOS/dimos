@@ -20,6 +20,7 @@ import asyncio
 from collections import Counter
 from collections.abc import Mapping, Sequence
 import copy
+from copy import deepcopy
 from enum import Enum
 import math
 import threading
@@ -27,6 +28,7 @@ import time
 import traceback
 from typing import Any, Literal, TypeAlias
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.dimos_msgs.msg import GraspCandidateArray
 from dimos_generated.geometry_msgs.msg import (
     Point,
@@ -321,7 +323,9 @@ class ManipulationModule(Module):
             )
             floor_obs = Obstacle(
                 name="floor",
-                pose=PoseStamped(header=Header(frame_id="world"), pose=floor_pose),
+                pose=PoseStamped(
+                    header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)), pose=floor_pose
+                ),
                 obstacle_type=ObstacleType.BOX,
                 dimensions=(0.6, 1.2, thickness),
             )
@@ -364,12 +368,16 @@ class ManipulationModule(Module):
                 return
             indices = [name_to_idx[name] for name in names]
             state = JointState(
-                header=msg.header,
+                header=deepcopy(msg.header),
                 name=list(names),
-                position=[msg.position[index] for index in indices],
-                velocity=[msg.velocity[index] for index in indices]
-                if len(msg.velocity) == len(msg.name)
-                else [],
+                position=np.asarray([msg.position[index] for index in indices], dtype=np.float64),
+                velocity=np.asarray(
+                    [msg.velocity[index] for index in indices]
+                    if len(msg.velocity) == len(msg.name)
+                    else [],
+                    dtype=np.float64,
+                ),
+                effort=np.array([], dtype=np.float64),
             )
             self._world_monitor.on_joint_state(state)
             if self._init_joints is None:
@@ -555,7 +563,13 @@ class ManipulationModule(Module):
             joints: Joint configuration to check
         """
         if self._world_monitor:
-            joint_state = JointState(name=self.config.model.joint_names, position=joints)
+            joint_state = JointState(
+                name=self.config.model.joint_names,
+                position=np.asarray(joints, dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            )
             return self._world_monitor.is_state_valid(joint_state)
         return False
 
@@ -732,7 +746,7 @@ class ManipulationModule(Module):
             if seed_state is None:
                 selection = self._world_monitor.planning_groups.select(group_ids)
                 current = self._world_monitor.current_model_joint_state()
-                if not current.name and not current.position:
+                if not current.name and not len(current.position):
                     return IKResult(status=IKStatus.NO_SOLUTION, message="No joint state")
                 seed_state = filter_joint_state_to_selected_joints(current, selection.joint_names)
         except (KeyError, ValueError) as exc:
@@ -813,7 +827,13 @@ class ManipulationModule(Module):
             goal_names.extend(normalized_target.name)
             goal_positions.extend(normalized_target.position)
 
-        goal = JointState(name=goal_names, position=goal_positions)
+        goal = JointState(
+            name=goal_names,
+            position=np.asarray(goal_positions, dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        )
         return self._plan_selected_path(
             group_ids, start, goal, planning_epoch, resolved_speed_scale
         )
@@ -929,7 +949,7 @@ class ManipulationModule(Module):
             return MoveResult(plan_result, None, delta, check_collision)
         resolved_speed = self.config.linear_speed_scale if speed_scale is None else speed_scale
         relative = TransformStamped(
-            header=Header(frame_id="world"),
+            header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
             transform=Transform(
                 translation=Vector3(x=delta[0], y=delta[1], z=delta[2]),
                 rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
@@ -939,7 +959,14 @@ class ManipulationModule(Module):
         plan = self.generate_cartesian_plan(
             {
                 group.id: (
-                    TransformStamped(header=Header(frame_id="world"), child_frame_id=""),
+                    TransformStamped(
+                        header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+                        child_frame_id="",
+                        transform=Transform(
+                            translation=Vector3(x=0.0, y=0.0, z=0.0),
+                            rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                        ),
+                    ),
                     relative,
                 )
             },
@@ -1026,12 +1053,23 @@ class ManipulationModule(Module):
             positions = dict(zip(state.name, state.position, strict=True))
             return JointState(
                 name=list(group.joint_names),
-                position=[positions[name] for name in group.joint_names],
+                position=np.asarray(
+                    [positions[name] for name in group.joint_names], dtype=np.float64
+                ),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
             )
 
         if config.home_joints is not None:
             presets["home"] = selected(
-                JointState(name=config.joint_names, position=config.home_joints)
+                JointState(
+                    name=config.joint_names,
+                    position=np.asarray(config.home_joints, dtype=np.float64),
+                    header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                    velocity=np.array([], dtype=np.float64),
+                    effort=np.array([], dtype=np.float64),
+                )
             )
         if self._init_joints is not None:
             presets["init"] = selected(self._init_joints)
@@ -1238,7 +1276,7 @@ class ManipulationModule(Module):
             name=name,
             obstacle_type=obstacle_type,
             pose=PoseStamped(
-                header=Header(frame_id=""),
+                header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
                 pose=Pose(position=pose.position, orientation=pose.orientation),
             ),
             dimensions=tuple(dimensions) if dimensions else (),
@@ -1276,7 +1314,7 @@ class ManipulationModule(Module):
             name=name,
             obstacle_type=obstacle_type,
             pose=PoseStamped(
-                header=Header(frame_id=""),
+                header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
                 pose=Pose(position=pose.position, orientation=pose.orientation),
             ),
             dimensions=tuple(dimensions) if dimensions else (),
@@ -1321,7 +1359,13 @@ class ManipulationModule(Module):
         obstacle = Obstacle(
             name=VOXEL_MAP_OBSTACLE_ID,
             obstacle_type=ObstacleType.OCTREE,
-            pose=PoseStamped(header=Header(frame_id=frame), pose=Pose()),
+            pose=PoseStamped(
+                header=Header(frame_id=frame, stamp=Time(sec=0, nanosec=0)),
+                pose=Pose(
+                    position=Point(x=0.0, y=0.0, z=0.0),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+            ),
             points=tuple(map(tuple, points.tolist())),
             octree_resolution=self.config.voxel_map_resolution,
         )
@@ -1347,7 +1391,7 @@ class ManipulationModule(Module):
         return self._world_monitor.update_obstacle_pose(
             name,
             PoseStamped(
-                header=Header(frame_id=""),
+                header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
                 pose=Pose(position=pose.position, orientation=pose.orientation),
             ),
         )

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import math
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped
 from dimos_generated.std_msgs.msg import Header
 
@@ -55,7 +56,7 @@ def _task(**overrides) -> PathFollowerTask:
 
 def _start_aligned(task: PathFollowerTask, path) -> None:
     odom = PoseStamped(
-        header=Header(frame_id=""),
+        header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
         pose=Pose(
             position=Point(x=path.poses[0].pose.position.x, y=path.poses[0].pose.position.y, z=0.0),
             orientation=quaternion_from_euler(

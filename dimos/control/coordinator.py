@@ -32,10 +32,13 @@ import threading
 import time
 from typing import TYPE_CHECKING, Any
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Twist
 from dimos_generated.sensor_msgs.msg import JointState
-from dimos_generated.std_msgs.msg import Float32
+from dimos_generated.std_msgs.msg import Float32, Header
+from dimos_generated.tf2_msgs.msg import TFMessage
 from dimos_generated.trajectory_msgs.msg import JointTrajectory
+import numpy as np
 
 from dimos.control.components import (
     TWIST_SUFFIX_MAP,
@@ -98,6 +101,8 @@ class ControlCoordinatorConfig(ModuleConfig):
     # Transitional: goes away once every consumer reads per-robot streams.
     publish_robot_joint_states: bool = False
     joint_state_frame_id: str = "coordinator"
+    publish_frame_poses: bool = False
+    frame_pose_hz: float = 30.0
     log_ticks: bool = False
     hardware: list[HardwareComponent] = field(default_factory=lambda: [])
     tasks: list[TaskConfig] = field(default_factory=lambda: [])
@@ -300,6 +305,15 @@ class ControlCoordinator(Module):
         from dimos.control.tasks.registry import control_task_registry
 
         return control_task_registry.create(cfg.type, cfg, hardware=self._hardware)
+
+    def _frame_pose_port(self) -> Out[TFMessage]:
+        port = getattr(self, "tf", None)
+        if isinstance(port, Out):
+            return port
+        raise ValueError(
+            "publish_frame_poses is on but the coordinator has no tf output — "
+            "add `tf: Out[TFMessage]` to your coordinator subclass"
+        )
 
     def _robot_joint_port(self, hardware_id: HardwareId) -> Out[JointState]:
         name = f"{hardware_id}_joints"
@@ -698,7 +712,13 @@ class ControlCoordinator(Module):
                     velocities.append(value)
 
         if names:
-            joint_state = JointState(name=names, velocity=velocities)
+            joint_state = JointState(
+                name=names,
+                velocity=np.asarray(velocities, dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                position=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            )
             self._dispatch("joint_command", joint_state)
 
     @rpc
@@ -905,6 +925,10 @@ class ControlCoordinator(Module):
             joint_to_hardware=self._joint_to_hardware,
             publish_callback=publish_cb,
             publish_robot_callback=publish_robot_cb,
+            publish_tf_callback=self._frame_pose_port().publish
+            if self.config.publish_frame_poses
+            else None,
+            frame_pose_hz=self.config.frame_pose_hz,
             frame_id=self.config.joint_state_frame_id,
             log_ticks=self.config.log_ticks,
         )

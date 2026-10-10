@@ -21,6 +21,7 @@ import threading
 from typing import Any
 
 from dimos_generated.geometry_msgs.msg import PoseStamped
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 
 from dimos.core.global_config import global_config
 from dimos.core.transport_factory import transport_topic
@@ -91,7 +92,7 @@ class LcmSpy:
                     listener(data)
 
     def publish(self, topic: str, msg: Any) -> None:
-        self._bus.publish(_wire_topic(topic), msg.encode())
+        self._bus.publish(_wire_topic(topic), cdr_encode(msg))
 
     def save_topic(self, topic: str) -> None:
         with self._saved_topics_lock:
@@ -169,7 +170,7 @@ class LcmSpy:
         event = threading.Event()
 
         def listener(msg: bytes) -> None:
-            data = type.decode(msg)
+            data = cdr_decode(msg, type)
             if predicate(data):
                 event.set()
 

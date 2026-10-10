@@ -242,7 +242,7 @@ class JointVelocityTask(BaseControlTask):
         """Uniform stream handler: digest the velocity half of a joint_command."""
         # Position-bearing messages belong to the servo half (the coordinator
         # routes position XOR velocity; positions win when both are present).
-        if msg.position or not msg.velocity:
+        if len(msg.position) or not len(msg.velocity):
             return False
         return self.set_velocities_by_name(dict(zip(msg.name, msg.velocity, strict=True)), t_now)
 

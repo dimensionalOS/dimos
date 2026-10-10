@@ -233,8 +233,12 @@ class RoboPlanTOPPRAParametrizer(BaseTrajectoryParametrizer):
         points = [
             JointTrajectoryPoint(
                 time_from_start=duration_from_seconds(time),
-                positions=list(position),
-                velocities=[float(velocity[index]) for index in output_indices],
+                positions=np.asarray(list(position), dtype=np.float64),
+                velocities=np.asarray(
+                    [float(velocity[index]) for index in output_indices], dtype=np.float64
+                ),
+                accelerations=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
             )
             for time, position, velocity in zip(
                 times,

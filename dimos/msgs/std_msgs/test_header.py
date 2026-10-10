@@ -17,7 +17,9 @@
 from datetime import datetime, timezone
 import time
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import encode as cdr_encode, schema as cdr_schema
 from rosbags.typesys import Stores, get_typestore
 
 from dimos.msgs.time import header_now, time_from_nanoseconds, time_from_seconds, to_seconds
@@ -33,7 +35,7 @@ def test_header_initialization_methods() -> None:
     after = time.time_ns()
     assert before <= current.stamp.sec * 1000000000 + current.stamp.nanosec <= after
     assert current.frame_id == "base_link"
-    empty = Header()
+    empty = Header(stamp=Time(sec=0, nanosec=0), frame_id="")
     assert empty.stamp.sec == empty.stamp.nanosec == 0
     assert empty.frame_id == ""
     dt = datetime(2025, 1, 18, 12, 30, 45, 500000, tzinfo=timezone.utc)
@@ -55,8 +57,10 @@ def test_header_datetime_conversion() -> None:
 
 def test_header_independent_cdr_fields() -> None:
     header = Header(stamp=time_from_seconds(100.5), frame_id="map")
-    decoded = get_typestore(Stores.ROS2_JAZZY).deserialize_cdr(header.encode(), Header.msg_name)
+    decoded = get_typestore(Stores.ROS2_JAZZY).deserialize_cdr(
+        cdr_encode(header), Header.__msgtype__
+    )
     assert decoded.stamp.sec == 100
     assert decoded.stamp.nanosec == 500000000
     assert decoded.frame_id == "map"
-    assert "seq" not in Header.schema
+    assert "seq" not in cdr_schema(Header.__msgtype__)

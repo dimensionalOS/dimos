@@ -21,6 +21,7 @@ from types import SimpleNamespace
 from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.sensor_msgs.msg import CompressedImage, Image
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 
@@ -38,16 +39,16 @@ def test_jpeg_wire_is_standard_cdr_and_preserves_exact_image_header(codec):
         np.full((16, 16, 3), [20, 80, 140], dtype=np.uint8), encoding="rgb8", header=header
     )
     topic = SimpleNamespace(topic="/image", msg_type=CompressedImage)
-    before = image.encode()
+    before = cdr_encode(image)
     encoded = codec.encode(image, topic)
-    wire = CompressedImage.decode(encoded)
+    wire = cdr_decode(encoded, CompressedImage)
     assert encoded[:4] == b"\x00\x01\x00\x00"
     assert wire.header == header
     assert wire.format == "rgb8; jpeg compressed bgr8"
     decoded = codec.decode(encoded, topic)
     assert decoded.encoding == "bgr8" and decoded.header == header
     np.testing.assert_allclose(image_view(decoded)[0, 0], [140, 80, 20], atol=3)
-    assert image.encode() == before
+    assert cdr_encode(image) == before
 
 
 def test_jpeg_lcm_requires_truthful_compressed_wire_type():
@@ -71,6 +72,18 @@ def test_jpeg_transport_wire_metadata_and_pickle_keep_separate_application_type(
 
 def test_compressed_image_rejects_invalid_data_and_unknown_format():
     with pytest.raises(ValueError, match="invalid compressed"):
-        image_from_compressed(CompressedImage(format="jpeg", data=b"not jpeg"))
+        image_from_compressed(
+            CompressedImage(
+                format="jpeg",
+                data=np.frombuffer(b"not jpeg", dtype=np.uint8),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            )
+        )
     with pytest.raises(ValueError, match="unsupported compressed"):
-        image_from_compressed(CompressedImage(format="h264", data=b"not jpeg"))
+        image_from_compressed(
+            CompressedImage(
+                format="h264",
+                data=np.frombuffer(b"not jpeg", dtype=np.uint8),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            )
+        )

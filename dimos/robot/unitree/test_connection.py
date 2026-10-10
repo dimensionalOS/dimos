@@ -25,6 +25,7 @@ from unittest.mock import ANY, AsyncMock, MagicMock, call
 
 from dimos_generated.geometry_msgs.msg import PoseStamped, TransformStamped, Twist, Vector3
 from dimos_generated.sensor_msgs.msg import Image, PointCloud2
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 import reactivex as rx
@@ -120,8 +121,8 @@ def test_move_api_toggle_sends_selected_wire_command(
     driver = _stub_driver()
     monkeypatch.setattr(conn_mod, "LegionConnection", MagicMock(return_value=driver))
     twist = Twist(
-        linear=Vector3(x=1.5, y=-0.4),
-        angular=Vector3(z=0.8),
+        linear=Vector3(x=1.5, y=-0.4, z=0.0),
+        angular=Vector3(z=0.8, x=0.0, y=0.0),
     )
 
     connection = UnitreeWebRTCConnection(ip="10.0.0.99", **connection_options)
@@ -220,11 +221,11 @@ def test_sensor_streams_emit_generated_cdr_with_exact_arrival_time(
         message = received[0]
         assert (message.header.stamp.sec, message.header.stamp.nanosec) == (1700000000, 123456789)
         if kind == "lidar":
-            decoded = PointCloud2.decode(message.encode())
+            decoded = cdr_decode(cdr_encode(message), PointCloud2)
             np.testing.assert_array_equal(pointcloud_xyz(decoded), values)
             assert decoded.header.frame_id == "world"
         else:
-            decoded = Image.decode(message.encode())
+            decoded = cdr_decode(cdr_encode(message), Image)
             np.testing.assert_array_equal(image_view(decoded), pixels)
             assert decoded.header.frame_id == "camera_optical"
     finally:
@@ -259,7 +260,7 @@ def test_odometry_stream_preserves_pose_and_uses_exact_arrival_stamp(
         assert not errors
         assert len(received) == 1
         cls = TransformStamped if as_tf else PoseStamped
-        message = cls.decode(received[0].encode())
+        message = cdr_decode(cdr_encode(received[0]), cls)
         assert message.header.frame_id == "world"
         assert (message.header.stamp.sec, message.header.stamp.nanosec) == (1700000000, 123456789)
         if as_tf:

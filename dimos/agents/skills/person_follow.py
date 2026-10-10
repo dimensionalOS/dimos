@@ -15,9 +15,9 @@
 import base64
 from threading import Event, RLock, Thread
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from dimos_generated.geometry_msgs.msg import Twist
+from dimos_generated.geometry_msgs.msg import Twist, Vector3
 from dimos_generated.sensor_msgs.msg import CameraInfo, Image, PointCloud2
 from dimos_generated.tf2_msgs.msg import TFMessage
 import numpy as np
@@ -25,20 +25,22 @@ from reactivex.disposable import Disposable
 
 from dimos.agents.annotation import skill
 from dimos.agents.capabilities import CAP_MOVEMENT
+from dimos.agents.skills.visual_servoing.detection_navigation import DetectionNavigation
+from dimos.agents.skills.visual_servoing.query import get_object_bbox_from_image
+from dimos.agents.skills.visual_servoing.visual_servoing_2d import VisualServoing2D
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.models.qwen.bbox import BBox
-from dimos.models.segmentation.edge_tam import EdgeTAMProcessor
 from dimos.models.vl.base import VlModel
 from dimos.models.vl.create import create
 from dimos.msgs.image import image_from_array
-from dimos.navigation.visual.query import get_object_bbox_from_image
-from dimos.navigation.visual_servoing.detection_navigation import DetectionNavigation
-from dimos.navigation.visual_servoing.visual_servoing_2d import VisualServoing2D
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.turbojpeg import get_turbojpeg
+
+if TYPE_CHECKING:
+    from dimos.models.segmentation.edge_tam import EdgeTAMProcessor
 
 logger = setup_logger()
 
@@ -203,7 +205,9 @@ class PersonFollowSkillContainer(Module):
         """
         self._stop_following()
 
-        self.cmd_vel.publish(Twist())
+        self.cmd_vel.publish(
+            Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+        )
 
         if self._thread is not None:
             self._thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
@@ -246,7 +250,9 @@ class PersonFollowSkillContainer(Module):
         )
 
         if len(initial_detections) == 0:
-            self.cmd_vel.publish(Twist())
+            self.cmd_vel.publish(
+                Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+            )
             return f"EdgeTAM failed to segment '{query}'."
 
         logger.info(f"EdgeTAM initialized with {len(initial_detections)} detections")
@@ -278,7 +284,9 @@ class PersonFollowSkillContainer(Module):
             detections = tracker.process_image(latest_image)
 
             if len(detections) == 0:
-                self.cmd_vel.publish(Twist())
+                self.cmd_vel.publish(
+                    Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+                )
 
                 lost_count += 1
                 if lost_count > self._max_lost_frames:
@@ -320,7 +328,9 @@ class PersonFollowSkillContainer(Module):
         self._should_stop.set()
 
     def _send_stop_reason(self, query: str, reason: str) -> None:
-        self.cmd_vel.publish(Twist())
+        self.cmd_vel.publish(
+            Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+        )
         self.tool_update(
             "follow_person",
             f"Person follow stopped for '{query}'. Reason: {reason}.",

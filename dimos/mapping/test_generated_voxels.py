@@ -34,14 +34,21 @@ def test_generated_cloud_union_and_column_carving(backend, carve):
     )
     try:
         for points in [[[0.1, 0.1, 0.1], [0.1, 0.1, 1.1], [1.1, 1.1, 0.1]], [[0.1, 0.1, 0.6]]]:
-            grid.add_frame(pointcloud_from_xyz(np.array(points), header=Header(frame_id="map")))
+            grid.add_frame(
+                pointcloud_from_xyz(
+                    np.array(points), header=Header(frame_id="map", stamp=Time(sec=0, nanosec=0))
+                )
+            )
         actual = {tuple(point) for point in grid.points()}
         expected = {(0.25, 0.25, 0.75), (1.25, 1.25, 0.25)}
         if not carve:
             expected |= {(0.25, 0.25, 0.25), (0.25, 0.25, 1.25)}
         assert actual == expected
         grid.add_frame(
-            pointcloud_from_xyz(np.array([[np.nan, 0, 0], [0, np.inf, 0]]), header=Header())
+            pointcloud_from_xyz(
+                np.array([[np.nan, 0, 0], [0, np.inf, 0]]),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            )
         )
         assert {tuple(point) for point in grid.points()} == expected
     finally:
@@ -52,7 +59,7 @@ def test_voxel_output_retains_exact_latest_stamp_and_invalidates_cache():
     grid = VoxelGrid(voxel_size=0.5, device="CPU:0", frame_id="map", show_startup_log=False)
     try:
         empty = grid.get_global_pointcloud2()
-        assert empty.width == 0 and empty.header.stamp == Time()
+        assert empty.width == 0 and empty.header.stamp == Time(sec=0, nanosec=0)
         header = Header(stamp=Time(sec=1700000000, nanosec=123456789), frame_id="map")
         source = pointcloud_from_xyz(np.array([[0.1, 0.2, 0.3]]), header=header)
         grid.add_frame(source)
@@ -67,8 +74,12 @@ def test_voxel_output_retains_exact_latest_stamp_and_invalidates_cache():
         assert second is not first
         assert second.header == header and second.width == 2
         assert first.width == 1
-        grid.add_frame(pointcloud_from_xyz(np.empty((0, 3)), header=Header(frame_id="map")))
-        assert grid.get_global_pointcloud2().header.stamp == Time()
+        grid.add_frame(
+            pointcloud_from_xyz(
+                np.empty((0, 3)), header=Header(frame_id="map", stamp=Time(sec=0, nanosec=0))
+            )
+        )
+        assert grid.get_global_pointcloud2().header.stamp == Time(sec=0, nanosec=0)
         assert grid.get_global_pointcloud2().width == 2
     finally:
         grid.dispose()

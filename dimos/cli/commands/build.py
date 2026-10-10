@@ -29,7 +29,9 @@ def build(
     install: bool = typer.Option(
         False, "--install", help="Also install the wheel into the active virtualenv."
     ),
-    offline: bool = typer.Option(False, "--offline", help="Require cached Cargo dependencies."),
+    offline: bool = typer.Option(
+        False, "--offline", help="Require cached native/Cargo dependencies; do not download."
+    ),
 ) -> None:
     """Discover, generate and build this project's custom message packages."""
     try:
@@ -40,6 +42,6 @@ def build(
         )
         for kind, path in artifacts.items():
             typer.echo(f"{kind}: {path}")
-    except (ValueError, FileNotFoundError, CalledProcessError) as error:
+    except (ValueError, RuntimeError, FileNotFoundError, CalledProcessError) as error:
         typer.echo(f"build: {error}", err=True)
         raise typer.Exit(1) from error

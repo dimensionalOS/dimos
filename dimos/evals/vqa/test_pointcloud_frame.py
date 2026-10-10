@@ -12,12 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import asdict
 from pathlib import Path
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos_generated.sensor_msgs.msg import CameraInfo, Image, PointCloud2
 from dimos_generated.std_msgs.msg import Header
 from dimos_generated.tf2_msgs.msg import TFMessage
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 
@@ -50,7 +53,13 @@ def _cloud(data, *, frame_id="", timestamp=0.0):
 
 def _calibration(fx, fy, cx, cy, width, height, *, frame_id=""):
     result = camera_info_from_intrinsics(
-        max(fx, 1.0), max(fy, 1.0), cx, cy, width, height, header=Header(frame_id=frame_id)
+        max(fx, 1.0),
+        max(fy, 1.0),
+        cx,
+        cy,
+        width,
+        height,
+        header=Header(frame_id=frame_id, stamp=Time(sec=0, nanosec=0)),
     )
     result.k[0] = fx
     result.k[4] = fy
@@ -62,8 +71,8 @@ def _transform(*, translation=None, frame_id="", child_frame_id="", ts=0.0):
         header=Header(frame_id=frame_id, stamp=time_from_seconds(ts)),
         child_frame_id=child_frame_id,
         transform=Transform(
-            translation=translation if translation is not None else Vector3(),
-            rotation=Quaternion(w=1.0),
+            translation=translation if translation is not None else Vector3(x=0.0, y=0.0, z=0.0),
+            rotation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0),
         ),
     )
 
@@ -226,7 +235,7 @@ def test_load_uses_recorded_camera_info_and_tf(
 
     def rectify(source: Image, calibration: CameraInfo) -> tuple[Image, CameraInfo]:
         calibrations.append(calibration)
-        result = CameraInfo.decode(camera_info.encode())
+        result = cdr_decode(cdr_encode(camera_info), CameraInfo)
         result.header.stamp = source.header.stamp
         return source, result
 
@@ -238,7 +247,9 @@ def test_load_uses_recorded_camera_info_and_tf(
     with loader:
         frame = loader.load(0)
 
-    assert calibrations == [camera_info]
+    np.testing.assert_equal(
+        [asdict(value) for value in calibrations], [asdict(value) for value in [camera_info]]
+    )
     assert frame.calibration_source == "recorded"
     assert frame.camera_info.header.stamp == image.header.stamp
     assert np.allclose(
@@ -286,7 +297,7 @@ def test_load_applies_camera_rectification_to_pointcloud_transform(
             [0.0, 0.0, 1.0],
         ]
     )
-    camera_info.r = rectification.ravel().tolist()
+    camera_info.r = rectification.ravel().astype(np.float64)
     with SqliteStore(path=dataset) as store:
         store.stream("color_image", Image).append(image, ts=10.0)
         store.stream("lidar", PointCloud2).append(cloud, ts=10.0)
@@ -352,7 +363,7 @@ def test_load_selects_camera_info_for_each_image_timestamp(
 
     def rectify(source: Image, calibration: CameraInfo) -> tuple[Image, CameraInfo]:
         calibrations.append(calibration)
-        result = CameraInfo.decode(calibration.encode())
+        result = cdr_decode(cdr_encode(calibration), CameraInfo)
         result.header.stamp = source.header.stamp
         return source, result
 
@@ -361,6 +372,8 @@ def test_load_selects_camera_info_for_each_image_timestamp(
         early = loader.load(0)
         late = loader.load(1)
 
-    assert calibrations == list(camera_infos)
+    np.testing.assert_equal(
+        [asdict(value) for value in calibrations], [asdict(value) for value in list(camera_infos)]
+    )
     assert early.camera_info.header.frame_id == "camera_early"
     assert late.camera_info.header.frame_id == "camera_late"

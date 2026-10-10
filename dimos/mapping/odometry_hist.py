@@ -73,7 +73,7 @@ class OdometryHist(Module):
         ):
             header = deepcopy(msg.header)
             header.frame_id = frame_id
-            self._poses.append(PoseStamped(header=header, pose=msg.pose.pose))
+            self._poses.append(PoseStamped(header=header, pose=deepcopy(msg.pose.pose)))
             self._unpublished = True
 
         if not self._unpublished:
@@ -88,4 +88,4 @@ class OdometryHist(Module):
         self._unpublished = False
         header = deepcopy(msg.header)
         header.frame_id = frame_id
-        self.odom_hist.publish(Path(header=header, poses=list(self._poses)))
+        self.odom_hist.publish(Path(header=header, poses=deepcopy(list(self._poses))))

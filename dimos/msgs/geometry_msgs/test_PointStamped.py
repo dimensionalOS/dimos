@@ -14,8 +14,11 @@
 
 """Generated point/stamp roundtrips and explicit pose construction."""
 
+from copy import deepcopy
+
 from dimos_generated.geometry_msgs.msg import Point, PointStamped, Pose, PoseStamped, Quaternion
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 from rosbags.typesys import Stores, get_typestore
 
 from dimos.msgs.time import time_from_nanoseconds, time_from_seconds, to_nanoseconds
@@ -23,7 +26,7 @@ from dimos.msgs.time import time_from_nanoseconds, time_from_seconds, to_nanosec
 
 def test_point_has_standard_cdr_schema() -> None:
     point = Point(x=1, y=2, z=3)
-    decoded = get_typestore(Stores.ROS2_JAZZY).deserialize_cdr(point.encode(), Point.msg_name)
+    decoded = get_typestore(Stores.ROS2_JAZZY).deserialize_cdr(cdr_encode(point), Point.__msgtype__)
     assert (decoded.x, decoded.y, decoded.z) == (1, 2, 3)
 
 
@@ -32,7 +35,7 @@ def test_cdr_encode_decode() -> None:
         point=Point(x=1.5, y=-2.5, z=3.5),
         header=Header(stamp=time_from_nanoseconds(1700000000123456789), frame_id="/world/grid"),
     )
-    dest = PointStamped.decode(source.encode())
+    dest = cdr_decode(cdr_encode(source), PointStamped)
     assert isinstance(dest, PointStamped)
     assert dest is not source
     assert dest.point.x == source.point.x
@@ -47,7 +50,8 @@ def test_explicit_pose_stamped_conversion() -> None:
         point=Point(x=1, y=2, z=3), header=Header(stamp=time_from_seconds(500), frame_id="/map")
     )
     pose = PoseStamped(
-        header=point.header, pose=Pose(position=point.point, orientation=Quaternion(w=1))
+        header=deepcopy(point.header),
+        pose=Pose(position=deepcopy(point.point), orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0)),
     )
     assert isinstance(pose, PoseStamped)
     assert pose.pose.position.x == 1

@@ -15,9 +15,11 @@
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos_generated.std_msgs.msg import Header
 from dimos_generated.tf2_msgs.msg import TFMessage
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import pytest
 import rerun as rr
 
@@ -30,11 +32,13 @@ def test_generated_tf_reaches_bridge_with_or_without_axes(axes: float) -> None:
     bridge = RerunBridgeModule(tf_axes=axes)
     bridge._min_intervals = {}
     edge = TransformStamped(
-        header=Header(frame_id="world"),
+        header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
         child_frame_id="base_link",
-        transform=Transform(translation=Vector3(x=3), rotation=Quaternion(w=1)),
+        transform=Transform(
+            translation=Vector3(x=3, y=0.0, z=0.0), rotation=Quaternion(w=1, x=0.0, y=0.0, z=0.0)
+        ),
     )
-    message = TFMessage.decode(TFMessage(transforms=[edge]).encode())
+    message = cdr_decode(cdr_encode(TFMessage(transforms=[edge])), TFMessage)
     try:
         with patch("rerun.log") as log:
             bridge._on_message(message, SimpleNamespace(name="/tf"))
@@ -52,7 +56,14 @@ def test_generated_tf_reaches_bridge_with_or_without_axes(axes: float) -> None:
 
 def test_generated_tree_reparents_and_clears_old_axes() -> None:
     tree = TfFrameTree(root="frames")
-    edge = TransformStamped(header=Header(frame_id="first"), child_frame_id="child")
+    edge = TransformStamped(
+        header=Header(frame_id="first", stamp=Time(sec=0, nanosec=0)),
+        child_frame_id="child",
+        transform=Transform(
+            translation=Vector3(x=0.0, y=0.0, z=0.0),
+            rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+        ),
+    )
     with patch("rerun.log") as log:
         tree.update([edge])
         edge.header.frame_id = "second"

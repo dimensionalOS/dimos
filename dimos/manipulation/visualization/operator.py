@@ -22,8 +22,11 @@ from dataclasses import dataclass, field
 import math
 from typing import TYPE_CHECKING
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import PoseStamped
 from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.std_msgs.msg import Header
+import numpy as np
 
 from dimos.manipulation.planning.groups.models import PlanningGroup
 from dimos.manipulation.planning.planners.config import CartesianPathConfig
@@ -159,7 +162,12 @@ class ManipulationOperator:
             group.id: JointState(
                 name=list(group.joint_names),
                 header=request.target.header,
-                position=list(request.target.position)[offset : offset + len(group.joint_names)],
+                position=np.asarray(
+                    list(request.target.position)[offset : offset + len(group.joint_names)],
+                    dtype=np.float64,
+                ),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
             )
             for group, offset in self._group_offsets(groups)
         }
@@ -314,7 +322,13 @@ class ManipulationOperator:
             if value is None:
                 return None
             positions.append(value)
-        return JointState(name=list(config.joint_names), position=positions)
+        return JointState(
+            name=list(config.joint_names),
+            position=np.asarray(positions, dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        )
 
     def _evaluate_complete_target(
         self,

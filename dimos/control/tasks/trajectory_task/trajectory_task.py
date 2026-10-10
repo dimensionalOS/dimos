@@ -28,9 +28,11 @@ from enum import Enum, auto
 import math
 from typing import TYPE_CHECKING, Annotated, Any
 
+from dimos_generated.builtin_interfaces.msg import Duration
 from dimos_generated.dimos_msgs.msg import TrajectoryStatus
 from dimos_generated.sensor_msgs.msg import JointState
 from dimos_generated.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+import numpy as np
 from pydantic import BeforeValidator, ConfigDict, Field
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 
@@ -232,7 +234,7 @@ class JointTrajectoryTask(BaseControlTask):
 
     def on_joint_command(self, msg: JointState, t_now: float) -> bool:
         """Convert streamed joint positions into a velocity-bounded trajectory target."""
-        if not msg.position or len(msg.name) != len(msg.position):
+        if not len(msg.position) or len(msg.name) != len(msg.position):
             return False
         selected = [
             (name, position)
@@ -244,7 +246,15 @@ class JointTrajectoryTask(BaseControlTask):
         trajectory = JointTrajectory(
             header=header_now(),
             joint_names=[name for name, _ in selected],
-            points=[JointTrajectoryPoint(positions=[position for _, position in selected])],
+            points=[
+                JointTrajectoryPoint(
+                    positions=np.asarray([position for _, position in selected], dtype=np.float64),
+                    velocities=np.array([], dtype=np.float64),
+                    accelerations=np.array([], dtype=np.float64),
+                    effort=np.array([], dtype=np.float64),
+                    time_from_start=Duration(sec=0, nanosec=0),
+                )
+            ],
         )
         return self.execute(trajectory, {}).status is TrajectoryExecutionStatus.ACCEPTED
 
@@ -454,10 +464,12 @@ class JointTrajectoryTask(BaseControlTask):
                 points=[
                     JointTrajectoryPoint(
                         time_from_start=trajectory.points[0].time_from_start,
-                        positions=first_positions,
-                        velocities=trajectory.points[0].velocities,
-                        accelerations=trajectory.points[0].accelerations,
-                        effort=trajectory.points[0].effort,
+                        positions=np.asarray(first_positions, dtype=np.float64),
+                        velocities=np.asarray(trajectory.points[0].velocities, dtype=np.float64),
+                        accelerations=np.asarray(
+                            trajectory.points[0].accelerations, dtype=np.float64
+                        ),
+                        effort=np.asarray(trajectory.points[0].effort, dtype=np.float64),
                     ),
                     *list(trajectory.points)[1:],
                 ],
@@ -554,6 +566,7 @@ class JointTrajectoryTask(BaseControlTask):
                 progress=progress,
                 time_elapsed=duration_from_seconds(elapsed),
                 time_remaining=duration_from_seconds(remaining),
+                error="",
             )
         completed = self._state == TrajectoryState.COMPLETED
         return TrajectoryStatus(
@@ -564,6 +577,7 @@ class JointTrajectoryTask(BaseControlTask):
                 self._last_duration if completed else self._last_elapsed
             ),
             time_remaining=duration_from_seconds(0.0),
+            error="",
         )
 
 

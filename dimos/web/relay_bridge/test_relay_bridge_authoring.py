@@ -27,6 +27,7 @@ import pickle
 import struct
 from typing import Any
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import (
     Point,
     PointStamped,
@@ -38,6 +39,7 @@ from dimos_generated.geometry_msgs.msg import (
 from dimos_generated.nav_msgs.msg import OccupancyGrid, Path as NavPath
 from dimos_generated.sensor_msgs.msg import Image
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import encode as cdr_encode
 from langchain_core.messages import AIMessage
 import numpy as np
 import pytest
@@ -169,8 +171,11 @@ _NAV_PATH = NavPath(
     header=Header(stamp=time_from_seconds(1), frame_id="world"),
     poses=[
         PoseStamped(
-            header=Header(stamp=time_from_seconds(1)),
-            pose=Pose(position=Point(x=1.5, y=-2.5), orientation=Quaternion(w=1)),
+            header=Header(stamp=time_from_seconds(1), frame_id=""),
+            pose=Pose(
+                position=Point(x=1.5, y=-2.5, z=0.0),
+                orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0),
+            ),
         )
     ],
 )
@@ -303,15 +308,19 @@ def test_cdr_channel_ships_generated_encode_bytes(monkeypatch) -> None:
         assert wait_until(lambda: pose.subscribers)
         module._min_interval = {"pose": 0.0}
         msg = PoseStamped(
-            header=Header(stamp=time_from_seconds(2)),
-            pose=Pose(position=Point(x=1, y=2), orientation=Quaternion(w=1)),
+            header=Header(stamp=time_from_seconds(2), frame_id=""),
+            pose=Pose(
+                position=Point(x=1, y=2, z=0.0), orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0)
+            ),
         )
         pose.publish(msg)
         assert wait_until(lambda: clients[0].frames)
-        assert clients[0].frames[0] == ("pose", msg.encode(), "reliable", None)
+        assert clients[0].frames[0] == ("pose", cdr_encode(msg), "reliable", None)
         # A sample of another type has a different declared message name: dropped and
         # logged, never sent to a browser that compiled the PoseStamped schema.
-        pose.publish(Pose(position=Point(x=1, y=2), orientation=Quaternion(w=1)))
+        pose.publish(
+            Pose(position=Point(x=1, y=2, z=0.0), orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0))
+        )
         assert wait_until(lambda: bool(exceptions))
         assert "pose" in exceptions[0]
         flush_loop(module)
@@ -344,8 +353,11 @@ def test_encoder_failure_is_isolated_and_rate_limited(monkeypatch) -> None:
             bad.publish(_NAV_PATH)
         pose.publish(
             PoseStamped(
-                header=Header(stamp=time_from_seconds(2)),
-                pose=Pose(position=Point(x=1, y=2), orientation=Quaternion(w=1)),
+                header=Header(stamp=time_from_seconds(2), frame_id=""),
+                pose=Pose(
+                    position=Point(x=1, y=2, z=0.0),
+                    orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0),
+                ),
             )
         )
         assert wait_until(lambda: clients[0].frames)
@@ -431,7 +443,7 @@ def test_spec_manifest_mismatch_fails(monkeypatch) -> None:
     start_with(replace(good, dir="tx"), "does not match its compiled runtime spec")
     start_with(
         replace(good, message_type=Twist),
-        "message type Twist does not match the RelayBridgeModule port type PoseStamped",
+        f"message type {Twist.__qualname__} does not match the RelayBridgeModule port type {PoseStamped.__qualname__}",
     )
 
 
@@ -771,8 +783,10 @@ def test_publish_frame_with_unusable_meta_is_dropped(monkeypatch) -> None:
 def _nav_path(*xy: tuple[float, float]) -> NavPath:
     poses = [
         PoseStamped(
-            header=Header(stamp=time_from_seconds(1)),
-            pose=Pose(position=Point(x=x, y=y), orientation=Quaternion(w=1)),
+            header=Header(stamp=time_from_seconds(1), frame_id=""),
+            pose=Pose(
+                position=Point(x=x, y=y, z=0.0), orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0)
+            ),
         )
         for x, y in xy
     ]
@@ -825,7 +839,7 @@ def test_map2d_path_replays_and_paces(map_bridge) -> None:
     assert json.loads(offers[0][0]) == [[1.5, -2.5]]
 
     # A planner burst must not leave the viewer stuck on the empty path.
-    path.publish(NavPath())
+    path.publish(NavPath(header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""), poses=[]))
     path.publish(_nav_path((0.25, 0.5), (1.0, 1.0), (1.75, 0.5)))
     assert wait_until(lambda: len(offers) == 3)
     assert [json.loads(payload) for payload, _ in offers[1:]] == [

@@ -24,15 +24,16 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use dimos_generated_messages::builtin_interfaces::msg::Time;
-use dimos_generated_messages::dimos_msgs::msg::ImuInfo;
+use dimos_generated_messages::builtin_interfaces::msg::time::Time;
+use dimos_generated_messages::dimos_msgs::msg::imu_info::ImuInfo;
 use dimos_generated_messages::geometry_msgs::msg::{
-    Quaternion as QuaternionMsg, Vector3 as Vector3Msg,
+    quaternion::Quaternion as QuaternionMsg, vector3::Vector3 as Vector3Msg,
 };
 use dimos_generated_messages::sensor_msgs::msg::{
-    CameraInfo, Image, Imu, PointCloud2, PointField, RegionOfInterest,
+    camera_info::CameraInfo, image::Image, imu::Imu, point_cloud2::PointCloud2,
+    point_field::PointField, region_of_interest::RegionOfInterest,
 };
-use dimos_generated_messages::std_msgs::msg::Header;
+use dimos_generated_messages::std_msgs::msg::header::Header;
 use dimos_module::cdr;
 use dimos_module::nalgebra::{
     Isometry3, Matrix3, Quaternion, Rotation3, Translation3, UnitQuaternion, Vector3,

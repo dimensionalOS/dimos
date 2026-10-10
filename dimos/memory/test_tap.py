@@ -16,8 +16,11 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from dimos_generated.geometry_msgs.msg import PoseStamped, Twist
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.dimos_msgs.msg import RegionPointCloud2
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Twist, Vector3
 from dimos_generated.std_msgs.msg import Header
+import numpy as np
 import pytest
 from pytest_mock import MockerFixture
 
@@ -26,6 +29,7 @@ from dimos.core.stream import Transport
 from dimos.memory import tap
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tap import TransportRecorder
+from dimos.msgs.pointcloud import pointcloud_from_xyz
 from dimos.msgs.time import time_from_seconds
 
 
@@ -59,12 +63,44 @@ def test_taps_matching_dimos_streams(tmp_path: Path) -> None:
     unsub = rec.tap("odom", PoseStamped, odom)
     assert rec.tap("goal", PoseStamped, goal) is None  # filtered out
     assert rec.tap("lidar", dict, raw) is None  # not a dimos message type
-    odom.publish(PoseStamped(header=Header(stamp=time_from_seconds(1.0))))
-    odom.publish(PoseStamped(header=Header(stamp=time_from_seconds(2.0))))
-    goal.publish(PoseStamped(header=Header(stamp=time_from_seconds(3.0))))
+    odom.publish(
+        PoseStamped(
+            header=Header(stamp=time_from_seconds(1.0), frame_id=""),
+            pose=Pose(
+                position=Point(x=0.0, y=0.0, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+        )
+    )
+    odom.publish(
+        PoseStamped(
+            header=Header(stamp=time_from_seconds(2.0), frame_id=""),
+            pose=Pose(
+                position=Point(x=0.0, y=0.0, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+        )
+    )
+    goal.publish(
+        PoseStamped(
+            header=Header(stamp=time_from_seconds(3.0), frame_id=""),
+            pose=Pose(
+                position=Point(x=0.0, y=0.0, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+        )
+    )
     assert unsub is not None
     unsub()
-    odom.publish(PoseStamped(header=Header(stamp=time_from_seconds(4.0))))
+    odom.publish(
+        PoseStamped(
+            header=Header(stamp=time_from_seconds(4.0), frame_id=""),
+            pose=Pose(
+                position=Point(x=0.0, y=0.0, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+        )
+    )
     rec.close()
     store.stop()
 
@@ -85,9 +121,33 @@ def test_full_queue_drops_and_counts(tmp_path: Path, monkeypatch: pytest.MonkeyP
     rec._writer.join()
     odom = _Transport()
     rec.tap("odom", PoseStamped, odom)
-    odom.publish(PoseStamped(header=Header(stamp=time_from_seconds(1.0))))
-    odom.publish(PoseStamped(header=Header(stamp=time_from_seconds(2.0))))
-    odom.publish(PoseStamped(header=Header(stamp=time_from_seconds(3.0))))
+    odom.publish(
+        PoseStamped(
+            header=Header(stamp=time_from_seconds(1.0), frame_id=""),
+            pose=Pose(
+                position=Point(x=0.0, y=0.0, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+        )
+    )
+    odom.publish(
+        PoseStamped(
+            header=Header(stamp=time_from_seconds(2.0), frame_id=""),
+            pose=Pose(
+                position=Point(x=0.0, y=0.0, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+        )
+    )
+    odom.publish(
+        PoseStamped(
+            header=Header(stamp=time_from_seconds(3.0), frame_id=""),
+            pose=Pose(
+                position=Point(x=0.0, y=0.0, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+        )
+    )
     assert rec.dropped == 2
     assert len(warnings) == 1
     store.stop()
@@ -101,7 +161,15 @@ def test_append_failure_does_not_kill_writer(tmp_path: Path) -> None:
     odom = _Transport()
     rec.tap("odom", PoseStamped, odom)
     odom.publish("not a PoseStamped")  # append raises TypeError inside the writer
-    odom.publish(PoseStamped(header=Header(stamp=time_from_seconds(2.0))))
+    odom.publish(
+        PoseStamped(
+            header=Header(stamp=time_from_seconds(2.0), frame_id=""),
+            pose=Pose(
+                position=Point(x=0.0, y=0.0, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+        )
+    )
     rec.close()  # returns: the writer is still draining
     store.stop()
 
@@ -159,8 +227,18 @@ def test_zero_source_stamp_and_unstamped_arrival_time_are_distinct(tmp_path, mon
         try:
             subscriptions.append(recorder.tap("pose", PoseStamped, pose_transport))
             subscriptions.append(recorder.tap("twist", Twist, twist_transport))
-            pose_transport.publish(PoseStamped())
-            twist_transport.publish(Twist())
+            pose_transport.publish(
+                PoseStamped(
+                    header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                    pose=Pose(
+                        position=Point(x=0.0, y=0.0, z=0.0),
+                        orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                    ),
+                )
+            )
+            twist_transport.publish(
+                Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+            )
         finally:
             for unsubscribe in subscriptions:
                 assert unsubscribe is not None
@@ -170,6 +248,40 @@ def test_zero_source_stamp_and_unstamped_arrival_time_are_distinct(tmp_path, mon
         pose = store.stream("pose").first()
         twist = store.stream("twist").first()
         assert pose.ts == 0.0
-        assert pose.data == PoseStamped()
+        assert pose.data == PoseStamped(
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            pose=Pose(
+                position=Point(x=0.0, y=0.0, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+        )
         assert twist.ts == 123.5
-        assert twist.data == Twist()
+        assert twist.data == Twist(
+            linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)
+        )
+
+
+def test_region_recorder_preserves_nested_source_time_and_empty_replacement(tmp_path, monkeypatch):
+    monkeypatch.setattr(tap.time, "time", lambda: 123.5)
+    path = tmp_path / "regions.db"
+    transport = _Transport()
+    header = Header(stamp=Time(sec=0, nanosec=34), frame_id="map")
+    with SqliteStore(path=str(path)) as store:
+        recorder = TransportRecorder(store)
+        unsubscribe = recorder.tap("map_regions", RegionPointCloud2, transport)
+        try:
+            for xyz in [np.array([[1.0, 2.0, 3.0]]), np.empty((0, 3))]:
+                transport.publish(
+                    RegionPointCloud2(
+                        region_id=-196603, cloud=pointcloud_from_xyz(xyz, header=header)
+                    )
+                )
+        finally:
+            assert unsubscribe is not None
+            unsubscribe()
+            recorder.close()
+    with SqliteStore(path=str(path), must_exist=True) as store:
+        observations = list(store.stream("map_regions"))
+        assert [obs.ts for obs in observations] == [34e-9, 34e-9]
+        assert [obs.data.region_id for obs in observations] == [-196603, -196603]
+        assert [obs.data.cloud.width for obs in observations] == [1, 0]

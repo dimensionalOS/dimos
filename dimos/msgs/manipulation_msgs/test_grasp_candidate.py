@@ -13,16 +13,22 @@
 # limitations under the License.
 
 from dimos_generated.dimos_msgs.msg import GraspCandidate, GraspCandidateArray
-from dimos_generated.geometry_msgs.msg import Point, Pose
+from dimos_generated.geometry_msgs.msg import Point, Pose, Quaternion
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 
 from dimos.msgs.time import time_from_seconds
 
 
 def test_grasp_candidate_round_trip_preserves_pose_and_score() -> None:
-    candidate = GraspCandidate(pose=Pose(position=Point(x=0.4, y=-0.2, z=0.3)), score=0.75)
+    candidate = GraspCandidate(
+        pose=Pose(
+            position=Point(x=0.4, y=-0.2, z=0.3), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+        ),
+        score=0.75,
+    )
 
-    decoded = GraspCandidate.decode(candidate.encode())
+    decoded = cdr_decode(cdr_encode(candidate), GraspCandidate)
 
     assert decoded.pose.position.x == 0.4
     assert decoded.pose.position.y == -0.2
@@ -32,14 +38,26 @@ def test_grasp_candidate_round_trip_preserves_pose_and_score() -> None:
 
 def test_grasp_candidate_array_round_trip_preserves_header_and_order() -> None:
     candidates = [
-        GraspCandidate(pose=Pose(position=Point(x=0.1, z=0.2)), score=0.9),
-        GraspCandidate(pose=Pose(position=Point(x=0.2, z=0.2)), score=0.7),
+        GraspCandidate(
+            pose=Pose(
+                position=Point(x=0.1, z=0.2, y=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+            score=0.9,
+        ),
+        GraspCandidate(
+            pose=Pose(
+                position=Point(x=0.2, z=0.2, y=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+            score=0.7,
+        ),
     ]
     proposals = GraspCandidateArray(
         header=Header(stamp=time_from_seconds(123.0), frame_id="world"), candidates=candidates
     )
 
-    decoded = GraspCandidateArray.decode(proposals.encode())
+    decoded = cdr_decode(cdr_encode(proposals), GraspCandidateArray)
 
     assert decoded.header.stamp == time_from_seconds(123.0)
     assert decoded.header.frame_id == "world"

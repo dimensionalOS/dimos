@@ -20,12 +20,12 @@ import time
 from types import SimpleNamespace
 from typing import cast
 
+from dimos_message_build.registry import decode as cdr_decode, message_types
 import typer
 
 from dimos.core.global_config import global_config
 from dimos.core.transport import PubSubTransport
 from dimos.core.transport_factory import make_transport, transport_topic
-from dimos.message_codegen.registry import message_types
 from dimos.msgs.helpers import resolve_msg_type
 from dimos.protocol.pubsub.impl.lcmpubsub import LCMPubSubBase, Topic
 from dimos.protocol.pubsub.impl.zenohpubsub import Zenoh
@@ -48,7 +48,7 @@ def _decode_typed_lcm_message(channel: str, data: bytes) -> object:
     cls = resolve_msg_type(msg_name)
     if cls is None:
         raise ValueError(f"Could not resolve message type from channel: {channel}")
-    return cls.decode(data)
+    return cdr_decode(data, cls.__msgtype__)
 
 
 def _listen_forever(listening_msg: str, on_stop: Callable[[], None] = lambda: None) -> None:

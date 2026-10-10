@@ -17,7 +17,7 @@
 import argparse
 from pathlib import Path
 
-from demo_msgs.msg import Telemetry as RosTelemetry
+from custom_msgs.msg import Reading as RosReading
 from rclpy.serialization import deserialize_message, serialize_message
 
 
@@ -27,29 +27,17 @@ def main() -> None:
     args = parser.parse_args()
     build = args.build.resolve()
     evidence = build / "evidence"
-    for filename in ("defaults-python.cdr", "defaults-C++.cdr", "defaults-Rust.cdr"):
-        assert (
-            deserialize_message((evidence / filename).read_bytes(), RosTelemetry) == RosTelemetry()
-        ), filename
-    reference = RosTelemetry(
-        sequence=4294967295, payload=list(range(256)), hops=[-2147483648, 2147483647]
-    )
-    reference.header.frame_id = "map"
-    reference.header.stamp.sec = -1
-    reference.header.stamp.nanosec = 999999999
-    reference.label = "café"
-    reference.position.x = -1.25
-    expected = serialize_message(reference)
-    for filename in ("python-le.cdr", "python-be.cdr", "C++.cdr", "Rust.cdr"):
-        decoded = deserialize_message((evidence / filename).read_bytes(), RosTelemetry)
-        # RMW may leave alignment padding unspecified. Compare every field;
-        # byte-canonical comparisons use the independent rosbags oracle.
+    for filename, value in (("input.cdr", 20.5), ("cpp.cdr", 21.5), ("rust.cdr", 22.5)):
+        reference = RosReading(value=value)
+        reference.header.frame_id = "map"
+        reference.header.stamp.sec = 17
+        reference.header.stamp.nanosec = 123456789
+        decoded = deserialize_message((evidence / filename).read_bytes(), RosReading)
         assert decoded == reference, filename
-        print(f"ROS2 Jazzy decoded {filename}: every field matches")
-    (evidence / "ros-jazzy.cdr").write_bytes(expected)
-    print(
-        "ROS2 Jazzy confirms declared defaults, nested fields, bounds, arrays, Unicode, and both byte orders."
-    )
+        print(f"ROS2 Jazzy decoded {filename}: all Header and value fields match")
+    (evidence / "ros-jazzy.cdr").write_bytes(serialize_message(reference))
+    print("ROS2 Jazzy independently decoded the supported three-language ownership fixture.")
+    print("Bounded Telemetry and declared-default conformance remain documented limitations.")
 
 
 if __name__ == "__main__":

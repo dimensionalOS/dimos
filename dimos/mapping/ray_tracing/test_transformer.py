@@ -14,17 +14,25 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
+from dimos_generated.builtin_interfaces.msg import Time
 import numpy as np
 from numpy.typing import NDArray
 import pytest
 
 pytest.importorskip("dimos_voxel_ray_tracing")
 
+from dimos_generated.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos_generated.sensor_msgs.msg import PointCloud2
 from dimos_generated.std_msgs.msg import Header
+from dimos_generated.tf2_msgs.msg import TFMessage
 
-from dimos.mapping.ray_tracing.transformer import RayTraceMap
+from dimos.mapping.ray_tracing.module import TF_MATCH_TOLERANCE_S
+from dimos.mapping.ray_tracing.transformer import RayTraceMap, pose_from_tf
 from dimos.mapping.ray_tracing.voxel_map import VoxelRayMapper
+from dimos.memory.store.sqlite import SqliteStore
+from dimos.memory.tf import StreamTF
 from dimos.memory.type.observation import Observation
 from dimos.msgs.pointcloud import pointcloud_from_xyz
 
@@ -41,7 +49,9 @@ def _obs(
         id=0,
         ts=ts,
         pose=pose,
-        _data=pointcloud_from_xyz(points, header=Header(frame_id="lidar")),
+        _data=pointcloud_from_xyz(
+            points, header=Header(frame_id="lidar", stamp=Time(sec=0, nanosec=0))
+        ),
     )
 
 
@@ -62,7 +72,12 @@ def test_emit_every_n_yields_on_cadence_and_flushes_remainder() -> None:
 def test_poseless_obs_are_skipped() -> None:
     points = _cube()
     poseless = Observation(
-        id=1, ts=0.0, pose=None, _data=pointcloud_from_xyz(points, header=Header(frame_id="lidar"))
+        id=1,
+        ts=0.0,
+        pose=None,
+        _data=pointcloud_from_xyz(
+            points, header=Header(frame_id="lidar", stamp=Time(sec=0, nanosec=0))
+        ),
     )
     posed = _obs(points, ts=1.0, pose=(0.0, 0.0, 0.0))
 
@@ -116,7 +131,9 @@ def test_registers_sensor_frame_cloud_by_pose() -> None:
         id=0,
         ts=1.0,
         pose=(5.0, 0.0, 2.0, 0.0, s, 0.0, s),
-        _data=pointcloud_from_xyz(point, header=Header(frame_id="lidar")),
+        _data=pointcloud_from_xyz(
+            point, header=Header(frame_id="lidar", stamp=Time(sec=0, nanosec=0))
+        ),
     )
 
     [emitted] = list(rtm(iter([obs])))
@@ -126,3 +143,42 @@ def test_registers_sensor_frame_cloud_by_pose() -> None:
     assert radius == pytest.approx(0.0 + margin)
     assert z_min == pytest.approx(1.0 - margin)
     assert z_max == pytest.approx(1.0 + margin)
+
+
+def test_reused_instance_continues_the_map() -> None:
+    rtm = RayTraceMap(min_health=0, max_health=1)
+    first = _obs(np.array([[1.0, 0.05, 0.05]], dtype=np.float32), ts=1.0, pose=(0.0, 0.0, 0.0))
+    second = _obs(np.array([[0.05, 1.0, 0.05]], dtype=np.float32), ts=2.0, pose=(0.0, 0.0, 0.0))
+
+    list(rtm(iter([first])))
+    list(rtm(iter([second])))
+
+    assert len(rtm.mapper.global_map()) == 2
+
+
+@pytest.mark.skipif_aarch64
+@pytest.mark.skipif_macos
+def test_pose_from_tf_attaches_the_pose_at_the_stamp(tmp_path: Path) -> None:
+    ts = 10.0
+    with SqliteStore(path=str(tmp_path / "tf.db")) as store:
+        edge = TransformStamped(
+            header=Header(frame_id="world", stamp=Time(sec=10, nanosec=0)),
+            child_frame_id="lidar",
+            transform=Transform(
+                translation=Vector3(x=1.0, y=2.0, z=3.0),
+                rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+        )
+        store.stream("tf", TFMessage).append(TFMessage(transforms=[edge]), ts=ts, pose=None)
+        tf = StreamTF(store.stream("tf", TFMessage))
+        cloud = pointcloud_from_xyz(
+            _cube(), header=Header(frame_id="lidar", stamp=Time(sec=10, nanosec=0))
+        )
+        matched = Observation(id=0, ts=ts, _data=cloud)
+        far = Observation(id=1, ts=ts + 10 * TF_MATCH_TOLERANCE_S, _data=cloud)
+
+        results = list(pose_from_tf(tf, "world")(iter([matched, far])))
+
+        assert results[0].pose_tuple is not None
+        assert results[0].pose_tuple[:3] == pytest.approx((1.0, 2.0, 3.0))
+        assert results[1].pose_tuple is None

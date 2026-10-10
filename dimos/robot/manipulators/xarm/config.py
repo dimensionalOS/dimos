@@ -20,7 +20,8 @@ import math
 from pathlib import Path
 from typing import Any
 
-from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from dimos_generated.std_msgs.msg import Header
 
 from dimos.control.components import (
@@ -68,7 +69,10 @@ XARM7_SIM_HOME = [0.0, -0.247, 0.0, 0.909, 0.0, 1.15644, 0.0]
 # z=0.12. Place the planning model to match, or the planner solves poses 12cm
 # below the arm it is driving and every grasp closes on air.
 XARM7_SIM_BASE_POSE = PoseStamped(
-    header=Header(frame_id="world"), pose=Pose(position=Point(z=0.12))
+    header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+    pose=Pose(
+        position=Point(z=0.12, x=0.0, y=0.0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+    ),
 )
 # Every link the xArm7-with-gripper URDF gives collision geometry. A point-cloud
 # self filter needs a capture-time transform for each one, and drops the whole
@@ -345,7 +349,13 @@ def make_xarm_model_config(
         ).with_default_joint_acceleration_limit(2.0),
         base_pose=base_pose
         if base_pose is not None
-        else PoseStamped(header=Header(frame_id=""), pose=Pose()),
+        else PoseStamped(
+            header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
+            pose=Pose(
+                position=Point(x=0.0, y=0.0, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+        ),
         joint_names=model_joint_names,
         base_link=f"{prefix}link_base",
         planning_groups=[

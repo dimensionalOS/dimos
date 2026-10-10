@@ -40,25 +40,32 @@ MRO and ``start()`` chains through ``super()``.
 from __future__ import annotations
 
 from copy import deepcopy
+import math
 import time
 from typing import Any
 
 from dimos_generated.geometry_msgs.msg import TransformStamped
 from dimos_generated.sensor_msgs.msg import PointCloud2
 from dimos_generated.tf2_msgs.msg import TFMessage
+from dimos_message_build.registry import decode as cdr_decode
 import reactivex as rx
 from reactivex import Observable, Subject, operators as ops
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
+from dimos.msgs.geometry import yaw
 from dimos.msgs.time import time_from_seconds
-from dimos.utils.data import get_data
+from dimos.utils.data import resolve_named_path
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
 MAP_SUFFIX = ".pc2.cdr"
+
+
+def yaw_deg(tf: TransformStamped) -> float:
+    return math.degrees(yaw(tf.transform.rotation))
 
 
 def fix_stream(
@@ -123,10 +130,8 @@ class RelocalizationModule(Module):
         self.tf.publish(TFMessage(transforms=[published]))
 
     def _load_premap(self, map_file: str) -> None:
-        # get_data, so a premap that is only in LFS is pulled and decompressed
-        # rather than reported missing.
-        name = map_file if map_file.endswith(MAP_SUFFIX) else map_file + MAP_SUFFIX
-        premap = PointCloud2.decode(get_data(name).read_bytes())
+        path = resolve_named_path(map_file, MAP_SUFFIX)
+        premap = cdr_decode(path.read_bytes(), PointCloud2)
 
         premap.header.frame_id = self.config.map_frame
         self.premap = premap
@@ -154,7 +159,12 @@ class RelocalizationModule(Module):
             f"got {tf.header.frame_id!r} -> {tf.child_frame_id!r}"
         )
         logger.info(
-            f"relocalize {source}: TF {world!r} -> {map_frame!r} t={tf.transform.translation}"
+            "relocalize fix",
+            source=source,
+            world=world,
+            map_frame=map_frame,
+            translation=str(tf.transform.translation),
+            yaw_deg=round(yaw_deg(tf), 1),
         )
         self.fixes.on_next(tf)
         if not self._placed and self.config.relocalize_once:

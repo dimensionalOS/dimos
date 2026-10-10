@@ -19,6 +19,7 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING, Any
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos_generated.nav_msgs.msg import OccupancyGrid
 from dimos_generated.sensor_msgs.msg import Image, PointCloud2
@@ -53,10 +54,10 @@ def _rgba(el: Any) -> tuple[int, int, int, int]:
 
 # base_link → camera_optical extrinsics (applied at render time for image observations)
 _BASE_TO_OPTICAL = TransformStamped(
-    header=Header(frame_id="base_link"),
+    header=Header(frame_id="base_link", stamp=Time(sec=0, nanosec=0)),
     child_frame_id="camera_optical",
     transform=Transform(
-        translation=Vector3(x=0.3),
+        translation=Vector3(x=0.3, y=0.0, z=0.0),
         rotation=Quaternion(x=-0.5, y=0.5, z=-0.5, w=0.5),
     ),
 )

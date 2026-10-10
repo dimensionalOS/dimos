@@ -30,7 +30,7 @@ import pyarrow.parquet as pq
 import pytest
 
 from dimos.core.stream import Stream, Transport
-from dimos.imitation.collection.episode_monitor import (
+from dimos.imitation.collection.episode import (
     EpisodeEvent,
     EpisodeStatus,
     RecordingState,
@@ -38,20 +38,24 @@ from dimos.imitation.collection.episode_monitor import (
 from dimos.imitation.collection.recorder import CollectionRecorder
 from dimos.imitation.dataprep.build import inspect_dataset, run_dataprep
 from dimos.imitation.dataprep.core import (
+    extract_episodes,
+)
+from dimos.imitation.dataprep.schema import (
     DataPrepConfig,
     EpisodeExtractor,
+    FeatureSpec,
     OutputConfig,
-    StreamField,
+    QualityConfig,
     SyncConfig,
-    extract_episodes,
 )
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.image import image_from_array, image_view
+from dimos.msgs.std_msgs.String import String
 from dimos.msgs.time import time_from_seconds
 from dimos.utils.testing.waiting import wait_until
 
 pytestmark = [
-    pytest.mark.skipif_macos,
+    pytest.mark.self_hosted,
     pytest.mark.skipif_aarch64,
 ]
 
@@ -108,13 +112,32 @@ def _dataprep_config(db_path: Path, output: OutputConfig) -> DataPrepConfig:
         source=str(db_path),
         episodes=EpisodeExtractor(status_stream="status"),
         observation={
-            "camera": StreamField(stream="color_image"),
-            "state": StreamField(stream="coordinator_joint_state", field="position"),
+            "camera": FeatureSpec(
+                stream="color_image",
+                field="data",
+                dtype="video",
+                shape=(16, 16, 3),
+                names=["height", "width", "channels"],
+            ),
+            "state": FeatureSpec(
+                stream="coordinator_joint_state",
+                field="position",
+                dtype="float32",
+                shape=(2,),
+                names=["joint_0", "joint_1"],
+            ),
         },
         action={
-            "action": StreamField(stream="coordinator_joint_state", field="position"),
+            "action": FeatureSpec(
+                stream="coordinator_joint_state",
+                field="position",
+                dtype="float32",
+                shape=(2,),
+                names=["joint_0", "joint_1"],
+            ),
         },
-        sync=SyncConfig(anchor="camera", rate_hz=1.0, tolerance_ms=1.0, action_shift=1),
+        sync=SyncConfig(anchor="camera", rate_hz=1.0, tolerance_ms=1.0),
+        quality=QualityConfig(max_camera_gap_ms=1100.0),
         output=output,
     )
 
@@ -135,6 +158,8 @@ def _record_session(db_path: Path) -> None:
     counts = {name: 0 for name in transports}
 
     def publish(name: str, message: Any) -> None:
+        if name == "status":
+            message = String(message.to_json())
         counts[name] += 1
         transports[name].publish(message)
         wait_until(
@@ -174,9 +199,9 @@ def _record_session(db_path: Path) -> None:
                     JointState(
                         header=Header(frame_id="arm", stamp=time_from_seconds(ts)),
                         name=["joint_0", "joint_1"],
-                        position=[base + frame, base + 100.0 + frame],
-                        velocity=[0.0, 0.0],
-                        effort=[0.0, 0.0],
+                        position=np.array([base + frame, base + 100.0 + frame], dtype=np.float64),
+                        velocity=np.array([0.0, 0.0], dtype=np.float64),
+                        effort=np.array([0.0, 0.0], dtype=np.float64),
                     ),
                 )
             if success:
@@ -208,13 +233,10 @@ def _read_video(path: Path) -> list[np.ndarray[Any, Any]]:
 
 
 EXPECTED_STATE = np.asarray(
-    [[0.0, 100.0], [1.0, 101.0], [20.0, 120.0], [21.0, 121.0]],
+    [[0.0, 100.0], [1.0, 101.0], [2.0, 102.0], [20.0, 120.0], [21.0, 121.0], [22.0, 122.0]],
     dtype=np.float32,
 )
-EXPECTED_ACTION = np.asarray(
-    [[1.0, 101.0], [2.0, 102.0], [21.0, 121.0], [22.0, 122.0]],
-    dtype=np.float32,
-)
+EXPECTED_ACTION = EXPECTED_STATE.copy()
 
 
 @pytest.fixture(scope="module")
@@ -268,11 +290,11 @@ def test_collection_to_hdf5_roundtrip(
         )
     )
     hdf5_info = inspect_dataset(hdf5_path)
-    assert (hdf5_info["episodes"], hdf5_info["frames"], hdf5_info["fps"]) == (2, 4, 1.0)
+    assert (hdf5_info["episodes"], hdf5_info["frames"], hdf5_info["fps"]) == (2, 6, 1.0)
     assert hdf5_info["episode_lengths"] == {
-        "min": 2,
-        "max": 2,
-        "mean": 2.0,
+        "min": 3,
+        "max": 3,
+        "mean": 3.0,
         "uniform": True,
     }
 
@@ -280,8 +302,8 @@ def test_collection_to_hdf5_roundtrip(
         first = h5["episodes/episode_000000"]
         second = h5["episodes/episode_000001"]
         assert [first.attrs["start_ts"], second.attrs["start_ts"]] == [100.0, 108.0]
-        np.testing.assert_array_equal(first["timestamp"][:], [0.0, 1.0])
-        np.testing.assert_array_equal(second["timestamp"][:], [0.0, 1.0])
+        np.testing.assert_array_equal(first["timestamp"][:], [0.0, 1.0, 2.0])
+        np.testing.assert_array_equal(second["timestamp"][:], [0.0, 1.0, 2.0])
         np.testing.assert_array_equal(
             np.concatenate([first["observation/state"][:], second["observation/state"][:]]),
             EXPECTED_STATE,
@@ -292,11 +314,11 @@ def test_collection_to_hdf5_roundtrip(
         )
         np.testing.assert_array_equal(
             first["observation/camera"][:],
-            np.stack([recorded_images[100.0], recorded_images[101.0]]),
+            np.stack([recorded_images[100.0], recorded_images[101.0], recorded_images[102.0]]),
         )
         np.testing.assert_array_equal(
             second["observation/camera"][:],
-            np.stack([recorded_images[108.0], recorded_images[109.0]]),
+            np.stack([recorded_images[108.0], recorded_images[109.0], recorded_images[110.0]]),
         )
 
     hdf5_meta = json.loads((tmp_path / "dataset.dimos_meta.json").read_text())
@@ -328,11 +350,11 @@ def test_collection_to_lerobot_roundtrip(
         raise
 
     lerobot_info = inspect_dataset(lerobot_path)
-    assert (lerobot_info["episodes"], lerobot_info["frames"], lerobot_info["fps"]) == (2, 4, 1.0)
+    assert (lerobot_info["episodes"], lerobot_info["frames"], lerobot_info["fps"]) == (2, 6, 1.0)
     data = pq.read_table(lerobot_path / "data/chunk-000/file-000.parquet")
-    assert data.column("timestamp").to_pylist() == pytest.approx([0.0, 1.0, 0.0, 1.0])
-    assert data.column("episode_index").to_pylist() == [0, 0, 1, 1]
-    assert data.column("frame_index").to_pylist() == [0, 1, 0, 1]
+    assert data.column("timestamp").to_pylist() == pytest.approx([0.0, 1.0, 2.0, 0.0, 1.0, 2.0])
+    assert data.column("episode_index").to_pylist() == [0, 0, 0, 1, 1, 1]
+    assert data.column("frame_index").to_pylist() == [0, 1, 2, 0, 1, 2]
     np.testing.assert_array_equal(
         np.asarray(data.column("observation.state").to_pylist()), EXPECTED_STATE
     )
@@ -341,14 +363,16 @@ def test_collection_to_lerobot_roundtrip(
     episode_rows = pq.read_table(
         lerobot_path / "meta/episodes/chunk-000/file-000.parquet"
     ).to_pylist()
-    assert [row["length"] for row in episode_rows] == [2, 2]
+    assert [row["length"] for row in episode_rows] == [3, 3]
     assert [(row["dataset_from_index"], row["dataset_to_index"]) for row in episode_rows] == [
-        (0, 2),
-        (2, 4),
+        (0, 3),
+        (3, 6),
     ]
     assert [row["tasks"] for row in episode_rows] == [["pick"], ["place"]]
 
     video = _read_video(lerobot_path / "videos/observation.images.camera/chunk-000/file-000.mp4")
-    assert len(video) == 4
-    expected_means = [recorded_images[ts].mean() for ts in (100.0, 101.0, 108.0, 109.0)]
+    assert len(video) == 6
+    expected_means = [
+        recorded_images[ts].mean() for ts in (100.0, 101.0, 102.0, 108.0, 109.0, 110.0)
+    ]
     np.testing.assert_allclose([frame.mean() for frame in video], expected_means, atol=5.0)

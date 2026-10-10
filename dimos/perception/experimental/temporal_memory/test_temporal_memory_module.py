@@ -23,9 +23,12 @@ import time
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, create_autospec, patch
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.dimos_msgs.msg import EntityMarker, EntityMarkers
 from dimos_generated.geometry_msgs.msg import Point
 from dimos_generated.sensor_msgs.msg import Image
+from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 from reactivex import operators as ops
@@ -450,9 +453,10 @@ class TestEntityMarkers:
                     entity_type="object",
                     position=Point(x=3.0, y=4.0, z=0.3),
                 ),
-            ]
+            ],
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
         )
-        archetype = entity_points(EntityMarkers.decode(markers.encode()))
+        archetype = entity_points(cdr_decode(cdr_encode(markers), EntityMarkers))
         # Should return rr.Points3D
         import rerun as rr
 
@@ -662,10 +666,16 @@ def test_scene_staleness_compares_pixels_not_padding():
     from dimos.perception.experimental.temporal_memory.temporal_utils.helpers import is_scene_stale
 
     first = Image(
-        width=2, height=2, encoding="rgb8", step=8, data=[10] * 6 + [0, 0] + [10] * 6 + [0, 0]
+        width=2,
+        height=2,
+        encoding="rgb8",
+        step=8,
+        data=np.asarray([10] * 6 + [0, 0] + [10] * 6 + [0, 0], dtype=np.uint8),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        is_bigendian=0,
     )
-    last = Image.decode(first.encode())
-    last.data = [10] * 6 + [255, 255] + [10] * 6 + [255, 255]
+    last = cdr_decode(cdr_encode(first), Image)
+    last.data = np.asarray([10] * 6 + [255, 255] + [10] * 6 + [255, 255], dtype=np.uint8)
     assert is_scene_stale([Frame(0, 0, first), Frame(1, 1, last)], stale_threshold=1)
-    last.data = [30] * 6 + [255, 255] + [30] * 6 + [255, 255]
+    last.data = np.asarray([30] * 6 + [255, 255] + [30] * 6 + [255, 255], dtype=np.uint8)
     assert not is_scene_stale([Frame(0, 0, first), Frame(1, 1, last)], stale_threshold=1)

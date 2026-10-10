@@ -1,0 +1,34 @@
+[package]
+name = "dimos-v4l2-camera"
+version = "0.1.0"
+edition = "2021"
+description = "Native Rust module: a V4L2 camera published as JPEG, encoded on Jetson hardware when present"
+license = "Apache-2.0"
+
+[lib]
+name = "dimos_v4l2_camera"
+path = "src/lib.rs"
+
+[[bin]]
+name = "v4l2_camera"
+path = "src/bin/v4l2_camera.rs"
+
+[package.metadata.dimos.module.v4l2_camera]
+path = "dimos_v4l2_camera::module::V4L2Camera"
+python = "dimos.hardware.sensors.camera.v4l2.module:V4L2Camera"
+
+[package.metadata.dimos.module.v4l2_camera.outputs]
+jpeg_out = "sensor_msgs/msg/CompressedImage"
+
+[dependencies]
+dimos-module = { path = "../../../../../../native/rust/dimos-module" }
+dimos-generated-messages = { path = "../../../../../../packages/dimos-generated/src/dimos_generated_schemas/package/rust" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
+serde = { version = "1", features = ["derive"] }
+tracing = "0.1"
+validator = { version = "0.21", features = ["derive"] }
+turbojpeg = { version = "1.5.1", default-features = false, features = ["cmake"] }
+libc = "0.2"
+
+[build-dependencies]
+cc = "1"

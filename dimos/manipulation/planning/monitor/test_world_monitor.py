@@ -113,9 +113,19 @@ class FakeWorld:
 
     def get_joint_state(self, ctx):
         if self.config is None:
-            return JointState()
+            return JointState(
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                name=[],
+                position=np.array([], dtype=np.float64),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            )
         return JointState(
-            name=self.config.joint_names, position=[0.0] * len(self.config.joint_names)
+            name=self.config.joint_names,
+            position=np.asarray([0.0] * len(self.config.joint_names), dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
         )
 
     def is_collision_free(self, ctx):
@@ -136,7 +146,7 @@ class FakeWorld:
     def get_group_ee_pose(self, ctx, group_id):
         self.calls.append(("get_group_ee_pose", ctx, group_id))
         return PoseStamped(
-            header=Header(frame_id=""),
+            header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
             pose=Pose(
                 position=Point(x=1, y=2, z=3),
                 orientation=Quaternion(x=0, y=0, z=0, w=1),
@@ -232,9 +242,9 @@ def _robot_config() -> RobotModelConfig:
     return RobotModelConfig(
         model=RobotModel.from_file(model_path),
         base_pose=PoseStamped(
-            header=Header(frame_id=""),
+            header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
             pose=Pose(
-                position=Point(),
+                position=Point(x=0.0, y=0.0, z=0.0),
                 orientation=Quaternion(x=0, y=0, z=0, w=1),
             ),
         ),
@@ -341,7 +351,7 @@ def test_obstacle_monitor_routes_mutations_through_parent_world_monitor(
     assert obstacle_monitor is not None
 
     pose = PoseStamped(
-        header=Header(frame_id=""),
+        header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
         pose=Pose(
             position=Point(x=1, y=2, z=3),
             orientation=Quaternion(x=0, y=0, z=0, w=1),
@@ -446,12 +456,20 @@ def test_current_group_joint_state_uses_public_names_in_group_order() -> None:
     monitor = world_monitor_module.WorldMonitor(world=fake_world)  # type: ignore[arg-type]
     monitor.load_model(_three_joint_reordered_group_config())
     monitor.start_state_monitor()
-    monitor.on_joint_state(JointState(name=["j1", "j2", "j3"], position=[0.1, 0.2, 0.3]))
+    monitor.on_joint_state(
+        JointState(
+            name=["j1", "j2", "j3"],
+            position=np.array([0.1, 0.2, 0.3], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        )
+    )
 
     state = monitor.current_group_joint_state("manipulator")
 
     assert state.name == ["j2", "j1"]
-    assert state.position == [0.2, 0.1]
+    np.testing.assert_array_equal(state.position, [0.2, 0.1])
 
 
 def test_current_model_joint_state_rejects_stale_state(mocker) -> None:
@@ -459,13 +477,21 @@ def test_current_model_joint_state_rejects_stale_state(mocker) -> None:
     monitor = world_monitor_module.WorldMonitor(world=fake_world)  # type: ignore[arg-type]
     monitor.load_model(_three_joint_reordered_group_config())
     monitor.start_state_monitor()
-    monitor.on_joint_state(JointState(name=["j1", "j2", "j3"], position=[1.0, 2.0, 3.0]))
+    monitor.on_joint_state(
+        JointState(
+            name=["j1", "j2", "j3"],
+            position=np.array([1.0, 2.0, 3.0], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        )
+    )
     mocker.patch.object(monitor, "is_state_stale", return_value=True)
 
     state = monitor.current_model_joint_state(max_age=0.5)
 
     assert state.name == []
-    assert state.position == []
+    np.testing.assert_array_equal(state.position, [])
 
 
 def test_current_group_joint_state_rejects_stale_state(mocker) -> None:
@@ -473,7 +499,15 @@ def test_current_group_joint_state_rejects_stale_state(mocker) -> None:
     stale_monitor = world_monitor_module.WorldMonitor(world=stale_world)  # type: ignore[arg-type]
     stale_monitor.load_model(_three_joint_reordered_group_config())
     stale_monitor.start_state_monitor()
-    stale_monitor.on_joint_state(JointState(name=["j1", "j2", "j3"], position=[0.1, 0.2, 0.3]))
+    stale_monitor.on_joint_state(
+        JointState(
+            name=["j1", "j2", "j3"],
+            position=np.array([0.1, 0.2, 0.3], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        )
+    )
     mocker.patch.object(stale_monitor, "is_state_stale", return_value=True)
 
     with pytest.raises(ValueError, match="stale"):
@@ -485,13 +519,21 @@ def test_group_ee_pose_uses_current_state_when_no_joint_state_is_provided() -> N
     monitor = world_monitor_module.WorldMonitor(world=fake_world)  # type: ignore[arg-type]
     monitor.load_model(_three_joint_reordered_group_config())
     monitor.start_state_monitor()
-    monitor.on_joint_state(JointState(name=["j1", "j2", "j3"], position=[0.1, 0.2, 0.3]))
+    monitor.on_joint_state(
+        JointState(
+            name=["j1", "j2", "j3"],
+            position=np.array([0.1, 0.2, 0.3], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        )
+    )
 
     pose = monitor.get_group_ee_pose("manipulator")
 
     set_calls = [call for call in fake_world.calls if call[0] == "set_joint_state"]
     assert set_calls[0][2].name == ["j1", "j2", "j3"]
-    assert set_calls[0][2].position == [0.1, 0.2, 0.3]
+    np.testing.assert_array_equal(set_calls[0][2].position, [0.1, 0.2, 0.3])
     assert pose.pose.position.x == 1
 
 
@@ -500,7 +542,15 @@ def test_group_ee_pose_without_joint_state_rejects_stale_state(mocker) -> None:
     stale_monitor = world_monitor_module.WorldMonitor(world=stale_world)  # type: ignore[arg-type]
     stale_monitor.load_model(_three_joint_reordered_group_config())
     stale_monitor.start_state_monitor()
-    stale_monitor.on_joint_state(JointState(name=["j1", "j2", "j3"], position=[0.1, 0.2, 0.3]))
+    stale_monitor.on_joint_state(
+        JointState(
+            name=["j1", "j2", "j3"],
+            position=np.array([0.1, 0.2, 0.3], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        )
+    )
     mocker.patch.object(stale_monitor, "is_state_stale", return_value=True)
 
     with pytest.raises(ValueError, match="stale"):
@@ -514,12 +564,18 @@ def test_group_kinematics_with_full_state_does_not_require_current_state() -> No
 
     pose = monitor.get_group_ee_pose(
         "manipulator",
-        JointState(name=["j1", "j2", "j3"], position=[0.1, 0.2, 0.3]),
+        JointState(
+            name=["j1", "j2", "j3"],
+            position=np.array([0.1, 0.2, 0.3], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        ),
     )
 
     set_calls = [call for call in fake_world.calls if call[0] == "set_joint_state"]
     assert set_calls[0][2].name == ["j1", "j2", "j3"]
-    assert set_calls[0][2].position == [0.1, 0.2, 0.3]
+    np.testing.assert_array_equal(set_calls[0][2].position, [0.1, 0.2, 0.3])
     assert pose.pose.position.x == 1
 
 
@@ -530,18 +586,30 @@ def test_group_kinematics_route_full_state_to_backend() -> None:
 
     pose = monitor.get_group_ee_pose(
         "manipulator",
-        JointState(name=["j1", "j2", "j3"], position=[0.9, 0.8, 0.3]),
+        JointState(
+            name=["j1", "j2", "j3"],
+            position=np.array([0.9, 0.8, 0.3], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        ),
     )
     jacobian = monitor.get_group_jacobian(
         "manipulator",
-        JointState(name=["j1", "j2", "j3"], position=[0.4, 0.3, 0.3]),
+        JointState(
+            name=["j1", "j2", "j3"],
+            position=np.array([0.4, 0.3, 0.3], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        ),
     )
 
     set_calls = [call for call in fake_world.calls if call[0] == "set_joint_state"]
     assert set_calls[0][2].name == ["j1", "j2", "j3"]
-    assert set_calls[0][2].position == [0.9, 0.8, 0.3]
+    np.testing.assert_array_equal(set_calls[0][2].position, [0.9, 0.8, 0.3])
     assert set_calls[1][2].name == ["j1", "j2", "j3"]
-    assert set_calls[1][2].position == [0.4, 0.3, 0.3]
+    np.testing.assert_array_equal(set_calls[1][2].position, [0.4, 0.3, 0.3])
     assert pose.pose.position.x == 1
     assert jacobian.shape == (6, 2)
     assert ("get_group_ee_pose", "scratch", "manipulator") in fake_world.calls
@@ -557,7 +625,15 @@ def test_convenience_wrappers_fail_for_no_pose_and_ambiguous_pose_groups() -> No
         )
     )
     with pytest.raises(ValueError, match="no unique pose-targetable"):
-        monitor.get_ee_pose(JointState(name=["j1", "j2"], position=[0.0, 0.0]))
+        monitor.get_ee_pose(
+            JointState(
+                name=["j1", "j2"],
+                position=np.array([0.0, 0.0], dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            )
+        )
 
     fake_world2 = FakeWorld()
     monitor2 = world_monitor_module.WorldMonitor(world=fake_world2)  # type: ignore[arg-type]
@@ -574,7 +650,15 @@ def test_convenience_wrappers_fail_for_no_pose_and_ambiguous_pose_groups() -> No
         )
     )
     with pytest.raises(ValueError, match="pose-targetable planning groups"):
-        monitor2.get_jacobian(JointState(name=["j1", "j2"], position=[0.0, 0.0]))
+        monitor2.get_jacobian(
+            JointState(
+                name=["j1", "j2"],
+                position=np.array([0.0, 0.0], dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            )
+        )
 
 
 def test_world_monitor_obstacle_mutations_cover_failure_and_visualization_errors(
@@ -607,7 +691,7 @@ def test_world_monitor_updates_obstacle_pose_with_backend_result(mocker: MockerF
     viz = FakeViz()
     monitor = world_monitor_module.WorldMonitor(world=world, visualization=viz)  # type: ignore[arg-type]
     pose = PoseStamped(
-        header=Header(frame_id=""),
+        header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
         pose=Pose(
             position=Point(x=1, y=2, z=3),
             orientation=Quaternion(x=0, y=0, z=0, w=1),
@@ -633,7 +717,13 @@ def test_world_monitor_forwards_only_successful_complete_updates(
     obstacle = Obstacle(
         name="box",
         obstacle_type=ObstacleType.BOX,
-        pose=PoseStamped(header=Header(frame_id=""), pose=Pose()),
+        pose=PoseStamped(
+            header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
+            pose=Pose(
+                position=Point(x=0.0, y=0.0, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+        ),
         dimensions=(1.0, 1.0, 1.0),
     )
     update = mocker.patch.object(world, "update_obstacle", side_effect=[True, False])
@@ -655,7 +745,7 @@ def test_obstacle_monitor_routes_complete_and_rejects_incomplete_updates(
     monitor = parent.obstacle_monitor
     assert monitor is not None
     pose = PoseStamped(
-        header=Header(frame_id=""),
+        header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
         pose=Pose(
             position=Point(x=1, y=2, z=3),
             orientation=Quaternion(x=0, y=0, z=0, w=1),
@@ -710,7 +800,7 @@ def test_obstacle_monitor_adds_complete_unknown_update_and_stops_on_failed_updat
     monitor = parent.obstacle_monitor
     assert monitor is not None
     pose = PoseStamped(
-        header=Header(frame_id=""),
+        header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
         pose=Pose(
             position=Point(x=1, y=2, z=3),
             orientation=Quaternion(x=0, y=0, z=0, w=1),
@@ -755,7 +845,7 @@ def test_world_monitor_clear_updates_world_tracking_and_survives_visualization_e
     obstacle_monitor = monitor.obstacle_monitor
     assert obstacle_monitor is not None
     pose = PoseStamped(
-        header=Header(frame_id=""),
+        header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
         pose=Pose(
             position=Point(x=1, y=2, z=3),
             orientation=Quaternion(x=0, y=0, z=0, w=1),
@@ -779,6 +869,8 @@ def test_world_monitor_clear_updates_world_tracking_and_survives_visualization_e
             ),
             size=Vector3(x=1, y=1, z=1),
         ),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        results=[],
     )
     obstacle_monitor.on_detections([detection])  # type: ignore[arg-type]
     assert obstacle_monitor.get_obstacle_count() == 2
@@ -841,7 +933,7 @@ def test_world_obstacle_monitor_rejects_invalid_add_and_handles_update_and_callb
     callback = mocker.Mock(side_effect=RuntimeError("callback failed"))
     obstacle_monitor.add_obstacle_callback(callback)
     pose = PoseStamped(
-        header=Header(frame_id=""),
+        header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
         pose=Pose(
             position=Point(x=1, y=2, z=3),
             orientation=Quaternion(x=0, y=0, z=0, w=1),
@@ -889,7 +981,9 @@ def test_world_obstacle_monitor_detection_add_update_and_stale_cleanup(
         orientation=Quaternion(x=0, y=0, z=0, w=1),
     )
     bbox = BoundingBox3D(center=center, size=Vector3(x=1, y=2, z=3))
-    detection = Detection3D(id="det-1", bbox=bbox)
+    detection = Detection3D(
+        id="det-1", bbox=bbox, header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""), results=[]
+    )
 
     obstacle_monitor.on_detections([detection])  # type: ignore[arg-type]
     obstacle_monitor.on_detections([detection])
@@ -932,7 +1026,9 @@ def test_mesh_obstacle_is_placed_at_the_hull_centroid_without_the_bbox_rotation(
     add_obstacle = mocker.patch.object(parent, "add_obstacle", return_value="parent-id")
 
     points = _tilted_box_cloud()
-    cloud = pointcloud_from_xyz(points, header=Header(frame_id="world"))
+    cloud = pointcloud_from_xyz(
+        points, header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0))
+    )
     # Mirrors Object.from_detections with use_aabb=False: pose carries the
     # oriented-box center and rotation.
     obb = pointcloud_to_open3d(cloud).get_oriented_bounding_box()
@@ -942,7 +1038,7 @@ def test_mesh_obstacle_is_placed_at_the_hull_centroid_without_the_bbox_rotation(
         center=Vector3(x=obb.center[0], y=obb.center[1], z=obb.center[2]),
         size=Vector3(x=obb.extent[0], y=obb.extent[1], z=obb.extent[2]),
         pose=PoseStamped(
-            header=Header(frame_id="world"),
+            header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
             pose=Pose(
                 position=Point(x=obb.center[0], y=obb.center[1], z=obb.center[2]),
                 orientation=quaternion_from_matrix(np.asarray(obb.R)),
@@ -954,7 +1050,15 @@ def test_mesh_obstacle_is_placed_at_the_hull_centroid_without_the_bbox_rotation(
         class_id=0,
         confidence=1.0,
         ts=0.0,
-        image=Image(),
+        image=Image(
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            height=0,
+            width=0,
+            encoding="",
+            is_bigendian=0,
+            step=0,
+            data=np.array([], dtype=np.uint8),
+        ),
     )
 
     monitor = WorldObstacleMonitor(parent=parent, use_mesh_obstacles=True)
@@ -1000,7 +1104,9 @@ def test_group_pose_preserves_joint_sample_stamp_and_backend_frame(use_current_s
     state = JointState(
         header=Header(frame_id="encoder", stamp=Time(sec=1700000000, nanosec=123456789)),
         name=["j1", "j2", "j3"],
-        position=[0.1, 0.2, 0.3],
+        position=np.array([0.1, 0.2, 0.3], dtype=np.float64),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
     )
     if use_current_state:
         monitor.start_state_monitor()
@@ -1020,13 +1126,15 @@ def test_link_pose_preserves_joint_sample_stamp(mocker):
     matrix[:3, 3] = [1, 2, 3]
     mocker.patch.object(world, "get_link_pose", return_value=matrix)
     state = JointState(
-        header=Header(stamp=Time(sec=-1, nanosec=987654321)),
+        header=Header(stamp=Time(sec=-1, nanosec=987654321), frame_id=""),
         name=["j1", "j2", "j3"],
-        position=[0.1, 0.2, 0.3],
+        position=np.array([0.1, 0.2, 0.3], dtype=np.float64),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
     )
     pose = monitor.get_link_pose("ee", state)
     assert pose is not None
     assert pose.header == Header(frame_id="world", stamp=state.header.stamp)
-    assert pose.pose.position == Point(x=1, y=2, z=3)
+    np.testing.assert_array_equal(pose.pose.position, Point(x=1, y=2, z=3))
     pose.header.stamp.nanosec = 0
     assert state.header.stamp.nanosec == 987654321

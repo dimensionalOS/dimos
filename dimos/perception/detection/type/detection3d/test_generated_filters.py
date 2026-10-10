@@ -15,9 +15,10 @@
 from types import SimpleNamespace
 
 from dimos_generated.builtin_interfaces.msg import Time
-from dimos_generated.geometry_msgs.msg import Quaternion, Transform, TransformStamped
-from dimos_generated.sensor_msgs.msg import CameraInfo, PointCloud2, PointField
+from dimos_generated.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
+from dimos_generated.sensor_msgs.msg import CameraInfo, PointCloud2, PointField, RegionOfInterest
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 
@@ -49,18 +50,37 @@ def test_filters_preserve_custom_point_records(make_filter):
             PointField(name=name, offset=i * 4, datatype=7 if i < 3 else 6, count=1)
             for i, name in enumerate(("x", "y", "z", "id"))
         ],
-        data=values.tobytes(),
+        data=np.frombuffer(values.tobytes(), dtype=np.uint8),
+        is_bigendian=False,
+        is_dense=False,
     )
     transform = TransformStamped(
-        header=Header(frame_id="camera"),
+        header=Header(frame_id="camera", stamp=Time(sec=0, nanosec=0)),
         child_frame_id="world",
-        transform=Transform(rotation=Quaternion(w=1)),
+        transform=Transform(
+            rotation=Quaternion(w=1, x=0.0, y=0.0, z=0.0), translation=Vector3(x=0.0, y=0.0, z=0.0)
+        ),
     )
     result = make_filter()(
-        SimpleNamespace(), PointCloud2.decode(cloud.encode()), CameraInfo(), transform
+        SimpleNamespace(),
+        cdr_decode(cdr_encode(cloud), PointCloud2),
+        CameraInfo(
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            height=0,
+            width=0,
+            distortion_model="",
+            d=np.array([], dtype=np.float64),
+            k=np.zeros(9, dtype=np.float64),
+            r=np.zeros(9, dtype=np.float64),
+            p=np.zeros(12, dtype=np.float64),
+            binning_x=0,
+            binning_y=0,
+            roi=RegionOfInterest(x_offset=0, y_offset=0, height=0, width=0, do_rectify=False),
+        ),
+        transform,
     )
     assert result is not None
-    result = PointCloud2.decode(result.encode())
+    result = cdr_decode(cdr_encode(result), PointCloud2)
     assert result.header == cloud.header
     assert result.fields == cloud.fields
     records = pointcloud_view(result).reshape(-1)

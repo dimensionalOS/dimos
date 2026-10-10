@@ -118,7 +118,7 @@ class TestTopic:
 
     def test_str_with_lcm_type(self) -> None:
         mock_type = MagicMock()
-        mock_type.msg_name = "TestMessage"
+        mock_type.__msgtype__ = "TestMessage"
         topic = Topic(topic="my_topic", msg_type=mock_type)
         assert str(topic) == "my_topic#TestMessage"
 

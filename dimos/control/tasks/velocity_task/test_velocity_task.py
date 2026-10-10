@@ -16,7 +16,10 @@
 
 from __future__ import annotations
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.std_msgs.msg import Header
+import numpy as np
 
 from dimos.control.task import CoordinatorState, JointStateSnapshot
 from dimos.control.tasks.velocity_task.velocity_task import (
@@ -31,7 +34,16 @@ def _task() -> JointVelocityTask:
 
 def test_on_joint_command_sets_velocities() -> None:
     task = _task()
-    assert task.on_joint_command(JointState(name=["a/j1", "a/j2"], velocity=[0.3, -0.1]), 1.0)
+    assert task.on_joint_command(
+        JointState(
+            name=["a/j1", "a/j2"],
+            velocity=np.array([0.3, -0.1], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            position=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        ),
+        1.0,
+    )
     out = task.compute(CoordinatorState(joints=JointStateSnapshot(), t_now=1.0))
     assert out is not None
     assert out.velocities == [0.3, -0.1]
@@ -41,8 +53,20 @@ def test_on_joint_command_ignores_position_bearing_messages() -> None:
     # Mirrors the coordinator's if-position-elif-velocity split: a message
     # carrying positions must never drive the velocity task.
     task = _task()
-    both = JointState(name=["a/j1", "a/j2"], position=[0.1, 0.2], velocity=[0.3, -0.1])
+    both = JointState(
+        name=["a/j1", "a/j2"],
+        position=np.array([0.1, 0.2], dtype=np.float64),
+        velocity=np.array([0.3, -0.1], dtype=np.float64),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        effort=np.array([], dtype=np.float64),
+    )
     assert not task.on_joint_command(both, 1.0)
-    positions = JointState(name=["a/j1", "a/j2"], position=[0.1, 0.2])
+    positions = JointState(
+        name=["a/j1", "a/j2"],
+        position=np.array([0.1, 0.2], dtype=np.float64),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
+    )
     assert not task.on_joint_command(positions, 1.0)
     assert not task.is_active()

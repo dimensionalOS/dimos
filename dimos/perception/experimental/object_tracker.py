@@ -16,9 +16,11 @@ import threading
 import time
 from typing import Any
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import (
     Point,
     Pose,
+    PoseWithCovariance,
     Quaternion,
     Transform,
     TransformStamped,
@@ -30,11 +32,16 @@ from dimos_generated.tf2_msgs.msg import TFMessage
 
 # Generated detection values
 from dimos_generated.vision_msgs.msg import (
+    BoundingBox2D,
+    BoundingBox3D,
     Detection2D,
     Detection2DArray,
     Detection3D,
     Detection3DArray,
+    ObjectHypothesis,
     ObjectHypothesisWithPose,
+    Point2D,
+    Pose2D,
 )
 import numpy as np
 from numpy.typing import NDArray
@@ -321,8 +328,12 @@ class ObjectTracking(Module):
         self.tracking_frame_count = 0  # Reset frame counter
 
         # Publish empty detections to clear any visualizations
-        empty_2d = Detection2DArray(header=Header(), detections=[])
-        empty_3d = Detection3DArray(header=Header(), detections=[])
+        empty_2d = Detection2DArray(
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""), detections=[]
+        )
+        empty_3d = Detection3DArray(
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""), detections=[]
+        )
         self._latest_detection2d = empty_2d
         self._latest_detection3d = empty_3d
         self._detection_event.clear()
@@ -433,12 +444,28 @@ class ObjectTracking(Module):
             height = float(y2 - y1)
 
             # Create Detection2D
-            detection_2d = Detection2D()
+            detection_2d = Detection2D(
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                results=[],
+                bbox=BoundingBox2D(
+                    center=Pose2D(position=Point2D(x=0.0, y=0.0), theta=0.0), size_x=0.0, size_y=0.0
+                ),
+                id="",
+            )
             detection_2d.id = "0"
             detection_2d.header = header
 
             # Create hypothesis
-            hypothesis = ObjectHypothesisWithPose()
+            hypothesis = ObjectHypothesisWithPose(
+                hypothesis=ObjectHypothesis(class_id="", score=0.0),
+                pose=PoseWithCovariance(
+                    pose=Pose(
+                        position=Point(x=0.0, y=0.0, z=0.0),
+                        orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                    ),
+                    covariance=np.zeros(36, dtype=np.float64),
+                ),
+            )
             hypothesis.hypothesis.class_id = "tracked_object"
             hypothesis.hypothesis.score = 1.0
             detection_2d.results = [hypothesis]
@@ -450,7 +477,9 @@ class ObjectTracking(Module):
             detection_2d.bbox.size_x = width
             detection_2d.bbox.size_y = height
 
-            detection2darray = Detection2DArray()
+            detection2darray = Detection2DArray(
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""), detections=[]
+            )
             detection2darray.header = header
             detection2darray.detections = [detection_2d]
 
@@ -471,16 +500,21 @@ class ObjectTracking(Module):
                     y_optical = (center_y - cy) * z_optical / fy
 
                     # Create pose in optical frame
-                    optical_pose = Pose()
+                    optical_pose = Pose(
+                        position=Point(x=0.0, y=0.0, z=0.0),
+                        orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                    )
                     optical_pose.position = Point(x=x_optical, y=y_optical, z=z_optical)
-                    optical_pose.orientation = Quaternion(w=1.0)  # Identity for now
+                    optical_pose.orientation = Quaternion(
+                        w=1.0, x=0.0, y=0.0, z=0.0
+                    )  # Identity for now
 
                     # Convert to robot frame
                     robot_pose = optical_to_robot_frame(optical_pose)
 
                     # Calculate orientation: object facing towards camera (origin)
                     yaw = yaw_towards_point(robot_pose.position)
-                    euler = Vector3(z=yaw)  # Only yaw, no roll/pitch
+                    euler = Vector3(z=yaw, x=0.0, y=0.0)  # Only yaw, no roll/pitch
                     robot_pose.orientation = euler_to_quaternion(euler)
 
                     # Estimate object size in meters
@@ -489,7 +523,18 @@ class ObjectTracking(Module):
                     size_z = 0.1  # Default depth size
 
                     # Create Detection3D
-                    detection_3d = Detection3D()
+                    detection_3d = Detection3D(
+                        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                        results=[],
+                        bbox=BoundingBox3D(
+                            center=Pose(
+                                position=Point(x=0.0, y=0.0, z=0.0),
+                                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                            ),
+                            size=Vector3(x=0.0, y=0.0, z=0.0),
+                        ),
+                        id="",
+                    )
                     detection_3d.id = "0"
                     detection_3d.header = header
 
@@ -497,12 +542,17 @@ class ObjectTracking(Module):
                     detection_3d.results = [hypothesis]
 
                     # Create 3D bounding box with robot frame pose
-                    detection_3d.bbox.center = Pose()
+                    detection_3d.bbox.center = Pose(
+                        position=Point(x=0.0, y=0.0, z=0.0),
+                        orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                    )
                     detection_3d.bbox.center.position = robot_pose.position
                     detection_3d.bbox.center.orientation = robot_pose.orientation
                     detection_3d.bbox.size = Vector3(x=size_x, y=size_y, z=size_z)
 
-                    detection3darray = Detection3DArray()
+                    detection3darray = Detection3DArray(
+                        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""), detections=[]
+                    )
                     detection3darray.header = header
                     detection3darray.detections = [detection_3d]
 

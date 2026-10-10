@@ -14,8 +14,10 @@
 
 from unittest.mock import MagicMock
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Twist
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 
@@ -36,18 +38,26 @@ def test_pursuit_generated_pose_preserves_steering_and_stop(
     poses = iter(
         [
             PoseStamped(
-                header=Header(frame_id="world"),
-                pose=Pose(position=Point(), orientation=quaternion_from_euler(0.0, 0.0, heading)),
+                header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+                pose=Pose(
+                    position=Point(x=0.0, y=0.0, z=0.0),
+                    orientation=quaternion_from_euler(0.0, 0.0, heading),
+                ),
             ),
             PoseStamped(
-                header=Header(frame_id="world"),
-                pose=Pose(position=Point(x=1.0), orientation=Quaternion(w=1.0)),
+                header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+                pose=Pose(
+                    position=Point(x=1.0, y=0.0, z=0.0),
+                    orientation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0),
+                ),
             ),
         ]
     )
     monkeypatch.setattr(explorer, "_wait_for_pose", lambda: next(poses))
     explorer._drive_to(1.0, 0.0)
-    commands = [Twist.decode(call.args[1].encode()) for call in output.broadcast.call_args_list]
+    commands = [
+        cdr_decode(cdr_encode(call.args[1]), Twist) for call in output.broadcast.call_args_list
+    ]
     assert len(commands) == 2
     assert commands[0].linear.x == expected_linear
     assert commands[0].angular.z == expected_angular
@@ -64,7 +74,7 @@ def test_person_track_generated_pose_preserves_position_and_heading(
     )
     publisher = PersonTrackPublisher([(1.0, 2.0), (1.0, 3.0), (2.0, 3.0)])
     publisher.tick()
-    pose = Pose.decode(output.broadcast.call_args.args[1].encode())
+    pose = cdr_decode(cdr_encode(output.broadcast.call_args.args[1]), Pose)
     assert (pose.position.x, pose.position.y, pose.position.z) == (1.0, 2.0, 0.0)
     assert np.isclose(pose.orientation.z, np.sin(np.pi / 4))
     assert np.isclose(pose.orientation.w, np.cos(np.pi / 4))

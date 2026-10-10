@@ -23,7 +23,7 @@ import struct
 from threading import Condition, RLock
 from typing import Any, Literal
 
-from dimos_generated.geometry_msgs.msg import PoseStamped, Twist
+from dimos_generated.geometry_msgs.msg import PoseStamped, Twist, Vector3
 from dimos_generated.nav_msgs.msg import Odometry
 from dimos_generated.std_msgs.msg import Bool, Int32, UInt32
 from pydantic import Field
@@ -136,7 +136,9 @@ class M20Connection(Module):
     @rpc
     def stop_movement(self) -> None:
         """Publish an immediate zero velocity without disabling future commands."""
-        self.cmd_vel.publish(Twist())
+        self.cmd_vel.publish(
+            Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+        )
 
     @rpc
     def standup(self) -> bool:

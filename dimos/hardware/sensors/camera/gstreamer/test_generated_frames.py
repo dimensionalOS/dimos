@@ -19,6 +19,7 @@ from types import ModuleType, SimpleNamespace
 from unittest.mock import Mock
 
 from dimos_generated.sensor_msgs.msg import Image
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 
@@ -70,7 +71,7 @@ def test_generated_bgr_frame_owns_pixels_after_sdk_buffer_unmap(camera_module, m
     try:
         assert camera._on_new_sample(sink) == 0
         assert len(received) == 1 and type(received[0]) is Image
-        value = Image.decode(received[0].encode())
+        value = cdr_decode(cdr_encode(received[0]), Image)
         assert value.header.frame_id == "camera_test"
         assert value.encoding == "bgr8" and value.step == 9
         assert to_nanoseconds(value.header.stamp) == 1700000000125000000

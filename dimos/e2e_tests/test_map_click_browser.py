@@ -18,6 +18,7 @@ from collections.abc import Iterator
 import threading
 from typing import NamedTuple
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Point, PointStamped, Pose, PoseStamped, Quaternion
 from dimos_generated.nav_msgs.msg import Path
 from dimos_generated.std_msgs.msg import Header
@@ -52,8 +53,10 @@ class MapBridge(NamedTuple):
 def _path(*xy: tuple[float, float]) -> Path:
     poses = [
         PoseStamped(
-            header=Header(stamp=time_from_seconds(1.0)),
-            pose=Pose(position=Point(x=x, y=y), orientation=Quaternion(w=1)),
+            header=Header(stamp=time_from_seconds(1.0), frame_id=""),
+            pose=Pose(
+                position=Point(x=x, y=y, z=0.0), orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0)
+            ),
         )
         for x, y in xy
     ]
@@ -141,5 +144,7 @@ def test_click_to_goal_and_cancel(map_bridge: MapBridge, chromium_page: Page) ->
     cancel.click()
     assert wait_until(lambda: stops == [True], timeout=15.0)
 
-    map_bridge.path.publish(Path())
+    map_bridge.path.publish(
+        Path(header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""), poses=[])
+    )
     expect(cancel).to_have_count(0, timeout=30_000)

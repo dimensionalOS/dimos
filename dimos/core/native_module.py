@@ -41,9 +41,10 @@ Example usage::
 
 from __future__ import annotations
 
+from dataclasses import asdict, is_dataclass
 import enum
 import functools
-import inspect
+from importlib.util import find_spec
 import json
 import os
 from pathlib import Path
@@ -54,6 +55,7 @@ import threading
 import time
 from typing import IO, Any
 
+import numpy as np
 from pydantic import Field, model_validator
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
@@ -61,7 +63,16 @@ from dimos.core.core import rpc
 from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.transport_factory import session_config
+from dimos.message_codegen.native_build import (
+    build_environment,
+    installed_prefixes,
+    prepare_cpp,
+    stage_module,
+)
+from dimos.protocol.service.lcmservice import LCMConfig
 from dimos.protocol.service.spec import SessionConfig
+from dimos.protocol.service.zenohservice import ZENOH_LOG_DIRECTIVES, ZenohConfig
+from dimos.utils.data import get_project_root
 from dimos.utils.logging_config import setup_logger
 
 if sys.platform.startswith("linux"):
@@ -84,6 +95,21 @@ else:
     from typing import TypeVar
 
 logger = setup_logger()
+
+
+def _json_values(value: Any) -> Any:
+    """Convert generated value fields to JSON without changing their schema names."""
+    if is_dataclass(value) and not isinstance(value, type):
+        return _json_values(asdict(value))
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, dict):
+        return {key: _json_values(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_values(item) for item in value]
+    return value
 
 
 class LogFormat(enum.Enum):
@@ -114,17 +140,31 @@ _PYTHON_TO_RUST_LEVELS = {
 }
 
 
+_NO_MESSAGE = "<no message>"
+
+
+def _check_legacy_cwd(values: Any) -> Any:
+    if isinstance(values, dict) and "cwd" in values:
+        raise ValueError(
+            "cwd was removed: use source_dir for source builds; external binaries run "
+            "from their executable directory. Pass absolute resource paths or use a launcher."
+        )
+    return values
+
+
 class NativeModuleConfig(ModuleConfig):
     """Configuration for a native subprocess module."""
 
     executable: str
+    source_dir: str | None = None
     build_command: str | None = None
-    cwd: str | None = None
+    # Opt-in CMake source preparation; Rust/Nix modules keep their own build commands.
+    cmake_message_packages: list[str] = Field(default_factory=list)
     extra_args: list[str] = Field(default_factory=list)
     extra_env: dict[str, str] = Field(default_factory=dict)
     # Session settings for this module alone, e.g. opening it as the zenoh router
     # the rest of the graph connects to. None follows the global config.
-    session: SessionConfig | None = None
+    session: ZenohConfig | LCMConfig | None = None
     shutdown_timeout: float = DEFAULT_THREAD_JOIN_TIMEOUT
     log_format: LogFormat = LogFormat.JSON
     auto_build: bool = False
@@ -137,6 +177,38 @@ class NativeModuleConfig(ModuleConfig):
     # Native config structs reject unknown fields, so a base field only crosses
     # the boundary if that module's native struct declares it.
     base_fields: frozenset[str] = frozenset()
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_legacy_cwd(cls, values: Any) -> Any:
+        return _check_legacy_cwd(values)
+
+    @model_validator(mode="after")
+    def _validate_source_paths(self) -> NativeModuleConfig:
+        if self.build_command and self.source_dir is None:
+            raise ValueError("Source builds require source_dir relative to the project checkout")
+        if self.source_dir is not None:
+            source = Path(self.source_dir)
+            if not self.source_dir or source.is_absolute() or ".." in source.parts:
+                raise ValueError("source_dir must stay relative to the project checkout")
+            if not self.executable or Path(self.executable).is_absolute():
+                raise ValueError(
+                    "Source builds require a relative executable; "
+                    "for an external binary set source_dir=None and build_command=None"
+                )
+            artifact = os.path.normpath(source / self.executable)
+            if artifact == ".." or artifact.startswith("../"):
+                raise ValueError("executable must stay within the project checkout")
+        return self
+
+    def resolve_paths(self) -> tuple[str | None, str]:
+        """Resolve source builds once; external binary paths do not fetch sources."""
+        if self.source_dir is not None:
+            root = get_project_root()
+            build_cwd = root / self.source_dir
+            return str(build_cwd), str(Path(os.path.normpath(build_cwd / self.executable)))
+        executable = Path(self.executable).absolute()
+        return str(executable.parent), str(executable)
 
     @model_validator(mode="after")
     def _session_needs_the_stdin_line(self) -> NativeModuleConfig:
@@ -156,7 +228,7 @@ class NativeModuleConfig(ModuleConfig):
         # An opted-in base field is sent even when None, so the native struct
         # reports a null it can name rather than a field that looks unset.
         return {
-            k: v
+            k: _json_values(v)
             for k, v in self.model_dump().items()
             if k not in ignore_fields and (v is not None or k in self.base_fields)
         }
@@ -206,11 +278,15 @@ class NativeModule(Module):
     """
 
     config: NativeModuleConfig
+    warm_up_inputs = False  # the native process subscribes and decodes itself
 
     _process: subprocess.Popen[bytes] | None = None
     _watchdog: threading.Thread | None = None
     _stopping: bool = False
     _stop_lock: threading.Lock
+    _cwd: str | None = None
+    _executable: str = ""
+    _prepared: bool = False
 
     @functools.cached_property
     def _module_label(self) -> str:
@@ -218,31 +294,35 @@ class NativeModule(Module):
         return f"{type(self).__name__}({exe})"
 
     def __init__(self, **kwargs: Any) -> None:
+        _check_legacy_cwd(kwargs)
         super().__init__(**kwargs)
         self._stop_lock = threading.Lock()
 
-        if self.config.cwd is not None and not Path(self.config.cwd).is_absolute():
-            base_dir = Path(inspect.getfile(type(self))).resolve().parent
-            self.config.cwd = str(base_dir / self.config.cwd)
-        if not Path(self.config.executable).is_absolute():
-            # The spawn runs from the executable's own directory, so a relative
-            # path has to be resolved before then or it resolves against itself.
-            base = Path(self.config.cwd) if self.config.cwd is not None else Path.cwd()
-            self.config.executable = str(base / self.config.executable)
+        if self.config.source_dir is None:
+            self._cwd, self._executable = self.config.resolve_paths()
+            self.config.executable = self._executable
 
     @rpc
     def build(self) -> None:
         super().build()
+        self._prepare_native(force=True)
+
+    def _prepare_native(self, *, force: bool = False) -> None:
+        if self._prepared and not force:
+            return
+        if not self._executable:
+            self._cwd, self._executable = self.config.resolve_paths()
+        self._prepared = False
         self._maybe_build()
+        self._prepared = True
 
     def _spawn_env(self) -> dict[str, str]:
         env = {**os.environ, **self.config.extra_env}
 
         env["DIMOS_TRANSPORT"] = global_config.transport
 
-        env["RUST_LOG"] = _PYTHON_TO_RUST_LEVELS.get(
-            os.environ.get("DIMOS_LOG_LEVEL", "").upper(), "info"
-        )
+        level = _PYTHON_TO_RUST_LEVELS.get(os.environ.get("DIMOS_LOG_LEVEL", "").upper(), "info")
+        env["RUST_LOG"] = f"{level},{ZENOH_LOG_DIRECTIVES}"
         return env
 
     def _session(self) -> SessionConfig:
@@ -260,7 +340,7 @@ class NativeModule(Module):
 
     def _argv(self, topics: dict[str, str]) -> list[str]:
         """The command line the native process is spawned with."""
-        cmd = [self.config.executable]
+        cmd = [self._executable]
         for name, topic_str in topics.items():
             cmd.extend([f"--{name}", topic_str])
         cmd.extend(self.config.to_cli_args())
@@ -282,6 +362,7 @@ class NativeModule(Module):
 
     @rpc
     def start(self) -> None:
+        self._prepare_native()
         super().start()
         if self._process is not None and self._process.poll() is None:
             logger.warning(
@@ -299,7 +380,7 @@ class NativeModule(Module):
         stdin_blob = self._stdin_blob(topics) if self.config.stdin_config else None
 
         env = self._spawn_env()
-        cwd = self.config.cwd or str(Path(self.config.executable).resolve().parent)
+        cwd = self._cwd or str(Path(self._executable).resolve().parent)
 
         logger.info(
             "Starting native process",
@@ -452,7 +533,7 @@ class NativeModule(Module):
                     fields = data.pop("fields", None)
                     if fields:
                         data.update(fields)
-                    message = data.pop("message", None) or line
+                    message = data.pop("message", None) or _NO_MESSAGE
                     msg_level = data.pop("level", None)
                     method = (
                         _NATIVE_TO_PYTHON_LEVELS.get(msg_level.lower(), level)
@@ -467,7 +548,7 @@ class NativeModule(Module):
         stream.close()
 
     def _maybe_build(self) -> None:
-        exe = Path(self.config.executable)
+        exe = Path(self._executable)
 
         if self.config.build_command is None:
             if not exe.exists():
@@ -486,11 +567,35 @@ class NativeModule(Module):
             build_command=self.config.build_command,
         )
         build_start = time.perf_counter()
+        build_env = {**os.environ, **self.config.extra_env}
+        if self.config.cmake_message_packages:
+            prefixes: list[str] = []
+            for package in self.config.cmake_message_packages:
+                provider = find_spec(package + "_schemas")
+                if provider is None or provider.origin is None:
+                    raise ValueError(f"Missing installed message source package: {package}")
+                prefix = prepare_cpp(Path(provider.origin).parent / "package")
+                prefixes.extend(
+                    value for value in installed_prefixes(prefix) if value not in prefixes
+                )
+            package_path = Path(__file__).resolve().parents[1]
+            sdk = package_path / "_native" / "cpp"
+            if not (sdk / "CMakeLists.txt").is_file():
+                sdk = package_path.parent / "native" / "cpp"
+            if not (sdk / "CMakeLists.txt").is_file():
+                raise FileNotFoundError("DimOS native C++ source resources are missing")
+            prefixes.append(str(sdk))
+            if self._cwd is None:
+                raise ValueError("CMake source preparation requires resolved source_dir")
+            source, exe = stage_module(Path(self._cwd), exe)
+            self._cwd = str(source)
+            self._executable = str(exe)
+            build_env = build_environment([Path(prefix) for prefix in prefixes], build_env)
         proc = subprocess.Popen(
             self.config.build_command,
             shell=True,
-            cwd=self.config.cwd,
-            env={**os.environ, **self.config.extra_env},
+            cwd=self._cwd,
+            env=build_env,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
         )

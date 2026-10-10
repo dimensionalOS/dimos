@@ -62,7 +62,9 @@ from dimos.perception.detection.type.detection2d.imageDetections2D import ImageD
 
 
 def _image(pixels: np.ndarray, *, ts: float = 0.0) -> Image:
-    return image_from_array(pixels, encoding="rgb8", header=Header(stamp=time_from_seconds(ts)))
+    return image_from_array(
+        pixels, encoding="rgb8", header=Header(stamp=time_from_seconds(ts), frame_id="")
+    )
 
 
 class _TestVlModel(VlModel):

@@ -48,6 +48,7 @@ else:
 
 from dimos_generated.geometry_msgs.msg import PointStamped
 from dimos_generated.nav_msgs.msg import Path
+from dimos_generated.sensor_msgs.msg import PointCloud2
 from dimos_generated.std_msgs.msg import Bool
 
 from dimos.web.cdr_codec import default_encoding, export_schema
@@ -417,6 +418,59 @@ class Map2D(Panel):
         requests = [
             ChannelRequest(
                 self.costmap, "rx", "costmap.zlib.v1", self.costmap_hz, delivery="latest"
+            )
+        ]
+        if self.pose is not None:
+            requests.append(ChannelRequest(self.pose, "rx", "pose.json.v1", self.pose_hz))
+        return tuple(requests)
+
+
+@dataclass(frozen=True)
+class Map3D(Panel):
+    """3D voxel map: a PointCloud2 stream (the mapper's global map by
+    default) voxelized at `res` and drawn as points, with the pose marker."""
+
+    kind: ClassVar[str] = "map3d"
+    cloud: str = "global_map"
+    pose: str | None = "odom"
+    res: float = field(default=0.05, kw_only=True)
+    max_hz: float = field(default=1.0, kw_only=True)
+    pose_hz: float = field(default=20.0, kw_only=True)
+    title: str = field(default="", kw_only=True)
+
+    def __post_init__(self) -> None:
+        _check_stream("cloud", self.cloud)
+        if self.pose is not None:
+            _check_stream("pose", self.pose)
+        _check_rate("res", self.res)
+        _check_rate("max_hz", self.max_hz)
+        _check_rate("pose_hz", self.pose_hz)
+
+    def _channels(self) -> tuple[Channel, ...]:
+        # Not a built-in bridge port, so the panel declares it (like Map2D's
+        # path) and cockpit() generates the typed port. A late viewer gets the
+        # last full map through the resend.
+        return (
+            Channel(
+                self.cloud,
+                PointCloud2,
+                encoding="voxels.zlib.v1",
+                delivery="latest",
+                max_hz=self.max_hz,
+                params={"res": self.res},
+                resend_on_subscribe=True,
+            ),
+        )
+
+    def _channel_requests(self) -> tuple[ChannelRequest, ...]:
+        requests = [
+            ChannelRequest(
+                self.cloud,
+                "rx",
+                "voxels.zlib.v1",
+                self.max_hz,
+                {"res": self.res},
+                delivery="latest",
             )
         ]
         if self.pose is not None:
