@@ -25,6 +25,10 @@ Any file type is accepted. Kind is inferred: a mem2 SQLite store (has a `_stream
 - Discovery modes (no argument, `--since`) skip files modified within the last `dimos_upload_quiet_s` seconds (default 30) so a store that is still being written is not shipped mid-run. Naming a path or `latest` is explicit intent and uploads immediately.
 - Compression stages next to the source file (not `/tmp`), with a free-space check first; point `dimos_staging_dir` at a bigger partition if needed.
 
+Successful uploads, including `already uploaded`, print a `console:` link to that exact upload's inspector, even if its preview failed. No browser is opened automatically.
+
+Links use the full, URL-encoded upload ID. They are printed only when `dimos_cloud_url` is `https://api.dimensional.org` (Console at `https://console.dimensional.org`) or `https://api.staging.dimensional.org` (Console at `https://console.staging.dimensional.org`), optionally with a trailing slash. Other API endpoints, including self-hosted servers, omit the link.
+
 ## Pulls
 
 Pulls land in `downloads/` under the checkout (`~/.local/state/dimos/downloads/` for an installed package), named `<upload-time>-<id-prefix>-<filename>` so nothing overwrites. `--dest` takes an exact target path. The wire bytes are sha256-verified, decoded, and moved into place atomically; a failed pull never clobbers an existing destination file.
