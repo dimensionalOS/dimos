@@ -46,9 +46,12 @@ logger = setup_logger()
 
 
 def recording_dir() -> Path:
-    """``recordings/<run-id>`` for this ``dimos run``; a timestamp when run outside it."""
+    """``<record_dir>/<run-id>`` for this ``dimos run``; a timestamp when run outside it."""
     run_id = os.environ.get("DIMOS_RUN_ID") or time.strftime("%Y%m%d-%H%M%S")
-    return RECORDINGS_DIR / run_id
+    base = (
+        Path(global_config.record_dir).expanduser() if global_config.record_dir else RECORDINGS_DIR
+    )
+    return base / run_id
 
 
 def _globs(topics: str) -> list[str]:
