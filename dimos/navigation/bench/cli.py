@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""``dimos nav-bench``: freeze a suite, run it against a blueprint, score runs again, play episodes back."""
+"""``dimos nav-bench``: freeze a suite, run it against a blueprint, score, report and play episodes back."""
 
 from __future__ import annotations
 
@@ -148,6 +148,16 @@ def score_command(
     from dimos.navigation.bench.runner import rescore
 
     _summary(rescore(run_dir))
+
+
+@app.command("report")
+def report_command(
+    run_dir: Path = typer.Argument(..., exists=True, help="A run directory."),
+) -> None:
+    """Write the run's report.html from its results and print the path."""
+    from dimos.navigation.bench.report import write
+
+    typer.echo(write(run_dir))
 
 
 @app.command("replay")

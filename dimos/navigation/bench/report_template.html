@@ -1,0 +1,104 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>{{ title }}</title>
+<style>
+body { font: 14px/1.4 system-ui, sans-serif; margin: 2em auto; max-width: 80em; color: #222; }
+.scroll { overflow-x: auto; }
+h2 { margin-top: 2em; border-bottom: 1px solid #ccc; }
+table { border-collapse: collapse; margin: 1em 0; }
+th, td { padding: 0.25em 0.75em; border-bottom: 1px solid #ddd; text-align: left; white-space: nowrap; }
+th { cursor: pointer; background: #f4f4f4; }
+tfoot td { font-weight: bold; }
+td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
+dl { display: grid; grid-template-columns: max-content auto; gap: 0.2em 1em; }
+dt { font-weight: bold; }
+code { font-size: 12px; }
+.verdict { font-size: 18px; margin: 1em 0; }
+</style>
+</head>
+<body>
+<h1>{{ title }}</h1>
+<p class="verdict">{{ verdict }}</p>
+<dl>
+<dt>suite</dt><dd>{{ run.suite_name }} ({{ run.suite }})</dd>
+<dt>split</dt><dd>{{ run.split or "all" }}</dd>
+<dt>blueprint</dt><dd>{{ run.blueprint }}</dd>
+<dt>policy</dt><dd>{{ run.policy or "default" }}</dd>
+<dt>overrides</dt><dd>{{ run.overrides | join(" ") or "none" }}</dd>
+<dt>git</dt><dd>{{ run.git_sha }}{% if run.git_dirty %} (dirty){% endif %}</dd>
+<dt>host</dt><dd>{{ run.host }}</dd>
+<dt>episodes</dt><dd>{{ report.rows | length }} of {{ run.episodes }}, {% if not run.finished %}not {% endif %}finished</dd>
+<dt>wall time</dt><dd>{{ wall }}</dd>
+<dt>finished at</dt><dd>{{ finished_at }}</dd>
+</dl>
+
+<h2>Outcomes by stressor</h2>
+<div class="scroll"><table>
+<thead><tr><th>stressor</th><th class="n">n</th>{% for outcome in report.outcomes %}<th class="n">{{ outcome }}</th>{% endfor %}</tr></thead>
+<tbody>
+{% for tag, counts in stressors.items() %}
+<tr><td>{{ tag }}</td><td class="n">{{ counts.values() | sum }}</td>{% for outcome in report.outcomes %}<td class="n">{{ counts[outcome] or "" }}</td>{% endfor %}</tr>
+{% endfor %}
+</tbody>
+<tfoot><tr><td>all</td><td class="n">{{ report.rows | length }}</td>{% for outcome in report.outcomes %}<td class="n">{{ totals[outcome] or "" }}</td>{% endfor %}</tr></tfoot>
+</table></div>
+
+<h2>Failure signatures</h2>
+<div class="scroll"><table>
+<thead><tr><th>signature</th><th class="n">n</th><th>from</th></tr></thead>
+<tbody>
+{% for signature, tags in signatures.items() %}
+<tr><td>{{ signature }}</td><td class="n">{{ tags.values() | sum }}</td><td>{% for tag, n in tags.most_common() %}{{ tag }} {{ n }}{{ ", " if not loop.last }}{% endfor %}</td></tr>
+{% endfor %}
+</tbody>
+</table></div>
+
+<h2>Outcomes against difficulty (medians)</h2>
+<div class="scroll"><table>
+<thead><tr><th>outcome</th><th class="n">n</th><th class="n">bottleneck m</th><th class="n">doors</th><th class="n">detour</th><th class="n">route m</th><th>bottlenecks 0 to {{ strip_m }} m</th></tr></thead>
+<tbody>
+{% for row in difficulty %}
+<tr><td>{{ row.outcome }}</td><td class="n">{{ row.n }}</td><td class="n">{{ "%.2f" | format(row.clearance) }}</td><td class="n">{{ "%.0f" | format(row.doors) }}</td><td class="n">{{ "%.2f" | format(row.detour) }}</td><td class="n">{{ "%.1f" | format(row.route) }}</td>
+<td><svg width="{{ strip_px }}" height="14"><line x1="0" x2="{{ strip_px }}" y1="7" y2="7" stroke="#ccc"/>
+{% for x in strip_ticks %}<line x1="{{ x }}" x2="{{ x }}" y1="3" y2="11" stroke="#bbb"/>{% endfor %}
+{% for x in row.dots %}<circle cx="{{ x }}" cy="7" r="3" fill="#0074d9" fill-opacity="0.35"/>{% endfor %}
+</svg></td></tr>
+{% endfor %}
+</tbody>
+</table></div>
+
+<h2>Episodes</h2>
+<div class="scroll"><table>
+<thead><tr><th>case</th><th>stressor</th><th>outcome</th><th>signature</th><th class="n">SPL</th><th class="n">time s</th><th class="n">bottleneck m</th><th class="n">final error m</th><th class="n">collisions</th><th>terminal</th><th>replay</th></tr></thead>
+<tbody>
+{% for row in report.rows %}
+<tr><td>{{ row.case.id }}</td><td>{{ row.case.tag }}</td><td>{{ row.outcome }}</td><td>{{ row.signature or "" }}</td>
+<td class="n">{{ "%.2f" | format(row.spl) if row.spl is not none }}</td>
+<td class="n">{{ "%.0f" | format(row.arrived_s) if row.arrived_s is not none }}</td>
+<td class="n">{{ "%.2f" | format(row.case.difficulty.min_clearance) }}</td>
+<td class="n">{{ "%.1f" | format(row.final_error_xy) if row.final_error_xy is not none }}</td>
+<td class="n">{{ row.collisions if row.collisions is not none }}</td>
+<td>{{ row.terminal or "" }}</td>
+<td><code>dimos nav-bench replay {{ row.case.id }}</code></td></tr>
+{% endfor %}
+</tbody>
+</table></div>
+
+<script>
+for (const th of document.querySelectorAll("th")) th.onclick = () => {
+  const table = th.closest("table"), index = th.cellIndex, body = table.tBodies[0];
+  const up = table.dataset.sorted !== String(index);
+  table.dataset.sorted = up ? String(index) : "";
+  const key = r => r.cells[index].textContent.trim();
+  const numeric = [...body.rows].every(r => key(r) === "" || !isNaN(parseFloat(key(r))));
+  [...body.rows].sort((a, b) => {
+    const [x, y] = numeric ? [parseFloat(key(a)), parseFloat(key(b))] : [key(a), key(b)];
+    const lt = (x !== x) ? 1 : (y !== y) ? -1 : x < y ? -1 : x > y ? 1 : 0;
+    return up ? lt : -lt;
+  }).forEach(r => body.appendChild(r));
+};
+</script>
+</body>
+</html>

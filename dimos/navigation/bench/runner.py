@@ -141,7 +141,8 @@ def run(config: RunConfig, report: Report | None = None) -> Path:
     with RUNS_INDEX.open("a") as index:
         index.write(f"{run_dir.resolve()}\n")
     episodes = [Episode(case, run_dir / case.id) for case in cases]
-    _write_run(run_dir, config, manifest, len(episodes), finished=False)
+    started = time.time()
+    _write_run(run_dir, config, manifest, len(episodes), started, finished=False)
     results = run_dir / RESULTS_FILE
     lock = threading.Lock()
     running: list[str] = []
@@ -190,7 +191,7 @@ def run(config: RunConfig, report: Report | None = None) -> Path:
     finally:
         signal.signal(signal.SIGTERM, previous)
     pool.shutdown()
-    _write_run(run_dir, config, manifest, len(episodes), finished=True)
+    _write_run(run_dir, config, manifest, len(episodes), started, finished=True)
     return run_dir
 
 
@@ -246,7 +247,12 @@ def _episode_dirs(run_dir: Path) -> Iterator[Path]:
 
 
 def _write_run(
-    run_dir: Path, config: RunConfig, manifest: Manifest, episodes: int, finished: bool
+    run_dir: Path,
+    config: RunConfig,
+    manifest: Manifest,
+    episodes: int,
+    started: float,
+    finished: bool,
 ) -> None:
     sha, dirty = git_state()
     record = {
@@ -266,6 +272,7 @@ def _write_run(
         "host": socket.gethostname(),
         "episodes": episodes,
         "finished": finished,
+        "started": started,
         "time": time.time(),
     }
     (run_dir / RUN_FILE).write_text(json.dumps(record, indent=2) + "\n")
