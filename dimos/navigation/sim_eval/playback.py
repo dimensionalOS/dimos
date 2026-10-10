@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Plays an episode's recorded body motion back in a MuJoCo viewer of its scene."""
+"""Plays an episode back: its body motion in a MuJoCo viewer, its replay file in Rerun."""
 
 from __future__ import annotations
 
@@ -20,6 +20,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 import json
 from pathlib import Path
+import subprocess
 import time
 
 import mujoco
@@ -30,7 +31,7 @@ from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.navigation.sim_eval.driver import TERMINAL_FILE
-from dimos.navigation.sim_eval.runner import RECORDING_FILE, RUN_FILE
+from dimos.navigation.sim_eval.runner import RECORDING_FILE, REPLAY_SUFFIX, RUN_FILE
 from dimos.navigation.sim_eval.suite import Manifest
 from dimos.simulation.go2_legged.robot import BASE_QUAT
 from dimos.simulation.go2_sim.world import build_model, open_viewer
@@ -124,11 +125,26 @@ def paced(items: list[Frame], speed: float) -> Iterator[Frame]:
         yield frame
 
 
-def play(episode_dir: Path, speed: float = 1.0, loop: bool = False) -> None:
-    """Open a viewer on the episode's scene and move the recorded body through it."""
+def open_rerun(replay: Path) -> subprocess.Popen[bytes]:
+    """The Rerun viewer on a replay file, our own build when it is installed."""
+    for command in ("dimos-viewer", "rerun"):
+        try:
+            return subprocess.Popen(
+                [command, str(replay)], stdin=subprocess.DEVNULL, start_new_session=True
+            )
+        except FileNotFoundError:
+            continue
+    raise FileNotFoundError("no rerun viewer on PATH")
+
+
+def play(episode_dir: Path, speed: float = 1.0, loop: bool = True, rerun: bool = True) -> None:
+    """Move the recorded body through the episode's scene, with its replay open in Rerun."""
     puppet = Puppet(episode_scene(episode_dir))
     recorded = frames(episode_dir / RECORDING_FILE)
     puppet.pose(recorded[0])
+    replay = episode_dir.with_suffix(REPLAY_SUFFIX)
+    if rerun and replay.exists():
+        open_rerun(replay)
     viewer = open_viewer(puppet.model, puppet.data, puppet.trunk_position())
     try:
         while viewer.is_running():
