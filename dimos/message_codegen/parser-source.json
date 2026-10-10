@@ -1,0 +1,8 @@
+{
+  "repository": "https://github.com/ros2/rosidl",
+  "revision": "85fa592b698b0f665e3120f48fac0d35e2f7d8a4",
+  "url": "https://codeload.github.com/ros2/rosidl/tar.gz/85fa592b698b0f665e3120f48fac0d35e2f7d8a4",
+  "sha256": "ba5369bca27297f606bf3396a9e066140d07ce754d8659159148102b089e9510",
+  "parser_sha256": "ce1f7d84ab0ad8300e77917061b74dbe701d33f3fd12de5ba6b75374c8f9970e",
+  "license": "Apache-2.0"
+}

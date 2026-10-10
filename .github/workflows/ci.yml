@@ -290,7 +290,10 @@ jobs:
           toolchain: '1.92.0'
           components: rustfmt
       - name: Install locked generation/check dependencies only
-        run: uv sync --only-group message-codegen --frozen
+        run: |
+          uv run --no-project --with requests python scripts/prepare_message_parser.py
+          uv sync --only-group message-codegen --frozen
+          uv pip install --python .venv/bin/python --no-deps ./dimos/message_codegen
       - name: Reject built-in Python/C++/Rust/schema drift
         run: .venv/bin/python -m scripts.generate_builtin_messages --check
       - name: Verify drift rejection for changed inputs and output inventories
@@ -331,7 +334,10 @@ jobs:
           enable-cache: true
           prune-cache: true
       - name: Install lint dependencies
-        run: uv sync --only-group lint --frozen
+        run: |
+          uv run --no-project --with requests python scripts/prepare_message_parser.py
+          uv sync --only-group lint --frozen
+          uv pip install --python .venv/bin/python --no-deps ./dimos/message_codegen
       - name: Install native build typing dependencies
         run: uv pip install --no-deps pybind11==3.0.1 types-setuptools==77.0.2.20250328
       - name: Mypy
@@ -392,7 +398,9 @@ jobs:
         # PyO3 extension modules (cdylib + `extension-module`) are the one case
         # that still needs a plain build: pytest imports the compiled .so.
         run: |
+          uv run --no-project --with requests python scripts/prepare_message_parser.py
           uv sync --group tests --frozen
+          uv pip install --python .venv/bin/python --no-deps ./dimos/message_codegen
           source .venv/bin/activate
           maturin develop -m dimos/mapping/ray_tracing/rust/py/Cargo.toml
           maturin develop -m dimos/navigation/global_planner/mls_planner/rust/py/Cargo.toml
@@ -537,7 +545,10 @@ jobs:
         with:
           node-version: 'lts/*'
       - name: Install Python dependencies
-        run: uv sync --group tests --frozen
+        run: |
+          uv run --no-project --with requests python scripts/prepare_message_parser.py
+          uv sync --group tests --frozen
+          uv pip install --python .venv/bin/python --no-deps ./dimos/message_codegen
       - name: Restore Hugging Face model cache
         id: hf-cache
         uses: actions/cache/restore@v6
@@ -661,7 +672,10 @@ jobs:
       - name: Fetch the go2_short replay dataset
         run: git lfs pull --include="data/.lfs/go2_short.db.tar.gz" --exclude=""
       - name: Install dependencies
-        run: uv sync --group tests --group browser-tests --frozen
+        run: |
+          uv run --no-project --with requests python scripts/prepare_message_parser.py
+          uv sync --group tests --group browser-tests --frozen
+          uv pip install --python .venv/bin/python --no-deps ./dimos/message_codegen
       - name: Install Playwright browsers  # the e2e runs in both engines
         run: uv run playwright install --with-deps chromium firefox
       - name: Cockpit + SDK browser e2e
@@ -777,7 +791,10 @@ jobs:
         if: steps.native-marker.outputs.cache-hit == 'true'
         run: python3 bin/build-native-modules --link-results .cachix-marker/links.txt
       - name: Install dependencies
-        run: uv sync --group tests --frozen
+        run: |
+          uv run --no-project --with requests python scripts/prepare_message_parser.py
+          uv sync --group tests --frozen
+          uv pip install --python .venv/bin/python --no-deps ./dimos/message_codegen
       - name: Run tests
         run: uv run pytest --numprocesses=logical --cov=dimos/ --junitxml=junit.xml -m 'not (self_hosted or mujoco or self_hosted_large or web_browser or bake_e2e or native_e2e)'
       - name: Re-run the failing tests with maximum verbosity
@@ -912,12 +929,17 @@ jobs:
           uv venv .codecov-venv
           uv pip install --python .codecov-venv/bin/python codecov-cli==11.2.8
       - name: Install dependencies
-        run: uv sync --group tests-self-hosted --frozen
+        run: |
+          uv run --no-project --with requests python scripts/prepare_message_parser.py
+          uv sync --group tests-self-hosted --frozen
+          uv pip install --python .venv/bin/python --no-deps ./dimos/message_codegen
       - name: Install web_browser e2e dependencies (macOS)
         if: matrix.os == 'macOS'
         run: |
           brew install ffmpeg libjpeg-turbo
+          uv run --no-project --with requests python scripts/prepare_message_parser.py
           uv sync --group tests-self-hosted --group browser-tests --frozen
+          uv pip install --python .venv/bin/python --no-deps ./dimos/message_codegen
           uv run python -c "from dimos.utils.turbojpeg import get_turbojpeg; get_turbojpeg()"
           uv run playwright install chromium firefox
       - name: Build C++ extensions in-place
@@ -1161,7 +1183,10 @@ jobs:
             `# Rerun viewer pulls in X11 keyboard bindings when DISPLAY is set.` \
             libxkbcommon-x11-0
       - name: Install dependencies
-        run: uv sync --group tests-self-hosted --frozen
+        run: |
+          uv run --no-project --with requests python scripts/prepare_message_parser.py
+          uv sync --group tests-self-hosted --frozen
+          uv pip install --python .venv/bin/python --no-deps ./dimos/message_codegen
       - name: Build C++ extensions in-place
         run: uv run python setup.py build_ext --inplace
       - name: Build DimSim and install its headless Chromium

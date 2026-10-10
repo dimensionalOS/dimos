@@ -52,6 +52,7 @@ jobs:
       - uses: astral-sh/setup-uv@v10.0.1
       - name: Build message backend wheel and prepare its test dependencies
         run: |
+          uv run --no-project --with requests python scripts/prepare_message_parser.py
           uv build dimos/message_codegen --wheel --out-dir wheelhouse
           uv venv --seed build/message-wheel-download
           build/message-wheel-download/bin/python -m pip download --only-binary=:all: --platform any --implementation py --python-version 3.10 --dest build/message-test-dependencies setuptools==77.0.3 wheel==0.48.0 packaging==25.0 tomli==2.4.0
@@ -96,6 +97,7 @@ jobs:
       - uses: astral-sh/setup-uv@v10.0.1
       - name: Build message backend wheel and prepare its test dependencies
         run: |
+          uv run --no-project --with requests python scripts/prepare_message_parser.py
           uv build dimos/message_codegen --wheel --out-dir wheelhouse
           uv venv --seed build/message-wheel-download
           build/message-wheel-download/bin/python -m pip download --only-binary=:all: --platform any --implementation py --python-version 3.10 --dest build/message-test-dependencies setuptools==77.0.3 wheel==0.48.0 packaging==25.0 tomli==2.4.0
@@ -130,7 +132,9 @@ jobs:
       - name: Build sdist
         run: uv build --sdist
       - name: Build lightweight backend artifacts
-        run: uv build dimos/message_codegen --out-dir message-dist
+        run: |
+          uv run --no-project --with requests python scripts/prepare_message_parser.py
+          uv build dimos/message_codegen --out-dir message-dist
       - name: Upload build backend for review
         uses: actions/upload-artifact@v7
         with:

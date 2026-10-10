@@ -189,16 +189,10 @@
     "repository": "ros2/rosidl",
     "revision": "85fa592b698b0f665e3120f48fac0d35e2f7d8a4",
     "files": {
-      "_vendor/rosidl_parser.py": "4ca3bc4ecbfca7f48a07f1d9630bfb5d006f55857e75a3d3207380386431572e",
       "schemas/licenses/ros2_rosidl/LICENSE": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
       "schemas/rosidl_adapter/package.xml": "653c797d2b4e2f5e6ad7b18812632bf6bf55aa924dfbca0405439389a5273989"
     },
-    "patches": {
-      "_vendor/rosidl_parser.py": {
-        "upstream_sha256": "ce1f7d84ab0ad8300e77917061b74dbe701d33f3fd12de5ba6b75374c8f9970e",
-        "description": "Equivalent linear-time constant-name validation regex"
-      }
-    }
+    "patches": {}
   },
   {
     "repository": "foxglove/schemas",

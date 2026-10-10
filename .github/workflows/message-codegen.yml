@@ -9,6 +9,7 @@ on:
       - scripts/test_builtin_message_source.sh
       - examples/message-codegen/**
       - scripts/*message*codegen*
+      - scripts/prepare_message_parser.py
       - .github/workflows/message-codegen.yml
       - .github/docker/message-codegen-reference.Dockerfile
       - Cargo.toml
@@ -39,6 +40,7 @@ jobs:
         run: |
           test ! -d /opt/ros
           uv venv .venv --python 3.12 --seed
+          uv run --no-project --with requests python scripts/prepare_message_parser.py
           uv pip install --python .venv/bin/python "./dimos/message_codegen[native]" ./packages/dimos-generated ruff==0.14.3 numpy pytest pytest-cov pytest-asyncio pytest-env mypy==1.19.0
           .venv/bin/python -c "import importlib.util; assert importlib.util.find_spec('rclpy') is None"
       - name: Verify built-in generated resources

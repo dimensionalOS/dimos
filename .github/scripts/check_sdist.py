@@ -29,7 +29,7 @@ MAX_UNCOMPRESSED_MB = 40
 REQUIRED = (
     "dimos/message_codegen/schemas/sensor_msgs/msg/Image.msg",
     "dimos/message_codegen/templates/native-support.cmake",
-    "dimos/message_codegen/_vendor/rosidl_parser.py",
+    "dimos/message_codegen/parser-source.json",
     "scripts/setup_message_codegen.sh",
     "web/cockpit/dist/index.html",
     "web/deno.lock",
