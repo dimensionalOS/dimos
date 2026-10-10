@@ -31,7 +31,7 @@ from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.navigation.bench.driver import TERMINAL_FILE
-from dimos.navigation.bench.runner import RECORDING_FILE, REPLAY_FILE, RUN_FILE, RUNS_INDEX
+from dimos.navigation.bench.runner import RECORDING_FILE, REPLAY_FILE, RUN_FILE, RUNS_INDEX, selects
 from dimos.navigation.bench.suite import Manifest
 from dimos.simulation.go2_legged.robot import BASE_QUAT
 from dimos.simulation.go2_sim.world import build_model, open_viewer
@@ -116,7 +116,7 @@ def find_episode(name: str) -> Path:
         if not run_dir.is_dir():
             continue
         found = sorted(
-            d for d in run_dir.iterdir() if d.name.startswith(name) and (d / TERMINAL_FILE).exists()
+            d for d in run_dir.iterdir() if selects(name, d.name) and (d / TERMINAL_FILE).exists()
         )
         if found:
             return found[0]
