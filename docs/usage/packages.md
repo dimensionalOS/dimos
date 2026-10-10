@@ -52,7 +52,7 @@ dimos --transport zenoh --viewer none run acme-probe.probe
 ## Module instance names
 
 Classes defined outside `dimos` and `dimos.*` default to their qualified Python
-name, for example `acme_robot.module.Worker`. Classes defined inside DimOS keep
+name, for example `acme_robot.module.Worker`. Classes defined inside dimOS keep
 their existing short names. The defining class controls this identity: reexporting
 a class or registering it through another package does not rename it, while a
 subclass uses its own definition path.

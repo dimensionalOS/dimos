@@ -189,8 +189,8 @@ You can override transports with the `transports` method. It returns a new bluep
 from dimos.core.transport import pSHMTransport, pLCMTransport
 
 base_blueprint = autoconnect(
-    module1(arg1=1),
-    module2(),
+    module1(arg1=1, instance_name="module1"),
+    module2(instance_name="module2"),
 )
 expanded_blueprint = autoconnect(
     base_blueprint,
@@ -358,6 +358,10 @@ blueprint = ModuleA.blueprint().global_config(n_workers=8)
 `BlueprintConfigParser` discovers the configuration exposed by a blueprint,
 resolves configuration sources, and returns an immutable
 `ParsedBlueprintConfig` for the coordinator:
+
+The explicit instance names in `base_blueprint` give these examples stable
+configuration addresses. Without an explicit name, external classes use their
+qualified Python names, such as `my_robot.module.Module1`.
 
 ```python session=blueprint-ex1
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
