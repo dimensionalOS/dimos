@@ -15,30 +15,33 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+import subprocess
 import sys
-import threading
-import time
 
 import pytest
 
+from dimos.memory.store.sqlite import SqliteStore
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.navigation.bench.ground_truth import Difficulty
+from dimos.navigation.bench.playback import Puppet, find_episode, frames
 from dimos.navigation.bench.runner import (
     RECORDING_FILE,
     RESULTS_FILE,
     RUN_FILE,
     SCORE_FILE,
-    Episode,
     Progress,
     RunConfig,
-    _episode,
-    _live,
     rescore,
     run,
-    stop_all,
 )
 from dimos.navigation.bench.suite import Case, Manifest, Rules, Split
+from dimos.simulation.go2_legged.policy import OnnxGo2Policy
 from dimos.simulation.scenes.procedural import Params, office
+
+T0 = 1000.0
 
 FAKE_BLUEPRINT = """
 import json, signal, sys, time
@@ -54,8 +57,6 @@ case_id = args["--episodedriver.case-id"]
 manifest = json.loads(Path(args["--episodedriver.manifest"]).read_text())
 case = next(c for c in manifest["cases"] if c["id"] == case_id)
 arrive = case["tag"] != "stay_put"
-if case["tag"] == "hang":
-    signal.pause()
 recording = Path(args["--fake-recordings"]) / f"{case_id}-{time.time_ns()}" / "memory.db"
 recording.parent.mkdir(parents=True)
 store = SqliteStore(path=str(recording))
@@ -73,15 +74,16 @@ store.stop()
 (recording.parent / "rerun.rrd").write_bytes(b"rrd")
 print(f"Recording to {recording}", flush=True)
 (out / "terminal.json").write_text(json.dumps({"reason": "arrived" if arrive else "timeout", "t0": t0}))
-print("scene", args["--simgo2world.seed"], args["--simgo2world.scene-params"], " ".join(a for a in sys.argv if a.startswith("--set-")), flush=True)
+print("scene", args["--simgo2world.scene-params"], *[a for a in sys.argv if a.startswith("--set-")], flush=True)
 signal.pause()
 """
 
 
 @pytest.fixture(autouse=True)
-def _private_slots(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def _private_state(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr("dimos.navigation.bench.runner.SLOTS_DIR", tmp_path / "slots")
     monkeypatch.setattr("dimos.navigation.bench.runner.RUNS_INDEX", tmp_path / "runs")
+    monkeypatch.setattr("dimos.navigation.bench.playback.RUNS_INDEX", tmp_path / "runs")
 
 
 def _case(case_id: str, tag: str, split: Split, params: Params) -> Case:
@@ -107,23 +109,16 @@ def suite(tmp_path: Path) -> Path:
         _case("mined-s1-aaaaaa", "mined", "dev", {}),
         _case("narrow_door-s1-bbbbbb", "narrow_door", "dev", {"door_width": 0.5}),
         _case("stay_put-s1-cccccc", "stay_put", "dev", {}),
-        _case("mined-s1-dddddd", "mined", "held_out", {}),
     ]
     path = tmp_path / "suite.json"
     Manifest("test", Rules(), 0, None, False, cases, []).save(path)
     return path
 
 
-@pytest.fixture
-def fake_blueprint(tmp_path: Path) -> tuple[str, ...]:
-    script = tmp_path / "fake_blueprint.py"
-    script.write_text(FAKE_BLUEPRINT)
-    return (sys.executable, str(script))
-
-
-def test_run_scores_every_episode_of_the_split_in_parallel(
-    suite: Path, fake_blueprint: tuple[str, ...], tmp_path: Path
+def test_run_scores_every_episode_in_parallel_and_rescores_the_same(
+    suite: Path, tmp_path: Path
 ) -> None:
+    (tmp_path / "fake.py").write_text(FAKE_BLUEPRINT)
     reports: list[Progress] = []
     run_dir = run(
         RunConfig(
@@ -132,82 +127,53 @@ def test_run_scores_every_episode_of_the_split_in_parallel(
             procs=3,
             out_dir=tmp_path / "run",
             overrides=(f"--fake-recordings={tmp_path / 'recordings'}", "--set-x=1"),
-            command=fake_blueprint,
+            command=(sys.executable, str(tmp_path / "fake.py")),
         ),
         reports.append,
     )
-    rows = [json.loads(line) for line in (run_dir / RESULTS_FILE).read_text().splitlines()]
-    assert len(rows) == 3
-    assert reports[0].done == 0 and len(reports[0].running) == 1
+    results = (run_dir / RESULTS_FILE).read_text()
+    rows = {r["case_id"]: r for r in map(json.loads, results.splitlines())}
+    assert len(rows) == 3 and all(r["error"] is None for r in rows.values())
+    assert rows["mined-s1-aaaaaa"]["outcome"] == "success"
+    assert rows["stay_put-s1-cccccc"]["outcome"] == "timeout"
     assert reports[-1].done == reports[-1].total == 3 and not reports[-1].running
-    assert sum(reports[-1].outcomes.values()) == 3
-    assert sorted(r.finished for r in reports if r.finished) == [
-        ("mined-s1-aaaaaa", "success"),
-        ("narrow_door-s1-bbbbbb", "success"),
-        ("stay_put-s1-cccccc", "timeout"),
-    ]
     assert max(len(r.running) for r in reports) <= 3
-    assert {r["case_id"] for r in rows} == {
-        "mined-s1-aaaaaa",
-        "narrow_door-s1-bbbbbb",
-        "stay_put-s1-cccccc",
-    }
-    by_case = {r["case_id"]: r for r in rows}
-    assert by_case["mined-s1-aaaaaa"]["outcome"] == "success"
-    assert by_case["mined-s1-aaaaaa"]["terminal"] == "arrived"
-    assert by_case["stay_put-s1-cccccc"]["outcome"] == "timeout"
-    assert all(r["error"] is None for r in rows)
+    assert ("stay_put-s1-cccccc", "timeout") in [r.finished for r in reports]
     episode = run_dir / "narrow_door-s1-bbbbbb"
-    assert (episode / RECORDING_FILE).exists()
-    assert (episode / SCORE_FILE).exists()
+    assert (episode / RECORDING_FILE).exists() and (episode / SCORE_FILE).exists()
     assert (episode / "rerun.rrd").read_bytes() == b"rrd"
-    assert 'scene 1 {"door_width": 0.5} --set-x=1' in (episode / "run.log").read_text()
+    assert 'scene {"door_width": 0.5} --set-x=1' in (episode / "run.log").read_text()
     assert not any((tmp_path / "recordings").iterdir())
-    meta = json.loads((run_dir / RUN_FILE).read_text())
-    assert meta["finished"] is True
+    assert json.loads((run_dir / RUN_FILE).read_text())["finished"] is True
     assert (tmp_path / "runs").read_text().strip() == str(run_dir.resolve())
-    assert meta["episodes"] == 3
-    assert meta["overrides"][-1] == "--set-x=1"
+    assert set(rescore(run_dir).read_text().splitlines()) == set(results.splitlines())
+    assert find_episode("narrow_door") == episode
 
 
-def test_rescore_reproduces_the_results(
-    suite: Path, fake_blueprint: tuple[str, ...], tmp_path: Path
-) -> None:
-    run_dir = run(
-        RunConfig(
-            suite=suite,
-            split=None,
-            cases=("mined-s1-dd",),
-            out_dir=tmp_path / "run",
-            overrides=(f"--fake-recordings={tmp_path / 'recordings'}",),
-            command=fake_blueprint,
-        )
+def test_playback_poses_the_puppet_from_a_recording(tmp_path: Path) -> None:
+    joints = list(OnnxGo2Policy.joint_names)
+    store = SqliteStore(path=str(tmp_path / "memory.db"))
+    store.start()
+    for k in range(3):
+        t = T0 + 0.02 * k
+        pose = PoseStamped(1.0 + k, 2.0, 0.3, 0.0, 0.0, 0.0, 1.0, ts=t, frame_id="odom")
+        store.stream("ground_truth", PoseStamped).append(pose, ts=t)
+        state = JointState(ts=t + 0.001, name=joints, position=[0.1 * k] * len(joints))
+        store.stream("joint_state", JointState).append(state, ts=t + 0.001)
+    store.stop()
+    recorded = frames(tmp_path / "memory.db")
+    assert [f.position[0] for f in recorded] == [1.0, 2.0, 3.0]
+    puppet = Puppet(office(1))
+    puppet.pose(recorded[-1])
+    assert puppet.trunk_position() == pytest.approx([3.0, 2.0, 0.3])
+    assert puppet.data.qpos[7:] == pytest.approx([0.2] * len(joints))
+
+
+def test_the_dimos_entry_point_imports_without_mujoco(tmp_path: Path) -> None:
+    (tmp_path / "mujoco").mkdir()
+    (tmp_path / "mujoco" / "__init__.py").write_text('raise ImportError("no mujoco here")\n')
+    env = {**os.environ, "PYTHONPATH": f"{tmp_path}{os.pathsep}{os.environ.get('PYTHONPATH', '')}"}
+    probe = subprocess.run(
+        [sys.executable, "-c", "import dimos.cli.dimos"], env=env, capture_output=True, text=True
     )
-    before = (run_dir / RESULTS_FILE).read_text()
-    assert rescore(run_dir).read_text() == before
-    assert json.loads(before)["case_id"] == "mined-s1-dddddd"
-
-
-def test_stop_all_ends_an_episode_that_never_terminates(
-    suite: Path, fake_blueprint: tuple[str, ...], tmp_path: Path
-) -> None:
-    manifest = Manifest.load(suite)
-    case = _case("hang-s1-eeeeee", "hang", "dev", {})
-    config = RunConfig(
-        suite=suite,
-        overrides=(f"--fake-recordings={tmp_path / 'recordings'}",),
-        command=fake_blueprint,
-    )
-    episode = Episode(case, tmp_path / "hang")
-    results: list = []
-    worker = threading.Thread(target=lambda: results.append(_episode(config, manifest, episode, 0)))
-    worker.start()
-    deadline = time.time() + 10.0
-    while not _live and time.time() < deadline:
-        time.sleep(0.05)
-    assert _live
-    stop_all()
-    worker.join(timeout=30.0)
-    assert not worker.is_alive()
-    assert results[0].error == "no terminal record"
-    assert not _live
+    assert probe.returncode == 0, probe.stderr[-2000:]

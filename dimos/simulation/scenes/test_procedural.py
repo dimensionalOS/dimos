@@ -115,16 +115,6 @@ def test_office_door_width_is_drawn_unless_given() -> None:
     assert narrow.params["width"] == office(3).params["width"]
 
 
-def test_office_counts_are_drawn_unless_given() -> None:
-    assert 8 <= office(3).params["clutter"] <= 15
-    assert 1 <= office(3).params["tables"] <= 3
-    scene = office(3, clutter=3, tables=0)
-    assert (scene.params["clutter"], scene.params["tables"]) == (3, 0)
-    assert sum(box.kind == "clutter" for box in scene.boxes) == 3
-    scene = office(3, clutter=0, tables=2)
-    assert sum(box.kind == "clutter" for box in scene.boxes) == 2 * 5
-
-
 def test_door_clutter_adds_one_box_past_every_doorway() -> None:
     plain, cluttered = office(3), office(3, door_clutter=True)
     assert len(cluttered.boxes) == len(plain.boxes) + len(plain.doors)

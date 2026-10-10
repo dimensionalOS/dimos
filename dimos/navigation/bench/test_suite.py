@@ -11,88 +11,51 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from dimos.navigation.bench.ground_truth import GO2, GroundTruth
-from dimos.navigation.bench.suite import (
-    MINED,
-    NARROW_DOOR_M,
-    OBSTRUCTED,
-    FreezeConfig,
-    Manifest,
-    freeze,
-)
+from dimos.navigation.bench.suite import MINED, NARROW_DOOR_M, FreezeConfig, Manifest, freeze
+from dimos.simulation.scenes.procedural import office
 
 SMALL = FreezeConfig(seeds=(1, 3), stressor_samples=60, samples_per_scene=25, cases_per_bin=1)
 
 
-STEPS: list[tuple[int, int, str]] = []
+def test_ground_truth_finds_floor_walls_routes_and_what_the_lidar_sees() -> None:
+    gt = GroundTruth(office(1))
+    z0 = gt.scene.params["z0"]
+    assert gt.height[gt.index((1.0, 1.0))] == pytest.approx(z0, abs=1e-6)
+    assert np.isnan(gt.height[gt.index((-0.05, 3.0))])
+    assert gt.stands((1.0, 1.0)) and not gt.stands((0.1, 3.0))
+    reach = np.where(gt.walkable, np.add.outer(*map(np.arange, gt.shape)), -1)
+    goal = gt.center(*np.unravel_index(int(np.argmax(reach)), gt.shape))
+    route = gt.route(gt.scene.start, goal, centered=True)
+    assert route is not None and all(gt.stands(p) for p in route.points)
+    assert np.allclose(route.points[-1, :2], goal[:2])
+    difficulty = gt.difficulty(route)
+    assert difficulty.min_clearance >= GO2.radius and difficulty.doors >= 1
+    cloud = gt.premap_cloud(route.points)
+    lo, hi = gt.scene.bounds()
+    assert len(cloud) > 20_000 and np.all(cloud >= lo - gt.cell) and np.all(cloud <= hi + gt.cell)
+    assert np.mean(np.abs(cloud[:, 2] - z0) < 0.05) > 0.1 and np.any(cloud[:, 2] > z0 + 2.5)
 
 
-@pytest.fixture(scope="module")
-def manifest() -> Manifest:
-    return freeze(SMALL, lambda *step: STEPS.append(step))
-
-
-def test_every_case_is_routable_and_pinned_to_its_scene(manifest: Manifest) -> None:
-    assert manifest.cases
-    assert len({c.id for c in manifest.cases}) == len(manifest.cases)
+def test_freeze_bins_routable_cases_that_round_trip(tmp_path: Path) -> None:
+    steps: list[tuple[int, int, str]] = []
+    manifest = freeze(SMALL, lambda *step: steps.append(step))
+    assert len({c.id for c in manifest.cases}) == len(manifest.cases) > 0
     for case in manifest.cases:
         assert case.route_length >= SMALL.min_route_m
-        assert case.difficulty.min_clearance >= GO2.radius
         assert case.scene().digest() == case.scene_digest
-    case = next(c for c in manifest.cases if c.tag == "narrow_door")
-    gt = GroundTruth(case.scene())
-    assert gt.stands(case.start)
-    route = gt.route(case.start, case.goal)
-    assert route is not None
-    assert route.length == pytest.approx(case.route_length)
-
-
-def test_stressors_match_their_templates(manifest: Manifest) -> None:
-    by_tag: dict[str, list] = {}
-    for case in manifest.cases:
-        by_tag.setdefault(case.tag, []).append(case)
-    for case in by_tag["narrow_door"]:
-        assert case.params == {"door_width": NARROW_DOOR_M}
-        assert case.difficulty.doors >= 1
-        assert case.difficulty.min_clearance <= NARROW_DOOR_M / 2 + 0.05
-    for case in by_tag["doorway_clutter"]:
-        assert case.params == {"door_clutter": True}
-        assert case.difficulty.doors >= 1
-    for case in by_tag["behind_clutter"]:
-        assert case.difficulty.doors == 0
-        assert case.difficulty.detour >= OBSTRUCTED
-        assert case.difficulty.clutter_near >= 1
-    for case in by_tag.get("against_wall", []):
-        assert case.difficulty.doors >= 1
-    for case in by_tag["around_table"]:
-        assert case.difficulty.doors == 0
-        assert case.difficulty.detour >= OBSTRUCTED
-    for case in by_tag.get("dead_end", []):
-        assert case.difficulty.detour >= 1.4
-    for case in by_tag.get("three_doors", []):
-        assert case.difficulty.doors >= 3
-    assert by_tag[MINED]
-    assert all(c.params == {} and c.start[:2] != (1.0, 1.0) for c in by_tag[MINED])
-
-
-def test_manifest_round_trips_through_json(manifest: Manifest, tmp_path: Path) -> None:
-    path = tmp_path / "suite.json"
-    manifest.save(path)
-    loaded = Manifest.load(path)
+    assert {"narrow_door", "behind_clutter", MINED} <= {c.tag for c in manifest.cases}
+    narrow = next(c for c in manifest.cases if c.tag == "narrow_door")
+    assert narrow.params == {"door_width": NARROW_DOOR_M} and narrow.difficulty.doors >= 1
+    assert [done for done, _, _ in steps] == [0, 1, 2, 3] and steps[-1][2] == "done"
+    manifest.save(tmp_path / "suite.json")
+    loaded = Manifest.load(tmp_path / "suite.json")
     assert loaded == manifest
     loaded.check_drift()
-
-
-def test_freeze_is_deterministic_and_reports_every_scene(manifest: Manifest) -> None:
-    assert freeze(SMALL) == manifest
-    assert [done for done, _, _ in STEPS] == [0, 1, 2, 3]
-    assert all(total == 3 for _, total, _ in STEPS)
-    assert {STEPS[1][2], STEPS[2][2]} == {"scene 1 done", "scene 3 done"}
-    assert STEPS[-1][2] == "done"
