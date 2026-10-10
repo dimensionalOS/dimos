@@ -36,7 +36,9 @@ from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspModule
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.manipulation_skills import ManipulationSkills
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
-from dimos.manipulation.planning.utils.point_cloud_self_filter import PointCloudSelfFilter
+from dimos.manipulation.planning.utils.roboplan_point_cloud_self_filter import (
+    RoboPlanPointCloudSelfFilter,
+)
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -193,7 +195,7 @@ def _voxel_mapping() -> tuple[Blueprint, ...]:
     return (
         # The wrist camera sees the arm itself, so the arm's returns must be
         # dropped before mapping.
-        PointCloudSelfFilter.blueprint(
+        RoboPlanPointCloudSelfFilter.blueprint(
             # Filter only the arm; gripper returns may remain in the map.
             model=make_xarm7_model_config(add_gripper=False).model,
             state_tolerance_s=0.1,
