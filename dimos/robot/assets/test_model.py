@@ -148,6 +148,29 @@ def test_loaded_model_exposes_cached_urdf_topology(tmp_path: Path) -> None:
     assert loaded.get_joint("missing") is None
 
 
+def test_loaded_model_reads_every_joint_limit(tmp_path: Path) -> None:
+    loaded = robot_model.LoadedRobotModel(
+        """
+        <robot name="test">
+          <link name="base"/>
+          <link name="arm"/>
+          <joint name="shoulder" type="revolute">
+            <parent link="base"/>
+            <child link="arm"/>
+            <limit lower="-1.5" upper="2.5" velocity="3.0" effort="40.0"/>
+          </joint>
+        </robot>
+        """,
+        tmp_path / "robot.urdf",
+        {},
+    )
+
+    joint = loaded.get_joint("shoulder")
+
+    assert joint is not None
+    assert (joint.lower, joint.upper, joint.velocity, joint.effort) == (-1.5, 2.5, 3.0, 40.0)
+
+
 def test_with_fixed_frame_builds_ordered_model_chain_and_preserves_extensions(
     tmp_path: Path,
 ) -> None:

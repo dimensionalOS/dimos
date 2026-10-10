@@ -65,14 +65,6 @@ overrides = [
 ]
 
 [[package]]
-name = "a750-control"
-version = "0.1.1"
-source = { registry = "https://pypi.org/simple" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/c0/77/d46aa63e746dce7773b47c67533b4ef9c25aa8160d71d5e1a278a0ee8be6/a750_control-0.1.1-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:1bba463c7258ab05cf652b26771f4f0715d795f6f67c9697448c0028301c0f4a", size = 22981212, upload-time = "2026-05-19T21:37:53.29Z" },
-]
-
-[[package]]
 name = "absl-py"
 version = "2.4.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1781,7 +1773,6 @@ agents = [
     { name = "sounddevice" },
 ]
 all = [
-    { name = "a750-control", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
     { name = "aiohttp" },
     { name = "aioquic" },
     { name = "aiortc" },
@@ -1897,7 +1888,6 @@ base = [
     { name = "yourdfpy", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
 ]
 control = [
-    { name = "a750-control", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
     { name = "can-motor-control" },
     { name = "piper-sdk" },
     { name = "pygame" },
@@ -1928,7 +1918,6 @@ learning = [
     { name = "pyarrow" },
 ]
 manipulation = [
-    { name = "a750-control", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
     { name = "aioquic" },
     { name = "can-motor-control" },
     { name = "chromadb" },
@@ -2010,7 +1999,6 @@ perception = [
     { name = "ultralytics" },
 ]
 planning = [
-    { name = "a750-control", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
     { name = "can-motor-control" },
     { name = "drake", version = "1.45.0", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'aarch64' and sys_platform == 'darwin'" },
     { name = "drake", version = "1.49.0", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'aarch64' and sys_platform != 'darwin'" },
@@ -2346,7 +2334,6 @@ tests-self-hosted = [
 
 [package.metadata]
 requires-dist = [
-    { name = "a750-control", marker = "platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'control'" },
     { name = "aiohttp", marker = "extra == 'webrtc'", specifier = ">=3.9.0" },
     { name = "aioquic", marker = "extra == 'web'", specifier = ">=1.2.0" },
     { name = "aiortc", marker = "extra == 'webrtc'", specifier = ">=1.14.0" },

@@ -14,27 +14,16 @@
 
 """Named Go2 movement envelopes (speed and limit caps).
 
-Data and validation only. Live wiring: ``DanHolonomicTCConfig.run_profile`` and
-``_HolonomicPathFollower._resolve_run_envelope``.
+Data and validation only. Live wiring: ``DanHolonomicTCConfig.run_profile``, resolved
+by ``DanHolonomicTC`` into ``HolonomicPathController.configure``.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 import math
 
 from dimos.navigation.experimental.dannav.geometry.path_speed_profile import PathSpeedProfileLimits
-
-_POSITIVE_FIELDS: tuple[str, ...] = (
-    "requested_planner_speed_m_s",
-    "max_tangent_accel_m_s2",
-    "max_normal_accel_m_s2",
-    "goal_decel_m_s2",
-    "max_planar_cmd_accel_m_s2",
-    "max_yaw_rate_rad_s",
-    "max_yaw_accel_rad_s2",
-)
 
 
 class RunProfileError(ValueError):
@@ -50,18 +39,16 @@ class RunProfile:
     max_tangent_accel_m_s2: float
     max_normal_accel_m_s2: float
     goal_decel_m_s2: float
-    max_planar_cmd_accel_m_s2: float
     max_yaw_rate_rad_s: float
-    max_yaw_accel_rad_s2: float
 
     def __post_init__(self) -> None:
         if not self.name.strip():
             raise RunProfileError("run profile name must be non-empty")
-        for field_name in _POSITIVE_FIELDS:
-            value = getattr(self, field_name)
+        for field in fields(self)[1:]:
+            value = getattr(self, field.name)
             if not math.isfinite(value) or value <= 0.0:
                 raise RunProfileError(
-                    f"{self.name!r}.{field_name} must be a positive finite float, got {value!r}"
+                    f"{self.name!r}.{field.name} must be a positive finite float, got {value!r}"
                 )
 
     def path_speed_profile_limits_at(self, max_speed_m_s: float) -> PathSpeedProfileLimits:
@@ -70,65 +57,45 @@ class RunProfile:
             max_speed_m_s=max_speed_m_s,
             max_tangent_accel_m_s2=self.max_tangent_accel_m_s2,
             max_normal_accel_m_s2=self.max_normal_accel_m_s2,
+            max_yaw_rate_rad_s=self.max_yaw_rate_rad_s,
         )
 
 
-@dataclass(frozen=True)
-class RunProfileRegistry:
-    """Named run profiles."""
-
-    profiles: Mapping[str, RunProfile]
-
-    def __post_init__(self) -> None:
-        if not self.profiles:
-            raise RunProfileError("registry must define at least one profile")
-        for key, profile in self.profiles.items():
-            if key != profile.name:
-                raise RunProfileError(
-                    f"registry key {key!r} does not match profile name {profile.name!r}"
-                )
-        object.__setattr__(self, "profiles", dict(self.profiles))
-
-    def get(self, name: str) -> RunProfile:
-        """Look up a profile by name; unknown names list the known profiles."""
-        try:
-            return self.profiles[name]
-        except KeyError as exc:
-            known = ", ".join(sorted(self.profiles))
-            raise RunProfileError(f"unknown run profile {name!r}; known profiles: {known}") from exc
-
-
-GO2_RUN_PROFILES = RunProfileRegistry(
-    profiles={
-        "walk": RunProfile(
+GO2_RUN_PROFILES: dict[str, RunProfile] = {
+    profile.name: profile
+    for profile in (
+        RunProfile(
             name="walk",
             requested_planner_speed_m_s=0.55,
             max_tangent_accel_m_s2=1.0,
             max_normal_accel_m_s2=0.6,
-            goal_decel_m_s2=1.0,
-            max_planar_cmd_accel_m_s2=5.0,
+            goal_decel_m_s2=0.5,
             max_yaw_rate_rad_s=1.0,
-            max_yaw_accel_rad_s2=5.0,
         ),
-        "trot": RunProfile(
+        RunProfile(
             name="trot",
             requested_planner_speed_m_s=1.0,
             max_tangent_accel_m_s2=1.5,
             max_normal_accel_m_s2=0.8,
             goal_decel_m_s2=1.2,
-            max_planar_cmd_accel_m_s2=5.0,
             max_yaw_rate_rad_s=1.2,
-            max_yaw_accel_rad_s2=5.0,
         ),
-        "run_conservative": RunProfile(
+        RunProfile(
             name="run_conservative",
             requested_planner_speed_m_s=1.5,
             max_tangent_accel_m_s2=2.0,
             max_normal_accel_m_s2=1.0,
             goal_decel_m_s2=1.5,
-            max_planar_cmd_accel_m_s2=6.0,
             max_yaw_rate_rad_s=1.0,
-            max_yaw_accel_rad_s2=4.0,
         ),
-    },
-)
+    )
+}
+
+
+def get_run_profile(name: str) -> RunProfile:
+    """Look up a profile by name; unknown names list the known profiles."""
+    try:
+        return GO2_RUN_PROFILES[name]
+    except KeyError as exc:
+        known = ", ".join(sorted(GO2_RUN_PROFILES))
+        raise RunProfileError(f"unknown run profile {name!r}; known profiles: {known}") from exc
