@@ -1,3 +1,4 @@
+#!/opt/venv/bin/python
 # Copyright 2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-ADAPTER_FACTORIES = {
-    "mujoco_eval": "dimos.hardware.manipulators.sim.eval_adapter:MujocoEvalAdapter",
-    "sim_mujoco": "dimos.hardware.manipulators.sim.adapter:ShmMujocoAdapter",
-}
+"""Normal DimOS CLI for the filtered robot image."""
+
+from dimos.cli.entry import main
+
+if __name__ == "__main__":
+    main()

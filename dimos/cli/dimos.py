@@ -20,6 +20,7 @@ up, in the order that defines `dimos --help`.
 
 from __future__ import annotations
 
+from importlib.util import find_spec
 import os
 import sys
 
@@ -149,10 +150,12 @@ from dimos.memory.cli.app import mem_app
 
 main.add_typer(mem_app, name="mem")
 
-from dimos.evals.cli import app as evals_app
+# The isolated robot image deliberately excludes the private evaluation package.
+if find_spec("dimos.evals") is not None:
+    from dimos.evals.cli import app as evals_app
 
-evals_app.add_typer(vqa_app, name="vqa")
-main.add_typer(evals_app, name="evals")
+    evals_app.add_typer(vqa_app, name="vqa")
+    main.add_typer(evals_app, name="evals")
 
 main.command()(cameracalibrate)
 main.command()(apriltag)

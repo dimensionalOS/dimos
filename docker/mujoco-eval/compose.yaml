@@ -1,0 +1,52 @@
+# No host ports, Docker socket, host IPC, capabilities, or outbound network.
+services:
+  trusted:
+    image: dimos-mujoco-eval-trusted
+    build:
+      context: ../..
+      dockerfile: docker/mujoco-eval/Dockerfile
+      target: trusted
+    network_mode: none
+    ipc: private
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    user: "${EVAL_UID:-1000}:${EVAL_GID:-1000}"
+    pids_limit: 128
+    mem_limit: 4g
+    cpus: 2
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=256m
+    volumes:
+      - type: bind
+        source: ${EVAL_PRIVATE_DIR:?Set private scene and manifest directory}
+        target: /private
+        read_only: true
+      - type: bind
+        source: ${EVAL_RESULT_DIR:?Set trusted result directory}
+        target: /results
+  robot:
+    image: dimos-mujoco-eval-robot
+    build:
+      context: ../..
+      dockerfile: docker/mujoco-eval/Dockerfile
+      target: robot
+    # Share the empty network namespace: only loopback is reachable. IPC, PID,
+    # filesystems and users remain separate. Trusted never joins the DimOS bus.
+    network_mode: service:trusted
+    depends_on: [trusted]
+    ipc: private
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    user: "1000:1000"
+    pids_limit: 128
+    mem_limit: 4g
+    cpus: 2
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=256m
+    environment:
+      DIMOS_MUJOCO_EVAL_ENDPOINT: ${EVAL_ENDPOINT:?Set explicit loopback TCP endpoint}
+      DIMOS_MUJOCO_EVAL_RUN: ${EVAL_RUN:?Set public run ID}
+      DIMOS_MUJOCO_EVAL_EPISODE: ${EVAL_EPISODE:?Set public episode ID}
+      EVAL_PROBE_MODE: ${EVAL_PROBE_MODE:-normal}

@@ -145,6 +145,9 @@ class GlobalConfig(BaseSettings):
     dimsim_scene: str = "apartment"
     dimsim_port: int = 8090
     dimsim_headless: bool = True
+    mujoco_eval_endpoint: str = ""
+    mujoco_eval_run: str = ""
+    mujoco_eval_episode: str = ""
     mujoco_scene: str | None = None
     local_relay: bool = False
     relay_url: str | None = None
