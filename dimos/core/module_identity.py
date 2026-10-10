@@ -17,6 +17,10 @@ from typing import Any
 
 def external_module_name(module_class: type[Any]) -> str | None:
     """Qualify external classes by their definition, independent of registration."""
-    if module_class.__module__ == "dimos" or module_class.__module__.startswith("dimos."):
+    module_path = module_class.__module__
+    if module_path == "dimos" or module_path.startswith("dimos."):
         return None
-    return f"{module_class.__module__}.{module_class.__qualname__}"
+    # Multiprocessing imports the entry script under this alias in workers.
+    if module_path == "__mp_main__":
+        module_path = "__main__"
+    return f"{module_path}.{module_class.__qualname__}"

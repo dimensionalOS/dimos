@@ -13,6 +13,10 @@
 # limitations under the License.
 
 import importlib
+import os
+import signal
+import subprocess
+import sys
 
 import pytest
 
@@ -138,6 +142,47 @@ def test_internal_namespace_boundary_is_exact(origin):
     assert worker.name == (
         "dimos_extensions.worker.Worker" if origin == "dimos_extensions.worker" else "worker"
     )
+
+
+def test_script_module_rpc_identity_survives_worker_import(tmp_path):
+    script = tmp_path / "worker_script.py"
+    script.write_text("""from dimos.core.core import rpc
+from dimos.core.module import Module
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
+from dimos.core.global_config import GlobalConfig
+
+class Worker(Module):
+    @rpc
+    def identity(self):
+        return self.config.instance_name
+
+if __name__ == "__main__":
+    coordinator = ModuleCoordinator(g=GlobalConfig(n_workers=1, viewer="none"))
+    try:
+        coordinator.start()
+        worker = coordinator.deploy(Worker)
+        assert Worker.name == worker.remote_name == worker.identity() == "__main__.Worker"
+        assert coordinator.list_module_names() == ["__main__.Worker"]
+    finally:
+        coordinator.stop()
+""")
+    with (tmp_path / "worker.log").open("w+") as output:
+        process = subprocess.Popen(
+            [sys.executable, str(script)],
+            stdout=output,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+        try:
+            return_code = process.wait(timeout=30)
+            output.seek(0)
+            assert return_code == 0, output.read()
+        finally:
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            process.wait(timeout=5)
 
 
 @pytest.mark.parametrize("source", ["cli", "environment", "overrides"])
