@@ -98,8 +98,10 @@ impl MLSPlanner {
             wall_buffer_weight,
             step_threshold_m,
             step_penalty_weight,
-            // Unused here. Only the binary's replan loop reads goal_tolerance.
+            // Unused here. Only the binary's replan loop reads the goal tolerances.
             goal_tolerance: 1.0,
+            goal_z_tolerance: 1.0,
+            blocked_timeout_s: 0.0,
             // Unused here. Only the binary's worker publishes viz artifacts.
             viz_publish_hz: 1.0,
             viz_region_m: 4.0,

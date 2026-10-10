@@ -45,7 +45,6 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Path import Path
-from dimos.navigation.base import NavigationState
 from dimos.navigation.experimental.dannav.geometry.path_distancer import PathDistancer
 from dimos.navigation.experimental.dannav.geometry.path_speed_profile import (
     PathSpeedProfileLimits,
@@ -64,6 +63,7 @@ from dimos.navigation.experimental.dannav.holonomic_tc.run_profiles import (
 from dimos.navigation.experimental.dannav.holonomic_tc.types import (
     TrajectoryReferenceSample,
 )
+from dimos.navigation.spec import NavigationState
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.trigonometry import angle_diff
 

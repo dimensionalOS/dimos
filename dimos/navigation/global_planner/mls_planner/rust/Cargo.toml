@@ -35,6 +35,7 @@ surface_map = "sensor_msgs.PointCloud2"
 nodes = "sensor_msgs.PointCloud2"
 node_edges = "nav_msgs.LineSegments3D"
 path = "nav_msgs.Path"
+nav_status = "actionlib_msgs.GoalStatus"
 
 [dependencies]
 dimos-module = { path = "../../../../../native/rust/dimos-module" }

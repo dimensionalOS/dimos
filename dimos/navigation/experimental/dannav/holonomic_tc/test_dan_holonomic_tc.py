@@ -31,8 +31,8 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Path import Path
-from dimos.navigation.base import NavigationState
 from dimos.navigation.experimental.dannav.holonomic_tc.module import DanHolonomicTC
+from dimos.navigation.spec import NavigationState
 
 _CancelVia = Literal["empty_path", "stop_movement"]
 

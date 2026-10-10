@@ -79,6 +79,8 @@ fn test_config() -> Config {
         step_threshold_m: 0.25,
         step_penalty_weight: 0.0,
         goal_tolerance: 0.3,
+        goal_z_tolerance: 0.5,
+        blocked_timeout_s: 2.0,
         viz_publish_hz: 2.0,
         viz_region_m: 4.0,
         viz_sweep_regions: 0,

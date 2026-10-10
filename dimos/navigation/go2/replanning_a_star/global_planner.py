@@ -30,13 +30,13 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.OccupancyGrid import CostValues, OccupancyGrid
 from dimos.msgs.nav_msgs.Path import Path
-from dimos.navigation.base import NavigationState
 from dimos.navigation.go2.replanning_a_star.goal_validator import find_safe_goal
 from dimos.navigation.go2.replanning_a_star.local_planner import LocalPlanner, StopMessage
 from dimos.navigation.go2.replanning_a_star.min_cost_astar import min_cost_astar
 from dimos.navigation.go2.replanning_a_star.navigation_map import NavigationMap
 from dimos.navigation.go2.replanning_a_star.position_tracker import PositionTracker
 from dimos.navigation.go2.replanning_a_star.replan_limiter import ReplanLimiter
+from dimos.navigation.spec import NavigationState
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.trigonometry import angle_diff
 
@@ -49,7 +49,6 @@ class GlobalPlanner(Resource):
 
     _current_odom: PoseStamped | None = None
     _current_goal: PoseStamped | None = None
-    _goal_reached: bool = False
     _thread: Thread | None = None
 
     _global_config: GlobalConfig
@@ -135,7 +134,6 @@ class GlobalPlanner(Resource):
         logger.info("Got new goal", goal=str(goal))
         with self._lock:
             self._current_goal = goal
-            self._goal_reached = False
         self._replan_limiter.reset()
         self._plan_path()
 
@@ -160,7 +158,6 @@ class GlobalPlanner(Resource):
 
             if not but_will_try_again:
                 self._current_goal = None
-                self._goal_reached = arrived
                 self._replan_limiter.reset()
 
         self.path.on_next(Path())
@@ -172,13 +169,6 @@ class GlobalPlanner(Resource):
     def set_replanning_enabled(self, enabled: bool) -> None:
         with self._lock:
             self._replanning_enabled = enabled
-
-    def get_state(self) -> NavigationState:
-        return self._local_planner.get_state()
-
-    def is_goal_reached(self) -> bool:
-        with self._lock:
-            return self._goal_reached
 
     @property
     def cmd_vel(self) -> Subject[Twist]:
