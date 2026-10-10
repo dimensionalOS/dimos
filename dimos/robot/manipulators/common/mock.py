@@ -17,9 +17,11 @@
 from __future__ import annotations
 
 from dimos.control.components import HardwareComponent, HardwareType, make_joints
+from dimos.control.connection.mock_connection import MockConnectionModule
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
-from dimos.core.stream import Out
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.JointState import JointState
 
 _mock_hw = HardwareComponent(
@@ -60,4 +62,26 @@ coordinator_dual_mock = _DualMockCoordinator.blueprint(
     tasks=[
         joint_trajectory_task([*_mock_left.joints, *_mock_right.joints]),
     ],
+)
+
+
+class _MockConnectionCoordinator(ControlCoordinator):
+    mock_position_command: Out[JointState]
+    mock_joint_state: In[JointState]
+
+
+# A pretend 7-joint arm called "mock", driven through a connection module
+# instead of an adapter. The coordinator has one port per driver port, named
+# after the robot, and the driver's ports are remapped onto them.
+coordinator_mock_connection = autoconnect(
+    _MockConnectionCoordinator.blueprint(
+        instance_name="ControlCoordinator",
+        tasks=[joint_trajectory_task(make_joints("mock", 7))],
+    ),
+    MockConnectionModule.blueprint(source="mock", joints=7),
+).remappings(
+    [
+        (MockConnectionModule, "position_command", "mock_position_command"),
+        (MockConnectionModule, "joint_state", "mock_joint_state"),
+    ]
 )

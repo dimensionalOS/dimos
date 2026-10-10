@@ -98,6 +98,20 @@ class JointStateSnapshot:
 
 
 @dataclass
+class SensorStateSnapshot:
+    """The latest reading from every sensor a robot's driver reports, such as
+    its IMU (from the ``Imu`` messages on the robot's ``imu`` port).
+
+    Looked up by sensor, then by reading: ``readings["g1/imu"]["qw"]``. A
+    sensor's name is its robot and part, e.g. "g1/imu"; a reading is one
+    number it reports, e.g. "qw", in the unit the robot's description gives.
+    Cameras and lidar are not here; they have their own streams.
+    """
+
+    readings: dict[str, dict[str, float]] = field(default_factory=dict)
+
+
+@dataclass
 class CoordinatorState:
     """Complete state snapshot for tasks to read.
 
@@ -112,12 +126,15 @@ class CoordinatorState:
             Empty dict when no whole-body hardware exposes IMU this tick.
         t_now: Current tick time (time.perf_counter())
         dt: Time since last tick (seconds)
+        sensors: Sensor readings from robots driven through connection
+            modules. Empty when none reports a sensor.
     """
 
     joints: JointStateSnapshot
     imu: dict[str, IMUState] = field(default_factory=dict)
     t_now: float = 0.0  # Coordinator time (perf_counter) - USE THIS, NOT time.time()!
     dt: float = 0.0  # Time since last tick
+    sensors: SensorStateSnapshot = field(default_factory=SensorStateSnapshot)
 
 
 @dataclass
