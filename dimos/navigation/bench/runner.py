@@ -142,7 +142,8 @@ def run(config: RunConfig, report: Report | None = None) -> Path:
         index.write(f"{run_dir.resolve()}\n")
     episodes = [Episode(case, run_dir / case.id) for case in cases]
     manifest.save(run_dir / SUITE_FILE)
-    _write_run(run_dir, config, finished=False)
+    started = time.time()
+    _write_run(run_dir, config, len(episodes), started, finished=False)
     results = run_dir / RESULTS_FILE
     lock = threading.Lock()
     running: list[str] = []
@@ -188,7 +189,7 @@ def run(config: RunConfig, report: Report | None = None) -> Path:
         stop_all()
         raise
     pool.shutdown()
-    _write_run(run_dir, config, finished=True)
+    _write_run(run_dir, config, len(episodes), started, finished=True)
     return run_dir
 
 
@@ -233,14 +234,19 @@ def rescore(run_dir: Path) -> Path:
     return results
 
 
-def _write_run(run_dir: Path, config: RunConfig, finished: bool) -> None:
+def _write_run(
+    run_dir: Path, config: RunConfig, episodes: int, started: float, finished: bool
+) -> None:
     record = {
         "blueprint": config.blueprint,
         "split": config.split,
         "cases": list(config.cases),
         "overrides": list(config.overrides),
         "policy": str(config.policy) if config.policy else None,
+        "episodes": episodes,
         "finished": finished,
+        "started": started,
+        "time": time.time(),
     }
     (run_dir / RUN_FILE).write_text(json.dumps(record, indent=2) + "\n")
 
