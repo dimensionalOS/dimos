@@ -1841,6 +1841,7 @@ all = [
     { name = "usd-core" },
     { name = "uvicorn" },
     { name = "viser", extra = ["urdf"] },
+    { name = "warp-lang" },
     { name = "xacro" },
     { name = "xarm-python-sdk" },
     { name = "yourdfpy" },
@@ -1903,6 +1904,7 @@ cuda = [
     { name = "cupy-cuda12x", marker = "platform_machine == 'x86_64'" },
     { name = "onnxruntime-gpu", version = "1.23.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11' and platform_machine == 'x86_64'" },
     { name = "onnxruntime-gpu", version = "1.24.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' and platform_machine == 'x86_64'" },
+    { name = "warp-lang" },
 ]
 dds = [
     { name = "cyclonedds" },
@@ -2466,6 +2468,7 @@ requires-dist = [
     { name = "usd-core", marker = "extra == 'scene'", specifier = ">=23.11" },
     { name = "uvicorn", marker = "extra == 'web'", specifier = ">=0.34.0" },
     { name = "viser", extras = ["urdf"], marker = "extra == 'planning'", specifier = ">=1.0.29" },
+    { name = "warp-lang", marker = "extra == 'cuda'", specifier = ">=1.13" },
     { name = "websocket-client", specifier = ">=1.8" },
     { name = "xacro", marker = "extra == 'control'" },
     { name = "xarm-python-sdk", marker = "extra == 'control'", specifier = ">=1.17.0" },

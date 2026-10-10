@@ -99,7 +99,7 @@ def _image_to_camera(image: Any) -> Any:
     return [(CAMERA_ENTITY, image.to_rerun())]
 
 
-def _rerun_blueprint() -> Any:
+def _rerun_blueprint(hidden: tuple[str, ...] = ()) -> Any:
     """Split layout: camera feed + 3D world, as the WebRTC go2 blueprint has."""
     import rerun as rr
     import rerun.blueprint as rrb
@@ -119,6 +119,7 @@ def _rerun_blueprint() -> Any:
                     "world/lidar": rrb.EntityBehavior(visible=False),
                     "world/nodes": rrb.EntityBehavior(visible=False),
                     "world/node_edges": rrb.EntityBehavior(visible=False),
+                    **{path: rrb.EntityBehavior(visible=False) for path in hidden},
                 },
             ),
             column_shares=[1, 2],
@@ -132,10 +133,12 @@ def _render_map(msg: Any) -> Any:
     return msg.to_rerun(voxel_size=0.01)
 
 
-def _rerun_config(visual_override: dict[str, Any] | None = None) -> dict[str, Any]:
+def _rerun_config(
+    visual_override: dict[str, Any] | None = None, hidden: tuple[str, ...] = ()
+) -> dict[str, Any]:
     """The bridge's own view, plus whatever the layer above it adds."""
     return {
-        "blueprint": _rerun_blueprint,
+        "blueprint": partial(_rerun_blueprint, hidden),
         "tf_axes": 0.5,
         # The robot box hangs off base_link on its own entity: a static transform
         # under world/tf would override the live one.
@@ -157,13 +160,17 @@ def _rerun_config(visual_override: dict[str, Any] | None = None) -> dict[str, An
 # The router is named, not scouted: behind wifi multicast scouting finds nothing
 # (docs/usage/transports/zenoh.md). --robot-ip still adds its endpoint alongside.
 GO2_ROUTER = os.environ.get("DIMOS_GO2_ROUTER", "tcp/go22:7447")
-# Ceiling cut for map_regions in odom: the origin is the lidar at start, ~0.5m above the floor.
-MAP_CEILING_M = 1.5
-# The storey the surface_map shows, in odom: the floor sits ~0.5m below the start pose.
-SURFACE_Z_BAND = (-0.5, MAP_CEILING_M)
+# The storey the viewer shows, in odom (origin: the lidar at start, ~0.5m above the floor):
+# map regions, surface map and mesh are all cut to it.
+VIEW_Z_BAND = (-0.5, 2.3)
 
-go2_dds_nav_viewer = autoconnect(
-    vis_module(
+
+def nav_viewer(
+    extra_topics: tuple[str, ...] = (),
+    visual_override: dict[str, Any] | None = None,
+    hidden: tuple[str, ...] = (),
+) -> Any:
+    return vis_module(
         viewer_backend=global_config.viewer,
         rerun_config={
             **_rerun_config(
@@ -172,16 +179,18 @@ go2_dds_nav_viewer = autoconnect(
                         render_map_region,
                         voxel_size=voxel_size,
                         height_range=HEIGHT_RANGE,
-                        max_z=MAP_CEILING_M,
+                        z_band=VIEW_Z_BAND,
                     ),
                     SURFACE_MAP_ENTITY: partial(
                         render_surface_region,
                         voxel_size=voxel_size,
                         wall_clearance_m=WALL_CLEARANCE_M,
                         clearance_clamp_m=1.0,
-                        z_band=SURFACE_Z_BAND,
+                        z_band=VIEW_Z_BAND,
                     ),
-                }
+                    **(visual_override or {}),
+                },
+                hidden,
             ),
             "topics": [
                 "tf",
@@ -199,18 +208,22 @@ go2_dds_nav_viewer = autoconnect(
                 "video",
                 "image",
                 "camera_info",
+                *extra_topics,
             ],
         },
-    ),
-).global_config(
-    transport="zenoh",
+    )
+
+
+VIEWER_GLOBAL_CONFIG = {
+    "transport": "zenoh",
     # a client: the router forwards to clients only, never between peers
-    zenoh_mode="client",
-    zenoh_connect=GO2_ROUTER,
+    "zenoh_mode": "client",
+    "zenoh_connect": GO2_ROUTER,
     # the router appears well after the robot's dimos run, keep dialing until it does
-    zenoh_connect_timeout=120.0,
+    "zenoh_connect_timeout": 120.0,
     # the robot's stack owns the bus-wide `Coordinator` name; this one only watches
-    serve_coordinator_rpc=False,
-    n_workers=3,
-    robot_model="unitree_go2",
-)
+    "serve_coordinator_rpc": False,
+    "robot_model": "unitree_go2",
+}
+
+go2_dds_nav_viewer = autoconnect(nav_viewer()).global_config(n_workers=3, **VIEWER_GLOBAL_CONFIG)
