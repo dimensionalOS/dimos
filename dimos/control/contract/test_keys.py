@@ -21,7 +21,7 @@ import pickle
 
 import pytest
 
-from dimos.control.contract.keys import POSITION, Key, Unit, is_valid_segment
+from dimos.control.contract.keys import Interface, Key, Unit, is_valid_segment
 
 
 @pytest.mark.parametrize("segment", ["arm", "joint1", "left_hip_pitch", "A", "_", "9", "a_1_B"])
@@ -38,9 +38,22 @@ def test_invalid_segments(segment: str) -> None:
 
 def test_build_from_parts() -> None:
     """Key.of joins three parts and checks each one."""
-    key = Key.of("arm", "joint1", POSITION)
+    key = Key.of("arm", "joint1", Interface.POSITION)
 
     assert key == "arm/joint1/position"
+
+
+def test_an_interface_prints_as_its_name() -> None:
+    """Keys are built with f-strings, so a member must print as "position"."""
+    assert str(Interface.POSITION) == "position"
+    assert f"arm/joint1/{Interface.POSITION}" == "arm/joint1/position"
+
+
+def test_an_interface_is_its_plain_string() -> None:
+    """A member and its spelling are interchangeable, including as dict keys."""
+    assert Interface.POSITION == "position"
+    assert {Interface.POSITION: 1.0}["position"] == 1.0
+    assert {"position": 1.0}[Interface.POSITION] == 1.0
 
 
 def test_parts_read_back() -> None:
@@ -55,7 +68,7 @@ def test_parts_read_back() -> None:
 
 def test_a_key_is_a_string() -> None:
     """It goes on the wire and works as a dict key with no conversion."""
-    key = Key.of("arm", "joint1", POSITION)
+    key = Key.of("arm", "joint1", Interface.POSITION)
 
     assert isinstance(key, str)
     assert {key: 1.0}["arm/joint1/position"] == 1.0
@@ -96,7 +109,7 @@ def test_error_quotes_the_key() -> None:
 
 def test_keys_pickle_with_their_parts() -> None:
     """Descriptions cross a process boundary, so the parts must survive."""
-    restored = pickle.loads(pickle.dumps(Key.of("arm", "joint1", POSITION)))
+    restored = pickle.loads(pickle.dumps(Key.of("arm", "joint1", Interface.POSITION)))
 
     assert restored == "arm/joint1/position"
     assert restored.source == "arm"

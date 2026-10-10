@@ -36,6 +36,8 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
+_POSE_TIMEOUT = 5.0
+
 
 UNITREE_WEBRTC_CONTROLS: list[tuple[str, int, str]] = [
     # ("Damp", 1001, "Lowers the robot to the ground fully."),
@@ -222,6 +224,12 @@ class UnitreeSkillContainer(Module):
     tf: In[TFMessage]
 
     @rpc
+    def start(self) -> None:
+        super().start()
+        # Subscribe before the first skill call so incoming poses are retained.
+        self.tfbuffer  # noqa: B018
+
+    @rpc
     def stop(self) -> None:
         super().stop()
 
@@ -252,7 +260,8 @@ class UnitreeSkillContainer(Module):
         x, y = float(x), float(y)
         degrees = None if degrees is None else float(degrees)
 
-        tf = self.tfbuffer.get("world", "base_link")
+        # Startup may complete before the first TF message reaches this module.
+        tf = self.tfbuffer.get("world", "base_link", forward_tolerance=_POSE_TIMEOUT)
         if tf is None:
             return "Failed to get the position of the robot."
 
