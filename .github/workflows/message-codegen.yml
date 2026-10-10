@@ -96,3 +96,22 @@ jobs:
         with:
           name: message-codegen-jazzy-reference
           path: build/message-codegen/demo/evidence/
+
+  viewers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.0.1
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: Prepare standalone viewer environment
+        run: |
+          uv venv .venv --python 3.12 --seed
+          uv pip install --python .venv/bin/python ./dimos/message_codegen ./packages/dimos-generated mcap==1.4.0 pillow rerun-sdk==0.32.0 pytest pytest-asyncio pytest-env
+      - name: Record CDR with schema closure and verify viewer decoding
+        run: bash scripts/test_message_mcap.sh
+      - uses: actions/upload-artifact@v7
+        with:
+          name: message-mcap-evidence
+          path: build/message-codegen/viewers/
