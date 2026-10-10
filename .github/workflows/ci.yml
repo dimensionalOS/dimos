@@ -753,7 +753,7 @@ jobs:
       - name: Install dependencies
         run: uv sync --group tests --frozen
       - name: Run tests
-        run: uv run pytest --numprocesses=logical --cov=dimos/ --junitxml=junit.xml -m 'not (self_hosted or mujoco or self_hosted_large or web_browser or bake_e2e or native_e2e)'
+        run: uv run pytest --numprocesses=logical --cov=dimos/ --cov=experimental/gateway/ --junitxml=junit.xml -m 'not (self_hosted or mujoco or self_hosted_large or web_browser or bake_e2e or native_e2e)'
       - name: Re-run the failing tests with maximum verbosity
         if: failure()
         env:
@@ -991,7 +991,7 @@ jobs:
         if: contains(matrix.markers, 'self_hosted')
         run: cargo build --release --locked -p dimos-livox -p dimos-virtual-mid360
       - name: Run tests
-        run: uv run pytest --cov=dimos/ --junitxml=junit.xml -m '(${{ matrix.markers }}) and not mujoco'
+        run: uv run pytest --cov=dimos/ --cov=experimental/gateway/ --junitxml=junit.xml -m '(${{ matrix.markers }}) and not mujoco'
       - name: Re-run the failing tests with maximum verbosity
         if: failure()
         env:
@@ -1143,7 +1143,7 @@ jobs:
         # heavier scenes (`apt`). Software X via xvfb is not enough.
         env:
           DISPLAY: ":0"
-        run: uv run pytest --cov=dimos/ --junitxml=junit.xml -m self_hosted_large
+        run: uv run pytest --cov=dimos/ --cov=experimental/gateway/ --junitxml=junit.xml -m self_hosted_large
       - name: Re-run the failing tests with maximum verbosity
         if: failure()
         env:

@@ -20,3 +20,10 @@ install: |
   fi
   DIMOS_COMMIT="${COMMIT:-}" bash "$script" --mode dev --branch "$REF" --project-dir "$DIMOS_DIR" --skip-tests ${NON_INTERACTIVE:+--non-interactive}
   "$DIMOS_DIR/.venv/bin/python" -c "import dimos" && echo "dimos is installed in $DIMOS_DIR"
+# Desktop's gateway contract; its implementation and metadata stay experimental.
+api:
+  version: "2.0.0"
+start: |
+  "$DIMOS_DIR/.venv/bin/python" -m experimental.gateway --detach --dimos-dir "$DIMOS_DIR" --socket "$DIMOS_SERVER_SOCKET"
+socket: |
+  echo "$DIMOS_SERVER_SOCKET"

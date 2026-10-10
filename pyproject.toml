@@ -22,11 +22,12 @@ include-package-data = false
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["dimos*"]
+include = ["dimos*", "experimental.gateway*"]
 # Web frontends / vendored node_modules: not part of the Python runtime
 # (MANIFEST.in already prunes these from the sdist; this keeps their stray
 # .py modules out of the wheel too).
 exclude = [
+    "experimental.gateway.tests*",
     "dimos.web.websocket_vis.node_modules*",
     "dimos.web.command-center-extension*",
     "dimos.web.dimos_interface.src*",
@@ -50,6 +51,8 @@ exclude = [
     "**/*.tcss",
     "**/*.pyi",
 ]
+
+"experimental.gateway" = ["annotations.yaml"]
 
 [tool.setuptools.exclude-package-data]
 # Trims data the recursive globs above would otherwise pull in: test fixtures
@@ -602,6 +605,7 @@ ignore = [
 # (camelCase, pinned to the TS side by the golden fixtures).
 "dimos/web/relay_bridge/protocol.py" = ["N815"]
 "dimos/web/relay_bridge/manifest.py" = ["N815"]
+"experimental/gateway/routes/*.py" = ["N815"]
 # Polyfill module: re-exports ROS message types (with a dimos_lcm fallback).
 "dimos/types/ros_polyfill.py" = ["F401"]
 
@@ -614,7 +618,7 @@ force-sort-within-sections = true
 runtime-evaluated-base-classes = ["dimos.core.module.Module"]
 
 [tool.mypy]
-files = ["dimos/"]
+files = ["dimos/", "experimental/gateway/"]
 mypy_path = "stubs/"
 python_version = "3.12"
 incremental = true
@@ -716,7 +720,7 @@ module = ["pyarrow", "pyarrow.*"]
 follow_imports = "skip"
 
 [tool.pytest.ini_options]
-testpaths = ["dimos"]
+testpaths = ["dimos", "experimental/gateway/tests"]
 env = [
   "GOOGLE_MAPS_API_KEY=AIzafake_google_key",
   "PYTHONWARNINGS=ignore:cupyx.jit.rawkernel is experimental:FutureWarning",
@@ -727,7 +731,7 @@ asyncio_default_fixture_loop_scope = "function"
 
 [tool.coverage.run]
 branch = true
-source = ["dimos"]
+source = ["dimos", "experimental.gateway"]
 concurrency = ["multiprocessing", "thread"]
 
 [tool.coverage.report]
