@@ -56,7 +56,7 @@ class _PoseTask(BaseControlTask):
         return {"link_tcp": PoseStamped(frame_id="link_base", position=(x, 0.0, 0.5))}
 
 
-def test_measured_frame_poses_are_published_as_world_tf_at_a_limited_rate() -> None:
+def test_measured_frame_poses_are_published_as_world_tf_at_a_limited_rate(monkeypatch) -> None:
     adapter = MagicMock(spec=ManipulatorAdapter)
     adapter.read_joint_positions.return_value = [0.25, 0.5]
     adapter.read_joint_velocities.return_value = [0.0, 0.0]
@@ -76,14 +76,19 @@ def test_measured_frame_poses_are_published_as_world_tf_at_a_limited_rate() -> N
         publish_callback=joint_states,
         publish_tf_callback=published.append,
     )
+    clock = iter([0.0, 0.005, 0.010, 0.015, 0.020, 0.040])
+    monkeypatch.setattr("dimos.control.tick_loop.time.perf_counter", lambda: next(clock))
     for _ in range(5):
-        loop._tick()  # all within one 30 Hz period
+        loop._tick()  # controlled times within one 30 Hz period
 
     (message,) = published
     (transform,) = message.transforms
     assert (transform.frame_id, transform.child_frame_id) == ("world", "link_tcp")
     assert transform.translation.to_numpy().tolist() == [0.25, 0.0, 0.5]
     assert transform.ts == joint_states.call_args_list[0].args[0].ts
+    loop._tick()  # first tick beyond the publication period
+    assert len(published) == 2
+    assert published[1].transforms[0].ts == joint_states.call_args_list[-1].args[0].ts
 
 
 def test_only_coordinators_declaring_tf_can_publish_frame_poses() -> None:

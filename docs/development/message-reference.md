@@ -89,3 +89,29 @@ also applies to the Rust part of `dimos build`. Cargo and its dependency cache
 are native build prerequisites, not Python installation prerequisites. No helper
 binary, ROS installation or runtime download is required. Dependency types are
 reexported from their owner crate, preserving exact cross-package identity.
+
+## Region and simulator metadata
+
+Ordinary image, cloud, pose, path, camera, TF and IMU streams retain their ROS2
+schemas. The planner's region streams use explicit custom envelopes:
+
+- `RegionPointCloud2`: signed `int32 region_id` plus a standard `cloud`.
+- `RegionBounds`: `header`, signed `region_id`, `center`, `radius`, `z_min`, `z_max`.
+- `RegionLineSegments3D`: signed `region_id` plus `lines`; every segment has its
+  own `start`, `end` and `weight`.
+
+Seed cloud and bounds pair on `region_id`, including regions with the same
+source timestamp. Viewer cell IDs pack two signed 16-bit coordinates into the
+signed 32-bit ID. Replacement and empty messages retain the same ID. Cloud and
+line envelopes carry source clock/frame metadata in `cloud.header` and
+`lines.header`; bounds carry their own header. MCAP's unsigned message sequence
+is transport metadata and is separate from the signed region ID.
+
+`Contacts` carries a Header and `Contact[]` with semantic `part`/`kind` labels.
+The simulator emits trunk/lidar/leg/foot and floor/wall/ceiling/clutter labels.
+It replaces the former JSON-in-String contact wire encoding. Generated values
+remain ordinary value types; semantic helpers live outside them.
+
+Rerun's region adapters render these envelopes. Foxglove can read their embedded
+schemas and raw fields, but custom region 3D visualization is currently unsupported;
+this proposal does not add a Foxglove plugin or duplicate visualization streams.
