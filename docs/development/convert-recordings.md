@@ -328,3 +328,25 @@ and old/new observation-ID associations. Both source database hashes remained
 unchanged. The converter/writer regression suite passed 38 tests, including
 nonempty numeric and byte arrays. These results do not establish strict malformed
 CDR rejection; the accepted native-library limitations above still apply.
+
+## Built-in region streams
+
+The converter recognizes the old mapper/planner contracts by exact stream name
+and source type: `seed_map`, `map_regions`, `surface_map` (PointCloud2),
+`seed_bounds`, `region_bounds` (PoseStamped), and `node_edges` (Path).
+Historical `dimos/<name>/<type>` wire topics are also recognized. Other streams
+retain their ordinary type; a matching basename under an arbitrary external topic
+is not sufficient to infer region semantics.
+
+For these legacy LCM streams, signed `Header.seq` becomes `region_id` unchanged.
+Clouds remain standard PointCloud2 values inside their region envelope. Bounds
+become explicit center/radius/vertical limits. Edge pose pairs become independent
+start/end/weight segments; inconsistent frames, timestamps or pair weight layouts
+fail conversion rather than losing fields. Endpoint Header sequence values remain
+in the conversion sidecar. Empty clouds and edge arrays retain their region ID.
+
+MCAP's separate unsigned sequence retains the input envelope sequence. When only
+a signed legacy Header sequence is available, its 32-bit bit pattern supplies that
+MCAP field; the original signed value is retained in the sidecar and region ID.
+Typed legacy recordings still require explicit conversion; runtime does not decode
+them transparently.

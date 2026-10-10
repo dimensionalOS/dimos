@@ -14,6 +14,7 @@
 
 """Offline migration preserves data and fails closed before publishing outputs."""
 
+import copy
 import hashlib
 import json
 from pathlib import Path
@@ -457,3 +458,116 @@ def test_nonempty_numeric_and_byte_arrays_preserve_values(tmp_path, typename):
         np.testing.assert_array_equal(actual, expected_array)
     if typename.endswith("JointState"):
         assert value.name == ["left", "right"]
+
+
+@pytest.mark.parametrize("suffix", [".mcap", ".db"])
+@pytest.mark.parametrize(
+    "stream_name,package,name",
+    [
+        ("map_regions", "sensor_msgs", "PointCloud2"),
+        ("seed_bounds", "geometry_msgs", "PoseStamped"),
+        ("node_edges", "nav_msgs", "Path"),
+    ],
+)
+def test_builtin_region_conversion_retains_signed_identity_and_geometry(
+    tmp_path, suffix, stream_name, package, name
+):
+    old = getattr(pytest.importorskip(f"dimos_lcm.{package}.{name}"), name)()
+    old.header.seq = -196603
+    old.header.stamp.sec = 1
+    old.header.stamp.nsec = 34
+    old.header.frame_id = "map"
+    if name == "PointCloud2":
+        old.height = 1
+        old.point_step = 12
+    elif name == "PoseStamped":
+        old.pose.position.x, old.pose.position.y = -3.0, 5.0
+        old.pose.orientation.x, old.pose.orientation.y, old.pose.orientation.z = 2.5, -1.0, 4.0
+    else:
+        endpoint = pytest.importorskip("dimos_lcm.geometry_msgs.PoseStamped").PoseStamped
+        old.poses = []
+        for x, weight in [(1.0, 0.5), (4.0, 0.5), (9.0, 100.0), (6.0, 100.0)]:
+            pose = copy.deepcopy(endpoint())
+            pose.header.frame_id = "map"
+            pose.header.stamp.sec, pose.header.stamp.nsec = 1, 34
+            pose.pose.position.x = x
+            pose.pose.orientation.x, pose.pose.orientation.y, pose.pose.orientation.z = (
+                0.0,
+                0.0,
+                0.0,
+            )
+            pose.pose.orientation.w = weight
+            old.poses.append(pose)
+        old.poses_length = len(old.poses)
+    source, output = tmp_path / "old.mcap", tmp_path / ("new" + suffix)
+    write_mcap(
+        source, [(stream_name, f"dimos.msgs.{package}.{name}.{name}", "lcm", [old.lcm_encode()])]
+    )
+    assert convert(source, output)["counts"] == {stream_name: 1}
+    if suffix == ".mcap":
+        embedded, channel, record = read_mcap(output)[0]
+        value = cdr_decode(record.data, convert_recording.resolve_msg_type(embedded.name))
+        assert b"MSG: std_msgs/Header" in embedded.data
+        assert record.sequence == 17
+    else:
+        with SqliteStore(path=str(output), must_exist=True) as store:
+            value = store.stream(stream_name).first().data
+    assert value.region_id == -196603
+    if name == "PointCloud2":
+        assert (
+            value.cloud.width,
+            value.cloud.header.frame_id,
+            value.cloud.header.stamp.nanosec,
+        ) == (0, "map", 34)
+    elif name == "PoseStamped":
+        assert (value.center.x, value.center.y, value.radius, value.z_min, value.z_max) == (
+            -3.0,
+            5.0,
+            2.5,
+            -1.0,
+            4.0,
+        )
+    else:
+        assert [segment.weight for segment in value.lines.segments] == [0.5, 100.0]
+        assert [(segment.start.x, segment.end.x) for segment in value.lines.segments] == [
+            (1.0, 4.0),
+            (9.0, 6.0),
+        ]
+
+
+def test_region_contract_is_not_inferred_for_arbitrary_cloud_streams():
+    ordinary = convert_recording.Stream("custom/map_regions", "sensor_msgs/msg/PointCloud2", "lcm")
+    assert ordinary.region_type is None
+    standard = convert_recording.Stream("map_regions", "sensor_msgs/msg/PointCloud2", "cdr")
+    assert standard.region_type is None
+
+
+@pytest.mark.parametrize("invalid", ["count", "frame", "timestamp", "orientation", "weight"])
+def test_region_edges_reject_unrepresentable_endpoint_fields(tmp_path, invalid):
+    path_type = pytest.importorskip("dimos_lcm.nav_msgs.Path").Path
+    pose_type = pytest.importorskip("dimos_lcm.geometry_msgs.PoseStamped").PoseStamped
+    old = copy.deepcopy(path_type())
+    old.header.frame_id = "map"
+    old.header.stamp.sec, old.header.stamp.nsec = 1, 34
+    old.poses = [copy.deepcopy(pose_type()), copy.deepcopy(pose_type())]
+    for pose in old.poses:
+        pose.header = copy.deepcopy(old.header)
+        pose.pose.orientation.x = pose.pose.orientation.y = pose.pose.orientation.z = 0.0
+        pose.pose.orientation.w = 0.5
+    if invalid == "count":
+        old.poses.pop()
+    elif invalid == "frame":
+        old.poses[0].header.frame_id = "odom"
+    elif invalid == "timestamp":
+        old.poses[0].header.stamp.nsec += 1
+    elif invalid == "orientation":
+        old.poses[0].pose.orientation.x = 1.0
+    else:
+        old.poses[0].pose.orientation.w = 2.0
+    old.poses_length = len(old.poses)
+    source, output = tmp_path / "old.mcap", tmp_path / "new.mcap"
+    write_mcap(source, [("node_edges", "dimos.msgs.nav_msgs.Path.Path", "lcm", [old.lcm_encode()])])
+    with pytest.raises(ValueError, match="Legacy region edge"):
+        convert(source, output)
+    assert not output.exists()
+    assert not output.with_name(output.name + ".conversion.jsonl").exists()

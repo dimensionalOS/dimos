@@ -16,8 +16,10 @@
 
 import math
 import time
+from typing import Any
 
 from dimos_generated.builtin_interfaces.msg import Duration, Time
+from dimos_generated.dimos_msgs.msg import RegionLineSegments3D, RegionPointCloud2
 from dimos_generated.std_msgs.msg import Header
 
 NANOSECONDS_PER_SECOND = 1_000_000_000
@@ -68,3 +70,13 @@ def duration_from_seconds(value: float) -> Duration:
 def header_now(frame_id: str = "") -> Header:
     """Construct a wall-clock header; generated defaults themselves remain zero."""
     return Header(stamp=time_from_nanoseconds(time.time_ns()), frame_id=frame_id)
+
+
+def message_header(message: Any) -> Header | None:
+    """Return source metadata, including the payload owned by a region envelope."""
+    if isinstance(message, RegionPointCloud2):
+        return message.cloud.header
+    if isinstance(message, RegionLineSegments3D):
+        return message.lines.header
+    header = getattr(message, "header", None)
+    return header if isinstance(header, Header) else None

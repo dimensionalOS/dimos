@@ -36,6 +36,8 @@ import sqlite3
 import tempfile
 from typing import Any
 
+from dimos_generated.dimos_msgs.msg import LineSegment3D, LineSegments3D
+from dimos_generated.geometry_msgs.msg import Point
 from dimos_message_build.registry import (
     decode as cdr_decode,
     encode as cdr_encode,
@@ -54,6 +56,7 @@ import sqlite_vec
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.utils.validation import validate_identifier
 from dimos.msgs.helpers import resolve_msg_type
+from dimos.msgs.time import message_header
 from dimos.protocol.cdr_mcap import CdrMcapWriter
 
 # Deliberate, reviewable mappings. No suffix-based arbitrary Python imports.
@@ -108,6 +111,18 @@ GENERATED_TYPES = {
     for package, names in TYPES.items()
     for name in names
 }
+REGION_STREAMS = {
+    "seed_map": ("sensor_msgs/msg/PointCloud2", "dimos_msgs/msg/RegionPointCloud2"),
+    "map_regions": ("sensor_msgs/msg/PointCloud2", "dimos_msgs/msg/RegionPointCloud2"),
+    "surface_map": ("sensor_msgs/msg/PointCloud2", "dimos_msgs/msg/RegionPointCloud2"),
+    "seed_bounds": ("geometry_msgs/msg/PoseStamped", "dimos_msgs/msg/RegionBounds"),
+    "region_bounds": ("geometry_msgs/msg/PoseStamped", "dimos_msgs/msg/RegionBounds"),
+    "node_edges": ("nav_msgs/msg/Path", "dimos_msgs/msg/RegionLineSegments3D"),
+}
+LEGACY_TYPES["dimos.msgs.nav_msgs.LineSegments3D.LineSegments3D"] = "nav_msgs/msg/Path"
+LEGACY_TYPES["dimos.msgs.nav_msgs.LineSegments3D"] = "nav_msgs/msg/Path"
+ROS_TYPES.update(target for _, target in REGION_STREAMS.values())
+
 CODECS = {"lcm", "jpeg", "json", "cdr", "lz4+lcm", "lz4+jpeg", "lz4+json"}
 
 
@@ -120,8 +135,22 @@ class Stream:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     @property
+    def region_type(self) -> str | None:
+        if self.codec not in {"lcm", "lz4+lcm"}:
+            return None
+        name = self.name
+        if name.startswith("dimos/"):
+            parts = name.split("/")
+            if len(parts) == 3 and parts[2].rsplit(".", 1)[-1] == self.ros_type.rsplit("/", 1)[-1]:
+                name = parts[1]
+        contract = REGION_STREAMS.get(name)
+        return contract[1] if contract and contract[0] == self.ros_type else None
+
+    @property
     def target(self) -> Any:
-        name = "sensor_msgs/msg/CompressedImage" if self.codec.endswith("jpeg") else self.ros_type
+        name = self.region_type or (
+            "sensor_msgs/msg/CompressedImage" if self.codec.endswith("jpeg") else self.ros_type
+        )
         result = resolve_msg_type(name)
         if result is None:
             raise ValueError(f"Generated message package does not provide {name}")
@@ -451,7 +480,67 @@ def decode(row: Row) -> tuple[Any, dict[str, int]]:
         ), sequences
     if name == "Image" and old.encoding == "jpeg":
         raise ValueError(f"{row.stream.name}: JPEG Image requires explicit jpeg codec metadata")
+    if row.stream.region_type is not None:
+        return _convert_region(row, old, sequences), sequences
     return _convert_fields(old, sequences), sequences
+
+
+def _convert_region(row: Row, old: Any, sequences: dict[str, int]) -> Any:
+    """Migrate only the documented built-in region stream contracts."""
+    header = _convert_fields(old.header, sequences, "header")
+    region_id = old.header.seq
+    if row.stream.region_type == "dimos_msgs/msg/RegionPointCloud2":
+        return row.stream.target(region_id=region_id, cloud=_convert_fields(old, sequences))
+    if row.stream.region_type == "dimos_msgs/msg/RegionBounds":
+        return row.stream.target(
+            header=header,
+            region_id=region_id,
+            center=Point(x=old.pose.position.x, y=old.pose.position.y, z=old.pose.position.z),
+            radius=old.pose.orientation.x,
+            z_min=old.pose.orientation.y,
+            z_max=old.pose.orientation.z,
+        )
+    if len(old.poses) % 2:
+        raise ValueError("Legacy region edge Path requires an even number of endpoint poses")
+    segments = []
+    for i in range(0, len(old.poses), 2):
+        start, end = old.poses[i], old.poses[i + 1]
+        if (
+            start.header.frame_id != old.header.frame_id
+            or end.header.frame_id != old.header.frame_id
+        ):
+            raise ValueError("Legacy region edge endpoints must share the Path frame")
+        if (start.header.stamp.sec, start.header.stamp.nsec) != (
+            old.header.stamp.sec,
+            old.header.stamp.nsec,
+        ) or (end.header.stamp.sec, end.header.stamp.nsec) != (
+            old.header.stamp.sec,
+            old.header.stamp.nsec,
+        ):
+            raise ValueError("Legacy region edge endpoints must share the Path timestamp")
+        if (
+            any(
+                getattr(pose.pose.orientation, axis) != 0.0
+                for pose in (start, end)
+                for axis in ("x", "y", "z")
+            )
+            or start.pose.orientation.w != end.pose.orientation.w
+        ):
+            raise ValueError("Legacy region edge orientation must carry one matching pair weight")
+        sequences[f"poses[{i}].header.seq"] = start.header.seq
+        sequences[f"poses[{i + 1}].header.seq"] = end.header.seq
+        segments.append(
+            LineSegment3D(
+                start=Point(
+                    x=start.pose.position.x, y=start.pose.position.y, z=start.pose.position.z
+                ),
+                end=Point(x=end.pose.position.x, y=end.pose.position.y, z=end.pose.position.z),
+                weight=start.pose.orientation.w,
+            )
+        )
+    return row.stream.target(
+        region_id=region_id, lines=LineSegments3D(header=header, segments=segments)
+    )
 
 
 def convert(source: Path, destination: Path) -> dict[str, Any]:
@@ -514,7 +603,7 @@ def convert(source: Path, destination: Path) -> dict[str, Any]:
                         raise ValueError(
                             f"{row.stream.name}[{counts[row.stream.name]}]: {exc}"
                         ) from exc
-                    header = getattr(value, "header", None)
+                    header = message_header(value)
                     source_ns = (
                         (header.stamp.sec * 1_000_000_000 + header.stamp.nanosec)
                         if header is not None
@@ -528,7 +617,7 @@ def convert(source: Path, destination: Path) -> dict[str, Any]:
                     sequence = (
                         row.sequence
                         if row.sequence is not None
-                        else sequences.get("header.seq", sequences.get("seq", 0))
+                        else sequences.get("header.seq", sequences.get("seq", 0)) & 0xFFFFFFFF
                     )
                     if not (
                         0 <= row.log_ns < 2**64
