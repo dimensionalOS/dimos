@@ -24,19 +24,19 @@ from dimos_generated.sensor_msgs.msg import Image
 import numpy as np
 from PIL import Image as PILImage
 
-from dimos.evals.environments.base import Environment
+from dimos.evals.environments.base import Environment, EnvironmentConfig
 from dimos.evals.types import RunningEnvironment
 from dimos.memory.store.memory import MemoryStore
 from dimos.msgs.image import image_from_array
 from dimos.msgs.time import header_now, to_seconds
-from dimos.protocol.service.spec import BaseConfig
 
 if TYPE_CHECKING:
     from dimos.evals.agents.base import Agent
 
 
-class ImageFileConfig(BaseConfig):
+class ImageFileConfig(EnvironmentConfig):
     path: Path
+    agent_artifacts: tuple[str, ...] = ("image",)
 
 
 class ImageFile(Environment):

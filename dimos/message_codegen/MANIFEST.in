@@ -1,0 +1,3 @@
+graft .upstream/rosidl_adapter
+include parser-source.json
+global-exclude __pycache__ *.pyc

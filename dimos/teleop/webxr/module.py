@@ -46,9 +46,10 @@ from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.imitation.collection.episode_monitor import EpisodeStatus
+from dimos.imitation.collection.episode import EpisodeStatus
 from dimos.msgs.geometry import quaternion_from_matrix
 from dimos.msgs.protocol import DimosMsg
+from dimos.msgs.std_msgs.String import String
 from dimos.teleop.utils.teleop_transforms import webxr_to_robot
 from dimos.teleop.webxr.body_tracking import BodyTrackingMode, BodyTrackingSnapshot
 
@@ -122,7 +123,7 @@ class WebXRTeleopModule(Module):
     teleop_buttons: Out[UInt32]
     button_pressed: Out[UInt32]
     button_released: Out[UInt32]
-    status: In[EpisodeStatus]
+    status: In[String]
     body_tracking: Out[BodyTrackingSnapshot]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -338,7 +339,12 @@ class WebXRTeleopModule(Module):
         for ws in clients:
             asyncio.run_coroutine_threadsafe(_ws_send_text(ws, data), loop)
 
-    def _on_episode_status(self, status: EpisodeStatus) -> None:
+    def _on_episode_status(self, message: String) -> None:
+        try:
+            status = EpisodeStatus.from_json(message.data)
+        except ValueError:
+            logger.warning("Ignoring invalid episode status JSON", exc_info=True)
+            return
         with self._lock:
             self._latest_episode_status = status
         self._broadcast_text(self._encode_episode_status(status))

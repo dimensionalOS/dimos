@@ -12,20 +12,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 import subprocess
 import sys
 import threading
-from types import ModuleType
-from typing import Any, cast
-from unittest.mock import MagicMock
+from typing import Any
 
 from dimos_generated.geometry_msgs.msg import Point, PoseStamped, Quaternion
 from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
+
+# Imported before subprocess.Popen is patched: mujoco's own import spawns a subprocess.
+import mujoco  # noqa: F401
 import numpy as np
+from numpy.typing import NDArray
+import pytest
 from pytest import MonkeyPatch
 
 from dimos.core.global_config import GlobalConfig
+from dimos.msgs.pointcloud import pointcloud_xyz
+from dimos.msgs.time import to_seconds
 from dimos.robot.unitree import mujoco_connection
 from dimos.robot.unitree.mujoco_connection import MujocoConnection
 
@@ -38,14 +43,30 @@ class _FakeShmNames:
 class _FakeShmWriter:
     shm = _FakeShmNames()
 
+    def __init__(self) -> None:
+        self.seq = 0  # the sequence number every sensor read reports
+        self.run_signaled = False
+
     def is_ready(self) -> bool:
         return True
+
+    def signal_run(self) -> None:
+        self.run_signaled = True
 
     def signal_stop(self) -> None:
         pass
 
     def cleanup(self) -> None:
         pass
+
+    def read_video(self) -> tuple[NDArray[Any], int]:
+        return np.zeros((1, 1, 3), dtype=np.uint8), self.seq
+
+    def read_odom(self) -> tuple[tuple[NDArray[Any], NDArray[Any], float], int]:
+        return (np.zeros(3), np.array([1.0, 0.0, 0.0, 0.0]), 0.0), self.seq
+
+    def read_lidar(self) -> tuple[tuple[NDArray[Any], float], int]:
+        return (np.zeros((1, 3), dtype=np.float32), 0.0), self.seq
 
 
 class _FakeLogger:
@@ -99,14 +120,14 @@ class _QuietProcess:
         self.terminate()
 
 
-def _bare_connection(monkeypatch: MonkeyPatch) -> MujocoConnection:
-    monkeypatch.setitem(sys.modules, "mujoco", MagicMock(name="mujoco"))
-    mjx_env = ModuleType("mujoco_playground._src.mjx_env")
-    mjx_env.ensure_menagerie_exists = lambda: None
-    playground_src = ModuleType("mujoco_playground._src")
-    playground_src.mjx_env = mjx_env
-    monkeypatch.setitem(sys.modules, "mujoco_playground._src", playground_src)
+def _bare_connection(monkeypatch: MonkeyPatch, popen: Callable[..., Any]) -> MujocoConnection:
+    """A MujocoConnection whose subprocess, shared memory and logging are doubles."""
+    monkeypatch.setattr(mujoco_connection, "ensure_menagerie", lambda: None)
     monkeypatch.setattr(mujoco_connection, "get_data", lambda _name: None)
+    monkeypatch.setattr(mujoco_connection, "ShmWriter", _FakeShmWriter)
+    monkeypatch.setattr(mujoco_connection.subprocess, "Popen", popen)
+    monkeypatch.setattr(mujoco_connection.atexit, "register", lambda *_args: None)
+    monkeypatch.setattr(mujoco_connection, "logger", _FakeLogger())
     return MujocoConnection(GlobalConfig())
 
 
@@ -132,14 +153,7 @@ def test_start_drains_subprocess_output_larger_than_a_pipe(
             **kwargs,
         )
 
-    connection = _bare_connection(monkeypatch)
-
-    monkeypatch.setattr(mujoco_connection, "ShmWriter", _FakeShmWriter)
-    monkeypatch.setattr("dimos.robot.unitree.mujoco_connection.subprocess.Popen", noisy_child)
-    monkeypatch.setattr(
-        "dimos.robot.unitree.mujoco_connection.atexit.register", lambda *_args: None
-    )
-    monkeypatch.setattr(mujoco_connection, "logger", _FakeLogger())
+    connection = _bare_connection(monkeypatch, noisy_child)
 
     try:
         connection.start()
@@ -164,18 +178,8 @@ def test_stop_terminates_child_before_closing_pumped_output(
     monkeypatch: MonkeyPatch,
 ) -> None:
     """Stopping a quiet child must not deadlock on the pump's read lock."""
-    monkeypatch.setattr(mujoco_connection, "logger", _FakeLogger())
-    connection = _bare_connection(monkeypatch)
     process = _QuietProcess()
-    state = cast("Any", connection)
-    state.process = process
-    state.shm_data = _FakeShmWriter()
-    state._output_thread = threading.Thread(
-        target=connection._pump_subprocess_output,
-        name="mujoco-output-pump",
-        daemon=True,
-    )
-    state._output_thread.start()
+    connection = _bare_connection(monkeypatch, lambda *_args, **_kwargs: process)
     assert process.stdout.read_started.wait(timeout=1)
 
     stopper = threading.Thread(target=connection.stop)
@@ -191,22 +195,84 @@ def test_stop_terminates_child_before_closing_pumped_output(
     assert process.terminations == 1
 
 
-def test_odometry_reads_generated_pose_and_converts_wxyz(monkeypatch):
-    connection = _bare_connection(monkeypatch)
-    shared = mujoco_connection.ShmWriter()
-    connection.shm_data = shared
-    try:
-        values = np.ndarray((8,), dtype=np.float64, buffer=shared.shm.odom.buf)
-        values[:] = [1.25, -2.5, 0.3, 0.8, 0, 0, 0.6, -0.5]
-        sequence = np.ndarray((8,), dtype=np.int64, buffer=shared.shm.seq.buf)
-        sequence[2] = 1
-        message = connection.get_odom_message()
-        assert message is not None
-        decoded = cdr_decode(cdr_encode(message), PoseStamped)
-        assert decoded.header.frame_id == "world"
-        assert (decoded.header.stamp.sec, decoded.header.stamp.nanosec) == (-1, 500000000)
-        assert decoded.pose.position == Point(x=1.25, y=-2.5, z=0.3)
-        assert decoded.pose.orientation == Quaternion(z=0.6, w=0.8, x=0.0, y=0.0)
-        assert connection.get_odom_message() is None
-    finally:
-        connection.stop()
+def test_odometry_reads_generated_pose_and_converts_wxyz(quiet_connection, monkeypatch):
+    monkeypatch.setattr(
+        quiet_connection.shm_data,
+        "read_odom",
+        lambda: ((np.array([1.25, -2.5, 0.3]), np.array([0.8, 0.0, 0.0, 0.6]), -0.5), 1),
+    )
+    message = quiet_connection.get_odom_message()
+    assert message is not None
+    decoded = cdr_decode(cdr_encode(message), PoseStamped)
+    assert decoded.header.frame_id == "world"
+    assert (decoded.header.stamp.sec, decoded.header.stamp.nanosec) == (-1, 500000000)
+    assert decoded.pose.position == Point(x=1.25, y=-2.5, z=0.3)
+    assert decoded.pose.orientation == Quaternion(z=0.6, w=0.8, x=0.0, y=0.0)
+    assert quiet_connection.get_odom_message() is None
+
+
+def test_start_waits_on_the_process_launched_at_construction(monkeypatch: MonkeyPatch) -> None:
+    launches: list[_QuietProcess] = []
+
+    def popen(*_args: Any, **_kwargs: Any) -> _QuietProcess:
+        launches.append(_QuietProcess())
+        return launches[-1]
+
+    connection = _bare_connection(monkeypatch, popen)
+    assert len(launches) == 1
+    first_shm = connection.shm_data
+    assert isinstance(first_shm, _FakeShmWriter)
+    assert not first_shm.run_signaled  # the world stands still until start()
+
+    connection.start()  # the fake shared memory is ready at once: start() only waits
+    assert len(launches) == 1
+    assert first_shm.run_signaled
+    first_shm.seq = 500
+    assert _delivered_sensors(connection) == 3
+
+    connection.stop()
+    assert launches[0].terminations == 1
+
+    connection.start()  # stop() then start() relaunches
+    assert len(launches) == 2
+    assert connection.process is launches[1]
+    second_shm = connection.shm_data
+    assert isinstance(second_shm, _FakeShmWriter)
+    assert second_shm is not first_shm
+    assert second_shm.run_signaled
+    second_shm.seq = 1  # the new simulator counts frames from zero again
+    assert _delivered_sensors(connection) == 3
+    connection.stop()
+
+
+def _delivered_sensors(connection: MujocoConnection) -> int:
+    """How many of the three sensors hand out a frame right now."""
+    frames = (
+        connection.get_video_frame(),
+        connection.get_odom_message(),
+        connection.get_lidar_message(),
+    )
+    return sum(frame is not None for frame in frames)
+
+
+@pytest.fixture
+def quiet_connection(monkeypatch: MonkeyPatch) -> Iterator[MujocoConnection]:
+    connection = _bare_connection(monkeypatch, lambda *_args, **_kwargs: _QuietProcess())
+    yield connection
+    connection.stop()
+
+
+def test_get_lidar_message_builds_a_point_cloud_once_per_frame(
+    quiet_connection: MujocoConnection, monkeypatch: MonkeyPatch
+) -> None:
+    points = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype=np.float32)
+    assert quiet_connection.shm_data is not None
+    monkeypatch.setattr(quiet_connection.shm_data, "read_lidar", lambda: ((points, 3.5), 1))
+
+    message = quiet_connection.get_lidar_message()
+    assert message is not None
+    assert message.header.frame_id == "world"
+    assert to_seconds(message.header.stamp) == 3.5
+    np.testing.assert_allclose(pointcloud_xyz(message), points)
+
+    assert quiet_connection.get_lidar_message() is None  # same frame again

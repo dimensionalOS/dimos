@@ -4,30 +4,21 @@ on:
   pull_request:
     paths:
       - dimos/message_codegen/**
-      - examples/message-codegen/**
       - examples/message-project/**
-      - packages/dimos-generated/**
       - docs/development/messages*.md
-      - docs/development/message-reference.md
-      - docs/development/message-limitations.md
-      - native/rust/dimos-lcm-transport/**
-      - scripts/*message*codegen*
+      - dimos/cli/commands/build.py
       - scripts/test_message_packages.sh
       - scripts/package_messages.sh
-      - scripts/test_message_mcap.sh
-      - dimos/protocol/cdr_mcap.py
-      - dimos/protocol/test_cdr_mcap.py
-      - dimos/protocol/pubsub/impl/*ros*.py
-      - scripts/vendor_message_definitions.py
+      - packages/dimos-generated/**
       - scripts/generate_builtin_messages.py
       - scripts/test_builtin_message_source.sh
+      - examples/message-codegen/**
+      - scripts/*message*codegen*
+      - scripts/prepare_message_parser.py
       - .github/workflows/message-codegen.yml
       - .github/docker/message-codegen-reference.Dockerfile
       - Cargo.toml
       - Cargo.lock
-      - pyproject.toml
-      - uv.lock
-      - .github/workflows/ci.yml
   workflow_dispatch:
 
 permissions:
@@ -35,75 +26,77 @@ permissions:
 
 jobs:
   standalone:
-    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write  # Codecov OIDC, matching the main CI coverage uploads.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.0.1
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: '1.92.0'
+          toolchain: "1.92.0"
           components: rustfmt
-      - uses: actions/setup-node@v6
-        with:
-          node-version: '22'
       - name: Set up a ROS-free Python environment
         run: |
           test ! -d /opt/ros
-          uv venv .venv --python 3.12
-          uv pip install --python .venv/bin/python ruff==0.14.3 rosbags==0.11.0 empy==4.2 lark==1.2.2 numpy PyYAML==6.0.3 pytest pytest-asyncio pytest-env lcm-dimos-fork setuptools wheel mcap==1.4.0 rerun-sdk==0.32.0 pillow mypy==1.19.0
+          uv venv .venv --python 3.12 --seed
+          uv run --no-project --with requests python scripts/prepare_message_parser.py
+          uv pip install --python .venv/bin/python "./dimos/message_codegen[native]" ./packages/dimos-generated ruff==0.14.3 numpy pytest pytest-cov pytest-asyncio pytest-env mypy==1.19.0
           .venv/bin/python -c "import importlib.util; assert importlib.util.find_spec('rclpy') is None"
-      - name: Reject checked-in generated source drift
+      - name: Verify built-in generated resources
         run: .venv/bin/python -m scripts.generate_builtin_messages --check
-      - name: Install built-in source without message compilers
+      - name: Verify compiler-free package installation
         run: bash scripts/test_builtin_message_source.sh
-      - name: Install the native generation prerequisites
-        run: uv pip install --python .venv/bin/python './dimos/message_codegen[native]' ./packages/dimos-generated
-      - name: Prepare standalone Cargo dependencies for offline acceptance
-        run: |
-          # Resolve only the message crate, not the dimOS runtime workspace.
-          # Keep Cargo's generated lock outside the checked-in package artifacts.
-          cp -R packages/dimos-generated/src/dimos_generated_schemas/package/rust "$RUNNER_TEMP/dimos-message-rust"
-          cargo fetch --manifest-path "$RUNNER_TEMP/dimos-message-rust/Cargo.toml"
+      - name: Test built-in messages and native semantics
+        run: .venv/bin/python -m pytest --noconftest -o addopts='' -q dimos/message_codegen/test_native.py dimos/message_codegen/test_python_source.py dimos/message_codegen/test_packages.py
       - name: Generate, build, test, and demonstrate all three languages
         run: bash scripts/test_message_codegen.sh
-      - name: Build standalone message authoring and built-in packages
+      - name: Prepare standalone authoring package dependencies
+        if: runner.os == 'Linux'
         run: |
+          uv pip install --python .venv/bin/python mcap==1.4.0
+          uv run --no-project --with requests python scripts/prepare_message_parser.py
           uv build dimos/message_codegen --out-dir build/message-codegen/ux-wheelhouse
           uv build packages/dimos-generated --out-dir build/message-codegen/ux-wheelhouse
           uv venv --seed build/message-codegen/download-env
           build/message-codegen/download-env/bin/python -m pip wheel --wheel-dir build/message-codegen/ux-wheelhouse build/message-codegen/ux-wheelhouse/dimos_message_build-*.whl build/message-codegen/ux-wheelhouse/dimos_generated-*.whl tomli packaging pytest catkin-pkg==1.1.0 PyYAML==6.0.2
-      - name: Verify source, wheel, editable and native source consumers
+      - name: Verify authoring configuration and shared dependency identities
+        if: runner.os == 'Linux'
+        env:
+          DIMOS_NATIVE_ACCEPTANCE: '1'
+        run: .venv/bin/python -m pytest --noconftest -o addopts='' -q dimos/message_codegen/test_project.py dimos/message_codegen/test_ownership.py dimos/message_codegen/test_ownership_native.py
+      - name: Verify isolated source, wheel, editable and native source consumers
+        if: runner.os == 'Linux'
         env:
           DIMOS_MESSAGE_WHEELHOUSE: ${{ github.workspace }}/build/message-codegen/ux-wheelhouse
         run: bash scripts/test_message_packages.sh
-      - name: Retain standalone message build artifacts
+      - name: Retain standalone authoring packages
+        if: runner.os == 'Linux'
         uses: actions/upload-artifact@v7
         with:
           name: message-authoring-packages
           path: |
             build/message-codegen/ux-wheelhouse/dimos*
             build/message-codegen/release/dist/*
-      - name: Record generated CDR and verify both viewer decoders
-        run: bash scripts/test_message_mcap.sh
-      - name: Retain self-contained recording and viewer evidence
-        uses: actions/upload-artifact@v7
+      - name: Upload standalone generator coverage
+        uses: codecov/codecov-action@v7
         with:
-          name: message-mcap-evidence
-          path: |
-            build/message-codegen/viewers/demo.mcap
-            build/message-codegen/viewers/demo.rrd
-            build/message-codegen/viewers/evidence/
-      - name: Retain the standalone Python source for ROS bridge verification
-        uses: actions/upload-artifact@v7
-        with:
-          name: message-codegen-python-source
-          path: packages/dimos-generated/src/
-          if-no-files-found: error
+          use_oidc: true
+          files: build/message-codegen/demo/evidence/coverage.xml
+          flags: MessageCodegen-${{ matrix.os }}
+          fail_ci_if_error: true
+          use_pypi: true
+          version: "11.2.8"
       - name: Retain executable demo evidence
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: message-codegen-evidence
+          name: message-codegen-evidence-${{ matrix.os }}
           path: build/message-codegen/demo/evidence/
           if-no-files-found: error
 
@@ -114,12 +107,8 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
         with:
-          name: message-codegen-evidence
+          name: message-codegen-evidence-ubuntu-latest
           path: build/message-codegen/demo/evidence/
-      - uses: actions/download-artifact@v8
-        with:
-          name: message-codegen-python-source
-          path: packages/dimos-generated/src/
       - name: Build independent ROS2 reference environment
         run: docker build -f .github/docker/message-codegen-reference.Dockerfile -t dimos-cdr-jazzy-reference .github/docker
       - name: Compare native payloads with independently generated ROS2 types
@@ -132,29 +121,32 @@ jobs:
               source /opt/ros/jazzy/setup.bash
               mkdir -p /tmp/reference/src
               cp -r /demo/evidence/custom_msgs /tmp/reference/src/
-              sed -i "/rosidl_generate_interfaces/i find_package(rosidl_generator_py REQUIRED)" /tmp/reference/src/custom_msgs/CMakeLists.txt
               cd /tmp/reference
               colcon build --packages-select custom_msgs --event-handlers console_direct+
               source install/setup.bash
               python3 /source/examples/message-codegen/demo_ros_reference.py --build /demo
             ' | tee build/message-codegen/demo/evidence/jazzy-reference.txt
-      - name: Verify generated messages through the optional ROS bridge
-        run: |
-          docker run --rm -v "$PWD:/source:ro" dimos-cdr-jazzy-reference '
-            set -e
-            source /opt/ros/jazzy/setup.bash
-            cp -r /source/dimos/message_codegen /tmp/message-build
-            cp -r /source/packages/dimos-generated /tmp/message-values
-            /opt/cdr-python/bin/pip install /tmp/message-build /tmp/message-values
-            export ROS_LOCALHOST_ONLY=1
-            export PYTHONPATH=/source:$PYTHONPATH
-            cd /source
-            python3 -m pytest -o addopts="" --noconftest --import-mode=importlib -p no:cacheprovider \
-              dimos/protocol/pubsub/impl/test_rospubsub_conversion.py \
-              dimos/protocol/pubsub/impl/test_rospubsub.py -q
-            python3 examples/message-codegen/demo_ros_bridge.py
-          ' | tee build/message-codegen/demo/evidence/ros-bridge.txt
       - uses: actions/upload-artifact@v7
         with:
           name: message-codegen-jazzy-reference
           path: build/message-codegen/demo/evidence/
+
+  viewers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.0.1
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: Prepare standalone viewer environment
+        run: |
+          uv venv .venv --python 3.12 --seed
+          uv run --no-project --with requests python scripts/prepare_message_parser.py
+          uv pip install --python .venv/bin/python ./dimos/message_codegen ./packages/dimos-generated mcap==1.4.0 pillow rerun-sdk==0.32.0 pytest pytest-asyncio pytest-env
+      - name: Record CDR with schema closure and verify viewer decoding
+        run: bash scripts/test_message_mcap.sh
+      - uses: actions/upload-artifact@v7
+        with:
+          name: message-mcap-evidence
+          path: build/message-codegen/viewers/

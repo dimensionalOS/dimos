@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
+from pathlib import Path
 import subprocess
 import sys
 
@@ -32,7 +34,10 @@ def test_generated_interfaces_check_nested_fields_buffers_and_keyword_arguments(
         ["demo_msgs/msg/Reading"],
         languages=("python",),
     )
-    monkeypatch.setenv("MYPYPATH", str(tmp_path / "generated/python"))
+    (tmp_path / "dimos_message_build").symlink_to(Path(__file__).parent, target_is_directory=True)
+    monkeypatch.setenv(
+        "MYPYPATH", os.pathsep.join([str(tmp_path / "generated/python"), str(tmp_path)])
+    )
     source = tmp_path / "consumer.py"
     source.write_text(
         "import numpy as np\n"

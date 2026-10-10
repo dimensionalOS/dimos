@@ -1,0 +1,57 @@
+[package]
+name = "dimos-depth2depth-cloud"
+version = "0.1.0"
+edition = "2021"
+description = "Native Rust module: Depth Anything calibrated to a lidar, as a camera-frame point cloud"
+license = "Apache-2.0"
+
+[lib]
+name = "dimos_depth2depth_cloud"
+path = "src/lib.rs"
+
+[[bin]]
+name = "depth2depth_cloud"
+path = "src/bin/depth2depth_cloud.rs"
+
+# Not a root-workspace member: its candle/TensorRT dependency tree would otherwise land in the root
+# Cargo.lock and every flake that builds from it.
+[workspace]
+
+# Bake registry entry, cross-checked at compile time by the module macro.
+[package.metadata.dimos.module.depth2depth_cloud]
+path = "dimos_depth2depth_cloud::module::Depth2DepthCloud"
+python = "dimos.perception.depth2depth_cloud.module:Depth2DepthCloud"
+
+[package.metadata.dimos.module.depth2depth_cloud.inputs]
+image = "sensor_msgs/msg/CompressedImage"
+camera_info = "sensor_msgs/msg/CameraInfo"
+lidar = "sensor_msgs/msg/PointCloud2"
+tf = "tf2_msgs/msg/TFMessage"
+
+[package.metadata.dimos.module.depth2depth_cloud.outputs]
+depth_cloud = "sensor_msgs/msg/PointCloud2"
+
+[dependencies]
+dimos-module = { path = "../../../../native/rust/dimos-module" }
+dimos-generated-messages = { path = "../../../../packages/dimos-generated/src/dimos_generated_schemas/package/rust" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
+serde = { version = "1", features = ["derive"] }
+tracing = "0.1"
+validator = { version = "0.21", features = ["derive"] }
+nalgebra = "0.35.0"
+rayon = "1"
+turbojpeg = { version = "1.5.1", default-features = false, features = ["cmake"] }
+
+# The model's backend: Metal on a Mac, TensorRT with the `tensorrt` feature (Jetsons, NVIDIA PCs), else CPU (e.g. a Pi).
+# The flake builds one package per backend and module.py picks by hardware.
+depth2depth = "=0.4.0"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+depth2depth = { version = "=0.4.0", features = ["metal"] }
+
+[features]
+tensorrt = ["depth2depth/tensorrt"]
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

@@ -159,7 +159,7 @@ dimos build --offline            # require cached native sources and Cargo depen
 ```
 
 Use pip's `--no-index --find-links` with a prepared wheelhouse for offline Python
-builds. C++ source preparation currently supports Linux and requires a C/C++
+builds. C++ message source preparation supports Linux and macOS and requires a C/C++
 compiler, CMake and `dimos-message-build[native]` in the active environment.
 It builds pinned upstream ROSIDL/FastRTPS/Fast CDR support in a writable local
 cache; it does not install ROS system packages. The first online native build

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import shutil
 
 from .definitions import Message
 
@@ -86,15 +87,19 @@ def write_project(output: Path, messages: tuple[Message, ...], module: str, vers
             + (" DEPENDENCIES " + " ".join(deps) if deps else "")
             + ")\nament_package()\n"
         )
+    shutil.copyfile(
+        Path(__file__).with_name("templates") / "native-toolchain.cmake",
+        output / "native-toolchain.cmake",
+    )
     # The ordinary source superbuild configures each upstream message project
     # after its dependencies have installed their real CMake exports.
-    cmake = f"cmake_minimum_required(VERSION 3.20)\nproject(dimos_message_sources VERSION {version} LANGUAGES NONE)\ninclude(ExternalProject)\n"
+    cmake = f"cmake_minimum_required(VERSION 3.20)\nproject(dimos_message_sources VERSION {version} LANGUAGES NONE)\ninclude(ExternalProject)\ninclude(${{CMAKE_CURRENT_LIST_DIR}}/native-toolchain.cmake)\n"
     cmake += 'string(REPLACE ";" "|" _prefixes "${CMAKE_PREFIX_PATH}")\n'
     cmake += 'string(REPLACE ";" "|" _runtime_paths "${DIMOS_RUNTIME_PATHS}")\n'
     previous = ""
     for package in order:
         cmake += f'ExternalProject_Add({package} SOURCE_DIR "${{CMAKE_CURRENT_LIST_DIR}}/{package}" DOWNLOAD_COMMAND "" LIST_SEPARATOR | '
-        cmake += "CMAKE_ARGS -DCMAKE_INSTALL_PREFIX=${CMAKE_INSTALL_PREFIX} -DCMAKE_PREFIX_PATH=${_prefixes} -DPython3_EXECUTABLE=${Python3_EXECUTABLE} -DBUILD_TESTING=OFF -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_RPATH=$ORIGIN|${_runtime_paths}"
+        cmake += "CMAKE_ARGS ${_dimos_toolchain_args} -DCMAKE_INSTALL_PREFIX=${CMAKE_INSTALL_PREFIX} -DCMAKE_PREFIX_PATH=${_prefixes} -DPython3_EXECUTABLE=${Python3_EXECUTABLE} -DBUILD_TESTING=OFF -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_RPATH=${_dimos_origin}|${_runtime_paths}"
         if previous:
             cmake += f" DEPENDS {previous}"
         cmake += ")\n"

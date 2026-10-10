@@ -17,17 +17,7 @@ import pytest
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.global_config import global_config
 from dimos.robot.all_blueprints import all_blueprints
-from dimos.robot.get_all_blueprints import get_blueprint_by_name
-
-# Optional dependencies that are allowed to be missing
-OPTIONAL_DEPENDENCIES = {"pyzed", "geometry_msgs", "turbojpeg", "unitree_sdk2py"}
-OPTIONAL_ERROR_SUBSTRINGS = {
-    "Unable to locate turbojpeg library automatically",
-    "ZED SDK not installed",
-    "Descriptors cannot be created directly",
-    # cockpit() blueprints without the [web] extra installed.
-    "needs the web extra",
-}
+from dimos.robot.get_all_blueprints import OptionalDependencyError, load_blueprint
 
 # These need self-hosted dependencies or external robot assets.
 SELF_HOSTED_BLUEPRINTS = frozenset(
@@ -78,21 +68,13 @@ SELF_HOSTED_BLUEPRINTS = frozenset(
 )
 
 UBUNTU_BLUEPRINTS = sorted(set(all_blueprints) - SELF_HOSTED_BLUEPRINTS)
-SELF_HOSTED_BLUEPRINTS = sorted(SELF_HOSTED_BLUEPRINTS)
 
 
 def _check_blueprint(blueprint_name: str) -> None:
     try:
-        blueprint = get_blueprint_by_name(blueprint_name)
-    except ModuleNotFoundError as e:
-        if e.name in OPTIONAL_DEPENDENCIES:
-            pytest.skip(f"Skipping due to missing optional dependency: {e.name}")
-        raise
-    except Exception as e:
-        message = str(e)
-        if any(substring in message for substring in OPTIONAL_ERROR_SUBSTRINGS):
-            pytest.skip(f"Skipping due to missing optional dependency: {message}")
-        raise
+        blueprint = load_blueprint(blueprint_name)
+    except OptionalDependencyError as e:
+        pytest.skip(f"Skipping due to missing optional dependency: {e}")
     assert isinstance(blueprint, Blueprint), (
         f"Blueprint '{blueprint_name}' is not a Blueprint, got {type(blueprint)}"
     )
@@ -113,7 +95,7 @@ def test_blueprint_is_valid(blueprint_name: str, monkeypatch: pytest.MonkeyPatch
 
 
 @pytest.mark.self_hosted
-@pytest.mark.parametrize("blueprint_name", SELF_HOSTED_BLUEPRINTS)
+@pytest.mark.parametrize("blueprint_name", sorted(SELF_HOSTED_BLUEPRINTS))
 def test_self_hosted_blueprint_is_valid(blueprint_name: str) -> None:
     """Validate blueprints that need heavy deps or LFS — self-hosted runner only."""
     _check_blueprint(blueprint_name)

@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from copy import deepcopy
 from typing import TYPE_CHECKING
 
@@ -41,6 +42,9 @@ class VoxelGrid:
     linearly with map size — full-map scan + gather per frame, ~150 ms at
     300k voxels). Both produce identical voxel sets.
 
+    `stamped` makes each voxel remember the frame that wrote it, so
+    `reproject` can move the map when those frames' poses are corrected.
+
     No Module/framework dependency. Can be used standalone or wrapped
     by VoxelGridMapper (Module) or VoxelMapTransformer (memory Transformer).
     """
@@ -53,23 +57,24 @@ class VoxelGrid:
         carve_columns: bool = True,
         frame_id: str = "world",
         show_startup_log: bool = True,
+        stamped: bool = False,
     ) -> None:
         self._voxel_size = voxel_size
         self._frame_id = frame_id
 
         use_cuda = False
         self._impl: O3dVoxels | PackedVoxels
-        if device.startswith("CUDA"):
+        if not stamped and device.startswith("CUDA"):
             import open3d.core as o3c  # type: ignore[import-untyped]
 
             use_cuda = o3c.cuda.is_available()
             self._impl = (
                 O3dVoxels(voxel_size, block_count, carve_columns, o3c.Device(device))
                 if use_cuda
-                else PackedVoxels(voxel_size, carve_columns)
+                else PackedVoxels(voxel_size, carve_columns, stamped)
             )
         else:
-            self._impl = PackedVoxels(voxel_size, carve_columns)
+            self._impl = PackedVoxels(voxel_size, carve_columns, stamped)
 
         if show_startup_log:
             logger.info(f"VoxelGrid using device: {device if use_cuda else 'CPU:0 (packed-numpy)'}")
@@ -86,6 +91,15 @@ class VoxelGrid:
         self._impl.add_frame(frame)
         self._latest_header = deepcopy(frame.header)
         self._latest_header.frame_id = self._frame_id
+        self.get_global_pointcloud.invalidate_cache(self)
+        self.get_global_pointcloud2.invalidate_cache(self)
+
+    def reproject(self, place: Callable[[PointCloud2], PointCloud2]) -> None:
+        """Move every voxel to where `place` puts its stamped original position."""
+        self._check_disposed()
+        if not isinstance(self._impl, PackedVoxels):
+            raise RuntimeError("reproject needs VoxelGrid(stamped=True)")
+        self._impl.reproject(place)
         self.get_global_pointcloud.invalidate_cache(self)
         self.get_global_pointcloud2.invalidate_cache(self)
 

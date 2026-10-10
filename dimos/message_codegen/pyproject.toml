@@ -13,9 +13,11 @@ dependencies = ["rosbags==0.11.0", "empy==4.2", "lark==1.2.2", "setuptools>=70",
 native = ["pip", "catkin-pkg==1.1.0", "PyYAML==6.0.2"]
 
 [tool.setuptools]
-packages = ["dimos_message_build", "dimos_message_build._vendor"]
-package-dir = {"dimos_message_build" = "."}
+packages = ["dimos_message_build", "rosidl_adapter", "rosidl_adapter.msg", "rosidl_adapter.srv", "rosidl_adapter.action", "rosidl_adapter.resource"]
+package-dir = {"dimos_message_build" = ".", "rosidl_adapter" = ".upstream/rosidl_adapter"}
 include-package-data = false
 
 [tool.setuptools.package-data]
-"dimos_message_build" = ["py.typed", "schemas/**/*", "templates/*", "sources.json", "native_sources.json", "_vendor/*.pyi", "_vendor/LICENSE", "_vendor/*.xml"]
+"dimos_message_build" = ["py.typed", "schemas/**/*", "templates/*", "sources.json", "native_sources.json", "parser-source.json"]
+
+"rosidl_adapter" = ["resource/*.em", "LICENSE", "package.xml"]

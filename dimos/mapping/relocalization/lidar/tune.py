@@ -52,6 +52,7 @@ from dimos.mapping.relocalization.lidar.relocalize import (
     LidarRelocalizer,
     RelocalizeConfig,
 )
+from dimos.mapping.relocalization.lidar.replay import main as replay_main
 from dimos.msgs.pointcloud import pointcloud_from_xyz, pointcloud_to_open3d, pointcloud_xyz
 from dimos.msgs.time import time_from_seconds
 from dimos.utils.data import get_data
@@ -651,6 +652,7 @@ def view(name: str, probes: list[Probe], out: str | None) -> None:
 
 
 app = typer.Typer(help="Relocalization eval and tuning over a recording plus its premap")
+app.command("replay")(replay_main)
 
 
 def _register(

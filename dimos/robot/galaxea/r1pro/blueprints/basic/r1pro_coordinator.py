@@ -39,8 +39,14 @@ from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory
 from dimos.core.coordination.blueprints import Blueprint, TransportSpec, autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.transport import ZenohTransport
+from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.protocol.pubsub.impl.zenohpubsub import QOS_LATEST_WINS, Topic as ZenohTopic, Zenoh
 from dimos.robot.galaxea.r1pro.connection import R1PRO_UPPER_BODY_JOINTS, R1ProConnection
+from dimos.robot.galaxea.r1pro.head_cameras import (
+    HeadCameraInfo,
+    HeadLeftCamera,
+    HeadRightCamera,
+)
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 
@@ -154,14 +160,22 @@ def _zenoh_transport(
     )
 
 
+def _head_cameras() -> list[Blueprint]:
+    """Both head eyes and their intrinsics; see ``head_cameras``."""
+    return [HeadLeftCamera.blueprint(), HeadRightCamera.blueprint(), HeadCameraInfo.blueprint()]
+
+
 def r1pro_control(
     *,
     tasks: Sequence[TaskConfig] | None = None,
+    publish_odom: bool | None = None,
+    enable_wrist_color: bool | None = None,
 ) -> Blueprint:
-    """R1ProConnection and ControlCoordinator.
+    """R1ProConnection, ControlCoordinator and the head cameras.
 
     ``tasks`` overrides the default task set (whole-body trajectory + chassis
     velocity); transports and remappings stay identical either way.
+    The other keyword args override the matching ``R1ProConnectionConfig`` fields.
     """
     resolved_tasks = (
         list(tasks)
@@ -179,7 +193,13 @@ def r1pro_control(
 
     return (
         autoconnect(
-            R1ProConnection.blueprint(),
+            R1ProConnection.blueprint(
+                **({} if publish_odom is None else {"publish_odom": publish_odom}),
+                **(
+                    {} if enable_wrist_color is None else {"enable_wrist_color": enable_wrist_color}
+                ),
+            ),
+            *_head_cameras(),
             ControlCoordinator.blueprint(
                 tick_rate=100,
                 hardware=[
@@ -204,6 +224,10 @@ def r1pro_control(
             [
                 (R1ProConnection, "cmd_vel", "chassis_cmd_vel"),
                 (R1ProConnection, "odom", "chassis_odom"),
+                (HeadLeftCamera, "jpeg_out", "head_left_color"),
+                (HeadRightCamera, "jpeg_out", "head_right_color"),
+                (HeadCameraInfo, "left_info", "head_left_info"),
+                (HeadCameraInfo, "right_info", "head_right_info"),
             ]
         )
         .transports(
@@ -234,6 +258,8 @@ def r1pro_control(
                 ("head_right_color", CompressedImage): _zenoh_transport(
                     "/head_right_color", CompressedImage, latest_wins=True
                 ),
+                ("head_left_info", CameraInfo): _zenoh_transport("/head_left_info", CameraInfo),
+                ("head_right_info", CameraInfo): _zenoh_transport("/head_right_info", CameraInfo),
                 ("head_depth", Image): _zenoh_transport("/head_depth", Image, latest_wins=True),
                 ("lidar", PointCloud2): _zenoh_transport("/lidar", PointCloud2, latest_wins=True),
                 ("wrist_left_color", CompressedImage): _zenoh_transport(

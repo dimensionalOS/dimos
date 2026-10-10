@@ -30,9 +30,9 @@ if TYPE_CHECKING:
     from dimos_generated.geometry_msgs.msg import TransformStamped
     from dimos_generated.sensor_msgs.msg import Image, PointCloud2
 
-    from dimos.mapping.loop_closure.pgo import PoseGraph
     from dimos.memory.stream import Stream
     from dimos.memory.type.observation import Observation
+    from dimos.navigation.go2.loop_closure.pgo import PoseGraph
 
 PATH_THICKNESS = 0.01
 # Pin pattern (from dimos/memory/vis/space/rerun.py): thin vertical line
@@ -464,12 +464,12 @@ def main(
     from dimos_generated.std_msgs.msg import Header
     import rerun as rr
 
-    from dimos.mapping.loop_closure.pgo import PGO
     from dimos.memory.cli.dataset import open_store, resolve_dataset, stream_payload_types
     from dimos.memory.transform import QualityWindow, SpeedLimit
     from dimos.memory.utils.progress import progress
     from dimos.msgs.camera_info import camera_info_from_yaml
     from dimos.msgs.image import image_sharpness
+    from dimos.navigation.go2.loop_closure.pgo import PGO
     from dimos.perception.fiducial.marker_transformer import DetectMarkers
     from dimos.robot.unitree.go2.camera_calibration import front_camera_calibration
     from dimos.robot.unitree.go2.connection import BASE_TO_OPTICAL

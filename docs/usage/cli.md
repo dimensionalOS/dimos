@@ -16,7 +16,8 @@ dimos [GLOBAL OPTIONS] COMMAND [ARGS]
 | `--robot-ips` | TEXT | `None` | Multiple robot IPs |
 | `--simulation` / `--no-simulation` | bool | `False` | Enable MuJoCo simulation |
 | `--replay` / `--no-replay` | bool | `False` | Use recorded replay data |
-| `--replay-db` | TEXT | `go2_bigoffice` | Replay memory SQLite database name |
+| `--replay-db` | TEXT | `go2_short` | Replay memory SQLite database name |
+| `--replay-exit` / `--no-replay-exit` | bool | `False` | Exit once every replay stream finishes |
 | `--record [sqlite\|mcap]` | `sqlite\|mcap` | off | Record selected streams to one artifact; bare `--record` means SQLite ([Recording](/docs/usage/recording.md)) |
 | `--record-engine` | `python\|rust` | `python` | Recording implementation; Rust is experimental and never selected implicitly |
 | `--record-topics` | TEXT | `*` | Comma-separated globs on stream names to record |
@@ -45,6 +46,7 @@ dimos [GLOBAL OPTIONS] COMMAND [ARGS]
 | `--mujoco-global-map-from-pointcloud` | TEXT | `None` | Generate map from point cloud |
 | `--mujoco-start-pos` | TEXT | `-1.0, 1.0` | MuJoCo robot start position |
 | `--mujoco-steps-per-frame` | INT | `7` | MuJoCo simulation steps per frame |
+| `--mujoco-shadows` | `auto\|on\|off` | `auto` | MuJoCo shadow mapping. `auto` benchmarks one shadowed render at startup and disables shadows when it exceeds 30% of the video frame budget; `on` and `off` skip the benchmark |
 
 ### Configuration Precedence
 
@@ -288,7 +290,7 @@ dimos log                    # last 50 lines, human-readable
 dimos log -f                 # follow in real time
 dimos log -n 100             # last 100 lines
 dimos log --json | jq .event # raw JSONL, extract events
-dimos log -r 20260306-143022-unitree-go2  # specific run
+dimos log -r 20260306-143022-a3f1-unitree-go2  # specific run
 ```
 
 All processes (main + workers) write to the same `main.jsonl`. Filter by module:

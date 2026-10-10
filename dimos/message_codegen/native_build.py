@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Linux source preparation using upstream CMake projects and a writable cache.
+"""Linux/macOS source preparation using upstream CMake projects and a writable cache.
 
 Nothing calls this module from package installation, schema discovery or import.
 No package-manager implementation lives here: CMake owns upstream source builds.
@@ -34,7 +34,7 @@ import subprocess
 import sys
 from typing import Any
 
-if sys.platform == "linux":
+if sys.platform in {"linux", "darwin"}:
     import fcntl
 
 from . import cpp
@@ -57,10 +57,8 @@ def _locked(directory: Path) -> Iterator[None]:
 
 
 def _toolchain_key() -> str:
-    if sys.platform != "linux":
-        raise NotImplementedError(
-            "Native ROSIDL source preparation is currently validated on Linux only"
-        )
+    if sys.platform not in {"linux", "darwin"}:
+        raise NotImplementedError("Native ROSIDL source preparation requires Linux or macOS")
     cxx = shlex.split(os.environ.get("CXX") or "c++")
     cc = shlex.split(os.environ.get("CC") or "cc")
     if not cxx or not cc:
@@ -85,7 +83,19 @@ def _toolchain_key() -> str:
     cmake = subprocess.check_output(["cmake", "--version"], text=True)
     flags = {
         name: os.environ.get(name, "")
-        for name in ["CC", "CXX", "CFLAGS", "CXXFLAGS", "LDFLAGS", "CMAKE_TOOLCHAIN_FILE"]
+        for name in [
+            "CC",
+            "CXX",
+            "CFLAGS",
+            "CXXFLAGS",
+            "LDFLAGS",
+            "CMAKE_TOOLCHAIN_FILE",
+            "SDKROOT",
+            "MACOSX_DEPLOYMENT_TARGET",
+            "CMAKE_OSX_SYSROOT",
+            "CMAKE_OSX_DEPLOYMENT_TARGET",
+            "CMAKE_OSX_ARCHITECTURES",
+        ]
     }
     versions = {
         name: metadata.version(name)
@@ -99,9 +109,30 @@ def _toolchain_key() -> str:
             + target
             + sys.version
             + sys.executable
-            + json.dumps([flags, versions], sort_keys=True)
+            + sys.platform
+            + json.dumps([flags, versions, _cmake_toolchain_args()], sort_keys=True)
         ).encode()
     ).hexdigest()
+
+
+def _cmake_toolchain_args() -> list[str]:
+    """Forward one target configuration to support and message CMake builds."""
+    values = {"CMAKE_TOOLCHAIN_FILE": os.environ.get("CMAKE_TOOLCHAIN_FILE", "")}
+    if sys.platform == "darwin":
+        sdk = os.environ.get("CMAKE_OSX_SYSROOT") or os.environ.get("SDKROOT")
+        if not sdk:
+            if shutil.which("xcrun") is None:
+                raise RuntimeError("Missing xcrun; install Apple's Command Line Tools first")
+            sdk = subprocess.check_output(
+                ["xcrun", "--sdk", "macosx", "--show-sdk-path"], text=True
+            ).strip()
+        values.update(
+            CMAKE_OSX_SYSROOT=sdk,
+            CMAKE_OSX_DEPLOYMENT_TARGET=os.environ.get("CMAKE_OSX_DEPLOYMENT_TARGET")
+            or os.environ.get("MACOSX_DEPLOYMENT_TARGET", ""),
+            CMAKE_OSX_ARCHITECTURES=os.environ.get("CMAKE_OSX_ARCHITECTURES", ""),
+        )
+    return [f"-D{name}={value}" for name, value in sorted(values.items()) if value]
 
 
 def build_environment(prefixes: list[Path], base: dict[str, str] | None = None) -> dict[str, str]:
@@ -130,9 +161,15 @@ def prepare_support(
     key = _toolchain_key()
     lock = (TOOLKIT / "native_sources.json").read_bytes()
     recipe = (TOOLKIT / "templates/native-support.cmake").read_bytes()
+    toolchain = (TOOLKIT / "templates/native-toolchain.cmake").read_bytes()
     snapshots = {name: source_digest(path) for name, path in sorted((source_dirs or {}).items())}
     digest = sha256(
-        key.encode() + lock + recipe + json.dumps(snapshots, sort_keys=True).encode()
+        key.encode()
+        + lock
+        + recipe
+        + toolchain
+        + Path(__file__).read_bytes()
+        + json.dumps(snapshots, sort_keys=True).encode()
     ).hexdigest()
     directory = cache / "support" / digest
     prefix = directory / "install"
@@ -145,6 +182,7 @@ def prepare_support(
         source = directory / "source"
         source.mkdir(exist_ok=True)
         (source / "CMakeLists.txt").write_bytes(recipe)
+        (source / "native-toolchain.cmake").write_bytes(toolchain)
         (source / "native_sources.json").write_bytes(lock)
         overrides = source_dirs or {}
         expected = {*json.loads(lock)["repositories"], "fastcdr"}
@@ -168,6 +206,7 @@ def prepare_support(
                 "-B",
                 str(directory / "build"),
                 "-DPython3_EXECUTABLE=" + sys.executable,
+                *_cmake_toolchain_args(),
                 "-DFETCHCONTENT_BASE_DIR=" + str(directory / "upstream"),
                 "-DDIMOS_SUPPORT_PREFIX=" + str(prefix),
                 "-DFETCHCONTENT_FULLY_DISCONNECTED=" + ("ON" if offline else "OFF"),
@@ -315,6 +354,7 @@ def prepare_cpp(
                         "-B",
                         str(directory / "build"),
                         "-DPython3_EXECUTABLE=" + sys.executable,
+                        *_cmake_toolchain_args(),
                         "-DCMAKE_INSTALL_PREFIX=" + str(prefix),
                         "-DCMAKE_PREFIX_PATH=" + ";".join(map(str, prefixes)),
                         "-DDIMOS_RUNTIME_PATHS=" + ";".join(str(p / "lib") for p in prefixes),

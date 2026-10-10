@@ -22,7 +22,8 @@ from dimos_message_build.registry import decode as cdr_decode, encode as cdr_enc
 import numpy as np
 import pytest
 
-from dimos.imitation.dataprep.core import StreamField, is_image_array, resolve_field
+from dimos.imitation.dataprep.core import is_image_array, resolve_field
+from dimos.imitation.dataprep.schema import FeatureSpec
 from dimos.msgs.image import compressed_image_from_image, image_from_array
 
 
@@ -35,7 +36,12 @@ def test_generated_camera_field_is_a_pixel_array_after_cdr(compressed):
     message = compressed_image_from_image(image, quality=100) if compressed else image
     message = cdr_decode(cdr_encode(message), type(message))
     before = cdr_encode(message)
-    array = resolve_field(message, StreamField(stream="camera"))
+    array = resolve_field(
+        message,
+        FeatureSpec(
+            stream="camera", dtype="video", shape=(8, 10, 3), names=["height", "width", "channels"]
+        ),
+    )
     assert array.shape == pixels.shape and array.dtype == pixels.dtype
     assert is_image_array(array)
     np.testing.assert_allclose(array, pixels, atol=2 if compressed else 0)
@@ -55,7 +61,12 @@ def test_generated_mono16_camera_respects_row_padding_and_endian():
         data=np.asarray(padded.ravel(), dtype=np.uint8),
         header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
     )
-    array = resolve_field({"camera": message}, StreamField(stream="dict", field="camera"))
+    array = resolve_field(
+        {"camera": message},
+        FeatureSpec(
+            stream="dict", field="camera", dtype="uint16", shape=(2, 2), names=["height", "width"]
+        ),
+    )
     assert is_image_array(array)
     np.testing.assert_array_equal(array, pixels)
     assert array.strides == (6, 2)

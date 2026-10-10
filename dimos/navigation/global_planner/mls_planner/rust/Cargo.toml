@@ -1,0 +1,48 @@
+[package]
+name = "dimos-mls-planner"
+version = "0.1.0"
+edition = "2021"
+description = "Native Rust multi-level surface path planner for dimos"
+license = "Apache-2.0"
+
+[lib]
+name = "dimos_mls_planner"
+path = "src/lib.rs"
+
+[[bin]]
+name = "mls_planner"
+path = "src/main.rs"
+
+# Bake registry entry, cross-checked at compile time by the module macro.
+# threads = 2 so the handle loop keeps dispatching while the planning worker
+# runs block_in_place.
+[package.metadata.dimos.module.mls_planner]
+path = "dimos_mls_planner::module::MlsPlanner"
+python = "dimos.navigation.global_planner.mls_planner.mls_planner_native:MLSPlannerNative"
+threads = 2
+
+[package.metadata.dimos.module.mls_planner.inputs]
+global_map = "sensor_msgs/msg/PointCloud2"
+local_map = "sensor_msgs/msg/PointCloud2"
+region_bounds = "dimos_msgs/msg/RegionBounds"
+seed_map = "dimos_msgs/msg/RegionPointCloud2"
+seed_bounds = "dimos_msgs/msg/RegionBounds"
+goal = "geometry_msgs/msg/PointStamped"
+tf = "tf2_msgs/msg/TFMessage"
+
+[package.metadata.dimos.module.mls_planner.outputs]
+surface_map = "dimos_msgs/msg/RegionPointCloud2"
+nodes = "sensor_msgs/msg/PointCloud2"
+node_edges = "dimos_msgs/msg/RegionLineSegments3D"
+path = "nav_msgs/msg/Path"
+
+[dependencies]
+dimos-module = { path = "../../../../../native/rust/dimos-module" }
+dimos-generated-messages = { path = "../../../../../packages/dimos-generated/src/dimos_generated_schemas/package/rust" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time"] }
+serde = { version = "1", features = ["derive"] }
+ahash = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+validator = { version = "0.21", features = ["derive"] }
+rayon = "1"

@@ -13,32 +13,80 @@
 # limitations under the License.
 
 import importlib.util
+import os
 from pathlib import Path
 import subprocess
 import sys
 
 import pytest
 
+from dimos.message_codegen.generate import generate
+from dimos.message_codegen.ownership import Dependency
+
 
 @pytest.mark.native_e2e
-def test_external_schema_records_on_both_transports_with_unchanged_binary(tmp_path):
-    executable = Path("target/debug/dimos-memory-recorder").resolve()
-    if not executable.is_file() or importlib.util.find_spec("external_telemetry") is None:
-        pytest.skip("Build the recorder and install the external message demo package first")
+@pytest.mark.parametrize("backend", ["lcm", "zenoh"])
+def test_external_schema_records_on_both_transports_with_unchanged_binary(tmp_path, backend):
+    executable = Path(
+        os.environ.get("DIMOS_NATIVE_RECORDER_BIN", "target/debug/dimos-memory-recorder")
+    ).resolve()
+    if not executable.is_file():
+        pytest.skip("Build the native recorder before running the native_e2e recording gate")
+    source = tmp_path / "interfaces/recording_msgs/msg/Reading.msg"
+    source.parent.mkdir(parents=True)
+    source.write_text("std_msgs/Header header\nfloat64 value\nstring application_note\n")
+    spec = importlib.util.find_spec("dimos_generated_schemas")
+    assert spec is not None and spec.origin is not None
+    builtin = Dependency.load(Path(spec.origin).parent / "package")
+    package = tmp_path / "generated"
+    generate(
+        [source.parents[2]],
+        package,
+        ["recording_msgs/msg/Reading"],
+        "recording_messages",
+        dependencies=(builtin,),
+        languages=("python",),
+    )
+    site = tmp_path / "site"
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pip",
+            "install",
+            "--no-deps",
+            "--no-build-isolation",
+            "--target",
+            str(site),
+            str(package / "python"),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    env = {
+        **os.environ,
+        "PYTHONPATH": os.pathsep.join(
+            [str(site), str(Path.cwd()), os.environ.get("PYTHONPATH", "")]
+        ),
+    }
     result = subprocess.run(
         [
             sys.executable,
             str(Path(__file__).with_name("demo_native_recording.py")),
             "--executable",
             str(executable),
+            "--transport",
+            backend,
             "--output",
             str(tmp_path),
         ],
         capture_output=True,
         text=True,
+        env=env,
         timeout=60,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "lcm: locally-added-field-2" in result.stdout
-    assert "zenoh: locally-added-field-2" in result.stdout
+    assert f"{backend}: locally-added-field-2" in result.stdout
     assert "PASS:" in result.stdout

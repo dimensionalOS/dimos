@@ -15,6 +15,12 @@
   padding: 8px;
 }
 
+/* Without this, overflow: hidden tool lines shrink to nothing instead of the
+   list scrolling. */
+.lines > * {
+  flex-shrink: 0;
+}
+
 .hint {
   color: var(--fg-muted);
   font-size: 12px;

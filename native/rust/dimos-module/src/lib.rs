@@ -24,6 +24,7 @@ pub mod log;
 pub mod module;
 pub mod pointcloud;
 pub mod tf;
+pub mod time;
 pub mod transport;
 pub mod workers;
 pub mod zenoh;

@@ -19,6 +19,11 @@ their ROS schema name. Other formats use a caller-supplied ``codecs`` map (wire
 topic -> codec), while ``streams`` may map friendly stream names to topics. See
 ``dimos.robot.unitree.go2.dds.store.Go2McapStore`` for the Go2 DDS wiring.
 
+Channels published by dimos itself need neither: a dimos topic carries its
+message type in its own name, which supplies a friendly stream name
+(``_dimos_wire``). Decoding still requires a declared CDR schema or an injected
+codec; a type-like topic never implies the byte encoding.
+
 Read-only: no append, blobs, vectors, or embeddings. Payloads decode lazily on
 ``obs.data``; ts and counts are cheap (counts come from the mcap index).
 """
@@ -28,7 +33,7 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping
 from dataclasses import replace
 from functools import partial
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from dimos.memory.backend import Backend
 from dimos.memory.codecs.base import codec_for
@@ -39,6 +44,9 @@ from dimos.memory.store.base import Store, StoreConfig
 from dimos.memory.type.filter import StreamQuery
 from dimos.memory.type.observation import Observation
 from dimos.msgs.helpers import resolve_msg_type
+
+if TYPE_CHECKING:
+    from dimos.msgs.protocol import DimosMsg
 
 
 @runtime_checkable
@@ -63,12 +71,34 @@ class _BytesCodec:
 _BYTES_CODEC = _BytesCodec()
 
 
+def _dimos_wire(topic: str) -> tuple[str, type[DimosMsg]] | None:
+    """Split a dimos wire topic into its port name and message type.
+
+    A dimos topic embeds the type in its last segment,
+    ``dimos/<port>/<package>/msg/<Type>`` (built by ``zenohpubsub.Topic.key_expr``), so
+    every dimos channel describes itself and no per-topic registry is needed.
+    None for anything that is not one, which leaves DDS and app channels to
+    the injected codecs.
+    """
+    parts = topic.split("/")
+    if len(parts) < 5 or parts[0] != "dimos" or parts[-2] != "msg":
+        return None
+    port = "/".join(parts[1:-3])
+    msg_type = resolve_msg_type("/".join(parts[-3:]))
+    return (port, msg_type) if port and msg_type is not None else None
+
+
 def _slug(topic: str) -> str:
     """Auto stream name from a topic: drop the ``rt/`` prefix and ``/`` -> ``_``.
 
     ``rt/`` is the ROS2-over-DDS topic prefix; ``removeprefix`` only strips it
-    where present (e.g. app-level ``control_log`` is left alone).
+    where present (e.g. app-level ``control_log`` is left alone). A dimos topic
+    names itself by its port, dropping the type segment: the dot in
+    ``nav_msgs/msg/Path`` is not attribute-addressable on ``store.streams``.
     """
+    wire = _dimos_wire(topic)
+    if wire is not None:
+        return wire[0].replace("/", "_")
     return topic.removeprefix("rt/").replace("/", "_")
 
 
@@ -193,6 +223,21 @@ class McapStore(Store):
             for cid, ch in summary.channels.items():
                 count = summary.statistics.channel_message_counts.get(cid, 0)
                 name = name_of.get(ch.topic) or _slug(ch.topic)
+                taken = self._stream_topic.get(name)
+                if taken is not None and taken != ch.topic:
+                    # Two topics, one name. One port carrying two types is
+                    # the type's to tell apart (`shared` -> `shared_Imu`); two
+                    # ports folding to one slug is a naming decision for
+                    # `streams=`, not something to guess at.
+                    wire, had = _dimos_wire(ch.topic), _dimos_wire(taken)
+                    if wire is not None and had is not None and wire[0] == had[0]:
+                        type_name = wire[1].__msgtype__.rsplit("/", 1)[-1]
+                        name = f"{name}_{type_name}"
+                    if self._stream_topic.get(name, ch.topic) != ch.topic:
+                        raise ValueError(
+                            f"stream {name!r} would name both {taken!r} and {ch.topic!r};"
+                            " pass streams= to name them apart"
+                        )
                 schema = summary.schemas.get(ch.schema_id)
                 signature = (
                     ch.message_encoding,
@@ -202,10 +247,6 @@ class McapStore(Store):
                 if ch.topic in topic_signatures and topic_signatures[ch.topic] != signature:
                     raise ValueError(
                         f"Topic {ch.topic!r} has conflicting channel schemas or timing policies"
-                    )
-                if name in self._stream_topic and self._stream_topic[name] != ch.topic:
-                    raise ValueError(
-                        f"Topics {self._stream_topic[name]!r} and {ch.topic!r} map to stream {name!r}"
                     )
                 topic_signatures[ch.topic] = signature
                 if (
@@ -246,7 +287,9 @@ class McapStore(Store):
         if name not in self._available:
             raise KeyError(f"No stream {name!r}. Available: {sorted(self._available)}")
         topic = self._stream_topic[name]
-        codec = self._codecs.get(topic) or _BYTES_CODEC  # no codec -> Stream[bytes]
+        # Injected codecs win; known CDR schemas were resolved from channel metadata.
+        # A type-like topic alone must never select a decoder for arbitrary bytes.
+        codec = self._codecs.get(topic) or _BYTES_CODEC
         ptype = codec.payload_type
         obs = McapObservationStore(
             name=name,

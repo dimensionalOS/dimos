@@ -107,3 +107,7 @@ optuna.db
 
 # Generated typing interfaces from editable native builds.
 /dimos_generated-stubs/
+# policy blobs are loaded from outside the repository
+*.bin
+
+/dimos/message_codegen/.upstream/

@@ -29,7 +29,8 @@ import numpy as np
 import pytest
 import pytest_mock
 
-from dimos.imitation.collection.episode_monitor import EpisodeStatus
+from dimos.imitation.collection.episode import EpisodeStatus
+from dimos.msgs.std_msgs.String import String
 from dimos.msgs.time import time_from_seconds
 from dimos.teleop.webxr.body_tracking import BodyTrackingSnapshot
 from dimos.teleop.webxr.controller_types import (
@@ -256,7 +257,7 @@ def test_episode_status_is_cached_and_broadcast(
     broadcast = mocker.patch.object(module, "_broadcast_text")
     mocker.patch("dimos.teleop.webxr.module.time.time", return_value=165.5)
 
-    module._on_episode_status(_episode_status())
+    module._on_episode_status(String(_episode_status().to_json()))
 
     assert module._latest_episode_status == _episode_status()
     payload = json.loads(broadcast.call_args.args[0])
@@ -927,3 +928,21 @@ def test_command_dispatch_rejects_invalid_frame_before_control_handler(module, m
         frame = frame[:-1]
     assert module._dispatch_binary_message(frame) is False
     handler.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        "not json",
+        '{"schema_version":2}',
+        '{"schema_version":true}',
+        '{"schema_version":1,"ts":null}',
+    ],
+)
+def test_invalid_episode_document_keeps_the_previous_hud_state(module, mocker, document):
+    broadcast = mocker.patch.object(module, "_broadcast_text")
+    module._on_episode_status(String(_episode_status().to_json()))
+    broadcast.reset_mock()
+    module._on_episode_status(String(document))
+    assert module._latest_episode_status == _episode_status()
+    broadcast.assert_not_called()

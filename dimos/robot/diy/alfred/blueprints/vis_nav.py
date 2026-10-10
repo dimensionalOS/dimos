@@ -34,11 +34,12 @@ from dimos.mapping.dim_slam.dim_slam import (
     SourceConfig,
 )
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
-from dimos.navigation.dannav.holonomic_tc.module import DanHolonomicTC
-from dimos.navigation.dannav.local_planner.module import DanLocalPlanner
+from dimos.navigation.experimental.dannav.holonomic_tc.module import DanHolonomicTC
+from dimos.navigation.experimental.dannav.local_planner.module import DanLocalPlanner
+from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPlannerNative
+from dimos.navigation.global_planner.mls_planner.start_relay import StartRelay
+from dimos.navigation.global_planner.mls_planner.viz import planner_visual_override
 from dimos.navigation.movement_manager.movement_manager import MovementManager
-from dimos.navigation.nav_3d.mls_planner.mls_planner_native import MLSPlannerNative
-from dimos.navigation.nav_3d.mls_planner.start_relay import StartRelay
 from dimos.robot.diy.alfred.config import ALFRED, ALFRED_URDF
 from dimos.visualization.rerun.urdf_robot import UrdfRobotStaticRerunFactory
 from dimos.visualization.vis_module import vis_module
@@ -111,6 +112,8 @@ def _alfred_urdf_static(rr: Any) -> list[tuple[str, Any]]:
 
 
 VOXEL_SIZE_METERS = 0.05
+WALL_CLEARANCE_M = 0.2
+PLANNER_VIZ_HZ = 2.0
 DEPTH_MAX_RANGE_METERS = 4.0
 """4 m won the mapping grid against 6 m (top-down F1 .570 vs .506 against a
 lidar-raycast reference on drive_2026-08-18_23-05-04.db)."""
@@ -171,8 +174,9 @@ def vis_nav(
         MLSPlannerNative.blueprint(
             voxel_size=VOXEL_SIZE_METERS,
             robot_height=ALFRED.body_height,
-            wall_clearance_m=0.2,
+            wall_clearance_m=WALL_CLEARANCE_M,
             step_penalty_weight=1.0,
+            viz_publish_hz=PLANNER_VIZ_HZ,
         ).remappings([(MLSPlannerNative, "path", "planner_path")]),
         # Solely the tf-driven start_pose source for the dannav odom remaps below.
         StartRelay.blueprint(),
@@ -198,9 +202,7 @@ def vis_nav(
                     "world/lidar": 1.0,
                     "world/global_map": 1.0,
                     "world/local_map": 1.0,
-                    "world/surface_map": 1.0,
                     "world/nodes": 1.0,
-                    "world/node_edges": 1.0,
                 },
                 # An image only renders if it shares an entity with its Pinhole.
                 "visual_override": {
@@ -214,6 +216,8 @@ def vis_nav(
                     ),
                     "world/image": _ir_image,
                     "world/camera_info": _ir_pinhole,
+                    # The planner publishes its surface and edges by cell.
+                    **planner_visual_override(PLANNER_VIZ_HZ, VOXEL_SIZE_METERS, WALL_CLEARANCE_M),
                 },
             },
         ),

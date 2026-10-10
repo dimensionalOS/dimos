@@ -16,7 +16,7 @@
 unwrapped from its daemon thread and rebuilt as a passive ControlTask.
 
 Algorithm is a faithful port of
-:class:`dimos.navigation.replanning_a_star.local_planner.LocalPlanner`:
+:class:`dimos.navigation.go2.replanning_a_star.local_planner.LocalPlanner`:
 PController + 0.5 m fixed lookahead + rotate-then-drive heuristic +
 state machine (initial_rotation → path_following → final_rotation → arrived).
 
@@ -57,8 +57,8 @@ from dimos.control.tasks.velocity_tracking_pid import (
 from dimos.core.global_config import global_config as _gc
 from dimos.msgs.geometry import quaternion_euler, quaternion_from_euler
 from dimos.msgs.time import time_from_seconds
-from dimos.navigation.replanning_a_star.controllers import PController
-from dimos.navigation.replanning_a_star.path_distancer import PathDistancer
+from dimos.navigation.go2.replanning_a_star.controllers import PController
+from dimos.navigation.go2.replanning_a_star.path_distancer import PathDistancer
 from dimos.protocol.service.spec import BaseConfig
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.trigonometry import angle_diff

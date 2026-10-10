@@ -25,6 +25,7 @@ import pytest
 from scipy.spatial.transform import Rotation
 
 from dimos.core.stream import In
+from dimos.core.transport_factory import rpc_backend
 from dimos.mapping.relocalization.lidar.module import LidarWindowRelocalization
 from dimos.mapping.relocalization.module import RelocalizationModule
 from dimos.msgs.geometry import inverse_transform, transform_from_matrix, transform_matrix
@@ -32,8 +33,11 @@ from dimos.msgs.pointcloud import pointcloud_from_xyz, pointcloud_xyz
 
 
 @pytest.fixture
-def module():
+def module(mocker):
     """Build a real module (and dispose it); `cls, **config` picks the class."""
+    backend = rpc_backend()
+    for method in ("start", "serve_module_rpc", "stop"):
+        mocker.patch.object(backend, method)
     built = []
 
     def build(cls=RelocalizationModule, **config):
@@ -164,6 +168,8 @@ def test_relocalizer_refuses_below_its_own_threshold(monkeypatch):
         )
 
     assert relocalizer(0.5).relocalize(None, "world", "map") is None
+    refused = relocalizer(0.5).attempt(None, "world", "map")
+    assert refused.fix is None and refused.result.fitness == 0.4
 
     # Accepted: open3d places the live cloud in the map, the TF tree wants the
     # other direction, and relocalize() is what turns one into the other.

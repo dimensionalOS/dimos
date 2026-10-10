@@ -16,7 +16,7 @@
 
 use crate::live::{LiveConfig, LiveSource, Ports};
 use crate::pcap::PcapSource;
-use crate::pipeline::{imu_records, Frame, ImuRecord, PacketSource};
+use crate::pipeline::{Frame, ImuRecord, PacketSource, Pipeline};
 use crate::wire::{DataPacket, DataType};
 use dimos_generated_messages::builtin_interfaces::msg::time::Time;
 use dimos_generated_messages::geometry_msgs::msg::{quaternion::Quaternion, vector3::Vector3};
@@ -55,7 +55,7 @@ impl<'de, T: serde::de::DeserializeOwned> Deserialize<'de> for Nullable<T> {
 #[derive(Clone)]
 pub struct Config {
     host_ip: Nullable<String>,
-    lidar_ip: String,
+    lidar_ip: Nullable<String>,
     #[validate(range(exclusive_min = 0.0))]
     frequency: f64,
     enable_imu: bool,
@@ -67,6 +67,9 @@ pub struct Config {
     /// Replay speed relative to capture time. Null runs flat-out.
     #[validate(custom(function = positive_replay_rate))]
     replay_rate: Nullable<f64>,
+    /// Seconds a replay holds its first packet, so consumers can subscribe first.
+    #[validate(range(min = 0.0))]
+    replay_delay: f64,
     /// Multicast group the device streams data to. Null receives unicast
     /// only, the loopback/virtual arrangement.
     multicast_ip: Nullable<String>,
@@ -184,6 +187,7 @@ impl Mid360 {
                 config.point_data_port,
                 config.imu_data_port,
                 config.replay_rate.0,
+                config.replay_delay,
                 self.stop.clone(),
             )
             .unwrap_or_else(|err| panic!("failed to open pcap '{path}': {err}"));
@@ -198,7 +202,13 @@ impl Mid360 {
             .expect("host_ip is required for live capture")
             .parse()
             .expect("invalid host_ip");
-        let lidar_ip: Ipv4Addr = config.lidar_ip.parse().expect("invalid lidar_ip");
+        let lidar_ip: Ipv4Addr = config
+            .lidar_ip
+            .0
+            .as_deref()
+            .expect("lidar_ip is required for live capture")
+            .parse()
+            .expect("invalid lidar_ip");
         let multicast_ip = config
             .multicast_ip
             .0
@@ -229,13 +239,13 @@ fn run_pipeline(
     failed: &tokio::sync::Notify,
 ) {
     let format = config.point_format;
-    let mut assembler = crate::pipeline::FrameAssembler::new(config.frequency);
+    let mut pipeline = Pipeline::new(config.frequency);
     let mut buf = [0u8; 4096];
     while !stop.load(Ordering::Relaxed) {
-        let Some(len) = source.recv(&mut buf) else {
+        let Some(received) = source.recv(&mut buf) else {
             break;
         };
-        let packet = match DataPacket::parse(&buf[..len]) {
+        let packet = match DataPacket::parse(&buf[..received.len]) {
             Ok(packet) => packet,
             Err(err) => {
                 dimos_module::warn_throttled!(
@@ -246,20 +256,14 @@ fn run_pipeline(
                 continue;
             }
         };
-        match packet.data_type {
-            DataType::Imu => {
-                if config.enable_imu {
-                    for record in imu_records(&packet) {
-                        let msg = imu_message(&config.imu_frame_id, &record);
-                        let _ = handle.block_on(imu.publish(&msg));
-                    }
-                }
-            }
-            _ => {
-                if let Some(frame) = assembler.push(&packet) {
-                    let msg = cloud_message(format, &config.frame_id, &frame);
-                    let _ = handle.block_on(lidar.publish(&msg));
-                }
+        if let Some(frame) = pipeline.push(&packet, received.arrival_secs) {
+            let msg = cloud_message(format, &config.frame_id, &frame);
+            let _ = handle.block_on(lidar.publish(&msg));
+        }
+        if packet.data_type == DataType::Imu && config.enable_imu {
+            for record in pipeline.imu_records(&packet) {
+                let msg = imu_message(&config.imu_frame_id, &record);
+                let _ = handle.block_on(imu.publish(&msg));
             }
         }
     }
@@ -268,7 +272,7 @@ fn run_pipeline(
         failed.notify_one();
         return;
     }
-    if let Some(frame) = assembler.flush() {
+    if let Some(frame) = pipeline.flush() {
         let msg = cloud_message(format, &config.frame_id, &frame);
         let _ = handle.block_on(lidar.publish(&msg));
     }
@@ -480,7 +484,7 @@ mod tests {
     fn config_json() -> serde_json::Value {
         serde_json::json!({
             "host_ip": null,
-            "lidar_ip": "192.168.1.155",
+            "lidar_ip": null,
             "frequency": 10.0,
             "enable_imu": true,
             "point_format": "minimal",
@@ -488,6 +492,7 @@ mod tests {
             "imu_frame_id": "imu_link",
             "pcap": "x.pcap",
             "replay_rate": null,
+            "replay_delay": 0.0,
             "multicast_ip": null,
             "cmd_data_port": 56100,
             "push_msg_port": 56200,

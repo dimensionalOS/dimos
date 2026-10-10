@@ -28,9 +28,9 @@ from dimos_message_build.registry import decode as cdr_decode, encode as cdr_enc
 import numpy as np
 import pytest
 
+from dimos.agents.skills.visual_servoing.detection_navigation import DetectionNavigation
 from dimos.msgs.image import image_from_array
 from dimos.msgs.pointcloud import pointcloud_from_xyz, pointcloud_xyz
-from dimos.navigation.visual_servoing.detection_navigation import DetectionNavigation
 from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC
 
 

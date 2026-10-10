@@ -32,6 +32,7 @@ let
       runHook preConfigure
       mkdir source
       cp ${../../dimos/message_codegen/templates/native-support.cmake} source/CMakeLists.txt
+      cp ${../../dimos/message_codegen/templates/native-toolchain.cmake} source/native-toolchain.cmake
       cp ${../../dimos/message_codegen/native_sources.json} source/native_sources.json
       ${pkgs.lib.concatStringsSep "\n" (pkgs.lib.mapAttrsToList unpack archives)}
       ${unpack "fastcdr" fastcdr}

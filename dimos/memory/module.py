@@ -23,28 +23,21 @@ import sqlite3
 import time
 from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast
 
-from dimos_generated.geometry_msgs.msg import PoseStamped
-from dimos_generated.sensor_msgs.msg import Image
 from dimos_generated.tf2_msgs.msg import TFMessage
 from pydantic import Field, field_validator
 from reactivex import operators as ops
 from reactivex.disposable import Disposable
 
-from dimos.agents.annotation import skill
 from dimos.constants import DIMOS_PROJECT_ROOT, RECORDINGS_DIR
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
-from dimos.memory.embed import EmbedImages
-from dimos.memory.recording_policy import OnExisting
 from dimos.memory.store.null import NullStore
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.stream import Stream
-from dimos.memory.transform import QualityWindow
-from dimos.memory.type.observation import EmbeddedObservation, Observation
-from dimos.models.embedding.base import EmbeddingModel
+from dimos.memory.type.recording import OnExisting
 from dimos.msgs.geometry import pose_from_transform
-from dimos.msgs.time import to_seconds
+from dimos.msgs.time import message_header, to_seconds
 from dimos.utils.data import backup_file
 from dimos.utils.logging_config import setup_logger
 
@@ -53,6 +46,10 @@ if TYPE_CHECKING:
     from reactivex.abc import DisposableBase
 
     from dimos.core.stream import Out
+    from dimos.memory.semantic_search import (
+        SemanticSearch as SemanticSearch,
+        SemanticSearchConfig as SemanticSearchConfig,
+    )
 
 logger = setup_logger()
 
@@ -211,63 +208,6 @@ class MemoryModule(Module):
         )
         self._store.start()
         return self._store
-
-
-class SemanticSearchConfig(MemoryModuleConfig):
-    embedding_model: type[EmbeddingModel] | None = None
-
-
-class SemanticSearch(MemoryModule):
-    config: SemanticSearchConfig
-    model: EmbeddingModel | None = None
-    embeddings: Stream[Any] | None = None
-
-    @rpc
-    def start(self) -> None:
-        super().start()
-
-        embedding_cls = self.config.embedding_model
-        if embedding_cls is None:
-            from dimos.models.embedding.clip import CLIPModel
-
-            embedding_cls = CLIPModel
-
-        self.model = self.register_disposable(embedding_cls())
-        self.model.start()
-
-        self.embeddings = self.store.stream("color_image_embedded", Image)
-
-        # fmt: off
-        self.store.streams.color_image \
-           .live() \
-           .filter(lambda obs: obs.data.brightness > 0.1) \
-           .transform(QualityWindow(lambda img: img.sharpness, window=0.5)) \
-           .transform(EmbedImages(self.model, batch_size=2)) \
-           .save(self.embeddings) \
-           .drain_thread()
-        # fmt: on
-
-    @skill
-    def search(self, query: str) -> PoseStamped:
-        from dimos.memory.transform import peaks
-
-        assert self.model is not None and self.embeddings is not None, (
-            "SemanticSearch.search() called before start()"
-        )
-
-        query_vector = self.model.embed_text(query)
-
-        # TODO(lesh): cluster results by peaks, then sort by time/distance
-        # depending on the desired weighting.
-        results = self.embeddings.search(query_vector)
-
-        def _similarity(obs: Observation[Any]) -> float:
-            return cast("EmbeddedObservation[Any]", obs).similarity or 0.0
-
-        best = results.transform(peaks(key=_similarity, distance=1.0)).last()
-        if best.pose_stamped is None:
-            raise LookupError("No pose on best search result")
-        return best.pose_stamped
 
 
 class RecorderConfig(MemoryModuleConfig):
@@ -437,19 +377,24 @@ class Recorder(MemoryModule):
 
     def _resolve_ts(self, name: str, msg: Any) -> float:
         """Timestamp to record *msg* at. Override to re-base onto another clock."""
-        header = getattr(msg, "header", None)
+        header = message_header(msg)
         return to_seconds(header.stamp) if header is not None else time.time()
 
     async def _resolve_pose(self, name: str, msg: Any, ts: float) -> Pose | None:
-        """Pose to anchor *msg* with. Dispatches to the stream's (async)
-        ``@pose_setter_for`` if one is defined, else falls back to a
-        ``world <- frame_id`` tf lookup."""
+        """Pose to anchor *msg* with.
+
+        Poseless streams skip pose setters and tf resolution. Other streams
+        dispatch to their async ``@pose_setter_for`` when defined, then fall
+        back to a ``world <- frame_id`` tf lookup.
+        """
+        if name in self.config.poseless_streams:
+            return None
         setter = self._pose_setters.get(name)
         if setter is not None:
             return cast("Pose | None", await setter(msg))
         if self._tf is None:
             return None
-        header = getattr(msg, "header", None)
+        header = message_header(msg)
         frame_id = (header.frame_id if header is not None else "") or self.config.default_frame_id
         transform = self._tf.get(
             self.config.root_frame, frame_id, time_point=ts, time_tolerance=self.config.tf_tolerance
@@ -485,3 +430,13 @@ class Recorder(MemoryModule):
                 pass
 
         self.register_disposable(Disposable(self.tf.subscribe(on_tf)))
+
+
+def __getattr__(name: str) -> object:
+    # SemanticSearch moved to semantic_search.py, which loads torch. Resolve the
+    # old import path lazily so importing this module stays cheap.
+    if name in ("SemanticSearch", "SemanticSearchConfig"):
+        from dimos.memory import semantic_search
+
+        return getattr(semantic_search, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

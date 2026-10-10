@@ -61,9 +61,19 @@ def transport_topic(name: str, g: GlobalConfig = global_config) -> str:
 # publisher. Matched by message type since that is what makes them high-rate.
 _LATEST_WINS_TYPES = ("sensor_msgs/msg/Image", "sensor_msgs/msg/PointCloud2")
 # Low-rate channels where a drop loses something that never comes back: a whole
-# turn of agent/human conversation, a one-shot robot action verb, or a
-# push-to-talk chunk (one gap discards the whole utterance).
-_NEVER_DROP_CHANNELS = ("human_input", "agent", "agent_idle", "command", "audio_in")
+# turn of agent/human conversation, a one-shot robot action verb, a push-to-talk
+# chunk where one gap discards the whole utterance, or a region of a seeded map
+# that is sent once.
+_NEVER_DROP_CHANNELS = (
+    "human_input",
+    "agent",
+    "agent_idle",
+    "command",
+    "audio_in",
+    "loaded_map",
+    "seed_map",
+    "seed_bounds",
+)
 
 
 def zenoh_key_expr(name: str, msg_name: str) -> str:
@@ -73,10 +83,10 @@ def zenoh_key_expr(name: str, msg_name: str) -> str:
 
 def default_zenoh_qos_for(name: str, msg_name: str) -> ZenohQoS | None:
     """Default publisher QoS from a channel name and message type name."""
-    if msg_name in _LATEST_WINS_TYPES:
-        return QOS_LATEST_WINS
     if name.lstrip("/") in _NEVER_DROP_CHANNELS:
         return QOS_NEVER_DROP
+    if msg_name in _LATEST_WINS_TYPES:
+        return QOS_LATEST_WINS
     return None
 
 

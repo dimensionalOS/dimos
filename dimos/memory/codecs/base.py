@@ -97,6 +97,13 @@ def _make_one(name: str, payload_module: str, inner: Codec[Any] | None = None) -
         return Lz4Codec(inner)
     if name == "cdr":
         return CdrCodec(resolve_payload_type(payload_module))
+    if name == "json":
+        from dimos.memory.codecs.json import JsonCodec
+
+        expected = JsonCodec.payload_type
+        if payload_module != f"{expected.__module__}.{expected.__qualname__}":
+            raise TypeError("JSON codec requires std_msgs.String")
+        return JsonCodec()
     if name == "pickle":
         return PickleCodec()
     if name in {"lcm", "jpeg"}:

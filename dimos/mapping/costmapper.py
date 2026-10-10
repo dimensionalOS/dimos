@@ -53,6 +53,9 @@ class CostMapper(Module):
     def start(self) -> None:
         super().start()
 
+        # numba (0.3 s): load the occupancy kernels now rather than on the first map.
+        import dimos.mapping.pointclouds.occupancy_kernels  # noqa: F401
+
         def _select_map(
             pair: tuple[PointCloud2, PointCloud2 | None],
         ) -> PointCloud2:

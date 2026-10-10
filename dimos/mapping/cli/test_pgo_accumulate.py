@@ -18,10 +18,10 @@ from dimos_generated.std_msgs.msg import Header
 import numpy as np
 
 from dimos.mapping.cli.map import _accumulate
-from dimos.mapping.loop_closure.pgo import PoseGraph
 from dimos.memory.store.memory import MemoryStore
 from dimos.msgs.pointcloud import pointcloud_from_xyz, pointcloud_xyz
 from dimos.msgs.time import time_from_nanoseconds
+from dimos.navigation.go2.loop_closure.pgo import PoseGraph
 
 
 def test_pgo_accumulate_applies_generated_correction_before_mapping(mocker):

@@ -74,6 +74,8 @@ from dimos.web.relay_bridge.relay_bridge_module import (
 from dimos.web.relay_bridge.relay_process import RelayProcess
 from dimos.web.relay_bridge.wt_client import RelayClient, RelayRejectedError, fetch_relay_info
 
+pytestmark = pytest.mark.self_hosted
+
 ROBOT_ID = "bridge-e2e"
 POSE = PoseStamped(
     header=Header(stamp=time_from_seconds(42.5), frame_id=""),

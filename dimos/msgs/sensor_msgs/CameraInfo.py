@@ -25,6 +25,8 @@ if TYPE_CHECKING:
 from dimos_lcm.sensor_msgs import CameraInfo as LCMCameraInfo
 from dimos_lcm.std_msgs.Header import Header
 import numpy as np
+from pydantic import GetCoreSchemaHandler
+from pydantic_core import core_schema
 
 from dimos.types.timestamped import Timestamped
 
@@ -90,6 +92,30 @@ class CameraInfo(Timestamped):
         self.roi_height = 0
         self.roi_width = 0
         self.roi_do_rectify = False
+
+    @classmethod
+    def __get_pydantic_core_schema__(
+        cls, source: Any, handler: GetCoreSchemaHandler
+    ) -> core_schema.CoreSchema:
+        """As a config field: from an instance or its dict, dumped as that dict."""
+        return core_schema.no_info_plain_validator_function(
+            lambda v: v if isinstance(v, cls) else cls(**v),
+            serialization=core_schema.plain_serializer_function_ser_schema(cls.to_dict),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "frame_id": self.frame_id,
+            "height": self.height,
+            "width": self.width,
+            "distortion_model": self.distortion_model,
+            "D": list(self.D),
+            "K": list(self.K),
+            "R": list(self.R),
+            "P": list(self.P),
+            "binning_x": self.binning_x,
+            "binning_y": self.binning_y,
+        }
 
     @classmethod
     def from_intrinsics(
