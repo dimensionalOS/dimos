@@ -714,3 +714,68 @@ def test_model_rejects_non_urdf_source(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="must reference a .urdf or .xacro"):
         model.load()
+
+
+def test_with_collision_from_visuals_adds_convex_hulls_where_links_have_none(
+    tmp_path: Path,
+) -> None:
+    urdf = tmp_path / "robot.urdf"
+    urdf.write_text(
+        "<robot name='r'>"
+        "<link name='base'><visual><origin xyz='0 0 0.1' rpy='0 0 0'/>"
+        "<geometry><mesh filename='base.stl' scale='1 1 1'/></geometry></visual></link>"
+        "<link name='tool'><visual><geometry><mesh filename='tool.stl'/></geometry></visual>"
+        "<collision><geometry><box size='0.1 0.1 0.1'/></geometry></collision></link>"
+        "<link name='frame'/>"
+        "</robot>"
+    )
+    root = ET.fromstring(
+        robot_model.RobotModel.from_file(urdf).with_collision_from_visuals().load().xml
+    )
+
+    base = root.find("link[@name='base']")
+    assert base is not None
+    collision = base.find("collision")
+    assert collision is not None
+    assert collision.find("origin").get("xyz") == "0 0 0.1"
+    mesh = collision.find("geometry/mesh")
+    assert mesh.get("filename").endswith("base.stl") and mesh.get("scale") == "1 1 1"
+    assert mesh.find("{http://drake.mit.edu}declare_convex") is not None
+    # A link that already collides keeps its own geometry; an empty link stays empty.
+    assert len(root.find("link[@name='tool']").findall("collision")) == 1
+    assert root.find("link[@name='frame']").find("collision") is None
+
+
+def test_with_collision_box_and_joint_origin(tmp_path: Path) -> None:
+    urdf = tmp_path / "robot.urdf"
+    urdf.write_text(
+        "<robot name='r'><link name='base'/><link name='arm'/>"
+        "<joint name='mount' type='fixed'><origin xyz='0 0.31 0' rpy='0 0 0'/>"
+        "<parent link='base'/><child link='arm'/></joint></robot>"
+    )
+    model = (
+        robot_model.RobotModel.from_file(urdf)
+        .with_collision_box("arm", "camera", size=(0.07, 0.07, 0.05), xyz=(-0.09, 0.0, 0.06))
+        .with_joint_origin("mount", xyz=(0.0, 0.215, 0.0))
+    )
+    root = ET.fromstring(model.load().xml)
+
+    box = root.find("link[@name='arm']/collision[@name='camera']")
+    assert box is not None
+    assert [float(v) for v in box.find("origin").get("xyz").split()] == [-0.09, 0.0, 0.06]
+    assert [float(v) for v in box.find("geometry/box").get("size").split()] == [0.07, 0.07, 0.05]
+    mount = root.find("joint[@name='mount']/origin")
+    assert [float(v) for v in mount.get("xyz").split()] == [0.0, 0.215, 0.0]
+
+
+def test_collision_box_and_joint_origin_reject_unknown_names(tmp_path: Path) -> None:
+    urdf = tmp_path / "robot.urdf"
+    urdf.write_text("<robot name='r'><link name='base'/></robot>")
+    model = robot_model.RobotModel.from_file(urdf)
+
+    with pytest.raises(ValueError, match="unknown link"):
+        model.with_collision_box("arm", "camera", size=(0.1, 0.1, 0.1)).load()
+    with pytest.raises(ValueError, match="unknown joint"):
+        model.with_joint_origin("mount", xyz=(0.0, 0.0, 0.0)).load()
+    with pytest.raises(ValueError, match="needs xyz or rpy"):
+        model.with_joint_origin("mount")
