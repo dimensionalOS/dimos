@@ -41,6 +41,7 @@ from dimos.manipulation.manipulation_spec import ExecutionStatus
 from dimos.manipulation.planning.planners.config import RRTConnectPlannerConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -248,6 +249,33 @@ class TestCoordinatorIntegration:
         assert len(trajectory.points) > 1
         assert trajectory.joint_names == module.config.model.joint_names
 
+    def test_planning_publishes_the_tool_path(self, module, joint_state_zeros):
+        """The tip's path for a fresh plan goes out before anything executes."""
+        module._on_joint_state(joint_state_zeros)
+        paths = []
+        module.planned_tool_path.subscribe(paths.append)
+
+        result = module.plan_to_joints({"manipulator": JointState(position=[0.05] * 7)})
+        assert result.succeeded, result.message
+
+        assert len(paths) == 1
+        assert paths[0].frame_id == "world"
+        assert len(paths[0].poses) == len(module._last_plan.path) >= 2
+
+    def test_execute_publishes_the_planned_trajectory(self, module, joint_state_zeros):
+        """The plan sent to the coordinator is published for recording."""
+        module._on_joint_state(joint_state_zeros)
+        published = []
+        module.planned_joint_trajectory.subscribe(published.append)
+
+        result = module.plan_to_joints({"manipulator": JointState(position=[0.05] * 7)})
+        assert result.succeeded, result.message
+        assert module.execute().status is ExecutionStatus.COMPLETED
+
+        assert len(published) == 1
+        assert published[0] is _executed(module._control_coordinator)
+        assert published[0].joint_names == module.config.model.joint_names
+
     def test_execute_rejected_by_coordinator(self, module, joint_state_zeros):
         """Test handling of coordinator rejection."""
         module._on_joint_state(joint_state_zeros)
@@ -297,3 +325,90 @@ def _executed(coordinator):
         if invocation.args[1] == "execute":
             return invocation.args[2]["trajectory"]
     return None
+
+
+@pytest.mark.skipif(not _drake_available(), reason="Drake not installed")
+class TestStagedPlanning:
+    def test_plan_from_a_given_start_state(self, module, joint_state_zeros):
+        module._on_joint_state(joint_state_zeros)
+        start = JointState(name=joint_state_zeros.name, position=[0.3] * 7)
+
+        result = module.plan_to_joints(
+            {"manipulator": JointState(position=[0.35] * 7)}, start=start
+        )
+
+        assert result.succeeded, result.message
+        assert result.plan.path[0].position == pytest.approx([0.3] * 7)
+
+    def test_execute_plan_runs_a_given_plan(self, module, joint_state_zeros):
+        module._on_joint_state(joint_state_zeros)
+        plan = module.plan_to_joints({"manipulator": JointState(position=[0.05] * 7)}).plan
+        module.clear_planned_path()
+
+        result = module.execute_plan(plan)
+
+        assert result.status is ExecutionStatus.COMPLETED
+        assert _executed(module._control_coordinator) is plan.trajectory
+
+    def test_preview_plans_publishes_one_path_for_all_legs(self, module, joint_state_zeros):
+        module._on_joint_state(joint_state_zeros)
+        first = module.plan_to_joints({"manipulator": JointState(position=[0.05] * 7)}).plan
+        second = module.plan_to_joints(
+            {"manipulator": JointState(position=[0.1] * 7)}, start=first.path[-1]
+        ).plan
+        paths = []
+        module.planned_tool_path.subscribe(paths.append)
+
+        result = module.preview_plans([first, second])
+
+        assert result.succeeded, result.message
+        assert len(paths[-1].poses) == len(first.path) + len(second.path)
+
+
+@pytest.mark.skipif(not _drake_available(), reason="Drake not installed")
+class TestHomeCapture:
+    def test_home_preset_follows_the_captured_pose(self, module, joint_state_zeros):
+        module._on_joint_state(joint_state_zeros)
+        before = module.get_state().groups["manipulator"].joint_presets.get("home")
+
+        here = JointState(name=joint_state_zeros.name, position=[0.2] * 7)
+        module._on_joint_state(here)
+        assert module.set_home_to_current().succeeded
+
+        after = module.get_state().groups["manipulator"].joint_presets["home"]
+        assert list(after.position) == pytest.approx([0.2] * 7)
+        assert before is None or list(before.position) != list(after.position)
+
+
+@pytest.mark.skipif(not _drake_available(), reason="Drake not installed")
+class TestIKFallbackSeeds:
+    def test_pose_planning_retries_ik_from_the_home_posture(
+        self, module, joint_state_zeros, monkeypatch
+    ):
+        from dimos.manipulation.planning.spec.enums import IKStatus
+        from dimos.manipulation.planning.spec.models import IKResult
+
+        module._on_joint_state(joint_state_zeros)
+        # a pose the arm reaches from zeros, so only the forced failure matters
+        target = module.get_state().groups["manipulator"].end_effector_pose
+        target = PoseStamped(
+            frame_id="world",
+            position=(target.position.x, target.position.y, target.position.z + 0.05),
+            orientation=target.orientation,
+        )
+        real_ik = module.inverse_kinematics
+        seeds_used = []
+
+        def flaky_ik(*args, **kwargs):
+            seeds_used.append(list(kwargs["seed"].position))
+            if len(seeds_used) == 1:
+                return IKResult(status=IKStatus.JOINT_LIMITS, message="forced")
+            return real_ik(*args, **kwargs)
+
+        monkeypatch.setattr(module, "inverse_kinematics", flaky_ik)
+
+        result = module.plan_to_poses({"manipulator": target})
+
+        assert result.succeeded, result.message
+        assert len(seeds_used) == 2
+        assert seeds_used[1] == pytest.approx(module.config.model.home_joints)

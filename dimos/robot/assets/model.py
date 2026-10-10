@@ -98,6 +98,26 @@ class _JointPositionLimits:
     upper: float
 
 
+@dataclass(frozen=True)
+class _CollisionBox:
+    link: str
+    name: str
+    size: tuple[float, float, float]
+    xyz: tuple[float, float, float]
+    rpy: tuple[float, float, float]
+
+
+@dataclass(frozen=True)
+class _JointOrigin:
+    joint: str
+    xyz: tuple[float, float, float] | None
+    rpy: tuple[float, float, float] | None
+
+
+_DRAKE_NS = "http://drake.mit.edu"
+ET.register_namespace("drake", _DRAKE_NS)
+
+
 _PLANAR_BASE_CONFIG = ConfigDict(extra="forbid", validate_default=True)
 _NonEmptyString = Annotated[str, Field(min_length=1)]
 _PositiveFiniteFloat = Annotated[float, Field(gt=0.0, allow_inf_nan=False)]
@@ -144,6 +164,9 @@ class RobotModel:
     _removed_joint_subtrees: tuple[str, ...] = ()
     _planar_base: PlanarBaseDefinition | None = None
     _default_joint_acceleration_limit: float | None = None
+    _collision_from_visuals: bool = False
+    _collision_boxes: tuple[_CollisionBox, ...] = ()
+    _joint_origins: tuple[_JointOrigin, ...] = ()
 
     @classmethod
     def from_file(
@@ -189,6 +212,45 @@ class RobotModel:
             self,
             _fixed_frames=(*self._fixed_frames, _FixedFrame(name, parent, xyz, rpy)),
         )
+
+    def with_collision_from_visuals(self) -> RobotModel:
+        """Return a model whose links without collision geometry collide as the
+        convex hull of their visual meshes.
+
+        Drake builds the hull from the ``drake:declare_convex`` tag; a model
+        without any ``<collision>`` element is otherwise transparent to
+        collision checks.
+        """
+        return replace(self, _collision_from_visuals=True)
+
+    def with_collision_box(
+        self,
+        link: str,
+        name: str,
+        *,
+        size: tuple[float, float, float],
+        xyz: tuple[float, float, float] = (0.0, 0.0, 0.0),
+        rpy: tuple[float, float, float] = (0.0, 0.0, 0.0),
+    ) -> RobotModel:
+        """Return a model with a box collision body fixed to *link*, for
+        hardware the URDF does not know about, such as a wrist camera."""
+        return replace(
+            self,
+            _collision_boxes=(*self._collision_boxes, _CollisionBox(link, name, size, xyz, rpy)),
+        )
+
+    def with_joint_origin(
+        self,
+        joint: str,
+        *,
+        xyz: tuple[float, float, float] | None = None,
+        rpy: tuple[float, float, float] | None = None,
+    ) -> RobotModel:
+        """Return a model with *joint*'s origin replaced, for a measured mount
+        that differs from the file."""
+        if xyz is None and rpy is None:
+            raise ValueError("with_joint_origin needs xyz or rpy")
+        return replace(self, _joint_origins=(*self._joint_origins, _JointOrigin(joint, xyz, rpy)))
 
     def with_subtree_rooted_at(self, root_link: str) -> RobotModel:
         """Return a view containing an existing link and its descendants.
@@ -301,6 +363,12 @@ class RobotModel:
             xml = _set_missing_joint_acceleration_limits(
                 xml, self._default_joint_acceleration_limit
             )
+        if self._joint_origins:
+            xml = _set_joint_origins(xml, self._joint_origins)
+        if self._collision_from_visuals:
+            xml = _add_collision_from_visuals(xml)
+        if self._collision_boxes:
+            xml = _add_collision_boxes(xml, self._collision_boxes)
         if self._fixed_frames:
             xml = _add_fixed_frames(xml, self._fixed_frames)
 
@@ -362,6 +430,60 @@ def _add_planar_base(xml: str, definition: PlanarBaseDefinition) -> str:
                 "acceleration": str(definition.acceleration_limits[index]),
             },
         )
+    return ET.tostring(root, encoding="unicode")
+
+
+def _set_joint_origins(xml: str, origins: tuple[_JointOrigin, ...]) -> str:
+    root = ET.fromstring(xml)
+    joints = {joint.get("name"): joint for joint in root.findall("joint")}
+    for origin in origins:
+        joint = joints.get(origin.joint)
+        if joint is None:
+            raise ValueError(f"Joint origin references unknown joint: {origin.joint}")
+        element = joint.find("origin")
+        if element is None:
+            element = ET.SubElement(joint, "origin")
+        if origin.xyz is not None:
+            element.set("xyz", _vector_text(origin.xyz))
+        if origin.rpy is not None:
+            element.set("rpy", _vector_text(origin.rpy))
+    return ET.tostring(root, encoding="unicode")
+
+
+def _add_collision_from_visuals(xml: str) -> str:
+    root = ET.fromstring(xml)
+    for link in root.findall("link"):
+        if link.find("collision") is not None:
+            continue
+        for index, visual in enumerate(link.findall("visual")):
+            mesh = visual.find("geometry/mesh")
+            if mesh is None:
+                continue
+            collision = ET.SubElement(
+                link, "collision", {"name": f"{link.get('name')}_collision_{index}"}
+            )
+            origin = visual.find("origin")
+            if origin is not None:
+                ET.SubElement(collision, "origin", dict(origin.attrib))
+            geometry = ET.SubElement(collision, "geometry")
+            hull = ET.SubElement(geometry, "mesh", dict(mesh.attrib))
+            ET.SubElement(hull, f"{{{_DRAKE_NS}}}declare_convex")
+    return ET.tostring(root, encoding="unicode")
+
+
+def _add_collision_boxes(xml: str, boxes: tuple[_CollisionBox, ...]) -> str:
+    root = ET.fromstring(xml)
+    links = {link.get("name"): link for link in root.findall("link")}
+    for box in boxes:
+        link = links.get(box.link)
+        if link is None:
+            raise ValueError(f"Collision box {box.name} references unknown link: {box.link}")
+        collision = ET.SubElement(link, "collision", {"name": box.name})
+        ET.SubElement(
+            collision, "origin", {"xyz": _vector_text(box.xyz), "rpy": _vector_text(box.rpy)}
+        )
+        geometry = ET.SubElement(collision, "geometry")
+        ET.SubElement(geometry, "box", {"size": _vector_text(box.size)})
     return ET.tostring(root, encoding="unicode")
 
 

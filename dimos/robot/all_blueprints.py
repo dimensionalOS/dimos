@@ -67,6 +67,8 @@ all_blueprints = {
     "desk-marker-tf": "dimos.perception.fiducial.blueprints.desk_marker_tf:desk_marker_tf",
     "drone-agentic": "dimos.robot.drone.blueprints.agentic.drone_agentic:drone_agentic",
     "drone-basic": "dimos.robot.drone.blueprints.basic.drone_basic:drone_basic",
+    "dual-openyam-grasp": "dimos.robot.manipulators.dual_openyam.blueprints.grasp:dual_openyam_grasp",
+    "dual-openyam-grasp-agent": "dimos.robot.manipulators.dual_openyam.blueprints.agentic:dual_openyam_grasp_agent",
     "dual-openyam-planner-coordinator": "dimos.robot.manipulators.dual_openyam.blueprints.basic:dual_openyam_planner_coordinator",
     "dual-xarm6-planner-coordinator": "dimos.robot.manipulators.xarm.blueprints.basic:dual_xarm6_planner_coordinator",
     "go2-dds": "dimos.robot.unitree.go2.dds.blueprints:go2_dds",

@@ -20,6 +20,7 @@ from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
 from dimos.hardware.whole_body.spec import WholeBodyConfig
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.robot.manipulators.dual_openyam.joints import (
     DUAL_OPENYAM_ARM_JOINTS,
     DUAL_OPENYAM_JOINTS,
@@ -98,10 +99,15 @@ def _hardware_component(
     )
 
 
-def dual_openyam_model_config() -> RobotModelConfig:
-    """Build the combined arm-only planning model."""
+def dual_openyam_model_config(base_pose: PoseStamped | None = None) -> RobotModelConfig:
+    """Build the combined arm-only planning model.
+
+    *base_pose* places ``dual_openyam_base`` in the world frame; leave it unset
+    for a rig whose base is the world origin.
+    """
     return RobotModelConfig(
         model=DUAL_OPENYAM_MODEL.with_default_joint_acceleration_limit(1.0),
+        base_pose=base_pose if base_pose is not None else PoseStamped(),
         joint_names=list(DUAL_OPENYAM_ARM_JOINTS),
         base_link="dual_openyam_base",
         planning_groups=[
@@ -110,12 +116,14 @@ def dual_openyam_model_config() -> RobotModelConfig:
                 joint_names=tuple(dual_openyam_arm_joints("left")),
                 base_link="dual_openyam_base",
                 tip_link="left_grasp_frame",
+                gripper_hardware_id="left_arm",
             ),
             PlanningGroupDefinition(
                 name="right_manipulator",
                 joint_names=tuple(dual_openyam_arm_joints("right")),
                 base_link="dual_openyam_base",
                 tip_link="right_grasp_frame",
+                gripper_hardware_id="right_arm",
             ),
         ],
         auto_convert_meshes=True,

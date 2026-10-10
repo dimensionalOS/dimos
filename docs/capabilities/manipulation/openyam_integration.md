@@ -91,6 +91,129 @@ The bus uses classical CAN at 1 Mbit/s. Opening the gripper decreases motor
 position. The arm and gripper are exposed together as one whole-body hardware
 component.
 
+## Grasping on the dual rig
+
+`dual-openyam-grasp` is the xArm grasp stack on the dual OpenYAM: coordinator,
+planner, pick-and-place, scene registration and a grasp provider, with a fixed
+RealSense over the table feeding perception and one RealSense on each wrist.
+Each arm is a planning group with its own gripper, so pick-and-place calls take
+`left_manipulator` or `right_manipulator`. The three D405 serials of the
+benchmark rig are the defaults; override them with
+`--realsensecamera.serial-number`, `--left-wrist-camera.serial-number` and
+`--right-wrist-camera.serial-number`.
+
+```bash
+# robot, heuristic top-down grasps
+dimos run dual-openyam-grasp --left-can-port follower_l --right-can-port follower_r
+
+# robot, GraspGenX grasps (up to 100 ranked learned grasps per object)
+dimos run dual-openyam-grasp --left-can-port follower_l --right-can-port follower_r --graspgen
+
+# in-memory arms, no CAN or camera needed (removes all three cameras)
+dimos run dual-openyam-grasp --disable real-sense-camera --disable object-scene-registration-module
+```
+
+### What the planner avoids
+
+Neither the dual OpenYAM URDF nor the upstream i2rt model carries collision
+geometry, so the grasp blueprint builds its own planning model
+(`dual_openyam_grasp_model_config`):
+
+- every link collides as the convex hull of its visual mesh;
+- the wrist camera and its bracket are boxes on each gripper link
+  (`DUAL_OPENYAM_WRIST_CAMERA_BOXES`, 1.5 cm margin plus room for the plug);
+- the two fingertips and the nested wrist pair are excluded, everything else
+  adjacent is filtered;
+- the arm bases stand at the measured `DUAL_OPENYAM_BASE_SPACING`;
+- the table top and the bin are static obstacles (`DUAL_OPENYAM_STATIC_BOXES`,
+  table top 4.5 cm below the base plates, bin at the far edge of the 130 x 80 cm
+  table, centred).
+
+Detected objects and, with a voxel map, unknown clutter are added on top by the
+world monitor. Viser's "Robot display" switch shows the collision bodies. The
+acceptance test lives in `test_grasp_collision.py` (self-hosted, needs Drake):
+a plan with the fingertips in the bin is refused, free space plans. Re-measure
+the bin and the base spacing whenever the rig changes.
+
+The blueprint carries a Rerun bridge with the three cameras as tiles and the
+scene beside them. After `scan_objects` the detected objects appear as labelled
+boxes; `pick_object` draws the ranked grasp proposals as jaw glyphs, the one
+being attempted in yellow, and every plan draws the tip's path before the arm
+moves. It opens no window on the robot; watch it from a laptop:
+
+```bash
+uvx dimos-viewer --connect rerun+http://<robot-ip>:9877/proxy --ws-url ws://<robot-ip>:3030/ws
+```
+
+Every run records the policy-training data to `recordings/<run-id>/memory.db`
+without any flag; `--record=` (an empty value) turns it off and `--record-topics` widens or
+narrows the set. What is kept, against the data a learned policy needs:
+
+| Training input | Stream | Source |
+|---|---|---|
+| joint states | `coordinator_joint_state` | coordinator, 12 arm joints and both grippers, 100 Hz |
+| joint trajectory | `planned_joint_trajectory` | ManipulationModule, the plan handed over per `execute()` |
+| joint commands | `applied_joint_position_command` | coordinator, the positions the hardware accepted, per tick |
+| camera images | `color_image`, `depth_image`, `camera_info` | overhead camera |
+| | `left_wrist_color_image`, `left_wrist_depth_image`, `left_wrist_camera_info` | left wrist camera |
+| | `right_wrist_color_image`, `right_wrist_depth_image`, `right_wrist_camera_info` | right wrist camera |
+| frames | `tf`, `left_wrist_tf`, `right_wrist_tf` | planner and cameras |
+
+`--graspgen` is a global flag read when the blueprint is imported, so it also
+works as `dimos --graspgen run dual-openyam-grasp ...`. GraspGenX has the same
+requirements as on the xArm: Linux x86_64, a CUDA 12.8-compatible GPU and
+`uv >= 0.9.25`; the first launch prepares its isolated environment and downloads
+the checkpoints, which takes minutes. The gripper is described to GraspGenX as
+a sweep volume measured off the URDF finger meshes
+(`DUAL_OPENYAM_GRIPPER_SWEEP_VOLUME`): 9.4 cm opening, pads 2 cm tall, 14.7 cm
+from the gripper link to the fingertips.
+
+Then from `dimos shell`:
+
+```python skip
+app.ManipulationSkills.go_init()
+scan = app.PickAndPlaceModule.scan_objects(["mustard bottle", "soup can"])
+app.PickAndPlaceModule.pick_object("<object_id>", planning_group="right_manipulator")
+app.PickAndPlaceModule.place_at(0.35, -0.25, 0.20, planning_group="right_manipulator")
+```
+
+The camera pose in `blueprints/grasp.py` (`DUAL_OPENYAM_CAMERA_TRANSFORM`) is
+the mount on the benchmark rig; re-measure it when the camera moves.
+
+### Driving it from humancli
+
+`dual-openyam-grasp-agent` adds an MCP server and an LLM agent over the same
+stack, with a system prompt that names both arms as `left_manipulator` and
+`right_manipulator`. The agent needs `OPENAI_API_KEY` in the environment or in
+the `.env` of the directory `dimos run` starts in. `--graspgen` works here too.
+
+```bash
+# terminal 1, robot
+dimos run dual-openyam-grasp-agent --left-can-port follower_l --right-can-port follower_r
+
+# terminal 2, same machine
+dimos humancli
+```
+
+Then talk to it: "scan for a soup can, a mustard bottle and a banana", then
+"pick up the soup can with the right hand and put it in the bin". The agent
+calls `stage_pick_and_place`, which plans every leg of the job from the
+predicted end of the one before (approach, descend, grasp, lift, carry, lower,
+release, retreat, return home) without moving. Viser plays the whole motion as
+a ghost and Rerun draws the full tool path. The agent reports the legs, the
+seconds of motion and the grasp rank, then waits. Say "proceed" and it calls
+`proceed`, which runs the legs in order and stops at the first that fails; say
+"discard" and nothing moves. After the lift the overhead camera scans again:
+if the object is still where it was, the grasp missed and the job stops there
+(`--pickandplacemodule.verify-lift-by-scan false` falls back to the jaw
+readback, which a soft object like the fake banana defeats). The agent passes the arm as `planning_group` on
+every motion skill and picks the arm on the object's side when none is stated.
+
+
+The recording lands under `recordings/<run-id>/`. `applied_joint_position_command`
+carries only the targets the hardware accepted, at the control rate, so it is
+the executed trajectory; `coordinator_joint_state` includes the two grippers.
+
 ## Safety
 
 - Keep the workspace clear and the emergency stop reachable during first
