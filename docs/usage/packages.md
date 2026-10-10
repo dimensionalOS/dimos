@@ -49,6 +49,26 @@ dimos list
 dimos --transport zenoh --viewer none run acme-probe.probe
 ```
 
+## Module instance names
+
+Classes defined outside `dimos` and `dimos.*` default to their qualified Python
+name, for example `acme_robot.module.Worker`. Classes defined inside DimOS keep
+their existing short names. The defining class controls this identity: reexporting
+a class or registering it through another package does not rename it, while a
+subclass uses its own definition path.
+
+Set `instance_name="front_camera"` on a blueprint to choose a stable explicit
+identity. Different classes must not share an instance name in one composition;
+repeating the same class and instance name keeps the last blueprint's configuration.
+The identity is also used for external modules' RPC endpoints and isolated Python
+facades. Stream names, topics and TF frames are unchanged; `.namespace()` remains
+an explicit way to isolate them.
+
+Module configuration accepts `--acme_robot.module.Worker.speed` or the escaped
+`--acme_robot_module_Worker.speed`. Environment variables use the escaped root,
+for example `ACME_ROBOT_MODULE_WORKER__SPEED=2`. Dots and slashes become underscores;
+configuration rejects ambiguous escaped roots instead of silently overriding one.
+
 ## Native source layout and runtime API
 
 Place all local native inputs under the importable package, for example

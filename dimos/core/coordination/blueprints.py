@@ -402,7 +402,7 @@ def _eliminate_duplicates(blueprints: list[BlueprintAtom]) -> list[BlueprintAtom
 
 def config_key(instance_name: str) -> str:
     """Escape an instance name into a valid config/CLI/env identifier."""
-    return instance_name.replace("/", "_")
+    return instance_name.replace("/", "_").replace(".", "_")
 
 
 def _reprefix_transport(
