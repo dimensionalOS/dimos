@@ -12,9 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Copyright 2026 Dimensional Inc.
-// SPDX-License-Identifier: Apache-2.0
-
 //! Geometry extraction kept separate from generated message values and codecs.
 use std::io;
 
@@ -202,5 +199,126 @@ mod tests {
         let mut message = cloud(false);
         message.data[..4].copy_from_slice(&f32::NAN.to_le_bytes());
         assert_eq!(xyz_points(&message).unwrap(), vec![(2., 2., 4.)]);
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExtractError(pub &'static str);
+
+impl std::fmt::Display for ExtractError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.0)
+    }
+}
+
+impl std::error::Error for ExtractError {}
+
+/// Read the little-endian float32 XYZ layout expected by native mapping modules.
+/// Preserve their array-valued API while sharing the checked row/stride reader.
+pub fn extract_xyz(message: &PointCloud2) -> Result<Vec<[f32; 3]>, ExtractError> {
+    if message.is_bigendian {
+        return Err(ExtractError("big-endian point data not supported"));
+    }
+    for name in ["x", "y", "z"] {
+        if !message
+            .fields
+            .iter()
+            .any(|field| field.name == name && field.datatype == PointField::FLOAT32)
+        {
+            return Err(ExtractError("missing a float32 x/y/z field"));
+        }
+    }
+    xyz_points(message)
+        .map(|points| points.into_iter().map(|(x, y, z)| [x, y, z]).collect())
+        .map_err(|_| ExtractError("invalid point cloud fields, dimensions or strides"))
+}
+
+#[cfg(test)]
+mod extraction_tests {
+    use super::*;
+    use dimos_generated_messages::{
+        builtin_interfaces::msg::time::Time, std_msgs::msg::header::Header,
+    };
+
+    /// An xyz float32 cloud, the shape the raytracer publishes.
+    fn cloud_of(points: &[[f32; 3]]) -> PointCloud2 {
+        let mut data = Vec::with_capacity(points.len() * 12);
+        for p in points {
+            for v in p {
+                data.extend_from_slice(&v.to_le_bytes());
+            }
+        }
+        let field = |name: &str, off: u32| PointField {
+            name: name.into(),
+            offset: off,
+            datatype: PointField::FLOAT32,
+            count: 1,
+        };
+        PointCloud2 {
+            header: Header {
+                stamp: Time { sec: 0, nanosec: 0 },
+                frame_id: String::new(),
+            },
+            height: 1,
+            width: points.len() as u32,
+            fields: vec![field("x", 0), field("y", 4), field("z", 8)],
+            is_bigendian: false,
+            point_step: 12,
+            row_step: 12 * points.len() as u32,
+            data,
+            is_dense: true,
+        }
+    }
+
+    #[test]
+    fn drops_non_finite_points_and_moves_nothing() {
+        let cloud = cloud_of(&[[1.0, 2.0, 0.3], [f32::NAN, 0.0, 0.0], [0.0, 0.0, 0.0]]);
+        assert_eq!(
+            extract_xyz(&cloud).unwrap(),
+            vec![[1.0, 2.0, 0.3], [0.0, 0.0, 0.0]]
+        );
+    }
+
+    #[test]
+    fn refuses_a_cloud_it_cannot_read() {
+        let mut cloud = cloud_of(&[[0.0; 3]]);
+        cloud.fields.remove(2); // no z
+        assert!(extract_xyz(&cloud).is_err());
+
+        let mut cloud = cloud_of(&[[0.0; 3]]);
+        cloud.is_bigendian = true;
+        assert!(extract_xyz(&cloud).is_err());
+
+        let mut cloud = cloud_of(&[[0.0; 3]]);
+        cloud.width = 99; // claims more points than the buffer holds
+        assert!(extract_xyz(&cloud).is_err());
+    }
+
+    #[test]
+    fn malformed_metadata_is_an_error_not_a_panic() {
+        // ROS counts are unsigned; oversized metadata must not reach an index.
+        for (what, tweak) in [
+            (
+                "oversized width",
+                (|c: &mut PointCloud2| c.width = u32::MAX) as fn(&mut PointCloud2),
+            ),
+            ("oversized height", |c| c.height = u32::MAX),
+            ("oversized step", |c| c.point_step = u32::MAX),
+            ("oversized offset", |c| c.fields[0].offset = u32::MAX),
+            ("offset past step", |c| c.fields[2].offset = u32::MAX),
+            ("width*height overflows", |c| {
+                c.width = u32::MAX;
+                c.height = u32::MAX;
+            }),
+            ("width*height*step overflows", |c| {
+                c.width = u32::MAX;
+                c.height = u32::MAX;
+                c.point_step = u32::MAX;
+            }),
+        ] {
+            let mut cloud = cloud_of(&[[0.0; 3]]);
+            tweak(&mut cloud);
+            assert!(extract_xyz(&cloud).is_err(), "{what}");
+        }
     }
 }

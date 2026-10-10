@@ -1732,9 +1732,9 @@ dependencies = [
     { name = "jsonlines" },
     { name = "keyring" },
     { name = "lazy-loader" },
-    { name = "lcm-dimos-fork" },
     { name = "llvmlite" },
     { name = "lz4" },
+    { name = "matplotlib" },
     { name = "numba" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
@@ -1812,7 +1812,6 @@ all = [
     { name = "langchain-openai" },
     { name = "lap" },
     { name = "manifold3d" },
-    { name = "matplotlib" },
     { name = "moondream" },
     { name = "mujoco" },
     { name = "ollama" },
@@ -1844,6 +1843,7 @@ all = [
     { name = "sse-starlette" },
     { name = "tensorboard" },
     { name = "timm" },
+    { name = "tokenizers" },
     { name = "torchreid" },
     { name = "transformers", extra = ["torch"] },
     { name = "trimesh" },
@@ -1892,6 +1892,7 @@ base = [
     { name = "soundfile" },
     { name = "sse-starlette" },
     { name = "timm" },
+    { name = "tokenizers" },
     { name = "transformers", extra = ["torch"] },
     { name = "ultralytics" },
     { name = "uvicorn" },
@@ -1923,6 +1924,7 @@ drone = [
 ]
 learning = [
     { name = "h5py" },
+    { name = "mcap" },
     { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "pandas", version = "3.0.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "pyarrow" },
@@ -1948,7 +1950,6 @@ manipulation = [
     { name = "langchain-ollama" },
     { name = "langchain-openai" },
     { name = "lap" },
-    { name = "matplotlib" },
     { name = "moondream" },
     { name = "mujoco" },
     { name = "ollama" },
@@ -1973,6 +1974,7 @@ manipulation = [
     { name = "soundfile" },
     { name = "sse-starlette" },
     { name = "timm" },
+    { name = "tokenizers" },
     { name = "transformers", extra = ["torch"] },
     { name = "trimesh" },
     { name = "ultralytics" },
@@ -2005,6 +2007,7 @@ perception = [
     { name = "pillow" },
     { name = "sentencepiece" },
     { name = "timm" },
+    { name = "tokenizers" },
     { name = "transformers", extra = ["torch"] },
     { name = "ultralytics" },
 ]
@@ -2013,7 +2016,6 @@ planning = [
     { name = "can-motor-control" },
     { name = "drake", version = "1.45.0", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'aarch64' and sys_platform == 'darwin'" },
     { name = "drake", version = "1.49.0", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'aarch64' and sys_platform != 'darwin'" },
-    { name = "matplotlib" },
     { name = "piper-sdk" },
     { name = "pycollada" },
     { name = "pygame" },
@@ -2073,6 +2075,7 @@ unitree = [
     { name = "soundfile" },
     { name = "sse-starlette" },
     { name = "timm" },
+    { name = "tokenizers" },
     { name = "transformers", extra = ["torch"] },
     { name = "ultralytics" },
     { name = "unitree-webrtc-connect" },
@@ -2113,6 +2116,7 @@ unitree-dds = [
     { name = "soundfile" },
     { name = "sse-starlette" },
     { name = "timm" },
+    { name = "tokenizers" },
     { name = "transformers", extra = ["torch"] },
     { name = "ultralytics" },
     { name = "unitree-sdk2py-dimos" },
@@ -2189,6 +2193,7 @@ lint = [
     { name = "sentencepiece" },
     { name = "sounddevice" },
     { name = "tensorboard" },
+    { name = "tokenizers" },
     { name = "torch", version = "2.6.0", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')" },
     { name = "torch", version = "2.7.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'" },
     { name = "torchreid" },
@@ -2230,6 +2235,7 @@ project-deps = [
     { name = "openai" },
     { name = "sentencepiece" },
     { name = "tensorboard" },
+    { name = "tokenizers" },
     { name = "torch", version = "2.6.0", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')" },
     { name = "torch", version = "2.7.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'" },
     { name = "torchreid" },
@@ -2265,7 +2271,6 @@ tests = [
     { name = "openai" },
     { name = "pre-commit" },
     { name = "py-spy" },
-    { name = "pybind11" },
     { name = "pygame" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -2283,6 +2288,7 @@ tests = [
     { name = "rosbags" },
     { name = "sentencepiece" },
     { name = "tensorboard" },
+    { name = "tokenizers" },
     { name = "torch", version = "2.6.0", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')" },
     { name = "torch", version = "2.7.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'" },
     { name = "torchreid" },
@@ -2341,6 +2347,7 @@ tests-self-hosted = [
     { name = "rosbags" },
     { name = "sentencepiece" },
     { name = "tensorboard" },
+    { name = "tokenizers" },
     { name = "torch", version = "2.6.0", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')" },
     { name = "torch", version = "2.7.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'" },
     { name = "torchreid" },
@@ -2381,7 +2388,7 @@ requires-dist = [
     { name = "dimos", extras = ["planning", "base", "sim", "cpu"], marker = "extra == 'manipulation'" },
     { name = "dimos", extras = ["unitree"], marker = "extra == 'unitree-dds'" },
     { name = "dimos-generated", editable = "packages/dimos-generated" },
-    { name = "dimos-lcm", specifier = ">=0.1.3" },
+    { name = "dimos-lcm", specifier = ">=0.1.4" },
     { name = "dimos-message-build", directory = "dimos/message_codegen" },
     { name = "dimos-viewer", specifier = "==0.32.0a2" },
     { name = "dimos-viewer", marker = "extra == 'visualization'", specifier = "==0.32.0a2" },
@@ -2413,11 +2420,11 @@ requires-dist = [
     { name = "langchain-openai", marker = "extra == 'agents'", specifier = ">=1,<2" },
     { name = "lap", marker = "extra == 'perception'", specifier = ">=0.5.12" },
     { name = "lazy-loader" },
-    { name = "lcm-dimos-fork", specifier = ">=1.5.2.post1" },
     { name = "llvmlite", specifier = ">=0.42.0" },
     { name = "lz4", specifier = ">=4.4.5" },
     { name = "manifold3d", marker = "extra == 'apriltag'", specifier = ">=2.5.0" },
-    { name = "matplotlib", marker = "extra == 'planning'", specifier = ">=3.7.1" },
+    { name = "matplotlib", specifier = ">=3.7.1" },
+    { name = "mcap", marker = "extra == 'learning'", specifier = ">=1.2" },
     { name = "mcap", marker = "extra == 'unitree-dds'", specifier = ">=1.2.0" },
     { name = "moondream", marker = "extra == 'perception'" },
     { name = "mujoco", marker = "extra == 'sim'", specifier = ">=3.3.4" },
@@ -2425,8 +2432,8 @@ requires-dist = [
     { name = "numpy", specifier = ">=1.26.4" },
     { name = "ollama", marker = "extra == 'agents'", specifier = ">=0.6.0" },
     { name = "omegaconf", marker = "extra == 'perception'", specifier = ">=2.3.0" },
-    { name = "onnxruntime", marker = "extra == 'cpu'" },
-    { name = "onnxruntime-gpu", marker = "platform_machine == 'x86_64' and extra == 'cuda'", specifier = ">=1.17.1" },
+    { name = "onnxruntime", marker = "extra == 'cpu'", specifier = ">=1.21" },
+    { name = "onnxruntime-gpu", marker = "platform_machine == 'x86_64' and extra == 'cuda'", specifier = ">=1.21" },
     { name = "open-clip-torch", marker = "extra == 'misc'", specifier = "==3.2.0" },
     { name = "open3d", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'", specifier = ">=0.18.0" },
     { name = "open3d-unofficial-arm", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'", specifier = ">=0.19.0.post9" },
@@ -2477,6 +2484,7 @@ requires-dist = [
     { name = "textual", specifier = "==3.7.1" },
     { name = "textual-serve", specifier = ">=1.1.1,<2" },
     { name = "timm", marker = "extra == 'perception'", specifier = ">=1.0.15" },
+    { name = "tokenizers", marker = "extra == 'perception'", specifier = ">=0.21" },
     { name = "toolz", specifier = ">=1.1.0" },
     { name = "torchreid", marker = "extra == 'misc'", specifier = "==0.2.5" },
     { name = "transformers", extras = ["torch"], marker = "extra == 'perception'", specifier = ">=4.53.0,<4.54" },
@@ -2540,6 +2548,7 @@ lint = [
     { name = "sentencepiece", specifier = ">=0.2.0" },
     { name = "sounddevice", specifier = ">=0.5.5" },
     { name = "tensorboard", specifier = "==2.20.0" },
+    { name = "tokenizers", specifier = ">=0.21" },
     { name = "torch", marker = "(platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')", specifier = ">=2.1,<2.8" },
     { name = "torch", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'", specifier = ">=2.1,<2.8", index = "https://download.pytorch.org/whl/cu128" },
     { name = "torchreid", specifier = "==0.2.5" },
@@ -2581,6 +2590,7 @@ project-deps = [
     { name = "openai" },
     { name = "sentencepiece", specifier = ">=0.2.0" },
     { name = "tensorboard", specifier = "==2.20.0" },
+    { name = "tokenizers", specifier = ">=0.21" },
     { name = "torch", marker = "(platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')", specifier = ">=2.1,<2.8" },
     { name = "torch", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'", specifier = ">=2.1,<2.8", index = "https://download.pytorch.org/whl/cu128" },
     { name = "torchreid", specifier = "==0.2.5" },
@@ -2617,7 +2627,6 @@ tests = [
     { name = "openai" },
     { name = "pre-commit", specifier = "==4.2.0" },
     { name = "py-spy" },
-    { name = "pybind11", specifier = "==3.0.1" },
     { name = "pygame", specifier = ">=2.6.1" },
     { name = "pytest", specifier = "==8.3.5" },
     { name = "pytest-asyncio", specifier = "==1.4.0" },
@@ -2635,6 +2644,7 @@ tests = [
     { name = "rosbags", specifier = "==0.11.0" },
     { name = "sentencepiece", specifier = ">=0.2.0" },
     { name = "tensorboard", specifier = "==2.20.0" },
+    { name = "tokenizers", specifier = ">=0.21" },
     { name = "torch", marker = "(platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')", specifier = ">=2.1,<2.8" },
     { name = "torch", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'", specifier = ">=2.1,<2.8", index = "https://download.pytorch.org/whl/cu128" },
     { name = "torchreid", specifier = "==0.2.5" },
@@ -2677,7 +2687,7 @@ tests-self-hosted = [
     { name = "openai" },
     { name = "pre-commit", specifier = "==4.2.0" },
     { name = "py-spy" },
-    { name = "pybind11", specifier = "==3.0.1" },
+    { name = "pybind11", specifier = ">=2.12" },
     { name = "pygame", specifier = ">=2.6.1" },
     { name = "pytest", specifier = "==8.3.5" },
     { name = "pytest-asyncio", specifier = "==1.4.0" },
@@ -2695,6 +2705,7 @@ tests-self-hosted = [
     { name = "rosbags", specifier = "==0.11.0" },
     { name = "sentencepiece", specifier = ">=0.2.0" },
     { name = "tensorboard", specifier = "==2.20.0" },
+    { name = "tokenizers", specifier = ">=0.21" },
     { name = "torch", marker = "(platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')", specifier = ">=2.1,<2.8" },
     { name = "torch", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'", specifier = ">=2.1,<2.8", index = "https://download.pytorch.org/whl/cu128" },
     { name = "torchreid", specifier = "==0.2.5" },
@@ -2729,7 +2740,7 @@ requires-dist = [
 
 [[package]]
 name = "dimos-lcm"
-version = "0.1.3"
+version = "0.1.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "foxglove-websocket" },
@@ -2737,9 +2748,9 @@ dependencies = [
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/09/b2/4cdd2bce665ab633313b5d371e0a63fcae2cf77a934a2a9bf820db88a540/dimos_lcm-0.1.3.tar.gz", hash = "sha256:5f7dbd3055f299823bc0e450c59583ad5a2d093c182deec8a86073853881bb09", size = 405688, upload-time = "2026-06-03T07:20:20.552Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/4b/05/2c1d03a588ede64ea19c5c22ee72d2a4ac5e5e29c452920aa0e56a578fad/dimos_lcm-0.1.4.tar.gz", hash = "sha256:4cef49c386860b94bd18a5da8b0a195459f56d883eaf7ede4fe297167bb773da", size = 303907, upload-time = "2026-09-22T20:19:47.059Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/95/19/2d8babf544993508359922ea59db2280d42efa0d5a80d4d0cae22ce40d67/dimos_lcm-0.1.3-py3-none-any.whl", hash = "sha256:63317225a0b4ab0f05e4b656f3f78ac9ba4e914998da2c689ca839cbbd83d57d", size = 1714087, upload-time = "2026-06-03T07:20:22.689Z" },
+    { url = "https://files.pythonhosted.org/packages/d0/d0/f93e2a2d9062ad0b3981b80db12b34494d231917243ab213265e926b5fa9/dimos_lcm-0.1.4-py3-none-any.whl", hash = "sha256:65efc67a5055b8d53a885bb46a7f49cc6bd07929cbd18403784efe65e186d3a2", size = 593548, upload-time = "2026-09-22T20:19:45.404Z" },
 ]
 
 [[package]]
@@ -7795,11 +7806,11 @@ wheels = [
 
 [[package]]
 name = "pybind11"
-version = "3.0.1"
+version = "3.0.4"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/2f/7b/a6d8dcb83c457e24a9df1e4d8fd5fb8034d4bbc62f3c324681e8a9ba57c2/pybind11-3.0.1.tar.gz", hash = "sha256:9c0f40056a016da59bab516efb523089139fcc6f2ba7e4930854c61efb932051", size = 546914, upload-time = "2025-08-22T20:09:27.265Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/cc/f0/35145a3c3baffeef55d4b8324caa33abaa8fa56ab345ecd4b2211d09163e/pybind11-3.0.4.tar.gz", hash = "sha256:3286b59c8a774b9ee650169302dd5a4eedc30a8617905a0560dd8ee44775130c", size = 589533, upload-time = "2026-04-19T03:08:15.925Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/cd/8a/37362fc2b949d5f733a8b0f2ff51ba423914cabefe69f1d1b6aab710f5fe/pybind11-3.0.1-py3-none-any.whl", hash = "sha256:aa8f0aa6e0a94d3b64adfc38f560f33f15e589be2175e103c0a33c6bce55ee89", size = 293611, upload-time = "2025-08-22T20:09:25.235Z" },
+    { url = "https://files.pythonhosted.org/packages/b3/06/c3a23c9a0263b136c519f033a58d4641e73065fefc7754e9667ec206d992/pybind11-3.0.4-py3-none-any.whl", hash = "sha256:961720ee652da51d531b7b2451a6bd2bc042b0106e6d9baa48ecb7d58034ce63", size = 314166, upload-time = "2026-04-19T03:08:14.091Z" },
 ]
 
 [[package]]

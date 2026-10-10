@@ -24,7 +24,6 @@ Run with:
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
 
 from dimos_generated.geometry_msgs.msg import Twist
 
@@ -33,21 +32,20 @@ from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
 
-_CPP_DIR = Path(__file__).parent / "cpp"
 _BUILD = "nix build .#default"
 
 
 class PingConfig(NativeModuleConfig):
     executable: str = "result/bin/ping"
     build_command: str = _BUILD
-    cwd: str = str(_CPP_DIR)
+    source_dir: str = "examples/native-modules/cpp"
     stdin_config: bool = True
 
 
 class PongConfig(NativeModuleConfig):
     executable: str = "result/bin/pong"
     build_command: str = _BUILD
-    cwd: str = str(_CPP_DIR)
+    source_dir: str = "examples/native-modules/cpp"
     stdin_config: bool = True
     sample_config: int = 42
 

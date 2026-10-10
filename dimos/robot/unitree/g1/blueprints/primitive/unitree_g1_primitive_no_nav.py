@@ -38,7 +38,7 @@ from dimos.hardware.sensors.camera.zed import compat as zed
 from dimos.mapping.costmapper import CostMapper
 from dimos.mapping.voxels.module import VoxelGridMapper
 from dimos.msgs.geometry import quaternion_from_euler
-from dimos.navigation.frontier_exploration.wavefront_frontier_goal_selector import (
+from dimos.navigation.experimental.frontier_exploration.wavefront_frontier_goal_selector import (
     WavefrontFrontierExplorer,
 )
 from dimos.robot.unitree.g1.g1_rerun import g1_costmap

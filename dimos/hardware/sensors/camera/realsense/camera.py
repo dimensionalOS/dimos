@@ -33,7 +33,7 @@ from dimos.spec import perception
 
 
 class RealSenseCameraConfig(NativeModuleConfig, DepthCameraConfig):
-    cwd: str | None = "rust"
+    source_dir: str | None = "dimos/hardware/sensors/camera/realsense/rust"
     executable: str = "target/release/realsense_native"
     # Own flake: librealsense2 isn't in the root shell.
     build_command: str | None = "nix develop path:. -c cargo build --release"

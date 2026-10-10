@@ -18,4 +18,4 @@ package-dir = {"dimos_message_build" = "."}
 include-package-data = false
 
 [tool.setuptools.package-data]
-"dimos_message_build" = ["py.typed", "schemas/**/*", "templates/*", "sources.json", "native_sources.json", "_vendor/*.pyi", "_vendor/LICENSE", "_vendor/*.xml"]
+"dimos_message_build" = ["py.typed", "schemas/**/*", "templates/*", "sources.json", "native_sources.json", "_vendor/*.pyi", "_vendor/LICENSE", "_vendor/*.xml", "_vendor/*sources.json"]

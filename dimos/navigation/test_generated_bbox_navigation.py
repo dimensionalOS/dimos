@@ -30,8 +30,8 @@ from dimos_message_build.registry import decode as cdr_decode, encode as cdr_enc
 import numpy as np
 import pytest
 
+from dimos.agents.skills.visual_servoing.bbox_navigation import BBoxNavigationModule
 from dimos.core.transport import LCMTransport
-from dimos.navigation.bbox_navigation import BBoxNavigationModule
 
 
 def test_generated_bbox_goal_preserves_header_and_projection():

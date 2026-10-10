@@ -16,25 +16,31 @@
 
 
 from pathlib import Path
+from typing import Any
 import xml.etree.ElementTree as ET
 
 from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.std_msgs.msg import Header
-from etils import epath
 import mujoco
-from mujoco_playground._src import mjx_env
 import numpy as np
 
 from dimos.core.global_config import GlobalConfig
 from dimos.mapping.occupancy.extrude_occupancy import generate_mujoco_scene
 from dimos.msgs.occupancy import occupancy_from_file
 from dimos.simulation.mujoco.input_controller import InputController
+from dimos.simulation.mujoco.menagerie import menagerie_path
 from dimos.simulation.mujoco.policy import G1OnnxController, Go1OnnxController, OnnxController
 from dimos.utils.data import get_data
 
 
-def _get_data_dir() -> epath.Path:
-    return epath.Path(str(get_data("mujoco_sim")))
+def _get_data_dir() -> Path:
+    return get_data("mujoco_sim")
+
+
+def _update_assets(assets: dict[str, bytes], path: Path, glob: str = "*") -> None:
+    for file in path.glob(glob):
+        if file.is_file():
+            assets[file.name] = file.read_bytes()
 
 
 def get_assets() -> dict[str, bytes]:
@@ -43,16 +49,17 @@ def get_assets() -> dict[str, bytes]:
 
     # Assets used from https://sketchfab.com/3d-models/mersus-office-8714be387bcd406898b2615f7dae3a47
     # Created by Ryan Cassidy and Coleman Costello
-    mjx_env.update_assets(assets, data_dir, "*.xml")
-    mjx_env.update_assets(assets, data_dir / "scene_office1/textures", "*.png")
-    mjx_env.update_assets(assets, data_dir / "scene_office1/office_split", "*.obj")
-    mjx_env.update_assets(assets, mjx_env.MENAGERIE_PATH / "unitree_go1" / "assets")
-    mjx_env.update_assets(assets, mjx_env.MENAGERIE_PATH / "unitree_g1" / "assets")
+    _update_assets(assets, data_dir, "*.xml")
+    _update_assets(assets, data_dir / "scene_office1/textures", "*.png")
+    _update_assets(assets, data_dir / "scene_office1/office_split", "*.obj")
+    menagerie = menagerie_path()
+    _update_assets(assets, menagerie / "unitree_go1" / "assets")
+    _update_assets(assets, menagerie / "unitree_g1" / "assets")
 
     # From: https://sketchfab.com/3d-models/jeong-seun-34-42956ca979404a038b8e0d3e496160fd
-    person_dir = epath.Path(str(get_data("person")))
-    mjx_env.update_assets(assets, person_dir, "*.obj")
-    mjx_env.update_assets(assets, person_dir, "*.png")
+    person_dir = get_data("person")
+    _update_assets(assets, person_dir, "*.obj")
+    _update_assets(assets, person_dir, "*.png")
 
     return assets
 
@@ -78,7 +85,7 @@ def load_model(
     n_substeps = round(ctrl_dt / sim_dt)
     model.opt.timestep = sim_dt
 
-    params = {
+    params: dict[str, Any] = {
         "policy_path": (_get_data_dir() / f"{robot}_policy.onnx").as_posix(),
         "default_angles": np.array(model.keyframe("home").qpos[7:]),
         "n_substeps": n_substeps,

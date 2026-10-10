@@ -82,9 +82,9 @@ When `stop()` is called, the process receives SIGTERM. If it doesn't exit within
 
 | Field              | Type             | Default       | Description                                                 |
 |--------------------|------------------|---------------|-------------------------------------------------------------|
-| `executable`       | `str`            | *(required)*  | Path to the native binary (relative to `cwd` if set)        |
+| `source_dir` | `str \| None` | `None` | Build directory relative to the shared project checkout; required for source builds |
+| `executable` | `str` | *(required)* | Source mode: relative to `source_dir`, inside the checkout. External mode: supplied binary path |
 | `build_command`    | `str \| None`    | `None`        | Shell command to run if executable is missing (auto-build)  |
-| `cwd`              | `str \| None`    | `None`        | Working directory for build and runtime. Relative paths are resolved against the Python file defining the module |
 | `extra_args`       | `list[str]`      | `[]`          | Additional CLI arguments appended after auto-generated ones |
 | `extra_env`        | `dict[str, str]` | `{}`          | Extra environment variables for the subprocess              |
 | `shutdown_timeout` | `float`          | `10.0`        | Seconds to wait for SIGTERM before SIGKILL                  |
@@ -93,7 +93,7 @@ When `stop()` is called, the process receives SIGTERM. If it doesn't exit within
 
 ### Auto CLI arg generation
 
-Any field you add to your config subclass automatically becomes a `--name value` CLI arg. Fields from `NativeModuleConfig` itself (like `executable`, `extra_args`, `cwd`) are **not** passed. They're for Python-side orchestration only.
+Any field you add to your config subclass automatically becomes a `--name value` CLI arg. Fields from `NativeModuleConfig` itself (like `executable`, `extra_args`, `source_dir`) are **not** passed. They're for Python-side orchestration only.
 
 ```python skip
 from pydantic import Field
@@ -244,11 +244,11 @@ from dimos_generated.sensor_msgs.msg import Imu
 from dimos.spec import perception
 
 class Mid360Config(NativeModuleConfig):
-    cwd: str | None = "rust"
-    executable: str = str(DIMOS_PROJECT_ROOT / "target" / "release" / "mid360_native")
+    source_dir: str | None = "dimos/hardware/sensors/lidar/livox/rust"
+    executable: str = "../../../../../../target/release/mid360_native"
     build_command: str | None = "cargo build --release"
     host_ip: str | None = None  # auto-detected on the lidar's subnet
-    lidar_ip: str = "192.168.1.155"
+    lidar_ip: str | None = None  # required for a live sensor
     frequency: float = 10.0
     enable_imu: bool = True
     frame_id: str = "lidar_link"
@@ -271,23 +271,60 @@ autoconnect(
 )
 ```
 
+## Native sources in pip installations
+
+An editable checkout uses its local sources. An installed wheel uses the same
+`get_project_root()` checkout as data downloads: clone `main` on first use,
+then reuse the existing checkout without automatically updating it. This checkout
+can differ from the installed Python version. Git and network access are needed
+on first use; the clone skips LFS assets.
+
+Source builds declare `source_dir` relative to the shared checkout and an
+`executable` relative to that directory. Configuration rejects absolute source
+paths, absolute build executables, and artifact paths that
+escape the checkout. Cargo workspace outputs can use `../` within the checkout.
+These paths do not depend on the Python file or a subclass's location.
+
+For an externally provisioned binary, set `source_dir=None`,
+`build_command=None`, and `executable="/path/to/binary"`. The process runs from
+its executable directory. Relative executable paths are anchored to the caller's
+current directory when the module is created; executable names are not searched
+on PATH. No checkout is fetched in this mode.
+
+The `cwd` config field was removed. Use `source_dir` for source builds. For an
+external binary, pass absolute resource paths or use a launcher script if the
+program needs a different working directory. Passing `cwd` raises a migration error.
+Data downloads and IsolatedPython behavior are unchanged.
+
+Nix-based modules still require Nix and their normal build dependencies.
+FastLIO2 requires Nix 2.26 or newer for relative flake inputs. This change does
+not establish additional platform or hardware support.
+
 ## Auto Building
 
-If `build_command` is set in the module config, and the executable doesn't exist when `start()` is called, NativeModule runs the build command automatically.
+Creating a config or module does not fetch native sources. `build()` resolves the
+source directory and prepares the executable. `start()` reuses that preparation,
+or prepares it first when called directly. Recorder replay skips both native
+preparation and launch.
+
+If the executable is missing and `build_command` is set, preparation runs the
+build command. With `build_command=None`, a missing executable is an error.
 Build output is streamed line by line through structlog at `info`, with stderr merged into
 stdout. `nix build` prints no build logs unless `-L` is passed, so the built-in modules all
 include it.
 
 ```python skip
 class MyLidarConfig(NativeModuleConfig):
-    cwd: str | None = "cpp"
+    source_dir: str | None = "dimos/my_module/cpp"
     executable: str = "result/bin/my_lidar"
     build_command: str | None = "nix build -L .#my_lidar"
 ```
 
-`cwd` is used for both the build command and the runtime subprocess. Relative paths are resolved against the directory of the Python file that defines the module
+The resolved `source_dir` is used for both the build command and the runtime subprocess.
 
-If the executable already exists, the build step is skipped entirely.
+If the executable exists, preparation skips compilation unless `auto_build=True`
+or `--build-native` requests a rebuild. `auto_build=False` does not disable
+building a missing executable. Calling `build()` again checks these rules again.
 
 ### Faster builds via the Cachix substituter
 

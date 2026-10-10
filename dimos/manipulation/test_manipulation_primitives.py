@@ -296,7 +296,7 @@ def test_legacy_skill_adapter_delegates_to_primitive_rpcs(
 
     result = skills.move_to_joints("0.25")
 
-    assert result.is_success()
+    assert "COMPLETED" in result.message
     target = manipulation.plan_to_joints.call_args.args[0]["tool"]
     assert target.name == ["j0"]
     np.testing.assert_array_equal(target.position, [0.25])

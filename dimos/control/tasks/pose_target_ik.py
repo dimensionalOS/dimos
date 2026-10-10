@@ -773,6 +773,10 @@ class PoseTargetIKTask(BaseControlTask):
             return None
         return self._solver.frame_poses(measured_state, frame_names)
 
+    def measured_frame_poses(self, state: CoordinatorState) -> dict[str, PoseStamped]:
+        """Measured world poses of this task's target frames; empty without full feedback."""
+        return self.current_frame_poses(state, self._config.target_frames) or {}
+
     def on_preempted(self, by_task: str, joints: frozenset[str]) -> None:
         """Notify the leaf when any of its claimed joints are preempted."""
         if joints & self.claim().joints:

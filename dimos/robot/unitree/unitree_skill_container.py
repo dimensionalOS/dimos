@@ -35,7 +35,7 @@ from dimos.msgs.geometry import (
 )
 from dimos.msgs.time import header_now
 from dimos.navigation.base import NavigationState
-from dimos.navigation.navigation_spec import NavigationInterfaceSpec
+from dimos.navigation.go2.replanning_a_star.spec import NavigationInterfaceSpec
 from dimos.robot.unitree.go2.connection_spec import GO2ConnectionSpec
 from dimos.utils.logging_config import setup_logger
 
@@ -229,6 +229,12 @@ class UnitreeSkillContainer(Module):
     _connection: GO2ConnectionSpec
 
     tf: In[TFMessage]
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+        # Subscribe before the first skill call so its initial pose lookup has history.
+        self._tf = self.tfbuffer
 
     @rpc
     def stop(self) -> None:

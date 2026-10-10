@@ -13,6 +13,7 @@ graft dimos/message_codegen/schemas
 graft dimos/message_codegen/templates
 include dimos/message_codegen/_vendor/*.pyi
 include scripts/setup_message_codegen.sh
+include dimos/message_codegen/pyproject.toml
 graft packages/dimos-generated
 prune packages/dimos-generated/build
 prune dimos/message_codegen/build
@@ -54,12 +55,3 @@ prune dimos/web/command-center-extension
 
 global-exclude test_*.py
 global-exclude conftest.py
-
-include dimos/message_codegen/_vendor/LICENSE
-include dimos/message_codegen/_vendor/*.xml
-
-# Native source resources are prepared lazily, never compiled by the Python backend.
-graft native/cpp
-prune native/cpp/build
-recursive-include dimos/hardware/sensors/lidar *.cpp *.hpp *.h CMakeLists.txt *.cmake
-recursive-include dimos/robot/deeprobotics/m20/onboard/drdds-zenoh-bridge/cpp *.cpp *.hpp *.h CMakeLists.txt *.cmake

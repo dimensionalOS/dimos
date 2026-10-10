@@ -1,5 +1,7 @@
 from ..._types import store
 
+PointField = store.types["sensor_msgs/msg/PointField"]
+PointCloud2 = store.types["sensor_msgs/msg/PointCloud2"]
 BatteryState = store.types["sensor_msgs/msg/BatteryState"]
 RegionOfInterest = store.types["sensor_msgs/msg/RegionOfInterest"]
 CameraInfo = store.types["sensor_msgs/msg/CameraInfo"]
@@ -21,8 +23,6 @@ MultiEchoLaserScan = store.types["sensor_msgs/msg/MultiEchoLaserScan"]
 NavSatStatus = store.types["sensor_msgs/msg/NavSatStatus"]
 NavSatFix = store.types["sensor_msgs/msg/NavSatFix"]
 PointCloud = store.types["sensor_msgs/msg/PointCloud"]
-PointField = store.types["sensor_msgs/msg/PointField"]
-PointCloud2 = store.types["sensor_msgs/msg/PointCloud2"]
 Range = store.types["sensor_msgs/msg/Range"]
 RelativeHumidity = store.types["sensor_msgs/msg/RelativeHumidity"]
 Temperature = store.types["sensor_msgs/msg/Temperature"]

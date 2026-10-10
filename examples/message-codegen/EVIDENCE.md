@@ -1,3 +1,9 @@
+# Historical evidence — superseded implementation
+
+This records earlier wrapper-based experiments, not acceptance of the current
+direct-library generator. Current results come from the exact-HEAD standalone
+CI matrix and its uploaded evidence.
+
 # Stage 1 local verification
 
 Captured on 2026-09-21 on Linux x86_64 with Python 3.12, GCC 16, and Rust 1.98.
@@ -1307,6 +1313,4 @@ records terminal CI for the previous batch and standalone Python 3.9 encoding.
 
 ## Remaining consumer cutover
 
-See [final-consumer-cutover.md](evidence/final-consumer-cutover.md) for generated
-entity/control/PGO/eval migration, exact previous CI failures, offline evidence
-and remaining legacy retirement boundaries.
+The dated [consumer cutover evidence](evidence/remaining-consumer-cutover.md) is kept separately, including its tested revisions and limitations.

@@ -15,7 +15,6 @@
 from dimos_generated.sensor_msgs.msg import Image
 
 from dimos.agents.annotation import skill
-from dimos.agents.skill_result import SkillResult
 from dimos.core.module import Module
 from dimos.core.stream import In
 
@@ -28,16 +27,16 @@ class ObserveSkill(Module):
     _frame_timeout: float = 5.0
 
     @skill
-    def observe(self) -> Image | SkillResult:
+    def observe(self) -> Image:
         """Returns the current video frame from the robot camera. Use this skill for any visual world queries.
 
         This skill provides the current camera view for perception tasks.
+        Raises TimeoutError when no frame arrives within the frame timeout.
         """
         try:
             return self.color_image.get_next(timeout=self._frame_timeout)
-        except Exception:
-            return SkillResult.fail(
-                "EXECUTION_TIMEOUT",
+        except Exception as exc:
+            raise TimeoutError(
                 f"No camera frame received within {self._frame_timeout} seconds; "
-                "the camera may not be running.",
-            )
+                "the camera may not be running."
+            ) from exc

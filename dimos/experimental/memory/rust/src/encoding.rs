@@ -31,7 +31,7 @@ pub(crate) fn encode(
     observation: DecodedObservation,
 ) -> Result<StoredObservation> {
     let data = match stream.codec {
-        Codec::Cdr => observation.payload,
+        Codec::Cdr | Codec::Json => observation.payload,
         Codec::Lz4Cdr => lz4_frame(&observation.payload)?,
     };
     Ok(StoredObservation {

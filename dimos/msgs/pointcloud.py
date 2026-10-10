@@ -84,7 +84,9 @@ def pointcloud_xyz(message: PointCloud2) -> NDArray[np.float64]:
     return np.stack([points[name].ravel() for name in ("x", "y", "z")], axis=-1).astype(np.float64)
 
 
-def pointcloud_from_xyz(points: NDArray[Any], *, header: Header) -> PointCloud2:
+def pointcloud_from_xyz(
+    points: NDArray[Any], *, header: Header, stamps: NDArray[Any] | None = None
+) -> PointCloud2:
     """Copy Nx3 or HxWx3 coordinates into a tightly packed little-endian XYZ cloud.
 
     XYZ fields are float32. NaNs/infinities remain missing-point markers and set
@@ -100,7 +102,7 @@ def pointcloud_from_xyz(points: NDArray[Any], *, header: Header) -> PointCloud2:
         raise ValueError("XYZ coordinates exceed float32 range")
     packed = np.ascontiguousarray(values, dtype="<f4")
     height, width = (1, packed.shape[0]) if packed.ndim == 2 else packed.shape[:2]
-    return PointCloud2(
+    message = PointCloud2(
         header=deepcopy(header),
         height=height,
         width=width,
@@ -114,6 +116,32 @@ def pointcloud_from_xyz(points: NDArray[Any], *, header: Header) -> PointCloud2:
         data=np.asarray(packed.view(np.uint8).reshape(-1), dtype=np.uint8),
         is_dense=bool(finite.all()),
     )
+
+    if stamps is not None:
+        times = np.asarray(stamps, dtype="<f8")
+        if times.shape != values.shape[:-1]:
+            raise ValueError("Per-point stamps must match the coordinate shape")
+        if not np.isfinite(times).all():
+            raise ValueError("Per-point stamps must be finite")
+        stamped = np.empty(times.shape, dtype=[("xyz", "<f4", (3,)), ("stamps", "<f8")])
+        stamped["xyz"], stamped["stamps"] = packed, times
+        message.fields.append(
+            PointField(name="stamps", offset=12, datatype=PointField.FLOAT64, count=1)
+        )
+        message.point_step = 20
+        message.row_step = width * 20
+        message.data = stamped.view(np.uint8).reshape(-1)
+    return message
+
+
+def pointcloud_stamps(message: PointCloud2) -> NDArray[np.float64] | None:
+    """Read per-point capture times; absence falls back to the header at the caller."""
+    fields = [field for field in message.fields if field.name == "stamps"]
+    if not fields:
+        return None
+    if len(fields) != 1 or fields[0].datatype != PointField.FLOAT64 or fields[0].count != 1:
+        raise ValueError("Per-point stamps must be a scalar FLOAT64 field")
+    return np.asarray(pointcloud_view(message)["stamps"].reshape(-1), dtype=np.float64)
 
 
 def select_points(message: PointCloud2, keep: NDArray[np.bool_]) -> PointCloud2:

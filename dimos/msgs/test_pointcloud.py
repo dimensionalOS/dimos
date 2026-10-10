@@ -34,6 +34,7 @@ from dimos.msgs.pointcloud import (
     pointcloud_from_xyz,
     pointcloud_from_xyz_rgb,
     pointcloud_rgb,
+    pointcloud_stamps,
     pointcloud_view,
     pointcloud_xyz,
     select_points,
@@ -433,3 +434,29 @@ def test_voxel_downsample_native_centroids_colors_and_exact_header():
     np.testing.assert_allclose(pointcloud_xyz(result), [[0.2, 0.2, 0.2]], atol=1e-6)
     np.testing.assert_array_equal(pointcloud_rgb(result), [[127, 127, 127]])
     assert source.width == 40
+
+
+@pytest.mark.parametrize("shape", [(3, 3), (2, 3, 3)])
+def test_per_point_stamps_survive_cdr_and_point_selection(shape):
+    points = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
+    stamps = np.arange(np.prod(shape[:-1]), dtype=np.float64).reshape(shape[:-1]) + 17.25
+    header = Header(stamp=Time(sec=19, nanosec=123), frame_id="map")
+    cloud = pointcloud_from_xyz(points, header=header, stamps=stamps)
+    restored = cdr_decode(cdr_encode(cloud), PointCloud2)
+    np.testing.assert_array_equal(pointcloud_xyz(restored), points.reshape(-1, 3))
+    np.testing.assert_array_equal(pointcloud_stamps(restored), stamps.reshape(-1))
+    keep = np.arange(stamps.size) % 2 == 0
+    selected = select_points(restored, keep)
+    np.testing.assert_array_equal(pointcloud_stamps(selected), stamps.reshape(-1)[keep])
+    assert selected.header == header
+    assert pointcloud_stamps(pointcloud_from_xyz(points, header=header)) is None
+
+
+@pytest.mark.parametrize("stamps", [np.array([1.0]), np.array([1.0, np.nan])])
+def test_per_point_stamps_reject_wrong_count_or_nonfinite_values(stamps):
+    with pytest.raises(ValueError, match="Per-point stamps"):
+        pointcloud_from_xyz(
+            np.zeros((2, 3)),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            stamps=stamps,
+        )

@@ -25,13 +25,31 @@ import threading
 from typing import Any
 import uuid
 
-from demo_native import free_port, stop_process
-from external_telemetry.demo_msgs.msg import Telemetry
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode
 from mcap.reader import make_reader
+from recording_messages.recording_msgs.msg import Reading
 
 from dimos.core.transport import LCMTransport, ZenohTransport
 from dimos.experimental.memory.rust_recorder import RustStreamSpec
 from dimos.protocol.service.zenohservice import ZenohConfig, ZenohSessionPool
+
+
+def free_port(kind: int) -> int:
+    with socket.socket(socket.AF_INET, kind) as listener:
+        listener.bind(("127.0.0.1", 0))
+        return int(listener.getsockname()[1])
+
+
+def stop_process(process: subprocess.Popen[bytes]) -> None:
+    if process.poll() is None:
+        process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=5)
 
 
 def record(backend: str, executable: Path, output: Path) -> None:
@@ -45,11 +63,11 @@ def record(backend: str, executable: Path, output: Path) -> None:
         topic = f"demo/{uuid.uuid4().hex[:8]}"
         publisher: Any
         if backend == "lcm":
-            publisher = LCMTransport(topic, Telemetry, url=url)
+            publisher = LCMTransport(topic, Reading, url=url)
         else:
             publisher = ZenohTransport(
                 topic,
-                Telemetry,
+                Reading,
                 session_pool=pool,
                 scouting=False,
                 multicast=False,
@@ -60,7 +78,7 @@ def record(backend: str, executable: Path, output: Path) -> None:
         stack.callback(publisher.stop)
         publisher.start()
         spec = RustStreamSpec.from_type(
-            port="telemetry", name="telemetry", payload_type=Telemetry, codec="cdr"
+            port="telemetry", name="telemetry", payload_type=Reading, codec="cdr"
         )
         session = ZenohConfig(
             mode="client",
@@ -115,7 +133,11 @@ def record(backend: str, executable: Path, output: Path) -> None:
         assert ready.wait(15), "".join(transcript)
         expected = []
         for index in range(3):
-            message = Telemetry(application_note=f"locally-added-field-{index}")
+            message = Reading(
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id="map"),
+                value=float(index),
+                application_note=f"locally-added-field-{index}",
+            )
             message.header.stamp.sec = 1700000000
             message.header.stamp.nanosec = 123456789 + index
             expected.append(message)
@@ -132,7 +154,7 @@ def record(backend: str, executable: Path, output: Path) -> None:
         assert b"application_note" in schema.data
         assert channel.message_encoding == "cdr"
         assert row.publish_time == row.log_time  # Unknown stamp layout uses reception time.
-        decoded = Telemetry.decode(row.data)
+        decoded = cdr_decode(row.data, Reading)
         assert decoded == original
         print(
             f"{backend}: {decoded.application_note}, payload stamp={decoded.header.stamp.sec}.{decoded.header.stamp.nanosec:09d}"
@@ -147,9 +169,10 @@ def main() -> None:
         "--executable", type=Path, default=Path("target/debug/dimos-memory-recorder")
     )
     parser.add_argument("--output", type=Path, default=Path("build/message-codegen/demo/evidence"))
+    parser.add_argument("--transport", choices=("lcm", "zenoh", "both"), default="both")
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
-    for backend in ("lcm", "zenoh"):
+    for backend in ("lcm", "zenoh") if args.transport == "both" else (args.transport,):
         record(backend, args.executable, args.output / f"external-native-recording-{backend}.mcap")
     print("PASS: custom field recorded on both transports without a recorder decoder or rebuild")
 

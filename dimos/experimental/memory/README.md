@@ -11,8 +11,9 @@ The recorder is built as a locked Nix package. Nix supplies Rust, Python for bui
 CMake, and SQLite, so none of those tools or
 development packages need to be installed on the host.
 
-The Python module builds the package automatically on first use. To build it
-ahead of time, run:
+The Python module resolves the package through Nix before each launch, so its
+wire protocol always matches the Python checkout. Nix reuses the cached package
+when the native sources have not changed. To build it ahead of time, run:
 
 ```bash
 cd dimos/experimental/memory/rust
@@ -96,3 +97,18 @@ Unknown timestamp layouts use reception time. Negative source times work in
 SQLite; MCAP rejects them because its time fields are unsigned. Arbitrary
 pickle payloads, Python `pose_setter_for` hooks, and spatial pose attachment
 remain Python-recorder features; unsupported combinations fail during startup.
+
+
+## JSON documents
+
+The `json` codec accepts the existing `std_msgs.String` transport and stores its
+JSON text as UTF-8 without a CDR envelope. Ordinary String streams retain their
+selected CDR codec and reception timestamp. Configure an event source timestamp
+explicitly with `stream_timestamp_fields={"events": "ts"}` and select the codec
+with `stream_codecs={"events": "json"}`. Missing, nonnumeric or nonfinite selected
+timestamps fail recording. Without a selected field, JSON uses reception time.
+
+JSON storage is supported by SQLite. The ROS2-profile MCAP backend accepts only
+CDR channels with complete message schemas; record a typed custom event message
+there instead of selecting the JSON storage codec. JSON source times are converted
+to signed nanoseconds with checked range and retained in SQLite.

@@ -46,6 +46,7 @@ const FLUSH_INTERVAL: Duration = Duration::from_millis(100);
 #[serde(rename_all = "lowercase")]
 pub enum Codec {
     Cdr,
+    Json,
     #[serde(rename = "lz4+cdr")]
     Lz4Cdr,
 }
@@ -59,6 +60,10 @@ pub struct StreamConfig {
     pub schema_name: String,
     pub schema_definition: String,
     pub codec: Codec,
+    #[serde(default)]
+    pub timestamp_field: Option<String>,
+    #[serde(default)]
+    pub json_schema: Option<serde_json::Value>,
 }
 
 impl StreamConfig {
@@ -137,6 +142,13 @@ pub struct RecorderEngine {
 
 impl RecorderEngine {
     pub fn start(config: RecorderConfig) -> Result<Self> {
+        for stream in &config.streams {
+            anyhow::ensure!(
+                stream.codec == Codec::Json
+                    || (stream.timestamp_field.is_none() && stream.json_schema.is_none()),
+                "JSON options require the json codec"
+            );
+        }
         let (write_tx, write_rx) = bounded(QUEUE_CAPACITY);
         let (permit_tx, permit_rx) = bounded(QUEUE_CAPACITY);
         let (failure_tx, failure_rx) = bounded(1);
@@ -527,6 +539,8 @@ mod tests {
                 "test_msgs/msg/Raw"
             }
             .to_string(),
+            timestamp_field: None,
+            json_schema: None,
             schema_definition: if is_tf {
                 schema("tf2_msgs/msg/TFMessage")
             } else {
@@ -549,6 +563,8 @@ mod tests {
             }
             .to_string(),
             codec,
+            timestamp_field: None,
+            json_schema: None,
         })
     }
 
@@ -639,6 +655,8 @@ mod tests {
             schema_name: "sensor_msgs/msg/Imu".to_string(),
             schema_definition: schema("sensor_msgs/msg/Imu").to_string(),
             codec: Codec::Cdr,
+            timestamp_field: None,
+            json_schema: None,
         });
 
         let observations =

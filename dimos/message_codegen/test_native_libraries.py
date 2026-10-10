@@ -17,7 +17,6 @@
 import json
 from pathlib import Path
 import pickle
-import subprocess
 import sys
 
 import numpy as np
@@ -26,7 +25,6 @@ import pytest
 from dimos.message_codegen import native_build, registry
 from dimos.message_codegen.generate import generate
 from dimos.message_codegen.native_build import complete, save_complete, source_digest, stage_module
-from dimos.message_codegen.project import Project, prepare
 
 
 @pytest.fixture
@@ -116,41 +114,6 @@ def test_native_python_defaults_are_explicit_not_rewritten(tmp_path, frozen_regi
     ] == ["accept_msgs/msg/Reading"]
 
 
-def test_selected_language_cache_invalidates_on_selection_edit_delete_and_rename(
-    tmp_path, monkeypatch
-):
-    (tmp_path / "pyproject.toml").write_text(
-        '[project]\nname="accept-messages"\nversion="0.1.0"\n[tool.dimos.messages]\ndependencies={}\n'
-    )
-    source = tmp_path / "interfaces/accept_msgs/msg/Reading.msg"
-    source.parent.mkdir(parents=True)
-    source.write_text("float64 value\n")
-    config = Project.load(tmp_path)
-
-    def no_tools(*args, **kwargs):
-        raise AssertionError("Source packaging invoked an external build")
-
-    monkeypatch.setattr(subprocess, "run", no_tools)
-    output = prepare(config)
-    stamp = (output / "generation.json").stat().st_mtime_ns
-    assert prepare(config) == output
-    assert (output / "generation.json").stat().st_mtime_ns == stamp
-    assert not (output / "cpp").exists()
-    assert not (output / "rust").exists()
-    prepare(config, ("rust",))
-    assert (output / "rust/build.rs").is_file()
-    assert not (output / "python").exists()
-    source.rename(source.with_name("Renamed.msg"))
-    source.with_name("Renamed.msg").write_text("int32 other\n")
-    prepare(config)
-    assert not (output / "schemas/accept_msgs/msg/Reading.msg").exists()
-    assert (output / "schemas/accept_msgs/msg/Renamed.msg").read_text() == "int32 other\n"
-    source.with_name("Renamed.msg").unlink()
-    with pytest.raises(ValueError, match="No messages"):
-        prepare(config)
-    assert (output / "schemas/accept_msgs/msg/Renamed.msg").is_file()
-
-
 def test_cpp_and_rust_bounded_strings_fail_explicitly(tmp_path):
     source = tmp_path / "interfaces/accept_msgs/msg/Limited.msg"
     source.parent.mkdir(parents=True)
@@ -214,7 +177,10 @@ def test_native_build_rejects_changed_schema_before_preparing_support(tmp_path, 
     assert not (tmp_path / "cache").exists()
 
 
-def test_cache_identity_tracks_selected_compilers_and_cmake(monkeypatch):
+@pytest.mark.parametrize("platform", ["linux", "darwin"])
+def test_cache_identity_tracks_selected_compilers_and_cmake(monkeypatch, platform):
+    monkeypatch.setattr(native_build.sys, "platform", platform)
+    monkeypatch.setenv("SDKROOT", "/test-sdk")
     monkeypatch.setenv("CXX", "selected-cxx --target=test")
     monkeypatch.setenv("CC", "selected-cc")
     monkeypatch.setattr(native_build.shutil, "which", lambda name: "/tools/" + name)

@@ -31,7 +31,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
       - name: Install uv
-        uses: astral-sh/setup-uv@v10.0.1
+        uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
           prune-cache: true
@@ -80,7 +80,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
       - name: Install uv
-        uses: astral-sh/setup-uv@v10.0.1
+        uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
           prune-cache: true
@@ -131,19 +131,12 @@ jobs:
       - name: Build cockpit dist  # setup.py copies it into the wheel's _relay_dist
         uses: ./.github/actions/build-cockpit
       - uses: astral-sh/setup-uv@v10.0.1
-      - name: Build message backend wheel and prepare its test dependencies
+      - name: Build compiler-free message wheels
         run: |
           uv build dimos/message_codegen --wheel --out-dir wheelhouse
-          uv venv --seed build/message-wheel-download
-          build/message-wheel-download/bin/python -m pip download --only-binary=:all: --platform any --implementation py --python-version 3.10 --dest build/message-test-dependencies setuptools==77.0.3 wheel==0.48.0 packaging==25.0 tomli==2.4.0
-      - name: Build and smoke-test compiler-free built-in source wheel
-        run: |
           uv build packages/dimos-generated --wheel --out-dir wheelhouse
-          uv venv build/message-smoke
-          uv pip install --python build/message-smoke/bin/python wheelhouse/dimos_generated-*.whl wheelhouse/dimos_message_build-*.whl
-          build/message-smoke/bin/python -I .github/scripts/message_wheel_smoke.py
       - name: Build wheels
-        uses: pypa/cibuildwheel@v4.2.0
+        uses: pypa/cibuildwheel@v4.2.1
       - name: Attestation
         uses: actions/attest-build-provenance@v4
         with:
@@ -165,7 +158,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: uv venv .venv --python 3.12
       - run: uv pip install --python .venv/bin/python ./dimos/message_codegen
-      - name: Package native source inputs, schemas, and Rust crate
+      - name: Package pinned message source artifacts
         run: bash scripts/package_messages.sh
       - uses: actions/upload-artifact@v7
         with:
@@ -195,7 +188,7 @@ jobs:
           path: dist
           merge-multiple: true
       - name: Install uv
-        uses: astral-sh/setup-uv@v10.0.1
+        uses: astral-sh/setup-uv@v10.2.0
       - name: Install twine
         run: uv tool install twine
       - name: Validate distributions
@@ -230,7 +223,7 @@ jobs:
           path: dist
           merge-multiple: true
       - name: Install uv
-        uses: astral-sh/setup-uv@v10.0.1
+        uses: astral-sh/setup-uv@v10.2.0
       - name: Install twine
         run: uv tool install twine
       - name: Validate distributions
@@ -300,6 +293,17 @@ jobs:
           VERSION: ${{ needs.validate.outputs.version }}
         run: |
           gh release create "v$VERSION" --verify-tag --notes-from-tag dist/*
+      - name: Move latest branch to the release commit
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          # Pre-releases (a/b/rc/dev) leave `latest` alone, like GitHub's "Latest" release badge.
+          if [[ ! "$VERSION" =~ ^[0-9]+(\.[0-9]+)*(\.post[0-9]+)?$ ]]; then
+            echo "v$VERSION is a pre-release, leaving latest unchanged"
+            exit 0
+          fi
+          # `latest` may sit on an older release line that this commit does not descend from.
+          git push --force origin HEAD:refs/heads/latest
 
   merge-back:
     if: ${{ ! inputs.dry-run }}

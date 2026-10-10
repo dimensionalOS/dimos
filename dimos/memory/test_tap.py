@@ -17,8 +17,10 @@ from pathlib import Path
 from typing import Any
 
 from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.dimos_msgs.msg import RegionPointCloud2
 from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Twist, Vector3
 from dimos_generated.std_msgs.msg import Header
+import numpy as np
 import pytest
 from pytest_mock import MockerFixture
 
@@ -27,6 +29,7 @@ from dimos.core.stream import Transport
 from dimos.memory import tap
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tap import TransportRecorder
+from dimos.msgs.pointcloud import pointcloud_from_xyz
 from dimos.msgs.time import time_from_seconds
 
 
@@ -256,3 +259,29 @@ def test_zero_source_stamp_and_unstamped_arrival_time_are_distinct(tmp_path, mon
         assert twist.data == Twist(
             linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)
         )
+
+
+def test_region_recorder_preserves_nested_source_time_and_empty_replacement(tmp_path, monkeypatch):
+    monkeypatch.setattr(tap.time, "time", lambda: 123.5)
+    path = tmp_path / "regions.db"
+    transport = _Transport()
+    header = Header(stamp=Time(sec=0, nanosec=34), frame_id="map")
+    with SqliteStore(path=str(path)) as store:
+        recorder = TransportRecorder(store)
+        unsubscribe = recorder.tap("map_regions", RegionPointCloud2, transport)
+        try:
+            for xyz in [np.array([[1.0, 2.0, 3.0]]), np.empty((0, 3))]:
+                transport.publish(
+                    RegionPointCloud2(
+                        region_id=-196603, cloud=pointcloud_from_xyz(xyz, header=header)
+                    )
+                )
+        finally:
+            assert unsubscribe is not None
+            unsubscribe()
+            recorder.close()
+    with SqliteStore(path=str(path), must_exist=True) as store:
+        observations = list(store.stream("map_regions"))
+        assert [obs.ts for obs in observations] == [34e-9, 34e-9]
+        assert [obs.data.region_id for obs in observations] == [-196603, -196603]
+        assert [obs.data.cloud.width for obs in observations] == [1, 0]

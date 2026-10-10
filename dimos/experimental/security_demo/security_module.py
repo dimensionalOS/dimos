@@ -37,14 +37,16 @@ from dimos_generated.geometry_msgs.msg import Twist
 from dimos_generated.nav_msgs.msg import OccupancyGrid
 from dimos_generated.sensor_msgs.msg import CameraInfo
 from dimos_generated.sensor_msgs.msg import Image
-from dimos.navigation.patrolling.create_patrol_router import create_patrol_router
-from dimos.navigation.patrolling.routers.patrol_router import PatrolRouter
+from dimos.navigation.experimental.patrolling.create_patrol_router import create_patrol_router
+from dimos.navigation.experimental.patrolling.routers.patrol_router import PatrolRouter
 from dimos.agents.skills.speak_skill_spec import SpeakSkillSpec
-from dimos.navigation.replanning_a_star.module_spec import ReplanningAStarPlannerSpec
-from dimos.navigation.visual_servoing.visual_servoing_2d import VisualServoing2D
+from dimos.navigation.go2.replanning_a_star.module_spec import ReplanningAStarPlannerSpec
+from dimos.agents.skills.visual_servoing.visual_servoing_2d import VisualServoing2D
 from dimos.utils.logging_config import setup_logger
 from dimos.msgs.image import image_to_bgr, image_from_array
-from dimos.navigation.patrolling.constants import EXTRA_CLEARANCE
+from dimos.navigation.experimental.patrolling.constants import EXTRA_CLEARANCE
+
+from dimos_generated.geometry_msgs.msg import Vector3
 
 from dimos_generated.geometry_msgs.msg import Vector3
 

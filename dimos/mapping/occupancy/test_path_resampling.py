@@ -24,7 +24,7 @@ from dimos.mapping.occupancy.gradient import gradient
 from dimos.mapping.occupancy.path_resampling import simple_resample_path, smooth_resample_path
 from dimos.mapping.occupancy.visualize_path import visualize_path
 from dimos.msgs.image import image_view
-from dimos.navigation.replanning_a_star.min_cost_astar import min_cost_astar
+from dimos.navigation.go2.replanning_a_star.min_cost_astar import min_cost_astar
 from dimos.utils.data import get_data
 
 

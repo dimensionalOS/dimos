@@ -75,8 +75,8 @@ from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.mapping.costmapper import CostMapper
 from dimos.mapping.pointclouds.occupancy import HeightCostConfig
 from dimos.msgs.geometry import pose_matrix, quaternion_from_matrix
+from dimos.navigation.go2.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.navigation.movement_manager.movement_manager import MovementManager
-from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.robot.unitree.g1.config import G1
 from dimos.robot.unitree.g1.g1_rerun import (
     G1_RERUN_ROOT,
@@ -305,6 +305,7 @@ if global_config.simulation == "mujoco":
     _nav_remappings = [(VoxelGridMapper, "lidar", "pointcloud")]
 else:
     from dimos.hardware.sensors.lidar.pointlio.module import PointLio
+    from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
     from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
     from dimos.robot.unitree.g1.wholebody_connection import G1WholeBodyConnection
 
@@ -322,10 +323,11 @@ else:
     _default_ramp_seconds = 10.0
     _decimation = 2  # 100 Hz tick / 2 = 50 Hz policy (training + sim rate).
     # One process per heavy module; fewer workers starve the Rerun bridge.
-    _n_workers = 10
+    _n_workers = 11
     # Same nav middle as unitree-g1-nav-simple, fed by Point-LIO from the
     # MID-360, executed through the coordinator's twist_command.
     _nav_stack = autoconnect(
+        mid360_for_pointlio(),
         PointLio.blueprint(),
         RayTracingVoxelMap.blueprint(
             voxel_size=_G1_REAL_NAV_VOXEL_RESOLUTION,
@@ -486,6 +488,7 @@ if global_config.simulation != "mujoco":
     _rerun_config["visual_override"]["world/navigation_costmap"] = _g1_real_costmap
     # Raw scan is sensor-frame (LIO contract); the voxel map is the live view.
     _rerun_config["visual_override"]["world/lidar"] = None
+    _rerun_config["visual_override"]["world/lidar_raw"] = None
 
 
 def _viewer() -> Any:
@@ -551,7 +554,7 @@ _coordinator = _G1GrootCoordinator.blueprint(
         ("cmd_vel", Twist): LCMTransport(_cmd_vel_topic, Twist),
         # Real-hw only: the transport_lcm adapter speaks to
         # G1WholeBodyConnection over these topics. autoconnect already
-        # matches by (name, type) so sim doesn't need them -- they're
+        # matches by (name, type) so sim doesn't need them; they're
         # harmless when the sim engine doesn't expose those ports.
         ("motor_states", JointState): LCMTransport("/g1/motor_states", JointState),
         ("imu", Imu): LCMTransport("/g1/imu", Imu),

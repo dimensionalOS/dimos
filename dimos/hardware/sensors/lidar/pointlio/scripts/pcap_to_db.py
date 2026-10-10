@@ -30,12 +30,11 @@ Usage:
     # to the db automatically. View it with:
     rerun "${DB%.db}.rrd"
 
-One coordinator runs three autoconnected modules: a ``VirtualMid360`` replays the
-pcap over the Livox wire (aliasing the host/lidar IPs onto a dummy interface on
-Linux, or lo0 on macOS — needs CAP_NET_ADMIN/sudo), an unmodified live ``PointLio``
-consumes it as real hardware, and a ``PointlioRecorder`` appends PointLio's
-odometry/lidar into the db. This script just wires them and stops once the pcap
-has drained. Replay is real time (Point-LIO is not deterministic), so runs differ.
+One coordinator runs three autoconnected modules: the ``Mid360`` driver replays
+the pcap through its own decode path, ``PointLio`` consumes the driver's cloud
+and IMU streams, and a ``PointlioRecorder`` appends Point-LIO's odometry/lidar into
+the db. This script just wires them and stops once the pcap has drained. Replay runs at capture speed (Point-LIO is not
+deterministic), so runs differ.
 """
 
 from __future__ import annotations
@@ -66,6 +65,8 @@ _LIDAR_STREAM = "pointlio_lidar"
 # Extra seconds past the pcap's own duration before auto-stopping, when no
 # explicit --max-sensor-sec is given.
 _DRAIN_MARGIN_SEC = 4.0
+# The recorder subscribes about a second after the driver starts streaming.
+_REPLAY_DELAY_SEC = 4.0
 
 # Per-field PointLioConfig tuning, exposed as --flags. Each entry is
 # (field, kind, help); kind is "float"/"int"/"bool"/"vec" or a tuple of choices.
@@ -133,7 +134,7 @@ _TUNING_FIELDS: tuple[tuple[str, Any, str], ...] = (
 def _add_tuning_args(parser: argparse.ArgumentParser) -> None:
     """Add a --flag per PointLioConfig tuning field (see _TUNING_FIELDS)."""
     group = parser.add_argument_group(
-        "PointLio tuning",
+        "Point-LIO tuning",
         "Per-field PointLioConfig overrides; omit to keep the config default. "
         "These win over --config.",
     )
@@ -305,34 +306,24 @@ def _write_rrd(db_path: Path, odom_stream: str, lidar_stream: str, voxel: float)
 def _build_blueprint(
     args: argparse.Namespace, db_path: Path, overrides: dict[str, Any]
 ) -> Blueprint:
-    """autoconnect(VirtualMid360 + PointLio + PointlioRecorder).
+    """autoconnect(Mid360 pcap replay + PointLio + PointlioRecorder).
 
-    PointLio's ``odometry``/``lidar`` outputs auto-wire to the recorder's
-    same-named inputs. VirtualMid360 carries no dimos streams — it speaks the
-    Livox wire protocol, reached by host_ip/lidar_ip, and sets up the NIC itself.
+    The driver's raw cloud is renamed to ``lidar_raw`` so Point-LIO's ``lidar``
+    output stays the only cloud the recorder sees.
     """
+    # Imported here so --help stays fast and free of the module stack.
     from dimos.core.coordination.blueprints import autoconnect
     from dimos.hardware.sensors.lidar.pointlio.module import PointLio
+    from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
     from dimos.hardware.sensors.lidar.pointlio.recorder import PointlioRecorder
-    from dimos.hardware.sensors.lidar.virtual_mid360.module import VirtualMid360
 
-    pointlio_kwargs: dict[str, Any] = dict(
-        host_ip=args.host_ip, lidar_ip=args.lidar_ip, odom_freq=args.odom_freq, debug=False
-    )
+    pointlio_kwargs: dict[str, Any] = dict(odom_freq=args.odom_freq)
     pointlio_kwargs.update(overrides)
 
     return (
         autoconnect(
-            VirtualMid360.blueprint(
-                pcap=str(args.pcap_path),
-                rate=args.rate,
-                delay=args.warmup_sec,  # hold streaming until PointLio's SDK is up
-                host_ip=args.host_ip,
-                lidar_ip=args.lidar_ip,
-                alias_iface=args.alias_iface,
-                # When the NIC is provisioned by hand, skip the module's own sudo
-                # (it runs in a tty-less worker where a password prompt can't appear).
-                setup_network=not args.no_network_setup,
+            mid360_for_pointlio(
+                pcap=str(args.pcap_path), replay_rate=args.rate, replay_delay=_REPLAY_DELAY_SEC
             ),
             PointLio.blueprint(**pointlio_kwargs),
             PointlioRecorder.blueprint(db_path=str(db_path)),
@@ -350,14 +341,10 @@ def _build_blueprint(
 def _poll_until_drained(
     db_path: Path, odom_stream: str, lidar_stream: str, max_sensor_sec: float
 ) -> bool:
-    """Block until the pcap drains or a cap is hit; False if Point-LIO never
-    produced odometry within the startup timeout.
+    """Block until the pcap drains or a cap is hit.
 
-    Drain is detected on the *lidar* stream's latest timestamp going flat: lidar
-    is input-driven, so it stops advancing the moment the pcap is exhausted. The
-    odometry stream can't be used for this — Point-LIO keeps publishing odometry
-    (dead-reckoning) at odom_freq after input stops, with ever-advancing
-    timestamps, so its stream never looks stagnant and the run would hang."""
+    False if Point-LIO never produced odometry within the startup timeout. Drain
+    is detected on the lidar stream's latest timestamp going flat."""
     last_lidar_max: float | None = None
     first_max: float | None = None
     stagnant_since: float | None = None
@@ -371,7 +358,7 @@ def _poll_until_drained(
             if time.time() - start_time > _STARTUP_TIMEOUT_SEC:
                 print(
                     f"[pcap_to_db] no odometry after {_STARTUP_TIMEOUT_SEC:.0f}s — Point-LIO "
-                    "failed to start (check the binary, pcap path, and interface setup).",
+                    "failed to start (check the binaries and the pcap path).",
                     file=sys.stderr,
                     flush=True,
                 )
@@ -456,10 +443,8 @@ def _run(args: argparse.Namespace) -> int:
     overrides = _load_overrides(args.config)
     overrides.update(_cli_overrides(args))  # --tuning flags win over --config
 
-    # Default the stop bound to the pcap's own duration: Point-LIO keeps
-    # dead-reckoning (publishing at full rate) after the pcap drains, so the
-    # stream-stagnation check never fires on its own. Adding the real span makes
-    # the run stop shortly after the data ends. --max-sensor-sec overrides.
+    # Default the stop bound to the pcap's own span plus a margin, so the run
+    # ends shortly after the data does. --max-sensor-sec overrides.
     max_sensor_sec = args.max_sensor_sec
     if max_sensor_sec <= 0:
         span = _pcap_sensor_span(pcap_path)
@@ -469,7 +454,7 @@ def _run(args: argparse.Namespace) -> int:
     print(
         f"[pcap_to_db] pcap={pcap_path.name} db={db_path.name} "
         f"({'append' if db_path.exists() else 'new'}) rate={args.rate} "
-        f"ips={args.host_ip}/{args.lidar_ip} stop_at={max_sensor_sec or 'drain'}",
+        f"stop_at={max_sensor_sec or 'drain'}",
         flush=True,
     )
 
@@ -528,26 +513,9 @@ def main(argv: list[str]) -> int:
     parser.add_argument(
         "--voxel", type=float, default=0.2, help="voxel size (m) for the .rrd aggregated map"
     )
-    parser.add_argument(
-        "--warmup-sec",
-        type=float,
-        default=4.0,
-        help="seconds the fake lidar waits before streaming (lets Point-LIO come up first)",
-    )
-    # Hidden: a YAML/JSON doc of PointLioConfig overrides. The per-field --tuning
+    # Hidden: a YAML/JSON doc of PointLioConfig overrides. The per-field
+    # --tuning flags win over it.
     parser.add_argument("--config", default="", help=argparse.SUPPRESS)
-    # Addressing knobs (override to run two replays at once).
-    parser.add_argument("--host-ip", default="192.168.1.5")
-    parser.add_argument("--lidar-ip", default="192.168.1.155")
-    parser.add_argument(
-        "--alias-iface", default="dimos-mid360", help="dummy iface the host/lidar IPs live on"
-    )
-    parser.add_argument(
-        "--no-network-setup",
-        action="store_true",
-        help="don't let the module alias the NIC via sudo — you've set up host/lidar IPs "
-        "+ multicast routes yourself (e.g. on macOS where worker-side sudo can't prompt)",
-    )
 
     _add_tuning_args(parser)
 

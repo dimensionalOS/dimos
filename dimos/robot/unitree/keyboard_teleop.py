@@ -16,6 +16,7 @@
 import os
 import sys
 import threading
+import time
 from typing import Any
 
 from dimos_generated.geometry_msgs.msg import Twist, Vector3
@@ -32,6 +33,7 @@ from dimos.control.benchmarking.gate import GATE_ADVANCE, GATE_QUIT, GATE_SKIP
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import Out
+from dimos.msgs.sensor_msgs.Joy import Joy
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -46,13 +48,39 @@ DEFAULT_ANGULAR_SPEED: float = 0.8  # rad/s
 DEFAULT_BOOST_MULTIPLIER: float = 2.0
 DEFAULT_SLOW_MULTIPLIER: float = 0.5
 
-_WINDOW_WIDTH = 500
-_WINDOW_HEIGHT = 400
-_FONT_SIZE = 24
+_WINDOW_WIDTH = 520
+_WINDOW_HEIGHT = 340
 _CONTROL_RATE_HZ = 50
-_BACKGROUND_COLOR = (30, 30, 30)
-_HELP_TEXT_COLOR = (150, 150, 150)
-_INDICATOR_RADIUS = 15
+_ESTOP_FLASH_S = 0.6
+_FONT_NAMES = "dejavusans,liberationsans,arial"
+
+_BG = (17, 19, 23)
+_PANEL = (26, 29, 35)
+_CAP = (38, 42, 51)
+_ACCENT = (0, 170, 255)
+_TEXT = (230, 233, 238)
+_DIM = (120, 126, 138)
+_RED = (235, 72, 72)
+_GREEN = (56, 200, 120)
+
+# Order of Joy.buttons on the joystick stream (1 = held).
+JOY_BUTTONS = ("w", "a", "s", "d", "q", "e", "shift", "ctrl", "space")
+_JOY_KEYS = (
+    (pygame.K_w,),
+    (pygame.K_a,),
+    (pygame.K_s,),
+    (pygame.K_d,),
+    (pygame.K_q,),
+    (pygame.K_e,),
+    (pygame.K_LSHIFT, pygame.K_RSHIFT),
+    (pygame.K_LCTRL, pygame.K_RCTRL),
+    (pygame.K_SPACE,),
+)
+_JOY_KEY_SET = frozenset(key for keys in _JOY_KEYS for key in keys)
+
+
+def joy_buttons(keys_held: set[int]) -> list[int]:
+    return [int(any(key in keys_held for key in keys)) for keys in _JOY_KEYS]
 
 
 class KeyboardTeleop(Module):
@@ -71,6 +99,7 @@ class KeyboardTeleop(Module):
     dedicated_worker = True
 
     cmd_vel: Out[Twist]
+    joystick: Out[Joy]
     operator_command: Out[Int8]
     # Reference-governor corridor half-width (m). Number keys 0-9 map
     # to 0.0–0.9 m so an operator can dial precision live during a run.
@@ -78,10 +107,11 @@ class KeyboardTeleop(Module):
 
     _stop_event: threading.Event
     _keys_held: set[int] | None = None
+    _keys_down: set[int]
     _thread: threading.Thread | None = None
     _screen: pygame.Surface | None = None
     _clock: pygame.time.Clock | None = None
-    _font: pygame.font.Font | None = None
+    _fonts: dict[tuple[int, bool], pygame.font.Font] | None = None
 
     def __init__(
         self,
@@ -110,6 +140,7 @@ class KeyboardTeleop(Module):
         # but still want the operator's live e_max input.
         self.disable_movement = disable_movement
         self._was_active = False
+        self._estop_at = 0.0
         # Namespaced instances (e.g. "robot0/keyboardteleop") get their own
         # window title so multi-robot teleop windows are distinguishable.
         self._window_title = self.config.instance_name or "Keyboard Teleop"
@@ -119,6 +150,7 @@ class KeyboardTeleop(Module):
         super().start()
 
         self._keys_held = set()
+        self._keys_down = set()
         self._stop_event.clear()
 
         self._thread = threading.Thread(target=self._pygame_loop, daemon=True)
@@ -149,7 +181,7 @@ class KeyboardTeleop(Module):
         self._screen = pygame.display.set_mode((_WINDOW_WIDTH, _WINDOW_HEIGHT), pygame.SWSURFACE)
         pygame.display.set_caption(self._window_title)
         self._clock = pygame.time.Clock()
-        self._font = pygame.font.Font(None, _FONT_SIZE)
+        self._fonts = {}
 
         while not self._stop_event.is_set():
             for event in pygame.event.get():
@@ -157,6 +189,9 @@ class KeyboardTeleop(Module):
                     self._stop_event.set()
                 elif event.type == pygame.KEYDOWN:
                     self._keys_held.add(event.key)
+                    self._keys_down.add(event.key)
+                    if event.key in _JOY_KEY_SET:
+                        self.joystick.publish(Joy(buttons=joy_buttons(self._keys_down)))
 
                     if event.key == pygame.K_SPACE:
                         # Emergency stop - clear all keys and send zero twist
@@ -168,6 +203,7 @@ class KeyboardTeleop(Module):
                         stop_twist.linear = Vector3(x=0.0, y=0.0, z=0.0)
                         stop_twist.angular = Vector3(x=0.0, y=0.0, z=0.0)
                         self.cmd_vel.publish(stop_twist)
+                        self._estop_at = time.monotonic()
                         logger.warning("EMERGENCY STOP!")
                     elif event.key == pygame.K_ESCAPE:
                         # ESC quits
@@ -184,6 +220,9 @@ class KeyboardTeleop(Module):
 
                 elif event.type == pygame.KEYUP:
                     self._keys_held.discard(event.key)
+                    self._keys_down.discard(event.key)
+                    if event.key in _JOY_KEY_SET:
+                        self.joystick.publish(Joy(buttons=joy_buttons(self._keys_down)))
 
             # Generate Twist message from held keys
             twist = Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
@@ -234,6 +273,9 @@ class KeyboardTeleop(Module):
             else:
                 self.cmd_vel.publish(twist)
 
+            buttons = joy_buttons(self._keys_down)
+            if any(buttons):
+                self.joystick.publish(Joy(buttons=buttons))
             self._update_display(twist)
 
             # Maintain control loop rate
@@ -243,62 +285,90 @@ class KeyboardTeleop(Module):
 
         pygame.quit()
 
-    def _update_display(self, twist: Twist) -> None:
-        if self._screen is None or self._font is None or self._keys_held is None:
+    def _font(self, size: int, bold: bool = False) -> pygame.font.Font:
+        if self._fonts is None:
             raise RuntimeError("Not initialized correctly")
+        key = (size, bold)
+        if key not in self._fonts:
+            self._fonts[key] = pygame.font.SysFont(_FONT_NAMES, size, bold=bold)
+        return self._fonts[key]
 
-        self._screen.fill(_BACKGROUND_COLOR)
+    def _keycap(
+        self,
+        rect: pygame.Rect,
+        label: str,
+        held: bool,
+        sub: str = "",
+        color: tuple[int, int, int] = _ACCENT,
+    ) -> None:
+        if self._screen is None:
+            raise RuntimeError("Not initialized correctly")
+        pygame.draw.rect(self._screen, color if held else _CAP, rect, border_radius=10)
+        text = self._font(20, True).render(label, True, _BG if held else _TEXT)
+        self._screen.blit(
+            text, text.get_rect(center=(rect.centerx, rect.centery - (6 if sub else 0)))
+        )
+        if sub:
+            text = self._font(11).render(sub, True, _BG if held else _DIM)
+            self._screen.blit(text, text.get_rect(center=(rect.centerx, rect.centery + 14)))
 
-        y_pos = 20
+    def _update_display(self, twist: Twist) -> None:
+        if self._screen is None or self._keys_held is None:
+            raise RuntimeError("Not initialized correctly")
+        screen = self._screen
+        screen.fill(_BG)
 
-        # Determine active speed multiplier
-        speed_mult_text = ""
-        if pygame.K_LSHIFT in self._keys_held or pygame.K_RSHIFT in self._keys_held:
-            speed_mult_text = f" [BOOST {self.boost_multiplier:g}x]"
-        elif pygame.K_LCTRL in self._keys_held or pygame.K_RCTRL in self._keys_held:
-            speed_mult_text = f" [SLOW {self.slow_multiplier:g}x]"
+        held = joy_buttons(self._keys_held)
+        moving = twist.linear.x != 0 or twist.linear.y != 0 or twist.angular.z != 0
+        estop = time.monotonic() - self._estop_at < _ESTOP_FLASH_S
 
-        texts = [
-            self._window_title + speed_mult_text,
-            "",
-            f"Linear X (Forward/Back): {twist.linear.x:+.2f} m/s",
-            f"Linear Y (Strafe L/R): {twist.linear.y:+.2f} m/s",
-            f"Angular Z (Turn L/R): {twist.angular.z:+.2f} rad/s",
-            "",
-            "Keys: " + ", ".join([pygame.key.name(k).upper() for k in self._keys_held if k < 256]),
+        screen.blit(self._font(16, True).render(self._window_title.upper(), True, _TEXT), (20, 18))
+        status, color = (
+            ("E-STOP", _RED) if estop else ("DRIVING", _RED) if moving else ("IDLE", _GREEN)
+        )
+        pill = pygame.Rect(_WINDOW_WIDTH - 120, 14, 100, 26)
+        pygame.draw.rect(screen, color, pill, border_radius=13)
+        text = self._font(13, True).render(status, True, _BG)
+        screen.blit(text, text.get_rect(center=pill.center))
+
+        movement = not self.disable_movement
+        rows = [
+            [(pygame.K_q, "Q", "strafe"), (pygame.K_w, "W", "fwd"), (pygame.K_e, "E", "strafe")],
+            [(pygame.K_a, "A", "turn"), (pygame.K_s, "S", "back"), (pygame.K_d, "D", "turn")],
         ]
+        for r, row in enumerate(rows):
+            for c, (key, label, sub) in enumerate(row):
+                rect = pygame.Rect(20 + c * 60, 60 + r * 60, 52, 52)
+                self._keycap(rect, label, movement and key in self._keys_held, sub)
+        boost, slow = f"boost {self.boost_multiplier:g}x", f"slow {self.slow_multiplier:g}x"
+        self._keycap(pygame.Rect(20, 180, 82, 52), "Shift", bool(held[6]), boost)
+        self._keycap(pygame.Rect(110, 180, 82, 52), "Ctrl", bool(held[7]), slow)
+        self._keycap(pygame.Rect(20, 240, 172, 52), "Space", estop, "e-stop", _RED)
 
-        for i, text in enumerate(texts):
-            if text:
-                color = (0, 255, 255) if i == 0 else (255, 255, 255)
-                surf = self._font.render(text, True, color)
-                self._screen.blit(surf, (20, y_pos))
-            y_pos += 30
+        px = 220
+        pygame.draw.rect(screen, _PANEL, (px, 60, _WINDOW_WIDTH - px - 20, 232), border_radius=12)
+        top_linear = self.linear_speed * self.boost_multiplier
+        top_angular = self.angular_speed * self.boost_multiplier
+        axes = [
+            ("forward", twist.linear.x, top_linear, "m/s"),
+            ("strafe", twist.linear.y, top_linear, "m/s"),
+            ("yaw", twist.angular.z, top_angular, "rad/s"),
+        ]
+        for i, (name, value, top, unit) in enumerate(axes):
+            y = 84 + i * 66
+            screen.blit(self._font(13).render(name.upper(), True, _DIM), (px + 16, y))
+            text = self._font(18, True).render(f"{value:+.2f} {unit}", True, _TEXT)
+            screen.blit(text, (_WINDOW_WIDTH - 36 - text.get_width(), y - 3))
+            bar = pygame.Rect(px + 16, y + 26, _WINDOW_WIDTH - px - 52, 8)
+            pygame.draw.rect(screen, _CAP, bar, border_radius=4)
+            width = int(bar.width / 2 * max(-1.0, min(1.0, value / top))) if top else 0
+            fill = pygame.Rect(min(bar.centerx, bar.centerx + width), bar.y, abs(width), 8)
+            pygame.draw.rect(screen, _ACCENT, fill, border_radius=4)
+            pygame.draw.line(screen, _DIM, (bar.centerx, bar.y - 3), (bar.centerx, bar.bottom + 2))
 
-        if twist.linear.x != 0 or twist.linear.y != 0 or twist.angular.z != 0:
-            pygame.draw.circle(self._screen, (255, 0, 0), (450, 30), _INDICATOR_RADIUS)
-        else:
-            pygame.draw.circle(self._screen, (0, 255, 0), (450, 30), _INDICATOR_RADIUS)
-
-        y_pos = 280
+        help_text = "Esc quit  ·  Enter advance  ·  K skip  ·  Bksp quit tool  ·  0-9 e_max"
         if self.disable_movement:
-            help_texts = [
-                "Movement disabled (e_max slider mode)",
-                "Space: E-Stop | ESC: Quit",
-                "Enter: Advance | K: Skip | Backspace: Quit (tools)",
-                "0-9: e_max corridor (0.0-0.9 m, for RG)",
-            ]
-        else:
-            help_texts = [
-                "WS: Move | AD: Turn | QE: Strafe",
-                "Shift: Boost | Ctrl: Slow",
-                "Space: E-Stop | ESC: Quit",
-                "Enter: Advance | K: Skip | Backspace: Quit (tools)",
-                "0-9: e_max corridor (0.0-0.9 m, for RG)",
-            ]
-        for text in help_texts:
-            surf = self._font.render(text, True, _HELP_TEXT_COLOR)
-            self._screen.blit(surf, (20, y_pos))
-            y_pos += 25
+            help_text = "Movement off (e_max mode)  ·  " + help_text
+        screen.blit(self._font(12).render(help_text, True, _DIM), (20, _WINDOW_HEIGHT - 28))
 
         pygame.display.flip()

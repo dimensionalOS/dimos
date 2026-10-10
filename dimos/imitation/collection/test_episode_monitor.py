@@ -30,13 +30,11 @@ from pydantic import ValidationError
 import pytest
 import pytest_mock
 
-from dimos.imitation.collection.episode_monitor import (
-    EpisodeMonitorModule,
-    EpisodeStatus,
-    KeyPress,
-)
-from dimos.protocol.rpc.pubsubrpc import LCMRPC
+from dimos.core.transport_factory import rpc_backend
+from dimos.imitation.collection.episode import EpisodeStatus
+from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
 from dimos.teleop.webxr.controller_types import BUTTON_ALIASES, Buttons
+from dimos.teleop.webxr.module import WebXRTeleopModule
 
 
 @pytest.fixture
@@ -51,14 +49,14 @@ def make_monitor(
     stopped on teardown.
     """
     mocker.patch("dimos.core.module.get_loop", return_value=(mocker.MagicMock(), None))
-    mocker.patch.object(LCMRPC, "__init__", return_value=None)
-    mocker.patch.object(LCMRPC, "serve_module_rpc", return_value=None)
-    mocker.patch.object(LCMRPC, "start", return_value=None)
-    mocker.patch.object(LCMRPC, "stop", return_value=None)
+    backend = rpc_backend()
+    for method in ("start", "serve_module_rpc", "stop"):
+        mocker.patch.object(backend, method)
 
     built: list[EpisodeMonitorModule] = []
 
     def _make(**config: object) -> EpisodeMonitorModule:
+        config.setdefault("task", "pick up the block")
         m = EpisodeMonitorModule(**config)
         m.status = mocker.MagicMock()  # type: ignore[assignment]
         built.append(m)
@@ -71,17 +69,63 @@ def make_monitor(
 
 def _events(monitor: EpisodeMonitorModule) -> list[EpisodeStatus]:
     """The EpisodeStatus objects published on the monitor's `status` port."""
-    return [call.args[0] for call in monitor.status.publish.call_args_list]  # type: ignore[attr-defined]
+    return [
+        EpisodeStatus.from_json(call.args[0].data) for call in monitor.status.publish.call_args_list
+    ]  # type: ignore[attr-defined]
 
 
 def _press(monitor: EpisodeMonitorModule, alias: str) -> None:
-    """Rising edge: release-then-press the given WebXR button alias."""
+    """Deliver one raw WebXR button tap, including its release."""
     attr = BUTTON_ALIASES[alias]
-    released = Buttons()
     pressed = Buttons()
     pressed.set_attribute(attr, True)
-    monitor._on_buttons(released.to_message())
     monitor._on_buttons(pressed.to_message())
+    monitor._on_buttons(Buttons().to_message())
+
+
+@pytest.mark.parametrize("duration", [0.03, 0.06])
+def test_webxr_taps_start_save_and_discard_without_repeating_while_held(
+    make_monitor: Callable[..., EpisodeMonitorModule],
+    mocker: pytest_mock.MockerFixture,
+    duration: float,
+) -> None:
+    monitor = make_monitor()
+    webxr = WebXRTeleopModule()
+    clock = mocker.patch("dimos.teleop.webxr.module.time.monotonic", return_value=0.0)
+    # Wire the monitor's declared input to the matching real WebXR output,
+    # as autoconnect does, replacing only the transport subscription boundary.
+    port = next(iter(monitor.inputs.values()))
+    mocker.patch.object(port, "subscribe", side_effect=getattr(webxr, port.name).subscribe)
+    mocker.patch("dimos.core.module.Module.start")
+    try:
+        monitor.start()
+        for offset, alias in enumerate(["B", "B", "B", "Y"]):
+            held = Buttons()
+            held.set_attribute(BUTTON_ALIASES[alias], True)
+            for timestamp, buttons in [
+                (float(offset), held),
+                (offset + duration / 2, held),
+                (offset + duration - 0.001, held),
+                (offset + duration, Buttons()),
+                (offset + duration + 0.06, Buttons()),
+            ]:
+                clock.return_value = timestamp
+                webxr._publish_buttons(buttons)
+
+        events = _events(monitor)
+        assert [event.last_event for event in events] == [
+            "init",
+            "start",
+            "save",
+            "start",
+            "discard",
+        ]
+        assert events[-1].episodes_saved == 1
+        assert events[-1].episodes_discarded == 1
+        assert events[-1].state == "idle"
+    finally:
+        monitor.stop()
+        webxr.stop()
 
 
 def test_toggle_starts_then_saves(make_monitor: Callable[..., EpisodeMonitorModule]) -> None:
@@ -94,6 +138,52 @@ def test_toggle_starts_then_saves(make_monitor: Callable[..., EpisodeMonitorModu
     assert events[-1].state == "idle"
     assert events[-1].episodes_saved == 1
     assert events[-1].episodes_discarded == 0
+    assert events[-1].task_label == "pick up the block"
+
+
+def test_rpc_commands_use_the_same_state_machine(
+    make_monitor: Callable[..., EpisodeMonitorModule],
+) -> None:
+    m = make_monitor()
+
+    recording = m.command("toggle")
+    saved = m.command("toggle")
+
+    assert [event.last_event for event in _events(m)] == ["start", "save"]
+    assert recording.state == "recording"
+    assert saved.state == "idle"
+    assert saved.episodes_saved == 1
+
+
+def test_get_status_does_not_publish(
+    make_monitor: Callable[..., EpisodeMonitorModule],
+) -> None:
+    m = make_monitor()
+    m.command("start")
+    event_count = len(_events(m))
+
+    status = m.get_status()
+
+    assert status.state == "recording"
+    assert status.last_event == "start"
+    assert len(_events(m)) == event_count
+
+
+def test_invalid_rpc_command_is_rejected_without_changing_state(
+    make_monitor: Callable[..., EpisodeMonitorModule],
+) -> None:
+    m = make_monitor()
+
+    with pytest.raises(ValueError, match="unknown episode command"):
+        m.command("pause")  # type: ignore[arg-type]
+
+    assert m.get_status().state == "idle"
+    assert _events(m) == []
+
+
+def test_task_is_required(make_monitor: Callable[..., EpisodeMonitorModule]) -> None:
+    with pytest.raises(ValidationError, match="task"):
+        EpisodeMonitorModule()
 
 
 def test_discard_does_not_count_as_saved(
@@ -112,27 +202,14 @@ def test_discard_does_not_count_as_saved(
 def test_start_while_recording_autocommits_previous(
     make_monitor: Callable[..., EpisodeMonitorModule],
 ) -> None:
-    # toggle (start), then an explicit start via keyboard while still recording:
-    # the in-progress episode auto-commits (matches the offline extractor).
-    m = make_monitor(keyboard_map={"start": "r"})
-    _press(m, "B")  # recording
-    m._on_keyboard(KeyPress(key="r", ts=2.0))  # start again → auto-commit prior
+    m = make_monitor(button_map={"start": "A"})
+    _press(m, "A")
+    _press(m, "A")
 
     last = _events(m)[-1]
     assert last.last_event == "start"
     assert last.state == "recording"
     assert last.episodes_saved == 1  # the auto-committed one
-
-
-def test_no_event_without_rising_edge(
-    make_monitor: Callable[..., EpisodeMonitorModule],
-) -> None:
-    m = make_monitor()
-    pressed = Buttons()
-    pressed.right_secondary = True  # B held
-    m._on_buttons(pressed.to_message())
-    m._on_buttons(pressed.to_message())  # still held — no new edge
-    assert [e.last_event for e in _events(m)] == ["start"]
 
 
 def test_published_status_is_internally_consistent(
@@ -158,27 +235,18 @@ def test_published_status_is_internally_consistent(
     assert events[-1].episodes_discarded == 1
 
 
-def test_reset_counters(make_monitor: Callable[..., EpisodeMonitorModule]) -> None:
-    m = make_monitor()
-    _press(m, "B")
-    _press(m, "B")
-    status = m.reset_counters()
-    assert status.episodes_saved == 0
-    assert status.episodes_discarded == 0
-    assert status.state == "idle"
-    assert status.last_event == "init"
-
-
-def test_shutdown_discards_recording(make_monitor: Callable[..., EpisodeMonitorModule]) -> None:
+def test_shutdown_leaves_recording_incomplete(
+    make_monitor: Callable[..., EpisodeMonitorModule],
+) -> None:
     m = make_monitor()
     _press(m, "B")
 
     m.stop()
 
     last = _events(m)[-1]
-    assert last.last_event == "discard"
-    assert last.state == "idle"
-    assert last.episodes_discarded == 1
+    assert last.last_event == "start"
+    assert last.state == "recording"
+    assert last.episodes_discarded == 0
 
 
 def test_invalid_button_mapping_fails_at_startup(
@@ -204,8 +272,6 @@ def test_buttons_are_ignored_after_shutdown_begins(
     _press(m, "B")
 
     assert _events(m) == []
-    with pytest.raises(RuntimeError, match="during shutdown"):
-        m.reset_counters()
 
 
 def test_stop_waits_for_in_flight_transition_and_blocks_later_transitions(

@@ -129,6 +129,22 @@ class dimos_msgs__msg__BoundingBox3DArray:
     __msgtype__: ClassVar[str] = "dimos_msgs/msg/BoundingBox3DArray"
 
 @dataclass
+class dimos_msgs__msg__Contact:
+    """Class for dimos_msgs/msg/Contact."""
+
+    part: str
+    kind: str
+    __msgtype__: ClassVar[str] = "dimos_msgs/msg/Contact"
+
+@dataclass
+class dimos_msgs__msg__Contacts:
+    """Class for dimos_msgs/msg/Contacts."""
+
+    header: std_msgs__msg__Header
+    contacts: list[dimos_msgs__msg__Contact]
+    __msgtype__: ClassVar[str] = "dimos_msgs/msg/Contacts"
+
+@dataclass
 class dimos_msgs__msg__EntityMarker:
     """Class for dimos_msgs/msg/EntityMarker."""
 
@@ -210,6 +226,67 @@ class dimos_msgs__msg__MotorCommandArray:
     kd: np.ndarray[tuple[int, ...], np.dtype[np.float64]]
     tau: np.ndarray[tuple[int, ...], np.dtype[np.float64]]
     __msgtype__: ClassVar[str] = "dimos_msgs/msg/MotorCommandArray"
+
+@dataclass
+class dimos_msgs__msg__RegionBounds:
+    """Class for dimos_msgs/msg/RegionBounds."""
+
+    header: std_msgs__msg__Header
+    region_id: int
+    center: geometry_msgs__msg__Point
+    radius: float
+    z_min: float
+    z_max: float
+    __msgtype__: ClassVar[str] = "dimos_msgs/msg/RegionBounds"
+
+@dataclass
+class dimos_msgs__msg__RegionLineSegments3D:
+    """Class for dimos_msgs/msg/RegionLineSegments3D."""
+
+    region_id: int
+    lines: dimos_msgs__msg__LineSegments3D
+    __msgtype__: ClassVar[str] = "dimos_msgs/msg/RegionLineSegments3D"
+
+@dataclass
+class sensor_msgs__msg__PointField:
+    """Class for sensor_msgs/msg/PointField."""
+
+    name: str
+    offset: int
+    datatype: int
+    count: int
+    INT8: ClassVar[int] = 1
+    UINT8: ClassVar[int] = 2
+    INT16: ClassVar[int] = 3
+    UINT16: ClassVar[int] = 4
+    INT32: ClassVar[int] = 5
+    UINT32: ClassVar[int] = 6
+    FLOAT32: ClassVar[int] = 7
+    FLOAT64: ClassVar[int] = 8
+    __msgtype__: ClassVar[str] = "sensor_msgs/msg/PointField"
+
+@dataclass
+class sensor_msgs__msg__PointCloud2:
+    """Class for sensor_msgs/msg/PointCloud2."""
+
+    header: std_msgs__msg__Header
+    height: int
+    width: int
+    fields: list[sensor_msgs__msg__PointField]
+    is_bigendian: bool
+    point_step: int
+    row_step: int
+    data: np.ndarray[tuple[int, ...], np.dtype[np.uint8]]
+    is_dense: bool
+    __msgtype__: ClassVar[str] = "sensor_msgs/msg/PointCloud2"
+
+@dataclass
+class dimos_msgs__msg__RegionPointCloud2:
+    """Class for dimos_msgs/msg/RegionPointCloud2."""
+
+    region_id: int
+    cloud: sensor_msgs__msg__PointCloud2
+    __msgtype__: ClassVar[str] = "dimos_msgs/msg/RegionPointCloud2"
 
 @dataclass
 class dimos_msgs__msg__RobotState:
@@ -866,39 +943,6 @@ class sensor_msgs__msg__PointCloud:
     points: list[geometry_msgs__msg__Point32]
     channels: list[sensor_msgs__msg__ChannelFloat32]
     __msgtype__: ClassVar[str] = "sensor_msgs/msg/PointCloud"
-
-@dataclass
-class sensor_msgs__msg__PointField:
-    """Class for sensor_msgs/msg/PointField."""
-
-    name: str
-    offset: int
-    datatype: int
-    count: int
-    INT8: ClassVar[int] = 1
-    UINT8: ClassVar[int] = 2
-    INT16: ClassVar[int] = 3
-    UINT16: ClassVar[int] = 4
-    INT32: ClassVar[int] = 5
-    UINT32: ClassVar[int] = 6
-    FLOAT32: ClassVar[int] = 7
-    FLOAT64: ClassVar[int] = 8
-    __msgtype__: ClassVar[str] = "sensor_msgs/msg/PointField"
-
-@dataclass
-class sensor_msgs__msg__PointCloud2:
-    """Class for sensor_msgs/msg/PointCloud2."""
-
-    header: std_msgs__msg__Header
-    height: int
-    width: int
-    fields: list[sensor_msgs__msg__PointField]
-    is_bigendian: bool
-    point_step: int
-    row_step: int
-    data: np.ndarray[tuple[int, ...], np.dtype[np.uint8]]
-    is_dense: bool
-    __msgtype__: ClassVar[str] = "sensor_msgs/msg/PointCloud2"
 
 @dataclass
 class sensor_msgs__msg__Range:
@@ -1666,6 +1710,20 @@ FIELDDEFS: Typesdict = {
             ("boxes", (T.SEQUENCE, ((T.NAME, "vision_msgs/msg/BoundingBox3D"), 0))),
         ],
     ),
+    "dimos_msgs/msg/Contact": (
+        [],
+        [
+            ("part", (T.BASE, ("string", 0))),
+            ("kind", (T.BASE, ("string", 0))),
+        ],
+    ),
+    "dimos_msgs/msg/Contacts": (
+        [],
+        [
+            ("header", (T.NAME, "std_msgs/msg/Header")),
+            ("contacts", (T.SEQUENCE, ((T.NAME, "dimos_msgs/msg/Contact"), 0))),
+        ],
+    ),
     "dimos_msgs/msg/EntityMarker": (
         [],
         [
@@ -1738,6 +1796,63 @@ FIELDDEFS: Typesdict = {
             ("kp", (T.SEQUENCE, ((T.BASE, ("float64", 0)), 0))),
             ("kd", (T.SEQUENCE, ((T.BASE, ("float64", 0)), 0))),
             ("tau", (T.SEQUENCE, ((T.BASE, ("float64", 0)), 0))),
+        ],
+    ),
+    "dimos_msgs/msg/RegionBounds": (
+        [],
+        [
+            ("header", (T.NAME, "std_msgs/msg/Header")),
+            ("region_id", (T.BASE, ("int32", 0))),
+            ("center", (T.NAME, "geometry_msgs/msg/Point")),
+            ("radius", (T.BASE, ("float64", 0))),
+            ("z_min", (T.BASE, ("float64", 0))),
+            ("z_max", (T.BASE, ("float64", 0))),
+        ],
+    ),
+    "dimos_msgs/msg/RegionLineSegments3D": (
+        [],
+        [
+            ("region_id", (T.BASE, ("int32", 0))),
+            ("lines", (T.NAME, "dimos_msgs/msg/LineSegments3D")),
+        ],
+    ),
+    "sensor_msgs/msg/PointField": (
+        [
+            ("INT8", "uint8", 1),
+            ("UINT8", "uint8", 2),
+            ("INT16", "uint8", 3),
+            ("UINT16", "uint8", 4),
+            ("INT32", "uint8", 5),
+            ("UINT32", "uint8", 6),
+            ("FLOAT32", "uint8", 7),
+            ("FLOAT64", "uint8", 8),
+        ],
+        [
+            ("name", (T.BASE, ("string", 0))),
+            ("offset", (T.BASE, ("uint32", 0))),
+            ("datatype", (T.BASE, ("uint8", 0))),
+            ("count", (T.BASE, ("uint32", 0))),
+        ],
+    ),
+    "sensor_msgs/msg/PointCloud2": (
+        [],
+        [
+            ("header", (T.NAME, "std_msgs/msg/Header")),
+            ("height", (T.BASE, ("uint32", 0))),
+            ("width", (T.BASE, ("uint32", 0))),
+            ("fields", (T.SEQUENCE, ((T.NAME, "sensor_msgs/msg/PointField"), 0))),
+            ("is_bigendian", (T.BASE, ("bool", 0))),
+            ("point_step", (T.BASE, ("uint32", 0))),
+            ("row_step", (T.BASE, ("uint32", 0))),
+            ("data", (T.SEQUENCE, ((T.BASE, ("uint8", 0)), 0))),
+            ("is_dense", (T.BASE, ("bool", 0))),
+        ],
+    ),
+    "dimos_msgs/msg/RegionPointCloud2": (
+        [],
+        [
+            ("region_id", (T.BASE, ("int32", 0))),
+            ("cloud", (T.NAME, "sensor_msgs/msg/PointCloud2")),
         ],
     ),
     "dimos_msgs/msg/RobotState": (
@@ -2337,38 +2452,6 @@ FIELDDEFS: Typesdict = {
             ("header", (T.NAME, "std_msgs/msg/Header")),
             ("points", (T.SEQUENCE, ((T.NAME, "geometry_msgs/msg/Point32"), 0))),
             ("channels", (T.SEQUENCE, ((T.NAME, "sensor_msgs/msg/ChannelFloat32"), 0))),
-        ],
-    ),
-    "sensor_msgs/msg/PointField": (
-        [
-            ("INT8", "uint8", 1),
-            ("UINT8", "uint8", 2),
-            ("INT16", "uint8", 3),
-            ("UINT16", "uint8", 4),
-            ("INT32", "uint8", 5),
-            ("UINT32", "uint8", 6),
-            ("FLOAT32", "uint8", 7),
-            ("FLOAT64", "uint8", 8),
-        ],
-        [
-            ("name", (T.BASE, ("string", 0))),
-            ("offset", (T.BASE, ("uint32", 0))),
-            ("datatype", (T.BASE, ("uint8", 0))),
-            ("count", (T.BASE, ("uint32", 0))),
-        ],
-    ),
-    "sensor_msgs/msg/PointCloud2": (
-        [],
-        [
-            ("header", (T.NAME, "std_msgs/msg/Header")),
-            ("height", (T.BASE, ("uint32", 0))),
-            ("width", (T.BASE, ("uint32", 0))),
-            ("fields", (T.SEQUENCE, ((T.NAME, "sensor_msgs/msg/PointField"), 0))),
-            ("is_bigendian", (T.BASE, ("bool", 0))),
-            ("point_step", (T.BASE, ("uint32", 0))),
-            ("row_step", (T.BASE, ("uint32", 0))),
-            ("data", (T.SEQUENCE, ((T.BASE, ("uint8", 0)), 0))),
-            ("is_dense", (T.BASE, ("bool", 0))),
         ],
     ),
     "sensor_msgs/msg/Range": (

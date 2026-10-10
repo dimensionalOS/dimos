@@ -16,6 +16,9 @@ export interface DrawHealth {
   lastDrawOkAtMs: number;
   /** Consecutive failed decode-or-draw attempts since the last success. */
   failures: number;
+  /** Set by a self-paced sink (a WebRTC track): the store holds one "frame"
+   * (the track), so the badge reads rate and staleness off the sink instead. */
+  fps?: number;
 }
 
 /** Hz/staleness readout for a panel's primary channel. Re-rendered on the
@@ -34,7 +37,20 @@ export function Badge({ store, ch, health, staleMs, unit, testId }: {
   let text: string;
   let error = false;
   let stale = false;
-  if (stats.frames === 0) {
+  if (health?.fps !== undefined) {
+    const silentMs = Date.now() - health.lastDrawOkAtMs;
+    if (health.failures > 0) {
+      text = "decode failing";
+      error = true;
+    } else if (silentMs > staleMs) {
+      text = `stale ${(silentMs / 1000).toFixed(1)} s`;
+      stale = true;
+    } else if (health.fps === 0) {
+      text = "waiting"; // connecting, or a short stall inside the stale window
+    } else {
+      text = `${health.fps.toFixed(1)} ${unit}`;
+    }
+  } else if (stats.frames === 0) {
     // Nothing ever arrived; a corrupt first frame is an error, not "waiting".
     text = "waiting";
   } else if (stats.decodeFailing || (health !== undefined && health.failures > 0)) {
@@ -52,7 +68,7 @@ export function Badge({ store, ch, health, staleMs, unit, testId }: {
   } else {
     text = `${stats.hz.toFixed(1)} ${unit}`;
   }
-  const state = stats.frames === 0 ? "waiting" : error ? "error" : stale ? "stale" : "live";
+  const state = text === "waiting" ? "waiting" : error ? "error" : stale ? "stale" : "live";
   return (
     <span
       className={error || stale ? styles.badgeStale : styles.badge}

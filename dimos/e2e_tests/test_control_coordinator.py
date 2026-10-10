@@ -18,12 +18,15 @@ These tests start a real coordinator process and communicate over the active tra
 Unlike unit tests, these verify the full system integration.
 """
 
+import os
+import platform
 import time
 
 from dimos_generated.sensor_msgs.msg import JointState
 from dimos_generated.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from dimos_message_build.registry import decode as cdr_decode
 import numpy as np
+import pytest
 
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.tasks.trajectory_task.trajectory_task import (
@@ -34,6 +37,8 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
 from dimos.core.rpc_client import RPCClient
 from dimos.msgs.time import duration_from_seconds, header_now
 from dimos.msgs.trajectory import TrajectoryState
+
+pytestmark = pytest.mark.self_hosted
 
 
 class TestControlCoordinatorE2E:
@@ -133,6 +138,10 @@ class TestControlCoordinatorE2E:
         finally:
             client.stop_rpc_client()
 
+    @pytest.mark.skipif(
+        platform.system() == "Darwin" and bool(os.environ.get("CI")),
+        reason="time.sleep(0.01) sleeps for ~80ms on hosted macos runner",
+    )
     def test_coordinator_joint_state_published(
         self, lcm_spy, start_blueprint, wait_for_system_ready
     ) -> None:
@@ -144,18 +153,25 @@ class TestControlCoordinatorE2E:
         start_blueprint("coordinator-mock")
         wait_for_system_ready()
 
-        # Wait for initial message
         lcm_spy.wait_for_saved_topic(joint_state_topic)
-
-        # Collect messages for 1 second
-        time.sleep(1.0)
-
-        # Check we received messages (should be ~100 at 100Hz)
         with lcm_spy._messages_lock:
-            message_count = len(lcm_spy.messages.get(joint_state_topic, []))
+            # We don't want to count the backlog when measuring the throughput.
+            start_count = len(lcm_spy.messages.get(joint_state_topic, []))
 
-        # Allow some tolerance (at least 50 messages in 1 second)
-        assert message_count >= 50, f"Expected ~100 messages, got {message_count}"
+        # Collect messages for one wall-clock second.
+        window_start = time.perf_counter()
+        time.sleep(1.0)
+        window_elapsed = time.perf_counter() - window_start
+
+        with lcm_spy._messages_lock:
+            total_count = len(lcm_spy.messages.get(joint_state_topic, []))
+        in_window = total_count - start_count
+
+        # The coordinator ticks at 100 Hz and its loop compensates for sleep
+        # overshoot, so we should see ~100 messages land in the window.
+        assert 90 < in_window < 110, (
+            f"Expected ~100 messages/s, got {in_window} in {window_elapsed:.3f}s"
+        )
 
         # Decode a message to verify structure
         with lcm_spy._messages_lock:

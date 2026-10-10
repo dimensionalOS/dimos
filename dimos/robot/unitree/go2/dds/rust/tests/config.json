@@ -1,0 +1,95 @@
+{
+  "publish_hz": 5.0,
+  "camera_xyz": [
+    0.32715,
+    -3e-05,
+    0.04297
+  ],
+  "mid360_xyz": [
+    -0.032,
+    0.0,
+    0.12
+  ],
+  "mid360_mount": [
+    0.0,
+    60.0,
+    0.0
+  ],
+  "camera_info": {
+    "header": {
+      "stamp": {
+        "sec": 0,
+        "nanosec": 0
+      },
+      "frame_id": "camera_optical"
+    },
+    "height": 720,
+    "width": 1280,
+    "distortion_model": "equidistant",
+    "d": [
+      -0.07309428880537933,
+      -0.02341140740909078,
+      -0.0069305931780026956,
+      0.009238684474464793
+    ],
+    "k": [
+      797.4756164864929,
+      0.0,
+      643.5352167821186,
+      0.0,
+      796.4872112769983,
+      349.2783605343087,
+      0.0,
+      0.0,
+      1.0
+    ],
+    "r": [
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ],
+    "p": [
+      797.4756164864929,
+      0.0,
+      643.5352167821186,
+      0.0,
+      0.0,
+      796.4872112769983,
+      349.2783605343087,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      0.0
+    ],
+    "binning_x": 0,
+    "binning_y": 0,
+    "roi": {
+      "x_offset": 0,
+      "y_offset": 0,
+      "height": 0,
+      "width": 0,
+      "do_rectify": false
+    }
+  },
+  "camera_info_hz": 1.0,
+  "tf_root": "base_link",
+  "iface": "eth0",
+  "domain_id": 0,
+  "lidar_on": true,
+  "lidar_raw_on": false,
+  "lowstate_on": true,
+  "lowstate_hz": 50.0,
+  "video_on": true,
+  "video_encoding": "jpeg",
+  "video_fps": 15.0,
+  "video_group": "230.1.1.1",
+  "video_port": 1720,
+  "deadman_ms": 500
+}
