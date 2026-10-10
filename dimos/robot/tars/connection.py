@@ -93,7 +93,9 @@ class TarsConnection(Module):
         self._slab_frame = f"slab_{p.lidar_slab}_upper"
         self._slab_y = p.slab_y(p.lidar_slab)
         self._hinge = JOINT_NAMES.index(f"slab_{p.lidar_slab}_hinge")
-        self._lidar_height = p.lidar_height
+        self._lidar_xyz = p.lidar_xyz
+        half_tilt = math.radians(p.lidar_tilt) / 2
+        self._lidar_rot = Quaternion(0.0, math.sin(half_tilt), 0.0, math.cos(half_tilt))
         self._clock_offset = 0.0
 
     @rpc
@@ -195,8 +197,8 @@ class TarsConnection(Module):
                 ts=ts,
             ),
             Transform(
-                translation=Vector3(0.0, 0.0, self._lidar_height),
-                rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+                translation=Vector3(*self._lidar_xyz),
+                rotation=self._lidar_rot,
                 frame_id=self._slab_frame,
                 child_frame_id="lidar_link",
                 ts=ts,
