@@ -22,6 +22,8 @@ import pytest
 
 from dimos.simulation.scenes.procedural import (
     CEILING_HEIGHT,
+    DOOR_HEIGHT,
+    DOOR_WIDTH,
     SLAB_THICKNESS,
     START_CLEARANCE,
     Scene,
@@ -92,6 +94,32 @@ def test_office_records_its_parameters() -> None:
     params = office(2).params
     assert {"width", "length", "z0", "rooms", "clutter", "tables"} <= params.keys()
     assert params["rooms"] in (4, 6)
+
+
+def _door_widths(scene: Scene) -> list[float]:
+    """The width of every doorway, read off its lintel."""
+    lintel = scene.params["z0"] + DOOR_HEIGHT
+    return [
+        2 * max(box.half[0], box.half[1])
+        for box in scene.boxes
+        if box.kind == "wall" and abs(box.center[2] - box.half[2] - lintel) < 1e-9
+    ]
+
+
+def test_office_door_width_is_drawn_unless_given() -> None:
+    drawn = _door_widths(office(3))
+    assert len(set(drawn)) > 1
+    assert all(DOOR_WIDTH[0] <= w <= DOOR_WIDTH[1] for w in drawn)
+    narrow = office(3, door_width=0.6)
+    assert _door_widths(narrow) == pytest.approx([0.6] * len(drawn))
+    assert narrow.params["width"] == office(3).params["width"]
+
+
+def test_door_clutter_adds_one_box_past_every_doorway() -> None:
+    plain, cluttered = office(3), office(3, door_clutter=True)
+    assert len(cluttered.boxes) == len(plain.boxes) + len(plain.doors)
+    assert cluttered.boxes[: len(plain.boxes)] == plain.boxes
+    assert len(plain.doors) == 4
 
 
 def test_degenerate_boxes_are_dropped() -> None:

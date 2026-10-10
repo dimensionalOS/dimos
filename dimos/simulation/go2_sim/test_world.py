@@ -14,22 +14,29 @@
 
 from __future__ import annotations
 
+import time
+
 import mujoco
 import numpy as np
 from numpy.typing import NDArray
 import pytest
 
-from dimos.msgs.sim_msgs.Contacts import Contact
+from dimos.core.transport import LCMTransport
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.sim_msgs.Contacts import Contact, Contacts
 from dimos.simulation.go2_legged.policy import OnnxGo2Policy
 from dimos.simulation.go2_legged.robot import CONTROL_DT
 from dimos.simulation.go2_sim.world import (
     CEILING_GROUP,
+    CONTACTS_HEARTBEAT_DT,
     FRAME_DT,
     LIDAR_GROUPS,
     MOUNT_R,
     TICKS_PER_FRAME,
     Go2Sim,
     LidarFrame,
+    SimGo2World,
     scene_edges,
 )
 from dimos.simulation.scenes.procedural import Scene, office
@@ -151,6 +158,40 @@ def test_sensor_sits_on_the_mount_above_the_base(sim: Go2Sim) -> None:
     assert 0.1 < sensor[2] - base[2] < 0.2
     forward = rotation @ np.array([1.0, 0.0, 0.0])
     assert forward[2] < -0.8
+
+
+def test_reset_pose_moves_the_robot_and_the_contacts_keep_their_heartbeat(scene: Scene) -> None:
+    world = SimGo2World()
+    world.cmd_vel.transport = LCMTransport("/test_go2_sim_world/cmd_vel", Twist)
+    poses: list[PoseStamped] = []
+    heard: list[Contacts] = []
+    world.ground_truth.subscribe(poses.append)
+    world.contacts.subscribe(heard.append)
+    world.start()
+    try:
+        deadline = time.monotonic() + 10.0
+        while len(poses) < 5 and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert poses[-1].position.x == pytest.approx(scene.start[0], abs=0.1)
+        time.sleep(2.5)
+        assert heard[-1].ts - heard[-2].ts == pytest.approx(CONTACTS_HEARTBEAT_DT, abs=0.1)
+        assert heard[-1].contacts == [Contact("foot", "floor")]
+        world.reset_pose(3.0, 2.0, scene.params["z0"], 1.0)
+        # the bundled policy lurches a few decimeters as it is set down, so take the first pose there
+        moved = [p for p in poses if abs(p.position.x - 3.0) < 0.5]
+        while not moved and time.monotonic() < deadline:
+            time.sleep(0.02)
+            moved = [p for p in poses if abs(p.position.x - 3.0) < 0.5]
+        first = moved[0]
+        assert (first.position.x, first.position.y) == pytest.approx((3.0, 2.0), abs=0.15)
+        assert first.orientation.to_euler().z == pytest.approx(1.0, abs=0.2)
+        assert first.ts > poses[0].ts
+        while not any(c.ts >= first.ts for c in heard) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        after = min(c.ts for c in heard if c.ts >= first.ts)
+        assert after - first.ts < CONTACTS_HEARTBEAT_DT + 0.5
+    finally:
+        world.stop()
 
 
 def test_scene_edges_cover_every_box(scene: Scene) -> None:

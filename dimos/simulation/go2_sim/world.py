@@ -46,6 +46,7 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.LineSegments3D import LineSegments3D
 from dimos.msgs.nav_msgs.Odometry import Odometry
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.sim_msgs.Contacts import Contact, Contacts, Part
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
@@ -54,7 +55,8 @@ from dimos.robot.unitree.go2.constants import CMD_VEL_TIMEOUT
 from dimos.robot.unitree.go2.go2_mid360_static_transforms import FRAMES
 from dimos.simulation.go2_legged.policy import Go2Policy, load_policy
 from dimos.simulation.go2_legged.robot import CONTROL_DT, LeggedGo2, apply_fitted_physics, go2_spec
-from dimos.simulation.scenes.procedural import Family, Scene, generate
+from dimos.simulation.scenes.mjcf import CEILING_GROUP, SCENE_GROUP, add_boxes, geom_name
+from dimos.simulation.scenes.procedural import Family, Params, Scene, generate
 from dimos.simulation.sensors.mid360.lidar import SimMid360
 from dimos.simulation.sensors.mid360.pattern import POINT_RATE
 from dimos.simulation.sensors.mujoco_raycaster import MujocoRaycaster
@@ -65,9 +67,6 @@ logger = setup_logger()
 FRAME_DT = 0.1
 TICKS_PER_FRAME = round(FRAME_DT / CONTROL_DT)
 LIDAR_HALF_EXTENTS = (0.0325, 0.0325, 0.03)
-SCENE_GROUP = 0
-# Seen by the lidar only. The viewer switches this group off so the room stays visible.
-CEILING_GROUP = 1
 ROBOT_VISUAL_GROUP = 2
 COLLISION_GROUP = 3
 # Collision primitives are left out.
@@ -82,7 +81,10 @@ BOX_RGBA = {
 }
 FLOOR_CHECKER = ((0.62, 0.60, 0.56), (0.70, 0.68, 0.64))
 SCENE_PUBLISH_DT = 2.0
+# contacts go out on change, and on this period so a recording always holds the current set
+CONTACTS_HEARTBEAT_DT = 1.0
 ODOM_FRAME_ID = "odom"
+BASE_FRAME_ID = "base_link"
 SENSOR_FRAME_ID = "mid360_link"
 STILL = np.zeros(3)
 
@@ -180,18 +182,13 @@ def build_model(scene: Scene) -> mujoco.MjModel:
     """The scene's boxes, the Go2 and the Mid-360 housing as a contact box, in one model."""
     spec = go2_spec()
     _dress(spec)
+    add_boxes(spec, scene)
     for i, box in enumerate(scene.boxes):
-        geom = spec.worldbody.add_geom()
-        geom.type = mujoco.mjtGeom.mjGEOM_BOX
-        geom.name = f"{box.kind}_{i}"
-        geom.pos = box.center
-        geom.size = box.half
+        geom = spec.geom(geom_name(i, box))
         if box.kind == "floor":
             geom.material = "floor"
         else:
             geom.rgba = BOX_RGBA[box.kind]
-        if box.kind == "ceiling":
-            geom.group = CEILING_GROUP
     lidar = spec.body("base").add_geom()
     lidar.name = "mid360"
     lidar.type = mujoco.mjtGeom.mjGEOM_BOX
@@ -213,6 +210,20 @@ def scene_edges(scene: Scene) -> NDArray[np.float64]:
     return edges
 
 
+def open_viewer(
+    model: mujoco.MjModel, data: mujoco.MjData, lookat: NDArray[np.float64]
+) -> mujoco.viewer.Handle:
+    """A passive viewer on the scene with the ceiling hidden and a free camera over the robot."""
+    viewer = mujoco.viewer.launch_passive(model, data, show_left_ui=False, show_right_ui=False)
+    viewer.opt.geomgroup[CEILING_GROUP] = 0
+    viewer.cam.type = mujoco.mjtCamera.mjCAMERA_FREE
+    viewer.cam.lookat[:] = lookat
+    viewer.cam.distance = 4.0
+    viewer.cam.elevation = -55
+    viewer.cam.azimuth = 225
+    return viewer
+
+
 class Go2Sim:
     """The compiled scene with the Go2 and its Mid-360, ticked from a velocity command."""
 
@@ -228,7 +239,7 @@ class Go2Sim:
         self._points_per_step = int(POINT_RATE * self.model.opt.timestep)
         geom = mujoco.mjtObj.mjOBJ_GEOM
         self._kind = {
-            mujoco.mj_name2id(self.model, geom, f"{box.kind}_{i}"): box.kind
+            mujoco.mj_name2id(self.model, geom, geom_name(i, box)): box.kind
             for i, box in enumerate(scene.boxes)
         }
         self._lidar_geom = mujoco.mj_name2id(self.model, geom, "mid360")
@@ -312,6 +323,7 @@ class CommandHold:
 class SimGo2WorldConfig(ModuleConfig):
     family: Family = "office"
     seed: int = 1
+    scene_params: Params = {}
     real_time_factor: float = Field(default=1.0, gt=0.0)
     mujoco_viewer: bool = False
     policy: Path | None = None
@@ -328,16 +340,18 @@ class SimGo2World(Module):
     odometry: Out[Odometry]
     tf: Out[TFMessage]
     ground_truth: Out[PoseStamped]
+    joint_state: Out[JointState]
     contacts: Out[Contacts]
     scene: Out[LineSegments3D]
 
     _thread: Thread | None = None
+    _reset: tuple[float, float, float, float] | None = None
 
     @rpc
     def start(self) -> None:
         super().start()
         self._policy = load_policy(self.config.policy)
-        self._sim = self._load(self.config.family, self.config.seed)
+        self._sim = self._load(self.config.family, self.config.seed, self.config.scene_params)
         self._hold = CommandHold()
         self._stop_event = Event()
         self.register_disposable(Disposable(self.cmd_vel.subscribe(self._on_cmd_vel)))
@@ -351,13 +365,18 @@ class SimGo2World(Module):
             self._thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         super().stop()
 
+    @rpc
+    def reset_pose(self, x: float, y: float, z: float, yaw: float) -> None:
+        """Stand the robot at rest at the pose with its feet on z, before the sim's next tick."""
+        self._reset = (x, y, z, yaw)
+
     def _on_cmd_vel(self, msg: Twist) -> None:
         command = np.array([msg.linear.x, msg.linear.y, msg.angular.z])
         if not self._hold.update(command, time.monotonic()):
             logger.warning("Ignored non-finite cmd_vel", command=command.tolist())
 
-    def _load(self, family: Family, seed: int) -> Go2Sim:
-        scene = generate(family, seed)
+    def _load(self, family: Family, seed: int, params: Params) -> Go2Sim:
+        scene = generate(family, seed, **params)
         sim = Go2Sim(scene, seed, self._policy)
         sim.reset(*scene.start, 0.0)
         blocked = [c for c in sim.contacts() if c.kind != "floor"]
@@ -369,18 +388,7 @@ class SimGo2World(Module):
     def _open_viewer(self, sim: Go2Sim) -> mujoco.viewer.Handle | None:
         if not self.config.mujoco_viewer:
             return None
-        viewer = mujoco.viewer.launch_passive(
-            sim.model, sim.data, show_left_ui=False, show_right_ui=False
-        )
-        viewer.opt.geomgroup[CEILING_GROUP] = 0
-        # a free camera, so the mouse can pan away from the robot. Starts above the walls,
-        # looking down over the robot's shoulder.
-        viewer.cam.type = mujoco.mjtCamera.mjCAMERA_FREE
-        viewer.cam.lookat[:] = sim.base_pose()[0]
-        viewer.cam.distance = 4.0
-        viewer.cam.elevation = -55
-        viewer.cam.azimuth = 225
-        return viewer
+        return open_viewer(sim.model, sim.data, sim.base_pose()[0])
 
     def _run(self) -> None:
         # open3d loads on the first cloud, about a second
@@ -397,17 +405,25 @@ class SimGo2World(Module):
     def _simulate(self, sim: Go2Sim, viewer: mujoco.viewer.Handle | None) -> None:
         t0 = time.time()
         last_contacts: list[Contact] | None = None
+        next_contacts_publish = 0.0
         next_scene_publish = 0.0
         while not self._stop_event.is_set():
+            if (pose := self._reset) is not None:
+                self._reset = None
+                sim.reset(*pose)
+                t0 = time.time()
+                last_contacts = None
+                next_contacts_publish = next_scene_publish = 0.0
             frame = sim.tick(self._hold.current(time.monotonic()))
             if viewer is not None:
                 viewer.sync()
             stamp = t0 + sim.t / self.config.real_time_factor
             self._publish_poses(sim, stamp)
             contacts = sim.contacts()
-            if contacts != last_contacts:
+            if contacts != last_contacts or sim.t >= next_contacts_publish:
                 self.contacts.publish(Contacts(contacts, ts=stamp))
                 last_contacts = contacts
+                next_contacts_publish = sim.t + CONTACTS_HEARTBEAT_DT
             if frame is not None:
                 self.lidar.publish(
                     PointCloud2.from_numpy(frame.points, frame_id=SENSOR_FRAME_ID, timestamp=stamp)
@@ -459,5 +475,15 @@ class SimGo2World(Module):
                 *map(float, base_q),
                 ts=stamp,
                 frame_id=ODOM_FRAME_ID,
+            )
+        )
+        positions, velocities = sim.robot.joint_state()
+        self.joint_state.publish(
+            JointState(
+                ts=stamp,
+                frame_id=BASE_FRAME_ID,
+                name=list(sim.robot.policy.joint_names),
+                position=positions.tolist(),
+                velocity=velocities.tolist(),
             )
         )
