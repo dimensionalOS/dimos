@@ -31,7 +31,7 @@ from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.navigation.bench.driver import TERMINAL_FILE
-from dimos.navigation.bench.runner import RECORDING_FILE, REPLAY_FILE, RUN_FILE
+from dimos.navigation.bench.runner import RECORDING_FILE, REPLAY_FILE, RUN_FILE, RUNS_INDEX
 from dimos.navigation.bench.suite import Manifest
 from dimos.simulation.go2_legged.robot import BASE_QUAT
 from dimos.simulation.go2_sim.world import build_model, open_viewer
@@ -104,6 +104,23 @@ class Puppet:
     def trunk_position(self) -> NDArray[np.float64]:
         position: NDArray[np.float64] = self.data.xpos[self._trunk].copy()
         return position
+
+
+def find_episode(name: str) -> Path:
+    """An episode directory as given, or the newest run's episode whose case id starts with name."""
+    given = Path(name).expanduser()
+    if given.is_dir():
+        return given
+    runs = RUNS_INDEX.read_text().splitlines() if RUNS_INDEX.exists() else []
+    for run_dir in map(Path, reversed(runs)):
+        if not run_dir.is_dir():
+            continue
+        found = sorted(
+            d for d in run_dir.iterdir() if d.name.startswith(name) and (d / TERMINAL_FILE).exists()
+        )
+        if found:
+            return found[0]
+    raise FileNotFoundError(f"no episode directory or recorded case named {name}")
 
 
 def episode_scene(episode_dir: Path) -> Scene:

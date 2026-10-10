@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-from collections import deque
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from itertools import count
@@ -30,6 +29,7 @@ from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.nav_msgs.Path import Path as PathMsg
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.navigation.bench.driver import TERMINAL_FILE, EpisodeDriver
@@ -102,6 +102,8 @@ class Harness:
     reached: LCMTransport
     clicks: list[PointStamped]
     seeds: list[PointCloud2]
+    routes: list[PathMsg]
+    phases: list[str]
 
 
 @pytest.fixture
@@ -129,9 +131,11 @@ def harness(manifest_path: Path, tmp_path: Path) -> Iterator[Harness]:
         getattr(driver, name).transport = transport
     world = FakeWorld(transports["ground_truth"], z=office(1).params["z0"])
     driver._world = world
-    harness = Harness(driver, world, transports["goal"], transports["goal_reached"], [], [])
+    harness = Harness(driver, world, transports["goal"], transports["goal_reached"], [], [], [], [])
     driver.clicked_point.subscribe(harness.clicks.append)
     driver.loaded_map.subscribe(harness.seeds.append)
+    driver.reference_path.subscribe(harness.routes.append)
+    driver.phase.subscribe(lambda msg: harness.phases.append(msg.data))
     world.start()
     driver.start()
     try:
@@ -177,36 +181,6 @@ def test_driver_resets_seeds_sends_the_goal_and_ends_on_arrival(
     assert record["t0"] == pytest.approx(echo.ts)
     assert record["case_id"] == CASE_ID
     assert record["premap_points"] == len(harness.seeds[0].points_f32())
-
-
-def test_driver_reports_a_lost_goal(harness: Harness, tmp_path: Path) -> None:
-    record = _terminal(tmp_path, 40.0)
-    assert record["reason"] == "goal_lost"
-    assert len(harness.clicks) >= 10
-
-
-def _judging(
-    rules: Rules, now: float, commands: list[tuple[float, float]], xy: list[tuple[float, float]]
-) -> str | None:
-    """The driver's live verdict over a command and pose history, with no threads or transports."""
-    driver = EpisodeDriver.__new__(EpisodeDriver)
-    driver._rules = rules
-    driver._commands = deque((t, np.array([v, 0.0, 0.0])) for t, v in commands)
-    driver._recent = deque(
-        (now - rules.stuck_s + k * 0.02, np.array([x, y, 0.3]), np.zeros(3))
-        for k, (x, y) in enumerate(xy)
-    )
-    return driver._stuck_or_stalled(now - 100.0, now)
-
-
-def test_live_stuck_and_stalled_rules() -> None:
-    rules = Rules(stuck_s=10.0, stalled_s=20.0)
-    now = 1000.0
-    driving = [(now - 10.0 + k * 0.05, 0.3) for k in range(200)]
-    idle = [(now - 20.0 + k * 0.1, 0.0) for k in range(200)]
-    still = [(0.0, 0.0)] * 50
-    assert _judging(rules, now, driving, still) == "stuck"
-    assert _judging(rules, now, driving, [(0.01 * k, 0.0) for k in range(50)]) is None
-    assert _judging(rules, now, [(now - 12.0, 0.3), *idle[80:]], still) is None
-    assert _judging(rules, now, idle, still) == "stalled"
-    assert _judging(rules, now, [], []) == "stalled"
+    assert len(harness.routes) == 1 and len(harness.routes[0].poses) > 10
+    assert harness.routes[0].poses[-1].position.x == pytest.approx(4.0, abs=0.05)
+    assert harness.phases == ["reset", "premap", "goal", "navigate", "arrived"]

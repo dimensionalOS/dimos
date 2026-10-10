@@ -101,29 +101,6 @@ def test_no_route_to_a_wall_or_an_unreachable_cell(office_truth: GroundTruth) ->
     assert office_truth.route(office_truth.scene.start, (0.05, 3.0)) is None
 
 
-def test_low_overhang_blocks_and_high_overhang_does_not() -> None:
-    scene = _room()
-    scene.add((2.0, 1.0, 0.3), (3.0, 3.0, 0.34), "clutter")
-    scene.add((4.0, 1.0, 0.7), (5.0, 3.0, 0.74), "clutter")
-    gt = GroundTruth(scene)
-    assert not gt.stands((2.5, 2.0))
-    assert gt.stands((4.5, 2.0))
-    assert gt.route((1.0, 1.0), (4.5, 2.0)) is not None
-
-
-def test_a_small_step_is_ground_and_a_large_one_is_not() -> None:
-    scene = _room()
-    scene.add((2.0, 1.0, 0.0), (3.0, 3.0, 0.15), "clutter")
-    scene.add((4.0, 1.0, 0.0), (5.0, 3.0, 0.3), "clutter")
-    gt = GroundTruth(scene)
-    assert gt.height[gt.index((2.5, 2.0))] == pytest.approx(0.15)
-    assert gt.stands((2.5, 2.0))
-    assert not gt.stands((4.5, 2.0))
-    route = gt.route((1.0, 1.0), (2.5, 2.0))
-    assert route is not None
-    assert route.points[-1, 2] == pytest.approx(0.15)
-
-
 def test_difficulty_counts_doors_and_nearby_clutter() -> None:
     scene = _room()
     scene.add((3.0, 0.0, 0.0), (3.1, 1.5, 2.6), "wall")

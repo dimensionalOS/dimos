@@ -46,6 +46,15 @@ Outcome = Literal[
     "timeout",
 ]
 
+Signature = Literal[
+    "planner_empty",
+    "local_refused",
+    "follower_zeroed",
+    "commanded_no_progress",
+    "body_fell",
+    "out_of_time",
+    "arrival_mismatch",
+]
 COLLIDING_KINDS = ("wall", "clutter", "ceiling")
 T = TypeVar("T")
 GOAL_ECHO_M = 0.05
@@ -85,6 +94,7 @@ class Recording:
     contacts: list[ContactSample] | None = None
     goals: list[tuple[float, Point]] | None = None
     planner_paths: list[PathSample] | None = None
+    local_paths: list[PathSample] | None = None
     commands: Commands | None = None
     arrivals: list[float] | None = None
 
@@ -107,6 +117,7 @@ class Recording:
             ) or stamped("odometry", Odometry)
             goals = stamped("goal", PointStamped)
             paths = stamped("planner_path", PathMsg)
+            local = stamped("path", PathMsg)
             commands = stamped("cmd_vel", Twist)
             arrivals = stamped("goal_reached", Bool)
             contacts = stamped("contacts", Contacts)
@@ -119,15 +130,8 @@ class Recording:
                 goals=None
                 if goals is None
                 else [(float(o.ts), (o.data.x, o.data.y, o.data.z)) for o in goals],
-                planner_paths=None
-                if paths is None
-                else [
-                    PathSample(
-                        float(o.ts),
-                        np.array([tuple(q.position) for q in o.data.poses]).reshape(-1, 3),
-                    )
-                    for o in paths
-                ],
+                planner_paths=_path_samples(paths),
+                local_paths=_path_samples(local),
                 commands=None
                 if commands is None
                 else Commands(
@@ -156,10 +160,12 @@ class Score:
     """One episode's outcome and soft metrics. None means not measured."""
 
     outcome: Outcome
+    signature: Signature | None
     window: tuple[float, float]
     arrived_s: float | None
     traveled_m: float | None
     spl: float | None
+    final_xy: tuple[float, float]
     final_error_xy: float | None
     final_error_z: float | None
     reroutes: int | None
@@ -213,10 +219,12 @@ def score(
         spl = (route_length / max(route_length, traveled)) if outcome == "success" else 0.0
     return Score(
         outcome=outcome,
+        signature=_signature(outcome, recording.local_paths, t0, t1),
         window=(t0, t1),
         arrived_s=arrival - t0 if arrival is not None else None,
         traveled_m=traveled,
         spl=spl,
+        final_xy=(float(final[0]), float(final[1])),
         final_error_xy=error_xy,
         final_error_z=error_z,
         reroutes=paths.reroutes,
@@ -231,6 +239,37 @@ def score(
         fell=fell,
         missing=missing,
     )
+
+
+def _path_samples(observations: list[Observation[PathMsg]] | None) -> list[PathSample] | None:
+    if observations is None:
+        return None
+    return [
+        PathSample(float(o.ts), np.array([tuple(q.position) for q in o.data.poses]).reshape(-1, 3))
+        for o in observations
+    ]
+
+
+def _signature(
+    outcome: Outcome, local_paths: list[PathSample] | None, t0: float, t1: float
+) -> Signature | None:
+    """Which link of the chain gave up first, for a failed episode."""
+    if outcome in ("success", "reached_with_collision"):
+        return None
+    if outcome == "fall":
+        return "body_fell"
+    if outcome in ("wrong_place", "wrong_floor"):
+        return "arrival_mismatch"
+    if outcome == "no_plan":
+        return "planner_empty"
+    if outcome == "stuck":
+        return "commanded_no_progress"
+    if outcome == "timeout":
+        return "out_of_time"
+    last = [p for p in local_paths or [] if t0 <= p.t <= t1]
+    if not last:
+        return None
+    return "local_refused" if len(last[-1].points) <= 1 else "follower_zeroed"
 
 
 def _episode_start(recording: Recording, goal: Point) -> float:

@@ -143,6 +143,21 @@ def test_commanding_without_moving_is_stuck() -> None:
 def test_commanding_nothing_is_stalled() -> None:
     s = score(_walk(30.0, arrive=False, hold_last=15.0, command_last=False), RULES, GOAL)
     assert s.outcome == "stalled"
+    assert s.signature is None
+    assert s.final_xy == pytest.approx((5.0, 1.0), abs=0.1)
+
+
+def test_a_stall_names_the_link_that_gave_up() -> None:
+    rec = _walk(30.0, arrive=False, hold_last=15.0, command_last=False)
+    refused = replace(rec, local_paths=[PathSample(T0 + 20.0, np.array([START]))])
+    assert score(refused, RULES, GOAL).signature == "local_refused"
+    followed = replace(rec, local_paths=[PathSample(T0 + 20.0, np.array([START, [*GOAL]]))])
+    assert score(followed, RULES, GOAL).signature == "follower_zeroed"
+    assert (
+        score(_walk(30.0, arrive=False, hold_last=15.0), RULES, GOAL).signature
+        == "commanded_no_progress"
+    )
+    assert score(_walk(10.0), RULES, GOAL).signature is None
 
 
 def test_running_out_of_time_is_timeout_and_caps_the_window() -> None:
