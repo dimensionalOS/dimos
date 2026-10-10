@@ -33,7 +33,7 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 
-def _resolve_scene(scene: str | None) -> Path | None:
+def resolve_scene(scene: str | None) -> Path | None:
     """dimos scene name ("office1") -> data/mujoco_sim/scene_office1.xml, or a path as-is."""
     if scene is None:
         return None
@@ -100,7 +100,7 @@ class TarsTwistAdapter:
                 client = TarsClient(
                     realtime=self._realtime,
                     cmd_timeout=self._cmd_timeout,
-                    scene=_resolve_scene(self._scene),
+                    scene=resolve_scene(self._scene),
                     spawn=self._spawn,
                     viewer=self._viewer,
                 )
