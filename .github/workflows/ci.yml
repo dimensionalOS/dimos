@@ -449,13 +449,17 @@ jobs:
           sudo unzip -q /tmp/zenoh-c.zip -d /usr/local
           sudo unzip -q /tmp/zenoh-cpp.zip -d /usr/local
           sudo ldconfig
+      - uses: astral-sh/setup-uv@v10.0.1
+      - name: Install standalone native message build dependencies
+        run: |
+          uv venv .native-codegen --python 3.12 --seed
+          uv pip install --python .native-codegen/bin/python "./dimos/message_codegen[native]"
       - name: Generate native CDR message package
         run: |
-          bash scripts/setup_message_codegen.sh
-          bash scripts/install_native_messages.sh
-          echo "CMAKE_PREFIX_PATH=$PWD/build/message-codegen/install" >> "$GITHUB_ENV"
+          DIMOS_CODEGEN_PYTHON="$PWD/.native-codegen/bin/python" bash scripts/install_native_messages.sh
+          echo "CMAKE_PREFIX_PATH=$(cat build/message-codegen/native/prefixes.txt)" >> "$GITHUB_ENV"
       - name: Configure
-        run: cmake -S native/cpp -B build/native-cpp -DDIMOS_NATIVE_BUILD_TESTS=ON
+        run: cmake -S native/cpp -B build/native-cpp -DDIMOS_NATIVE_BUILD_TESTS=ON -DCMAKE_TOOLCHAIN_FILE="$PWD/build/message-codegen/native/toolchain.cmake"
       - name: Build
         run: cmake --build build/native-cpp -j
       - name: Test

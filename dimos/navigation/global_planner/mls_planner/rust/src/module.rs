@@ -821,7 +821,7 @@ fn build_pc2_xyzi(points: &[Xyzi], frame_id: &str, stamp: Time) -> PointCloud2 {
     let make_field = |name: &str, off: i32| PointField {
         name: name.into(),
         offset: off as u32,
-        datatype: PointField::FLOAT32 as u8,
+        datatype: PointField::FLOAT32,
         count: 1,
     };
     PointCloud2 {
@@ -853,7 +853,7 @@ fn build_pc2_xyz(points: &[(f32, f32, f32)], frame_id: &str, stamp: Time) -> Poi
     let make_field = |name: &str, off: i32| PointField {
         name: name.into(),
         offset: off as u32,
-        datatype: PointField::FLOAT32 as u8,
+        datatype: PointField::FLOAT32,
         count: 1,
     };
     PointCloud2 {
@@ -881,7 +881,7 @@ fn extract_xyz(msg: &PointCloud2) -> Result<Vec<(f32, f32, f32)>, ExtractError> 
     let mut y_off: Option<usize> = None;
     let mut z_off: Option<usize> = None;
     for f in &msg.fields {
-        if f.datatype != PointField::FLOAT32 as u8 {
+        if f.datatype != PointField::FLOAT32 {
             continue;
         }
         match f.name.as_str() {

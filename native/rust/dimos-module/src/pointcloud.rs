@@ -251,7 +251,7 @@ mod extraction_tests {
         let field = |name: &str, off: u32| PointField {
             name: name.into(),
             offset: off,
-            datatype: PointField::FLOAT32 as u8,
+            datatype: PointField::FLOAT32,
             count: 1,
         };
         PointCloud2 {

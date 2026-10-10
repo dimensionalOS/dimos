@@ -764,7 +764,7 @@ fn make_cloud(data: Vec<u8>, n: i32, frame_id: &str, stamp: Time) -> PointCloud2
     let make_field = |name: &str, off: i32| PointField {
         name: name.into(),
         offset: off as u32,
-        datatype: PointField::FLOAT32 as u8,
+        datatype: PointField::FLOAT32,
         count: 1,
     };
     PointCloud2 {

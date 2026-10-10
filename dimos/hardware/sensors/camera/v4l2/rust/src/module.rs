@@ -17,9 +17,11 @@
 
 use std::time::{Duration, Instant};
 
-use dimos_module::{native_config, Module, Output};
-use lcm_msgs::sensor_msgs::CompressedImage;
-use lcm_msgs::std_msgs::{Header, Time};
+use dimos_generated_messages::{
+    builtin_interfaces::msg::time::Time, sensor_msgs::msg::compressed_image::CompressedImage,
+    std_msgs::msg::header::Header,
+};
+use dimos_module::{cdr, native_config, Module, Output};
 use tracing::{info, warn};
 
 use crate::capture::{fourcc, Capture};
@@ -56,7 +58,7 @@ pub struct Config {
 #[derive(Module)]
 #[module(name = "v4l2_camera", setup = start)]
 pub struct V4L2Camera {
-    #[output(encode = CompressedImage::encode)]
+    #[output(encode = cdr::encode)]
     jpeg_out: Output<CompressedImage>,
 
     #[config]
@@ -115,7 +117,7 @@ fn pump(
 ) {
     let mut clock = CaptureClock::new(driver_clocks(), wall_s);
     let (width, height) = (config.width as usize, config.height as usize);
-    let (mut timeouts, mut seq) = (0, 0i32);
+    let mut timeouts = 0;
     let (mut frames, mut encode_s, mut window) = (0u32, 0.0, Instant::now());
     loop {
         let frame = match capture.next(FRAME_TIMEOUT_MS) {
@@ -154,17 +156,15 @@ fn pump(
         };
         let message = CompressedImage {
             header: Header {
-                seq,
                 stamp: Time {
                     sec: stamp.trunc() as i32,
-                    nsec: (stamp.fract() * 1e9) as i32,
+                    nanosec: (stamp.fract() * 1e9) as u32,
                 },
                 frame_id: config.frame_id.clone(),
             },
             format: "jpeg".into(),
             data,
         };
-        seq = seq.wrapping_add(1);
         runtime.block_on(output.publish(&message)).ok();
         frames += 1;
         if window.elapsed() >= STATS_EVERY {

@@ -18,11 +18,11 @@ path = "dimos_v4l2_camera::module::V4L2Camera"
 python = "dimos.hardware.sensors.camera.v4l2.module:V4L2Camera"
 
 [package.metadata.dimos.module.v4l2_camera.outputs]
-jpeg_out = "sensor_msgs.CompressedImage"
+jpeg_out = "sensor_msgs/msg/CompressedImage"
 
 [dependencies]
 dimos-module = { path = "../../../../../../native/rust/dimos-module" }
-lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
+dimos-generated-messages = { path = "../../../../../../packages/dimos-generated/src/dimos_generated_schemas/package/rust" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
 serde = { version = "1", features = ["derive"] }
 tracing = "0.1"
