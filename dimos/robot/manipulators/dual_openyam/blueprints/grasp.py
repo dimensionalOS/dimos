@@ -67,36 +67,24 @@ from dimos.robot.manipulators.dual_openyam.config import (
 )
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 
-# Distance between the two base motor axes: 43 cm by tape, J1 motor cap
-# centre to centre (2026-10-08). The URDF's 0.62 m is the ABC bench. The
-# 2026-10-07 reading that favoured 0.62 was confounded by the old camera pose,
-# which sat 4.5 cm too high and 3 cm too far forward.
+# Base motor axis to axis, by tape. The URDF's 0.62 m is the ABC bench.
 DUAL_OPENYAM_BASE_SPACING = 0.43
-# Joint 1 zero of each arm, measured 2026-10-09 by jogging joint 1 until the
-# arm lay straight along the table, parallel to its twin: the motor read
-# 0.046 rad on the left and 0.194 rad on the right at that pose. The model
-# turns each base by the opposite angle so the reported angles place the arm
-# where it really is. The lasting fix is re-zeroing those motors.
+# Angle each joint 1 reads when the arm lies straight along the table; the
+# motors' stored zeros do not match the URDF. Each base is turned by the
+# opposite angle until the motors are re-zeroed.
 DUAL_OPENYAM_BASE_YAW = {"left": -0.046, "right": -0.194}
-# Where each arm's real base sits relative to the nominal (0, +-spacing/2, 0),
-# in world metres, fitted from the tag-touch checks of 2026-10-09: with the
-# tool commanded over a tag centre the closed jaws land at the command plus
-# (real base minus model base), so the model base moves by the measured
-# error. Three rounds of readings per arm; the last put both tools on the tag
-# centres within 5 mm. The height error is in the tool length, see
-# DUAL_OPENYAM_TCP_OFFSET.
+# Base position relative to the nominal (0, +-spacing/2, 0), in world metres,
+# fitted so the closed jaws land on tag centres within 5 mm.
 DUAL_OPENYAM_BASE_OFFSET = {
     "left": (-0.038, 0.008, 0.0),
     "right": (-0.036, 0.003, 0.0),
 }
 
-# Wrist camera: a D405 on a 6 cm bracket that leaves the gripper body at
-# 45 deg, leaning toward the fingers. It sits on the gripper link's -X side,
-# the side that points up at the rest pose. Measured off a photo against a
-# 10 cm tag (2026-10-09): the camera centre is 10 cm above the closed tips
-# and 10 cm to the side of the gripper axis, which puts it 8 cm below the
-# gripper link along the fingers, not above it as first sketched. Boxes in
-# the gripper frame with 1.5 cm of margin per side and 2 cm for the USB plug.
+# Wrist camera: a D405 on a 6 cm bracket leaving the gripper body at 45 deg
+# toward the fingers, on the gripper link's -X side (up at the rest pose).
+# Camera centre about 10 cm above the closed tips and 10 cm beside the
+# gripper axis. Boxes in the gripper frame with 1.5 cm of margin per side
+# and 2 cm for the USB plug.
 _WRIST_TUBE_HALF_WIDTH = 0.0325
 _BRACKET_RPY = (0.0, math.pi / 4, 0.0)
 DUAL_OPENYAM_WRIST_CAMERA_BOXES = [
@@ -105,7 +93,7 @@ DUAL_OPENYAM_WRIST_CAMERA_BOXES = [
     ("wrist_camera", (0.072, 0.072, 0.073), (-0.095, 0.0, -0.080)),
 ]
 
-# The workcell in the world frame, table of 2026-10-08: 130 x 80 cm, its top
+# The workcell in the world frame: a 130 x 80 cm table, its top
 # 4.5 cm below the arm mounting plates (tape), its near
 # edge at the back of the 21.6 cm deep base frame, so it runs from 11.1 cm
 # behind the origin to 68.9 cm ahead; the bin stands at the far edge centred
@@ -131,9 +119,8 @@ DUAL_OPENYAM_STATIC_BOXES = [
 ]
 
 # Home is the pose the arms rest in on their supports: the URDF zero with
-# joint 2 held one degree above its hard stop. Joint 1 is the reading at
-# which each arm lies straight (see DUAL_OPENYAM_BASE_YAW), so the arms rest
-# parallel until the motors are re-zeroed.
+# joint 2 one degree above its hard stop and joint 1 at the reading where
+# the arm lies straight (see DUAL_OPENYAM_BASE_YAW).
 DUAL_OPENYAM_REST_PER_ARM = {
     "left": [0.046, 0.02, 0.0, 0.0, 0.0, 0.0],
     "right": [0.194, 0.02, 0.0, 0.0, 0.0, 0.0],
@@ -143,10 +130,10 @@ DUAL_OPENYAM_REST_PER_ARM = {
 # pads (tip_left.stl, tip_right.stl at the URDF's closed zero position) meet on
 # that axis from 12.7 to 14.7 cm below the gripper link; plan to the pad centre.
 DUAL_OPENYAM_TCP_OFFSET = (0.0, 0.0, -0.037)
-# The printed fingers on the rig reach further than the URDF's: with the tool
-# commanded a known height above the table, the closed tips sat 4.5 cm (left)
-# and 6 cm (right) lower than the model's. The tool point moves out along
-# the fingers by that much, per arm (2026-10-09).
+# Per-arm shift of the tool point along the fingers: with the tool commanded
+# a known height above the table the closed tips sat this much lower than
+# the model's. The fingers measure as the URDF's, so this stands in for a
+# shoulder or elbow zero error until the motors are re-zeroed.
 DUAL_OPENYAM_TCP_EXTENSION = {"left": -0.045, "right": -0.060}
 
 # The same gripper in GraspGenX's convention: origin on the gripper link,
@@ -181,10 +168,9 @@ DUAL_OPENYAM_GRASP_PINK = PinkKinematicsConfig(
 )
 
 # Fixed camera on the centre post, in the frame midway between the arm bases
-# (x forward, y toward the left arm, z up). Solved on 2026-10-08 from four
-# 10 cm AprilTags (ids 20 to 23) at tape-measured positions on the table,
-# 1.2 px reprojection RMS over 16 corners; a tape from the table top to the
-# camera centre (46 cm) agrees within 1.5 cm.
+# (x forward, y toward the left arm, z up). Solved from four 10 cm AprilTags
+# (ids 20 to 23) at tape-measured positions on the table, 1.2 px reprojection
+# RMS over 16 corners; a tape to the camera centre agrees within 1.5 cm.
 DUAL_OPENYAM_CAMERA_TRANSFORM = Transform(
     translation=Vector3(x=-0.0163, y=0.0008, z=0.4020),
     rotation=Quaternion(-0.01366, 0.48119, -0.00881, 0.87647),  # xyzw, pitched 57.6 deg down
@@ -196,7 +182,7 @@ DUAL_OPENYAM_CAMERA_TRANSFORM = Transform(
 # --realsensecamera.serial-number, --left-wrist-camera.serial-number and
 # --right-wrist-camera.serial-number.
 DUAL_OPENYAM_OVERHEAD_CAMERA_SERIAL = "230322272156"
-# Sides verified 2026-10-06 by covering the left wrist lens.
+# Sides verified by covering the left wrist lens.
 DUAL_OPENYAM_WRIST_CAMERA_SERIALS = {"left": "260322272983", "right": "260322276650"}
 
 # Streams a run keeps for ACT and VLA training: the joint states, the plans
@@ -429,7 +415,7 @@ def dual_openyam_wrist_camera(side: str) -> Blueprint:
     name = f"{side}_wrist_camera"
     # 640x480 at 30 fps is what the OpenArm ACT datasets were collected at.
     # Colour only: all three D405s share USB 2 hubs, and with depth on the
-    # right wrist dropped one frame in eight (run of 2026-10-07).
+    # right wrist dropped one frame in eight.
     camera = RealSenseCamera.blueprint(
         instance_name=name,
         frame_id_prefix=f"{side}_wrist",
