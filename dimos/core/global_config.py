@@ -141,6 +141,9 @@ class GlobalConfig(BaseSettings):
     dtop: bool = False
     obstacle_avoidance: bool = True
     detection_model: VlModelName = "moondream"
+    # Learned grasps from GraspGenX instead of the heuristic top-down grasp, in
+    # blueprints that offer both (dual-openyam-grasp).
+    graspgen: bool = False
     listen_host: str = "127.0.0.1"
     dimsim_scene: str = "apartment"
     dimsim_port: int = 8090
