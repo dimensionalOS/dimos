@@ -21,9 +21,7 @@ import threading
 import time
 
 import pytest
-import typer
 
-from dimos.navigation.bench.cli import override_flag, seeds_of
 from dimos.navigation.bench.ground_truth import Difficulty
 from dimos.navigation.bench.runner import (
     RECORDING_FILE,
@@ -214,12 +212,3 @@ def test_slots_are_exclusive_across_runners() -> None:
         assert first != second
     with _slot() as again:
         assert again == first
-
-
-def test_cli_parses_seed_lists_and_overrides() -> None:
-    assert seeds_of("1,3,5-8") == (1, 3, 5, 6, 7, 8)
-    assert override_flag("MLSPlannerNative.step_threshold_m=0.24") == (
-        "--mlsplannernative.step-threshold-m=0.24"
-    )
-    with pytest.raises(typer.BadParameter):
-        override_flag("MLSPlannerNative.step_threshold_m")

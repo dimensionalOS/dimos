@@ -164,13 +164,16 @@ def test_reset_pose_moves_the_robot_through_the_sim_thread(scene: Scene) -> None
     world = SimGo2World()
     world.cmd_vel.transport = LCMTransport("/test_go2_sim_world/cmd_vel", Twist)
     poses: list[PoseStamped] = []
+    heard: list[Contacts] = []
     world.ground_truth.subscribe(poses.append)
+    world.contacts.subscribe(heard.append)
     world.start()
     try:
         deadline = time.monotonic() + 10.0
         while len(poses) < 5 and time.monotonic() < deadline:
             time.sleep(0.05)
         assert poses[-1].position.x == pytest.approx(scene.start[0], abs=0.1)
+        time.sleep(2.0)
         world.reset_pose(3.0, 2.0, scene.params["z0"], 1.0)
 
         # the bundled policy lurches a few decimeters as it is set down, so take the first pose there
@@ -184,6 +187,10 @@ def test_reset_pose_moves_the_robot_through_the_sim_thread(scene: Scene) -> None
         assert (first.position.x, first.position.y) == pytest.approx((3.0, 2.0), abs=0.15)
         assert first.orientation.to_euler().z == pytest.approx(1.0, abs=0.2)
         assert first.ts > poses[0].ts
+        while not any(c.ts >= first.ts for c in heard) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        after = min(c.ts for c in heard if c.ts >= first.ts)
+        assert after - first.ts < CONTACTS_HEARTBEAT_DT + 0.5
     finally:
         world.stop()
 

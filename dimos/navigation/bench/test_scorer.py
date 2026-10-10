@@ -175,6 +175,17 @@ def test_reroutes_and_path_change_come_from_consecutive_paths() -> None:
     assert s.empty_path_s == pytest.approx(1.5)
 
 
+def test_a_repeated_vertex_does_not_poison_the_path_change() -> None:
+    doubled = np.array([START, START, [*GOAL]])
+    bent = np.array([START, [3.0, 2.0, 0.3], [*GOAL]])
+    rec = replace(
+        _walk(10.0), planner_paths=[PathSample(T0 + 0.5, doubled), PathSample(T0 + 2.0, bent)]
+    )
+    s = score(rec, RULES, GOAL)
+    assert s.path_change_max == pytest.approx(1.0)
+    assert s.reroutes == 1
+
+
 def test_yaw_reversals_count_sign_flips_of_the_turn_command() -> None:
     rec = _walk(10.0)
     v = rec.commands.v.copy()
