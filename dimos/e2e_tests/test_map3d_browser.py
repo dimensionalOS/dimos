@@ -25,10 +25,12 @@ Locally:
 from collections.abc import Callable
 
 import cv2
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 import pytest
 
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.pointcloud import pointcloud_from_xyz
+from dimos.msgs.time import time_from_seconds
 from dimos.web.cockpit import Map3D, cockpit
 
 pytest.importorskip("playwright")
@@ -42,10 +44,9 @@ CANVAS = '[data-testid="map3d-global_map-canvas"]'
 # ~2.6 km, so the frame only shows if the clip planes follow the fit, and the
 # voxels are still ~4 px wide from there. Their heights put one voxel at each
 # end of the height ramp and one in the middle.
-CLOUD = PointCloud2.from_numpy(
+CLOUD = pointcloud_from_xyz(
     np.array([[-1000.0, 0.0, 0.0], [0.0, 0.0, 16.0], [1000.0, 0.0, 32.0]], np.float32),
-    frame_id="world",
-    timestamp=1.0,
+    header=Header(stamp=time_from_seconds(1.0), frame_id="world"),
 )
 
 
