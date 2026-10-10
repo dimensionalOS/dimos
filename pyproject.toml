@@ -585,7 +585,6 @@ explicit = true
 
 [tool.ruff]
 line-length = 100
-extend-exclude = ["dimos/message_codegen/_vendor"]
 exclude = [
     ".git",
     ".pytest_cache",
@@ -645,7 +644,7 @@ warn_unused_ignores = false
 untyped_calls_exclude = ["zenoh"]
 explicit_package_bases = true
 # Upstream vendored sources retain their original typing; our adapters remain strict.
-exclude = "^dimos/models/Detic(/|$)|^dimos/message_codegen/_vendor/|.*/test_.|.*/tool_.|.*/conftest.py*"
+exclude = "^dimos/models/Detic(/|$)|.*/test_.|.*/tool_.|.*/conftest.py*"
 
 [[tool.mypy.overrides]]
 module = [

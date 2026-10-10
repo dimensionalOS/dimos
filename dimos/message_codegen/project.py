@@ -173,7 +173,6 @@ def prepare(project: Project, languages: tuple[str, ...] | None = None) -> Path:
     toolkit_paths = (
         list(toolkit.glob("*.py"))
         + list(toolkit.glob("*.json"))
-        + list((toolkit / "_vendor").rglob("*"))
         + list((toolkit / "templates").glob("*"))
     )
     for path in sorted(toolkit_paths):

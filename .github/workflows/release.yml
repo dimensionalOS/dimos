@@ -133,6 +133,7 @@ jobs:
       - uses: astral-sh/setup-uv@v10.0.1
       - name: Build compiler-free message wheels
         run: |
+          uv run --no-project --with requests python scripts/prepare_message_parser.py
           uv build dimos/message_codegen --wheel --out-dir wheelhouse
           uv build packages/dimos-generated --wheel --out-dir wheelhouse
       - name: Build wheels
@@ -157,7 +158,9 @@ jobs:
       - uses: astral-sh/setup-uv@v10.0.1
       - uses: dtolnay/rust-toolchain@stable
       - run: uv venv .venv --python 3.12
-      - run: uv pip install --python .venv/bin/python ./dimos/message_codegen
+      - run: |
+          uv run --no-project --with requests python scripts/prepare_message_parser.py
+          uv pip install --python .venv/bin/python ./dimos/message_codegen
       - name: Package pinned message source artifacts
         run: bash scripts/package_messages.sh
       - uses: actions/upload-artifact@v7
