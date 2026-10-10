@@ -88,11 +88,15 @@ def freeze_command(
 
 @app.command("run")
 def run_command(
-    suite: Path = typer.Option(..., "--suite", exists=True, help="A frozen manifest."),
+    suite: Path | None = typer.Option(
+        None, "--suite", exists=True, help="A frozen manifest. Without one, v1 is frozen once."
+    ),
     blueprint: str = typer.Option("go2-sim-nav-episode", help="Blueprint with an EpisodeDriver."),
     split: str = typer.Option("dev", help="dev, held_out or all."),
     case: list[str] = typer.Option(
-        [], "--case", help="Only cases whose id starts with this, e.g. narrow_door or a full id."
+        [],
+        "--case",
+        help="Only these cases: a tag, a tag and scene like narrow_door-s3, or a full id.",
     ),
     procs: int = typer.Option(4, min=1, help="Episodes running at once."),
     out: Path | None = typer.Option(None, "--out", help="Run directory, new."),
@@ -106,10 +110,19 @@ def run_command(
     ),
 ) -> None:
     """Run every case of the split, several at a time, and score each recording."""
-    from dimos.navigation.bench.runner import RESULTS_FILE, RunConfig, run as run_suite
+    from dimos.navigation.bench.runner import RESULTS_FILE, RUNS_DIR, RunConfig, run as run_suite
 
     if split not in ("dev", "held_out", "all"):
         raise typer.BadParameter("split must be dev, held_out or all")
+    if suite is None:
+        suite = RUNS_DIR / "v1.json"
+        if not suite.exists():
+            from dimos.navigation.bench.suite import FreezeConfig, freeze
+
+            with _Bar("v1") as bar:
+                manifest = freeze(FreezeConfig(), bar.tick)
+            suite.parent.mkdir(parents=True, exist_ok=True)
+            manifest.save(suite)
     config = RunConfig(
         suite=suite,
         blueprint=blueprint,

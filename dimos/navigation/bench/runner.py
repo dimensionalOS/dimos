@@ -116,6 +116,11 @@ class Progress:
 Report = Callable[[Progress], None]
 
 
+def selects(prefix: str, case_id: str) -> bool:
+    """Whether a case id is the prefix or continues it at a dash, so s1 does not take s10."""
+    return case_id == prefix or case_id.startswith(prefix + "-")
+
+
 def run(config: RunConfig, report: Report | None = None) -> Path:
     """Run every selected case once and return the run directory."""
     manifest = Manifest.load(config.suite)
@@ -124,7 +129,7 @@ def run(config: RunConfig, report: Report | None = None) -> Path:
         c
         for c in manifest.cases
         if (config.split is None or c.split == config.split)
-        and (not config.cases or c.id.startswith(config.cases))
+        and (not config.cases or any(selects(prefix, c.id) for prefix in config.cases))
     ]
     if not cases:
         raise ValueError(
