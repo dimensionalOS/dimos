@@ -350,12 +350,22 @@ class ManipulationModule(Module):
             aliases = self.config.joint_state_aliases
             name_to_idx = {aliases.get(name, name): i for i, name in enumerate(msg.name)}
             names = self.config.model.joint_names
+            canonical_names = [aliases.get(name, name) for name in msg.name]
+            if (
+                len(msg.name) != len(msg.position)
+                or len(set(canonical_names)) != len(canonical_names)
+                or not np.isfinite(msg.position).all()
+                or not np.isfinite(msg.ts)
+            ):
+                logger.warning("Skipping malformed model state")
+                return
             missing = [name for name in names if name not in name_to_idx]
             if missing:
                 logger.warning("Skipping incomplete model state", missing_joints=missing)
                 return
             indices = [name_to_idx[name] for name in names]
             state = JointState(
+                ts=msg.ts,
                 name=list(names),
                 position=[msg.position[index] for index in indices],
                 velocity=[msg.velocity[index] for index in indices]
@@ -379,24 +389,29 @@ class ManipulationModule(Module):
                     break
                 transforms: list[Transform] = []
                 config = self.config.model
+                # Use one measurement for every dynamic edge in this publication.
+                state = self._world_monitor.current_model_joint_state()
                 for group in self._world_monitor.planning_groups.list():
-                    if not group.has_pose_target or group.tip_link is None:
+                    if not state.name or not group.has_pose_target or group.tip_link is None:
                         continue
-                    ee_pose = self._world_monitor.get_group_ee_pose(group.id)
+                    ee_pose = self._world_monitor.get_group_ee_pose(group.id, state)
                     if ee_pose is not None and group.tip_link is not None:
                         ee_tf = Transform.from_pose(group.tip_link, ee_pose)
                         ee_tf.frame_id = "world"
                         transforms.append(ee_tf)
                 for link_name in config.tf_extra_links:
-                    link_pose = self._world_monitor.get_link_pose(link_name)
+                    if not state.name:
+                        break
+                    link_pose = self._world_monitor.get_link_pose(link_name, state)
                     if link_pose is not None:
                         link_tf = Transform.from_pose(link_name, link_pose)
                         link_tf.frame_id = "world"
                         transforms.append(link_tf)
 
-                now = time.time()
+                # Fixed mounts are valid at the same measurement time as their parent.
+                stamp = state.ts if state.name else time.time()
                 for static in self.config.static_transforms:
-                    static.ts = now
+                    static.ts = stamp
                     transforms.append(static)
 
                 if transforms:

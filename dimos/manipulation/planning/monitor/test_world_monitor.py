@@ -466,7 +466,7 @@ def test_group_ee_pose_uses_current_state_when_no_joint_state_is_provided() -> N
     monitor = world_monitor_module.WorldMonitor(world=fake_world)  # type: ignore[arg-type]
     monitor.load_model(_three_joint_reordered_group_config())
     monitor.start_state_monitor()
-    monitor.on_joint_state(JointState(name=["j1", "j2", "j3"], position=[0.1, 0.2, 0.3]))
+    monitor.on_joint_state(JointState(ts=123.5, name=["j1", "j2", "j3"], position=[0.1, 0.2, 0.3]))
 
     pose = monitor.get_group_ee_pose("manipulator")
 
@@ -474,6 +474,15 @@ def test_group_ee_pose_uses_current_state_when_no_joint_state_is_provided() -> N
     assert set_calls[0][2].name == ["j1", "j2", "j3"]
     assert set_calls[0][2].position == [0.1, 0.2, 0.3]
     assert pose.position.x == 1
+    assert pose.ts == 123.5
+
+    snapshot = monitor.get_current_joint_state()
+    assert snapshot is not None
+    snapshot.position[0] = 99.0
+    assert monitor.get_current_joint_state().position == [0.1, 0.2, 0.3]
+    monitor.stop_all_monitors()
+    monitor.start_state_monitor()
+    assert monitor.get_current_joint_state() is None
 
 
 def test_group_ee_pose_without_joint_state_rejects_stale_state(mocker) -> None:

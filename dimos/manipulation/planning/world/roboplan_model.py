@@ -20,11 +20,13 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 import itertools
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any, Protocol
 import xml.etree.ElementTree as ET
 from xml.sax.saxutils import escape
 
 import numpy as np
+import yaml
 
 from dimos.manipulation.planning.groups.models import PlanningGroup
 from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
@@ -60,6 +62,7 @@ class _SceneFactory(Protocol):
         urdf: str,
         srdf: str,
         package_paths: Sequence[str],
+        joint_limits: Path,
     ) -> Any: ...
 
 
@@ -108,12 +111,25 @@ def build_roboplan_model(
     groups, all_group = _groups(config, registry)
     srdf = _srdf(_MODEL_NAME, config, groups, prepared)
     package_paths = [str(path) for path in description.package_paths.values()]
-    scene = scene_factory(
-        name=_MODEL_NAME,
-        urdf=prepared.xml,
-        srdf=srdf,
-        package_paths=package_paths,
-    )
+    # 0.7 ignores nonstandard acceleration attributes in URDF. Import the
+    # authoritative prepared limits through the supported YAML API instead.
+    limits = {
+        coordinate.name: {
+            "max_velocity": [coordinate.max_velocity],
+            "max_acceleration": [coordinate.max_acceleration],
+        }
+        for coordinate in robot.joint_space.coordinates
+    }
+    with TemporaryDirectory(prefix="dimos-roboplan-limits-") as directory:
+        limits_path = Path(directory) / "limits.yaml"
+        limits_path.write_text(yaml.safe_dump({"joint_limits": limits}))
+        scene = scene_factory(
+            name=_MODEL_NAME,
+            urdf=prepared.xml,
+            srdf=srdf,
+            package_paths=package_paths,
+            joint_limits=limits_path,
+        )
     groups = _validate_group_order(scene, groups)
     all_group = groups[frozenset(all_group.group_ids)]
     _apply_collision_exclusions(scene, srdf)
@@ -125,7 +141,7 @@ def build_roboplan_model(
 
 
 def _prepare_model(config: RobotModelConfig, description: LoadedRobotModel) -> _PreparedModel:
-    result = ET.Element("robot", {"name": _MODEL_NAME})
+    result = ET.Element("robot", {"name": _MODEL_NAME, "version": "1.0"})
     ET.SubElement(result, "link", {"name": _ROOT_LINK})
     root = ET.fromstring(description.xml)
     if _tag(root.tag) != "robot":

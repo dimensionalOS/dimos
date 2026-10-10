@@ -266,7 +266,7 @@ class TestWorldMonitorVisualization:
         viz = FakeVisualization()
         monitor = _make_world_monitor_with_viz(viz)
         state_monitor = MagicMock()
-        state_monitor.get_current_positions.return_value = None
+        state_monitor.get_current_joint_state.return_value = None
         obstacle_monitor = MagicMock()
         monitor._state_monitor = state_monitor
         monitor._obstacle_monitor = obstacle_monitor

@@ -67,26 +67,6 @@ XARM7_SIM_HOME = [0.0, -0.247, 0.0, 0.909, 0.0, 1.15644, 0.0]
 # z=0.12. Place the planning model to match, or the planner solves poses 12cm
 # below the arm it is driving and every grasp closes on air.
 XARM7_SIM_BASE_POSE = PoseStamped(frame_id="world", position=Vector3(z=0.12))
-# Every link the xArm7-with-gripper URDF gives collision geometry. A point-cloud
-# self filter needs a capture-time transform for each one, and drops the whole
-# cloud if any is missing, so publish them all as TF when one is composed in.
-XARM7_COLLISION_LINKS = [
-    "link_base",
-    "link1",
-    "link2",
-    "link3",
-    "link4",
-    "link5",
-    "link6",
-    "link7",
-    "xarm_gripper_base_link",
-    "left_outer_knuckle",
-    "left_finger",
-    "left_inner_knuckle",
-    "right_outer_knuckle",
-    "right_finger",
-    "right_inner_knuckle",
-]
 
 
 def make_xarm7_sim_robot_config(
