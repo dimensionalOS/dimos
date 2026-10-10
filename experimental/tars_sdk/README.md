@@ -19,6 +19,7 @@ c.move(0.15, 0.1)             # vx m/s, wz rad/s; resend within cmd_timeout (0.5
 c.set_mode("roll")            # slabs become wheel spokes (~1 m/s); set_mode("walk") folds back
 s = c.get_state()             # mode, odom (estimated), odom_gt (sim truth), raw sensors
 frame = c.get_camera()        # RGB + depth (m) from the front camera on slab 2
+scan = c.get_lidar()          # 360 deg 3D lidar on top of slab 2; scan.points_odom() = registered cloud
 c.sit(); c.disconnect()
 ```
 
@@ -39,7 +40,13 @@ Keyboard teleop in the viewer: `mjpython -m tars_sdk.teleop [--scene X.xml] [--s
 | `mirror.py` | Viewer process that mirrors a running sim through shared memory |
 | `model/` | `params.py` (every dimension, mass, limit), `generate.py` (MJCF, optional URDF/STL), `tars.xml` |
 
-Model (reference size; the default build is `scale=0.5`, i.e. 0.76 m and 7.5 kg): 1.52 m tall and 60 kg. It has 4 slabs, each with a hinge (±π, 600 Nm) at the hub axle and a telescoping lower segment (0–0.7 m, 800 N). Foot friction is 1.2. Sensors are an IMU on the hub, a touch sensor per foot, and the front camera. To change the design, edit `model/params.py`. The simulator builds the MJCF from `Params` at connect time; `python -m tars_sdk.model.generate [--urdf out/]` writes `tars.xml` (and URDF/STL) to disk.
+Model (reference size; the default build is `scale=0.5`, i.e. 0.76 m and 7.5 kg): 1.52 m tall and 60 kg. It has 4 slabs, each with a hinge (±π, 600 Nm) at the hub axle and a telescoping lower segment (0–0.7 m, 800 N). Foot friction is 1.2. Sensors are an IMU on the hub, a touch sensor per foot, the front camera, and a lidar turret on top of slab 2. To change the design, edit `model/params.py`. The simulator builds the MJCF from `Params` at connect time; `python -m tars_sdk.model.generate [--urdf out/]` writes `tars.xml` (and URDF/STL) to disk.
+
+## Lidar
+
+A 3D 360° lidar with the Livox Mid-360 pattern: elevation −7° to +52°, 360 × 32 beams per sweep, range 0.1–40 m. It sits in a Mid-360-style turret on the top face of slab 2, above the camera, and tilts with the slab as TARS walks. The optical center (`lidar_link`) is the middle of the turret's dark window band, `lidar_height` above the hinge axis in the slab frame. The turret clears the neighbouring slabs, so the view stays 360°. At most about 9% of the beams hit the other slabs at the worst moment of the gait. `sim.py` ray-casts each sweep with `mj_multiRay` on a snapshot of the state and drops beams that hit TARS itself. Each sweep is rotated by a random sub-degree offset, so successive scans fill the gaps between beams.
+
+`get_lidar()` returns points in the lidar frame plus the lidar pose in the odom frame (simulator truth). It also returns the robot state at the scan instant (`base_position`, `base_quat`, `joint_q`), which is enough to rebuild the TF chain odom → base_link → slab_2_upper → lidar_link for exactly that scan. A sweep costs about 1 ms on an empty floor and about 60 ms in the dimos office scene. The GIL is released, so the real-time sim thread doesn't slow down. The lidar pattern is set in `model/params.py`.
 
 ## Gait
 

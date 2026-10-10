@@ -46,6 +46,14 @@ class Params:
     display_from_top: float = 0.19  # display center distance below slab top
     camera_from_top: float = 0.05
 
+    # --- lidar: 3D 360 deg (Livox Mid-360 pattern) in a turret on top of one slab; tilts with it ---
+    lidar_slab: int = 2  # slab carrying the lidar (the one with the display + camera)
+    lidar_size: float = 0.13  # turret diameter (Mid-360 proportions: height 0.9 x diameter)
+    lidar_h_samples: int = 360  # azimuth samples per scan (1 deg)
+    lidar_rings: int = 32  # elevation samples per scan
+    lidar_v_fov: tuple[float, float] = (-7.0, 52.0)  # deg, min/max elevation
+    lidar_range: tuple[float, float] = (0.1, 40.0)  # m, min/max range (not scaled)
+
     # --- mass (kg) ---
     hub_mass: float = 4.0  # axle + electronics + IMU
     upper_mass: float = 10.0  # per slab
@@ -91,6 +99,7 @@ class Params:
                 "display_h",
                 "display_from_top",
                 "camera_from_top",
+                "lidar_size",
                 "slide_travel",
             ),
             sc.LENGTH,
@@ -121,6 +130,12 @@ class Params:
     @property
     def pivot_height(self) -> float:
         return self.height - self.pivot_from_top
+
+    @property
+    def lidar_height(self) -> float:
+        """Lidar optical center (middle of the turret's window band) above the hinge axis,
+        in the frame of the slab carrying it."""
+        return self.pivot_from_top + 0.51 * self.lidar_size
 
     @property
     def pitch(self) -> float:

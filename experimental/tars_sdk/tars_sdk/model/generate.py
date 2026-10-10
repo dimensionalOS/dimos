@@ -24,6 +24,7 @@ MATERIALS = {
     "rubber": (0.05, 0.05, 0.05, 1.0),
     "display": (0.02, 0.05, 0.06, 1.0),
     "axle": (0.25, 0.25, 0.27, 1.0),
+    "glass": (0.03, 0.04, 0.05, 1.0),
 }
 
 
@@ -225,6 +226,9 @@ def build_urdf(p: Params, links: list[tuple[Link, Link]]) -> ET.Element:
             dict(lower=0, upper=p.slide_travel, effort=p.slide_effort, velocity=p.slide_velocity),
             p.slide_damping,
         )
+        if i == p.lidar_slab:
+            ET.SubElement(robot, "link", name="lidar_link")
+            add_joint("lidar_joint", "fixed", upper.name, "lidar_link", (0, 0, p.lidar_height))
         if i == p.display_slab:
             ET.SubElement(robot, "link", name="camera_link")
             add_joint(
@@ -292,6 +296,7 @@ def build_mjcf(p: Params, links: list[tuple[Link, Link]], standalone: bool = Tru
         "aluminum": ("0.6", "0.7", "0.15"),
         "sleeve": ("0.5", "0.6", "0.1"),
         "display": ("0.9", "0.9", "0.3"),
+        "glass": ("0.9", "0.9", "0.15"),
     }
     for name, rgba in MATERIALS.items():
         s, sh, r = spec.get(name, ("0.2", "0.2", "0"))
@@ -404,6 +409,26 @@ def build_mjcf(p: Params, links: list[tuple[Link, Link]], standalone: bool = Tru
             diaginertia=fmt(upper.inertia),
         )
         add_geoms(ub, upper)
+        if i == p.lidar_slab:
+            # lidar turret (Mid-360 look) on the slab's top face: aluminum base, dark window
+            # band (the optical center), aluminum crown
+            size, z = p.lidar_size, p.pivot_from_top
+            for name, r, z0, z1, mat in (
+                ("lidar_base", 0.5 * size, z, z + 0.28 * size, "aluminum"),
+                ("lidar_window", 0.48 * size, z + 0.28 * size, z + 0.74 * size, "glass"),
+                ("lidar_crown", 0.5 * size, z + 0.74 * size, z + 0.9 * size, "aluminum"),
+            ):
+                ET.SubElement(
+                    ub,
+                    "geom",
+                    name=name,
+                    type="cylinder",
+                    size=f"{r:.6g} {(z1 - z0) / 2:.6g}",
+                    pos=f"0 0 {(z0 + z1) / 2:.6g}",
+                    material=mat,
+                    **{"class": "visual"},
+                )
+            ET.SubElement(ub, "site", name="lidar", pos=f"0 0 {p.lidar_height:.6g}", size="0.01")
         if i == p.display_slab:
             ET.SubElement(
                 ub,

@@ -16,11 +16,14 @@
 
 from collections.abc import Iterator
 import math
+from pathlib import Path
 
+import numpy as np
 import pytest
 from tars_sdk import TarsClient
-from tars_sdk.kinematics import SlabGeometry, foot_fk, foot_ik
+from tars_sdk.kinematics import SlabGeometry, foot_fk, foot_ik, quat_to_mat
 from tars_sdk.model.params import Params
+from tars_sdk.types import JOINT_NAMES
 
 
 @pytest.mark.parametrize("dx", [-0.5, -0.2, 0.0, 0.1, 0.45])
@@ -86,6 +89,70 @@ def test_camera_renders_rgb_and_depth(client: TarsClient) -> None:
     assert f.rgb.shape == (120, 160, 3)
     assert f.depth is not None and f.depth.shape == (120, 160)
     assert f.depth.min() > 0.5
+
+
+WALL_SCENE = """<mujoco>
+  <worldbody>
+    <geom name="floor" type="plane" size="0 0 0.05"/>
+    <geom name="wall" type="box" pos="3 0 2.5" size="0.1 20 2.5"/>
+  </worldbody>
+</mujoco>
+"""
+
+
+def test_lidar_scan_is_360_and_ignores_the_robot(client: TarsClient) -> None:
+    scan = client.get_lidar()
+    p = Params()
+    assert scan.points.dtype == np.float32 and scan.points.shape[1] == 3
+    # standalone floor only: the lowest beams (-7 deg) land far out, never on TARS itself
+    lidar_z = scan.position[2]
+    assert lidar_z == pytest.approx((1.45 + p.lidar_height) * p.scale, abs=0.02)
+    r = np.linalg.norm(scan.points[:, :2], axis=1)
+    assert r.min() > 0.9 * lidar_z / math.tan(math.radians(-p.lidar_v_fov[0]))
+    az = np.degrees(np.arctan2(scan.points[:, 1], scan.points[:, 0]))
+    assert np.histogram(az, bins=8, range=(-180, 180))[0].min() > 0
+
+
+def test_lidar_registers_wall_while_turning(tmp_path: Path) -> None:
+    scene = tmp_path / "wall.xml"
+    scene.write_text(WALL_SCENE)
+    c = TarsClient(realtime=False, cmd_timeout=None, scene=scene)
+    c.connect()
+    c.stand()
+    assert c.wait_for_mode("ready", timeout=5)
+    c.move(0.0, 0.2)
+    for _ in range(4):
+        c.step(2.0)
+        pts = c.get_lidar().points_odom()
+        wall = pts[(pts[:, 0] > 2.0) & (pts[:, 2] > 0.05)]
+        assert len(wall) > 500
+        assert wall[:, 0] == pytest.approx(2.9, abs=0.01)  # wall face, in odom while yawing
+    assert c.get_odometry(ground_truth=True).yaw > 1.0
+    c.disconnect()
+
+
+def test_lidar_rides_slab_and_tf_chain_matches(client: TarsClient) -> None:
+    """odom -> base_link -> slab (hinge) -> lidar_link, rebuilt from the scan's own robot
+    state, must give the exact lidar pose while the slab swings."""
+    p = Params().resolved()
+    hinge = JOINT_NAMES.index(f"slab_{p.lidar_slab}_hinge")
+    client.move(0.3, 0.1)
+    tilts = []
+    for _ in range(40):
+        client.step(0.13)
+        s = client.get_lidar()
+        q = s.joint_q[hinge]
+        tilts.append(abs(q))
+        slab_in_base = np.array(
+            [[math.cos(q), 0, math.sin(q)], [0, 1, 0], [-math.sin(q), 0, math.cos(q)]]
+        )
+        r_base = quat_to_mat(s.base_quat)
+        r_lidar = r_base @ slab_in_base
+        pos = s.base_position + r_base @ np.array([0, p.slab_y(p.lidar_slab), 0])
+        pos = pos + r_lidar @ np.array([0, 0, p.lidar_height])
+        np.testing.assert_allclose(pos, s.position, atol=1e-6)
+        np.testing.assert_allclose(r_lidar, quat_to_mat(s.quat), atol=1e-6)
+    assert max(tilts) > 0.2  # the lidar really tilts with the gait
 
 
 def test_rolls_and_folds_back_up(client: TarsClient) -> None:

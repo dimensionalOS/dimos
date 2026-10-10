@@ -40,7 +40,14 @@ from tars_sdk.sim import SimBackend
 
 if TYPE_CHECKING:
     from tars_sdk.mirror import MirrorPublisher
-from tars_sdk.types import CameraFrame, JointTargets, Measurement, Odometry, TarsState
+from tars_sdk.types import (
+    CameraFrame,
+    JointTargets,
+    LidarScan,
+    Measurement,
+    Odometry,
+    TarsState,
+)
 
 
 class TarsError(RuntimeError):
@@ -225,6 +232,15 @@ class TarsClient:
     def get_camera(self, width: int = 640, height: int = 480, depth: bool = True) -> CameraFrame:
         """RGB (+ depth in meters) from the front camera on slab 2."""
         return self._require().render_camera(width, height, depth)
+
+    def get_lidar(self) -> LidarScan:
+        """One 360 deg 3D sweep (Mid-360 pattern) from the lidar turret on top of slab 2.
+
+        Points are in the lidar frame. `scan.position`/`scan.quat` give the lidar pose in the
+        odom frame (simulator truth) and `scan.points_odom()` the registered cloud;
+        `scan.base_*` and `scan.joint_q` give the robot state at the scan instant (for TF).
+        """
+        return self._require().cast_lidar()
 
     # ------------------------------------------------------------ internals
     def _require(self) -> SimBackend:

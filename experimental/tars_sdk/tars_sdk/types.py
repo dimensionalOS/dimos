@@ -25,6 +25,8 @@ from dataclasses import dataclass, field
 import numpy as np
 from numpy.typing import NDArray
 
+from tars_sdk.kinematics import quat_to_mat
+
 N_SLABS = 4
 N_JOINTS = 2 * N_SLABS
 JOINT_NAMES: tuple[str, ...] = tuple(
@@ -77,6 +79,29 @@ class CameraFrame:
     depth: NDArray[np.float32] | None  # HxW, meters
     fovy_deg: float
     time: float
+
+
+@dataclass
+class LidarScan:
+    """One 360 deg sweep. Points are in the lidar frame (lidar_link: X forward, Z up).
+
+    The lidar rides on a slab, so its pose changes with the gait. `base_*` and `joint_q` are
+    the robot state at the scan instant: enough to rebuild the TF chain
+    odom -> base_link -> slab -> lidar_link for exactly this scan.
+    """
+
+    points: NDArray[np.float32]  # Nx3, meters
+    time: float  # simulation time of the scan (s)
+    position: NDArray[np.float64]  # lidar origin in the odom frame
+    quat: NDArray[np.float64]  # wxyz, lidar orientation in the odom frame
+    base_position: NDArray[np.float64]  # hub (base_link) position in the odom frame
+    base_quat: NDArray[np.float64]  # wxyz, hub orientation in the odom frame
+    joint_q: NDArray[np.float64]  # joint positions, JOINT_NAMES order
+
+    def points_odom(self) -> NDArray[np.float32]:
+        """Points transformed into the odom frame."""
+        rot = quat_to_mat(self.quat)
+        return (self.points @ rot.T + self.position).astype(np.float32)
 
 
 @dataclass

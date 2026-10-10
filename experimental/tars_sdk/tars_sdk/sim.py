@@ -28,7 +28,15 @@ import numpy as np
 from tars_sdk.kinematics import heading, quat_to_mat
 from tars_sdk.model.generate import mjcf_xml
 from tars_sdk.model.params import Params
-from tars_sdk.types import JOINT_NAMES, N_SLABS, CameraFrame, JointTargets, Measurement, Odometry
+from tars_sdk.types import (
+    JOINT_NAMES,
+    N_SLABS,
+    CameraFrame,
+    JointTargets,
+    LidarScan,
+    Measurement,
+    Odometry,
+)
 
 Controller = Callable[[float, Measurement], JointTargets]
 
@@ -105,6 +113,20 @@ class SimBackend:
             sens("imu_acc"),
         )
         self._s_touch = [sens(f"slab_{i}_foot_touch") for i in range(1, N_SLABS + 1)]
+
+        # lidar: fixed ray pattern in the sensor frame, cast against everything but TARS itself
+        self._lidar_site = m.site(n("lidar")).id
+        self._lidar_body = int(m.site_bodyid[self._lidar_site])
+        az = np.linspace(0.0, 2 * math.pi, params.lidar_h_samples, endpoint=False)
+        el = np.radians(np.linspace(*params.lidar_v_fov, params.lidar_rings))
+        az_g, el_g = np.meshgrid(az, el)
+        self._lidar_dirs = np.stack(
+            [np.cos(el_g) * np.cos(az_g), np.cos(el_g) * np.sin(az_g), np.sin(el_g)], axis=-1
+        ).reshape(-1, 3)
+        self._lidar_az_step = 2 * math.pi / params.lidar_h_samples
+        self._lidar_rng = np.random.default_rng(0)
+        self._lidar_data = mujoco.MjData(m)
+        self._robot_geom = m.body_rootid[m.geom_bodyid] == m.body_rootid[self._hub]
 
         # start seated: every slab straight down, slides retracted, hub at the spawn point
         mujoco.mj_resetData(m, self.data)
@@ -235,3 +257,62 @@ class SimBackend:
             r.disable_depth_rendering()
         fovy = float(self.model.cam_fovy[self.model.camera(camera).id])
         return CameraFrame(rgb=rgb, depth=d, fovy_deg=fovy, time=float(self._render_data.time))
+
+    # ------------------------------------------------------------ lidar
+    def cast_lidar(self) -> LidarScan:
+        """One 360 deg sweep from the calling thread, using a snapshot of the current state.
+
+        Each sweep rotates the pattern by a random sub-step in azimuth, so successive scans
+        fill the gaps between beams (like the Mid-360's non-repetitive pattern). Returns
+        hits on the environment only: beams that hit TARS itself are dropped.
+        """
+        m, d = self.model, self._lidar_data
+        with self.lock:
+            d.qpos[:] = self.data.qpos
+            d.time = self.data.time
+        mujoco.mj_kinematics(m, d)
+        origin = d.site_xpos[self._lidar_site].copy()
+        rot = d.site_xmat[self._lidar_site].reshape(3, 3).copy()
+
+        a = self._lidar_rng.uniform(0.0, self._lidar_az_step)
+        ca, sa = math.cos(a), math.sin(a)
+        dirs = self._lidar_dirs @ np.array([[ca, sa, 0.0], [-sa, ca, 0.0], [0.0, 0.0, 1.0]])
+        dirs_world = dirs @ rot.T
+        n_rays = len(dirs)
+        geom = np.full(n_rays, -1, dtype=np.int32)
+        dist = np.full(n_rays, -1.0)
+        rmin, rmax = self.params.lidar_range
+        mujoco.mj_multiRay(
+            m,
+            d,
+            origin,
+            dirs_world.ravel(),
+            None,
+            1,
+            self._lidar_body,
+            geom,
+            dist,
+            None,
+            n_rays,
+            rmax,
+        )
+        hit = (geom >= 0) & (dist >= rmin) & (dist <= rmax)
+        hit[hit] &= ~self._robot_geom[geom[hit]]
+        points = (dirs[hit] * dist[hit, None]).astype(np.float32)
+
+        position = origin.copy()
+        position[:2] -= self._origin
+        quat = np.zeros(4)
+        mujoco.mju_mat2Quat(quat, rot.ravel())
+        a = self._root_q
+        base_position = d.qpos[a : a + 3].copy()
+        base_position[:2] -= self._origin
+        return LidarScan(
+            points=points,
+            time=float(d.time),
+            position=position,
+            quat=quat,
+            base_position=base_position,
+            base_quat=d.qpos[a + 3 : a + 7].copy(),
+            joint_q=d.qpos[self._qadr].copy(),
+        )

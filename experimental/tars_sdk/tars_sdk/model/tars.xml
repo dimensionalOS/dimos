@@ -18,6 +18,7 @@
     <material name="rubber" rgba="0.05 0.05 0.05 1" specular="0.2" shininess="0.2" reflectance="0"/>
     <material name="display" rgba="0.05 0.35 0.4 1" specular="0.9" shininess="0.9" reflectance="0.3" emission="0.25"/>
     <material name="axle" rgba="0.25 0.25 0.27 1" specular="0.2" shininess="0.2" reflectance="0"/>
+    <material name="glass" rgba="0.03 0.04 0.05 1" specular="0.9" shininess="0.9" reflectance="0.15"/>
   </asset>
   <default>
     <geom friction="1.2 0.01 0.0005" solref="0.00282843 1"/>
@@ -71,6 +72,10 @@
         <geom name="slab_2_seam_front_1" type="box" size="0.002 0.0475 0.0015" pos="0.07 0 -0.275" material="seam" class="visual"/>
         <geom name="slab_2_seam_back_1" type="box" size="0.002 0.0475 0.0015" pos="-0.07 0 -0.275" material="seam" class="visual"/>
         <geom name="slab_2_display" type="box" size="0.003 0.0425 0.03" pos="0.07 0 -0.02" material="display" class="visual"/>
+        <geom name="lidar_base" type="cylinder" size="0.0325 0.0091" pos="0 0 0.0841" material="aluminum" class="visual"/>
+        <geom name="lidar_window" type="cylinder" size="0.0312 0.01495" pos="0 0 0.10815" material="glass" class="visual"/>
+        <geom name="lidar_crown" type="cylinder" size="0.0325 0.0052" pos="0 0 0.1283" material="aluminum" class="visual"/>
+        <site name="lidar" pos="0 0 0.10815" size="0.01"/>
         <camera name="front_camera" pos="0.075 0 0.05" xyaxes="0 -1 0 0 0 1" fovy="70"/>
         <geom name="camera_lens" type="cylinder" size="0.012 0.004" pos="0.073 0 0.05" zaxis="1 0 0" material="rubber" class="visual"/>
         <body name="slab_2_lower" pos="0 0 -0.4">
