@@ -37,8 +37,7 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 
-# The crate is a workspace member, so cargo builds into the repo-root target dir.
-_BUILD = "cargo build --release"
+_BUILD = "nix build -L path:.#dimos-native-module-examples"
 
 
 class TfProducer(Module):
@@ -82,7 +81,7 @@ class TfProducer(Module):
 
 
 class TfListenerConfig(NativeModuleConfig):
-    executable: str = "../../../target/release/tf_listener"
+    executable: str = "result/bin/tf_listener"
     build_command: str = _BUILD
     source_dir: str = "examples/native-modules/rust"
     stdin_config: bool = True
@@ -99,7 +98,7 @@ class TfListenerModule(NativeModule):
 
 
 class TfBroadcasterConfig(NativeModuleConfig):
-    executable: str = "../../../target/release/tf_broadcaster"
+    executable: str = "result/bin/tf_broadcaster"
     build_command: str = _BUILD
     source_dir: str = "examples/native-modules/rust"
     stdin_config: bool = True

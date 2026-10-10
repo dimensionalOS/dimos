@@ -8,10 +8,26 @@ name = "virtual_mid360"
 path = "src/main.rs"
 
 [dependencies]
-dimos-livox = { path = "../livox/rust" }
-dimos-module = { path = "../../../../../native/rust/dimos-module" }
+livox-wire = { git = "https://github.com/jeff-hykin/livox-wire", rev = "441c4a16dbe2adb0683ece976cc800c6d7fbc790" }
+# Direct dependencies of the copied livox wire/pipeline/pcap modules. See src/main.rs.
+dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "6663bcb6e5e18f43a6cb9cf77ccbec613e310443" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "net", "sync"] }
 serde = { version = "1", features = ["derive"] }
 socket2 = "0.6"
 tracing = "0.1"
 validator = { version = "0.21", features = ["derive"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[workspace]
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
+[profile.dev]
+debug = 0
+
+[profile.test]
+debug = 0

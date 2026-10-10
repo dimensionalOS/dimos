@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Guard rails for bin/build-native-modules.
+"""Guard rails for bin/native-modules.
 
 That script's AST discovery and flake-reference parsing feed the CI inputs
 hash that gates the Cachix publish job: a class or path it misses would let a
@@ -31,6 +31,7 @@ import json
 import os
 from pathlib import Path
 import re
+import subprocess
 from types import ModuleType
 from typing import NamedTuple
 
@@ -38,13 +39,13 @@ import pytest
 
 from dimos.constants import DIMOS_PROJECT_ROOT
 
-_SCRIPT_PATH = DIMOS_PROJECT_ROOT / "bin" / "build-native-modules"
+_SCRIPT_PATH = DIMOS_PROJECT_ROOT / "bin" / "native-modules"
 if not _SCRIPT_PATH.is_file():
     pytest.skip("dimos is not running from a source checkout", allow_module_level=True)
 
 
-def _load_script() -> ModuleType:
-    loader = SourceFileLoader("build_native_modules", str(_SCRIPT_PATH))
+def _load_script(path: Path, name: str) -> ModuleType:
+    loader = SourceFileLoader(name, str(path))
     spec = spec_from_loader(loader.name, loader)
     assert spec is not None
     module = module_from_spec(spec)
@@ -52,15 +53,9 @@ def _load_script() -> ModuleType:
     return module
 
 
-_SCRIPT = _load_script()
+_SCRIPT = _load_script(_SCRIPT_PATH, "native_modules")
+_RELOCK = _load_script(DIMOS_PROJECT_ROOT / "bin" / "relock-shared-flakes", "relock_shared_flakes")
 _IN_GIT_CHECKOUT = (DIMOS_PROJECT_ROOT / ".git").exists()
-# (file, class) form of the script's externally-provisioned exclusions; their
-# machine-dependent build commands are exempt from the literal rule, and
-# discover() itself fails loudly if an entry goes stale.
-_PROVISIONED = {
-    (f"{qualname.rsplit('.', 1)[0].replace('.', '/')}.py", qualname.rsplit(".", 1)[-1])
-    for qualname in _SCRIPT.EXTERNALLY_PROVISIONED
-}
 
 
 class _ClassDef(NamedTuple):
@@ -168,19 +163,10 @@ def _closure_nix_configs(classes: list[_ClassDef]) -> set[tuple[str, str]]:
     for cls in classes:
         if cls.name not in closure or cls.name == "NativeModuleConfig":
             continue
-        if (cls.file, cls.name) in _PROVISIONED:
-            # The exclusion exists because the command is machine-dependent and
-            # unreadable. If it becomes statically readable, the publish gate
-            # can (and must) track it — the entry would then hide real inputs.
-            assert cls.command_kind == "opaque", (
-                f"{cls.file}: {cls.name}.build_command is statically readable — remove it"
-                " from EXTERNALLY_PROVISIONED in bin/build-native-modules"
-            )
-            continue
         kind, command, owner = effective_command(cls, frozenset())
         assert kind != "opaque", (
             f"{cls.file}: {cls.name}.build_command must default to a plain string literal "
-            "so bin/build-native-modules can read it without importing dimos"
+            "so bin/native-modules can read it without importing dimos"
         )
         # Deliberately independent of the production command parser: options
         # before `build` must not silently remove a config from both scans.
@@ -207,7 +193,7 @@ def test_recorder_is_in_the_publish_manifest() -> None:
         if module.qualname == "dimos.experimental.memory.rust_recorder.RustRecorderConfig"
     )
     assert recorder.build_dir == "dimos/experimental/memory/rust"
-    assert _SCRIPT._flake_ref_of(recorder) == ".#dimos-memory-recorder"
+    assert _SCRIPT._flake_ref_of(recorder) == "path:."
 
 
 @pytest.mark.parametrize("override", [None, "build_command", "source_dir"])
@@ -247,39 +233,124 @@ def test_ast_extraction_matches_runtime() -> None:
         assert runtime_dir == (DIMOS_PROJECT_ROOT / module.build_dir).resolve()
 
 
-def test_no_module_hashes_the_repo_root() -> None:
-    """A collected input of "." puts the whole-repo tree SHA in the marker key,
-    so it changes on every commit and the marker never matches. A
-    fileset.toSource `root` anchor (usually the repo root) must be skipped, not
-    hashed — regression guard for the rust_recorder fileset flake."""
-    for module in _SCRIPT.discover():
-        assert "." not in _SCRIPT._collect_input_paths(module), (
-            f"{module.qualname}: input set includes the repo root — a fileset root anchor "
-            "is being hashed, which busts the publish marker on every commit"
+def test_every_module_builds_from_its_own_directory() -> None:
+    """`path:.` from the module dir, hashing nothing outside it: a root ref copies all of LFS, an outside input escapes the publish key."""
+    modules = _SCRIPT.discover()
+    assert modules
+    for module in modules:
+        assert module.build_dir != ".", f"{module.qualname}: builds from the repository root"
+        ref = _SCRIPT._flake_ref_of(module)
+        assert ref == "path:." or ref.startswith("path:.#"), (
+            f"{module.qualname}: flake ref {ref!r} is not the `path:.#<package>` convention"
+        )
+        inputs = _SCRIPT._collect_input_paths(module)
+        assert inputs == {module.build_dir}, (
+            f"{module.qualname}: hashed inputs {sorted(inputs)} are not just "
+            f"{module.build_dir!r} — the flake reaches outside its own directory"
         )
 
 
-def test_recorder_fileset_covers_every_workspace_member() -> None:
-    """Cargo resolves the workspace from the root manifest, so the recorder's
-    fileset src must carry every [workspace] member — as static path literals,
-    because the publish gate can only hash literals. Deriving the list from
-    Cargo.toml at eval time (fromTOML) is invisible to the flake parser, which
-    then hashes the fileset root instead: the repo-root tree SHA busts the
-    publish marker on every commit."""
-    flake = DIMOS_PROJECT_ROOT / "dimos" / "experimental" / "memory" / "rust" / "flake.nix"
-    block = re.search(r"members\s*=\s*\[([^]]*)\]", (DIMOS_PROJECT_ROOT / "Cargo.toml").read_text())
-    assert block is not None, "no [workspace] members array in Cargo.toml"
-    members = re.findall(r'"([^"]+)"', block.group(1))
-    assert members, "no [workspace] members parsed from Cargo.toml"
-    literals, _path_inputs = _SCRIPT._flake_refs(flake)
-    for member in members:
-        assert any(member == lit or member.startswith(lit + "/") for lit in literals), (
-            f"workspace member {member!r} has no covering path literal in {flake} — "
-            "list it in the fileset.unions so the publish gate hashes it"
-        )
+_GUARD_EXEMPT = re.compile(r"^(target|build|__pycache__|result.*|.*~|.*\.o|.*\.so|\.sw.)$")
 
 
-@pytest.mark.skipif(not _IN_GIT_CHECKOUT, reason="needs git HEAD for object hashes")
+@pytest.mark.skipif(not _IN_GIT_CHECKOUT, reason="needs a git checkout to list untracked files")
+def test_module_dirs_hold_only_tracked_source() -> None:
+    """`path:.` copies untracked files too, so a stray `.DS_Store` changes the hash and misses Cachix."""
+    stray = []
+    for flake in _SCRIPT.flake_dirs():
+        # ls-files, not status: status runs the LFS clean filter, which CI disables
+        listing = subprocess.run(
+            ["git", "ls-files", "--others", "--directory", "-z", "--", flake],
+            cwd=DIMOS_PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        for entry in filter(None, listing.split("\0")):
+            path = Path(entry)
+            if not any(_GUARD_EXEMPT.match(part) for part in path.relative_to(flake).parts):
+                stray.append(path.as_posix())
+    assert not stray, f"delete these, or commit them if they are source: {stray}"
+
+
+def test_a_flake_that_fails_to_evaluate_fails_the_gate(monkeypatch: pytest.MonkeyPatch) -> None:
+    def broken_eval(command, **kwargs):
+        raise subprocess.CalledProcessError(1, command, "", "error: syntax error")
+
+    monkeypatch.setattr(_SCRIPT.subprocess, "run", broken_eval)
+    _SCRIPT.current_system.cache_clear()
+    with pytest.raises(RuntimeError, match="syntax error"):
+        _SCRIPT._checks_of("native/rust")
+    _SCRIPT.current_system.cache_clear()
+
+
+_IN_REPO_INPUT = re.compile(r'url = "github:dimensionalOS/dimos\?(?P<query>[^"]*)"')
+
+
+def _module_flakes() -> list[Path]:
+    return sorted(
+        flake for flake in DIMOS_PROJECT_ROOT.rglob("flake.nix") if ".git" not in flake.parts
+    )
+
+
+def _in_repo_input_refs() -> dict[str, list[str | None]]:
+    """flake path -> the `ref=` of each in-repo input it declares (None when absent)."""
+    refs: dict[str, list[str | None]] = {}
+    for flake in _module_flakes():
+        found: list[str | None] = []
+        for match in _IN_REPO_INPUT.finditer(flake.read_text()):
+            ref = re.search(r"(?:^|&)ref=([^&]*)", match.group("query"))
+            found.append(ref.group(1) if ref else None)
+        if found:
+            refs[flake.relative_to(DIMOS_PROJECT_ROOT).as_posix()] = found
+    return refs
+
+
+def _resolve(nodes: dict, node: str, name: str) -> str | None:
+    """The node `name` refers to from `node`, resolving a `follows` path from root."""
+    edge = nodes.get(node, {}).get("inputs", {}).get(name)
+    if edge is None:
+        return None
+    if isinstance(edge, str):
+        return edge
+    current = "root"
+    for step in edge:
+        following = _resolve(nodes, current, step)
+        if following is None:
+            return None
+        current = following
+    return current
+
+
+def _build_nixpkgs_revs(lock: Path) -> set[str]:
+    """Every nixpkgs revision a flake actually builds against.
+
+    Reached by walking only the edges that carry a build: a flake's own `nixpkgs`,
+    and the in-repo shared flakes, whose nixpkgs is the one their `buildNativeModule`
+    and C++ SDK use. Everything else in the graph is somebody's tooling -- crate2nix
+    pulls in cachix, which pins a nixpkgs of its own that no derivation here is built
+    from. Counting those would report a divergence that does not exist.
+    """
+    nodes = json.loads(lock.read_text()).get("nodes", {})
+    revs: set[str] = set()
+    seen: set[str] = set()
+    frontier = ["root"]
+    while frontier:
+        node = frontier.pop()
+        if node in seen:
+            continue
+        seen.add(node)
+        locked = nodes.get(node, {}).get("locked", {})
+        if locked.get("repo") == "nixpkgs" and locked.get("owner") in ("NixOS", "nixos"):
+            revs.add(locked["rev"])
+            continue
+        for name in _BUILD_EDGES:
+            if (target := _resolve(nodes, node, name)) is not None:
+                frontier.append(target)
+    return revs
+
+
+@pytest.mark.skipif(not _IN_GIT_CHECKOUT, reason="needs a git checkout to find the locks")
 def test_manifest_is_deterministic() -> None:
     modules = _SCRIPT.discover()
     manifest = _SCRIPT.build_manifest(modules)
@@ -369,5 +440,142 @@ def test_flake_refs_resolve_and_are_covered() -> None:
                     continue  # comment/string noise; real broken refs fail discovery loudly
                 assert any(target == c or target.startswith(c + "/") for c in covered), (
                     f"{flake}: reference {token!r} resolves to {target!r}, outside the hashed "
-                    "input set — teach bin/build-native-modules._FLAKE_REF the new form"
+                    "input set — teach bin/native-modules._FLAKE_REF the new form"
                 )
+
+
+@pytest.mark.skipif(not _IN_GIT_CHECKOUT, reason="needs a git checkout to read refs")
+def test_in_repo_inputs_follow_the_default_branch() -> None:
+    """A `ref=` on an in-repo input names a branch that is gone once its PR merges.
+
+    The revision is pinned by bin/relock-shared-flakes; the input must not name a branch.
+    """
+    pinned = {flake: refs for flake, refs in _in_repo_input_refs().items() if any(refs)}
+    assert not pinned, f"drop the `ref=` from these in-repo inputs: {pinned}"
+
+
+@pytest.mark.skipif(not _IN_GIT_CHECKOUT, reason="needs a git checkout to read refs")
+def test_module_locks_pin_the_shared_code_as_it_is_now() -> None:
+    """Every module's pin on native/cpp or native/rust must hold this commit's tree.
+
+    `nix flake lock` and `cargo build --locked` do not notice that the shared code
+    moved -- they only check that the lock is complete -- so a change there can land
+    while every module still builds against the revision before it. The revision is
+    free to be older than HEAD; what must match is the content it pins.
+    """
+    stale = {
+        _rel(lock): names
+        for lock in _RELOCK.flake_locks()
+        if (names := _RELOCK.stale_flake_inputs(lock))
+    }
+    stale |= {
+        _rel(manifest): why
+        for manifest in _RELOCK.cargo_manifests()
+        if (why := _RELOCK.stale_cargo_pins(manifest))
+    }
+    assert not stale, (
+        "these modules pin shared code that is not the code in this commit, so they build "
+        f"against the older version: {stale} -- push, run bin/relock-shared-flakes, commit"
+    )
+
+
+def _rel(path: Path) -> str:
+    return path.relative_to(DIMOS_PROJECT_ROOT).as_posix()
+
+
+_BUILD_EDGES = ("nixpkgs", "dimos-native-rust", "dimos-native-cpp")
+
+
+def _root_input(lock: Path, input_name: str) -> str | None:
+    """The revision of one input a lock's root actually builds against, following follows."""
+    data = json.loads(lock.read_text())
+    nodes, root = data["nodes"], data.get("root", "root")
+    name = nodes[root].get("inputs", {}).get(input_name)
+    seen: set[str] = set()
+    while isinstance(name, str) and name not in seen:
+        seen.add(name)
+        node = nodes.get(name, {})
+        if "locked" in node:
+            return node["locked"].get("rev")
+        name = node.get("inputs", {}).get(input_name)
+    return None
+
+
+@pytest.mark.parametrize("input_name", ["nixpkgs", "crate2nix"])
+def test_every_module_flake_builds_against_one(input_name: str) -> None:
+    """Every module flake pins the same nixpkgs and the same crate2nix.
+
+    Each flake is standalone and names `nixos-unstable` itself, so nothing makes them
+    agree -- they pin whenever they happen to be locked and drift apart silently. The
+    cost is not subtle: a different nixpkgs is a different rustc, so two modules on
+    two revisions share no dependency derivations at all, and CI rebuilds from scratch
+    what it should have substituted.
+
+    The repo-root flake is excluded on purpose: it builds no module, it is the
+    devcontainer, and bumping it is an everyone-lives-here change.
+    """
+    by_rev: dict[str, list[str]] = {}
+    for lock in sorted(DIMOS_PROJECT_ROOT.rglob("flake.lock")):
+        if ".git" in lock.parts or lock.parent == DIMOS_PROJECT_ROOT:
+            continue
+        rev = _root_input(lock, input_name)
+        if rev:
+            by_rev.setdefault(rev, []).append(
+                lock.parent.relative_to(DIMOS_PROJECT_ROOT).as_posix()
+            )
+    if not by_rev:
+        pytest.skip(f"no flake.lock pins a {input_name} to compare")
+    assert len(by_rev) == 1, (
+        f"module flakes disagree on {input_name}, so they share no build: "
+        + "; ".join(f"{rev[:10]} -> {mods}" for rev, mods in by_rev.items())
+        + f" -- run `nix flake update {input_name}` in each and commit the locks"
+    )
+
+
+def _rust_flake_dirs() -> list[Path]:
+    """Flake directories with a cargo manifest, plus the shared crates' own flake.
+
+    `native/rust` has no manifest of its own -- the two crates sit one level down --
+    so it is named rather than matched.
+    """
+    directories = {DIMOS_PROJECT_ROOT / "native" / "rust"}
+    for flake in DIMOS_PROJECT_ROOT.rglob("flake.nix"):
+        skipped = {".git", "target", "result", "build"}
+        if not skipped.isdisjoint(flake.parts):
+            continue
+        if (flake.parent / "Cargo.toml").exists():
+            directories.add(flake.parent)
+    return sorted(directories)
+
+
+def test_every_rust_flake_offers_a_tests_check() -> None:
+    """Rust tests are derivations, so a flake without the check is silently untested.
+
+    CI runs `bin/native-modules --test`, which skips a flake declaring no
+    `checks.<system>.tests` rather than failing -- that is what lets the C++ flakes
+    through. A rust crate that loses the attribute would be skipped just as quietly.
+    """
+    missing = [
+        directory.relative_to(DIMOS_PROJECT_ROOT).as_posix()
+        for directory in _rust_flake_dirs()
+        if "checks.tests" not in re.sub(r"\s+", "", (directory / "flake.nix").read_text())
+    ]
+    assert not missing, f"rust flakes with no tests check, so nothing runs their tests: {missing}"
+
+
+def test_ci_never_names_a_module_directory() -> None:
+    """The workflow must discover modules, not list them.
+
+    Every hardcoded module path in ci.yml has been a maintenance bug waiting to
+    happen: the list goes stale when a module is added, renamed or moved, and CI
+    keeps passing while silently testing less. Discovery belongs in `bin/`, where
+    it can be run and tested locally.
+    """
+    workflow = (DIMOS_PROJECT_ROOT / ".github" / "workflows" / "ci.yml").read_text()
+    module_dirs = [
+        directory.relative_to(DIMOS_PROJECT_ROOT).as_posix() for directory in _rust_flake_dirs()
+    ]
+    named = sorted(directory for directory in module_dirs if directory in workflow)
+    assert not named, (
+        f"ci.yml names module directories: {named} -- discover them in a bin/ script instead"
+    )

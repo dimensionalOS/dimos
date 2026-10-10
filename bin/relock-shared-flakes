@@ -1,0 +1,395 @@
+#!/usr/bin/env python3
+"""Relock every module onto the pushed revision that holds this commit's shared code.
+
+The shared code lives in this repository: native/cpp is a flake input of the C++
+modules, native/rust/dimos-module a git dependency of the rust ones. A change
+there lands while every module still pins the revision before it, and the modules
+keep building against the older code.
+
+This cannot be fixed at commit time. A lock records the hash of the *fetched*
+tree, so the revision has to be on the remote to lock it -- and an unpushed commit
+is not there to fetch. The fix belongs after the push, which is where autofix.ci
+runs. `nix flake update` and `cargo update` cannot do it: they resolve a branch,
+and this commit's tree is on no branch until it merges. So the pin is the nearest
+pushed commit (HEAD or an ancestor) holding the same tree: `nix flake prefetch`
+writes the flake.lock node, the cargo dependency is a `rev =` this script moves
+before `cargo update`, and crate-hashes.json beside each Cargo.lock lets crate2nix
+fetch that one revision instead of every ref of the monorepo.
+
+Only refs/heads/*, refs/tags/* and refs/pull/*/head count as pushed: GitHub
+rewrites a pull request's merge ref, so a pin on it would rot.
+
+What counts as stale is the pinned *content*, not the revision. A pin may name an
+older commit quite legitimately -- what matters is that the shared tree at that
+commit is the tree in this one.
+
+Stdlib only, so it runs on a bare `python3` like the other bin/ scripts.
+"""
+
+from __future__ import annotations
+
+from concurrent.futures import ThreadPoolExecutor
+from functools import cache
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+import threading
+from urllib.parse import parse_qs
+
+if sys.version_info >= (3, 11):
+    import tomllib
+else:
+    import tomli as tomllib
+
+OWNER, NAME = "dimensionalOS", "dimos"
+GIT_URL = f"https://github.com/{OWNER}/{NAME}"
+
+REPO_ROOT = Path(
+    subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=True
+    ).stdout.strip()
+)
+
+# dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "<sha>" }
+_GIT_DEP = re.compile(
+    rf'^(?P<name>[\w-]+) = \{{ git = "{re.escape(GIT_URL)}", rev = "(?P<rev>[0-9a-f]{{40}})"(?P<rest>[^}}\n]*)\}}$',
+    re.MULTILINE,
+)
+_LOCK_SOURCE = f"git+{GIT_URL}?"
+_GIT_SOURCE = re.compile(r"^git\+(?P<url>[^?#]+)(?:\?(?P<query>[^#]*))?#(?P<rev>[0-9a-f]{40})$")
+_FETCH_LOCK = threading.Lock()
+
+
+def _git(*args: str, check: bool = True) -> str:
+    proc = subprocess.run(
+        ["git", *args], cwd=REPO_ROOT, capture_output=True, text=True, check=False
+    )
+    if check and proc.returncode != 0:
+        raise SystemExit(f"git {' '.join(args)} failed:\n{proc.stderr}")
+    return proc.stdout.strip() if proc.returncode == 0 else ""
+
+
+def _rel(path: Path) -> str:
+    return path.relative_to(REPO_ROOT).as_posix()
+
+
+def tree_at(rev: str, subdir: str) -> str | None:
+    """The git tree hash of `subdir` at `rev`, fetching the revision if it is absent.
+
+    CI checks out shallow, so a pinned revision is usually not present. Fetching just
+    that one commit costs under a second; asking for the full history costs 344 MB.
+    """
+    tree = _git("rev-parse", f"{rev}:{subdir}", check=False)
+    if tree:
+        return tree
+    with _FETCH_LOCK:
+        _git("fetch", "--quiet", "--depth", "1", "origin", rev, check=False)
+    return _git("rev-parse", f"{rev}:{subdir}", check=False) or None
+
+
+@cache
+def _remote_refs() -> str:
+    with _FETCH_LOCK:  # one ls-remote, not one per worker
+        return _git("ls-remote", "--quiet", "origin")
+
+
+def pushed_revisions() -> frozenset[str]:
+    """Every commit the remote's branches, tags and pull-request heads point at."""
+    revs = set()
+    for line in _remote_refs().splitlines():
+        sha, _, ref = line.partition("\t")
+        if ref.startswith(("refs/heads/", "refs/tags/")) or (
+            ref.startswith("refs/pull/") and ref.endswith("/head")
+        ):
+            revs.add(sha)
+    return frozenset(revs)
+
+
+def _parents(rev: str) -> list[str]:
+    # cat-file, not `rev-parse ^@`: a shallow clone hides the parents of its boundary
+    body = _git("cat-file", "-p", rev, check=False)
+    return [line.split()[1] for line in body.splitlines() if line.startswith("parent ")]
+
+
+def pushed_revision_holding(subdirs: tuple[str, ...]) -> str | None:
+    """HEAD or its nearest pushed ancestor whose `subdirs` are the trees in HEAD."""
+    wanted = {subdir: tree_at("HEAD", subdir) for subdir in subdirs}
+    seen: set[str] = set()
+    frontier = [_git("rev-parse", "HEAD")]
+    while frontier and len(seen) < 100:
+        rev = frontier.pop(0)
+        if rev in seen:
+            continue
+        seen.add(rev)
+        trees = {subdir: tree_at(rev, subdir) for subdir in subdirs}  # fetches an absent commit
+        if rev in pushed_revisions() and trees == wanted:
+            return rev
+        frontier.extend(_parents(rev))
+    return None
+
+
+@cache
+def prefetch(url: str) -> dict:
+    """What nix records for a flake ref: its `locked` node and NAR `hash`."""
+    proc = subprocess.run(
+        ["nix", "flake", "prefetch", "--json", url], capture_output=True, text=True, check=False
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(f"nix flake prefetch {url}:\n{proc.stderr}")
+    return json.loads(proc.stdout)
+
+
+def _tarball(rev: str, subdir: str | None = None) -> str:
+    # one tarball fetch of this repo per revision; its NAR hash is the checkout's
+    return f"github:{OWNER}/{NAME}/{rev}" + (f"?dir={subdir}" if subdir else "")
+
+
+def _unpushed(path: Path, what: str) -> str:
+    return (
+        f"{_rel(path)}: no pushed commit holds this commit's {what} -- push first; a lock"
+        " records the hash of a fetched tree and cannot name a commit nobody can fetch"
+    )
+
+
+# --- flake.lock: the C++ modules' native/cpp input -----------------------------
+
+
+def flake_locks() -> list[Path]:
+    """The flake.lock beside every tracked flake.nix below the root, whether or not it exists yet.
+
+    Not the root's own: it is the devcontainer, it pins no shared code, and `nix flake lock path:<root>`
+    copies the whole worktree (cargo target/, LFS data) into the store.
+    """
+    return [
+        (REPO_ROOT / p).with_name("flake.lock")
+        for p in _git("ls-files", "*flake.nix").splitlines()
+        if "/" in p
+    ]
+
+
+def _in_repo_inputs(nodes: dict) -> dict[str, dict]:
+    """Root input name -> its node, for the inputs pinned to a directory of this repo."""
+    found = {}
+    for name, node_name in nodes.get("root", {}).get("inputs", {}).items():
+        if not isinstance(node_name, str):
+            continue  # a `follows` path, not a direct pin
+        locked = nodes.get(node_name, {}).get("locked", {})
+        if locked.get("owner") == OWNER and locked.get("repo") == NAME and "dir" in locked:
+            found[name] = nodes[node_name]
+    return found
+
+
+def stale_flake_inputs(lock: Path) -> list[str]:
+    """In-repo inputs whose pinned tree is not the tree in this commit."""
+    if not lock.is_file():
+        return []
+    stale = []
+    for name, node in _in_repo_inputs(json.loads(lock.read_text()).get("nodes", {})).items():
+        subdir = node["locked"]["dir"]
+        pinned = tree_at(node["locked"]["rev"], subdir)
+        if pinned is not None and pinned != tree_at("HEAD", subdir):
+            stale.append(name)
+    return stale
+
+
+def relock_flake(lock: Path) -> tuple[Path, bool, list[str]]:
+    """Pin one lock's in-repo inputs to this commit's tree, then lock any input it lacks. Returns (lock, changed, failures)."""
+    before = lock.read_text() if lock.is_file() else None
+    failures, overrides = [], []
+    if before is not None:
+        stale = set(stale_flake_inputs(lock))
+        for name, node in _in_repo_inputs(json.loads(before)["nodes"]).items():
+            subdir = node["locked"]["dir"]
+            rev = pushed_revision_holding((subdir,)) if name in stale else node["locked"]["rev"]
+            if rev is None:
+                failures.append(_unpushed(lock, subdir))
+                continue
+            # an override re-reads the pinned flake, so inputs it gained since get locked too
+            overrides += ["--override-input", name, _tarball(rev, subdir)]
+    proc = subprocess.run(
+        ["nix", "flake", "lock", f"path:{lock.parent}", *overrides],
+        cwd=lock.parent,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        failures.append(f"{_rel(lock)}: nix flake lock\n{proc.stderr}")
+    after = lock.read_text() if lock.is_file() else None
+    return lock, after != before, failures
+
+
+# --- Cargo.lock: the rust modules' dimos-module dependency ----------------------
+
+
+def cargo_manifests() -> list[Path]:
+    """Every Cargo.toml depending on a crate of this repository."""
+    manifests = [REPO_ROOT / p for p in _git("ls-files", "*Cargo.toml").splitlines()]
+    return [m for m in manifests if _GIT_DEP.search(m.read_text())]
+
+
+@cache
+def _crate_dirs() -> dict[str, str]:
+    """Crate name -> its repo-relative directory, for every crate in this repository."""
+    dirs = {}
+    for p in _git("ls-files", "*Cargo.toml").splitlines():
+        name = tomllib.loads((REPO_ROOT / p).read_text()).get("package", {}).get("name")
+        if name:
+            dirs[name] = Path(p).parent.as_posix()
+    return dirs
+
+
+def _git_packages(lock: Path) -> list[tuple[str, str, str]]:
+    """(name, version, source) of every package the lock takes from a git repository."""
+    packages = tomllib.loads(lock.read_text()).get("package", [])
+    return [
+        (p["name"], p["version"], p["source"])
+        for p in packages
+        if p.get("source", "").startswith("git+")
+    ]
+
+
+def _pinned_crates(lock: Path) -> list[tuple[str, str, str]]:
+    """(name, version, rev) of every package the lock takes from this repository."""
+    return [
+        (name, version, source.rsplit("#", 1)[1])
+        for name, version, source in _git_packages(lock)
+        if source.startswith(_LOCK_SOURCE)
+    ]
+
+
+def _hash_key(name: str, version: str, source: str) -> str:
+    # crate2nix's key is Cargo's package ID: the source minus its fragment, then name@version,
+    # or just the version when the name is the URL's last segment.
+    url = source.split("#", 1)[0]
+    last = url.split("?", 1)[0].rstrip("/").rsplit("/", 1)[-1]
+    return f"{url}#{version}" if last == name else f"{url}#{name}@{version}"
+
+
+@cache
+def _source_hash(source: str) -> str:
+    """The NAR hash of a Cargo.lock git source's checkout, as crate2nix's fetchgit wants it."""
+    parsed = _GIT_SOURCE.match(source)
+    if parsed is None:
+        raise RuntimeError(f"unrecognised git source {source!r}")
+    url, rev = parsed.group("url"), parsed.group("rev")
+    if url.removesuffix(".git") == GIT_URL:
+        return prefetch(_tarball(rev))["hash"]
+    query = parse_qs(parsed.group("query") or "")
+    if "branch" in query:
+        ref = f"&ref=refs/heads/{query['branch'][0]}"
+    elif "tag" in query:
+        ref = f"&ref=refs/tags/{query['tag'][0]}"
+    else:
+        ref = "&allRefs=1"
+    return prefetch(f"git+{url}?rev={rev}{ref}&submodules=1")["hash"]
+
+
+def _hashes_file(manifest: Path) -> Path:
+    return manifest.with_name("crate-hashes.json")
+
+
+def _stale_pin(manifest: Path, lock: Path) -> list[str]:
+    """Why the pin on this repository's crates is not this commit's; empty when it is."""
+    revs = {m.group("rev") for m in _GIT_DEP.finditer(manifest.read_text())}
+    stale = []
+    for name, _, rev in _pinned_crates(lock):
+        if rev not in revs:
+            stale.append(f"{name}: Cargo.lock pins {rev[:10]}, Cargo.toml another revision")
+        subdir = _crate_dirs().get(name)
+        pinned = tree_at(rev, subdir) if subdir else None
+        if subdir is None or (pinned is not None and pinned != tree_at("HEAD", subdir)):
+            stale.append(f"{name} @ {rev[:10]}")
+    return stale
+
+
+def _missing_hashes(manifest: Path, lock: Path) -> list[str]:
+    """Git dependencies crate-hashes.json does not cover; crate2nix would fetch every ref."""
+    if not manifest.with_name("flake.nix").is_file():
+        return []
+    path = _hashes_file(manifest)
+    hashes = json.loads(path.read_text()) if path.is_file() else {}
+    return [
+        f"{name}: no hash in crate-hashes.json"
+        for name, version, source in _git_packages(lock)
+        if _hash_key(name, version, source) not in hashes
+    ]
+
+
+def stale_cargo_pins(manifest: Path) -> list[str]:
+    """Why this module's git dependencies are not as they should be; empty when they are."""
+    lock = manifest.with_name("Cargo.lock")
+    if not lock.is_file():
+        return ["no Cargo.lock"]
+    return _stale_pin(manifest, lock) + _missing_hashes(manifest, lock)
+
+
+def relock_cargo(manifest: Path) -> tuple[Path, bool, list[str]]:
+    """Move one module's `rev =`, its Cargo.lock and its crate-hashes.json onto HEAD's tree."""
+    lock, hashes_file = manifest.with_name("Cargo.lock"), _hashes_file(manifest)
+    if not stale_cargo_pins(manifest):
+        return manifest, False, []
+    files = (manifest, lock, hashes_file)
+    before = {p: p.read_text() if p.is_file() else None for p in files}
+
+    if _stale_pin(manifest, lock):
+        names = [m.group("name") for m in _GIT_DEP.finditer(manifest.read_text())]
+        crates = {name for name, _, _ in _pinned_crates(lock)} | set(names)
+        subdirs = tuple(sorted(d for d in (_crate_dirs().get(c) for c in crates) if d))
+        rev = pushed_revision_holding(subdirs)
+        if rev is None:
+            return manifest, False, [_unpushed(manifest, " and ".join(subdirs))]
+        manifest.write_text(
+            _GIT_DEP.sub(
+                lambda m: f'{m.group("name")} = {{ git = "{GIT_URL}", rev = "{rev}"{m.group("rest")}}}',
+                before[manifest],
+            )
+        )
+        cargo = shutil.which("cargo")
+        if cargo is None:
+            message = f"{_rel(manifest)}: cargo is not installed; Cargo.lock cannot follow the rev"
+            return manifest, True, [message]
+        proc = subprocess.run(
+            [cargo, "update", "--quiet", *(f"--package={name}" for name in names)],
+            cwd=manifest.parent,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if proc.returncode != 0:
+            return manifest, True, [f"{_rel(manifest)}: cargo update\n{proc.stderr}"]
+
+    # crate2nix diffs this file against what it would generate, byte for byte: every git
+    # dependency, keys sorted, two-space indent, no final newline.
+    hashes = {_hash_key(*package): _source_hash(package[2]) for package in _git_packages(lock)}
+    hashes_file.write_text(json.dumps(hashes, indent=2, sort_keys=True))
+    changed = any(before[p] != (p.read_text() if p.is_file() else None) for p in files)
+    return manifest, changed, []
+
+
+def main() -> int:
+    locks, manifests = flake_locks(), cargo_manifests()
+    workers = int(os.environ.get("RELOCK_WORKERS") or min(8, len(locks) + len(manifests) or 1))
+    touched, failed = [], []
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        results = list(pool.map(relock_flake, locks)) + list(pool.map(relock_cargo, manifests))
+    for path, changed, failures in results:
+        if changed:
+            touched.append(_rel(path))
+        failed.extend(failures)
+
+    for path in sorted(touched):
+        print(f"relocked {path}")
+    for message in failed:
+        print(f"FAIL  {message}", file=sys.stderr)
+    if not touched and not failed:
+        print("every module already pins the shared code as it is in this commit")
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

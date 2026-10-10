@@ -59,9 +59,8 @@ class PointLioConfig(NativeModuleConfig):
     # since it publishes odometry and tf without going back through Python.
     base_fields: frozenset[str] = frozenset({"frame_id", "frame_id_prefix"})
     source_dir: str | None = "dimos/hardware/sensors/lidar/pointlio/rust"
-    # The crate is a workspace member, so cargo builds into the repo-root target dir.
-    executable: str = "../../../../../../target/release/pointlio_native"
-    build_command: str | None = "cargo build --release"
+    executable: str = "result/bin/pointlio_native"
+    build_command: str | None = "nix build -L path:."
 
     # Odometry is published as frame_id (fixed) -> sensor_frame_id (moving sensor),
     # and also broadcast on TF. The point cloud is stamped with sensor_frame_id

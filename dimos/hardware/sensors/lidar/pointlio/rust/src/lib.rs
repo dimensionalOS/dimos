@@ -14,3 +14,6 @@
 
 // dimos glue around pointlio-core.
 pub mod module;
+
+// The Livox SDK2 wire format, shared with the other Mid-360 modules.
+pub use livox_wire::{pcap, pipeline, wire};

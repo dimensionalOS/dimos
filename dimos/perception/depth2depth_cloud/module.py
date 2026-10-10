@@ -37,9 +37,8 @@ def has_nvidia_gpu() -> bool:
 class Depth2DepthCloudConfig(NativeModuleConfig):
     source_dir: str | None = "dimos/perception/depth2depth_cloud/rust"
     executable: str = "result/bin/depth2depth_cloud"
-    # "." in a git checkout enters the whole repo, so the flake can read ../../../../native/rust (tracked files only).
-    # This builds for the CPU (Metal on a Mac); with an NVIDIA GPU it becomes .#tensorrt (see below).
-    build_command: str | None = "nix build -L ."
+    # Builds for the CPU (Metal on a Mac); with an NVIDIA GPU it becomes path:.#tensorrt (see below).
+    build_command: str | None = "nix build -L path:."
     stdin_config: bool = True
     # frame_id is also a NativeModuleConfig field; listed so it still crosses to the Rust config.
     base_fields: frozenset[str] = frozenset({"frame_id"})
@@ -92,8 +91,8 @@ class Depth2DepthCloudConfig(NativeModuleConfig):
 
     @model_validator(mode="after")
     def _tensorrt_on_nvidia(self) -> Depth2DepthCloudConfig:
-        if self.build_command == "nix build -L ." and has_nvidia_gpu():
-            self.build_command = "nix build -L .#tensorrt"
+        if self.build_command == "nix build -L path:." and has_nvidia_gpu():
+            self.build_command = "nix build -L path:.#tensorrt"
         return self
 
     @field_validator("decode_scale")

@@ -6,9 +6,9 @@ Walks the whole `dimos` package for any `NativeModuleConfig` subclass whose
 store path to publish, so it stays outside the gate). Discovery is pure AST (stdlib only, no dimos import),
 so this script runs on a bare `python3` with nothing installed.
 
-Modes:
+Modes (exactly one):
 
-  (default)      Run every discovered module's `nix build`. Nix content-hashes
+  --build        Run every discovered module's `nix build`. Nix content-hashes
                  all inputs and the Cachix substituter makes an unchanged
                  closure near-instant, so builds run unconditionally.
   --dry-run      Report which modules would actually be realised rather than
@@ -25,6 +25,20 @@ Modes:
                  while the push daemon drains. cachix-action reports push
                  failures without failing the build, so CI must run this
                  before trusting a build enough to save the publish marker.
+  --lint         Build every flake's `checks.<system>.lint` instead of the
+                 module packages. For a rust crate that is the same crate graph
+                 compiled with clippy-driver, so the dependency derivations are
+                 the ones the package build already published and only
+                 first-party crates are compiled; the attribute is named for
+                 what it does, not for the tool, so a C++ flake can offer one
+                 too. Flakes declaring no such check skip.
+  --test         Build every flake's `checks.<system>.tests`: the same crate
+                 graph with the test targets compiled and run inside the
+                 derivation. Flakes declaring no such check skip. Both check
+                 modes discover flakes with `git ls-files`, not module classes,
+                 so the shared crates under native/rust are covered too, and a
+                 flake that does not build on this system simply declares no
+                 check for it.
   --record-links Print `result-symlink store-path` per built module. The
                  publish job stores this in the marker cache entry so consumers
                  can materialise binaries without evaluating anything.
@@ -35,24 +49,27 @@ Modes:
                  and skips building at test time.
 
 Why git object hashes are sound gate keys: a nix sandbox only sees store paths,
-and for these flakes every store path copied out of the repo is some tracked
-subtree — the build dir itself, a relative path literal (`../../common`), or a
-`path:` flake input. `git rev-parse HEAD:<path>` (or `HEAD^{tree}` for the
-repository root) hashes exactly that (tracked
-content + modes), so `result` symlinks and other untracked junk can never
-perturb the key, which is what broke the old hashFiles() marker (#2733).
-`git+file:` self-inputs are pinned to a rev + narHash in the module's
-flake.lock — itself part of the hashed tree — so they are deliberately not
-traversed. Hashes come from HEAD: uncommitted edits are invisible until
-committed. Bump MARKER_SALT to invalidate every published marker when build
-semantics change outside the hashed inputs (e.g. docker/ros/install-nix.sh).
+and every native module is a self-contained flake built with
+`nix build path:.#<package>` from its own directory. The only content it can
+reach is that directory, plus remote inputs pinned to a rev + narHash in its own
+flake.lock — which is itself inside the hashed directory, so pinned inputs are
+deliberately not traversed. `git rev-parse HEAD:<dir>` hashes exactly the tracked
+content + modes of that directory, so `result` symlinks, `target/` and other
+untracked junk can never perturb the key, which is what broke the old hashFiles()
+marker (#2733). `_collect_input_paths` enforces the "reaches nothing outside
+itself" invariant rather than assuming it. Hashes come from HEAD: uncommitted
+edits are invisible until committed. Bump MARKER_SALT to invalidate every
+published marker when build semantics change outside the hashed inputs (e.g.
+docker/ros/install-nix.sh).
 """
 
 import argparse
 import ast
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
+from functools import lru_cache
 import hashlib
+import json
 import os
 from pathlib import Path, PurePosixPath
 import re
@@ -65,6 +82,38 @@ import urllib.request
 MARKER_SALT = 1
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+@lru_cache(maxsize=1)
+def current_system() -> str:
+    """nix's name for this machine, e.g. aarch64-darwin.
+
+    Asked lazily, never at import: `--inputs-hash` runs on a runner that has no nix
+    yet -- that is the whole point of the gate -- and must stay a git-only operation.
+    """
+    return _run(
+        ["nix", "eval", "--raw", "--impure", "--expr", "builtins.currentSystem"]
+    ).stdout.strip()
+
+
+def _run(command: list[str] | str, cwd: Path = REPO_ROOT) -> subprocess.CompletedProcess[str]:
+    """Run `command`; a non-zero exit raises with everything it printed."""
+    try:
+        return subprocess.run(
+            command,
+            cwd=str(cwd),
+            shell=isinstance(command, str),
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except subprocess.CalledProcessError as error:
+        shown = command if isinstance(command, str) else " ".join(command)
+        raise RuntimeError(
+            f"`{shown}` in {cwd} exited {error.returncode}\n{error.stdout}{error.stderr}"
+        ) from None
+
+
 PACKAGE_DIR = REPO_ROOT / "dimos"
 IGNORED_DIRS = {"result", "build", "target", "__pycache__", ".git", "node_modules"}
 # Captured at import time; forked workers inherit it
@@ -127,15 +176,6 @@ def _literal_default(classdef: ast.ClassDef, field: str, source: str) -> str | N
     return None
 
 
-# Modules whose flake attr is chosen per machine at runtime (dim_slam's
-# sdk_variant: nix sees neither the installed GPU driver nor /proc/device-tree, so
-# orin vs thor and cuda12 vs cuda13 are undecidable during evaluation, and a CI
-# runner could only ever build its own variant anyway). They sit deliberately
-# outside this repo's build/publish gate; each machine builds the variant it needs.
-# Every other non-literal build_command still fails loudly.
-EXTERNALLY_PROVISIONED = frozenset({"dimos.mapping.dim_slam.dim_slam.DimSlamConfig"})
-
-
 def is_nix_build(command: str | None) -> bool:
     """True for a `nix build …` command, the only kind that yields a `result` to publish."""
     if command is None:
@@ -146,7 +186,6 @@ def is_nix_build(command: str | None) -> bool:
 
 def discover() -> tuple[DiscoveredModule, ...]:
     found = []
-    provisioned_seen = set()
     for dirpath, dirnames, filenames in os.walk(PACKAGE_DIR):
         dirnames[:] = sorted(d for d in dirnames if d not in IGNORED_DIRS)
         for filename in sorted(filenames):
@@ -163,9 +202,6 @@ def discover() -> tuple[DiscoveredModule, ...]:
                 ):
                     continue
                 qualname = f"{source[: -len('.py')].replace('/', '.')}.{node.name}"
-                if qualname in EXTERNALLY_PROVISIONED:
-                    provisioned_seen.add(qualname)
-                    continue
                 build_command = _literal_default(node, "build_command", source)
                 if not is_nix_build(build_command):
                     continue
@@ -186,12 +222,6 @@ def discover() -> tuple[DiscoveredModule, ...]:
                         build_dir=PurePosixPath(build_rel).as_posix(),
                     )
                 )
-    stale = EXTERNALLY_PROVISIONED - provisioned_seen
-    if stale:
-        raise SystemExit(
-            f"EXTERNALLY_PROVISIONED entries not found in the tree: {sorted(stale)}"
-            " — remove them from bin/build-native-modules"
-        )
     return tuple(sorted(found))
 
 
@@ -348,20 +378,14 @@ def _collect_input_paths(module: DiscoveredModule) -> set[str]:
         raise SystemExit(
             f"{module.source}: {module.qualname} builds a local flake but {root} is missing"
         )
-    queue, seen = [root], set()
-    while queue:
-        flake = queue.pop()
-        if flake in seen:
-            continue
-        seen.add(flake)
-        literals, path_inputs = _flake_refs(flake)
-        paths |= literals
-        for rel in path_inputs:
-            paths.add(rel)
-            sub = REPO_ROOT / rel / "flake.nix"
-            if not sub.is_file():
-                raise SystemExit(f"path: input {rel!r} of {flake} has no flake.nix")
-            queue.append(sub)  # a path: input is a flake — its refs count too
+    literals, path_inputs = _flake_refs(root)
+    for rel in literals | path_inputs:
+        if rel != module.build_dir and not rel.startswith(module.build_dir + "/"):
+            raise SystemExit(
+                f"{module.build_dir}/flake.nix: {rel!r} is outside the module directory."
+                " A module may only reach its own directory and its pinned remote"
+                " inputs; copy what it needs in, or take it as a flake input."
+            )
     return paths
 
 
@@ -394,7 +418,7 @@ def build_manifest(modules: tuple[DiscoveredModule, ...]) -> str:
             top.append(path)
     lines = [
         f"salt {MARKER_SALT}",
-        f"script {_git_object_hash('bin/build-native-modules')}",
+        f"script {_git_object_hash('bin/native-modules')}",
         f"cachix {os.environ.get('CACHIX_CACHE_NAME', '')}",
         *(f"module {m.qualname} dir={m.build_dir} cmd={m.build_command}" for m in modules),
         *(f"path {path} {_git_object_hash(path)}" for path in top),
@@ -409,7 +433,7 @@ def _in_cachix_cache(cache: str, store_path: str) -> bool:
         url,
         method="HEAD",
         # The CDN rejects urllib's default Python-urllib agent with a 403.
-        headers={"User-Agent": "nix/2.28 (dimos bin/build-native-modules)"},
+        headers={"User-Agent": "nix/2.28 (dimos bin/native-modules)"},
     )
     try:
         with urllib.request.urlopen(request, timeout=10) as response:
@@ -430,6 +454,9 @@ def _result_links(modules: tuple[DiscoveredModule, ...]) -> list[tuple[str, str]
     for module in modules:
         links = sorted((REPO_ROOT / module.build_dir).glob("result*"))
         if not links:
+            systems = _declared_systems(module)
+            if systems is not None and current_system() not in systems:
+                continue
             raise SystemExit(f"{module.build_dir}: no result symlink — run the build first")
         for link in links:
             entries.append((link.relative_to(REPO_ROOT).as_posix(), os.readlink(str(link))))
@@ -481,22 +508,87 @@ def verify_published(modules: tuple[DiscoveredModule, ...]) -> None:
         raise SystemExit(f"paths never appeared in the {cache} Cachix cache:\n{listing}")
 
 
-def build_one(module: DiscoveredModule, dry_run: bool) -> tuple[str, bool, str]:
-    name = module.qualname.rsplit(".", 1)[-1]
-    command = module.build_command + (" --dry-run" if dry_run else "")
-    build_dir = REPO_ROOT / module.build_dir
-    _log(f"START: {name} in {build_dir}: {command}")
+def _declared_systems(module: DiscoveredModule) -> frozenset[str] | None:
+    """The systems a module's flake declares packages for, or None if it cannot say.
+
+    A module may legitimately not exist on this machine -- realsense links
+    librealsense, which nixpkgs will not evaluate off Linux, so its flake lists only
+    the Linux systems. Asking the flake is narrower than catching the build error:
+    a package missing from a system the flake *does* declare is a typo, and must
+    still fail loudly.
+    """
+    ref = _flake_ref_of(module).split("#", 1)[0] or "."
     proc = subprocess.run(
-        command,
-        shell=True,
-        cwd=str(build_dir),
+        ["nix", "eval", "--json", f"{ref}#packages", "--apply", "builtins.attrNames"],
+        cwd=str(REPO_ROOT / module.build_dir),
         capture_output=True,
         text=True,
         check=False,
     )
-    body = (proc.stdout or "") + (proc.stderr or "")
     if proc.returncode != 0:
-        raise RuntimeError(f"{name} exited {proc.returncode}\n{body}")
+        return None
+    try:
+        return frozenset(json.loads(proc.stdout))
+    except json.JSONDecodeError:
+        return None
+
+
+def flake_dirs() -> list[str]:
+    """Every tracked directory holding a `flake.nix`, repo-relative, sorted.
+
+    Checks are discovered from the flakes themselves rather than from the module
+    classes: the shared crates under `native/rust` are no module and would
+    otherwise go unlinted and untested.
+    """
+    tracked = subprocess.run(
+        ["git", "ls-files", "*flake.nix"],
+        cwd=str(REPO_ROOT),
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.split()
+    return sorted(str(PurePosixPath(path).parent) for path in tracked if "/" in path)
+
+
+def _checks_of(build_dir: str) -> frozenset[str] | None:
+    """The names under `checks.<system>`, or None if the flake declares none for this system; an eval failure raises."""
+    system = current_system()
+    # Read the flake as `nix build path:.` does; builtins.getFlake "path:…" can serve a stale copy.
+    apply = f'c: if c ? "{system}" then builtins.attrNames c."{system}" else null'
+    names = json.loads(
+        _run(
+            ["nix", "eval", "--json", "path:.#checks", "--apply", apply], REPO_ROOT / build_dir
+        ).stdout
+    )
+    return None if names is None else frozenset(names)
+
+
+def check_one(build_dir: str, check: str) -> tuple[str, bool, str]:
+    """Build one flake's `checks.<system>.<check>`; a flake without it fails the gate."""
+    names = _checks_of(build_dir)
+    if names is None:
+        return build_dir, False, f"SKIP:  {build_dir} does not build on {current_system()}"
+    if check not in names:
+        raise RuntimeError(
+            f"{build_dir} declares no {check} check: every flake declares checks.<system>.lint"
+            " and checks.<system>.tests, a no-op when there is nothing to run"
+        )
+    attr = f"path:.#checks.{current_system()}.{check}"
+    _log(f"START: {check} {build_dir}: {attr}")
+    _run(["nix", "build", "-L", attr, "--no-link"], REPO_ROOT / build_dir)
+    return build_dir, False, f"DONE:  {check} {build_dir}"
+
+
+def build_one(module: DiscoveredModule, dry_run: bool) -> tuple[str, bool, str]:
+    name = module.qualname.rsplit(".", 1)[-1]
+    command = module.build_command + (" --dry-run" if dry_run else "")
+    build_dir = REPO_ROOT / module.build_dir
+    systems = _declared_systems(module)
+    if systems is not None and current_system() not in systems:
+        return name, False, f"SKIP:  {name} declares no packages for {current_system()}"
+    _log(f"START: {name} in {build_dir}: {command}")
+    proc = _run(command, build_dir)
+    body = proc.stdout + proc.stderr
     # A dry run lists the derivations it would realise; saying nothing means every
     # output already substitutes, so a real run would push nothing new.
     return name, dry_run and "will be built" in body, f"DONE:  {name}\n{body}".rstrip()
@@ -504,7 +596,8 @@ def build_one(module: DiscoveredModule, dry_run: bool) -> tuple[str, bool, str]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    mode = parser.add_mutually_exclusive_group()
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--build", action="store_true", help="nix build every discovered module")
     mode.add_argument("--dry-run", action="store_true", help="report what a build would realise")
     mode.add_argument(
         "--inputs-hash", action="store_true", help="print the publish-marker key material hash"
@@ -513,6 +606,16 @@ def main() -> None:
         "--verify-published",
         action="store_true",
         help="check the built out paths are downloadable from the Cachix cache",
+    )
+    mode.add_argument(
+        "--lint",
+        action="store_true",
+        help="build every flake's checks.<system>.lint instead of the module packages",
+    )
+    mode.add_argument(
+        "--test",
+        action="store_true",
+        help="build every flake's checks.<system>.tests, which compiles and runs its tests",
     )
     mode.add_argument(
         "--record-links",
@@ -549,10 +652,19 @@ def main() -> None:
     failed = 0
     pending: list[str] = []
     workers = int(os.environ.get("BUILD_WORKERS") or os.cpu_count() or 2)
-    verb = "Checking" if args.dry_run else "Building"
-    _log(f"{verb} {len(modules)} module(s) with up to {workers} workers")
+    check = "lint" if args.lint else "tests" if args.test else None
+    targets: list[str] = flake_dirs() if check else [m.qualname for m in modules]
+    verb = check.capitalize() if check else "Checking" if args.dry_run else "Building"
+    _log(f"{verb}: {len(targets)} target(s) with up to {workers} workers")
     with ProcessPoolExecutor(max_workers=workers) as executor:
-        futures = {executor.submit(build_one, module, args.dry_run): module for module in modules}
+        futures = (
+            {executor.submit(check_one, build_dir, check): build_dir for build_dir in targets}
+            if check
+            else {
+                executor.submit(build_one, module, args.dry_run): module.qualname
+                for module in modules
+            }
+        )
         for future in as_completed(futures):
             try:
                 name, needs_build, status = future.result()
@@ -560,7 +672,7 @@ def main() -> None:
                 if needs_build:
                     pending.append(name)
             except Exception as error:
-                _log(f"FAIL:  {futures[future].qualname}: {error}")
+                _log(f"FAIL:  {futures[future]}: {error}")
                 failed += 1
     if failed:
         sys.exit(f"{failed} {'check' if args.dry_run else 'build'}(s) failed")

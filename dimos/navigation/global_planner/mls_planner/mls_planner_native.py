@@ -29,9 +29,8 @@ from dimos.navigation import spec
 
 class MLSPlannerNativeConfig(NativeModuleConfig):
     source_dir: str | None = "dimos/navigation/global_planner/mls_planner/rust"
-    # The crate is a workspace member, so cargo builds into the repo-root target dir.
-    executable: str = "../../../../../target/release/mls_planner"
-    build_command: str | None = "cargo build --release"
+    executable: str = "result/bin/mls_planner"
+    build_command: str | None = "nix build -L path:."
     stdin_config: bool = True
 
     world_frame: str = "odom"
