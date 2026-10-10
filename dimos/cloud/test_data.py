@@ -22,8 +22,9 @@ import time
 from typing import Any
 
 import pytest
+import typer
 
-from dimos.cloud import data as cd
+from dimos.cloud import cli, data as cd
 from dimos.cloud.data import CloudData, DataApi, MultipartBackend
 from dimos.core.global_config import global_config
 
@@ -416,26 +417,161 @@ def test_transport_maps_http_errors(monkeypatch: pytest.MonkeyPatch) -> None:
         t.request("POST", "/v1/data/uploads", {})
 
 
+@pytest.mark.parametrize("skipped", [False, True])
+@pytest.mark.parametrize(
+    "api_url,console_url",
+    [
+        ("https://api.dimensional.org", "https://console.dimensional.org"),
+        ("https://api.dimensional.org/", "https://console.dimensional.org"),
+        ("https://api.staging.dimensional.org", "https://console.staging.dimensional.org"),
+        ("https://api.staging.dimensional.org/", "https://console.staging.dimensional.org"),
+    ],
+)
+def test_upload_cli_prints_console_link(
+    env: tuple[CloudData, FakeTransport, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    skipped: bool,
+    api_url: str,
+    console_url: str,
+) -> None:
+    cloud, t, db = env
+    monkeypatch.setattr(cli, "CloudData", lambda: cloud)
+    monkeypatch.setattr(global_config, "dimos_cloud_url", api_url)
+    if skipped:
+        cloud.upload(db)
+
+    cli.upload(db, None, None, None, None)
+
+    captured = capsys.readouterr()
+    note = "already uploaded" if skipped else "complete"
+    assert f"{db.name}: {note} (u0)\n" in captured.out
+    assert "  console preview: failed:" in captured.out  # fixture's invalid stream name
+    assert f"  console: {console_url}/console/data?open=u0\n" in captured.out
+    assert captured.err == ""
+    assert list(t.uploads) == ["u0"] and t.uploads["u0"]["state"] == "complete"
+
+
+@pytest.mark.parametrize(
+    "upload_id,encoded_id",
+    [
+        ("12345678-1234-5678-abcd-123456789abc", "12345678-1234-5678-abcd-123456789abc"),
+        ("recording /?#&=+%é", "recording%20%2F%3F%23%26%3D%2B%25%C3%A9"),
+    ],
+)
+def test_upload_cli_console_link_preserves_full_id(
+    env: tuple[CloudData, FakeTransport, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    upload_id: str,
+    encoded_id: str,
+) -> None:
+    cloud, t, db = env
+    original_id = cloud.upload(db)["upload_id"]
+    t.uploads[upload_id] = t.uploads.pop(original_id)
+    monkeypatch.setattr(cli, "CloudData", lambda: cloud)
+    monkeypatch.setattr(global_config, "dimos_cloud_url", "https://api.dimensional.org")
+
+    cli.upload(db, None, None, None, None)
+
+    captured = capsys.readouterr()
+    assert f"{db.name}: already uploaded ({upload_id[:12]})\n" in captured.out
+    assert (
+        f"  console: https://console.dimensional.org/console/data?open={encoded_id}\n"
+        in captured.out
+    )
+    assert captured.err == ""
+
+
+@pytest.mark.parametrize(
+    "api_url",
+    [
+        "http://localhost:8000",
+        "https://cloud.example/",
+        "https://api.dimensional.org.evil.example",
+        "http://api.dimensional.org",
+        "https://api.dimensional.org/v1",
+        "https://api.dimensional.org//",
+    ],
+)
+def test_upload_cli_omits_console_link_for_unknown_api(
+    env: tuple[CloudData, FakeTransport, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    api_url: str,
+) -> None:
+    cloud, _, db = env
+    monkeypatch.setattr(cli, "CloudData", lambda: cloud)
+    monkeypatch.setattr(global_config, "dimos_cloud_url", api_url)
+
+    cli.upload(db, None, None, None, None)
+
+    captured = capsys.readouterr()
+    assert f"{db.name}: complete (u0)\n" in captured.out
+    assert "  console:" not in captured.out
+    assert "https://" not in captured.out
+    assert captured.err == ""
+
+
+def test_upload_cli_keeps_quota_warning_without_preview(
+    env: tuple[CloudData, FakeTransport, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    cloud, t, db = env
+    blob = db.with_suffix(".bin")
+    blob.write_bytes(b"raw artifact")
+    request = t.request
+
+    def warning_request(
+        method: str, path: str, body: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        result = request(method, path, body)
+        if path.endswith("/complete"):
+            result["quota"] = {"state": "warn", "message": "storage at 90% of quota"}
+        return result
+
+    monkeypatch.setattr(t, "request", warning_request)
+    monkeypatch.setattr(cli, "CloudData", lambda: cloud)
+    monkeypatch.setattr(global_config, "dimos_cloud_url", "https://api.dimensional.org")
+
+    cli.upload(blob, None, None, None, None)
+
+    captured = capsys.readouterr()
+    assert captured.out.strip().splitlines() == [
+        f"{blob.name}: complete (u0)",
+        "  console: https://console.dimensional.org/console/data?open=u0",
+    ]
+    assert captured.err == "storage at 90% of quota\n"
+
+
+@pytest.mark.parametrize("endpoint", ["/uploads", "/uploads/u0/complete"])
 def test_upload_cli_exits_nonzero_on_server_error(
-    env: tuple[CloudData, FakeTransport, Path], monkeypatch: pytest.MonkeyPatch
+    env: tuple[CloudData, FakeTransport, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    endpoint: str,
 ) -> None:
     """`dimos data upload` must fail loudly (exit 1), not swallow a server fault."""
-    import typer
-
-    from dimos.cloud import cli
-
     cloud, t, db = env
+    request = t.request
 
     def failing_request(
         method: str, path: str, body: dict[str, Any] | None = None
     ) -> dict[str, Any]:
-        raise RuntimeError("POST /v1/data/uploads: 503 storage unavailable")
+        if path == f"/v1/data{endpoint}":
+            raise RuntimeError(f"POST {path}: 503 storage unavailable")
+        return request(method, path, body)
 
     monkeypatch.setattr(t, "request", failing_request)
     monkeypatch.setattr(cli, "CloudData", lambda: cloud)
+    monkeypatch.setattr(global_config, "dimos_cloud_url", "https://api.dimensional.org")
     with pytest.raises(typer.Exit) as e:
         cli.upload(db, None, None, None, None)
     assert e.value.exit_code == 1
+    captured = capsys.readouterr()
+    assert captured.out.strip() == ""
+    assert captured.err == f"{db.name}: POST /v1/data{endpoint}: 503 storage unavailable\n1\n"
 
 
 def test_matching_suffix_uploads_raw_and_unstamped(
