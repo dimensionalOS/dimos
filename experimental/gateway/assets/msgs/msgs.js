@@ -1,0 +1,1670 @@
+var SIZE = {
+  int8_t: 1,
+  int16_t: 2,
+  int32_t: 4,
+  int64_t: 8,
+  float: 4,
+  double: 8,
+  boolean: 1,
+  byte: 1
+};
+var TYPED = {
+  int16_t: Int16Array,
+  int32_t: Int32Array,
+  int64_t: BigInt64Array,
+  float: Float32Array,
+  double: Float64Array
+};
+var utf8Decoder = new TextDecoder("utf-8", {
+  fatal: true,
+  ignoreBOM: true
+});
+var utf8Encoder = new TextEncoder();
+var TYPE_NAME = /^[A-Za-z_][A-Za-z0-9_]*\.[A-Za-z_][A-Za-z0-9_]*$/;
+var Writer = class {
+  bytes = new Uint8Array(256);
+  view = new DataView(this.bytes.buffer);
+  off = 0;
+  need(n) {
+    if (this.off + n <= this.bytes.length) {
+      return;
+    }
+    const grown = new Uint8Array(Math.max(this.bytes.length * 2, this.off + n));
+    grown.set(this.bytes);
+    this.bytes = grown;
+    this.view = new DataView(grown.buffer);
+  }
+};
+function readScalar(r, type) {
+  const { view } = r;
+  const at = r.off;
+  if (type === "string") {
+    const len = view.getInt32(at, false);
+    if (len < 1 || at + 4 + len > r.bytes.byteLength) {
+      throw new Error(`bad string length ${len} at ${at}`);
+    }
+    r.off = at + 4 + len;
+    return utf8Decoder.decode(r.bytes.subarray(at + 4, at + 3 + len));
+  }
+  r.off = at + SIZE[type];
+  switch (type) {
+    case "double":
+      return view.getFloat64(at, false);
+    case "float":
+      return view.getFloat32(at, false);
+    case "int64_t":
+      return view.getBigInt64(at, false);
+    case "int32_t":
+      return view.getInt32(at, false);
+    case "int16_t":
+      return view.getInt16(at, false);
+    case "int8_t":
+      return view.getInt8(at);
+    case "byte":
+      return view.getUint8(at);
+    case "boolean":
+      return view.getUint8(at) !== 0;
+  }
+  throw new Error(`unknown LCM primitive ${type}`);
+}
+function writeScalar(w, type, value) {
+  if (type === "string") {
+    const text = utf8Encoder.encode(value === void 0 ? "" : String(value));
+    w.need(5 + text.length);
+    w.view.setInt32(w.off, text.length + 1, false);
+    w.bytes.set(text, w.off + 4);
+    w.bytes[w.off + 4 + text.length] = 0;
+    w.off += 5 + text.length;
+    return;
+  }
+  const at = w.off;
+  w.need(SIZE[type]);
+  w.off += SIZE[type];
+  const v = w.view;
+  switch (type) {
+    case "double":
+      return v.setFloat64(at, Number(value ?? 0), false);
+    case "float":
+      return v.setFloat32(at, Number(value ?? 0), false);
+    case "int64_t":
+      return v.setBigInt64(at, typeof value === "bigint" ? value : BigInt(Math.trunc(Number(value ?? 0))), false);
+    case "int32_t":
+      return v.setInt32(at, Number(value ?? 0), false);
+    case "int16_t":
+      return v.setInt16(at, Number(value ?? 0), false);
+    case "int8_t":
+      return v.setInt8(at, Number(value ?? 0));
+    case "byte":
+      return v.setUint8(at, Number(value ?? 0));
+    case "boolean":
+      return v.setUint8(at, value ? 1 : 0);
+  }
+  throw new Error(`unknown LCM primitive ${type}`);
+}
+var Codec = class {
+  structs;
+  decoders;
+  constructor(structs) {
+    this.structs = structs;
+    this.decoders = new Map();
+  }
+  rows(name) {
+    const rows = this.structs[name];
+    if (!Array.isArray(rows)) {
+      throw new Error(`no schema for struct ${name}`);
+    }
+    return rows;
+  }
+  isPrimitive(type) {
+    return type === "string" || Object.hasOwn(SIZE, type);
+  }
+  count(dim, value) {
+    const n = typeof dim === "number" ? dim : value[dim];
+    if (typeof n !== "number" || n < 0 || !Number.isInteger(n)) {
+      throw new Error(`bad array length ${String(n)}`);
+    }
+    return n;
+  }
+  fields(name) {
+    const done = this.decoders.get(name);
+    if (done) {
+      return done;
+    }
+    if (done === null) {
+      throw new Error(`recursive struct ${name}`);
+    }
+    this.decoders.set(name, null);
+    const decoders = this.rows(name).map(([field, type, dims]) => {
+      if (field === "__proto__") {
+        throw new Error(`field __proto__ is not supported (${name})`);
+      }
+      const primitive = this.isPrimitive(type);
+      const one = primitive ? (r) => readScalar(r, type) : (r) => this.readStruct(r, type);
+      if (dims === null) {
+        return (r, out) => {
+          out[field] = one(r);
+        };
+      }
+      if (dims.length !== 1) {
+        throw new Error(`multi-dimensional arrays are not supported (${name}.${field})`);
+      }
+      const [dim] = dims;
+      return (r, out) => {
+        const n = this.count(dim, out);
+        const size = primitive ? SIZE[type] ?? 5 : 1;
+        if (r.off + n * size > r.bytes.byteLength) {
+          throw new Error(`${name}.${field}: ${n} x ${type} overruns the frame`);
+        }
+        if (type === "byte" || type === "int8_t") {
+          const view = r.bytes.subarray(r.off, r.off + n);
+          out[field] = type === "byte" ? view : new Int8Array(view.buffer, view.byteOffset, n);
+          r.off += n;
+          return;
+        }
+        const Typed = TYPED[type];
+        const items = Typed ? new Typed(n) : new Array(n);
+        for (let i = 0; i < n; i++) {
+          items[i] = one(r);
+        }
+        out[field] = items;
+      };
+    });
+    this.decoders.set(name, decoders);
+    return decoders;
+  }
+  readStruct(r, name) {
+    const out = {};
+    for (const decode2 of this.fields(name)) {
+      decode2(r, out);
+    }
+    return out;
+  }
+  writeStruct(w, name, value) {
+    const rows = this.rows(name);
+    const counts = {};
+    for (const [field, type, dims] of rows) {
+      const item = value?.[field];
+      const primitive = this.isPrimitive(type);
+      const one = (x) => primitive ? writeScalar(w, type, x) : this.writeStruct(w, type, x ?? {});
+      if (dims === null) {
+        const counted = rows.filter(([, , d]) => d?.[0] === field).map(([f]) => value?.[f]).filter((a) => a !== void 0);
+        if (counted.length > 0) {
+          const n2 = counted[0].length;
+          if (counted.some((a) => a.length !== n2)) {
+            throw new Error(`${name}: the arrays counted by ${field} differ in length`);
+          }
+          counts[field] = n2;
+          writeScalar(w, type, n2);
+        } else {
+          counts[field] = Number(item ?? 0);
+          one(item);
+        }
+        continue;
+      }
+      if (dims.length !== 1) {
+        throw new Error(`multi-dimensional arrays are not supported (${name}.${field})`);
+      }
+      const [dim] = dims;
+      const n = typeof dim === "number" ? dim : counts[dim];
+      const items = item ?? [];
+      if (item !== void 0 && items.length !== n) {
+        throw new Error(`${name}.${field}: ${items.length} items, the schema wants ${n}`);
+      }
+      for (let i = 0; i < n; i++) {
+        one(items[i]);
+      }
+    }
+  }
+};
+function fingerprintBytes(hex) {
+  return Uint8Array.from({
+    length: 8
+  }, (_, i) => parseInt(hex.slice(i * 2, i * 2 + 2), 16));
+}
+function fingerprintOf(bytes) {
+  if (bytes.byteLength < 8) {
+    throw new Error("frame shorter than its 8-byte fingerprint");
+  }
+  return Array.from(bytes.subarray(0, 8), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+function withName(name, fingerprint, decode2, encode) {
+  return Object.freeze({
+    name,
+    fingerprint,
+    decode: decode2,
+    encode,
+    zenohKey: (topic) => `${topic.replace(/\/+$/, "")}/${name}`,
+    lcmChannel: (topic) => `${topic}#${name}`
+  });
+}
+function createRegistry(structs, types, missing) {
+  const codec = new Codec(structs);
+  const byName = new Map();
+  const byFingerprint = new Map();
+  const unsupported = new Map(Object.entries(missing));
+  const add = (type) => {
+    byName.set(type.name, type);
+    unsupported.delete(type.name);
+    if (type.fingerprint !== null) {
+      const list = (byFingerprint.get(type.fingerprint) ?? []).filter((t) => t.name !== type.name);
+      byFingerprint.set(type.fingerprint, [
+        type,
+        ...list
+      ]);
+    }
+    return type;
+  };
+  for (const [name, fingerprint] of Object.entries(types)) {
+    const expected = fingerprintBytes(fingerprint);
+    add(withName(name, fingerprint, (bytes) => {
+      for (let i = 0; i < 8; i++) {
+        if (bytes[i] !== expected[i]) {
+          throw new Error(`fingerprint mismatch: the frame is not a ${name}`);
+        }
+      }
+      const r = {
+        view: new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+        bytes,
+        off: 8
+      };
+      const value = codec.readStruct(r, name);
+      if (r.off !== bytes.byteLength) {
+        throw new Error(`${name}: ${bytes.byteLength - r.off} trailing bytes`);
+      }
+      return value;
+    }, (value) => {
+      const w = new Writer();
+      w.need(8);
+      w.bytes.set(expected);
+      w.off = 8;
+      codec.writeStruct(w, name, value);
+      return w.bytes.slice(0, w.off);
+    }));
+  }
+  const typeOfChannel2 = (channel) => {
+    const hash = channel.lastIndexOf("#");
+    const name = hash >= 0 ? channel.slice(hash + 1) : channel.slice(channel.lastIndexOf("/") + 1);
+    return TYPE_NAME.test(name) ? name : void 0;
+  };
+  const lookup2 = (name) => {
+    const type = byName.get(name);
+    if (type) {
+      return type;
+    }
+    const reason = unsupported.get(name);
+    throw new Error(reason ? `${name} has no LCM schema (${reason}): register() a decoder for it` : `unknown message type ${name}`);
+  };
+  const decode2 = (bytes) => {
+    const fingerprint = fingerprintOf(bytes);
+    const type = byFingerprint.get(fingerprint)?.[0];
+    if (!type) {
+      throw new Error(`no message type has fingerprint ${fingerprint}`);
+    }
+    return type.decode(bytes);
+  };
+  const decodeChannel2 = (channel, bytes) => {
+    const name = typeOfChannel2(channel);
+    if (name !== void 0 && (byName.has(name) || unsupported.has(name))) {
+      return lookup2(name).decode(bytes);
+    }
+    return decode2(bytes);
+  };
+  const decodeMessage2 = (message) => message.kind === "delete" ? void 0 : decodeChannel2(message.key, message.bytes);
+  const register2 = (name, fingerprint, decodeFn, encodeFn) => {
+    if (!TYPE_NAME.test(name)) {
+      throw new Error(`register: the name must be "<package>.<Type>", got ${JSON.stringify(name)}`);
+    }
+    if (fingerprint !== null && !/^[0-9a-f]{16}$/.test(fingerprint)) {
+      throw new Error(`register: the fingerprint must be 16 lowercase hex chars or null, got ${JSON.stringify(fingerprint)}`);
+    }
+    const encode = encodeFn ?? (() => {
+      throw new Error(`${name} was registered without an encoder`);
+    });
+    return add(withName(name, fingerprint, decodeFn, encode));
+  };
+  return {
+    decode: decode2,
+    decodeChannel: decodeChannel2,
+    decodeMessage: decodeMessage2,
+    typeOfChannel: typeOfChannel2,
+    lookup: lookup2,
+    register: register2,
+    getTypeNames: () => [
+      ...byName.keys()
+    ].sort(),
+    getMissingTypes: () => Object.fromEntries(unsupported)
+  };
+}
+var STRUCTS = {
+  "builtin_interfaces.Time": [
+    [
+      "sec",
+      "int32_t",
+      null
+    ],
+    [
+      "nanosec",
+      "int32_t",
+      null
+    ]
+  ],
+  "control_msgs.ControlValues": [
+    [
+      "source",
+      "string",
+      null
+    ],
+    [
+      "source_ts",
+      "double",
+      null
+    ],
+    [
+      "epoch",
+      "int64_t",
+      null
+    ],
+    [
+      "sequence",
+      "int64_t",
+      null
+    ],
+    [
+      "interface_names_length",
+      "int32_t",
+      null
+    ],
+    [
+      "values_length",
+      "int32_t",
+      null
+    ],
+    [
+      "interface_names",
+      "string",
+      [
+        "interface_names_length"
+      ]
+    ],
+    [
+      "values",
+      "double",
+      [
+        "values_length"
+      ]
+    ]
+  ],
+  "foxglove_msgs.CompressedVideo": [
+    [
+      "data_length",
+      "int32_t",
+      null
+    ],
+    [
+      "timestamp",
+      "builtin_interfaces.Time",
+      null
+    ],
+    [
+      "frame_id",
+      "string",
+      null
+    ],
+    [
+      "data",
+      "byte",
+      [
+        "data_length"
+      ]
+    ],
+    [
+      "format",
+      "string",
+      null
+    ]
+  ],
+  "geometry_msgs.Point": [
+    [
+      "x",
+      "double",
+      null
+    ],
+    [
+      "y",
+      "double",
+      null
+    ],
+    [
+      "z",
+      "double",
+      null
+    ]
+  ],
+  "geometry_msgs.PointStamped": [
+    [
+      "header",
+      "std_msgs.Header",
+      null
+    ],
+    [
+      "point",
+      "geometry_msgs.Point",
+      null
+    ]
+  ],
+  "geometry_msgs.Pose": [
+    [
+      "position",
+      "geometry_msgs.Point",
+      null
+    ],
+    [
+      "orientation",
+      "geometry_msgs.Quaternion",
+      null
+    ]
+  ],
+  "geometry_msgs.PoseArray": [
+    [
+      "poses_length",
+      "int32_t",
+      null
+    ],
+    [
+      "header",
+      "std_msgs.Header",
+      null
+    ],
+    [
+      "poses",
+      "geometry_msgs.Pose",
+      [
+        "poses_length"
+      ]
+    ]
+  ],
+  "geometry_msgs.PoseStamped": [
+    [
+      "header",
+      "std_msgs.Header",
+      null
+    ],
+    [
+      "pose",
+      "geometry_msgs.Pose",
+      null
+    ]
+  ],
+  "geometry_msgs.PoseWithCovariance": [
+    [
+      "pose",
+      "geometry_msgs.Pose",
+      null
+    ],
+    [
+      "covariance",
+      "double",
+      [
+        36
+      ]
+    ]
+  ],
+  "geometry_msgs.PoseWithCovarianceStamped": [
+    [
+      "header",
+      "std_msgs.Header",
+      null
+    ],
+    [
+      "pose",
+      "geometry_msgs.PoseWithCovariance",
+      null
+    ]
+  ],
+  "geometry_msgs.Quaternion": [
+    [
+      "x",
+      "double",
+      null
+    ],
+    [
+      "y",
+      "double",
+      null
+    ],
+    [
+      "z",
+      "double",
+      null
+    ],
+    [
+      "w",
+      "double",
+      null
+    ]
+  ],
+  "geometry_msgs.Transform": [
+    [
+      "translation",
+      "geometry_msgs.Vector3",
+      null
+    ],
+    [
+      "rotation",
+      "geometry_msgs.Quaternion",
+      null
+    ]
+  ],
+  "geometry_msgs.TransformStamped": [
+    [
+      "header",
+      "std_msgs.Header",
+      null
+    ],
+    [
+      "child_frame_id",
+      "string",
+      null
+    ],
+    [
+      "transform",
+      "geometry_msgs.Transform",
+      null
+    ]
+  ],
+  "geometry_msgs.Twist": [
+    [
+      "linear",
+      "geometry_msgs.Vector3",
+      null
+    ],
+    [
+      "angular",
+      "geometry_msgs.Vector3",
+      null
+    ]
+  ],
+  "geometry_msgs.TwistStamped": [
+    [
+      "header",
+      "std_msgs.Header",
+      null
+    ],
+    [
+      "twist",
+      "geometry_msgs.Twist",
+      null
+    ]
+  ],
+  "geometry_msgs.TwistWithCovariance": [
+    [
+      "twist",
+      "geometry_msgs.Twist",
+      null
+    ],
+    [
+      "covariance",
+      "double",
+      [
+        36
+      ]
+    ]
+  ],
+  "geometry_msgs.TwistWithCovarianceStamped": [
+    [
+      "header",
+      "std_msgs.Header",
+      null
+    ],
+    [
+      "twist",
+      "geometry_msgs.TwistWithCovariance",
+      null
+    ]
+  ],
+  "geometry_msgs.Vector3": [
+    [
+      "x",
+      "double",
+      null
+    ],
+    [
+      "y",
+      "double",
+      null
+    ],
+    [
+      "z",
+      "double",
+      null
+    ]
+  ],
+  "geometry_msgs.Wrench": [
+    [
+      "force",
+      "geometry_msgs.Vector3",
+      null
+    ],
+    [
+      "torque",
+      "geometry_msgs.Vector3",
+      null
+    ]
+  ],
+  "geometry_msgs.WrenchStamped": [
+    [
+      "header",
+      "std_msgs.Header",
+      null
+    ],
+    [
+      "wrench",
+      "geometry_msgs.Wrench",
+      null
+    ]
+  ],
+  "nav_msgs.MapMetaData": [
+    [
+      "map_load_time",
+      "std_msgs.Time",
+      null
+    ],
+    [
+      "resolution",
+      "float",
+      null
+    ],
+    [
+      "width",
+      "int32_t",
+      null
+    ],
+    [
+      "height",
+      "int32_t",
+      null
+    ],
+    [
+      "origin",
+      "geometry_msgs.Pose",
+      null
+    ]
+  ],
+  "nav_msgs.OccupancyGrid": [
+    [
+      "data_length",
+      "int32_t",
+      null
+    ],
+    [
+      "header",
+      "std_msgs.Header",
+      null
+    ],
+    [
+      "info",
+      "nav_msgs.MapMetaData",
+      null
+    ],
+    [
+      "data",
+      "int8_t",
+      [
+        "data_length"
+      ]
+    ]
+  ],
+  "nav_msgs.Odometry": [
+    [
+      "header",
+      "std_msgs.Header",
+      null
+    ],
+    [
+      "child_frame_id",
+      "string",
+      null
+    ],
+    [
+      "pose",
+      "geometry_msgs.PoseWithCovariance",
+      null
+    ],
+    [
+      "twist",
+      "geometry_msgs.TwistWithCovariance",
+      null
+    ]
+  ],
+  "nav_msgs.Path": [
+    [
+      "poses_length",
+      "int32_t",
+      null
+    ],
+    [
+      "header",
+      "std_msgs.Header",
+      null
+    ],
+    [
+      "poses",
+      "geometry_msgs.PoseStamped",
+      [
+        "poses_length"
+      ]
+    ]
+  ],
+  "sensor_msgs.BatteryState": [
+    [
+      "cell_voltage_length",
+      "int32_t",
+      null
+    ],
+    [
+      "cell_temperature_length",
+      "int32_t",
+      null
+    ],
+    [
+      "header",
+      "std_msgs.Header",
+      null
+    ],
+    [
+      "voltage",
+      "float",
+      null
+    ],
+    [
+      "temperature",
+      "float",
+      null
+    ],
+    [
+      "current",
+      "float",
+      null
+    ],
+    [
+      "charge",
+      "float",
+      null
+    ],
+    [
+      "capacity",
+      "float",
+      null
+    ],
+    [
+      "design_capacity",
+      "float",
+      null
+    ],
+    [
+      "percentage",
+      "float",
+      null
+    ],
+    [
+      "power_supply_status",
+      "byte",
+      null
+    ],
+    [
+      "power_supply_health",
+      "byte",
+      null
+    ],
+    [
+      "power_supply_technology",
+      "byte",
+      null
+    ],
+    [
+      "present",
+      "boolean",
+      null
+    ],
+    [
+      "cell_voltage",
+      "float",
+      [
+        "cell_voltage_length"
+      ]
+    ],
+    [
+      "cell_temperature",
+      "float",
+      [
+        "cell_temperature_length"
+      ]
+    ],
+    [
+      "location",
+      "string",
+      null
+    ],
+    [
+      "serial_number",
+      "string",
+      null
+    ]
+  ],
+  "sensor_msgs.CameraInfo": [
+    [
+      "D_length",
+      "int32_t",
+      null
+    ],
+    [
+      "header",
+      "std_msgs.Header",
+      null
+    ],
+    [
+      "height",
+      "int32_t",
+      null
+    ],
+    [
+      "width",
+      "int32_t",
+      null
+    ],
+    [
+      "distortion_model",
+      "string",
+      null
+    ],
+    [
+      "D",
+      "double",
+      [
+        "D_length"
+      ]
+    ],
+    [
+      "K",
+      "double",
+      [
+        9
+      ]
+    ],
+    [
+      "R",
+      "double",
+      [
+        9
+      ]
+    ],
+    [
+      "P",
+      "double",
+      [
+        12
+      ]
+    ],
+    [
+      "binning_x",
+      "int32_t",
+      null
+    ],
+    [
+      "binning_y",
+      "int32_t",
+      null
+    ],
+    [
+      "roi",
+      "sensor_msgs.RegionOfInterest",
+      null
+    ]
+  ],
+  "sensor_msgs.CompressedImage": [
+    [
+      "data_length",
+      "int32_t",
+      null
+    ],
+    [
+      "header",
+      "std_msgs.Header",
+      null
+    ],
+    [
+      "format",
+      "string",
+      null
+    ],
+    [
+      "data",
+      "byte",
+      [
+        "data_length"
+      ]
+    ]
+  ],
+  "sensor_msgs.Image": [
+    [
+      "data_length",
+      "int32_t",
+      null
+    ],
+    [
+      "header",
+      "std_msgs.Header",
+      null
+    ],
+    [
+      "height",
+      "int32_t",
+      null
+    ],
+    [
+      "width",
+      "int32_t",
+      null
+    ],
+    [
+      "encoding",
+      "string",
+      null
+    ],
+    [
+      "is_bigendian",
+      "byte",
+      null
+    ],
+    [
+      "step",
+      "int32_t",
+      null
+    ],
+    [
+      "data",
+      "byte",
+      [
+        "data_length"
+      ]
+    ]
+  ],
+  "sensor_msgs.Imu": [
+    [
+      "header",
+      "std_msgs.Header",
+      null
+    ],
+    [
+      "orientation",
+      "geometry_msgs.Quaternion",
+      null
+    ],
+    [
+      "orientation_covariance",
+      "double",
+      [
+        9
+      ]
+    ],
+    [
+      "angular_velocity",
+      "geometry_msgs.Vector3",
+      null
+    ],
+    [
+      "angular_velocity_covariance",
+      "double",
+      [
+        9
+      ]
+    ],
+    [
+      "linear_acceleration",
+      "geometry_msgs.Vector3",
+      null
+    ],
+    [
+      "linear_acceleration_covariance",
+      "double",
+      [
+        9
+      ]
+    ]
+  ],
+  "sensor_msgs.JointState": [
+    [
+      "name_length",
+      "int32_t",
+      null
+    ],
+    [
+      "position_length",
+      "int32_t",
+      null
+    ],
+    [
+      "velocity_length",
+      "int32_t",
+      null
+    ],
+    [
+      "effort_length",
+      "int32_t",
+      null
+    ],
+    [
+      "header",
+      "std_msgs.Header",
+      null
+    ],
+    [
+      "name",
+      "string",
+      [
+        "name_length"
+      ]
+    ],
+    [
+      "position",
+      "double",
+      [
+        "position_length"
+      ]
+    ],
+    [
+      "velocity",
+      "double",
+      [
+        "velocity_length"
+      ]
+    ],
+    [
+      "effort",
+      "double",
+      [
+        "effort_length"
+      ]
+    ]
+  ],
+  "sensor_msgs.Joy": [
+    [
+      "axes_length",
+      "int32_t",
+      null
+    ],
+    [
+      "buttons_length",
+      "int32_t",
+      null
+    ],
+    [
+      "header",
+      "std_msgs.Header",
+      null
+    ],
+    [
+      "axes",
+      "float",
+      [
+        "axes_length"
+      ]
+    ],
+    [
+      "buttons",
+      "int32_t",
+      [
+        "buttons_length"
+      ]
+    ]
+  ],
+  "sensor_msgs.PointCloud2": [
+    [
+      "fields_length",
+      "int32_t",
+      null
+    ],
+    [
+      "data_length",
+      "int32_t",
+      null
+    ],
+    [
+      "header",
+      "std_msgs.Header",
+      null
+    ],
+    [
+      "height",
+      "int32_t",
+      null
+    ],
+    [
+      "width",
+      "int32_t",
+      null
+    ],
+    [
+      "fields",
+      "sensor_msgs.PointField",
+      [
+        "fields_length"
+      ]
+    ],
+    [
+      "is_bigendian",
+      "boolean",
+      null
+    ],
+    [
+      "point_step",
+      "int32_t",
+      null
+    ],
+    [
+      "row_step",
+      "int32_t",
+      null
+    ],
+    [
+      "data",
+      "byte",
+      [
+        "data_length"
+      ]
+    ],
+    [
+      "is_dense",
+      "boolean",
+      null
+    ]
+  ],
+  "sensor_msgs.PointField": [
+    [
+      "name",
+      "string",
+      null
+    ],
+    [
+      "offset",
+      "int32_t",
+      null
+    ],
+    [
+      "datatype",
+      "byte",
+      null
+    ],
+    [
+      "count",
+      "int32_t",
+      null
+    ]
+  ],
+  "sensor_msgs.RegionOfInterest": [
+    [
+      "x_offset",
+      "int32_t",
+      null
+    ],
+    [
+      "y_offset",
+      "int32_t",
+      null
+    ],
+    [
+      "height",
+      "int32_t",
+      null
+    ],
+    [
+      "width",
+      "int32_t",
+      null
+    ],
+    [
+      "do_rectify",
+      "boolean",
+      null
+    ]
+  ],
+  "std_msgs.Bool": [
+    [
+      "data",
+      "boolean",
+      null
+    ]
+  ],
+  "std_msgs.Float32": [
+    [
+      "data",
+      "float",
+      null
+    ]
+  ],
+  "std_msgs.Header": [
+    [
+      "seq",
+      "int32_t",
+      null
+    ],
+    [
+      "stamp",
+      "std_msgs.Time",
+      null
+    ],
+    [
+      "frame_id",
+      "string",
+      null
+    ]
+  ],
+  "std_msgs.Int32": [
+    [
+      "data",
+      "int32_t",
+      null
+    ]
+  ],
+  "std_msgs.Int8": [
+    [
+      "data",
+      "int8_t",
+      null
+    ]
+  ],
+  "std_msgs.String": [
+    [
+      "data",
+      "string",
+      null
+    ]
+  ],
+  "std_msgs.Time": [
+    [
+      "sec",
+      "int32_t",
+      null
+    ],
+    [
+      "nsec",
+      "int32_t",
+      null
+    ]
+  ],
+  "std_msgs.UInt32": [
+    [
+      "data",
+      "int32_t",
+      null
+    ]
+  ],
+  "tf2_msgs.TFMessage": [
+    [
+      "transforms_length",
+      "int32_t",
+      null
+    ],
+    [
+      "transforms",
+      "geometry_msgs.TransformStamped",
+      [
+        "transforms_length"
+      ]
+    ]
+  ],
+  "vision_msgs.BoundingBox2D": [
+    [
+      "center",
+      "vision_msgs.Pose2D",
+      null
+    ],
+    [
+      "size_x",
+      "double",
+      null
+    ],
+    [
+      "size_y",
+      "double",
+      null
+    ]
+  ],
+  "vision_msgs.BoundingBox2DArray": [
+    [
+      "boxes_length",
+      "int32_t",
+      null
+    ],
+    [
+      "header",
+      "std_msgs.Header",
+      null
+    ],
+    [
+      "boxes",
+      "vision_msgs.BoundingBox2D",
+      [
+        "boxes_length"
+      ]
+    ]
+  ],
+  "vision_msgs.BoundingBox3D": [
+    [
+      "center",
+      "geometry_msgs.Pose",
+      null
+    ],
+    [
+      "size",
+      "geometry_msgs.Vector3",
+      null
+    ]
+  ],
+  "vision_msgs.BoundingBox3DArray": [
+    [
+      "boxes_length",
+      "int32_t",
+      null
+    ],
+    [
+      "header",
+      "std_msgs.Header",
+      null
+    ],
+    [
+      "boxes",
+      "vision_msgs.BoundingBox3D",
+      [
+        "boxes_length"
+      ]
+    ]
+  ],
+  "vision_msgs.Detection2D": [
+    [
+      "results_length",
+      "int32_t",
+      null
+    ],
+    [
+      "header",
+      "std_msgs.Header",
+      null
+    ],
+    [
+      "results",
+      "vision_msgs.ObjectHypothesisWithPose",
+      [
+        "results_length"
+      ]
+    ],
+    [
+      "bbox",
+      "vision_msgs.BoundingBox2D",
+      null
+    ],
+    [
+      "id",
+      "string",
+      null
+    ]
+  ],
+  "vision_msgs.Detection2DArray": [
+    [
+      "detections_length",
+      "int32_t",
+      null
+    ],
+    [
+      "header",
+      "std_msgs.Header",
+      null
+    ],
+    [
+      "detections",
+      "vision_msgs.Detection2D",
+      [
+        "detections_length"
+      ]
+    ]
+  ],
+  "vision_msgs.Detection3D": [
+    [
+      "results_length",
+      "int32_t",
+      null
+    ],
+    [
+      "header",
+      "std_msgs.Header",
+      null
+    ],
+    [
+      "results",
+      "vision_msgs.ObjectHypothesisWithPose",
+      [
+        "results_length"
+      ]
+    ],
+    [
+      "bbox",
+      "vision_msgs.BoundingBox3D",
+      null
+    ],
+    [
+      "id",
+      "string",
+      null
+    ]
+  ],
+  "vision_msgs.Detection3DArray": [
+    [
+      "detections_length",
+      "int32_t",
+      null
+    ],
+    [
+      "header",
+      "std_msgs.Header",
+      null
+    ],
+    [
+      "detections",
+      "vision_msgs.Detection3D",
+      [
+        "detections_length"
+      ]
+    ]
+  ],
+  "vision_msgs.ObjectHypothesis": [
+    [
+      "class_id",
+      "string",
+      null
+    ],
+    [
+      "score",
+      "double",
+      null
+    ]
+  ],
+  "vision_msgs.ObjectHypothesisWithPose": [
+    [
+      "hypothesis",
+      "vision_msgs.ObjectHypothesis",
+      null
+    ],
+    [
+      "pose",
+      "geometry_msgs.PoseWithCovariance",
+      null
+    ]
+  ],
+  "vision_msgs.Point2D": [
+    [
+      "x",
+      "double",
+      null
+    ],
+    [
+      "y",
+      "double",
+      null
+    ]
+  ],
+  "vision_msgs.Pose2D": [
+    [
+      "position",
+      "vision_msgs.Point2D",
+      null
+    ],
+    [
+      "theta",
+      "double",
+      null
+    ]
+  ]
+};
+var TYPES = {
+  "control_msgs.ControlValues": "31b3ec9631ab499f",
+  "foxglove_msgs.CompressedVideo": "2217b46eefbf7b05",
+  "geometry_msgs.Point": "ae7e5fba5eeca11e",
+  "geometry_msgs.PointStamped": "9cd764738ea629af",
+  "geometry_msgs.Pose": "245634ae2ab17b76",
+  "geometry_msgs.PoseArray": "3755f9405735978e",
+  "geometry_msgs.PoseStamped": "6a82696458c279a0",
+  "geometry_msgs.PoseWithCovariance": "ce6428b127d11b5a",
+  "geometry_msgs.PoseWithCovarianceStamped": "be9e516a5301b969",
+  "geometry_msgs.Quaternion": "363bdd3bf9180a2b",
+  "geometry_msgs.Twist": "2e7c07d7cdf7e027",
+  "geometry_msgs.TwistStamped": "9cd2bcbe6cb2a7c0",
+  "geometry_msgs.TwistWithCovariance": "b439635a59217509",
+  "geometry_msgs.TwistWithCovarianceStamped": "a84d73c38305d185",
+  "geometry_msgs.Vector3": "ae7e5fba5eeca11e",
+  "geometry_msgs.Wrench": "ccfb0646cebc17c4",
+  "geometry_msgs.WrenchStamped": "d31bb4c714d07137",
+  "nav_msgs.OccupancyGrid": "e7dfd179cdfc3b65",
+  "nav_msgs.Odometry": "94e17f94648cf0e4",
+  "nav_msgs.Path": "c3ae62acb35793e2",
+  "sensor_msgs.BatteryState": "7e3961fd10438489",
+  "sensor_msgs.CameraInfo": "afb501b00707a02a",
+  "sensor_msgs.CompressedImage": "b8d011c10412b9a1",
+  "sensor_msgs.Image": "535cface1f4f5717",
+  "sensor_msgs.Imu": "31ab205c8dd57aa8",
+  "sensor_msgs.JointState": "ccefa8a492b967e3",
+  "sensor_msgs.Joy": "a0f07abc86c1684c",
+  "sensor_msgs.PointCloud2": "f5eb3da1c2853175",
+  "std_msgs.Bool": "1ebef06a50950e3e",
+  "std_msgs.Float32": "0adc26b8f0546dd3",
+  "std_msgs.Header": "2fdb11453be64af7",
+  "std_msgs.Int32": "2cbcf9f7ea91023e",
+  "std_msgs.Int8": "21d34305fdbb4415",
+  "std_msgs.String": "21bf37099b9d5e15",
+  "std_msgs.UInt32": "2cbcf9f7ea91023e",
+  "tf2_msgs.TFMessage": "c2b8a1c33a8923ec",
+  "vision_msgs.BoundingBox2DArray": "89ae9c19ce1bbb6a",
+  "vision_msgs.BoundingBox3DArray": "943b9c9caeede310",
+  "vision_msgs.Detection2D": "b4e48d74d9bf4510",
+  "vision_msgs.Detection2DArray": "d4e87e619f4e9c86",
+  "vision_msgs.Detection3D": "bf718df7ba916cb6",
+  "vision_msgs.Detection3DArray": "ea027f6760f2ebd2"
+};
+var MISSING = {
+  "nav_msgs.LineSegments3D": "hand-written, no dimos_lcm.nav_msgs.LineSegments3D class [dimos/msgs/nav_msgs/LineSegments3D.py:LineSegments3D]",
+  "sensor_msgs.ImuInfo": "hand-written, no dimos_lcm.sensor_msgs.ImuInfo class [dimos/msgs/sensor_msgs/ImuInfo.py:ImuInfo]",
+  "sensor_msgs.JointCommand": "hand-written, no dimos_lcm.sensor_msgs.JointCommand class [dimos/msgs/sensor_msgs/JointCommand.py:JointCommand]",
+  "sensor_msgs.MotorCommandArray": "hand-written, no dimos_lcm.sensor_msgs.MotorCommandArray class [dimos/msgs/sensor_msgs/MotorCommandArray.py:MotorCommandArray]",
+  "sensor_msgs.RobotState": "hand-written, no dimos_lcm.sensor_msgs.RobotState class [dimos/msgs/sensor_msgs/RobotState.py:RobotState]",
+  "sim_msgs.Contacts": "hand-written, no dimos_lcm.sim_msgs.Contacts class [dimos/msgs/sim_msgs/Contacts.py:Contacts]",
+  "trajectory_msgs.JointTrajectory": "hand-written, its own fingerprint 2b3c4d5e6f708192 (dimos_lcm.trajectory_msgs.JointTrajectory is another message of the same name, fingerprint ae3a209832c6d386) [dimos/msgs/trajectory_msgs/JointTrajectory.py:JointTrajectory]",
+  "trajectory_msgs.TrajectoryPoint": "hand-written, no dimos_lcm.trajectory_msgs.TrajectoryPoint class [dimos/msgs/trajectory_msgs/TrajectoryPoint.py:TrajectoryPoint]",
+  "trajectory_msgs.TrajectoryStatus": "hand-written, no dimos_lcm.trajectory_msgs.TrajectoryStatus class [dimos/msgs/trajectory_msgs/TrajectoryStatus.py:TrajectoryStatus]",
+  "visualization_msgs.EntityMarkers": "hand-written, no dimos_lcm.visualization_msgs.EntityMarkers class [dimos/msgs/visualization_msgs/EntityMarkers.py:EntityMarkers]"
+};
+var registry = createRegistry(STRUCTS, TYPES, MISSING);
+var { decode, decodeChannel, decodeMessage, typeOfChannel, lookup, register, getTypeNames, getMissingTypes } = registry;
+(function(control_msgs2) {
+  control_msgs2.ControlValues = lookup("control_msgs.ControlValues");
+})(control_msgs || (control_msgs = {}));
+(function(foxglove_msgs2) {
+  foxglove_msgs2.CompressedVideo = lookup("foxglove_msgs.CompressedVideo");
+})(foxglove_msgs || (foxglove_msgs = {}));
+(function(geometry_msgs2) {
+  geometry_msgs2.Point = lookup("geometry_msgs.Point");
+  geometry_msgs2.PointStamped = lookup("geometry_msgs.PointStamped");
+  geometry_msgs2.Pose = lookup("geometry_msgs.Pose");
+  geometry_msgs2.PoseArray = lookup("geometry_msgs.PoseArray");
+  geometry_msgs2.PoseStamped = lookup("geometry_msgs.PoseStamped");
+  geometry_msgs2.PoseWithCovariance = lookup("geometry_msgs.PoseWithCovariance");
+  geometry_msgs2.PoseWithCovarianceStamped = lookup("geometry_msgs.PoseWithCovarianceStamped");
+  geometry_msgs2.Quaternion = lookup("geometry_msgs.Quaternion");
+  geometry_msgs2.Twist = lookup("geometry_msgs.Twist");
+  geometry_msgs2.TwistStamped = lookup("geometry_msgs.TwistStamped");
+  geometry_msgs2.TwistWithCovariance = lookup("geometry_msgs.TwistWithCovariance");
+  geometry_msgs2.TwistWithCovarianceStamped = lookup("geometry_msgs.TwistWithCovarianceStamped");
+  geometry_msgs2.Vector3 = lookup("geometry_msgs.Vector3");
+  geometry_msgs2.Wrench = lookup("geometry_msgs.Wrench");
+  geometry_msgs2.WrenchStamped = lookup("geometry_msgs.WrenchStamped");
+})(geometry_msgs || (geometry_msgs = {}));
+(function(nav_msgs2) {
+  nav_msgs2.OccupancyGrid = lookup("nav_msgs.OccupancyGrid");
+  nav_msgs2.Odometry = lookup("nav_msgs.Odometry");
+  nav_msgs2.Path = lookup("nav_msgs.Path");
+})(nav_msgs || (nav_msgs = {}));
+(function(sensor_msgs2) {
+  sensor_msgs2.BatteryState = lookup("sensor_msgs.BatteryState");
+  sensor_msgs2.CameraInfo = lookup("sensor_msgs.CameraInfo");
+  sensor_msgs2.CompressedImage = lookup("sensor_msgs.CompressedImage");
+  sensor_msgs2.Image = lookup("sensor_msgs.Image");
+  sensor_msgs2.Imu = lookup("sensor_msgs.Imu");
+  sensor_msgs2.JointState = lookup("sensor_msgs.JointState");
+  sensor_msgs2.Joy = lookup("sensor_msgs.Joy");
+  sensor_msgs2.PointCloud2 = lookup("sensor_msgs.PointCloud2");
+})(sensor_msgs || (sensor_msgs = {}));
+(function(std_msgs2) {
+  std_msgs2.Bool = lookup("std_msgs.Bool");
+  std_msgs2.Float32 = lookup("std_msgs.Float32");
+  std_msgs2.Header = lookup("std_msgs.Header");
+  std_msgs2.Int32 = lookup("std_msgs.Int32");
+  std_msgs2.Int8 = lookup("std_msgs.Int8");
+  std_msgs2.String = lookup("std_msgs.String");
+  std_msgs2.UInt32 = lookup("std_msgs.UInt32");
+})(std_msgs || (std_msgs = {}));
+(function(tf2_msgs2) {
+  tf2_msgs2.TFMessage = lookup("tf2_msgs.TFMessage");
+})(tf2_msgs || (tf2_msgs = {}));
+(function(vision_msgs2) {
+  vision_msgs2.BoundingBox2DArray = lookup("vision_msgs.BoundingBox2DArray");
+  vision_msgs2.BoundingBox3DArray = lookup("vision_msgs.BoundingBox3DArray");
+  vision_msgs2.Detection2D = lookup("vision_msgs.Detection2D");
+  vision_msgs2.Detection2DArray = lookup("vision_msgs.Detection2DArray");
+  vision_msgs2.Detection3D = lookup("vision_msgs.Detection3D");
+  vision_msgs2.Detection3DArray = lookup("vision_msgs.Detection3DArray");
+})(vision_msgs || (vision_msgs = {}));
+var control_msgs;
+var foxglove_msgs;
+var geometry_msgs;
+var nav_msgs;
+var sensor_msgs;
+var std_msgs;
+var tf2_msgs;
+var vision_msgs;
+export {
+  control_msgs,
+  createRegistry,
+  decode,
+  decodeChannel,
+  decodeMessage,
+  foxglove_msgs,
+  geometry_msgs,
+  getMissingTypes,
+  getTypeNames,
+  lookup,
+  nav_msgs,
+  register,
+  sensor_msgs,
+  std_msgs,
+  tf2_msgs,
+  typeOfChannel,
+  vision_msgs
+};
