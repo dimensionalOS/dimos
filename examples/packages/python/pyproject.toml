@@ -1,0 +1,20 @@
+[build-system]
+requires = ["scikit-build-core>=1.0,<2", "dimos-build-config"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "dimos-package-python"
+version = "0.1.0"
+dynamic = ["entry-points"]
+requires-python = ">=3.10,<3.13"
+dependencies = ["dimos==0.0.14", "packaging>=24"]
+
+[tool.dimos]
+package = "src/dimos_package_python"
+
+[tool.dimos.blueprints]
+observer = "dimos_package_python.module:PythonObserver"
+isolated = "dimos_package_python.module:IsolatedObserver"
+
+[[tool.dynamic-metadata]]
+provider = "dimos"
