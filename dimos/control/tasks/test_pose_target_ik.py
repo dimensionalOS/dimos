@@ -494,14 +494,28 @@ def test_current_frame_poses_uses_live_coordinator_seed(mocker: MockerFixture) -
 
 def test_measured_frame_poses_follow_measured_joints_not_the_target(mocker: MockerFixture) -> None:
     solver = _solver(mocker)
-    target = PoseStamped(frame_id="world", position=(9.0, 9.0, 9.0))  # commanded, never reached
+    target = PoseStamped(
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id="world"),
+        pose=Pose(
+            position=Point(x=9.0, y=9.0, z=9.0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+        ),
+    )  # commanded, never reached
     task = _Task(_config(), solver, _snapshot(targets={"tool": target}))
 
     poses = task.measured_frame_poses(_state(positions={"arm/a": 0.2, "arm/b": 0.3}))
 
-    assert poses == {"tool": PoseStamped(frame_id="base")}  # FK result, not the target
+    assert poses == {
+        "tool": PoseStamped(
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id="base"),
+            pose=Pose(
+                position=Point(x=0.0, y=0.0, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+        )
+    }  # FK result, not the target
     seed, frames = solver.frame_poses.call_args.args
-    assert seed.position == [0.2, 0.3] and list(frames) == ["tool"]
+    np.testing.assert_array_equal(seed.position, [0.2, 0.3])
+    assert list(frames) == ["tool"]
 
 
 def test_measured_frame_poses_are_empty_without_full_feedback(mocker: MockerFixture) -> None:

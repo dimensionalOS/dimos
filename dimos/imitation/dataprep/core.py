@@ -33,7 +33,8 @@ from itertools import pairwise
 import math
 from typing import TYPE_CHECKING, Any
 
-from dimos_generated.sensor_msgs.msg import CompressedImage, Image
+from dimos_generated.sensor_msgs.msg import CompressedImage, Image, JointState
+from dimos_generated.std_msgs.msg import Header, String
 import numpy as np
 from numpy.typing import NDArray
 
@@ -59,8 +60,7 @@ from dimos.imitation.dataprep.schema import (
 )
 from dimos.memory.store.mcap import McapStore
 from dimos.msgs.image import image_from_compressed, image_view
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.std_msgs.String import String
+from dimos.msgs.time import time_from_seconds
 
 if TYPE_CHECKING:
     from dimos.memory.store.base import Store
@@ -322,6 +322,16 @@ def _source_messages(
         yield observation.ts, observation.data
 
 
+def _joint_snapshot(timestamp: float, targets: dict[str, float]) -> JointState:
+    return JointState(
+        header=Header(stamp=time_from_seconds(timestamp), frame_id=""),
+        name=list(targets),
+        position=np.asarray(list(targets.values()), dtype=np.float64),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
+    )
+
+
 def _joint_position_updates(
     messages: Iterator[tuple[float, Any]], start_ts: float, stream: str
 ) -> Iterator[tuple[float, JointState]]:
@@ -332,7 +342,7 @@ def _joint_position_updates(
         if not seeded and timestamp >= start_ts:
             yield (
                 start_ts,
-                JointState(ts=start_ts, name=list(targets), position=list(targets.values())),
+                _joint_snapshot(start_ts, targets),
             )
             seeded = True
         try:
@@ -347,10 +357,10 @@ def _joint_position_updates(
         if timestamp >= start_ts:
             yield (
                 timestamp,
-                JointState(ts=timestamp, name=list(targets), position=list(targets.values())),
+                _joint_snapshot(timestamp, targets),
             )
     if not seeded:
-        yield start_ts, JointState(ts=start_ts, name=list(targets), position=list(targets.values()))
+        yield start_ts, _joint_snapshot(start_ts, targets)
 
 
 def _episode_features(
