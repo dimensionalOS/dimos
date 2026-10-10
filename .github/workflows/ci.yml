@@ -23,6 +23,35 @@ env:
   UV_NO_SYNC: "1"
 
 jobs:
+  commit-messages:
+    name: No AI co-authors
+    timeout-minutes: 5
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check incoming commit messages
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        env:
+          PRE_COMMIT_FROM_REF: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          PRE_COMMIT_TO_REF: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+        run: |
+          : "${PRE_COMMIT_FROM_REF:?Missing base SHA}"
+          : "${PRE_COMMIT_TO_REF:?Missing head SHA}"
+          policy_ref="$PRE_COMMIT_FROM_REF"
+          policy_path="dimos/utils/commit_message.py"
+          if ! git cat-file -e "${policy_ref}:${policy_path}" 2>/dev/null; then
+            echo "::error::Base commit $policy_ref has no $policy_path. Update this branch from main and retry." >&2
+            exit 1
+          fi
+          git show "${policy_ref}:${policy_path}" > "$RUNNER_TEMP/commit-message-policy.py"
+          python3 "$RUNNER_TEMP/commit-message-policy.py" --check
+
   compute-ros-pin:
     # Extracts the ros-dev image digest pinned in docker/ros-dev-pin/Dockerfile
     # so downstream jobs can reference it from their `container:` field.
@@ -809,8 +838,9 @@ jobs:
           - os: macOS
             container: null  # run on host — `container:` is Linux-only
             # web_browser: the cockpit browser e2e that Linux runs in the `web` job.
-            markers: "self_hosted or web_browser"
-            experimental: true
+            # native_e2e: livox live loopback that Linux runs in the rust job.
+            markers: "self_hosted or web_browser or native_e2e"
+            experimental: false
     runs-on:
       - self-hosted
       - ${{ matrix.os }}
@@ -1107,6 +1137,9 @@ jobs:
         run: uv sync --group tests-self-hosted --frozen
       - name: Build C++ extensions in-place
         run: uv run python setup.py build_ext --inplace
+      - name: Build DimSim and install its headless Chromium
+        # Without this, it gets built in the test, creating race conditions.
+        run: ./bin/dimsim-prepare
       - name: Run tests
         # The runner must have an Xorg server with NVIDIA GPU access running
         # on DISPLAY=:0 — dimsim's headless Chromium needs real WebGL for the
@@ -1354,6 +1387,7 @@ jobs:
     if: always()
 
     needs:
+    - commit-messages
     - lint
     - rust
     - native
