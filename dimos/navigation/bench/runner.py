@@ -12,13 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Runs a suite: one blueprint process group per episode, several at a time, scored as they finish.
-
-The first episode runs alone so the native modules build once. Every process gets its
-own LCM multicast port and zenoh scouting group for its slot, so parallel instances never link.
-An episode ends when its driver writes terminal.json, when the process exits, or at the
-wall-clock cap, and is then stopped by its process group.
-"""
+"""Runs a suite: one blueprint process group per episode, several at a time, scored as they finish."""
 
 from __future__ import annotations
 
@@ -43,7 +37,7 @@ from dimos.constants import STATE_DIR
 from dimos.core.coordination.blueprint_config.sources import configuration_environment
 from dimos.navigation.bench.driver import TERMINAL_FILE
 from dimos.navigation.bench.scorer import Recording, score
-from dimos.navigation.bench.suite import Case, Manifest, Split, _git_state
+from dimos.navigation.bench.suite import Case, Manifest, Split, git_state
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -61,6 +55,9 @@ RECORD_TOPICS = (
     "goal_reached,lidar,local_map,surface_map"
 )
 LCM_PORT_BASE = 7800
+ZENOH_SCOUT_GROUP = "224.0.0.224"
+LCM_GROUP = "239.255.76.67"
+EPISODE_CAP_S = 900.0
 ZENOH_PORT_BASE = 7500
 RERUN_PORT_BASE = 9900
 WEBSOCKET_PORT_BASE = 3100
@@ -82,9 +79,7 @@ class RunConfig:
     out_dir: Path | None = None
     overrides: tuple[str, ...] = ()
     policy: Path | None = None
-    record_topics: str = RECORD_TOPICS
     viewer: str = "none"
-    episode_cap_s: float = 900.0
     command: tuple[str, ...] = ("dimos",)
 
 
@@ -92,10 +87,6 @@ class RunConfig:
 class Episode:
     case: Case
     dir: Path
-
-    @property
-    def replay(self) -> Path:
-        return self.dir / REPLAY_FILE
 
 
 @dataclass
@@ -112,7 +103,7 @@ class Result:
 
 @dataclass(frozen=True)
 class Progress:
-    """Where a run stands: episodes finished, the ones in flight, the outcomes so far and the one just in."""
+    """Where a run stands."""
 
     done: int
     total: int
@@ -248,7 +239,7 @@ def _episode_dirs(run_dir: Path) -> Iterator[Path]:
 def _write_run(
     run_dir: Path, config: RunConfig, manifest: Manifest, episodes: int, finished: bool
 ) -> None:
-    sha, dirty = _git_state()
+    sha, dirty = git_state()
     record = {
         "suite": str(config.suite.resolve()),
         "suite_name": manifest.suite,
@@ -259,7 +250,7 @@ def _write_run(
         "procs": config.procs,
         "overrides": list(config.overrides),
         "policy": str(config.policy) if config.policy else _environment_policy(),
-        "record_topics": config.record_topics,
+        "record_topics": RECORD_TOPICS,
         "viewer": config.viewer,
         "git_sha": sha,
         "git_dirty": dirty,
@@ -285,7 +276,7 @@ def _episode(config: RunConfig, manifest: Manifest, episode: Episode, slot: int)
         with _live_lock:
             _live.add(process)
         try:
-            deadline = time.time() + config.episode_cap_s
+            deadline = time.time() + EPISODE_CAP_S
             while time.time() < deadline and process.poll() is None:
                 if (episode.dir / TERMINAL_FILE).exists():
                     break
@@ -299,12 +290,7 @@ def _episode(config: RunConfig, manifest: Manifest, episode: Episode, slot: int)
 
 
 def _command(config: RunConfig, episode: Episode, slot: int) -> list[str]:
-    """The dimos run invocation, on a private zenoh scouting group for its slot.
-
-    The rerun bridge always runs and saves the episode's rerun file, on its own port, since
-    a bridge that finds its port taken joins that server instead. Headless means no viewer
-    window on it.
-    """
+    """The dimos run invocation, on a private zenoh scouting group and rerun port for its slot."""
     case = episode.case
     command = [
         *config.command,
@@ -313,7 +299,7 @@ def _command(config: RunConfig, episode: Episode, slot: int) -> list[str]:
         "--rerun-save",
         *(("--rerun-open", "none") if config.viewer == "none" else ()),
         "--zenoh-scout-addr",
-        f"224.0.0.224:{ZENOH_PORT_BASE + slot}",
+        f"{ZENOH_SCOUT_GROUP}:{ZENOH_PORT_BASE + slot}",
         "--rerun-websocket-server-port",
         str(WEBSOCKET_PORT_BASE + slot),
         "run",
@@ -322,7 +308,7 @@ def _command(config: RunConfig, episode: Episode, slot: int) -> list[str]:
         "--record",
         "sqlite",
         "--record-topics",
-        config.record_topics,
+        RECORD_TOPICS,
         f"--episodedriver.manifest={config.suite.resolve()}",
         f"--episodedriver.case-id={case.id}",
         f"--episodedriver.out-dir={episode.dir}",
@@ -344,7 +330,7 @@ def _environment_policy() -> str | None:
 def _environment(slot: int) -> dict[str, str]:
     """A private LCM multicast port for the slot. LCM reads this variable itself."""
     env = dict(os.environ)
-    env["LCM_DEFAULT_URL"] = f"udpm://239.255.76.67:{LCM_PORT_BASE + slot}?ttl=0"
+    env["LCM_DEFAULT_URL"] = f"udpm://{LCM_GROUP}:{LCM_PORT_BASE + slot}?ttl=0"
     return env
 
 
@@ -372,7 +358,7 @@ def _collect_recording(log: Path, episode: Episode) -> None:
         if file.name.startswith(RECORDING_FILE):
             shutil.move(str(file), episode.dir / file.name)
         elif file.name == REPLAY_FILE:
-            shutil.move(str(file), episode.replay)
+            shutil.move(str(file), episode.dir / REPLAY_FILE)
     if not any(source.parent.iterdir()):
         source.parent.rmdir()
 

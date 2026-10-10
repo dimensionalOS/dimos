@@ -13,8 +13,8 @@
 # limitations under the License.
 
 from pathlib import Path
+import time
 
-import numpy as np
 import pytest
 
 from dimos.memory.store.sqlite import SqliteStore
@@ -63,5 +63,6 @@ def test_puppet_takes_the_recorded_pose(tmp_path: Path) -> None:
 
 def test_paced_keeps_the_recorded_rhythm(tmp_path: Path) -> None:
     _record(tmp_path / "memory.db")
-    stamps = np.array([f.t for f in paced(frames(tmp_path / "memory.db"), speed=100.0)])
-    assert np.all(np.diff(stamps) > 0)
+    started = time.monotonic()
+    stamps = [f.t for f in paced(frames(tmp_path / "memory.db"), speed=0.1)]
+    assert time.monotonic() - started >= (stamps[-1] - stamps[0]) / 0.1 - 0.01

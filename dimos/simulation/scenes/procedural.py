@@ -226,11 +226,7 @@ def office(
     tables: int | None = None,
     door_clutter: bool = False,
 ) -> Scene:
-    """One floor of rooms joined by doorways, with clutter and tables kept out of the start and the doorways.
-
-    Door width, clutter count and table count are drawn from the seed unless given. With
-    door_clutter a box stands just past every doorway against one jamb, narrowing it.
-    """
+    """One floor of rooms joined by doorways, with clutter and tables kept out of the start and the doorways."""
     rng = np.random.default_rng(seed)
     width, length = float(_uniform(rng, 12, 18)), float(_uniform(rng, 9, 13))
     z0 = float(_uniform(rng, 0.0, 0.08))
@@ -284,9 +280,10 @@ def _door_clutter(scene: Scene, door: Door, z: float) -> None:
         scene.add((across, along, z), (across + sx, along + sy, z + sz), "clutter")
 
 
+Params = dict[str, bool | int | float]
 FAMILIES: dict[Family, Callable[..., Scene]] = {"office": office}
 
 
-def generate(family: Family, seed: int, **params: float) -> Scene:
+def generate(family: Family, seed: int, **params: bool | int | float) -> Scene:
     """The family's scene for the seed, with any of its named parameters overridden."""
     return FAMILIES[family](seed, **params)

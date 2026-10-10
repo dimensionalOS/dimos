@@ -38,8 +38,8 @@ from dimos.navigation.bench.runner import (
     run,
     stop_all,
 )
-from dimos.navigation.bench.suite import Case, Manifest, Rules
-from dimos.simulation.scenes.procedural import office
+from dimos.navigation.bench.suite import Case, Manifest, Rules, Split
+from dimos.simulation.scenes.procedural import Params, office
 
 FAKE_BLUEPRINT = """
 import json, signal, sys, time
@@ -79,7 +79,12 @@ signal.pause()
 """
 
 
-def _case(case_id: str, tag: str, split: str, params: dict) -> Case:
+@pytest.fixture(autouse=True)
+def _private_slots(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr("dimos.navigation.bench.runner.SLOTS_DIR", tmp_path / "slots")
+
+
+def _case(case_id: str, tag: str, split: Split, params: Params) -> Case:
     scene = office(1, **params)
     return Case(
         family="office",
@@ -89,7 +94,7 @@ def _case(case_id: str, tag: str, split: str, params: dict) -> Case:
         goal=(4.0, 1.0, float(scene.params["z0"])),
         tag=tag,
         id=case_id,
-        split=split,  # type: ignore[arg-type]
+        split=split,
         difficulty=Difficulty(0.5, 0, 1.0, 0),
         route_length=3.0,
         scene_digest=scene.digest(),

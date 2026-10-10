@@ -12,12 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Frozen navigation cases: a scene, a start, a goal, and how hard the route between them is.
-
-A suite is frozen once from a sampling seed and saved as a manifest. Stressor templates
-provoke one failure mode each. Mined cases are random pairs spread evenly over
-difficulty bins. Every candidate that fails validation is kept as a rejection.
-"""
+"""Frozen navigation cases: a scene, a start, a goal, and how hard the route between them is."""
 
 from __future__ import annotations
 
@@ -46,13 +41,17 @@ from dimos.navigation.bench.ground_truth import (
     GroundTruth,
     Route,
     boxes_near,
-    detour,
-    doors_crossed,
 )
-from dimos.simulation.scenes.procedural import TABLE_TOP_THICKNESS, Box, Family, Scene, generate
+from dimos.simulation.scenes.procedural import (
+    TABLE_TOP_THICKNESS,
+    Box,
+    Family,
+    Params,
+    Scene,
+    generate,
+)
 
 Split = Literal["dev", "held_out"]
-Params = dict[str, bool | int | float]
 Pose = tuple[float, float, float]
 Point = tuple[float, float, float]
 
@@ -64,6 +63,7 @@ DOOR_BINS = (1, 2)
 CLEARANCE_BINS = (0.35, 0.6)
 STRADDLE_M = (1.2, 1.5, 2.0)
 OBSTRUCTED = 1.05
+DEAD_END_DETOUR = 1.4
 
 
 @dataclass(frozen=True)
@@ -71,7 +71,6 @@ class Rules:
     """How an episode is scored. Changing any value is a new version."""
 
     version: int = 1
-    premap: Literal["seed", "walk"] = "seed"
     goal_xy_m: float = 0.5
     goal_z_m: float = 0.3
     stand_height_m: float = GO2.stand
@@ -153,13 +152,10 @@ _MANIFEST = TypeAdapter(Manifest)
 
 
 @dataclass(frozen=True)
-class Measured:
-    """What a route looks like, by the measures the templates select on."""
+class Measured(Difficulty):
+    """A route's difficulty plus the measures only the templates select on."""
 
     route: Route
-    doors: int
-    detour: float
-    clutter_near: int
     tables_near: int
     goal_clearance: float
 
@@ -173,14 +169,10 @@ def _table_tops(scene: Scene) -> list[Box]:
 
 
 def measure(gt: GroundTruth, route: Route) -> Measured:
-    boxes = [box for box in gt.scene.boxes if box.kind == "clutter"]
-    tops = _table_tops(gt.scene)
     return Measured(
+        **vars(gt.difficulty(route)),
         route=route,
-        doors=doors_crossed(gt.scene, route),
-        detour=detour(route),
-        clutter_near=len(boxes_near(route, boxes, CLUTTER_NEAR)),
-        tables_near=len(boxes_near(route, tops, CLUTTER_NEAR)),
+        tables_near=len(boxes_near(route, _table_tops(gt.scene), CLUTTER_NEAR)),
         goal_clearance=float(route.clearance[-1]),
     )
 
@@ -237,7 +229,7 @@ def across_tables(gt: GroundTruth, rng: np.random.Generator, n: int) -> list[Pai
 
 @dataclass(frozen=True)
 class Stressor:
-    """A template for one failure mode: scene overrides, where to look, which routes qualify, which is best."""
+    """A template for one failure mode."""
 
     name: str
     params: Params
@@ -269,7 +261,7 @@ STRESSORS = [
     Stressor(
         "dead_end",
         {},
-        lambda m: m.doors >= 1 and m.detour >= 1.4,
+        lambda m: m.doors >= 1 and m.detour >= DEAD_END_DETOUR,
         lambda m: -m.detour,
     ),
     Stressor(
@@ -347,7 +339,7 @@ def freeze(config: FreezeConfig, tick: Tick | None = None) -> Manifest:
     cases += _spread_over_bins(pooled, rng, config.cases_per_bin)
     if tick is not None:
         tick(total, total, "done")
-    git_sha, git_dirty = _git_state()
+    git_sha, git_dirty = git_state()
     return Manifest(
         suite=config.suite,
         rules=config.rules,
@@ -363,10 +355,17 @@ def freeze(config: FreezeConfig, tick: Tick | None = None) -> Manifest:
 def _freeze_scene(config: FreezeConfig, seed: int) -> _Mined:
     """Every stressor placed in one scene and its mined candidates validated, from the scene's own random stream."""
     rng = np.random.default_rng([config.sampling_seed, seed])
-    truths = _Truths()
+    truths: dict[str, GroundTruth] = {}
+
+    def truth(params: Params) -> GroundTruth:
+        key = json.dumps(params, sort_keys=True)
+        if key not in truths:
+            truths[key] = GroundTruth(generate(config.family, seed, **params))
+        return truths[key]
+
     found = _Mined([], [], [], Counter())
     for stressor in STRESSORS:
-        gt = truths.get(config.family, seed, stressor.params)
+        gt = truth(stressor.params)
         candidate = _stressor_candidate(gt, stressor, seed, rng, config)
         if candidate is None:
             found.rejections.append(
@@ -378,7 +377,7 @@ def _freeze_scene(config: FreezeConfig, seed: int) -> _Mined:
             found.cases.append(case)
         else:
             found.rejections.append(_rejection(candidate, case))
-    gt = truths.get(config.family, seed, {})
+    gt = truth({})
     for candidate in _mined_candidates(gt, seed, rng, config):
         case = _validate(gt, candidate, rng, config)
         if isinstance(case, Case):
@@ -386,19 +385,6 @@ def _freeze_scene(config: FreezeConfig, seed: int) -> _Mined:
         else:
             found.tally[case] += 1
     return found
-
-
-class _Truths:
-    """Ground truth per scene, built once."""
-
-    def __init__(self) -> None:
-        self._cache: dict[str, GroundTruth] = {}
-
-    def get(self, family: Family, seed: int, params: Params) -> GroundTruth:
-        key = json.dumps([family, seed, params], sort_keys=True)
-        if key not in self._cache:
-            self._cache[key] = GroundTruth(generate(family, seed, **params))
-        return self._cache[key]
 
 
 def _yaw(rng: np.random.Generator) -> float:
@@ -501,15 +487,7 @@ def _case_id(candidate: Candidate) -> str:
 
 
 def _rejection(candidate: Candidate, reason: str) -> Rejection:
-    return Rejection(
-        candidate.family,
-        candidate.seed,
-        candidate.params,
-        candidate.tag,
-        reason,
-        candidate.start,
-        candidate.goal,
-    )
+    return Rejection(**vars(candidate), reason=reason)
 
 
 def _bin(case: Case) -> tuple[int, int]:
@@ -531,7 +509,9 @@ def _spread_over_bins(pool: list[Case], rng: np.random.Generator, per_bin: int) 
     return sorted(chosen, key=lambda c: c.id)
 
 
-def _git_state() -> tuple[str | None, bool]:
+def git_state() -> tuple[str | None, bool]:
+    """The HEAD sha and whether the tree is dirty, or None and False outside a checkout."""
+
     def git(*args: str) -> str:
         return subprocess.run(
             ["git", *args], cwd=DIMOS_PROJECT_ROOT, capture_output=True, text=True, timeout=5

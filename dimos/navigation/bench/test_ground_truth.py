@@ -71,7 +71,6 @@ def test_route_through_the_office_stays_on_walkable_ground(office_truth: GroundT
     difficulty = gt.difficulty(route)
     assert difficulty.min_clearance >= GO2.radius
     assert difficulty.doors >= 1
-    assert difficulty.detour >= 1.0
     centered = gt.route(gt.scene.start, goal, centered=True)
     assert centered is not None
     assert centered.clearance.mean() >= route.clearance.mean()

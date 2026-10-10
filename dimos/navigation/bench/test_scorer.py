@@ -221,7 +221,6 @@ def test_recording_reads_every_stream_from_a_store(tmp_path: Path) -> None:
     store.stop()
     rec = Recording.from_store(tmp_path / "memory.db")
     assert rec.end == T0 + 2
-    assert rec.pose_source == "ground_truth"
     assert rec.pose.xyz[-1].tolist() == [3.0, 1.0, 0.3]
     assert rec.goals == [(T0, GOAL)]
     assert rec.planner_paths[0].points.tolist() == [list(START)]

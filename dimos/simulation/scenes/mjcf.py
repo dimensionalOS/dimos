@@ -44,10 +44,3 @@ def add_boxes(spec: mujoco.MjSpec, scene: Scene) -> None:
         geom.size = box.half
         if box.kind == "ceiling":
             geom.group = CEILING_GROUP
-
-
-def scene_model(scene: Scene) -> mujoco.MjModel:
-    """The scene alone, with nothing in it."""
-    spec = mujoco.MjSpec()
-    add_boxes(spec, scene)
-    return spec.compile()
