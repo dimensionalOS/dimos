@@ -230,6 +230,7 @@ class ManipulationModule(Module):
         self._error_message = ""
         self._planning_epoch = 0
         self._started = False
+        self._stop_lock = threading.Lock()
 
         # Planning components (initialized in start())
         self._world_monitor: WorldMonitor | None = None
@@ -1412,27 +1413,31 @@ class ManipulationModule(Module):
     @rpc
     def stop(self) -> None:
         """Stop the manipulation module."""
-        logger.info("Stopping ManipulationModule")
+        with self._stop_lock:
+            if self._module_closed:
+                return
+            logger.info("Stopping ManipulationModule")
 
-        execution_manager = getattr(self, "_execution_manager", None)
-        if execution_manager is not None:
-            cancellation = execution_manager.cancel()
-            if cancellation.status is ExecutionStatus.UNCERTAIN:
-                logger.error(
-                    "Shutdown could not confirm coordinator trajectory safety: %s",
-                    cancellation.message,
-                )
-            execution_manager.close()
+            execution_manager = getattr(self, "_execution_manager", None)
+            if execution_manager is not None:
+                cancellation = execution_manager.cancel()
+                if cancellation.status is ExecutionStatus.UNCERTAIN:
+                    logger.error(
+                        "Shutdown could not confirm coordinator trajectory safety: %s",
+                        cancellation.message,
+                    )
 
-        # Stop TF thread
-        if self._tf_thread is not None:
-            self._tf_stop_event.set()
-            self._tf_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
-            self._tf_thread = None
+                execution_manager.close()
 
-        # Stop world monitor (includes visualization thread)
-        if self._world_monitor is not None:
-            self._world_monitor.stop_all_monitors()
+            # Stop TF thread
+            if self._tf_thread is not None:
+                self._tf_stop_event.set()
+                self._tf_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+                self._tf_thread = None
 
-        super().stop()
-        self._started = False
+            # Stop world monitor (includes visualization thread)
+            if self._world_monitor is not None:
+                self._world_monitor.stop_all_monitors()
+
+            super().stop()
+            self._started = False
