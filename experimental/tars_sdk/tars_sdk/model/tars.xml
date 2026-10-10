@@ -72,10 +72,13 @@
         <geom name="slab_2_seam_front_1" type="box" size="0.002 0.0475 0.0015" pos="0.07 0 -0.275" material="seam" class="visual"/>
         <geom name="slab_2_seam_back_1" type="box" size="0.002 0.0475 0.0015" pos="-0.07 0 -0.275" material="seam" class="visual"/>
         <geom name="slab_2_display" type="box" size="0.003 0.0425 0.03" pos="0.07 0 -0.02" material="display" class="visual"/>
-        <geom name="lidar_base" type="cylinder" size="0.0325 0.0091" pos="0 0 0.0841" material="aluminum" class="visual"/>
-        <geom name="lidar_window" type="cylinder" size="0.0312 0.01495" pos="0 0 0.10815" material="glass" class="visual"/>
-        <geom name="lidar_crown" type="cylinder" size="0.0325 0.0052" pos="0 0 0.1283" material="aluminum" class="visual"/>
-        <site name="lidar" pos="0 0 0.10815" size="0.01"/>
+        <geom name="lidar_pedestal" type="cylinder" size="0.026 0.0114905" pos="0 0 0.0864905" material="axle" class="visual"/>
+        <frame pos="0 0 0.097981" quat="0.923879533 0 0.382683432 0">
+          <geom name="lidar_base" type="cylinder" size="0.0325 0.0091" pos="0 0 0.0091" material="aluminum" class="visual"/>
+          <geom name="lidar_window" type="cylinder" size="0.0312 0.01495" pos="0 0 0.03315" material="glass" class="visual"/>
+          <geom name="lidar_crown" type="cylinder" size="0.0325 0.0052" pos="0 0 0.0533" material="aluminum" class="visual"/>
+          <site name="lidar" pos="0 0 0.03315" size="0.01"/>
+        </frame>
         <camera name="front_camera" pos="0.075 0 0.05" xyaxes="0 -1 0 0 0 1" fovy="70"/>
         <geom name="camera_lens" type="cylinder" size="0.012 0.004" pos="0.073 0 0.05" zaxis="1 0 0" material="rubber" class="visual"/>
         <body name="slab_2_lower" pos="0 0 -0.4">

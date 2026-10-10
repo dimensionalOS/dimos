@@ -49,6 +49,9 @@ class Params:
     # --- lidar: 3D 360 deg (Livox Mid-360 pattern) in a turret on top of one slab; tilts with it ---
     lidar_slab: int = 2  # slab carrying the lidar (the one with the display + camera)
     lidar_size: float = 0.13  # turret diameter (Mid-360 proportions: height 0.9 x diameter)
+    # pitched forward/down (deg) so the -7..52 deg band reaches the floor near TARS (Go2's
+    # Mid-360 rig uses 60); 45 keeps most of the walls for the map
+    lidar_tilt: float = 45.0
     lidar_h_samples: int = 360  # azimuth samples per scan (1 deg)
     lidar_rings: int = 32  # elevation samples per scan
     lidar_v_fov: tuple[float, float] = (-7.0, 52.0)  # deg, min/max elevation
@@ -132,10 +135,19 @@ class Params:
         return self.height - self.pivot_from_top
 
     @property
-    def lidar_height(self) -> float:
-        """Lidar optical center (middle of the turret's window band) above the hinge axis,
-        in the frame of the slab carrying it."""
-        return self.pivot_from_top + 0.51 * self.lidar_size
+    def lidar_mount(self) -> tuple[float, float, float]:
+        """Turret base center in the slab frame: on the top face, raised so the tilted
+        turret's front edge rests on it."""
+        r, a = 0.5 * self.lidar_size, math.radians(self.lidar_tilt)
+        return (0.0, 0.0, self.pivot_from_top + r * math.sin(a))
+
+    @property
+    def lidar_xyz(self) -> tuple[float, float, float]:
+        """Lidar optical center (middle of the turret's window band) in the slab frame; the
+        lidar frame is the slab frame pitched down by `lidar_tilt`."""
+        h, a = 0.51 * self.lidar_size, math.radians(self.lidar_tilt)
+        x, y, z = self.lidar_mount
+        return (x + h * math.sin(a), y, z + h * math.cos(a))
 
     @property
     def pitch(self) -> float:

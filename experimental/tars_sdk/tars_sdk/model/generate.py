@@ -181,11 +181,13 @@ def build_urdf(p: Params, links: list[tuple[Link, Link]]) -> ET.Element:
                 ET.SubElement(ET.SubElement(c, "geometry"), "box", size=fmt(b.size))
         return el
 
-    def add_joint(name, jtype, parent, child, xyz, axis=None, limit=None, damping=None):
+    def add_joint(
+        name, jtype, parent, child, xyz, axis=None, limit=None, damping=None, rpy=(0, 0, 0)
+    ):
         j = ET.SubElement(robot, "joint", name=name, type=jtype)
         ET.SubElement(j, "parent", link=parent)
         ET.SubElement(j, "child", link=child)
-        ET.SubElement(j, "origin", xyz=fmt(xyz), rpy="0 0 0")
+        ET.SubElement(j, "origin", xyz=fmt(xyz), rpy=fmt(rpy))
         if axis:
             ET.SubElement(j, "axis", xyz=fmt(axis))
         if limit:
@@ -228,7 +230,14 @@ def build_urdf(p: Params, links: list[tuple[Link, Link]]) -> ET.Element:
         )
         if i == p.lidar_slab:
             ET.SubElement(robot, "link", name="lidar_link")
-            add_joint("lidar_joint", "fixed", upper.name, "lidar_link", (0, 0, p.lidar_height))
+            add_joint(
+                "lidar_joint",
+                "fixed",
+                upper.name,
+                "lidar_link",
+                p.lidar_xyz,
+                rpy=(0, math.radians(p.lidar_tilt), 0),
+            )
         if i == p.display_slab:
             ET.SubElement(robot, "link", name="camera_link")
             add_joint(
@@ -410,16 +419,34 @@ def build_mjcf(p: Params, links: list[tuple[Link, Link]], standalone: bool = Tru
         )
         add_geoms(ub, upper)
         if i == p.lidar_slab:
-            # lidar turret (Mid-360 look) on the slab's top face: aluminum base, dark window
-            # band (the optical center), aluminum crown
-            size, z = p.lidar_size, p.pivot_from_top
+            # lidar turret (Mid-360 look) on the slab's top face, pitched down by lidar_tilt
+            # on a short pedestal: aluminum base, dark window band (the optical center),
+            # aluminum crown
+            size, (mx, my, mz) = p.lidar_size, p.lidar_mount
+            a = math.radians(p.lidar_tilt)
+            ET.SubElement(
+                ub,
+                "geom",
+                name="lidar_pedestal",
+                type="cylinder",
+                size=f"{0.4 * size:.6g} {(mz - p.pivot_from_top) / 2:.6g}",
+                pos=f"{mx:.6g} {my:.6g} {(mz + p.pivot_from_top) / 2:.6g}",
+                material="axle",
+                **{"class": "visual"},
+            )
+            turret = ET.SubElement(
+                ub,
+                "frame",
+                pos=f"{mx:.6g} {my:.6g} {mz:.6g}",
+                quat=f"{math.cos(a / 2):.9g} 0 {math.sin(a / 2):.9g} 0",
+            )
             for name, r, z0, z1, mat in (
-                ("lidar_base", 0.5 * size, z, z + 0.28 * size, "aluminum"),
-                ("lidar_window", 0.48 * size, z + 0.28 * size, z + 0.74 * size, "glass"),
-                ("lidar_crown", 0.5 * size, z + 0.74 * size, z + 0.9 * size, "aluminum"),
+                ("lidar_base", 0.5 * size, 0.0, 0.28 * size, "aluminum"),
+                ("lidar_window", 0.48 * size, 0.28 * size, 0.74 * size, "glass"),
+                ("lidar_crown", 0.5 * size, 0.74 * size, 0.9 * size, "aluminum"),
             ):
                 ET.SubElement(
-                    ub,
+                    turret,
                     "geom",
                     name=name,
                     type="cylinder",
@@ -428,7 +455,7 @@ def build_mjcf(p: Params, links: list[tuple[Link, Link]], standalone: bool = Tru
                     material=mat,
                     **{"class": "visual"},
                 )
-            ET.SubElement(ub, "site", name="lidar", pos=f"0 0 {p.lidar_height:.6g}", size="0.01")
+            ET.SubElement(turret, "site", name="lidar", pos=f"0 0 {0.51 * size:.6g}", size="0.01")
         if i == p.display_slab:
             ET.SubElement(
                 ub,

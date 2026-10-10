@@ -100,17 +100,25 @@ WALL_SCENE = """<mujoco>
 """
 
 
-def test_lidar_scan_is_360_and_ignores_the_robot(client: TarsClient) -> None:
+def _pitch(a: float) -> np.ndarray:
+    return np.array([[math.cos(a), 0, math.sin(a)], [0, 1, 0], [-math.sin(a), 0, math.cos(a)]])
+
+
+def test_lidar_sees_the_floor_ahead_and_never_the_robot(client: TarsClient) -> None:
     scan = client.get_lidar()
     p = Params()
     assert scan.points.dtype == np.float32 and scan.points.shape[1] == 3
-    # standalone floor only: the lowest beams (-7 deg) land far out, never on TARS itself
-    lidar_z = scan.position[2]
-    assert lidar_z == pytest.approx((1.45 + p.lidar_height) * p.scale, abs=0.02)
-    r = np.linalg.norm(scan.points[:, :2], axis=1)
-    assert r.min() > 0.9 * lidar_z / math.tan(math.radians(-p.lidar_v_fov[0]))
-    az = np.degrees(np.arctan2(scan.points[:, 1], scan.points[:, 0]))
-    assert np.histogram(az, bins=8, range=(-180, 180))[0].min() > 0
+    assert scan.position[2] == pytest.approx((1.45 + p.lidar_xyz[2]) * p.scale, abs=0.02)
+    # standalone floor only: every hit is floor, none on TARS itself
+    pts = scan.points_odom()
+    assert np.abs(pts[:, 2]).max() < 0.01
+    r = np.linalg.norm(pts[:, :2] - scan.position[:2], axis=1)
+    assert r.min() > 0.3
+    # pitched down: the floor right in front is seen, across the whole front half
+    lowest = math.radians(p.lidar_tilt - p.lidar_v_fov[0])
+    assert r.min() < 1.2 * scan.position[2] / math.tan(lowest)
+    az = np.degrees(np.arctan2(pts[:, 1], pts[:, 0]))
+    assert np.histogram(az, bins=6, range=(-90, 90))[0].min() > 0
 
 
 def test_lidar_registers_wall_while_turning(tmp_path: Path) -> None:
@@ -143,13 +151,11 @@ def test_lidar_rides_slab_and_tf_chain_matches(client: TarsClient) -> None:
         s = client.get_lidar()
         q = s.joint_q[hinge]
         tilts.append(abs(q))
-        slab_in_base = np.array(
-            [[math.cos(q), 0, math.sin(q)], [0, 1, 0], [-math.sin(q), 0, math.cos(q)]]
-        )
         r_base = quat_to_mat(s.base_quat)
-        r_lidar = r_base @ slab_in_base
+        r_slab = r_base @ _pitch(q)
+        r_lidar = r_slab @ _pitch(math.radians(p.lidar_tilt))
         pos = s.base_position + r_base @ np.array([0, p.slab_y(p.lidar_slab), 0])
-        pos = pos + r_lidar @ np.array([0, 0, p.lidar_height])
+        pos = pos + r_slab @ np.array(p.lidar_xyz)
         np.testing.assert_allclose(pos, s.position, atol=1e-6)
         np.testing.assert_allclose(r_lidar, quat_to_mat(s.quat), atol=1e-6)
     assert max(tilts) > 0.2  # the lidar really tilts with the gait
