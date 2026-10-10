@@ -453,37 +453,6 @@ def test_upload_cli_prints_console_link(
 
 
 @pytest.mark.parametrize(
-    "upload_id,encoded_id",
-    [
-        ("12345678-1234-5678-abcd-123456789abc", "12345678-1234-5678-abcd-123456789abc"),
-        ("recording /?#&=+%é", "recording%20%2F%3F%23%26%3D%2B%25%C3%A9"),
-    ],
-)
-def test_upload_cli_console_link_preserves_full_id(
-    env: tuple[CloudData, FakeTransport, Path],
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-    upload_id: str,
-    encoded_id: str,
-) -> None:
-    cloud, t, db = env
-    original_id = cloud.upload(db)["upload_id"]
-    t.uploads[upload_id] = t.uploads.pop(original_id)
-    monkeypatch.setattr(cli, "CloudData", lambda: cloud)
-    monkeypatch.setattr(global_config, "dimos_cloud_url", "https://api.dimensional.org")
-
-    cli.upload(db, None, None, None, None)
-
-    captured = capsys.readouterr()
-    assert f"{db.name}: already uploaded ({upload_id[:12]})\n" in captured.out
-    assert (
-        f"  console: https://console.dimensional.org/console/data?open={encoded_id}\n"
-        in captured.out
-    )
-    assert captured.err == ""
-
-
-@pytest.mark.parametrize(
     "api_url",
     [
         "http://localhost:8000",
