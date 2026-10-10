@@ -19,7 +19,7 @@ from __future__ import annotations
 from collections import Counter
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from rich.progress import (
     BarColumn,
@@ -33,6 +33,7 @@ import typer
 
 if TYPE_CHECKING:
     from dimos.navigation.bench.runner import Progress, Report
+    from dimos.navigation.bench.suite import Split
 
 app = typer.Typer(help="Closed-loop navigation benchmark in the simulated world.")
 
@@ -112,7 +113,7 @@ def run_command(
     config = RunConfig(
         suite=suite,
         blueprint=blueprint,
-        split=None if split == "all" else split,  # type: ignore[arg-type]
+        split=None if split == "all" else cast("Split", split),
         cases=tuple(case),
         procs=procs,
         out_dir=out,

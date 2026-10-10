@@ -12,24 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Scores one episode from its recording, by rules fixed in advance.
-
-The episode runs from the goal's first echo on the goal topic to the arrival signal, the
-timeout, or the end of the recording. Every metric names the streams it needs and is
-reported as None when one is missing, so a robot recording without ground truth or
-contacts scores with the same function.
-"""
+"""Scores one episode from its recording, by rules fixed in advance."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import Literal, TypeVar
 
 import numpy as np
 from numpy.typing import NDArray
 
 from dimos.memory.store.sqlite import SqliteStore
+from dimos.memory.type.observation import Observation
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -52,6 +47,7 @@ Outcome = Literal[
 ]
 
 COLLIDING_KINDS = ("wall", "clutter", "ceiling")
+T = TypeVar("T")
 GOAL_ECHO_M = 0.05
 
 
@@ -86,7 +82,6 @@ class Recording:
 
     end: float
     pose: Poses | None = None
-    pose_source: Literal["ground_truth", "odometry"] = "ground_truth"
     contacts: list[ContactSample] | None = None
     goals: list[tuple[float, Point]] | None = None
     planner_paths: list[PathSample] | None = None
@@ -100,18 +95,16 @@ class Recording:
         try:
             names = set(store.list_streams())
 
-            def stamped(name: str, kind: type) -> list | None:  # type: ignore[type-arg]
+            def stamped(name: str, kind: type[T]) -> list[Observation[T]] | None:
                 return store.stream(name, kind).to_list() if name in names else None
 
             end = max(
                 (float(store.stream(n).last().ts) for n in names if store.stream(n).exists()),
                 default=0.0,
             )
-            source: Literal["ground_truth", "odometry"] = "ground_truth"
-            pose = stamped("ground_truth", PoseStamped)
-            if pose is None:
-                pose = stamped("odometry", Odometry)
-                source = "odometry"
+            pose: list[Observation[PoseStamped]] | list[Observation[Odometry]] | None = stamped(
+                "ground_truth", PoseStamped
+            ) or stamped("odometry", Odometry)
             goals = stamped("goal", PointStamped)
             paths = stamped("planner_path", PathMsg)
             commands = stamped("cmd_vel", Twist)
@@ -120,7 +113,6 @@ class Recording:
             return cls(
                 end=end,
                 pose=_poses(pose) if pose else None,
-                pose_source=source,
                 contacts=None
                 if contacts is None
                 else [ContactSample(float(o.ts), o.data.contacts) for o in contacts],
@@ -152,7 +144,7 @@ class Recording:
             store.stop()
 
 
-def _poses(observations: list) -> Poses:  # type: ignore[type-arg]
+def _poses(observations: list[Observation[PoseStamped]] | list[Observation[Odometry]]) -> Poses:
     t = np.array([float(o.ts) for o in observations])
     xyz = np.array([tuple(o.data.position) for o in observations]).reshape(-1, 3)
     rpy = np.array([tuple(o.data.orientation.to_euler()) for o in observations]).reshape(-1, 3)
@@ -169,7 +161,7 @@ class Score:
     traveled_m: float | None
     spl: float | None
     final_error_xy: float | None
-    final_error_z: float | None  # of the body's standing height above the goal
+    final_error_z: float | None
     reroutes: int | None
     reroute_rate: float | None
     path_change_p95: float | None
@@ -401,14 +393,14 @@ def _outcome(
     if paths.any_plan is False:
         return "no_plan"
     assert recording.pose is not None
-    if _stuck(recording.pose, recording.commands, rules, t1):
+    if stuck(recording.pose, recording.commands, rules, t1):
         return "stuck"
-    if _stalled(recording.commands, rules, t0, t1):
+    if stalled(recording.commands, rules, t0, t1):
         return "stalled"
     return "timeout"
 
 
-def _moving(commands: Commands, rules: Rules) -> NDArray[np.bool_]:
+def moving(commands: Commands, rules: Rules) -> NDArray[np.bool_]:
     speed = np.hypot(commands.v[:, 0], commands.v[:, 1])
     moving: NDArray[np.bool_] = (speed >= rules.moving_cmd) | (
         np.abs(commands.v[:, 2]) >= rules.moving_cmd
@@ -416,12 +408,12 @@ def _moving(commands: Commands, rules: Rules) -> NDArray[np.bool_]:
     return moving
 
 
-def _stuck(pose: Poses, commands: Commands | None, rules: Rules, t1: float) -> bool:
+def stuck(pose: Poses, commands: Commands | None, rules: Rules, t1: float) -> bool:
     """Commanding motion through the final stretch while the body went nowhere."""
     if commands is None:
         return False
     keep = (commands.t >= t1 - rules.stuck_s) & (commands.t <= t1)
-    if not keep.any() or _moving(commands, rules)[keep].mean() < 0.8:
+    if not keep.any() or moving(commands, rules)[keep].mean() < 0.8:
         return False
     span = (pose.t >= t1 - rules.stuck_s) & (pose.t <= t1)
     if not span.any():
@@ -432,10 +424,10 @@ def _stuck(pose: Poses, commands: Commands | None, rules: Rules, t1: float) -> b
     )
 
 
-def _stalled(commands: Commands | None, rules: Rules, t0: float, t1: float) -> bool:
+def stalled(commands: Commands | None, rules: Rules, t0: float, t1: float) -> bool:
     """No motion commanded through the final stretch."""
     if commands is None:
         return False
-    moving = _moving(commands, rules) & (commands.t >= t0) & (commands.t <= t1)
-    last = commands.t[moving].max() if moving.any() else t0
+    drove = moving(commands, rules) & (commands.t >= t0) & (commands.t <= t1)
+    last = commands.t[drove].max() if drove.any() else t0
     return bool(t1 - last >= rules.stalled_s)

@@ -56,7 +56,7 @@ from dimos.robot.unitree.go2.go2_mid360_static_transforms import FRAMES
 from dimos.simulation.go2_legged.policy import Go2Policy, load_policy
 from dimos.simulation.go2_legged.robot import CONTROL_DT, LeggedGo2, apply_fitted_physics, go2_spec
 from dimos.simulation.scenes.mjcf import CEILING_GROUP, SCENE_GROUP, add_boxes, geom_name
-from dimos.simulation.scenes.procedural import Family, Scene, generate
+from dimos.simulation.scenes.procedural import Family, Params, Scene, generate
 from dimos.simulation.sensors.mid360.lidar import SimMid360
 from dimos.simulation.sensors.mid360.pattern import POINT_RATE
 from dimos.simulation.sensors.mujoco_raycaster import MujocoRaycaster
@@ -323,7 +323,7 @@ class CommandHold:
 class SimGo2WorldConfig(ModuleConfig):
     family: Family = "office"
     seed: int = 1
-    scene_params: dict[str, bool | int | float] = {}
+    scene_params: Params = {}
     real_time_factor: float = Field(default=1.0, gt=0.0)
     mujoco_viewer: bool = False
     policy: Path | None = None
@@ -375,7 +375,7 @@ class SimGo2World(Module):
         if not self._hold.update(command, time.monotonic()):
             logger.warning("Ignored non-finite cmd_vel", command=command.tolist())
 
-    def _load(self, family: Family, seed: int, params: dict[str, bool | int | float]) -> Go2Sim:
+    def _load(self, family: Family, seed: int, params: Params) -> Go2Sim:
         scene = generate(family, seed, **params)
         sim = Go2Sim(scene, seed, self._policy)
         sim.reset(*scene.start, 0.0)

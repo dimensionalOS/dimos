@@ -54,7 +54,7 @@ PREMAP_SPEED = 0.5
 PREMAP_SEED = 0
 SEARCH_CACHE = 256
 PROBE_GROUP = 5
-# the Mid-360 on its mount tops out near 0.55 m when the sim Go2 stands
+# the Mid-360 on its mount is the highest point of the standing sim Go2
 GO2_CLEARANCE_HEIGHT = 0.6
 CENTERING_CLEARANCE = 0.6
 CLUTTER_NEAR = 0.5
@@ -102,18 +102,18 @@ class Difficulty:
 class GroundTruth:
     """One ground height per column, the cells a body can stand on, and routes between them."""
 
-    def __init__(self, scene: Scene, body: Body = GO2, cell: float = CELL) -> None:
+    def __init__(self, scene: Scene) -> None:
         self.scene = scene
-        self.body = body
-        self.cell = cell
+        self.body = GO2
+        self.cell = CELL
         lo, hi = scene.bounds()
         self.origin = (float(lo[0]), float(lo[1]))
-        self.shape = (math.ceil((hi[0] - lo[0]) / cell), math.ceil((hi[1] - lo[1]) / cell))
-        self._probe = Probe(scene, body.height, cell / 4)
+        self.shape = (math.ceil((hi[0] - lo[0]) / CELL), math.ceil((hi[1] - lo[1]) / CELL))
+        self._probe = Probe(scene, GO2.height, CELL / 4)
         self.height = self._ground(float(hi[2]), float(hi[2] - lo[2]))
         ground = self._reachable(np.isfinite(self.height), self.index(scene.start))
-        self.clearance = ndimage.distance_transform_edt(ground) * cell
-        self.walkable = ground & (self.clearance >= body.radius)
+        self.clearance = ndimage.distance_transform_edt(ground) * CELL
+        self.walkable = ground & (self.clearance >= GO2.radius)
         self._walk = self._edges(self.walkable)
         self._graphs: dict[bool, csr_matrix] = {}
         self._searches: dict[tuple[int, bool], NDArray[np.int32]] = {}
@@ -186,19 +186,21 @@ class GroundTruth:
         caster = MujocoRaycaster(self._probe.model, self._probe.data, SCENE_GROUPS)
         lidar = SimMid360.go2(caster, PREMAP_SEED)
         per_pose = int(POINT_RATE * PREMAP_STEP_M / PREMAP_SPEED)
-        hits = []
+        lo, hi = self.scene.bounds()
+        dims = np.ceil((hi - lo) / self.cell).astype(np.int64) + 3
+        seen = np.zeros(dims, dtype=bool)
+        kept = []
         for position, rotation in sensor_poses(route, self.body.stand, PREMAP_STEP_M):
-            points = lidar.cast(position, rotation, per_pose)
-            hits.append(position + points.astype(np.float64) @ rotation.T)
-        points = np.concatenate(hits)
-        lo, _ = self.scene.bounds()
-        keys = np.floor((points - lo) / self.cell).astype(np.int64) + 1
-        side = int(keys.max()) + 1
-        _, first = np.unique(
-            (keys[:, 0] * side + keys[:, 1]) * side + keys[:, 2], return_index=True
-        )
-        cloud: NDArray[np.float32] = points[np.sort(first)].astype(np.float32)
-        return cloud
+            points = (
+                position + lidar.cast(position, rotation, per_pose).astype(np.float64) @ rotation.T
+            )
+            keys = np.clip(np.floor((points - lo) / self.cell).astype(np.int64) + 1, 0, dims - 1)
+            flat = np.ravel_multi_index((keys[:, 0], keys[:, 1], keys[:, 2]), tuple(dims))
+            _, first = np.unique(flat, return_index=True)
+            first = first[~seen.flat[flat[first]]]
+            seen.flat[flat[first]] = True
+            kept.append(points[np.sort(first)].astype(np.float32))
+        return np.concatenate(kept)
 
     def difficulty(self, route: Route) -> Difficulty:
         clutter = [box for box in self.scene.boxes if box.kind == "clutter"]

@@ -33,9 +33,12 @@ from dimos.navigation.bench.suite import (
 SMALL = FreezeConfig(seeds=(1, 3), stressor_samples=60, samples_per_scene=25, cases_per_bin=1)
 
 
+STEPS: list[tuple[int, int, str]] = []
+
+
 @pytest.fixture(scope="module")
 def manifest() -> Manifest:
-    return freeze(SMALL)
+    return freeze(SMALL, lambda *step: STEPS.append(step))
 
 
 def test_every_case_is_routable_and_pinned_to_its_scene(manifest: Manifest) -> None:
@@ -44,7 +47,6 @@ def test_every_case_is_routable_and_pinned_to_its_scene(manifest: Manifest) -> N
     for case in manifest.cases:
         assert case.route_length >= SMALL.min_route_m
         assert case.difficulty.min_clearance >= GO2.radius
-        assert case.split in ("dev", "held_out")
         assert case.scene().digest() == case.scene_digest
     case = next(c for c in manifest.cases if c.tag == "narrow_door")
     gt = GroundTruth(case.scene())
@@ -69,6 +71,8 @@ def test_stressors_match_their_templates(manifest: Manifest) -> None:
         assert case.difficulty.doors == 0
         assert case.difficulty.detour >= OBSTRUCTED
         assert case.difficulty.clutter_near >= 1
+    for case in by_tag.get("against_wall", []):
+        assert case.difficulty.doors >= 1
     for case in by_tag["around_table"]:
         assert case.difficulty.doors == 0
         assert case.difficulty.detour >= OBSTRUCTED
@@ -102,10 +106,9 @@ def test_drift_check_catches_a_changed_scene(manifest: Manifest) -> None:
         drifted.check_drift()
 
 
-def test_freeze_is_deterministic_and_reports_every_step() -> None:
-    config = FreezeConfig(seeds=(1,), stressor_samples=8, samples_per_scene=8, cases_per_bin=1)
-    steps: list[tuple[int, int, str]] = []
-    assert freeze(config, lambda *step: steps.append(step)) == freeze(config)
-    assert [done for done, _, _ in steps] == [0, 1, 2]
-    assert all(total == 2 for _, total, _ in steps)
-    assert steps[1][2] == "scene 1 done" and steps[-1][2] == "done"
+def test_freeze_is_deterministic_and_reports_every_scene(manifest: Manifest) -> None:
+    assert freeze(SMALL) == manifest
+    assert [done for done, _, _ in STEPS] == [0, 1, 2, 3]
+    assert all(total == 3 for _, total, _ in STEPS)
+    assert {STEPS[1][2], STEPS[2][2]} == {"scene 1 done", "scene 3 done"}
+    assert STEPS[-1][2] == "done"

@@ -12,20 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Runs one benchmark case against the navigation stack in the simulated world.
-
-Resets the robot to the case's start, premaps by seeding the stack with the scene's cloud or
-by walking the reference route on teleop, sends the goal until the stack echoes it, then
-watches for a terminal condition and writes it to terminal.json. Collisions never end an
-episode. The runner stops the process.
-"""
+"""Runs one benchmark case against the navigation stack in the simulated world."""
 
 from __future__ import annotations
 
 from collections import deque
 from collections.abc import Callable
 import json
-import math
 from pathlib import Path
 from threading import Event, Thread
 import time
@@ -41,20 +34,18 @@ from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.navigation.bench.ground_truth import GroundTruth
-from dimos.navigation.bench.oracle import RouteTracker
-from dimos.navigation.bench.scorer import GOAL_ECHO_M
+from dimos.navigation.bench.scorer import GOAL_ECHO_M, Commands, Poses, stalled, stuck
 from dimos.navigation.bench.suite import Manifest
+from dimos.simulation.go2_sim.world import ODOM_FRAME_ID
 from dimos.simulation.go2_sim.world_spec import SimWorldSpec
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
 TERMINAL_FILE = "terminal.json"
-ODOM_FRAME_ID = "odom"
 WATCH_DT = 0.05
 FIRST_POSE_WAIT_S = 60.0
 
@@ -65,13 +56,12 @@ class EpisodeDriverConfig(ModuleConfig):
     out_dir: Path = Path()
     settle_s: float = 2.0
     seed_settle_s: float = 4.0
-    teleop_hz: float = 20.0
     goal_resend_s: float = 1.0
     goal_wait_s: float = 8.0
 
 
 class EpisodeDriver(Module):
-    """Drives one case: premap, reset, goal, and the terminal condition."""
+    """Drives one case: reset, premap, goal, and the terminal condition."""
 
     config: EpisodeDriverConfig
 
@@ -80,7 +70,6 @@ class EpisodeDriver(Module):
     goal_reached: In[Bool]
     cmd_vel: In[Twist]
 
-    tele_cmd_vel: Out[Twist]
     clicked_point: Out[PointStamped]
     loaded_map: Out[PointCloud2]
 
@@ -95,9 +84,8 @@ class EpisodeDriver(Module):
         self._case = next(c for c in manifest.cases if c.id == self.config.case_id)
         self._truth = GroundTruth(self._case.scene())
         self._pose: tuple[float, NDArray[np.float64], NDArray[np.float64]] | None = None
-        self._recent: deque[tuple[float, NDArray[np.float64]]] = deque()
-        self._moving: deque[tuple[float, bool]] = deque()
-        self._last_moving: float | None = None
+        self._recent: deque[tuple[float, NDArray[np.float64], NDArray[np.float64]]] = deque()
+        self._commands: deque[tuple[float, NDArray[np.float64]]] = deque()
         self._echo: float | None = None
         self._arrival: float | None = None
         self._stop_event = Event()
@@ -119,7 +107,7 @@ class EpisodeDriver(Module):
         xyz = np.array(tuple(msg.position), dtype=np.float64)
         rpy = np.array(tuple(msg.orientation.to_euler()), dtype=np.float64)
         self._pose = (msg.ts, xyz, rpy)
-        self._recent.append((msg.ts, xyz))
+        self._recent.append(self._pose)
         while self._recent and self._recent[0][0] < msg.ts - self._rules.stuck_s:
             self._recent.popleft()
 
@@ -132,16 +120,11 @@ class EpisodeDriver(Module):
             self._arrival = time.time()
 
     def _on_cmd(self, msg: Twist) -> None:
-        moving = (
-            math.hypot(msg.linear.x, msg.linear.y) >= self._rules.moving_cmd
-            or abs(msg.angular.z) >= self._rules.moving_cmd
-        )
         now = time.time()
-        self._moving.append((now, moving))
-        if moving:
-            self._last_moving = now
-        while self._moving and self._moving[0][0] < now - self._rules.stuck_s:
-            self._moving.popleft()
+        self._commands.append((now, np.array([msg.linear.x, msg.linear.y, msg.angular.z])))
+        keep = now - max(self._rules.stuck_s, self._rules.stalled_s)
+        while self._commands and self._commands[0][0] < keep:
+            self._commands.popleft()
 
     def _run(self) -> None:
         try:
@@ -155,22 +138,17 @@ class EpisodeDriver(Module):
         if not self._wait(lambda: self._pose is not None, FIRST_POSE_WAIT_S):
             return {"reason": "no_ground_truth"}
         self._reset_to_start()
-        record: dict[str, object] = {"case_id": case.id, "premap": rules.premap}
+        record: dict[str, object] = {"case_id": case.id}
         started = time.time()
         route = self._truth.route(case.start, case.goal, centered=True)
         if route is None:
             return {**record, "reason": "no_reference_route"}
-        if rules.premap == "seed":
-            cloud = self._truth.premap_cloud(route.points)
-            self.loaded_map.publish(
-                PointCloud2.from_numpy(cloud, frame_id=ODOM_FRAME_ID, timestamp=time.time())
-            )
-            record["premap_points"] = len(cloud)
-            self._stop_event.wait(self.config.seed_settle_s)
-        else:
-            walked = self._walk(route.points, rules.timeout_s(route.length) or FIRST_POSE_WAIT_S)
-            record["premap_walked"] = walked
-            self._reset_to_start()
+        cloud = self._truth.premap_cloud(route.points)
+        self.loaded_map.publish(
+            PointCloud2.from_numpy(cloud, frame_id=ODOM_FRAME_ID, timestamp=time.time())
+        )
+        self._stop_event.wait(self.config.seed_settle_s)
+        record["premap_points"] = len(cloud)
         record["premap_s"] = round(time.time() - started, 2)
         t0 = self._send_goal()
         if t0 is None:
@@ -185,23 +163,6 @@ class EpisodeDriver(Module):
         self._world.reset_pose(x, y, z, yaw)
         self._stop_event.wait(self.config.settle_s)
 
-    def _walk(self, route: NDArray[np.float64], timeout_s: float) -> bool:
-        """Teleop along the route from the true pose until the tracker arrives."""
-        tracker = RouteTracker(route)
-        deadline = time.time() + timeout_s
-        period = 1.0 / self.config.teleop_hz
-        arrived = False
-        while not arrived and time.time() < deadline and not self._stop_event.is_set():
-            assert self._pose is not None
-            _, xyz, rpy = self._pose
-            command, arrived = tracker.step(float(xyz[0]), float(xyz[1]), float(rpy[2]))
-            self.tele_cmd_vel.publish(
-                Twist(Vector3(command[0], command[1], 0.0), Vector3(0.0, 0.0, command[2]))
-            )
-            self._stop_event.wait(period)
-        self.tele_cmd_vel.publish(Twist(Vector3(0.0, 0.0, 0.0), Vector3(0.0, 0.0, 0.0)))
-        return arrived
-
     def _send_goal(self) -> float | None:
         """Send the goal until the stack echoes it. The echo's stamp starts the episode clock."""
         deadline = time.time() + self.config.goal_wait_s
@@ -214,8 +175,6 @@ class EpisodeDriver(Module):
 
     def _watch(self, t0: float, timeout_s: float | None) -> str:
         rules = self._rules
-        if self._last_moving is None or self._last_moving < t0:
-            self._last_moving = t0
         while not self._stop_event.is_set():
             now = time.time()
             if self._arrival is not None:
@@ -225,23 +184,27 @@ class EpisodeDriver(Module):
                 return "fall"
             if timeout_s is not None and now - t0 >= timeout_s:
                 return "timeout"
-            if now - t0 >= rules.stuck_s and (verdict := self._stuck_or_stalled(now)) is not None:
+            if now - t0 >= rules.stuck_s and (verdict := self._stuck_or_stalled(t0, now)):
                 return verdict
             self._stop_event.wait(WATCH_DT)
         return "stopped"
 
-    def _stuck_or_stalled(self, now: float) -> str | None:
-        # the callbacks keep appending, so work on copies
-        commands, recent = list(self._moving), list(self._recent)
-        moving = [m for t, m in commands if t >= now - self._rules.stuck_s]
-        stalled = self._last_moving is not None and now - self._last_moving >= self._rules.stalled_s
-        if not moving or not recent:
-            return "stalled" if stalled else None
-        if sum(moving) / len(moving) >= 0.8:
-            xy = np.array([xyz[:2] for _, xyz in recent])
-            progress = float(np.linalg.norm(xy - xy[0], axis=1).max())
-            return "stuck" if progress < self._rules.stuck_progress_m else None
-        return "stalled" if stalled else None
+    def _stuck_or_stalled(self, t0: float, now: float) -> str | None:
+        """The scorer's stuck and stalled rules over the windows the callbacks keep."""
+        recent, commands = list(self._recent), list(self._commands)
+        poses = Poses(
+            np.array([t for t, _, _ in recent]),
+            np.array([xyz for _, xyz, _ in recent]).reshape(-1, 3),
+            np.array([rpy for _, _, rpy in recent]).reshape(-1, 3),
+        )
+        twists = Commands(
+            np.array([t for t, _ in commands]), np.array([v for _, v in commands]).reshape(-1, 3)
+        )
+        if stuck(poses, twists, self._rules, now):
+            return "stuck"
+        if stalled(twists, self._rules, t0, now):
+            return "stalled"
+        return None
 
     def _wait(self, done: Callable[[], bool], timeout_s: float) -> bool:
         deadline = time.time() + timeout_s
