@@ -21,6 +21,7 @@ import contextlib
 from datetime import datetime, timezone
 import functools
 from pathlib import Path
+import re
 from typing import Any
 from urllib.parse import quote
 
@@ -98,10 +99,11 @@ def upload(
     explicit = path is not None
     path = None if str(path) == "latest" else path
     cloud = CloudData()
-    console_url = {
-        "https://api.dimensional.org": "https://console.dimensional.org",
-        "https://api.staging.dimensional.org": "https://console.staging.dimensional.org",
-    }.get(global_config.dimos_cloud_url.removesuffix("/"))
+    console_url, matched = re.subn(
+        r"\Ahttps://api\.(staging\.)?dimensional\.org/?\Z",
+        r"https://console.\1dimensional.org",
+        global_config.dimos_cloud_url,
+    )
     targets = recordings(since_s) if since_s else [path] if path else recordings()[-1:]
     if not targets:
         raise RuntimeError("nothing to upload — pass a path")
@@ -123,7 +125,7 @@ def upload(
                 typer.echo(f"  console preview: {r['preview']}")
             if r["quota"].get("state") not in (None, "ok"):
                 typer.echo(r["quota"]["message"], err=True)
-            if console_url:
+            if matched:
                 typer.echo(
                     f"  console: {console_url}/console/data?open={quote(r['upload_id'], safe='')}"
                 )
