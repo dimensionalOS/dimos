@@ -180,6 +180,7 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport
 from dimos_generated.sensor_msgs.msg import Image
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.std_msgs.msg import Header
 from dimos.msgs.image import image_from_array, image_view
 
@@ -200,7 +201,7 @@ class TickerCameraModule(Module):
             img = image_from_array(
                 np.zeros((480, 640, 3), dtype=np.uint8),
                 encoding="rgb8",
-                header=Header(frame_id="synthetic"),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id="synthetic"),
             )
             self.color_image.publish(img)
 
@@ -251,6 +252,26 @@ Received: (480, 640, 3)
 12:36:08.388 [inf][/coordination/python_worker.py] Worker stopping module... module=TickerCameraModule module_id=0 worker_id=0
 12:36:08.388 [inf][/coordination/python_worker.py] Worker module stopped. module=TickerCameraModule module_id=0 worker_id=0
 12:36:08.394 [inf][ation/worker_manager_python.py] All workers shut down
+```
+```results
+    @abstractmethod
+    def publish(self, topic: TopicT, message: MsgT) -> None:
+        """Publish a message to a topic."""
+        ...
+
+    @abstractmethod
+    def subscribe(
+        self, topic: TopicT, callback: Callable[[MsgT, TopicT], None]
+    ) -> Callable[[], None]:
+        """Subscribe to a topic with a callback. returns unsubscribe function
+
+        The unsubscribe function must not block waiting for an in-flight
+        callback (callers may hold an event loop the backend needs for
+        progress), must be callable from within the callback itself, and once
+        it returns no further deliveries start (a callback already executing
+        may still complete).
+        """
+        ...
 ```
 
 See [Modules](/docs/usage/modules.md) for more on module architecture.
@@ -312,24 +333,7 @@ print(inspect.getsource(PubSub.subscribe))
 ```
 
 ```results
-    @abstractmethod
-    def publish(self, topic: TopicT, message: MsgT) -> None:
-        """Publish a message to a topic."""
-        ...
-
-    @abstractmethod
-    def subscribe(
-        self, topic: TopicT, callback: Callable[[MsgT, TopicT], None]
-    ) -> Callable[[], None]:
-        """Subscribe to a topic with a callback. returns unsubscribe function
-
-        The unsubscribe function must not block waiting for an in-flight
-        callback (callers may hold an event loop the backend needs for
-        progress), must be callable from within the callback itself, and once
-        it returns no further deliveries start (a callback already executing
-        may still complete).
-        """
-        ...
+Received velocity: x=1.0, y=0.0, z=0.5
 ```
 
 Topic/message types are flexible: bytes, JSON, or our ROS-compatible [LCM](/docs/usage/lcm.md) types. We also have pickle-based transports for arbitrary Python objects.
@@ -350,7 +354,7 @@ received = []
 topic = Topic("/robot/velocity", Vector3)
 
 lcm.subscribe(topic, lambda msg, t: received.append(msg))
-lcm.publish(topic, Vector3(x=1.0, z=0.5))
+lcm.publish(topic, Vector3(x=1.0, y=0.0, z=0.5))
 
 import time
 time.sleep(0.1)
@@ -360,7 +364,7 @@ lcm.stop()
 ```
 
 ```results
-Received velocity: x=1.0, y=0.0, z=0.5
+Received: [{'data': [1, 2, 3]}]
 ```
 
 ### Zenoh
@@ -387,7 +391,7 @@ shm.stop()
 ```
 
 ```results
-Received: [{'data': [1, 2, 3]}]
+Received: [SensorReading(value=22.5)]
 ```
 
 ### DDS Transport
@@ -421,7 +425,9 @@ dds.stop()
 ```
 
 ```results
-Received: [SensorReading(value=22.5)]
+Received 2 messages:
+  {'temperature': 22.5}
+  {'temperature': 23.0}
 ```
 ## A minimal transport: `Memory`
 
