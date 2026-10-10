@@ -51,6 +51,7 @@ def serve(
     from experimental.gateway import events
     from experimental.gateway.app import create_app
     from experimental.gateway.state import new_state
+    from experimental.gateway.topic_rates import TopicWatch
 
     if healthy(socket_path):
         raise SystemExit(f"a dimos gateway is already answering on {socket_path}")
@@ -80,6 +81,10 @@ def serve(
 
     state = new_state(dimos_dir, bus)
     state.exit = exit_now
+    if zenoh:
+        connect = events.resolve_connect(zenoh_connect)
+        state.topics = TopicWatch(lambda: events.zenoh_session(connect))
+        state.topics.start()
     server = uvicorn.Server(
         uvicorn.Config(create_app(state), log_level="warning", timeout_graceful_shutdown=2)
     )

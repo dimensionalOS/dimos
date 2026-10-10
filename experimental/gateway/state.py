@@ -29,6 +29,7 @@ from pydantic import BeforeValidator
 from experimental.gateway import events, introspect, store
 from experimental.gateway.discovery import Jobs, Scanner
 from experimental.gateway.skills import Skills
+from experimental.gateway.topic_rates import TopicWatch
 from experimental.gateway.uploads import Uploads
 
 API_VERSION = "2.0.0"
@@ -51,6 +52,7 @@ class State:
     skills: Skills = field(default_factory=Skills)
     cache: introspect.Cache = field(default_factory=introspect.Cache)
     listed: list[dict[str, Any]] | None = None
+    topics: TopicWatch | None = None
     exit: Callable[[], None] = lambda: os._exit(0)
     started_at: int = field(default_factory=lambda: int(time.time()))
     background: list[asyncio.Task[Any]] = field(default_factory=list)

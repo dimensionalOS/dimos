@@ -64,6 +64,14 @@ const newer = await (await fetch(`../../dimos/runs/latest/log?after=${page.offse
 
 `- GET /runs/{runId}/log`
 
+## How do I list topics and their rates?
+
+```js
+const { topics } = await (await fetch("../../dimos/topics/rates")).json() // [{ topic, type, hz, bps, lastSeen }]
+```
+
+`- GET /topics/rates`
+
 ## How do I list a blueprint's modules, their streams and RPCs?
 
 ```js
@@ -100,6 +108,18 @@ const result = await (await fetch("../../dimos/skills/call", {
 ```
 
 `- POST /skills/call` (acts on the robot: only from a user's action)
+
+## How do I decode dimos messages in a page?
+
+```js
+import { DimApp } from "./dim-app/mod.js"
+
+const app = new DimApp({ msgDecodeEndpoint: "../../dimos/msgs.js" })
+app.subscribe("odom", (odom) => console.log(odom.pose.pose.position)) // decoded
+const twist = app.msgs.geometry_msgs.Twist.encode({ linear: { x: 0.3 } }) // bytes
+```
+
+`- GET /msgs.js`
 
 ## How do I list robots and their recommended blueprints?
 
