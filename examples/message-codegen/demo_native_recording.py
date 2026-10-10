@@ -174,7 +174,7 @@ def main() -> None:
     args.output.mkdir(parents=True, exist_ok=True)
     for backend in ("lcm", "zenoh") if args.transport == "both" else (args.transport,):
         record(backend, args.executable, args.output / f"external-native-recording-{backend}.mcap")
-    print("PASS: custom field recorded on both transports without a recorder decoder or rebuild")
+    print("PASS: custom field recorded without a recorder decoder or rebuild")
 
 
 if __name__ == "__main__":

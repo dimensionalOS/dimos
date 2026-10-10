@@ -86,8 +86,7 @@ pytest.importorskip("dimos_mls_planner")
 from dimos.mapping.ray_tracing.transformer import RayTraceMap
 from dimos.memory.tf import StreamTF
 from dimos.memory.type.observation import Observation
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.pointcloud import pointcloud_from_xyz
 from dimos.navigation.global_planner.mls_planner.mls_planner import MLSPlanner
 from dimos.navigation.global_planner.mls_planner.utils.plan_rrd import Seeding, SeedStage
 
@@ -104,9 +103,22 @@ def test_seeding_lands_one_region_per_step_and_matches_a_full_rebuild(
 ) -> None:
     # Three floor patches, each in its own region cell.
     cloud = np.vstack([_patch(0.0), _patch(8.0), _patch(16.0)])
-    loaded_map = Observation(id=0, ts=5.0, _data=PointCloud2.from_numpy(cloud, frame_id="map"))
+    loaded_map = Observation(
+        id=0,
+        ts=5.0,
+        _data=pointcloud_from_xyz(
+            cloud, header=Header(frame_id="map", stamp=Time(sec=5, nanosec=0))
+        ),
+    )
     tf_lookup = mocker.create_autospec(StreamTF, instance=True)
-    tf_lookup.get.return_value = Transform(frame_id="odom", child_frame_id="map")
+    tf_lookup.get.return_value = TransformStamped(
+        header=Header(frame_id="odom", stamp=Time(sec=5, nanosec=0)),
+        child_frame_id="map",
+        transform=Transform(
+            translation=Vector3(x=0.0, y=0.0, z=0.0),
+            rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+        ),
+    )
     # No support gate, so every seeded voxel reaches the planner.
     ray = RayTraceMap(voxel_size=VOXEL_SIZE, support_min=0)
     planner = MLSPlanner(voxel_size=VOXEL_SIZE, robot_height=0.5)

@@ -27,6 +27,7 @@ import socket
 import subprocess
 import time
 
+from dimos_generated.dimos_msgs.msg import RegionPointCloud2
 from dimos_generated.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos_generated.sensor_msgs.msg import PointCloud2
 from dimos_generated.std_msgs.msg import Header
@@ -148,7 +149,7 @@ def test_the_host_publishes_its_outputs_and_hides_the_suppressed_hop(baked, zeno
     transports = []
     try:
         for name, msg_type in (
-            ("surface_map", PointCloud2),
+            ("surface_map", RegionPointCloud2),
             ("global_map", PointCloud2),
             ("local_map", PointCloud2),
         ):

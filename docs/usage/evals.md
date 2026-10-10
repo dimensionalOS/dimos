@@ -246,8 +246,8 @@ odom = store.stream("odom", PoseStamped)
 for i in range(20):
     odom.append(
         PoseStamped(header=Header(stamp=time_from_seconds(1000.0+i),frame_id="world"),
-                    pose=Pose(position=Point(x=float(i),y=2.5,z=0.0),
-                              orientation=Quaternion(x=0.0,y=0.0,z=0.0,w=1.0))),
+                    pose=Pose(position=Point(x=float(i), y=2.5, z=0.0),
+                              orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0))),
         ts=1000.0 + i,
     )
 store.stop()

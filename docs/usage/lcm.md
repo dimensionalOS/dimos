@@ -6,8 +6,8 @@ CDR messages. LCM and Zenoh use the same message bytes; choosing a transport
 does not change a message's schema or codec.
 
 Message definitions are ROS2 `.msg` files. The standalone generator produces
-Python, C++ and Rust value types without requiring ROS. Python types and codecs use rosbags; C++ uses ROSIDL/Fast CDR and Rust
-uses ros2msg/`re_cdr`.
+Python, C++ and Rust value types without requiring ROS. Python classes/codecs use rosbags; C++ uses upstream ROSIDL/Fast CDR and
+native Rust types use `re_cdr`.
 See [add and use a message](/docs/development/messages.md) for the complete
 local-message user story and the three language examples.
 
@@ -106,8 +106,8 @@ finally:
 In-process value: 1.0, 2.0, 3.0
 ```
 
-For inter-process exchange, encode with `encode(message)` and decode using the
-known generated type. Separate Python-object serialization paths retain their
+For inter-process exchange, use the registry’s `encode(message)` and
+`decode(payload, MessageType)` functions. Separate Python-object serialization paths retain their
 own contracts; CDR is the typed-message representation.
 
 ## Available types and custom packages

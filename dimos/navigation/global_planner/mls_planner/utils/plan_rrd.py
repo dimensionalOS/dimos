@@ -47,7 +47,6 @@ from dimos.memory.transform import FnTransformer
 from dimos.memory.type.observation import Observation
 from dimos.memory.vis.utils import DEFAULT_RENDER_VOXEL, default_render_voxel
 from dimos.msgs.pointcloud import pointcloud_xyz
-from dimos.navigation.global_planner.mls_planner.mls_planner import MLSPlanner
 from dimos.navigation.global_planner.mls_planner.viz import graph_edges, graph_nodes, surface_points
 from dimos.navigation.global_planner.viz import (
     PATH_COLOR,
@@ -67,6 +66,14 @@ from dimos.visualization.rerun.message_helpers import register_colormap_annotati
 
 if TYPE_CHECKING:
     import rerun.blueprint as rrb
+
+    from dimos.navigation.global_planner.mls_planner.mls_planner import MLSPlanner
+
+# Logging recorded TF/odometry does not require the optional planner extension.
+try:
+    import dimos_mls_planner as _planner_module
+except ImportError:
+    _planner_module = None
 
     from dimos.memory.stream import Stream
 
@@ -454,9 +461,14 @@ def _build_planners(
     step_height: float,
     step_penalty_weight: float,
 ) -> list[tuple[str, tuple[int, int, int], MLSPlanner]]:
+    if _planner_module is None:
+        raise ImportError(
+            "dimos_mls_planner is not built. Run: uv run maturin develop --release --uv "
+            "-m dimos/navigation/global_planner/mls_planner/rust/py/Cargo.toml"
+        )
     planners: list[tuple[str, tuple[int, int, int], MLSPlanner]] = []
     for i, (clr, buf, wgt) in enumerate(configs):
-        planner = MLSPlanner(
+        planner = _planner_module.MLSPlanner(
             voxel_size=voxel_size,
             robot_height=robot_height,
             max_overhead_m=max_overhead,
