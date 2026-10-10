@@ -448,6 +448,7 @@ tests = [
     # in the manipulation extra includes core, RRT, Cartesian and TOPPRA.
     # Tests-only installs need core for native point-cloud Narrowphase queries.
     "roboplan-core>=0.7.0,<0.8.0",
+    "langchain-ollama>=1,<2",
     "mujoco>=3.3.4",
     "pygame>=2.6.1",
     "python-can>=4",

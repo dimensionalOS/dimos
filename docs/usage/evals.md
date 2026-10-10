@@ -333,8 +333,10 @@ change it.
 
 **Limits.** The case's `timeout_s` sets the time budget for the agent and
 subsequent motion settling. `McpClientAdapter` returns what it has when its
-wait expires, marked `timeout`; `QuestionAnswer` and `Blind` rely on the
-model provider's timeout. Environment startup has a separate
+wait expires, marked `timeout`. `QuestionAnswer` and `Blind` use provider
+timeouts by default. For OpenAI, an explicit `request_timeout_s` is limited to
+the case's `timeout_s`. Timed-out trajectories are retained and passed to the
+case grader; other provider errors skip grading. Environment startup has a separate
 `launch_timeout_s`. Pi and dimcode bound model HTTP requests with `max_steps`
 (including retries), and optionally cap output per request with `max_output_tokens`.
 There is no aggregate token or dollar cap; usage is recorded when the agent supplies it.
