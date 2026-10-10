@@ -133,7 +133,12 @@ class DanHolonomicTC(Module):
             with self._lock:
                 if self._odom is None or not self._controller.active:
                     continue
-                cmd = self._controller.step(self._odom)
+                try:
+                    cmd = self._controller.step(self._odom)
+                except Exception:
+                    logger.exception("Path following failed, stopping.")
+                    self._follow(None)
+                    continue
                 if cmd is not None:
                     self.nav_cmd_vel.publish(cmd)
                 if not self._controller.active:
