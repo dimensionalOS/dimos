@@ -85,7 +85,6 @@ DUAL_OPENYAM_BASE_OFFSET = {
 # Camera centre about 10 cm above the closed tips and 10 cm beside the
 # gripper axis. Boxes in the gripper frame with 1.5 cm of margin per side
 # and 2 cm for the USB plug.
-_WRIST_TUBE_HALF_WIDTH = 0.0325
 _BRACKET_RPY = (0.0, math.pi / 4, 0.0)
 DUAL_OPENYAM_WRIST_CAMERA_BOXES = [
     # name, size, xyz: the bracket, then the camera body at its end.
@@ -209,19 +208,6 @@ DUAL_OPENYAM_RECORD_TOPICS = ",".join(
         ),
     ]
 )
-
-DUAL_OPENYAM_GRASP_PROMPTS = [
-    "soup can",
-    "mustard bottle",
-    "cracker box",
-    "banana",
-    "plate",
-    "toothpaste",
-    "toy block",
-    "mug",
-    "marker",
-    "towel",
-]
 
 
 def dual_openyam_grasp_model_config() -> RobotModelConfig:
