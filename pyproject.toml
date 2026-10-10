@@ -52,7 +52,7 @@ exclude = [
     "**/*.pyi",
 ]
 
-"experimental.gateway" = ["annotations.yaml"]
+"experimental.gateway" = ["annotations.yaml", "assets/**/*"]
 
 [tool.setuptools.exclude-package-data]
 # Trims data the recursive globs above would otherwise pull in: test fixtures
