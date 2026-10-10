@@ -19,6 +19,7 @@ and installs the wheel, source and editable package with C/C++ compilers disable
 Install the lightweight core from this proposal checkout:
 
 ```sh skip
+python scripts/prepare_message_parser.py
 pip install './dimos/message_codegen[native]'
 ```
 
@@ -98,3 +99,42 @@ tests. Actual macOS acceptance requires the hosted macOS matrix job to pass.
 remain explicit: unsupported bounds and permissive native decoder behavior are
 not fixed by wrappers or weakened assertions. The later full-catalog package
 layer retains its complete strict expected-failure suite.
+
+## Upstream parser preparation and offline installation
+
+The parser is imported directly from upstream `rosidl_adapter.parser`; its source
+is not checked into this repository. `parser-source.json` pins the ROSIDL revision,
+archive SHA256 and unchanged parser SHA256. Preparation copies the upstream Python
+package, Apache-2.0 license and package metadata into ignored `.upstream/` output.
+It never patches upstream code. A small constant-name guard in `definitions.py`
+rejects invalid names before upstream's backtracking regex runs.
+
+Prepare once before building this backend from a repository checkout:
+
+```sh
+python scripts/prepare_message_parser.py
+pip wheel ./dimos/message_codegen --no-deps --wheel-dir dist
+```
+
+Preparation needs `requests`; install it explicitly in the preparation environment.
+It downloads only the pinned project archive. Reuse the cache without network:
+
+```sh
+python scripts/prepare_message_parser.py --offline
+# Or seed a new cache with the same hash-verified archive:
+python scripts/prepare_message_parser.py --offline --archive /path/to/rosidl.tar.gz
+```
+
+The backend wheel **and sdist contain these already-prepared upstream files**.
+Ordinary `pip install backend.whl` and `pip install backend.tar.gz` do not fetch
+GitHub. An unprepared repository source build fails with the preparation command;
+it never downloads inside a PEP517 hook or at runtime. No upstream parser wheel
+on PyPI is assumed: this is our backend artifact containing licensed upstream
+files. Distribution of matching proposal wheels remains required.
+
+A fully offline PEP517 source installation also requires setuptools/wheel and
+normal pinned Python dependencies in a wheelhouse (`--no-index --find-links`).
+Python wheels need no native compiler. C++ source preparation remains separate
+and retains its existing explicit toolchain and offline source-cache contract.
+The unchanged parser package is platform-independent; actual macOS checks remain
+CI acceptance, not something proven by Linux configuration tests.

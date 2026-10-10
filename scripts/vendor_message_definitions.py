@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Refresh the pinned, ROS-free schema and parser sources used by message codegen.
+"""Refresh the pinned, ROS-free schema sources used by message codegen.
 
 Run with the checkout's development Python environment. This maintenance command
 requires network access; generation and downstream applications never run it.
@@ -46,7 +46,7 @@ SOURCES = (
     ("ros2/rcl_interfaces", "7aa3caf43377ea6ad615bc1040832e2c7566bfbe", ("builtin_interfaces",)),
     ("ros2/geometry2", "f702874b1c8535d6a038230ab2cda0ba5d521ebd", ("tf2_msgs",)),
     ("ros-perception/vision_msgs", "adbf56af9f77e3c8ab2552e25dc99e4a8a77fb27", ("vision_msgs",)),
-    ("ros2/rosidl", "85fa592b698b0f665e3120f48fac0d35e2f7d8a4", ("rosidl_adapter",)),
+    ("ros2/rosidl", "85fa592b698b0f665e3120f48fac0d35e2f7d8a4", ()),
     ("foxglove/schemas", "e86a94e9d4d259cdde71872f18336a7a055bf9ba", ("foxglove_msgs",)),
 )
 
@@ -73,8 +73,6 @@ def main() -> None:
                     target = ROOT / "schemas" / "licenses" / repository.replace("/", "_") / path
                 elif path.parts[0] not in packages:
                     continue
-                elif path.as_posix() == "rosidl_adapter/rosidl_adapter/parser.py":
-                    target = ROOT / "_vendor" / "rosidl_parser.py"
                 elif path.name in {"LICENSE", "LICENSE.txt", "NOTICE", "package.xml"} or (
                     len(path.parts) == 3 and path.parts[1] == "msg" and path.suffix == ".msg"
                 ):
@@ -84,20 +82,6 @@ def main() -> None:
                 source = archive.extractfile(member)
                 assert source is not None
                 content = source.read()
-                if target == ROOT / "_vendor" / "rosidl_parser.py":
-                    original = (
-                        b"VALID_CONSTANT_NAME_PATTERN = re.compile('^[A-Z]([A-Z0-9_]?[A-Z0-9]+)*$')"
-                    )
-                    replacement = (
-                        b"# DimOS patch: equivalent linear-time pattern; avoid nested ambiguous repetition.\n"
-                        b"VALID_CONSTANT_NAME_PATTERN = re.compile('^[A-Z](?:[A-Z0-9]|_[A-Z0-9])*$')"
-                    )
-                    assert content.count(original) == 1, "Recheck parser patch against upstream"
-                    patches[str(target.relative_to(ROOT))] = {
-                        "upstream_sha256": hashlib.sha256(content).hexdigest(),
-                        "description": "Equivalent linear-time constant-name validation regex",
-                    }
-                    content = content.replace(original, replacement)
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes(content)
                 files[str(target.relative_to(ROOT))] = hashlib.sha256(content).hexdigest()
