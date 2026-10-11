@@ -442,6 +442,23 @@ def test_object_db_uses_wall_clock_for_pending_ttl(monkeypatch: Any) -> None:
     assert object_db.find_by_object_id("stable-id") is None
 
 
+def test_a_kept_object_outlives_the_pending_ttl(monkeypatch: Any) -> None:
+    module = ObjectSceneRegistrationModule.__new__(ObjectSceneRegistrationModule)
+    module._object_db = ObjectDB(pending_ttl_s=5.0)
+    detected = MagicMock(object_id="target", track_id=-1, ts=4.0, last_seen_ts=None)
+    detected.center = None
+    detected.detections_count = 1
+    now = [1000.0]
+    monkeypatch.setattr("dimos.perception.experimental.objectDB.time.time", lambda: now[0])
+    module._object_db.add_objects([detected])
+
+    assert module.keep_object("target")
+    assert not module.keep_object("unknown")
+    now[0] = 1060.0
+    module._object_db.add_objects([])
+    assert module._object_db.find_by_object_id("target") is detected
+
+
 def test_object_db_counts_each_source_frame_once(monkeypatch: Any) -> None:
     object_db = ObjectDB(min_detections_for_permanent=10)
     now = [1000.0]

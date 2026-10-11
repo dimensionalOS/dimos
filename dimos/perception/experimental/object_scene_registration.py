@@ -268,6 +268,17 @@ class ObjectSceneRegistrationModule(Module):
         return objects[0].pointcloud if objects else None
 
     @rpc
+    def keep_object(self, object_id: str) -> bool:
+        """Keep an object under its id while the camera looks away from it.
+
+        A newly seen object is pending and is dropped after a few seconds
+        unseen; kept, it stays, and later views of it add to its points.
+
+        Returns whether an object with this id exists.
+        """
+        return self._object_db.promote(object_id)
+
+    @rpc
     def get_object_pointcloud_by_object_id(self, object_id: str) -> PointCloud2 | None:
         """Get pointcloud for an object by its stable object_id (searches all objects)."""
         obj = self._object_db.find_by_object_id(object_id)
