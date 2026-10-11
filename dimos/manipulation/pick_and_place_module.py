@@ -45,6 +45,7 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.manipulation_msgs.GraspCandidate import GraspCandidate
 from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.experimental.object_scene_registration_spec import ObjectSceneRegistrationSpec
@@ -55,6 +56,8 @@ VOXEL_MAP_EXCLUSION_ID = "pick-and-place/target"
 _FRESH_FRAME_POLL = 0.1
 # Half a turn about the gripper's approach axis (its local z), as (x, y, z, w).
 _HALF_TURN_ABOUT_APPROACH = Quaternion(0.0, 0.0, 1.0, 0.0)
+# Joints this close (radians) to the scan pose count as being there already.
+_AT_SCAN_POSE_TOLERANCE = 0.01
 
 
 class PickAndPlaceModuleConfig(ModuleConfig):
@@ -71,8 +74,8 @@ class PickAndPlaceModuleConfig(ModuleConfig):
     max_grasp_attempts: int = Field(default=5, gt=0)
     yaw_policy: Literal["generated", "preserve_current"] = "generated"
     grasp_verification: GraspVerificationConfig = Field(default_factory=GraspVerificationConfig)
-    # After the lift, the camera must see the object moved along the lift by at
-    # least this share (0 to 1) of the gripper's lift distance, else it stayed down.
+    # After the lift, the camera must see the object rise by at least this share
+    # (0 to 1) of the height the gripper rose, else it stayed down.
     lift_follow_fraction: float = Field(default=0.5, gt=0.0, le=1.0)
     # Detections of the target's label farther than this (metres) from where it
     # was last seen (and, after a lift, from where it would be had it come along)
@@ -88,9 +91,9 @@ class PickAndPlaceModuleConfig(ModuleConfig):
     retry_skip_angle: float = Field(default=0.35, ge=0.0)
     # How far (metres, horizontally) a released object may rest from the place target.
     place_tolerance: float = Field(default=0.07, gt=0.0)
-    # How long (seconds) a check after a lift or a release waits for a camera
-    # frame taken after the arm stopped.
-    fresh_frame_timeout: float = Field(default=2.0, gt=0.0)
+    # How long (seconds) a check after a lift, a miss or a release waits for a
+    # camera frame taken after the arm stopped. A scan can take a second or more.
+    fresh_frame_timeout: float = Field(default=8.0, gt=0.0)
 
 
 @dataclass(frozen=True)
@@ -205,6 +208,8 @@ class PickAndPlaceModule(Module):
         # True while a pick has left the gripper inside the target's ignored box;
         # the box then stays so the next plan can start from there.
         self._arm_in_target = False
+        # Joint positions of each planning group when the latest scan_objects ran.
+        self._scan_joints: dict[PlanningGroupID, JointState] = {}
 
     @skill
     def scan_objects(self, prompts: list[str]) -> SkillResult:
@@ -219,6 +224,11 @@ class PickAndPlaceModule(Module):
         if self._held is None:
             self._clear_proposals()
         self._objects = {}
+        self._scan_joints = {
+            group_id: state.joints
+            for group_id, state in self._manipulation.get_state().groups.items()
+            if state.joints is not None
+        }
         detections = self._scene.scan_scene(text=prompts)
         self._objects = _scanned(detections)
         return SkillResult(
@@ -241,9 +251,10 @@ class PickAndPlaceModule(Module):
         """Grasp one object from the latest scan and lift it.
 
         After the lift the camera checks the object came up with the gripper. On
-        a miss the arm backs out, scans again and tries another grasp, a limited
-        number of times. ``tries`` in the result lists each grasp; ``handoff: true``
-        means it stopped trying after misses and the object is not held.
+        a miss the arm backs out, returns to where scan_objects saw the object,
+        scans again and tries another grasp, a limited number of times. ``tries``
+        in the result lists each grasp; ``handoff: true`` means it stopped trying
+        after misses and the object is not held.
 
         Args:
             object_id: Exact object ID returned by the latest scan_objects call.
@@ -367,15 +378,16 @@ class PickAndPlaceModule(Module):
                     f"Object {target.object_id} is still not held after {len(tries)} "
                     f"{'try' if len(tries) == 1 else 'tries'}.",
                 )
-            found = self._rescan(target)
-            if found is None:
-                return self._stop_trying(
-                    last,
-                    tries,
-                    f"A new scan for {target.name} found none within "
-                    f"{self.config.lift_check_radius:.2f} m of where object "
-                    f"{target.object_id} was.",
+            if moved := self._return_to_scan_pose(group):
+                stopped = self._stopped(
+                    f"Move back to where object {target.object_id} was scanned from", moved
                 )
+                return self._stop_trying(
+                    SkillResult(f"{last.message} {stopped.message}", metadata=last.metadata), tries
+                )
+            found = self._rescan(target)
+            if isinstance(found, str):
+                return self._stop_trying(last, tries, found)
             proposal = self._propose(found, crop=True)
             if isinstance(proposal, SkillResult):
                 return self._stop_trying(last, tries, proposal.message)
@@ -464,7 +476,7 @@ class PickAndPlaceModule(Module):
                     self._stopped(f"Retract after grasping object {object_id}", blocked),
                     (rank, candidate),
                 )
-            result = self._verify_lift(target, pregrasp.position - grasp.position, group)
+            result = self._verify_lift(target, grasp, pregrasp, group)
             result.metadata.update(
                 rank=rank, score=candidate.score, candidates=len(candidates.candidates)
             )
@@ -477,23 +489,55 @@ class PickAndPlaceModule(Module):
             )
         )
 
-    def _rescan(self, target: ScannedObject) -> ScannedObject | None:
+    def _return_to_scan_pose(self, group: PlanningGroupID) -> PlanResult | ExecutionResult | None:
+        """Move the arm back to its joint positions from the latest scan_objects call.
+
+        At the pre-grasp pose the wrist camera is too close to the object to see
+        it whole; from the scan pose it has already seen it once. The move is
+        collision checked and carries a held object along.
+
+        Args:
+            group: Planning group to move.
+
+        Returns the planner or execution result that stopped the move, or None
+        when the arm arrived, was already there, or no scan pose was recorded
+        for the group.
+        """
+        joints = self._scan_joints.get(group)
+        if joints is None:
+            return None
+        state = self._manipulation.get_state().groups.get(group)
+        if (
+            state is not None
+            and state.joints is not None
+            and np.allclose(state.joints.position, joints.position, atol=_AT_SCAN_POSE_TOLERANCE)
+        ):
+            return None
+        return self._run(self._manipulation.plan_to_joints({group: joints}))
+
+    def _rescan(self, target: ScannedObject) -> ScannedObject | str:
         """Detect the object again after a missed grasp and record it in the latest scan.
 
         Args:
             target: The object as it was last seen.
 
         Returns the detection that may be the target (see ``_sightings``) nearest
-        to where it was, within ``lift_check_radius``, or None when there is none.
+        to where it was, within ``lift_check_radius``, or a statement of why
+        there is none.
         """
         detections = self._detect_after(target.name, time.time())
+        if detections is None:
+            return f"A new scan for {target.name} found nothing: {self._no_frame()}."
         found = [
             obj
             for obj in self._sightings(target, detections)
             if obj.position.distance(target.position) <= self.config.lift_check_radius
         ]
         if not found:
-            return None
+            return (
+                f"A new scan for {target.name} found none within "
+                f"{self.config.lift_check_radius:.2f} m of where object {target.object_id} was."
+            )
         nearest = min(found, key=lambda obj: obj.position.distance(target.position))
         self._objects.pop(target.object_id, None)
         self._objects[nearest.object_id] = nearest
@@ -596,27 +640,34 @@ class PickAndPlaceModule(Module):
         return self._verify_place(held, place.position, released_at)
 
     def _verify_lift(
-        self, target: ScannedObject, lift: Vector3, planning_group: PlanningGroupID
+        self,
+        target: ScannedObject,
+        grasp: PoseStamped,
+        pregrasp: PoseStamped,
+        planning_group: PlanningGroupID,
     ) -> SkillResult:
         """Check that the object came up with the gripper, and report the pick.
 
         Jaws that stop on an edge, or on an object pushed aside, read the same as
-        a hold, so after the lift the jaws are read again and the camera looks for
-        the object.
+        a hold, so after the lift the jaws are read again, the arm carries the
+        object to the scan pose (when one was recorded), the jaws are read once
+        more and the camera looks for the object. If that move fails the camera
+        looks from where the arm stopped.
 
         Args:
             target: The object being picked, with where it was scanned.
-            lift: How the gripper moved from the grasp pose to the pre-grasp pose,
-                metres, in the planning frame.
+            grasp: Gripper pose that closed on the object, planning frame.
+            pregrasp: Gripper pose the arm lifted to, planning frame.
             planning_group: Group whose gripper closed on the object.
 
         Returns "Pick complete" with ``grasped: True``, else opens the gripper,
         forgets the held object and returns ``grasped: False``.
         """
-        lifted_at = time.time()
+        # How far (metres) and which way the gripper, and a held object, moved.
+        lift = pregrasp.position - grasp.position
         facts: dict[str, Any] = {
             **_summary(target),
-            "gripper_lift_m": round(lift.length(), 3),
+            "gripper_lift_m": round(lift.z, 3),
         }
         verification = self.config.grasp_verification
         jaws = self._gripper_position(planning_group)
@@ -628,22 +679,50 @@ class PickAndPlaceModule(Module):
                 jaws=round(jaws, 3),
                 **facts,
             )
-        detections = self._detect_after(target.name, lifted_at)
-        moved = _distance_along(
-            [obj.position for obj in self._sightings(target, detections)],
+        note = ""
+        if self._scan_joints.get(planning_group) is not None:
+            if moved_arm := self._return_to_scan_pose(planning_group):
+                stopped = self._stopped(
+                    f"Move to the scan pose to look for object {target.object_id}", moved_arm
+                )
+                note = f" {stopped.message}; the camera looked from where the arm stopped."
+            tip = self._tip_position(planning_group)
+            if tip is not None:
+                lift = tip - grasp.position
+                facts["gripper_lift_m"] = round(lift.z, 3)
+            jaws = self._gripper_position(planning_group)
+            if verification.enabled and jaws is not None and jaws <= verification.held_low:
+                return self._missed_grasp(
+                    planning_group,
+                    f"After carrying object {target.object_id} up, the gripper reads "
+                    f"{jaws:.2f}: the object fell out.{note}",
+                    jaws=round(jaws, 3),
+                    **facts,
+                )
+        detections = self._detect_after(target.name, time.time())
+        if detections is None:
+            # Raising here would leave the gripper closed on an object nobody tracks.
+            return SkillResult(
+                f"Pick complete on the jaw reading alone: {self._no_frame()}.{note}",
+                metadata={**facts, "object_lift_m": None, "grasped": True},
+            )
+        sightings = self._sightings(target, detections)
+        rose = _height_gained(
+            [obj.position for obj in sightings],
             target.position,
             lift,
             self.config.lift_check_radius,
         )
-        facts["object_lift_m"] = None if moved is None else round(moved, 3)
-        if moved is not None and moved < self.config.lift_follow_fraction * lift.length():
+        facts["object_lift_m"] = None if rose is None else round(rose, 3)
+        if rose is not None and rose < self.config.lift_follow_fraction * lift.z:
             return self._missed_grasp(
                 planning_group,
-                f"Lifted the gripper {lift.length():.2f} m, but the camera sees object "
-                f"{target.object_id} moved {moved:.2f} m with it; it stayed on the table.",
+                f"Lifted the gripper {lift.z:.2f} m, but the camera sees object "
+                f"{target.object_id} rose {rose:.2f} m with it; it stayed on the table.{note}",
                 **facts,
             )
-        return SkillResult("Pick complete", metadata={**facts, "grasped": True})
+        complete = f"Pick complete.{note}" if note else "Pick complete"
+        return SkillResult(complete, metadata={**facts, "grasped": True})
 
     def _sightings(
         self, target: ScannedObject, detections: Detection3DArray
@@ -663,7 +742,7 @@ class PickAndPlaceModule(Module):
             return [seen[target.object_id]]
         return [obj for obj in seen.values() if obj.object_id not in self._objects]
 
-    def _detect_after(self, label: str, since: float) -> Detection3DArray:
+    def _detect_after(self, label: str, since: float) -> Detection3DArray | None:
         """Detect a label in a camera frame taken after a given time.
 
         Args:
@@ -671,7 +750,7 @@ class PickAndPlaceModule(Module):
             since: Wall-clock time (seconds, as ``time.time()``) the frame must be
                 newer than, e.g. when the arm stopped.
 
-        Raises TimeoutError when no such frame arrives within ``fresh_frame_timeout``.
+        Returns None when no such frame arrives within ``fresh_frame_timeout``.
         """
         deadline = time.monotonic() + self.config.fresh_frame_timeout
         while True:
@@ -679,11 +758,15 @@ class PickAndPlaceModule(Module):
             if detections.ts >= since:
                 return detections
             if time.monotonic() >= deadline:
-                raise TimeoutError(
-                    f"No camera frame newer than {since:.2f} arrived within "
-                    f"{self.config.fresh_frame_timeout:.1f} s; the newest is from {detections.ts:.2f}"
-                )
+                return None
             time.sleep(_FRESH_FRAME_POLL)
+
+    def _no_frame(self) -> str:
+        """Why a check had no camera frame, as the end of a sentence."""
+        return (
+            "the camera gave no frame taken after the arm stopped within "
+            f"{self.config.fresh_frame_timeout:.1f} s"
+        )
 
     def _missed_grasp(
         self, planning_group: PlanningGroupID, report: str, **facts: Any
@@ -746,7 +829,7 @@ class PickAndPlaceModule(Module):
         detections = self._detect_after(held.name, time.time())
         nearby = [
             center
-            for center in _centers(detections)
+            for center in ([] if detections is None else _centers(detections))
             if center.distance(released_at) <= self.config.lift_check_radius
         ]
         if nearby:
@@ -897,7 +980,14 @@ class PickAndPlaceModule(Module):
         Returns the planner or execution result that stopped the leg, or None
         when the arm arrived.
         """
-        plan = self._manipulation.plan_to_poses({planning_group: pose})
+        return self._run(self._manipulation.plan_to_poses({planning_group: pose}))
+
+    def _run(self, plan: PlanResult) -> PlanResult | ExecutionResult | None:
+        """Run a plan to the end.
+
+        Returns the plan when it failed, the execution result when the motion
+        stopped part-way, or None when the arm arrived.
+        """
         if not plan.succeeded:
             return plan
         execution = self._manipulation.execute(blocking=True)
@@ -1032,21 +1122,21 @@ def _summary(obj: ScannedObject | HeldObject) -> dict[str, Any]:
     return {"object_id": obj.object_id, "name": obj.name}
 
 
-def _distance_along(
+def _height_gained(
     centers: Sequence[Vector3], start: Vector3, lift: Vector3, radius: float
 ) -> float | None:
-    """How far a lifted object moved with the gripper, as the camera sees it.
+    """How high a lifted object rose with the gripper, as the camera sees it.
 
     Args:
         centers: Centres of the detections of the object's label after the lift,
-            metres, in the planning frame.
+            metres, in the planning frame (Z up).
         start: Centre of the object before the grasp, metres.
-        lift: How the gripper moved from the grasp pose to the pre-grasp pose, metres.
+        lift: How the gripper moved from the grasp pose to where it is now, metres.
         radius: Detections farther than this (metres) from both ``start`` and
             ``start + lift`` are taken to be other objects.
 
-    Returns the farthest any remaining detection moved along the lift direction,
-    metres, or None when no detection remains.
+    Returns the most any remaining detection rose above ``start``, metres, or
+    None when no detection remains. Sliding sideways does not count.
     """
     lifted_to = start + lift
     nearby = [
@@ -1056,8 +1146,7 @@ def _distance_along(
     ]
     if not nearby:
         return None
-    direction = lift.normalize()
-    return max((center - start).dot(direction) for center in nearby)
+    return max(center.z - start.z for center in nearby)
 
 
 def _crop(pointcloud: PointCloud2, box: ScannedObject, margin: float) -> PointCloud2:
