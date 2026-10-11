@@ -19,12 +19,15 @@ patch presses on the object, only contact patches come near the object and no
 part of the gripper overlaps anything else. At the open pose a contact patch may
 come near the object but not press into it: the fingers would have to push the
 object aside to get there. It can also be asked to hold enough of the object
-between the contact patches, or the fingers would close on nothing.
+between the contact patches, or the fingers would close on nothing, and to slide
+each grasp that fails along its approach to the nearest depth that passes
+(``GripperContactModel.fit_depth``).
 """
 
 from __future__ import annotations
 
 from collections.abc import Collection, Mapping, Sequence
+import dataclasses
 from dataclasses import dataclass
 from pathlib import Path
 import xml.etree.ElementTree as ET
@@ -36,11 +39,20 @@ from scipy.spatial import ConvexHull, cKDTree
 from scipy.spatial.transform import Rotation
 import trimesh
 
-from dimos.manipulation.planning.spec.gripper import ApproachOffsets, GraspContact, GripperSpec
+from dimos.manipulation.planning.spec.gripper import (
+    UNCHECKED,
+    ApproachOffsets,
+    GraspContact,
+    GripperSpec,
+)
 from dimos.robot.assets.model import LoadedRobotModel
 
 # Name GraspContact.touches gives the object being grasped.
 TARGET = "target"
+# Name GraspContact.touches gives a gripper part below the floor (see ``check``).
+FLOOR = "floor"
+# The depth search takes grasps this many at a time when it may stop early.
+_DEPTH_CHUNK = 50
 # Object points are thinned to one per cube of this edge (metres) before the
 # check: fine enough for a margin of a few millimetres, and it bounds the work.
 _TARGET_CELL = 0.0025
@@ -86,12 +98,15 @@ class _LinkShape:
         bodies: The pieces; a point is inside the link when it is inside any.
         low: Lower corner of a box around every piece, link frame, metres.
         high: Upper corner of that box, metres.
+        corners: The pieces' convex hull vertices, link frame, metres: the
+            outermost points of the shape in every direction.
     """
 
     link: str
     bodies: tuple[_Body, ...]
     low: NDArray[np.float64]
     high: NDArray[np.float64]
+    corners: NDArray[np.float64]
 
 
 class GripperContactModel:
@@ -164,6 +179,18 @@ class GripperContactModel:
             ]
         )
         self._gap = _closing_region(pads)
+        # The space the contact patches surround at each pose of the close, as
+        # face planes in the tip frame: what the gripper holds if its fingers
+        # stop at that pose.
+        self._grip = [np.asarray(ConvexHull(step.reshape((-1, 3))).equations) for step in pads]
+        # Every shape's outermost points in the tip frame with the jaws open, (K, 3).
+        self._open_corners = np.concatenate(
+            [
+                shape.corners @ pose[:3, :3].T + pose[:3, 3]
+                for shape in self._shapes
+                for pose in [self._tip_from_link[0][shape.link]]
+            ]
+        )
         gap_low, gap_high = pads.reshape((-1, 3)).min(axis=0), pads.reshape((-1, 3)).max(axis=0)
         # A sphere, in the tip frame, holding the whole gap.
         self._gap_center = (gap_low + gap_high) / 2.0
@@ -233,6 +260,7 @@ class GripperContactModel:
         contact_margin: float,
         obstacle_margin: float,
         min_gap_points: int = 0,
+        floor: float | None = None,
     ) -> list[GraspContact]:
         """Say, for each grasp, what its gripper would touch that it should not.
 
@@ -249,20 +277,151 @@ class GripperContactModel:
                 gap the contact patches close across (see ``in_gap``) closes on
                 nothing and gets ``empty_gap``. Points are counted one per 5 mm
                 cube. 0 skips this.
+            floor: Height (metres, along the points' Z axis, which must point
+                up) of a solid surface under everything, such as the table's top.
+                A grasp whose open gripper reaches below it touches "floor":
+                that part would be inside the table, where no point may show
+                it. None skips this.
 
         Returns one GraspContact per grasp, in order.
         """
+        target = _thin(_finite(target), _TARGET_CELL)
+        return self._check(
+            grasps, target, obstacles, contact_margin, obstacle_margin, min_gap_points, floor
+        )[0]
+
+    def fit_depth(
+        self,
+        grasps: NDArray[np.float64],
+        target: NDArray[np.float64],
+        obstacles: Mapping[str, NDArray[np.float64]],
+        contact_margin: float,
+        obstacle_margin: float,
+        min_gap_points: int,
+        shifts: Sequence[float],
+        floor: float | None = None,
+        enough: int = 0,
+    ) -> list[GraspContact]:
+        """Move each grasp that fails where it is along its approach to the nearest depth that passes.
+
+        A grasp clear where it is (see ``check``) stays there. Any other is tried
+        at each shift, nearest first and backing off before going deeper, and
+        moves to the first where the check is clear, a contact patch presses on
+        the object as the fingers close, and where they stop at least
+        ``min_gap_points`` object points (one per 5 mm cube, and at least one)
+        lie between the contact patches.
+
+        Args:
+            grasps: Tool tip poses, shape (N, 4, 4), in the frame of the points.
+            target: Points of the object being grasped, shape (M, 3), metres.
+            obstacles: Other point sets the gripper must not overlap, by name.
+            contact_margin: As in ``check``, metres.
+            obstacle_margin: As in ``check``, metres.
+            min_gap_points: As in ``check``, and the fewest object points the
+                contact patches must hold where the fingers stop.
+            shifts: Distances (metres) to try moving each grasp along the tool
+                tip's z axis; positive is deeper, toward the object.
+            floor: As in ``check``, metres.
+            enough: Stop once this many grasps pass, taking the grasps in order
+                (best first), 50 at a time; the rest get touches ("unchecked",).
+                0 checks every grasp.
+
+        Returns one GraspContact per grasp, in order: the winning shift's, with
+        ``depth_shift`` set, or the unmoved grasp's when no shift passes.
+        """
+        grasps = np.asarray(grasps, dtype=np.float64).reshape((-1, 4, 4))
+        if enough > 0:
+            found: list[GraspContact] = []
+            for start in range(0, len(grasps), _DEPTH_CHUNK):
+                if sum(verdict.clear for verdict in found) >= enough:
+                    found += [GraspContact((UNCHECKED,))] * (len(grasps) - start)
+                    break
+                found += self.fit_depth(
+                    grasps[start : start + _DEPTH_CHUNK],
+                    target,
+                    obstacles,
+                    contact_margin,
+                    obstacle_margin,
+                    min_gap_points,
+                    shifts,
+                    floor,
+                )
+            return found
+        target = _thin(_finite(target), _TARGET_CELL)
+        held_points = _thin(target, _GAP_CELL)
+        least = max(min_gap_points, 1)
+        order = sorted({float(shift) for shift in shifts} - {0.0}, key=lambda s: (abs(s), s))
+        results, _ = self._check(
+            grasps, target, obstacles, contact_margin, obstacle_margin, min_gap_points, floor
+        )
+        failing = np.flatnonzero([not verdict.clear for verdict in results])
+        for shift in order:
+            if not len(failing):
+                break
+            moved = grasps[failing].copy()
+            # The tool tip's z axis is the third column of each pose's rotation.
+            moved[:, :3, 3] += shift * moved[:, :3, 2]
+            found, stops = self._check(
+                moved, target, obstacles, contact_margin, obstacle_margin, min_gap_points, floor
+            )
+            held = self._held_counts(moved, held_points, stops)
+            passed = np.array(
+                [
+                    verdict.clear and count >= least
+                    for verdict, count in zip(found, held, strict=True)
+                ],
+                dtype=bool,
+            )
+            for index in np.flatnonzero(passed):
+                results[failing[index]] = dataclasses.replace(found[index], depth_shift=shift)
+            failing = failing[~passed]
+        return results
+
+    def _check(
+        self,
+        grasps: NDArray[np.float64],
+        target: NDArray[np.float64],
+        obstacles: Mapping[str, NDArray[np.float64]],
+        contact_margin: float,
+        obstacle_margin: float,
+        min_gap_points: int,
+        floor: float | None = None,
+    ) -> tuple[list[GraspContact], NDArray[np.int64]]:
+        """``check`` on a target already thinned, and for each grasp the pose of
+        the close where its fingers stop on the object: the first where a contact
+        patch presses into it, or -1 when none does and the fingers close on
+        nothing."""
         grasps = np.asarray(grasps, dtype=np.float64).reshape((-1, 4, 4))
         steps = len(self._tip_from_link)
-        target = _thin(_finite(target), _TARGET_CELL)
+        below = self._below_floor(grasps, floor)
+        # A grasp below the floor fails whatever else it touches: only the rest
+        # get the shape tests, which take most of the time.
+        rest = np.flatnonzero(~below)
         empty = np.zeros(len(grasps), dtype=bool)
         if min_gap_points > 0:
-            empty = self._gap_counts(grasps, _thin(target, _GAP_CELL)) < min_gap_points
-        off_patch, pressed = self._touches(grasps, target, contact_margin, patches=True)
-        hits = {
-            name: self._touches(grasps, _finite(points), obstacle_margin, patches=False)[0]
-            for name, points in obstacles.items()
-        }
+            empty[rest] = self._gap_counts(grasps[rest], _thin(target, _GAP_CELL)) < min_gap_points
+        off_patch = np.zeros((len(grasps), steps), dtype=bool)
+        pressed = np.zeros((len(grasps), steps), dtype=bool)
+        hits = {name: np.zeros((len(grasps), steps), dtype=bool) for name in obstacles}
+        # The open pose first; only grasps that touch nothing there go on to the
+        # closing poses, which a grasp already touching something cannot clear.
+        for poses, chosen in (([0], rest), (range(1, steps), None)):
+            if chosen is None:
+                touched = off_patch[rest, 0] | pressed[rest, 0]
+                for hit in hits.values():
+                    touched |= hit[rest, 0]
+                chosen = rest[~touched]
+            if not len(chosen) or not len(poses):
+                continue
+            found_off, found_pressed = self._touches(
+                grasps[chosen], target, contact_margin, patches=True, steps=poses
+            )
+            off_patch[chosen] |= found_off
+            pressed[chosen] |= found_pressed
+            for name, points in obstacles.items():
+                hits[name][chosen] |= self._touches(
+                    grasps[chosen], _finite(points), obstacle_margin, patches=False, steps=poses
+                )[0]
         # The fingers stop once a contact patch presses into the object, so the
         # poses from there on are never reached. A patch already pressing at the
         # open pose leaves only the open pose to check, and is itself a touch.
@@ -275,11 +434,39 @@ class GripperContactModel:
         for index in range(len(grasps)):
             touches = [TARGET] if (off_patch[index] & checked[index]).any() else []
             touches += [name for name, hit in hits.items() if (hit[index] & checked[index]).any()]
-            at_open = off_patch[index, 0] or any(hit[index, 0] for hit in hits.values())
+            touches += [FLOOR] if below[index] else []
+            at_open = (
+                off_patch[index, 0] or below[index] or any(hit[index, 0] for hit in hits.values())
+            )
             results.append(
                 GraspContact(tuple(touches), bool(touches) and not at_open, bool(empty[index]))
             )
-        return results
+        return results, np.where(reached, first, -1)
+
+    def _below_floor(self, grasps: NDArray[np.float64], floor: float | None) -> NDArray[np.bool_]:
+        """Which grasps' open gripper reaches below ``floor`` (metres; None: none)."""
+        if floor is None:
+            return np.zeros(len(grasps), dtype=bool)
+        # The open gripper's lowest point: the Z row of each grasp's pose applied
+        # to every outermost point.
+        heights = self._open_corners @ grasps[:, 2, :3].T + grasps[:, 2, 3]
+        return np.asarray(heights.min(axis=0) < floor)
+
+    def _held_counts(
+        self, grasps: NDArray[np.float64], points: NDArray[np.float64], stops: NDArray[np.int64]
+    ) -> NDArray[np.int64]:
+        """How many of ``points`` lie between each grasp's contact patches at the
+        pose of the close given by ``stops`` (one index per grasp; -1 holds
+        nothing)."""
+        if not len(grasps) or not len(points):
+            return np.zeros(len(grasps), dtype=np.int64)
+        owner, local = self._near_points(grasps, points, self._gap_center, self._gap_radius)
+        inside = np.zeros(len(owner), dtype=bool)
+        for step, planes in enumerate(self._grip):
+            mine = stops[owner] == step
+            if mine.any():
+                inside[mine] = np.all(local[mine] @ planes[:, :3].T + planes[:, 3] <= 1e-9, axis=1)
+        return np.bincount(owner[inside], minlength=len(grasps))
 
     def _gap_counts(
         self, grasps: NDArray[np.float64], points: NDArray[np.float64]
@@ -297,16 +484,20 @@ class GripperContactModel:
         margin: float,
         *,
         patches: bool,
+        steps: Sequence[int] | None = None,
     ) -> tuple[NDArray[np.bool_], NDArray[np.bool_]]:
         """Which grasps bring a gripper part within ``margin`` of any point, at each pose.
+
+        Only the poses of the close in ``steps`` are tested (None: all); the
+        rest stay False.
 
         Returns two (grasps, poses) masks: a point near the gripper outside every
         contact patch, and a point inside a contact patch and inside the link's
         shape, which the patch presses on (all False unless ``patches``).
         """
-        steps = len(self._tip_from_link)
-        outside = np.zeros((len(grasps), steps), dtype=bool)
-        inside = np.zeros((len(grasps), steps), dtype=bool)
+        steps_count = len(self._tip_from_link)
+        outside = np.zeros((len(grasps), steps_count), dtype=bool)
+        inside = np.zeros((len(grasps), steps_count), dtype=bool)
         if not len(grasps) or not len(points):
             return outside, inside
         owner, local = self._near_points(grasps, points, self._center, self._radius + margin)
@@ -317,7 +508,8 @@ class GripperContactModel:
         order = np.argsort(local[:, 2], kind="stable")
         owner, local = owner[order], local[order]
         heights = local[:, 2]
-        for step, tip_from_link in enumerate(self._tip_from_link):
+        for step in range(steps_count) if steps is None else steps:
+            tip_from_link = self._tip_from_link[step]
             for index, shape in enumerate(self._shapes):
                 center, half, growth = self._z_spans[step, index]
                 reach = half + growth * margin
@@ -444,6 +636,12 @@ def approach_offsets(
     )
 
 
+def depth_shifts(reach: float, step: float) -> list[float]:
+    """Distances (metres) for ``fit_depth`` to try: ``-reach`` to ``reach``, ``step`` apart, through 0."""
+    count = int(reach / step + 1e-9)
+    return [step * index for index in range(-count, count + 1)]
+
+
 class _UrdfTree:
     """The links, joints and collision shapes of a URDF, enough for gripper kinematics."""
 
@@ -519,17 +717,19 @@ class _UrdfTree:
     def shape(self, link: str) -> _LinkShape | None:
         """The link's collision shape in its own frame, or None when it has none."""
         bodies = []
+        corners = []
         for collision in self._links[link].findall("collision"):
             mesh = self._collision_mesh(collision)
             if mesh is None:
                 continue
             mesh.apply_transform(_origin(collision))
             bodies += _bodies(mesh)
+            corners.append(np.asarray(mesh.convex_hull.vertices, dtype=np.float64))
         if not bodies:
             return None
         low = np.min([body.low for body in bodies], axis=0)
         high = np.max([body.high for body in bodies], axis=0)
-        return _LinkShape(link, tuple(bodies), low, high)
+        return _LinkShape(link, tuple(bodies), low, high, np.concatenate(corners))
 
     def _collision_mesh(self, collision: ET.Element) -> trimesh.Trimesh | None:
         geometry = collision.find("geometry")

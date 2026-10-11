@@ -33,13 +33,16 @@ from scipy.spatial import cKDTree
 
 from dimos.manipulation.grasping.grasp_fallback import GraspProposals
 from dimos.manipulation.manipulation_spec import ManipulationSpec
-from dimos.manipulation.planning.spec.gripper import GraspContact
+from dimos.manipulation.planning.spec.gripper import UNCHECKED, GraspContact
 from dimos.manipulation.planning.spec.models import PlanningGroupID
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.manipulation_msgs.GraspCandidate import GraspCandidate
 from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.perception.experimental.object_scene_registration_spec import ObjectSceneRegistrationSpec
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.transform_utils import pose_to_matrix
 
 logger = setup_logger()
 
@@ -65,7 +68,7 @@ _TABLE_ABOVE_TARGET = 0.02
 
 def scene_obstacles(
     scene: PointCloud2, target: PointCloud2, tips: Sequence[Vector3]
-) -> dict[str, PointCloud2]:
+) -> tuple[dict[str, PointCloud2], float | None]:
     """Split the scene around an object into the table under it and everything else.
 
     The table is the most common height among the points no higher than 2 cm
@@ -79,7 +82,8 @@ def scene_obstacles(
         tips: Where each gripper's tool tip is, metres, same frame; points near
             them are the robot's own gripper and are dropped.
 
-    Returns {"table": ..., "objects": ...}, each possibly empty.
+    Returns {"table": ..., "objects": ...}, each possibly empty, and the
+    table's height (metres; None when there is no table).
     """
     points = _xyz(scene)
     own = _xyz(target)
@@ -91,13 +95,14 @@ def scene_obstacles(
         keep &= np.linalg.norm(points - tip.to_numpy(), axis=1) > _GRIPPER_SELF_RADIUS
     points = points[keep]
     table = np.zeros(len(points), dtype=bool)
+    height: float | None = None
     if len(own) and len(points):
         floor = own[:, 2].min()
         low_points = points[points[:, 2] <= floor + _TABLE_ABOVE_TARGET, 2]
         if len(low_points):
             bins = np.floor(low_points / _TABLE_BIN).astype(np.int64)
             values, counts = np.unique(bins, return_counts=True)
-            height = (values[np.argmax(counts)] + 0.5) * _TABLE_BIN
+            height = float((values[np.argmax(counts)] + 0.5) * _TABLE_BIN)
             table = points[:, 2] <= height + _TABLE_BAND
     objects = points[~table]
     if len(own) and len(objects):
@@ -106,7 +111,7 @@ def scene_obstacles(
     return {
         TABLE: _cloud(points[table], scene),
         OBJECTS: _cloud(objects, scene),
-    }
+    }, height
 
 
 def drop_touching(
@@ -118,6 +123,10 @@ def drop_touching(
     obstacle_margin: float,
     planning_group: PlanningGroupID | None,
     min_gap_points: int = 0,
+    depth_search: float = 0.0,
+    depth_step: float = 0.005,
+    floor: float | None = None,
+    depth_enough: int = 0,
 ) -> tuple[GraspProposals, dict[str, Any]]:
     """Keep the grasps whose gripper touches the object only at its contact patches.
 
@@ -131,13 +140,23 @@ def drop_touching(
         planning_group: Group whose tool tip the grasps pose.
         min_gap_points: Fewest object points (one per 5 mm cube) the gap
             between the finger pads must hold; 0 skips this.
+        depth_search: How far (metres) a grasp that fails where it is may slide
+            along its approach, each way, to the nearest depth that passes. Moved
+            grasps come back at that depth, and only when no grasp passes where
+            its source put it. 0 checks each grasp where it is.
+        depth_step: Spacing (metres) of the depths tried.
+        floor: Height (metres) of the table's top; a grasp with any gripper
+            part below it is dropped. None skips this.
+        depth_enough: With ``depth_search``, stop once this many grasps pass,
+            taking them in order; the rest are dropped unchecked. 0 checks all.
 
     Returns the grasps that pass and the facts of the check: ``checked``,
     ``rejected``, how many touched each of "target" and the obstacles,
     ``empty_gap`` (too few object points between the pads; only when
     ``min_gap_points`` is set), ``while_closing`` (rejected only for what the
-    closing fingers hit) and ``seconds``; or ``{"skipped": why}`` with every grasp kept when the robot
-    model has no gripper spec.
+    closing fingers hit), ``moved`` (kept at another depth; only with
+    ``depth_search``) and ``seconds``; or ``{"skipped": why}`` with every grasp
+    kept when the robot model has no gripper spec.
     """
     candidates = proposals.all()
     if not candidates.candidates:
@@ -151,6 +170,10 @@ def drop_touching(
         obstacle_margin,
         planning_group,
         min_gap_points=min_gap_points,
+        depth_search=depth_search,
+        depth_step=depth_step,
+        floor=floor,
+        depth_enough=depth_enough,
     )
     if verdicts is None:
         return proposals, {"skipped": "the robot model has no gripper spec"}
@@ -161,20 +184,33 @@ def drop_touching(
         )
     facts: dict[str, Any] = {
         "checked": len(verdicts),
-        "rejected": sum(not verdict.clear for verdict in verdicts),
+        "rejected": sum(
+            not verdict.clear and UNCHECKED not in verdict.touches for verdict in verdicts
+        ),
     }
-    for name in ("target", *obstacles):
+    for name in ("target", *obstacles, *(["floor"] if floor is not None else [])):
         facts[name] = sum(name in verdict.touches for verdict in verdicts)
     if min_gap_points > 0:
         facts["empty_gap"] = sum(verdict.empty_gap for verdict in verdicts)
     facts["while_closing"] = sum(verdict.while_closing for verdict in verdicts)
+    if depth_enough > 0:
+        facts["unchecked"] = sum(UNCHECKED in verdict.touches for verdict in verdicts)
+    # Moved grasps are a fallback: when any grasp passes where its source put
+    # it, only those are kept.
+    unmoved = any(verdict.clear and verdict.depth_shift == 0.0 for verdict in verdicts)
+    keep = [verdict.clear and (verdict.depth_shift == 0.0 or not unmoved) for verdict in verdicts]
+    if depth_search > 0.0:
+        facts["moved"] = sum(
+            kept and verdict.depth_shift != 0.0
+            for kept, verdict in zip(keep, verdicts, strict=True)
+        )
     facts["seconds"] = round(time.monotonic() - started, 3)
     provided_count = 0 if proposals.provided is None else len(proposals.provided.candidates)
     return (
         replace(
             proposals,
-            provided=_kept(proposals.provided, verdicts[:provided_count]),
-            heuristic=_kept(proposals.heuristic, verdicts[provided_count:]),
+            provided=_kept(proposals.provided, verdicts[:provided_count], keep[:provided_count]),
+            heuristic=_kept(proposals.heuristic, verdicts[provided_count:], keep[provided_count:]),
         ),
         facts,
     )
@@ -190,6 +226,9 @@ def check_in_scene(
     obstacle_margin: float,
     planning_group: PlanningGroupID,
     min_gap_points: int = 0,
+    depth_search: float = 0.0,
+    depth_step: float = 0.005,
+    depth_enough: int = 0,
 ) -> tuple[GraspProposals, dict[str, Any]]:
     """Check grasps against an object's points and the camera's view of the scene around it.
 
@@ -207,6 +246,11 @@ def check_in_scene(
         planning_group: Group whose tool tip the grasps pose.
         min_gap_points: Fewest object points (one per 5 mm cube) the gap
             between the finger pads must hold; 0 skips this.
+        depth_search: How far (metres) each grasp may slide along its approach;
+            see ``drop_touching``.
+        depth_step: Spacing (metres) of the depths tried.
+        depth_enough: Stop the depth search once this many grasps pass; 0
+            checks all.
 
     Returns what ``drop_touching`` returns; every grasp is kept, with
     ``{"skipped": why}``, when there is no scene in the object's frame or the
@@ -221,15 +265,20 @@ def check_in_scene(
         if state.end_effector_pose is not None
     ]
     try:
+        obstacles, table_height = scene_obstacles(scene, target, tips)
         return drop_touching(
             manipulation,
             proposals,
             target,
-            scene_obstacles(scene, target, tips),
+            obstacles,
             contact_margin,
             obstacle_margin,
             planning_group,
             min_gap_points,
+            depth_search,
+            depth_step,
+            table_height,
+            depth_enough,
         )
     except Exception as exc:
         logger.warning("Grasp contact check failed; keeping every grasp", error=str(exc))
@@ -262,13 +311,28 @@ def add_facts(total: dict[str, Any], more: dict[str, Any]) -> None:
 
 
 def _kept(
-    array: GraspCandidateArray | None, verdicts: Sequence[GraspContact]
+    array: GraspCandidateArray | None,
+    verdicts: Sequence[GraspContact],
+    keep: Sequence[bool],
 ) -> GraspCandidateArray | None:
-    """The candidates of an array whose verdict is clear, in order."""
+    """The candidates of an array marked ``keep``, in order, each moved along its
+    approach by its verdict's ``depth_shift``."""
     if array is None:
         return None
-    kept = [c for c, verdict in zip(array.candidates, verdicts, strict=True) if verdict.clear]
+    kept = [
+        _shifted(candidate, verdict.depth_shift)
+        for candidate, verdict, chosen in zip(array.candidates, verdicts, keep, strict=True)
+        if chosen
+    ]
     return GraspCandidateArray(array.header, kept)
+
+
+def _shifted(candidate: GraspCandidate, shift: float) -> GraspCandidate:
+    """The candidate moved ``shift`` metres along its tool tip's z axis (its approach)."""
+    if shift == 0.0:
+        return candidate
+    position = candidate.pose.position.to_numpy() + shift * pose_to_matrix(candidate.pose)[:3, 2]
+    return GraspCandidate(Pose(Vector3(*position), candidate.pose.orientation), candidate.score)
 
 
 def _xyz(cloud: PointCloud2) -> NDArray[np.float64]:

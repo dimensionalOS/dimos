@@ -278,6 +278,10 @@ class ManipulationSpec(Spec, Protocol):
         obstacle_margin: float,
         planning_group: PlanningGroupID | None = None,
         min_gap_points: int = 0,
+        depth_search: float = 0.0,
+        depth_step: float = 0.005,
+        floor: float | None = None,
+        depth_enough: int = 0,
     ) -> list[GraspContact] | None: ...
 
     def set_voxel_map_exclusion(
