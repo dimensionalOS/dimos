@@ -19,6 +19,8 @@ import pytest
 from dimos.manipulation.planning.spec.validation import prepare_robot_model
 from dimos.robot.manipulators.panda.config import (
     PANDA_GRIPPER_RANGE,
+    PANDA_JOINT_LIMIT_MARGIN,
+    PANDA_JOINT_LIMITS,
     make_panda_hardware,
     make_panda_model_config,
 )
@@ -42,3 +44,12 @@ def test_panda_model_asset_has_the_arm_and_fixed_fingers() -> None:
     model = prepare_robot_model(config).description
     assert [joint.name for joint in model.joints if joint.type != "fixed"] == config.joint_names
     assert 'name="hand_tcp"' in model.xml
+
+
+@pytest.mark.self_hosted  # clones franka_description
+def test_panda_plans_stay_inside_the_joint_limits() -> None:
+    model = prepare_robot_model(make_panda_model_config()).description
+    joints = {joint.name: joint for joint in model.joints}
+    for name, (lower, upper) in PANDA_JOINT_LIMITS.items():
+        assert joints[name].lower == pytest.approx(lower + PANDA_JOINT_LIMIT_MARGIN)
+        assert joints[name].upper == pytest.approx(upper - PANDA_JOINT_LIMIT_MARGIN)

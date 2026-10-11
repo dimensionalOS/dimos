@@ -42,6 +42,19 @@ PANDA_GRIPPER_RANGE = (0.0, 0.08)
 PANDA_FINGER_JOINTS = ("finger_joint1", "finger_joint2")
 # Robosuite's (and LIBERO's) Panda start pose.
 PANDA_HOME = [0.0, -0.161037389, 0.0, -2.44459747, 0.0, 2.2267522, 0.785398163]
+# fer.urdf's joint limits, which LIBERO's MJCF shares.
+PANDA_JOINT_LIMITS: dict[str, tuple[float, float]] = {
+    "joint1": (-2.8973, 2.8973),
+    "joint2": (-1.7628, 1.7628),
+    "joint3": (-2.8973, 2.8973),
+    "joint4": (-3.0718, -0.0698),
+    "joint5": (-2.8973, 2.8973),
+    "joint6": (-0.0175, 3.7525),
+    "joint7": (-2.8973, 2.8973),
+}
+# Plans stop this far inside the limits: MuJoCo's joint limits are soft, so an arm
+# sent to a limit settles a little past it, and the planner rejects that start state.
+PANDA_JOINT_LIMIT_MARGIN = 0.03
 PANDA_GRIPPER_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
     ("leftfinger", "rightfinger"),
     ("link7", "hand"),
@@ -63,8 +76,8 @@ def make_panda_model_config(
     gripper is commanded separately, as for the other arms.
     """
     model_joint_names = joint_names(7)
-    return RobotModelConfig(
-        model=RobotModel.from_file(
+    model = (
+        RobotModel.from_file(
             PANDA_MODEL_PATH,
             package_paths=PANDA_PACKAGE_PATHS,
             # no_prefix names the links link0..7 / hand and the joints joint1..7.
@@ -73,7 +86,14 @@ def make_panda_model_config(
         # Drop the xacro's empty "base" link above link0: the planner roots at base_link.
         .with_subtree_rooted_at("link0")
         .with_fixed_joints(*PANDA_FINGER_JOINTS)
-        .with_default_joint_acceleration_limit(2.0),
+        .with_default_joint_acceleration_limit(2.0)
+    )
+    for name, (lower, upper) in PANDA_JOINT_LIMITS.items():
+        model = model.with_joint_position_limits(
+            name, lower=lower + PANDA_JOINT_LIMIT_MARGIN, upper=upper - PANDA_JOINT_LIMIT_MARGIN
+        )
+    return RobotModelConfig(
+        model=model,
         base_pose=base_pose if base_pose is not None else PoseStamped(),
         joint_names=model_joint_names,
         base_link="link0",
