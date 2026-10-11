@@ -1668,6 +1668,7 @@ def scene_filter(fallback: PickAndPlaceModule) -> PickAndPlaceModule:
     camera's table; the check drops 37 grasps and keeps one."""
     provider: Any = fallback._grasp_generator
     fallback._scene_grasp_generator = provider
+    fallback.config.grasp_scene_filter = True
     provider.propose_grasps_in_scene.return_value = SceneGrasps(
         GraspCandidateArray(Header(1.0, "world"), [_grasp_at(0.1, 0.05, 0.9)]), 37
     )
@@ -1714,7 +1715,8 @@ def test_with_the_scene_filter_off_grasps_are_not_checked(
     scene: Any = scene_filter._scene
     scene.get_full_scene_pointcloud.assert_not_called()
     assert result.metadata["scene_filtered_by_source"] == {}
-    assert "scene_filter_skipped" not in result.metadata["tries"][0]
+    assert result.metadata["scene_filter_skipped"] == "off"
+    assert _tries(result, "scene_filter_skipped") == ["off"]
 
 
 def test_a_provider_that_cannot_check_the_scene_is_asked_as_before(

@@ -85,7 +85,8 @@ class GraspProposals:
         provider_error: What the provider raised, or None.
         scene_filtered: Per source, grasps dropped because the gripper would hit
             the scene; empty when no scene check ran.
-        scene_filter_skipped: Why the scene check was wanted but did not run, or None.
+        scene_filter_skipped: Why the scene check did not run ("off" when it is
+            switched off), or None when it ran or the provider cannot run it.
     """
 
     provider: str
@@ -222,7 +223,7 @@ def propose_with_fallback(
         heuristic_config: How the heuristic grasps fit the gripper.
         scene: Drop the provider's grasps that would hit this scene, or None to
             take them all. Heuristic grasps are never checked.
-        scene_skipped: Why a wanted scene check could not run, for the report.
+        scene_skipped: Why the scene check did not run, for the report.
     """
     name = provider_name(provider)
     sources = grasp_sources(provider, heuristic_fallback)

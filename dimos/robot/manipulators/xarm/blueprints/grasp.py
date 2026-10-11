@@ -240,6 +240,10 @@ _XARM_GRASP_MODULES = (
     ),
 )
 
+# GraspGenX samples this many grasps and returns them all: the pick's contact
+# check, with the gripper's real shape, chooses among them.
+_GRASPGENX_SAMPLES = 500
+
 xarm_grasp = autoconnect(
     *_XARM_GRASP_MODULES, HeuristicGraspModule.blueprint(**XARM_APPROACH_OFFSETS._asdict())
 ).remappings(_REMAPPINGS)
@@ -250,5 +254,7 @@ xarm_grasp_graspgenx = autoconnect(
         gripper=XARM_GRIPPER_SWEEP_VOLUME,
         grasp_frame_to_tcp=XARM_GRASP_FRAME_TO_TCP,
         gripper_body=XARM_GRIPPER_BODY,
+        num_samples=_GRASPGENX_SAMPLES,
+        max_candidates=_GRASPGENX_SAMPLES,
     ),
 ).remappings(_REMAPPINGS)

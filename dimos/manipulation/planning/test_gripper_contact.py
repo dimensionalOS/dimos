@@ -23,11 +23,15 @@ from __future__ import annotations
 import dataclasses
 import math
 from pathlib import Path
+import time
 
 import numpy as np
 from numpy.typing import NDArray
 import pytest
+from scipy.spatial import cKDTree
+from scipy.spatial.transform import Rotation
 
+from dimos.manipulation.grasping.grasp_gen_x.module import GripperBox, gripper_body_points
 from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspConfig, heuristic_grasps
 from dimos.manipulation.planning.gripper_contact import GripperContactModel, approach_offsets
 from dimos.manipulation.planning.spec.gripper import ContactPatch, GraspContact, GripperSpec
@@ -303,6 +307,114 @@ def test_xarm_gap_holds_the_space_the_pads_sweep_while_closing(
     )
 
     assert xarm.in_gap(points).tolist() == [True, True, False, False, False]
+
+
+# Every grasp GraspGenX samples goes through this check.
+
+
+def _graspgenx_scene_filter_keeps(grasps: NDArray, scene: NDArray) -> list[bool]:
+    """Which grasps GraspGenX's own scene check keeps: the open xArm gripper as
+    boxes (XARM_GRIPPER_BODY), clear when every point on them is at least 1 cm
+    (the pick's scene_collision_threshold) from every scene point."""
+    from dimos.robot.manipulators.xarm.grasp_geometry import (
+        XARM_GRASP_FRAME_TO_TCP,
+        XARM_GRIPPER_BODY,
+    )
+
+    body = gripper_body_points([GripperBox.model_validate(box) for box in XARM_GRIPPER_BODY])
+    # GraspGenX's grasp frame from a tool tip pose.
+    frames = grasps @ np.linalg.inv(np.asarray(XARM_GRASP_FRAME_TO_TCP))
+    tree = cKDTree(scene)
+    return [
+        bool(tree.query(body @ frame[:3, :3].T + frame[:3, 3])[0].min() >= 0.01) for frame in frames
+    ]
+
+
+@pytest.mark.self_hosted
+def test_xarm_keeps_grasps_on_a_flat_box_that_graspgenx_scene_check_drops(
+    xarm: GripperContactModel,
+) -> None:
+    # 12 cm long, 8 cm across the jaws, 1.5 cm tall. The open fingertips stop
+    # 5 to 10 mm above the table: inside GraspGenX's 1 cm, clear of the 3 mm margin.
+    flat = _box((0.0, 0.0, 0.0075), (0.12, 0.08, 0.015))
+    table = _table(hole=(-0.06, 0.06, -0.04, 0.04))
+    grasps = np.stack(
+        [
+            _top_down(x, 0.0, fingertips - XARM_TIP_BEHIND_TCP)
+            for x in (-0.03, 0.0, 0.03)
+            for fingertips in (0.005, 0.0075, 0.0095)
+        ]
+    )
+
+    verdicts = xarm.check(grasps, flat, {"table": table}, CONTACT_MARGIN, OBSTACLE_MARGIN)
+
+    assert _graspgenx_scene_filter_keeps(grasps, table) == [False] * len(grasps)
+    assert verdicts == [CLEAR] * len(grasps)
+
+
+@pytest.mark.self_hosted
+def test_xarm_still_rejects_fingers_going_into_the_table_beside_a_flat_box(
+    xarm: GripperContactModel,
+) -> None:
+    flat = _box((0.0, 0.0, 0.0075), (0.12, 0.08, 0.015))
+    table = _table(hole=(-0.06, 0.06, -0.04, 0.04))
+    # The open fingertips 2 mm below the table top.
+    into = _top_down(0.0, 0.0, -0.002 - XARM_TIP_BEHIND_TCP)
+
+    assert _check(xarm, into, flat, table=table) == GraspContact(("table",))
+
+
+def _grasps_around(center: NDArray, count: int, seed: int = 0) -> NDArray:
+    """Tool tip poses spread around ``center`` like GraspGenX's samples: approaching
+    from anywhere above the table, at any turn about the approach, the tool tip
+    within 3 cm of the centre."""
+    rng = np.random.default_rng(seed)
+    poses = np.tile(np.eye(4), (count, 1, 1))
+    # Tool z (the approach) tilted up to 90 degrees from straight down.
+    tilts = Rotation.from_euler(
+        "zyz",
+        np.stack(
+            [
+                rng.uniform(0.0, 2 * np.pi, count),
+                rng.uniform(np.pi / 2, np.pi, count),
+                rng.uniform(0.0, 2 * np.pi, count),
+            ],
+            axis=1,
+        ),
+    )
+    poses[:, :3, :3] = tilts.as_matrix()
+    poses[:, :3, 3] = center + rng.uniform(-0.03, 0.03, (count, 3))
+    return poses
+
+
+@pytest.mark.self_hosted
+def test_xarm_checks_five_hundred_grasps_in_about_a_second(xarm: GripperContactModel) -> None:
+    # A mug-sized cylinder with points 5 mm apart, as the camera's object cloud
+    # has them, a table 1 cm apart and two neighbours.
+    mug = _thin(_cylinder(0.04, 0.10), 0.005)
+    table = _table(hole=(-0.04, 0.04, -0.04, 0.04))
+    neighbours = np.concatenate(
+        [
+            _thin(_box((0.12, 0.05, 0.04), (0.05, 0.05, 0.08)), 0.01),
+            _thin(_box((-0.1, -0.1, 0.03), (0.06, 0.04, 0.06)), 0.01),
+        ]
+    )
+    grasps = _grasps_around(np.array([0.0, 0.0, 0.05]), 500)
+    obstacles = {"table": table, "objects": neighbours}
+
+    started = time.perf_counter()
+    verdicts = xarm.check(grasps, mug, obstacles, CONTACT_MARGIN, OBSTACLE_MARGIN)
+    seconds = time.perf_counter() - started
+
+    assert len(verdicts) == 500
+    assert 0 < sum(verdict.clear for verdict in verdicts) < 500
+    assert seconds < 2.0
+
+
+def _thin(points: NDArray, cell: float) -> NDArray:
+    """One point per cube of edge ``cell`` (metres)."""
+    _, first = np.unique(np.floor(points / cell).astype(np.int64), axis=0, return_index=True)
+    return points[np.sort(first)]
 
 
 def _cloud(points: NDArray) -> PointCloud2:

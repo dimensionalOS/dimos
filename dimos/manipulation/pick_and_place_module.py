@@ -123,9 +123,11 @@ class PickAndPlaceModuleConfig(ModuleConfig):
     heuristic_grasp: HeuristicGraspConfig = Field(default_factory=HeuristicGraspConfig)
     # Drop the grasp provider's grasps whose open gripper, at the grasp pose,
     # would overlap the table or another object in the camera's view. Works with
-    # a provider that can check against a scene (GraspGenX). False tries every
-    # grasp the provider gives. Heuristic grasps are never checked.
-    grasp_scene_filter: bool = True
+    # a provider that can check against a scene (GraspGenX), which models the
+    # gripper as boxes. Off, the contact check (grasp_contact_check) checks the
+    # table and other objects with the gripper's real shape instead. Heuristic
+    # grasps are never checked here.
+    grasp_scene_filter: bool = False
     # A gripper part closer than this (metres) to a scene point is a collision.
     # The scene cloud has one point per 1 cm cell, so less than about 1 cm lets a
     # finger slip between two table points unseen; much more turns down grasps
@@ -375,6 +377,8 @@ class PickAndPlaceModule(Module):
         result.metadata.setdefault(
             "grasp_sources", grasp_sources(self._grasp_generator, self.config.heuristic_fallback)
         )
+        if self._scene_grasp_generator is not None and not self.config.grasp_scene_filter:
+            result.metadata.setdefault("scene_filter_skipped", "off")
         if "skipped" in self._contact:
             result.metadata.setdefault("contact_check_skipped", self._contact["skipped"])
         elif self._contact:
@@ -478,12 +482,15 @@ class PickAndPlaceModule(Module):
             target: The object to grasp.
             pointcloud: The target's points, planning frame, metres.
 
-        Returns the check, or None and why it cannot run. Both are None when the
-        check is off or the provider cannot check grasps against a scene.
+        Returns the check, or None and why it does not run ("off" when
+        ``grasp_scene_filter`` is off). Both are None when the provider cannot
+        check grasps against a scene.
         """
         provider = self._scene_grasp_generator
-        if not self.config.grasp_scene_filter or provider is None:
+        if provider is None:
             return None, None
+        if not self.config.grasp_scene_filter:
+            return None, "off"
         try:
             scene = self._scene.get_full_scene_pointcloud(exclude_object_id=target.object_id)
         except Exception as exc:

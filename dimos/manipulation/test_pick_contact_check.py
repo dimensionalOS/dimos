@@ -99,6 +99,28 @@ def test_pick_with_the_gap_rule_off_asks_for_no_gap(contact_check: PickAndPlaceM
     assert "empty_gap" not in result.metadata["contact_rejected"]
 
 
+def test_with_the_scene_filter_off_the_contact_check_still_sees_the_scene(
+    contact_check: PickAndPlaceModule,
+) -> None:
+    # A provider able to check grasps against the scene, as GraspGenX is.
+    provider: Any = contact_check._grasp_generator
+    contact_check._scene_grasp_generator = provider
+    manipulation: Any = contact_check._manipulation
+    manipulation.check_grasp_contacts.return_value = [GraspContact(("table",)), GraspContact()]
+
+    result = contact_check.pick_object("cup-1")
+
+    provider.propose_grasps_in_scene.assert_not_called()
+    provider.propose_grasps.assert_called_once()
+    scene: Any = contact_check._scene
+    scene.get_full_scene_pointcloud.assert_called_once_with(exclude_object_id="cup-1")
+    obstacles = manipulation.check_grasp_contacts.call_args.args[2]
+    assert len(obstacles["table"].points_f32()) > 0
+    assert result.metadata["score"] == 0.5
+    assert result.metadata["scene_filter_skipped"] == "off"
+    assert result.metadata["contact_rejected"]["table"] == 1
+
+
 def test_pick_says_when_the_contact_check_rejects_every_grasp(
     contact_check: PickAndPlaceModule,
 ) -> None:
