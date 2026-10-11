@@ -43,6 +43,7 @@ from dimos.manipulation.planning.spec.models import PlanningGroupID
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.manipulation_msgs.GraspCandidate import GraspCandidate
 from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
@@ -52,6 +53,8 @@ from dimos.perception.experimental.object_scene_registration_spec import ObjectS
 VOXEL_MAP_EXCLUSION_ID = "pick-and-place/target"
 # How often (seconds) a check waiting for a new camera frame asks again.
 _FRESH_FRAME_POLL = 0.1
+# Half a turn about the gripper's approach axis (its local z), as (x, y, z, w).
+_HALF_TURN_ABOUT_APPROACH = Quaternion(0.0, 0.0, 1.0, 0.0)
 
 
 class PickAndPlaceModuleConfig(ModuleConfig):
@@ -75,6 +78,14 @@ class PickAndPlaceModuleConfig(ModuleConfig):
     # was last seen (and, after a lift, from where it would be had it come along)
     # are other objects. A released object is looked for this far from the gripper.
     lift_check_radius: float = Field(default=0.15, gt=0.0)
+    # Grasp tries on one object, counting the first. After a verified miss the
+    # arm backs out, scans the object again and tries a grasp not tried yet.
+    max_grasp_retries: int = Field(default=3, gt=0)
+    # A new candidate within both of these of a grasp already tried counts as the
+    # same grasp and is skipped: distance (metres) between the grasp positions
+    # relative to the object's centre, and angle (radians) between orientations.
+    retry_skip_distance: float = Field(default=0.02, ge=0.0)
+    retry_skip_angle: float = Field(default=0.35, ge=0.0)
     # How far (metres, horizontally) a released object may rest from the place target.
     place_tolerance: float = Field(default=0.07, gt=0.0)
     # How long (seconds) a check after a lift or a release waits for a camera
@@ -90,11 +101,15 @@ class ScannedObject:
         object_id: ID the scene registration gave it.
         name: Detected label, e.g. "cup".
         position: Centre of its 3D box in the planning frame, metres.
+        orientation: Orientation of that box in the planning frame.
+        size: Edge lengths of that box along its own axes, metres.
     """
 
     object_id: str
     name: str
     position: Vector3
+    orientation: Quaternion
+    size: Vector3
 
 
 @dataclass(frozen=True)
@@ -110,6 +125,35 @@ class HeldObject:
     object_id: str
     name: str
     grasp: PoseStamped
+
+
+@dataclass(frozen=True)
+class _TriedGrasp:
+    """A grasp pick_object already tried on the current object.
+
+    Args:
+        offset: Grasp position minus the object's centre at the time, metres.
+        orientation: Grasp orientation, planning frame.
+    """
+
+    offset: Vector3
+    orientation: Quaternion
+
+
+@dataclass(frozen=True)
+class _GraspTry:
+    """What one grasp try did.
+
+    Args:
+        result: The report of the try.
+        candidate: (rank, candidate) the gripper closed with, or None when it never closed.
+        missed: True when the grasp verifiably missed, the arm backed out to the
+            pre-grasp pose and the gripper was told to open, so another try may follow.
+    """
+
+    result: SkillResult
+    candidate: tuple[int, GraspCandidate] | None = None
+    missed: bool = False
 
 
 def _status(result: PlanResult | ExecutionResult) -> str:
@@ -196,9 +240,10 @@ class PickAndPlaceModule(Module):
     ) -> SkillResult:
         """Grasp one object from the latest scan and lift it.
 
-        After the lift the camera checks the object came up with the gripper.
-        ``grasped: false`` in the result means it did not: the object is still on
-        the table and the gripper is open. Scan again before another pick.
+        After the lift the camera checks the object came up with the gripper. On
+        a miss the arm backs out, scans again and tries another grasp, a limited
+        number of times. ``tries`` in the result lists each grasp; ``handoff: true``
+        means it stopped trying after misses and the object is not held.
 
         Args:
             object_id: Exact object ID returned by the latest scan_objects call.
@@ -217,11 +262,47 @@ class PickAndPlaceModule(Module):
                 f"No object with id {object_id} in the latest scan. Scanned ids: {scanned}. "
                 "Use scan_objects to refresh the list."
             )
-        pointcloud = self._scene.get_object_pointcloud_by_object_id(object_id)
+        proposal = self._propose(target)
+        if isinstance(proposal, SkillResult):
+            return proposal
+        candidates, box = proposal
+        group = self._gripper_group(planning_group)
+        # The target is mapped geometry: with its cells as obstacles the planner
+        # refuses the approach into it, and the held object blocks every move after.
+        self._exclude_target(box)
+        self._arm_in_target = False
+        try:
+            return self._pick_from(candidates, target, box, group)
+        finally:
+            if self._held is None and not self._arm_in_target:
+                self._manipulation.clear_voxel_map_exclusion(VOXEL_MAP_EXCLUSION_ID)
+
+    def _propose(
+        self, target: ScannedObject, crop: bool = False
+    ) -> tuple[GraspCandidateArray, TargetBox | None] | SkillResult:
+        """Generate ranked grasps for an object and show them in the viewer.
+
+        Args:
+            target: The object to grasp, from the latest scan.
+            crop: Keep only the points inside the target's detected box (plus
+                ``target_clearance``). The scene registration merges a new view
+                into the old cloud, so after a push the cloud holds both places.
+
+        Returns the candidates and the bounds of the points used, or a statement
+        of why there are none.
+        """
+        pointcloud = self._scene.get_object_pointcloud_by_object_id(target.object_id)
         if pointcloud is None:
             return SkillResult(
-                f"Object {object_id} has no point cloud in the latest scan. Use scan_objects again."
+                f"Object {target.object_id} has no point cloud in the latest scan. "
+                "Use scan_objects again."
             )
+        if crop:
+            pointcloud = _crop(pointcloud, target, self.config.target_clearance)
+            if not len(pointcloud.points_f32()):
+                return SkillResult(
+                    f"Object {target.object_id} has no points inside its detected box."
+                )
         candidates = self._grasp_generator.propose_grasps(pointcloud)
         self._grasp_candidates = candidates
         self._manipulation.show_grasp_proposals(candidates)
@@ -231,18 +312,8 @@ class PickAndPlaceModule(Module):
                 f"the planning frame is {self.config.planning_frame!r}"
             )
         if not candidates.candidates:
-            return SkillResult(f"Generated 0 grasp candidates for object {object_id}.")
-        group = self._gripper_group(planning_group)
-        # The target is mapped geometry: with its cells as obstacles the planner
-        # refuses the approach into it, and the held object blocks every move after.
-        box = _target_box(pointcloud)
-        self._exclude_target(box)
-        self._arm_in_target = False
-        try:
-            return self._pick_from(candidates, target, box, group)
-        finally:
-            if self._held is None and not self._arm_in_target:
-                self._manipulation.clear_voxel_map_exclusion(VOXEL_MAP_EXCLUSION_ID)
+            return SkillResult(f"Generated 0 grasp candidates for object {target.object_id}.")
+        return candidates, _target_box(pointcloud)
 
     def _pick_from(
         self,
@@ -251,20 +322,104 @@ class PickAndPlaceModule(Module):
         box: TargetBox | None,
         group: PlanningGroupID,
     ) -> SkillResult:
-        """Open the gripper and try the ranked grasps in order until one holds the object.
+        """Grasp the object, and after each verified miss scan again and try a new grasp.
+
+        Up to ``max_grasp_retries`` tries. A candidate that repeats a grasp already
+        tried on this object is skipped.
 
         Args:
             candidates: Ranked grasps in the planning frame, best first.
             target: The object being picked, with where it was scanned.
             box: Bounds of the object's point cloud, or None when it has none.
             group: Gripper-capable planning group doing the pick.
+
+        Returns the last try's report with ``tries`` (one record per grasp) and
+        ``handoff`` (true when it stopped trying after misses) in its metadata.
+        """
+        tries: list[dict[str, Any]] = []
+        tried: list[_TriedGrasp] = []
+        ranked = list(enumerate(candidates.candidates))
+        while True:
+            attempt = self._grasp_once(candidates, ranked, target, box, group)
+            if attempt.candidate is None:
+                return self._stop_trying(attempt.result, tries)
+            rank, candidate = attempt.candidate
+            tries.append(
+                {
+                    "try": len(tries) + 1,
+                    "object_id": target.object_id,
+                    "rank": rank,
+                    "score": candidate.score,
+                    "skipped": len(candidates.candidates) - len(ranked),
+                    "grasped": attempt.result.metadata.get("grasped"),
+                }
+            )
+            tried.append(
+                _TriedGrasp(candidate.pose.position - target.position, candidate.pose.orientation)
+            )
+            last = attempt.result
+            if not attempt.missed:
+                return self._stop_trying(last, tries)
+            if len(tries) >= self.config.max_grasp_retries:
+                return self._stop_trying(
+                    last,
+                    tries,
+                    f"Object {target.object_id} is still not held after {len(tries)} "
+                    f"{'try' if len(tries) == 1 else 'tries'}.",
+                )
+            found = self._rescan(target)
+            if found is None:
+                return self._stop_trying(
+                    last,
+                    tries,
+                    f"A new scan for {target.name} found none within "
+                    f"{self.config.lift_check_radius:.2f} m of where object "
+                    f"{target.object_id} was.",
+                )
+            proposal = self._propose(found, crop=True)
+            if isinstance(proposal, SkillResult):
+                return self._stop_trying(last, tries, proposal.message)
+            target = found
+            candidates, box = proposal
+            ranked = [
+                (rank, candidate)
+                for rank, candidate in enumerate(candidates.candidates)
+                if not any(self._repeats(candidate, target, grasp) for grasp in tried)
+            ]
+            if not ranked:
+                return self._stop_trying(
+                    last,
+                    tries,
+                    f"Every new grasp candidate for object {target.object_id} repeats a "
+                    "grasp already tried.",
+                )
+            # Re-centre the ignored box on where the object is now.
+            self._exclude_target(box)
+
+    def _grasp_once(
+        self,
+        candidates: GraspCandidateArray,
+        ranked: Sequence[tuple[int, GraspCandidate]],
+        target: ScannedObject,
+        box: TargetBox | None,
+        group: PlanningGroupID,
+    ) -> _GraspTry:
+        """Open the gripper and grasp with the first candidate the planner can reach.
+
+        Args:
+            candidates: Every candidate generated for the object, for its frame,
+                time stamp and count.
+            ranked: (rank, candidate) pairs to try, best first.
+            target: The object being picked, with where it was scanned.
+            box: Bounds of the object's point cloud, or None when it has none.
+            group: Gripper-capable planning group doing the pick.
         """
         object_id = target.object_id
         if not_open := self._open_gripper(group, "before grasping"):
-            return not_open
+            return _GraspTry(not_open)
 
         last_plan = ""
-        for rank, candidate in enumerate(candidates.candidates[: self.config.max_grasp_attempts]):
+        for rank, candidate in ranked[: self.config.max_grasp_attempts]:
             grasp = self._apply_yaw_policy(
                 PoseStamped(
                     ts=candidates.header.timestamp,
@@ -283,8 +438,8 @@ class PickAndPlaceModule(Module):
                 last_plan = _status(blocked)
                 continue
             if blocked is not None:
-                return self._stopped(
-                    f"Move to grasp candidate {rank} for object {object_id}", blocked
+                return _GraspTry(
+                    self._stopped(f"Move to grasp candidate {rank} for object {object_id}", blocked)
                 )
             if not_held := self._close_and_verify(group, object_id):
                 # Back out while the target's cells are still ignored: left at
@@ -292,25 +447,98 @@ class PickAndPlaceModule(Module):
                 if blocked := self._servo(grasp, pregrasp, group):
                     self._arm_in_target = True
                     stopped = self._stopped("Retract to the pre-grasp pose", blocked)
-                    return SkillResult(
-                        f"{not_held.message} {stopped.message}", metadata=not_held.metadata
+                    return _GraspTry(
+                        SkillResult(
+                            f"{not_held.message} {stopped.message}", metadata=not_held.metadata
+                        ),
+                        (rank, candidate),
                     )
-                return not_held
+                return _GraspTry(
+                    not_held, (rank, candidate), missed=not_held.metadata.get("grasped") is False
+                )
 
             self._held = HeldObject(object_id, target.name, grasp)
             self._carry_target(box, grasp, group)
             if blocked := self._servo(grasp, pregrasp, group):
-                return self._stopped(f"Retract after grasping object {object_id}", blocked)
+                return _GraspTry(
+                    self._stopped(f"Retract after grasping object {object_id}", blocked),
+                    (rank, candidate),
+                )
             result = self._verify_lift(target, pregrasp.position - grasp.position, group)
             result.metadata.update(
                 rank=rank, score=candidate.score, candidates=len(candidates.candidates)
             )
-            return result
-        attempted = min(len(candidates.candidates), self.config.max_grasp_attempts)
-        return SkillResult(
-            f"The planner found no path to any of the {attempted} grasp candidate(s) tried "
-            f"for object {object_id}; last planner result {last_plan}."
+            return _GraspTry(result, (rank, candidate), missed=result.metadata["grasped"] is False)
+        attempted = min(len(ranked), self.config.max_grasp_attempts)
+        return _GraspTry(
+            SkillResult(
+                f"The planner found no path to any of the {attempted} grasp candidate(s) tried "
+                f"for object {object_id}; last planner result {last_plan}."
+            )
         )
+
+    def _rescan(self, target: ScannedObject) -> ScannedObject | None:
+        """Detect the object again after a missed grasp and record it in the latest scan.
+
+        Args:
+            target: The object as it was last seen.
+
+        Returns the detection that may be the target (see ``_sightings``) nearest
+        to where it was, within ``lift_check_radius``, or None when there is none.
+        """
+        detections = self._detect_after(target.name, time.time())
+        found = [
+            obj
+            for obj in self._sightings(target, detections)
+            if obj.position.distance(target.position) <= self.config.lift_check_radius
+        ]
+        if not found:
+            return None
+        nearest = min(found, key=lambda obj: obj.position.distance(target.position))
+        self._objects.pop(target.object_id, None)
+        self._objects[nearest.object_id] = nearest
+        return nearest
+
+    def _repeats(
+        self, candidate: GraspCandidate, target: ScannedObject, tried: _TriedGrasp
+    ) -> bool:
+        """Whether a candidate grasps the object the same way as a grasp already tried.
+
+        Positions are compared relative to the object's centre, so a grasp on an
+        object that was pushed aside still matches.
+
+        Args:
+            candidate: New grasp candidate, planning frame.
+            target: The object as it is now, with its centre.
+            tried: A grasp already tried, with its offset from the object's centre then.
+        """
+        offset = candidate.pose.position - target.position
+        if offset.distance(tried.offset) > self.config.retry_skip_distance:
+            return False
+        orientation = candidate.pose.orientation
+        # A parallel-jaw gripper turned half a turn about its approach axis
+        # holds the object the same way.
+        flipped = tried.orientation * _HALF_TURN_ABOUT_APPROACH
+        angle = min(orientation.angle_to(tried.orientation), orientation.angle_to(flipped))
+        return angle <= self.config.retry_skip_angle
+
+    @staticmethod
+    def _stop_trying(
+        last: SkillResult, tries: list[dict[str, Any]], gave_up: str | None = None
+    ) -> SkillResult:
+        """Report the end of a pick, with one record per grasp tried.
+
+        Args:
+            last: The report of the last step.
+            tries: One record per grasp tried, in order; empty when no grasp was.
+            gave_up: Why pick_object stopped trying after a verified miss, or None
+                when it stopped for another reason (success, a fault, no path).
+        """
+        if not tries:
+            return last
+        message = last.message if gave_up is None else f"{last.message} {gave_up}"
+        metadata = {**last.metadata, "tries": tries, "handoff": gave_up is not None}
+        return SkillResult(message, metadata=metadata)
 
     @rpc
     def get_grasp_candidates(self) -> GraspCandidateArray:
@@ -791,6 +1019,8 @@ def _scanned(detections: Detection3DArray) -> dict[str, ScannedObject]:
             object_id=str(detection.id),
             name=str(detection.results[0].hypothesis.class_id),
             position=_center(detection),
+            orientation=Quaternion(detection.bbox.center.orientation),
+            size=Vector3(detection.bbox.size),
         )
         for detection in detections.detections
         if detection.id and detection.results
@@ -828,6 +1058,26 @@ def _distance_along(
         return None
     direction = lift.normalize()
     return max((center - start).dot(direction) for center in nearby)
+
+
+def _crop(pointcloud: PointCloud2, box: ScannedObject, margin: float) -> PointCloud2:
+    """The points of a cloud inside an object's detected 3D box, grown on every side.
+
+    Args:
+        pointcloud: Points in the planning frame, metres.
+        box: The detection whose box (centre, orientation, size) to keep.
+        margin: How far (metres) outside each face of the box a point may lie.
+    """
+    points = np.asarray(pointcloud.points_f32(), dtype=np.float64).reshape((-1, 3))
+    # Each point in the box's own axes, R^T (p - c), written for row vectors.
+    local = (points - box.position.to_numpy()) @ box.orientation.to_rotation_matrix()
+    half = np.asarray(box.size.to_tuple(), dtype=np.float64) / 2.0 + margin
+    inside = np.flatnonzero(np.all(np.abs(local) <= half, axis=1))
+    return PointCloud2(
+        pointcloud.pointcloud.select_by_index(inside.tolist()),
+        frame_id=pointcloud.frame_id,
+        ts=pointcloud.ts,
+    )
 
 
 def _horizontal_distance(a: Vector3, b: Vector3) -> float:

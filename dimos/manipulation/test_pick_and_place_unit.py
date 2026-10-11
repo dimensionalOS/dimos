@@ -107,6 +107,11 @@ def _holding_cup() -> HeldObject:
     return HeldObject("cup-1", "cup", PoseStamped(frame_id="world", orientation=TOP_DOWN))
 
 
+def _scanned_cup(object_id: str, at: Vector3) -> ScannedObject:
+    """A cup from the latest scan, with the 10 cm box ``_detections`` gives it."""
+    return ScannedObject(object_id, "cup", at, Quaternion(), Vector3(0.1, 0.1, 0.1))
+
+
 def _held_id(module: PickAndPlaceModule) -> str | None:
     return None if module._held is None else module._held.object_id
 
@@ -123,7 +128,7 @@ def module() -> Iterator[PickAndPlaceModule]:
     instance._manipulation.execute.return_value = COMPLETED
     instance._manipulation.move_linear.return_value = _linear_move()
     instance._manipulation.set_gripper_position.return_value = ACCEPTED
-    instance._objects = {"cup-1": ScannedObject("cup-1", "cup", CUP_AT)}
+    instance._objects = {"cup-1": _scanned_cup("cup-1", CUP_AT)}
     # After a lift or a release the camera sees no cup.
     instance._scene.scan_scene.return_value = _detections()
     # The cup's points: a 4 cm cube centred on the grasp at (0.1, 0.0, 0.2).
@@ -370,27 +375,6 @@ def test_final_grasp_leg_skips_collision_checking(module: PickAndPlaceModule) ->
         assert call.kwargs["check_collision"] is False
 
 
-def test_empty_grasp_reopens_before_failing(
-    module: PickAndPlaceModule, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    manipulation: Any = module._manipulation
-
-    def settle(read: Any, target: float, config: Any, **_: Any) -> GripperSettle:
-        position = 0.0 if target == config.closed_position else target
-        return GripperSettle(True, position, True, 0.1)
-
-    monkeypatch.setattr("dimos.manipulation.pick_and_place_module.await_gripper_settle", settle)
-
-    result = module.pick_object("cup-1")
-
-    assert result.message == (
-        "Closed the gripper on object cup-1. Final gripper position 0.00. Reopened the gripper."
-    )
-    assert result.metadata == {"object_id": "cup-1", "jaws": 0.0, "grasped": False}
-    assert _held_id(module) is None
-    assert manipulation.set_gripper_position.call_args_list[-1].args[0] == 1.0
-
-
 def test_pick_rejects_jaws_that_never_closed(
     module: PickAndPlaceModule, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -405,6 +389,7 @@ def test_pick_rejects_jaws_that_never_closed(
     result = module.pick_object("cup-1")
 
     assert result.message == "Closed the gripper on object cup-1. Final gripper position 1.00."
+    assert result.metadata["handoff"] is False
     assert _held_id(module) is None
     # Jaws that never closed are not reopened; the last command was the close.
     assert manipulation.set_gripper_position.call_args_list[-1].args[0] == 0.0
@@ -604,31 +589,6 @@ def test_an_empty_target_cloud_asks_for_no_exclusion(module: PickAndPlaceModule)
     manipulation.set_voxel_map_exclusion.assert_not_called()
 
 
-def test_an_empty_close_backs_out_before_the_target_is_an_obstacle_again(
-    module: PickAndPlaceModule, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    manipulation: Any = module._manipulation
-    _close_on_nothing(monkeypatch)
-    order: list[str] = []
-
-    def servo(*args: Any, **kwargs: Any) -> MoveResult:
-        order.append("servo")
-        return _linear_move()
-
-    manipulation.move_linear.side_effect = servo
-    manipulation.clear_voxel_map_exclusion.side_effect = lambda name: order.append("clear")
-
-    result = module.pick_object("cup-1")
-
-    assert result.message == (
-        "Closed the gripper on object cup-1. Final gripper position 0.00. Reopened the gripper."
-    )
-    # Down to the grasp, back up to the pregrasp, and only then the box goes.
-    assert order == ["servo", "servo", "clear"]
-    dz = [c.args[2] for c in manipulation.move_linear.call_args_list]
-    assert dz[0] == pytest.approx(-dz[1])
-
-
 def test_an_empty_close_reports_a_back_out_that_did_not_complete(
     module: PickAndPlaceModule, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -645,6 +605,7 @@ def test_an_empty_close_reports_a_back_out_that_did_not_complete(
         "Closed the gripper on object cup-1. Final gripper position 0.00. Reopened the gripper. "
         "Retract to the pre-grasp pose did not complete; execution returned FAULT: retract failed"
     )
+    assert result.metadata["handoff"] is False
     assert _held_id(module) is None
     # The gripper is still inside the cup's cells; the next plan starts from there.
     manipulation.clear_voxel_map_exclusion.assert_not_called()
@@ -681,6 +642,7 @@ def test_pick_is_complete_when_the_object_rose_with_the_gripper(
 def test_pick_fails_when_the_object_did_not_rise(
     module: PickAndPlaceModule, seen_at: Vector3, object_lift: float
 ) -> None:
+    module.config.max_grasp_retries = 1
     scene: Any = module._scene
     manipulation: Any = module._manipulation
     scene.scan_scene.return_value = _detections(("cup-1", "cup", seen_at))
@@ -689,7 +651,8 @@ def test_pick_fails_when_the_object_did_not_rise(
 
     assert result.message == (
         f"Lifted the gripper 0.10 m, but the camera sees object cup-1 moved {object_lift:.2f} m "
-        "with it; it stayed on the table. Reopened the gripper."
+        "with it; it stayed on the table. Reopened the gripper. "
+        "Object cup-1 is still not held after 1 try."
     )
     assert result.metadata["grasped"] is False
     assert result.metadata["object_lift_m"] == pytest.approx(object_lift)
@@ -724,6 +687,7 @@ def test_pick_counts_the_detection_that_came_along(module: PickAndPlaceModule) -
 
 
 def test_pick_fails_when_the_jaws_empty_during_the_lift(module: PickAndPlaceModule) -> None:
+    module.config.max_grasp_retries = 1
     manipulation: Any = module._manipulation
     scene: Any = module._scene
     manipulation.get_state.return_value = _group_state(gripper_position=0.02)
@@ -732,7 +696,7 @@ def test_pick_fails_when_the_jaws_empty_during_the_lift(module: PickAndPlaceModu
 
     assert result.message == (
         "After lifting object cup-1, the gripper reads 0.02: the jaws are closed on nothing. "
-        "Reopened the gripper."
+        "Reopened the gripper. Object cup-1 is still not held after 1 try."
     )
     assert result.metadata["grasped"] is False
     assert result.metadata["jaws"] == pytest.approx(0.02)
@@ -817,7 +781,7 @@ def test_place_reports_an_object_lost_on_the_way(module: PickAndPlaceModule) -> 
 def test_pick_ignores_a_neighbour_from_the_latest_scan(module: PickAndPlaceModule) -> None:
     """The wrist camera rarely sees the held cup; a known neighbour must not fail the pick."""
     scene: Any = module._scene
-    module._objects["cup-2"] = ScannedObject("cup-2", "cup", Vector3(0.2, 0.0, 0.2))
+    module._objects["cup-2"] = _scanned_cup("cup-2", Vector3(0.2, 0.0, 0.2))
     scene.scan_scene.return_value = _detections(("cup-2", "cup", Vector3(0.2, 0.0, 0.2)))
 
     result = module.pick_object("cup-1")
@@ -895,3 +859,273 @@ def test_place_ignores_detections_far_from_the_release(module: PickAndPlaceModul
 
     assert result.message == "Place complete"
     assert result.metadata["located_by"] == "gripper"
+
+
+def _cup_at(x: float, y: float, z: float, object_id: str = "cup-1") -> Detection3DArray:
+    return _detections((object_id, "cup", Vector3(x, y, z)))
+
+
+def _grasp_at(
+    x: float, y: float, score: float, orientation: Quaternion = TOP_DOWN
+) -> GraspCandidate:
+    return GraspCandidate(Pose(Vector3(x, y, 0.2), orientation), score)
+
+
+def _tries(result: Any, key: str) -> list[Any]:
+    return [record[key] for record in result.metadata["tries"]]
+
+
+def test_a_first_try_success_records_one_try(module: PickAndPlaceModule) -> None:
+    result = module.pick_object("cup-1")
+
+    assert result.message == "Pick complete"
+    assert result.metadata["tries"] == [
+        {"try": 1, "object_id": "cup-1", "rank": 0, "score": 1.0, "skipped": 0, "grasped": True}
+    ]
+    assert result.metadata["handoff"] is False
+
+
+def test_a_missed_grasp_is_retried_with_the_next_candidate(module: PickAndPlaceModule) -> None:
+    scene: Any = module._scene
+    manipulation: Any = module._manipulation
+    grasp_generator: Any = module._grasp_generator
+    grasp_generator.propose_grasps.return_value = GraspCandidateArray(
+        Header(1.0, "world"), [_grasp_at(0.1, 0.0, 0.9), _grasp_at(0.1, 0.03, 0.5)]
+    )
+    # Lift check (still on the table), re-scan, lift check (rode up with the gripper).
+    scene.scan_scene.side_effect = [
+        _cup_at(0.1, 0.0, 0.2),
+        _cup_at(0.1, 0.0, 0.2, object_id="cup-7"),
+        _cup_at(0.1, 0.03, 0.3, object_id="cup-7"),
+    ]
+
+    result = module.pick_object("cup-1")
+
+    assert result.message == "Pick complete"
+    assert _tries(result, "rank") == [0, 1]
+    assert _tries(result, "skipped") == [0, 1]
+    assert _tries(result, "grasped") == [False, True]
+    assert _tries(result, "object_id") == ["cup-1", "cup-7"]
+    assert result.metadata["handoff"] is False
+    assert _held_id(module) == "cup-7"
+    assert module.get_object("cup-7") == {"object_id": "cup-7", "name": "cup"}
+    assert grasp_generator.propose_grasps.call_count == 2
+    # Box on the table, carried, re-centred for the second approach, carried again.
+    assert [group for _, _, group in _exclusions(manipulation)] == [
+        None,
+        "arm/tool",
+        None,
+        "arm/tool",
+    ]
+    manipulation.clear_voxel_map_exclusion.assert_not_called()
+
+
+def test_empty_closes_back_out_before_the_re_scan_and_the_box_goes_last(
+    module: PickAndPlaceModule, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    scene: Any = module._scene
+    manipulation: Any = module._manipulation
+    grasp_generator: Any = module._grasp_generator
+    module.config.max_grasp_retries = 2
+    grasp_generator.propose_grasps.return_value = GraspCandidateArray(
+        Header(1.0, "world"), [_grasp_at(0.1, 0.0, 0.9), _grasp_at(0.1, 0.05, 0.5)]
+    )
+    _close_on_nothing(monkeypatch)
+    order: list[str] = []
+
+    def servo(*args: Any, **kwargs: Any) -> MoveResult:
+        order.append("servo")
+        return _linear_move()
+
+    def gripper(position: float, group: str) -> CommandResult:
+        order.append(f"gripper {position:.0f}")
+        return ACCEPTED
+
+    def scan(text: list[str]) -> Detection3DArray:
+        order.append("scan")
+        return _cup_at(0.1, 0.0, 0.2)
+
+    manipulation.move_linear.side_effect = servo
+    manipulation.set_gripper_position.side_effect = gripper
+    manipulation.set_voxel_map_exclusion.side_effect = lambda *a, **k: order.append("box")
+    manipulation.clear_voxel_map_exclusion.side_effect = lambda name: order.append("clear")
+    scene.scan_scene.side_effect = scan
+
+    result = module.pick_object("cup-1")
+
+    one_try = ["gripper 1", "servo", "gripper 0", "gripper 1", "servo"]
+    # Open, down, close on nothing, reopen, back out; look again, re-centre the
+    # box, try again; the box goes only once the arm is out the last time.
+    assert order == ["box", *one_try, "scan", "box", *one_try, "clear"]
+    down, back_out = (c.args[2] for c in manipulation.move_linear.call_args_list[:2])
+    assert down == pytest.approx(-back_out)
+    assert result.message == (
+        "Closed the gripper on object cup-1. Final gripper position 0.00. Reopened the gripper. "
+        "Object cup-1 is still not held after 2 tries."
+    )
+    assert result.metadata["grasped"] is False
+    assert result.metadata["jaws"] == 0.0
+    assert result.metadata["handoff"] is True
+    assert _held_id(module) is None
+
+
+def test_three_missed_grasps_hand_the_pick_off(module: PickAndPlaceModule) -> None:
+    scene: Any = module._scene
+    manipulation: Any = module._manipulation
+    grasp_generator: Any = module._grasp_generator
+    grasp_generator.propose_grasps.return_value = GraspCandidateArray(
+        Header(1.0, "world"),
+        [_grasp_at(0.1, 0.0, 0.9), _grasp_at(0.1, 0.05, 0.6), _grasp_at(0.1, -0.05, 0.3)],
+    )
+    scene.scan_scene.return_value = _cup_at(0.1, 0.0, 0.2)
+
+    result = module.pick_object("cup-1")
+
+    assert result.message.endswith("Object cup-1 is still not held after 3 tries.")
+    assert result.metadata["handoff"] is True
+    assert result.metadata["grasped"] is False
+    assert _tries(result, "try") == [1, 2, 3]
+    assert _tries(result, "rank") == [0, 1, 2]
+    assert _tries(result, "score") == [0.9, 0.6, 0.3]
+    assert _tries(result, "grasped") == [False, False, False]
+    assert _held_id(module) is None
+    assert manipulation.set_gripper_position.call_args_list[-1].args[0] == 1.0
+    manipulation.clear_voxel_map_exclusion.assert_called_once_with(VOXEL_MAP_EXCLUSION_ID)
+    # Three lift checks and the two re-scans between them.
+    assert scene.scan_scene.call_count == 5
+
+
+def test_a_re_scan_that_loses_the_object_hands_the_pick_off(module: PickAndPlaceModule) -> None:
+    scene: Any = module._scene
+    grasp_generator: Any = module._grasp_generator
+    # Lift check: still on the table. Re-scan: the only cup is 40 cm away.
+    scene.scan_scene.side_effect = [_cup_at(0.1, 0.0, 0.2), _cup_at(0.5, 0.0, 0.2, "cup-2")]
+
+    result = module.pick_object("cup-1")
+
+    assert result.message.endswith(
+        "A new scan for cup found none within 0.15 m of where object cup-1 was."
+    )
+    assert result.metadata["handoff"] is True
+    assert _tries(result, "grasped") == [False]
+    assert grasp_generator.propose_grasps.call_count == 1
+
+
+def test_a_re_scan_does_not_retarget_a_neighbour_from_the_latest_scan(
+    module: PickAndPlaceModule,
+) -> None:
+    """The neighbour 5 cm away kept its own ID; picking it would report the wrong object."""
+    scene: Any = module._scene
+    module._objects["cup-2"] = _scanned_cup("cup-2", Vector3(0.15, 0.0, 0.2))
+    # Lift check: the cup stayed. Re-scan: only the neighbour is seen.
+    scene.scan_scene.side_effect = [
+        _cup_at(0.1, 0.0, 0.2),
+        _cup_at(0.15, 0.0, 0.2, "cup-2"),
+    ]
+
+    result = module.pick_object("cup-1")
+
+    assert result.metadata["handoff"] is True
+    assert result.message.endswith("found none within 0.15 m of where object cup-1 was.")
+
+
+def test_a_retry_proposes_grasps_from_where_the_object_is_now(
+    module: PickAndPlaceModule,
+) -> None:
+    """The scene merges the new view into the old cloud; only the new place is grasped."""
+    scene: Any = module._scene
+    grasp_generator: Any = module._grasp_generator
+    grasp_generator.propose_grasps.side_effect = [
+        GraspCandidateArray(Header(1.0, "world"), [_grasp_at(0.1, 0.0, 0.9)]),
+        GraspCandidateArray(Header(1.0, "world"), [_grasp_at(0.1, 0.13, 0.9)]),
+    ]
+    # Points where the cup stood and where it was pushed to, 10 cm along y.
+    scene.get_object_pointcloud_by_object_id.return_value = PointCloud2.from_numpy(
+        np.asarray(
+            [[0.1, 0.0, 0.2], [0.1, 0.01, 0.21], [0.1, 0.1, 0.2], [0.1, 0.11, 0.21]],
+            dtype=np.float32,
+        ),
+        frame_id="world",
+        timestamp=1.0,
+    )
+    scene.scan_scene.side_effect = [
+        _cup_at(0.1, 0.1, 0.2),  # lift check: pushed aside, not lifted
+        _cup_at(0.1, 0.1, 0.2),  # re-scan
+        _cup_at(0.1, 0.1, 0.3),  # lift check: rode up
+    ]
+
+    result = module.pick_object("cup-1")
+
+    assert result.message == "Pick complete"
+    retry_cloud = grasp_generator.propose_grasps.call_args_list[1].args[0]
+    assert all(y > 0.05 for y in retry_cloud.points_f32()[:, 1])
+    assert len(retry_cloud.points_f32()) == 2
+
+
+def test_a_retry_skips_candidates_that_repeat_a_tried_grasp(module: PickAndPlaceModule) -> None:
+    """The cup was pushed 4 cm; grasps that match the tried one on the cup are skipped."""
+    scene: Any = module._scene
+    grasp_generator: Any = module._grasp_generator
+    flipped = Quaternion.from_euler(Vector3(-3.141592653589793, 0.0, 3.141592653589793))
+
+    def proposals(dx: float) -> GraspCandidateArray:
+        return GraspCandidateArray(
+            Header(1.0, "world"),
+            [
+                _grasp_at(0.1 + dx, 0.0, 0.9),  # the grasp tried first
+                _grasp_at(0.1 + dx, 0.0, 0.8, flipped),  # the same, turned half a turn
+                _grasp_at(0.11 + dx, 0.0, 0.7),  # 1 cm along
+                _grasp_at(0.1 + dx, 0.05, 0.5),  # 5 cm along: a new grasp
+            ],
+        )
+
+    grasp_generator.propose_grasps.side_effect = [proposals(0.0), proposals(0.04)]
+    scene.scan_scene.side_effect = [
+        _cup_at(0.14, 0.0, 0.2),  # lift check: pushed, not lifted
+        _cup_at(0.14, 0.0, 0.2),  # re-scan
+        _cup_at(0.14, 0.05, 0.3),  # lift check: rode up
+    ]
+
+    result = module.pick_object("cup-1")
+
+    assert result.message == "Pick complete"
+    assert _tries(result, "rank") == [0, 3]
+    assert _tries(result, "skipped") == [0, 3]
+
+
+def test_a_retry_with_only_repeated_candidates_hands_the_pick_off(
+    module: PickAndPlaceModule,
+) -> None:
+    scene: Any = module._scene
+    manipulation: Any = module._manipulation
+    scene.scan_scene.return_value = _cup_at(0.1, 0.0, 0.2)
+
+    result = module.pick_object("cup-1")
+
+    assert result.message.endswith(
+        "Every new grasp candidate for object cup-1 repeats a grasp already tried."
+    )
+    assert result.metadata["handoff"] is True
+    assert len(result.metadata["tries"]) == 1
+    assert manipulation.plan_to_poses.call_count == 1
+
+
+def test_a_gripper_that_never_settles_is_a_fault_not_a_handoff(
+    module: PickAndPlaceModule, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Jaws stuck at open did not grasp anything; trying again would not help."""
+    manipulation: Any = module._manipulation
+
+    def settle(read: Any, target: float, config: Any, **_: Any) -> GripperSettle:
+        if target == config.closed_position:
+            return GripperSettle(False, 0.98, False, config.timeout)
+        return GripperSettle(True, target, True, 0.1)
+
+    monkeypatch.setattr("dimos.manipulation.pick_and_place_module.await_gripper_settle", settle)
+
+    result = module.pick_object("cup-1")
+
+    assert result.message.startswith("Closed the gripper on object cup-1.")
+    assert result.metadata["handoff"] is False
+    assert len(result.metadata["tries"]) == 1
+    assert manipulation.plan_to_poses.call_count == 1

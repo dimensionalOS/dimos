@@ -77,8 +77,8 @@ world-frame pose (meters / radians).
 1. Call **scan_objects** with all requested object prompts.
 2. Call **pick_object** with the exact object ID returned by the scan.
 3. Call **place_at** only after a successful pick.
-4. Believe the result: `grasped: false` means the object is still on the table (re-scan, \
-then pick again) and `placed: false` says how far from the target it ended; neither is a success.
+4. Believe the result: `handoff: true` means pick_object already retried and the object is \
+not held, and `placed: false` says how far from the target it ended; neither is a success.
 
 # Rules
 - Use an exact object ID from the latest scan output. Do NOT select by name.
