@@ -303,3 +303,73 @@ def test_scene_check_failure_is_wrapped(runtime: Any) -> None:
             module.propose_grasps_in_scene(cloud(), cloud(), 0.01)
     finally:
         module.stop()
+
+
+def test_proposals_sample_the_configured_count(runtime: Any) -> None:
+    module = GraspGenXRuntimeModule(
+        _isolated_python_runtime=True, **module_args(config(num_samples=500))
+    )
+    try:
+        module.start()
+        module.propose_grasps(cloud())
+
+        assert runtime.return_value.infer.call_args.args[1] == 500
+    finally:
+        module.stop()
+
+
+def test_scene_check_runs_on_every_sample_before_keeping_the_best(runtime: Any) -> None:
+    poses = np.repeat(np.eye(4, dtype=np.float32)[None], 5, axis=0)
+    poses[:, 0, 3] = [1.0, 2.0, 3.0, 4.0, 5.0]
+    runtime.return_value.infer.return_value = (poses, np.asarray([0.9, 0.8, 0.7, 0.6, 0.5]))
+    # The two best grasps hit the scene; three lower ones are clear.
+    runtime.return_value.collision_free.return_value = np.asarray([False, False, True, True, True])
+    module = GraspGenXRuntimeModule(
+        _isolated_python_runtime=True,
+        **module_args(config(gripper_body=BODY, max_candidates=2)),
+    )
+    try:
+        module.start()
+        result = module.propose_grasps_in_scene(cloud(), cloud(), 0.01)
+
+        _, checked, _ = runtime.return_value.collision_free.call_args.args
+        assert len(checked) == 5
+        assert [c.score for c in result.grasps] == pytest.approx([0.7, 0.6])
+        assert result.removed == 2
+        assert result.sampled == 5
+        # Keeping the best two first and checking only those would leave none.
+        assert result.clear_in_top == 0
+        assert result.infer_s >= 0.0
+        assert result.check_s >= 0.0
+    finally:
+        module.stop()
+
+
+def test_scene_check_takes_a_sample_count_per_call(runtime: Any) -> None:
+    runtime.return_value.collision_free.return_value = np.asarray([True])
+    module = GraspGenXRuntimeModule(
+        _isolated_python_runtime=True,
+        **module_args(config(gripper_body=BODY, num_samples=200)),
+    )
+    try:
+        module.start()
+        module.propose_grasps_in_scene(cloud(), cloud(), 0.01, num_samples=1000)
+        assert runtime.return_value.infer.call_args.args[1] == 1000
+        module.propose_grasps_in_scene(cloud(), cloud(), 0.01)
+        assert runtime.return_value.infer.call_args.args[1] == 200
+    finally:
+        module.stop()
+
+
+@pytest.mark.parametrize("num_samples", [0, -5, True, 2.5])
+def test_scene_check_rejects_a_bad_sample_count(runtime: Any, num_samples: Any) -> None:
+    module = GraspGenXRuntimeModule(
+        _isolated_python_runtime=True, **module_args(config(gripper_body=BODY))
+    )
+    try:
+        module.start()
+        with pytest.raises(ValueError, match="num_samples"):
+            module.propose_grasps_in_scene(cloud(), cloud(), 0.01, num_samples=num_samples)
+        runtime.return_value.infer.assert_not_called()
+    finally:
+        module.stop()

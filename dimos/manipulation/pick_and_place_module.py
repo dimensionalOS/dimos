@@ -284,6 +284,55 @@ class PickAndPlaceModule(Module):
         obj = self._objects.get(object_id)
         return None if obj is None else _summary(obj)
 
+    @rpc
+    def scene_grasp_counts(self, object_id: str, num_samples: int) -> dict[str, Any]:
+        """Count how many grasps on a scanned object stay clear of the scene.
+
+        Asks the grasp provider for grasps with the scene check, from the same
+        object and scene points pick_object would use, but moves nothing and
+        keeps nothing. For measuring the provider; not an agent skill.
+
+        Args:
+            object_id: Object ID from the latest scan_objects.
+            num_samples: How many grasps the provider samples for this call.
+
+        Returns ``num_samples``; ``sampled`` (grasps proposed), ``clear`` (left
+        after the scene check), ``clear_in_top`` (clear among the best-scored
+        grasps the provider keeps), ``kept`` (grasps returned); ``infer_s``,
+        ``check_s`` and ``call_s`` (the whole call), seconds; and the object's
+        and scene's point counts. Holds ``error`` instead when the check could
+        not run.
+        """
+        report: dict[str, Any] = {"num_samples": num_samples}
+        target = self._objects.get(object_id)
+        if target is None:
+            return {**report, "error": f"no object {object_id} in the latest scan"}
+        pointcloud = self._scene.get_object_pointcloud_by_object_id(object_id)
+        if pointcloud is None:
+            return {**report, "error": f"object {object_id} has no point cloud"}
+        check, skipped = self._scene_check(target, pointcloud)
+        if check is None:
+            return {**report, "error": skipped or "the scene check is off or unsupported"}
+        started = time.monotonic()
+        try:
+            result = check.provider.propose_grasps_in_scene(
+                pointcloud, check.scene, check.collision_threshold, num_samples=num_samples
+            )
+        except Exception as exc:
+            return {**report, "error": f"{type(exc).__name__}: {exc}"}
+        return {
+            **report,
+            "sampled": result.sampled,
+            "clear": result.sampled - result.removed,
+            "clear_in_top": result.clear_in_top,
+            "kept": len(result.grasps.candidates),
+            "infer_s": round(result.infer_s, 3),
+            "check_s": round(result.check_s, 3),
+            "call_s": round(time.monotonic() - started, 3),
+            "object_points": len(pointcloud.points_f32()),
+            "scene_points": len(check.scene.points_f32()),
+        }
+
     @skill(uses=[CAP_MOVEMENT])
     def pick_object(
         self, object_id: str, planning_group: PlanningGroupID | None = None

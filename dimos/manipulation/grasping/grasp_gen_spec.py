@@ -40,10 +40,19 @@ class SceneGrasps:
     Args:
         grasps: The grasps that stay clear of the scene, best first.
         removed: How many proposed grasps were dropped for overlapping the scene.
+        sampled: How many grasps the model proposed before the check.
+        clear_in_top: How many of the best-scored grasps, as many as the provider
+            keeps, stay clear: what checking only the kept grasps would leave.
+        infer_s: Time the model took to propose, seconds.
+        check_s: Time the scene check took, seconds.
     """
 
     grasps: GraspCandidateArray
     removed: int
+    sampled: int = 0
+    clear_in_top: int = 0
+    infer_s: float = 0.0
+    check_s: float = 0.0
 
 
 class SceneGraspGenSpec(Spec, Protocol):
@@ -54,4 +63,5 @@ class SceneGraspGenSpec(Spec, Protocol):
         object_pointcloud: PointCloud2,
         scene_pointcloud: PointCloud2,
         collision_threshold: float,
+        num_samples: int | None = None,
     ) -> SceneGrasps: ...

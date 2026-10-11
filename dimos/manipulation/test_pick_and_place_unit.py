@@ -1809,3 +1809,59 @@ def test_scene_filtered_grasps_add_up_over_retries(scene_filter: PickAndPlaceMod
         {"exclude_object_id": "cup-1"},
         {"exclude_object_id": "cup-7"},
     ]
+
+
+def test_scene_grasp_counts_asks_the_provider_for_that_many_samples_and_moves_nothing(
+    scene_filter: PickAndPlaceModule,
+) -> None:
+    provider: Any = scene_filter._grasp_generator
+    provider.propose_grasps_in_scene.return_value = SceneGrasps(
+        GraspCandidateArray(Header(1.0, "world"), [_grasp_at(0.1, 0.05, 0.9)]),
+        removed=480,
+        sampled=500,
+        clear_in_top=3,
+        infer_s=1.25,
+        check_s=0.5,
+    )
+    manipulation: Any = scene_filter._manipulation
+
+    counts = scene_filter.scene_grasp_counts("cup-1", 500)
+
+    target, nearby, threshold = provider.propose_grasps_in_scene.call_args.args
+    assert provider.propose_grasps_in_scene.call_args.kwargs == {"num_samples": 500}
+    assert len(target.points_f32()) == len(_block_cloud().points_f32())
+    assert threshold == pytest.approx(0.01)
+    assert {k: counts[k] for k in ("num_samples", "sampled", "clear", "clear_in_top", "kept")} == {
+        "num_samples": 500,
+        "sampled": 500,
+        "clear": 20,
+        "clear_in_top": 3,
+        "kept": 1,
+    }
+    assert counts["infer_s"] == pytest.approx(1.25)
+    assert counts["check_s"] == pytest.approx(0.5)
+    assert counts["scene_points"] == len(nearby.points_f32())
+    assert "error" not in counts
+    manipulation.plan_to_poses.assert_not_called()
+    manipulation.show_grasp_proposals.assert_not_called()
+    assert scene_filter.get_grasp_candidates().candidates == []
+
+
+def test_scene_grasp_counts_says_why_when_it_cannot_run(scene_filter: PickAndPlaceModule) -> None:
+    scene: Any = scene_filter._scene
+    provider: Any = scene_filter._grasp_generator
+
+    assert "latest scan" in _scene_grasp_error(scene_filter, "cup-9")
+    scene.get_full_scene_pointcloud.return_value = None
+    assert _scene_grasp_error(scene_filter, "cup-1") == (
+        "the scene registration gave no scene point cloud"
+    )
+    scene.get_full_scene_pointcloud.return_value = _table()
+    provider.propose_grasps_in_scene.side_effect = RuntimeError("CUDA out of memory")
+    assert _scene_grasp_error(scene_filter, "cup-1") == "RuntimeError: CUDA out of memory"
+
+
+def _scene_grasp_error(module: PickAndPlaceModule, object_id: str) -> str:
+    counts = module.scene_grasp_counts(object_id, 200)
+    assert counts["num_samples"] == 200
+    return str(counts["error"])

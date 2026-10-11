@@ -89,6 +89,12 @@ class GraspGenXConfig(IsolatedPythonModuleConfig):
 
     gripper: SweepVolumeGripperConfig
     grasp_frame_to_tcp: RigidTransform = IDENTITY_TRANSFORM
+    # How many grasps the model samples per call. More samples leave more grasps
+    # after the scene check, at more GPU time: sampling and checking 500 takes
+    # about 0.3 s on a laptop RTX 5070 Ti.
+    num_samples: PositiveCount = 500
+    # How many grasps a call returns at most, best score first. The scene check
+    # runs on every sample before this cut.
     max_candidates: PositiveCount = 100
     # The gripper's solid parts with the jaws open, for propose_grasps_in_scene.
     # Empty makes that RPC raise.
@@ -131,12 +137,14 @@ class GraspGenXModule(IsolatedPythonModule, GraspGenSpec, SceneGraspGenSpec):
         object_pointcloud: PointCloud2,
         scene_pointcloud: PointCloud2,
         collision_threshold: float,
+        num_samples: int | None = None,
     ) -> SceneGrasps:
-        """Propose grasps like propose_grasps, then drop those that would hit the scene.
+        """Propose grasps like propose_grasps, minus those that would hit the scene.
 
-        A grasp is dropped when any part of the gripper body (``gripper_body``),
-        open and at the grasp pose, comes closer than ``collision_threshold`` to
-        a scene point.
+        Every sampled grasp is checked, then the best ``max_candidates`` of those
+        left are returned. A grasp is dropped when any part of the gripper body
+        (``gripper_body``), open and at the grasp pose, comes closer than
+        ``collision_threshold`` to a scene point.
 
         Args:
             object_pointcloud: The object's points, metres.
@@ -146,6 +154,8 @@ class GraspGenXModule(IsolatedPythonModule, GraspGenSpec, SceneGraspGenSpec):
             collision_threshold: A gripper part closer than this (metres) to a
                 scene point is a collision. Below ``GRIPPER_POINT_SPACING`` a scene
                 point can sit between gripper points unseen.
+            num_samples: How many grasps to sample for this call; None uses the
+                configured ``num_samples``.
         """
         raise NotImplementedError
 

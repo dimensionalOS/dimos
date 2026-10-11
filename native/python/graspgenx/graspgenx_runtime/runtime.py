@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -70,7 +71,7 @@ class GraspGenXRuntimeModule(GraspGenXModule):
 
     @rpc
     def propose_grasps(self, object_pointcloud: PointCloud2) -> GraspCandidateArray:
-        poses, scores = self._infer(object_pointcloud)
+        poses, scores = self._infer(object_pointcloud, self.config.num_samples)
         return self._ranked(object_pointcloud, poses, scores)
 
     @rpc
@@ -79,7 +80,11 @@ class GraspGenXRuntimeModule(GraspGenXModule):
         object_pointcloud: PointCloud2,
         scene_pointcloud: PointCloud2,
         collision_threshold: float,
+        num_samples: int | None = None,
     ) -> SceneGrasps:
+        samples = self.config.num_samples if num_samples is None else num_samples
+        if isinstance(samples, bool) or not isinstance(samples, int | np.integer) or samples <= 0:
+            raise ValueError("num_samples must be a positive whole number")
         if not self.config.gripper_body:
             raise ValueError("gripper_body is empty, so grasps cannot be checked against a scene")
         if not np.isfinite(collision_threshold) or collision_threshold <= 0.0:
@@ -93,7 +98,9 @@ class GraspGenXRuntimeModule(GraspGenXModule):
         if not np.all(np.isfinite(scene)):
             raise ValueError("scene pointcloud XYZ values must be finite floats in metres")
 
-        poses, scores = self._infer(object_pointcloud)
+        started = time.perf_counter()
+        poses, scores = self._infer(object_pointcloud, int(samples))
+        inferred = time.perf_counter()
         if len(poses) and len(scene):
             assert self._runtime is not None
             try:
@@ -102,13 +109,25 @@ class GraspGenXRuntimeModule(GraspGenXModule):
                 raise GraspGenXError("GraspGenX scene collision check failed") from exc
         else:
             clear = np.ones(len(poses), dtype=bool)
+        checked = time.perf_counter()
+        top = np.argsort(-scores, kind="stable")[: self.config.max_candidates]
         return SceneGrasps(
             self._ranked(object_pointcloud, poses[clear], scores[clear]),
-            int(len(poses) - np.count_nonzero(clear)),
+            removed=int(len(poses) - np.count_nonzero(clear)),
+            sampled=len(poses),
+            clear_in_top=int(np.count_nonzero(clear[top])),
+            infer_s=inferred - started,
+            check_s=checked - inferred,
         )
 
-    def _infer(self, object_pointcloud: PointCloud2) -> tuple[np.ndarray, np.ndarray]:
+    def _infer(
+        self, object_pointcloud: PointCloud2, num_samples: int
+    ) -> tuple[np.ndarray, np.ndarray]:
         """Check an object cloud, run the model on it and check what comes back.
+
+        Args:
+            object_pointcloud: The object's points, metres.
+            num_samples: How many grasps the model samples.
 
         Returns the model's grasp poses (N, 4, 4), in the cloud's frame and for
         GraspGenX's grasp frame rather than the TCP, and their scores (N,).
@@ -128,7 +147,7 @@ class GraspGenXRuntimeModule(GraspGenXModule):
             raise ValueError("object pointcloud XYZ values must be finite floats in metres")
 
         try:
-            poses, scores = self._runtime.infer(points)
+            poses, scores = self._runtime.infer(points, num_samples)
         except Exception as exc:
             raise GraspGenXError("GraspGenX inference failed") from exc
         scores = scores.reshape(-1)
