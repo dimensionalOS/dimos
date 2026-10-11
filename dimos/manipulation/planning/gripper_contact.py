@@ -18,7 +18,8 @@ A grasp passes when, at the open pose and at each closing step until a contact
 patch presses on the object, only contact patches come near the object and no
 part of the gripper overlaps anything else. At the open pose a contact patch may
 come near the object but not press into it: the fingers would have to push the
-object aside to get there.
+object aside to get there. It can also be asked to hold enough of the object
+between the contact patches, or the fingers would close on nothing.
 """
 
 from __future__ import annotations
@@ -31,7 +32,7 @@ import xml.etree.ElementTree as ET
 import numpy as np
 from numpy.typing import NDArray
 import open3d as o3d  # type: ignore[import-untyped]
-from scipy.spatial import cKDTree
+from scipy.spatial import ConvexHull, cKDTree
 from scipy.spatial.transform import Rotation
 import trimesh
 
@@ -46,6 +47,15 @@ _TARGET_CELL = 0.0025
 # Rays cast to decide whether a point is inside a link's shape; an odd count, so
 # a ray grazing an edge is outvoted.
 _INSIDE_RAYS = 3
+# Object points are counted one per cube of this edge (metres) in the gap
+# between the contact patches: the camera's object cloud has about this spacing,
+# so a denser cloud gives the same count.
+_GAP_CELL = 0.005
+# Two contact patches close toward each other when their sideways motions point
+# opposite ways to within this angle (radians).
+_FACING_ANGLE = np.radians(25.0)
+# A contact patch that moves less than this (metres) sideways does not close.
+_MIN_CLOSING_TRAVEL = 1e-4
 
 
 @dataclass(frozen=True)
@@ -137,6 +147,27 @@ class GripperContactModel:
         # A sphere, in the tip frame, holding every shape at every pose of the close.
         self._center = (low + high) / 2.0
         self._radius = float(np.linalg.norm(high - low) / 2.0)
+        # Each contact patch's box corners in the tip frame, at each pose of the close.
+        pads = np.array(
+            [
+                [
+                    [
+                        (poses[patch.link] @ np.append(corner, 1.0))[:3]
+                        for corner in _box_corners(
+                            np.subtract(patch.center, np.divide(patch.size, 2.0)),
+                            np.add(patch.center, np.divide(patch.size, 2.0)),
+                        )
+                    ]
+                    for patch in spec.contact_patches
+                ]
+                for poses in self._tip_from_link
+            ]
+        )
+        self._gap = _closing_region(pads)
+        gap_low, gap_high = pads.reshape((-1, 3)).min(axis=0), pads.reshape((-1, 3)).max(axis=0)
+        # A sphere, in the tip frame, holding the whole gap.
+        self._gap_center = (gap_low + gap_high) / 2.0
+        self._gap_radius = float(np.linalg.norm(gap_high - gap_low) / 2.0)
 
     @property
     def links(self) -> list[str]:
@@ -171,6 +202,20 @@ class GripperContactModel:
         ]
         return float(max(corners))
 
+    def in_gap(self, points: NDArray[np.float64]) -> NDArray[np.bool_]:
+        """Which points lie in the gap the contact patches close across.
+
+        Args:
+            points: Points in the tool tip's frame, shape (N, 3), metres.
+
+        Returns one bool per point.
+        """
+        points = np.asarray(points, dtype=np.float64).reshape((-1, 3))
+        inside = np.zeros(len(points), dtype=bool)
+        for planes in self._gap:
+            inside |= np.all(points @ planes[:, :3].T + planes[:, 3] <= 1e-9, axis=1)
+        return inside
+
     def check(
         self,
         grasps: NDArray[np.float64],
@@ -178,6 +223,7 @@ class GripperContactModel:
         obstacles: Mapping[str, NDArray[np.float64]],
         contact_margin: float,
         obstacle_margin: float,
+        min_gap_points: int = 0,
     ) -> list[GraspContact]:
         """Say, for each grasp, what its gripper would touch that it should not.
 
@@ -190,12 +236,19 @@ class GripperContactModel:
                 point touches it; allowed only inside a contact patch.
             obstacle_margin: A gripper part closer than this (metres) to an
                 obstacle point overlaps it.
+            min_gap_points: A grasp with fewer target points than this in the
+                gap the contact patches close across (see ``in_gap``) closes on
+                nothing and gets ``empty_gap``. Points are counted one per 5 mm
+                cube. 0 skips this.
 
         Returns one GraspContact per grasp, in order.
         """
         grasps = np.asarray(grasps, dtype=np.float64).reshape((-1, 4, 4))
         steps = len(self._tip_from_link)
         target = _thin(_finite(target), _TARGET_CELL)
+        empty = np.zeros(len(grasps), dtype=bool)
+        if min_gap_points > 0:
+            empty = self._gap_counts(grasps, _thin(target, _GAP_CELL)) < min_gap_points
         off_patch, pressed = self._touches(grasps, target, contact_margin, patches=True)
         hits = {
             name: self._touches(grasps, _finite(points), obstacle_margin, patches=False)[0]
@@ -214,8 +267,19 @@ class GripperContactModel:
             touches = [TARGET] if (off_patch[index] & checked[index]).any() else []
             touches += [name for name, hit in hits.items() if (hit[index] & checked[index]).any()]
             at_open = off_patch[index, 0] or any(hit[index, 0] for hit in hits.values())
-            results.append(GraspContact(tuple(touches), bool(touches) and not at_open))
+            results.append(
+                GraspContact(tuple(touches), bool(touches) and not at_open, bool(empty[index]))
+            )
         return results
+
+    def _gap_counts(
+        self, grasps: NDArray[np.float64], points: NDArray[np.float64]
+    ) -> NDArray[np.int64]:
+        """How many of ``points`` lie in each grasp's gap between the contact patches."""
+        if not len(grasps) or not len(points):
+            return np.zeros(len(grasps), dtype=np.int64)
+        owner, local = self._near_points(grasps, points, self._gap_center, self._gap_radius)
+        return np.bincount(owner[self.in_gap(local)], minlength=len(grasps))
 
     def _touches(
         self,
@@ -236,7 +300,7 @@ class GripperContactModel:
         inside = np.zeros((len(grasps), steps), dtype=bool)
         if not len(grasps) or not len(points):
             return outside, inside
-        owner, local = self._near_points(grasps, points, self._radius + margin)
+        owner, local = self._near_points(grasps, points, self._center, self._radius + margin)
         if not len(owner):
             return outside, inside
         for step, tip_from_link in enumerate(self._tip_from_link):
@@ -261,16 +325,20 @@ class GripperContactModel:
                 inside[np.unique(owners[allowed & (distance[near] <= 0.0)]), step] = True
         return outside, inside
 
+    @staticmethod
     def _near_points(
-        self, grasps: NDArray[np.float64], points: NDArray[np.float64], radius: float
+        grasps: NDArray[np.float64],
+        points: NDArray[np.float64],
+        center: NDArray[np.float64],
+        radius: float,
     ) -> tuple[NDArray[np.int64], NDArray[np.float64]]:
-        """The points within reach of each grasp, in that grasp's tool tip frame.
+        """The points within ``radius`` (metres) of ``center`` (tip frame) of each grasp.
 
         Returns which grasp each kept point belongs to, and the point in that
         grasp's tip frame (metres); a point near two grasps appears twice.
         """
         rotations, translations = grasps[:, :3, :3], grasps[:, :3, 3]
-        centers = np.einsum("nij,j->ni", rotations, self._center) + translations
+        centers = np.einsum("nij,j->ni", rotations, center) + translations
         found = cKDTree(points).query_ball_point(centers, radius)
         counts = np.fromiter((len(indices) for indices in found), dtype=np.int64, count=len(found))
         if not counts.sum():
@@ -280,6 +348,48 @@ class GripperContactModel:
         # R^T (p - t) for each point and the grasp it belongs to.
         local = np.einsum("kji,kj->ki", rotations[owner], points[indices] - translations[owner])
         return owner, local
+
+
+def _closing_region(pads: NDArray[np.float64]) -> list[NDArray[np.float64]]:
+    """The gap the contact patches close across, as convex pieces in the tool tip's frame.
+
+    Patches that close toward each other (see ``_pads_face_each_other``) give
+    one piece per closing step: around every patch at both ends of the step, so
+    together they hold the space the patches sweep across. Any other patches
+    (a three-finger hand, a gripper that does not close) give one piece around
+    every patch at the open pose.
+
+    Args:
+        pads: Corners of each contact patch's box at each pose of the close,
+            shape (poses, patches, 8, 3), metres; open first.
+
+    Returns each piece's face planes, shape (faces, 4): a point p is inside a
+    piece when ``planes[:, :3] @ p + planes[:, 3] <= 0`` for every face.
+    """
+    if _pads_face_each_other(pads.mean(axis=2)):
+        pieces = [pads[step : step + 2] for step in range(len(pads) - 1)]
+    else:
+        pieces = [pads[:1]]
+    return [np.asarray(ConvexHull(piece.reshape((-1, 3))).equations) for piece in pieces]
+
+
+def _pads_face_each_other(centers: NDArray[np.float64]) -> bool:
+    """Whether every contact patch closes toward another one.
+
+    Two patches close toward each other when their motions from open to closed,
+    seen along the approach (the tool tip's z axis), point opposite ways.
+
+    Args:
+        centers: Each patch's centre at each pose of the close, shape
+            (poses, patches, 3), tool tip frame, metres; open first.
+    """
+    sideways = (centers[-1] - centers[0])[:, :2]
+    lengths = np.linalg.norm(sideways, axis=1)
+    if len(sideways) < 2 or np.any(lengths < _MIN_CLOSING_TRAVEL):
+        return False
+    directions = sideways / lengths[:, None]
+    opposite = directions @ directions.T < -np.cos(_FACING_ANGLE)
+    return bool(opposite.any(axis=1).all())
 
 
 def approach_offsets(

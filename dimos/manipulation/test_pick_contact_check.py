@@ -74,6 +74,29 @@ def test_pick_skips_grasps_the_contact_check_rejects(contact_check: PickAndPlace
     assert target.frame_id == "world"
     assert set(obstacles) == {"table", "objects"}
     assert (contact_margin, obstacle_margin, group) == (0.005, 0.003, "arm/tool")
+    assert manipulation.check_grasp_contacts.call_args.kwargs == {"min_gap_points": 10}
+
+
+def test_pick_counts_grasps_that_close_on_nothing(contact_check: PickAndPlaceModule) -> None:
+    manipulation: Any = contact_check._manipulation
+    manipulation.check_grasp_contacts.return_value = [GraspContact(empty_gap=True), GraspContact()]
+
+    result = contact_check.pick_object("cup-1")
+
+    assert result.metadata["score"] == 0.5
+    facts = result.metadata["contact_rejected"]
+    assert (facts["rejected"], facts["empty_gap"], facts["target"]) == (1, 1, 0)
+
+
+def test_pick_with_the_gap_rule_off_asks_for_no_gap(contact_check: PickAndPlaceModule) -> None:
+    contact_check.config.grasp_require_object_in_gap = False
+    manipulation: Any = contact_check._manipulation
+    manipulation.check_grasp_contacts.return_value = [GraspContact(), GraspContact()]
+
+    result = contact_check.pick_object("cup-1")
+
+    assert manipulation.check_grasp_contacts.call_args.kwargs == {"min_gap_points": 0}
+    assert "empty_gap" not in result.metadata["contact_rejected"]
 
 
 def test_pick_says_when_the_contact_check_rejects_every_grasp(

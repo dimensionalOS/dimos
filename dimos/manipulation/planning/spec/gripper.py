@@ -108,14 +108,17 @@ class GraspContact:
             overlaps. Empty when the grasp is clear.
         while_closing: True when every such touch comes only as the fingers
             close, not at the open pose.
+        empty_gap: True when too few of the object's points lie in the gap the
+            finger pads close across, so the gripper would close on nothing.
     """
 
     touches: tuple[str, ...] = ()
     while_closing: bool = False
+    empty_gap: bool = False
 
     @property
     def clear(self) -> bool:
-        return not self.touches
+        return not self.touches and not self.empty_gap
 
 
 class ApproachOffsets(NamedTuple):

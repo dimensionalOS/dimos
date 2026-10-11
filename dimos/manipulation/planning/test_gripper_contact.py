@@ -20,6 +20,7 @@ from above: the tool tip's z axis points down.
 
 from __future__ import annotations
 
+import dataclasses
 import math
 from pathlib import Path
 
@@ -36,7 +37,9 @@ from dimos.utils.transform_utils import pose_to_matrix
 
 CONTACT_MARGIN = 0.005
 OBSTACLE_MARGIN = 0.003
+MIN_GAP_POINTS = 10
 CLEAR = GraspContact()
+EMPTY_GAP = GraspContact(empty_gap=True)
 
 
 def _top_down(x: float, y: float, z: float, yaw: float = 0.0) -> NDArray[np.float64]:
@@ -98,9 +101,13 @@ def _check(
     model: GripperContactModel,
     grasp: NDArray,
     target: NDArray,
+    *,
+    min_gap_points: int = 0,
     **obstacles: NDArray,
 ) -> GraspContact:
-    return model.check(grasp[None], target, obstacles, CONTACT_MARGIN, OBSTACLE_MARGIN)[0]
+    return model.check(
+        grasp[None], target, obstacles, CONTACT_MARGIN, OBSTACLE_MARGIN, min_gap_points
+    )[0]
 
 
 # The xArm Gripper, from the xArm description the planner loads.
@@ -214,6 +221,90 @@ def test_xarm_approach_offsets_match_the_finger_mesh(xarm: GripperContactModel) 
     assert np.allclose(offsets, XARM_APPROACH_OFFSETS, atol=0.0001)
 
 
+# The gap the xArm pads close across.
+
+
+@pytest.mark.self_hosted
+def test_xarm_gap_check_keeps_a_grasp_centred_on_the_box(xarm: GripperContactModel) -> None:
+    grasp = _top_down(0.0, 0.0, 0.03)
+
+    assert _check(xarm, grasp, BOX, table=BOX_TABLE, min_gap_points=MIN_GAP_POINTS) == CLEAR
+
+
+@pytest.mark.self_hosted
+def test_xarm_gap_check_rejects_pads_closing_beside_the_box(xarm: GripperContactModel) -> None:
+    # 5 cm along the pad faces: the pads (4.4 cm wide) close just past the box's side.
+    beside = _top_down(0.05, 0.0, 0.03)
+
+    assert _check(xarm, beside, BOX, table=BOX_TABLE, min_gap_points=MIN_GAP_POINTS) == EMPTY_GAP
+
+
+@pytest.mark.self_hosted
+def test_xarm_gap_check_rejects_pads_closing_above_a_short_box(xarm: GripperContactModel) -> None:
+    short_box = _box((0.0, 0.0, 0.015), (0.04, 0.04, 0.03))
+    # The pads reach at most 8.5 mm past the tool tip while closing: 6.5 mm above the box.
+    above = _top_down(0.0, 0.0, 0.045)
+
+    assert (
+        _check(xarm, above, short_box, table=BOX_TABLE, min_gap_points=MIN_GAP_POINTS) == EMPTY_GAP
+    )
+
+
+@pytest.mark.self_hosted
+@pytest.mark.parametrize("yaw", [0.0, np.pi / 2.0], ids=["closing across view", "along view"])
+def test_xarm_gap_check_keeps_a_grasp_on_the_front_of_a_can(
+    xarm: GripperContactModel, yaw: float
+) -> None:
+    # A camera at +x sees only the near half of a 6 cm can's side.
+    can = _cylinder(0.03, 0.033)
+    side = can[np.isclose(np.hypot(can[:, 0], can[:, 1]), 0.03)]
+    front = side[side[:, 0] > 0.0]
+    table = _table(hole=(-0.03, 0.03, -0.03, 0.03))
+    grasp = _top_down(0.0, 0.0, 0.02, yaw=yaw)
+
+    assert _check(xarm, grasp, front, table=table, min_gap_points=MIN_GAP_POINTS) == CLEAR
+
+
+@pytest.mark.self_hosted
+def test_xarm_gap_check_only_adds_its_own_reason(xarm: GripperContactModel) -> None:
+    heights = np.linspace(0.0, 0.12, 25)
+    grasps = np.stack(
+        [_top_down(x, 0.0, z) for x in (0.0, 0.03, 0.05) for z in heights], dtype=np.float64
+    )
+
+    def checked(min_gap_points: int) -> list[GraspContact]:
+        return xarm.check(
+            grasps, BOX, {"table": BOX_TABLE}, CONTACT_MARGIN, OBSTACLE_MARGIN, min_gap_points
+        )
+
+    off = checked(0)
+    on = checked(MIN_GAP_POINTS)
+
+    assert off == xarm.check(grasps, BOX, {"table": BOX_TABLE}, CONTACT_MARGIN, OBSTACLE_MARGIN)
+    assert not any(result.empty_gap for result in off)
+    assert any(result.empty_gap for result in on)
+    assert [dataclasses.replace(result, empty_gap=False) for result in on] == off
+
+
+@pytest.mark.self_hosted
+def test_xarm_gap_holds_the_space_the_pads_sweep_while_closing(
+    xarm: GripperContactModel,
+) -> None:
+    # Points in the tool tip's frame. Open, the pads end 4 mm short of the tool
+    # tip; closing, they swing 1.2 cm forward and meet on its axis.
+    points = np.array(
+        [
+            [0.0, 0.0, -0.03],  # between the open pads
+            [0.0, 0.0, 0.005],  # reached only as the pads swing forward
+            [0.0, 0.0, 0.015],  # past the closed pads
+            [0.0, 0.06, -0.03],  # outside the open pads
+            [0.03, 0.0, -0.03],  # beside the pads, along their faces
+        ]
+    )
+
+    assert xarm.in_gap(points).tolist() == [True, True, False, False, False]
+
+
 def _cloud(points: NDArray) -> PointCloud2:
     return PointCloud2.from_numpy(points.astype(np.float32), frame_id="world", timestamp=1.0)
 
@@ -239,15 +330,19 @@ def test_xarm_heuristic_grasps_aiming_the_pads_pass_the_contact_check(
 
     table = _table(hole=(-radius, radius, -radius, radius))
 
-    def checked(config: HeuristicGraspConfig) -> list[GraspContact]:
+    def checked(config: HeuristicGraspConfig, min_gap_points: int = 0) -> list[GraspContact]:
         grasps = heuristic_grasps(_cloud(target), config).candidates
         poses = np.stack([pose_to_matrix(grasp.pose) for grasp in grasps])
-        return xarm.check(poses, target, {"table": table}, CONTACT_MARGIN, OBSTACLE_MARGIN)
+        return xarm.check(
+            poses, target, {"table": table}, CONTACT_MARGIN, OBSTACLE_MARGIN, min_gap_points
+        )
 
-    aimed = checked(HeuristicGraspConfig(**XARM_APPROACH_OFFSETS._asdict()))
+    aiming_pads = HeuristicGraspConfig(**XARM_APPROACH_OFFSETS._asdict())
+    aimed = checked(aiming_pads)
     at_tool_tip = checked(HeuristicGraspConfig(heuristic_aim_pads=False))
 
     assert aimed == [CLEAR] * len(aimed)
+    assert checked(aiming_pads, MIN_GAP_POINTS) == aimed
     assert (at_tool_tip[0] != CLEAR) is aimed_only
 
 
@@ -402,6 +497,18 @@ def test_three_finger_hand_rejects_a_neighbour_under_a_finger(hand: GripperConta
     assert _check(
         hand, _top_down(0.0, 0.0, 0.04), CAN, table=CAN_TABLE, objects=neighbour
     ) == GraspContact(("objects",))
+
+
+def test_three_finger_hand_gap_is_around_the_open_pads(hand: GripperContactModel) -> None:
+    # The fingers close toward a point, not toward each other: the gap is the
+    # space the three open pads surround, 6 cm deep from about the tool tip back.
+    def check(grasp: NDArray) -> GraspContact:
+        return _check(hand, grasp, CAN, table=CAN_TABLE, min_gap_points=MIN_GAP_POINTS)
+
+    assert check(_top_down(0.0, 0.0, 0.04)) == CLEAR
+    assert check(_top_down(0.1, 0.0, 0.04)) == EMPTY_GAP
+    assert check(_top_down(0.0, 0.0, 0.1)) == EMPTY_GAP
+    assert hand.in_gap(np.array([[0.0, 0.0, -0.03], [0.0, 0.0, -0.07]])).tolist() == [True, False]
 
 
 def test_a_spec_naming_a_link_the_urdf_lacks_is_refused(tmp_path: Path) -> None:
