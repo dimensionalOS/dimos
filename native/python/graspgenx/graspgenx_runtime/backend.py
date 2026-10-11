@@ -27,6 +27,7 @@ from dimos.manipulation.grasping.grasp_gen_x.module import (
     GRASPGENX_MODEL_REVISION,
     GRASPGENX_MODEL_VERSION,
     GraspGenXConfig,
+    gripper_body_points,
 )
 
 _snapshot_root = Path(
@@ -60,6 +61,8 @@ from graspgenx.grasp_server import (
 from graspgenx.utils.checkpoint_io import load_model_cfg
 from graspgenx.x_grippers import make_sweep_volume_gripper_info
 
+from .scene_filter import collision_free
+
 _GRIPPER_TYPES = {
     "parallel_2f": 0,
     "revolute_2f": 1,
@@ -88,6 +91,7 @@ class GraspGenXRuntime:
             fingertip_depth=config.gripper.fingertip_depth,
         )
         self._sampler = GraspGenXSampler(model_config, gripper_info=gripper_info)
+        self._gripper_points = gripper_body_points(config.gripper_body)
 
     def infer(self, points: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """Run inference and copy the known torch tensors to CPU NumPy arrays."""
@@ -96,3 +100,9 @@ class GraspGenXRuntime:
             poses.detach().cpu().numpy(),
             scores.detach().cpu().numpy(),
         )
+
+    def collision_free(
+        self, scene: np.ndarray, poses: np.ndarray, collision_threshold: float
+    ) -> np.ndarray:
+        """Which grasps keep the open gripper clear of the scene; see ``scene_filter``."""
+        return collision_free(scene, poses, self._gripper_points, collision_threshold)

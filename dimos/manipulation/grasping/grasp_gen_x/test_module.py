@@ -26,12 +26,22 @@ from typing import Any
 import numpy as np
 import pytest
 
-from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec, LegacyGraspGenSpec
-from dimos.manipulation.grasping.grasp_gen_x.module import GraspGenXConfig
+from dimos.manipulation.grasping.grasp_gen_spec import (
+    GraspGenSpec,
+    LegacyGraspGenSpec,
+    SceneGraspGenSpec,
+)
+from dimos.manipulation.grasping.grasp_gen_x.module import (
+    GraspGenXConfig,
+    GraspGenXModule,
+    GripperBox,
+    gripper_body_points,
+)
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.manipulation_msgs.GraspCandidate import GraspCandidate
 from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
 from dimos.msgs.std_msgs.Header import Header
+from dimos.spec.utils import spec_annotation_compliance
 
 
 def config(**overrides: Any) -> GraspGenXConfig:
@@ -156,3 +166,46 @@ def test_host_collection_excludes_the_nested_runtime_suite() -> None:
     assert result.returncode == 0, result.stdout + result.stderr
     assert "test_public_adapter_import_does_not_load_optional_runtime" in result.stdout
     assert "test_runtime.py" not in result.stdout
+
+
+def test_graspgenx_offers_both_grasp_specs() -> None:
+    assert spec_annotation_compliance(GraspGenXModule, GraspGenSpec)
+    assert spec_annotation_compliance(GraspGenXModule, SceneGraspGenSpec)
+
+
+def test_gripper_body_points_cover_each_box_surface() -> None:
+    box = GripperBox(extents=(0.04, 0.02, 0.1), offset=(0.01, -0.02, 0.05))
+    spacing = 0.007
+    points = gripper_body_points([box], spacing).astype(np.float64)
+
+    local = points - np.asarray(box.offset)
+    half = np.asarray(box.extents) / 2.0
+    # Every point lies on a face.
+    assert np.all(np.abs(local) <= half + 1e-6)
+    assert np.all(np.any(np.isclose(np.abs(local), half, atol=1e-6), axis=1))
+    # Every spot on the surface is within half a grid diagonal of a point.
+    rng = np.random.default_rng(0)
+    spots = rng.uniform(-half, half, size=(2000, 3))
+    axis = rng.integers(0, 3, size=len(spots))
+    spots[np.arange(len(spots)), axis] = half[axis] * rng.choice([-1.0, 1.0], size=len(spots))
+    nearest = np.linalg.norm(spots[:, None, :] - local[None, :, :], axis=2).min(axis=1)
+    assert nearest.max() <= spacing / np.sqrt(2.0) + 1e-9
+
+
+def test_no_gripper_body_gives_no_points() -> None:
+    assert gripper_body_points([]).shape == (0, 3)
+    with pytest.raises(ValueError, match="spacing"):
+        gripper_body_points([], spacing=0.0)
+
+
+@pytest.mark.parametrize(
+    "box",
+    [
+        {"extents": (0.0, 0.01, 0.01), "offset": (0.0, 0.0, 0.0)},
+        {"extents": (0.01, 0.01), "offset": (0.0, 0.0, 0.0)},
+        {"extents": (0.01, 0.01, 0.01), "offset": (0.0, 0.0, np.inf)},
+    ],
+)
+def test_gripper_body_boxes_are_validated(box: dict[str, Any]) -> None:
+    with pytest.raises(ValueError):
+        config(gripper_body=(box,))

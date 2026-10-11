@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from dimos.core.core import rpc
+from dimos.manipulation.grasping.grasp_gen_spec import SceneGrasps
 from dimos.manipulation.grasping.grasp_gen_x.module import (
     GraspGenXConfig,
     GraspGenXError,
@@ -69,6 +70,50 @@ class GraspGenXRuntimeModule(GraspGenXModule):
 
     @rpc
     def propose_grasps(self, object_pointcloud: PointCloud2) -> GraspCandidateArray:
+        poses, scores = self._infer(object_pointcloud)
+        return self._ranked(object_pointcloud, poses, scores)
+
+    @rpc
+    def propose_grasps_in_scene(
+        self,
+        object_pointcloud: PointCloud2,
+        scene_pointcloud: PointCloud2,
+        collision_threshold: float,
+    ) -> SceneGrasps:
+        if not self.config.gripper_body:
+            raise ValueError("gripper_body is empty, so grasps cannot be checked against a scene")
+        if not np.isfinite(collision_threshold) or collision_threshold <= 0.0:
+            raise ValueError("collision_threshold must be a positive distance in metres")
+        if scene_pointcloud.frame_id != object_pointcloud.frame_id:
+            raise ValueError(
+                f"scene pointcloud is in frame {scene_pointcloud.frame_id!r}, "
+                f"the object pointcloud in {object_pointcloud.frame_id!r}"
+            )
+        scene = scene_pointcloud.points_f32().reshape((-1, 3))
+        if not np.all(np.isfinite(scene)):
+            raise ValueError("scene pointcloud XYZ values must be finite floats in metres")
+
+        poses, scores = self._infer(object_pointcloud)
+        if len(poses) and len(scene):
+            assert self._runtime is not None
+            try:
+                clear = self._runtime.collision_free(scene, poses, collision_threshold)
+            except Exception as exc:
+                raise GraspGenXError("GraspGenX scene collision check failed") from exc
+        else:
+            clear = np.ones(len(poses), dtype=bool)
+        return SceneGrasps(
+            self._ranked(object_pointcloud, poses[clear], scores[clear]),
+            int(len(poses) - np.count_nonzero(clear)),
+        )
+
+    def _infer(self, object_pointcloud: PointCloud2) -> tuple[np.ndarray, np.ndarray]:
+        """Check an object cloud, run the model on it and check what comes back.
+
+        Returns the model's grasp poses (N, 4, 4), in the cloud's frame and for
+        GraspGenX's grasp frame rather than the TCP, and their scores (N,).
+        Raises ValueError for a bad cloud or a bad model output.
+        """
         if self._runtime is None:
             raise GraspGenXError("GraspGenX module has not been started")
         if object_pointcloud.ts is None:
@@ -89,10 +134,7 @@ class GraspGenXRuntimeModule(GraspGenXModule):
         scores = scores.reshape(-1)
 
         if poses.size == 0 and scores.size == 0:
-            return GraspCandidateArray(
-                Header(float(object_pointcloud.ts), object_pointcloud.frame_id),
-                [],
-            )
+            return np.empty((0, 4, 4)), np.empty(0)
         if poses.shape != (len(scores), 4, 4):
             raise ValueError("backend poses must have shape (N, 4, 4)")
         if not np.all(np.isfinite(poses)) or not np.all(np.isfinite(scores)):
@@ -104,17 +146,22 @@ class GraspGenXRuntimeModule(GraspGenXModule):
             raise ValueError("backend poses must have orthonormal rotations")
         if not np.allclose(np.linalg.det(rotations), 1.0, atol=1e-5):
             raise ValueError("backend poses must have proper rotations")
+        return poses, scores
 
+    def _ranked(
+        self, object_pointcloud: PointCloud2, poses: np.ndarray, scores: np.ndarray
+    ) -> GraspCandidateArray:
+        """The best ``max_candidates`` grasps as TCP poses, highest score first."""
+        header = Header(float(object_pointcloud.ts), object_pointcloud.frame_id)
+        if len(poses) == 0:
+            return GraspCandidateArray(header, [])
         tcp_poses = poses @ np.asarray(self.config.grasp_frame_to_tcp)
         order = np.argsort(-scores, kind="stable")[: self.config.max_candidates]
         candidates = [
             GraspCandidate(self._pose_from_matrix(tcp_poses[index]), float(scores[index]))
             for index in order
         ]
-        return GraspCandidateArray(
-            Header(float(object_pointcloud.ts), object_pointcloud.frame_id),
-            candidates,
-        )
+        return GraspCandidateArray(header, candidates)
 
     @staticmethod
     def _pose_from_matrix(matrix: np.ndarray) -> Pose:

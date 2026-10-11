@@ -17,10 +17,10 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
-from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec
+from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec, SceneGraspGenSpec
 from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspConfig, heuristic_grasps
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -57,6 +57,23 @@ class SourcedGrasp:
 
 
 @dataclass(frozen=True)
+class SceneCheck:
+    """How to drop the provider's grasps whose gripper would hit the scene.
+
+    Args:
+        provider: The grasp provider, able to check its grasps against a scene.
+        scene: Points around the object (table, other objects) without the
+            object's own points, in the object cloud's frame, metres.
+        collision_threshold: A gripper part closer than this (metres) to a scene
+            point counts as a collision.
+    """
+
+    provider: SceneGraspGenSpec
+    scene: PointCloud2
+    collision_threshold: float
+
+
+@dataclass(frozen=True)
 class GraspProposals:
     """The grasps for one object from each source.
 
@@ -66,6 +83,9 @@ class GraspProposals:
         provided: The provider's grasps, or None when it raised.
         heuristic: The heuristic grasps, or None when there are none to add.
         provider_error: What the provider raised, or None.
+        scene_filtered: Per source, grasps dropped because the gripper would hit
+            the scene; empty when no scene check ran.
+        scene_filter_skipped: Why the scene check was wanted but did not run, or None.
     """
 
     provider: str
@@ -73,6 +93,8 @@ class GraspProposals:
     provided: GraspCandidateArray | None
     heuristic: GraspCandidateArray | None
     provider_error: str | None = None
+    scene_filtered: dict[str, int] = field(default_factory=dict)
+    scene_filter_skipped: str | None = None
 
     def all(self) -> GraspCandidateArray:
         """Every candidate, provider's first, as one array for the viewer."""
@@ -135,11 +157,18 @@ class GraspProposals:
         return provided + heuristic[:limit]
 
     def facts(self) -> dict[str, Any]:
-        """The sources in effect, how many grasps each gave, and any provider error."""
+        """The sources in effect, how many grasps each gave and lost to the scene check,
+        and any provider error."""
         counts = {self.provider: 0 if self.provided is None else len(self.provided.candidates)}
         if self.heuristic is not None:
             counts[HEURISTIC] = len(self.heuristic.candidates)
-        facts: dict[str, Any] = {"grasp_sources": self.sources, "candidates_by_source": counts}
+        facts: dict[str, Any] = {
+            "grasp_sources": self.sources,
+            "candidates_by_source": counts,
+            "scene_filtered_by_source": dict(self.scene_filtered),
+        }
+        if self.scene_filter_skipped is not None:
+            facts["scene_filter_skipped"] = self.scene_filter_skipped
         if self.provider_error is not None:
             facts["grasp_provider_error"] = self.provider_error
         return facts
@@ -179,6 +208,8 @@ def propose_with_fallback(
     object_pointcloud: PointCloud2,
     heuristic_fallback: bool,
     heuristic_config: HeuristicGraspConfig,
+    scene: SceneCheck | None = None,
+    scene_skipped: str | None = None,
 ) -> GraspProposals:
     """Ask the grasp provider for grasps and, with the fallback on, compute heuristic grasps too.
 
@@ -189,13 +220,24 @@ def propose_with_fallback(
             error as no provider grasps. Off, a provider error is raised. A
             provider that is itself the heuristic gets no second copy.
         heuristic_config: How the heuristic grasps fit the gripper.
+        scene: Drop the provider's grasps that would hit this scene, or None to
+            take them all. Heuristic grasps are never checked.
+        scene_skipped: Why a wanted scene check could not run, for the report.
     """
     name = provider_name(provider)
     sources = grasp_sources(provider, heuristic_fallback)
     error = None
+    scene_filtered: dict[str, int] = {}
     provided: GraspCandidateArray | None
     try:
-        provided = provider.propose_grasps(object_pointcloud)
+        if scene is None:
+            provided = provider.propose_grasps(object_pointcloud)
+        else:
+            checked = scene.provider.propose_grasps_in_scene(
+                object_pointcloud, scene.scene, scene.collision_threshold
+            )
+            provided = checked.grasps
+            scene_filtered[name] = checked.removed
     except Exception as exc:
         if not heuristic_fallback:
             raise
@@ -208,7 +250,7 @@ def propose_with_fallback(
             heuristic = heuristic_grasps(object_pointcloud, heuristic_config)
         except ValueError as exc:
             logger.warning("No heuristic grasps for this point cloud", error=str(exc))
-    return GraspProposals(name, sources, provided, heuristic, error)
+    return GraspProposals(name, sources, provided, heuristic, error, scene_filtered, scene_skipped)
 
 
 def same_grasp(a: Pose, b: Pose, distance: float, angle: float) -> bool:

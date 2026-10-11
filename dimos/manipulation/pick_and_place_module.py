@@ -24,6 +24,7 @@ from typing import Any, Literal
 
 import numpy as np
 from pydantic import Field
+from scipy.spatial import cKDTree
 
 from dimos.agents.annotation import skill
 from dimos.agents.capabilities import CAP_MOVEMENT
@@ -39,12 +40,13 @@ from dimos.manipulation.grasp_verification import (
 )
 from dimos.manipulation.grasping.grasp_fallback import (
     GraspProposals,
+    SceneCheck,
     SourcedGrasp,
     grasp_sources,
     propose_with_fallback,
     same_grasp,
 )
-from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec
+from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec, SceneGraspGenSpec
 from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspConfig
 from dimos.manipulation.manipulation_spec import ExecutionResult, ManipulationSpec, PlanResult
 from dimos.manipulation.planning.spec.models import PlanningGroupID
@@ -65,6 +67,15 @@ VOXEL_MAP_EXCLUSION_ID = "pick-and-place/target"
 _FRESH_FRAME_POLL = 0.1
 # Joints this close (radians) to the scan pose count as being there already.
 _AT_SCAN_POSE_TOLERANCE = 0.01
+# How far (metres) beyond the target's points the scene check looks: far enough
+# for the fingers, knuckles and most of the palm of the xArm gripper, which
+# reaches 0.18 m back from its tool tip.
+_SCENE_MARGIN = 0.15
+# Scene points this close (metres) to the target's own points are the target.
+_TARGET_POINT_RADIUS = 0.01
+# Scene points this close (metres) to a gripper's tool tip are that gripper: the
+# wrist camera sees its own fingers.
+_GRIPPER_SELF_RADIUS = 0.15
 
 
 class PickAndPlaceModuleConfig(ModuleConfig):
@@ -109,6 +120,16 @@ class PickAndPlaceModuleConfig(ModuleConfig):
     heuristic_fallback: bool = True
     # How those heuristic grasps fit the gripper.
     heuristic_grasp: HeuristicGraspConfig = Field(default_factory=HeuristicGraspConfig)
+    # Drop the grasp provider's grasps whose open gripper, at the grasp pose,
+    # would overlap the table or another object in the camera's view. Works with
+    # a provider that can check against a scene (GraspGenX). False tries every
+    # grasp the provider gives. Heuristic grasps are never checked.
+    grasp_scene_filter: bool = True
+    # A gripper part closer than this (metres) to a scene point is a collision.
+    # The scene cloud has one point per 1 cm cell, so less than about 1 cm lets a
+    # finger slip between two table points unseen; much more turns down grasps
+    # on short objects, whose fingertips must come close to the table.
+    scene_collision_threshold: float = Field(default=0.01, gt=0.0)
 
 
 @dataclass(frozen=True)
@@ -215,6 +236,8 @@ class PickAndPlaceModule(Module):
     config: PickAndPlaceModuleConfig
     _scene: ObjectSceneRegistrationSpec
     _grasp_generator: GraspGenSpec
+    # The grasp provider again when it can check its grasps against the scene.
+    _scene_grasp_generator: SceneGraspGenSpec | None = None
     _manipulation: ManipulationSpec
 
     def __init__(self, **kwargs: Any) -> None:
@@ -343,11 +366,14 @@ class PickAndPlaceModule(Module):
                 return SkillResult(
                     f"Object {target.object_id} has no points inside its detected box."
                 )
+        scene, scene_skipped = self._scene_check(target, pointcloud)
         proposals = propose_with_fallback(
             self._grasp_generator,
             pointcloud,
             self.config.heuristic_fallback,
             self.config.heuristic_grasp,
+            scene,
+            scene_skipped,
         )
         candidates = proposals.all()
         self._grasp_candidates = candidates
@@ -359,6 +385,43 @@ class PickAndPlaceModule(Module):
                 metadata=proposals.facts(),
             )
         return proposals, _target_box(pointcloud)
+
+    def _scene_check(
+        self, target: ScannedObject, pointcloud: PointCloud2
+    ) -> tuple[SceneCheck | None, str | None]:
+        """How to check the provider's grasps against the scene around the target.
+
+        The scene is the latest scan's camera cloud with the target masked out,
+        cut to the target's surroundings (see ``_scene_near``).
+
+        Args:
+            target: The object to grasp.
+            pointcloud: The target's points, planning frame, metres.
+
+        Returns the check, or None and why it cannot run. Both are None when the
+        check is off or the provider cannot check grasps against a scene.
+        """
+        provider = self._scene_grasp_generator
+        if not self.config.grasp_scene_filter or provider is None:
+            return None, None
+        try:
+            scene = self._scene.get_full_scene_pointcloud(exclude_object_id=target.object_id)
+        except Exception as exc:
+            return None, f"the scene point cloud failed: {type(exc).__name__}: {exc}"
+        if scene is None:
+            return None, "the scene registration gave no scene point cloud"
+        if scene.frame_id != pointcloud.frame_id:
+            return None, (
+                f"the scene point cloud is in frame {scene.frame_id!r}, "
+                f"the object's in {pointcloud.frame_id!r}"
+            )
+        tips = [
+            state.end_effector_pose.position
+            for state in self._manipulation.get_state().groups.values()
+            if state.end_effector_pose is not None
+        ]
+        nearby = _scene_near(scene, pointcloud, tips)
+        return SceneCheck(provider, nearby, self.config.scene_collision_threshold), None
 
     def _pick_from(
         self,
@@ -379,13 +442,15 @@ class PickAndPlaceModule(Module):
             group: Gripper-capable planning group doing the pick.
 
         Returns the last try's report with ``tries`` (one record per grasp),
-        ``handoff`` (true when it stopped trying after misses) and
+        ``handoff`` (true when it stopped trying after misses),
         ``rejected_by_source`` (per source, grasps the planner found no path to
-        over the whole pick) in its metadata.
+        over the whole pick) and ``scene_filtered_by_source`` (per source, grasps
+        dropped by the scene check over the whole pick) in its metadata.
         """
         tries: list[dict[str, Any]] = []
         tried: list[_TriedGrasp] = []
         rejected = dict.fromkeys(proposals.sources, 0)
+        scene_filtered = dict(proposals.scene_filtered)
         ranked, skipped = self._untried(proposals, target, tried)
         while True:
             attempt = self._grasp_once(
@@ -396,7 +461,9 @@ class PickAndPlaceModule(Module):
             if attempt.candidate is None:
                 last = attempt.result
                 facts = {**proposals.facts(), **last.metadata}
-                return self._stop_trying(SkillResult(last.message, metadata=facts), tries, rejected)
+                return self._stop_trying(
+                    SkillResult(last.message, metadata=facts), tries, rejected, scene_filtered
+                )
             choice = attempt.candidate
             candidate = choice.candidate
             facts = proposals.facts()
@@ -409,22 +476,25 @@ class PickAndPlaceModule(Module):
                 "skipped": skipped,
                 "grasped": attempt.result.metadata.get("grasped"),
                 "candidates_by_source": facts["candidates_by_source"],
+                "scene_filtered_by_source": facts["scene_filtered_by_source"],
                 "rejected_by_source": attempt.rejected,
             }
-            if "grasp_provider_error" in facts:
-                record["grasp_provider_error"] = facts["grasp_provider_error"]
+            for fact in ("grasp_provider_error", "scene_filter_skipped"):
+                if fact in facts:
+                    record[fact] = facts[fact]
             tries.append(record)
             tried.append(
                 _TriedGrasp(candidate.pose.position - target.position, candidate.pose.orientation)
             )
             last = attempt.result
             if not attempt.missed:
-                return self._stop_trying(last, tries, rejected)
+                return self._stop_trying(last, tries, rejected, scene_filtered)
             if len(tries) >= self.config.max_grasp_retries:
                 return self._stop_trying(
                     last,
                     tries,
                     rejected,
+                    scene_filtered,
                     f"Object {target.object_id} is still not held after {len(tries)} "
                     f"{'try' if len(tries) == 1 else 'tries'}.",
                 )
@@ -436,21 +506,25 @@ class PickAndPlaceModule(Module):
                     SkillResult(f"{last.message} {stopped.message}", metadata=last.metadata),
                     tries,
                     rejected,
+                    scene_filtered,
                 )
             found = self._rescan(target)
             if isinstance(found, str):
-                return self._stop_trying(last, tries, rejected, found)
+                return self._stop_trying(last, tries, rejected, scene_filtered, found)
             proposal = self._propose(found, crop=True)
             if isinstance(proposal, SkillResult):
-                return self._stop_trying(last, tries, rejected, proposal.message)
+                _add_counts(scene_filtered, proposal.metadata.get("scene_filtered_by_source", {}))
+                return self._stop_trying(last, tries, rejected, scene_filtered, proposal.message)
             target = found
             proposals, box = proposal
+            _add_counts(scene_filtered, proposals.scene_filtered)
             ranked, skipped = self._untried(proposals, target, tried)
             if not ranked:
                 return self._stop_trying(
                     last,
                     tries,
                     rejected,
+                    scene_filtered,
                     f"Every new grasp candidate for object {target.object_id} repeats a "
                     "grasp already tried.",
                 )
@@ -652,6 +726,7 @@ class PickAndPlaceModule(Module):
         last: SkillResult,
         tries: list[dict[str, Any]],
         rejected: dict[str, int],
+        scene_filtered: dict[str, int],
         gave_up: str | None = None,
     ) -> SkillResult:
         """Report the end of a pick, with one record per grasp tried.
@@ -661,10 +736,16 @@ class PickAndPlaceModule(Module):
             tries: One record per grasp tried, in order; empty when no grasp was.
             rejected: Per source, how many grasps the planner found no path to
                 over the whole pick.
+            scene_filtered: Per source, how many grasps the scene check dropped
+                over the whole pick; empty when it never ran.
             gave_up: Why pick_object stopped trying after a verified miss, or None
                 when it stopped for another reason (success, a fault, no path).
         """
-        metadata = {**last.metadata, "rejected_by_source": rejected}
+        metadata = {
+            **last.metadata,
+            "rejected_by_source": rejected,
+            "scene_filtered_by_source": scene_filtered,
+        }
         if not tries:
             return SkillResult(last.message, metadata=metadata)
         message = last.message if gave_up is None else f"{last.message} {gave_up}"
@@ -1254,6 +1335,42 @@ def _crop(pointcloud: PointCloud2, box: ScannedObject, margin: float) -> PointCl
         frame_id=pointcloud.frame_id,
         ts=pointcloud.ts,
     )
+
+
+def _scene_near(scene: PointCloud2, target: PointCloud2, tips: Sequence[Vector3]) -> PointCloud2:
+    """The scene points a grasp on the target could hit.
+
+    Keeps the points within ``_SCENE_MARGIN`` of the target's bounds, and drops
+    those within ``_TARGET_POINT_RADIUS`` of a target point (the target itself)
+    and within ``_GRIPPER_SELF_RADIUS`` of a tool tip (the robot's own gripper).
+
+    Args:
+        scene: Camera points, metres, in the target's frame.
+        target: The target's points, metres; with none, no scene point is kept.
+        tips: Where each gripper's tool tip is, metres, same frame.
+    """
+    points = np.asarray(scene.points_f32(), dtype=np.float64).reshape((-1, 3))
+    own = np.asarray(target.points_f32(), dtype=np.float64).reshape((-1, 3))
+    own = own[np.all(np.isfinite(own), axis=1)]
+    keep = np.zeros(len(points), dtype=bool)
+    if len(own):
+        low = own.min(axis=0) - _SCENE_MARGIN
+        high = own.max(axis=0) + _SCENE_MARGIN
+        keep = np.all((points >= low) & (points <= high), axis=1)
+    for tip in tips:
+        keep &= np.linalg.norm(points - tip.to_numpy(), axis=1) > _GRIPPER_SELF_RADIUS
+    if keep.any():
+        distance, _ = cKDTree(own).query(points[keep])
+        keep[np.flatnonzero(keep)[distance <= _TARGET_POINT_RADIUS]] = False
+    return PointCloud2.from_numpy(
+        points[keep].astype(np.float32), frame_id=scene.frame_id, timestamp=scene.ts
+    )
+
+
+def _add_counts(total: dict[str, int], more: dict[str, int]) -> None:
+    """Add per-source counts into a running total, in place."""
+    for source, count in more.items():
+        total[source] = total.get(source, 0) + count
 
 
 def _horizontal_distance(a: Vector3, b: Vector3) -> float:

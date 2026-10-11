@@ -52,9 +52,12 @@ def module_args(value: GraspGenXConfig | None = None) -> dict[str, Any]:
     return (value or config()).model_dump(exclude={"rpc_transport", "tf_transport", "g"})
 
 
-def cloud(points: np.ndarray | None = None) -> PointCloud2:
+def cloud(points: np.ndarray | None = None, frame_id: str = "camera") -> PointCloud2:
     xyz = np.zeros((1, 3), dtype=np.float32) if points is None else points
-    return PointCloud2.from_numpy(xyz, frame_id="camera", timestamp=12.5)
+    return PointCloud2.from_numpy(xyz, frame_id=frame_id, timestamp=12.5)
+
+
+BODY = ({"extents": (0.02, 0.02, 0.02), "offset": (0.0, 0.0, 0.0)},)
 
 
 @pytest.fixture
@@ -210,3 +213,93 @@ def test_runtime_implements_the_host_contract() -> None:
     assert inspect.signature(GraspGenXModule.propose_grasps) == inspect.signature(
         GraspGenXRuntimeModule.propose_grasps
     )
+    assert inspect.signature(GraspGenXModule.propose_grasps_in_scene) == inspect.signature(
+        GraspGenXRuntimeModule.propose_grasps_in_scene
+    )
+
+
+def test_scene_check_drops_colliding_grasps_and_counts_them(runtime: Any) -> None:
+    poses = np.repeat(np.eye(4, dtype=np.float32)[None], 3, axis=0)
+    poses[:, 0, 3] = [1.0, 2.0, 3.0]
+    runtime.return_value.infer.return_value = (poses, np.asarray([0.2, 0.9, 0.5]))
+    runtime.return_value.collision_free.return_value = np.asarray([True, False, True])
+    cfg = config(
+        gripper_body=BODY,
+        grasp_frame_to_tcp=(
+            (1.0, 0.0, 0.0, 10.0),
+            (0.0, 1.0, 0.0, 0.0),
+            (0.0, 0.0, 1.0, 0.0),
+            (0.0, 0.0, 0.0, 1.0),
+        ),
+    )
+    module = GraspGenXRuntimeModule(_isolated_python_runtime=True, **module_args(cfg))
+    scene = np.asarray([[0.0, 0.0, -0.1], [0.1, 0.0, -0.1]], dtype=np.float32)
+    try:
+        module.start()
+        result = module.propose_grasps_in_scene(cloud(), cloud(scene), 0.01)
+
+        assert result.removed == 1
+        assert [c.score for c in result.grasps] == pytest.approx([0.5, 0.2])
+        assert [c.pose.position.x for c in result.grasps] == pytest.approx([13.0, 11.0])
+        assert result.grasps.header.frame_id == "camera"
+        # The check sees the model's own grasp poses, not the TCP poses.
+        scene_arg, poses_arg, threshold = runtime.return_value.collision_free.call_args.args
+        np.testing.assert_array_equal(scene_arg, scene)
+        np.testing.assert_array_equal(poses_arg, poses)
+        assert threshold == pytest.approx(0.01)
+    finally:
+        module.stop()
+
+
+def test_an_empty_scene_drops_nothing(runtime: Any) -> None:
+    module = GraspGenXRuntimeModule(
+        _isolated_python_runtime=True, **module_args(config(gripper_body=BODY))
+    )
+    try:
+        module.start()
+        result = module.propose_grasps_in_scene(
+            cloud(), cloud(np.empty((0, 3), dtype=np.float32)), 0.01
+        )
+
+        assert result.removed == 0
+        assert len(result.grasps) == 1
+        runtime.return_value.collision_free.assert_not_called()
+    finally:
+        module.stop()
+
+
+@pytest.mark.parametrize(
+    ("body", "scene", "threshold", "match"),
+    [
+        ((), cloud(), 0.01, "gripper_body"),
+        (BODY, cloud(frame_id="world"), 0.01, "frame"),
+        (BODY, cloud(np.array([[np.inf, 0.0, 0.0]], dtype=np.float32)), 0.01, "finite"),
+        (BODY, cloud(), 0.0, "collision_threshold"),
+    ],
+)
+def test_scene_check_rejects_bad_inputs(
+    runtime: Any, body: Any, scene: PointCloud2, threshold: float, match: str
+) -> None:
+    module = GraspGenXRuntimeModule(
+        _isolated_python_runtime=True, **module_args(config(gripper_body=body))
+    )
+    try:
+        module.start()
+        with pytest.raises(ValueError, match=match):
+            module.propose_grasps_in_scene(cloud(), scene, threshold)
+        runtime.return_value.infer.assert_not_called()
+    finally:
+        module.stop()
+
+
+def test_scene_check_failure_is_wrapped(runtime: Any) -> None:
+    runtime.return_value.collision_free.side_effect = RuntimeError("CUDA out of memory")
+    module = GraspGenXRuntimeModule(
+        _isolated_python_runtime=True, **module_args(config(gripper_body=BODY))
+    )
+    try:
+        module.start()
+        with pytest.raises(GraspGenXError, match="collision check"):
+            module.propose_grasps_in_scene(cloud(), cloud(), 0.01)
+    finally:
+        module.stop()

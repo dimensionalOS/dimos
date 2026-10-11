@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import dataclass
 from typing import Protocol
 
 from dimos.msgs.geometry_msgs.PoseArray import PoseArray
@@ -30,3 +31,27 @@ class LegacyGraspGenSpec(Spec, Protocol):
 
 class GraspGenSpec(Spec, Protocol):
     def propose_grasps(self, object_pointcloud: PointCloud2) -> GraspCandidateArray: ...
+
+
+@dataclass(frozen=True)
+class SceneGrasps:
+    """Grasps for an object, minus those whose gripper would overlap the scene around it.
+
+    Args:
+        grasps: The grasps that stay clear of the scene, best first.
+        removed: How many proposed grasps were dropped for overlapping the scene.
+    """
+
+    grasps: GraspCandidateArray
+    removed: int
+
+
+class SceneGraspGenSpec(Spec, Protocol):
+    """A grasp provider that can also drop grasps whose gripper would hit the scene."""
+
+    def propose_grasps_in_scene(
+        self,
+        object_pointcloud: PointCloud2,
+        scene_pointcloud: PointCloud2,
+        collision_threshold: float,
+    ) -> SceneGrasps: ...
