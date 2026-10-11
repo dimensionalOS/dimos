@@ -23,7 +23,7 @@ object aside to get there.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 import xml.etree.ElementTree as ET
@@ -35,7 +35,7 @@ from scipy.spatial import cKDTree
 from scipy.spatial.transform import Rotation
 import trimesh
 
-from dimos.manipulation.planning.spec.gripper import GraspContact, GripperSpec
+from dimos.manipulation.planning.spec.gripper import ApproachOffsets, GraspContact, GripperSpec
 from dimos.robot.assets.model import LoadedRobotModel
 
 # Name GraspContact.touches gives the object being grasped.
@@ -143,9 +143,33 @@ class GripperContactModel:
         """Gripper links that have collision shapes."""
         return sorted({shape.link for shape in self._shapes})
 
+    @property
+    def poses(self) -> int:
+        """How many poses of the close the model holds: open first, fully closed last."""
+        return len(self._tip_from_link)
+
     def tip_from_link(self, step: int, link: str) -> NDArray[np.float64]:
         """A link's pose in the tool tip's frame at one pose of the close (0 is open), 4x4."""
         return self._tip_from_link[step][link]
+
+    def reach(self, step: int, links: Collection[str] | None = None) -> float:
+        """How far (metres) gripper links reach past the tool tip along its z axis.
+
+        Args:
+            step: Pose of the close, 0 for open.
+            links: Links to measure; None for every link with a shape.
+
+        Negative when they all stay behind the tool tip. Measured to the corners
+        of each link shape's bounding box, so a link turned against the tool tip
+        counts a little long.
+        """
+        corners = [
+            (self._tip_from_link[step][shape.link] @ np.append(corner, 1.0))[2]
+            for shape in self._shapes
+            if links is None or shape.link in links
+            for corner in _box_corners(shape.low, shape.high)
+        ]
+        return float(max(corners))
 
     def check(
         self,
@@ -256,6 +280,36 @@ class GripperContactModel:
         # R^T (p - t) for each point and the grasp it belongs to.
         local = np.einsum("kji,kj->ki", rotations[owner], points[indices] - translations[owner])
         return owner, local
+
+
+def approach_offsets(
+    description: LoadedRobotModel, spec: GripperSpec, tip_link: str, closing_steps: int = 40
+) -> ApproachOffsets:
+    """Measure where a gripper's finger pads, fingertips and palm sit, from its URDF.
+
+    Args:
+        description: The robot's URDF, loaded.
+        spec: The gripper's contact patches (its finger pads) and finger joint positions.
+        tip_link: The tool tip link a grasp pose gives.
+        closing_steps: Poses between open and closed searched for the fingertips'
+            farthest reach. Too few can miss a reach that peaks mid-close.
+
+    Raises ValueError when a link or joint the spec names is not in the URDF.
+    """
+    model = GripperContactModel(
+        description, spec.model_copy(update={"closing_steps": closing_steps}), tip_link
+    )
+    closed = model.poses - 1
+    centers = [
+        (model.tip_from_link(closed, patch.link) @ np.append(patch.center, 1.0))[2]
+        for patch in spec.contact_patches
+    ]
+    fingers = {patch.link for patch in spec.contact_patches}
+    return ApproachOffsets(
+        pad_behind_tcp=-float(np.mean(centers)),
+        fingertip_reach=max(model.reach(step) for step in range(model.poses)),
+        palm_behind_tcp=-model.reach(0, [link for link in model.links if link not in fingers]),
+    )
 
 
 class _UrdfTree:

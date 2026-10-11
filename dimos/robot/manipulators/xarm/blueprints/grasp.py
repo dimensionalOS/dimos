@@ -32,7 +32,7 @@ from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.manipulation.grasping.grasp_gen_x.module import GraspGenXModule
-from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspModule
+from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspConfig, HeuristicGraspModule
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.manipulation_skills import ManipulationSkills
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
@@ -47,6 +47,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
 from dimos.robot.manipulators.common.blueprints import coordinator, trajectory_task
 from dimos.robot.manipulators.xarm.config import (
+    XARM_APPROACH_OFFSETS,
     make_xarm7_model_config,
     make_xarm7_sim_hardware,
     make_xarm7_sim_module_kwargs,
@@ -217,7 +218,10 @@ _XARM_GRASP_MODULES = (
         voxel_map_resolution=XARM_GRASP_VOXEL_SIZE,
     ),
     ManipulationSkills.blueprint(),
-    PickAndPlaceModule.blueprint(planning_frame="world"),
+    PickAndPlaceModule.blueprint(
+        planning_frame="world",
+        heuristic_grasp=HeuristicGraspConfig(**XARM_APPROACH_OFFSETS._asdict()),
+    ),
     *_sensing(),
     _scene_registration(),
     *_voxel_mapping(),
@@ -236,9 +240,9 @@ _XARM_GRASP_MODULES = (
     ),
 )
 
-xarm_grasp = autoconnect(*_XARM_GRASP_MODULES, HeuristicGraspModule.blueprint()).remappings(
-    _REMAPPINGS
-)
+xarm_grasp = autoconnect(
+    *_XARM_GRASP_MODULES, HeuristicGraspModule.blueprint(**XARM_APPROACH_OFFSETS._asdict())
+).remappings(_REMAPPINGS)
 
 xarm_grasp_graspgenx = autoconnect(
     *_XARM_GRASP_MODULES,

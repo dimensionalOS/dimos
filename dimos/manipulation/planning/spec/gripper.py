@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import NamedTuple
 
 from pydantic import Field, model_validator
 from typing_extensions import Self
@@ -115,3 +116,23 @@ class GraspContact:
     @property
     def clear(self) -> bool:
         return not self.touches
+
+
+class ApproachOffsets(NamedTuple):
+    """Where a gripper's finger pads, fingertips and palm sit along its approach.
+
+    The approach is the tool tip's z axis, pointing from the gripper toward the object.
+
+    Args:
+        pad_behind_tcp: How far (metres) the contact patches' centre sits behind
+            the tool tip with the jaws fully closed.
+        fingertip_reach: The farthest (metres) any gripper part reaches past the
+            tool tip while the jaws close; negative when it stays behind.
+        palm_behind_tcp: How far (metres) the nearest part other than the links
+            holding contact patches (the palm, a knuckle) sits behind the tool
+            tip with the jaws open.
+    """
+
+    pad_behind_tcp: float
+    fingertip_reach: float
+    palm_behind_tcp: float

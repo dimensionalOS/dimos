@@ -58,6 +58,23 @@ class HeuristicGraspConfig(BaseConfig):
     # each half along their length. Shorter objects would get grasps too close
     # to the centre one to differ from it.
     min_split_length: float = Field(default=0.10, gt=0.0)
+    # Put the closed finger pads, not the tool tip, at the object's mid-height,
+    # keeping the fingertips above the surface under the object and the palm
+    # above its top. False puts the tool tip at mid-height.
+    heuristic_aim_pads: bool = True
+    # How far (metres) the closed finger pads' centre sits behind the tool tip,
+    # along the approach. 0 aims the tool tip itself at mid-height.
+    pad_behind_tcp: float = 0.0
+    # How far (metres) the fingertips reach past the tool tip, along the
+    # approach, at most while the jaws close. Negative when they stay behind it.
+    fingertip_reach: float = 0.0
+    # How far (metres) the nearest gripper part other than the fingers (the palm
+    # or a knuckle) sits behind the tool tip with the jaws open. None sets no
+    # limit, so on a tall object the palm can come down onto its top.
+    palm_behind_tcp: float | None = None
+    # Least gap (metres) kept between the fingertips and the surface under the
+    # object, and between the palm and the object's top.
+    gripper_clearance: float = Field(default=0.005, ge=0.0)
 
 
 class HeuristicGraspModuleConfig(ModuleConfig, HeuristicGraspConfig):
@@ -85,13 +102,15 @@ def heuristic_grasps(
     The first grasp is at the middle of the object with the jaws closing across
     its narrow side. When there is room, the others try each half of a long
     object, and the middle grasp turned a quarter turn, so a retry after a
-    miss has something different to try.
+    miss has something different to try. Each grasp puts the closed finger pads
+    at mid-height of the points it holds, unless the fingertips would come too
+    close to what the object stands on, or the palm to the object's top.
 
     Args:
         object_pointcloud: The object's points, metres, in a frame whose XY plane
             is horizontal and whose Z axis points up. In a tilted frame the
             grasps come out tilted too, with no error.
-        config: Jaw opening and spacing rules, metres.
+        config: Jaw opening, spacing rules and finger pad offsets, metres.
 
     Returns the grasps in the cloud's frame and with its timestamp. Raises
     ValueError for a cloud with fewer than three points, non-finite values,
@@ -107,9 +126,11 @@ def heuristic_grasps(
     if not np.all(np.isfinite(points)):
         raise ValueError("object pointcloud XYZ values must be finite floats in metres")
 
+    # Height (metres) of the surface the object stands on: its low end.
+    support = float(np.quantile(points[:, 2], 0.05))
     xy = points[:, :2]
     yaw = _narrow_axis_yaw(xy)
-    candidates = [GraspCandidate(_top_down(points, yaw), score=_CENTER_SCORE)]
+    candidates = [GraspCandidate(_top_down(points, yaw, config, support), score=_CENTER_SCORE)]
 
     # The jaws close along jaw_axis; length_axis lies along the object.
     length_axis = np.array([math.cos(yaw), math.sin(yaw)])
@@ -130,13 +151,12 @@ def heuristic_grasps(
             if len(half) >= 3 and _span(half[:, :2] @ jaw_axis) <= fits
         ]
         candidates += [
-            GraspCandidate(_top_down(half, yaw), score=score)
+            GraspCandidate(_top_down(half, yaw, config, support), score=score)
             for half, score in zip(halves, _HALF_SCORES, strict=False)
         ]
     if length <= fits and abs(length - _span(across)) >= _ROUND_TOLERANCE:
-        candidates.append(
-            GraspCandidate(_top_down(points, yaw + math.pi / 2.0), score=_TURNED_SCORE)
-        )
+        turned = _top_down(points, yaw + math.pi / 2.0, config, support)
+        candidates.append(GraspCandidate(turned, score=_TURNED_SCORE))
     return GraspCandidateArray(
         Header(float(object_pointcloud.ts), object_pointcloud.frame_id), candidates
     )
@@ -156,21 +176,37 @@ def _narrow_axis_yaw(xy: NDArray[np.float32]) -> float:
     return (yaw + math.pi / 2.0) % math.pi - math.pi / 2.0
 
 
-def _top_down(points: NDArray[np.float32], yaw: float) -> Pose:
+def _top_down(
+    points: NDArray[np.float32], yaw: float, config: HeuristicGraspConfig, support: float
+) -> Pose:
     """A straight-down grasp at the middle of some points.
 
     Args:
         points: XYZ points in metres, Z up.
         yaw: Gripper yaw about the vertical, radians. The jaws close at right
             angles to the horizontal direction (cos yaw, sin yaw).
+        config: Where the grasp puts the finger pads; see HeuristicGraspConfig.
+        support: Height (metres) of the surface the object stands on.
 
-    The grasp is at the points' median XY, halfway up between their low and
-    high ends (5th and 95th height percentiles).
+    The grasp is at the points' median XY. Halfway up between their low and
+    high ends (5th and 95th height percentiles) go the closed finger pads,
+    raised where needed to keep the fingertips above the support and the palm
+    above the points' high end. With ``heuristic_aim_pads`` off the tool tip
+    goes there instead.
     """
     center_xy = np.median(points[:, :2], axis=0)
     low_z, high_z = np.quantile(points[:, 2], [0.05, 0.95])
+    z = float((low_z + high_z) / 2.0)
+    if config.heuristic_aim_pads:
+        # The approach points straight down: the pads sit pad_behind_tcp above the
+        # tool tip, the fingertips reach fingertip_reach below it, and the palm
+        # sits palm_behind_tcp above it.
+        floors = [support + config.gripper_clearance + config.fingertip_reach]
+        if config.palm_behind_tcp is not None:
+            floors.append(float(high_z) + config.gripper_clearance - config.palm_behind_tcp)
+        z = max(z - config.pad_behind_tcp, *floors)
     return Pose(
-        Vector3(float(center_xy[0]), float(center_xy[1]), float((low_z + high_z) / 2.0)),
+        Vector3(float(center_xy[0]), float(center_xy[1]), z),
         Quaternion.from_euler(Vector3(-math.pi, 0.0, yaw)),
     )
 

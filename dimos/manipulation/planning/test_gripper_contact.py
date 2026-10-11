@@ -20,15 +20,19 @@ from above: the tool tip's z axis points down.
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 import numpy as np
 from numpy.typing import NDArray
 import pytest
 
-from dimos.manipulation.planning.gripper_contact import GripperContactModel
+from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspConfig, heuristic_grasps
+from dimos.manipulation.planning.gripper_contact import GripperContactModel, approach_offsets
 from dimos.manipulation.planning.spec.gripper import ContactPatch, GraspContact, GripperSpec
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.assets.model import RobotModel
+from dimos.utils.transform_utils import pose_to_matrix
 
 CONTACT_MARGIN = 0.005
 OBSTACLE_MARGIN = 0.003
@@ -185,6 +189,68 @@ def test_xarm_checks_a_hundred_grasps_at_once(xarm: GripperContactModel) -> None
     assert results[-1] == CLEAR
 
 
+@pytest.mark.self_hosted
+def test_xarm_approach_offsets_match_the_finger_mesh(xarm: GripperContactModel) -> None:
+    from dimos.robot.manipulators.xarm.config import (
+        XARM_APPROACH_OFFSETS,
+        make_xarm7_sim_robot_config,
+    )
+
+    config = make_xarm7_sim_robot_config()
+    assert config.gripper is not None
+    offsets = approach_offsets(config.model.load(), config.gripper, "link_tcp")
+    # Measured on the left finger mesh, in its frame (see xarm_gripper_spec):
+    # the pad face's centre and the fingertip's end.
+    face = np.array([0.0, -0.026, 0.041, 1.0])
+    fingertip = np.array([0.0, 0.0, 0.061, 1.0])
+    closed = xarm.poses - 1
+    pad_behind = -(xarm.tip_from_link(closed, "left_finger") @ face)[2]
+    reach = max((xarm.tip_from_link(s, "left_finger") @ fingertip)[2] for s in range(xarm.poses))
+
+    assert pad_behind == pytest.approx(0.0175, abs=0.0005)
+    assert reach == pytest.approx(0.003, abs=0.0005)
+    assert offsets.pad_behind_tcp == pytest.approx(pad_behind, abs=0.001)
+    assert offsets.fingertip_reach == pytest.approx(reach, abs=0.001)
+    assert np.allclose(offsets, XARM_APPROACH_OFFSETS, atol=0.0001)
+
+
+def _cloud(points: NDArray) -> PointCloud2:
+    return PointCloud2.from_numpy(points.astype(np.float32), frame_id="world", timestamp=1.0)
+
+
+@pytest.mark.self_hosted
+@pytest.mark.parametrize(
+    "target, radius, aimed_only",
+    [
+        # A tall box, 5 x 5 x 16 cm: at mid-height the tool tip leaves the palm
+        # on the box's top.
+        (_box((0.0, 0.0, 0.08), (0.05, 0.05, 0.16)), 0.025, True),
+        # A short can, 6 cm across and 3.3 cm tall.
+        (_cylinder(0.03, 0.033), 0.03, False),
+        # A mug-like cylinder, 8 cm across and 10 cm tall.
+        (_cylinder(0.04, 0.10), 0.04, False),
+    ],
+    ids=["tall box", "short can", "mug"],
+)
+def test_xarm_heuristic_grasps_aiming_the_pads_pass_the_contact_check(
+    xarm: GripperContactModel, target: NDArray, radius: float, aimed_only: bool
+) -> None:
+    from dimos.robot.manipulators.xarm.config import XARM_APPROACH_OFFSETS
+
+    table = _table(hole=(-radius, radius, -radius, radius))
+
+    def checked(config: HeuristicGraspConfig) -> list[GraspContact]:
+        grasps = heuristic_grasps(_cloud(target), config).candidates
+        poses = np.stack([pose_to_matrix(grasp.pose) for grasp in grasps])
+        return xarm.check(poses, target, {"table": table}, CONTACT_MARGIN, OBSTACLE_MARGIN)
+
+    aimed = checked(HeuristicGraspConfig(**XARM_APPROACH_OFFSETS._asdict()))
+    at_tool_tip = checked(HeuristicGraspConfig(heuristic_aim_pads=False))
+
+    assert aimed == [CLEAR] * len(aimed)
+    assert (at_tool_tip[0] != CLEAR) is aimed_only
+
+
 # A made-up three-finger hand: a palm and three fingers 120 degrees apart, each
 # hinged at the palm's rim. Open, the fingers splay 0.4 rad outward; closed, they
 # lean 0.4 rad inward, so their tips swing forward and back as they close.
@@ -301,6 +367,32 @@ def test_three_finger_hand_sweep_catches_the_fingertips_swinging_into_the_table(
 
     assert _check(hand, grasp, CAN, table=CAN_TABLE) == GraspContact(("table",), while_closing=True)
     assert _check(open_only, grasp, CAN, table=CAN_TABLE) == CLEAR
+
+
+def test_approach_offsets_of_the_three_finger_hand(hand_urdf: Path) -> None:
+    spec = GripperSpec(
+        contact_patches=tuple(
+            ContactPatch(
+                link=f"finger_{i}", center=(-0.007, 0.0, 0.053), size=(0.012, 0.027, 0.066)
+            )
+            for i in range(3)
+        ),
+        open_joints={"finger_0_joint": -0.4},
+        closed_joints={"finger_0_joint": 0.4},
+    )
+
+    offsets = approach_offsets(RobotModel.from_file(hand_urdf).load(), spec, "tool")
+
+    # The tool tip is 9 cm above the palm's centre and each finger hinges 1 cm
+    # above it. Closed, a finger leans 0.4 rad inward, taking its patch centre
+    # (x -0.007, z 0.053 in the finger's frame) to this height above the hinge.
+    patch_up = 0.053 * math.cos(0.4) - 0.007 * math.sin(0.4)
+    assert offsets.pad_behind_tcp == pytest.approx(0.09 - 0.01 - patch_up)
+    # Upright the fingertip is level with the tool tip; leaning a little, its
+    # 1 cm wide end reaches a hair farther.
+    assert offsets.fingertip_reach == pytest.approx(math.hypot(0.08, 0.005) - 0.08, abs=1e-5)
+    # The palm's face, 1 cm above its centre.
+    assert offsets.palm_behind_tcp == pytest.approx(0.08)
 
 
 def test_three_finger_hand_rejects_a_neighbour_under_a_finger(hand: GripperContactModel) -> None:

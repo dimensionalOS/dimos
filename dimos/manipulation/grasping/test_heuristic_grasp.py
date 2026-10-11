@@ -272,3 +272,104 @@ def test_the_plain_function_gives_the_module_grasps() -> None:
     assert [(c.pose, c.score) for c in proposals.candidates] == [
         (c.pose, c.score) for c in expected.candidates
     ]
+
+
+# Finger pad offsets like the xArm Gripper's, metres; no palm limit.
+PADS = HeuristicGraspConfig(pad_behind_tcp=0.0167, fingertip_reach=0.0031)
+
+
+def test_the_closed_pads_land_at_mid_height_of_a_tall_box() -> None:
+    """A 12 cm box: the tool tip goes 1.67 cm below mid-height, so the pads are at 6 cm."""
+    proposals = heuristic_grasps(_cloud(_box((-0.02, 0.02), (-0.02, 0.02), (0.0, 0.12))), PADS)
+
+    pose = proposals.candidates[0].pose
+    assert pose.position.z + PADS.pad_behind_tcp == pytest.approx(0.06, abs=1e-6)
+
+
+def test_on_a_short_box_the_fingertips_stay_clear_of_the_table_and_the_pads_still_hold_it() -> None:
+    """A box 3 cm tall, like a tuna can, on a table at z = 0. Pads at its mid-height
+    would put the tool tip 2 mm under the table."""
+    proposals = heuristic_grasps(_cloud(_box((-0.03, 0.03), (-0.02, 0.02), (0.0, 0.03))), PADS)
+
+    for candidate in proposals.candidates:
+        tcp = candidate.pose.position.z
+        assert tcp - PADS.fingertip_reach == pytest.approx(PADS.gripper_clearance)
+        assert 0.0 < tcp + PADS.pad_behind_tcp < 0.03
+
+
+def test_on_a_box_taller_than_the_fingers_the_palm_stays_above_its_top() -> None:
+    config = PADS.model_copy(update={"palm_behind_tcp": 0.05})
+    points = _box((-0.02, 0.02), (-0.02, 0.02), (0.0, 0.20))
+
+    proposals = heuristic_grasps(_cloud(points), config)
+
+    top = np.quantile(points[:, 2].astype(np.float32), 0.95)
+    palm = proposals.candidates[0].pose.position.z + config.palm_behind_tcp
+    assert palm == pytest.approx(top + config.gripper_clearance, abs=1e-6)
+
+
+# A 10 cm bar, 3 cm tall on its left half and 8 cm on its right: with these
+# rules it gets the centre grasp, one on each half and the turned one.
+_STEPPED_BAR = np.vstack(
+    [
+        _box((-0.0525, -0.0025), (-0.02, 0.02), (0.0, 0.03)),
+        _box((0.0025, 0.0525), (-0.02, 0.02), (0.0, 0.08)),
+    ]
+)
+_EVERY_KIND = {"max_grasp_width": 0.25, "min_split_length": 0.08}
+
+
+def test_every_kind_of_grasp_aims_its_pads() -> None:
+    off = heuristic_grasps(
+        _cloud(_STEPPED_BAR), HeuristicGraspConfig(heuristic_aim_pads=False, **_EVERY_KIND)
+    )
+    on = heuristic_grasps(_cloud(_STEPPED_BAR), PADS.model_copy(update=_EVERY_KIND))
+
+    assert [c.score for c in on.candidates] == pytest.approx([1.0, 0.8, 0.7, 0.5])
+    lowest = PADS.gripper_clearance + PADS.fingertip_reach
+    for before, after in zip(off.candidates, on.candidates, strict=True):
+        assert after.pose.orientation == before.pose.orientation
+        assert after.pose.position.z == pytest.approx(
+            max(before.pose.position.z - PADS.pad_behind_tcp, lowest)
+        )
+
+
+def test_with_aim_pads_off_the_grasps_are_the_tool_tip_at_mid_height_as_before() -> None:
+    config = HeuristicGraspConfig(
+        heuristic_aim_pads=False,
+        pad_behind_tcp=0.0167,
+        fingertip_reach=0.0031,
+        palm_behind_tcp=0.05,
+        **_EVERY_KIND,
+    )
+
+    proposals = heuristic_grasps(_cloud(_STEPPED_BAR), config)
+
+    # Each grasp's position, orientation (x, y, z, w) and score, as computed
+    # before the pads were aimed.
+    y, down = 3.469446951953614e-18, (-1.0, -3.8738279251049335e-09, 2.3720354844636946e-25)
+    w = 6.123233995736766e-17
+    turned = (-0.7071067784473375, -0.7071067839257575, 4.3297802979502905e-17)
+    assert [_values(c) for c in proposals.candidates] == [
+        (0.017500000074505806, y, 0.03750000149011612, *down, w, 1.0),
+        (0.027499999850988388, y, 0.03999999910593033, *down, w, 0.8),
+        (-0.027499999850988388, y, 0.014999999664723873, *down, w, 0.7),
+        (0.017500000074505806, y, 0.03750000149011612, *turned, 4.3297802644046424e-17, 0.5),
+    ]
+
+
+def _values(candidate: Any) -> tuple[float, ...]:
+    p, q = candidate.pose.position, candidate.pose.orientation
+    return (p.x, p.y, p.z, q.x, q.y, q.z, q.w, candidate.score)
+
+
+def test_the_module_takes_the_pad_offsets_and_the_switch() -> None:
+    cloud = _cloud(_box((-0.02, 0.02), (-0.02, 0.02), (0.0, 0.12)))
+    aimed = HeuristicGraspModule(pad_behind_tcp=0.0167)
+    plain = HeuristicGraspModule(pad_behind_tcp=0.0167, heuristic_aim_pads=False)
+    try:
+        assert aimed.propose_grasps(cloud).candidates[0].pose.position.z == pytest.approx(0.0433)
+        assert plain.propose_grasps(cloud).candidates[0].pose.position.z == pytest.approx(0.06)
+    finally:
+        aimed.stop()
+        plain.stop()
