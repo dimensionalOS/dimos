@@ -139,8 +139,10 @@ def _held_id(module: PickAndPlaceModule) -> str | None:
 
 @pytest.fixture
 def module() -> Iterator[PickAndPlaceModule]:
-    # The heuristic fallback has its own tests below.
-    instance = PickAndPlaceModule(planning_frame="world", heuristic_fallback=False)
+    # The heuristic fallback and the grasp contact check have their own tests.
+    instance = PickAndPlaceModule(
+        planning_frame="world", heuristic_fallback=False, grasp_contact_check=False
+    )
     instance._scene = MagicMock()
     instance._grasp_generator = MagicMock()
     instance._manipulation = MagicMock()

@@ -38,6 +38,7 @@ from dimos.manipulation.grasp_verification import (
     grasp_failure,
     open_failure,
 )
+from dimos.manipulation.grasping.contact_filter import add_facts, check_in_scene, contact_note
 from dimos.manipulation.grasping.grasp_fallback import (
     GraspProposals,
     SceneCheck,
@@ -130,6 +131,16 @@ class PickAndPlaceModuleConfig(ModuleConfig):
     # finger slip between two table points unseen; much more turns down grasps
     # on short objects, whose fingertips must come close to the table.
     scene_collision_threshold: float = Field(default=0.01, gt=0.0)
+    # Drop grasps, from every source, whose gripper would touch the target
+    # anywhere but its contact patches (the finger pads), at the open pose or as
+    # the fingers close, or would overlap the table or another object. Needs a
+    # gripper spec in the robot model; without one the pick skips the check and
+    # says so. False tries every grasp the sources give.
+    grasp_contact_check: bool = True
+    # A gripper part closer than this (metres) to the target touches it.
+    grasp_contact_margin: float = Field(default=0.005, gt=0.0)
+    # A gripper part closer than this (metres) to a table or object point overlaps it.
+    grasp_obstacle_margin: float = Field(default=0.003, gt=0.0)
 
 
 @dataclass(frozen=True)
@@ -250,6 +261,8 @@ class PickAndPlaceModule(Module):
         self._arm_in_target = False
         # Joint positions of each planning group when the latest scan_objects ran.
         self._scan_joints: dict[PlanningGroupID, JointState] = {}
+        # What the grasp contact check did over the current pick (see drop_touching).
+        self._contact: dict[str, Any] = {}
 
     @skill
     def scan_objects(self, prompts: list[str]) -> SkillResult:
@@ -344,7 +357,9 @@ class PickAndPlaceModule(Module):
         scans again and tries another grasp, a limited number of times. ``tries``
         in the result lists each grasp and its ``source``; ``handoff: true`` means
         it stopped trying after misses and the object is not held.
-        ``grasp_sources`` names where the grasps came from.
+        ``grasp_sources`` names where the grasps came from; ``contact_rejected``
+        counts the grasps dropped for touching the object off the finger pads
+        (``target``) or hitting the ``table`` or other ``objects``.
 
         Args:
             object_id: Exact object ID returned by the latest scan_objects call.
@@ -354,6 +369,10 @@ class PickAndPlaceModule(Module):
         result.metadata.setdefault(
             "grasp_sources", grasp_sources(self._grasp_generator, self.config.heuristic_fallback)
         )
+        if "skipped" in self._contact:
+            result.metadata.setdefault("contact_check_skipped", self._contact["skipped"])
+        elif self._contact:
+            result.metadata.setdefault("contact_rejected", dict(self._contact))
         return result
 
     def _pick(self, object_id: str, planning_group: PlanningGroupID | None) -> SkillResult:
@@ -364,6 +383,7 @@ class PickAndPlaceModule(Module):
                 f"did not start a pick of object {object_id}. Use place_at to put it down first."
             )
         self._clear_proposals()
+        self._contact = {}
         target = self._objects.get(object_id)
         if target is None:
             scanned = ", ".join(self._objects) or "none"
@@ -371,11 +391,11 @@ class PickAndPlaceModule(Module):
                 f"No object with id {object_id} in the latest scan. Scanned ids: {scanned}. "
                 "Use scan_objects to refresh the list."
             )
-        proposal = self._propose(target)
+        group = self._gripper_group(planning_group)
+        proposal = self._propose(target, group)
         if isinstance(proposal, SkillResult):
             return proposal
         proposals, box = proposal
-        group = self._gripper_group(planning_group)
         # The target is mapped geometry: with its cells as obstacles the planner
         # refuses the approach into it, and the held object blocks every move after.
         self._exclude_target(box)
@@ -387,15 +407,18 @@ class PickAndPlaceModule(Module):
                 self._manipulation.clear_voxel_map_exclusion(VOXEL_MAP_EXCLUSION_ID)
 
     def _propose(
-        self, target: ScannedObject, crop: bool = False
+        self, target: ScannedObject, group: PlanningGroupID, crop: bool = False
     ) -> tuple[GraspProposals, TargetBox | None] | SkillResult:
         """Generate ranked grasps for an object and show them in the viewer.
 
         The provider's grasps come first, then, with ``heuristic_fallback``,
-        heuristic grasps from the same points.
+        heuristic grasps from the same points. With ``grasp_contact_check``,
+        grasps whose gripper would touch the object off its pads or hit the
+        scene are dropped.
 
         Args:
             target: The object to grasp, from the latest scan.
+            group: Gripper-capable planning group doing the pick.
             crop: Keep only the points inside the target's detected box (plus
                 ``target_clearance``). The scene registration merges a new view
                 into the old cloud, so after a push the cloud holds both places.
@@ -424,13 +447,15 @@ class PickAndPlaceModule(Module):
             scene,
             scene_skipped,
         )
+        proposals = self._drop_touching(target, pointcloud, proposals, group)
         candidates = proposals.all()
         self._grasp_candidates = candidates
         self._manipulation.show_grasp_proposals(candidates)
         proposals.check_frame(self.config.planning_frame)
         if not candidates.candidates:
             return SkillResult(
-                f"Generated 0 grasp candidates for object {target.object_id}.{proposals.note()}",
+                f"Generated 0 grasp candidates for object {target.object_id}.{proposals.note()}"
+                f"{contact_note(self._contact)}",
                 metadata=proposals.facts(),
             )
         return proposals, _target_box(pointcloud)
@@ -471,6 +496,39 @@ class PickAndPlaceModule(Module):
         ]
         nearby = _scene_near(scene, pointcloud, tips)
         return SceneCheck(provider, nearby, self.config.scene_collision_threshold), None
+
+    def _drop_touching(
+        self,
+        target: ScannedObject,
+        pointcloud: PointCloud2,
+        proposals: GraspProposals,
+        group: PlanningGroupID,
+    ) -> GraspProposals:
+        """Keep the grasps whose gripper touches the target only at its finger pads.
+
+        See ``contact_filter.check_in_scene``; what it did adds to ``_contact``.
+
+        Args:
+            target: The object to grasp.
+            pointcloud: The target's points, planning frame, metres.
+            proposals: Grasps from each source.
+            group: Planning group whose tool tip the grasps pose.
+        """
+        if not self.config.grasp_contact_check:
+            self._contact = {"skipped": "off"}
+            return proposals
+        kept, facts = check_in_scene(
+            self._manipulation,
+            self._scene,
+            target.object_id,
+            pointcloud,
+            proposals,
+            self.config.grasp_contact_margin,
+            self.config.grasp_obstacle_margin,
+            group,
+        )
+        add_facts(self._contact, facts)
+        return kept
 
     def _pick_from(
         self,
@@ -560,7 +618,7 @@ class PickAndPlaceModule(Module):
             found = self._rescan(target)
             if isinstance(found, str):
                 return self._stop_trying(last, tries, rejected, scene_filtered, found)
-            proposal = self._propose(found, crop=True)
+            proposal = self._propose(found, group, crop=True)
             if isinstance(proposal, SkillResult):
                 _add_counts(scene_filtered, proposal.metadata.get("scene_filtered_by_source", {}))
                 return self._stop_trying(last, tries, rejected, scene_filtered, proposal.message)

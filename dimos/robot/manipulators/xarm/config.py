@@ -28,6 +28,7 @@ from dimos.core.global_config import global_config
 from dimos.hardware.spec import JointLimits
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.manipulation.planning.spec.gripper import ContactPatch, GripperSpec
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.robot.assets.model import RobotModel
@@ -53,6 +54,39 @@ XARM_GRIPPER_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
     ("link6", "left_outer_knuckle"),
     ("link6", "right_outer_knuckle"),
 ]
+
+
+def xarm_gripper_spec(prefix: str = "") -> GripperSpec:
+    """Where the xArm Gripper may touch a grasped object, and how it closes.
+
+    Each finger's flat inner pad, measured from the xarm_description finger mesh
+    in the finger's own frame: the face lies at y = -0.026 m (left finger; the
+    right mirrors it at +0.026 m), spans x -0.014 to 0.014 m and z 0.023 to
+    0.059 m, and the fingertip ends at z = 0.061 m. The sim's pad boxes sit on
+    the same face. Each box grows the pad 6 mm along the face and past the
+    fingertip, 8 mm out toward the object and 4 mm into the finger, so a pad
+    within a 5 mm contact margin of the object stays on the patch while the
+    fingertip's end and back do not. drive_joint runs 0.0 (open) to 0.85 rad
+    (closed); the other knuckles and fingers mimic it in the URDF.
+
+    Args:
+        prefix: Prefix the robot model puts on every link and joint name.
+    """
+
+    def pad(link: str, side: float) -> ContactPatch:
+        return ContactPatch(
+            link=f"{prefix}{link}",
+            center=(0.0, side * 0.028, 0.04185),
+            size=(0.044, 0.012, 0.0503),
+        )
+
+    return GripperSpec(
+        contact_patches=(pad("left_finger", -1.0), pad("right_finger", 1.0)),
+        open_joints={f"{prefix}drive_joint": 0.0},
+        closed_joints={f"{prefix}drive_joint": 0.85},
+        base_link=f"{prefix}xarm_gripper_base_link",
+    )
+
 
 XARM_ROS2_REPO = "https://github.com/xArm-Developer/xarm_ros2"
 XARM_ROS2_REF = "5bb832f72ca665f1236a9d8ed1c3a82f308db489"
@@ -335,6 +369,7 @@ def make_xarm_model_config(
         collision_exclusion_pairs=(
             collision_exclusions if add_gripper and robot_type == "xarm" else []
         ),
+        gripper=xarm_gripper_spec(prefix) if add_gripper and robot_type == "xarm" else None,
         gripper_hardware_id=gripper_hardware_id,
         tf_extra_links=[f"{prefix}{link}" for link in (tf_extra_links or [])],
         home_joints=home_joints or [0.0] * dof,
