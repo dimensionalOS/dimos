@@ -410,6 +410,7 @@ class SimGo2World(Module):
         while not self._stop_event.is_set():
             if (pose := self._reset) is not None:
                 self._reset = None
+                self._hold = CommandHold()
                 sim.reset(*pose)
                 t0 = time.time()
                 last_contacts = None

@@ -149,6 +149,7 @@ def test_run_scores_every_episode_and_rescores_the_same(suite: Path, tmp_path: P
     assert not any((tmp_path / "recordings").iterdir())
     assert json.loads((run_dir / RUN_FILE).read_text())["finished"] is True
     assert (tmp_path / "runs").read_text().strip() == str(run_dir.resolve())
+    suite.unlink()
     assert set(rescore(run_dir).read_text().splitlines()) == set(results.splitlines())
     assert find_episode("narrow_door") == episode
 

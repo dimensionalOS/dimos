@@ -47,7 +47,7 @@ def seeds_of(text: str) -> tuple[int, ...]:
     for part in text.split(","):
         lo, _, hi = part.strip().partition("-")
         seeds.extend(range(int(lo), int(hi or lo) + 1))
-    return tuple(seeds)
+    return tuple(dict.fromkeys(seeds))
 
 
 def override_flag(setting: str) -> str:
@@ -107,9 +107,10 @@ def run_command(
     procs: int = typer.Option(4, min=1, help="Episodes running at once."),
     out: Path | None = typer.Option(None, "--out", help="Run directory, new."),
     policy: Path | None = typer.Option(None, help="Body policy file for the sim world."),
-    viewer: str = typer.Option(
-        "none",
-        help="Viewer for every episode, as dimos --viewer. One window each, so use --procs 1.",
+    viewer: bool = typer.Option(
+        False,
+        "--viewer/--no-viewer",
+        help="Open a Rerun viewer for every episode. One window each, so use --procs 1.",
     ),
     setting: list[str] = typer.Option(
         [], "--set", help="Module config override, Module.field=value. Repeatable."

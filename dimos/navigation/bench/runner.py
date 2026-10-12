@@ -43,6 +43,7 @@ RUNS_INDEX = RUNS_DIR / "runs"
 MAX_SLOTS = 64
 RESULTS_FILE = "results.jsonl"
 RUN_FILE = "run.json"
+SUITE_FILE = "suite.json"
 SCORE_FILE = "score.json"
 RECORDING_FILE = "memory.db"
 REPLAY_FILE = "rerun.rrd"
@@ -75,7 +76,7 @@ class RunConfig:
     out_dir: Path | None = None
     overrides: tuple[str, ...] = ()
     policy: Path | None = None
-    viewer: str = "none"
+    viewer: bool = False
     command: tuple[str, ...] = ("dimos",)
 
 
@@ -136,6 +137,7 @@ def run(config: RunConfig, report: Report | None = None) -> Path:
     with RUNS_INDEX.open("a") as index:
         index.write(f"{run_dir.resolve()}\n")
     episodes = [Episode(case, run_dir / case.id) for case in cases]
+    manifest.save(run_dir / SUITE_FILE)
     _write_run(run_dir, config, finished=False)
     results = run_dir / RESULTS_FILE
     lock = threading.Lock()
@@ -215,9 +217,8 @@ def stop_all() -> None:
 
 
 def rescore(run_dir: Path) -> Path:
-    """Score every episode in the run again from its recording, by the suite the run names."""
-    meta = json.loads((run_dir / RUN_FILE).read_text())
-    manifest = Manifest.load(Path(meta["suite"]))
+    """Score every episode in the run again from its recording, by the suite the run saved."""
+    manifest = Manifest.load(run_dir / SUITE_FILE)
     results = run_dir / RESULTS_FILE
     results.unlink(missing_ok=True)
     with results.open("a") as out:
@@ -230,7 +231,6 @@ def rescore(run_dir: Path) -> Path:
 
 def _write_run(run_dir: Path, config: RunConfig, finished: bool) -> None:
     record = {
-        "suite": str(config.suite.resolve()),
         "blueprint": config.blueprint,
         "split": config.split,
         "cases": list(config.cases),
@@ -276,7 +276,7 @@ def _command(config: RunConfig, episode: Episode, slot: int) -> list[str]:
         "--viewer",
         "rerun",
         "--rerun-save",
-        *(("--rerun-open", "none") if config.viewer == "none" else ()),
+        *(() if config.viewer else ("--rerun-open", "none")),
         "--zenoh-scout-addr",
         f"{ZENOH_SCOUT_GROUP}:{ZENOH_PORT_BASE + slot}",
         "--rerun-websocket-server-port",
@@ -288,7 +288,7 @@ def _command(config: RunConfig, episode: Episode, slot: int) -> list[str]:
         "sqlite",
         "--record-topics",
         RECORD_TOPICS,
-        f"--episodedriver.manifest={config.suite.resolve()}",
+        f"--episodedriver.manifest={episode.dir.parent / SUITE_FILE}",
         f"--episodedriver.case-id={case.id}",
         f"--episodedriver.out-dir={episode.dir}",
         f"--simgo2world.family={case.family}",

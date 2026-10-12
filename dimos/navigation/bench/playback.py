@@ -18,7 +18,6 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from dataclasses import dataclass
-import json
 from pathlib import Path
 import subprocess
 import time
@@ -31,7 +30,13 @@ from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.navigation.bench.driver import TERMINAL_FILE
-from dimos.navigation.bench.runner import RECORDING_FILE, REPLAY_FILE, RUN_FILE, RUNS_INDEX, selects
+from dimos.navigation.bench.runner import (
+    RECORDING_FILE,
+    REPLAY_FILE,
+    RUNS_INDEX,
+    SUITE_FILE,
+    selects,
+)
 from dimos.navigation.bench.suite import Manifest
 from dimos.simulation.go2_legged.robot import BASE_QUAT
 from dimos.simulation.go2_sim.world import build_model, open_viewer
@@ -124,9 +129,8 @@ def find_episode(name: str) -> Path:
 
 
 def episode_scene(episode_dir: Path) -> Scene:
-    """The scene of the case the episode ran, from the run's suite."""
-    meta = json.loads((episode_dir.parent / RUN_FILE).read_text())
-    return Manifest.load(Path(meta["suite"])).case(episode_dir.name).scene()
+    """The scene of the case the episode ran, from the suite its run saved."""
+    return Manifest.load(episode_dir.parent / SUITE_FILE).case(episode_dir.name).scene()
 
 
 def paced(items: list[Frame], speed: float) -> Iterator[Frame]:
