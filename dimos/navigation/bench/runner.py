@@ -121,6 +121,11 @@ def selects(prefix: str, case_id: str) -> bool:
     return case_id == prefix or case_id.startswith(prefix + "-")
 
 
+def new_run_dir(suite: str) -> Path:
+    """A run directory named for now and the suite."""
+    return RUNS_DIR / time.strftime(f"%Y%m%d-%H%M%S-{suite}")
+
+
 def run(config: RunConfig, report: Report | None = None) -> Path:
     """Run every selected case once and return the run directory."""
     manifest = Manifest.load(config.suite)
@@ -135,7 +140,7 @@ def run(config: RunConfig, report: Report | None = None) -> Path:
         raise ValueError(
             f"no cases match split {config.split!r} and {config.cases} in {config.suite}"
         )
-    run_dir = config.out_dir or RUNS_DIR / time.strftime(f"%Y%m%d-%H%M%S-{manifest.suite}")
+    run_dir = config.out_dir or new_run_dir(manifest.suite)
     run_dir.mkdir(parents=True, exist_ok=False)
     RUNS_INDEX.parent.mkdir(parents=True, exist_ok=True)
     with RUNS_INDEX.open("a") as index:
