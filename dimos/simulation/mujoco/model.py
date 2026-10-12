@@ -63,12 +63,17 @@ def get_assets() -> dict[str, bytes]:
 
 
 def load_model(
-    input_device: InputController, robot: str, scene_xml: str
+    input_device: InputController,
+    robot: str,
+    scene_xml: str,
+    scene_assets: dict[str, bytes] | None = None,
 ) -> tuple[mujoco.MjModel, mujoco.MjData]:
     mujoco.set_mjcb_control(None)
 
     xml_string = get_model_xml(robot, scene_xml)
-    model = mujoco.MjModel.from_xml_string(xml_string, assets=get_assets())
+    model = mujoco.MjModel.from_xml_string(
+        xml_string, assets={**get_assets(), **(scene_assets or {})}
+    )
     data = mujoco.MjData(model)
 
     mujoco.mj_resetDataKeyframe(model, data, 0)
@@ -152,12 +157,34 @@ def _add_person_object(root: ET.Element) -> None:
     )
 
 
-def load_scene_xml(config: GlobalConfig) -> str:
+# rooms with their own data package, data/mujoco_<room>/ (scene_<room>.xml, meshes/, textures/)
+_PACKAGED_ROOMS = ("office_555",)
+
+
+def default_room(robot: str) -> str:
+    return "office_555" if robot == "unitree_go1" else "office1"
+
+
+def load_scene_xml(config: GlobalConfig, robot: str = "unitree_go1") -> str:
     if config.mujoco_room_from_occupancy:
         path = Path(config.mujoco_room_from_occupancy)
         return generate_mujoco_scene(OccupancyGrid.from_path(path))
 
-    mujoco_room = config.mujoco_room or "office1"
+    mujoco_room = config.mujoco_room or default_room(robot)
+    if mujoco_room in _PACKAGED_ROOMS:
+        return (get_data(f"mujoco_{mujoco_room}") / f"scene_{mujoco_room}.xml").read_text()
     xml_file = (_get_data_dir() / f"scene_{mujoco_room}.xml").as_posix()
     with open(xml_file) as f:
         return f.read()
+
+
+def load_scene_assets(config: GlobalConfig, robot: str = "unitree_go1") -> dict[str, bytes]:
+    """The meshes and textures of a packaged room (empty for the rooms in mujoco_sim)."""
+    mujoco_room = config.mujoco_room or default_room(robot)
+    if config.mujoco_room_from_occupancy or mujoco_room not in _PACKAGED_ROOMS:
+        return {}
+    assets: dict[str, bytes] = {}
+    room_dir = get_data(f"mujoco_{mujoco_room}")
+    _update_assets(assets, room_dir / "meshes")
+    _update_assets(assets, room_dir / "textures")
+    return assets
