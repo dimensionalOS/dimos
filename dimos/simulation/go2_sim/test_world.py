@@ -28,7 +28,6 @@ from dimos.msgs.sim_msgs.Contacts import Contact, Contacts
 from dimos.simulation.go2_legged.policy import OnnxGo2Policy
 from dimos.simulation.go2_legged.robot import CONTROL_DT
 from dimos.simulation.go2_sim.world import (
-    CEILING_GROUP,
     CONTACTS_HEARTBEAT_DT,
     FRAME_DT,
     LIDAR_GROUPS,
@@ -39,6 +38,7 @@ from dimos.simulation.go2_sim.world import (
     SimGo2World,
     scene_edges,
 )
+from dimos.simulation.scenes.mjcf import CEILING_GROUP
 from dimos.simulation.scenes.procedural import Scene, office
 from dimos.simulation.sensors.mujoco_raycaster import MujocoRaycaster
 

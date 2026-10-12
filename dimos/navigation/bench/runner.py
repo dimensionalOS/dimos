@@ -325,6 +325,9 @@ def _signal_session(process: subprocess.Popen[bytes], signum: int) -> bool:
         os.killpg(process.pid, signum)
     except ProcessLookupError:
         return False
+    except PermissionError:
+        # macOS answers this for a session whose leader is dead but not yet reaped
+        return True
     return True
 
 

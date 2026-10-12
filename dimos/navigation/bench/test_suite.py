@@ -17,6 +17,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
+from numpy.typing import NDArray
 import pytest
 
 from dimos.navigation.bench.ground_truth import GO2, GroundTruth
@@ -26,19 +27,31 @@ from dimos.simulation.scenes.procedural import office
 SMALL = FreezeConfig(seeds=(1, 3), stressor_samples=60, samples_per_scene=25, cases_per_bin=1)
 
 
-def test_ground_truth_finds_floor_walls_routes_and_what_the_lidar_sees() -> None:
+def _far_goal(gt: GroundTruth) -> NDArray[np.float64]:
+    reach = np.where(gt.walkable, np.add.outer(*map(np.arange, gt.shape)), -1)
+    return gt.center(*np.unravel_index(int(np.argmax(reach)), gt.shape))
+
+
+def test_ground_truth_finds_floor_walls_and_routes() -> None:
     gt = GroundTruth(office(1))
     z0 = gt.scene.params["z0"]
     assert gt.height[gt.index((1.0, 1.0))] == pytest.approx(z0, abs=1e-6)
     assert np.isnan(gt.height[gt.index((-0.05, 3.0))])
     assert gt.stands((1.0, 1.0)) and not gt.stands((0.1, 3.0))
-    reach = np.where(gt.walkable, np.add.outer(*map(np.arange, gt.shape)), -1)
-    goal = gt.center(*np.unravel_index(int(np.argmax(reach)), gt.shape))
+    goal = _far_goal(gt)
     route = gt.route(gt.scene.start, goal, centered=True)
     assert route is not None and all(gt.stands(p) for p in route.points)
     assert np.allclose(route.points[-1, :2], goal[:2])
     difficulty = gt.difficulty(route)
     assert difficulty.min_clearance >= GO2.radius and difficulty.doors >= 1
+
+
+@pytest.mark.self_hosted
+def test_premap_cloud_is_what_the_lidar_sees_along_the_route() -> None:
+    gt = GroundTruth(office(1))
+    z0 = gt.scene.params["z0"]
+    route = gt.route(gt.scene.start, _far_goal(gt), centered=True)
+    assert route is not None
     cloud = gt.premap_cloud(route.points)
     lo, hi = gt.scene.bounds()
     assert len(cloud) > 20_000 and np.all(cloud >= lo - gt.cell) and np.all(cloud <= hi + gt.cell)

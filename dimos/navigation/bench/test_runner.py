@@ -124,6 +124,11 @@ def suite(tmp_path: Path) -> Path:
     return path
 
 
+def _alive(pid: int) -> bool:
+    state = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True)
+    return bool(state.stdout.strip()) and not state.stdout.strip().startswith("Z")
+
+
 def test_run_scores_every_episode_and_rescores_the_same(suite: Path, tmp_path: Path) -> None:
     (tmp_path / "fake.py").write_text(FAKE_BLUEPRINT)
     reports: list[Progress] = []
@@ -184,9 +189,9 @@ def test_harness_failures_are_errors_that_survive_a_rescore(tmp_path: Path) -> N
     assert (lost["outcome"], lost["error"]) == (None, "no terminal record")
     orphan = int((run_dir / "no_terminal-s1-cccccc" / "child.pid").read_text())
     deadline = time.monotonic() + 5.0
-    while Path(f"/proc/{orphan}").exists() and time.monotonic() < deadline:
+    while _alive(orphan) and time.monotonic() < deadline:
         time.sleep(0.05)
-    assert not Path(f"/proc/{orphan}").exists()
+    assert not _alive(orphan)
     assert set(rescore(run_dir).read_text().splitlines()) == set(results.splitlines())
 
 

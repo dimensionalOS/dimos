@@ -59,6 +59,7 @@ def _until(done: object, timeout_s: float) -> None:
     assert done()  # type: ignore[operator]
 
 
+@pytest.mark.self_hosted
 def test_driver_resets_seeds_sends_the_goal_and_ends_on_arrival(tmp_path: Path) -> None:
     scene = office(1)
     start = (scene.start[0], scene.start[1], 0.0)
