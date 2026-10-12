@@ -104,10 +104,10 @@ def test_rejects_a_blob_without_the_magic() -> None:
 @pytest.mark.parametrize(
     ("blob", "message"),
     [
-        (_blob(version=2), "version"),
-        (_blob(obs=44), "observation"),
-        (_blob(kinds=()), "no band"),
-        (_blob(encoder_out=5), "encoder"),
+        pytest.param(_blob(version=2), "version", id="version"),
+        pytest.param(_blob(obs=44), "observation", id="observation"),
+        pytest.param(_blob(kinds=()), "no band", id="no-band"),
+        pytest.param(_blob(encoder_out=5), "encoder", id="encoder"),
     ],
 )
 def test_rejects_blobs_with_the_wrong_layout(blob: bytes, message: str) -> None:

@@ -147,8 +147,10 @@ class RobotStateMonitor:
                 try:
                     # Create JointState for world sync (API uses JointState)
                     joint_state = JointState(
+                        ts=msg.ts,
                         name=self._joint_names,
                         position=positions.tolist(),
+                        velocity=velocities.tolist() if velocities is not None else [],
                     )
                     self._world.sync_from_joint_state(joint_state)
                 except Exception as e:
