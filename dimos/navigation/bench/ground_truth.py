@@ -12,14 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Where a body can stand in a scene and how it can get from one place to another.
-
-Ground is found by casting rays down every column of a grid against the scene's MuJoCo
-model and confirming each candidate surface with a thin probe that must touch nothing
-in the body's height above it. Clearance is the distance from a ground cell to the
-nearest column with no ground. Routes run over the cells a body of the given radius can
-stand on, between neighbors within its step height.
-"""
+"""Where a body can stand in a scene and how it can get from one place to another."""
 
 from __future__ import annotations
 
@@ -179,10 +172,7 @@ class GroundTruth:
         return narrowest
 
     def premap_cloud(self, route: NDArray[np.float64]) -> NDArray[np.float32]:
-        """What the body's Mid-360 returns walking the route, in the world frame.
-
-        One return per CELL voxel, the way a prior mapping run leaves them.
-        """
+        """What the body's Mid-360 returns walking the route, one world-frame point per voxel."""
         caster = MujocoRaycaster(self._probe.model, self._probe.data, SCENE_GROUPS)
         lidar = SimMid360.go2(caster, PREMAP_SEED)
         per_pose = int(POINT_RATE * PREMAP_STEP_M / PREMAP_SPEED)
@@ -348,10 +338,9 @@ class Probe:
 def _lowest_surface(
     caster: MujocoRaycaster, probe: Probe, origin: NDArray[np.float64], depth: float
 ) -> float:
-    """Walk down one column. Upward faces are surface candidates, downward faces end the solid above.
+    """The lowest surface in the column with room for the body above it, or nan.
 
-    Faces that coincide, such as a wall standing on the floor, can hide a solid from the walk,
-    so every candidate is confirmed by the probe.
+    Coincident faces can hide a solid from the walk, so the probe confirms every candidate.
     """
     found = math.nan
     gap_top = origin[2]

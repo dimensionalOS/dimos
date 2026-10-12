@@ -21,6 +21,7 @@ import subprocess
 import sys
 import time
 
+import numpy as np
 import pytest
 
 from dimos.memory.store.sqlite import SqliteStore
@@ -35,9 +36,11 @@ from dimos.navigation.bench.runner import (
     SCORE_FILE,
     Progress,
     RunConfig,
+    _until_verdict,
     rescore,
     run,
 )
+from dimos.navigation.bench.scorer import Commands, Poses, Recording, score
 from dimos.navigation.bench.suite import Case, Manifest, Rules, Split
 from dimos.simulation.go2_legged.policy import OnnxGo2Policy
 from dimos.simulation.scenes.procedural import Params, office
@@ -185,6 +188,27 @@ def test_harness_failures_are_errors_that_survive_a_rescore(tmp_path: Path) -> N
         time.sleep(0.05)
     assert not Path(f"/proc/{orphan}").exists()
     assert set(rescore(run_dir).read_text().splitlines()) == set(results.splitlines())
+
+
+def test_a_stuck_verdict_is_scored_at_the_drivers_end_and_not_the_shutdown_tail() -> None:
+    rules, goal, t_end = Rules(), (20.0, 0.0, 0.0), 30.0
+    t = np.arange(0.0, t_end + 0.5 + 1e-9, 0.05)
+    x = np.where(t <= 20.0, 0.5 * t, 10.0 + 0.029 * (t - 20.0)) + np.where(
+        t > t_end + 0.2, 0.05, 0.0
+    )
+    xyz = np.column_stack([x, np.zeros_like(t), np.full_like(t, rules.stand_height_m)])
+    recording = Recording(
+        end=float(t[-1]),
+        pose=Poses(t, xyz, np.zeros_like(xyz)),
+        goals=[(0.0, goal)],
+        commands=Commands(t, np.tile([0.5, 0.0, 0.0], (len(t), 1))),
+        arrivals=[],
+        contacts=[],
+    )
+    assert score(recording, rules, goal, 20.0).outcome == "timeout"
+    cut = _until_verdict(recording, {"reason": "stuck", "t_end": t_end})
+    assert score(cut, rules, goal, 20.0).outcome == "stuck"
+    assert _until_verdict(recording, {"reason": "arrived", "t_end": t_end}) is recording
 
 
 @pytest.mark.self_hosted

@@ -20,7 +20,7 @@ from collections import Counter
 from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 import fcntl
 import json
 import os
@@ -60,6 +60,7 @@ RERUN_PORT_BASE = 9900
 WEBSOCKET_PORT_BASE = 3100
 STOP_GRACE_S = 20.0
 POLL_S = 0.5
+VERDICT_SLACK_S = 0.1
 RECORDING_LINE = re.compile(r"Recording to (\S+memory\.db)")
 
 _live: set[subprocess.Popen[bytes]] = set()
@@ -374,7 +375,10 @@ def _score(manifest: Manifest, episode: Episode, terminal: dict[str, object] | N
         return result
     try:
         scored = score(
-            Recording.from_store(recording), manifest.rules, case.goal, case.route_length
+            _until_verdict(Recording.from_store(recording), terminal),
+            manifest.rules,
+            case.goal,
+            case.route_length,
         )
     except ValueError as error:
         result.error = str(error)
@@ -383,3 +387,14 @@ def _score(manifest: Manifest, episode: Episode, terminal: dict[str, object] | N
     result.metrics = asdict(scored)
     (episode.dir / SCORE_FILE).write_text(json.dumps(result.metrics, indent=2) + "\n")
     return result
+
+
+def _until_verdict(recording: Recording, terminal: dict[str, object]) -> Recording:
+    """The recording cut just after the driver's verdict, so the shutdown tail is not scored.
+
+    Recorded stamps trail the driver's clock a little, hence the slack. An arrival is left whole.
+    """
+    t_end = terminal.get("t_end")
+    if terminal["reason"] == "arrived" or not isinstance(t_end, float):
+        return recording
+    return replace(recording, end=min(recording.end, t_end + VERDICT_SLACK_S))
