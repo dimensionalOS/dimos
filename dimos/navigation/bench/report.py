@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 from pathlib import Path
 from statistics import median
@@ -104,6 +104,8 @@ class DifficultyRow:
 def load(run_dir: Path) -> Report:
     """The run's results joined with the suite's cases."""
     run = _RUN.validate_json((run_dir / RUN_FILE).read_text())
+    if not run.finished:
+        run = replace(run, time=(run_dir / RESULTS_FILE).stat().st_mtime)
     manifest = Manifest.load(run_dir / SUITE_FILE)
     cases = {c.id: c for c in manifest.cases}
     rows = [
