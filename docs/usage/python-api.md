@@ -149,15 +149,10 @@ module proxy:
 
 ```python skip
 app = Dimos.connect()
-try:
-    print(app.list_streams())
-    unsubscribe = app.Detection3DModule.detections.subscribe(print)
-    try:
-        input("Press Enter to stop listening")
-    finally:
-        unsubscribe()
-finally:
-    app.stop()
+print(app.list_streams())
+unsubscribe = app.Detection3DModule.detections.subscribe(print)
+input("Press Enter to stop listening")
+unsubscribe()
 ```
 
 `list_streams(module)` filters by module name or proxy. Each result includes the
