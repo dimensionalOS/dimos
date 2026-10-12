@@ -119,6 +119,8 @@ class GlobalConfig(BaseSettings):
     # integrated GPUs (e.g. Apple Silicon), dropping the sim below realtime.
     # "auto" keeps shadows and turns them off if the sim falls behind realtime.
     mujoco_shadows: Literal["auto", "on", "off"] = "auto"
+    # Skip MuJoCo's viewer window: same physics and sensors, offscreen rendering only.
+    mujoco_headless: bool = False
     scene_package: str | None = None
     robot_model: str | None = None
     robot_id: str | None = None

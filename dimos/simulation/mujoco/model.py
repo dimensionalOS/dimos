@@ -110,6 +110,12 @@ def get_model_xml(robot: str, scene_xml: str) -> str:
     root.set("model", f"{robot}_scene")
     root.insert(0, ET.Element("include", file=f"{robot}.xml"))
 
+    # The office's ~1200 collision hulls are each a static body that broadphase re-pairs every step.
+    compiler = root.find("compiler")
+    if compiler is None:
+        compiler = ET.SubElement(root, "compiler")
+    compiler.set("fusestatic", "true")
+
     # Ensure visual/map element exists with znear and zfar
     visual = root.find("visual")
     if visual is None:

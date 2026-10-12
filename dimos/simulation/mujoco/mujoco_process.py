@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import base64
+import contextlib
 import json
 import os
 import pickle
@@ -68,6 +69,12 @@ class MockController:
     def stop(self) -> None:
         """Stop method to satisfy InputController protocol."""
         pass
+
+
+def _sleep_until(deadline: float) -> None:
+    """Sleep in 2 ms slices: macOS coalesces a background process's timers, turning one 35 ms sleep into ~100 ms."""
+    while (remaining := deadline - time.time()) > 0:
+        time.sleep(min(remaining, 0.002))
 
 
 def _shadow_render_is_slow(model: mujoco.MjModel, data: mujoco.MjData) -> bool:
@@ -147,7 +154,13 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
         model, mujoco.mjtObj.mjOBJ_CAMERA, "lidar_right_camera"
     )
 
-    with viewer.launch_passive(model, data, show_left_ui=False, show_right_ui=False) as m_viewer:
+    # Headless runs the same loop with offscreen renderers only: no window, no GLFW, no mjpython.
+    viewer_context: contextlib.AbstractContextManager[Any] = (
+        contextlib.nullcontext(None)
+        if config.mujoco_headless
+        else viewer.launch_passive(model, data, show_left_ui=False, show_right_ui=False)
+    )
+    with viewer_context as m_viewer:
         camera_size = (VIDEO_WIDTH, VIDEO_HEIGHT)
 
         # Create renderers
@@ -162,6 +175,10 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
         depth_right_renderer.enable_depth_rendering()
 
         scene_option = mujoco.MjvOption()
+        video_scene_option = mujoco.MjvOption()
+        if robot_name == "unitree_go1":
+            # The head camera never sees the Go2's own visual meshes (group 2), ~270k triangles.
+            video_scene_option.geomgroup[2] = 0
 
         # Timing control
         last_video_time = 0.0
@@ -169,35 +186,40 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
         video_interval = 1.0 / VIDEO_FPS
         lidar_interval = 1.0 / LIDAR_FPS
 
-        m_viewer.cam.lookat = config.mujoco_camera_position_float[0:3]
-        m_viewer.cam.distance = config.mujoco_camera_position_float[3]
-        m_viewer.cam.azimuth = config.mujoco_camera_position_float[4]
-        m_viewer.cam.elevation = config.mujoco_camera_position_float[5]
+        if m_viewer is not None:
+            m_viewer.cam.lookat = config.mujoco_camera_position_float[0:3]
+            m_viewer.cam.distance = config.mujoco_camera_position_float[3]
+            m_viewer.cam.azimuth = config.mujoco_camera_position_float[4]
+            m_viewer.cam.elevation = config.mujoco_camera_position_float[5]
 
         parent_pid = os.getppid()
 
         def alive() -> bool:
             # Also exit when the connection's process is gone, whatever killed it.
-            return m_viewer.is_running() and not shm.should_stop() and os.getppid() == parent_pid
+            viewer_open = m_viewer is None or m_viewer.is_running()
+            return viewer_open and not shm.should_stop() and os.getppid() == parent_pid
 
         shm.signal_ready()
 
         # The world stands still until the connection's start(): the parent is
         # still deploying and wiring the other modules.
         while alive() and not shm.should_run():
-            m_viewer.sync()
+            if m_viewer is not None:
+                m_viewer.sync()
             time.sleep(0.05)
 
+        # One iteration advances mujoco_steps_per_frame timesteps of sim time.
+        frame_dt = model.opt.timestep * config.mujoco_steps_per_frame
+        next_frame_time = time.time()
         while alive():
-            step_start = time.time()
-
             # Step simulation
             for _ in range(config.mujoco_steps_per_frame):
                 mujoco.mj_step(model, data)
 
             person_position_controller.tick(data)
 
-            m_viewer.sync()
+            if m_viewer is not None:
+                m_viewer.sync()
 
             # Always update odometry
             pos = data.qpos[0:3].copy()
@@ -208,10 +230,13 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
 
             # Video rendering
             if current_time - last_video_time >= video_interval:
-                rgb_renderer.update_scene(data, camera=camera_id, scene_option=scene_option)
+                rgb_renderer.update_scene(data, camera=camera_id, scene_option=video_scene_option)
                 pixels = rgb_renderer.render()
                 shm.write_video(pixels)
-                last_video_time = current_time
+                # Step by the interval, not to now: 35 ms frames would otherwise give 14 fps, not 20.
+                last_video_time = max(
+                    last_video_time + video_interval, current_time - video_interval
+                )
 
             # Lidar/depth rendering
             if current_time - last_lidar_time >= lidar_interval:
@@ -264,10 +289,9 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
 
                 last_lidar_time = current_time
 
-            # Control simulation speed
-            time_until_next_step = model.opt.timestep - (time.time() - step_start)
-            if time_until_next_step > 0:
-                time.sleep(time_until_next_step)
+            # Absolute deadlines, so a late frame is caught up rather than lost.
+            next_frame_time = max(next_frame_time + frame_dt, time.time() - 0.25)
+            _sleep_until(next_frame_time)
 
         person_position_controller.stop()
 
