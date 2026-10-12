@@ -75,7 +75,7 @@ def test_driver_resets_seeds_sends_the_goal_and_ends_on_arrival(tmp_path: Path) 
         route_length=3.0,
         scene_digest=scene.digest(),
     )
-    Manifest("test", Rules(), 0, None, False, [case], []).save(tmp_path / "suite.json")
+    Manifest("test", Rules(), 0, [case]).save(tmp_path / "suite.json")
     transports = {
         name: LCMTransport(f"/test_driver/{name}", kind)
         for name, kind in (

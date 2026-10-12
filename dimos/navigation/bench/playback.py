@@ -125,11 +125,8 @@ def find_episode(name: str) -> Path:
 
 def episode_scene(episode_dir: Path) -> Scene:
     """The scene of the case the episode ran, from the run's suite."""
-    case_id = json.loads((episode_dir / TERMINAL_FILE).read_text())["case_id"]
     meta = json.loads((episode_dir.parent / RUN_FILE).read_text())
-    manifest = Manifest.load(Path(meta["suite"]))
-    case = next(c for c in manifest.cases if c.id == case_id)
-    return case.scene()
+    return Manifest.load(Path(meta["suite"])).case(episode_dir.name).scene()
 
 
 def paced(items: list[Frame], speed: float) -> Iterator[Frame]:

@@ -28,7 +28,6 @@ from dimos.memory.type.observation import Observation
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path as PathMsg
 from dimos.msgs.sim_msgs.Contacts import Contact, Contacts
 from dimos.msgs.std_msgs.Bool import Bool
@@ -56,6 +55,7 @@ Signature = Literal[
     "arrival_mismatch",
 ]
 COLLIDING_KINDS = ("wall", "clutter", "ceiling")
+TRUNK_ON_FLOOR = Contact("trunk", "floor")
 T = TypeVar("T")
 GOAL_ECHO_M = 0.05
 
@@ -112,9 +112,7 @@ class Recording:
                 (float(store.stream(n).last().ts) for n in names if store.stream(n).exists()),
                 default=0.0,
             )
-            pose: list[Observation[PoseStamped]] | list[Observation[Odometry]] | None = stamped(
-                "ground_truth", PoseStamped
-            ) or stamped("odometry", Odometry)
+            pose = stamped("ground_truth", PoseStamped)
             goals = stamped("goal", PointStamped)
             paths = stamped("planner_path", PathMsg)
             local = stamped("path", PathMsg)
@@ -148,7 +146,7 @@ class Recording:
             store.stop()
 
 
-def _poses(observations: list[Observation[PoseStamped]] | list[Observation[Odometry]]) -> Poses:
+def _poses(observations: list[Observation[PoseStamped]]) -> Poses:
     t = np.array([float(o.ts) for o in observations])
     xyz = np.array([tuple(o.data.position) for o in observations]).reshape(-1, 3)
     rpy = np.array([tuple(o.data.orientation.to_euler()) for o in observations]).reshape(-1, 3)
@@ -186,7 +184,7 @@ def score(
 ) -> Score:
     """Score the episode in the recording that drives to the goal."""
     if recording.pose is None:
-        raise ValueError("a recording needs ground_truth or odometry to be scored")
+        raise ValueError("a recording needs ground_truth to be scored")
     missing = [
         name
         for name, stream in (
@@ -319,7 +317,7 @@ def _collisions(samples: list[ContactSample] | None, t0: float, t1: float) -> _C
         return None
     before = [s for s in samples if s.t <= t0]
     state = before[-1].contacts if before else []
-    colliding, on_trunk = _colliding(state), Contact("trunk", "floor") in state
+    colliding, on_trunk = _colliding(state), TRUNK_ON_FLOOR in state
     count, seconds, trunk_floor = int(colliding), 0.0, 0.0
     t_prev = t0
     for sample in (s for s in samples if t0 < s.t <= t1):
@@ -328,7 +326,7 @@ def _collisions(samples: list[ContactSample] | None, t0: float, t1: float) -> _C
         t_prev = sample.t
         now = _colliding(sample.contacts)
         count += int(now and not colliding)
-        colliding, on_trunk = now, Contact("trunk", "floor") in sample.contacts
+        colliding, on_trunk = now, TRUNK_ON_FLOOR in sample.contacts
     seconds += (t1 - t_prev) * colliding
     trunk_floor += (t1 - t_prev) * on_trunk
     return _Collisions(count, seconds, trunk_floor)
@@ -343,7 +341,7 @@ def _fell(
 ) -> bool:
     tipped = bool(np.any(np.abs(pose.rpy[:, :2]) > rules.fall_rad))
     on_trunk = samples is not None and any(
-        t0 <= s.t <= t1 and Contact("trunk", "floor") in s.contacts for s in samples
+        t0 <= s.t <= t1 and TRUNK_ON_FLOOR in s.contacts for s in samples
     )
     return tipped or on_trunk
 
@@ -441,10 +439,10 @@ def _outcome(
 
 def moving(commands: Commands, rules: Rules) -> NDArray[np.bool_]:
     speed = np.hypot(commands.v[:, 0], commands.v[:, 1])
-    moving: NDArray[np.bool_] = (speed >= rules.moving_cmd) | (
+    commanded: NDArray[np.bool_] = (speed >= rules.moving_cmd) | (
         np.abs(commands.v[:, 2]) >= rules.moving_cmd
     )
-    return moving
+    return commanded
 
 
 def stuck(pose: Poses, commands: Commands | None, rules: Rules, t1: float) -> bool:
@@ -452,7 +450,7 @@ def stuck(pose: Poses, commands: Commands | None, rules: Rules, t1: float) -> bo
     if commands is None:
         return False
     keep = (commands.t >= t1 - rules.stuck_s) & (commands.t <= t1)
-    if not keep.any() or moving(commands, rules)[keep].mean() < 0.8:
+    if not keep.any() or moving(commands, rules)[keep].mean() < rules.stuck_moving_fraction:
         return False
     span = (pose.t >= t1 - rules.stuck_s) & (pose.t <= t1)
     if not span.any():

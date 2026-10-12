@@ -13,6 +13,7 @@
 # limitations under the License.
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -59,3 +60,6 @@ def test_freeze_bins_routable_cases_that_round_trip(tmp_path: Path) -> None:
     loaded = Manifest.load(tmp_path / "suite.json")
     assert loaded == manifest
     loaded.check_drift()
+    stale = replace(loaded.cases[0], scene_digest="stale")
+    with pytest.raises(RuntimeError, match=stale.id):
+        replace(loaded, cases=[stale]).check_drift()

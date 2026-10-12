@@ -309,12 +309,12 @@ def sensor_poses(
     stops = np.minimum(np.arange(0.0, arc[-1] + step / 2, step), arc[-1])
     bases = np.column_stack([np.interp(stops, arc, route[:, i]) for i in range(3)])
     poses = []
-    for s, base in zip(stops, bases, strict=True):
-        k = int(np.clip(np.searchsorted(arc, s, side="right"), 1, len(route) - 1))
+    for stop, base in zip(stops, bases, strict=True):
+        k = int(np.clip(np.searchsorted(arc, stop, side="right"), 1, len(route) - 1))
         heading = route[k, :2] - route[k - 1, :2] if len(route) > 1 else np.array([1.0, 0.0])
         yaw = math.atan2(heading[1], heading[0])
-        c, w = math.cos(yaw), math.sin(yaw)
-        rotation = np.array([[c, -w, 0.0], [w, c, 0.0], [0.0, 0.0, 1.0]])
+        cos_yaw, sin_yaw = math.cos(yaw), math.sin(yaw)
+        rotation = np.array([[cos_yaw, -sin_yaw, 0.0], [sin_yaw, cos_yaw, 0.0], [0.0, 0.0, 1.0]])
         position = base + [0.0, 0.0, stand] + rotation @ MOUNT_XYZ
         poses.append((position, rotation @ MOUNT_R))
     return poses

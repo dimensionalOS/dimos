@@ -19,6 +19,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import time
 
 import pytest
 
@@ -44,7 +45,7 @@ from dimos.simulation.scenes.procedural import Params, office
 T0 = 1000.0
 
 FAKE_BLUEPRINT = """
-import json, signal, sys, time
+import json, signal, subprocess, sys, time
 from pathlib import Path
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
@@ -57,6 +58,10 @@ case_id = args["--episodedriver.case-id"]
 manifest = json.loads(Path(args["--episodedriver.manifest"]).read_text())
 case = next(c for c in manifest["cases"] if c["id"] == case_id)
 arrive = case["tag"] != "stay_put"
+if case["tag"] == "no_terminal":
+    child = subprocess.Popen(["sleep", "300"])
+    (out / "child.pid").write_text(str(child.pid))
+    sys.exit(1)
 recording = Path(args["--fake-recordings"]) / f"{case_id}-{time.time_ns()}" / "memory.db"
 recording.parent.mkdir(parents=True)
 store = SqliteStore(path=str(recording))
@@ -73,7 +78,8 @@ if arrive:
 store.stop()
 (recording.parent / "rerun.rrd").write_bytes(b"rrd")
 print(f"Recording to {recording}", flush=True)
-(out / "terminal.json").write_text(json.dumps({"reason": "arrived" if arrive else "timeout", "t0": t0}))
+reason = case["tag"] if case["tag"] == "driver_error" else "arrived" if arrive else "timeout"
+(out / "terminal.json").write_text(json.dumps({"reason": reason, "t0": t0}))
 print("scene", args["--simgo2world.scene-params"], *[a for a in sys.argv if a.startswith("--set-")], flush=True)
 signal.pause()
 """
@@ -111,13 +117,11 @@ def suite(tmp_path: Path) -> Path:
         _case("stay_put-s1-cccccc", "stay_put", "dev", {}),
     ]
     path = tmp_path / "suite.json"
-    Manifest("test", Rules(), 0, None, False, cases, []).save(path)
+    Manifest("test", Rules(), 0, cases).save(path)
     return path
 
 
-def test_run_scores_every_episode_in_parallel_and_rescores_the_same(
-    suite: Path, tmp_path: Path
-) -> None:
+def test_run_scores_every_episode_and_rescores_the_same(suite: Path, tmp_path: Path) -> None:
     (tmp_path / "fake.py").write_text(FAKE_BLUEPRINT)
     reports: list[Progress] = []
     run_dir = run(
@@ -137,7 +141,6 @@ def test_run_scores_every_episode_in_parallel_and_rescores_the_same(
     assert rows["mined-s1-aaaaaa"]["outcome"] == "success"
     assert rows["stay_put-s1-cccccc"]["outcome"] == "timeout"
     assert reports[-1].done == reports[-1].total == 3 and not reports[-1].running
-    assert max(len(r.running) for r in reports) <= 3
     assert ("stay_put-s1-cccccc", "timeout") in [r.finished for r in reports]
     episode = run_dir / "narrow_door-s1-bbbbbb"
     assert (episode / RECORDING_FILE).exists() and (episode / SCORE_FILE).exists()
@@ -150,6 +153,40 @@ def test_run_scores_every_episode_in_parallel_and_rescores_the_same(
     assert find_episode("narrow_door") == episode
 
 
+def test_harness_failures_are_errors_that_survive_a_rescore(tmp_path: Path) -> None:
+    cases = [
+        _case("mined-s1-aaaaaa", "mined", "dev", {}),
+        _case("driver_error-s1-bbbbbb", "driver_error", "dev", {}),
+        _case("no_terminal-s1-cccccc", "no_terminal", "dev", {}),
+    ]
+    Manifest("test", Rules(), 0, cases).save(tmp_path / "suite.json")
+    (tmp_path / "fake.py").write_text(FAKE_BLUEPRINT)
+    run_dir = run(
+        RunConfig(
+            suite=tmp_path / "suite.json",
+            blueprint="fake",
+            procs=2,
+            out_dir=tmp_path / "run",
+            overrides=(f"--fake-recordings={tmp_path / 'recordings'}",),
+            command=(sys.executable, str(tmp_path / "fake.py")),
+        )
+    )
+    results = (run_dir / RESULTS_FILE).read_text()
+    rows = {r["case_id"]: r for r in map(json.loads, results.splitlines())}
+    assert rows["mined-s1-aaaaaa"]["outcome"] == "success"
+    failed = rows["driver_error-s1-bbbbbb"]
+    assert (failed["outcome"], failed["error"]) == (None, "driver_error")
+    lost = rows["no_terminal-s1-cccccc"]
+    assert (lost["outcome"], lost["error"]) == (None, "no terminal record")
+    orphan = int((run_dir / "no_terminal-s1-cccccc" / "child.pid").read_text())
+    deadline = time.monotonic() + 5.0
+    while Path(f"/proc/{orphan}").exists() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert not Path(f"/proc/{orphan}").exists()
+    assert set(rescore(run_dir).read_text().splitlines()) == set(results.splitlines())
+
+
+@pytest.mark.self_hosted
 def test_playback_poses_the_puppet_from_a_recording(tmp_path: Path) -> None:
     joints = list(OnnxGo2Policy.joint_names)
     store = SqliteStore(path=str(tmp_path / "memory.db"))

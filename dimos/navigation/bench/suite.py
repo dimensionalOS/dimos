@@ -19,21 +19,19 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 import hashlib
 import json
 import math
 import multiprocessing
 import os
 from pathlib import Path
-import subprocess
 from typing import Literal
 
 import numpy as np
 from numpy.typing import NDArray
 from pydantic import TypeAdapter
 
-from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.navigation.bench.ground_truth import (
     CLUTTER_NEAR,
     GO2,
@@ -79,6 +77,7 @@ class Rules:
     fall_rad: float = 1.0
     stuck_s: float = 10.0
     stuck_progress_m: float = 0.3
+    stuck_moving_fraction: float = 0.8
     stalled_s: float = 10.0
     moving_cmd: float = 0.05
     reroute_m: float = 0.5
@@ -112,27 +111,12 @@ class Case(Candidate):
     scene_digest: str
 
 
-@dataclass(frozen=True)
-class Rejection:
-    family: Family
-    seed: int
-    params: Params
-    tag: str
-    reason: str
-    start: Pose | None = None
-    goal: Point | None = None
-
-
 @dataclass
 class Manifest:
     suite: str
     rules: Rules
     sampling_seed: int
-    git_sha: str | None
-    git_dirty: bool
     cases: list[Case]
-    rejections: list[Rejection]
-    mined_rejected: dict[str, int] = field(default_factory=dict)
 
     def save(self, path: Path) -> None:
         path.write_text(_MANIFEST.dump_json(self, indent=2).decode() + "\n")
@@ -140,6 +124,9 @@ class Manifest:
     @classmethod
     def load(cls, path: Path) -> Manifest:
         return _MANIFEST.validate_json(path.read_text())
+
+    def case(self, case_id: str) -> Case:
+        return next(c for c in self.cases if c.id == case_id)
 
     def check_drift(self) -> None:
         """Fail if any case's scene no longer generates the geometry it was frozen with."""
@@ -308,9 +295,7 @@ class _Mined:
     """One scene's share of the suite before the mined pool is spread over bins."""
 
     cases: list[Case]
-    rejections: list[Rejection]
     pool: list[Case]
-    tally: Counter[str]
 
 
 def freeze(config: FreezeConfig, tick: Tick | None = None) -> Manifest:
@@ -327,28 +312,19 @@ def freeze(config: FreezeConfig, tick: Tick | None = None) -> Manifest:
             if tick is not None:
                 tick(len(mined), total, f"scene {futures[future]} done")
     cases: list[Case] = []
-    rejections: list[Rejection] = []
     pooled: list[Case] = []
-    tally: Counter[str] = Counter()
     for seed in config.seeds:
         cases += mined[seed].cases
-        rejections += mined[seed].rejections
         pooled += mined[seed].pool
-        tally += mined[seed].tally
     rng = np.random.default_rng(config.sampling_seed)
     cases += _spread_over_bins(pooled, rng, config.cases_per_bin)
     if tick is not None:
         tick(total, total, "done")
-    git_sha, git_dirty = git_state()
     return Manifest(
         suite=config.suite,
         rules=config.rules,
         sampling_seed=config.sampling_seed,
-        git_sha=git_sha,
-        git_dirty=git_dirty,
         cases=cases,
-        rejections=rejections,
-        mined_rejected=dict(sorted(tally.items())),
     )
 
 
@@ -363,27 +339,20 @@ def _freeze_scene(config: FreezeConfig, seed: int) -> _Mined:
             truths[key] = GroundTruth(generate(config.family, seed, **params))
         return truths[key]
 
-    found = _Mined([], [], [], Counter())
+    found = _Mined([], [])
     for stressor in STRESSORS:
         gt = truth(stressor.params)
         candidate = _stressor_candidate(gt, stressor, seed, rng, config)
         if candidate is None:
-            found.rejections.append(
-                Rejection(config.family, seed, stressor.params, stressor.name, "no goal matched")
-            )
             continue
         case = _validate(gt, candidate, rng, config)
-        if isinstance(case, Case):
+        if case is not None:
             found.cases.append(case)
-        else:
-            found.rejections.append(_rejection(candidate, case))
     gt = truth({})
     for candidate in _mined_candidates(gt, seed, rng, config):
         case = _validate(gt, candidate, rng, config)
-        if isinstance(case, Case):
+        if case is not None:
             found.pool.append(case)
-        else:
-            found.tally[case] += 1
     return found
 
 
@@ -449,26 +418,20 @@ def _point(p: NDArray[np.float64]) -> Point:
 
 def _validate(
     gt: GroundTruth, candidate: Candidate, rng: np.random.Generator, config: FreezeConfig
-) -> Case | str:
-    """The case for a candidate, or the reason it is rejected."""
+) -> Case | None:
+    """The case for a candidate, or None when its start, goal or route does not qualify."""
     try:
         start_index = gt.index(candidate.start)
+        goal_stands = gt.stands(candidate.goal)
     except ValueError:
-        return "start outside the scene"
-    if not gt.walkable[start_index]:
-        return "start not walkable"
-    if gt.clearance[start_index] < START_CLEARANCE_MIN:
-        return "start too close to an obstacle"
-    try:
-        if not gt.stands(candidate.goal):
-            return "goal not walkable"
-    except ValueError:
-        return "goal outside the scene"
+        return None
+    if not gt.walkable[start_index] or gt.clearance[start_index] < START_CLEARANCE_MIN:
+        return None
+    if not goal_stands:
+        return None
     route = gt.route(candidate.start, candidate.goal)
-    if route is None:
-        return "no route"
-    if route.length < config.min_route_m:
-        return "route too short"
+    if route is None or route.length < config.min_route_m:
+        return None
     split: Split = "held_out" if rng.random() < config.held_out_fraction else "dev"
     return Case(
         **vars(candidate),
@@ -484,10 +447,6 @@ def _case_id(candidate: Candidate) -> str:
     record = json.dumps(vars(candidate), sort_keys=True)
     digest = hashlib.sha256(record.encode()).hexdigest()[:6]
     return f"{candidate.tag}-s{candidate.seed}-{digest}"
-
-
-def _rejection(candidate: Candidate, reason: str) -> Rejection:
-    return Rejection(**vars(candidate), reason=reason)
 
 
 def _bin(case: Case) -> tuple[int, int]:
@@ -507,17 +466,3 @@ def _spread_over_bins(pool: list[Case], rng: np.random.Generator, per_bin: int) 
             taken[_bin(case)] += 1
             chosen.append(case)
     return sorted(chosen, key=lambda c: c.id)
-
-
-def git_state() -> tuple[str | None, bool]:
-    """The HEAD sha and whether the tree is dirty, or None and False outside a checkout."""
-
-    def git(*args: str) -> str:
-        return subprocess.run(
-            ["git", *args], cwd=DIMOS_PROJECT_ROOT, capture_output=True, text=True, timeout=5
-        ).stdout.strip()
-
-    try:
-        return git("rev-parse", "HEAD") or None, bool(git("status", "--porcelain"))
-    except (OSError, subprocess.SubprocessError):
-        return None, False

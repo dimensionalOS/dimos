@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 import hashlib
 import itertools
 import json
-from typing import Literal, TypeVar
+from typing import Literal
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
@@ -31,7 +31,6 @@ from dimos.msgs.sim_msgs.Contacts import Kind
 Vec3 = tuple[float, float, float]
 Rect = tuple[float, float, float, float]
 Family = Literal["office"]
-T = TypeVar("T", int, float)
 
 SLAB_THICKNESS = 0.15
 WALL_THICKNESS = 0.1
@@ -105,7 +104,7 @@ def _uniform(rng: np.random.Generator, low: float, high: float) -> float:
     return low + (high - low) * float(rng.random())
 
 
-def _given(drawn: T, given: T | None) -> T:
+def _given(drawn: float, given: float | None) -> float:
     """The given value over the drawn one. The draw still happens, so the seed's later draws do not shift."""
     return drawn if given is None else given
 
@@ -222,8 +221,6 @@ def _table(
 def office(
     seed: int,
     door_width: float | None = None,
-    clutter: int | None = None,
-    tables: int | None = None,
     door_clutter: bool = False,
 ) -> Scene:
     """One floor of rooms joined by doorways, with clutter and tables kept out of the start and the doorways."""
@@ -258,9 +255,9 @@ def office(
             door = Door(0, x, _uniform(rng, a + 0.3, b - w - 0.3), w)
             _wall_with_doors(scene, 0, x, a, b, z0, top, [door])
     keep_clear += [_door_zone(door) for door in scene.doors]
-    clutter = _given(int(rng.integers(8, 16)), clutter)
+    clutter = int(rng.integers(8, 16))
     _clutter(scene, rng, 0.2, 0.2, width - 0.2, length - 0.2, z0, clutter, keep_clear)
-    tables = _given(int(rng.integers(1, 4)), tables)
+    tables = int(rng.integers(1, 4))
     for _ in range(tables):
         _table(scene, rng, 0.3, 0.3, width - 0.3, length - 0.3, z0, keep_clear)
     if door_clutter:

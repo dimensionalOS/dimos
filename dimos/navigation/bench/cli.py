@@ -12,13 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""``dimos nav-bench``: freeze a suite, run it against a blueprint, score runs again, play episodes back."""
+"""dimos nav-bench: freeze a suite, run it against a blueprint, score runs again, play episodes back."""
 
 from __future__ import annotations
 
 from collections import Counter
 import json
 from pathlib import Path
+import signal
 from typing import TYPE_CHECKING, cast
 
 from rich.progress import (
@@ -35,11 +36,13 @@ if TYPE_CHECKING:
     from dimos.navigation.bench.runner import Progress, Report
     from dimos.navigation.bench.suite import Split
 
+DEFAULT_SUITE = "v1"
+
 app = typer.Typer(help="Closed-loop navigation benchmark in the simulated world.")
 
 
 def seeds_of(text: str) -> tuple[int, ...]:
-    """Seeds from a list like ``1,3,5-8``."""
+    """Seeds from a list like 1,3,5-8."""
     seeds: list[int] = []
     for part in text.split(","):
         lo, _, hi = part.strip().partition("-")
@@ -48,7 +51,7 @@ def seeds_of(text: str) -> tuple[int, ...]:
 
 
 def override_flag(setting: str) -> str:
-    """``Module.field=value`` as the ``--module.field=value`` flag ``dimos run`` takes."""
+    """Module.field=value as the --module.field=value flag dimos run takes."""
     key, sep, value = setting.partition("=")
     if not sep or not key:
         raise typer.BadParameter(f"expected Module.field=value, got {setting!r}")
@@ -58,7 +61,7 @@ def override_flag(setting: str) -> str:
 @app.command("freeze")
 def freeze_command(
     out: Path = typer.Option(..., "--out", help="Where to write the manifest."),
-    suite: str = typer.Option("v1", help="Suite name recorded in the manifest."),
+    suite: str = typer.Option(DEFAULT_SUITE, help="Suite name recorded in the manifest."),
     seeds: str = typer.Option("1-20", help="Scene seeds, e.g. 1,3,5-8."),
     sampling_seed: int = typer.Option(0, help="Seed for the case sampling."),
     stressor_samples: int = typer.Option(300, help="Candidate goals per stressor per scene."),
@@ -81,7 +84,7 @@ def freeze_command(
     out.parent.mkdir(parents=True, exist_ok=True)
     manifest.save(out)
     tags = Counter(c.tag for c in manifest.cases)
-    typer.echo(f"{len(manifest.cases)} cases, {len(manifest.rejections)} rejections -> {out}")
+    typer.echo(f"{len(manifest.cases)} cases -> {out}")
     for tag, count in sorted(tags.items()):
         typer.echo(f"  {tag}: {count}")
 
@@ -89,7 +92,10 @@ def freeze_command(
 @app.command("run")
 def run_command(
     suite: Path | None = typer.Option(
-        None, "--suite", exists=True, help="A frozen manifest. Without one, v1 is frozen once."
+        None,
+        "--suite",
+        exists=True,
+        help=f"A frozen manifest. Without one, {DEFAULT_SUITE} is frozen once.",
     ),
     blueprint: str = typer.Option("go2-sim-nav-episode", help="Blueprint with an EpisodeDriver."),
     split: str = typer.Option("dev", help="dev, held_out or all."),
@@ -111,16 +117,15 @@ def run_command(
 ) -> None:
     """Run every case of the split, several at a time, and score each recording."""
     from dimos.navigation.bench.runner import RESULTS_FILE, RUNS_DIR, RunConfig, run as run_suite
+    from dimos.navigation.bench.suite import FreezeConfig, freeze
 
     if split not in ("dev", "held_out", "all"):
         raise typer.BadParameter("split must be dev, held_out or all")
     if suite is None:
-        suite = RUNS_DIR / "v1.json"
+        suite = RUNS_DIR / f"{DEFAULT_SUITE}.json"
         if not suite.exists():
-            from dimos.navigation.bench.suite import FreezeConfig, freeze
-
-            with _Bar("v1") as bar:
-                manifest = freeze(FreezeConfig(), bar.tick)
+            with _Bar(DEFAULT_SUITE) as bar:
+                manifest = freeze(FreezeConfig(suite=DEFAULT_SUITE), bar.tick)
             suite.parent.mkdir(parents=True, exist_ok=True)
             manifest.save(suite)
     config = RunConfig(
@@ -134,6 +139,7 @@ def run_command(
         policy=policy,
         viewer=viewer,
     )
+    signal.signal(signal.SIGTERM, _interrupt)
     with _Bar(suite.stem) as bar:
         run_dir = run_suite(config, _report(bar))
     typer.echo(f"run finished -> {run_dir}")
@@ -163,6 +169,10 @@ def replay_command(
     from dimos.navigation.bench.playback import find_episode, play
 
     play(find_episode(episode), speed=speed, loop=loop, rerun=rerun)
+
+
+def _interrupt(*_: object) -> None:
+    raise KeyboardInterrupt
 
 
 class _Bar:

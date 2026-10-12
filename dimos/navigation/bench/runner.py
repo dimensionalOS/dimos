@@ -28,19 +28,14 @@ from pathlib import Path
 import re
 import shutil
 import signal
-import socket
 import subprocess
 import threading
 import time
 
 from dimos.constants import STATE_DIR
-from dimos.core.coordination.blueprint_config.sources import configuration_environment
-from dimos.navigation.bench.driver import TERMINAL_FILE
-from dimos.navigation.bench.scorer import Recording, score
-from dimos.navigation.bench.suite import Case, Manifest, Split, git_state
-from dimos.utils.logging_config import setup_logger
-
-logger = setup_logger()
+from dimos.navigation.bench.driver import HARNESS_REASONS, TERMINAL_FILE
+from dimos.navigation.bench.scorer import Outcome, Recording, score
+from dimos.navigation.bench.suite import Case, Manifest, Split
 
 RUNS_DIR = STATE_DIR / "nav-bench"
 SLOTS_DIR = RUNS_DIR / "slots"
@@ -63,8 +58,8 @@ ZENOH_PORT_BASE = 7500
 RERUN_PORT_BASE = 9900
 WEBSOCKET_PORT_BASE = 3100
 STOP_GRACE_S = 20.0
+POLL_S = 0.5
 RECORDING_LINE = re.compile(r"Recording to (\S+memory\.db)")
-POLICY_ENV = "SIMGO2WORLD__POLICY"
 
 _live: set[subprocess.Popen[bytes]] = set()
 _live_lock = threading.Lock()
@@ -97,7 +92,7 @@ class Result:
     split: str
     episode: str
     terminal: str | None
-    outcome: str | None
+    outcome: Outcome | None
     error: str | None = None
     metrics: dict[str, object] = field(default_factory=dict)
 
@@ -141,7 +136,7 @@ def run(config: RunConfig, report: Report | None = None) -> Path:
     with RUNS_INDEX.open("a") as index:
         index.write(f"{run_dir.resolve()}\n")
     episodes = [Episode(case, run_dir / case.id) for case in cases]
-    _write_run(run_dir, config, manifest, len(episodes), finished=False)
+    _write_run(run_dir, config, finished=False)
     results = run_dir / RESULTS_FILE
     lock = threading.Lock()
     running: list[str] = []
@@ -173,7 +168,6 @@ def run(config: RunConfig, report: Report | None = None) -> Path:
             progress((episode.dir.name, verdict))
         return result
 
-    previous = signal.signal(signal.SIGTERM, _interrupt)
     pool = ThreadPoolExecutor(max_workers=config.procs)
     try:
         first = one(episodes[0])
@@ -187,10 +181,8 @@ def run(config: RunConfig, report: Report | None = None) -> Path:
         pool.shutdown(wait=False, cancel_futures=True)
         stop_all()
         raise
-    finally:
-        signal.signal(signal.SIGTERM, previous)
     pool.shutdown()
-    _write_run(run_dir, config, manifest, len(episodes), finished=True)
+    _write_run(run_dir, config, finished=True)
     return run_dir
 
 
@@ -222,51 +214,29 @@ def stop_all() -> None:
         _stop(process)
 
 
-def _interrupt(*_: object) -> None:
-    raise KeyboardInterrupt
-
-
 def rescore(run_dir: Path) -> Path:
     """Score every episode in the run again from its recording, by the suite the run names."""
     meta = json.loads((run_dir / RUN_FILE).read_text())
     manifest = Manifest.load(Path(meta["suite"]))
-    cases = {c.id: c for c in manifest.cases}
     results = run_dir / RESULTS_FILE
     results.unlink(missing_ok=True)
     with results.open("a") as out:
-        for episode_dir in sorted(_episode_dirs(run_dir)):
-            episode = Episode(cases[episode_dir.name], episode_dir)
+        for episode_dir in sorted(d for d in run_dir.iterdir() if d.is_dir()):
+            episode = Episode(manifest.case(episode_dir.name), episode_dir)
             terminal = _terminal(episode_dir)
             out.write(json.dumps(asdict(_score(manifest, episode, terminal))) + "\n")
     return results
 
 
-def _episode_dirs(run_dir: Path) -> Iterator[Path]:
-    return (d for d in run_dir.iterdir() if d.is_dir() and (d / TERMINAL_FILE).exists())
-
-
-def _write_run(
-    run_dir: Path, config: RunConfig, manifest: Manifest, episodes: int, finished: bool
-) -> None:
-    sha, dirty = git_state()
+def _write_run(run_dir: Path, config: RunConfig, finished: bool) -> None:
     record = {
         "suite": str(config.suite.resolve()),
-        "suite_name": manifest.suite,
-        "rules_version": manifest.rules.version,
         "blueprint": config.blueprint,
         "split": config.split,
         "cases": list(config.cases),
-        "procs": config.procs,
         "overrides": list(config.overrides),
-        "policy": str(config.policy) if config.policy else _environment_policy(),
-        "record_topics": RECORD_TOPICS,
-        "viewer": config.viewer,
-        "git_sha": sha,
-        "git_dirty": dirty,
-        "host": socket.gethostname(),
-        "episodes": episodes,
+        "policy": str(config.policy) if config.policy else None,
         "finished": finished,
-        "time": time.time(),
     }
     (run_dir / RUN_FILE).write_text(json.dumps(record, indent=2) + "\n")
 
@@ -289,7 +259,7 @@ def _episode(config: RunConfig, manifest: Manifest, episode: Episode, slot: int)
             while time.time() < deadline and process.poll() is None:
                 if (episode.dir / TERMINAL_FILE).exists():
                     break
-                time.sleep(0.5)
+                time.sleep(POLL_S)
         finally:
             _stop(process)
             with _live_lock:
@@ -330,12 +300,6 @@ def _command(config: RunConfig, episode: Episode, slot: int) -> list[str]:
     return [*command, *config.overrides]
 
 
-def _environment_policy() -> str | None:
-    """The world's policy as the environment or .env sets it for every dimos run, if at all."""
-    environment = configuration_environment(None)
-    return next((v for k, v in environment.items() if k.upper() == POLICY_ENV), None)
-
-
 def _environment(slot: int) -> dict[str, str]:
     """A private LCM multicast port for the slot. LCM reads this variable itself."""
     env = dict(os.environ)
@@ -344,15 +308,23 @@ def _environment(slot: int) -> dict[str, str]:
 
 
 def _stop(process: subprocess.Popen[bytes]) -> None:
-    if process.poll() is not None:
-        return
-    group = os.getpgid(process.pid)
-    os.killpg(group, signal.SIGTERM)
+    """Stop the episode's whole session, whether or not its leader is still alive."""
+    deadline = time.time() + STOP_GRACE_S
+    _signal_session(process, signal.SIGTERM)
+    while time.time() < deadline and _signal_session(process, 0):
+        time.sleep(POLL_S)
+    _signal_session(process, signal.SIGKILL)
+    process.wait()
+
+
+def _signal_session(process: subprocess.Popen[bytes], signum: int) -> bool:
+    """Signal the session the leader started, and say whether anything is left in it."""
+    process.poll()
     try:
-        process.wait(timeout=STOP_GRACE_S)
-    except subprocess.TimeoutExpired:
-        os.killpg(group, signal.SIGKILL)
-        process.wait()
+        os.killpg(process.pid, signum)
+    except ProcessLookupError:
+        return False
+    return True
 
 
 def _collect_recording(log: Path, episode: Episode) -> None:
@@ -393,6 +365,9 @@ def _score(manifest: Manifest, episode: Episode, terminal: dict[str, object] | N
     recording = episode.dir / RECORDING_FILE
     if terminal is None:
         result.error = "no terminal record"
+        return result
+    if result.terminal in HARNESS_REASONS:
+        result.error = result.terminal
         return result
     if not recording.exists():
         result.error = "no recording"

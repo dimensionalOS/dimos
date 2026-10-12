@@ -48,6 +48,7 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 TERMINAL_FILE = "terminal.json"
+HARNESS_REASONS = ("driver_error", "no_ground_truth", "no_reference_route", "goal_lost", "stopped")
 WATCH_DT = 0.05
 FIRST_POSE_WAIT_S = 60.0
 
@@ -85,7 +86,7 @@ class EpisodeDriver(Module):
         super().start()
         manifest = Manifest.load(self.config.manifest)
         self._rules = manifest.rules
-        self._case = next(c for c in manifest.cases if c.id == self.config.case_id)
+        self._case = manifest.case(self.config.case_id)
         self._truth = GroundTruth(self._case.scene())
         self._pose: tuple[float, NDArray[np.float64], NDArray[np.float64]] | None = None
         self._recent: deque[tuple[float, NDArray[np.float64], NDArray[np.float64]]] = deque()
