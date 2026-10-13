@@ -255,3 +255,35 @@ def test_a_stuck_body_held_against_an_object_is_pushing() -> None:
         None,
         None,
     )
+
+
+def test_walking_well_past_the_route_length_is_wandering() -> None:
+    walk = _walk(5.0, arrive=False)
+    s = score(walk, RULES, GOAL, route_length=1.5)
+    assert s.traveled_m == pytest.approx(2.0, abs=0.02)
+    assert s.detour == pytest.approx(1.33, abs=0.02)
+    assert s.signatures == ["out_of_time", "wandering"]
+    direct = score(walk, RULES, GOAL, route_length=1.6)
+    assert direct.detour == pytest.approx(1.25, abs=0.02) and direct.signatures == ["out_of_time"]
+    unmeasured = score(walk, RULES, GOAL)
+    assert (unmeasured.detour, unmeasured.signatures) == (None, ["out_of_time"])
+
+
+def test_a_fall_in_the_first_seconds_is_an_early_fall() -> None:
+    def tipped(after: float) -> Recording:
+        walk = _walk(10.0)
+        rpy = walk.pose.rpy.copy()
+        rpy[walk.pose.t >= T0 + after, 0] = 1.4
+        return replace(walk, pose=replace(walk.pose, rpy=rpy))
+
+    early = score(tipped(2.0), RULES, GOAL)
+    assert early.fell_s == pytest.approx(2.0, abs=0.02)
+    assert early.signatures == ["body_fell", "early_fall"]
+    late = score(tipped(3.5), RULES, GOAL)
+    assert late.fell_s == pytest.approx(3.5, abs=0.02) and late.signatures == ["body_fell"]
+    feet, trunk = [Contact("foot", "floor")], [Contact("foot", "floor"), Contact("trunk", "floor")]
+    touches = ((0.5, trunk), (0.56, feet), (2.0, trunk), (3.0, feet))
+    lying = replace(tipped(3.5), contacts=[ContactSample(T0 + t, c) for t, c in touches])
+    assert score(lying, RULES, GOAL).fell_s == pytest.approx(2.0)
+    assert score(lying, RULES, GOAL).signatures == ["body_fell", "early_fall"]
+    assert score(_trunk_on_floor(0.06), RULES, GOAL).fell_s is None

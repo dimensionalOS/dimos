@@ -76,6 +76,8 @@ Signature = Literal[
     "out_of_time",
     "arrival_mismatch",
     "pushing",
+    "wandering",
+    "early_fall",
 ]
 COLLIDING_KINDS = ("wall", "clutter")
 TRUNK_ON_FLOOR = Contact("trunk", "floor")
@@ -83,6 +85,8 @@ T = TypeVar("T")
 GOAL_ECHO_M = 0.05
 TIMEOUT_SLACK_S = 0.2
 PUSHING_FRACTION = 0.5
+WANDER_RATIO = 1.3
+EARLY_FALL_S = 3.0
 CONTACT_SPEED_S = 0.2
 ARRIVED = ("success", "reached_with_collision", "wrong_place", "wrong_floor")
 GAVE_UP = ("stuck", "stalled", "timeout")
@@ -218,6 +222,8 @@ class Score:
     final_margin_m: float | None = None
     pushing_s: float | None = None
     pushing_on: str | None = None
+    detour: float | None = None
+    fell_s: float | None = None
     missing: list[str] = field(default_factory=list)
 
 
@@ -256,7 +262,8 @@ def score(
     t1 = arrival if arrival is not None else deadline
     pose = _slice(recording.pose, t0, t1)
     collisions = _collisions(recording.contacts, t0, t1)
-    fell = _fell(pose, collisions, rules)
+    fall = _fall_start(pose, collisions, rules)
+    fell = fall is not None
     final = _at(recording.pose, t1)
     error_xy = float(np.hypot(*(final[:2] - goal[:2])))
     error_z = float(abs(final[2] - rules.stand_height_m - goal[2]))
@@ -275,8 +282,19 @@ def score(
     final_contacts = _collisions(recording.contacts, t1 - rules.stuck_s, t1)
     pushing_s = final_contacts.seconds if final_contacts else None
     pushed = _held_longest(recording.contacts or [], t1 - rules.stuck_s, t1)
+    fell_s = fall - t0 if fall is not None else None
     signatures = _signatures(
-        _Episode(outcome, recording.local_paths, t0, t1, pushing_s=pushing_s, stuck_s=rules.stuck_s)
+        _Episode(
+            outcome,
+            recording.local_paths,
+            t0,
+            t1,
+            pushing_s=pushing_s,
+            stuck_s=rules.stuck_s,
+            traveled_m=traveled,
+            route_length=route_length,
+            fell_s=fell_s,
+        )
     )
     return Score(
         outcome=outcome,
@@ -314,6 +332,8 @@ def score(
         final_margin_m=float(margins[-1]) if margins is not None else None,
         pushing_s=pushing_s,
         pushing_on=_name(pushed) if pushed else None,
+        detour=traveled / route_length if route_length else None,
+        fell_s=fell_s,
         missing=missing,
     )
 
@@ -342,6 +362,9 @@ class _Episode:
     t1: float
     pushing_s: float | None
     stuck_s: float
+    traveled_m: float
+    route_length: float | None
+    fell_s: float | None
 
 
 def _last_local_path(episode: _Episode) -> int | None:
@@ -369,6 +392,18 @@ def _pushing(episode: _Episode) -> bool:
     )
 
 
+def _wandering(episode: _Episode) -> bool:
+    if not episode.route_length:
+        return False
+    return episode.traveled_m / episode.route_length >= WANDER_RATIO
+
+
+def _early_fall(episode: _Episode) -> bool:
+    return (
+        episode.outcome == "fall" and episode.fell_s is not None and episode.fell_s <= EARLY_FALL_S
+    )
+
+
 CHECKS: tuple[tuple[Signature, Callable[[_Episode], bool]], ...] = (
     ("body_fell", lambda e: e.outcome == "fall"),
     ("arrival_mismatch", lambda e: e.outcome in ("unclaimed", "wrong_place", "wrong_floor")),
@@ -378,6 +413,8 @@ CHECKS: tuple[tuple[Signature, Callable[[_Episode], bool]], ...] = (
     ("local_refused", _local_refused),
     ("follower_zeroed", _follower_zeroed),
     ("pushing", _pushing),
+    ("wandering", _wandering),
+    ("early_fall", _early_fall),
 )
 
 
@@ -429,6 +466,7 @@ class _Collisions:
     trunk_floor_s: float
     started: Counter[Contact]
     first: tuple[float, Contact] | None
+    trunk_touches: list[tuple[float, float]]
 
 
 def _collisions(samples: list[ContactSample] | None, t0: float, t1: float) -> _Collisions | None:
@@ -441,6 +479,8 @@ def _collisions(samples: list[ContactSample] | None, t0: float, t1: float) -> _C
     count, seconds, trunk_floor = int(bool(held)), 0.0, 0.0
     started = Counter(held)
     first = (t0, min(held)) if held else None
+    trunk_touches: list[tuple[float, float]] = []
+    trunk_since = t0
     t_prev = t0
     for sample in (s for s in samples if t0 < s.t <= t1):
         seconds += (sample.t - t_prev) * bool(held)
@@ -451,10 +491,16 @@ def _collisions(samples: list[ContactSample] | None, t0: float, t1: float) -> _C
         started.update(now - held)
         if first is None and now:
             first = (sample.t, min(now))
+        if on_trunk and TRUNK_ON_FLOOR not in sample.contacts:
+            trunk_touches.append((trunk_since, sample.t))
+        if not on_trunk:
+            trunk_since = sample.t
         held, on_trunk = now, TRUNK_ON_FLOOR in sample.contacts
     seconds += (t1 - t_prev) * bool(held)
     trunk_floor += (t1 - t_prev) * on_trunk
-    return _Collisions(count, seconds, trunk_floor, started, first)
+    if on_trunk:
+        trunk_touches.append((trunk_since, t1))
+    return _Collisions(count, seconds, trunk_floor, started, first, trunk_touches)
 
 
 def _held_longest(samples: list[ContactSample], t0: float, t1: float) -> Contact | None:
@@ -502,10 +548,15 @@ def _margins(pose: Poses, scene: Scene) -> NDArray[np.float64] | None:
     return margins
 
 
-def _fell(pose: Poses, collisions: _Collisions | None, rules: Rules) -> bool:
-    tipped = bool(np.any(np.abs(pose.rpy[:, :2]) > rules.fall_rad))
-    on_trunk = collisions is not None and collisions.trunk_floor_s >= rules.fall_trunk_floor_s
-    return tipped or on_trunk
+def _fall_start(pose: Poses, collisions: _Collisions | None, rules: Rules) -> float | None:
+    """When the fall began: the first tilt past the limit, or the trunk touch that reached it."""
+    tipped = np.abs(pose.rpy[:, :2]).max(axis=1) > rules.fall_rad
+    starts = [float(pose.t[tipped.argmax()])] if tipped.any() else []
+    if collisions is not None and collisions.trunk_floor_s >= rules.fall_trunk_floor_s:
+        lain = np.cumsum([end - start for start, end in collisions.trunk_touches])
+        reached = min(int(np.searchsorted(lain, rules.fall_trunk_floor_s)), len(lain) - 1)
+        starts.append(collisions.trunk_touches[reached][0])
+    return min(starts, default=None)
 
 
 @dataclass(frozen=True)
