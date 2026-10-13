@@ -23,6 +23,17 @@ parent, inside ``main()``.
 
 
 def main() -> None:
+    import sys
+
+    if len(sys.argv) > 1 and sys.argv[1] == "package":
+        from dimos.package.cli import main as package_main
+
+        package_main(sys.argv[2:])
+        return
     from dimos.cli.dimos import cli_main
 
     cli_main()
+
+
+if __name__ == "__main__":
+    main()
