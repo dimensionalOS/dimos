@@ -59,10 +59,6 @@ def get_assets() -> dict[str, bytes]:
     _update_assets(assets, person_dir, "*.obj")
     _update_assets(assets, person_dir, "*.png")
 
-    office_555 = get_data("mujoco_office_555")
-    _update_assets(assets, office_555 / "meshes")
-    _update_assets(assets, office_555 / "textures")
-
     return assets
 
 
@@ -72,7 +68,13 @@ def load_model(
     mujoco.set_mjcb_control(None)
 
     xml_string = get_model_xml(robot, scene_xml)
-    model = mujoco.MjModel.from_xml_string(xml_string, assets=get_assets())
+    assets = get_assets()
+    # office_555's meshes and textures (all named office_555_*), fetched only when the scene uses them
+    if 'file="office_555_' in scene_xml:
+        office_555 = get_data("mujoco_office_555")
+        _update_assets(assets, office_555 / "meshes")
+        _update_assets(assets, office_555 / "textures")
+    model = mujoco.MjModel.from_xml_string(xml_string, assets=assets)
     data = mujoco.MjData(model)
 
     mujoco.mj_resetDataKeyframe(model, data, 0)
