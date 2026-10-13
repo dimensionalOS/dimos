@@ -33,7 +33,7 @@ SIM_ENV = {
     "MUJOCOSIMMODULE__OVERVIEW_CAMERA_NAME": "overview",
     "MUJOCOSIMMODULE__OVERVIEW_FPS": "8",
 }
-THREADS = {"bottle": ["cap_thread"]}
+THREADS = {"bottle": {"cap_thread": "cap_hold"}}
 
 
 def sim_env(scene: str) -> dict[str, str]:
@@ -80,8 +80,8 @@ SUITE: Suite = [
     EvalCase(
         id="robosuite_2_open_bottle",
         inputs="Unscrew the cap of the water bottle and lift it off the bottle. " + GUIDANCE,
-        environment=environment("bottle", ("cap_main", "bottle_main")),
-        # 0.2 touched the cap + 0.4 x unscrewed + 0.4 ended 2 cm off the neck.
+        environment=environment("bottle", ("cap_main", "cap_carrier", "bottle_main")),
+        # 0.1 touched the cap + 0.5 x unscrewed + 0.3 taken off the bottle + 0.1 held 5 cm up.
         grade=cap_partial,
         threshold=1.0,
         timeout_s=3600.0,

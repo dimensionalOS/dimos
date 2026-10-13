@@ -136,24 +136,24 @@ def _imu_from_mujoco_wxyz(
 
 
 class _ThreadReleases:
-    """Switch off each thread equality once its hinge has turned to the end of its range."""
+    """Switch off a part's hold once its thread's hinge has turned to the end of its range."""
 
-    def __init__(self, model: mujoco.MjModel, names: list[str]) -> None:
-        self._threads: list[tuple[int, int, int, int]] = []
-        for name in names:
-            eq = model.equality(name).id
-            if model.eq_type[eq] != mujoco.mjtEq.mjEQ_JOINT or model.eq_obj2id[eq] < 0:
-                raise ValueError(f"Thread {name!r} must be a joint equality between two joints")
-            slide, hinge = int(model.eq_obj1id[eq]), int(model.eq_obj2id[eq])
-            self._threads.append((eq, slide, hinge, int(model.jnt_qposadr[hinge])))
+    def __init__(self, model: mujoco.MjModel, holds: dict[str, str]) -> None:
+        self._threads: list[tuple[int, int, int]] = []
+        for thread_name, hold_name in holds.items():
+            thread, hold = model.equality(thread_name).id, model.equality(hold_name).id
+            if model.eq_type[thread] != mujoco.mjtEq.mjEQ_JOINT or model.eq_obj2id[thread] < 0:
+                raise ValueError(
+                    f"Thread {thread_name!r} must be a joint equality between two joints"
+                )
+            hinge = int(model.eq_obj2id[thread])
+            self._threads.append((hold, hinge, int(model.jnt_qposadr[hinge])))
 
     def __call__(self, model: mujoco.MjModel, data: mujoco.MjData) -> None:
-        for eq, slide, hinge, hinge_adr in self._threads:
-            if data.eq_active[eq] and data.qpos[hinge_adr] >= model.jnt_range[hinge][1] - 1e-3:
-                data.eq_active[eq] = 0
-                # Rest at the unthreaded height instead of dropping back down the slide.
-                model.jnt_range[slide][0] = data.qpos[model.jnt_qposadr[slide]]
-                logger.info("MujocoSimModule: thread released", equality=model.equality(eq).name)
+        for hold, hinge, hinge_adr in self._threads:
+            if data.eq_active[hold] and data.qpos[hinge_adr] >= model.jnt_range[hinge][1] - 1e-3:
+                data.eq_active[hold] = 0
+                logger.info("MujocoSimModule: thread released", equality=model.equality(hold).name)
 
 
 class _WholeBodySimHooks:
@@ -296,10 +296,11 @@ class MujocoSimModuleConfig(ModuleConfig, DepthCameraConfig):
     camera_info_fps: float = 1.0
     overview_camera_name: str | None = None
     overview_fps: float = Field(default=5.0, gt=0, allow_inf_nan=False)
-    # Screw threads to release: joint equalities that tie a slide (joint1) to a hinge (joint2).
-    # Once the hinge reaches the top of its range the equality is switched off, so the part
-    # (a bottle cap) rests where it is and can be pulled off along the slide.
-    thread_releases: list[str] = Field(default_factory=list)
+    # Screw threads, as {thread: hold}: the thread is a joint equality tying a slide (joint1) to a
+    # hinge (joint2), the hold an equality (a weld) fixing a free part to the threaded body. Once
+    # the hinge reaches the top of its range the hold is switched off and the part (a bottle cap)
+    # is loose.
+    thread_releases: dict[str, str] = Field(default_factory=dict)
     # Optional MuJoCo-native lidar: cast rays from one or more named cameras
     # and publish world-frame PointCloud2 points on ``pointcloud``.
     enable_mujoco_lidar: bool = False

@@ -20,12 +20,17 @@ import time
 from typing import Any
 from unittest.mock import MagicMock
 
+import mujoco
 import numpy as np
 import pytest
 
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.simulation.engines.mujoco_engine import CameraConfig, CameraFrame, MujocoEngine
-from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule, MujocoSimModuleConfig
+from dimos.simulation.engines.mujoco_sim_module import (
+    MujocoSimModule,
+    MujocoSimModuleConfig,
+    _ThreadReleases,
+)
 
 
 class _FakeData:
@@ -546,3 +551,46 @@ def test_missing_required_camera_fails_before_starting_physics(tmp_path, missing
         assert not module._engine.connected
     finally:
         module.stop()
+
+
+_SCREW_CAP = """
+<mujoco>
+  <worldbody>
+    <body name="carrier">
+      <inertial pos="0 0 0" mass="0.01" diaginertia="1e-6 1e-6 1e-6"/>
+      <joint name="lift" type="slide" axis="0 0 1" range="0 0.1"/>
+      <joint name="turn" type="hinge" axis="0 0 1" range="0 1"/>
+    </body>
+    <body name="cap" pos="0 0 0">
+      <freejoint/>
+      <geom type="box" size="0.01 0.01 0.01" mass="0.01" contype="0" conaffinity="0"/>
+    </body>
+  </worldbody>
+  <equality>
+    <joint name="thread" joint1="lift" joint2="turn" polycoef="0 0.001 0 0 0"/>
+    <weld name="hold" body1="cap" body2="carrier"/>
+  </equality>
+</mujoco>
+"""
+
+
+def test_thread_release_frees_the_held_part_at_the_end_of_the_turn():
+    model = mujoco.MjModel.from_xml_string(_SCREW_CAP)
+    data = mujoco.MjData(model)
+    release = _ThreadReleases(model, {"thread": "hold"})
+    hold, turn = model.equality("hold").id, model.joint("turn")
+    end = turn.range[1]
+
+    data.qpos[turn.qposadr[0]] = end / 2
+    release(model, data)
+    assert data.eq_active[hold]
+
+    data.qpos[turn.qposadr[0]] = end
+    release(model, data)
+    assert not data.eq_active[hold]
+
+
+def test_thread_release_needs_a_joint_equality():
+    model = mujoco.MjModel.from_xml_string(_SCREW_CAP)
+    with pytest.raises(ValueError, match="joint equality"):
+        _ThreadReleases(model, {"hold": "thread"})

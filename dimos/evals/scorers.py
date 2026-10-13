@@ -512,19 +512,24 @@ def hang_partial(outcome: Outcome) -> float:
     return float(score + 0.3 * hung_tool(outcome))
 
 
-# Bottle cap (robosuite_2): the cap turns on a thread, comes free after CAP_TURN_RAD, then lifts off.
+# Bottle cap (robosuite_2): the cap is welded to a carrier that turns on a thread; after
+# CAP_TURN_RAD the weld is released and the cap is a free body.
 CAP_TURN_RAD = math.radians(200)
 
 
 def cap_partial(outcome: Outcome) -> float:
-    """0.2 for touching the cap, 0.4 x how far it was unscrewed, 0.4 for ending 2 cm up off the neck."""
-    tracks = _tracks(outcome, ("cap_main", *GRIPPER_BODIES))
-    cap = tracks.get("cap_main")
-    if cap is None:
+    """0.1 touched the cap, 0.5 x how far it was unscrewed, 0.3 taken 2 cm off the neck,
+    0.1 ending held 5 cm above where it sat."""
+    tracks = _tracks(outcome, ("cap_main", "cap_carrier", *GRIPPER_BODIES))
+    cap, carrier = tracks.get("cap_main"), tracks.get("cap_carrier")
+    if cap is None or carrier is None:
         return 0.0
-    # Turn about the bottle's vertical axis, unwrapped over the run (the cap turns slowly).
-    yaw = np.unwrap(np.arctan2(cap.rot[:, 1, 0], cap.rot[:, 0, 0]))
+    # The carrier only turns about the bottle's vertical axis (the cap itself tumbles once free).
+    yaw = np.unwrap(np.arctan2(carrier.rot[:, 1, 0], carrier.rot[:, 0, 0]))
     turned = float((yaw - yaw[0]).max())
     touched = turned > 0.05 or cap.moved() > 0.002 or _came_within(tracks, "cap_main", 0.04)
-    off = cap.final[2] - cap.rest[2] >= 0.02
-    return float(0.2 * touched + 0.4 * min(max(turned / CAP_TURN_RAD, 0.0), 1.0) + 0.4 * off)
+    off = cap.moved() >= 0.02
+    held_up = cap.final[2] - cap.rest[2] >= 0.05
+    return float(
+        0.1 * touched + 0.5 * min(max(turned / CAP_TURN_RAD, 0.0), 1.0) + 0.3 * off + 0.1 * held_up
+    )
