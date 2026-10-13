@@ -33,7 +33,9 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Path import Path as PathMsg
 from dimos.msgs.sim_msgs.Contacts import Contact, Contacts
 from dimos.msgs.std_msgs.Bool import Bool
+from dimos.navigation.bench.ground_truth import GO2
 from dimos.navigation.bench.suite import Point, Rules
+from dimos.simulation.scenes.procedural import Scene
 
 Outcome = Literal[
     "success",
@@ -209,6 +211,9 @@ class Score:
     first_contact: str | None = None
     first_contact_s: float | None = None
     first_contact_speed: float | None = None
+    margin_m: float | None = None
+    margin_s: float | None = None
+    final_margin_m: float | None = None
     missing: list[str] = field(default_factory=list)
 
 
@@ -219,11 +224,13 @@ def score(
     route_length: float | None = None,
     feature: tuple[float, float] | None = None,
     verdict: str | None = None,
+    scene: Scene | None = None,
 ) -> Score:
     """Score the episode in the recording that drives to the goal.
 
     With a feature, also the closest the body's center came to it.
     With the driver's verdict, a recording that shows no outcome takes it.
+    With the scene, also the body's margin to a wall or clutter, at its smallest and at the end.
     """
     if recording.pose is None:
         raise ValueError("a recording needs ground_truth to be scored")
@@ -260,6 +267,8 @@ def score(
     if route_length is not None:
         spl = (route_length / max(route_length, traveled)) if outcome == "success" else 0.0
     signatures = _signatures(_Episode(outcome, recording.local_paths, t0, t1))
+    margins = _margins(pose, scene) if scene is not None else None
+    closest = int(np.argmin(margins)) if margins is not None else None
     return Score(
         outcome=outcome,
         signature=signatures[0] if signatures else None,
@@ -291,6 +300,9 @@ def score(
         first_contact=_name(touched[1]) if touched else None,
         first_contact_s=touched[0] - t0 if touched else None,
         first_contact_speed=_speed(recording.pose, touched[0]) if touched else None,
+        margin_m=float(margins[closest]) if margins is not None else None,
+        margin_s=float(pose.t[closest] - t0) if closest is not None else None,
+        final_margin_m=float(margins[-1]) if margins is not None else None,
         missing=missing,
     )
 
@@ -437,6 +449,22 @@ def _speed(pose: Poses, t: float) -> float | None:
         return None
     steps = np.linalg.norm(np.diff(span.xyz[:, :2], axis=0), axis=1)
     return float(steps.sum() / (span.t[-1] - span.t[0]))
+
+
+def _margins(pose: Poses, scene: Scene) -> NDArray[np.float64] | None:
+    """Per pose, the horizontal gap from the body to the nearest wall or clutter box at its height."""
+    boxes = [box for box in scene.boxes if box.kind in COLLIDING_KINDS]
+    if not boxes:
+        return None
+    center, half = np.array([b.center for b in boxes]), np.array([b.half for b in boxes])
+    outside = np.maximum(np.abs(pose.xyz[:, None, :2] - center[:, :2]) - half[:, :2], 0.0)
+    foot = pose.xyz[:, None, 2] - GO2.stand
+    level = (center[:, 2] + half[:, 2] > foot) & (center[:, 2] - half[:, 2] < foot + GO2.height)
+    gap = np.where(level, np.hypot(outside[..., 0], outside[..., 1]), np.inf).min(axis=1)
+    if not np.isfinite(gap).all():
+        return None
+    margins: NDArray[np.float64] = gap - GO2.radius
+    return margins
 
 
 def _fell(pose: Poses, collisions: _Collisions | None, rules: Rules) -> bool:

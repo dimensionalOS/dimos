@@ -20,6 +20,7 @@ import numpy as np
 import pytest
 
 from dimos.msgs.sim_msgs.Contacts import Contact
+from dimos.navigation.bench.ground_truth import GO2
 from dimos.navigation.bench.scorer import (
     Commands,
     ContactSample,
@@ -31,6 +32,7 @@ from dimos.navigation.bench.scorer import (
     score,
 )
 from dimos.navigation.bench.suite import Rules
+from dimos.simulation.scenes.procedural import room
 
 RULES = Rules()
 START = np.array([1.0, 1.0, 0.3])
@@ -187,3 +189,26 @@ def test_every_failure_has_an_outcome_and_a_signature() -> None:
     late = replace(_walk(60.0, arrive=False, goal=far), arrivals=[T0 + 55.0])
     s = score(late, RULES, far, route_length=4.0)
     assert s.signature == "out_of_time" and s.window == (T0, T0 + RULES.timeout_s(4.0))
+
+
+def test_margin_is_the_gap_to_the_nearest_obstacle_at_body_height() -> None:
+    assert score(_walk(10.0), RULES, GOAL).margin_m is None
+    scene = room(1, width=8.0, length=6.0)
+    z0 = scene.start[2]
+    open_floor = score(_walk(10.0), RULES, GOAL, scene=scene)
+    assert open_floor.margin_m == pytest.approx(1.0 - GO2.radius)
+    assert open_floor.margin_s == 0.0
+    assert open_floor.final_margin_m == pytest.approx(1.0 - GO2.radius, abs=0.02)
+    pose = _walk(10.0).pose
+    by_wall = replace(_walk(10.0), pose=replace(pose, xyz=pose.xyz - [0.0, 0.8, 0.0]))
+    assert score(by_wall, RULES, GOAL, scene=scene).margin_m == pytest.approx(0.2 - GO2.radius)
+    scene.add((3.0, 1.3, z0), (3.3, 1.6, z0 + 0.1), "clutter")
+    scene.add((2.0, 0.5, z0 + 0.7), (2.5, 1.5, z0 + 0.8), "clutter")
+    past_a_block = score(_walk(10.0), RULES, GOAL, scene=scene)
+    assert past_a_block.margin_m == pytest.approx(0.3 - GO2.radius)
+    assert past_a_block.margin_s == pytest.approx(5.0, abs=0.05)
+    scene.add((4.0, 0.5, z0 + 0.5), (4.5, 1.5, z0 + 0.55), "clutter")
+    under_a_slab = score(_walk(10.0), RULES, GOAL, scene=scene)
+    assert under_a_slab.margin_m == pytest.approx(-GO2.radius)
+    assert under_a_slab.margin_s == pytest.approx(7.0, abs=0.05)
+    assert under_a_slab.final_margin_m == pytest.approx(0.5 - GO2.radius, abs=0.02)
