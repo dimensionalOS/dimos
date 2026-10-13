@@ -122,7 +122,7 @@ code { font-size: 12px; }
 <thead><tr><th>case</th><th>stressor</th><th>outcome</th><th>signature</th><th class="n">SPL</th><th class="n">time s</th><th class="n">bottleneck m</th><th class="n">final error m</th><th class="n">collisions</th>{% if controlled %}<th class="n">nearest to feature m</th>{% endif %}<th>terminal</th><th>replay</th></tr></thead>
 <tbody>
 {% for row in report.rows %}
-<tr><td>{{ row.case.id }}</td><td>{{ row.case.tag }}</td><td>{{ row.outcome }}</td><td>{{ row.signature or "" }}</td>
+<tr><td>{{ row.case.id }}</td><td>{{ row.case.tag }}</td><td>{{ row.outcome }}</td><td>{{ row.signatures | join(", ") }}</td>
 <td class="n">{{ "%.2f" | format(row.spl) if row.spl is not none }}</td>
 <td class="n">{{ "%.0f" | format(row.arrived_s) if row.arrived_s is not none }}</td>
 <td class="n">{{ "%.2f" | format(row.case.difficulty.min_clearance) }}</td>

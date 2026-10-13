@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Literal, TypeVar, cast, get_args
@@ -182,6 +183,7 @@ class Score:
 
     outcome: Outcome
     signature: Signature | None
+    signatures: list[Signature]
     window: tuple[float, float]
     arrived_s: float | None
     traveled_m: float | None
@@ -257,9 +259,11 @@ def score(
     spl = None
     if route_length is not None:
         spl = (route_length / max(route_length, traveled)) if outcome == "success" else 0.0
+    signatures = _signatures(_Episode(outcome, recording.local_paths, t0, t1))
     return Score(
         outcome=outcome,
-        signature=_signature(outcome, recording.local_paths, t0, t1),
+        signature=signatures[0] if signatures else None,
+        signatures=signatures,
         window=(t0, t1),
         arrived_s=arrival - t0 if arrival is not None else None,
         traveled_m=traveled,
@@ -305,26 +309,48 @@ def _path_samples(observations: list[Observation[PathMsg]] | None) -> list[PathS
     ]
 
 
-def _signature(
-    outcome: Outcome, local_paths: list[PathSample] | None, t0: float, t1: float
-) -> Signature | None:
-    """Which link of the chain gave up first, for a failed episode."""
-    if outcome in ("success", "reached_with_collision"):
-        return None
-    if outcome == "fall":
-        return "body_fell"
-    if outcome in ("unclaimed", "wrong_place", "wrong_floor"):
-        return "arrival_mismatch"
-    if outcome == "no_plan":
-        return "planner_empty"
-    if outcome == "stuck":
-        return "commanded_no_progress"
-    if outcome == "timeout":
-        return "out_of_time"
-    last = [p for p in local_paths or [] if t0 <= p.t <= t1]
-    if not last:
-        return None
-    return "local_refused" if len(last[-1].points) <= 1 else "follower_zeroed"
+@dataclass(frozen=True)
+class _Episode:
+    """What a signature check sees of a scored episode."""
+
+    outcome: Outcome
+    local_paths: list[PathSample] | None
+    t0: float
+    t1: float
+
+
+def _last_local_path(episode: _Episode) -> int | None:
+    """The number of poses in the last local path of the episode, or None without one."""
+    inside = [p for p in episode.local_paths or [] if episode.t0 <= p.t <= episode.t1]
+    return len(inside[-1].points) if inside else None
+
+
+def _local_refused(episode: _Episode) -> bool:
+    poses = _last_local_path(episode)
+    return episode.outcome == "stalled" and poses is not None and poses <= 1
+
+
+def _follower_zeroed(episode: _Episode) -> bool:
+    poses = _last_local_path(episode)
+    return episode.outcome == "stalled" and poses is not None and poses > 1
+
+
+CHECKS: tuple[tuple[Signature, Callable[[_Episode], bool]], ...] = (
+    ("body_fell", lambda e: e.outcome == "fall"),
+    ("arrival_mismatch", lambda e: e.outcome in ("unclaimed", "wrong_place", "wrong_floor")),
+    ("planner_empty", lambda e: e.outcome == "no_plan"),
+    ("commanded_no_progress", lambda e: e.outcome == "stuck"),
+    ("out_of_time", lambda e: e.outcome == "timeout"),
+    ("local_refused", _local_refused),
+    ("follower_zeroed", _follower_zeroed),
+)
+
+
+def _signatures(episode: _Episode) -> list[Signature]:
+    """Every check that applies to a failed episode, the primary cause first."""
+    if episode.outcome in ("success", "reached_with_collision"):
+        return []
+    return [name for name, applies in CHECKS if applies(episode)]
 
 
 def _episode_start(recording: Recording, goal: Point) -> float:

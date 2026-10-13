@@ -71,7 +71,7 @@ def test_a_clean_arrival_is_a_success_with_full_metrics() -> None:
     assert s.feature_m is None
     beside = score(_walk(10.0), RULES, GOAL, feature=((START[0] + GOAL[0]) / 2, START[1] + 0.3))
     assert beside.feature_m == pytest.approx(0.3, abs=0.02)
-    assert s.outcome == "success" and s.signature is None
+    assert s.outcome == "success" and s.signature is None and s.signatures == []
     assert s.window == (T0, T0 + 9.9) and s.arrived_s == pytest.approx(9.9)
     assert s.traveled_m == pytest.approx(4.0, abs=0.05) and s.spl == pytest.approx(1.0, abs=0.02)
     assert s.final_error_xy < 0.05 and s.final_xy == pytest.approx((5.0, 1.0), abs=0.05)
@@ -175,6 +175,7 @@ def test_every_failure_has_an_outcome_and_a_signature() -> None:
     assert score(stalled, RULES, GOAL).outcome == "stalled"
     refused = replace(stalled, local_paths=[PathSample(T0 + 20.0, np.array([START]))])
     assert score(refused, RULES, GOAL).signature == "local_refused"
+    assert score(refused, RULES, GOAL).signatures == ["local_refused"]
     followed = replace(stalled, local_paths=[PathSample(T0 + 20.0, np.array([START, [*GOAL]]))])
     assert score(followed, RULES, GOAL).signature == "follower_zeroed"
     empty = replace(

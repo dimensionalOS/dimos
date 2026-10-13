@@ -53,6 +53,7 @@ class Row:
     episode: Path
     outcome: str
     signature: str | None
+    signatures: tuple[str, ...]
     terminal: str | None
     spl: float | None
     arrived_s: float | None
@@ -220,6 +221,7 @@ def _row(case: Case, record: dict[str, object], episode: Path) -> Row:
         episode=episode,
         outcome=str(record["outcome"]),
         signature=_text(metrics.get("signature")),
+        signatures=tuple(metrics.get("signatures") or ()),
         terminal=_text(record.get("terminal")),
         spl=_float(metrics.get("spl")),
         arrived_s=_float(metrics.get("arrived_s")),
