@@ -39,7 +39,6 @@ OUTCOMES: tuple[str, ...] = get_args(Outcome)
 STRIP_M = 1.0
 STRIP_TICK_M = 0.25
 STRIP_PX = 240
-THRESHOLDS = (0.5, 0.9)
 CURVE_PX = (480, 180)
 CURVE_PAD_PX = 44
 
@@ -263,29 +262,6 @@ def by_level(report: Report) -> list[LevelRow]:
     return levels
 
 
-def crossing(levels: list[LevelRow], rate: float) -> float | None:
-    """The level from which the success rate stays at or above the rate, interpolated between levels.
-
-    The lowest level when every level is there, and None when the highest is not.
-    """
-    short = [i for i, row in enumerate(levels) if row.rate < rate]
-    if not short:
-        return levels[0].value
-    if short[-1] == len(levels) - 1:
-        return None
-    below, above = levels[short[-1]], levels[short[-1] + 1]
-    return below.value + (above.value - below.value) * (rate - below.rate) / (
-        above.rate - below.rate
-    )
-
-
-def _reached(levels: list[LevelRow], rate: float) -> str:
-    at = crossing(levels, rate)
-    if at is None:
-        return f"never reaches {rate:.0%}"
-    return f"{rate:.0%} at {at:.2f} m" + (" or lower" if at == levels[0].value else "")
-
-
 def _curve_y(rate: float) -> int:
     return round(CURVE_PAD_PX / 2 + (1 - rate) * (CURVE_PX[1] - CURVE_PAD_PX))
 
@@ -314,18 +290,15 @@ def render(report: Report) -> str:
     spls = [r.spl for r in report.successes if r.spl is not None]
     spl = f", median SPL of successes {median(spls):.2f}" if spls else ""
     levels = by_level(report)
-    edge, curve = "", []
-    if levels:
-        edge = ". Success rate " + ", ".join(_reached(levels, rate) for rate in THRESHOLDS)
-        curve = _curve(levels)
     seeds = encountered(report)
+    met = ""
     if seeds is not None:
-        edge += f". Feature encountered in {len(seeds)} of {len(controls(report))} control runs"
+        met = f". Feature encountered in {len(seeds)} of {len(controls(report))} control runs"
     env = Environment(loader=FileSystemLoader(Path(__file__).parent), autoescape=True)
     env.filters["quote"] = shlex.quote
     return env.get_template(TEMPLATE_FILE).render(
         title=f"nav-bench {report.suite}",
-        verdict=f"{len(report.successes)} of {len(report.rows)} episodes succeeded{spl}{edge}",
+        verdict=f"{len(report.successes)} of {len(report.rows)} episodes succeeded{spl}{met}",
         wall=f"{(run.time - run.started) / 60:.1f} min" if run.started is not None else "unknown",
         finished_at=time.strftime("%Y-%m-%d %H:%M", time.localtime(run.time)),
         report=report,
@@ -337,9 +310,9 @@ def render(report: Report) -> str:
         variable=next((r.case.level.variable for r in report.rows if r.case.level), ""),
         levels=levels,
         controlled=seeds is not None,
-        curve=curve,
+        curve=_curve(levels) if levels else [],
         curve_px=CURVE_PX,
-        curve_grid=[(f"{rate:.0%}", _curve_y(rate)) for rate in (0.0, *THRESHOLDS, 1.0)],
+        curve_grid=[(f"{rate:.0%}", _curve_y(rate)) for rate in (0.0, 0.5, 1.0)],
         strip_m=STRIP_M,
         strip_px=STRIP_PX,
         strip_ticks=[_strip_x(k * STRIP_TICK_M) for k in range(int(STRIP_M / STRIP_TICK_M) + 1)],
