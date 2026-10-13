@@ -28,6 +28,7 @@ from dimos.navigation.bench.suite import (
     LEG_WIDTH,
     MINED,
     NARROW_DOOR_M,
+    OVERHANG,
     SIDE_WALL_M,
     FreezeConfig,
     Level,
@@ -171,4 +172,21 @@ def test_block_height_probe_aims_the_direct_line_through_the_block() -> None:
         assert abs(float(along[0] * (at - start)[1] - along[1] * (at - start)[0])) < 1e-9
         assert 2.3 <= float(np.dot(along, goal - at)) <= 3.0
     assert len({(c.start, c.goal) for c in manifest.cases if c.seed == 1}) == 1
+    manifest.check_drift()
+
+
+def test_overhang_probe_aims_the_direct_line_under_the_slab() -> None:
+    probe = replace(OVERHANG, seeds=(1, 2))
+    manifest = freeze_probe(probe)
+    assert len(manifest.cases) == 2 * (len(probe.levels) + 1)
+    for case in manifest.cases:
+        assert case.level is not None and case.params == {"clearance": case.level.value}
+        scene = case.scene()
+        assert len([b for b in scene.boxes if b.kind == "clutter"]) == (
+            0 if case.level.control else 5
+        )
+        assert case.feature == (scene.params["slab_x"], scene.params["slab_y"])
+        start, goal, at = (np.array(p[:2]) for p in (case.start, case.goal, case.feature))
+        along = (goal - start) / np.linalg.norm(goal - start)
+        assert abs(float(along[0] * (at - start)[1] - along[1] * (at - start)[0])) < 1e-9
     manifest.check_drift()

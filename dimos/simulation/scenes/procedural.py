@@ -30,7 +30,7 @@ from dimos.msgs.sim_msgs.Contacts import Kind
 
 Vec3 = tuple[float, float, float]
 Rect = tuple[float, float, float, float]
-Family = Literal["office", "room", "doorway", "table", "block"]
+Family = Literal["office", "room", "doorway", "table", "block", "overhang"]
 
 SLAB_THICKNESS = 0.15
 WALL_THICKNESS = 0.1
@@ -42,6 +42,8 @@ TABLE_LEG = 0.04
 TABLE_SIZE = (1.4, 0.8)
 TABLE_HEIGHT = 0.75
 BLOCK_SIZE = 0.3
+OVERHANG_SIZE = (0.6, 2.0)
+OVERHANG_LEG = 0.1
 START_CLEARANCE = 1.0
 DOOR_CLEARANCE = 0.8
 DOOR_SIDE_MARGIN = 0.3
@@ -365,6 +367,25 @@ def block(seed: int, block_height: float | None = None) -> Scene:
     return scene
 
 
+def overhang(seed: int, clearance: float | None = None) -> Scene:
+    """One empty room with a long slab on four posts across the open floor, its underside at the clearance."""
+    rng = np.random.default_rng(seed)
+    width, length = _uniform(rng, 10, 12), _uniform(rng, 8, 10)
+    z0 = _uniform(rng, 0.0, 0.08)
+    x, y = _uniform(rng, 0.35, 0.45) * width, _uniform(rng, 0.35, 0.5) * length
+    clearance = _given(_uniform(rng, 0.3, 0.9), clearance)
+    scene = Scene(
+        f"overhang_{seed}", {"width": width, "length": length, "z0": z0, "slab_x": x, "slab_y": y}
+    )
+    _shell(scene, width, length, z0)
+    if clearance > 0:
+        lx, ly = OVERHANG_SIZE
+        top = z0 + clearance + TABLE_TOP_THICKNESS
+        _table_at(scene, x - lx / 2, y - ly / 2, lx, ly, z0, top, OVERHANG_LEG)
+    scene.start = (1.0, 1.0, z0)
+    return scene
+
+
 Params = dict[str, bool | int | float]
 FAMILIES: dict[Family, Callable[..., Scene]] = {
     "office": office,
@@ -372,6 +393,7 @@ FAMILIES: dict[Family, Callable[..., Scene]] = {
     "doorway": doorway,
     "table": table,
     "block": block,
+    "overhang": overhang,
 }
 
 

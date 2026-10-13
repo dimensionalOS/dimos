@@ -566,6 +566,22 @@ LEG_WIDTH = Probe(
     scene_param="leg_width",
     control=0.0,
 )
+
+
+def under_the_slab(gt: GroundTruth, clearance: float, rng: np.random.Generator) -> Placed:
+    """A goal straight past the slab's center, so the direct line runs under it."""
+    return _straight_past(gt.scene, gt.scene.params["slab_x"], gt.scene.params["slab_y"], rng)
+
+
+OVERHANG = Probe(
+    "overhang_clearance",
+    "overhang",
+    "overhang_clearance",
+    (0.30, 0.36, 0.40, 0.44, 0.48, 0.52, 0.56, 0.64, 0.80),
+    under_the_slab,
+    scene_param="clearance",
+    control=0.0,
+)
 BLOCK_HEIGHT = Probe(
     "block_height",
     "block",
@@ -575,7 +591,9 @@ BLOCK_HEIGHT = Probe(
     scene_param="block_height",
     control=0.0,
 )
-PROBES = {probe.name: probe for probe in (GOAL_CLEARANCE, DOORWAY, LEG_WIDTH, BLOCK_HEIGHT)}
+PROBES = {
+    probe.name: probe for probe in (GOAL_CLEARANCE, DOORWAY, LEG_WIDTH, BLOCK_HEIGHT, OVERHANG)
+}
 
 
 def freeze_probe(probe: Probe, sampling_seed: int = 0, rules: Rules = Rules()) -> Manifest:

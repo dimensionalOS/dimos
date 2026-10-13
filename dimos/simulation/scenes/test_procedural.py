@@ -24,6 +24,8 @@ from dimos.simulation.scenes.procedural import (
     BLOCK_SIZE,
     DOOR_HEIGHT,
     DOOR_WIDTH,
+    OVERHANG_LEG,
+    OVERHANG_SIZE,
     SLAB_THICKNESS,
     START_CLEARANCE,
     TABLE_HEIGHT,
@@ -37,6 +39,7 @@ from dimos.simulation.scenes.procedural import (
     doorway,
     generate,
     office,
+    overhang,
     room,
     table,
 )
@@ -245,3 +248,34 @@ def test_block_height_is_drawn_unless_given_and_zero_removes_it() -> None:
     bare = block(3, block_height=0.0)
     assert not [b for b in bare.boxes if b.kind == "clutter"]
     assert bare.params == block(3).params
+
+
+def test_overhang_is_deterministic_and_pinned() -> None:
+    assert overhang(3).digest() == overhang(3).digest() == "452ccec8edfe8ec0"
+    assert overhang(3).digest() != overhang(4).digest()
+
+
+def test_overhang_is_a_slab_on_posts_with_its_underside_at_the_clearance() -> None:
+    for seed in range(1, 21):
+        scene = overhang(seed, clearance=0.5)
+        z0, x, y = (scene.params[k] for k in ("z0", "slab_x", "slab_y"))
+        slab, *posts = [b for b in scene.boxes if b.kind == "clutter"]
+        assert slab.center[:2] == pytest.approx((x, y))
+        assert (2 * slab.half[0], 2 * slab.half[1]) == pytest.approx(OVERHANG_SIZE)
+        assert slab.center[2] - slab.half[2] == pytest.approx(z0 + 0.5)
+        assert len(posts) == 4
+        for post in posts:
+            assert post.half[:2] == pytest.approx((OVERHANG_LEG / 2, OVERHANG_LEG / 2))
+            assert post.center[2] + post.half[2] == pytest.approx(z0 + 0.5)
+        assert (
+            2.0 < y - OVERHANG_SIZE[1] / 2
+            and y + OVERHANG_SIZE[1] / 2 < scene.params["length"] - 2.0
+        )
+
+
+def test_overhang_clearance_is_drawn_unless_given_and_zero_removes_it() -> None:
+    slab = next(b for b in overhang(3).boxes if b.kind == "clutter")
+    assert 0.3 <= slab.center[2] - slab.half[2] - overhang(3).params["z0"] <= 0.9
+    bare = overhang(3, clearance=0.0)
+    assert not [b for b in bare.boxes if b.kind == "clutter"]
+    assert bare.params == overhang(3).params
