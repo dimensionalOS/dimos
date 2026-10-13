@@ -100,7 +100,7 @@ dimos/
 │   ├── module.py            # Module base class, In/Out streams
 │   ├── core.py              # @rpc decorator
 │   ├── stream.py            # In[T], Out[T], Transport[T]
-│   ├── transport.py         # LCM/SHM/ROS/DDS/Jpeg transports
+│   ├── transport.py         # Zenoh/LCM/ROS/DDS/Jpeg transports
 │   ├── coordination/
 │   │   ├── blueprints.py           # Blueprint, autoconnect()
 │   │   ├── module_coordinator.py   # Deploy + lifecycle orchestration
@@ -198,8 +198,9 @@ Singleton config. Values cascade: defaults → `.env` → env vars → blueprint
 
 ### Transports
 
-- **LCMTransport**: Default. Multicast UDP.
-- **SHMTransport/pSHMTransport**: Shared memory — use for images and point clouds.
+- **ZenohTransport**: Default. Typed messages with LCM encoding over Zenoh.
+- **pZenohTransport**: Pickled Zenoh — use for complex Python objects.
+- **LCMTransport**: Opt-in legacy backend. Multicast UDP.
 - **pLCMTransport**: Pickled LCM — use for complex Python objects.
 - **ROSTransport**: ROS topic bridge — interop with ROS nodes (`dimos/core/transport.py`).
 - **DDSTransport**: DDS pub/sub. `DDS_AVAILABLE` reports whether cyclonedds is installed, and cyclonedds is imported only when a `DDSTransport` is constructed. Install with `uv sync --extra dds --inexact` (`dimos/protocol/pubsub/impl/ddspubsub.py`).
