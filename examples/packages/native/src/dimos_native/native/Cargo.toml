@@ -1,0 +1,15 @@
+[package]
+name = "lazy_native_probes"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[[bin]]
+name = "package_probe"
+path = "src/bin/probe.rs"
+
+[[bin]]
+name = "package_other"
+path = "src/bin/other.rs"
