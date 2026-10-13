@@ -530,6 +530,6 @@ def cap_partial(outcome: Outcome) -> float:
     touched = turned > 0.05 or cap.moved() > 0.002 or _came_within(tracks, "cap_main", 0.04)
     off = cap.moved() >= 0.02
     held_up = cap.final[2] - cap.rest[2] >= 0.05
-    return float(
-        0.1 * touched + 0.5 * min(max(turned / CAP_TURN_RAD, 0.0), 1.0) + 0.3 * off + 0.1 * held_up
-    )
+    turn = min(max(turned / CAP_TURN_RAD, 0.0), 1.0)
+    score = 0.1 * touched + 0.5 * turn + 0.3 * off + 0.1 * held_up
+    return round(float(score), 6)  # 0.1 + 0.5 + 0.3 + 0.1 sums to 0.9999999999999999

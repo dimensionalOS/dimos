@@ -79,6 +79,20 @@ xarm_perception_sim = autoconnect(
 )
 
 
+def _xarm7_sim_twist_task(base_pose: PoseStamped | None = None) -> TaskConfig:
+    """End-effector twist control for the raw robot interface."""
+    return eef_twist_task(
+        _xarm7_sim_hw,
+        robot_model=make_xarm7_sim_robot_config(base_pose=base_pose),
+        target_frame="link_tcp",
+        max_joint_velocity_rad_s=0.5,
+        # The MJCF leaves joints 1/3/5/7 unbounded while the IK model stops them at +-3.11 rad;
+        # a wrist pushed a millirad past that by contact or overshoot would otherwise make the
+        # task drop every command and freeze the arm for good.
+        feedback_limit_tolerance=0.02,
+    )
+
+
 def _xarm_sim(base_pose: PoseStamped | None = None) -> Blueprint:
     """Robot-only stack: control and sensors, exposed as plain Zenoh topics for agents without
     dimOS. ``base_pose`` is where the scene mounts ``link_base``; the eef_twist IK and the
@@ -93,12 +107,7 @@ def _xarm_sim(base_pose: PoseStamped | None = None) -> Blueprint:
         coordinator(
             hardware=[_xarm7_sim_hw],
             tasks=[
-                eef_twist_task(
-                    _xarm7_sim_hw,
-                    robot_model=make_xarm7_sim_robot_config(base_pose=base_pose),
-                    target_frame="link_tcp",
-                    max_joint_velocity_rad_s=0.5,
-                ),
+                _xarm7_sim_twist_task(base_pose),
                 TaskConfig(
                     name="arm_gripper",
                     type="gripper",
