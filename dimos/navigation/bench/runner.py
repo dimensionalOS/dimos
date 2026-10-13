@@ -34,7 +34,7 @@ import time
 
 import numpy as np
 
-from dimos.constants import STATE_DIR
+from dimos.constants import DIMOS_PROJECT_ROOT, STATE_DIR
 from dimos.navigation.bench.driver import HARNESS_REASONS, TERMINAL_FILE
 from dimos.navigation.bench.scorer import Outcome, Recording, score
 from dimos.navigation.bench.suite import Case, Manifest, Split
@@ -148,7 +148,8 @@ def run(config: RunConfig, report: Report | None = None) -> Path:
     episodes = [Episode(case, run_dir / case.id) for case in cases]
     manifest.save(run_dir / SUITE_FILE)
     started = time.time()
-    _write_run(run_dir, config, len(episodes), started, ended=None)
+    provenance = _provenance(DIMOS_PROJECT_ROOT)
+    _write_run(run_dir, config, len(episodes), started, provenance, ended=None)
     results = run_dir / RESULTS_FILE
     lock = threading.Lock()
     running: list[str] = []
@@ -216,10 +217,12 @@ def run(config: RunConfig, report: Report | None = None) -> Path:
             stop_all()
             time.sleep(POLL_S)
         pool.shutdown()
-        _write_run(run_dir, config, len(episodes), started, ended=time.time())
+        _write_run(run_dir, config, len(episodes), started, provenance, ended=time.time())
         raise
     pool.shutdown()
-    _write_run(run_dir, config, len(episodes), started, ended=time.time(), finished=True)
+    _write_run(
+        run_dir, config, len(episodes), started, provenance, ended=time.time(), finished=True
+    )
     return run_dir
 
 
@@ -264,11 +267,28 @@ def rescore(run_dir: Path) -> Path:
     return results
 
 
+def _provenance(root: Path) -> dict[str, str | bool | None]:
+    """The commit the checkout at root is on and whether it has uncommitted changes."""
+    if not (root / ".git").exists():
+        return {"commit": None, "dirty": None}
+    try:
+        commit, status = (
+            subprocess.run(
+                ["git", "-C", str(root), *args], capture_output=True, text=True, check=True
+            ).stdout.strip()
+            for args in (("rev-parse", "HEAD"), ("status", "--porcelain"))
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return {"commit": None, "dirty": None}
+    return {"commit": commit, "dirty": bool(status)}
+
+
 def _write_run(
     run_dir: Path,
     config: RunConfig,
     episodes: int,
     started: float,
+    provenance: dict[str, str | bool | None],
     ended: float | None,
     finished: bool = False,
 ) -> None:
@@ -283,6 +303,7 @@ def _write_run(
         "finished": finished,
         "started": started,
         "time": ended,
+        **provenance,
     }
     (run_dir / RUN_FILE).write_text(json.dumps(record, indent=2) + "\n")
 

@@ -107,6 +107,16 @@ def test_an_interrupted_run_keeps_the_stop_time_it_recorded(tmp_path: Path) -> N
     assert load(killed).run.time == 600.0
 
 
+def test_a_run_carries_its_commit_and_one_recorded_before_that_has_none(tmp_path: Path) -> None:
+    case = _case("mined-s1-a", "mined", 0.8)
+    old, new = tmp_path / "old", tmp_path / "new"
+    _run(old, [case], [_result(case, "success")])
+    _run(new, [case], [_result(case, "success")], commit="abc123", dirty=True)
+    assert (load(old).run.commit, load(old).run.dirty) == (None, None)
+    assert (load(new).run.commit, load(new).run.dirty) == ("abc123", True)
+    assert render([load(old)]) and render([load(new)])
+
+
 def test_report_tallies_outcomes_by_stressor_and_signature(tmp_path: Path) -> None:
     cases = [
         _case("mined-s1-a", "mined", 0.8),

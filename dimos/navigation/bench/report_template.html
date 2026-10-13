@@ -50,6 +50,7 @@ code { font-size: 12px; }
 <dt>split</dt><dd>{{ run.split or "all" }}</dd>
 <dt>blueprint</dt><dd>{{ run.blueprint }}</dd>
 <dt>policy</dt><dd>{{ run.policy or "default" }}</dd>
+<dt>commit</dt><dd>{{ run.commit or "unknown" }}{% if run.dirty %}, dirty{% endif %}</dd>
 <dt>overrides</dt><dd>{{ run.overrides | join(" ") or "none" }}</dd>
 <dt>episodes</dt><dd>{{ (report.rows | length) + (report.invalid | length) }} of {{ run.episodes }}, {% if not run.finished %}not {% endif %}finished{% if report.invalid %}, {{ report.invalid | length }} invalid and not counted{% endif %}</dd>
 <dt>wall time</dt><dd>{{ wall }}</dd>

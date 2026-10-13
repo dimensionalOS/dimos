@@ -86,6 +86,8 @@ class Run:
     finished: bool
     time: float
     started: float | None = None
+    commit: str | None = None
+    dirty: bool | None = None
 
 
 _RUN = TypeAdapter(Run)

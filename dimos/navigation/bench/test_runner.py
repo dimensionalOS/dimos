@@ -38,6 +38,7 @@ from dimos.navigation.bench.runner import (
     SCORE_FILE,
     Progress,
     RunConfig,
+    _provenance,
     _require_whole,
     _until_verdict,
     rescore,
@@ -134,7 +135,39 @@ def _alive(pid: int) -> bool:
     return bool(state.stdout.strip()) and not state.stdout.strip().startswith("Z")
 
 
-def test_run_scores_every_episode_and_rescores_the_same(suite: Path, tmp_path: Path) -> None:
+def _git(root: Path, *args: str) -> str:
+    identity = ("-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false")
+    done = subprocess.run(
+        ["git", "-C", str(root), *identity, *args], capture_output=True, text=True, check=True
+    )
+    return done.stdout.strip()
+
+
+@pytest.fixture
+def checkout(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    root = tmp_path / "checkout"
+    root.mkdir()
+    _git(root, "init", "-q")
+    _git(root, "commit", "-q", "--allow-empty", "--no-verify", "-m", "first")
+    monkeypatch.setattr("dimos.navigation.bench.runner.DIMOS_PROJECT_ROOT", root)
+    return root
+
+
+def test_provenance_names_the_commit_and_notices_uncommitted_changes(
+    checkout: Path, tmp_path: Path
+) -> None:
+    commit = _git(checkout, "rev-parse", "HEAD")
+    assert _provenance(checkout) == {"commit": commit, "dirty": False}
+    (checkout / "changed").write_text("x")
+    assert _provenance(checkout) == {"commit": commit, "dirty": True}
+    assert _provenance(tmp_path) == {"commit": None, "dirty": None}
+    (tmp_path / ".git").mkdir()
+    assert _provenance(tmp_path) == {"commit": None, "dirty": None}
+
+
+def test_run_scores_every_episode_and_rescores_the_same(
+    suite: Path, checkout: Path, tmp_path: Path
+) -> None:
     (tmp_path / "fake.py").write_text(FAKE_BLUEPRINT)
     reports: list[Progress] = []
     run_dir = run(
@@ -160,7 +193,9 @@ def test_run_scores_every_episode_and_rescores_the_same(suite: Path, tmp_path: P
     assert (episode / "rerun.rrd").read_bytes() == b"rrd"
     assert 'scene {"door_width": 0.5} --set-x=1' in (episode / "run.log").read_text()
     assert not any((tmp_path / "recordings").iterdir())
-    assert json.loads((run_dir / RUN_FILE).read_text())["finished"] is True
+    meta = json.loads((run_dir / RUN_FILE).read_text())
+    assert meta["finished"] is True
+    assert (meta["commit"], meta["dirty"]) == (_git(checkout, "rev-parse", "HEAD"), False)
     assert (tmp_path / "runs").read_text().strip() == str(run_dir.resolve())
     suite.unlink()
     assert set(rescore(run_dir).read_text().splitlines()) == set(results.splitlines())
