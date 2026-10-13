@@ -34,7 +34,7 @@ Family = Literal["office"]
 
 SLAB_THICKNESS = 0.15
 WALL_THICKNESS = 0.1
-CEILING_HEIGHT = 2.6
+WALL_HEIGHT = 2.6
 DOOR_HEIGHT = 2.0
 DOOR_WIDTH = (0.8, 1.2)
 TABLE_TOP_THICKNESS = 0.04
@@ -115,11 +115,6 @@ def _walls(scene: Scene, x0: float, y0: float, x1: float, y1: float, z: float, t
     scene.add((x1, y0 - t, z), (x1 + t, y1 + t, top), "wall")
     scene.add((x0, y0 - t, z), (x1, y0, top), "wall")
     scene.add((x0, y1, z), (x1, y1 + t, top), "wall")
-
-
-def _ceiling(scene: Scene, x0: float, y0: float, x1: float, y1: float, z: float) -> None:
-    t = WALL_THICKNESS
-    scene.add((x0 - t, y0 - t, z), (x1 + t, y1 + t, z + SLAB_THICKNESS), "ceiling")
 
 
 def _wall_with_doors(
@@ -228,10 +223,9 @@ def office(
     width, length = float(_uniform(rng, 12, 18)), float(_uniform(rng, 9, 13))
     z0 = float(_uniform(rng, 0.0, 0.08))
     scene = Scene(f"office_{seed}", {"width": width, "length": length, "z0": z0})
-    top = z0 + CEILING_HEIGHT
+    top = z0 + WALL_HEIGHT
     scene.add((0.0, 0.0, z0 - SLAB_THICKNESS), (width, length, z0), "floor")
     _walls(scene, 0, 0, width, length, z0, top)
-    _ceiling(scene, 0, 0, width, length, top)
     wy = _uniform(rng, 0.4, 0.6) * length
     splits = int(rng.integers(1, 3))
     for _ in range(PLACEMENT_TRIES):

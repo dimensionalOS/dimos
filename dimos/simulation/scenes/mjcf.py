@@ -23,11 +23,7 @@ from numpy.typing import NDArray
 from dimos.simulation.scenes.procedural import Box, Scene
 
 SCENE_GROUP = 0
-# Seen by the lidar only. The viewer switches this group off so the room stays visible.
-CEILING_GROUP = 1
-SCENE_GROUPS: NDArray[np.uint8] = np.isin(np.arange(6), (SCENE_GROUP, CEILING_GROUP)).astype(
-    np.uint8
-)
+SCENE_GROUPS: NDArray[np.uint8] = (np.arange(6) == SCENE_GROUP).astype(np.uint8)
 
 
 def geom_name(index: int, box: Box) -> str:
@@ -42,5 +38,3 @@ def add_boxes(spec: mujoco.MjSpec, scene: Scene) -> None:
         geom.name = geom_name(i, box)
         geom.pos = box.center
         geom.size = box.half
-        if box.kind == "ceiling":
-            geom.group = CEILING_GROUP

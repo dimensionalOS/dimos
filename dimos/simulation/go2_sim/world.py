@@ -55,7 +55,7 @@ from dimos.robot.unitree.go2.constants import CMD_VEL_TIMEOUT
 from dimos.robot.unitree.go2.go2_mid360_static_transforms import FRAMES
 from dimos.simulation.go2_legged.policy import Go2Policy, load_policy
 from dimos.simulation.go2_legged.robot import CONTROL_DT, LeggedGo2, apply_fitted_physics, go2_spec
-from dimos.simulation.scenes.mjcf import CEILING_GROUP, SCENE_GROUP, add_boxes, geom_name
+from dimos.simulation.scenes.mjcf import SCENE_GROUP, add_boxes, geom_name
 from dimos.simulation.scenes.procedural import Family, Params, Scene, generate
 from dimos.simulation.sensors.mid360.lidar import SimMid360
 from dimos.simulation.sensors.mid360.pattern import POINT_RATE
@@ -70,13 +70,10 @@ LIDAR_HALF_EXTENTS = (0.0325, 0.0325, 0.03)
 ROBOT_VISUAL_GROUP = 2
 COLLISION_GROUP = 3
 # Collision primitives are left out.
-LIDAR_GROUPS = np.isin(np.arange(6), (SCENE_GROUP, CEILING_GROUP, ROBOT_VISUAL_GROUP)).astype(
-    np.uint8
-)
+LIDAR_GROUPS = np.isin(np.arange(6), (SCENE_GROUP, ROBOT_VISUAL_GROUP)).astype(np.uint8)
 # Looks only. The lidar and the contacts never read color or light.
 BOX_RGBA = {
     "wall": (0.86, 0.84, 0.78, 1.0),
-    "ceiling": (0.95, 0.95, 0.95, 1.0),
     "clutter": (0.45, 0.55, 0.70, 1.0),
 }
 FLOOR_CHECKER = ((0.62, 0.60, 0.56), (0.70, 0.68, 0.64))
@@ -213,9 +210,8 @@ def scene_edges(scene: Scene) -> NDArray[np.float64]:
 def open_viewer(
     model: mujoco.MjModel, data: mujoco.MjData, lookat: NDArray[np.float64]
 ) -> mujoco.viewer.Handle:
-    """A passive viewer on the scene with the ceiling hidden and a free camera over the robot."""
+    """A passive viewer on the scene with a free camera over the robot."""
     viewer = mujoco.viewer.launch_passive(model, data, show_left_ui=False, show_right_ui=False)
-    viewer.opt.geomgroup[CEILING_GROUP] = 0
     viewer.cam.type = mujoco.mjtCamera.mjCAMERA_FREE
     viewer.cam.lookat[:] = lookat
     viewer.cam.distance = 4.0

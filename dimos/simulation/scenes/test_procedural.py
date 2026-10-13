@@ -21,11 +21,11 @@ import numpy as np
 import pytest
 
 from dimos.simulation.scenes.procedural import (
-    CEILING_HEIGHT,
     DOOR_HEIGHT,
     DOOR_WIDTH,
     SLAB_THICKNESS,
     START_CLEARANCE,
+    WALL_HEIGHT,
     Scene,
     generate,
     office,
@@ -33,17 +33,17 @@ from dimos.simulation.scenes.procedural import (
 
 
 def test_office_is_deterministic_and_pinned() -> None:
-    assert office(3).digest() == office(3).digest() == "ab569178c96c7815"
+    assert office(3).digest() == office(3).digest() == "02d2bcbade80b2a6"
     assert office(3).digest() != office(4).digest()
 
 
 def test_office_geometry_is_enclosed_and_on_one_floor() -> None:
     scene = generate("office", 1)
     z0 = scene.params["z0"]
-    assert {box.kind for box in scene.boxes} == {"floor", "wall", "ceiling", "clutter"}
+    assert {box.kind for box in scene.boxes} == {"floor", "wall", "clutter"}
     lo, hi = scene.bounds()
     assert lo[2] == pytest.approx(z0 - SLAB_THICKNESS)
-    assert hi[2] > z0 + CEILING_HEIGHT
+    assert hi[2] == pytest.approx(z0 + WALL_HEIGHT)
     assert scene.start[2] == z0
 
 
@@ -67,7 +67,7 @@ def _reachable_fraction(scene: Scene, cell: float = 0.1, inflate: float = 0.17) 
     blocked = np.zeros((nx, ny), dtype=bool)
     for box in scene.boxes:
         low, high = box.center[2] - box.half[2], box.center[2] + box.half[2]
-        if box.kind in ("floor", "ceiling") or high < z0 + 0.02 or low > z0 + 0.45:
+        if box.kind == "floor" or high < z0 + 0.02 or low > z0 + 0.45:
             continue
         ix = np.abs(xs - box.center[0]) < box.half[0] + inflate
         iy = np.abs(ys - box.center[1]) < box.half[1] + inflate

@@ -54,7 +54,7 @@ Signature = Literal[
     "out_of_time",
     "arrival_mismatch",
 ]
-COLLIDING_KINDS = ("wall", "clutter", "ceiling")
+COLLIDING_KINDS = ("wall", "clutter")
 TRUNK_ON_FLOOR = Contact("trunk", "floor")
 T = TypeVar("T")
 GOAL_ECHO_M = 0.05
