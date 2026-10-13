@@ -30,7 +30,7 @@ from dimos.msgs.sim_msgs.Contacts import Kind
 
 Vec3 = tuple[float, float, float]
 Rect = tuple[float, float, float, float]
-Family = Literal["office", "room", "doorway", "table"]
+Family = Literal["office", "room", "doorway", "table", "block"]
 
 SLAB_THICKNESS = 0.15
 WALL_THICKNESS = 0.1
@@ -41,6 +41,7 @@ TABLE_TOP_THICKNESS = 0.04
 TABLE_LEG = 0.04
 TABLE_SIZE = (1.4, 0.8)
 TABLE_HEIGHT = 0.75
+BLOCK_SIZE = 0.3
 START_CLEARANCE = 1.0
 DOOR_CLEARANCE = 0.8
 DOOR_SIDE_MARGIN = 0.3
@@ -117,6 +118,14 @@ def _walls(scene: Scene, x0: float, y0: float, x1: float, y1: float, z: float, t
     scene.add((x1, y0 - t, z), (x1 + t, y1 + t, top), "wall")
     scene.add((x0, y0 - t, z), (x1, y0, top), "wall")
     scene.add((x0, y1, z), (x1, y1 + t, top), "wall")
+
+
+def _shell(scene: Scene, width: float, length: float, z0: float) -> float:
+    """The floor and outer walls of one rectangular floor. Returns the height the walls reach."""
+    top = z0 + WALL_HEIGHT
+    scene.add((0.0, 0.0, z0 - SLAB_THICKNESS), (width, length, z0), "floor")
+    _walls(scene, 0, 0, width, length, z0, top)
+    return top
 
 
 def _wall_with_doors(
@@ -235,9 +244,7 @@ def office(
     width, length = size * float(_uniform(rng, 12, 18)), size * float(_uniform(rng, 9, 13))
     z0 = float(_uniform(rng, 0.0, 0.08))
     scene = Scene(f"office_{seed}", {"width": width, "length": length, "z0": z0})
-    top = z0 + WALL_HEIGHT
-    scene.add((0.0, 0.0, z0 - SLAB_THICKNESS), (width, length, z0), "floor")
-    _walls(scene, 0, 0, width, length, z0, top)
+    top = _shell(scene, width, length, z0)
     wy = _uniform(rng, 0.4, 0.6) * length
     splits = int(rng.integers(1, 3))
     for _ in range(PLACEMENT_TRIES):
@@ -302,9 +309,7 @@ def room(seed: int, width: float | None = None, length: float | None = None) -> 
     length = _given(_uniform(rng, 5, 7), length)
     z0 = _uniform(rng, 0.0, 0.08)
     scene = Scene(f"room_{seed}", {"width": width, "length": length, "z0": z0})
-    top = z0 + WALL_HEIGHT
-    scene.add((0.0, 0.0, z0 - SLAB_THICKNESS), (width, length, z0), "floor")
-    _walls(scene, 0, 0, width, length, z0, top)
+    _shell(scene, width, length, z0)
     scene.start = (1.0, 1.0, z0)
     return scene
 
@@ -315,9 +320,7 @@ def doorway(seed: int, door_width: float | None = None) -> Scene:
     width, length = _uniform(rng, 8, 10), _uniform(rng, 5, 7)
     z0 = _uniform(rng, 0.0, 0.08)
     scene = Scene(f"doorway_{seed}", {"width": width, "length": length, "z0": z0})
-    top = z0 + WALL_HEIGHT
-    scene.add((0.0, 0.0, z0 - SLAB_THICKNESS), (width, length, z0), "floor")
-    _walls(scene, 0, 0, width, length, z0, top)
+    top = _shell(scene, width, length, z0)
     at = _uniform(rng, 0.45, 0.55) * width
     along = float(rng.random())
     w = _given(_uniform(rng, *DOOR_WIDTH), door_width)
@@ -339,10 +342,25 @@ def table(seed: int, leg_width: float | None = None) -> Scene:
         f"table_{seed}",
         {"width": width, "length": length, "z0": z0, "table_x": tx, "table_y": ty},
     )
-    top = z0 + WALL_HEIGHT
-    scene.add((0.0, 0.0, z0 - SLAB_THICKNESS), (width, length, z0), "floor")
-    _walls(scene, 0, 0, width, length, z0, top)
+    _shell(scene, width, length, z0)
     _table_at(scene, tx, ty, lx, ly, z0, z0 + TABLE_HEIGHT, _given(TABLE_LEG, leg_width))
+    scene.start = (1.0, 1.0, z0)
+    return scene
+
+
+def block(seed: int, block_height: float | None = None) -> Scene:
+    """One empty room with a square block standing in open floor."""
+    rng = np.random.default_rng(seed)
+    width, length = _uniform(rng, 10, 12), _uniform(rng, 8, 10)
+    z0 = _uniform(rng, 0.0, 0.08)
+    x, y = _uniform(rng, 0.35, 0.45) * width, _uniform(rng, 0.35, 0.5) * length
+    height = _given(_uniform(rng, 0.1, 0.4), block_height)
+    scene = Scene(
+        f"block_{seed}", {"width": width, "length": length, "z0": z0, "block_x": x, "block_y": y}
+    )
+    _shell(scene, width, length, z0)
+    half = BLOCK_SIZE / 2
+    scene.add((x - half, y - half, z0), (x + half, y + half, z0 + height), "clutter")
     scene.start = (1.0, 1.0, z0)
     return scene
 
@@ -353,6 +371,7 @@ FAMILIES: dict[Family, Callable[..., Scene]] = {
     "room": room,
     "doorway": doorway,
     "table": table,
+    "block": block,
 }
 
 

@@ -65,7 +65,7 @@ STRADDLE_M = (1.2, 1.5, 2.0)
 OBSTRUCTED = 1.05
 DEAD_END_DETOUR = 1.4
 SIDE_WALL_M = 1.5
-PAST_LEG_M = (2.3, 3.0)
+PAST_M = (2.3, 3.0)
 
 
 @dataclass(frozen=True)
@@ -536,15 +536,25 @@ def table_leg(scene: Scene, leg_width: float, corner: int) -> tuple[float, float
     return x, y
 
 
-def through_a_leg(gt: GroundTruth, leg_width: float, rng: np.random.Generator) -> Placed:
-    """The scene's start at a drawn yaw, and a goal straight past one table leg, so the direct line hits it."""
-    sx, sy, z = gt.scene.start
-    x, y = table_leg(gt.scene, leg_width, int(rng.integers(4)))
+def _straight_past(scene: Scene, x: float, y: float, rng: np.random.Generator) -> Placed:
+    """The scene's start at a drawn yaw, and a goal on the line from it through the point and well past it."""
+    sx, sy, z = scene.start
     reach = math.hypot(x - sx, y - sy)
-    low, high = PAST_LEG_M
+    low, high = PAST_M
     stretch = (reach + low + (high - low) * float(rng.random())) / reach
     goal = (sx + stretch * (x - sx), sy + stretch * (y - sy), z)
     return Placed((sx, sy, _yaw(rng)), goal, (x, y))
+
+
+def through_a_leg(gt: GroundTruth, leg_width: float, rng: np.random.Generator) -> Placed:
+    """A goal straight past one table leg, so the direct line hits it."""
+    x, y = table_leg(gt.scene, leg_width, int(rng.integers(4)))
+    return _straight_past(gt.scene, x, y, rng)
+
+
+def through_the_block(gt: GroundTruth, height: float, rng: np.random.Generator) -> Placed:
+    """A goal straight past the block, so the direct line hits it."""
+    return _straight_past(gt.scene, gt.scene.params["block_x"], gt.scene.params["block_y"], rng)
 
 
 LEG_WIDTH = Probe(
@@ -556,7 +566,16 @@ LEG_WIDTH = Probe(
     scene_param="leg_width",
     control=0.0,
 )
-PROBES = {probe.name: probe for probe in (GOAL_CLEARANCE, DOORWAY, LEG_WIDTH)}
+BLOCK_HEIGHT = Probe(
+    "block_height",
+    "block",
+    "block_height",
+    (0.04, 0.08, 0.12, 0.16, 0.20, 0.24, 0.28, 0.32, 0.40),
+    through_the_block,
+    scene_param="block_height",
+    control=0.0,
+)
+PROBES = {probe.name: probe for probe in (GOAL_CLEARANCE, DOORWAY, LEG_WIDTH, BLOCK_HEIGHT)}
 
 
 def freeze_probe(probe: Probe, sampling_seed: int = 0, rules: Rules = Rules()) -> Manifest:

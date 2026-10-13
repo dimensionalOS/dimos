@@ -21,6 +21,7 @@ import numpy as np
 import pytest
 
 from dimos.simulation.scenes.procedural import (
+    BLOCK_SIZE,
     DOOR_HEIGHT,
     DOOR_WIDTH,
     SLAB_THICKNESS,
@@ -32,6 +33,7 @@ from dimos.simulation.scenes.procedural import (
     WALL_HEIGHT,
     WALL_THICKNESS,
     Scene,
+    block,
     doorway,
     generate,
     office,
@@ -218,3 +220,28 @@ def test_table_leg_width_defaults_and_can_be_removed() -> None:
     bare = table(3, leg_width=0.0)
     assert len([box for box in bare.boxes if box.kind == "clutter"]) == 1
     assert bare.params == table(3).params
+
+
+def test_block_is_deterministic_and_pinned() -> None:
+    assert block(3).digest() == block(3).digest() == "375c1d95815ff1af"
+    assert block(3).digest() != block(4).digest()
+
+
+def test_block_stands_in_open_floor_at_the_given_height() -> None:
+    for seed in range(1, 21):
+        scene = block(seed, block_height=0.12)
+        z0, x, y = (scene.params[k] for k in ("z0", "block_x", "block_y"))
+        (box,) = [b for b in scene.boxes if b.kind == "clutter"]
+        assert box.center[:2] == pytest.approx((x, y))
+        assert box.half == pytest.approx((BLOCK_SIZE / 2, BLOCK_SIZE / 2, 0.06))
+        assert box.center[2] - box.half[2] == pytest.approx(z0)
+        assert x > 1.0 + START_CLEARANCE + 1.0 and x < scene.params["width"] - 4.0
+        assert 2.0 < y < scene.params["length"] - 2.0
+
+
+def test_block_height_is_drawn_unless_given_and_zero_removes_it() -> None:
+    (drawn,) = [b for b in block(3).boxes if b.kind == "clutter"]
+    assert 0.1 <= 2 * drawn.half[2] <= 0.4
+    bare = block(3, block_height=0.0)
+    assert not [b for b in bare.boxes if b.kind == "clutter"]
+    assert bare.params == block(3).params
