@@ -49,6 +49,97 @@ dimos list
 dimos --transport zenoh --viewer none run acme-probe.probe
 ```
 
+## Consumer projects and Git repositories
+
+`dimos package` delegates installation and resolution to uv. It edits the selected
+consumer's ordinary `pyproject.toml` and `uv.lock`; it does not introduce a package
+registry, solver or lock format. Install uv first; the local acceptance check uses uv 0.12.21. These commands need a compatible
+dimOS host and a resolvable `dimos-build-config` build dependency. Both are release
+gates: the provider is still unpublished and the historical dimOS 0.0.14 release
+does not contain this stack's package support.
+
+Use `--project` to choose a consumer directory; `add` creates a minimal Python
+3.10–3.12 application manifest if needed. Without it, package commands use the
+nearest project (or create one in the current directory). They refuse to implicitly
+edit the dimOS source checkout. Local source paths are relative to the calling
+directory, independently of the consumer location.
+
+The following repository and package names are placeholders:
+
+```bash skip
+dimos --project ./robot package add "git+https://github.com/OWNER/REPO.git" \
+  --tag v1.0.0 --subdirectory packages/acme-probe --extra camera
+dimos --project ./robot package sync
+dimos --project ./robot list
+dimos --project ./robot --transport zenoh --viewer none run acme-probe.probe
+dimos --project ./robot package update acme-probe
+dimos --project ./robot package remove acme-probe
+```
+
+Keep a compatible dimOS host as a direct consumer dependency if it should remain
+installed after removing plugin packages. Until releases exist, supply the exact
+compatible host/provider wheels through normal uv wheelhouse/index settings.
+`--extra` requests standard package extras; platform markers and Python constraints
+remain uv's responsibility. Only the declared dimOS native targets avoid install-time
+compilation; other source dependencies can still require compilers.
+
+`add` also accepts `--rev` (a commit), `--branch`, or `--editable /local/package`.
+Git URLs can carry `#subdirectory=...` instead of the separate option. A convenience
+selector is available for statically declared project names:
+
+```bash skip
+dimos package add "github:OWNER/REPO#acme-probe" --tag v1.0.0 --project ./robot
+dimos package add --editable ../author/packages/acme-probe --project ./robot
+```
+
+The shorthand examines the root project and declared `tool.uv.workspace.members`
+at the selected Git revision, honors member exclusions and requires one matching
+canonical `project.name`. It does not import author code. Without a selector it uses
+the repository's default branch, not an assumed branch named `main`. The member is
+translated to a normal Git source with a subdirectory; its source namespace is
+independent of its distribution, import-package and blueprint names. Private repos
+use Git's existing HTTPS credentials; explicit `git+ssh://` sources use SSH credentials.
+
+`sync` and `list`/`run` require an existing current lock and never refresh a branch
+tip. `update` explicitly refreshes resolutions within the declared selectors; it
+does not switch a pinned revision or tag to a different selector. uv may retain a
+Git workspace revision when unselected siblings still pin it; use `package update`
+without package names to refresh the full closure. Offline updates use cached
+revisions. Failed edits
+restore the previous manifest and lock. If installation was interrupted, repeat
+`sync` to reconcile the environment; metadata rollback does not roll back installed
+files. Edits are serialized locally. Removing a distribution does not delete native
+or isolated runtime caches; stop running modules before upgrading/removing their
+packages, and use cache cleanup separately.
+
+`list`/`run` dispatch through uv into that consumer before importing the robot CLI,
+with lock validation and isolated Python import paths. A nearest non-dimOS project
+is also selected automatically. Missing dimOS, a missing/stale lock or failed sync
+fails the command; it never falls back to the global dimOS environment. The existing
+in-repository workflow and ordinary Module behavior remain unchanged. Python runtime
+isolation is optional and continues to use `IsolatedPythonModule`/`PackageProject`.
+
+One repository can own multiple independently packaged subprojects, each with its
+own `pyproject.toml` and `tool.dimos` declaration. An optional uv authoring workspace
+shares a lock/environment and therefore requires compatible dependencies. Modern
+uv resolves Git workspace sibling dependencies at the same repository revision;
+the generic acceptance fixture exercises that path with the thin provider. This is
+not a promise for ordinary pip or standalone wheels: `tool.uv.sources` is not
+standard published dependency metadata. Published wheels must declare independently
+resolvable sibling dependencies. Check release builds with `uv build --no-sources`
+and install artifacts outside the author checkout. Package-owned native/runtime
+snapshots cannot rely on parent-relative source trees outside their packaged directory.
+
+## Release preparation
+
+Before advertising index-based installation, release the independent build provider
+and a compatible dimOS host. Test those exact artifacts in a fresh consumer outside
+the author checkout, including discovery without native compilation and preparation
+of a selected module. Record the supported uv version and Python range. For a
+monorepo release, verify each distribution can resolve its siblings without
+`tool.uv.sources`. These are release gates; this consumer change publishes no artifacts.
+The Rust/C++ SDK examples remain manual checks described in their READMEs.
+
 ## Module instance names
 
 Classes defined outside `dimos` and `dimos.*` default to their qualified Python

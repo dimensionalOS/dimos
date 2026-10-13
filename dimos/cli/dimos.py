@@ -72,6 +72,7 @@ from dimos.robot.unitree.go2.cli.go2tool import app as go2tool_app
 
 main = typer.Typer(
     help="Dimensional CLI",
+    epilog="Use dimos --project DIR list/run for a locked consumer environment.",
     no_args_is_help=True,
 )
 
