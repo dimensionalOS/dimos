@@ -181,6 +181,23 @@ def test_report_gives_the_success_rate_per_level(tmp_path: Path) -> None:
     assert "Outcomes by stressor" not in page and "Outcomes against difficulty" not in page
 
 
+def test_report_counts_near_falls_and_lists_verdict_mismatches(tmp_path: Path) -> None:
+    level = Level("door_width", 0.6)
+    cases = [_case(f"door-s{k}-a", "door", 0.5, level, seed=k) for k in range(4)]
+    results = [
+        _result(cases[0], "success"),
+        _result(cases[1], "success", trunk_floor_s=0.06),
+        _result(cases[2], "fall", trunk_floor_s=2.0),
+        _result(cases[3], "stuck", mismatch=True),
+    ]
+    run = tmp_path / "run"
+    _run(run, cases, results)
+    report = load(run)
+    assert by_level(report)[0].near_falls == 1
+    assert [row.case.id for row in report.mismatches] == ["door-s3-a"]
+    assert render([report])
+
+
 def test_labels_of_levels_too_close_to_read_go_on_a_second_line(tmp_path: Path) -> None:
     cases = [
         _case(f"leg-s1-{value}", "leg", 0.5, Level("leg_width", value))

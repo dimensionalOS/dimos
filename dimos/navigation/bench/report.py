@@ -60,6 +60,8 @@ class Row:
     final_error_xy: float | None
     collisions: int | None
     feature_m: float | None
+    near_fall: bool
+    mismatch: bool
 
 
 @dataclass(frozen=True)
@@ -107,6 +109,11 @@ class Report:
     def successes(self) -> list[Row]:
         return [r for r in self.rows if r.outcome == "success"]
 
+    @property
+    def mismatches(self) -> list[Row]:
+        """The episodes where the driver's verdict and the recording disagree."""
+        return [r for r in self.rows if r.mismatch]
+
 
 @dataclass(frozen=True)
 class DifficultyRow:
@@ -129,6 +136,7 @@ class LevelRow:
     outcomes: Counter[str]
     signatures: Counter[str]
     not_encountered: int
+    near_falls: int = 0
 
     @property
     def n(self) -> int:
@@ -207,6 +215,8 @@ def _row(case: Case, record: dict[str, object], episode: Path) -> Row:
         final_error_xy=_float(metrics.get("final_error_xy")),
         collisions=None if metrics.get("collisions") is None else int(metrics["collisions"]),
         feature_m=_float(metrics.get("feature_m")),
+        near_fall=record["outcome"] != "fall" and bool(metrics.get("trunk_floor_s")),
+        mismatch=bool(metrics.get("mismatch")),
     )
 
 
@@ -288,6 +298,7 @@ def by_level(report: Report) -> list[LevelRow]:
                     outcomes=Counter(r.outcome for r in faced),
                     signatures=Counter(r.signature for r in faced if r.signature is not None),
                     not_encountered=len(rows) - len(faced),
+                    near_falls=sum(r.near_fall for r in faced),
                 )
             )
     return levels

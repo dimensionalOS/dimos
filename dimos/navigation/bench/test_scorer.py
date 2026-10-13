@@ -116,6 +116,31 @@ def test_standing_on_the_goal_without_reporting_arrival_is_unclaimed() -> None:
     assert (score(lying, RULES, GOAL).outcome, score(lying, RULES, GOAL).reached) == ("fall", False)
 
 
+def test_a_recording_that_shows_no_outcome_takes_the_drivers_verdict() -> None:
+    walking = _walk(5.0, arrive=False)
+    alone = score(walking, RULES, GOAL, route_length=4.0)
+    assert (alone.outcome, alone.mismatch) == ("timeout", False)
+    told = score(walking, RULES, GOAL, route_length=4.0, verdict="stuck")
+    assert (told.outcome, told.signature, told.mismatch) == ("stuck", "commanded_no_progress", True)
+    with pytest.raises(ValueError, match="arrived is not in the recording"):
+        score(walking, RULES, GOAL, route_length=4.0, verdict="arrived")
+
+
+def test_a_verdict_the_recording_contradicts_is_a_mismatch() -> None:
+    def mismatch(recording: Recording, verdict: str) -> tuple[str, bool]:
+        s = score(recording, RULES, GOAL, verdict=verdict)
+        return s.outcome, s.mismatch
+
+    assert mismatch(_walk(10.0), "arrived") == ("success", False)
+    assert mismatch(_walk(10.0), "stuck") == ("success", True)
+    assert mismatch(_trunk_on_floor(1.0), "arrived") == ("fall", True)
+    silent = _walk(30.0, arrive=False, hold_last=15.0)
+    assert mismatch(silent, "stuck") == ("unclaimed", False)
+    stalled = _walk(30.0, arrive=False, hold_last=25.0, command_last=False)
+    assert mismatch(stalled, "stalled") == ("stalled", False)
+    assert mismatch(stalled, "stuck") == ("stalled", True)
+
+
 def test_every_failure_has_an_outcome_and_a_signature() -> None:
     bumped = replace(
         _walk(10.0),

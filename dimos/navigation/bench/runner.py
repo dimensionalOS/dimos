@@ -430,6 +430,7 @@ def _score(manifest: Manifest, episode: Episode, terminal: dict[str, object] | N
             case.goal,
             case.route_length,
             case.feature,
+            result.terminal,
         )
     except ValueError as error:
         result.error = str(error)

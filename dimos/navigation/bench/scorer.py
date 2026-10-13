@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Literal, TypeVar
+from typing import Literal, TypeVar, cast, get_args
 
 import numpy as np
 from numpy.typing import NDArray
@@ -59,7 +59,7 @@ DEFINITIONS: dict[Outcome, str] = {
     "last {stuck_s:g} s and the body moved less than {stuck_progress_m:g} m.",
     "stalled": "No arrival, and no motion was commanded for the last {stalled_s:g} s.",
     "no_plan": "No arrival, and the global planner published no path.",
-    "timeout": "No arrival and none of the above. The time budget is {timeout_base_s:g} s plus "
+    "timeout": "No arrival, and the time budget ran out: {timeout_base_s:g} s plus "
     "{timeout_s_per_m:g} s per meter of route.",
 }
 
@@ -76,6 +76,9 @@ COLLIDING_KINDS = ("wall", "clutter")
 TRUNK_ON_FLOOR = Contact("trunk", "floor")
 T = TypeVar("T")
 GOAL_ECHO_M = 0.05
+TIMEOUT_SLACK_S = 0.2
+ARRIVED = ("success", "reached_with_collision", "wrong_place", "wrong_floor")
+GAVE_UP = ("stuck", "stalled", "timeout")
 
 
 @dataclass(frozen=True)
@@ -196,6 +199,7 @@ class Score:
     fell: bool | None
     reached: bool
     claimed: bool
+    mismatch: bool = False
     feature_m: float | None = None
     missing: list[str] = field(default_factory=list)
 
@@ -206,10 +210,12 @@ def score(
     goal: Point,
     route_length: float | None = None,
     feature: tuple[float, float] | None = None,
+    verdict: str | None = None,
 ) -> Score:
     """Score the episode in the recording that drives to the goal.
 
     With a feature, also the closest the body's center came to it.
+    With the driver's verdict, a recording that shows no outcome takes it.
     """
     if recording.pose is None:
         raise ValueError("a recording needs ground_truth to be scored")
@@ -236,9 +242,10 @@ def score(
     error_xy = float(np.hypot(*(final[:2] - goal[:2])))
     error_z = float(abs(final[2] - rules.stand_height_m - goal[2]))
     paths = _path_metrics(recording.planner_paths, rules, t0, t1)
-    outcome = _outcome(
-        recording, rules, t0, t1, arrival, error_xy, error_z, collisions, fell, paths
-    )
+    shown = _outcome(recording, rules, t0, t1, arrival, error_xy, error_z, collisions, fell, paths)
+    if shown is None and timeout is not None and t1 - t0 >= timeout - TIMEOUT_SLACK_S:
+        shown = "timeout"
+    outcome, mismatch = _settle(shown, verdict)
     traveled = float(np.linalg.norm(np.diff(pose.xyz[:, :2], axis=0), axis=1).sum())
     spl = None
     if route_length is not None:
@@ -265,6 +272,7 @@ def score(
         fell=fell,
         reached=not fell and _at_goal(rules, error_xy, error_z),
         claimed=arrival is not None,
+        mismatch=mismatch,
         feature_m=None
         if feature is None
         else float(np.linalg.norm(pose.xyz[:, :2] - feature, axis=1).min()),
@@ -452,7 +460,8 @@ def _outcome(
     collisions: _Collisions | None,
     fell: bool,
     paths: _Paths,
-) -> Outcome:
+) -> Outcome | None:
+    """What the recording shows, or None when no rule applies."""
     if fell:
         return "fall"
     if arrival is not None:
@@ -470,7 +479,22 @@ def _outcome(
         return "stuck"
     if stalled(recording.commands, rules, t0, t1):
         return "stalled"
-    return "timeout"
+    return None
+
+
+def _settle(shown: Outcome | None, verdict: str | None) -> tuple[Outcome, bool]:
+    """The outcome, and whether the driver's verdict disagrees with what the recording shows."""
+    if verdict is None:
+        return shown or "timeout", False
+    if shown is None:
+        if verdict not in get_args(Outcome):
+            raise ValueError(f"the driver's verdict {verdict} is not in the recording")
+        return cast("Outcome", verdict), True
+    if verdict == "arrived":
+        return shown, shown not in ARRIVED
+    if shown in ("unclaimed", "no_plan"):
+        return shown, verdict not in GAVE_UP
+    return shown, verdict != shown
 
 
 def _at_goal(rules: Rules, error_xy: float, error_z: float) -> bool:
