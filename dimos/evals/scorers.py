@@ -510,3 +510,21 @@ def hang_partial(outcome: Outcome) -> float:
     near = np.sqrt((local[:, 0] - along) ** 2 + local[:, 1] ** 2 + (local[:, 2] - 0.08625) ** 2)
     score += 0.2 * bool((near < 0.03).any())
     return float(score + 0.3 * hung_tool(outcome))
+
+
+# Bottle cap (robosuite_2): the cap turns on a thread, comes free after CAP_TURN_RAD, then lifts off.
+CAP_TURN_RAD = math.radians(200)
+
+
+def cap_partial(outcome: Outcome) -> float:
+    """0.2 for touching the cap, 0.4 x how far it was unscrewed, 0.4 for ending 2 cm up off the neck."""
+    tracks = _tracks(outcome, ("cap_main", *GRIPPER_BODIES))
+    cap = tracks.get("cap_main")
+    if cap is None:
+        return 0.0
+    # Turn about the bottle's vertical axis, unwrapped over the run (the cap turns slowly).
+    yaw = np.unwrap(np.arctan2(cap.rot[:, 1, 0], cap.rot[:, 0, 0]))
+    turned = float((yaw - yaw[0]).max())
+    touched = turned > 0.05 or cap.moved() > 0.002 or _came_within(tracks, "cap_main", 0.04)
+    off = cap.final[2] - cap.rest[2] >= 0.02
+    return float(0.2 * touched + 0.4 * min(max(turned / CAP_TURN_RAD, 0.0), 1.0) + 0.4 * off)
