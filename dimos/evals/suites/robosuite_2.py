@@ -74,7 +74,7 @@ SUITE: Suite = [
         # 0.2 touched + 0.8 x height; 1.0 only at 5 cm. half_size_m sets the touch radius.
         grade=lift_partial("bin_main", by_m=0.05, half_size_m=0.15),
         threshold=1.0,
-        timeout_s=2400.0,
+        timeout_s=1200.0,
         tags=frozenset({"mujoco", "robosuite_2", "manipulation", "bin"}),
     ),
     EvalCase(
@@ -84,7 +84,7 @@ SUITE: Suite = [
         # 0.1 touched the cap + 0.5 x unscrewed + 0.3 taken off the bottle + 0.1 held 5 cm up.
         grade=cap_partial,
         threshold=1.0,
-        timeout_s=3600.0,
+        timeout_s=1200.0,
         tags=frozenset({"mujoco", "robosuite_2", "manipulation", "bottle"}),
     ),
 ]
