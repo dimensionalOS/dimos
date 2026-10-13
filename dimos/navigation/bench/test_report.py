@@ -19,12 +19,22 @@ import os
 from pathlib import Path
 import shlex
 
+import pytest
+
 from dimos.navigation.bench.ground_truth import Difficulty
-from dimos.navigation.bench.report import by_signature, by_stressor, load, render, write
-from dimos.navigation.bench.suite import Case, Manifest, Rules
+from dimos.navigation.bench.report import (
+    by_level,
+    by_signature,
+    by_stressor,
+    crossing,
+    load,
+    render,
+    write,
+)
+from dimos.navigation.bench.suite import Case, Level, Manifest, Rules
 
 
-def _case(case_id: str, tag: str, clearance: float) -> Case:
+def _case(case_id: str, tag: str, clearance: float, level: Level | None = None) -> Case:
     return Case(
         family="office",
         seed=1,
@@ -37,6 +47,7 @@ def _case(case_id: str, tag: str, clearance: float) -> Case:
         difficulty=Difficulty(clearance, 1, 1.0, 0),
         route_length=3.0,
         scene_digest="",
+        level=level,
     )
 
 
@@ -119,4 +130,37 @@ def test_report_tallies_outcomes_by_stressor_and_signature(tmp_path: Path) -> No
     assert "<td>stalled</td>" in page
     assert f"dimos nav-bench replay {run.resolve() / 'narrow_door-s1-b'}" in page
     assert page.count("<circle") == 3 and "<tfoot><tr><td>all</td>" in page
+    assert by_level(report) == [] and "Success against" not in page
     assert write(run) == run / "report.html" and (run / "report.html").read_text() == page
+
+
+def test_report_gives_the_success_rate_per_level_and_where_it_crosses(tmp_path: Path) -> None:
+    wins = {0.2: 0, 0.3: 1, 0.4: 2}
+    cases, results = [], []
+    for value, won in wins.items():
+        for k in range(2):
+            case = _case(f"gap-s{k}-{value}", "gap", 0.5, Level("goal_clearance", value))
+            cases.append(case)
+            results.append(
+                _result(case, "success")
+                if k < won
+                else _result(case, "stalled", signature="local_refused")
+            )
+    run = tmp_path / "run"
+    _run(run, cases, results)
+    report = load(run)
+    levels = by_level(report)
+    assert [(row.value, row.n, row.rate) for row in levels] == [
+        (0.2, 2, 0.0),
+        (0.3, 2, 0.5),
+        (0.4, 2, 1.0),
+    ]
+    assert levels[0].signatures == {"local_refused": 2} and levels[2].signatures == {}
+    assert crossing(levels, 0.5) == pytest.approx(0.3)
+    assert crossing(levels, 0.9) == pytest.approx(0.38)
+    assert crossing(levels[:2], 0.9) is None and crossing(levels[2:], 0.9) == 0.4
+    page = render(report)
+    assert "Success rate 50% at 0.30 m, 90% at 0.38 m" in page
+    assert "<h2>Success against goal clearance</h2>" in page and page.count("<rect") == 3
+    assert "local_refused 2</td>" in page
+    assert ">1/2</text>" in page
