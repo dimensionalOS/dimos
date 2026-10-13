@@ -79,7 +79,7 @@ code { font-size: 12px; }
 <td class="n">{{ "%.1f" | format(row.final_error_xy) if row.final_error_xy is not none }}</td>
 <td class="n">{{ row.collisions if row.collisions is not none }}</td>
 <td>{{ row.terminal or "" }}</td>
-<td><code>dimos nav-bench replay {{ row.case.id }}</code></td></tr>
+<td><code>dimos nav-bench replay {{ row.episode | string | quote }}</code></td></tr>
 {% endfor %}
 </tbody>
 </table></div>

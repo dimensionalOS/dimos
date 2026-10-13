@@ -17,9 +17,10 @@
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 import json
 from pathlib import Path
+import shlex
 from statistics import median
 import time
 from typing import get_args
@@ -44,6 +45,7 @@ class Row:
     """One episode as the report sees it. The outcome is the error when scoring produced none."""
 
     case: Case
+    episode: Path
     outcome: str
     signature: str | None
     terminal: str | None
@@ -103,13 +105,14 @@ class DifficultyRow:
 
 def load(run_dir: Path) -> Report:
     """The run's results joined with the suite's cases."""
-    run = _RUN.validate_json((run_dir / RUN_FILE).read_text())
-    if not run.finished:
-        run = replace(run, time=(run_dir / RESULTS_FILE).stat().st_mtime)
+    meta = json.loads((run_dir / RUN_FILE).read_text())
+    if meta["time"] is None:
+        meta["time"] = (run_dir / RESULTS_FILE).stat().st_mtime
+    run = _RUN.validate_python(meta)
     manifest = Manifest.load(run_dir / SUITE_FILE)
     cases = {c.id: c for c in manifest.cases}
     rows = [
-        _row(cases[record["case_id"]], record)
+        _row(cases[record["case_id"]], record, run_dir.resolve() / record["case_id"])
         for record in map(json.loads, (run_dir / RESULTS_FILE).read_text().splitlines())
     ]
     return Report(manifest.suite, run, sorted(rows, key=lambda r: r.case.id))
@@ -121,12 +124,13 @@ def write(run_dir: Path) -> Path:
     return path
 
 
-def _row(case: Case, record: dict[str, object]) -> Row:
+def _row(case: Case, record: dict[str, object], episode: Path) -> Row:
     metrics = record.get("metrics") or {}
     assert isinstance(metrics, dict)
     final = metrics.get("final_xy")
     return Row(
         case=case,
+        episode=episode,
         outcome=str(record["outcome"] or record["error"]),
         signature=_text(metrics.get("signature")),
         terminal=_text(record.get("terminal")),
@@ -193,6 +197,7 @@ def render(report: Report) -> str:
     spls = [r.spl for r in report.successes if r.spl is not None]
     spl = f", median SPL of successes {median(spls):.2f}" if spls else ""
     env = Environment(loader=FileSystemLoader(Path(__file__).parent), autoescape=True)
+    env.filters["quote"] = shlex.quote
     return env.get_template(TEMPLATE_FILE).render(
         title=f"nav-bench {report.suite}",
         verdict=f"{len(report.successes)} of {len(report.rows)} episodes succeeded{spl}",

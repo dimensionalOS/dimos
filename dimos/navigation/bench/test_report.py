@@ -13,8 +13,11 @@
 # limitations under the License.
 from __future__ import annotations
 
+import html
 import json
+import os
 from pathlib import Path
+import shlex
 
 from dimos.navigation.bench.ground_truth import Difficulty
 from dimos.navigation.bench.report import by_signature, by_stressor, load, render, write
@@ -51,6 +54,44 @@ def _result(case: Case, outcome: str | None, **metrics: object) -> str:
     )
 
 
+def _run(run: Path, cases: list[Case], results: list[str], **meta: object) -> None:
+    run.mkdir()
+    Manifest("test", Rules(), 0, cases).save(run / "suite.json")
+    base = {
+        "split": "dev",
+        "blueprint": "fake",
+        "policy": None,
+        "overrides": ["--set-x=1"],
+        "episodes": len(cases),
+        "finished": True,
+        "started": 0.0,
+        "time": 90.0,
+    }
+    (run / "run.json").write_text(json.dumps({**base, **meta}))
+    (run / "results.jsonl").write_text("\n".join(results))
+
+
+def test_replay_commands_name_the_episode_of_the_reports_own_run(tmp_path: Path) -> None:
+    case = _case("mined-s1-a", "mined", 0.8)
+    older, newer = tmp_path / "older run", tmp_path / "newer run"
+    for run in (older, newer):
+        _run(run, [case], [_result(case, "success")])
+    for run in (older, newer):
+        command = f"dimos nav-bench replay {shlex.quote(str(run.resolve() / case.id))}"
+        assert command in html.unescape(render(load(run)))
+
+
+def test_an_interrupted_run_keeps_the_stop_time_it_recorded(tmp_path: Path) -> None:
+    case = _case("mined-s1-a", "mined", 0.8)
+    stopped, killed = tmp_path / "stopped", tmp_path / "killed"
+    _run(stopped, [case], [_result(case, "success")], finished=False, time=90.0)
+    _run(killed, [case], [_result(case, "success")], finished=False, time=None)
+    for run in (stopped, killed):
+        os.utime(run / "results.jsonl", (600.0, 600.0))
+    assert load(stopped).run.time == 90.0
+    assert load(killed).run.time == 600.0
+
+
 def test_report_tallies_outcomes_by_stressor_and_signature(tmp_path: Path) -> None:
     cases = [
         _case("mined-s1-a", "mined", 0.8),
@@ -58,27 +99,14 @@ def test_report_tallies_outcomes_by_stressor_and_signature(tmp_path: Path) -> No
         _case("narrow_door-s2-c", "narrow_door", 0.5),
     ]
     run = tmp_path / "run"
-    run.mkdir()
-    Manifest("test", Rules(), 0, cases).save(run / "suite.json")
-    meta = {
-        "split": "dev",
-        "blueprint": "fake",
-        "policy": None,
-        "overrides": ["--set-x=1"],
-        "episodes": 3,
-        "finished": True,
-        "started": 0.0,
-        "time": 90.0,
-    }
-    (run / "run.json").write_text(json.dumps(meta))
-    (run / "results.jsonl").write_text(
-        "\n".join(
-            [
-                _result(cases[0], "success", spl=0.9, arrived_s=12.0),
-                _result(cases[1], "stalled", signature="local_refused", final_xy=(2.0, 1.5)),
-                _result(cases[2], None),
-            ]
-        )
+    _run(
+        run,
+        cases,
+        [
+            _result(cases[0], "success", spl=0.9, arrived_s=12.0),
+            _result(cases[1], "stalled", signature="local_refused", final_xy=(2.0, 1.5)),
+            _result(cases[2], None),
+        ],
     )
     report = load(run)
     assert report.outcomes == ["success", "stalled", "no recording"]
@@ -89,6 +117,6 @@ def test_report_tallies_outcomes_by_stressor_and_signature(tmp_path: Path) -> No
     assert "1 of 3 episodes succeeded, median SPL of successes 0.90" in page
     assert "<dd>1.5 min</dd>" in page and "<dd>test</dd>" in page
     assert "<td>stalled</td>" in page
-    assert "dimos nav-bench replay narrow_door-s1-b" in page
+    assert f"dimos nav-bench replay {run.resolve() / 'narrow_door-s1-b'}" in page
     assert page.count("<circle") == 3 and "<tfoot><tr><td>all</td>" in page
     assert write(run) == run / "report.html" and (run / "report.html").read_text() == page
