@@ -72,7 +72,7 @@ PAST_M = (2.3, 3.0)
 class Rules:
     """How an episode is scored. Changing any value is a new version."""
 
-    version: int = 1
+    version: int = 2
     goal_xy_m: float = 0.5
     goal_z_m: float = 0.3
     stand_height_m: float = GO2.stand

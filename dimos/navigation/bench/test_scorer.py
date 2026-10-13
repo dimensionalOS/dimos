@@ -76,6 +76,7 @@ def test_a_clean_arrival_is_a_success_with_full_metrics() -> None:
     assert s.traveled_m == pytest.approx(4.0, abs=0.05) and s.spl == pytest.approx(1.0, abs=0.02)
     assert s.final_error_xy < 0.05 and s.final_xy == pytest.approx((5.0, 1.0), abs=0.05)
     assert (s.collisions, s.reroutes, s.yaw_reversals, s.fell, s.missing) == (0, 0, 0, False, [])
+    assert (s.reached, s.claimed) == (True, True)
     assert s.empty_path_s == pytest.approx(0.5)
 
 
@@ -105,6 +106,16 @@ def test_a_brief_trunk_touch_is_not_a_fall() -> None:
     assert (lying.outcome, lying.signature) == ("fall", "body_fell")
 
 
+def test_standing_on_the_goal_without_reporting_arrival_is_unclaimed() -> None:
+    for command_last in (True, False):
+        silent = _walk(30.0, arrive=False, hold_last=15.0, command_last=command_last)
+        s = score(silent, RULES, GOAL, route_length=4.0)
+        assert (s.outcome, s.signature) == ("unclaimed", "arrival_mismatch")
+        assert (s.reached, s.claimed, s.spl) == (True, False, 0.0)
+    lying = replace(silent, contacts=_trunk_on_floor(1.0).contacts)
+    assert (score(lying, RULES, GOAL).outcome, score(lying, RULES, GOAL).reached) == ("fall", False)
+
+
 def test_every_failure_has_an_outcome_and_a_signature() -> None:
     bumped = replace(
         _walk(10.0),
@@ -121,23 +132,25 @@ def test_every_failure_has_an_outcome_and_a_signature() -> None:
         1.5,
         0.0,
     )
-    assert score(_walk(10.0), RULES, (7.0, 1.0, 0.0)).outcome == "wrong_place"
+    far_off = score(_walk(10.0), RULES, (7.0, 1.0, 0.0))
+    assert (far_off.outcome, far_off.reached, far_off.claimed) == ("wrong_place", False, True)
     assert score(_walk(10.0), RULES, (5.0, 1.0, 1.0)).outcome == "wrong_floor"
     tipped = _walk(10.0)
     rpy = tipped.pose.rpy.copy()
     rpy[-10:, 1] = 1.4
     tipped = replace(tipped, pose=replace(tipped.pose, rpy=rpy))
     assert score(tipped, RULES, GOAL).signature == "body_fell"
-    stuck = _walk(30.0, arrive=False, hold_last=15.0)
+    stuck = _walk(30.0, arrive=False, hold_last=25.0)
     assert score(stuck, RULES, GOAL).signature == "commanded_no_progress"
-    stalled = _walk(30.0, arrive=False, hold_last=15.0, command_last=False)
+    stalled = _walk(30.0, arrive=False, hold_last=25.0, command_last=False)
     assert score(stalled, RULES, GOAL).outcome == "stalled"
     refused = replace(stalled, local_paths=[PathSample(T0 + 20.0, np.array([START]))])
     assert score(refused, RULES, GOAL).signature == "local_refused"
     followed = replace(stalled, local_paths=[PathSample(T0 + 20.0, np.array([START, [*GOAL]]))])
     assert score(followed, RULES, GOAL).signature == "follower_zeroed"
     empty = replace(
-        _walk(30.0, arrive=False), planner_paths=[PathSample(T0 + 0.5, np.zeros((0, 3)))]
+        _walk(30.0, arrive=False, hold_last=25.0),
+        planner_paths=[PathSample(T0 + 0.5, np.zeros((0, 3)))],
     )
     assert score(empty, RULES, GOAL).signature == "planner_empty"
     far = (40.0, 1.0, 0.0)

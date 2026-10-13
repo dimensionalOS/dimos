@@ -36,6 +36,7 @@ from dimos.navigation.bench.suite import Point, Rules
 Outcome = Literal[
     "success",
     "reached_with_collision",
+    "unclaimed",
     "wrong_place",
     "wrong_floor",
     "fall",
@@ -48,6 +49,8 @@ DEFINITIONS: dict[Outcome, str] = {
     "success": "The stack reported arrival with the body within {goal_xy_m:g} m of the goal and "
     "{goal_z_m:g} m of its height, and the body touched no wall or clutter.",
     "reached_with_collision": "As success, but the body touched a wall or clutter on the way.",
+    "unclaimed": "The body ended within {goal_xy_m:g} m of the goal and {goal_z_m:g} m of its "
+    "height, and the stack never reported arrival.",
     "wrong_place": "The stack reported arrival more than {goal_xy_m:g} m from the goal.",
     "wrong_floor": "The stack reported arrival more than {goal_z_m:g} m above or below the goal.",
     "fall": "The body tilted more than {fall_rad:g} rad in roll or pitch, or its trunk lay on the "
@@ -191,6 +194,8 @@ class Score:
     collision_s: float | None
     trunk_floor_s: float | None
     fell: bool | None
+    reached: bool
+    claimed: bool
     feature_m: float | None = None
     missing: list[str] = field(default_factory=list)
 
@@ -258,6 +263,8 @@ def score(
         collision_s=collisions.seconds if collisions else None,
         trunk_floor_s=collisions.trunk_floor_s if collisions else None,
         fell=fell,
+        reached=not fell and _at_goal(rules, error_xy, error_z),
+        claimed=arrival is not None,
         feature_m=None
         if feature is None
         else float(np.linalg.norm(pose.xyz[:, :2] - feature, axis=1).min()),
@@ -287,7 +294,7 @@ def _signature(
         return None
     if outcome == "fall":
         return "body_fell"
-    if outcome in ("wrong_place", "wrong_floor"):
+    if outcome in ("unclaimed", "wrong_place", "wrong_floor"):
         return "arrival_mismatch"
     if outcome == "no_plan":
         return "planner_empty"
@@ -454,6 +461,8 @@ def _outcome(
         if error_xy > rules.goal_xy_m:
             return "wrong_place"
         return "reached_with_collision" if collisions and collisions.count else "success"
+    if _at_goal(rules, error_xy, error_z):
+        return "unclaimed"
     if paths.any_plan is False:
         return "no_plan"
     assert recording.pose is not None
@@ -462,6 +471,10 @@ def _outcome(
     if stalled(recording.commands, rules, t0, t1):
         return "stalled"
     return "timeout"
+
+
+def _at_goal(rules: Rules, error_xy: float, error_z: float) -> bool:
+    return error_xy <= rules.goal_xy_m and error_z <= rules.goal_z_m
 
 
 def moving(commands: Commands, rules: Rules) -> NDArray[np.bool_]:
