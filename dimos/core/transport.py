@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import functools
+from functools import partial
 import importlib.util
 import threading
 import time
@@ -109,7 +110,7 @@ class pLCMTransport(PubSubTransport[T]):
 
     def __reduce__(self):  # type: ignore[no-untyped-def]
         return (
-            functools.partial(pLCMTransport, **self.lcm.config.model_dump(exclude={"lcm"})),
+            partial(pLCMTransport, **self.lcm.config.model_dump(exclude={"lcm"})),
             (self.topic,),
         )
 
@@ -153,7 +154,7 @@ class LCMTransport(PubSubTransport[T]):
 
     def __reduce__(self):  # type: ignore[no-untyped-def]
         return (
-            functools.partial(LCMTransport, **self.lcm.config.model_dump(exclude={"lcm"})),
+            partial(LCMTransport, **self.lcm.config.model_dump(exclude={"lcm"})),
             (self.topic.topic, self.topic.lcm_type),
         )
 
@@ -182,7 +183,7 @@ class JpegLcmTransport(LCMTransport):  # type: ignore[type-arg]
 
     def __reduce__(self):  # type: ignore[no-untyped-def]
         return (
-            functools.partial(JpegLcmTransport, **self.lcm.config.model_dump(exclude={"lcm"})),
+            partial(JpegLcmTransport, **self.lcm.config.model_dump(exclude={"lcm"})),
             (self.topic.topic, self.topic.lcm_type),
         )
 

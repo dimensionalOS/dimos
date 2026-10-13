@@ -178,7 +178,10 @@ class ModuleCoordinator(Resource):
         with self._modules_lock:
             descriptors: list[StreamDescriptor] = []
             for module in self._deployed_modules.values():
-                descriptors.extend(module.get_stream_descriptors())
+                descriptors.extend(
+                    descriptor._replace(module=module.remote_name)
+                    for descriptor in module.get_stream_descriptors()
+                )
             return descriptors
 
     def load_blueprint_by_name(self, name: str) -> None:
