@@ -102,12 +102,13 @@ def freeze_command(
 
 @app.command("run")
 def run_command(
-    suite: Path | None = typer.Option(
-        None,
+    suite: list[Path] = typer.Option(
+        [],
         "--suite",
         exists=True,
-        help=f"A frozen manifest. Without one, {DEFAULT_SUITE} is frozen once.",
+        help=f"A frozen manifest. Repeatable. With none and no --probes, {DEFAULT_SUITE} is frozen once.",
     ),
+    probes: bool = typer.Option(False, "--probes", help="Freeze and run every probe as well."),
     blueprint: str = typer.Option("go2-sim-nav-episode", help="Blueprint with an EpisodeDriver."),
     split: str = typer.Option("dev", help="dev, held_out or all."),
     case: list[str] = typer.Option(
@@ -127,23 +128,36 @@ def run_command(
         [], "--set", help="Module config override, Module.field=value. Repeatable."
     ),
 ) -> None:
-    """Run every case of the split, several at a time, and score each recording."""
+    """Run every case of the split, several at a time, and score each recording.
+
+    Several suites run one after another, each into its own directory under the run directory.
+    """
+    from dimos.navigation.bench.report import write_index
     from dimos.navigation.bench.runner import RUNS_DIR, RunConfig, new_run_dir, run as run_suite
-    from dimos.navigation.bench.suite import FreezeConfig, Manifest, freeze
+    from dimos.navigation.bench.suite import PROBES, FreezeConfig, Manifest, freeze, freeze_probe
 
     if split not in ("dev", "held_out", "all"):
         raise typer.BadParameter("split must be dev, held_out or all")
-    if suite is None:
-        suite = RUNS_DIR / f"{DEFAULT_SUITE}.json"
-        if not suite.exists():
+    suites = list(suite)
+    if not suites and not probes:
+        default = RUNS_DIR / f"{DEFAULT_SUITE}.json"
+        if not default.exists():
             with _Bar(DEFAULT_SUITE) as bar:
                 manifest = freeze(FreezeConfig(suite=DEFAULT_SUITE), bar.tick)
-            suite.parent.mkdir(parents=True, exist_ok=True)
-            manifest.save(suite)
+            default.parent.mkdir(parents=True, exist_ok=True)
+            manifest.save(default)
+        suites.append(default)
+    several = probes or len(suites) > 1
     if out is None:
-        out = new_run_dir(Manifest.load(suite).suite)
+        out = new_run_dir("suites" if several else Manifest.load(suites[0]).suite)
+    if probes:
+        out.mkdir(parents=True)
+        for name, probe in PROBES.items():
+            typer.echo(f"freezing {name}")
+            freeze_probe(probe).save(out / f"{name}.json")
+            suites.append(out / f"{name}.json")
     config = RunConfig(
-        suite=suite,
+        suite=suites[0],
         blueprint=blueprint,
         split=None if split == "all" else cast("Split", split),
         cases=tuple(case),
@@ -154,15 +168,22 @@ def run_command(
         viewer=viewer,
     )
     signal.signal(signal.SIGTERM, _interrupt)
+    run_dir = out
     try:
-        with _Bar(suite.stem) as bar:
-            run_suite(config, _report(bar))
+        for path in suites:
+            run_dir = out / Manifest.load(path).suite if several else out
+            with _Bar(path.stem) as bar:
+                run_suite(replace(config, suite=path, out_dir=run_dir), _report(bar))
+            typer.echo(f"run finished -> {run_dir}")
+            _finish(run_dir)
     except KeyboardInterrupt:
-        typer.echo(f"run interrupted -> {out}")
-        _finish(out)
+        typer.echo(f"run interrupted -> {run_dir}")
+        _finish(run_dir)
+        if several:
+            typer.echo(f"index -> {write_index(out)}")
         raise
-    typer.echo(f"run finished -> {out}")
-    _finish(out)
+    if several:
+        typer.echo(f"index -> {write_index(out)}")
 
 
 @app.command("score")

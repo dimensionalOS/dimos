@@ -28,6 +28,7 @@ from dimos.navigation.bench.report import (
     load,
     render,
     write,
+    write_index,
 )
 from dimos.navigation.bench.suite import Case, Level, Manifest, Rules
 
@@ -65,9 +66,11 @@ def _result(case: Case, outcome: str | None, **metrics: object) -> str:
     )
 
 
-def _run(run: Path, cases: list[Case], results: list[str], **meta: object) -> None:
+def _run(
+    run: Path, cases: list[Case], results: list[str], suite: str = "test", **meta: object
+) -> None:
     run.mkdir()
-    Manifest("test", Rules(), 0, cases).save(run / "suite.json")
+    Manifest(suite, Rules(), 0, cases).save(run / "suite.json")
     base = {
         "split": "dev",
         "blueprint": "fake",
@@ -195,3 +198,24 @@ def test_report_leaves_out_cases_whose_control_never_met_the_feature(tmp_path: P
     assert "Feature encountered in 2 of 3 control runs" in page
     assert '<th class="n">not encountered</th>' in page and ">0/2</text>" in page
     assert '<td class="n">0.40</td>' in page
+
+
+def test_index_links_every_suite_run_under_the_directory(tmp_path: Path) -> None:
+    plain = _case("door-s1-a", "door", 0.5, Level("door_width", 0.6))
+    _run(tmp_path / "door_width", [plain], [_result(plain, "success")], "door_width")
+    control = _case("leg-s1-ctl", "leg", 0.5, Level("leg_width", 0.0, control=True))
+    leg = _case("leg-s1-b", "leg", 0.5, Level("leg_width", 0.02))
+    _run(
+        tmp_path / "leg_width",
+        [control, leg],
+        [_result(control, "success", feature_m=0.05), _result(leg, "stuck", feature_m=0.3)],
+        "leg_width",
+    )
+    (tmp_path / "leg_width.json").write_text("{}")
+    path = write_index(tmp_path)
+    page = path.read_text()
+    assert path == tmp_path / "index.html"
+    assert '<a href="door_width/report.html">door_width</a>' in page
+    assert '<a href="leg_width/report.html">leg_width</a>' in page
+    assert page.index("door_width/") < page.index("leg_width/")
+    assert '<td class="n">2 of 2</td><td class="n">1</td><td class="n">1 of 1</td>' in page

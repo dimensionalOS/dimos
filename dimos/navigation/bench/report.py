@@ -35,6 +35,8 @@ from dimos.navigation.bench.suite import Case, Manifest
 
 REPORT_FILE = "report.html"
 TEMPLATE_FILE = "report_template.html"
+INDEX_FILE = "index.html"
+INDEX_TEMPLATE_FILE = "index_template.html"
 OUTCOMES: tuple[str, ...] = get_args(Outcome)
 STRIP_M = 1.0
 STRIP_TICK_M = 0.25
@@ -157,6 +159,34 @@ def load(run_dir: Path) -> Report:
 def write(run_dir: Path) -> Path:
     path = run_dir / REPORT_FILE
     path.write_text(render(load(run_dir)))
+    return path
+
+
+@dataclass(frozen=True)
+class IndexRow:
+    """One suite's run on the index page."""
+
+    link: str
+    report: Report
+    encountered: str
+
+
+def write_index(run_dir: Path) -> Path:
+    """One page linking the report of every suite run under the directory."""
+    rows = []
+    for suite_dir in sorted(d for d in run_dir.iterdir() if (d / RESULTS_FILE).exists()):
+        report = load(suite_dir)
+        seeds = encountered(report)
+        rows.append(
+            IndexRow(
+                link=f"{suite_dir.name}/{REPORT_FILE}",
+                report=report,
+                encountered="" if seeds is None else f"{len(seeds)} of {len(controls(report))}",
+            )
+        )
+    env = Environment(loader=FileSystemLoader(Path(__file__).parent), autoescape=True)
+    path = run_dir / INDEX_FILE
+    path.write_text(env.get_template(INDEX_TEMPLATE_FILE).render(title="nav-bench", rows=rows))
     return path
 
 
