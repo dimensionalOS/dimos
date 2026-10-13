@@ -24,6 +24,7 @@ from typing import Literal, TypeVar, cast, get_args
 
 import numpy as np
 from numpy.typing import NDArray
+from scipy.spatial.transform import Rotation
 
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.type.observation import Observation
@@ -35,6 +36,7 @@ from dimos.msgs.sim_msgs.Contacts import Contact, Contacts
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.navigation.bench.ground_truth import GO2
 from dimos.navigation.bench.suite import Point, Rules
+from dimos.simulation.go2_sim.world import LIDAR_HALF_EXTENTS, MOUNT_R, MOUNT_XYZ
 from dimos.simulation.scenes.procedural import Scene
 
 Outcome = Literal[
@@ -539,13 +541,21 @@ def _margins(pose: Poses, scene: Scene) -> NDArray[np.float64] | None:
         return None
     center, half = np.array([b.center for b in boxes]), np.array([b.half for b in boxes])
     outside = np.maximum(np.abs(pose.xyz[:, None, :2] - center[:, :2]) - half[:, :2], 0.0)
-    foot = pose.xyz[:, None, 2] - GO2.stand
-    level = (center[:, 2] + half[:, 2] > foot) & (center[:, 2] - half[:, 2] < foot + GO2.height)
+    foot, head = pose.xyz[:, None, 2] - GO2.stand, _lidar_top(pose)[:, None]
+    level = (center[:, 2] + half[:, 2] > foot) & (center[:, 2] - half[:, 2] < head)
     gap = np.where(level, np.hypot(outside[..., 0], outside[..., 1]), np.inf).min(axis=1)
     if not np.isfinite(gap).all():
         return None
     margins: NDArray[np.float64] = gap - GO2.radius
     return margins
+
+
+def _lidar_top(pose: Poses) -> NDArray[np.float64]:
+    """Per pose, the height of the top of the Mid-360 on the tilted trunk."""
+    tilt = Rotation.from_euler("xyz", pose.rpy).as_matrix()
+    reach = (tilt @ MOUNT_XYZ)[:, 2] + np.abs(tilt @ MOUNT_R)[:, 2] @ LIDAR_HALF_EXTENTS
+    top: NDArray[np.float64] = pose.xyz[:, 2] + reach
+    return top
 
 
 def _fall_start(pose: Poses, collisions: _Collisions | None, rules: Rules) -> float | None:
