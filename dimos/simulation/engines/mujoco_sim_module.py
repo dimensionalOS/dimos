@@ -30,7 +30,7 @@ import math
 from pathlib import Path
 import threading
 import time
-from typing import Any
+from typing import Any, Literal
 
 import mujoco
 import numpy as np
@@ -254,6 +254,11 @@ class MujocoSimModuleConfig(ModuleConfig, DepthCameraConfig):
     headless: bool = False
     tracked_bodies: list[str] = Field(default_factory=list)
     dof: int = 7
+    # Contact solver overrides applied to the loaded model; None keeps the MJCF's own option.
+    # Exported robosuite scenes lost robosuite's <option cone="elliptic" impratio="20">, and
+    # with MuJoCo's pyramidal default a closed gripper lets objects creep out.
+    friction_cone: Literal["pyramidal", "elliptic"] | None = None
+    impratio: float | None = None
 
     # Camera config (matches former MujocoCameraConfig).
     camera_name: str = "wrist_camera"
@@ -512,6 +517,7 @@ class MujocoSimModule(
             engine_kwargs["spawn_z"] = self.config.spawn_z
             engine_kwargs["spawn_yaw"] = self.config.spawn_yaw
         self._engine = MujocoEngine(**engine_kwargs)
+        self._apply_solver_options(self._engine.model)
 
         # Detect gripper (extra joint beyond dof).
         dof = self.config.dof
@@ -617,6 +623,22 @@ class MujocoSimModule(
             camera=self.config.camera_name,
             shm_key=shm_key,
         )
+
+    def _apply_solver_options(self, model: mujoco.MjModel) -> None:
+        if self.config.friction_cone is not None:
+            model.opt.cone = (
+                mujoco.mjtCone.mjCONE_ELLIPTIC
+                if self.config.friction_cone == "elliptic"
+                else mujoco.mjtCone.mjCONE_PYRAMIDAL
+            )
+        if self.config.impratio is not None:
+            model.opt.impratio = self.config.impratio
+        if self.config.friction_cone is not None or self.config.impratio is not None:
+            logger.info(
+                "MujocoSimModule: solver options",
+                cone=int(model.opt.cone),
+                impratio=float(model.opt.impratio),
+            )
 
     def _compose_model(self) -> mujoco.MjModel:
         """Compose optional scene package MJCF + robot MJCF + scene-package entities."""

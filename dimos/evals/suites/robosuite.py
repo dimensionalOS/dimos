@@ -16,7 +16,15 @@
 
 from dimos.evals.constants import XARM7_GRIPPER_NOTES
 from dimos.evals.environments.mujoco_sim import MujocoEnvironment
-from dimos.evals.scorers import hung_tool, lifted, opened_door, placed_can, seated_nut, stacked_on
+from dimos.evals.scorers import (
+    GRIPPER_BODIES,
+    can_partial,
+    door_partial,
+    hang_partial,
+    lift_partial,
+    nut_partial,
+    stack_partial,
+)
 from dimos.evals.suites.mujoco_xarm import PERCEPTION_MODULES
 from dimos.evals.types import EvalCase, Suite
 from dimos.utils.data import LfsPath
@@ -30,8 +38,17 @@ GUIDANCE = (
     "their world positions. Use the robot's manipulation skills to move: move_to_pose places, "
     "and get_robot_state reports, the gripper's tool centre point (TCP). "
     f"{XARM7_GRIPPER_NOTES} "
-    "Keep the final result steady for at least two seconds before finishing."
+    "Keep the final result steady for at least two seconds before finishing. "
+    "Do not read the simulator's scene, asset or recording files or the source of robosuite or "
+    "MuJoCo; learn about the scene only through the robot's camera and tools."
 )
+
+
+# robosuite's own contact solver (robosuite/models/assets/base.xml), which the scene export dropped.
+ROBOSUITE_PHYSICS = {
+    "MUJOCOSIMMODULE__FRICTION_CONE": "elliptic",
+    "MUJOCOSIMMODULE__IMPRATIO": "20",
+}
 
 
 def environment(scene: str, bodies: tuple[str, ...]) -> MujocoEnvironment:
@@ -45,14 +62,15 @@ def environment(scene: str, bodies: tuple[str, ...]) -> MujocoEnvironment:
         disable=PERCEPTION_MODULES,
         scene=LfsPath(f"robosuite/{scene}/scene.xml"),
         base_height=0.912,
-        tracked_bodies=bodies,
+        tracked_bodies=(*bodies, *GRIPPER_BODIES),  # gripper poses feed the partial graders
         agent_artifacts=(),  # sensors and skills only; the recording holds ground-truth poses
         # The wrist camera starts parked, so confirm objects from one view; robosuite's plain,
         # flat-shaded objects score about 0.3 with OWLv2, under the 0.40 real-world default.
         module_env={
             "LIVELOCALIZEMODULE__POLICY": (
                 '{"min_views": 1, "candidate_floor": 0.2, "accept_score": 0.25}'
-            )
+            ),
+            **ROBOSUITE_PHYSICS,
         },
     )
 
@@ -65,8 +83,8 @@ SUITE: Suite = [
             "The cube is 4 cm wide. " + GUIDANCE
         ),
         environment=environment("lift", ("cube_main",)),
-        grade=lifted("cube_main", by_m=0.05),
-        timeout_s=600.0,
+        grade=lift_partial("cube_main", by_m=0.05, half_size_m=0.02),
+        timeout_s=2400.0,
         tags=frozenset({"mujoco", "robosuite", "manipulation", "lift"}),
     ),
     EvalCase(
@@ -75,9 +93,9 @@ SUITE: Suite = [
             "Open the door by at least 0.3 radians (about 17 degrees), then release it "
             "and leave it open. The door has a movable handle. " + GUIDANCE
         ),
-        environment=environment("door", ("Door_frame", "Door_door")),
-        grade=opened_door,
-        timeout_s=900.0,
+        environment=environment("door", ("Door_frame", "Door_door", "Door_latch")),
+        grade=door_partial,
+        timeout_s=3600.0,
         tags=frozenset({"mujoco", "robosuite", "manipulation", "door"}),
     ),
     EvalCase(
@@ -88,8 +106,8 @@ SUITE: Suite = [
             "and move the gripper away. " + GUIDANCE
         ),
         environment=environment("pick_place", ("Can_main", "VisualCan_main")),
-        grade=placed_can,
-        timeout_s=900.0,
+        grade=can_partial,
+        timeout_s=3600.0,
         tags=frozenset({"mujoco", "robosuite", "manipulation", "pick_place"}),
     ),
     EvalCase(
@@ -100,9 +118,9 @@ SUITE: Suite = [
             "gripper away. " + GUIDANCE
         ),
         environment=environment("stack", ("cubeA_main", "cubeB_main")),
-        grade=stacked_on("cubeA_main", "cubeB_main", rise_m=(0.041, 0.049), band_m=0.03),
-        threshold=0.5,
-        timeout_s=900.0,
+        grade=stack_partial("cubeA_main", "cubeB_main", rise_m=(0.041, 0.049), band_m=0.03),
+        threshold=0.6,  # 0.2 lifted + 0.8 x the old 0.5 placement bar
+        timeout_s=3600.0,
         tags=frozenset({"mujoco", "robosuite", "manipulation", "stack"}),
     ),
     EvalCase(
@@ -116,8 +134,8 @@ SUITE: Suite = [
             "tool_hang",
             ("stand_root", "frame_root", "tool_hole1_root"),
         ),
-        grade=hung_tool,
-        timeout_s=1200.0,
+        grade=hang_partial,
+        timeout_s=4800.0,
         tags=frozenset({"mujoco", "robosuite", "manipulation", "tool_hang"}),
     ),
     EvalCase(
@@ -127,8 +145,8 @@ SUITE: Suite = [
             "the nut rests flat on the table. Release it and move the gripper away. " + GUIDANCE
         ),
         environment=environment("nut_assembly", ("SquareNut_main", "peg1")),
-        grade=seated_nut,
-        timeout_s=900.0,
+        grade=nut_partial,
+        timeout_s=3600.0,
         tags=frozenset({"mujoco", "robosuite", "manipulation", "nut_assembly"}),
     ),
 ]

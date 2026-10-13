@@ -25,7 +25,7 @@ from dataclasses import replace
 
 from dimos.evals.constants import RAW_ARM_README, XARM7_GRIPPER_NOTES
 from dimos.evals.environments.mujoco_sim import MujocoEnvironment, MujocoEnvironmentConfig
-from dimos.evals.suites.robosuite import GUIDANCE, SUITE as SKILL_SUITE
+from dimos.evals.suites.robosuite import GUIDANCE, ROBOSUITE_PHYSICS, SUITE as SKILL_SUITE
 from dimos.evals.types import EvalCase, Suite
 
 XARM7_ROBOSUITE_NOTES = f"""
@@ -45,7 +45,9 @@ def _raw(case: EvalCase) -> EvalCase:
         id=case.id.replace("robosuite_", "robosuite_raw_", 1),
         inputs=(
             f"{task} Keep the final result steady for at least two seconds before finishing. "
-            "Use the robot interface described in ROBOT.md."
+            "Use the robot interface described in ROBOT.md. Do not read the simulator's scene, "
+            "asset or recording files or the source of robosuite or MuJoCo, and do not install "
+            "them; learn about the scene only through the robot interface."
         ),
         environment=MujocoEnvironment(
             blueprint=["xarm-sim-robosuite", "mcp-server"],
@@ -54,6 +56,7 @@ def _raw(case: EvalCase) -> EvalCase:
             ready_streams=("color_image", "coordinator_joint_state"),
             scene=skills.scene,
             tracked_bodies=skills.tracked_bodies,
+            module_env=dict(ROBOSUITE_PHYSICS),
             agent_artifacts=(),  # ROBOT.md and the robot only; the recording holds ground truth
         ),
         tags=case.tags | {"raw"},

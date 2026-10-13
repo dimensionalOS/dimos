@@ -310,3 +310,203 @@ def floor(scores: Sequence[float]) -> float:
 
 def mean(scores: Sequence[float]) -> float:
     return sum(scores) / len(scores)
+
+
+# Staged partial credit for the robosuite cases. These read the whole tf history of the tracked
+# bodies, not only the final pose, so a failed run still earns the stages it reached. A case
+# scores 1.0 only when its binary check above passes, so pass rates stay comparable.
+
+GRIPPER = "xarm_gripper_base_link"
+FINGERS = ("left_finger", "right_finger")
+GRIPPER_BODIES = (GRIPPER, *FINGERS)
+_TCP_M = 0.172  # along the gripper base's z axis (XARM7_GRIPPER_NOTES)
+_SETTLE_S = 2.0  # spawned objects may still be dropping onto the table when recording starts
+
+
+class _Track:
+    """One body's world poses over the run, in time order."""
+
+    def __init__(self, ts: list[float], pos: list[np.ndarray], rot: list[np.ndarray]) -> None:
+        self.ts = np.asarray(ts)
+        self.pos = np.asarray(pos)
+        self.rot = np.asarray(rot)
+        settled = int(np.searchsorted(self.ts, self.ts[0] + _SETTLE_S, side="right")) - 1
+        self.rest = self.pos[max(settled, 0)]
+
+    @property
+    def final(self) -> np.ndarray:
+        return self.pos[-1]
+
+    def rise(self) -> float:
+        """Highest the body got above its resting height."""
+        return float(self.pos[:, 2].max() - self.rest[2])
+
+    def moved(self) -> float:
+        """Farthest the body got from its resting position."""
+        return float(np.linalg.norm(self.pos - self.rest, axis=1).max())
+
+    def at(self, ts: np.ndarray) -> np.ndarray:
+        """Index of this track's newest sample at or before each of ``ts``."""
+        return np.clip(np.searchsorted(self.ts, ts, side="right") - 1, 0, len(self.ts) - 1)
+
+
+def _tracks(outcome: Outcome, bodies: Sequence[str]) -> dict[str, _Track]:
+    """World tracks of ``bodies`` that the sim published on tf; missing bodies are left out."""
+    raw: dict[str, tuple[list[float], list[np.ndarray], list[np.ndarray]]] = {
+        b: ([], [], []) for b in bodies
+    }
+    with recording(outcome) as store:
+        if "tf" not in store.streams:
+            return {}
+        for record in store.streams.tf.order_by("ts"):
+            for transform in record.data.transforms:
+                # Robot links are also on tf relative to their parents; only world poses count.
+                if transform.child_frame_id in raw and transform.frame_id == "world":
+                    ts, pos, rot = raw[transform.child_frame_id]
+                    ts.append(record.ts)
+                    pos.append(transform.translation.to_numpy())
+                    rot.append(transform.rotation.to_rotation_matrix())
+    return {b: _Track(*v) for b, v in raw.items() if v[0]}
+
+
+def _tcp(tracks: dict[str, _Track]) -> np.ndarray | None:
+    """The gripper's TCP over time, on the gripper base's timestamps."""
+    base = tracks.get(GRIPPER)
+    if base is None:
+        return None
+    return base.pos + base.rot[:, :, 2] * _TCP_M
+
+
+def _closed(tracks: dict[str, _Track]) -> np.ndarray | None:
+    """Per gripper sample: jaws at least 2 cm narrower than their widest in the run."""
+    base, left, right = (tracks.get(b) for b in GRIPPER_BODIES)
+    if base is None or left is None or right is None:
+        return None
+    gap = np.linalg.norm(left.pos[left.at(base.ts)] - right.pos[right.at(base.ts)], axis=1)
+    return gap < gap.max() - 0.02
+
+
+def _came_within(tracks: dict[str, _Track], body: str, radius_m: float) -> bool:
+    """The TCP came within ``radius_m`` of ``body``'s origin at some point."""
+    tcp, target = _tcp(tracks), tracks.get(body)
+    if tcp is None or target is None:
+        return False
+    nearest = target.pos[target.at(tracks[GRIPPER].ts)]
+    return bool((np.linalg.norm(tcp - nearest, axis=1) < radius_m).any())
+
+
+def lift_partial(body: str, *, by_m: float, half_size_m: float) -> Callable[[Outcome], float]:
+    """0.2 for touching ``body``, then 0.8 x final height gained / ``by_m``."""
+
+    def grade(outcome: Outcome) -> float:
+        tracks = _tracks(outcome, (body, *GRIPPER_BODIES))
+        cube = tracks.get(body)
+        if cube is None:
+            return 0.0
+        touched = cube.moved() > 0.01 or _came_within(tracks, body, half_size_m + 0.015)
+        height = min(max((cube.final[2] - cube.rest[2]) / by_m, 0.0), 1.0)
+        return float(0.2 * touched + 0.8 * height)
+
+    return grade
+
+
+def stack_partial(
+    top: str, base: str, *, rise_m: tuple[float, float], band_m: float
+) -> Callable[[Outcome], float]:
+    """0.2 once ``top`` is lifted 2 cm, then 0.8 x the ``stacked_on`` placement score."""
+    placed = stacked_on(top, base, rise_m=rise_m, band_m=band_m)
+
+    def grade(outcome: Outcome) -> float:
+        track = _tracks(outcome, (top,)).get(top)
+        if track is None:
+            return 0.0
+        return float(0.2 * (track.rise() >= 0.02) + 0.8 * placed(outcome))
+
+    return grade
+
+
+# Door_handle geom in the Door_latch body frame: centre and half-sizes.
+_HANDLE_CENTRE = np.array([0.075, -0.10, 0.0])
+_HANDLE_HALF = np.array([0.075, 0.015, 0.02])
+
+
+def door_partial(outcome: Outcome) -> float:
+    """0.2 for holding the handle (or opening the door at all), then 0.8 x angle / 0.3 rad."""
+    tracks = _tracks(outcome, ("Door_frame", "Door_door", "Door_latch", *GRIPPER_BODIES))
+    frame, panel = tracks.get("Door_frame"), tracks.get("Door_door")
+    if frame is None or panel is None:
+        return 0.0
+    relative = frame.rot[-1].T @ panel.rot[-1]
+    angle = math.atan2(relative[1, 0], relative[0, 0])
+    held = angle >= 0.05  # the door is latched, so it only swings once the handle is turned
+    tcp, closed, latch = _tcp(tracks), _closed(tracks), tracks.get("Door_latch")
+    if not held and tcp is not None and closed is not None and latch is not None:
+        i = latch.at(tracks[GRIPPER].ts)
+        local = np.einsum("nji,nj->ni", latch.rot[i], tcp - latch.pos[i]) - _HANDLE_CENTRE
+        outside = np.linalg.norm(np.maximum(np.abs(local) - _HANDLE_HALF, 0.0), axis=1)
+        held = bool(((outside < 0.015) & closed).any())
+    return float(0.2 * held + 0.8 * min(max(angle, 0.0) / 0.3, 1.0))
+
+
+def can_partial(outcome: Outcome) -> float:
+    """0.2 lifted, 0.4 resting in the target compartment, 0.4 for position near the marker."""
+    tracks = _tracks(outcome, ("Can_main", "VisualCan_main"))
+    can, marker = tracks.get("Can_main"), tracks.get("VisualCan_main")
+    if can is None or marker is None:
+        return 0.0
+    score = 0.2 * (can.rise() >= 0.03)
+    dx, dy, dz = np.abs(can.final - marker.final)
+    # The marker sits at the centre of its bin quarter (0.2 x 0.25 m) at the can's resting height.
+    if not (dx < 0.1 and dy < 0.125 and dz < 0.02):
+        return float(score)
+    score += 0.4
+    if placed_can(outcome):
+        return float(score + 0.4)
+    # Ramp from the pass box (5 x 7.5 cm) out to the compartment walls; half credit lying down.
+    off = math.hypot(max(dx - 0.05, 0.0), max(dy - 0.075, 0.0))
+    upright = can.rot[-1][2, 2] > 0.98
+    return float(score + 0.4 * ramp(off, band=0.05) * (1.0 if upright else 0.5))
+
+
+def nut_partial(outcome: Outcome) -> float:
+    """0.4 picked up, 0.2 released resting near the peg, 0.4 x how far down the peg it went."""
+    tracks = _tracks(outcome, ("SquareNut_main", "peg1"))
+    nut, peg = tracks.get("SquareNut_main"), tracks.get("peg1")
+    if nut is None or peg is None or nut.rise() < 0.02:
+        return 0.0
+    delta = nut.final - peg.final
+    flat = math.hypot(delta[0], delta[1])
+    centred = flat < 0.007 and abs(nut.rot[-1][2, 2]) > 0.98
+    # The exported peg box is 0.2 m tall about its origin; a seated nut sits 2 cm below the origin.
+    depth = (0.1 - delta[2]) / (0.1 + 0.02) if centred else 0.0
+    resting = nut.final[2] <= nut.rest[2] + 0.01 or depth > 0.0
+    score = 0.4 + 0.2 * (resting and flat < 0.05)
+    if seated_nut(outcome):
+        return float(score + 0.4)
+    return float(score + 0.4 * min(max(depth, 0.0), 1.0))
+
+
+def hang_partial(outcome: Outcome) -> float:
+    """0.1 frame lifted, 0.3 frame in the stand, 0.1 wrench lifted, 0.2 wrench reached the hook,
+    0.3 wrench hung (the full ``hung_tool`` check)."""
+    tracks = _tracks(outcome, ("stand_root", "frame_root", "tool_hole1_root"))
+    stand, frame, hole = (tracks.get(b) for b in ("stand_root", "frame_root", "tool_hole1_root"))
+    if stand is None or frame is None or hole is None:
+        return 0.0
+    score = 0.1 * (frame.rise() >= 0.03) + 0.1 * (hole.rise() >= 0.03)
+    # Frame in stand: same geometry as hung_tool, on the final poses.
+    stand_r, frame_r = stand.rot[-1], frame.rot[-1]
+    tip = frame.final + frame_r @ np.array([0.04375, 0, -0.13445])
+    off = float(np.linalg.norm(stand_r.T @ (tip - stand.final) - np.array([0, 0.045, -0.07])))
+    aligned = stand_r[2, 2] > 0.98 and np.dot(stand_r[:, 2], frame_r[:, 2]) > 0.98
+    if aligned and off < 0.01:
+        score += 0.3
+    else:
+        score += 0.3 * ramp(max(off - 0.01, 0.0), band=0.05) * (1.0 if aligned else 0.5)
+    # Wrench at the hook at some point: hole within 3 cm of the hook segment in the frame.
+    i = frame.at(hole.ts)
+    local = np.einsum("nji,nj->ni", frame.rot[i], hole.pos - frame.pos[i])
+    along = np.clip(local[:, 0], -0.043, 0.04375)
+    near = np.sqrt((local[:, 0] - along) ** 2 + local[:, 1] ** 2 + (local[:, 2] - 0.08625) ** 2)
+    score += 0.2 * bool((near < 0.03).any())
+    return float(score + 0.3 * hung_tool(outcome))
