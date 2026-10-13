@@ -197,13 +197,16 @@ def test_report_counts_near_falls_and_lists_verdict_mismatches(tmp_path: Path) -
     results = [
         _result(cases[0], "success"),
         _result(cases[1], "success", trunk_floor_s=0.06),
-        _result(cases[2], "fall", trunk_floor_s=2.0),
+        _result(
+            cases[2], "fall", trunk_floor_s=2.0, contacts={"leg clutter": 3, "foot clutter": 1}
+        ),
         _result(cases[3], "stuck", mismatch=True),
     ]
     run = tmp_path / "run"
     _run(run, cases, results)
     report = load(run)
     assert by_level(report)[0].near_falls == 1
+    assert by_level(report)[0].contacts == {"leg clutter": 1, "foot clutter": 1}
     assert [row.case.id for row in report.mismatches] == ["door-s3-a"]
     assert render([report])
 

@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Literal, TypeVar, cast, get_args
@@ -77,6 +78,7 @@ TRUNK_ON_FLOOR = Contact("trunk", "floor")
 T = TypeVar("T")
 GOAL_ECHO_M = 0.05
 TIMEOUT_SLACK_S = 0.2
+CONTACT_SPEED_S = 0.2
 ARRIVED = ("success", "reached_with_collision", "wrong_place", "wrong_floor")
 GAVE_UP = ("stuck", "stalled", "timeout")
 
@@ -201,6 +203,10 @@ class Score:
     claimed: bool
     mismatch: bool = False
     feature_m: float | None = None
+    contacts: dict[str, int] = field(default_factory=dict)
+    first_contact: str | None = None
+    first_contact_s: float | None = None
+    first_contact_speed: float | None = None
     missing: list[str] = field(default_factory=list)
 
 
@@ -247,6 +253,7 @@ def score(
         shown = "timeout"
     outcome, mismatch = _settle(shown, verdict)
     traveled = float(np.linalg.norm(np.diff(pose.xyz[:, :2], axis=0), axis=1).sum())
+    touched = collisions.first if collisions else None
     spl = None
     if route_length is not None:
         spl = (route_length / max(route_length, traveled)) if outcome == "success" else 0.0
@@ -276,6 +283,10 @@ def score(
         feature_m=None
         if feature is None
         else float(np.linalg.norm(pose.xyz[:, :2] - feature, axis=1).min()),
+        contacts={_name(c): n for c, n in sorted(collisions.started.items())} if collisions else {},
+        first_contact=_name(touched[1]) if touched else None,
+        first_contact_s=touched[0] - t0 if touched else None,
+        first_contact_speed=_speed(recording.pose, touched[0]) if touched else None,
         missing=missing,
     )
 
@@ -355,6 +366,8 @@ class _Collisions:
     count: int
     seconds: float
     trunk_floor_s: float
+    started: Counter[Contact]
+    first: tuple[float, Contact] | None
 
 
 def _collisions(samples: list[ContactSample] | None, t0: float, t1: float) -> _Collisions | None:
@@ -363,23 +376,41 @@ def _collisions(samples: list[ContactSample] | None, t0: float, t1: float) -> _C
         return None
     before = [s for s in samples if s.t <= t0]
     state = before[-1].contacts if before else []
-    colliding, on_trunk = _colliding(state), TRUNK_ON_FLOOR in state
-    count, seconds, trunk_floor = int(colliding), 0.0, 0.0
+    held, on_trunk = _colliding(state), TRUNK_ON_FLOOR in state
+    count, seconds, trunk_floor = int(bool(held)), 0.0, 0.0
+    started = Counter(held)
+    first = (t0, min(held)) if held else None
     t_prev = t0
     for sample in (s for s in samples if t0 < s.t <= t1):
-        seconds += (sample.t - t_prev) * colliding
+        seconds += (sample.t - t_prev) * bool(held)
         trunk_floor += (sample.t - t_prev) * on_trunk
         t_prev = sample.t
         now = _colliding(sample.contacts)
-        count += int(now and not colliding)
-        colliding, on_trunk = now, TRUNK_ON_FLOOR in sample.contacts
-    seconds += (t1 - t_prev) * colliding
+        count += int(bool(now) and not held)
+        started.update(now - held)
+        if first is None and now:
+            first = (sample.t, min(now))
+        held, on_trunk = now, TRUNK_ON_FLOOR in sample.contacts
+    seconds += (t1 - t_prev) * bool(held)
     trunk_floor += (t1 - t_prev) * on_trunk
-    return _Collisions(count, seconds, trunk_floor)
+    return _Collisions(count, seconds, trunk_floor, started, first)
 
 
-def _colliding(contacts: list[Contact]) -> bool:
-    return any(c.kind in COLLIDING_KINDS for c in contacts)
+def _colliding(contacts: list[Contact]) -> set[Contact]:
+    return {c for c in contacts if c.kind in COLLIDING_KINDS}
+
+
+def _name(contact: Contact) -> str:
+    return f"{contact.part} {contact.kind}"
+
+
+def _speed(pose: Poses, t: float) -> float | None:
+    """The body's ground speed over the moment before t."""
+    span = _slice(pose, t - CONTACT_SPEED_S, t)
+    if len(span.t) < 2 or span.t[-1] == span.t[0]:
+        return None
+    steps = np.linalg.norm(np.diff(span.xyz[:, :2], axis=0), axis=1)
+    return float(steps.sum() / (span.t[-1] - span.t[0]))
 
 
 def _fell(pose: Poses, collisions: _Collisions | None, rules: Rules) -> bool:

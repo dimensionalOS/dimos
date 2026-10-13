@@ -77,6 +77,7 @@ def test_a_clean_arrival_is_a_success_with_full_metrics() -> None:
     assert s.final_error_xy < 0.05 and s.final_xy == pytest.approx((5.0, 1.0), abs=0.05)
     assert (s.collisions, s.reroutes, s.yaw_reversals, s.fell, s.missing) == (0, 0, 0, False, [])
     assert (s.reached, s.claimed) == (True, True)
+    assert (s.contacts, s.first_contact, s.first_contact_s) == ({}, None, None)
     assert s.empty_path_s == pytest.approx(0.5)
 
 
@@ -157,6 +158,9 @@ def test_every_failure_has_an_outcome_and_a_signature() -> None:
         1.5,
         0.0,
     )
+    assert (s.contacts, s.first_contact) == ({"leg clutter": 1}, "leg clutter")
+    assert s.first_contact_s == pytest.approx(3.0)
+    assert s.first_contact_speed == pytest.approx(SPEED, abs=0.01)
     far_off = score(_walk(10.0), RULES, (7.0, 1.0, 0.0))
     assert (far_off.outcome, far_off.reached, far_off.claimed) == ("wrong_place", False, True)
     assert score(_walk(10.0), RULES, (5.0, 1.0, 1.0)).outcome == "wrong_floor"

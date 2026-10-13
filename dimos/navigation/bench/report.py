@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 from pathlib import Path
 import shlex
@@ -62,6 +62,7 @@ class Row:
     feature_m: float | None
     near_fall: bool
     mismatch: bool
+    contacts: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -143,6 +144,7 @@ class LevelRow:
     left_out: Counter[str]
     left_out_collisions: int
     near_falls: int = 0
+    contacts: Counter[str] = field(default_factory=Counter)
 
     @property
     def not_encountered(self) -> int:
@@ -227,6 +229,7 @@ def _row(case: Case, record: dict[str, object], episode: Path) -> Row:
         feature_m=_float(metrics.get("feature_m")),
         near_fall=record["outcome"] != "fall" and bool(metrics.get("trunk_floor_s")),
         mismatch=bool(metrics.get("mismatch")),
+        contacts=tuple(metrics.get("contacts") or ()),
     )
 
 
@@ -311,6 +314,7 @@ def by_level(report: Report) -> list[LevelRow]:
                     left_out=Counter(r.outcome for r in rest),
                     left_out_collisions=sum(bool(r.collisions) for r in rest),
                     near_falls=sum(r.near_fall for r in faced),
+                    contacts=Counter(name for r in faced for name in r.contacts),
                 )
             )
     return levels
