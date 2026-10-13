@@ -335,21 +335,23 @@ def test_connect_discovers_only_wired_streams(running_app, client, stream_module
 @pytest.mark.parametrize("name", ["messages", "commands", "state"])
 def test_connect_subscribes_to_every_stream_direction(client, stream_module, collected, name):
     module = client.get_module("remote/streams")
-    stream = getattr(module, name)
+    stream = module.get_stream(name)
     received, event, callback = collected
     with Disposable(stream.subscribe(callback)):
         stream_module.emit(name, b"hello")
         assert event.wait(timeout=5.0)
         assert received == [b"hello"]
-    assert getattr(module, name) is stream
+    assert module.get_stream(name) is stream
+    with pytest.raises(AttributeError, match=name):
+        getattr(module, name)
     with pytest.raises(AttributeError, match="missing"):
-        _ = module.missing
+        module.get_stream("missing")
 
 
 def test_unsubscribe_and_client_stop_leave_daemon_running(
     running_app, client, stream_module, collected, wait_until
 ):
-    stream = client.get_module("remote/streams").messages
+    stream = client.get_module("remote/streams").get_stream("messages")
     received, event, callback = collected
     unsubscribed = []
     with Disposable(stream.subscribe(callback)):
@@ -391,7 +393,27 @@ def test_connected_stream_uses_configured_lcm_bus(
     owner = running_app.VectorStreamModule
     owner.set_transport("messages", custom_lcm_transport)
     received, event, callback = collected
-    with Disposable(client.VectorStreamModule.messages.subscribe(callback)):
+    with Disposable(client.VectorStreamModule.get_stream("messages").subscribe(callback)):
         owner.emit(Vector3(1.0, 2.0, 3.0))
         assert event.wait(timeout=5.0)
         assert received == [Vector3(1.0, 2.0, 3.0)]
+
+
+def test_get_stream_subscribes_when_module_class_is_unavailable(
+    client, stream_module, collected, mocker
+):
+    import_module = mocker.patch(
+        "dimos.porcelain.remote_module_source.importlib.import_module", side_effect=ImportError
+    )
+    module = client.get_module("remote/streams")
+    mocker.stop(import_module)
+    assert isinstance(module, RemoteModuleProxy)
+    received, event, callback = collected
+    with Disposable(module.get_stream("messages").subscribe(callback)):
+        stream_module.emit("messages", b"hello")
+        assert event.wait(timeout=5.0)
+        assert received == [b"hello"]
+    with pytest.raises(AttributeError, match="messages"):
+        module.messages  # noqa: B018
+    with pytest.raises(AttributeError, match="missing"):
+        module.get_stream("missing")

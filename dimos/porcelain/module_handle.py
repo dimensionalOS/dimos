@@ -18,7 +18,7 @@ from collections.abc import Callable
 from typing import Any, TypeAlias
 
 from dimos.core.rpc_client import ModuleProxyProtocol, RpcCall, RPCClient
-from dimos.core.stream import RemoteStream
+from dimos.core.stream import RemoteOut
 from dimos.protocol.rpc.spec import RPCSpec
 
 
@@ -33,7 +33,7 @@ class RemoteModuleProxy:
         rpc: RPCSpec,
         remote_name: str,
         rpc_names: set[str],
-        stream_lookup: Callable[[str], RemoteStream[Any]] | None = None,
+        stream_lookup: Callable[[str], RemoteOut[Any]] | None = None,
     ) -> None:
         self._rpc = rpc
         self._remote_name = remote_name
@@ -41,14 +41,18 @@ class RemoteModuleProxy:
         self._stream_lookup = stream_lookup
         self._unsub_fns: list[Callable[[], None]] = []
 
-    def __getattr__(self, name: str) -> Any:
+    def __getattr__(self, name: str) -> RpcCall:
         if name.startswith("_"):
             raise AttributeError(name)
         if name not in self._rpc_names:
-            if self._stream_lookup is not None:
-                return self._stream_lookup(name)
             raise AttributeError(f"{self._remote_name!r} has no @rpc method named {name!r}")
         return RpcCall(None, self._rpc, name, self._remote_name, self._unsub_fns, None)
+
+    def get_stream(self, name: str) -> RemoteOut[Any]:
+        """Get a subscription handle for an advertised stream."""
+        if self._stream_lookup is None:
+            raise AttributeError("Stream lookup is unavailable")
+        return self._stream_lookup(name)
 
     def __dir__(self) -> list[str]:
         return sorted(self._rpc_names)

@@ -207,7 +207,7 @@ class Dimos:
     def list_streams(self, module: str | ModuleHandle | None = None) -> list[StreamInfo]:
         """Return the wired streams of deployed modules and the channel carrying each.
 
-        Subscribe to one through its module, e.g. ``app.Detector.detections.subscribe(cb)``.
+        Subscribe via its module, e.g. ``app.Detector.get_stream("detections").subscribe(cb)``.
 
         Args:
             module: Optional exact instance name, unique class name, or module proxy.

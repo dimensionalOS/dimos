@@ -143,9 +143,7 @@ class RemoteModuleSource(ModuleSource):
                     (d for d in self.list_stream_descriptors() if (d.module, d.name) == key), None
                 )
                 if descriptor is None:
-                    raise AttributeError(
-                        f"{remote_name!r} has no @rpc method or stream named {name!r}"
-                    )
+                    raise AttributeError(f"{remote_name!r} has no stream named {name!r}")
                 stream_type, transport = pickle.loads(descriptor.transport)
                 if isinstance(
                     transport, (WebRTCTransport, WebRTCVideoTransport, WebRTCAudioTransport)
