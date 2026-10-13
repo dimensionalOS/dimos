@@ -20,9 +20,11 @@ import numpy as np
 from numpy.typing import NDArray
 import pytest
 
-from dimos.navigation.bench.ground_truth import GO2, GroundTruth
+from dimos.navigation.bench.ground_truth import CELL, GO2, GroundTruth
 from dimos.navigation.bench.suite import (
     BLOCK_HEIGHT,
+    CORRIDOR,
+    CORRIDOR_TURN,
     DOORWAY,
     GOAL_CLEARANCE,
     LEG_WIDTH,
@@ -33,6 +35,7 @@ from dimos.navigation.bench.suite import (
     FreezeConfig,
     Level,
     Manifest,
+    Probe,
     freeze,
     freeze_probe,
     table_leg,
@@ -189,4 +192,24 @@ def test_overhang_probe_aims_the_direct_line_under_the_slab() -> None:
         start, goal, at = (np.array(p[:2]) for p in (case.start, case.goal, case.feature))
         along = (goal - start) / np.linalg.norm(goal - start)
         assert abs(float(along[0] * (at - start)[1] - along[1] * (at - start)[0])) < 1e-9
+    manifest.check_drift()
+
+
+@pytest.mark.parametrize("probe", [CORRIDOR, CORRIDOR_TURN])
+def test_corridor_probes_set_the_width_and_put_the_goal_in_the_far_room(probe: Probe) -> None:
+    probe = replace(probe, seeds=(1, 2))
+    manifest = freeze_probe(probe)
+    assert len({c.id for c in manifest.cases}) == len(manifest.cases) == 2 * len(probe.levels)
+    assert probe.levels == CORRIDOR.levels and probe.control is None
+    for case in manifest.cases:
+        assert case.level is not None and case.params == {"corridor_width": case.level.value}
+        assert case.family == probe.family and case.feature is None
+        params = case.scene().params
+        assert params["room_x"] + SIDE_WALL_M <= case.goal[0] <= params["width"] - SIDE_WALL_M
+        assert params["room_y"] + SIDE_WALL_M <= case.goal[1] <= params["length"] - SIDE_WALL_M
+        assert GO2.radius <= case.difficulty.min_clearance <= case.level.value / 2 + CELL
+        straight = float(np.hypot(case.goal[0] - case.start[0], case.goal[1] - case.start[1]))
+        assert case.route_length >= straight and case.difficulty.doors == 0
+    for seed in probe.seeds:
+        assert len({(c.start, c.goal) for c in manifest.cases if c.seed == seed}) == 1
     manifest.check_drift()

@@ -30,7 +30,9 @@ from dimos.msgs.sim_msgs.Contacts import Kind
 
 Vec3 = tuple[float, float, float]
 Rect = tuple[float, float, float, float]
-Family = Literal["office", "room", "doorway", "table", "block", "overhang"]
+Family = Literal[
+    "office", "room", "doorway", "table", "block", "overhang", "corridor", "corridor_turn"
+]
 
 SLAB_THICKNESS = 0.15
 WALL_THICKNESS = 0.1
@@ -50,6 +52,9 @@ DOOR_SIDE_MARGIN = 0.3
 DOOR_CLUTTER_SIZE = (0.3, 0.3, 0.5)
 MIN_ROOM_WIDTH = 3.0
 PLACEMENT_TRIES = 50
+CORRIDOR_WIDTH = (0.8, 1.2)
+CORRIDOR_LENGTH = (3.5, 4.5)
+CORRIDOR_MOUTH_INSET = 1.0
 
 
 @dataclass(frozen=True)
@@ -233,6 +238,20 @@ def _table_at(
             scene.add((px, py, z), (px + leg, py + leg, top - TABLE_TOP_THICKNESS), "clutter")
 
 
+def _solid(
+    scene: Scene, width: float, length: float, z: float, top: float, hollow: list[Rect]
+) -> None:
+    """Wall filling one rectangular floor everywhere outside the hollows."""
+    xs = sorted({0.0, width, *(x for x0, _, x1, _ in hollow for x in (x0, x1))})
+    ys = sorted({0.0, length, *(y for _, y0, _, y1 in hollow for y in (y0, y1))})
+    for x0, x1 in itertools.pairwise(xs):
+        filled = [_clear(x0, y0, x1, y1, hollow) for y0, y1 in itertools.pairwise(ys)]
+        for solid, run in itertools.groupby(range(len(filled)), filled.__getitem__):
+            if solid:
+                strips = list(run)
+                scene.add((x0, ys[strips[0]], z), (x1, ys[strips[-1] + 1], top), "wall")
+
+
 def office(
     seed: int,
     door_width: float | None = None,
@@ -386,6 +405,74 @@ def overhang(seed: int, clearance: float | None = None) -> Scene:
     return scene
 
 
+def corridor(seed: int, corridor_width: float | None = None) -> Scene:
+    """Two empty rooms joined by one straight corridor, the only way from the start to the far room."""
+    rng = np.random.default_rng(seed)
+    near, run, far = _uniform(rng, 3, 4), _uniform(rng, *CORRIDOR_LENGTH), _uniform(rng, 4, 5)
+    width, length = near + run + far, _uniform(rng, 5, 7)
+    z0 = _uniform(rng, 0.0, 0.08)
+    y = _uniform(rng, CORRIDOR_MOUTH_INSET, length - CORRIDOR_MOUTH_INSET)
+    half = _given(_uniform(rng, *CORRIDOR_WIDTH), corridor_width) / 2
+    scene = Scene(
+        f"corridor_{seed}",
+        {
+            "width": width,
+            "length": length,
+            "z0": z0,
+            "corridor_x": near,
+            "corridor_y": y,
+            "room_x": near + run,
+            "room_y": 0.0,
+        },
+    )
+    top = _shell(scene, width, length, z0)
+    hollow = [
+        (0.0, 0.0, near, length),
+        (near, y - half, near + run, y + half),
+        (near + run, 0.0, width, length),
+    ]
+    _solid(scene, width, length, z0, top, hollow)
+    scene.start = (1.0, 1.0, z0)
+    return scene
+
+
+def corridor_turn(seed: int, corridor_width: float | None = None) -> Scene:
+    """Two empty rooms joined by one corridor with a right-angle turn, the only way between them."""
+    rng = np.random.default_rng(seed)
+    near, run, far = _uniform(rng, 3, 4), _uniform(rng, *CORRIDOR_LENGTH), _uniform(rng, 4, 5)
+    depth = _uniform(rng, 4, 5)
+    z0 = _uniform(rng, 0.0, 0.08)
+    y = _uniform(rng, CORRIDOR_MOUTH_INSET, 3.0)
+    first = _uniform(rng, 0.45, 0.55) * run
+    half = _given(_uniform(rng, *CORRIDOR_WIDTH), corridor_width) / 2
+    turn = near + first
+    room_x, room_y = turn - CORRIDOR_MOUTH_INSET, y + run - first
+    width, length = room_x + far, room_y + depth
+    scene = Scene(
+        f"corridor_turn_{seed}",
+        {
+            "width": width,
+            "length": length,
+            "z0": z0,
+            "corridor_x": near,
+            "corridor_y": y,
+            "turn_x": turn,
+            "room_x": room_x,
+            "room_y": room_y,
+        },
+    )
+    top = _shell(scene, width, length, z0)
+    hollow = [
+        (0.0, 0.0, near, length),
+        (near, y - half, turn + half, y + half),
+        (turn - half, y - half, turn + half, room_y),
+        (room_x, room_y, width, length),
+    ]
+    _solid(scene, width, length, z0, top, hollow)
+    scene.start = (1.0, 1.0, z0)
+    return scene
+
+
 Params = dict[str, bool | int | float]
 FAMILIES: dict[Family, Callable[..., Scene]] = {
     "office": office,
@@ -394,6 +481,8 @@ FAMILIES: dict[Family, Callable[..., Scene]] = {
     "table": table,
     "block": block,
     "overhang": overhang,
+    "corridor": corridor,
+    "corridor_turn": corridor_turn,
 }
 
 

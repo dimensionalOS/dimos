@@ -22,6 +22,8 @@ import pytest
 
 from dimos.simulation.scenes.procedural import (
     BLOCK_SIZE,
+    CORRIDOR_LENGTH,
+    CORRIDOR_WIDTH,
     DOOR_HEIGHT,
     DOOR_WIDTH,
     OVERHANG_LEG,
@@ -36,6 +38,8 @@ from dimos.simulation.scenes.procedural import (
     WALL_THICKNESS,
     Scene,
     block,
+    corridor,
+    corridor_turn,
     doorway,
     generate,
     office,
@@ -279,3 +283,79 @@ def test_overhang_clearance_is_drawn_unless_given_and_zero_removes_it() -> None:
     bare = overhang(3, clearance=0.0)
     assert not [b for b in bare.boxes if b.kind == "clutter"]
     assert bare.params == overhang(3).params
+
+
+def _gap(scene: Scene, x: float, y: float, axis: int) -> tuple[float, float]:
+    """The nearest wall faces on both sides of a point along an axis."""
+    at = (x, y)
+    below, above = [], []
+    for box in scene.boxes:
+        if box.kind != "wall" or abs(at[1 - axis] - box.center[1 - axis]) >= box.half[1 - axis]:
+            continue
+        low, high = box.center[axis] - box.half[axis], box.center[axis] + box.half[axis]
+        if high <= at[axis]:
+            below.append(high)
+        else:
+            above.append(low)
+    return max(below), min(above)
+
+
+def test_corridor_is_deterministic_and_pinned() -> None:
+    assert corridor(3).digest() == corridor(3).digest() == "f70db16e317a35aa"
+    assert corridor(3).digest() != corridor(4).digest()
+    assert corridor_turn(3).digest() == corridor_turn(3).digest() == "0fc849a623765780"
+    assert corridor_turn(3).digest() != corridor_turn(4).digest()
+
+
+def test_corridor_joins_two_empty_rooms_between_walls_the_given_width_apart() -> None:
+    for seed in range(1, 21):
+        scene = corridor(seed, corridor_width=0.6)
+        width, length = scene.params["width"], scene.params["length"]
+        x, y, room_x = (scene.params[k] for k in ("corridor_x", "corridor_y", "room_x"))
+        assert sorted(box.kind for box in scene.boxes) == ["floor", *["wall"] * 6]
+        assert CORRIDOR_LENGTH[0] <= room_x - x <= CORRIDOR_LENGTH[1]
+        assert 1.0 <= y <= length - 1.0 and scene.params["room_y"] == 0.0
+        assert x >= 1.0 + START_CLEARANCE and width - room_x >= 4.0
+        for along in (x + 0.01, (x + room_x) / 2, room_x - 0.01):
+            assert _gap(scene, along, y, 1) == pytest.approx((y - 0.3, y + 0.3))
+        assert _gap(scene, x - 0.01, y, 1) == pytest.approx((0.0, length))
+        assert _gap(scene, room_x + 0.01, y, 1) == pytest.approx((0.0, length))
+        assert _gap(scene, (x + room_x) / 2, y, 0) == pytest.approx((0.0, width))
+        assert _reachable_fraction(scene) == 1.0, seed
+        lo, hi = scene.bounds()
+        assert lo[:2] == pytest.approx([-WALL_THICKNESS] * 2)
+        assert hi[:2] == pytest.approx([width + WALL_THICKNESS, length + WALL_THICKNESS])
+
+
+def test_corridor_turn_bends_once_between_walls_the_given_width_apart() -> None:
+    for seed in range(1, 21):
+        scene = corridor_turn(seed, corridor_width=0.6)
+        width, length = scene.params["width"], scene.params["length"]
+        x, y, turn = (scene.params[k] for k in ("corridor_x", "corridor_y", "turn_x"))
+        room_x, room_y = scene.params["room_x"], scene.params["room_y"]
+        assert sorted(box.kind for box in scene.boxes) == ["floor", *["wall"] * 10]
+        first, second = turn - x, room_y - y
+        assert CORRIDOR_LENGTH[0] <= first + second <= CORRIDOR_LENGTH[1]
+        assert 0.45 <= first / (first + second) <= 0.55
+        assert x + 0.5 < room_x == pytest.approx(turn - 1.0)
+        assert width - room_x >= 4.0 and length - room_y >= 4.0
+        assert _gap(scene, (x + turn - 0.3) / 2, y, 1) == pytest.approx((y - 0.3, y + 0.3))
+        assert _gap(scene, turn, (y + 0.3 + room_y) / 2, 0) == pytest.approx(
+            (turn - 0.3, turn + 0.3)
+        )
+        assert _gap(scene, turn, y, 0) == pytest.approx((0.0, turn + 0.3))
+        assert _gap(scene, turn, y, 1) == pytest.approx((y - 0.3, length))
+        assert _gap(scene, room_x + 0.01, room_y + 0.01, 0) == pytest.approx((room_x, width))
+        assert _gap(scene, x - 0.01, y, 1) == pytest.approx((0.0, length))
+        assert _reachable_fraction(scene) == 1.0, seed
+
+
+def test_corridor_width_is_drawn_unless_given() -> None:
+    for family in (corridor, corridor_turn):
+        drawn, narrow = family(3), family(3, corridor_width=0.5)
+        x, y = drawn.params["corridor_x"] + 0.01, drawn.params["corridor_y"]
+        low, high = _gap(drawn, x, y, 1)
+        assert CORRIDOR_WIDTH[0] <= high - low <= CORRIDOR_WIDTH[1]
+        assert (low + high) / 2 == pytest.approx(y)
+        assert _gap(narrow, x, y, 1) == pytest.approx((y - 0.25, y + 0.25))
+        assert narrow.params == drawn.params

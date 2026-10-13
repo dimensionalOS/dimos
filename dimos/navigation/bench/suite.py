@@ -591,8 +591,45 @@ BLOCK_HEIGHT = Probe(
     scene_param="block_height",
     control=0.0,
 )
+
+
+def past_the_corridor(gt: GroundTruth, width: float, rng: np.random.Generator) -> Placed:
+    """The scene's start at a drawn yaw, and a goal in the far room well clear of every wall."""
+    sx, sy, z = gt.scene.start
+    params = gt.scene.params
+    near_x, near_y = params["room_x"] + SIDE_WALL_M, params["room_y"] + SIDE_WALL_M
+    x = near_x + (params["width"] - SIDE_WALL_M - near_x) * float(rng.random())
+    y = near_y + (params["length"] - SIDE_WALL_M - near_y) * float(rng.random())
+    return Placed((sx, sy, _yaw(rng)), (x, y, z))
+
+
+CORRIDOR = Probe(
+    "corridor_width",
+    "corridor",
+    "corridor_width",
+    (0.45, 0.48, 0.51, 0.54, 0.57, 0.60, 0.65, 0.75, 0.90),
+    past_the_corridor,
+    scene_param="corridor_width",
+)
+CORRIDOR_TURN = Probe(
+    "corridor_turn",
+    "corridor_turn",
+    "corridor_width",
+    CORRIDOR.levels,
+    past_the_corridor,
+    scene_param="corridor_width",
+)
 PROBES = {
-    probe.name: probe for probe in (GOAL_CLEARANCE, DOORWAY, LEG_WIDTH, BLOCK_HEIGHT, OVERHANG)
+    probe.name: probe
+    for probe in (
+        GOAL_CLEARANCE,
+        DOORWAY,
+        LEG_WIDTH,
+        BLOCK_HEIGHT,
+        OVERHANG,
+        CORRIDOR,
+        CORRIDOR_TURN,
+    )
 }
 
 
