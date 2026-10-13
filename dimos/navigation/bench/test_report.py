@@ -141,6 +141,8 @@ def test_report_tallies_outcomes_by_stressor_and_signature(tmp_path: Path) -> No
         and "nearest to feature" not in page
     )
     assert "<summary>Episodes (3)</summary>" in page and "Outcomes by stressor" in page
+    assert "<summary>What the outcomes mean</summary>" in page
+    assert "<dt>stalled</dt><dd>No arrival, and no motion was commanded for the last 10 s." in page
     assert write(run) == run / "report.html" and (run / "report.html").read_text() == page
 
 

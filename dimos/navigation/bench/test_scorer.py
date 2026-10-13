@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from typing import get_args
 
 import numpy as np
 import pytest
@@ -22,9 +23,11 @@ from dimos.msgs.sim_msgs.Contacts import Contact
 from dimos.navigation.bench.scorer import (
     Commands,
     ContactSample,
+    Outcome,
     PathSample,
     Poses,
     Recording,
+    definitions,
     score,
 )
 from dimos.navigation.bench.suite import Rules
@@ -85,6 +88,13 @@ def _trunk_on_floor(seconds: float) -> Recording:
             ContactSample(T0 + 3.0 + seconds, [Contact("foot", "floor")]),
         ],
     )
+
+
+def test_every_outcome_is_defined_with_the_limits_of_the_rules() -> None:
+    meanings = definitions(replace(RULES, stuck_s=7.0, stuck_moving_fraction=0.6))
+    assert list(meanings) == list(get_args(Outcome))
+    assert "at least 60% of the last 7 s" in meanings["stuck"]
+    assert "{" not in "".join(meanings.values())
 
 
 def test_a_brief_trunk_touch_is_not_a_fall() -> None:

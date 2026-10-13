@@ -30,8 +30,8 @@ from pydantic import TypeAdapter
 
 from dimos.navigation.bench.ground_truth import GO2
 from dimos.navigation.bench.runner import RESULTS_FILE, RUN_FILE, SUITE_FILE
-from dimos.navigation.bench.scorer import Outcome
-from dimos.navigation.bench.suite import Case, Manifest
+from dimos.navigation.bench.scorer import Outcome, definitions
+from dimos.navigation.bench.suite import Case, Manifest, Rules
 
 REPORT_FILE = "report.html"
 TEMPLATE_FILE = "report_template.html"
@@ -82,6 +82,7 @@ _RUN = TypeAdapter(Run)
 @dataclass(frozen=True)
 class Report:
     suite: str
+    rules: Rules
     run: Run
     rows: list[Row]
 
@@ -154,7 +155,7 @@ def load(run_dir: Path) -> Report:
         _row(cases[record["case_id"]], record, run_dir.resolve() / record["case_id"])
         for record in map(json.loads, (run_dir / RESULTS_FILE).read_text().splitlines())
     ]
-    return Report(manifest.suite, run, sorted(rows, key=lambda r: r.case.id))
+    return Report(manifest.suite, manifest.rules, run, sorted(rows, key=lambda r: r.case.id))
 
 
 def write(run_dir: Path) -> Path:
@@ -350,6 +351,7 @@ def render(reports: list[Report]) -> str:
     return env.get_template(TEMPLATE_FILE).render(
         title=f"nav-bench {reports[0].suite}" if len(reports) == 1 else "nav-bench",
         sections=[_section(report) for report in reports],
+        glossary=definitions(reports[0].rules),
         curve_px=CURVE_PX,
         curve_grid=[(f"{rate:.0%}", _curve_y(rate)) for rate in (0.0, 0.5, 1.0)],
         strip_m=STRIP_M,

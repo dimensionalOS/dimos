@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Literal, TypeVar
 
@@ -44,6 +44,21 @@ Outcome = Literal[
     "no_plan",
     "timeout",
 ]
+DEFINITIONS: dict[Outcome, str] = {
+    "success": "The stack reported arrival with the body within {goal_xy_m:g} m of the goal and "
+    "{goal_z_m:g} m of its height, and the body touched no wall or clutter.",
+    "reached_with_collision": "As success, but the body touched a wall or clutter on the way.",
+    "wrong_place": "The stack reported arrival more than {goal_xy_m:g} m from the goal.",
+    "wrong_floor": "The stack reported arrival more than {goal_z_m:g} m above or below the goal.",
+    "fall": "The body tilted more than {fall_rad:g} rad in roll or pitch, or its trunk lay on the "
+    "floor for {fall_trunk_floor_s:g} s or more. Checked before every other outcome.",
+    "stuck": "No arrival. Motion was commanded for at least {stuck_moving_fraction:.0%} of the "
+    "last {stuck_s:g} s and the body moved less than {stuck_progress_m:g} m.",
+    "stalled": "No arrival, and no motion was commanded for the last {stalled_s:g} s.",
+    "no_plan": "No arrival, and the global planner published no path.",
+    "timeout": "No arrival and none of the above. The time budget is {timeout_base_s:g} s plus "
+    "{timeout_s_per_m:g} s per meter of route.",
+}
 
 Signature = Literal[
     "planner_empty",
@@ -248,6 +263,11 @@ def score(
         else float(np.linalg.norm(pose.xyz[:, :2] - feature, axis=1).min()),
         missing=missing,
     )
+
+
+def definitions(rules: Rules) -> dict[Outcome, str]:
+    """What each outcome means, with the limits these rules set."""
+    return {outcome: text.format(**asdict(rules)) for outcome, text in DEFINITIONS.items()}
 
 
 def _path_samples(observations: list[Observation[PathMsg]] | None) -> list[PathSample] | None:
