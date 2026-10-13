@@ -44,10 +44,10 @@ turbojpeg = { version = "1.5.1", default-features = false, features = ["cmake"] 
 
 # The model's backend: Metal on a Mac, TensorRT with the `tensorrt` feature (Jetsons, NVIDIA PCs), else CPU (e.g. a Pi).
 # The flake builds one package per backend and module.py picks by hardware.
-depth2depth = "=0.4.0"
+depth2depth = "=0.4.1"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-depth2depth = { version = "=0.4.0", features = ["metal"] }
+depth2depth = { version = "=0.4.1", features = ["metal"] }
 
 [features]
 tensorrt = ["depth2depth/tensorrt"]

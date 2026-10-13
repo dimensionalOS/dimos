@@ -14,6 +14,7 @@
 
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
+from enum import Enum
 from functools import cached_property, reduce
 import operator
 import re
@@ -76,6 +77,28 @@ class ModuleRef:
     name: str
     spec: type[Spec] | type[ModuleBase]
     optional: bool = False
+
+
+class _HostSelection(Enum):
+    ANY = "any"
+
+
+_ANY_HOST = _HostSelection.ANY
+
+
+@dataclass(frozen=True)
+class HostedPlacement:
+    """Placement constraint attached to one Blueprint fragment."""
+
+    module_names: tuple[str, ...]
+    host: str | None | _HostSelection = _ANY_HOST
+    tags: frozenset[str] = frozenset()
+
+    def __post_init__(self) -> None:
+        if not self.module_names:
+            raise ValueError("Hosted placement must contain at least one module")
+        if len(set(self.module_names)) != len(self.module_names):
+            raise ValueError("Hosted placement module names must be unique")
 
 
 @dataclass(frozen=True)
@@ -196,6 +219,20 @@ class Blueprint:
 
     requirement_checks: tuple[Callable[[], str | None], ...] = field(default_factory=tuple)
     configurator_checks: "tuple[SystemConfigurator, ...]" = field(default_factory=tuple)
+    hosted_placements: tuple[HostedPlacement, ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        module_names = {atom.name for atom in self.blueprints}
+        unknown = sorted(
+            {
+                name
+                for placement in self.hosted_placements
+                for name in placement.module_names
+                if name not in module_names
+            }
+        )
+        if unknown:
+            raise ValueError(f"Hosted placement references unknown modules: {', '.join(unknown)}")
 
     def __getstate__(self) -> dict[str, Any]:
         state = self.__dict__.copy()
@@ -227,6 +264,42 @@ class Blueprint:
             self,
             global_config_overrides=MappingProxyType({**self.global_config_overrides, **kwargs}),
         )
+
+    def hosted(
+        self,
+        *,
+        host: str | None | _HostSelection = _ANY_HOST,
+        tags: Iterable[str] = (),
+    ) -> "Blueprint":
+        """Schedule this Blueprint fragment as one placement unit.
+
+        With no selector, ``hosted()`` chooses any available remote Host. An
+        exact Host name/ID and required Host tags may narrow the candidates.
+        Passing ``host=None`` constrains the fragment to the controlling machine.
+        """
+        if not self.blueprints:
+            raise ValueError("hosted() requires at least one module")
+        if (
+            host is not None
+            and host is not _ANY_HOST
+            and (not isinstance(host, str) or not host.strip())
+        ):
+            raise ValueError("host must be a non-empty string")
+
+        if isinstance(tags, str):
+            raise ValueError("tags must be an iterable of strings, not a string")
+        tag_set = frozenset(tags)
+        if any(not isinstance(tag, str) or not tag.strip() for tag in tag_set):
+            raise ValueError("tags must contain non-empty strings")
+        if host is None and tag_set:
+            raise ValueError("host=None cannot be combined with tags")
+
+        placement = HostedPlacement(
+            module_names=tuple(atom.name for atom in self.blueprints),
+            host=host,
+            tags=tag_set,
+        )
+        return replace(self, hosted_placements=(*self.hosted_placements, placement))
 
     def remappings(
         self,
@@ -334,6 +407,13 @@ class Blueprint:
             blueprints=tuple(new_atoms),
             remapping_map=MappingProxyType(new_remap),
             transport_map=MappingProxyType(new_transports),
+            hosted_placements=tuple(
+                replace(
+                    placement,
+                    module_names=tuple(f"{prefix}/{name}" for name in placement.module_names),
+                )
+                for placement in self.hosted_placements
+            ),
         )
 
     def requirements(self, *checks: Callable[[], str | None]) -> "Blueprint":
@@ -355,7 +435,8 @@ def transport_config_name(cls: type) -> str:
 
 
 def autoconnect(*blueprints: Blueprint) -> Blueprint:
-    all_blueprints = tuple(_eliminate_duplicates([bp for bs in blueprints for bp in bs.blueprints]))
+    all_atoms = [atom for blueprint in blueprints for atom in blueprint.blueprints]
+    all_blueprints = tuple(_eliminate_duplicates(all_atoms))
     all_transports = dict(  # type: ignore[var-annotated]
         reduce(operator.iadd, [list(x.transport_map.items()) for x in blueprints], [])
     )
@@ -367,6 +448,24 @@ def autoconnect(*blueprints: Blueprint) -> Blueprint:
     )
     all_requirement_checks = tuple(check for bs in blueprints for check in bs.requirement_checks)
     all_configurator_checks = tuple(check for bs in blueprints for check in bs.configurator_checks)
+    winning_blueprint_indexes = {
+        atom.name: index
+        for index, blueprint in enumerate(blueprints)
+        for atom in blueprint.blueprints
+    }
+    all_hosted_placements = tuple(
+        replace(
+            placement,
+            module_names=tuple(
+                name
+                for name in placement.module_names
+                if winning_blueprint_indexes.get(name) == index
+            ),
+        )
+        for index, blueprint in enumerate(blueprints)
+        for placement in blueprint.hosted_placements
+        if any(winning_blueprint_indexes.get(name) == index for name in placement.module_names)
+    )
 
     return Blueprint(
         blueprints=all_blueprints,
@@ -378,6 +477,7 @@ def autoconnect(*blueprints: Blueprint) -> Blueprint:
         remapping_map=MappingProxyType(all_remappings),
         requirement_checks=all_requirement_checks,
         configurator_checks=all_configurator_checks,
+        hosted_placements=all_hosted_placements,
     )
 
 

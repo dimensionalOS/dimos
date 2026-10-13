@@ -15,11 +15,9 @@
 
 """WebXR velocity teleoperation and headset video for Go2."""
 
-from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.core.transport import LCMTransport, pSHMTransport
+from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.sensor_msgs.Image import Image
 from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.teleop.webxr.extensions import Go2TeleopModule
 
@@ -32,9 +30,6 @@ teleop_webxr_go2 = (
     .transports(
         {
             ("cmd_vel", Twist): LCMTransport("/cmd_vel", Twist),
-            ("color_image", Image): pSHMTransport(
-                "color_image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
-            ),
         }
     )
     .global_config(robot_model="unitree_go2")

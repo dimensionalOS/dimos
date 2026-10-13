@@ -37,6 +37,7 @@ from dimos.core.module import Module
 from dimos.core.rpc_client import RpcCall, RPCClient
 from dimos.core.transport_factory import make_transport
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.safe_thread_map import safe_thread_map
 
 if TYPE_CHECKING:
     from dimos.core.module import SkillInfo
@@ -388,9 +389,10 @@ class McpServer(Module):
     def on_system_modules(self, modules: list[RPCClient]) -> None:
         # TODO: this is a bit hacky, also not thread-safe
         assert self.rpc is not None
-        app.state.skills = [
-            skill_info for module in modules for skill_info in (module.get_skills() or [])
-        ]
+        # One RPC per module, in parallel: a worker still warming up blocks
+        # its call on the langchain import.
+        per_module = safe_thread_map(modules, lambda module: module.get_skills() or [])
+        app.state.skills = [skill_info for skills in per_module for skill_info in skills]
         app.state.skills_by_name = {s.func_name: s for s in app.state.skills}
         app.state.rpc_calls = {
             skill_info.func_name: RpcCall(

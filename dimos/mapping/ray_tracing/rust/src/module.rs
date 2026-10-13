@@ -35,7 +35,6 @@ use tracing::{info, warn};
 /// Messages queued to the worker in arrival order.
 enum Job {
     Lidar(PointCloud2, Instant),
-    ClearMask(PointCloud2),
     LoadedMap(PointCloud2),
     /// A loaded map placed in the world and split into tiles, or None when
     /// it could not be placed.
@@ -54,11 +53,6 @@ const SEED_PASS_BUDGET: Duration = Duration::from_millis(20);
 pub struct RayTracingVoxelMap {
     #[input(decode = PointCloud2::decode, handler = on_lidar)]
     lidar: Input<PointCloud2>,
-
-    // World-frame points a sensor knows to be empty. Their voxels are deleted
-    // outright, reaching space ray tracing cannot clear.
-    #[input(decode = PointCloud2::decode, handler = on_voxel_clear_mask)]
-    voxel_clear_mask: Input<PointCloud2>,
 
     // An externally loaded map cloud. Only the first one seeds the map.
     #[input(decode = PointCloud2::decode, handler = on_loaded_map)]
@@ -142,10 +136,6 @@ impl RayTracingVoxelMap {
 
     async fn on_lidar(&mut self, msg: PointCloud2) {
         self.enqueue(Job::Lidar(msg, Instant::now())).await;
-    }
-
-    async fn on_voxel_clear_mask(&mut self, msg: PointCloud2) {
-        self.enqueue(Job::ClearMask(msg)).await;
     }
 
     async fn on_loaded_map(&mut self, msg: PointCloud2) {
@@ -256,9 +246,6 @@ impl SeedState {
 /// Everything the worker mutates across jobs.
 struct State {
     mapper: Mapper,
-    // Stamp of the last applied clear mask, so a late one cannot erase voxels
-    // a newer mask already accounted for.
-    last_clear_mask_stamp: f64,
     // Stamp of the last lidar frame folded in, which is what a full map
     // snapshot is current as of.
     last_frame_stamp: Time,
@@ -288,7 +275,6 @@ impl Worker {
     async fn run(mut self) {
         let mut state = State {
             mapper: Mapper::new(self.config.clone()),
-            last_clear_mask_stamp: 0.0,
             last_frame_stamp: Time::default(),
             seed: SeedState::Idle,
             viz: RegionSweep::default(),
@@ -320,7 +306,6 @@ impl Worker {
     async fn handle(&self, state: &mut State, job: Job) {
         match job {
             Job::Lidar(msg, received) => self.ingest_frame(state, msg, received).await,
-            Job::ClearMask(msg) => self.apply_clear_mask(state, msg),
             Job::LoadedMap(msg) => self.place_loaded_map(state, msg).await,
             Job::SeedPrepared(partition) => {
                 if let Some(part) = &partition {
@@ -460,56 +445,6 @@ impl Worker {
             cloud.header.seq = pack_cell(cell);
             publish_cloud(&self.map_regions, &cloud).await;
         }
-    }
-
-    /// Delete the voxels covering a cloud of world-frame points a sensor knows
-    /// to be empty.
-    ///
-    /// Ray tracing only clears what a ray passes through, so a sensor that
-    /// occludes itself - a wrist camera staring past its own arm - can never
-    /// clear the volume its arm hides. It deposits voxels of itself there and
-    /// walls itself in. A publisher that knows those points are free says so
-    /// here.
-    fn apply_clear_mask(&self, state: &mut State, msg: PointCloud2) {
-        let stamp = time_secs(&msg.header.stamp);
-        if stamp < state.last_clear_mask_stamp {
-            warn_throttled!(
-                Duration::from_secs(1),
-                stamp,
-                last_stamp = state.last_clear_mask_stamp,
-                "Out-of-order voxel clear mask dropped",
-            );
-            return;
-        }
-        // The keys are metric positions, so the cloud must already be in the
-        // world frame. Registering it would need a pose this node has no reason
-        // to trust for a mask.
-        if msg.header.frame_id != self.config.world_frame {
-            warn_throttled!(
-                Duration::from_secs(1),
-                frame = %msg.header.frame_id,
-                expected = %self.config.world_frame,
-                "Voxel clear mask is not in the world frame, dropped a mask.",
-            );
-            return;
-        }
-        let points = match extract_xyz(&msg) {
-            Ok(p) => p.into_iter().map(|[x, y, z]| (x, y, z)).collect::<Vec<_>>(),
-            Err(e) => {
-                warn_throttled!(
-                    Duration::from_secs(1),
-                    error = %e,
-                    "Failed to get clear mask points, dropped a mask.",
-                );
-                return;
-            }
-        };
-        state.last_clear_mask_stamp = stamp;
-        if points.is_empty() {
-            return;
-        }
-        let mapper = &mut state.mapper;
-        tokio::task::block_in_place(|| mapper.clear_metric(points));
     }
 
     /// Place the first loaded map on its own task and tile it off the worker.
@@ -809,7 +744,7 @@ async fn publish_cloud(out: &Output<PointCloud2>, cloud: &PointCloud2) {
 mod tests {
     use super::*;
     use crate::voxel_ray_tracer::{
-        emit_points, metric_voxel_keys, update_map, LocalBounds, VoxelKey, VoxelMap, CHUNK_EDGE,
+        emit_points, update_map, LocalBounds, VoxelKey, VoxelMap, CHUNK_EDGE,
     };
     use ahash::AHashSet;
     use nalgebra::{Isometry3, Translation3, UnitQuaternion, Vector3};
@@ -1003,7 +938,8 @@ mod tests {
         assert_eq!(sizes(due), vec![((0, 0), 1), (far, 1)]);
         assert!(map_regions_due(&mut mapper, &mut viz, 1.0, 4.0, 0).is_empty());
 
-        mapper.clear_metric([(1.5, 1.5, 0.5)]);
+        // A normal sensor ray carves the near seed and ends on the far seed.
+        mapper.add_frame_world(vec![(40.5, 40.5, 0.5)], (0.5, 0.5, 0.5));
         let due = map_regions_due(&mut mapper, &mut viz, 1.0, 4.0, 0);
         assert_eq!(sizes(due), vec![((0, 0), 0)]);
         assert!(map_regions_due(&mut mapper, &mut viz, 1.0, 4.0, 0).is_empty());
@@ -1025,25 +961,26 @@ mod tests {
         assert!(!is_stale(100.0, Some(500.0), 0.0));
     }
 
-    /// The clear-mask handler names voxels by decoding a cloud and quantizing
-    /// it. Both halves have to agree with how returns were quantized on the way
-    /// in, or a mask silently clears nothing.
+    /// Published occupied-cell centers must round-trip through cloud decoding,
+    /// including negative coordinates.
     #[test]
-    fn clear_mask_cloud_round_trips_to_the_voxels_it_covers() {
+    fn occupied_cloud_preserves_voxel_centers() {
         let map = map_with_healthy(&[(3, -2, 1)]);
         let occupied: Vec<VoxelKey> = map.voxels.keys().collect();
         assert_eq!(occupied, vec![(3, -2, 1)]);
 
-        // A mask cloud naming that voxel's center, encoded and decoded exactly
-        // as the port would.
+        // Encode and decode the occupied voxel center exactly as the port would.
         let cloud = points_to_cloud(&[3.5, -1.5, 1.5], "world", Time::default());
         let Ok(points) = extract_xyz(&cloud) else {
-            panic!("clear mask cloud must decode");
+            panic!("occupied cloud must decode");
         };
         let points: Vec<(f32, f32, f32)> = points.into_iter().map(|[x, y, z]| (x, y, z)).collect();
-        let keys: Vec<VoxelKey> = metric_voxel_keys(points, 1.0).collect();
+        let centers: Vec<_> = occupied
+            .into_iter()
+            .map(|(x, y, z)| (x as f32 + 0.5, y as f32 + 0.5, z as f32 + 0.5))
+            .collect();
 
-        assert_eq!(keys, occupied);
+        assert_eq!(points, centers);
     }
 
     #[test]

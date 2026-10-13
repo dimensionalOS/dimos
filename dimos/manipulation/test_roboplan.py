@@ -191,27 +191,28 @@ class FakeScene:
     position_limits_upper: ClassVar[list[float]] = [1.0, 2.0]
     valid_frames: ClassVar[set[str]] = {"dimos_world"}
 
-    def __init__(
-        self,
-        *,
-        name: str,
-        urdf: str,
-        srdf: str,
-        package_paths: list[str],
-    ) -> None:
+    def __init__(self, name: str, description: tuple[str, list[str]]) -> None:
+        urdf, package_paths = description
         self.constructor_kwargs = {
             "name": name,
             "urdf": urdf,
-            "srdf": srdf,
+            "srdf": "",
             "package_paths": package_paths,
         }
         self.models: list[tuple[str, str, dict[str, str]]] = []
         self.geometry: dict[str, np.ndarray] = {}
         self.geometry_shapes: dict[str, object] = {}
         self.collision_settings: dict[tuple[str, str], bool] = {}
-        self.groups = self._read_groups(srdf)
+        self.groups: dict[str, list[str]] = {}
         self.native_joint_names = self._read_joint_names(urdf)
         self.current_positions = np.zeros(len(self.native_joint_names), dtype=np.float64)
+
+    def importSrdf(self, srdf: str) -> None:
+        self.constructor_kwargs["srdf"] = srdf
+        self.groups = self._read_groups(srdf)
+
+    def importJointLimitsFromConfig(self, config: Any) -> None:
+        self.imported_limits = config
 
     def _require_frame(self, parent_frame: str) -> None:
         if parent_frame not in self.valid_frames:
@@ -397,12 +398,39 @@ class FakePathShortcutter:
         return path
 
 
+class FakeSceneContext:
+    def __init__(self, scene: FakeScene) -> None:
+        self.scene = scene
+        self.current_positions = scene.current_positions.copy()
+
+    def getScene(self) -> FakeScene:
+        return self.scene
+
+    def isGeometryCurrent(self) -> bool:
+        return True
+
+    def toFullJointPositions(self, group_name: str, q: np.ndarray) -> np.ndarray:
+        full = self.current_positions.copy()
+        for name, value in zip(self.scene.groups[group_name], q, strict=True):
+            full[self.scene.native_joint_names.index(name)] = value
+        return full
+
+    def forwardKinematics(self, q: np.ndarray, frame_name: str, base_frame: str = "") -> np.ndarray:
+        return self.scene.forwardKinematics(q, frame_name, base_frame)
+
+    def hasCollisions(self, q: np.ndarray) -> bool:
+        return self.scene.hasCollisions(q)
+
+
 def _install_fake_roboplan(monkeypatch: pytest.MonkeyPatch) -> None:
     FakeCartesianPathPlanner.instances.clear()
     FakePathShortcutter.instances.clear()
     roboplan_pkg = ModuleType("roboplan")
     roboplan_pkg.__path__ = []  # type: ignore[attr-defined]
     core = ModuleType("roboplan.core")
+    core.loadUrdfSceneDescriptionFromXml = lambda urdf, paths: (urdf, paths)  # type: ignore[attr-defined]
+    core.loadJointLimitsConfig = lambda path: Path(path).read_text()  # type: ignore[attr-defined]
+    core.SceneContext = FakeSceneContext  # type: ignore[attr-defined]
     core.Scene = FakeScene  # type: ignore[attr-defined]
     core.JointConfiguration = FakeJointConfiguration  # type: ignore[attr-defined]
     core.JointPath = FakeJointPath  # type: ignore[attr-defined]

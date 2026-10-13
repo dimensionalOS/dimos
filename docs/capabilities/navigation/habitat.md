@@ -45,15 +45,30 @@ Habitat is y-up with -z forward; dimos is z-up with x forward. `dimos/simulation
 
 The tf tree is `world -> base_link -> camera -> camera_optical`. Images hang off `camera_optical`: a pinhole points down its own +z, which in the body frame is straight up. `base_link` sits on the navmesh, so the planner's `start_z_offset_m` is 0, unlike a real robot whose base link rides above the ground.
 
-## Licensed Scenes
+## HSSD Scenes
 
-The bundled house is the only one that needs no credentials. The full HM3D splits require a [research access grant](https://matterport.com/habitat-matterport-3d-research-dataset) from Matterport, after which:
+[HSSD](https://huggingface.co/datasets/hssd/hssd-hab) is a separate dataset from the bundled HM3D example. After the Habitat environment has been built, run this from the repository root with Git LFS installed:
 
 ```bash
-cd dimos/simulation/habitat/nix
-./env/bin/python -m habitat_sim.utils.datasets_download \
-    --username <token-id> --password <token-secret> \
-    --uids hm3d_minival_v0.2 --data-path ./data
+target/habitat/env/bin/python -m habitat_sim.utils.datasets_download \
+    --uids hssd-hab --data-path target/habitat/data --no-replace
+```
+
+The downloader exposes HSSD under `target/habitat/data/scene_datasets/hssd-hab/`.
+Import `HSSD_DATASET_CONFIG` from [`dimos/simulation/habitat/constants.py`](/dimos/simulation/habitat/constants.py#L32)
+and pass `str(HSSD_DATASET_CONFIG)` as `scene_dataset_config` in connections and eval suites.
+The same module defines `HABITAT_ROOT`, `HABITAT_DATA_DIR`, and `HM3D_EXAMPLE_DATASET_CONFIG`.
+HSSD includes the scene configurations and their referenced stage and object assets.
+See the [upstream dataset instructions](https://github.com/facebookresearch/habitat-sim/blob/main/DATASETS.md#habitat-synthetic-scene-dataset-hssd).
+
+## Licensed HM3D Scenes
+
+The full HM3D splits require a [research access grant](https://matterport.com/habitat-matterport-3d-research-dataset) from Matterport. After obtaining credentials, run this from the repository root:
+
+```bash
+target/habitat/env/bin/python -m habitat_sim.utils.datasets_download \
+    --username "$MATTERPORT_TOKEN_ID" --password "$MATTERPORT_TOKEN_SECRET" \
+    --uids hm3d_minival_v0.2 --data-path target/habitat/data --no-replace
 ```
 
 Then point `HabitatConnection`'s `scene_dataset_config` and `scene_id` at the scene you want.

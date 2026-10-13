@@ -209,13 +209,16 @@ class BrokerProvider(AsyncProviderBase):
                 )
             )
             # On the loop thread so the track's loop ref is correct for set_latest.
-            from dimos.protocol.pubsub.impl.webrtc.providers.video_track import CameraVideoTrack
+            from dimos.protocol.pubsub.impl.webrtc.providers.video_track import (
+                CameraVideoTrack,
+                prefer_video_codec,
+            )
 
             self._video_track = CameraVideoTrack(asyncio.get_running_loop())
             # addTrack must precede createDataChannel (CF/aiortc workaround).
             self._pc.addTrack(self._video_track)
             if self._config.video_codec:
-                self._prefer_video_codec(self._config.video_codec)
+                prefer_video_codec(self._pc, self._config.video_codec)
             # Operator → robot audio: recvonly m=audio in the offer so CF can
             # bridge the operator's mic track into this session. Frames are
             # dropped unless a module registers an audio callback.
@@ -272,26 +275,6 @@ class BrokerProvider(AsyncProviderBase):
         except Exception:
             await self._disconnect()
             raise
-
-    def _prefer_video_codec(self, codec: str) -> None:
-        """Reorder the video transceiver's codec preferences (e.g. h264 first).
-
-        Best-effort: unknown codec → warn and keep aiortc's default order, so a
-        misconfigured knob can't kill the connection."""
-        from aiortc import RTCRtpSender
-
-        want = f"video/{codec}".lower()
-        caps = RTCRtpSender.getCapabilities("video")
-        preferred = [c for c in caps.codecs if c.mimeType.lower() == want]
-        if not preferred:
-            logger.warning("video_codec=%r not in local capabilities — using defaults", codec)
-            return
-        rest = [c for c in caps.codecs if c.mimeType.lower() != want]
-        assert self._pc is not None
-        for t in self._pc.getTransceivers():
-            if t.kind == "video":
-                t.setCodecPreferences(preferred + rest)
-                logger.info("video codec preference: %s first", want)
 
     # ─── Operator → robot audio ──────────────────────────────────────
 
