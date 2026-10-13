@@ -124,3 +124,57 @@ uv run --frozen --group lint --with-editable ../../.. python -m mypy
 The tests mock the model backend and need no GPU or checkpoints. Runtime mypy
 reads the annotated dimOS and GraspGenX source despite their missing `py.typed`
 markers. Each runtime owns its lint configuration and dependencies.
+
+## Installed package projects
+
+A separately installed contract can select its own runtime project:
+
+```python
+from dimos.experimental.isolated_python.package import PackageProject
+
+class Detector(IsolatedPythonModule):
+    package_project = PackageProject("acme_detector", "runtime", "acme-detector")
+    implementation = "runtime:DetectorRuntime"
+```
+
+The owning package must be an unpacked wheel or editable filesystem package.
+Include the runtime's `pyproject.toml`, implementation sources and, for a locked
+release, `uv.lock` as package data. The runtime declares its own DimOS, contract
+and implementation dependencies. Configure normal uv indexes or wheelhouses to
+make the matching artifacts available; no host checkout is implicitly installed.
+Add `(distribution_name, import_package)` pairs to `shared_packages` when other
+shared message or API packages must match the host too.
+
+Preparation checks the installed distribution version, Python source fingerprint
+and wheel payload records for DimOS and each shared contract. Different artifacts
+with the same version fail before the child starts. Editable dependencies must
+be editable on both sides with matching code. This alignment check is not a
+signature verifier: deployment locks and artifact hashes remain the package
+manager's responsibility, and native ABI compatibility is still separate.
+
+Projects are copied into a content-addressed cache before uv writes an environment
+or lockfile. The key covers project contents, host contracts, Python and platform.
+A file lock serializes preparation; project publication is atomic and a failed uv
+sync is retried on the next build. Existing locks use `--frozen`; an unlocked
+development project resolves on its first preparation and reuses the cached lock.
+Launch uses the prepared environment with `--no-sync`. Host `PYTHONPATH` and
+`PYTHONHOME` are removed so they cannot defeat dependency isolation.
+
+Editing packaged runtime sources, dependencies or a shared contract gives a new
+cache on the next module construction. Restart after reinstalling/updating a
+package. `dimos cache clean` can reclaim these regenerable caches after runs stop;
+uninstalling a distribution does not delete development sources or runtime data.
+Repository-relative `project_dir` projects retain their existing behavior.
+
+The [independent Python example](../../../examples/packages/python/pyproject.toml)
+exports both an ordinary Python consumer and an isolated consumer of native
+`Twist` messages. Its runtime pins `packaging==25.0`, independently of the host's
+version. The example is deliberately an unlocked development project; generate
+and ship a lock against your deployment's actual DimOS/contract artifacts for a
+release. No additional RPC protocol is introduced.
+
+For editable development, configure uv sources for both DimOS and the contract
+as editable dependencies in the runtime project. Use absolute development paths,
+or relative paths contained inside the packaged runtime directory: parent-relative
+paths outside that directory do not survive its cache snapshot. Native/toolchain
+build outputs and arbitrary sibling repositories are not copied implicitly.

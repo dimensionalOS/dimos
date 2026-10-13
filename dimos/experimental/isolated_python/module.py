@@ -16,12 +16,15 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
+from functools import cached_property
 from hashlib import sha256
 import os
 from pathlib import Path
 import pickle
 import select
 import subprocess
+import sys
 import threading
 import time
 from typing import Any, ClassVar
@@ -31,6 +34,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.rpc_client import RPCClient
+from dimos.experimental.isolated_python.package import PackageProject, PackageRuntime
 from dimos.utils.data import get_project_root
 from dimos.utils.generic import short_id
 from dimos.utils.logging_config import setup_logger
@@ -78,6 +82,7 @@ class IsolatedPythonModule(NativeModule):
     config: IsolatedPythonModuleConfig
     implementation: ClassVar[str]
     project_dir: ClassVar[str]
+    package_project: ClassVar[PackageProject | None] = None
 
     _isolated_python_runtime: bool
     _runtime_client: RPCClient | None
@@ -105,8 +110,16 @@ class IsolatedPythonModule(NativeModule):
                 return getattr(client, name)
         return super().__getattribute__(name)
 
+    @cached_property
+    def _package_runtime(self) -> PackageRuntime | None:
+        if self.package_project is None:
+            return None
+        return self.package_project.resolve()
+
     @property
     def runtime_project(self) -> Path:
+        if self._package_runtime is not None:
+            return self._package_runtime.project
         project = get_project_root() / self.project_dir
         if not project.is_dir():
             raise FileNotFoundError(
@@ -123,11 +136,25 @@ class IsolatedPythonModule(NativeModule):
         # `uv run` syncs the declared project and builds the cached overlay that
         # holds the shared checkout’s dimOS with its dependencies. Doing it here keeps the
         # first install, which can take minutes, out of the startup timeout.
+        if self._package_runtime is not None:
+            return self._package_command(
+                "python",
+                "-c",
+                "from dimos.experimental.isolated_python.package import verify_environment; "
+                "verify_environment()",
+            )
         return isolated_python_run_command(self.runtime_project, "python", "-c", "pass")
 
+    def _package_command(self, *command: str, prepared: bool = False) -> list[str]:
+        args = ["uv", "run", "--project", str(self.runtime_project), "--python", sys.executable]
+        if prepared:
+            args.append("--no-sync")
+        elif (self.runtime_project / "uv.lock").is_file():
+            args.append("--frozen")
+        return [*args, *command]
+
     def _launch_command(self, handshake_fd: int) -> list[str]:
-        return isolated_python_run_command(
-            self.runtime_project,
+        command = [
             "python",
             "-m",
             "dimos.experimental.isolated_python.bootstrap",
@@ -139,7 +166,10 @@ class IsolatedPythonModule(NativeModule):
             self._new_runtime_name(),
             "--handshake-fd",
             str(handshake_fd),
-        )
+        ]
+        if self._package_runtime is not None:
+            return self._package_command(*command, prepared=True)
+        return isolated_python_run_command(self.runtime_project, *command)
 
     def _new_runtime_name(self) -> str:
         public_name = self.config.instance_name or type(self).__name__
@@ -156,16 +186,24 @@ class IsolatedPythonModule(NativeModule):
         project_key = sha256(str(self.runtime_project).encode()).hexdigest()[:16]
         env["UV_PROJECT_ENVIRONMENT"] = str(CACHE_DIR / "isolated-python" / project_key / ".venv")
         env.update(self.config.extra_env)
+        if self._package_runtime is not None:
+            # Parent import paths must not bypass the child's dependency environment.
+            for name in ("PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV", "UV_PYTHON"):
+                env.pop(name, None)
+            env["UV_PROJECT_ENVIRONMENT"] = str(self._package_runtime.environment)
+            env["DIMOS_ISOLATED_PROVENANCE"] = self._package_runtime.provenance
         return env
 
     def _run_prepare(self) -> None:
-        result = subprocess.run(
-            self._prepare_command(),
-            cwd=self.runtime_project,
-            env=self._runtime_env(),
-            capture_output=True,
-            text=True,
-        )
+        lock = self._package_runtime.prepare_lock if self._package_runtime else nullcontext()
+        with lock:
+            result = subprocess.run(
+                self._prepare_command(),
+                cwd=self.runtime_project,
+                env=self._runtime_env(),
+                capture_output=True,
+                text=True,
+            )
         if result.returncode:
             output = (result.stdout + "\n" + result.stderr).strip()
             raise RuntimeError(

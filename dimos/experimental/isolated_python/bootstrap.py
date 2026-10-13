@@ -28,6 +28,7 @@ from typing import Any
 import typer
 
 from dimos.experimental.isolated_python.module import IsolatedPythonModule, contract_rpc_names
+from dimos.experimental.isolated_python.package import verify_environment
 from dimos.spec.utils import _signatures_compatible
 
 
@@ -84,6 +85,7 @@ def main(
 ) -> None:
     module: IsolatedPythonModule | None = None
     try:
+        verify_environment()
         declaration_class = load_class(declaration)
         runtime_class = load_class(implementation)
         if not issubclass(declaration_class, IsolatedPythonModule):
