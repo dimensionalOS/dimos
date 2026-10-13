@@ -41,6 +41,7 @@ from dimos.navigation.bench.ground_truth import (
     boxes_near,
 )
 from dimos.simulation.scenes.procedural import (
+    TABLE_SIZE,
     TABLE_TOP_THICKNESS,
     WALL_THICKNESS,
     Box,
@@ -64,6 +65,7 @@ STRADDLE_M = (1.2, 1.5, 2.0)
 OBSTRUCTED = 1.05
 DEAD_END_DETOUR = 1.4
 SIDE_WALL_M = 1.5
+PAST_LEG_M = (2.3, 3.0)
 
 
 @dataclass(frozen=True)
@@ -509,7 +511,37 @@ DOORWAY = Probe(
     past_the_door,
     scene_param="door_width",
 )
-PROBES = {probe.name: probe for probe in (GOAL_CLEARANCE, DOORWAY)}
+
+
+def table_leg(scene: Scene, leg_width: float, corner: int) -> tuple[float, float]:
+    """The center of one of the table's legs, counted from the corner nearest the origin."""
+    lx, ly = TABLE_SIZE
+    x = scene.params["table_x"] + (leg_width / 2 if corner % 2 == 0 else lx - leg_width / 2)
+    y = scene.params["table_y"] + (leg_width / 2 if corner < 2 else ly - leg_width / 2)
+    return x, y
+
+
+def through_a_leg(
+    gt: GroundTruth, leg_width: float, rng: np.random.Generator
+) -> tuple[Pose, Point]:
+    """The scene's start at a drawn yaw, and a goal straight past one table leg, so the direct line hits it."""
+    sx, sy, z = gt.scene.start
+    x, y = table_leg(gt.scene, leg_width, int(rng.integers(4)))
+    reach = math.hypot(x - sx, y - sy)
+    low, high = PAST_LEG_M
+    stretch = (reach + low + (high - low) * float(rng.random())) / reach
+    return (sx, sy, _yaw(rng)), (sx + stretch * (x - sx), sy + stretch * (y - sy), z)
+
+
+LEG_WIDTH = Probe(
+    "leg_width",
+    "table",
+    "leg_width",
+    (0.01, 0.02, 0.03, 0.04, 0.06, 0.08, 0.10, 0.15, 0.20),
+    through_a_leg,
+    scene_param="leg_width",
+)
+PROBES = {probe.name: probe for probe in (GOAL_CLEARANCE, DOORWAY, LEG_WIDTH)}
 
 
 def freeze_probe(probe: Probe, sampling_seed: int = 0, rules: Rules = Rules()) -> Manifest:

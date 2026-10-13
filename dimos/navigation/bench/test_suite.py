@@ -24,6 +24,7 @@ from dimos.navigation.bench.ground_truth import GO2, GroundTruth
 from dimos.navigation.bench.suite import (
     DOORWAY,
     GOAL_CLEARANCE,
+    LEG_WIDTH,
     MINED,
     NARROW_DOOR_M,
     SIDE_WALL_M,
@@ -32,6 +33,7 @@ from dimos.navigation.bench.suite import (
     Manifest,
     freeze,
     freeze_probe,
+    table_leg,
 )
 from dimos.simulation.scenes.procedural import office
 
@@ -122,4 +124,24 @@ def test_door_width_probe_sets_the_door_and_puts_the_goal_past_it() -> None:
         assert door.width == case.level.value and case.difficulty.doors == 1
         assert case.goal[0] >= door.at + SIDE_WALL_M
         assert case.goal[0] <= scene.params["width"] - SIDE_WALL_M
+    manifest.check_drift()
+
+
+def test_leg_width_probe_aims_the_direct_line_through_a_table_leg() -> None:
+    probe = replace(LEG_WIDTH, seeds=(1, 2))
+    manifest = freeze_probe(probe)
+    assert len({c.id for c in manifest.cases}) == len(manifest.cases) == 2 * len(probe.levels)
+    for case in manifest.cases:
+        assert case.level is not None and case.params == {"leg_width": case.level.value}
+        scene = case.scene()
+        start, goal = np.array(case.start[:2]), np.array(case.goal[:2])
+        legs = [np.array(table_leg(scene, case.level.value, corner)) for corner in range(4)]
+        along = (goal - start) / np.linalg.norm(goal - start)
+        off_line = [
+            abs(float(along[0] * (leg - start)[1] - along[1] * (leg - start)[0])) for leg in legs
+        ]
+        past = [float(np.dot(along, goal - leg)) for leg in legs]
+        hit = int(np.argmin(off_line))
+        assert off_line[hit] < 1e-9 and 2.3 <= past[hit] <= 3.0
+        assert len([box for box in scene.boxes if box.kind == "clutter"]) == 5
     manifest.check_drift()

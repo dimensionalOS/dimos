@@ -30,7 +30,7 @@ from dimos.msgs.sim_msgs.Contacts import Kind
 
 Vec3 = tuple[float, float, float]
 Rect = tuple[float, float, float, float]
-Family = Literal["office", "room", "doorway"]
+Family = Literal["office", "room", "doorway", "table"]
 
 SLAB_THICKNESS = 0.15
 WALL_THICKNESS = 0.1
@@ -39,6 +39,8 @@ DOOR_HEIGHT = 2.0
 DOOR_WIDTH = (0.8, 1.2)
 TABLE_TOP_THICKNESS = 0.04
 TABLE_LEG = 0.04
+TABLE_SIZE = (1.4, 0.8)
+TABLE_HEIGHT = 0.75
 START_CLEARANCE = 1.0
 DOOR_CLEARANCE = 0.8
 DOOR_SIDE_MARGIN = 0.3
@@ -207,13 +209,17 @@ def _table(
             break
     else:
         return
-    top = z + _uniform(rng, 0.45, 0.8)
+    _table_at(scene, tx, ty, lx, ly, z, z + _uniform(rng, 0.45, 0.8), TABLE_LEG)
+
+
+def _table_at(
+    scene: Scene, tx: float, ty: float, lx: float, ly: float, z: float, top: float, leg: float
+) -> None:
+    """A table top with a square leg inside each corner."""
     scene.add((tx, ty, top - TABLE_TOP_THICKNESS), (tx + lx, ty + ly, top), "clutter")
-    for px in (tx, tx + lx - TABLE_LEG):
-        for py in (ty, ty + ly - TABLE_LEG):
-            scene.add(
-                (px, py, z), (px + TABLE_LEG, py + TABLE_LEG, top - TABLE_TOP_THICKNESS), "clutter"
-            )
+    for px in (tx, tx + lx - leg):
+        for py in (ty, ty + ly - leg):
+            scene.add((px, py, z), (px + leg, py + leg, top - TABLE_TOP_THICKNESS), "clutter")
 
 
 def office(
@@ -321,8 +327,33 @@ def doorway(seed: int, door_width: float | None = None) -> Scene:
     return scene
 
 
+def table(seed: int, leg_width: float | None = None) -> Scene:
+    """One empty room with a table standing in open floor, taller than the robot."""
+    rng = np.random.default_rng(seed)
+    width, length = _uniform(rng, 10, 12), _uniform(rng, 8, 10)
+    z0 = _uniform(rng, 0.0, 0.08)
+    lx, ly = TABLE_SIZE
+    tx = _uniform(rng, 0.35, 0.45) * width - lx / 2
+    ty = _uniform(rng, 0.35, 0.5) * length - ly / 2
+    scene = Scene(
+        f"table_{seed}",
+        {"width": width, "length": length, "z0": z0, "table_x": tx, "table_y": ty},
+    )
+    top = z0 + WALL_HEIGHT
+    scene.add((0.0, 0.0, z0 - SLAB_THICKNESS), (width, length, z0), "floor")
+    _walls(scene, 0, 0, width, length, z0, top)
+    _table_at(scene, tx, ty, lx, ly, z0, z0 + TABLE_HEIGHT, _given(TABLE_LEG, leg_width))
+    scene.start = (1.0, 1.0, z0)
+    return scene
+
+
 Params = dict[str, bool | int | float]
-FAMILIES: dict[Family, Callable[..., Scene]] = {"office": office, "room": room, "doorway": doorway}
+FAMILIES: dict[Family, Callable[..., Scene]] = {
+    "office": office,
+    "room": room,
+    "doorway": doorway,
+    "table": table,
+}
 
 
 def generate(family: Family, seed: int, **params: bool | int | float) -> Scene:

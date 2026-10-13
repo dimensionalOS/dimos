@@ -25,6 +25,10 @@ from dimos.simulation.scenes.procedural import (
     DOOR_WIDTH,
     SLAB_THICKNESS,
     START_CLEARANCE,
+    TABLE_HEIGHT,
+    TABLE_LEG,
+    TABLE_SIZE,
+    TABLE_TOP_THICKNESS,
     WALL_HEIGHT,
     WALL_THICKNESS,
     Scene,
@@ -32,6 +36,7 @@ from dimos.simulation.scenes.procedural import (
     generate,
     office,
     room,
+    table,
 )
 
 
@@ -181,3 +186,35 @@ def test_doorway_width_is_drawn_unless_given() -> None:
     assert _door_widths(narrow) == pytest.approx([0.5])
     assert narrow.doors[0].at == drawn.doors[0].at
     assert narrow.params == drawn.params
+
+
+def test_table_is_deterministic_and_pinned() -> None:
+    assert table(3).digest() == table(3).digest() == "9618ac5b4763012c"
+    assert table(3).digest() != table(4).digest()
+
+
+def test_table_stands_in_open_floor_on_four_legs_of_the_given_width() -> None:
+    for seed in range(1, 21):
+        scene = table(seed, leg_width=0.02)
+        z0, tx, ty = (scene.params[k] for k in ("z0", "table_x", "table_y"))
+        top, *legs = [box for box in scene.boxes if box.kind == "clutter"]
+        assert top.center[2] + top.half[2] == pytest.approx(z0 + TABLE_HEIGHT)
+        assert (2 * top.half[0], 2 * top.half[1]) == pytest.approx(TABLE_SIZE)
+        assert len(legs) == 4 and len({leg.center[:2] for leg in legs}) == 4
+        for leg in legs:
+            assert leg.half[:2] == pytest.approx((0.01, 0.01))
+            assert leg.center[2] - leg.half[2] == pytest.approx(z0)
+            assert leg.center[2] + leg.half[2] == pytest.approx(top.center[2] - top.half[2])
+            assert tx <= leg.center[0] <= tx + TABLE_SIZE[0]
+            assert ty <= leg.center[1] <= ty + TABLE_SIZE[1]
+        assert tx > 1.0 + START_CLEARANCE and tx + TABLE_SIZE[0] < scene.params["width"] - 3.0
+        assert ty > 1.5 and ty + TABLE_SIZE[1] < scene.params["length"] - 1.5
+
+
+def test_table_leg_width_defaults_and_can_be_removed() -> None:
+    drawn = [box for box in table(3).boxes if box.kind == "clutter"]
+    assert all(box.half[0] == pytest.approx(TABLE_LEG / 2) for box in drawn[1:])
+    assert drawn[0].half[2] == pytest.approx(TABLE_TOP_THICKNESS / 2)
+    bare = table(3, leg_width=0.0)
+    assert len([box for box in bare.boxes if box.kind == "clutter"]) == 1
+    assert bare.params == table(3).params
