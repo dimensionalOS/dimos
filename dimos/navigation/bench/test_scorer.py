@@ -65,6 +65,9 @@ def _walk(
 
 def test_a_clean_arrival_is_a_success_with_full_metrics() -> None:
     s = score(_walk(10.0), RULES, GOAL, route_length=4.0)
+    assert s.feature_m is None
+    beside = score(_walk(10.0), RULES, GOAL, feature=((START[0] + GOAL[0]) / 2, START[1] + 0.3))
+    assert beside.feature_m == pytest.approx(0.3, abs=0.02)
     assert s.outcome == "success" and s.signature is None
     assert s.window == (T0, T0 + 9.9) and s.arrived_s == pytest.approx(9.9)
     assert s.traveled_m == pytest.approx(4.0, abs=0.05) and s.spl == pytest.approx(1.0, abs=0.02)

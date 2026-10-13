@@ -99,9 +99,11 @@ def test_probe_freezes_every_level_in_every_seed(tmp_path: Path) -> None:
     for seed in probe.seeds:
         cases = [c for c in manifest.cases if c.seed == seed]
         assert [c.level for c in cases] == [Level("goal_clearance", v) for v in probe.levels]
-        assert len({c.start for c in cases}) == len({c.goal[1] for c in cases}) == len(cases)
+        assert len({c.start for c in cases}) == len({c.goal[1] for c in cases}) == 1
+        assert len({c.goal[0] for c in cases}) == len(cases)
     for case in manifest.cases:
         assert case.level is not None and case.tag == "goal_clearance" and case.family == "room"
+        assert case.feature is None and not case.level.control
         params = case.scene().params
         assert params["width"] - case.goal[0] == pytest.approx(case.level.value)
         assert SIDE_WALL_M <= case.goal[1] <= params["length"] - SIDE_WALL_M
@@ -130,9 +132,14 @@ def test_door_width_probe_sets_the_door_and_puts_the_goal_past_it() -> None:
 def test_leg_width_probe_aims_the_direct_line_through_a_table_leg() -> None:
     probe = replace(LEG_WIDTH, seeds=(1, 2))
     manifest = freeze_probe(probe)
-    assert len({c.id for c in manifest.cases}) == len(manifest.cases) == 2 * len(probe.levels)
+    assert len({c.id for c in manifest.cases}) == len(manifest.cases) == 2 * (len(probe.levels) + 1)
+    bare = [c for c in manifest.cases if c.level is not None and c.level.control]
+    assert [(c.seed, c.params) for c in bare] == [(1, {"leg_width": 0.0}), (2, {"leg_width": 0.0})]
+    assert all(len([b for b in c.scene().boxes if b.kind == "clutter"]) == 1 for c in bare)
     for case in manifest.cases:
         assert case.level is not None and case.params == {"leg_width": case.level.value}
+        if case.level.control:
+            continue
         scene = case.scene()
         start, goal = np.array(case.start[:2]), np.array(case.goal[:2])
         legs = [np.array(table_leg(scene, case.level.value, corner)) for corner in range(4)]
@@ -143,5 +150,6 @@ def test_leg_width_probe_aims_the_direct_line_through_a_table_leg() -> None:
         past = [float(np.dot(along, goal - leg)) for leg in legs]
         hit = int(np.argmin(off_line))
         assert off_line[hit] < 1e-9 and 2.3 <= past[hit] <= 3.0
+        assert case.feature == pytest.approx(tuple(legs[hit]))
         assert len([box for box in scene.boxes if box.kind == "clutter"]) == 5
     manifest.check_drift()

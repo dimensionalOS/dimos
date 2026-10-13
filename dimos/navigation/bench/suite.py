@@ -109,10 +109,11 @@ class Candidate:
 
 @dataclass(frozen=True)
 class Level:
-    """Where a probe case sits on the variable its probe sweeps."""
+    """Where a probe case sits on the variable its probe sweeps. A control case has the feature removed."""
 
     variable: str
     value: float
+    control: bool = False
 
 
 @dataclass(frozen=True)
@@ -123,6 +124,7 @@ class Case(Candidate):
     route_length: float
     scene_digest: str
     level: Level | None = None
+    feature: tuple[float, float] | None = None
 
 
 @dataclass
@@ -457,7 +459,16 @@ def _validate(
     )
 
 
-Placement = Callable[[GroundTruth, float, np.random.Generator], tuple[Pose, Point]]
+@dataclass(frozen=True)
+class Placed:
+    """A probe case's start and goal, and the feature the robot could pass without meeting."""
+
+    start: Pose
+    goal: Point
+    feature: tuple[float, float] | None = None
+
+
+Placement = Callable[[GroundTruth, float, np.random.Generator], Placed]
 
 
 @dataclass(frozen=True)
@@ -465,6 +476,9 @@ class Probe:
     """One feature in an otherwise empty scene, swept over fixed levels with one case per level and seed.
 
     The level is handed to the placement, and to the scene as scene_param when that is named.
+    A seed's placement draws are the same at every level, so only the level differs between its cases.
+    control is the level that removes the feature, run once per seed to see whether the robot's own
+    line crosses it.
     """
 
     name: str
@@ -473,15 +487,16 @@ class Probe:
     levels: tuple[float, ...]
     place: Placement
     scene_param: str | None = None
+    control: float | None = None
     seeds: tuple[int, ...] = tuple(range(1, 6))
 
 
-def goal_by_wall(gt: GroundTruth, clearance: float, rng: np.random.Generator) -> tuple[Pose, Point]:
+def goal_by_wall(gt: GroundTruth, clearance: float, rng: np.random.Generator) -> Placed:
     """The scene's start at a drawn yaw, and a goal this far from the far wall and well clear of the side walls."""
     sx, sy, z = gt.scene.start
     width, length = gt.scene.params["width"], gt.scene.params["length"]
     across = SIDE_WALL_M + (length - 2 * SIDE_WALL_M) * float(rng.random())
-    return (sx, sy, _yaw(rng)), (width - clearance, across, z)
+    return Placed((sx, sy, _yaw(rng)), (width - clearance, across, z))
 
 
 GOAL_CLEARANCE = Probe(
@@ -493,14 +508,14 @@ GOAL_CLEARANCE = Probe(
 )
 
 
-def past_the_door(gt: GroundTruth, width: float, rng: np.random.Generator) -> tuple[Pose, Point]:
+def past_the_door(gt: GroundTruth, width: float, rng: np.random.Generator) -> Placed:
     """The scene's start at a drawn yaw, and a goal in the far room well clear of the door and every wall."""
     sx, sy, z = gt.scene.start
     (door,) = gt.scene.doors
     near = door.at + WALL_THICKNESS + SIDE_WALL_M
     x = near + (gt.scene.params["width"] - SIDE_WALL_M - near) * float(rng.random())
     y = SIDE_WALL_M + (gt.scene.params["length"] - 2 * SIDE_WALL_M) * float(rng.random())
-    return (sx, sy, _yaw(rng)), (x, y, z)
+    return Placed((sx, sy, _yaw(rng)), (x, y, z))
 
 
 DOORWAY = Probe(
@@ -521,16 +536,15 @@ def table_leg(scene: Scene, leg_width: float, corner: int) -> tuple[float, float
     return x, y
 
 
-def through_a_leg(
-    gt: GroundTruth, leg_width: float, rng: np.random.Generator
-) -> tuple[Pose, Point]:
+def through_a_leg(gt: GroundTruth, leg_width: float, rng: np.random.Generator) -> Placed:
     """The scene's start at a drawn yaw, and a goal straight past one table leg, so the direct line hits it."""
     sx, sy, z = gt.scene.start
     x, y = table_leg(gt.scene, leg_width, int(rng.integers(4)))
     reach = math.hypot(x - sx, y - sy)
     low, high = PAST_LEG_M
     stretch = (reach + low + (high - low) * float(rng.random())) / reach
-    return (sx, sy, _yaw(rng)), (sx + stretch * (x - sx), sy + stretch * (y - sy), z)
+    goal = (sx + stretch * (x - sx), sy + stretch * (y - sy), z)
+    return Placed((sx, sy, _yaw(rng)), goal, (x, y))
 
 
 LEG_WIDTH = Probe(
@@ -540,6 +554,7 @@ LEG_WIDTH = Probe(
     (0.01, 0.02, 0.03, 0.04, 0.06, 0.08, 0.10, 0.15, 0.20),
     through_a_leg,
     scene_param="leg_width",
+    control=0.0,
 )
 PROBES = {probe.name: probe for probe in (GOAL_CLEARANCE, DOORWAY, LEG_WIDTH)}
 
@@ -548,15 +563,16 @@ def freeze_probe(probe: Probe, sampling_seed: int = 0, rules: Rules = Rules()) -
     """The probe's cases, every level in every seed's scene. Deterministic in its arguments."""
     cases = []
     for seed in probe.seeds:
-        rng = np.random.default_rng([sampling_seed, seed])
         gt = None
-        for value in probe.levels:
+        levels = probe.levels if probe.control is None else (probe.control, *probe.levels)
+        for value in levels:
+            rng = np.random.default_rng([sampling_seed, seed])
             params: Params = {} if probe.scene_param is None else {probe.scene_param: value}
             if gt is None or params:
                 gt = GroundTruth(generate(probe.family, seed, **params))
-            start, goal = probe.place(gt, value, rng)
-            candidate = Candidate(probe.family, seed, params, start, goal, probe.name)
-            route = gt.route(start, goal)
+            placed = probe.place(gt, value, rng)
+            candidate = Candidate(probe.family, seed, params, placed.start, placed.goal, probe.name)
+            route = gt.route(placed.start, placed.goal)
             if route is None:
                 raise ValueError(f"{probe.name} at {value} has no route in seed {seed}")
             cases.append(
@@ -567,7 +583,8 @@ def freeze_probe(probe: Probe, sampling_seed: int = 0, rules: Rules = Rules()) -
                     difficulty=gt.difficulty(route),
                     route_length=route.length,
                     scene_digest=gt.scene.digest(),
-                    level=Level(probe.variable, value),
+                    level=Level(probe.variable, value, control=value == probe.control),
+                    feature=placed.feature,
                 )
             )
     return Manifest(suite=probe.name, rules=rules, sampling_seed=sampling_seed, cases=cases)

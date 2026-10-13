@@ -28,6 +28,7 @@ from typing import get_args
 from jinja2 import Environment, FileSystemLoader
 from pydantic import TypeAdapter
 
+from dimos.navigation.bench.ground_truth import GO2
 from dimos.navigation.bench.runner import RESULTS_FILE, RUN_FILE, SUITE_FILE
 from dimos.navigation.bench.scorer import Outcome
 from dimos.navigation.bench.suite import Case, Manifest
@@ -57,6 +58,7 @@ class Row:
     final_xy: tuple[float, float] | None
     final_error_xy: float | None
     collisions: int | None
+    feature_m: float | None
 
 
 @dataclass(frozen=True)
@@ -108,11 +110,12 @@ class DifficultyRow:
 
 @dataclass(frozen=True)
 class LevelRow:
-    """One level of a swept variable: its outcomes and failure signatures."""
+    """One level of a swept variable: the outcomes and failure signatures of the cases that encountered the feature."""
 
     value: float
     outcomes: Counter[str]
     signatures: Counter[str]
+    not_encountered: int
 
     @property
     def n(self) -> int:
@@ -173,6 +176,7 @@ def _row(case: Case, record: dict[str, object], episode: Path) -> Row:
         final_xy=(float(final[0]), float(final[1])) if final else None,
         final_error_xy=_float(metrics.get("final_error_xy")),
         collisions=None if metrics.get("collisions") is None else int(metrics["collisions"]),
+        feature_m=_float(metrics.get("feature_m")),
     )
 
 
@@ -221,20 +225,42 @@ def by_difficulty(report: Report) -> list[DifficultyRow]:
     return rows
 
 
+def controls(report: Report) -> list[Row]:
+    """The episodes run with the feature removed."""
+    return [r for r in report.rows if r.case.level is not None and r.case.level.control]
+
+
+def encountered(report: Report) -> set[int] | None:
+    """The seeds whose control episode walked over the feature, or None for a run with no controls."""
+    rows = controls(report)
+    if not rows:
+        return None
+    return {r.case.seed for r in rows if r.feature_m is not None and r.feature_m < GO2.radius}
+
+
 def by_level(report: Report) -> list[LevelRow]:
-    """Outcomes and failure signatures per level of the swept variable, lowest first."""
+    """Outcomes and failure signatures per level of the swept variable, lowest first.
+
+    A case whose seed's control never walked over the feature did not encounter it and is left out.
+    """
+    seeds = encountered(report)
     groups: dict[float, list[Row]] = {}
     for row in report.rows:
-        if row.case.level is not None:
+        if row.case.level is not None and not row.case.level.control:
             groups.setdefault(row.case.level.value, []).append(row)
-    return [
-        LevelRow(
-            value=value,
-            outcomes=Counter(r.outcome for r in rows),
-            signatures=Counter(r.signature for r in rows if r.signature is not None),
-        )
-        for value, rows in sorted(groups.items())
-    ]
+    levels = []
+    for value, rows in sorted(groups.items()):
+        faced = [r for r in rows if seeds is None or r.case.seed in seeds]
+        if faced:
+            levels.append(
+                LevelRow(
+                    value=value,
+                    outcomes=Counter(r.outcome for r in faced),
+                    signatures=Counter(r.signature for r in faced if r.signature is not None),
+                    not_encountered=len(rows) - len(faced),
+                )
+            )
+    return levels
 
 
 def crossing(levels: list[LevelRow], rate: float) -> float | None:
@@ -292,6 +318,9 @@ def render(report: Report) -> str:
     if levels:
         edge = ". Success rate " + ", ".join(_reached(levels, rate) for rate in THRESHOLDS)
         curve = _curve(levels)
+    seeds = encountered(report)
+    if seeds is not None:
+        edge += f". Feature encountered in {len(seeds)} of {len(controls(report))} control runs"
     env = Environment(loader=FileSystemLoader(Path(__file__).parent), autoescape=True)
     env.filters["quote"] = shlex.quote
     return env.get_template(TEMPLATE_FILE).render(
@@ -307,6 +336,7 @@ def render(report: Report) -> str:
         difficulty=by_difficulty(report),
         variable=next((r.case.level.variable for r in report.rows if r.case.level), ""),
         levels=levels,
+        controlled=seeds is not None,
         curve=curve,
         curve_px=CURVE_PX,
         curve_grid=[(f"{rate:.0%}", _curve_y(rate)) for rate in (0.0, *THRESHOLDS, 1.0)],

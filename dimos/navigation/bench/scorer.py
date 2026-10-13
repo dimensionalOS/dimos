@@ -176,13 +176,21 @@ class Score:
     collision_s: float | None
     trunk_floor_s: float | None
     fell: bool | None
+    feature_m: float | None = None
     missing: list[str] = field(default_factory=list)
 
 
 def score(
-    recording: Recording, rules: Rules, goal: Point, route_length: float | None = None
+    recording: Recording,
+    rules: Rules,
+    goal: Point,
+    route_length: float | None = None,
+    feature: tuple[float, float] | None = None,
 ) -> Score:
-    """Score the episode in the recording that drives to the goal."""
+    """Score the episode in the recording that drives to the goal.
+
+    With a feature, also the closest the body's center came to it.
+    """
     if recording.pose is None:
         raise ValueError("a recording needs ground_truth to be scored")
     missing = [
@@ -235,6 +243,9 @@ def score(
         collision_s=collisions.seconds if collisions else None,
         trunk_floor_s=collisions.trunk_floor_s if collisions else None,
         fell=fell,
+        feature_m=None
+        if feature is None
+        else float(np.linalg.norm(pose.xyz[:, :2] - feature, axis=1).min()),
         missing=missing,
     )
 

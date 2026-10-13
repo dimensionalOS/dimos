@@ -27,6 +27,7 @@ from dimos.navigation.bench.report import (
     by_signature,
     by_stressor,
     crossing,
+    encountered,
     load,
     render,
     write,
@@ -34,10 +35,12 @@ from dimos.navigation.bench.report import (
 from dimos.navigation.bench.suite import Case, Level, Manifest, Rules
 
 
-def _case(case_id: str, tag: str, clearance: float, level: Level | None = None) -> Case:
+def _case(
+    case_id: str, tag: str, clearance: float, level: Level | None = None, seed: int = 1
+) -> Case:
     return Case(
         family="office",
-        seed=1,
+        seed=seed,
         params={},
         start=(1.0, 1.0, 0.0),
         goal=(4.0, 1.0, 0.0),
@@ -131,6 +134,11 @@ def test_report_tallies_outcomes_by_stressor_and_signature(tmp_path: Path) -> No
     assert f"dimos nav-bench replay {run.resolve() / 'narrow_door-s1-b'}" in page
     assert page.count("<circle") == 3 and "<tfoot><tr><td>all</td>" in page
     assert by_level(report) == [] and "Success against" not in page
+    assert (
+        encountered(report) is None
+        and "not encountered" not in page
+        and "nearest to feature" not in page
+    )
     assert write(run) == run / "report.html" and (run / "report.html").read_text() == page
 
 
@@ -164,3 +172,32 @@ def test_report_gives_the_success_rate_per_level_and_where_it_crosses(tmp_path: 
     assert "<h2>Success against goal clearance</h2>" in page and page.count("<rect") == 3
     assert "local_refused 2</td>" in page
     assert ">1/2</text>" in page
+
+
+def test_report_leaves_out_cases_whose_control_never_met_the_feature(tmp_path: Path) -> None:
+    nearest = {1: 0.05, 2: 0.40, 3: 0.10}
+    cases, results = [], []
+    for seed, feature_m in nearest.items():
+        control = _case(f"leg-s{seed}-ctl", "leg", 0.5, Level("leg_width", 0.0, control=True), seed)
+        cases.append(control)
+        results.append(_result(control, "success", feature_m=feature_m))
+        for value in (0.02, 0.08):
+            case = _case(f"leg-s{seed}-{value}", "leg", 0.5, Level("leg_width", value), seed)
+            cases.append(case)
+            hit = value == 0.02 and seed != 2
+            results.append(
+                _result(case, "reached_with_collision" if hit else "success", feature_m=0.6)
+            )
+    run = tmp_path / "run"
+    _run(run, cases, results)
+    report = load(run)
+    assert encountered(report) == {1, 3}
+    levels = by_level(report)
+    assert [(row.value, row.n, row.successes, row.not_encountered) for row in levels] == [
+        (0.02, 2, 0, 1),
+        (0.08, 2, 2, 1),
+    ]
+    page = render(report)
+    assert "Feature encountered in 2 of 3 control runs" in page
+    assert '<th class="n">not encountered</th>' in page and ">0/2</text>" in page
+    assert '<td class="n">0.40</td>' in page
