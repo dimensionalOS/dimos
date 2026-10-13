@@ -5,6 +5,7 @@
 !dimos
 !misc/DimSim
 !docker/evals
+docker/evals/eval-runs
 !pyproject.toml
 !uv.lock
 !setup.py

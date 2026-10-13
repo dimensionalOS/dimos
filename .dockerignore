@@ -107,6 +107,3 @@ temp/
 assets/*/*
 !assets/agent/prompt.txt
 !assets/*
-
-# Eval run outputs (the default EVAL_RUNS_DIR for docker/evals)
-docker/evals/eval-runs/
