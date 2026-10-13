@@ -161,9 +161,7 @@ def load_scene_xml(config: GlobalConfig) -> str:
         path = Path(config.mujoco_room_from_occupancy)
         return generate_mujoco_scene(OccupancyGrid.from_path(path))
 
-    mujoco_room = config.mujoco_room or (
-        "office1" if config.robot_model == "unitree_g1" else "office_555"
-    )
+    mujoco_room = config.mujoco_room or "office_555"
     if mujoco_room == "office_555":
         return (get_data("mujoco_office_555") / "scene_office_555.xml").read_text()
     xml_file = (_get_data_dir() / f"scene_{mujoco_room}.xml").as_posix()
