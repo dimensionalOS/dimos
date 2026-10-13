@@ -212,3 +212,46 @@ def test_margin_is_the_gap_to_the_nearest_obstacle_at_body_height() -> None:
     assert under_a_slab.margin_m == pytest.approx(-GO2.radius)
     assert under_a_slab.margin_s == pytest.approx(7.0, abs=0.05)
     assert under_a_slab.final_margin_m == pytest.approx(0.5 - GO2.radius, abs=0.02)
+
+
+def _stuck_touching(seconds: float) -> Recording:
+    """A stuck walk with a leg on clutter for the given part of the final stuck window."""
+    start = T0 + 30.0 - RULES.stuck_s
+    return replace(
+        _walk(30.0, arrive=False, hold_last=25.0),
+        contacts=[
+            ContactSample(T0 - 5.0, [Contact("foot", "floor")]),
+            ContactSample(start - 3.0, [Contact("leg", "clutter"), Contact("foot", "floor")]),
+            ContactSample(start + 1.0, [Contact("leg", "clutter"), Contact("trunk", "wall")]),
+            ContactSample(start + 2.0, [Contact("leg", "clutter")]),
+            ContactSample(start + seconds, [Contact("foot", "floor")]),
+        ],
+    )
+
+
+def test_a_stuck_body_held_against_an_object_is_pushing() -> None:
+    held = RULES.stuck_s * 0.5
+    s = score(_stuck_touching(held + 0.1), RULES, GOAL)
+    assert s.signatures == ["commanded_no_progress", "pushing"]
+    assert s.signature == "commanded_no_progress"
+    assert s.pushing_s == pytest.approx(held + 0.1) and s.pushing_on == "leg clutter"
+    brief = score(_stuck_touching(held - 0.1), RULES, GOAL)
+    assert brief.signatures == ["commanded_no_progress"]
+    assert brief.pushing_s == pytest.approx(held - 0.1) and brief.pushing_on == "leg clutter"
+    free = score(_walk(30.0, arrive=False, hold_last=25.0), RULES, GOAL)
+    assert (free.signatures, free.pushing_s, free.pushing_on) == (
+        ["commanded_no_progress"],
+        0.0,
+        None,
+    )
+    stalled = replace(
+        _walk(30.0, arrive=False, hold_last=25.0, command_last=False),
+        contacts=_stuck_touching(held + 0.1).contacts,
+    )
+    assert score(stalled, RULES, GOAL).signatures == []
+    unrecorded = score(replace(_stuck_touching(held + 0.1), contacts=None), RULES, GOAL)
+    assert (unrecorded.signatures, unrecorded.pushing_s, unrecorded.pushing_on) == (
+        ["commanded_no_progress"],
+        None,
+        None,
+    )

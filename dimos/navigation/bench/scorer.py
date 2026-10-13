@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from collections import Counter
+from collections import Counter, defaultdict
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -75,12 +75,14 @@ Signature = Literal[
     "body_fell",
     "out_of_time",
     "arrival_mismatch",
+    "pushing",
 ]
 COLLIDING_KINDS = ("wall", "clutter")
 TRUNK_ON_FLOOR = Contact("trunk", "floor")
 T = TypeVar("T")
 GOAL_ECHO_M = 0.05
 TIMEOUT_SLACK_S = 0.2
+PUSHING_FRACTION = 0.5
 CONTACT_SPEED_S = 0.2
 ARRIVED = ("success", "reached_with_collision", "wrong_place", "wrong_floor")
 GAVE_UP = ("stuck", "stalled", "timeout")
@@ -214,6 +216,8 @@ class Score:
     margin_m: float | None = None
     margin_s: float | None = None
     final_margin_m: float | None = None
+    pushing_s: float | None = None
+    pushing_on: str | None = None
     missing: list[str] = field(default_factory=list)
 
 
@@ -266,9 +270,14 @@ def score(
     spl = None
     if route_length is not None:
         spl = (route_length / max(route_length, traveled)) if outcome == "success" else 0.0
-    signatures = _signatures(_Episode(outcome, recording.local_paths, t0, t1))
     margins = _margins(pose, scene) if scene is not None else None
     closest = int(np.argmin(margins)) if margins is not None else None
+    final_contacts = _collisions(recording.contacts, t1 - rules.stuck_s, t1)
+    pushing_s = final_contacts.seconds if final_contacts else None
+    pushed = _held_longest(recording.contacts or [], t1 - rules.stuck_s, t1)
+    signatures = _signatures(
+        _Episode(outcome, recording.local_paths, t0, t1, pushing_s=pushing_s, stuck_s=rules.stuck_s)
+    )
     return Score(
         outcome=outcome,
         signature=signatures[0] if signatures else None,
@@ -303,6 +312,8 @@ def score(
         margin_m=float(margins[closest]) if margins is not None else None,
         margin_s=float(pose.t[closest] - t0) if closest is not None else None,
         final_margin_m=float(margins[-1]) if margins is not None else None,
+        pushing_s=pushing_s,
+        pushing_on=_name(pushed) if pushed else None,
         missing=missing,
     )
 
@@ -329,6 +340,8 @@ class _Episode:
     local_paths: list[PathSample] | None
     t0: float
     t1: float
+    pushing_s: float | None
+    stuck_s: float
 
 
 def _last_local_path(episode: _Episode) -> int | None:
@@ -347,6 +360,15 @@ def _follower_zeroed(episode: _Episode) -> bool:
     return episode.outcome == "stalled" and poses is not None and poses > 1
 
 
+def _pushing(episode: _Episode) -> bool:
+    held = episode.pushing_s
+    return (
+        episode.outcome == "stuck"
+        and held is not None
+        and held >= PUSHING_FRACTION * episode.stuck_s
+    )
+
+
 CHECKS: tuple[tuple[Signature, Callable[[_Episode], bool]], ...] = (
     ("body_fell", lambda e: e.outcome == "fall"),
     ("arrival_mismatch", lambda e: e.outcome in ("unclaimed", "wrong_place", "wrong_floor")),
@@ -355,6 +377,7 @@ CHECKS: tuple[tuple[Signature, Callable[[_Episode], bool]], ...] = (
     ("out_of_time", lambda e: e.outcome == "timeout"),
     ("local_refused", _local_refused),
     ("follower_zeroed", _follower_zeroed),
+    ("pushing", _pushing),
 )
 
 
@@ -432,6 +455,18 @@ def _collisions(samples: list[ContactSample] | None, t0: float, t1: float) -> _C
     seconds += (t1 - t_prev) * bool(held)
     trunk_floor += (t1 - t_prev) * on_trunk
     return _Collisions(count, seconds, trunk_floor, started, first)
+
+
+def _held_longest(samples: list[ContactSample], t0: float, t1: float) -> Contact | None:
+    """The colliding contact held for the most time over the window."""
+    seconds: defaultdict[Contact, float] = defaultdict(float)
+    before = [s for s in samples if s.t <= t0]
+    held, t_prev = _colliding(before[-1].contacts if before else []), t0
+    for sample in [*(s for s in samples if t0 < s.t <= t1), ContactSample(t1, [])]:
+        for contact in held:
+            seconds[contact] += sample.t - t_prev
+        held, t_prev = _colliding(sample.contacts), sample.t
+    return max(sorted(seconds), key=seconds.__getitem__, default=None)
 
 
 def _colliding(contacts: list[Contact]) -> set[Contact]:
