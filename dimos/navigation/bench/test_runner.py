@@ -33,6 +33,7 @@ from dimos.navigation.bench.ground_truth import Difficulty
 from dimos.navigation.bench.playback import Puppet, find_episode, frames
 from dimos.navigation.bench.runner import (
     RECORDING_FILE,
+    REPLAY_FILE,
     RESULTS_FILE,
     RUN_FILE,
     SCORE_FILE,
@@ -200,6 +201,37 @@ def test_run_scores_every_episode_and_rescores_the_same(
     suite.unlink()
     assert set(rescore(run_dir).read_text().splitlines()) == set(results.splitlines())
     assert find_episode("narrow_door") == episode
+
+
+def test_keeping_failures_drops_the_recordings_of_successes_and_rescores_the_same(
+    suite: Path, tmp_path: Path
+) -> None:
+    (tmp_path / "fake.py").write_text(FAKE_BLUEPRINT)
+    run_dir = run(
+        RunConfig(
+            suite=suite,
+            blueprint="fake",
+            procs=3,
+            out_dir=tmp_path / "run",
+            overrides=(f"--fake-recordings={tmp_path / 'recordings'}",),
+            keep="failures",
+            command=(sys.executable, str(tmp_path / "fake.py")),
+        )
+    )
+    results = (run_dir / RESULTS_FILE).read_text()
+    rows = {r["case_id"]: r for r in map(json.loads, results.splitlines())}
+    assert rows["mined-s1-aaaaaa"]["outcome"] == "success"
+    assert rows["stay_put-s1-cccccc"]["outcome"] == "timeout"
+    success, failure = run_dir / "mined-s1-aaaaaa", run_dir / "stay_put-s1-cccccc"
+    assert {f.name for f in success.iterdir()} == {"terminal.json", SCORE_FILE, "run.log"}
+    assert (failure / RECORDING_FILE).exists()
+    assert (failure / REPLAY_FILE).read_bytes() == b"rrd"
+    assert set(rescore(run_dir).read_text().splitlines()) == set(results.splitlines())
+    (success / SCORE_FILE).unlink()
+    rescored = {r["case_id"]: r for r in map(json.loads, rescore(run_dir).read_text().splitlines())}
+    lost = rescored["mined-s1-aaaaaa"]
+    assert (lost["outcome"], lost["error"]) == (None, "no recording")
+    assert rescored["stay_put-s1-cccccc"] == rows["stay_put-s1-cccccc"]
 
 
 def test_an_interrupted_run_keeps_finished_episodes_and_drops_the_rest(tmp_path: Path) -> None:

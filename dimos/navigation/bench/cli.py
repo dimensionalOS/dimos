@@ -34,7 +34,7 @@ from rich.progress import (
 import typer
 
 if TYPE_CHECKING:
-    from dimos.navigation.bench.runner import Progress, Report
+    from dimos.navigation.bench.runner import Keep, Progress, Report
     from dimos.navigation.bench.suite import Split
 
 DEFAULT_SUITE = "v1"
@@ -127,6 +127,9 @@ def run_command(
     setting: list[str] = typer.Option(
         [], "--set", help="Module config override, Module.field=value. Repeatable."
     ),
+    keep: str = typer.Option(
+        "all", help="all, or failures to delete the recording of a success once it is scored."
+    ),
 ) -> None:
     """Run every case of the split, several at a time, and score each recording.
 
@@ -139,6 +142,8 @@ def run_command(
 
     if split not in ("dev", "held_out", "all"):
         raise typer.BadParameter("split must be dev, held_out or all")
+    if keep not in ("all", "failures"):
+        raise typer.BadParameter("keep must be all or failures")
     suites = list(suite)
     if not suites and not probes:
         default = RUNS_DIR / f"{DEFAULT_SUITE}.json"
@@ -167,6 +172,7 @@ def run_command(
         overrides=tuple(override_flag(s) for s in setting),
         policy=policy,
         viewer=viewer,
+        keep=cast("Keep", keep),
     )
     signal.signal(signal.SIGTERM, _interrupt)
     run_dir = out

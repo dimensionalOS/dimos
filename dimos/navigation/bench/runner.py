@@ -31,6 +31,7 @@ import signal
 import subprocess
 import threading
 import time
+from typing import Literal, cast
 
 import numpy as np
 
@@ -66,6 +67,8 @@ VERDICT_SLACK_S = 0.1
 RECORDING_GAP_S = 1.0
 RECORDING_LINE = re.compile(r"Recording to (\S+memory\.db)")
 
+Keep = Literal["all", "failures"]
+
 _live: set[subprocess.Popen[bytes]] = set()
 _live_lock = threading.Lock()
 
@@ -81,6 +84,7 @@ class RunConfig:
     overrides: tuple[str, ...] = ()
     policy: Path | None = None
     viewer: bool = False
+    keep: Keep = "all"
     command: tuple[str, ...] = ("dimos",)
 
 
@@ -198,6 +202,9 @@ def run(config: RunConfig, report: Report | None = None) -> Path:
             verdict = str(result.outcome or result.error)
             outcomes[verdict] += 1
             progress((episode.dir.name, verdict))
+        agreed = result.outcome == "success" and not result.metrics.get("mismatch")
+        if config.keep == "failures" and agreed:
+            _prune(episode.dir)
         return result
 
     pool = ThreadPoolExecutor(max_workers=config.procs)
@@ -414,6 +421,13 @@ def _collect_recording(log: Path, episode: Episode) -> None:
         source.parent.rmdir()
 
 
+def _prune(episode_dir: Path) -> None:
+    """Delete the episode's recording and rerun file, leaving its score."""
+    for file in episode_dir.iterdir():
+        if file.name.startswith(RECORDING_FILE) or file.name == REPLAY_FILE:
+            file.unlink()
+
+
 def _terminal(episode_dir: Path) -> dict[str, object] | None:
     path = episode_dir / TERMINAL_FILE
     if not path.exists():
@@ -433,14 +447,19 @@ def _score(manifest: Manifest, episode: Episode, terminal: dict[str, object] | N
         outcome=None,
     )
     recording = episode.dir / RECORDING_FILE
+    kept = episode.dir / SCORE_FILE
     if terminal is None:
         result.error = "no terminal record"
         return result
     if result.terminal in HARNESS_REASONS:
         result.error = result.terminal
         return result
-    if not recording.exists():
+    if not recording.exists() and not kept.exists():
         result.error = "no recording"
+        return result
+    if not recording.exists():
+        result.metrics = json.loads(kept.read_text())
+        result.outcome = cast("Outcome", result.metrics["outcome"])
         return result
     try:
         recorded = Recording.from_store(recording)
@@ -458,7 +477,7 @@ def _score(manifest: Manifest, episode: Episode, terminal: dict[str, object] | N
         return result
     result.outcome = scored.outcome
     result.metrics = asdict(scored)
-    (episode.dir / SCORE_FILE).write_text(json.dumps(result.metrics, indent=2) + "\n")
+    kept.write_text(json.dumps(result.metrics, indent=2) + "\n")
     return result
 
 
