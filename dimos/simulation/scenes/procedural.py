@@ -30,7 +30,7 @@ from dimos.msgs.sim_msgs.Contacts import Kind
 
 Vec3 = tuple[float, float, float]
 Rect = tuple[float, float, float, float]
-Family = Literal["office"]
+Family = Literal["office", "room"]
 
 SLAB_THICKNESS = 0.15
 WALL_THICKNESS = 0.1
@@ -289,8 +289,22 @@ def _door_clutter(scene: Scene, door: Door, z: float) -> None:
         scene.add((across, along, z), (across + sx, along + sy, z + sz), "clutter")
 
 
+def room(seed: int, width: float | None = None, length: float | None = None) -> Scene:
+    """One empty walled room. The size is drawn, so the walls fall anywhere against a voxel grid."""
+    rng = np.random.default_rng(seed)
+    width = _given(_uniform(rng, 6, 8), width)
+    length = _given(_uniform(rng, 5, 7), length)
+    z0 = _uniform(rng, 0.0, 0.08)
+    scene = Scene(f"room_{seed}", {"width": width, "length": length, "z0": z0})
+    top = z0 + WALL_HEIGHT
+    scene.add((0.0, 0.0, z0 - SLAB_THICKNESS), (width, length, z0), "floor")
+    _walls(scene, 0, 0, width, length, z0, top)
+    scene.start = (1.0, 1.0, z0)
+    return scene
+
+
 Params = dict[str, bool | int | float]
-FAMILIES: dict[Family, Callable[..., Scene]] = {"office": office}
+FAMILIES: dict[Family, Callable[..., Scene]] = {"office": office, "room": room}
 
 
 def generate(family: Family, seed: int, **params: bool | int | float) -> Scene:

@@ -26,9 +26,11 @@ from dimos.simulation.scenes.procedural import (
     SLAB_THICKNESS,
     START_CLEARANCE,
     WALL_HEIGHT,
+    WALL_THICKNESS,
     Scene,
     generate,
     office,
+    room,
 )
 
 
@@ -130,3 +132,27 @@ def test_degenerate_boxes_are_dropped() -> None:
 
 def test_generate_dispatches_by_family() -> None:
     assert generate("office", 3).digest() == office(3).digest()
+    assert generate("room", 3, width=6.5).digest() == room(3, width=6.5).digest()
+
+
+def test_room_is_deterministic_and_pinned() -> None:
+    assert room(3).digest() == room(3).digest() == "5833274ec7fd2415"
+    assert room(3).digest() != room(4).digest()
+
+
+def test_room_is_empty_and_enclosed() -> None:
+    scene = room(1)
+    width, length, z0 = scene.params["width"], scene.params["length"], scene.params["z0"]
+    assert sorted(box.kind for box in scene.boxes) == ["floor", *["wall"] * 4]
+    assert scene.doors == [] and scene.start == (1.0, 1.0, z0)
+    assert _reachable_fraction(scene) == 1.0
+    lo, hi = scene.bounds()
+    assert lo[:2] == pytest.approx([-WALL_THICKNESS] * 2)
+    assert hi[:2] == pytest.approx([width + WALL_THICKNESS, length + WALL_THICKNESS])
+
+
+def test_room_size_is_drawn_unless_given() -> None:
+    assert 6 <= room(2).params["width"] <= 8 and 5 <= room(2).params["length"] <= 7
+    sized = room(2, width=6.5, length=5.5)
+    assert (sized.params["width"], sized.params["length"]) == (6.5, 5.5)
+    assert sized.params["z0"] == room(2).params["z0"]
