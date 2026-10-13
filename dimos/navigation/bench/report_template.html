@@ -6,7 +6,9 @@
 <style>
 body { font: 14px/1.4 system-ui, sans-serif; margin: 2em auto; max-width: 80em; color: #222; }
 .scroll { overflow-x: auto; }
-h2 { margin-top: 2em; border-bottom: 1px solid #ccc; }
+h2 { margin-top: 2.5em; border-bottom: 2px solid #888; }
+h3 { margin-top: 2em; border-bottom: 1px solid #ccc; }
+summary { cursor: pointer; margin-top: 2em; font-weight: bold; }
 table { border-collapse: collapse; margin: 1em 0; }
 th, td { padding: 0.25em 0.75em; border-bottom: 1px solid #ddd; text-align: left; white-space: nowrap; }
 th { cursor: pointer; background: #f4f4f4; }
@@ -20,6 +22,21 @@ code { font-size: 12px; }
 </head>
 <body>
 <h1>{{ title }}</h1>
+{% if sections | length > 1 %}
+<table>
+<thead><tr><th>suite</th><th class="n">episodes</th><th class="n">succeeded</th><th class="n">feature encountered</th><th>finished</th></tr></thead>
+<tbody>
+{% for s in sections %}
+<tr><td><a href="#{{ s.report.suite }}">{{ s.report.suite }}</a></td><td class="n">{{ s.report.rows | length }} of {{ s.report.run.episodes }}</td><td class="n">{{ s.report.successes | length }}</td><td class="n">{{ s.encountered }}</td><td>{{ "yes" if s.report.run.finished else "no" }}</td></tr>
+{% endfor %}
+</tbody>
+</table>
+{% endif %}
+{% for s in sections %}
+{% set report = s.report %}{% set run = s.report.run %}{% set verdict = s.verdict %}{% set wall = s.wall %}{% set finished_at = s.finished_at %}
+{% set stressors = s.stressors %}{% set totals = s.totals %}{% set signatures = s.signatures %}{% set difficulty = s.difficulty %}
+{% set variable = s.variable %}{% set levels = s.levels %}{% set controlled = s.controlled %}{% set curve = s.curve %}
+{% if sections | length > 1 %}<h2 id="{{ report.suite }}">{{ report.suite }}</h2>{% endif %}
 <p class="verdict">{{ verdict }}</p>
 <dl>
 <dt>suite</dt><dd>{{ report.suite }}</dd>
@@ -33,8 +50,10 @@ code { font-size: 12px; }
 </dl>
 
 {% if levels %}
-<h2>Success against {{ variable | replace("_", " ") }}</h2>
-<svg width="{{ curve_px[0] }}" height="{{ curve_px[1] + 30 }}" font-size="11" fill="#555">
+<h3>Success against {{ variable | replace("_", " ") }}</h3>
+<svg width="{{ curve_px[0] }}" height="{{ curve_px[1] + 48 }}" font-size="11" fill="#555">
+<text x="{{ (curve[0].x + curve[-1].x) // 2 }}" y="{{ curve_px[1] + 42 }}" text-anchor="middle" font-size="12">{{ variable | replace("_", " ") }} (m)</text>
+<text x="12" y="{{ curve_px[1] // 2 }}" text-anchor="middle" font-size="12" transform="rotate(-90 12 {{ curve_px[1] // 2 }})">success</text>
 {% for label, y in curve_grid %}<line x1="{{ curve[0].x }}" x2="{{ curve[-1].x }}" y1="{{ y }}" y2="{{ y }}" stroke="#ddd"/><text x="{{ curve[0].x - 6 }}" y="{{ y + 4 }}" text-anchor="end">{{ label }}</text>
 {% endfor %}
 {% for point in curve %}<text x="{{ point.x }}" y="{{ curve_px[1] + 10 }}" text-anchor="middle">{{ point.label }}</text><text x="{{ point.x }}" y="{{ curve_px[1] + 24 }}" text-anchor="middle">{{ point.count }}</text>
@@ -52,7 +71,8 @@ code { font-size: 12px; }
 </table></div>
 {% endif %}
 
-<h2>Outcomes by stressor</h2>
+{% if not levels %}
+<h3>Outcomes by stressor</h3>
 <div class="scroll"><table>
 <thead><tr><th>stressor</th><th class="n">n</th>{% for outcome in report.outcomes %}<th class="n">{{ outcome }}</th>{% endfor %}</tr></thead>
 <tbody>
@@ -63,7 +83,7 @@ code { font-size: 12px; }
 <tfoot><tr><td>all</td><td class="n">{{ report.rows | length }}</td>{% for outcome in report.outcomes %}<td class="n">{{ totals[outcome] or "" }}</td>{% endfor %}</tr></tfoot>
 </table></div>
 
-<h2>Failure signatures</h2>
+<h3>Failure signatures</h3>
 <div class="scroll"><table>
 <thead><tr><th>signature</th><th class="n">n</th><th>from</th></tr></thead>
 <tbody>
@@ -73,7 +93,7 @@ code { font-size: 12px; }
 </tbody>
 </table></div>
 
-<h2>Outcomes against difficulty (medians)</h2>
+<h3>Outcomes against difficulty (medians)</h3>
 <div class="scroll"><table>
 <thead><tr><th>outcome</th><th class="n">n</th><th class="n">bottleneck m</th><th class="n">doors</th><th class="n">detour</th><th class="n">route m</th><th>bottlenecks 0 to {{ strip_m }} m</th></tr></thead>
 <tbody>
@@ -87,7 +107,8 @@ code { font-size: 12px; }
 </tbody>
 </table></div>
 
-<h2>Episodes</h2>
+{% endif %}
+<details><summary>Episodes ({{ report.rows | length }})</summary>
 <div class="scroll"><table>
 <thead><tr><th>case</th><th>stressor</th><th>outcome</th><th>signature</th><th class="n">SPL</th><th class="n">time s</th><th class="n">bottleneck m</th><th class="n">final error m</th><th class="n">collisions</th>{% if controlled %}<th class="n">nearest to feature m</th>{% endif %}<th>terminal</th><th>replay</th></tr></thead>
 <tbody>
@@ -104,6 +125,8 @@ code { font-size: 12px; }
 {% endfor %}
 </tbody>
 </table></div>
+</details>
+{% endfor %}
 
 <script>
 for (const th of document.querySelectorAll("th")) th.onclick = () => {

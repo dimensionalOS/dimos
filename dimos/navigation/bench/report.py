@@ -35,14 +35,12 @@ from dimos.navigation.bench.suite import Case, Manifest
 
 REPORT_FILE = "report.html"
 TEMPLATE_FILE = "report_template.html"
-INDEX_FILE = "index.html"
-INDEX_TEMPLATE_FILE = "index_template.html"
 OUTCOMES: tuple[str, ...] = get_args(Outcome)
 STRIP_M = 1.0
 STRIP_TICK_M = 0.25
 STRIP_PX = 240
 CURVE_PX = (480, 180)
-CURVE_PAD_PX = 44
+CURVE_PAD_PX = 56
 
 
 @dataclass(frozen=True)
@@ -157,36 +155,14 @@ def load(run_dir: Path) -> Report:
 
 
 def write(run_dir: Path) -> Path:
+    """The report of one suite's run, or one page for every suite run under the directory."""
+    if (run_dir / RESULTS_FILE).exists():
+        reports = [load(run_dir)]
+    else:
+        suites = sorted(d for d in run_dir.iterdir() if (d / RESULTS_FILE).exists())
+        reports = [load(d) for d in suites]
     path = run_dir / REPORT_FILE
-    path.write_text(render(load(run_dir)))
-    return path
-
-
-@dataclass(frozen=True)
-class IndexRow:
-    """One suite's run on the index page."""
-
-    link: str
-    report: Report
-    encountered: str
-
-
-def write_index(run_dir: Path) -> Path:
-    """One page linking the report of every suite run under the directory."""
-    rows = []
-    for suite_dir in sorted(d for d in run_dir.iterdir() if (d / RESULTS_FILE).exists()):
-        report = load(suite_dir)
-        seeds = encountered(report)
-        rows.append(
-            IndexRow(
-                link=f"{suite_dir.name}/{REPORT_FILE}",
-                report=report,
-                encountered="" if seeds is None else f"{len(seeds)} of {len(controls(report))}",
-            )
-        )
-    env = Environment(loader=FileSystemLoader(Path(__file__).parent), autoescape=True)
-    path = run_dir / INDEX_FILE
-    path.write_text(env.get_template(INDEX_TEMPLATE_FILE).render(title="nav-bench", rows=rows))
+    path.write_text(render(reports))
     return path
 
 
@@ -314,25 +290,38 @@ def _strip_x(meters: float) -> int:
     return round(min(meters / STRIP_M, 1.0) * STRIP_PX)
 
 
-def render(report: Report) -> str:
-    """The whole page from the template beside this module."""
+@dataclass(frozen=True)
+class Section:
+    """One suite's part of the page."""
+
+    report: Report
+    verdict: str
+    wall: str
+    finished_at: str
+    stressors: dict[str, Counter[str]]
+    totals: Counter[str]
+    signatures: dict[str, Counter[str]]
+    difficulty: list[DifficultyRow]
+    variable: str
+    levels: list[LevelRow]
+    controlled: bool
+    encountered: str
+    curve: list[CurvePoint]
+
+
+def _section(report: Report) -> Section:
     run = report.run
     spls = [r.spl for r in report.successes if r.spl is not None]
     spl = f", median SPL of successes {median(spls):.2f}" if spls else ""
     levels = by_level(report)
     seeds = encountered(report)
-    met = ""
-    if seeds is not None:
-        met = f". Feature encountered in {len(seeds)} of {len(controls(report))} control runs"
-    env = Environment(loader=FileSystemLoader(Path(__file__).parent), autoescape=True)
-    env.filters["quote"] = shlex.quote
-    return env.get_template(TEMPLATE_FILE).render(
-        title=f"nav-bench {report.suite}",
-        verdict=f"{len(report.successes)} of {len(report.rows)} episodes succeeded{spl}{met}",
+    met = "" if seeds is None else f"{len(seeds)} of {len(controls(report))}"
+    faced = f". Feature encountered in {met} control runs" if met else ""
+    return Section(
+        report=report,
+        verdict=f"{len(report.successes)} of {len(report.rows)} episodes succeeded{spl}{faced}",
         wall=f"{(run.time - run.started) / 60:.1f} min" if run.started is not None else "unknown",
         finished_at=time.strftime("%Y-%m-%d %H:%M", time.localtime(run.time)),
-        report=report,
-        run=run,
         stressors=by_stressor(report),
         totals=Counter(r.outcome for r in report.rows),
         signatures=by_signature(report),
@@ -340,7 +329,18 @@ def render(report: Report) -> str:
         variable=next((r.case.level.variable for r in report.rows if r.case.level), ""),
         levels=levels,
         controlled=seeds is not None,
+        encountered=met,
         curve=_curve(levels) if levels else [],
+    )
+
+
+def render(reports: list[Report]) -> str:
+    """The whole page from the template beside this module, one section per suite."""
+    env = Environment(loader=FileSystemLoader(Path(__file__).parent), autoescape=True)
+    env.filters["quote"] = shlex.quote
+    return env.get_template(TEMPLATE_FILE).render(
+        title=f"nav-bench {reports[0].suite}" if len(reports) == 1 else "nav-bench",
+        sections=[_section(report) for report in reports],
         curve_px=CURVE_PX,
         curve_grid=[(f"{rate:.0%}", _curve_y(rate)) for rate in (0.0, 0.5, 1.0)],
         strip_m=STRIP_M,

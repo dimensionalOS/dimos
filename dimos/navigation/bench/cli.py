@@ -130,9 +130,10 @@ def run_command(
 ) -> None:
     """Run every case of the split, several at a time, and score each recording.
 
-    Several suites run one after another, each into its own directory under the run directory.
+    Several suites run one after another, each into its own directory under the run directory,
+    with one report for all of them.
     """
-    from dimos.navigation.bench.report import write_index
+    from dimos.navigation.bench.report import write
     from dimos.navigation.bench.runner import RUNS_DIR, RunConfig, new_run_dir, run as run_suite
     from dimos.navigation.bench.suite import PROBES, FreezeConfig, Manifest, freeze, freeze_probe
 
@@ -180,10 +181,10 @@ def run_command(
         typer.echo(f"run interrupted -> {run_dir}")
         _finish(run_dir)
         if several:
-            typer.echo(f"index -> {write_index(out)}")
+            typer.echo(f"report -> {write(out)}")
         raise
     if several:
-        typer.echo(f"index -> {write_index(out)}")
+        typer.echo(f"report -> {write(out)}")
 
 
 @app.command("score")
@@ -200,7 +201,7 @@ def score_command(
 def report_command(
     run_dir: Path = typer.Argument(..., exists=True, help="A run directory."),
 ) -> None:
-    """Write the run's report.html from its results and print the path."""
+    """Write report.html for a suite's run, or for every suite run under the directory."""
     from dimos.navigation.bench.report import write
 
     typer.echo(write(run_dir))

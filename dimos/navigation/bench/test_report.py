@@ -28,7 +28,6 @@ from dimos.navigation.bench.report import (
     load,
     render,
     write,
-    write_index,
 )
 from dimos.navigation.bench.suite import Case, Level, Manifest, Rules
 
@@ -92,7 +91,7 @@ def test_replay_commands_name_the_episode_of_the_reports_own_run(tmp_path: Path)
         _run(run, [case], [_result(case, "success")])
     for run in (older, newer):
         command = f"dimos nav-bench replay {shlex.quote(str(run.resolve() / case.id))}"
-        assert command in html.unescape(render(load(run)))
+        assert command in html.unescape(render([load(run)]))
 
 
 def test_an_interrupted_run_keeps_the_stop_time_it_recorded(tmp_path: Path) -> None:
@@ -127,7 +126,7 @@ def test_report_tallies_outcomes_by_stressor_and_signature(tmp_path: Path) -> No
     assert by_stressor(report)["narrow_door"] == {"stalled": 1, "no recording": 1}
     assert by_signature(report) == {"local_refused": {"narrow_door": 1}}
     assert report.rows[1].final_xy == (2.0, 1.5) and report.rows[2].spl is None
-    page = render(report)
+    page = render([report])
     assert "1 of 3 episodes succeeded, median SPL of successes 0.90" in page
     assert "<dd>1.5 min</dd>" in page and "<dd>test</dd>" in page
     assert "<td>stalled</td>" in page
@@ -139,6 +138,7 @@ def test_report_tallies_outcomes_by_stressor_and_signature(tmp_path: Path) -> No
         and "not encountered" not in page
         and "nearest to feature" not in page
     )
+    assert "<summary>Episodes (3)</summary>" in page and "Outcomes by stressor" in page
     assert write(run) == run / "report.html" and (run / "report.html").read_text() == page
 
 
@@ -164,11 +164,12 @@ def test_report_gives_the_success_rate_per_level(tmp_path: Path) -> None:
         (0.4, 2, 1.0),
     ]
     assert levels[0].signatures == {"local_refused": 2} and levels[2].signatures == {}
-    page = render(report)
+    page = render([report])
     assert "3 of 6 episodes succeeded<" in page
-    assert "<h2>Success against goal clearance</h2>" in page and page.count("<rect") == 3
+    assert "<h3>Success against goal clearance</h3>" in page and page.count("<rect") == 3
     assert "local_refused 2</td>" in page
     assert ">1/2</text>" in page
+    assert "Outcomes by stressor" not in page and "Outcomes against difficulty" not in page
 
 
 def test_report_leaves_out_cases_whose_control_never_met_the_feature(tmp_path: Path) -> None:
@@ -194,13 +195,13 @@ def test_report_leaves_out_cases_whose_control_never_met_the_feature(tmp_path: P
         (0.02, 2, 0, 1),
         (0.08, 2, 2, 1),
     ]
-    page = render(report)
+    page = render([report])
     assert "Feature encountered in 2 of 3 control runs" in page
     assert '<th class="n">not encountered</th>' in page and ">0/2</text>" in page
     assert '<td class="n">0.40</td>' in page
 
 
-def test_index_links_every_suite_run_under_the_directory(tmp_path: Path) -> None:
+def test_one_report_covers_every_suite_run_under_the_directory(tmp_path: Path) -> None:
     plain = _case("door-s1-a", "door", 0.5, Level("door_width", 0.6))
     _run(tmp_path / "door_width", [plain], [_result(plain, "success")], "door_width")
     control = _case("leg-s1-ctl", "leg", 0.5, Level("leg_width", 0.0, control=True))
@@ -212,10 +213,12 @@ def test_index_links_every_suite_run_under_the_directory(tmp_path: Path) -> None
         "leg_width",
     )
     (tmp_path / "leg_width.json").write_text("{}")
-    path = write_index(tmp_path)
+    path = write(tmp_path)
     page = path.read_text()
-    assert path == tmp_path / "index.html"
-    assert '<a href="door_width/report.html">door_width</a>' in page
-    assert '<a href="leg_width/report.html">leg_width</a>' in page
-    assert page.index("door_width/") < page.index("leg_width/")
+    assert path == tmp_path / "report.html" and "<title>nav-bench</title>" in page
+    assert '<a href="#door_width">door_width</a>' in page
     assert '<td class="n">2 of 2</td><td class="n">1</td><td class="n">1 of 1</td>' in page
+    assert page.index('<h2 id="door_width">') < page.index('<h2 id="leg_width">')
+    assert "<h3>Success against door width</h3>" in page
+    assert "<h3>Success against leg width</h3>" in page
+    assert page.count("<summary>Episodes") == 2 and page.count("<script>") == 1
