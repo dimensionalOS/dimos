@@ -15,7 +15,7 @@
 
 import pickle
 from types import MappingProxyType
-from typing import Protocol
+from typing import Any, Protocol
 
 import pytest
 
@@ -30,6 +30,7 @@ from dimos.core.coordination.blueprints import (
     Blueprint,
     BlueprintAtom,
     DisabledModuleProxy,
+    HostedPlacement,
     ModuleRef,
     StreamRef,
     autoconnect,
@@ -156,6 +157,86 @@ def test_global_config() -> None:
     assert blueprint_set.global_config_overrides["option1"] is True
     assert "option2" in blueprint_set.global_config_overrides
     assert blueprint_set.global_config_overrides["option2"] == 42
+
+
+def test_hosted_marks_a_composed_fragment_without_forwarding_module_kwargs() -> None:
+    blueprint = autoconnect(ModuleA.blueprint(), ModuleB.blueprint()).hosted(tags={"gpu"})
+
+    assert blueprint.hosted_placements == (
+        HostedPlacement(
+            module_names=("modulea", "moduleb"),
+            tags=frozenset({"gpu"}),
+        ),
+    )
+    assert all("hosted" not in atom.kwargs for atom in blueprint.blueprints)
+
+
+def test_autoconnect_preserves_independent_hosted_units() -> None:
+    blueprint = autoconnect(
+        ModuleA.blueprint().hosted(host="robot-1"),
+        ModuleB.blueprint().hosted(),
+    )
+
+    assert blueprint.hosted_placements == (
+        HostedPlacement(module_names=("modulea",), host="robot-1"),
+        HostedPlacement(module_names=("moduleb",)),
+    )
+
+
+def test_namespace_updates_hosted_placement_names() -> None:
+    blueprint = ModuleA.blueprint().hosted(tags={"gpu"}).namespace("robot0")
+
+    assert blueprint.hosted_placements == (
+        HostedPlacement(module_names=("robot0/modulea",), tags=frozenset({"gpu"})),
+    )
+
+
+def test_autoconnect_drops_hosted_metadata_from_overridden_module() -> None:
+    blueprint = autoconnect(
+        ModuleA.blueprint().hosted(tags={"old"}),
+        ModuleA.blueprint(key1="new"),
+    )
+
+    assert blueprint.hosted_placements == ()
+
+
+@pytest.mark.parametrize(
+    ("module_names", "message"),
+    (
+        ((), "at least one module"),
+        (("modulea", "modulea"), "must be unique"),
+    ),
+)
+def test_hosted_placement_rejects_invalid_module_names(
+    module_names: tuple[str, ...],
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        HostedPlacement(module_names=module_names)
+
+
+def test_blueprint_rejects_hosted_placement_for_unknown_module() -> None:
+    atom = ModuleA.blueprint().blueprints[0]
+
+    with pytest.raises(ValueError, match="unknown modules: missing"):
+        Blueprint(
+            blueprints=(atom,),
+            hosted_placements=(HostedPlacement(module_names=("missing",)),),
+        )
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    (
+        {"host": ""},
+        {"tags": "gpu"},
+        {"tags": {""}},
+        {"host": None, "tags": {"gpu"}},
+    ),
+)
+def test_hosted_rejects_invalid_constraints(kwargs: dict[str, Any]) -> None:
+    with pytest.raises(ValueError):
+        ModuleA.blueprint().hosted(**kwargs)
 
 
 def test_future_annotations_support() -> None:

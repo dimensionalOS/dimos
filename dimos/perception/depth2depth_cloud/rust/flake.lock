@@ -60,16 +60,16 @@
         ]
       },
       "locked": {
-        "lastModified": 1791337730,
-        "narHash": "sha256-iJMdQ2OJsdyBK1+TQNBnjA+ErTT4E2uxrOwf4cJGGbA=",
+        "lastModified": 1791857561,
+        "narHash": "sha256-XmB4XTzdWc9wv2qX/kv8zBJ7Ed4fp9AKDwK1KY68yDo=",
         "owner": "jeff-hykin",
         "repo": "depth2depth",
-        "rev": "146bd2841329e48a5355b0119fa1038b78afc20e",
+        "rev": "6553b739826cfc8e37e4550536a7ccbdbfc890dc",
         "type": "github"
       },
       "original": {
         "owner": "jeff-hykin",
-        "ref": "v0.4.0",
+        "ref": "v0.4.1",
         "repo": "depth2depth",
         "type": "github"
       }

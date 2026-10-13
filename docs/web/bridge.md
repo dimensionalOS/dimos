@@ -27,6 +27,8 @@ The relay flags are `dimos run` options. Most of the rest are fields of the brid
 | `--relay-url URL` | none | Connect to a relay started elsewhere, given its HTTP address (`http://localhost:7780`, `https://relay.example.com`). The bridge fetches `/api/info` there on every connect, so a relay restart (new port, new certificate) is transparent. |
 | `--relay-ca PEM` | none | CA bundle that signed the relay's certificate (mkcert, a private CA). Replaces the default trust store for that relay. |
 | `RELAY_KEY` | none | The robot's key for a relay with an auth file, bound to the robot id there. Set it in the environment or in `.env`. The `--relay-key` flag exists too, but it shows in the process list. |
+| `--rtc <bool>` | true | Deliver `jpeg.v1` channels as WebRTC tracks when the relay offers it and aiortc is installed. `--rtc false` keeps JPEG frames through the relay. |
+| `--rtc-file PATH` | none | Cloudflare configuration for the local relay (its `--rtc-file`). A relay started elsewhere carries its own. |
 | `--robot-id ID` | the hostname | How the relay and the cockpit name this robot. Two robots on one relay need different ids. A global option: `dimos --robot-id go2-lab run ...`. |
 | `--robot-model NAME` | none | Shown next to the name in the cockpit. Also a global option. |
 | `--robot-name NAME` | the id | Display name in the cockpit. |
@@ -122,6 +124,8 @@ An encoding id names a codec pair: the encoder in the bridge and the decoder in 
 | `bool.json.v1` | `Bool` | tx | the Map2D cancel button |
 | `audio.json.v1` | `AudioChunk` | tx | the Chat microphone |
 | `twist.json.v1` | `Twist` | tx | Teleop (its own protocol path, not a codec) |
+
+Behind a relay with Cloudflare video ([Relay hosting](/docs/web/relay_hosting.md#video-through-cloudflare)), and with aiortc installed (`dimos[webrtc]`), the bridge advertises every `jpeg.v1` channel as `video.webrtc.v1`. The frames become one H.264 WebRTC track per channel, pulled by the browser from Cloudflare instead of forwarded by the relay. Odd frame sizes lose their last row or column (H.264 encodes even sizes). A camera that pauses for 30 s or more (Cloudflare's track timeout) is pulled afresh by the relay when its frames resume. `--rtc false` keeps JPEG.
 
 Two more need no registration:
 

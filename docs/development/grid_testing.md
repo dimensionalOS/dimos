@@ -40,10 +40,10 @@ testcases = [
         tags={"all", "glob", "regex"},  # LCM supports all pattern types
     ),
     Case(
-        name="shm_pickle",
-        pubsub_context=shm_context,
+        name="zenoh_pickle",
+        pubsub_context=zenoh_context,
         topic_values=[...],
-        tags={"all"},  # SharedMemory only supports subscribe_all
+        tags={"all", "glob"},  # Zenoh supports wildcard key expressions
     ),
 ]
 ```
