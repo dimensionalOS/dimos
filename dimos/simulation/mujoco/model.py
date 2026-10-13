@@ -68,13 +68,7 @@ def load_model(
     mujoco.set_mjcb_control(None)
 
     xml_string = get_model_xml(robot, scene_xml)
-    assets = get_assets()
-    # office_555's meshes and textures (all named office_555_*), fetched only when the scene uses them
-    if 'file="office_555_' in scene_xml:
-        office_555 = get_data("mujoco_office_555")
-        _update_assets(assets, office_555 / "meshes")
-        _update_assets(assets, office_555 / "textures")
-    model = mujoco.MjModel.from_xml_string(xml_string, assets=assets)
+    model = mujoco.MjModel.from_xml_string(xml_string, assets=get_assets())
     data = mujoco.MjData(model)
 
     mujoco.mj_resetDataKeyframe(model, data, 0)
@@ -165,7 +159,18 @@ def load_scene_xml(config: GlobalConfig) -> str:
 
     mujoco_room = config.mujoco_room or "office_555"
     if mujoco_room == "office_555":
-        return (get_data("mujoco_office_555") / "scene_office_555.xml").read_text()
+        return _office_555_scene_xml()
     xml_file = (_get_data_dir() / f"scene_{mujoco_room}.xml").as_posix()
     with open(xml_file) as f:
         return f.read()
+
+
+def _office_555_scene_xml() -> str:
+    """The office_555 scene, its meshes and textures referenced by absolute path so they load from its data folder."""
+    office_555 = get_data("mujoco_office_555")
+    root = ET.parse(office_555 / "scene_office_555.xml").getroot()
+    for element, folder in [("mesh", "meshes"), ("texture", "textures")]:
+        for asset in root.iter(element):
+            if asset.get("file"):
+                asset.set("file", (office_555 / folder / asset.get("file")).as_posix())
+    return ET.tostring(root, encoding="unicode")
