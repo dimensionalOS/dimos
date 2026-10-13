@@ -16,7 +16,7 @@ import subprocess
 
 import pytest
 
-from dimos.package.project import add, consumer_project
+from dimos.package.project import add, consumer_project, remove, sync, update
 
 
 def test_add_delegates_revision_extras_and_restores_failed_resolution(tmp_path, mocker):
@@ -50,3 +50,27 @@ def test_implicit_project_does_not_edit_dimos_checkout(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     with pytest.raises(ValueError, match="Select a consumer"):
         consumer_project(None, create=True)
+
+
+def test_sync_requires_lock_and_never_relocks(tmp_path, mocker):
+    project = consumer_project(tmp_path, create=True)
+    run = mocker.patch("dimos.package.project.uv")
+    with pytest.raises(ValueError, match="missing"):
+        sync(project)
+    run.assert_not_called()
+    (project / "uv.lock").write_text("locked")
+    sync(project)
+    run.assert_called_once_with(project, "sync", "--locked", "--no-default-groups")
+
+
+def test_update_and_remove_delegate_explicit_changes(tmp_path, mocker):
+    project = consumer_project(tmp_path, create=True)
+    run = mocker.patch("dimos.package.project.uv")
+    update(project, ("acme-probe",))
+    assert [call.args[1:] for call in run.call_args_list] == [
+        ("lock", "--upgrade-package", "acme-probe"),
+        ("sync", "--locked", "--no-default-groups"),
+    ]
+    run.reset_mock()
+    remove(project, ("acme-probe",))
+    run.assert_called_once_with(project, "remove", "acme-probe")

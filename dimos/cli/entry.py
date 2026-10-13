@@ -25,11 +25,16 @@ parent, inside ``main()``.
 def main() -> None:
     import sys
 
-    if len(sys.argv) > 1 and sys.argv[1] == "package":
-        from dimos.package.cli import main as package_main
+    from dimos.package.dispatch import dispatch
 
-        package_main(sys.argv[2:])
+    try:
+        arguments = dispatch(sys.argv[1:])
+    except (ValueError, OSError) as error:
+        print(f"Consumer command failed: {error}", file=sys.stderr)
+        raise SystemExit(2) from error
+    if not arguments and sys.argv[1:]:
         return
+    sys.argv[1:] = arguments
     from dimos.cli.dimos import cli_main
 
     cli_main()

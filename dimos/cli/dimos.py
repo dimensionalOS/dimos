@@ -110,6 +110,18 @@ main.add_typer(data_app, name="data")
 main.add_typer(go2tool_app, name="go2tool")
 main.command()(shell)
 main.add_typer(cache_app, name="cache")
+
+
+@main.command(
+    "package", context_settings={"allow_extra_args": True, "ignore_unknown_options": True}
+)
+def package_command(ctx: typer.Context) -> None:
+    """Add, sync, update or remove consumer dependencies with uv."""
+    from dimos.package.cli import main as package_main
+
+    package_main(list(ctx.args))
+
+
 main.command("login")(cloud_login)
 main.command("logout")(cloud_logout)
 main.command("whoami")(cloud_whoami)

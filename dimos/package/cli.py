@@ -21,7 +21,7 @@ from pathlib import Path
 import subprocess
 import sys
 
-from dimos.package.project import add, consumer_project
+from dimos.package.project import add, consumer_project, remove, sync, update
 from dimos.package.sources import resolve_source
 
 
@@ -38,8 +38,24 @@ def main(argv: list[str] | None = None) -> None:
     selector.add_argument("--tag")
     selector.add_argument("--branch")
     selector.add_argument("--rev")
+    synchronize = commands.add_parser("sync", help="Install the existing consumer lock")
+    upgrade = commands.add_parser("update", help="Explicitly refresh dependency resolutions")
+    upgrade.add_argument("names", nargs="*")
+    uninstall = commands.add_parser("remove", help="Remove distribution dependencies using uv")
+    uninstall.add_argument("names", nargs="+")
+    for command in (install, synchronize, upgrade, uninstall):
+        command.add_argument("--project", type=Path, default=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     try:
+        if args.command != "add":
+            project = consumer_project(args.project)
+            if args.command == "sync":
+                sync(project)
+            elif args.command == "update":
+                update(project, tuple(args.names))
+            else:
+                remove(project, tuple(args.names))
+            return
         source = resolve_source(
             args.source,
             tag=args.tag,

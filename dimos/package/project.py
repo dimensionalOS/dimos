@@ -22,6 +22,8 @@ import os
 from pathlib import Path
 import subprocess
 
+from filelock import FileLock
+
 from dimos.package.sources import read_manifest
 
 
@@ -67,13 +69,18 @@ def project_edit(project: Path) -> Iterator[None]:
         raise
 
 
-def uv(project: Path, *args: str) -> None:
-    env = {
+def uv_environment() -> dict[str, str]:
+    return {
         key: value
         for key, value in os.environ.items()
         if key not in {"VIRTUAL_ENV", "UV_PROJECT_ENVIRONMENT", "PYTHONPATH", "PYTHONHOME"}
     }
-    subprocess.run(["uv", "--project", str(project), *args], cwd=project, env=env, check=True)
+
+
+def uv(project: Path, *args: str) -> None:
+    subprocess.run(
+        ["uv", "--project", str(project), *args], cwd=project, env=uv_environment(), check=True
+    )
 
 
 def add(
@@ -94,5 +101,28 @@ def add(
             args.extend((option, value))
     for extra in extras:
         args.extend(("--extra", extra))
-    with project_edit(project):
+    with FileLock(str(project / ".dimos-package.lock")), project_edit(project):
         uv(project, *args)
+
+
+def sync(project: Path) -> None:
+    if not (project / "uv.lock").is_file():
+        raise ValueError("Consumer uv.lock is missing; use package add or package update first")
+    with FileLock(str(project / ".dimos-package.lock")):
+        uv(project, "sync", "--locked", "--no-default-groups")
+
+
+def update(project: Path, names: tuple[str, ...]) -> None:
+    with FileLock(str(project / ".dimos-package.lock")), project_edit(project):
+        args = ["lock"]
+        for name in names:
+            args.extend(("--upgrade-package", name))
+        if not names:
+            args.append("--upgrade")
+        uv(project, *args)
+        uv(project, "sync", "--locked", "--no-default-groups")
+
+
+def remove(project: Path, names: tuple[str, ...]) -> None:
+    with FileLock(str(project / ".dimos-package.lock")), project_edit(project):
+        uv(project, "remove", *names)
