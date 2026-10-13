@@ -47,7 +47,7 @@ CURVE_ROW_PX = 28
 
 @dataclass(frozen=True)
 class Row:
-    """One episode as the report sees it. The outcome is the error when scoring produced none."""
+    """One scored episode as the report sees it."""
 
     case: Case
     episode: Path
@@ -60,6 +60,16 @@ class Row:
     final_error_xy: float | None
     collisions: int | None
     feature_m: float | None
+
+
+@dataclass(frozen=True)
+class Invalid:
+    """An episode that produced no outcome. It is listed and left out of every count."""
+
+    case: Case
+    episode: Path
+    error: str
+    terminal: str | None
 
 
 @dataclass(frozen=True)
@@ -85,12 +95,13 @@ class Report:
     rules: Rules
     run: Run
     rows: list[Row]
+    invalid: list[Invalid]
 
     @property
     def outcomes(self) -> list[str]:
-        """Outcome columns, known ones in rank order, then errors."""
+        """Outcome columns in rank order."""
         seen = {r.outcome for r in self.rows}
-        return [o for o in OUTCOMES if o in seen] + sorted(seen - set(OUTCOMES))
+        return [o for o in OUTCOMES if o in seen]
 
     @property
     def successes(self) -> list[Row]:
@@ -151,11 +162,21 @@ def load(run_dir: Path) -> Report:
     run = _RUN.validate_python(meta)
     manifest = Manifest.load(run_dir / SUITE_FILE)
     cases = {c.id: c for c in manifest.cases}
-    rows = [
-        _row(cases[record["case_id"]], record, run_dir.resolve() / record["case_id"])
-        for record in map(json.loads, (run_dir / RESULTS_FILE).read_text().splitlines())
-    ]
-    return Report(manifest.suite, manifest.rules, run, sorted(rows, key=lambda r: r.case.id))
+    rows, invalid = [], []
+    for record in map(json.loads, (run_dir / RESULTS_FILE).read_text().splitlines()):
+        case, episode = cases[record["case_id"]], run_dir.resolve() / record["case_id"]
+        if record["outcome"] is None:
+            terminal = _text(record.get("terminal"))
+            invalid.append(Invalid(case, episode, str(record["error"]), terminal))
+        else:
+            rows.append(_row(case, record, episode))
+    return Report(
+        manifest.suite,
+        manifest.rules,
+        run,
+        sorted(rows, key=lambda r: r.case.id),
+        sorted(invalid, key=lambda r: r.case.id),
+    )
 
 
 def write(run_dir: Path) -> Path:
@@ -177,7 +198,7 @@ def _row(case: Case, record: dict[str, object], episode: Path) -> Row:
     return Row(
         case=case,
         episode=episode,
-        outcome=str(record["outcome"] or record["error"]),
+        outcome=str(record["outcome"]),
         signature=_text(metrics.get("signature")),
         terminal=_text(record.get("terminal")),
         spl=_float(metrics.get("spl")),

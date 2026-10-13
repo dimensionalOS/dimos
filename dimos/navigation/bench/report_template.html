@@ -31,10 +31,10 @@ code { font-size: 12px; }
 </details>
 {% if sections | length > 1 %}
 <table>
-<thead><tr><th>suite</th><th class="n">episodes</th><th class="n">succeeded</th><th class="n">feature encountered</th><th>finished</th></tr></thead>
+<thead><tr><th>suite</th><th class="n">episodes</th><th class="n">succeeded</th><th class="n">invalid</th><th class="n">feature encountered</th><th>finished</th></tr></thead>
 <tbody>
 {% for s in sections %}
-<tr><td><a href="#{{ s.report.suite }}">{{ s.report.suite }}</a></td><td class="n">{{ s.report.rows | length }} of {{ s.report.run.episodes }}</td><td class="n">{{ s.report.successes | length }}</td><td class="n">{{ s.encountered }}</td><td>{{ "yes" if s.report.run.finished else "no" }}</td></tr>
+<tr><td><a href="#{{ s.report.suite }}">{{ s.report.suite }}</a></td><td class="n">{{ (s.report.rows | length) + (s.report.invalid | length) }} of {{ s.report.run.episodes }}</td><td class="n">{{ s.report.successes | length }}</td><td class="n">{{ s.report.invalid | length or "" }}</td><td class="n">{{ s.encountered }}</td><td>{{ "yes" if s.report.run.finished else "no" }}</td></tr>
 {% endfor %}
 </tbody>
 </table>
@@ -51,7 +51,7 @@ code { font-size: 12px; }
 <dt>blueprint</dt><dd>{{ run.blueprint }}</dd>
 <dt>policy</dt><dd>{{ run.policy or "default" }}</dd>
 <dt>overrides</dt><dd>{{ run.overrides | join(" ") or "none" }}</dd>
-<dt>episodes</dt><dd>{{ report.rows | length }} of {{ run.episodes }}, {% if not run.finished %}not {% endif %}finished</dd>
+<dt>episodes</dt><dd>{{ (report.rows | length) + (report.invalid | length) }} of {{ run.episodes }}, {% if not run.finished %}not {% endif %}finished{% if report.invalid %}, {{ report.invalid | length }} invalid and not counted{% endif %}</dd>
 <dt>wall time</dt><dd>{{ wall }}</dd>
 <dt>finished at</dt><dd>{{ finished_at }}</dd>
 </dl>
@@ -134,6 +134,19 @@ code { font-size: 12px; }
 </tbody>
 </table></div>
 </details>
+{% if report.invalid %}
+<details><summary>Invalid episodes ({{ report.invalid | length }})</summary>
+<div class="scroll"><table>
+<thead><tr><th>case</th><th>stressor</th><th>error</th><th>terminal</th><th>replay</th></tr></thead>
+<tbody>
+{% for row in report.invalid %}
+<tr><td>{{ row.case.id }}</td><td>{{ row.case.tag }}</td><td>{{ row.error }}</td><td>{{ row.terminal or "" }}</td>
+<td><code>dimos nav-bench replay {{ row.episode | string | quote }}</code></td></tr>
+{% endfor %}
+</tbody>
+</table></div>
+</details>
+{% endif %}
 {% endfor %}
 
 <script>

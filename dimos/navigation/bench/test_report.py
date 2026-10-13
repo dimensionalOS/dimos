@@ -124,23 +124,28 @@ def test_report_tallies_outcomes_by_stressor_and_signature(tmp_path: Path) -> No
         ],
     )
     report = load(run)
-    assert report.outcomes == ["success", "stalled", "no recording"]
-    assert by_stressor(report)["narrow_door"] == {"stalled": 1, "no recording": 1}
+    assert report.outcomes == ["success", "stalled"]
+    assert by_stressor(report)["narrow_door"] == {"stalled": 1}
     assert by_signature(report) == {"local_refused": {"narrow_door": 1}}
-    assert report.rows[1].final_xy == (2.0, 1.5) and report.rows[2].spl is None
+    assert report.rows[1].final_xy == (2.0, 1.5)
+    assert [(row.case.id, row.error) for row in report.invalid] == [
+        ("narrow_door-s2-c", "no recording")
+    ]
     page = render([report])
-    assert "1 of 3 episodes succeeded, median SPL of successes 0.90" in page
+    assert "1 of 2 episodes succeeded, median SPL of successes 0.90" in page
+    assert "3 of 3, finished, 1 invalid and not counted" in page
+    assert "<summary>Invalid episodes (1)</summary>" in page and "<td>no recording</td>" in page
     assert "<dd>1.5 min</dd>" in page and "<dd>test</dd>" in page
     assert "<td>stalled</td>" in page
     assert f"dimos nav-bench replay {run.resolve() / 'narrow_door-s1-b'}" in page
-    assert page.count("<circle") == 3 and "<tfoot><tr><td>all</td>" in page
+    assert page.count("<circle") == 2 and '<tfoot><tr><td>all</td><td class="n">2</td>' in page
     assert by_level(report) == [] and "Success against" not in page
     assert (
         encountered(report) is None
         and "not encountered" not in page
         and "nearest to feature" not in page
     )
-    assert "<summary>Episodes (3)</summary>" in page and "Outcomes by stressor" in page
+    assert "<summary>Episodes (2)</summary>" in page and "Outcomes by stressor" in page
     assert "<summary>What the outcomes mean</summary>" in page
     assert "<dt>stalled</dt><dd>No arrival, and no motion was commanded for the last 10 s." in page
     assert write(run) == run / "report.html" and (run / "report.html").read_text() == page
@@ -235,7 +240,10 @@ def test_one_report_covers_every_suite_run_under_the_directory(tmp_path: Path) -
     page = path.read_text()
     assert path == tmp_path / "report.html" and "<title>nav-bench</title>" in page
     assert '<a href="#door_width">door_width</a>' in page
-    assert '<td class="n">2 of 2</td><td class="n">1</td><td class="n">1 of 1</td>' in page
+    assert (
+        '<td class="n">2 of 2</td><td class="n">1</td><td class="n"></td><td class="n">1 of 1</td>'
+        in page
+    )
     assert page.index('<h2 id="door_width">') < page.index('<h2 id="leg_width">')
     assert "<h3>Success against door width</h3>" in page
     assert "<h3>Success against leg width</h3>" in page
