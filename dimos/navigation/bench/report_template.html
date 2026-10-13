@@ -73,7 +73,7 @@ code { font-size: 12px; }
 <thead><tr><th class="n">{{ variable | replace("_", " ") }} m</th><th class="n">n</th>{% for outcome in report.outcomes %}<th class="n">{{ outcome }}</th>{% endfor %}{% if controlled %}<th class="n">not encountered</th>{% endif %}<th class="n">near falls</th><th>failure signatures</th></tr></thead>
 <tbody>
 {% for row in levels %}
-<tr><td class="n">{{ "%.2f" | format(row.value) }}</td><td class="n">{{ row.n }}</td>{% for outcome in report.outcomes %}<td class="n">{{ row.outcomes[outcome] or "" }}</td>{% endfor %}{% if controlled %}<td class="n">{{ row.not_encountered or "" }}</td>{% endif %}<td class="n">{{ row.near_falls or "" }}</td><td>{% for signature, n in row.signatures.most_common() %}{{ signature }} {{ n }}{{ ", " if not loop.last }}{% endfor %}</td></tr>
+<tr><td class="n">{{ "%.2f" | format(row.value) }}</td><td class="n">{{ row.n }}</td>{% for outcome in report.outcomes %}<td class="n">{{ row.outcomes[outcome] or "" }}</td>{% endfor %}{% if controlled %}<td class="n">{% for outcome, n in row.left_out.most_common() %}{{ outcome }} {{ n }}{{ ", " if not loop.last }}{% endfor %}{% if row.left_out_collisions %}, {{ row.left_out_collisions }} collided{% endif %}</td>{% endif %}<td class="n">{{ row.near_falls or "" }}</td><td>{% for signature, n in row.signatures.most_common() %}{{ signature }} {{ n }}{{ ", " if not loop.last }}{% endfor %}</td></tr>
 {% endfor %}
 </tbody>
 </table></div>

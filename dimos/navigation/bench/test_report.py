@@ -222,9 +222,14 @@ def test_report_leaves_out_cases_whose_control_never_met_the_feature(tmp_path: P
         for value in (0.02, 0.08):
             case = _case(f"leg-s{seed}-{value}", "leg", 0.5, Level("leg_width", value), seed)
             cases.append(case)
-            hit = value == 0.02 and seed != 2
+            hit = value == 0.02
             results.append(
-                _result(case, "reached_with_collision" if hit else "success", feature_m=0.6)
+                _result(
+                    case,
+                    "reached_with_collision" if hit else "success",
+                    feature_m=0.6,
+                    collisions=2 * hit,
+                )
             )
     run = tmp_path / "run"
     _run(run, cases, results)
@@ -234,6 +239,10 @@ def test_report_leaves_out_cases_whose_control_never_met_the_feature(tmp_path: P
     assert [(row.value, row.n, row.successes, row.not_encountered) for row in levels] == [
         (0.02, 2, 0, 1),
         (0.08, 2, 2, 1),
+    ]
+    assert [(row.left_out, row.left_out_collisions) for row in levels] == [
+        ({"reached_with_collision": 1}, 1),
+        ({"success": 1}, 0),
     ]
     page = render([report])
     assert "Feature encountered in 2 of 3 control runs" in page

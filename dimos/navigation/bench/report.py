@@ -130,13 +130,21 @@ class DifficultyRow:
 
 @dataclass(frozen=True)
 class LevelRow:
-    """One level of a swept variable: the outcomes and failure signatures of the cases that encountered the feature."""
+    """One level of a swept variable: the outcomes and failure signatures of the cases that encountered the feature.
+
+    The cases that did not are left out of those and counted on their own.
+    """
 
     value: float
     outcomes: Counter[str]
     signatures: Counter[str]
-    not_encountered: int
+    left_out: Counter[str]
+    left_out_collisions: int
     near_falls: int = 0
+
+    @property
+    def not_encountered(self) -> int:
+        return sum(self.left_out.values())
 
     @property
     def n(self) -> int:
@@ -291,13 +299,15 @@ def by_level(report: Report) -> list[LevelRow]:
     levels = []
     for value, rows in sorted(groups.items()):
         faced = [r for r in rows if seeds is None or r.case.seed in seeds]
+        rest = [r for r in rows if seeds is not None and r.case.seed not in seeds]
         if faced:
             levels.append(
                 LevelRow(
                     value=value,
                     outcomes=Counter(r.outcome for r in faced),
                     signatures=Counter(r.signature for r in faced if r.signature is not None),
-                    not_encountered=len(rows) - len(faced),
+                    left_out=Counter(r.outcome for r in rest),
+                    left_out_collisions=sum(bool(r.collisions) for r in rest),
                     near_falls=sum(r.near_fall for r in faced),
                 )
             )
