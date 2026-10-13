@@ -74,7 +74,7 @@ code { font-size: 12px; }
 <thead><tr><th class="n">{{ variable | replace("_", " ") }} m</th><th class="n">n</th>{% for outcome in report.outcomes %}<th class="n">{{ outcome }}</th>{% endfor %}{% if controlled %}<th class="n">not encountered</th>{% endif %}<th class="n">near falls</th><th>episodes with a contact</th><th>failure signatures</th></tr></thead>
 <tbody>
 {% for row in levels %}
-<tr><td class="n">{{ "%.2f" | format(row.value) }}</td><td class="n">{{ row.n }}</td>{% for outcome in report.outcomes %}<td class="n">{{ row.outcomes[outcome] or "" }}</td>{% endfor %}{% if controlled %}<td class="n">{% for outcome, n in row.left_out.most_common() %}{{ outcome }} {{ n }}{{ ", " if not loop.last }}{% endfor %}{% if row.left_out_collisions %}, {{ row.left_out_collisions }} collided{% endif %}</td>{% endif %}<td class="n">{{ row.near_falls or "" }}</td><td>{% for contact, n in row.contacts.most_common() %}{{ contact }} {{ n }}{{ ", " if not loop.last }}{% endfor %}</td><td>{% for signature, n in row.signatures.most_common() %}{{ signature }} {{ n }}{{ ", " if not loop.last }}{% endfor %}</td></tr>
+<tr><td class="n">{{ "%.2f" | format(row.value) }}</td><td class="n">{{ row.n }}</td>{% for outcome in report.outcomes %}<td class="n">{{ row.outcomes[outcome] or "" }}</td>{% endfor %}{% if controlled %}<td class="n">{% for outcome, n in row.left_out.most_common() %}{{ outcome }} {{ n }}{{ ", " if not loop.last }}{% endfor %}{% if row.left_out_collisions %}, {{ row.left_out_collisions }} collided{% endif %}</td>{% endif %}<td class="n">{{ row.near_falls or "" }}</td><td>{% for contact, n in row.contacts.most_common() %}{{ contact }} {{ n }}{{ ", " if not loop.last }}{% endfor %}</td><td>{% for signature, n in row.signatures.most_common() %}{{ signature }} {{ n }}{{ ", " if not loop.last }}{% endfor %}{% if row.unexplained %}{{ ", " if row.signatures }}unexplained {{ row.unexplained }}{% endif %}</td></tr>
 {% endfor %}
 </tbody>
 </table></div>
@@ -99,6 +99,7 @@ code { font-size: 12px; }
 {% for signature, tags in signatures.items() %}
 <tr><td>{{ signature }}</td><td class="n">{{ tags.values() | sum }}</td><td>{% for tag, n in tags.most_common() %}{{ tag }} {{ n }}{{ ", " if not loop.last }}{% endfor %}</td></tr>
 {% endfor %}
+{% if report.unexplained %}<tr><td>unexplained</td><td class="n">{{ report.unexplained | length }}</td><td></td></tr>{% endif %}
 </tbody>
 </table></div>
 

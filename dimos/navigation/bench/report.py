@@ -36,6 +36,7 @@ from dimos.navigation.bench.suite import Case, Manifest, Rules
 REPORT_FILE = "report.html"
 TEMPLATE_FILE = "report_template.html"
 OUTCOMES: tuple[str, ...] = get_args(Outcome)
+ARRIVED = ("success", "reached_with_collision")
 STRIP_M = 1.0
 STRIP_TICK_M = 0.25
 STRIP_PX = 240
@@ -64,6 +65,11 @@ class Row:
     near_fall: bool
     mismatch: bool
     contacts: tuple[str, ...]
+
+    @property
+    def unexplained(self) -> bool:
+        """A failure that no signature check applies to."""
+        return self.outcome not in ARRIVED and not self.signatures
 
 
 @dataclass(frozen=True)
@@ -114,6 +120,10 @@ class Report:
         return [r for r in self.rows if r.outcome == "success"]
 
     @property
+    def unexplained(self) -> list[Row]:
+        return [r for r in self.rows if r.unexplained]
+
+    @property
     def mismatches(self) -> list[Row]:
         """The episodes where the driver's verdict and the recording disagree."""
         return [r for r in self.rows if r.mismatch]
@@ -146,6 +156,7 @@ class LevelRow:
     left_out_collisions: int
     near_falls: int = 0
     contacts: Counter[str] = field(default_factory=Counter)
+    unexplained: int = 0
 
     @property
     def not_encountered(self) -> int:
@@ -221,7 +232,7 @@ def _row(case: Case, record: dict[str, object], episode: Path) -> Row:
         episode=episode,
         outcome=str(record["outcome"]),
         signature=_text(metrics.get("signature")),
-        signatures=tuple(metrics.get("signatures") or ()),
+        signatures=tuple(metrics.get("signatures") or filter(None, [metrics.get("signature")])),
         terminal=_text(record.get("terminal")),
         spl=_float(metrics.get("spl")),
         arrived_s=_float(metrics.get("arrived_s")),
@@ -255,8 +266,8 @@ def by_signature(report: Report) -> dict[str, Counter[str]]:
     """Stressor counts per failure signature."""
     table: dict[str, Counter[str]] = {}
     for row in report.rows:
-        if row.signature is not None:
-            table.setdefault(row.signature, Counter())[row.case.tag] += 1
+        for signature in row.signatures:
+            table.setdefault(signature, Counter())[row.case.tag] += 1
     return dict(sorted(table.items(), key=lambda item: -sum(item[1].values())))
 
 
@@ -312,7 +323,8 @@ def by_level(report: Report) -> list[LevelRow]:
                 LevelRow(
                     value=value,
                     outcomes=Counter(r.outcome for r in faced),
-                    signatures=Counter(r.signature for r in faced if r.signature is not None),
+                    signatures=Counter(name for r in faced for name in r.signatures),
+                    unexplained=sum(r.unexplained for r in faced),
                     left_out=Counter(r.outcome for r in rest),
                     left_out_collisions=sum(bool(r.collisions) for r in rest),
                     near_falls=sum(r.near_fall for r in faced),

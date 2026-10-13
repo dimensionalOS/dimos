@@ -205,10 +205,30 @@ def test_report_counts_near_falls_and_lists_verdict_mismatches(tmp_path: Path) -
     run = tmp_path / "run"
     _run(run, cases, results)
     report = load(run)
+    assert [row.case.id for row in report.unexplained] == ["door-s2-a", "door-s3-a"]
+    assert by_level(report)[0].unexplained == 2
     assert by_level(report)[0].near_falls == 1
     assert by_level(report)[0].contacts == {"leg clutter": 1, "foot clutter": 1}
     assert [row.case.id for row in report.mismatches] == ["door-s3-a"]
     assert render([report])
+
+
+def test_every_signature_of_an_episode_is_counted(tmp_path: Path) -> None:
+    level = Level("door_width", 0.6)
+    cases = [_case(f"door-s{k}-a", "door", 0.5, level, seed=k) for k in range(3)]
+    both = ["commanded_no_progress", "pushing"]
+    results = [
+        _result(cases[0], "stuck", signature=both[0], signatures=both),
+        _result(cases[1], "stuck", signature=both[0], signatures=both[:1]),
+        _result(cases[2], "stalled", signature="local_refused"),
+    ]
+    run = tmp_path / "run"
+    _run(run, cases, results)
+    report = load(run)
+    counted = {"commanded_no_progress": 2, "pushing": 1, "local_refused": 1}
+    assert by_level(report)[0].signatures == counted
+    assert {name: sum(tags.values()) for name, tags in by_signature(report).items()} == counted
+    assert report.unexplained == [] and render([report])
 
 
 def test_labels_of_levels_too_close_to_read_go_on_a_second_line(tmp_path: Path) -> None:
