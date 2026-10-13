@@ -12,12 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The robosuite_2 cases through the raw robot interface, for agents without dimOS.
+"""The BinBottle cases through the raw robot interface, for agents without dimOS.
 
-Same scenes, tasks and graders as ``dimos.evals.suites.robosuite_2``; the robot is reached
+Same scenes, tasks and graders as ``dimos.evals.suites.binbottle``; the robot is reached
 over plain Zenoh topics described in ROBOT.md instead of dimOS skills.
 
-dimos evals run dimos.evals.suites.robosuite_2_raw --agent dimos.evals.agents.pi \\
+dimos evals run dimos.evals.suites.binbottle_raw --agent dimos.evals.agents.pi \\
     --set no_dimos=true --set max_steps=150
 """
 
@@ -25,20 +25,21 @@ from dataclasses import replace
 
 from dimos.evals.constants import RAW_ARM_README
 from dimos.evals.environments.mujoco_sim import MujocoEnvironment, MujocoEnvironmentConfig
+from dimos.evals.suites.binbottle import SUITE as SKILL_SUITE, sim_env
 from dimos.evals.suites.robosuite import GUIDANCE
-from dimos.evals.suites.robosuite_2 import SUITE as SKILL_SUITE, sim_env
 from dimos.evals.suites.robosuite_raw import XARM7_ROBOSUITE_NOTES
 from dimos.evals.types import EvalCase, Suite
 
 
-def _raw(case: EvalCase) -> EvalCase:
+def raw(case: EvalCase) -> EvalCase:
+    """``case`` through the raw robot interface: the same scene and grader, no dimOS skills."""
     skills = case.environment.config
     assert isinstance(skills, MujocoEnvironmentConfig)
     task = case.inputs.replace(GUIDANCE, "").strip()
     scene = next(s for s in ("bin", "bottle", "blocks") if s in case.tags)
     return replace(
         case,
-        id=case.id.replace("robosuite_2_", "robosuite_2_raw_", 1),
+        id=case.id.replace("_", "_raw_", 1),  # binbottle_bin_lift -> binbottle_raw_bin_lift
         inputs=(
             f"{task} Keep the final result steady for at least two seconds before finishing. "
             "Use the robot interface described in ROBOT.md. Do not read the simulator's scene, "
@@ -59,4 +60,4 @@ def _raw(case: EvalCase) -> EvalCase:
     )
 
 
-SUITE: Suite = [_raw(case) for case in SKILL_SUITE]
+SUITE: Suite = [raw(case) for case in SKILL_SUITE]

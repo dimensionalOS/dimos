@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Household objects on the robosuite table: an empty shelf bin, a capped water bottle and
-five letter blocks.
+"""BinBottle: household objects on the robosuite table, an empty shelf bin and a capped water
+bottle.
 
-The scenes (``data/robosuite_2``) reuse the robosuite lift table, xArm7, wrist camera and start
+The scenes (``data/robosuite_2``, shared with ``dimosblocks``) reuse the robosuite lift table, xArm7, wrist camera and start
 pose, with robosuite's contact solver settings in the XML. Each also has an ``overview`` camera
 that is recorded for viewing runs afterwards; no agent tool or bridge reads it.
 """
@@ -23,7 +23,7 @@ that is recorded for viewing runs afterwards; no agent tool or bridge reads it.
 import json
 
 from dimos.evals.environments.mujoco_sim import MujocoEnvironment
-from dimos.evals.scorers import GRIPPER_BODIES, WORD, cap_partial, lift_partial, word_partial
+from dimos.evals.scorers import GRIPPER_BODIES, cap_partial, lift_partial
 from dimos.evals.suites.mujoco_xarm import PERCEPTION_MODULES
 from dimos.evals.suites.robosuite import GUIDANCE
 from dimos.evals.types import EvalCase, Suite
@@ -69,34 +69,23 @@ def environment(scene: str, bodies: tuple[str, ...]) -> MujocoEnvironment:
 
 SUITE: Suite = [
     EvalCase(
-        id="robosuite_2_bin_lift",
+        id="binbottle_bin_lift",
         inputs="Pick up the yellow bin and hold it at least 5 cm above the table. " + GUIDANCE,
         environment=environment("bin", ("bin_main",)),
         # 0.2 touched + 0.8 x height; 1.0 only at 5 cm. half_size_m sets the touch radius.
         grade=lift_partial("bin_main", by_m=0.05, half_size_m=0.15),
         threshold=1.0,
         timeout_s=1200.0,
-        tags=frozenset({"mujoco", "robosuite_2", "manipulation", "bin"}),
+        tags=frozenset({"mujoco", "binbottle", "manipulation", "bin"}),
     ),
     EvalCase(
-        id="robosuite_2_open_bottle",
+        id="binbottle_open_bottle",
         inputs="Unscrew the cap of the water bottle and lift it off the bottle. " + GUIDANCE,
         environment=environment("bottle", ("cap_main", "cap_carrier", "bottle_main")),
         # 0.1 touched the cap + 0.5 x unscrewed + 0.3 taken off the bottle + 0.1 held 5 cm up.
         grade=cap_partial,
         threshold=1.0,
         timeout_s=3600.0,
-        tags=frozenset({"mujoco", "robosuite_2", "manipulation", "bottle"}),
-    ),
-    EvalCase(
-        id="robosuite_2_spell_dimos",
-        inputs="Arrange the letter blocks so they spell DIMOS. " + GUIDANCE,
-        environment=environment("blocks", tuple(f"block_{c}_main" for c in WORD)),
-        # Any placement on the table: 0.1 moved + 0.4 x pairs in reading order + 0.25 one row
-        # + 0.25 letters upright for one reader.
-        grade=word_partial,
-        threshold=1.0,
-        timeout_s=4800.0,
-        tags=frozenset({"mujoco", "robosuite_2", "manipulation", "blocks"}),
+        tags=frozenset({"mujoco", "binbottle", "manipulation", "bottle"}),
     ),
 ]

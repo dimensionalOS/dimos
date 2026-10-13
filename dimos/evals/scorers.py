@@ -528,7 +528,7 @@ def hang_partial(outcome: Outcome) -> float:
     return float(score + 0.3 * hung_tool(outcome))
 
 
-# Bottle cap (robosuite_2): the cap is welded to a carrier that turns on a thread; after
+# Bottle cap (binbottle): the cap is welded to a carrier that turns on a thread; after
 # CAP_TURN_RAD the weld is released and the cap is a free body.
 CAP_TURN_RAD = math.radians(200)
 
@@ -551,7 +551,7 @@ def cap_partial(outcome: Outcome) -> float:
     return round(float(score), 6)  # 0.1 + 0.5 + 0.3 + 0.1 sums to 0.9999999999999999
 
 
-# Letter blocks (robosuite_2): spell DIMOS. The word may lie at any angle on the table; the letters'
+# Letter blocks (dimosblocks): spell DIMOS. The word may lie at any angle on the table; the letters'
 # common up direction defines the reader, and the word must read left to right for that reader.
 WORD = "DIMOS"
 _BLOCK_M = 0.05
