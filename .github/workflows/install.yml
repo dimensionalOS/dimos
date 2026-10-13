@@ -41,7 +41,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-24.04, ubuntu-24.04-arm]
-        version: ['22.04', '24.04']
+        version: ['22.04', '24.04', '26.04']
         mode: [library, dev]
     runs-on: ${{ matrix.os }}
     container: ubuntu:${{ matrix.version }}

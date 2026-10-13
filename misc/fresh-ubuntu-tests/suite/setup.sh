@@ -9,7 +9,9 @@ export GIT_LFS_SKIP_SMUDGE=1
 
 # system dependencies (docs/installation/ubuntu.md)
 sudo apt-get update
-sudo apt-get install -y ca-certificates curl git g++ portaudio19-dev git-lfs libturbojpeg pre-commit libgl1 libegl1 libglib2.0-0 ffmpeg libsndfile1 pkg-config
+turbojpeg_package=libturbojpeg
+apt-cache show "$turbojpeg_package" >/dev/null 2>&1 || turbojpeg_package=libturbojpeg0
+sudo apt-get install -y ca-certificates curl git g++ portaudio19-dev git-lfs "$turbojpeg_package" pre-commit libgl1 libegl1 libglib2.0-0 ffmpeg libsndfile1 pkg-config
 
 # uv
 curl -LsSf https://astral.sh/uv/install.sh | sh

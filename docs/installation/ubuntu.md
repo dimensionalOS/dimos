@@ -1,6 +1,6 @@
 # Ubuntu installation
 
-Use the official installer on Ubuntu 22.04/24.04, on x86_64 or ARM64:
+Use the official installer on Ubuntu 22.04/24.04/26.04, on x86_64 or ARM64:
 
 ```sh skip
 curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/install.sh | bash
@@ -18,7 +18,7 @@ source .venv/bin/activate
 
 An existing checkout is reused without pulling or switching branches. Developer mode includes test and lint dependencies; see [testing](/docs/development/testing.md) for additional groups.
 
-Both modes pass CPU installation CI on Ubuntu 22.04/24.04 and x86_64/ARM64. Linux ARM64 excludes the unsupported `scene` extra. Jetson CUDA setup is not supported.
+Both modes pass CPU installation CI on Ubuntu 22.04/24.04/26.04 and x86_64/ARM64. Linux ARM64 excludes the unsupported `scene` extra. Jetson CUDA setup is not supported.
 
 See [installer options](/docs/installation/index.md).
 
@@ -28,7 +28,9 @@ Use these steps if you need to install without the guided script.
 
 ```sh skip
 sudo apt-get update
-sudo apt-get install -y ca-certificates curl git g++ portaudio19-dev git-lfs libturbojpeg pre-commit libgl1 libegl1 libglib2.0-0 ffmpeg libsndfile1 pkg-config
+turbojpeg_package=libturbojpeg
+apt-cache show "$turbojpeg_package" >/dev/null 2>&1 || turbojpeg_package=libturbojpeg0
+sudo apt-get install -y ca-certificates curl git g++ portaudio19-dev git-lfs "$turbojpeg_package" pre-commit libgl1 libegl1 libglib2.0-0 ffmpeg libsndfile1 pkg-config
 curl -LsSf https://astral.sh/uv/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
 ```

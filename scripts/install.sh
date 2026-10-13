@@ -21,7 +21,7 @@ trap 'exit 143' TERM
 INSTALLER_VERSION="0.3.0"
 
 # ─── package lists (edit these when dependencies change) ──────────────────────
-UBUNTU_PACKAGES="ca-certificates curl git g++ portaudio19-dev git-lfs libturbojpeg pre-commit libgl1 libegl1 libglib2.0-0 ffmpeg libsndfile1 pkg-config"
+UBUNTU_PACKAGES="ca-certificates curl git g++ portaudio19-dev git-lfs pre-commit libgl1 libegl1 libglib2.0-0 ffmpeg libsndfile1 pkg-config"
 MACOS_PACKAGES="gnu-sed gcc portaudio git-lfs libjpeg-turbo pre-commit ffmpeg libsndfile pkg-config"
 
 INSTALL_MODE="${DIMOS_INSTALL_MODE:-}"
@@ -520,6 +520,23 @@ verify_nix_develop() {
 }
 
 # ─── system dependencies ─────────────────────────────────────────────────────
+ubuntu_turbojpeg_package() {
+    if [[ "$DRY_RUN" == "1" ]]; then
+        printf '%s\n' "libturbojpeg"
+        return
+    fi
+
+    local package
+    for package in libturbojpeg libturbojpeg0; do
+        if apt-cache show "$package" &>/dev/null; then
+            printf '%s\n' "$package"
+            return
+        fi
+    done
+
+    die "neither libturbojpeg nor libturbojpeg0 is available from the configured apt repositories"
+}
+
 install_system_deps() {
     info "checking system dependencies..."
 
@@ -527,7 +544,11 @@ install_system_deps() {
         ubuntu|wsl)
             local -a needed=() privilege=(/usr/bin/env)
             if [[ $(id -u) != 0 ]]; then privilege=(sudo); fi
-            for pkg in $UBUNTU_PACKAGES; do
+            run_cmd "${privilege[@]}" apt-get update
+
+            local turbojpeg_package
+            turbojpeg_package="$(ubuntu_turbojpeg_package)"
+            for pkg in $UBUNTU_PACKAGES "$turbojpeg_package"; do
                 if [[ "$(dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null || true)" != "install ok installed" ]]; then
                     needed+=("$pkg")
                 fi
@@ -540,7 +561,6 @@ install_system_deps() {
             if ! prompt_confirm "Install these packages via apt?" "yes"; then
                 die "required system packages were declined; install them before continuing: ${needed[*]}"
             fi
-            run_cmd "${privilege[@]}" apt-get update
             run_cmd "${privilege[@]}" /usr/bin/env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y "${needed[@]}"
             ;;
         macos)
