@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Household objects on the robosuite table: an empty shelf bin and a capped water bottle.
+"""Household objects on the robosuite table: an empty shelf bin, a capped water bottle and
+five letter blocks.
 
 The scenes (``data/robosuite_2``) reuse the robosuite lift table, xArm7, wrist camera and start
 pose, with robosuite's contact solver settings in the XML. Each also has an ``overview`` camera
@@ -22,7 +23,7 @@ that is recorded for viewing runs afterwards; no agent tool or bridge reads it.
 import json
 
 from dimos.evals.environments.mujoco_sim import MujocoEnvironment
-from dimos.evals.scorers import GRIPPER_BODIES, cap_partial, lift_partial
+from dimos.evals.scorers import GRIPPER_BODIES, WORD, cap_partial, lift_partial, word_partial
 from dimos.evals.suites.mujoco_xarm import PERCEPTION_MODULES
 from dimos.evals.suites.robosuite import GUIDANCE
 from dimos.evals.types import EvalCase, Suite
@@ -86,5 +87,16 @@ SUITE: Suite = [
         threshold=1.0,
         timeout_s=3600.0,
         tags=frozenset({"mujoco", "robosuite_2", "manipulation", "bottle"}),
+    ),
+    EvalCase(
+        id="robosuite_2_spell_dimos",
+        inputs="Arrange the letter blocks so they spell DIMOS. " + GUIDANCE,
+        environment=environment("blocks", tuple(f"block_{c}_main" for c in WORD)),
+        # Any placement on the table: 0.1 moved + 0.4 x pairs in reading order + 0.25 one row
+        # + 0.25 letters upright for one reader.
+        grade=word_partial,
+        threshold=1.0,
+        timeout_s=4800.0,
+        tags=frozenset({"mujoco", "robosuite_2", "manipulation", "blocks"}),
     ),
 ]

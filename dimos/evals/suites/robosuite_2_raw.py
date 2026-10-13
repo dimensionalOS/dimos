@@ -35,7 +35,7 @@ def _raw(case: EvalCase) -> EvalCase:
     skills = case.environment.config
     assert isinstance(skills, MujocoEnvironmentConfig)
     task = case.inputs.replace(GUIDANCE, "").strip()
-    scene = "bottle" if "bottle" in case.tags else "bin"
+    scene = next(s for s in ("bin", "bottle", "blocks") if s in case.tags)
     return replace(
         case,
         id=case.id.replace("robosuite_2_", "robosuite_2_raw_", 1),
