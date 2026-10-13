@@ -159,8 +159,7 @@ unsubscribe()
 stream's name, message type, module instance, direction and transport channel.
 Connected input, output and IO ports expose subscriptions. Messages use the
 existing stream transport directly; the client must have its message types
-installed. Shared memory requires the same host. WebRTC streams require the
-hosted operator client.
+installed. WebRTC streams require the hosted operator client.
 
 Stream handles are cached for the connection. Reconnect after changing stream
 wiring. Closing the connected app releases its stream transports while the

@@ -92,9 +92,6 @@ class Transport(Resource, ObservableMixin[T]):
     # means "no overridable config" (LCM/SHM transports).
     _config_cls: type[BaseModel] | None = None
 
-    def prepare_for_clients(self) -> None:
-        """Ensure deployed resources exist before advertising this transport."""
-
     # used by any local publishing stream (Out/IO); selfstream is None when
     # publishing without a source stream
     def broadcast(self, selfstream: Stream[T] | None, value: T) -> None:

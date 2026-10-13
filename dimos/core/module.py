@@ -355,7 +355,6 @@ class ModuleBase(Configurable, CompositeResource):
             transport = stream.transport
             if transport is None:
                 continue
-            transport.prepare_for_clients()
             descriptors.append(
                 StreamDescriptor(
                     module=self.config.instance_name or type(self).__name__,

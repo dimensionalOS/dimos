@@ -31,7 +31,7 @@ from dimos.core.demos.stress_test_module import StressTestModule
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module
 from dimos.core.stream import IO, In, Out
-from dimos.core.transport import LCMTransport, SHMTransport, pLCMTransport, pSHMTransport
+from dimos.core.transport import LCMTransport, pLCMTransport
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.porcelain.dimos import Dimos
 from dimos.porcelain.module_handle import RemoteModuleProxy
@@ -395,32 +395,3 @@ def test_connected_stream_uses_configured_lcm_bus(
         owner.emit(Vector3(1.0, 2.0, 3.0))
         assert event.wait(timeout=5.0)
         assert received == [Vector3(1.0, 2.0, 3.0)]
-
-
-@pytest.fixture(params=[pSHMTransport, SHMTransport])
-def shm_transport(request):
-    transport = request.param(f"/early_{uuid.uuid4().hex}", default_capacity=1024)
-    try:
-        yield transport
-    finally:
-        transport.stop()
-
-
-def test_early_shm_subscription_can_close_and_reconnect(
-    running_app, client, stream_module, shm_transport, collected
-):
-    stream_module.set_transport("messages", shm_transport)
-    received, event, callback = collected
-    with Disposable(client.get_module("remote/streams").messages.subscribe(callback)):
-        stream_module.emit("messages", b"first")
-        assert event.wait(timeout=5.0)
-        client.stop()
-    second = Dimos.connect()
-    try:
-        event.clear()
-        with Disposable(second.get_module("remote/streams").messages.subscribe(callback)):
-            stream_module.emit("messages", b"second")
-            assert event.wait(timeout=5.0)
-            assert received == [b"first", b"second"]
-    finally:
-        second.stop()

@@ -30,11 +30,7 @@ import numpy as np
 from dimos.core.stream import In, Stream, Transport
 from dimos.msgs.protocol import DimosMsg
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM, PickleLCM, Topic as LCMTopic
-from dimos.protocol.pubsub.impl.shmpubsub import (
-    BytesSharedMemory,
-    PickleSharedMemory,
-    SharedMemoryPubSubBase,
-)
+from dimos.protocol.pubsub.impl.shmpubsub import BytesSharedMemory, PickleSharedMemory
 from dimos.protocol.pubsub.impl.webrtc.providers.broker import BrokerConfig
 from dimos.protocol.pubsub.impl.webrtc.providers.spec import AudioProvider, ProviderConfig
 from dimos.protocol.pubsub.impl.webrtc.webrtcpubsub import WebRTCPubSub
@@ -199,15 +195,7 @@ class JpegLcmTransport(LCMTransport):  # type: ignore[type-arg]
         self._started = False
 
 
-class _SharedMemoryTransport(PubSubTransport[T]):
-    shm: SharedMemoryPubSubBase
-
-    def prepare_for_clients(self) -> None:
-        self.shm.prepare_topic(self.topic)
-
-
-class pSHMTransport(_SharedMemoryTransport[T]):
-    shm: PickleSharedMemory
+class pSHMTransport(PubSubTransport[T]):
     _started: bool = False
 
     def __init__(self, topic: str, **kwargs) -> None:  # type: ignore[no-untyped-def]
@@ -240,7 +228,7 @@ class pSHMTransport(_SharedMemoryTransport[T]):
         self._started = False
 
 
-class SHMTransport(_SharedMemoryTransport[T]):
+class SHMTransport(PubSubTransport[T]):
     _started: bool = False
 
     def __init__(self, topic: str, **kwargs) -> None:  # type: ignore[no-untyped-def]
@@ -273,7 +261,7 @@ class SHMTransport(_SharedMemoryTransport[T]):
         self._started = False
 
 
-class JpegShmTransport(_SharedMemoryTransport[T]):
+class JpegShmTransport(PubSubTransport[T]):
     _started: bool = False
 
     def __init__(self, topic: str, quality: int = 75, **kwargs) -> None:  # type: ignore[no-untyped-def]
@@ -286,10 +274,7 @@ class JpegShmTransport(_SharedMemoryTransport[T]):
         self.quality = quality
 
     def __reduce__(self):  # type: ignore[no-untyped-def]
-        return (
-            functools.partial(JpegShmTransport, default_capacity=self.shm.config.default_capacity),
-            (self.topic, self.quality),
-        )
+        return (JpegShmTransport, (self.topic, self.quality))
 
     def broadcast(self, _, msg) -> None:  # type: ignore[no-untyped-def]
         if not self._started:
