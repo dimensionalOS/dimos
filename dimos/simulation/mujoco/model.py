@@ -69,6 +69,10 @@ def load_model(
 
     xml_string = get_model_xml(robot, scene_xml)
     model = mujoco.MjModel.from_xml_string(xml_string, assets=get_assets())
+    # clip planes in meters: MuJoCo scales them by the scene's extent, which differs ~200x between rooms, and a far
+    # near plane hides what is close to the lidar's depth cameras
+    model.vis.map.znear = 0.01 / model.stat.extent
+    model.vis.map.zfar = 100 / model.stat.extent
     data = mujoco.MjData(model)
 
     mujoco.mj_resetDataKeyframe(model, data, 0)
@@ -109,16 +113,6 @@ def get_model_xml(robot: str, scene_xml: str) -> str:
     root = ET.fromstring(scene_xml)
     root.set("model", f"{robot}_scene")
     root.insert(0, ET.Element("include", file=f"{robot}.xml"))
-
-    # Ensure visual/map element exists with znear and zfar
-    visual = root.find("visual")
-    if visual is None:
-        visual = ET.SubElement(root, "visual")
-    map_elem = visual.find("map")
-    if map_elem is None:
-        map_elem = ET.SubElement(visual, "map")
-    map_elem.set("znear", "0.01")
-    map_elem.set("zfar", "10000")
 
     _add_person_object(root)
 
