@@ -1,7 +1,7 @@
 from contextlib import AbstractContextManager
 from typing import Any
 
-from . import MjData, MjModel
+from . import MjData, MjModel, MjvOption
 
 class _Camera:
     type: int
@@ -13,6 +13,7 @@ class _Camera:
 
 class Handle(AbstractContextManager["Handle"]):
     cam: _Camera
+    opt: MjvOption
     def is_running(self) -> bool: ...
     def sync(self) -> None: ...
     def close(self) -> None: ...

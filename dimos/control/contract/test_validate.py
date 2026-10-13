@@ -32,23 +32,7 @@ from dimos.control.contract.description import (
     Resource,
     ResourceKind,
 )
-from dimos.control.contract.keys import (
-    EFFORT,
-    PITCH,
-    POSITION,
-    ROLL,
-    VX,
-    VY,
-    VZ,
-    WX,
-    WY,
-    WZ,
-    YAW,
-    Unit,
-    X,
-    Y,
-    Z,
-)
+from dimos.control.contract.keys import Interface, Unit
 from dimos.control.contract.validate import (
     CommandBatch,
     DescriptionError,
@@ -114,9 +98,9 @@ def test_the_five_fields_alone_make_a_valid_description() -> None:
             Resource(
                 name="joint1",
                 kind=ResourceKind.JOINT,
-                state_interfaces=(POSITION,),
-                command_interfaces=(POSITION,),
-                units={POSITION: Unit.RAD},
+                state_interfaces=(Interface.POSITION,),
+                command_interfaces=(Interface.POSITION,),
+                units={Interface.POSITION: Unit.RAD},
             ),
         ),
         state_rate_hz=100.0,
@@ -158,7 +142,7 @@ def test_rule1_duplicate_resource_names(xarm: ControlDescription) -> None:
 
 def test_rule1_interface_without_a_unit(xarm: ControlDescription) -> None:
     """An interface with no unit is unusable: a task cannot know what it sent."""
-    unitless = dataclasses.replace(xarm.resources[0], units={POSITION: Unit.RAD})
+    unitless = dataclasses.replace(xarm.resources[0], units={Interface.POSITION: Unit.RAD})
     broken = dataclasses.replace(xarm, resources=(unitless, *xarm.resources[1:]))
 
     assert any("no declared unit" in e for e in errors_of(broken))
@@ -170,7 +154,10 @@ def test_rule1_duplicate_interface_on_one_resource(xarm: ControlDescription) -> 
     validate_state demands each declared key exactly once, so a description that
     let this through would produce a source that can never report at all.
     """
-    doubled = dataclasses.replace(xarm.resources[0], state_interfaces=(POSITION, POSITION, EFFORT))
+    doubled = dataclasses.replace(
+        xarm.resources[0],
+        state_interfaces=(Interface.POSITION, Interface.POSITION, Interface.EFFORT),
+    )
     broken = dataclasses.replace(xarm, resources=(doubled, *xarm.resources[1:]))
 
     assert any("more than once" in e for e in errors_of(broken))
@@ -488,8 +475,8 @@ def test_a_base_may_be_six_dof() -> None:
     Nothing forces a base to stay on the floor. One that drives declares the
     few axes it has; one that flies declares all six.
     """
-    linear = (VX, VY, VZ)
-    angular = (WX, WY, WZ)
+    linear = (Interface.VX, Interface.VY, Interface.VZ)
+    angular = (Interface.WX, Interface.WY, Interface.WZ)
     axes = linear + angular
     drone = ControlDescription(
         source="drone",
@@ -497,12 +484,20 @@ def test_a_base_may_be_six_dof() -> None:
             Resource(
                 name="body",
                 kind=ResourceKind.BASE,
-                state_interfaces=(*axes, X, Y, Z, ROLL, PITCH, YAW),
+                state_interfaces=(
+                    *axes,
+                    Interface.X,
+                    Interface.Y,
+                    Interface.Z,
+                    Interface.ROLL,
+                    Interface.PITCH,
+                    Interface.YAW,
+                ),
                 command_interfaces=axes,
                 units=dict.fromkeys(linear, Unit.M_PER_S)
                 | dict.fromkeys(angular, Unit.RAD_PER_S)
-                | {X: Unit.M, Y: Unit.M, Z: Unit.M}
-                | dict.fromkeys((ROLL, PITCH, YAW), Unit.RAD),
+                | {Interface.X: Unit.M, Interface.Y: Unit.M, Interface.Z: Unit.M}
+                | dict.fromkeys((Interface.ROLL, Interface.PITCH, Interface.YAW), Unit.RAD),
             ),
         ),
         state_rate_hz=100.0,

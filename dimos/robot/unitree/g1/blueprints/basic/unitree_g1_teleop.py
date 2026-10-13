@@ -50,11 +50,10 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE, STATE_DIR
+from dimos.constants import STATE_DIR
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.stream import In
-from dimos.core.transport import pSHMTransport
 from dimos.imitation.collection.episode import EpisodeStatus
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
 from dimos.manipulation.manipulation_module import ManipulationModule
@@ -122,54 +121,36 @@ class G1ManipulationModule(ManipulationModule):
     """Plan arm motion against the live full-body G1 collision model."""
 
 
-unitree_g1_teleop = (
-    autoconnect(
-        _unitree_g1_groot_wbc_core,
-        VideoArmTeleopModule.blueprint(),
-        G1ManipulationModule.blueprint(
-            instance_name="G1Manipulation",
-            model=g1_manipulation_model_config(),
-            visualization=ViserVisualizationConfig(host="0.0.0.0"),
-        ),
-        *_camera_if_real(),
-        EpisodeMonitorModule.blueprint(task="Teleoperate the G1"),
-        G1CollectionRecorder.blueprint(
-            db_path=_session_db(),
-            stream_codecs={"status": "json"},
-            record_tf=False,
-            # Collection observations/actions are synchronized by timestamp,
-            # not localized in the world frame. Declaring them poseless also
-            # avoids attempting a world-to-camera lookup when nav localization
-            # is disabled for an upper-body-only session.
-            poseless_streams=[
-                "color_image",
-                "status",
-                "left_cartesian_command",
-                "right_cartesian_command",
-                "coordinator_joint_state",
-            ],
-        ),
-    )
-    .remappings(
-        [
-            (VideoArmTeleopModule, "left_controller_output", "left_cartesian_command"),
-            (VideoArmTeleopModule, "right_controller_output", "right_cartesian_command"),
-            (G1ManipulationModule, "_control_coordinator", _G1GrootCoordinator),
-        ]
-    )
-    # Camera frames stay off the LCM bus: both consumers (WebXR module and
-    # recorder) are on-box, and raw images multicast over LCM make each
-    # subscribing process pay receive+decode per frame — measured at ~31 MB/s
-    # and a starved coordinator tick loop on the Orin. SHM is zero-copy; an
-    # unconsumed stream costs only the producer's write.
-    .transports(
-        {
-            ("color_image", Image): pSHMTransport(
-                "/color_image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
-            ),
-            ("depth_image", Image): pSHMTransport(
-                "/depth_image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
-            ),
-        }
-    )
+unitree_g1_teleop = autoconnect(
+    _unitree_g1_groot_wbc_core,
+    VideoArmTeleopModule.blueprint(),
+    G1ManipulationModule.blueprint(
+        instance_name="G1Manipulation",
+        model=g1_manipulation_model_config(),
+        visualization=ViserVisualizationConfig(host="0.0.0.0"),
+    ),
+    *_camera_if_real(),
+    EpisodeMonitorModule.blueprint(task="Teleoperate the G1"),
+    G1CollectionRecorder.blueprint(
+        db_path=_session_db(),
+        stream_codecs={"status": "json"},
+        record_tf=False,
+        # Collection observations/actions are synchronized by timestamp,
+        # not localized in the world frame. Declaring them poseless also
+        # avoids attempting a world-to-camera lookup when nav localization
+        # is disabled for an upper-body-only session.
+        poseless_streams=[
+            "color_image",
+            "status",
+            "left_cartesian_command",
+            "right_cartesian_command",
+            "coordinator_joint_state",
+        ],
+    ),
+).remappings(
+    [
+        (VideoArmTeleopModule, "left_controller_output", "left_cartesian_command"),
+        (VideoArmTeleopModule, "right_controller_output", "right_cartesian_command"),
+        (G1ManipulationModule, "_control_coordinator", _G1GrootCoordinator),
+    ]
 )

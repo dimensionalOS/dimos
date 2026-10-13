@@ -40,9 +40,9 @@ from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.web.cockpit import Channel, cockpit
 from dimos.web.relay_bridge import dynamic
+from dimos.web.relay_bridge.config import RelayBridgeConfig
 from dimos.web.relay_bridge.dynamic import DynamicPortSpec, make_relay_bridge_class
 from dimos.web.relay_bridge.e2e_support import stop_module
-from dimos.web.relay_bridge.relay_bridge_module import RelayBridgeConfig
 
 # Marker message types: distinct classes so a shape differing only by type
 # gets a distinct generated class.

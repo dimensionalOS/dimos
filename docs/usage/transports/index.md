@@ -125,7 +125,7 @@ P: box "PubSub" rad 5px
 # Descriptions below
 text "robot configs" at B.s + (0.1, -0.2in)
 text "camera, nav" at M.s + (0, -0.2in)
-text "LCM, SHM, ROS" at T.s + (0, -0.2in)
+text "Zenoh, LCM, ROS" at T.s + (0, -0.2in)
 text "pub/sub API" at P.s + (0, -0.2in)
 ```
 
@@ -141,7 +141,7 @@ See [Blueprints](/docs/usage/blueprints.md) for the blueprint API.
 
 From [`unitree/go2/blueprints/smart/unitree_go2.py`](/dimos/robot/unitree/go2/blueprints/smart/unitree_go2.py).
 
-Example: rebind a few streams from the default `LCMTransport` to `ROSTransport` (defined at [`transport.py`](/dimos/core/transport.py#L226)) so you can visualize in **rviz2**.
+Example: rebind a few streams from the default backend to `ROSTransport` (defined at [`transport.py`](/dimos/core/transport.py#L187)) so you can visualize in **rviz2**.
 
 ```python skip
 nav = autoconnect(
@@ -284,7 +284,7 @@ At the stream layer, a transport is implemented by subclassing `Transport` (see 
 Your `Transport.__init__` args can be anything meaningful for your backend:
 
 * `(ip, port)`
-* a shared-memory segment name
+* a Zenoh key expression
 * a filesystem path
 * a Redis channel
 
@@ -363,30 +363,7 @@ Received velocity: x=1.0, y=0.0, z=0.5
 
 ### Zenoh
 
-### Shared memory (IPC)
-
-Shared memory is highest performance, but only works on the **same machine**.
-
-```python
-from dimos.protocol.pubsub.impl.shmpubsub import PickleSharedMemory
-
-shm = PickleSharedMemory(prefer="cpu")
-shm.start()
-
-received = []
-shm.subscribe("test/topic", lambda msg, topic: received.append(msg))
-shm.publish("test/topic", {"data": [1, 2, 3]})
-
-import time
-time.sleep(0.1)
-
-print(f"Received: {received}")
-shm.stop()
-```
-
-```results
-Received: [{'data': [1, 2, 3]}]
-```
+See [Zenoh](#zenoh) for backend selection, connection settings, and per-topic QoS.
 
 ### DDS Transport
 
@@ -520,7 +497,6 @@ python -m pytest -sv -k "not bytes" dimos/protocol/pubsub/benchmark/tool_benchma
 | Transport      | Use case                            | Cross-process | Network | Notes                                |
 |----------------|-------------------------------------|---------------|---------|--------------------------------------|
 | `Memory`       | Testing only, single process        | No            | No      | Minimal reference impl               |
-| `SharedMemory` | Multi-process on same machine       | Yes           | No      | Highest throughput (IPC)             |
 | `LCM`          | Robot LAN broadcast (UDP multicast) | Yes           | Yes     | Best-effort; can drop packets on LAN |
 | `Zenoh`        | Reliable network stream transport   | Yes           | Yes     | Recommended on macOS for heavy replay |
 | `Redis`        | Network pubsub via Redis server     | Yes           | Yes     | Central broker; adds hop             |

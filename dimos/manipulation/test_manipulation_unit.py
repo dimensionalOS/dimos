@@ -18,7 +18,6 @@ from __future__ import annotations
 
 from pathlib import Path
 import pickle
-import time
 from unittest.mock import ANY, DEFAULT, MagicMock, call
 
 import numpy as np
@@ -581,6 +580,7 @@ class TestPlanningInitialization:
         with module:
             initialize_planning.assert_called_once_with()
             initialize_execution.assert_called_once_with()
+            assert module._tf is None
 
     def test_start_is_idempotent(self, mocker: MockerFixture, robot_config) -> None:
         module = ManipulationModule(model=robot_config)
@@ -987,6 +987,8 @@ class TestPlanningGroupApis:
         module.config.model = model
         module._world_monitor = MagicMock(spec=WorldMonitor)
         module._world_monitor.planning_groups = PlanningGroupRegistry(model.planning_groups)
+        state = JointState(ts=123.5, name=model.joint_names, position=[0.0, 0.0])
+        module._world_monitor.current_model_joint_state.return_value = state
         module._world_monitor.get_group_ee_pose.side_effect = [
             PoseStamped(position=Vector3(0.4, 0.2, 0.3)),
             PoseStamped(position=Vector3(0.4, -0.2, 0.3)),
@@ -1003,15 +1005,16 @@ class TestPlanningGroupApis:
         module._tf_publish_loop()
 
         assert module._world_monitor.get_group_ee_pose.call_args_list == [
-            call("left_arm"),
-            call("right_arm"),
+            call("left_arm", state),
+            call("right_arm", state),
         ]
+        module._world_monitor.current_model_joint_state.assert_called_once()
         publish.assert_called_once()
 
     def test_tf_loop_publishes_mount_edges_alongside_the_robot(
         self, module_factory, mocker: MockerFixture
     ) -> None:
-        """One publisher for the chain, so the mount is never stamped a period stale."""
+        """A fixed camera mount shares its dynamic parent's measurement time."""
         model = _bimanual_config()
         module = module_factory()
         module.config.model = model
@@ -1020,8 +1023,11 @@ class TestPlanningGroupApis:
         ]
         module._world_monitor = MagicMock(spec=WorldMonitor)
         module._world_monitor.planning_groups = PlanningGroupRegistry(model.planning_groups)
+        module._world_monitor.current_model_joint_state.return_value = JointState(
+            ts=123.5, name=model.joint_names, position=[0.0, 0.0]
+        )
         module._world_monitor.get_group_ee_pose.return_value = PoseStamped(
-            position=Vector3(0.4, 0.2, 0.3)
+            ts=123.5, position=Vector3(0.4, 0.2, 0.3)
         )
         publish = mocker.patch.object(module.tf, "publish")
 
@@ -1031,14 +1037,14 @@ class TestPlanningGroupApis:
 
         mocker.patch.object(module._tf_stop_event, "wait", side_effect=stop_after_first_iteration)
         module._tf_stop_event.clear()
-        before = time.time()
 
         module._tf_publish_loop()
 
         published = list(publish.call_args.args[0])
         mount = next(t for t in published if t.child_frame_id == "camera_link")
         assert mount.frame_id == "left/tool"
-        assert mount.ts >= before
+        assert mount.ts == 123.5
+        assert {tf.ts for tf in published} == {123.5}
 
     def test_get_ee_pose_fails_safely_without_pose_group(self, robot_config, module_factory):
         no_pose_config = RobotModelConfig(

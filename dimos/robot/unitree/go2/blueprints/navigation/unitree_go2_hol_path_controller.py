@@ -65,9 +65,9 @@ _nav_rerun_config = {
     },
 }
 
-unitree_go2_mls_htc = autoconnect(
+unitree_go2_hol_path_controller = autoconnect(
     vis_module(viewer_backend=global_config.viewer, rerun_config=_nav_rerun_config),
-    GO2Connection.blueprint(motion_mode="mcf"),
+    GO2Connection.blueprint(motion_mode="mcf", velocity_api=True),
     VoxelGridMapper.blueprint(
         voxel_size=voxel_size,
         frame_id="world",

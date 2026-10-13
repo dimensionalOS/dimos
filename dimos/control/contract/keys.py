@@ -38,46 +38,62 @@ _SEGMENT = re.compile(r"[A-Za-z0-9_]+")
 SEPARATOR = "/"
 """What goes between the parts of a name. Never allowed inside one."""
 
-# Joint interfaces.
-POSITION = "position"
-VELOCITY = "velocity"
-EFFORT = "effort"
-KP = "kp"
-KD = "kd"
 
-# Base interfaces: body-frame twist, then the integrated pose.
-#
-# A ground base declares the planar subset (vx, vy, wz over x, y, yaw); a drone
-# or a free-flyer declares all six. Both are the same vocabulary, so a task that
-# reads vz does not need to know which kind of base it is talking to.
-#
-# The pose terms (x, y, z, roll, pitch, yaw) are state-only today: a base is
-# commanded as a twist, and nothing in the stack commands a pose directly. They
-# are named here so odometry has one spelling, not two.
-VX = "vx"
-VY = "vy"
-VZ = "vz"
-WX = "wx"
-WY = "wy"
-WZ = "wz"
-X = "x"
-Y = "y"
-Z = "z"
-ROLL = "roll"
-PITCH = "pitch"
-YAW = "yaw"
+class Interface(str, Enum):  # TODO(PY311): switch to enum.StrEnum
+    """The third part of a name: what a number says about a part.
 
-# IMU scalars. Orientation quaternion, angular rate, linear acceleration.
-QX = "qx"
-QY = "qy"
-QZ = "qz"
-QW = "qw"
-GX = "gx"
-GY = "gy"
-GZ = "gz"
-AX = "ax"
-AY = "ay"
-AZ = "az"
+    Each member is also a plain string, e.g. ``Interface.POSITION ==
+    "position"``, so it can be used wherever a name part is expected.
+    """
+
+    # A joint: where it is, how fast it turns, how hard it pushes, and how
+    # stiffly (kp) and with how much damping (kd) it is held.
+    POSITION = "position"
+    VELOCITY = "velocity"
+    EFFORT = "effort"
+    KP = "kp"
+    KD = "kd"
+
+    # A base: how fast it moves, measured from the base itself, then where it
+    # has got to.
+    #
+    # A ground base declares the planar subset (vx, vy, wz over x, y, yaw); a
+    # drone or a free-flyer declares all six. Both are the same vocabulary, so
+    # a task that reads vz does not need to know which kind of base it is
+    # talking to.
+    #
+    # The pose terms (x, y, z, roll, pitch, yaw) are state-only today: a base
+    # is commanded as a twist, and nothing in the stack commands a pose
+    # directly. They are named here so odometry has one spelling, not two.
+    VX = "vx"
+    VY = "vy"
+    VZ = "vz"
+    WX = "wx"
+    WY = "wy"
+    WZ = "wz"
+    X = "x"
+    Y = "y"
+    Z = "z"
+    ROLL = "roll"
+    PITCH = "pitch"
+    YAW = "yaw"
+
+    # An IMU: orientation quaternion, angular rate, linear acceleration.
+    QX = "qx"
+    QY = "qy"
+    QZ = "qz"
+    QW = "qw"
+    GX = "gx"
+    GY = "gy"
+    GZ = "gz"
+    AX = "ax"
+    AY = "ay"
+    AZ = "az"
+
+    def __str__(self) -> str:
+        # Python 3.11+ would print "Interface.POSITION" here, and keys are
+        # built with f-strings, so give the plain name on every version.
+        return self.value
 
 
 class Unit(Enum):
@@ -138,7 +154,7 @@ class Key(str):
         Args:
             source: Which robot, e.g. "arm".
             resource: Which part of it, e.g. "joint1".
-            interface: What about that part, e.g. "position".
+            interface: What about that part, e.g. ``Interface.POSITION``.
         """
         for label, segment in (
             ("source", source),

@@ -35,31 +35,7 @@ from dimos.control.contract.description import (
     Resource,
     ResourceKind,
 )
-from dimos.control.contract.keys import (
-    AX,
-    AY,
-    AZ,
-    EFFORT,
-    GX,
-    GY,
-    GZ,
-    KD,
-    KP,
-    POSITION,
-    QW,
-    QX,
-    QY,
-    QZ,
-    VELOCITY,
-    VX,
-    VY,
-    WZ,
-    YAW,
-    Key,
-    Unit,
-    X,
-    Y,
-)
+from dimos.control.contract.keys import Interface, Key, Unit
 
 ARM_JOINTS = tuple(f"joint{i}" for i in range(1, 8))
 G1_JOINTS = tuple(f"joint{i}" for i in range(1, 30))
@@ -78,22 +54,26 @@ def xarm() -> ControlDescription:
             kind=ResourceKind.JOINT,
             # No velocity state: the SDK does not report it, so it is not
             # declared rather than published as a fabricated zero.
-            state_interfaces=(POSITION, EFFORT),
-            command_interfaces=(POSITION, VELOCITY),
-            units={POSITION: Unit.RAD, VELOCITY: Unit.RAD_PER_S, EFFORT: Unit.NM},
+            state_interfaces=(Interface.POSITION, Interface.EFFORT),
+            command_interfaces=(Interface.POSITION, Interface.VELOCITY),
+            units={
+                Interface.POSITION: Unit.RAD,
+                Interface.VELOCITY: Unit.RAD_PER_S,
+                Interface.EFFORT: Unit.NM,
+            },
         )
         for name in ARM_JOINTS
     )
     gripper = Resource(
         name="gripper",
         kind=ResourceKind.JOINT,
-        state_interfaces=(POSITION,),
-        command_interfaces=(POSITION,),
-        units={POSITION: Unit.M},
+        state_interfaces=(Interface.POSITION,),
+        command_interfaces=(Interface.POSITION,),
+        units={Interface.POSITION: Unit.M},
     )
-    limits = {Key.of("arm", j, POSITION): Limits(-3.14, 3.14) for j in ARM_JOINTS}
-    limits |= {Key.of("arm", j, VELOCITY): Limits(-1.0, 1.0) for j in ARM_JOINTS}
-    limits[Key.of("arm", "gripper", POSITION)] = Limits(0.0, 0.085)
+    limits = {Key.of("arm", j, Interface.POSITION): Limits(-3.14, 3.14) for j in ARM_JOINTS}
+    limits |= {Key.of("arm", j, Interface.VELOCITY): Limits(-1.0, 1.0) for j in ARM_JOINTS}
+    limits[Key.of("arm", "gripper", Interface.POSITION)] = Limits(0.0, 0.085)
     return ControlDescription(
         source="arm",
         resources=(*joints, gripper),
@@ -114,14 +94,20 @@ def g1() -> ControlDescription:
         Resource(
             name=name,
             kind=ResourceKind.JOINT,
-            state_interfaces=(POSITION, VELOCITY, EFFORT),
-            command_interfaces=(POSITION, VELOCITY, EFFORT, KP, KD),
+            state_interfaces=(Interface.POSITION, Interface.VELOCITY, Interface.EFFORT),
+            command_interfaces=(
+                Interface.POSITION,
+                Interface.VELOCITY,
+                Interface.EFFORT,
+                Interface.KP,
+                Interface.KD,
+            ),
             units={
-                POSITION: Unit.RAD,
-                VELOCITY: Unit.RAD_PER_S,
-                EFFORT: Unit.NM,
-                KP: Unit.UNITLESS,
-                KD: Unit.UNITLESS,
+                Interface.POSITION: Unit.RAD,
+                Interface.VELOCITY: Unit.RAD_PER_S,
+                Interface.EFFORT: Unit.NM,
+                Interface.KP: Unit.UNITLESS,
+                Interface.KD: Unit.UNITLESS,
             },
         )
         for name in G1_JOINTS
@@ -129,15 +115,29 @@ def g1() -> ControlDescription:
     imu = Resource(
         name="imu",
         kind=ResourceKind.SENSOR,
-        state_interfaces=(QX, QY, QZ, QW, GX, GY, GZ, AX, AY, AZ),
-        units=dict.fromkeys((QX, QY, QZ, QW), Unit.UNITLESS)
-        | dict.fromkeys((GX, GY, GZ), Unit.RAD_PER_S)
-        | dict.fromkeys((AX, AY, AZ), Unit.M_PER_S2),
+        state_interfaces=(
+            Interface.QX,
+            Interface.QY,
+            Interface.QZ,
+            Interface.QW,
+            Interface.GX,
+            Interface.GY,
+            Interface.GZ,
+            Interface.AX,
+            Interface.AY,
+            Interface.AZ,
+        ),
+        units=dict.fromkeys((Interface.QX, Interface.QY, Interface.QZ, Interface.QW), Unit.UNITLESS)
+        | dict.fromkeys((Interface.GX, Interface.GY, Interface.GZ), Unit.RAD_PER_S)
+        | dict.fromkeys((Interface.AX, Interface.AY, Interface.AZ), Unit.M_PER_S2),
     )
+    limits = {Key.of("g1", j, Interface.POSITION): Limits(-2.0, 2.0) for j in G1_JOINTS}
+    limits |= {Key.of("g1", j, Interface.VELOCITY): Limits(-32.0, 32.0) for j in G1_JOINTS}
+    limits |= {Key.of("g1", j, Interface.EFFORT): Limits(-88.0, 88.0) for j in G1_JOINTS}
     return ControlDescription(
         source="g1",
         resources=(*joints, imu),
-        limits={Key.of("g1", j, POSITION): Limits(-2.0, 2.0) for j in G1_JOINTS},
+        limits=limits,
         state_rate_hz=500.0,
         deadman_timeout_s=0.05,
     )
@@ -153,24 +153,31 @@ def chassis() -> ControlDescription:
     base = Resource(
         name="base",
         kind=ResourceKind.BASE,
-        state_interfaces=(VX, VY, WZ, X, Y, YAW),
-        command_interfaces=(VX, VY, WZ),
+        state_interfaces=(
+            Interface.VX,
+            Interface.VY,
+            Interface.WZ,
+            Interface.X,
+            Interface.Y,
+            Interface.YAW,
+        ),
+        command_interfaces=(Interface.VX, Interface.VY, Interface.WZ),
         units={
-            VX: Unit.M_PER_S,
-            VY: Unit.M_PER_S,
-            WZ: Unit.RAD_PER_S,
-            X: Unit.M,
-            Y: Unit.M,
-            YAW: Unit.RAD,
+            Interface.VX: Unit.M_PER_S,
+            Interface.VY: Unit.M_PER_S,
+            Interface.WZ: Unit.RAD_PER_S,
+            Interface.X: Unit.M,
+            Interface.Y: Unit.M,
+            Interface.YAW: Unit.RAD,
         },
     )
     return ControlDescription(
         source="chassis",
         resources=(base,),
         limits={
-            Key.of("chassis", "base", VX): Limits(-1.5, 1.5, clamp=True),
-            Key.of("chassis", "base", VY): Limits(-1.0, 1.0, clamp=True),
-            Key.of("chassis", "base", WZ): Limits(-2.0, 2.0, clamp=True),
+            Key.of("chassis", "base", Interface.VX): Limits(-1.5, 1.5, clamp=True),
+            Key.of("chassis", "base", Interface.VY): Limits(-1.0, 1.0, clamp=True),
+            Key.of("chassis", "base", Interface.WZ): Limits(-2.0, 2.0, clamp=True),
         },
         state_rate_hz=50.0,
         deadman_timeout_s=0.2,

@@ -27,7 +27,7 @@ from dimos.control.contract.description import (
     Resource,
     ResourceKind,
 )
-from dimos.control.contract.keys import POSITION, Unit
+from dimos.control.contract.keys import Interface, Unit
 
 
 def test_a_description_is_exactly_five_fields() -> None:
@@ -100,7 +100,7 @@ def test_gripper_units_are_per_gripper(xarm: ControlDescription) -> None:
     """Metres here, but a gripper measured 0 to 1 is just as declarable."""
     normalized = dataclasses.replace(
         xarm.resource("gripper"),  # type: ignore[arg-type]
-        units={POSITION: Unit.NORMALIZED},
+        units={Interface.POSITION: Unit.NORMALIZED},
     )
     swapped = dataclasses.replace(xarm, resources=(*xarm.resources[:-1], normalized))
 
@@ -125,9 +125,9 @@ def test_every_dataclass_pickles() -> None:
         Resource(
             name="joint1",
             kind=ResourceKind.JOINT,
-            state_interfaces=(POSITION,),
-            command_interfaces=(POSITION,),
-            units={POSITION: Unit.RAD},
+            state_interfaces=(Interface.POSITION,),
+            command_interfaces=(Interface.POSITION,),
+            units={Interface.POSITION: Unit.RAD},
         ),
         Limits(-1.0, 1.0, clamp=True),
     )

@@ -365,30 +365,6 @@ impl VoxelMap {
         removed
     }
 
-    /// Delete voxels outright, whatever their health, keeping every neighbor's
-    /// `support` count in sync. Unknown keys are skipped. Returns how many voxels
-    /// were removed.
-    ///
-    /// This is the escape hatch for space a sensor cannot ray-trace clear: a
-    /// wrist camera's own arm occludes the volume behind it, so no ray ever
-    /// fires a miss there and the arm's own returns would sit in the map
-    /// forever. A caller that knows those keys are free names them here.
-    pub fn clear_voxels(&mut self, keys: impl IntoIterator<Item = VoxelKey>) -> usize {
-        let mut removed = 0;
-        for key in keys {
-            let Some(voxel) = self.voxels.remove(&key) else {
-                continue;
-            };
-            // The fine-cell bitmask rides inside the removed voxel, so the fine
-            // layer needs no separate cleanup.
-            if voxel.health > 0 {
-                self.health_crossed(key, false);
-            }
-            removed += 1;
-        }
-        removed
-    }
-
     /// Set a voxel's health directly, creating it if absent. Bypasses hit and
     /// miss accounting but keeps support counts in sync.
     #[cfg(test)]
@@ -1254,19 +1230,6 @@ const KEY_LIMIT: f32 = (1 << 30) as f32;
 #[inline]
 fn in_key_range(x: f32, y: f32, z: f32, inv: f32) -> bool {
     (x * inv).abs() < KEY_LIMIT && (y * inv).abs() < KEY_LIMIT && (z * inv).abs() < KEY_LIMIT
-}
-
-/// Quantize world-frame metric points to voxel keys the same way returns are
-/// quantized, so a caller naming voxels by position lands on the ones the map
-/// actually holds.
-pub fn metric_voxel_keys(
-    points: impl IntoIterator<Item = (f32, f32, f32)>,
-    voxel_size: f32,
-) -> impl Iterator<Item = VoxelKey> {
-    let inv = 1.0 / voxel_size;
-    points
-        .into_iter()
-        .map(move |(x, y, z)| world_to_voxel(x, y, z, inv))
 }
 
 /// Fine cells of `key` crossed by the ray segment between `t0` and `t1`,

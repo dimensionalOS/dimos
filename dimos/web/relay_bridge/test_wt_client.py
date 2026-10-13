@@ -523,7 +523,7 @@ async def test_connect_handshake_timeout_is_bounded(monkeypatch: pytest.MonkeyPa
         async def __aexit__(self, *args: Any) -> None:
             raise AssertionError("a timed-out __aenter__ must not be exited twice")
 
-    monkeypatch.setattr(wt_client, "aioquic_connect", lambda *args, **kwargs: HangingConnect())
+    monkeypatch.setattr(wt_client, "_quic_connect", lambda *args, **kwargs: HangingConnect())
     with pytest.raises(asyncio.TimeoutError):
         await RelayClient.connect("https://127.0.0.1:1", "robot", timeout=0.01)
 
@@ -544,7 +544,7 @@ async def test_connect_defaults_port_to_443_and_loads_relay_ca(
         dials.append((host, port, configuration.cafile))
         return Refused()
 
-    monkeypatch.setattr(wt_client, "aioquic_connect", fake_connect)
+    monkeypatch.setattr(wt_client, "_quic_connect", fake_connect)
     with pytest.raises(ConnectionRefusedError):
         await RelayClient.connect("https://relay.example", "robot", cafile="/ca.pem")
     assert dials == [("relay.example", 443, "/ca.pem")]
@@ -608,6 +608,18 @@ async def test_fetch_relay_info_cert_hash_is_optional(info_server: str) -> None:
     # A relay with a real certificate (T12c) advertises no hash.
     _serve({"wtUrl": "https://relay.example:443", "v": PROTOCOL_VERSION})
     assert (await fetch_relay_info(info_server)).cert_hash is None
+
+
+async def test_fetch_relay_info_rtc_flag(info_server: str) -> None:
+    # v7: a relay with Cloudflare configured advertises rtc: true; absent is
+    # false, anything but a boolean is a shape error.
+    _serve(GOOD_INFO)
+    assert (await fetch_relay_info(info_server)).rtc is False
+    _serve({**GOOD_INFO, "rtc": True})
+    assert (await fetch_relay_info(info_server)).rtc is True
+    _serve({**GOOD_INFO, "rtc": "yes"})
+    with pytest.raises(ProtocolError, match="unexpected shape"):
+        await fetch_relay_info(info_server)
 
 
 @pytest.mark.parametrize(

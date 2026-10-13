@@ -76,6 +76,7 @@ class WorldMonitor:
         self._prepared_model: PreparedRobotModel | None = None
         self._planning_groups = PlanningGroupRegistry()
         self._state_monitor: RobotStateMonitor | None = None
+        self._latest_joint_state: JointState | None = None
         self._obstacle_monitor: WorldObstacleMonitor | None = None
         self._viz_thread: threading.Thread | None = None
         self._viz_stop_event = threading.Event()
@@ -210,6 +211,13 @@ class WorldMonitor:
                 lock=self._lock,
                 joint_names=config.joint_names,
             )
+            self._latest_joint_state = None
+
+            def record_state(state: JointState) -> None:
+                # RobotStateMonitor invokes callbacks under our shared lock.
+                self._latest_joint_state = JointState(state)
+
+            monitor.add_state_callback(record_state)
             monitor.start()
             self._state_monitor = monitor
 
@@ -322,18 +330,10 @@ class WorldMonitor:
 
     def get_current_joint_state(self) -> JointState | None:
         """Get current joint state. Returns None if not yet received."""
-        if self._state_monitor is not None:
-            positions = self._state_monitor.get_current_positions()
-            velocities = self._state_monitor.get_current_velocities()
-            if positions is not None:
-                return JointState(
-                    name=self.get_model_config().joint_names,
-                    position=positions.tolist(),
-                    velocity=velocities.tolist() if velocities is not None else [],
-                )
-
-        # Fall back to world's live context
         with self._lock:
+            if self._state_monitor is not None:
+                return JointState(self._latest_joint_state) if self._latest_joint_state else None
+            # Fall back to world's live context when no monitor is running.
             ctx = self._world.get_live_context()
             return self._world.get_joint_state(ctx)
 
@@ -460,7 +460,9 @@ class WorldMonitor:
                     raise ValueError("Current model state is unavailable")
             self._world.set_joint_state(ctx, joint_state)
 
-            return self._world.get_group_ee_pose(ctx, group_id)
+            pose = self._world.get_group_ee_pose(ctx, group_id)
+            pose.ts = joint_state.ts
+            return pose
 
     def get_link_pose(
         self, link_name: str, joint_state: JointState | None = None
@@ -474,8 +476,9 @@ class WorldMonitor:
         with self._world.scratch_context() as ctx:
             if joint_state is None:
                 joint_state = self.get_current_joint_state()
-            if joint_state is not None:
-                self._world.set_joint_state(ctx, joint_state)
+            if joint_state is None:
+                return None
+            self._world.set_joint_state(ctx, joint_state)
             try:
                 mat = self._world.get_link_pose(ctx, link_name)
             except KeyError:
@@ -486,6 +489,7 @@ class WorldMonitor:
             rot = mat[:3, :3]
             quat = Quaternion.from_rotation_matrix(rot)
             return PoseStamped(
+                ts=joint_state.ts,
                 frame_id="world",
                 position=[float(pos[0]), float(pos[1]), float(pos[2])],
                 orientation=[float(quat.x), float(quat.y), float(quat.z), float(quat.w)],

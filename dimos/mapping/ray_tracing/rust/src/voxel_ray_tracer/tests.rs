@@ -1504,90 +1504,13 @@ fn fine_children_bin_exactly_to_their_parents() {
 }
 
 #[test]
-fn metric_voxel_keys_quantize_by_map_resolution() {
-    let keys: Vec<VoxelKey> =
-        metric_voxel_keys([(0.049, 0.05, -0.001), (0.1, -0.1, 0.0)], 0.05).collect();
+fn world_to_voxel_quantizes_by_map_resolution() {
+    let keys: Vec<VoxelKey> = [(0.049, 0.05, -0.001), (0.1, -0.1, 0.0)]
+        .into_iter()
+        .map(|(x, y, z)| world_to_voxel(x, y, z, 1.0 / 0.05))
+        .collect();
 
     assert_eq!(keys, vec![(0, 1, -1), (2, -2, 0)]);
-}
-
-/// A cleared voxel leaves the chunk's healthy mask with it, so emit_points
-/// cannot bring it back out.
-#[test]
-fn clear_voxels_drops_the_voxel_from_emission() {
-    let cfg = basic_config();
-    let mut map = VoxelMap::default();
-    update_map(&mut map, (0.0, 0.0, 0.0), &[(5.5, 0.5, 0.5)], &cfg);
-    let no_live = AHashSet::new();
-    assert!(!emit_points(&map, 1.0, None, &no_live).is_empty());
-
-    assert_eq!(map.clear_voxels([(5, 0, 0)]), 1);
-
-    assert_eq!(map.health((5, 0, 0)), None);
-    assert!(
-        emit_points(&map, 1.0, None, &no_live).is_empty(),
-        "cleared voxel must not be emitted"
-    );
-}
-
-/// Every one of the 26 neighbors counts a healthy voxel in its `support`.
-/// Deleting it without decrementing them leaves counts that never come back
-/// down, and support_min then keeps phantom surfaces in the local map.
-#[test]
-fn clear_voxels_decrements_neighbor_support() {
-    let mut map = VoxelMap::default();
-    map.set_health((0, 0, 0), 1);
-    map.set_health((1, 0, 0), 1);
-    map.set_health((0, 1, 0), 1);
-    assert_eq!(map.voxels.support(&(1, 0, 0)).unwrap(), 2);
-    assert_eq!(map.voxels.support(&(0, 1, 0)).unwrap(), 2);
-
-    assert_eq!(map.clear_voxels([(0, 0, 0)]), 1);
-
-    assert_eq!(map.voxels.support(&(1, 0, 0)).unwrap(), 1);
-    assert_eq!(map.voxels.support(&(0, 1, 0)).unwrap(), 1);
-}
-
-/// An unhealthy voxel was never counted in its neighbors' support, so removing
-/// it must not decrement them or the counts go stale downward.
-#[test]
-fn clear_voxels_leaves_support_alone_for_an_unhealthy_voxel() {
-    let mut map = VoxelMap::default();
-    map.set_health((1, 0, 0), 1);
-    map.set_health((0, 0, 0), 0);
-    assert_eq!(map.voxels.support(&(1, 0, 0)).unwrap(), 0);
-
-    assert_eq!(map.clear_voxels([(0, 0, 0)]), 1);
-
-    assert_eq!(map.voxels.support(&(1, 0, 0)).unwrap(), 0);
-}
-
-#[test]
-fn clear_voxels_skips_keys_the_map_does_not_hold() {
-    let mut map = VoxelMap::default();
-    map.set_health((0, 0, 0), 1);
-
-    assert_eq!(map.clear_voxels([(0, 0, 0), (9, 9, 9), (0, 0, 0)]), 1);
-
-    assert!(map.voxels.is_empty());
-}
-
-/// The fine-cell bitmask lives inside the voxel, so clearing the coarse voxel
-/// has to take its fine children with it.
-#[test]
-fn clear_voxels_takes_the_fine_layer_with_it() {
-    let cfg = Config {
-        fine_divisor: 2,
-        ..basic_config()
-    };
-    let mut map = VoxelMap::default();
-    update_map(&mut map, (0.0, 0.0, 0.0), &[(5.1, 0.1, 0.1)], &cfg);
-    let no_live = AHashSet::new();
-    assert!(!emit_points_fine(&map, 1.0, 2, None, &no_live).is_empty());
-
-    assert_eq!(map.clear_voxels([(5, 0, 0)]), 1);
-
-    assert!(emit_points_fine(&map, 1.0, 2, None, &no_live).is_empty());
 }
 
 /// Every support count matches a neighbor scan and the healthy mask
@@ -1745,7 +1668,8 @@ fn seeded_wall_normals_spare_grazing_rays() {
 
     // The same wall without moments, so no normals.
     let mut bare = VoxelMap::default();
-    for key in metric_voxel_keys(wall.iter().copied(), cfg.voxel_size) {
+    for &(x, y, z) in &wall {
+        let key = world_to_voxel(x, y, z, 1.0 / cfg.voxel_size);
         bare.set_health(key, SEED_HEALTH);
     }
 
@@ -1968,7 +1892,12 @@ fn a_health_crossing_marks_exactly_its_chunk_once() {
     assert!(map.take_changed_chunks().is_empty());
 
     // Carving it back to zero flips it out of the emitted set.
-    map.clear_voxels([key]);
+    for _ in 0..2 {
+        assert!(!map.record_miss(key, -1));
+        assert!(map.take_changed_chunks().is_empty());
+    }
+    assert!(!map.record_miss(key, -1));
+    assert_eq!(map.health(key), Some(0));
     assert_eq!(map.take_changed_chunks().len(), 1);
 }
 
