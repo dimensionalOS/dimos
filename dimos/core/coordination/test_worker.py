@@ -19,7 +19,9 @@ from typing import TYPE_CHECKING
 import pytest
 
 from dimos.agents.annotation import skill
+from dimos.core.coordination.python_worker import _handle_request, _WorkerState
 from dimos.core.coordination.worker_manager_python import WorkerManagerPython
+from dimos.core.coordination.worker_messages import UndeployModuleRequest
 from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import Module
@@ -468,3 +470,18 @@ def test_module_can_opt_out_of_input_warm_up(create_worker_manager):
 
     assert _wait_for_warm_up(module) == (None, "warmup-UnwarmedInputsModule")
     module.stop()
+
+
+def test_failed_undeploy_retains_instance_for_retry(mocker) -> None:
+    module = mocker.Mock(spec=SimpleModule)
+    module.stop.side_effect = [RuntimeError("stop failed"), None]
+    state = _WorkerState(instances={1: module}, worker_id=0)
+    request = UndeployModuleRequest(module_id=1)
+
+    with pytest.raises(RuntimeError, match="stop failed"):
+        _handle_request(request, state)
+
+    assert state.instances[1] is module
+    assert _handle_request(request, state).result is True
+    assert state.instances == {}
+    assert module.stop.call_count == 2
