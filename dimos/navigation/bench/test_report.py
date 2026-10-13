@@ -21,6 +21,8 @@ import shlex
 
 from dimos.navigation.bench.ground_truth import Difficulty
 from dimos.navigation.bench.report import (
+    CURVE_PX,
+    CURVE_ROW_PX,
     by_level,
     by_signature,
     by_stressor,
@@ -170,6 +172,20 @@ def test_report_gives_the_success_rate_per_level(tmp_path: Path) -> None:
     assert "local_refused 2</td>" in page
     assert ">1/2</text>" in page
     assert "Outcomes by stressor" not in page and "Outcomes against difficulty" not in page
+
+
+def test_labels_of_levels_too_close_to_read_go_on_a_second_line(tmp_path: Path) -> None:
+    cases = [
+        _case(f"leg-s1-{value}", "leg", 0.5, Level("leg_width", value))
+        for value in (0.01, 0.02, 0.03, 0.2)
+    ]
+    run = tmp_path / "run"
+    _run(run, cases, [_result(case, "success") for case in cases])
+    page = render([load(run)])
+    first, second = CURVE_PX[1] + 10, CURVE_PX[1] + 10 + CURVE_ROW_PX
+    for label, y in (("0.01", first), ("0.02", second), ("0.03", first), ("0.20", first)):
+        assert f'y="{y}" text-anchor="middle">{label}</text>' in page
+    assert f'<svg width="{CURVE_PX[0]}" height="{CURVE_PX[1] + 48 + CURVE_ROW_PX}"' in page
 
 
 def test_report_leaves_out_cases_whose_control_never_met_the_feature(tmp_path: Path) -> None:

@@ -41,6 +41,8 @@ STRIP_TICK_M = 0.25
 STRIP_PX = 240
 CURVE_PX = (480, 180)
 CURVE_PAD_PX = 56
+CURVE_LABEL_PX = 34
+CURVE_ROW_PX = 28
 
 
 @dataclass(frozen=True)
@@ -137,6 +139,7 @@ class CurvePoint:
     y: int
     label: str
     count: str
+    drop: int = 0
 
 
 def load(run_dir: Path) -> Report:
@@ -275,15 +278,21 @@ def _curve_y(rate: float) -> int:
 def _curve(levels: list[LevelRow]) -> list[CurvePoint]:
     inner = CURVE_PX[0] - 2 * CURVE_PAD_PX
     span = (levels[-1].value - levels[0].value) or 1.0
-    return [
-        CurvePoint(
-            x=round(CURVE_PAD_PX + (row.value - levels[0].value) / span * inner),
-            y=_curve_y(row.rate),
-            label=f"{row.value:.2f}",
-            count=f"{row.successes}/{row.n}",
+    points, last = [], [-CURVE_LABEL_PX, -CURVE_LABEL_PX]
+    for row in levels:
+        x = round(CURVE_PAD_PX + (row.value - levels[0].value) / span * inner)
+        line = 0 if x - last[0] >= CURVE_LABEL_PX else int(last[1] < last[0])
+        last[line] = x
+        points.append(
+            CurvePoint(
+                x=x,
+                y=_curve_y(row.rate),
+                label=f"{row.value:.2f}",
+                count=f"{row.successes}/{row.n}",
+                drop=line * CURVE_ROW_PX,
+            )
         )
-        for row in levels
-    ]
+    return points
 
 
 def _strip_x(meters: float) -> int:
