@@ -73,6 +73,25 @@ def test_a_clean_arrival_is_a_success_with_full_metrics() -> None:
     assert s.empty_path_s == pytest.approx(0.5)
 
 
+def _trunk_on_floor(seconds: float) -> Recording:
+    return replace(
+        _walk(10.0),
+        contacts=[
+            ContactSample(T0 - 5.0, [Contact("foot", "floor")]),
+            ContactSample(T0 + 3.0, [Contact("foot", "floor"), Contact("trunk", "floor")]),
+            ContactSample(T0 + 3.0 + seconds, [Contact("foot", "floor")]),
+        ],
+    )
+
+
+def test_a_brief_trunk_touch_is_not_a_fall() -> None:
+    touched = score(_trunk_on_floor(0.06), RULES, GOAL)
+    assert (touched.outcome, touched.fell) == ("success", False)
+    assert touched.trunk_floor_s == pytest.approx(0.06)
+    lying = score(_trunk_on_floor(RULES.fall_trunk_floor_s + 0.1), RULES, GOAL)
+    assert (lying.outcome, lying.signature) == ("fall", "body_fell")
+
+
 def test_every_failure_has_an_outcome_and_a_signature() -> None:
     bumped = replace(
         _walk(10.0),

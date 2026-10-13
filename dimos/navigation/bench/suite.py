@@ -75,6 +75,7 @@ class Rules:
     timeout_s_per_m: float = 6.0
     timeout_base_s: float = 20.0
     fall_rad: float = 1.0
+    fall_trunk_floor_s: float = 0.5
     stuck_s: float = 10.0
     stuck_progress_m: float = 0.3
     stuck_moving_fraction: float = 0.8

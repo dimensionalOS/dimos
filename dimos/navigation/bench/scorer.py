@@ -203,7 +203,7 @@ def score(
     t1 = arrival if arrival is not None else deadline
     pose = _slice(recording.pose, t0, t1)
     collisions = _collisions(recording.contacts, t0, t1)
-    fell = _fell(pose, recording.contacts, rules, t0, t1)
+    fell = _fell(pose, collisions, rules)
     final = _at(recording.pose, t1)
     error_xy = float(np.hypot(*(final[:2] - goal[:2])))
     error_z = float(abs(final[2] - rules.stand_height_m - goal[2]))
@@ -336,13 +336,9 @@ def _colliding(contacts: list[Contact]) -> bool:
     return any(c.kind in COLLIDING_KINDS for c in contacts)
 
 
-def _fell(
-    pose: Poses, samples: list[ContactSample] | None, rules: Rules, t0: float, t1: float
-) -> bool:
+def _fell(pose: Poses, collisions: _Collisions | None, rules: Rules) -> bool:
     tipped = bool(np.any(np.abs(pose.rpy[:, :2]) > rules.fall_rad))
-    on_trunk = samples is not None and any(
-        t0 <= s.t <= t1 and TRUNK_ON_FLOOR in s.contacts for s in samples
-    )
+    on_trunk = collisions is not None and collisions.trunk_floor_s >= rules.fall_trunk_floor_s
     return tipped or on_trunk
 
 
