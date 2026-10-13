@@ -381,7 +381,7 @@ class BlueprintConfigParser:
     def _validate_structure(self, schema: ParserSchema) -> None:
         roots: dict[str, list[str]] = defaultdict(list)
         for module in schema.modules:
-            roots[config_key(module.atom.name)].append(module.atom.name)
+            roots[config_key(module.atom.name).lower()].append(module.atom.name)
         conflicts = {key: names for key, names in roots.items() if len(names) > 1}
         reserved = {key: names for key, names in roots.items() if key in {"g", "transports"}}
         if conflicts or reserved:

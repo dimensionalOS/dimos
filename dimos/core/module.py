@@ -26,6 +26,7 @@ from typing import (
     Literal,
     Protocol,
     TypeGuard,
+    cast,
     get_args,
     get_origin,
     get_type_hints,
@@ -38,6 +39,7 @@ from dimos.core.core import T, rpc
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.introspection.module.info import extract_module_info
 from dimos.core.introspection.module.render import render_module_io
+from dimos.core.module_identity import external_module_name
 from dimos.core.resource import CompositeResource
 from dimos.core.rpc_client import RpcCall
 from dimos.core.stream import IO, In, Out, RemoteOut, Transport
@@ -115,9 +117,8 @@ class ModuleConfig(BaseConfig):
     rpc_timeouts: dict[str, float] = Field(default_factory=lambda: dict(DEFAULT_RPC_TIMEOUTS))
     frame_id_prefix: str | None = None
     frame_id: str | None = None
-    # Set by the coordinator when the same module class is deployed more than
-    # once (see BlueprintAtom.instance_name). Changes the RPC topic prefix
-    # from the class name to this name.
+    # Explicit instance identity, or the qualified default for external classes.
+    # Internal classes keep their class-name RPC default when this is unset.
     instance_name: str | None = None
     g: GlobalConfig = global_config
 
@@ -161,6 +162,8 @@ class ModuleBase(Configurable, CompositeResource):
 
     def __init__(self, config_args: dict[str, Any]) -> None:
         super().__init__(**config_args)
+        if self.config.instance_name is None:
+            self.config.instance_name = external_module_name(type(self))
         self._module_closed_lock = threading.Lock()
         self._tools = {}
         self._tools_lock = threading.Lock()
@@ -180,7 +183,8 @@ class ModuleBase(Configurable, CompositeResource):
     @classproperty
     def name(self) -> str:
         """Name for this module to be used for blueprint configs."""
-        return self.__name__.lower()  # type: ignore[attr-defined,no-any-return]
+        module_class = cast("type[ModuleBase]", self)
+        return external_module_name(module_class) or module_class.__name__.lower()
 
     @property
     def frame_id(self) -> str:

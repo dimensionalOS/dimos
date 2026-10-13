@@ -219,6 +219,25 @@ def test_autoconnect_eliminates_duplicates_keeps_newer() -> None:
     assert module_a_atoms[0].kwargs == {"key1": "new"}
 
 
+def test_autoconnect_rejects_different_classes_with_the_same_instance_name() -> None:
+    with pytest.raises(ValueError, match="shared.*ModuleA.*ModuleB|shared.*ModuleB.*ModuleA"):
+        autoconnect(
+            ModuleA.blueprint(instance_name="shared"),
+            ModuleB.blueprint(instance_name="shared"),
+        )
+
+
+def test_namespaces_allow_packages_to_reuse_instance_names() -> None:
+    merged = autoconnect(
+        ModuleA.blueprint(instance_name="worker").namespace("package_a"),
+        ModuleB.blueprint(instance_name="worker").namespace("package_b"),
+    )
+    assert [(atom.name, atom.module) for atom in merged.blueprints] == [
+        ("package_a/worker", ModuleA),
+        ("package_b/worker", ModuleB),
+    ]
+
+
 def test_disabled_module_proxy_pickle_roundtrip() -> None:
     proxy = DisabledModuleProxy("SomeSpec")
     restored = pickle.loads(pickle.dumps(proxy))
