@@ -27,6 +27,7 @@ subclass): factories return evaluators called with
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from datetime import datetime
 import math
 from typing import TypeVar
 
@@ -350,15 +351,30 @@ class _Track:
         return np.clip(np.searchsorted(self.ts, ts, side="right") - 1, 0, len(self.ts) - 1)
 
 
+def _answered_at(outcome: Outcome) -> float | None:
+    """When the agent gave its final answer (epoch seconds); None if it ran out of steps or time."""
+    steps = outcome.trajectory.steps
+    if not steps or steps[-1].source != "agent" or steps[-1].tool_calls:
+        return None
+    return datetime.fromisoformat(steps[-1].timestamp.replace("Z", "+00:00")).timestamp()
+
+
 def _tracks(outcome: Outcome, bodies: Sequence[str]) -> dict[str, _Track]:
-    """World tracks of ``bodies`` that the sim published on tf; missing bodies are left out."""
+    """World tracks of ``bodies`` that the sim published on tf; missing bodies are left out.
+
+    A run that ends with an answer is graded as it stood at that answer: the sim keeps stepping
+    for several seconds while the environment shuts down, and a held part can drop then.
+    """
     raw: dict[str, tuple[list[float], list[np.ndarray], list[np.ndarray]]] = {
         b: ([], [], []) for b in bodies
     }
+    until = _answered_at(outcome)
     with recording(outcome) as store:
         if "tf" not in store.streams:
             return {}
         for record in store.streams.tf.order_by("ts"):
+            if until is not None and record.ts > until:
+                break
             for transform in record.data.transforms:
                 # Robot links are also on tf relative to their parents; only world poses count.
                 if transform.child_frame_id in raw and transform.frame_id == "world":
