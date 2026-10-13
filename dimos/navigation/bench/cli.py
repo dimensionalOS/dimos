@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from dataclasses import replace
 import json
 from pathlib import Path
 import signal
@@ -62,25 +63,35 @@ def override_flag(setting: str) -> str:
 def freeze_command(
     out: Path = typer.Option(..., "--out", help="Where to write the manifest."),
     suite: str = typer.Option(DEFAULT_SUITE, help="Suite name recorded in the manifest."),
-    seeds: str = typer.Option("1-20", help="Scene seeds, e.g. 1,3,5-8."),
+    probe: str | None = typer.Option(None, help="Freeze this probe suite and not the mixed one."),
+    seeds: str | None = typer.Option(None, help="Scene seeds, e.g. 1,3,5-8. Default: the suite's."),
     sampling_seed: int = typer.Option(0, help="Seed for the case sampling."),
     stressor_samples: int = typer.Option(300, help="Candidate goals per stressor per scene."),
     samples_per_scene: int = typer.Option(60, help="Random start-goal pairs mined per scene."),
     cases_per_bin: int = typer.Option(3, help="Mined cases kept per difficulty bin."),
 ) -> None:
     """Generate, validate and bin the suite's cases into a manifest."""
-    from dimos.navigation.bench.suite import FreezeConfig, freeze
+    from dimos.navigation.bench.suite import PROBES, FreezeConfig, freeze, freeze_probe
 
-    config = FreezeConfig(
-        suite=suite,
-        seeds=seeds_of(seeds),
-        sampling_seed=sampling_seed,
-        stressor_samples=stressor_samples,
-        samples_per_scene=samples_per_scene,
-        cases_per_bin=cases_per_bin,
-    )
-    with _Bar(suite) as bar:
-        manifest = freeze(config, bar.tick)
+    if probe is not None:
+        if probe not in PROBES:
+            raise typer.BadParameter(f"unknown probe {probe!r}, known: {sorted(PROBES)}")
+        spec = PROBES[probe]
+        if seeds is not None:
+            spec = replace(spec, seeds=seeds_of(seeds))
+        manifest = freeze_probe(spec, sampling_seed)
+    else:
+        config = FreezeConfig(
+            suite=suite,
+            sampling_seed=sampling_seed,
+            stressor_samples=stressor_samples,
+            samples_per_scene=samples_per_scene,
+            cases_per_bin=cases_per_bin,
+        )
+        if seeds is not None:
+            config = replace(config, seeds=seeds_of(seeds))
+        with _Bar(suite) as bar:
+            manifest = freeze(config, bar.tick)
     out.parent.mkdir(parents=True, exist_ok=True)
     manifest.save(out)
     tags = Counter(c.tag for c in manifest.cases)

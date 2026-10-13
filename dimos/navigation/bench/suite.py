@@ -62,6 +62,7 @@ CLEARANCE_BINS = (0.35, 0.6)
 STRADDLE_M = (1.2, 1.5, 2.0)
 OBSTRUCTED = 1.05
 DEAD_END_DETOUR = 1.4
+SIDE_WALL_M = 1.5
 
 
 @dataclass(frozen=True)
@@ -104,12 +105,21 @@ class Candidate:
 
 
 @dataclass(frozen=True)
+class Level:
+    """Where a probe case sits on the variable its probe sweeps."""
+
+    variable: str
+    value: float
+
+
+@dataclass(frozen=True)
 class Case(Candidate):
     id: str
     split: Split
     difficulty: Difficulty
     route_length: float
     scene_digest: str
+    level: Level | None = None
 
 
 @dataclass
@@ -442,6 +452,65 @@ def _validate(
         route_length=route.length,
         scene_digest=gt.scene.digest(),
     )
+
+
+Placement = Callable[[GroundTruth, float, np.random.Generator], tuple[Pose, Point]]
+
+
+@dataclass(frozen=True)
+class Probe:
+    """One feature in an otherwise empty scene, swept over fixed levels with one case per level and seed."""
+
+    name: str
+    family: Family
+    variable: str
+    levels: tuple[float, ...]
+    place: Placement
+    seeds: tuple[int, ...] = tuple(range(1, 6))
+
+
+def goal_by_wall(gt: GroundTruth, clearance: float, rng: np.random.Generator) -> tuple[Pose, Point]:
+    """The scene's start at a drawn yaw, and a goal this far from the far wall and well clear of the side walls."""
+    sx, sy, z = gt.scene.start
+    width, length = gt.scene.params["width"], gt.scene.params["length"]
+    across = SIDE_WALL_M + (length - 2 * SIDE_WALL_M) * float(rng.random())
+    return (sx, sy, _yaw(rng)), (width - clearance, across, z)
+
+
+GOAL_CLEARANCE = Probe(
+    "goal_clearance",
+    "room",
+    "goal_clearance",
+    (0.20, 0.23, 0.26, 0.29, 0.32, 0.35, 0.40, 0.50, 0.60),
+    goal_by_wall,
+)
+PROBES = {probe.name: probe for probe in (GOAL_CLEARANCE,)}
+
+
+def freeze_probe(probe: Probe, sampling_seed: int = 0, rules: Rules = Rules()) -> Manifest:
+    """The probe's cases, every level in every seed's scene. Deterministic in its arguments."""
+    cases = []
+    for seed in probe.seeds:
+        gt = GroundTruth(generate(probe.family, seed))
+        rng = np.random.default_rng([sampling_seed, seed])
+        for value in probe.levels:
+            start, goal = probe.place(gt, value, rng)
+            candidate = Candidate(probe.family, seed, {}, start, goal, probe.name)
+            route = gt.route(start, goal)
+            if route is None:
+                raise ValueError(f"{probe.name} at {value} has no route in seed {seed}")
+            cases.append(
+                Case(
+                    **vars(candidate),
+                    id=_case_id(candidate),
+                    split="dev",
+                    difficulty=gt.difficulty(route),
+                    route_length=route.length,
+                    scene_digest=gt.scene.digest(),
+                    level=Level(probe.variable, value),
+                )
+            )
+    return Manifest(suite=probe.name, rules=rules, sampling_seed=sampling_seed, cases=cases)
 
 
 def _case_id(candidate: Candidate) -> str:

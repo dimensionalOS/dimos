@@ -21,7 +21,17 @@ from numpy.typing import NDArray
 import pytest
 
 from dimos.navigation.bench.ground_truth import GO2, GroundTruth
-from dimos.navigation.bench.suite import MINED, NARROW_DOOR_M, FreezeConfig, Manifest, freeze
+from dimos.navigation.bench.suite import (
+    GOAL_CLEARANCE,
+    MINED,
+    NARROW_DOOR_M,
+    SIDE_WALL_M,
+    FreezeConfig,
+    Level,
+    Manifest,
+    freeze,
+    freeze_probe,
+)
 from dimos.simulation.scenes.procedural import office
 
 SMALL = FreezeConfig(seeds=(1, 3), stressor_samples=60, samples_per_scene=25, cases_per_bin=1)
@@ -76,3 +86,25 @@ def test_freeze_bins_routable_cases_that_round_trip(tmp_path: Path) -> None:
     stale = replace(loaded.cases[0], scene_digest="stale")
     with pytest.raises(RuntimeError, match=stale.id):
         replace(loaded, cases=[stale]).check_drift()
+
+
+def test_probe_freezes_every_level_in_every_seed(tmp_path: Path) -> None:
+    probe = replace(GOAL_CLEARANCE, seeds=(1, 2))
+    manifest = freeze_probe(probe)
+    assert manifest.suite == "goal_clearance"
+    assert len({c.id for c in manifest.cases}) == len(manifest.cases) == 2 * len(probe.levels)
+    for seed in probe.seeds:
+        cases = [c for c in manifest.cases if c.seed == seed]
+        assert [c.level for c in cases] == [Level("goal_clearance", v) for v in probe.levels]
+        assert len({c.start for c in cases}) == len({c.goal[1] for c in cases}) == len(cases)
+    for case in manifest.cases:
+        assert case.level is not None and case.tag == "goal_clearance" and case.family == "room"
+        params = case.scene().params
+        assert params["width"] - case.goal[0] == pytest.approx(case.level.value)
+        assert SIDE_WALL_M <= case.goal[1] <= params["length"] - SIDE_WALL_M
+        assert case.route_length > 3.0 and case.difficulty.doors == 0
+    assert freeze_probe(probe) == manifest
+    manifest.save(tmp_path / "probe.json")
+    loaded = Manifest.load(tmp_path / "probe.json")
+    assert loaded == manifest
+    loaded.check_drift()
