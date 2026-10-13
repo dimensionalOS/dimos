@@ -30,7 +30,7 @@ from dimos.msgs.sim_msgs.Contacts import Kind
 
 Vec3 = tuple[float, float, float]
 Rect = tuple[float, float, float, float]
-Family = Literal["office", "room"]
+Family = Literal["office", "room", "doorway"]
 
 SLAB_THICKNESS = 0.15
 WALL_THICKNESS = 0.1
@@ -303,8 +303,26 @@ def room(seed: int, width: float | None = None, length: float | None = None) -> 
     return scene
 
 
+def doorway(seed: int, door_width: float | None = None) -> Scene:
+    """Two empty rooms joined by one doorway, the only way from the start to the far room."""
+    rng = np.random.default_rng(seed)
+    width, length = _uniform(rng, 8, 10), _uniform(rng, 5, 7)
+    z0 = _uniform(rng, 0.0, 0.08)
+    scene = Scene(f"doorway_{seed}", {"width": width, "length": length, "z0": z0})
+    top = z0 + WALL_HEIGHT
+    scene.add((0.0, 0.0, z0 - SLAB_THICKNESS), (width, length, z0), "floor")
+    _walls(scene, 0, 0, width, length, z0, top)
+    at = _uniform(rng, 0.45, 0.55) * width
+    along = float(rng.random())
+    w = _given(_uniform(rng, *DOOR_WIDTH), door_width)
+    door = Door(0, at, 1.0 + along * (length - w - 2.0), w)
+    _wall_with_doors(scene, 0, at, 0, length, z0, top, [door])
+    scene.start = (1.0, 1.0, z0)
+    return scene
+
+
 Params = dict[str, bool | int | float]
-FAMILIES: dict[Family, Callable[..., Scene]] = {"office": office, "room": room}
+FAMILIES: dict[Family, Callable[..., Scene]] = {"office": office, "room": room, "doorway": doorway}
 
 
 def generate(family: Family, seed: int, **params: bool | int | float) -> Scene:

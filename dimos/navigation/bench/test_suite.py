@@ -22,6 +22,7 @@ import pytest
 
 from dimos.navigation.bench.ground_truth import GO2, GroundTruth
 from dimos.navigation.bench.suite import (
+    DOORWAY,
     GOAL_CLEARANCE,
     MINED,
     NARROW_DOOR_M,
@@ -108,3 +109,17 @@ def test_probe_freezes_every_level_in_every_seed(tmp_path: Path) -> None:
     loaded = Manifest.load(tmp_path / "probe.json")
     assert loaded == manifest
     loaded.check_drift()
+
+
+def test_door_width_probe_sets_the_door_and_puts_the_goal_past_it() -> None:
+    probe = replace(DOORWAY, seeds=(1, 2))
+    manifest = freeze_probe(probe)
+    assert len({c.id for c in manifest.cases}) == len(manifest.cases) == 2 * len(probe.levels)
+    for case in manifest.cases:
+        assert case.level is not None and case.params == {"door_width": case.level.value}
+        scene = case.scene()
+        (door,) = scene.doors
+        assert door.width == case.level.value and case.difficulty.doors == 1
+        assert case.goal[0] >= door.at + SIDE_WALL_M
+        assert case.goal[0] <= scene.params["width"] - SIDE_WALL_M
+    manifest.check_drift()

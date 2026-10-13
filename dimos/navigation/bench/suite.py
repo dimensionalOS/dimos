@@ -42,6 +42,7 @@ from dimos.navigation.bench.ground_truth import (
 )
 from dimos.simulation.scenes.procedural import (
     TABLE_TOP_THICKNESS,
+    WALL_THICKNESS,
     Box,
     Family,
     Params,
@@ -459,13 +460,17 @@ Placement = Callable[[GroundTruth, float, np.random.Generator], tuple[Pose, Poin
 
 @dataclass(frozen=True)
 class Probe:
-    """One feature in an otherwise empty scene, swept over fixed levels with one case per level and seed."""
+    """One feature in an otherwise empty scene, swept over fixed levels with one case per level and seed.
+
+    The level is handed to the placement, and to the scene as scene_param when that is named.
+    """
 
     name: str
     family: Family
     variable: str
     levels: tuple[float, ...]
     place: Placement
+    scene_param: str | None = None
     seeds: tuple[int, ...] = tuple(range(1, 6))
 
 
@@ -484,18 +489,41 @@ GOAL_CLEARANCE = Probe(
     (0.20, 0.23, 0.26, 0.29, 0.32, 0.35, 0.40, 0.50, 0.60),
     goal_by_wall,
 )
-PROBES = {probe.name: probe for probe in (GOAL_CLEARANCE,)}
+
+
+def past_the_door(gt: GroundTruth, width: float, rng: np.random.Generator) -> tuple[Pose, Point]:
+    """The scene's start at a drawn yaw, and a goal in the far room well clear of the door and every wall."""
+    sx, sy, z = gt.scene.start
+    (door,) = gt.scene.doors
+    near = door.at + WALL_THICKNESS + SIDE_WALL_M
+    x = near + (gt.scene.params["width"] - SIDE_WALL_M - near) * float(rng.random())
+    y = SIDE_WALL_M + (gt.scene.params["length"] - 2 * SIDE_WALL_M) * float(rng.random())
+    return (sx, sy, _yaw(rng)), (x, y, z)
+
+
+DOORWAY = Probe(
+    "door_width",
+    "doorway",
+    "door_width",
+    (0.45, 0.48, 0.51, 0.54, 0.57, 0.60, 0.65, 0.75, 0.90),
+    past_the_door,
+    scene_param="door_width",
+)
+PROBES = {probe.name: probe for probe in (GOAL_CLEARANCE, DOORWAY)}
 
 
 def freeze_probe(probe: Probe, sampling_seed: int = 0, rules: Rules = Rules()) -> Manifest:
     """The probe's cases, every level in every seed's scene. Deterministic in its arguments."""
     cases = []
     for seed in probe.seeds:
-        gt = GroundTruth(generate(probe.family, seed))
         rng = np.random.default_rng([sampling_seed, seed])
+        gt = None
         for value in probe.levels:
+            params: Params = {} if probe.scene_param is None else {probe.scene_param: value}
+            if gt is None or params:
+                gt = GroundTruth(generate(probe.family, seed, **params))
             start, goal = probe.place(gt, value, rng)
-            candidate = Candidate(probe.family, seed, {}, start, goal, probe.name)
+            candidate = Candidate(probe.family, seed, params, start, goal, probe.name)
             route = gt.route(start, goal)
             if route is None:
                 raise ValueError(f"{probe.name} at {value} has no route in seed {seed}")

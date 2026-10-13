@@ -28,6 +28,7 @@ from dimos.simulation.scenes.procedural import (
     WALL_HEIGHT,
     WALL_THICKNESS,
     Scene,
+    doorway,
     generate,
     office,
     room,
@@ -156,3 +157,27 @@ def test_room_size_is_drawn_unless_given() -> None:
     sized = room(2, width=6.5, length=5.5)
     assert (sized.params["width"], sized.params["length"]) == (6.5, 5.5)
     assert sized.params["z0"] == room(2).params["z0"]
+
+
+def test_doorway_is_deterministic_and_pinned() -> None:
+    assert doorway(3).digest() == doorway(3).digest() == "45dc20e43b3572f6"
+    assert doorway(3).digest() != doorway(4).digest()
+
+
+def test_doorway_joins_two_empty_rooms_through_one_door() -> None:
+    for seed in range(1, 21):
+        scene = doorway(seed)
+        (door,) = scene.doors
+        length = scene.params["length"]
+        assert {box.kind for box in scene.boxes} == {"floor", "wall"}
+        assert door.axis == 0 and DOOR_WIDTH[0] <= door.width <= DOOR_WIDTH[1]
+        assert door.start >= 1.0 and door.start + door.width <= length - 1.0
+        assert 1.0 + START_CLEARANCE < door.at < scene.params["width"] - 3.0
+        assert _reachable_fraction(scene) == 1.0, seed
+
+
+def test_doorway_width_is_drawn_unless_given() -> None:
+    drawn, narrow = doorway(3), doorway(3, door_width=0.5)
+    assert _door_widths(narrow) == pytest.approx([0.5])
+    assert narrow.doors[0].at == drawn.doors[0].at
+    assert narrow.params == drawn.params
