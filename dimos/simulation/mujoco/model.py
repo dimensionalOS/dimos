@@ -165,6 +165,7 @@ def _office_555_scene_xml() -> str:
     root = ET.parse(office_555 / "scene_office_555.xml").getroot()
     for element, folder in [("mesh", "meshes"), ("texture", "textures")]:
         for asset in root.iter(element):
-            if asset.get("file"):
-                asset.set("file", (office_555 / folder / asset.get("file")).as_posix())
+            file = asset.get("file")
+            if file:
+                asset.set("file", (office_555 / folder / file).as_posix())
     return ET.tostring(root, encoding="unicode")
