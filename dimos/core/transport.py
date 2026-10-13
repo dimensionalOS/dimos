@@ -352,6 +352,12 @@ class DDSTransport(PubSubTransport[T]):
         self._started: bool = False
         self._start_lock = threading.RLock()
 
+    def __reduce__(self) -> tuple[Any, ...]:
+        return (
+            partial(DDSTransport, qos=self.dds.qos, **self.dds.config.model_dump()),
+            (self.topic.name, self.topic.data_type),
+        )
+
     def start(self) -> None:
         with self._start_lock:
             if not self._started:
