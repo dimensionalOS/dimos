@@ -32,6 +32,8 @@ import subprocess
 import threading
 import time
 
+import numpy as np
+
 from dimos.constants import STATE_DIR
 from dimos.navigation.bench.driver import HARNESS_REASONS, TERMINAL_FILE
 from dimos.navigation.bench.scorer import Outcome, Recording, score
@@ -61,6 +63,7 @@ WEBSOCKET_PORT_BASE = 3100
 STOP_GRACE_S = 20.0
 POLL_S = 0.5
 VERDICT_SLACK_S = 0.1
+RECORDING_GAP_S = 1.0
 RECORDING_LINE = re.compile(r"Recording to (\S+memory\.db)")
 
 _live: set[subprocess.Popen[bytes]] = set()
@@ -377,8 +380,10 @@ def _score(manifest: Manifest, episode: Episode, terminal: dict[str, object] | N
         result.error = "no recording"
         return result
     try:
+        recorded = Recording.from_store(recording)
+        _require_whole(recorded, terminal)
         scored = score(
-            _until_verdict(Recording.from_store(recording), terminal),
+            _until_verdict(recorded, terminal),
             manifest.rules,
             case.goal,
             case.route_length,
@@ -390,6 +395,17 @@ def _score(manifest: Manifest, episode: Episode, terminal: dict[str, object] | N
     result.metrics = asdict(scored)
     (episode.dir / SCORE_FILE).write_text(json.dumps(result.metrics, indent=2) + "\n")
     return result
+
+
+def _require_whole(recording: Recording, terminal: dict[str, object]) -> None:
+    """Refuse a recording that lost ground truth between the goal and the driver's verdict."""
+    t0, t_end = terminal.get("t0"), terminal.get("t_end")
+    if recording.pose is None or not isinstance(t0, float) or not isinstance(t_end, float):
+        return
+    t = recording.pose.t
+    gap = float(np.diff([t0, *t[(t > t0) & (t < t_end)], t_end]).max())
+    if gap > RECORDING_GAP_S:
+        raise ValueError(f"recording is missing {gap:.1f} s of ground truth")
 
 
 def _until_verdict(recording: Recording, terminal: dict[str, object]) -> Recording:

@@ -22,6 +22,7 @@ import sys
 import time
 
 import numpy as np
+from numpy.typing import NDArray
 import pytest
 
 from dimos.memory.store.sqlite import SqliteStore
@@ -36,6 +37,7 @@ from dimos.navigation.bench.runner import (
     SCORE_FILE,
     Progress,
     RunConfig,
+    _require_whole,
     _until_verdict,
     rescore,
     run,
@@ -214,6 +216,24 @@ def test_a_stuck_verdict_is_scored_at_the_drivers_end_and_not_the_shutdown_tail(
     cut = _until_verdict(recording, {"reason": "stuck", "t_end": t_end})
     assert score(cut, rules, goal, 20.0).outcome == "stuck"
     assert _until_verdict(recording, {"reason": "arrived", "t_end": t_end}) is recording
+
+
+def test_a_recording_that_lost_ground_truth_is_refused() -> None:
+    terminal: dict[str, object] = {"reason": "arrived", "t0": T0, "t_end": T0 + 10.0}
+    t = T0 + np.arange(-2.0, 12.0, 0.02)
+
+    def recording(keep: NDArray[np.bool_]) -> Recording:
+        return Recording(
+            end=float(t[keep][-1]),
+            pose=Poses(t[keep], np.zeros((keep.sum(), 3)), np.zeros((keep.sum(), 3))),
+        )
+
+    _require_whole(recording(np.ones_like(t, dtype=bool)), terminal)
+    with pytest.raises(ValueError, match=r"missing 2\.0 s"):
+        _require_whole(recording((t < T0 + 4.0) | (t > T0 + 6.0)), terminal)
+    with pytest.raises(ValueError, match=r"missing 3\.0 s"):
+        _require_whole(recording(t < T0 + 7.0), terminal)
+    _require_whole(recording(t < T0 + 7.0), {"reason": "arrived", "t0": T0})
 
 
 @pytest.mark.self_hosted
