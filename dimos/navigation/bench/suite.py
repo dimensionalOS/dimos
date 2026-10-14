@@ -41,6 +41,10 @@ from dimos.navigation.bench.ground_truth import (
     boxes_near,
 )
 from dimos.simulation.scenes.procedural import (
+    BLOCK_SIZE,
+    OVERHANG_SIZE,
+    PLACEMENT_TRIES,
+    START_CLEARANCE,
     TABLE_SIZE,
     TABLE_TOP_THICKNESS,
     WALL_THICKNESS,
@@ -66,6 +70,8 @@ OBSTRUCTED = 1.05
 DEAD_END_DETOUR = 1.4
 SIDE_WALL_M = 1.5
 PAST_M = (2.3, 3.0)
+APPROACH_M = 1.5
+UNDER_SLAB_RAD = math.pi / 6
 
 
 @dataclass(frozen=True)
@@ -491,12 +497,20 @@ class Probe:
     seeds: tuple[int, ...] = tuple(range(1, 6))
 
 
+def _start_before(scene: Scene, x: float, rng: np.random.Generator) -> Pose:
+    """A drawn pose short of the given x and clear of the walls."""
+    length = scene.params["length"]
+    sx = START_CLEARANCE + (x - START_CLEARANCE) * float(rng.random())
+    sy = START_CLEARANCE + (length - 2 * START_CLEARANCE) * float(rng.random())
+    return sx, sy, _yaw(rng)
+
+
 def goal_by_wall(gt: GroundTruth, clearance: float, rng: np.random.Generator) -> Placed:
-    """The scene's start at a drawn yaw, and a goal this far from the far wall and well clear of the side walls."""
-    sx, sy, z = gt.scene.start
+    """A drawn start well short of the far wall, and a goal this far from it and well clear of the side walls."""
     width, length = gt.scene.params["width"], gt.scene.params["length"]
+    start = _start_before(gt.scene, width - APPROACH_M, rng)
     across = SIDE_WALL_M + (length - 2 * SIDE_WALL_M) * float(rng.random())
-    return Placed((sx, sy, _yaw(rng)), (width - clearance, across, z))
+    return Placed(start, (width - clearance, across, gt.scene.start[2]))
 
 
 GOAL_CLEARANCE = Probe(
@@ -509,13 +523,13 @@ GOAL_CLEARANCE = Probe(
 
 
 def past_the_door(gt: GroundTruth, width: float, rng: np.random.Generator) -> Placed:
-    """The scene's start at a drawn yaw, and a goal in the far room well clear of the door and every wall."""
-    sx, sy, z = gt.scene.start
+    """A drawn start well short of the door's wall, and a goal in the far room well clear of the door and every wall."""
     (door,) = gt.scene.doors
+    start = _start_before(gt.scene, door.at - APPROACH_M, rng)
     near = door.at + WALL_THICKNESS + SIDE_WALL_M
     x = near + (gt.scene.params["width"] - SIDE_WALL_M - near) * float(rng.random())
     y = SIDE_WALL_M + (gt.scene.params["length"] - 2 * SIDE_WALL_M) * float(rng.random())
-    return Placed((sx, sy, _yaw(rng)), (x, y, z))
+    return Placed(start, (x, y, gt.scene.start[2]))
 
 
 DOORWAY = Probe(
@@ -536,25 +550,68 @@ def table_leg(scene: Scene, leg_width: float, corner: int) -> tuple[float, float
     return x, y
 
 
-def _straight_past(scene: Scene, x: float, y: float, rng: np.random.Generator) -> Placed:
-    """The scene's start at a drawn yaw, and a goal on the line from it through the point and well past it."""
-    sx, sy, z = scene.start
+def _start_facing(
+    scene: Scene,
+    before: float,
+    x: float,
+    y: float,
+    rng: np.random.Generator,
+    spread: float = math.pi / 2,
+) -> Pose:
+    """A drawn start clear of the walls and of an object that begins at the given x.
+
+    Its line through the point slants no more than the spread and ends well clear of the walls.
+    """
+    width, length = scene.params["width"], scene.params["length"]
+    for _ in range(PLACEMENT_TRIES):
+        reach = APPROACH_M + (x - START_CLEARANCE - APPROACH_M) * float(rng.random())
+        slant = spread * (2 * float(rng.random()) - 1)
+        yaw = _yaw(rng)
+        sx, sy = x - reach * math.cos(slant), y - reach * math.sin(slant)
+        far_x, far_y = x + PAST_M[1] * math.cos(slant), y + PAST_M[1] * math.sin(slant)
+        if (
+            sx <= before - START_CLEARANCE
+            and START_CLEARANCE <= sy <= length - START_CLEARANCE
+            and far_x <= width - SIDE_WALL_M
+            and SIDE_WALL_M <= far_y <= length - SIDE_WALL_M
+        ):
+            return sx, sy, yaw
+    raise ValueError(f"{scene.name} has no start facing ({x}, {y})")
+
+
+def _straight_past(
+    scene: Scene, start: Pose, x: float, y: float, half_width: float, rng: np.random.Generator
+) -> Placed:
+    """A goal along a line that passes the point closely enough for the body to meet an object this wide.
+
+    The feature is where that line comes nearest the point.
+    """
+    sx, sy, _ = start
     reach = math.hypot(x - sx, y - sy)
+    offset = (half_width + GO2.radius) * (2 * float(rng.random()) - 1)
+    heading = math.atan2(y - sy, x - sx) + math.asin(offset / reach)
+    meet = math.sqrt(reach**2 - offset**2)
     low, high = PAST_M
-    stretch = (reach + low + (high - low) * float(rng.random())) / reach
-    goal = (sx + stretch * (x - sx), sy + stretch * (y - sy), z)
-    return Placed((sx, sy, _yaw(rng)), goal, (x, y))
+    past = meet + low + (high - low) * float(rng.random())
+    goal = (sx + past * math.cos(heading), sy + past * math.sin(heading), scene.start[2])
+    return Placed(start, goal, (sx + meet * math.cos(heading), sy + meet * math.sin(heading)))
 
 
 def through_a_leg(gt: GroundTruth, leg_width: float, rng: np.random.Generator) -> Placed:
-    """A goal straight past one table leg, so the direct line hits it."""
-    x, y = table_leg(gt.scene, leg_width, int(rng.integers(4)))
-    return _straight_past(gt.scene, x, y, rng)
+    """A goal straight past one table leg, so the body walking the direct line meets it."""
+    corner = int(rng.integers(4))
+    start = _start_facing(
+        gt.scene, gt.scene.params["table_x"], *table_leg(gt.scene, 0.0, corner), rng
+    )
+    x, y = table_leg(gt.scene, leg_width, corner)
+    return _straight_past(gt.scene, start, x, y, leg_width / 2, rng)
 
 
 def through_the_block(gt: GroundTruth, height: float, rng: np.random.Generator) -> Placed:
-    """A goal straight past the block, so the direct line hits it."""
-    return _straight_past(gt.scene, gt.scene.params["block_x"], gt.scene.params["block_y"], rng)
+    """A goal straight past the block, so the body walking the direct line meets it."""
+    x, y = gt.scene.params["block_x"], gt.scene.params["block_y"]
+    start = _start_facing(gt.scene, x - BLOCK_SIZE / 2, x, y, rng)
+    return _straight_past(gt.scene, start, x, y, BLOCK_SIZE / 2, rng)
 
 
 LEG_WIDTH = Probe(
@@ -569,8 +626,11 @@ LEG_WIDTH = Probe(
 
 
 def under_the_slab(gt: GroundTruth, clearance: float, rng: np.random.Generator) -> Placed:
-    """A goal straight past the slab's center, so the direct line runs under it."""
-    return _straight_past(gt.scene, gt.scene.params["slab_x"], gt.scene.params["slab_y"], rng)
+    """A goal straight past the slab, so the direct line runs under it between the posts."""
+    x, y = gt.scene.params["slab_x"], gt.scene.params["slab_y"]
+    across = min(OVERHANG_SIZE) / 2
+    start = _start_facing(gt.scene, x - across, x, y, rng, UNDER_SLAB_RAD)
+    return _straight_past(gt.scene, start, x, y, across - GO2.radius, rng)
 
 
 OVERHANG = Probe(
@@ -594,13 +654,13 @@ BLOCK_HEIGHT = Probe(
 
 
 def past_the_corridor(gt: GroundTruth, width: float, rng: np.random.Generator) -> Placed:
-    """The scene's start at a drawn yaw, and a goal in the far room well clear of every wall."""
-    sx, sy, z = gt.scene.start
+    """A drawn start well short of the corridor, and a goal in the far room well clear of every wall."""
     params = gt.scene.params
+    start = _start_before(gt.scene, params["corridor_x"] - APPROACH_M, rng)
     near_x, near_y = params["room_x"] + SIDE_WALL_M, params["room_y"] + SIDE_WALL_M
     x = near_x + (params["width"] - SIDE_WALL_M - near_x) * float(rng.random())
     y = near_y + (params["length"] - SIDE_WALL_M - near_y) * float(rng.random())
-    return Placed((sx, sy, _yaw(rng)), (x, y, z))
+    return Placed(start, (x, y, gt.scene.start[2]))
 
 
 CORRIDOR = Probe(
