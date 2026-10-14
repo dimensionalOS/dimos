@@ -681,7 +681,7 @@ CORRIDOR = Probe(
     "corridor_width",
     "corridor",
     "corridor_width",
-    (0.45, 0.48, 0.51, 0.54, 0.57, 0.60, 0.65, 0.75, 0.90),
+    (0.45, 0.48, 0.51, 0.54, 0.57, 0.60, 0.65, 0.75, 0.90, 1.00, 1.20),
     past_the_corridor,
     scene_param="corridor_width",
 )

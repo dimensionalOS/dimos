@@ -380,8 +380,8 @@ def test_corridor_turn_winds_a_drawn_number_of_turns_as_the_only_way_between_the
         room = _far_room(scene)
         assert _reached(scene, inflate=0.2)[0][room], seed
         assert not _reached(scene, inflate=0.33)[0][room], seed
-        assert corridor_turn(seed, corridor_width=0.9).params == params
-        assert _reached(corridor_turn(seed, corridor_width=0.9), inflate=0.33)[0][room], seed
+        assert corridor_turn(seed, corridor_width=1.2).params == params
+        assert _reached(corridor_turn(seed, corridor_width=1.2), inflate=0.33)[0][room], seed
         scene.add((x, y - 0.3, z0), (x + 0.1, y + 0.3, z0 + 1.0), "wall")
         assert not _reached(scene, inflate=0.2)[0][room], seed
     assert len(turns) >= 3
