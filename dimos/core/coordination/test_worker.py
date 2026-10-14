@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from contextlib import ExitStack
 import threading
 import time
 from typing import TYPE_CHECKING
@@ -146,6 +147,50 @@ def test_worker_manager_basic(create_worker_manager):
     assert result == 2
 
     module.stop()
+
+
+def test_undeploy_pipe_failure_keeps_live_worker_registered(
+    create_worker_manager, monkeypatch, mocker
+):
+    manager = create_worker_manager(n_workers=1)
+    module = manager.deploy(SimpleModule, global_config, {})
+    worker = manager.workers[0]
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(
+                worker._conn, "send", mocker.Mock(side_effect=BrokenPipeError("pipe failed"))
+            )
+            with pytest.raises(BrokenPipeError, match="pipe failed"):
+                manager.undeploy(module)
+
+        assert worker.module_count == 1
+        assert module.increment() == 1
+        manager.undeploy(module)
+        assert manager.workers == []
+    finally:
+        module.stop_rpc_client()
+
+
+def test_dead_shared_worker_keeps_sibling_ownership_until_undeployed(create_worker_manager):
+    manager = create_worker_manager(n_workers=1)
+    with ExitStack() as cleanup:
+        first = manager.deploy(SimpleModule, global_config, {})
+        cleanup.callback(first.stop_rpc_client)
+        sibling = manager.deploy(AnotherModule, global_config, {})
+        cleanup.callback(sibling.stop_rpc_client)
+        dead_worker = manager.workers[0]
+        dead_worker._process.terminate()
+        dead_worker._process.join(timeout=5)
+        assert not dead_worker._process.is_alive()
+        manager.undeploy(first)
+        replacement = manager.deploy_fresh(SimpleModule, global_config, {})
+        cleanup.callback(replacement.stop_rpc_client)
+        added = manager.deploy(ThirdModule, global_config, {})
+        cleanup.callback(added.stop_rpc_client)
+        assert added.multiply(3) == 3
+        assert replacement.increment() == 1
+        manager.undeploy(sibling)
+        assert dead_worker not in manager.workers
 
 
 def test_unpicklable_rpc_result_raises_without_killing_the_worker(create_worker_manager):

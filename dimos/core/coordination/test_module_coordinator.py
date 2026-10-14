@@ -14,6 +14,7 @@
 
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from multiprocessing.connection import wait
 import os
 from pathlib import Path
 import pickle
@@ -1350,3 +1351,21 @@ def test_restart_keeps_state_when_undeploy_fails(dynamic_coordinator, mocker) ->
     close_client.assert_not_called()
     assert dynamic_coordinator.get_instance(ModuleA) is proxy
     assert proxy.get_name() == "A, Module A"
+
+
+def test_restart_recovers_dead_worker(dynamic_coordinator, mocker) -> None:
+    dynamic_coordinator.load_module(ModuleA)
+    manager = dynamic_coordinator._managers["python"]
+    dead_worker = manager.workers[0]
+    old_proxy = dynamic_coordinator.get_instance(ModuleA)
+    close_client = mocker.spy(old_proxy, "stop_rpc_client")
+    process = dead_worker._process
+    process.terminate()
+    assert wait([process.sentinel], timeout=5) == [process.sentinel]
+
+    replacement = dynamic_coordinator.restart_module(ModuleA, reload_source=False)
+    assert replacement is not old_proxy
+    assert replacement.get_name() == "A, Module A"
+    assert dynamic_coordinator.get_instance(ModuleA) is replacement
+    assert dead_worker not in manager.workers
+    close_client.assert_called_once_with()
