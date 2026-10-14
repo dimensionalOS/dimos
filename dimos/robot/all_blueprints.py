@@ -33,6 +33,7 @@ all_blueprints = {
     "coordinator-lite6": "dimos.robot.manipulators.xarm.blueprints.basic:coordinator_lite6",
     "coordinator-mobile-manip-mock": "dimos.control.blueprints.mobile:coordinator_mobile_manip_mock",
     "coordinator-mock": "dimos.robot.manipulators.common.mock:coordinator_mock",
+    "coordinator-mock-connection": "dimos.robot.manipulators.common.mock:coordinator_mock_connection",
     "coordinator-mock-twist-base": "dimos.control.blueprints.mobile:coordinator_mock_twist_base",
     "coordinator-openarm": "dimos.robot.manipulators.openarm.blueprints.basic:coordinator_openarm",
     "coordinator-openyam": "dimos.robot.manipulators.openyam.blueprints.basic:coordinator_openyam",
