@@ -29,10 +29,12 @@ from dimos.evals.suites.robosuite import GUIDANCE
 from dimos.evals.types import EvalCase, Suite
 from dimos.utils.data import LfsPath
 
-# Recording-only scene camera, and the bottle cap's thread release (MujocoSimModule).
+# Recording-only scene camera, the bottle cap's thread release, and gravity compensation so the
+# arm holds its commanded pose as the real xArm does (MujocoSimModule).
 SIM_ENV = {
     "MUJOCOSIMMODULE__OVERVIEW_CAMERA_NAME": "overview",
     "MUJOCOSIMMODULE__OVERVIEW_FPS": "8",
+    "MUJOCOSIMMODULE__GRAVITY_COMPENSATION": "true",
 }
 THREADS = {"bottle": {"cap_thread": "cap_hold"}}
 
