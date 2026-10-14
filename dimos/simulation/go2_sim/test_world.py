@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import math
 import time
 
 import numpy as np
@@ -37,7 +38,7 @@ from dimos.simulation.go2_sim.world import (
     SimGo2World,
     scene_edges,
 )
-from dimos.simulation.scenes.procedural import Scene, office
+from dimos.simulation.scenes.procedural import Box, Scene, office
 from dimos.simulation.sensors.mujoco_raycaster import MujocoRaycaster
 
 pytestmark = pytest.mark.self_hosted
@@ -192,3 +193,7 @@ def test_scene_edges_cover_every_box(scene: Scene) -> None:
     lo, hi = scene.bounds()
     assert np.allclose(edges.reshape(-1, 3).min(0), lo)
     assert np.allclose(edges.reshape(-1, 3).max(0), hi)
+    turned = Scene("turned", boxes=[Box((1.0, 2.0, 0.5), (2.0, 0.5, 0.5), "wall", math.pi / 2)])
+    corners = scene_edges(turned).reshape(-1, 3)
+    assert np.allclose(corners.min(0), [0.5, 0.0, 0.0])
+    assert np.allclose(corners.max(0), [1.5, 4.0, 1.0])

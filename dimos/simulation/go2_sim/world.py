@@ -203,7 +203,7 @@ def scene_edges(scene: Scene) -> NDArray[np.float64]:
     """The 12 edges of every box, as (N, 2, 3) segments."""
     centers = np.array([box.center for box in scene.boxes])[:, None, None, :]
     halves = np.array([box.half for box in scene.boxes])[:, None, None, :]
-    turns = Rotation.from_euler("z", [box.yaw for box in scene.boxes]).as_matrix()
+    turns = Rotation.from_euler("z", [[box.yaw] for box in scene.boxes]).as_matrix()
     corners = np.einsum("nij,nabj->nabi", turns, BOX_EDGES[None] * halves)
     edges: NDArray[np.float64] = (centers + corners).reshape(-1, 2, 3)
     return edges
