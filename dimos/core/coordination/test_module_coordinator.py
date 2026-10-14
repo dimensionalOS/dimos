@@ -14,6 +14,7 @@
 
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import suppress
 from multiprocessing.connection import wait
 import os
 from pathlib import Path
@@ -109,6 +110,28 @@ class RestartNativeModule(NativeModule):
     def stop(self) -> None:
         with Path(self.config.extra_env["STOP_LOG"]).open("a") as log:
             log.write("stop\n")
+        super().stop()
+
+
+class RestartFailureModule(Module):
+    def __init__(self, directory: Path, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.directory = directory
+
+    @rpc
+    def get_pid(self) -> int:
+        return os.getpid()
+
+    @rpc
+    def register_probe(self, name: str) -> None:
+        self.rpc.serve_rpc(self.get_pid, name)
+
+    @rpc
+    def stop(self) -> None:
+        with (self.directory / "stops").open("a") as log:
+            log.write(f"{os.getpid()}\n")
+        if (self.directory / "fail").exists():
+            raise RuntimeError("stop failed")
         super().stop()
 
 
@@ -1311,7 +1334,7 @@ def test_restart_waits_for_native_teardown(dynamic_coordinator, tmp_path, mocker
         old_stop()
         wait_until(lambda: (tmp_path / "stopping").exists(), timeout=5.0)
 
-    # Force the asynchronous stop to begin before an undeploy can overtake it.
+    # Force the base code's asynchronous stop to begin before undeploy can overtake it.
     mocker.patch.object(old_proxy, "stop", side_effect=stop_and_wait)
     close_client = mocker.spy(old_proxy, "stop_rpc_client")
     try:
@@ -1324,7 +1347,8 @@ def test_restart_waits_for_native_teardown(dynamic_coordinator, tmp_path, mocker
                 assert not restarted.done()
             finally:
                 block.unlink(missing_ok=True)
-                os.kill(old_pid, signal.SIGTERM)
+                with suppress(ProcessLookupError):
+                    os.kill(old_pid, signal.SIGTERM)
             new_proxy = restarted.result(timeout=10.0)
         assert new_proxy is not old_proxy
         wait_until(lambda: int((tmp_path / "pid").read_text()) != old_pid, timeout=5.0)
@@ -1336,21 +1360,47 @@ def test_restart_waits_for_native_teardown(dynamic_coordinator, tmp_path, mocker
         block.unlink(missing_ok=True)
 
 
-def test_restart_keeps_state_when_undeploy_fails(dynamic_coordinator, mocker) -> None:
-    dynamic_coordinator.load_module(ModuleA)
-    proxy = dynamic_coordinator.get_instance(ModuleA)
-    manager = dynamic_coordinator._managers["python"]
-    mocker.patch.object(manager, "undeploy", side_effect=RuntimeError("stop failed"))
-    deploy = mocker.spy(manager, "deploy_fresh")
-    close_client = mocker.spy(proxy, "stop_rpc_client")
+def test_restart_retries_failed_stop_on_shared_worker(dynamic_coordinator, tmp_path) -> None:
+    failure = tmp_path / "fail"
+    failure.touch()
+    try:
+        dynamic_coordinator.load_blueprint(
+            autoconnect(RestartFailureModule.blueprint(directory=tmp_path), ModuleA.blueprint())
+        )
+        proxy = dynamic_coordinator.get_instance(RestartFailureModule)
+        sibling = dynamic_coordinator.get_instance(ModuleA)
+        manager = dynamic_coordinator._managers["python"]
+        workers = manager.workers
+        assert len(workers) == 1
+        assert workers[0].module_count == 2
+        old_pid = proxy.get_pid()
+        probe = f"{proxy.remote_name}/old-{old_pid}"
+        proxy.register_probe(probe)
+        result, unsubscribe = sibling.rpc.call_sync(probe, ([], {}), rpc_timeout=2)
+        unsubscribe()
+        assert result == old_pid
 
-    with pytest.raises(RuntimeError, match="stop failed"):
-        dynamic_coordinator.restart_module(ModuleA, reload_source=False)
+        with pytest.raises(RuntimeError, match="stop failed"):
+            dynamic_coordinator.restart_module(RestartFailureModule, reload_source=False)
 
-    deploy.assert_not_called()
-    close_client.assert_not_called()
-    assert dynamic_coordinator.get_instance(ModuleA) is proxy
-    assert proxy.get_name() == "A, Module A"
+        assert dynamic_coordinator.get_instance(RestartFailureModule) is proxy
+        assert manager.workers == workers
+        assert workers[0].module_count == 2
+        assert proxy.get_pid() == old_pid
+        assert sibling.get_name() == "A, Module A"
+        assert (tmp_path / "stops").read_text().splitlines() == [str(old_pid)]
+
+        failure.unlink()
+        replacement = dynamic_coordinator.restart_module(RestartFailureModule, reload_source=False)
+        assert (tmp_path / "stops").read_text().splitlines() == [str(old_pid), str(old_pid)]
+        assert replacement is not proxy
+        assert dynamic_coordinator.get_instance(RestartFailureModule) is replacement
+        assert replacement.get_pid() != old_pid
+        assert sibling.get_name() == "A, Module A"
+        with pytest.raises(TimeoutError):
+            sibling.rpc.call_sync(probe, ([], {}), rpc_timeout=1)
+    finally:
+        failure.unlink(missing_ok=True)
 
 
 def test_restart_recovers_dead_worker(dynamic_coordinator, mocker) -> None:
