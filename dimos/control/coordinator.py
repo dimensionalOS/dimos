@@ -41,6 +41,7 @@ from dimos.control.components import (
     TaskName,
     split_joint_name,
 )
+from dimos.control.connection.connection_module import ConnectionStatus
 from dimos.control.connection_source import ConnectionSource
 from dimos.control.contract.convert import COMMAND_PORTS, STATE_PORTS
 from dimos.control.hardware_interface import (
@@ -78,6 +79,10 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 logger = setup_logger()
+
+# How long the coordinator waits, in seconds, for all connection modules
+# together to answer a call such as halt_robot or status.
+_CONNECTION_RPC_TIMEOUT_S = 1.0
 
 
 @dataclass
@@ -208,6 +213,17 @@ class ControlCoordinator(Module):
         self._command_ports: dict[str, dict[str, Out[Any]]] = {}
         # Subscriptions to the robots' reading ports, by "<robot>/<driver port>".
         self._reading_unsubs: dict[str, Callable[[], None]] = {}
+        # The name each robot's connection module serves its RPCs under, by
+        # robot. Guarded by _hardware_lock.
+        self._connection_modules: dict[str, str] = {}
+        # Set by set_estop: while set, no robot behind a connection module is
+        # sent anything.
+        self._estopped = False
+        # Set by set_estop while tasks are stopped, so a task added meanwhile
+        # is stopped too. Guarded by _task_lock.
+        self._tasks_estopped = False
+        # Held through each whole set_estop, so a stop and a clear never overlap.
+        self._estop_lock = threading.Lock()
 
         # Tick loop (created on start)
         self._tick_loop: TickLoop | None = None
@@ -368,6 +384,7 @@ class ControlCoordinator(Module):
                 coordinator also drives hardware adapters.
         """
         found: dict[str, ConnectionSource] = {}
+        modules_by_robot: dict[str, str] = {}
         for module in modules:
             if "describe_control" in module.rpcs:
                 described = module.describe_control()
@@ -377,13 +394,22 @@ class ControlCoordinator(Module):
                             f"two connection modules describe a robot called {description.source!r}"
                         )
                     found[description.source] = ConnectionSource(description, described.session_id)
-        # Each proxy received here opened its own RPC client.
+                    modules_by_robot[description.source] = module.remote_name
+        # Each proxy received here opened its own RPC client. Connection
+        # modules are called later by name, through this module's client.
         for module in modules:
             module.stop_rpc_client()
-        self._set_connections(found)
+        self._set_connections(found, modules_by_robot)
 
-    def _set_connections(self, found: dict[str, ConnectionSource]) -> None:
-        """Replace the robots driven through connection modules with ``found``."""
+    def _set_connections(
+        self, found: dict[str, ConnectionSource], modules_by_robot: dict[str, str]
+    ) -> None:
+        """Replace the robots driven through connection modules with ``found``.
+
+        Args:
+            found: Each robot's record, by robot name.
+            modules_by_robot: The name of the module that runs each robot.
+        """
         if found and self._hardware:
             raise ValueError(
                 "this coordinator drives hardware adapters; a blueprint uses adapters or "
@@ -416,6 +442,7 @@ class ControlCoordinator(Module):
             self._connections.clear()
             self._connections.update(found)
             self._command_ports = {source: outputs for source, (outputs, _) in ports.items()}
+            self._connection_modules = modules_by_robot
         if found:
             logger.info(f"Driving robots through connection modules: {sorted(found)}")
 
@@ -468,6 +495,8 @@ class ControlCoordinator(Module):
     def _publish_command(self, source: str, values: dict[str, float]) -> None:
         """Send one robot its command for this tick. Called by the tick loop,
         which holds ``_hardware_lock``."""
+        if self._estopped:
+            return
         connection = self._connections[source]
         ports = self._command_ports[source]
         for name, msg in connection.command_messages(values, time.time()):
@@ -638,6 +667,11 @@ class ControlCoordinator(Module):
             if task.name in self._tasks:
                 logger.warning(f"Task {task.name} already registered")
                 return False
+            if self._tasks_estopped:
+                # Added during an emergency stop: stopped like the rest.
+                handler = getattr(task, "set_estop", None)
+                if callable(handler):
+                    handler(True)
             if isinstance(task, JointTrajectoryTask):
                 if self._trajectory_task is not None:
                     raise ValueError("ControlCoordinator supports exactly one JointTrajectoryTask")
@@ -859,17 +893,129 @@ class ControlCoordinator(Module):
 
     @rpc
     def set_estop(self, estopped: bool) -> bool:
-        """Latch/clear E-STOP on every task exposing ``set_estop``, making them
-        inert so the tick loop stops commanding the hardware within one tick.
-        Synchronous RPC (not a stream) so E-STOP can't be dropped under load."""
-        if estopped:
+        """Emergency-stop everything this coordinator drives, or clear the stop.
+
+        Stopping:
+
+        - every task with a ``set_estop`` goes inert; a running joint
+          trajectory is cancelled;
+        - robots behind connection modules are sent nothing more, and each
+          connection module is asked to halt its robot. With no commands
+          coming, their deadmen halt them again within their timeout;
+        - hardware adapters keep the last value they were given.
+
+        Clearing makes the tasks live again (a cancelled trajectory is not
+        resumed) and sends commands again once each robot reports again,
+        holding each joint where that new reading has it.
+
+        A synchronous RPC, not a stream, so an E-STOP can't be dropped under
+        load. Stopping waits up to about a second for the halts to be confirmed.
+        Calls run one at a time, in order: a clear sent during a stop waits for
+        the stop's halts to finish.
+
+        Args:
+            estopped: True to stop, False to clear.
+
+        Returns:
+            False if a connection module did not confirm that its robot halted
+            (it is named in the log), otherwise True.
+        """
+        with self._estop_lock:
+            if not estopped:
+                self._set_tasks_estop(False)
+                with self._hardware_lock:
+                    for connection in self._connections.values():
+                        # Sends nothing until the robot reports again.
+                        connection.drop_holds()
+                    self._estopped = False
+                logger.warning("E-STOP cleared at coordinator")
+                return True
+
             logger.warning("E-STOP latched at coordinator")
+            self._estopped = True
+            # The tick loop sends commands holding this lock, so once it is
+            # taken, a tick already sending has finished and no other will send.
+            with self._hardware_lock:
+                modules = sorted(set(self._connection_modules.values()))
+            self._set_tasks_estop(True)
+            answers = self._call_connections("halt_robot")
+            halted = True
+            for module in modules:
+                if module not in answers:
+                    halted = False  # Already logged by _call_connections.
+                elif answers[module] is not True:
+                    halted = False
+                    logger.error(f"{module!r} could not halt its robot; see its status()")
+            return halted
+
+    def _set_tasks_estop(self, estopped: bool) -> None:
+        """Call ``set_estop(estopped)`` on every task that has it, and remember
+        it for tasks added later."""
         with self._task_lock:
+            self._tasks_estopped = estopped
             for task in self._tasks.values():
                 handler = getattr(task, "set_estop", None)
                 if callable(handler):
                     handler(estopped)
-        return True
+
+    @rpc
+    def get_connection_status(self) -> dict[str, ConnectionStatus | None]:
+        """How each robot's connection module is doing, by robot name.
+
+        Asks every connection module for its ``status`` and waits up to about
+        a second in total. A robot whose module did not answer gets ``None``.
+        Robots driven by hardware adapters are not listed.
+        """
+        answers = self._call_connections("status")
+        with self._hardware_lock:
+            modules_by_robot = dict(self._connection_modules)
+        return {robot: answers.get(module) for robot, module in modules_by_robot.items()}
+
+    def _call_connections(self, method: str) -> dict[str, Any]:
+        """Call the RPC ``method``, which takes no arguments, on every
+        connection module at once.
+
+        Each is called by its module name through this module's own RPC
+        client. Answers are awaited for up to ``_CONNECTION_RPC_TIMEOUT_S`` in
+        total; a module that does not answer in time, or raises, is logged by
+        name and left out.
+
+        Returns:
+            Each answering module's result, by module name.
+        """
+        with self._hardware_lock:
+            modules = sorted(set(self._connection_modules.values()))
+        answers: dict[str, Any] = {}
+        replied = {module: threading.Event() for module in modules}
+        cancels: list[Callable[[], Any]] = []
+        for module in modules:
+
+            def receive(value: Any, module: str = module) -> None:
+                answers[module] = value
+                replied[module].set()
+
+            try:
+                cancels.append(self.rpc.call(f"{module}/{method}", ([], {}), receive))
+            except Exception as error:
+                # Counts as a failed answer, so nobody waits for it.
+                receive(error)
+        deadline = time.monotonic() + _CONNECTION_RPC_TIMEOUT_S
+        for event in replied.values():
+            event.wait(max(0.0, deadline - time.monotonic()))
+        for cancel in cancels:
+            cancel()
+
+        results: dict[str, Any] = {}
+        for module in modules:
+            if not replied[module].is_set():
+                logger.error(
+                    f"{module!r} did not answer {method} within {_CONNECTION_RPC_TIMEOUT_S} s"
+                )
+            elif isinstance(answers[module], BaseException):
+                logger.error(f"{module!r} failed {method}: {answers[module]!r}")
+            else:
+                results[module] = answers[module]
+        return results
 
     @rpc
     def set_activated(self, engaged: bool) -> None:

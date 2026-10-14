@@ -151,6 +151,9 @@ class ConnectionModule(Module, ABC):
     the shortest ``deadman_timeout_s`` among the descriptions, ``halt`` is
     called once. The next accepted command starts it again.
 
+    Halting on request: the ``halt_robot`` RPC calls ``halt`` at once. The
+    coordinator calls it on an emergency stop.
+
     ``write`` and ``halt`` never run at the same time. Commands and the
     deadman share the module's event loop, so a ``write`` that hangs stops
     both: the deadman cannot fire and no later command is handled until it
@@ -235,7 +238,7 @@ class ConnectionModule(Module, ABC):
 
         Must be safe to call any number of times, including before any
         command. Called when commands stop arriving, after a failed ``write``,
-        and when the module stops.
+        when ``halt_robot`` is called, and when the module stops.
         """
 
     @rpc
@@ -296,6 +299,21 @@ class ConnectionModule(Module, ABC):
                 last_rejection=self._last_rejection,
                 last_error=self._last_error,
             )
+
+    @rpc
+    def halt_robot(self) -> bool:
+        """Stop the robot moving now, by calling the driver's ``halt``.
+
+        Waits for a ``write`` in progress to finish first. Does nothing before
+        the hardware is connected or once the module has stopped. Later
+        commands are still obeyed: whoever sends them must stop sending.
+
+        Returns:
+            True if ``halt`` ran and did not raise. False if it raised (the
+            error is in ``status``), or the hardware is not connected.
+        """
+        logger.warning(f"{self._label}: halt requested")
+        return self._halt()
 
     def publish_state(self, values: Mapping[str, float]) -> None:
         """Publish one set of readings on the output ports.
@@ -498,16 +516,19 @@ class ConnectionModule(Module, ABC):
         logger.warning(f"{self._label}: no command for {self._deadman_s} s, halting")
         self._halt()
 
-    def _halt(self) -> None:
+    def _halt(self) -> bool:
+        """Call ``halt`` if connected. True if it ran and did not raise."""
         with self._hardware_lock:
-            if self._connected:
-                self._call_halt()
+            return self._connected and self._call_halt()
 
-    def _call_halt(self) -> None:
+    def _call_halt(self) -> bool:
+        """Call ``halt``. True if it did not raise; a failure goes to ``status``."""
         try:
             self.halt()
         except Exception as error:
             self._report(f"halt failed: {type(error).__name__}: {error}")
+            return False
+        return True
 
     def _state_loop(self) -> None:
         period = 1.0 / max(d.state_rate_hz for d in self._descriptions.values())
