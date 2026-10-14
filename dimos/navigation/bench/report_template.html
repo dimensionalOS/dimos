@@ -47,7 +47,8 @@ td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
 dl { display: grid; grid-template-columns: max-content auto; gap: 0.2em 1em; }
 dt { font-weight: bold; }
 code { font-size: 12px; }
-.copy { font-size: 12px; min-width: 5em; padding: 0 0.5em; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 3px; cursor: pointer; }
+th.cp, td.cp { padding-left: 0; padding-right: 0; }
+.copy { font: inherit; min-width: 2.2em; padding: 0 0.2em; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 3px; cursor: pointer; }
 .verdict { font-size: 18px; margin: 1em 0; }
 .row { display: flex; flex-wrap: wrap; gap: 2em; align-items: flex-start; }
 </style>
@@ -82,10 +83,10 @@ addEventListener("DOMContentLoaded", () => {
 addEventListener("click", event => {
   const button = event.target.closest("button.copy");
   if (!button) return;
-  const code = button.parentElement.querySelector("code");
+  const code = button.closest("tr").querySelector("code");
   const done = () => {
-    button.textContent = "copied";
-    setTimeout(() => { button.textContent = "copy"; }, 1500);
+    button.textContent = "✓";
+    setTimeout(() => { button.textContent = "cp"; }, 1500);
   };
   const select = () => {
     const range = document.createRange();
@@ -218,10 +219,10 @@ addEventListener("click", event => {
 {% endif %}
 <details><summary>Episodes ({{ report.rows | length }})</summary>
 <div class="scroll"><table>
-<thead><tr><th>case</th><th{% if variable %} class="n"{% endif %}>{{ heading }}</th><th>outcome</th><th>signature</th><th class="n">SPL</th><th class="n">time s</th><th class="n">bottleneck m</th><th class="n">final error m</th><th class="n">collisions</th>{% if controlled %}<th class="n">nearest to feature m</th>{% endif %}<th>terminal</th><th>replay</th></tr></thead>
+<thead><tr><th class="cp"></th><th>case</th><th{% if variable %} class="n"{% endif %}>{{ heading }}</th><th>outcome</th><th>signature</th><th class="n">SPL</th><th class="n">time s</th><th class="n">bottleneck m</th><th class="n">final error m</th><th class="n">collisions</th>{% if controlled %}<th class="n">nearest to feature m</th>{% endif %}<th>terminal</th><th>replay</th></tr></thead>
 <tbody>
 {% for row in report.rows %}
-<tr><td>{{ row.case.id }}</td>{{ level_cell(row.case, unit) }}<td>{{ row.outcome }}</td><td>{{ row.signatures | join(", ") }}</td>
+<tr><td class="cp"><button class="copy" title="Copy the replay command">cp</button></td><td>{{ row.case.id }}</td>{{ level_cell(row.case, unit) }}<td>{{ row.outcome }}</td><td>{{ row.signatures | join(", ") }}</td>
 <td class="n">{{ "%.2f" | format(row.spl) if row.spl is not none }}</td>
 <td class="n">{{ "%.0f" | format(row.arrived_s) if row.arrived_s is not none }}</td>
 <td class="n">{{ "%.2f" | format(row.case.difficulty.min_clearance) }}</td>
@@ -229,7 +230,7 @@ addEventListener("click", event => {
 <td class="n">{{ row.collisions if row.collisions is not none }}</td>
 {% if controlled %}<td class="n">{{ "%.2f" | format(row.feature_m) if row.feature_m is not none }}</td>{% endif %}
 <td>{{ row.terminal or "" }}</td>
-<td><button class="copy" title="Copy the replay command">copy</button> <code>dimos nav-bench replay {{ row.episode | string | quote }}</code></td></tr>
+<td><code>dimos nav-bench replay {{ row.episode | string | quote }}</code></td></tr>
 {% endfor %}
 </tbody>
 </table></div>
@@ -237,11 +238,11 @@ addEventListener("click", event => {
 {% if report.mismatches %}
 <details><summary>Driver and recording disagree ({{ report.mismatches | length }})</summary>
 <div class="scroll"><table>
-<thead><tr><th>case</th><th{% if variable %} class="n"{% endif %}>{{ heading }}</th><th>outcome</th><th>driver's verdict</th><th>replay</th></tr></thead>
+<thead><tr><th class="cp"></th><th>case</th><th{% if variable %} class="n"{% endif %}>{{ heading }}</th><th>outcome</th><th>driver's verdict</th><th>replay</th></tr></thead>
 <tbody>
 {% for row in report.mismatches %}
-<tr><td>{{ row.case.id }}</td>{{ level_cell(row.case, unit) }}<td>{{ row.outcome }}</td><td>{{ row.terminal or "" }}</td>
-<td><button class="copy" title="Copy the replay command">copy</button> <code>dimos nav-bench replay {{ row.episode | string | quote }}</code></td></tr>
+<tr><td class="cp"><button class="copy" title="Copy the replay command">cp</button></td><td>{{ row.case.id }}</td>{{ level_cell(row.case, unit) }}<td>{{ row.outcome }}</td><td>{{ row.terminal or "" }}</td>
+<td><code>dimos nav-bench replay {{ row.episode | string | quote }}</code></td></tr>
 {% endfor %}
 </tbody>
 </table></div>
@@ -250,11 +251,11 @@ addEventListener("click", event => {
 {% if report.invalid %}
 <details><summary>Invalid episodes ({{ report.invalid | length }})</summary>
 <div class="scroll"><table>
-<thead><tr><th>case</th><th{% if variable %} class="n"{% endif %}>{{ heading }}</th><th>error</th><th>terminal</th><th>replay</th></tr></thead>
+<thead><tr><th class="cp"></th><th>case</th><th{% if variable %} class="n"{% endif %}>{{ heading }}</th><th>error</th><th>terminal</th><th>replay</th></tr></thead>
 <tbody>
 {% for row in report.invalid %}
-<tr><td>{{ row.case.id }}</td>{{ level_cell(row.case, unit) }}<td>{{ row.error }}</td><td>{{ row.terminal or "" }}</td>
-<td><button class="copy" title="Copy the replay command">copy</button> <code>dimos nav-bench replay {{ row.episode | string | quote }}</code></td></tr>
+<tr><td class="cp"><button class="copy" title="Copy the replay command">cp</button></td><td>{{ row.case.id }}</td>{{ level_cell(row.case, unit) }}<td>{{ row.error }}</td><td>{{ row.terminal or "" }}</td>
+<td><code>dimos nav-bench replay {{ row.episode | string | quote }}</code></td></tr>
 {% endfor %}
 </tbody>
 </table></div>
