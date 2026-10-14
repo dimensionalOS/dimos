@@ -107,10 +107,26 @@ class ModuleC(Module):
 
 class RestartNativeModule(NativeModule):
     @rpc
+    def get_pid(self) -> int:
+        return os.getpid()
+
+    @rpc
+    def register_probe(self, name: str) -> None:
+        self.rpc.serve_rpc(self.get_pid, name)
+
+    @rpc
     def stop(self) -> None:
         with Path(self.config.extra_env["STOP_LOG"]).open("a") as log:
             log.write("stop\n")
         super().stop()
+
+    def _close_module(self) -> None:
+        if path := self.config.extra_env.get("STOP_BLOCK"):
+            block = Path(path)
+            if block.exists():
+                block.with_suffix(".entered").touch()
+                wait_until(lambda: not block.exists(), timeout=30.0)
+        super()._close_module()
 
 
 class RestartFailureModule(Module):
@@ -1291,8 +1307,8 @@ def test_shutdown_unblocks_loop(monkeypatch: pytest.MonkeyPatch) -> None:
     assert stopped.is_set()
 
 
-def test_restart_waits_for_native_teardown(dynamic_coordinator, tmp_path, mocker) -> None:
-    """A shared worker must finish one stop before reusing the RPC name."""
+@pytest.fixture
+def native_test_process(tmp_path: Path) -> Path:
     script = tmp_path / "child.py"
     script.write_text(
         "import os, signal, sys\n"
@@ -1308,6 +1324,13 @@ def test_restart_waits_for_native_teardown(dynamic_coordinator, tmp_path, mocker
         "pid_file.replace(root / 'pid')\n"
         "while True: signal.pause()\n"
     )
+    return script
+
+
+def test_restart_waits_for_native_teardown(
+    dynamic_coordinator, tmp_path, mocker, native_test_process
+) -> None:
+    """A shared worker must finish one stop before reusing the RPC name."""
     block = tmp_path / "block"
     block.touch()
     stop_log = tmp_path / "stops"
@@ -1316,7 +1339,7 @@ def test_restart_waits_for_native_teardown(dynamic_coordinator, tmp_path, mocker
             autoconnect(
                 RestartNativeModule.blueprint(
                     executable=sys.executable,
-                    extra_args=[str(script), str(tmp_path)],
+                    extra_args=[str(native_test_process), str(tmp_path)],
                     extra_env={"STOP_LOG": str(stop_log)},
                     shutdown_timeout=5.0,
                 ),
@@ -1356,6 +1379,68 @@ def test_restart_waits_for_native_teardown(dynamic_coordinator, tmp_path, mocker
         assert stop_log.read_text().splitlines() == ["stop"]
         close_client.assert_called_once_with()
         assert dynamic_coordinator.get_instance(ModuleA).get_name() == "A, Module A"
+    finally:
+        block.unlink(missing_ok=True)
+
+
+def test_restart_waits_for_native_watchdog_cleanup(
+    dynamic_coordinator, tmp_path, native_test_process
+) -> None:
+    block = tmp_path / "cleanup.block"
+    block.touch()
+    stop_log = tmp_path / "stops"
+    try:
+        dynamic_coordinator.load_blueprint(
+            autoconnect(
+                RestartNativeModule.blueprint(
+                    executable=sys.executable,
+                    extra_args=[str(native_test_process), str(tmp_path)],
+                    extra_env={"STOP_LOG": str(stop_log), "STOP_BLOCK": str(block)},
+                    shutdown_timeout=5.0,
+                ),
+                ModuleA.blueprint(),
+            )
+        )
+        manager = dynamic_coordinator._managers["python"]
+        assert len(manager.workers) == 1
+        assert manager.workers[0].module_count == 2
+        proxy = dynamic_coordinator.get_instance(RestartNativeModule)
+        sibling = dynamic_coordinator.get_instance(ModuleA)
+        worker_pid = proxy.get_pid()
+        probe = f"{proxy.remote_name}/old-{worker_pid}"
+        proxy.register_probe(probe)
+        wait_until(lambda: (tmp_path / "pid").exists(), timeout=5.0)
+        old_pid = int((tmp_path / "pid").read_text())
+        os.kill(old_pid, signal.SIGKILL)
+        wait_until(lambda: block.with_suffix(".entered").exists(), timeout=5.0)
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            restarted = pool.submit(
+                dynamic_coordinator.restart_module, RestartNativeModule, reload_source=False
+            )
+            try:
+                wait_until(lambda: len(stop_log.read_text().splitlines()) == 2, timeout=5.0)
+                result, unsubscribe = sibling.rpc.call_sync(
+                    f"{proxy.remote_name}/stop", ([], {}), rpc_timeout=2
+                )
+                unsubscribe()
+                assert result is None
+                with pytest.raises(TimeoutError):
+                    restarted.result(timeout=1.0)
+                result, unsubscribe = sibling.rpc.call_sync(probe, ([], {}), rpc_timeout=2)
+                unsubscribe()
+                assert result == worker_pid
+            finally:
+                block.unlink(missing_ok=True)
+            replacement = restarted.result(timeout=10.0)
+
+        assert replacement is not proxy
+        wait_until(lambda: int((tmp_path / "pid").read_text()) != old_pid, timeout=5.0)
+        os.kill(int((tmp_path / "pid").read_text()), 0)
+        assert stop_log.read_text().splitlines() == ["stop", "stop", "stop"]
+        assert sibling.get_name() == "A, Module A"
+        with pytest.raises(TimeoutError):
+            sibling.rpc.call_sync(probe, ([], {}), rpc_timeout=1)
     finally:
         block.unlink(missing_ok=True)
 

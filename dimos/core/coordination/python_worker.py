@@ -448,7 +448,7 @@ def _handle_request(request: Any, state: _WorkerState) -> WorkerResponse:
         case UndeployModuleRequest(module_id=module_id):
             stopping_instance = state.instances.get(module_id)
             if stopping_instance is not None:
-                stopping_instance.stop()
+                stopping_instance.stop_and_wait()
                 del state.instances[module_id]
             return WorkerResponse(result=True)
 

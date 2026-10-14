@@ -217,6 +217,10 @@ class ModuleBase(Configurable, CompositeResource):
         super().stop()
         self._close_module()
 
+    def stop_and_wait(self) -> None:
+        """Stop from the worker thread, waiting for asynchronous teardown to finish."""
+        self.stop()
+
     def _close_module(self) -> None:
         with self._module_closed_lock:
             if self._module_closed:

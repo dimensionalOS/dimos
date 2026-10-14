@@ -160,6 +160,20 @@ def test_process_crash_triggers_stop() -> None:
             pass
 
 
+def test_stop_and_wait_preserves_cleanup_failure(mocker) -> None:
+    module = StubNativeModule()
+    close = mocker.patch.object(module, "_close_module", side_effect=RuntimeError("cleanup failed"))
+    try:
+        with pytest.raises(RuntimeError, match="cleanup failed"):
+            module.stop()
+        with pytest.raises(RuntimeError, match="cleanup failed"):
+            module.stop_and_wait()
+        close.assert_called_once_with()
+    finally:
+        mocker.stop(close)
+        Module.stop(module)
+
+
 def test_manual(dimos_cluster: ModuleCoordinator, args_file: str) -> None:
     native_module = dimos_cluster.deploy(
         StubNativeModule,
