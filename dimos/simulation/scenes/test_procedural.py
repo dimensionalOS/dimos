@@ -28,6 +28,9 @@ from dimos.simulation.scenes.procedural import (
     CORRIDOR_WIDTH,
     DOOR_HEIGHT,
     DOOR_WIDTH,
+    HIDDEN_CLUTTER_ASTRIDE,
+    HIDDEN_CORRIDOR_WIDTH,
+    HIDDEN_ROOM_DEPTH,
     OVERHANG_LEG,
     OVERHANG_SIZE,
     SCATTER_AREA,
@@ -57,6 +60,8 @@ from dimos.simulation.scenes.procedural import (
     corridor_turn,
     doorway,
     generate,
+    hidden_clutter,
+    hidden_object,
     office,
     overhang,
     room,
@@ -309,6 +314,67 @@ def test_small_object_length_is_drawn_unless_given_and_zero_removes_it() -> None
     bare = small_object(3, object_length=0.0)
     assert not [b for b in bare.boxes if b.kind == "clutter"]
     assert bare.params == small_object(3).params
+
+
+def test_hidden_object_is_deterministic_and_pinned() -> None:
+    assert hidden_object(3).digest() == hidden_object(3).digest() == "d536559f053535e1"
+    assert hidden_object(3).digest() != hidden_object(4).digest()
+    assert hidden_object(3, object_length=0.0).params == hidden_object(3).params
+
+
+def test_hidden_object_lies_in_the_corridor_out_of_sight_of_the_first_room() -> None:
+    for seed in range(1, 21):
+        scene = hidden_object(seed, object_length=0.5)
+        params = scene.params
+        (box,) = [b for b in scene.boxes if b.kind == "clutter"]
+        spot = np.array([params["object_x"], params["object_y"]])
+        assert box.center[:2] == pytest.approx(spot) and 2 * box.half[0] == pytest.approx(0.5)
+        walls = [b for b in scene.boxes if b.kind == "wall"]
+        assert min(wall.gap(spot) for wall in walls) >= HIDDEN_CORRIDOR_WIDTH / 2 - 1e-6
+        assert _reached(scene, cell=0.05, inflate=0.16)[0][_far_room(scene, cell=0.05)], seed
+        for x in np.arange(0.5, params["corridor_x"], 0.5):
+            for y in np.arange(0.5, params["length"], 0.5):
+                line = np.linspace((x, y), spot, 200)
+                assert min(float(wall.gap(line).min()) for wall in walls) == 0.0, (seed, x, y)
+
+
+def test_hidden_clutter_is_deterministic_and_pinned() -> None:
+    assert hidden_clutter(3).digest() == hidden_clutter(3).digest() == "86f98684b5d2afd0"
+    assert hidden_clutter(3).digest() != hidden_clutter(4).digest()
+
+
+def test_hidden_clutter_lies_across_the_way_to_the_goal_out_of_sight_of_the_first_room() -> None:
+    for seed in range(1, 11):
+        full = hidden_clutter(seed, clutter_count=6)
+        params = full.params
+        boxes = [box for box in full.boxes if box.kind == "clutter"]
+        walls = [box for box in full.boxes if box.kind == "wall"]
+        assert len(boxes) == 6 and boxes == full.boxes[-6:]
+        for count in (0, 3):
+            fewer = hidden_clutter(seed, clutter_count=count)
+            assert fewer.params == params
+            assert fewer.boxes == full.boxes[: len(full.boxes) - 6 + count]
+        assert HIDDEN_ROOM_DEPTH[0] <= params["room_depth"] <= HIDDEN_ROOM_DEPTH[1]
+        c, s = math.cos(params["room_yaw"]), math.sin(params["room_yaw"])
+        ahead = WALL_THICKNESS + 0.5
+        door = np.array([params["room_x"] + ahead * c, params["room_y"] + ahead * s])
+        goal = np.array([params["goal_x"], params["goal_y"]])
+        way = (goal - door) / np.linalg.norm(goal - door)
+        assert np.linalg.norm(goal - door) >= HIDDEN_ROOM_DEPTH[0] - 2.0
+        for box in boxes:
+            assert box.yaw == params["room_yaw"]
+            offset = np.array(box.center[:2]) - door
+            assert abs(way[0] * offset[1] - way[1] * offset[0]) <= HIDDEN_CLUTTER_ASTRIDE + 1e-9
+            assert 0.0 < float(offset @ way) < np.linalg.norm(goal - door)
+            assert box.gap(goal) >= START_CLEARANCE - 1e-9
+        assert _reached(full, cell=0.05, inflate=0.16)[0][
+            int(goal[0] / 0.05), int(goal[1] / 0.05)
+        ], seed
+        for x in np.arange(0.5, params["corridor_x"], 1.0):
+            for y in np.arange(0.5, params["length"], 1.0):
+                for box in boxes:
+                    line = np.linspace((x, y), box.center[:2], 200)
+                    assert min(float(wall.gap(line).min()) for wall in walls) == 0.0, (seed, x, y)
 
 
 def test_overhang_is_deterministic_and_pinned() -> None:

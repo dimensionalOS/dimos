@@ -31,6 +31,8 @@ from dimos.navigation.bench.suite import (
     CORRIDOR_TURN,
     DOORWAY,
     GOAL_CLEARANCE,
+    HIDDEN_CLUTTER,
+    HIDDEN_OBJECT,
     LEG_WIDTH,
     MINED,
     NARROW_DOOR_M,
@@ -236,6 +238,43 @@ def test_small_object_probe_aims_the_direct_line_over_the_object() -> None:
     for seed in probe.seeds:
         assert len({(c.start, c.goal, c.feature) for c in manifest.cases if c.seed == seed}) == 1
     _one_start_per_seed(manifest, "object_x")
+    manifest.check_drift()
+
+
+def test_hidden_object_probe_marks_the_object_on_the_way_through_the_corridor() -> None:
+    probe = replace(HIDDEN_OBJECT, seeds=(1, 2))
+    manifest = freeze_probe(probe)
+    assert len(manifest.cases) == 2 * (len(probe.levels) + 1)
+    assert probe.levels == SMALL_OBJECT.levels
+    for case in manifest.cases:
+        assert case.level is not None and case.params == {"object_length": case.level.value}
+        scene = case.scene()
+        objects = [box for box in scene.boxes if box.kind == "clutter"]
+        assert len(objects) == (0 if case.level.control else 1)
+        assert case.feature == (scene.params["object_x"], scene.params["object_y"])
+        assert case.start[0] <= scene.params["corridor_x"] - APPROACH_M
+        assert case.route_length >= scene.params["corridor_length"]
+    for seed in probe.seeds:
+        assert len({(c.start, c.goal, c.feature) for c in manifest.cases if c.seed == seed}) == 1
+    manifest.check_drift()
+
+
+def test_hidden_clutter_probe_only_adds_boxes_in_the_far_room() -> None:
+    probe = replace(HIDDEN_CLUTTER, seeds=(1, 2))
+    manifest = freeze_probe(probe)
+    assert len({c.id for c in manifest.cases}) == len(manifest.cases) == 2 * len(probe.levels)
+    assert probe.levels[0] == 0.0 and probe.control is None
+    for seed in probe.seeds:
+        cases = [c for c in manifest.cases if c.seed == seed]
+        assert len({(c.start, c.goal) for c in cases}) == 1
+        boxes = [[b for b in c.scene().boxes if b.kind == "clutter"] for c in cases]
+        assert [len(b) for b in boxes] == list(probe.levels)
+        assert all(few == many[: len(few)] for few, many in itertools.pairwise(boxes))
+    for case in manifest.cases:
+        params = case.scene().params
+        assert case.goal == (params["goal_x"], params["goal_y"], params["z0"])
+        assert case.start[0] <= params["corridor_x"] - APPROACH_M
+        assert case.route_length >= params["corridor_length"] and case.feature is None
     manifest.check_drift()
 
 

@@ -698,6 +698,14 @@ def past_the_winding_corridor(gt: GroundTruth, width: float, rng: np.random.Gene
     return Placed(start, (x, y, gt.scene.start[2]))
 
 
+def past_the_hidden_object(gt: GroundTruth, length: float, rng: np.random.Generator) -> Placed:
+    """Through the winding corridor to the far room, with the object on the way as the feature."""
+    placed = past_the_winding_corridor(gt, length, rng)
+    return Placed(
+        placed.start, placed.goal, (gt.scene.params["object_x"], gt.scene.params["object_y"])
+    )
+
+
 CORRIDOR = Probe(
     "corridor_width",
     "corridor",
@@ -730,6 +738,32 @@ CLUTTER = Probe(
     across_the_boxes,
     scene_param="clutter_count",
 )
+
+
+def into_the_hidden_clutter(gt: GroundTruth, count: float, rng: np.random.Generator) -> Placed:
+    """A drawn start well short of the corridor, and the goal the far room keeps clear."""
+    params = gt.scene.params
+    start = _start_before(gt.scene, params["corridor_x"] - APPROACH_M, rng)
+    return Placed(start, (params["goal_x"], params["goal_y"], gt.scene.start[2]))
+
+
+HIDDEN_CLUTTER = Probe(
+    "hidden_clutter",
+    "hidden_clutter",
+    "clutter_count",
+    (0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0),
+    into_the_hidden_clutter,
+    scene_param="clutter_count",
+)
+HIDDEN_OBJECT = Probe(
+    "hidden_object",
+    "hidden_object",
+    "object_length",
+    SMALL_OBJECT.levels,
+    past_the_hidden_object,
+    scene_param="object_length",
+    control=0.0,
+)
 PROBES = {
     probe.name: probe
     for probe in (
@@ -742,6 +776,8 @@ PROBES = {
         CORRIDOR_TURN,
         CLUTTER,
         SMALL_OBJECT,
+        HIDDEN_OBJECT,
+        HIDDEN_CLUTTER,
     )
 }
 
