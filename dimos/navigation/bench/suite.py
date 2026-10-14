@@ -495,7 +495,7 @@ class Probe:
     place: Placement
     scene_param: str | None = None
     control: float | None = None
-    seeds: tuple[int, ...] = tuple(range(1, 6))
+    seeds: tuple[int, ...] = tuple(range(1, 11))
 
 
 def _start_before(scene: Scene, x: float, rng: np.random.Generator) -> Pose:
