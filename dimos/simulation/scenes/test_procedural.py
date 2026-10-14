@@ -15,9 +15,11 @@
 from __future__ import annotations
 
 from collections import deque
+import itertools
 import math
 
 import numpy as np
+from numpy.typing import NDArray
 import pytest
 
 from dimos.simulation.scenes.procedural import (
@@ -31,6 +33,7 @@ from dimos.simulation.scenes.procedural import (
     SCATTER_AREA,
     SCATTER_COUNT,
     SCATTER_HEIGHT,
+    SCATTER_SIDE,
     SLAB_THICKNESS,
     START_CLEARANCE,
     TABLE_HEIGHT,
@@ -39,7 +42,13 @@ from dimos.simulation.scenes.procedural import (
     TABLE_TOP_THICKNESS,
     WALL_HEIGHT,
     WALL_THICKNESS,
+    WINDING_LENGTH,
+    WINDING_SEGMENT,
+    WINDING_SPAN,
+    WINDING_TURN,
+    Box,
     Scene,
+    _winding,
     block,
     corridor,
     corridor_turn,
@@ -80,19 +89,23 @@ def test_office_keeps_clutter_and_tables_clear_of_the_start() -> None:
             assert math.hypot(dx, dy) >= START_CLEARANCE - 1e-9, seed
 
 
-def _reachable_fraction(scene: Scene, cell: float = 0.1, inflate: float = 0.17) -> float:
-    """Free floor reachable from the start on a grid at body height, grown by the body's half width."""
+def _reached(
+    scene: Scene, cell: float = 0.1, inflate: float = 0.17
+) -> tuple[NDArray[np.bool_], NDArray[np.bool_]]:
+    """The cells reached from the start, and the cells blocked, on a grid at body height.
+
+    Boxes are grown by the body's half width.
+    """
     width, length, z0 = scene.params["width"], scene.params["length"], scene.params["z0"]
     nx, ny = int(width / cell), int(length / cell)
     xs, ys = (np.arange(nx) + 0.5) * cell, (np.arange(ny) + 0.5) * cell
+    centers = np.stack(np.meshgrid(xs, ys, indexing="ij"), axis=-1)
     blocked = np.zeros((nx, ny), dtype=bool)
     for box in scene.boxes:
         low, high = box.center[2] - box.half[2], box.center[2] + box.half[2]
         if box.kind == "floor" or high < z0 + 0.02 or low > z0 + 0.45:
             continue
-        ix = np.abs(xs - box.center[0]) < box.half[0] + inflate
-        iy = np.abs(ys - box.center[1]) < box.half[1] + inflate
-        blocked[np.ix_(ix, iy)] = True
+        blocked |= box.gap(centers) < inflate
     start = (int(scene.start[0] / cell), int(scene.start[1] / cell))
     seen = np.zeros_like(blocked)
     seen[start] = True
@@ -103,6 +116,12 @@ def _reachable_fraction(scene: Scene, cell: float = 0.1, inflate: float = 0.17) 
             if 0 <= nx_ < nx and 0 <= ny_ < ny and not blocked[nx_, ny_] and not seen[nx_, ny_]:
                 seen[nx_, ny_] = True
                 queue.append((nx_, ny_))
+    return seen, blocked
+
+
+def _reachable_fraction(scene: Scene, cell: float = 0.1, inflate: float = 0.17) -> float:
+    """Free floor reachable from the start on a grid at body height, grown by the body's half width."""
+    seen, blocked = _reached(scene, cell, inflate)
     return float(seen.sum() / (~blocked).sum())
 
 
@@ -307,7 +326,7 @@ def _gap(scene: Scene, x: float, y: float, axis: int) -> tuple[float, float]:
 def test_corridor_is_deterministic_and_pinned() -> None:
     assert corridor(3).digest() == corridor(3).digest() == "f70db16e317a35aa"
     assert corridor(3).digest() != corridor(4).digest()
-    assert corridor_turn(3).digest() == corridor_turn(3).digest() == "0fc849a623765780"
+    assert corridor_turn(3).digest() == corridor_turn(3).digest() == "f25fbdad34ae379a"
     assert corridor_turn(3).digest() != corridor_turn(4).digest()
 
 
@@ -331,42 +350,85 @@ def test_corridor_joins_two_empty_rooms_between_walls_the_given_width_apart() ->
         assert hi[:2] == pytest.approx([width + WALL_THICKNESS, length + WALL_THICKNESS])
 
 
-def test_corridor_turn_bends_once_between_walls_the_given_width_apart() -> None:
+def _far_room(scene: Scene, cell: float = 0.1) -> tuple[int, int]:
+    """The grid cell at the middle of a winding corridor's far room."""
+    params = scene.params
+    ahead = WALL_THICKNESS + params["room_depth"] / 2
+    across = (params["room_left"] - params["room_right"]) / 2
+    c, s = math.cos(params["room_yaw"]), math.sin(params["room_yaw"])
+    x, y = params["room_x"] + ahead * c - across * s, params["room_y"] + ahead * s + across * c
+    return int(x / cell), int(y / cell)
+
+
+def test_corridor_turn_winds_a_drawn_number_of_turns_as_the_only_way_between_the_rooms() -> None:
+    turns = set()
     for seed in range(1, 21):
         scene = corridor_turn(seed, corridor_width=0.6)
-        width, length = scene.params["width"], scene.params["length"]
-        x, y, turn = (scene.params[k] for k in ("corridor_x", "corridor_y", "turn_x"))
-        room_x, room_y = scene.params["room_x"], scene.params["room_y"]
-        assert sorted(box.kind for box in scene.boxes) == ["floor", *["wall"] * 10]
-        first, second = turn - x, room_y - y
-        assert CORRIDOR_LENGTH[0] <= first + second <= CORRIDOR_LENGTH[1]
-        assert 0.45 <= first / (first + second) <= 0.55
-        assert x + 0.5 < room_x == pytest.approx(turn - 1.0)
-        assert width - room_x >= 4.0 and length - room_y >= 4.0
-        assert _gap(scene, (x + turn - 0.3) / 2, y, 1) == pytest.approx((y - 0.3, y + 0.3))
-        assert _gap(scene, turn, (y + 0.3 + room_y) / 2, 0) == pytest.approx(
-            (turn - 0.3, turn + 0.3)
+        params = scene.params
+        x, y, z0 = params["corridor_x"], params["corridor_y"], params["z0"]
+        turns.add(params["turns"])
+        assert WINDING_LENGTH[0] <= params["corridor_length"] <= WINDING_LENGTH[1] + 1e-9
+        assert 1 <= params["turns"] <= params["corridor_length"] / WINDING_SEGMENT[0] - 1
+        assert params["room_depth"] >= 4.0 and params["room_left"] + params["room_right"] >= 4.0
+        assert min(params["room_left"], params["room_right"]) >= 1.0
+        assert params["length"] <= WINDING_SPAN + 1e-9
+        lo, hi = scene.bounds()
+        assert lo[:2] == pytest.approx([-WALL_THICKNESS] * 2)
+        assert hi[:2] == pytest.approx(
+            [params["width"] + WALL_THICKNESS, params["length"] + WALL_THICKNESS]
         )
-        assert _gap(scene, turn, y, 0) == pytest.approx((0.0, turn + 0.3))
-        assert _gap(scene, turn, y, 1) == pytest.approx((y - 0.3, length))
-        assert _gap(scene, room_x + 0.01, room_y + 0.01, 0) == pytest.approx((room_x, width))
-        assert _gap(scene, x - 0.01, y, 1) == pytest.approx((0.0, length))
-        assert _reachable_fraction(scene) == 1.0, seed
+        room = _far_room(scene)
+        assert _reached(scene, inflate=0.2)[0][room], seed
+        assert not _reached(scene, inflate=0.33)[0][room], seed
+        assert corridor_turn(seed, corridor_width=0.9).params == params
+        assert _reached(corridor_turn(seed, corridor_width=0.9), inflate=0.33)[0][room], seed
+        scene.add((x, y - 0.3, z0), (x + 0.1, y + 0.3, z0 + 1.0), "wall")
+        assert not _reached(scene, inflate=0.2)[0][room], seed
+    assert len(turns) >= 3
+
+
+def test_winding_corridors_turn_both_ways_by_drawn_angles_in_runs_no_shorter_than_the_least() -> (
+    None
+):
+    turns = []
+    for seed in range(1, 21):
+        points, heading = _winding(np.random.default_rng(seed))
+        steps = [(x1 - x0, y1 - y0) for (x0, y0), (x1, y1) in itertools.pairwise(points)]
+        assert min(math.hypot(*step) for step in steps) >= WINDING_SEGMENT[0] - 1e-9
+        headings = [math.atan2(dy, dx) for dx, dy in steps]
+        assert headings[0] == 0.0
+        bends = [math.remainder(b - a, math.tau) for a, b in itertools.pairwise(headings)]
+        assert math.remainder(sum(bends) - heading, math.tau) == pytest.approx(0.0, abs=1e-9)
+        turns += bends
+    assert all(WINDING_TURN[0] - 1e-9 <= abs(turn) <= WINDING_TURN[1] + 1e-9 for turn in turns)
+    assert min(turns) < 0 < max(turns)
+    assert max(map(abs, turns)) - min(map(abs, turns)) > math.radians(30)
 
 
 def test_corridor_width_is_drawn_unless_given() -> None:
-    for family in (corridor, corridor_turn):
-        drawn, narrow = family(3), family(3, corridor_width=0.5)
-        x, y = drawn.params["corridor_x"] + 0.01, drawn.params["corridor_y"]
-        low, high = _gap(drawn, x, y, 1)
-        assert CORRIDOR_WIDTH[0] <= high - low <= CORRIDOR_WIDTH[1]
-        assert (low + high) / 2 == pytest.approx(y)
-        assert _gap(narrow, x, y, 1) == pytest.approx((y - 0.25, y + 0.25))
-        assert narrow.params == drawn.params
+    drawn, narrow = corridor(3), corridor(3, corridor_width=0.5)
+    x, y = drawn.params["corridor_x"] + 0.01, drawn.params["corridor_y"]
+    low, high = _gap(drawn, x, y, 1)
+    assert CORRIDOR_WIDTH[0] <= high - low <= CORRIDOR_WIDTH[1]
+    assert (low + high) / 2 == pytest.approx(y)
+    assert _gap(narrow, x, y, 1) == pytest.approx((y - 0.25, y + 0.25))
+    assert narrow.params == drawn.params
+    assert corridor_turn(3).params == corridor_turn(3, corridor_width=0.5).params
+
+
+def test_a_turned_box_measures_gaps_and_extents_in_its_own_frame() -> None:
+    box = Box((1.0, 2.0, 0.5), (2.0, 0.5, 0.5), "wall", math.pi / 2)
+    assert box.reach() == pytest.approx((0.5, 2.0, 0.5))
+    points = np.array([[1.0, 2.0], [1.0, 4.5], [2.5, 2.0], [1.4, 3.9]])
+    assert box.gap(points) == pytest.approx([0.0, 0.5, 1.0, 0.0])
+    scene = Scene("turned", boxes=[box])
+    lo, hi = scene.bounds()
+    assert lo == pytest.approx([0.5, 0.0, 0.0]) and hi == pytest.approx([1.5, 4.0, 1.0])
+    assert scene.digest() != Scene("flat", boxes=[Box(box.center, box.half, "wall")]).digest()
 
 
 def test_scattered_is_deterministic_and_pinned() -> None:
-    assert scattered(3).digest() == scattered(3).digest() == "15a4a9eddbae5ef3"
+    assert scattered(3).digest() == scattered(3).digest() == "01f4d93f40f051db"
     assert scattered(3).digest() != scattered(4).digest()
 
 
@@ -380,18 +442,25 @@ def test_scattered_stands_the_given_count_of_boxes_clear_of_the_start_and_goal()
         assert len(boxes) == 80 and boxes == scene.boxes[5:]
         assert 8 <= width <= 10 and width * length == pytest.approx(SCATTER_AREA)
         assert 1.5 <= width - goal[0] <= 2.5 and 1.5 <= goal[1] <= length - 1.5
+        assert len({box.half for box in boxes}) == 80
         for box in boxes:
-            assert box.half == pytest.approx((BLOCK_SIZE / 2, BLOCK_SIZE / 2, SCATTER_HEIGHT / 2))
+            assert all(SCATTER_SIDE[0] <= 2 * h <= SCATTER_SIDE[1] for h in box.half[:2])
+            assert SCATTER_HEIGHT[0] <= 2 * box.half[2] <= SCATTER_HEIGHT[1]
             assert box.center[2] - box.half[2] == pytest.approx(z0)
             assert box.half[0] <= box.center[0] <= width - box.half[0]
             assert box.half[1] <= box.center[1] <= length - box.half[1]
             for x, y in (scene.start[:2], goal):
-                apart = max(abs(box.center[0] - x), abs(box.center[1] - y))
-                assert apart >= START_CLEARANCE + BLOCK_SIZE / 2 - 1e-9
+                apart = max(
+                    abs(box.center[0] - x) - box.half[0], abs(box.center[1] - y) - box.half[1]
+                )
+                assert apart >= START_CLEARANCE - 1e-9
         for i, a in enumerate(boxes):
             for b in boxes[:i]:
-                apart = max(abs(a.center[0] - b.center[0]), abs(a.center[1] - b.center[1]))
-                assert apart >= BLOCK_SIZE - 1e-9
+                apart = max(
+                    abs(a.center[0] - b.center[0]) - a.half[0] - b.half[0],
+                    abs(a.center[1] - b.center[1]) - a.half[1] - b.half[1],
+                )
+                assert apart >= -1e-9
 
 
 def test_scattered_count_only_adds_boxes_and_zero_leaves_the_room_empty() -> None:

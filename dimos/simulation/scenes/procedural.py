@@ -21,15 +21,18 @@ from dataclasses import dataclass, field
 import hashlib
 import itertools
 import json
+import math
 from typing import Literal
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
+from scipy import ndimage
 
 from dimos.msgs.sim_msgs.Contacts import Kind
 
 Vec3 = tuple[float, float, float]
 Rect = tuple[float, float, float, float]
+Point = tuple[float, float]
 Family = Literal[
     "office",
     "room",
@@ -63,8 +66,16 @@ PLACEMENT_TRIES = 50
 CORRIDOR_WIDTH = (0.8, 1.2)
 CORRIDOR_LENGTH = (3.5, 4.5)
 CORRIDOR_MOUTH_INSET = 1.0
+WINDING_LENGTH = (4.0, 10.0)
+WINDING_SEGMENT = (1.5, 3.0)
+WINDING_TURN = (math.pi / 6, math.pi / 2)
+WINDING_SPAN = 12.0
+WINDING_WIDTH_MAX = 0.9
 SCATTER_AREA = 64.0
-SCATTER_HEIGHT = 1.0
+SCATTER_SIDE = (0.15, 0.6)
+SCATTER_HEIGHT = (0.25, 1.2)
+SCATTER_LANE = 0.4
+SCATTER_CELL = 0.05
 SCATTER_COUNT = 40
 
 
@@ -73,6 +84,31 @@ class Box:
     center: Vec3
     half: Vec3
     kind: Kind
+    yaw: float = 0.0
+
+    def local(self, points: NDArray[np.float64]) -> NDArray[np.float64]:
+        """Points in the box's own frame, whose axes the half sizes lie along."""
+        c, s = math.cos(self.yaw), math.sin(self.yaw)
+        turn = np.array([[c, s, 0.0], [-s, c, 0.0], [0.0, 0.0, 1.0]])[
+            : points.shape[-1], : points.shape[-1]
+        ]
+        moved: NDArray[np.float64] = (points - np.array(self.center)[: points.shape[-1]]) @ turn.T
+        return moved
+
+    def gap(self, xy: NDArray[np.float64]) -> NDArray[np.float64]:
+        """Per point, the horizontal distance to the box's footprint."""
+        outside = np.maximum(np.abs(self.local(xy)) - np.array(self.half[:2]), 0.0)
+        away: NDArray[np.float64] = np.hypot(outside[..., 0], outside[..., 1])
+        return away
+
+    def reach(self) -> Vec3:
+        """Half the box's extent along each world axis."""
+        c, s = abs(math.cos(self.yaw)), abs(math.sin(self.yaw))
+        return (
+            c * self.half[0] + s * self.half[1],
+            s * self.half[0] + c * self.half[1],
+            self.half[2],
+        )
 
 
 @dataclass(frozen=True)
@@ -108,13 +144,16 @@ class Scene:
 
     def bounds(self) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
         centers = np.array([box.center for box in self.boxes])
-        halves = np.array([box.half for box in self.boxes])
+        halves = np.array([box.reach() for box in self.boxes])
         return (centers - halves).min(0), (centers + halves).max(0)
 
     def digest(self) -> str:
         """A hash of the geometry and start, for detecting generator drift."""
         record = {
-            "boxes": [(box.center, box.half, box.kind) for box in self.boxes],
+            "boxes": [
+                (box.center, box.half, box.kind, *([box.yaw] if box.yaw else []))
+                for box in self.boxes
+            ],
             "start": self.start,
         }
         return hashlib.sha256(json.dumps(record, sort_keys=True).encode()).hexdigest()[:16]
@@ -189,6 +228,12 @@ def _clear(x0: float, y0: float, x1: float, y1: float, keep_clear: list[Rect]) -
     return not any(
         x0 < kx1 and x1 > kx0 and y0 < ky1 and y1 > ky0 for kx0, ky0, kx1, ky1 in keep_clear
     )
+
+
+def _joined(free: NDArray[np.bool_], a: tuple[int, int], b: tuple[int, int]) -> bool:
+    """Whether two cells lie in one connected patch of free cells."""
+    patches, _ = ndimage.label(free)
+    return bool(patches[a] and patches[a] == patches[b])
 
 
 def _clutter(
@@ -447,18 +492,104 @@ def corridor(seed: int, corridor_width: float | None = None) -> Scene:
     return scene
 
 
+def _slab(a: Point, b: Point, half: float, back: float = 0.0, on: float = 0.0) -> Box:
+    """A flat box from one point to another, this far to each side and past each end."""
+    run, yaw = math.dist(a, b), math.atan2(b[1] - a[1], b[0] - a[0])
+    mid = (run + on - back) / 2
+    center = (a[0] + mid * math.cos(yaw), a[1] + mid * math.sin(yaw), 0.0)
+    return Box(center, ((run + on + back) / 2, half, 0.0), "wall", yaw)
+
+
+def _overlap(a: Box, b: Box) -> bool:
+    """Whether two flat boxes share any floor."""
+    for box, other in ((a, b), (b, a)):
+        x, y = other.half[0], other.half[1]
+        turn = other.yaw - box.yaw
+        corners = np.array([[x, y], [x, -y], [-x, y], [-x, -y]]) @ np.array(
+            [[math.cos(turn), math.sin(turn)], [-math.sin(turn), math.cos(turn)]]
+        )
+        reach = np.abs(corners).max(axis=0)
+        if np.any(np.abs(box.local(np.array(other.center[:2]))) >= reach + np.array(box.half[:2])):
+            return False
+    return True
+
+
+def _winding(rng: np.random.Generator) -> tuple[list[Point], float]:
+    """A corridor's centerline from the origin heading along x, and the heading it ends on.
+
+    Its length, how many turns it takes and each turn's side and angle are drawn.
+    """
+    length = _uniform(rng, *WINDING_LENGTH)
+    runs: list[float] = []
+    while length - sum(runs) >= 2 * WINDING_SEGMENT[0]:
+        runs.append(min(_uniform(rng, *WINDING_SEGMENT), length - sum(runs) - WINDING_SEGMENT[0]))
+    runs.append(length - sum(runs))
+    points, heading = [(0.0, 0.0)], 0.0
+    for i, run in enumerate(runs):
+        if i:
+            heading += _uniform(rng, *WINDING_TURN) * (1 if rng.random() < 0.5 else -1)
+        x, y = points[-1]
+        points.append((x + run * math.cos(heading), y + run * math.sin(heading)))
+    return points, heading
+
+
+def _edge(points: list[Point], offset: float) -> list[Point]:
+    """A centerline moved sideways, with the corners kept sharp."""
+    normals = [
+        (-(y1 - y0) / math.dist((x0, y0), (x1, y1)), (x1 - x0) / math.dist((x0, y0), (x1, y1)))
+        for (x0, y0), (x1, y1) in itertools.pairwise(points)
+    ]
+    moved = []
+    for i, (x, y) in enumerate(points):
+        (ax, ay), (bx, by) = normals[max(i - 1, 0)], normals[min(i, len(normals) - 1)]
+        scale = offset / (1 + ax * bx + ay * by)
+        moved.append((x + scale * (ax + bx), y + scale * (ay + by)))
+    return moved
+
+
 def corridor_turn(seed: int, corridor_width: float | None = None) -> Scene:
-    """Two empty rooms joined by one corridor with a right-angle turn, the only way between them."""
+    """Two empty rooms joined by one winding corridor, the only way between them.
+
+    The corridor's length, its number of turns and each turn's side and angle are drawn.
+    """
     rng = np.random.default_rng(seed)
-    near, run, far = _uniform(rng, 3, 4), _uniform(rng, *CORRIDOR_LENGTH), _uniform(rng, 4, 5)
-    depth = _uniform(rng, 4, 5)
+    near = _uniform(rng, 3, 4)
     z0 = _uniform(rng, 0.0, 0.08)
-    y = _uniform(rng, CORRIDOR_MOUTH_INSET, 3.0)
-    first = _uniform(rng, 0.45, 0.55) * run
+    below, above = _uniform(rng, 1.5, 3.0), _uniform(rng, 1.5, 3.0)
     half = _given(_uniform(rng, *CORRIDOR_WIDTH), corridor_width) / 2
-    turn = near + first
-    room_x, room_y = turn - CORRIDOR_MOUTH_INSET, y + run - first
-    width, length = room_x + far, room_y + depth
+    t = WALL_THICKNESS
+    for _ in range(PLACEMENT_TRIES):
+        points, heading = _winding(rng)
+        far, depth = _uniform(rng, 4, 5), _uniform(rng, 4, 5)
+        left = _uniform(rng, CORRIDOR_MOUTH_INSET, far - CORRIDOR_MOUTH_INSET)
+        ahead, across = (
+            (math.cos(heading), math.sin(heading)),
+            (-math.sin(heading), math.cos(heading)),
+        )
+        end = points[-1]
+        shift = left - far / 2
+        room_a = (end[0] + shift * across[0], end[1] + shift * across[1])
+        room_b = (room_a[0] + (depth + 2 * t) * ahead[0], room_a[1] + (depth + 2 * t) * ahead[1])
+        room = _slab(room_a, room_b, far / 2 + t)
+        widest = [_slab(a, b, WINDING_WIDTH_MAX / 2 + 2 * t) for a, b in itertools.pairwise(points)]
+        parts = [*widest, room]
+        apart = all(not _overlap(a, b) for i, a in enumerate(parts) for b in parts[i + 2 :])
+        reach = [
+            (p.center[0] - p.reach()[0], p.center[1] - p.reach()[1], p.center[1] + p.reach()[1])
+            for p in parts
+        ]
+        low, high = min(-below, *(r[1] for r in reach)), max(above, *(r[2] for r in reach))
+        if apart and all(r[0] > 2 * t for r in reach[1:]) and high - low <= WINDING_SPAN:
+            break
+    else:
+        raise ValueError(f"corridor_turn {seed} found no corridor that keeps clear of itself")
+    width = near + max(p.center[0] + p.reach()[0] for p in parts)
+    length = high - low
+    top = z0 + WALL_HEIGHT
+
+    def placed(point: Point) -> Point:
+        return near + point[0], point[1] - low
+
     scene = Scene(
         f"corridor_turn_{seed}",
         {
@@ -466,27 +597,52 @@ def corridor_turn(seed: int, corridor_width: float | None = None) -> Scene:
             "length": length,
             "z0": z0,
             "corridor_x": near,
-            "corridor_y": y,
-            "turn_x": turn,
-            "room_x": room_x,
-            "room_y": room_y,
+            "corridor_y": -low,
+            "room_x": placed(end)[0],
+            "room_y": placed(end)[1],
+            "room_yaw": heading,
+            "room_depth": depth,
+            "room_left": left,
+            "room_right": far - left,
+            "turns": len(points) - 2,
+            "corridor_length": sum(math.dist(a, b) for a, b in itertools.pairwise(points)),
         },
     )
-    top = _shell(scene, width, length, z0)
-    hollow = [
-        (0.0, 0.0, near, length),
-        (near, y - half, turn + half, y + half),
-        (turn - half, y - half, turn + half, room_y),
-        (room_x, room_y, width, length),
-    ]
-    _solid(scene, width, length, z0, top, hollow)
-    scene.start = (1.0, 1.0, z0)
+    _shell(scene, width, length, z0)
+    y = -low
+    scene.add((near, 0.0, z0), (near + t, y - half, top), "wall")
+    scene.add((near, y + half, z0), (near + t, length, top), "wall")
+
+    def wall(a: Point, b: Point, back: float = 0.0, on: float = 0.0) -> None:
+        box = _slab(placed(a), placed(b), t / 2, back, on)
+        scene.boxes.append(
+            Box(
+                (box.center[0], box.center[1], (z0 + top) / 2),
+                (box.half[0], t / 2, (top - z0) / 2),
+                "wall",
+                box.yaw,
+            )
+        )
+
+    for side in (1, -1):
+        edge = _edge(points, side * (half + t / 2))
+        for a, b in itertools.pairwise(edge):
+            wall(a, b, on=t if b == edge[-1] else 0.0)
+
+    def into(u: float, v: float) -> Point:
+        return end[0] + u * ahead[0] + v * across[0], end[1] + u * ahead[1] + v * across[1]
+
+    wall(into(t / 2, half), into(t / 2, left + t))
+    wall(into(t / 2, -half), into(t / 2, left - far - t))
+    wall(into(depth + 1.5 * t, left + t), into(depth + 1.5 * t, left - far - t))
+    wall(into(0.0, left + t / 2), into(depth + 2 * t, left + t / 2))
+    wall(into(0.0, left - far - t / 2), into(depth + 2 * t, left - far - t / 2))
     scene.start = (1.0, 1.0, z0)
     return scene
 
 
 def scattered(seed: int, clutter_count: int = SCATTER_COUNT) -> Scene:
-    """One room with square boxes scattered over the floor, clear of the start and the goal."""
+    """One room with boxes of drawn sizes scattered over the floor, clear of the start and the goal."""
     rng = np.random.default_rng(seed)
     width = _uniform(rng, 8, 10)
     length = SCATTER_AREA / width
@@ -498,17 +654,26 @@ def scattered(seed: int, clutter_count: int = SCATTER_COUNT) -> Scene:
     )
     _shell(scene, width, length, z0)
     scene.start = (1.0, 1.0, z0)
-    c, half = START_CLEARANCE, BLOCK_SIZE / 2
+    c, lane = START_CLEARANCE, SCATTER_LANE / 2
     keep_clear = [(x - c, y - c, x + c, y + c) for x, y in (scene.start[:2], (gx, gy))]
+    xs = (np.arange(int(width / SCATTER_CELL)) + 0.5) * SCATTER_CELL
+    ys = (np.arange(int(length / SCATTER_CELL)) + 0.5) * SCATTER_CELL
+    lanes = np.outer(
+        np.abs(xs - width / 2) < width / 2 - lane, np.abs(ys - length / 2) < length / 2 - lane
+    )
+    ends = [(int(x / SCATTER_CELL), int(y / SCATTER_CELL)) for x, y in (scene.start[:2], (gx, gy))]
     for _ in range(int(clutter_count)):
+        a, b = _uniform(rng, *SCATTER_SIDE) / 2, _uniform(rng, *SCATTER_SIDE) / 2
+        height = _uniform(rng, *SCATTER_HEIGHT)
         for _ in range(PLACEMENT_TRIES):
-            x, y = _uniform(rng, half, width - half), _uniform(rng, half, length - half)
-            spot = (x - half, y - half, x + half, y + half)
-            if _clear(*spot, keep_clear):
-                scene.add(
-                    (spot[0], spot[1], z0), (spot[2], spot[3], z0 + SCATTER_HEIGHT), "clutter"
-                )
+            x, y = _uniform(rng, a, width - a), _uniform(rng, b, length - b)
+            spot = (x - a, y - b, x + a, y + b)
+            left = lanes.copy()
+            left[np.ix_(np.abs(xs - x) < a + lane, np.abs(ys - y) < b + lane)] = False
+            if _clear(*spot, keep_clear) and _joined(left, *ends):
+                scene.add((spot[0], spot[1], z0), (spot[2], spot[3], z0 + height), "clutter")
                 keep_clear.append(spot)
+                lanes = left
                 break
     return scene
 

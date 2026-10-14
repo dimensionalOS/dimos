@@ -378,6 +378,7 @@ class Shape:
 
     kind: str
     rect: Rect
+    turn_deg: float
     raised: bool
 
 
@@ -417,6 +418,7 @@ def thumbnail(report: Report) -> Thumbnail | None:
                 box.center[0] + box.half[0],
                 box.center[1] + box.half[1],
             ),
+            turn_deg=math.degrees(box.yaw),
             raised=box.center[2] - box.half[2] > scene.start[2] + GO2.step,
         )
         for box in scene.boxes

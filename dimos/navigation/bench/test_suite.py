@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 import itertools
+import math
 from pathlib import Path
 
 import numpy as np
@@ -45,7 +46,13 @@ from dimos.navigation.bench.suite import (
     freeze_probe,
     table_leg,
 )
-from dimos.simulation.scenes.procedural import BLOCK_SIZE, OVERHANG_SIZE, START_CLEARANCE, office
+from dimos.simulation.scenes.procedural import (
+    BLOCK_SIZE,
+    OVERHANG_SIZE,
+    START_CLEARANCE,
+    WALL_THICKNESS,
+    office,
+)
 
 SMALL = FreezeConfig(seeds=(1, 3), stressor_samples=60, samples_per_scene=25, cases_per_bin=1)
 
@@ -238,8 +245,17 @@ def test_corridor_probes_set_the_width_and_put_the_goal_in_the_far_room(probe: P
         assert case.level is not None and case.params == {"corridor_width": case.level.value}
         assert case.family == probe.family and case.feature is None
         params = case.scene().params
-        assert params["room_x"] + SIDE_WALL_M <= case.goal[0] <= params["width"] - SIDE_WALL_M
-        assert params["room_y"] + SIDE_WALL_M <= case.goal[1] <= params["length"] - SIDE_WALL_M
+        if probe.name == "corridor_turn":
+            c, s = math.cos(params["room_yaw"]), math.sin(params["room_yaw"])
+            dx, dy = case.goal[0] - params["room_x"], case.goal[1] - params["room_y"]
+            ahead, across = dx * c + dy * s - WALL_THICKNESS, dy * c - dx * s
+            assert SIDE_WALL_M - 1e-9 <= ahead <= params["room_depth"] - SIDE_WALL_M + 1e-9
+            assert SIDE_WALL_M - params["room_right"] - 1e-9 <= across
+            assert across <= params["room_left"] - SIDE_WALL_M + 1e-9
+            assert case.route_length >= params["corridor_length"]
+        else:
+            assert params["room_x"] + SIDE_WALL_M <= case.goal[0] <= params["width"] - SIDE_WALL_M
+            assert params["room_y"] + SIDE_WALL_M <= case.goal[1] <= params["length"] - SIDE_WALL_M
         assert GO2.radius <= case.difficulty.min_clearance <= case.level.value / 2 + CELL
         straight = float(np.hypot(case.goal[0] - case.start[0], case.goal[1] - case.start[1]))
         assert case.route_length >= straight and case.difficulty.doors == 0

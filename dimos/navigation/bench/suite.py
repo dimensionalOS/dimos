@@ -664,6 +664,19 @@ def past_the_corridor(gt: GroundTruth, width: float, rng: np.random.Generator) -
     return Placed(start, (x, y, gt.scene.start[2]))
 
 
+def past_the_winding_corridor(gt: GroundTruth, width: float, rng: np.random.Generator) -> Placed:
+    """A drawn start well short of the corridor, and a goal in the turned far room well clear of its walls."""
+    params = gt.scene.params
+    start = _start_before(gt.scene, params["corridor_x"] - APPROACH_M, rng)
+    ahead = WALL_THICKNESS + SIDE_WALL_M
+    ahead += (params["room_depth"] - 2 * SIDE_WALL_M) * float(rng.random())
+    span = params["room_left"] + params["room_right"] - 2 * SIDE_WALL_M
+    across = SIDE_WALL_M - params["room_right"] + span * float(rng.random())
+    c, s = math.cos(params["room_yaw"]), math.sin(params["room_yaw"])
+    x, y = params["room_x"] + ahead * c - across * s, params["room_y"] + ahead * s + across * c
+    return Placed(start, (x, y, gt.scene.start[2]))
+
+
 CORRIDOR = Probe(
     "corridor_width",
     "corridor",
@@ -677,7 +690,7 @@ CORRIDOR_TURN = Probe(
     "corridor_turn",
     "corridor_width",
     CORRIDOR.levels,
-    past_the_corridor,
+    past_the_winding_corridor,
     scene_param="corridor_width",
 )
 

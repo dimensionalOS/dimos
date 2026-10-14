@@ -16,6 +16,8 @@
 
 from __future__ import annotations
 
+import math
+
 import mujoco
 import numpy as np
 from numpy.typing import NDArray
@@ -38,3 +40,4 @@ def add_boxes(spec: mujoco.MjSpec, scene: Scene) -> None:
         geom.name = geom_name(i, box)
         geom.pos = box.center
         geom.size = box.half
+        geom.quat = (math.cos(box.yaw / 2), 0.0, 0.0, math.sin(box.yaw / 2))

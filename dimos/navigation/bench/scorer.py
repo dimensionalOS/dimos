@@ -550,10 +550,10 @@ def _margins(pose: Poses, scene: Scene) -> NDArray[np.float64] | None:
     if not boxes:
         return None
     center, half = np.array([b.center for b in boxes]), np.array([b.half for b in boxes])
-    outside = np.maximum(np.abs(pose.xyz[:, None, :2] - center[:, :2]) - half[:, :2], 0.0)
+    away = np.stack([box.gap(pose.xyz[:, :2]) for box in boxes], axis=1)
     foot, head = pose.xyz[:, None, 2] - GO2.stand, _lidar_top(pose)[:, None]
     level = (center[:, 2] + half[:, 2] > foot) & (center[:, 2] - half[:, 2] < head)
-    gap = np.where(level, np.hypot(outside[..., 0], outside[..., 1]), np.inf).min(axis=1)
+    gap = np.where(level, away, np.inf).min(axis=1)
     if not np.isfinite(gap).all():
         return None
     margins: NDArray[np.float64] = gap - GO2.radius

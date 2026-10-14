@@ -80,7 +80,7 @@ code { font-size: 12px; }
 <svg width="{{ thumbnail_px }}" height="{{ ((y1 - y0) / px) | round | int }}" viewBox="{{ x0 }} {{ -y1 }} {{ x1 - x0 }} {{ y1 - y0 }}">
 <g transform="scale(1 -1)">
 <rect x="{{ x0 }}" y="{{ y0 }}" width="{{ x1 - x0 }}" height="{{ y1 - y0 }}" fill="#f4f4f4"/>
-{% for shape in t.shapes %}{% set color = "#ff851b" if shape.kind == "clutter" else "#555" %}<rect x="{{ shape.rect[0] }}" y="{{ shape.rect[1] }}" width="{{ shape.rect[2] - shape.rect[0] }}" height="{{ shape.rect[3] - shape.rect[1] }}" fill="{{ color }}" stroke="{{ color }}" stroke-width="{{ px }}"{% if shape.raised %} fill-opacity="0.25" stroke-opacity="0.5"{% endif %}/>
+{% for shape in t.shapes %}{% set color = "#ff851b" if shape.kind == "clutter" else "#555" %}<rect x="{{ shape.rect[0] }}" y="{{ shape.rect[1] }}" width="{{ shape.rect[2] - shape.rect[0] }}" height="{{ shape.rect[3] - shape.rect[1] }}" fill="{{ color }}" stroke="{{ color }}" stroke-width="{{ px }}"{% if shape.turn_deg %} transform="rotate({{ shape.turn_deg }} {{ (shape.rect[0] + shape.rect[2]) / 2 }} {{ (shape.rect[1] + shape.rect[3]) / 2 }})"{% endif %}{% if shape.raised %} fill-opacity="0.25" stroke-opacity="0.5"{% endif %}/>
 {% endfor %}
 {% if t.feature %}<circle cx="{{ t.feature[0] }}" cy="{{ t.feature[1] }}" r="{{ 6 * px }}" fill="none" stroke="#ff4136" stroke-width="{{ 1.5 * px }}"/>{% endif %}
 <circle cx="{{ t.goal[0] }}" cy="{{ t.goal[1] }}" r="{{ 3 * px }}" fill="#2ecc40"/>

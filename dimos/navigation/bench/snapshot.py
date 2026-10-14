@@ -124,7 +124,7 @@ def _corner(case: Case, scene: Scene, azimuth: float) -> View:
         for i, box in enumerate(scene.boxes)
         if box.kind == "wall"
         and any(
-            abs(box.center[axis] - near[axis]) + box.half[axis] <= WALL_THICKNESS + EPS
+            abs(box.center[axis] - near[axis]) + box.reach()[axis] <= WALL_THICKNESS + EPS
             for axis in (0, 1)
         )
     )
@@ -159,10 +159,11 @@ def _corner(case: Case, scene: Scene, azimuth: float) -> View:
 
 def _crosses(eye: NDArray[np.float64], point: NDArray[np.float64], box: Box) -> bool:
     """Whether the sight line from the eye to the point passes through the box."""
+    eye, point = box.local(eye), box.local(point)
     ray = point - eye
     with np.errstate(divide="ignore", invalid="ignore"):
-        a = (np.subtract(box.center, box.half) - eye) / ray
-        b = (np.add(box.center, box.half) - eye) / ray
+        a = (-np.array(box.half) - eye) / ray
+        b = (np.array(box.half) - eye) / ray
     enter, leave = np.fmin(a, b).max(), np.fmax(a, b).min()
     return bool(enter < leave and leave > 0.0 and enter < 1.0 - EPS)
 
