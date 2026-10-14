@@ -4,14 +4,44 @@
 <meta charset="utf-8">
 <title>{{ title }}</title>
 <style>
-body { font: 14px/1.4 system-ui, sans-serif; margin: 2em auto; max-width: 80em; color: #222; }
+:root {
+  color-scheme: light dark;
+  --page: light-dark(#fff, #16181c);
+  --text: light-dark(#222, #ddd);
+  --muted: light-dark(#555, #a4a9b0);
+  --rule: light-dark(#888, #777);
+  --line: light-dark(#ccc, #4a4e55);
+  --grid: light-dark(#ddd, #383c42);
+  --tick: light-dark(#bbb, #5c6068);
+  --panel: light-dark(#f4f4f4, #25282e);
+  --series: light-dark(#0074d9, #4da3ff);
+  --clutter: #ff851b;
+  --feature: #ff4136;
+  --goal: #2ecc40;
+}
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }
+body { font: 14px/1.4 system-ui, sans-serif; margin: 2em auto; max-width: 80em; color: var(--text); background: var(--page); }
+#theme { position: absolute; top: 1em; right: 1em; width: 16px; height: 16px; padding: 0; border: 1px solid var(--muted); border-radius: 50%; background: linear-gradient(90deg, var(--muted) 50%, transparent 50%); cursor: pointer; }
+img { background: #fff; }
+svg { fill: var(--muted); }
+.grid { stroke: var(--grid); }
+.axis { stroke: var(--line); }
+.tick { stroke: var(--tick); }
+.series { fill: var(--series); }
+.curve { fill: none; stroke: var(--series); }
+.floor { fill: var(--panel); }
+.wall { fill: var(--muted); stroke: var(--muted); }
+.clutter { fill: var(--clutter); stroke: var(--clutter); }
+.feature { fill: none; stroke: var(--feature); }
+.goal { fill: var(--goal); }
 .scroll { overflow-x: auto; }
-h2 { margin-top: 2.5em; border-bottom: 2px solid #888; }
-h3 { margin-top: 2em; border-bottom: 1px solid #ccc; }
+h2 { margin-top: 2.5em; border-bottom: 2px solid var(--rule); }
+h3 { margin-top: 2em; border-bottom: 1px solid var(--line); }
 summary { cursor: pointer; margin-top: 2em; font-weight: bold; }
 table { border-collapse: collapse; margin: 1em 0; }
-th, td { padding: 0.25em 0.75em; border-bottom: 1px solid #ddd; text-align: left; white-space: nowrap; }
-th { cursor: pointer; background: #f4f4f4; }
+th, td { padding: 0.25em 0.75em; border-bottom: 1px solid var(--grid); text-align: left; white-space: nowrap; }
+th { cursor: pointer; background: var(--panel); }
 tfoot td { font-weight: bold; }
 td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
 dl { display: grid; grid-template-columns: max-content auto; gap: 0.2em 1em; }
@@ -22,6 +52,33 @@ code { font-size: 12px; }
 </style>
 </head>
 <body>
+<button id="theme" title="Switch between light and dark" hidden></button>
+<script>
+{
+  const root = document.documentElement, button = document.getElementById("theme"), key = "nav-bench-theme";
+  try { root.dataset.theme = localStorage.getItem(key) || root.dataset.theme || ""; } catch {}
+  button.hidden = false;
+  button.onclick = () => {
+    const dark = root.dataset.theme ? root.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+    root.dataset.theme = dark ? "light" : "dark";
+    try { localStorage.setItem(key, root.dataset.theme); } catch {}
+  };
+}
+addEventListener("DOMContentLoaded", () => {
+  for (const th of document.querySelectorAll("th")) th.onclick = () => {
+    const table = th.closest("table"), index = th.cellIndex, body = table.tBodies[0];
+    const up = table.dataset.sorted !== String(index);
+    table.dataset.sorted = up ? String(index) : "";
+    const key = r => r.cells[index].textContent.trim();
+    const numeric = [...body.rows].every(r => key(r) === "" || !isNaN(parseFloat(key(r))));
+    [...body.rows].sort((a, b) => {
+      const [x, y] = numeric ? [parseFloat(key(a)), parseFloat(key(b))] : [key(a), key(b)];
+      const lt = (x !== x) ? 1 : (y !== y) ? -1 : x < y ? -1 : x > y ? 1 : 0;
+      return up ? lt : -lt;
+    }).forEach(r => body.appendChild(r));
+  };
+});
+</script>
 <h1>{{ title }}</h1>
 <details>
 <summary>What the outcomes mean</summary>
@@ -62,15 +119,15 @@ code { font-size: 12px; }
 <h3>Success against {{ variable | replace("_", " ") }}</h3>
 {% set drop = curve | map(attribute="drop") | max %}
 <div class="row">
-<svg width="{{ curve_px[0] }}" height="{{ curve_px[1] + 48 + drop }}" font-size="11" fill="#555">
+<svg width="{{ curve_px[0] }}" height="{{ curve_px[1] + 48 + drop }}" font-size="11">
 <text x="{{ (curve[0].x + curve[-1].x) // 2 }}" y="{{ curve_px[1] + 42 + drop }}" text-anchor="middle" font-size="12">{{ variable | replace("_", " ") }} (m)</text>
 <text x="12" y="{{ curve_px[1] // 2 }}" text-anchor="middle" font-size="12" transform="rotate(-90 12 {{ curve_px[1] // 2 }})">success</text>
-{% for label, y in curve_grid %}<line x1="{{ curve[0].x }}" x2="{{ curve[-1].x }}" y1="{{ y }}" y2="{{ y }}" stroke="#ddd"/><text x="{{ curve[0].x - 6 }}" y="{{ y + 4 }}" text-anchor="end">{{ label }}</text>
+{% for label, y in curve_grid %}<line x1="{{ curve[0].x }}" x2="{{ curve[-1].x }}" y1="{{ y }}" y2="{{ y }}" class="grid"/><text x="{{ curve[0].x - 6 }}" y="{{ y + 4 }}" text-anchor="end">{{ label }}</text>
 {% endfor %}
 {% for point in curve %}<text x="{{ point.x }}" y="{{ curve_px[1] + 10 + point.drop }}" text-anchor="middle">{{ point.label }}</text><text x="{{ point.x }}" y="{{ curve_px[1] + 24 + point.drop }}" text-anchor="middle">{{ point.count }}</text>
 {% endfor %}
-<polyline fill="none" stroke="#0074d9" stroke-width="2" points="{% for point in curve %}{{ point.x }},{{ point.y }} {% endfor %}"/>
-{% for point in curve %}<rect x="{{ point.x - 3 }}" y="{{ point.y - 3 }}" width="6" height="6" fill="#0074d9"/>{% endfor %}
+<polyline class="curve" stroke-width="2" points="{% for point in curve %}{{ point.x }},{{ point.y }} {% endfor %}"/>
+{% for point in curve %}<rect x="{{ point.x - 3 }}" y="{{ point.y - 3 }}" width="6" height="6" class="series"/>{% endfor %}
 </svg>
 {% if s.thumbnail %}
 {% set t = s.thumbnail %}{% set x0, y0, x1, y1 = t.bounds %}{% set px = (x1 - x0) / thumbnail_px %}
@@ -79,12 +136,12 @@ code { font-size: 12px; }
 {% else %}
 <svg width="{{ thumbnail_px }}" height="{{ ((y1 - y0) / px) | round | int }}" viewBox="{{ x0 }} {{ -y1 }} {{ x1 - x0 }} {{ y1 - y0 }}">
 <g transform="scale(1 -1)">
-<rect x="{{ x0 }}" y="{{ y0 }}" width="{{ x1 - x0 }}" height="{{ y1 - y0 }}" fill="#f4f4f4"/>
-{% for shape in t.shapes %}{% set color = "#ff851b" if shape.kind == "clutter" else "#555" %}<rect x="{{ shape.rect[0] }}" y="{{ shape.rect[1] }}" width="{{ shape.rect[2] - shape.rect[0] }}" height="{{ shape.rect[3] - shape.rect[1] }}" fill="{{ color }}" stroke="{{ color }}" stroke-width="{{ px }}"{% if shape.turn_deg %} transform="rotate({{ shape.turn_deg }} {{ (shape.rect[0] + shape.rect[2]) / 2 }} {{ (shape.rect[1] + shape.rect[3]) / 2 }})"{% endif %}{% if shape.raised %} fill-opacity="0.25" stroke-opacity="0.5"{% endif %}/>
+<rect x="{{ x0 }}" y="{{ y0 }}" width="{{ x1 - x0 }}" height="{{ y1 - y0 }}" class="floor"/>
+{% for shape in t.shapes %}<rect x="{{ shape.rect[0] }}" y="{{ shape.rect[1] }}" width="{{ shape.rect[2] - shape.rect[0] }}" height="{{ shape.rect[3] - shape.rect[1] }}" class="{{ "clutter" if shape.kind == "clutter" else "wall" }}" stroke-width="{{ px }}"{% if shape.turn_deg %} transform="rotate({{ shape.turn_deg }} {{ (shape.rect[0] + shape.rect[2]) / 2 }} {{ (shape.rect[1] + shape.rect[3]) / 2 }})"{% endif %}{% if shape.raised %} fill-opacity="0.25" stroke-opacity="0.5"{% endif %}/>
 {% endfor %}
-{% if t.feature %}<circle cx="{{ t.feature[0] }}" cy="{{ t.feature[1] }}" r="{{ 6 * px }}" fill="none" stroke="#ff4136" stroke-width="{{ 1.5 * px }}"/>{% endif %}
-<circle cx="{{ t.goal[0] }}" cy="{{ t.goal[1] }}" r="{{ 3 * px }}" fill="#2ecc40"/>
-<g transform="translate({{ t.start[0] }} {{ t.start[1] }}) rotate({{ t.start[2] | degrees }}) scale({{ px }})" fill="#0074d9"><circle r="4"/><path d="M0,-1 H10 V-4 L16,0 L10,4 V1 H0 Z"/></g>
+{% if t.feature %}<circle cx="{{ t.feature[0] }}" cy="{{ t.feature[1] }}" r="{{ 6 * px }}" class="feature" stroke-width="{{ 1.5 * px }}"/>{% endif %}
+<circle cx="{{ t.goal[0] }}" cy="{{ t.goal[1] }}" r="{{ 3 * px }}" class="goal"/>
+<g transform="translate({{ t.start[0] }} {{ t.start[1] }}) rotate({{ t.start[2] | degrees }}) scale({{ px }})" class="series"><circle r="4"/><path d="M0,-1 H10 V-4 L16,0 L10,4 V1 H0 Z"/></g>
 </g>
 </svg>
 {% endif %}
@@ -129,9 +186,9 @@ code { font-size: 12px; }
 <tbody>
 {% for row in difficulty %}
 <tr><td>{{ row.outcome }}</td><td class="n">{{ row.n }}</td><td class="n">{{ "%.2f" | format(row.clearance) }}</td><td class="n">{{ "%.0f" | format(row.doors) }}</td><td class="n">{{ "%.2f" | format(row.detour) }}</td><td class="n">{{ "%.1f" | format(row.route) }}</td>
-<td><svg width="{{ strip_px }}" height="14"><line x1="0" x2="{{ strip_px }}" y1="7" y2="7" stroke="#ccc"/>
-{% for x in strip_ticks %}<line x1="{{ x }}" x2="{{ x }}" y1="3" y2="11" stroke="#bbb"/>{% endfor %}
-{% for x in row.dots %}<circle cx="{{ x }}" cy="7" r="3" fill="#0074d9" fill-opacity="0.35"/>{% endfor %}
+<td><svg width="{{ strip_px }}" height="14"><line x1="0" x2="{{ strip_px }}" y1="7" y2="7" class="axis"/>
+{% for x in strip_ticks %}<line x1="{{ x }}" x2="{{ x }}" y1="3" y2="11" class="tick"/>{% endfor %}
+{% for x in row.dots %}<circle cx="{{ x }}" cy="7" r="3" class="series" fill-opacity="0.35"/>{% endfor %}
 </svg></td></tr>
 {% endfor %}
 </tbody>
@@ -184,19 +241,5 @@ code { font-size: 12px; }
 {% endif %}
 {% endfor %}
 
-<script>
-for (const th of document.querySelectorAll("th")) th.onclick = () => {
-  const table = th.closest("table"), index = th.cellIndex, body = table.tBodies[0];
-  const up = table.dataset.sorted !== String(index);
-  table.dataset.sorted = up ? String(index) : "";
-  const key = r => r.cells[index].textContent.trim();
-  const numeric = [...body.rows].every(r => key(r) === "" || !isNaN(parseFloat(key(r))));
-  [...body.rows].sort((a, b) => {
-    const [x, y] = numeric ? [parseFloat(key(a)), parseFloat(key(b))] : [key(a), key(b)];
-    const lt = (x !== x) ? 1 : (y !== y) ? -1 : x < y ? -1 : x > y ? 1 : 0;
-    return up ? lt : -lt;
-  }).forEach(r => body.appendChild(r));
-};
-</script>
 </body>
 </html>
