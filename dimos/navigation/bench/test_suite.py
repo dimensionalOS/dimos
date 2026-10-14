@@ -36,6 +36,7 @@ from dimos.navigation.bench.suite import (
     NARROW_DOOR_M,
     OVERHANG,
     SIDE_WALL_M,
+    SMALL_OBJECT,
     UNDER_SLAB_RAD,
     Case,
     FreezeConfig,
@@ -49,6 +50,8 @@ from dimos.navigation.bench.suite import (
 from dimos.simulation.scenes.procedural import (
     BLOCK_SIZE,
     OVERHANG_SIZE,
+    SMALL_OBJECT_ASPECT,
+    SMALL_OBJECT_LENGTH,
     START_CLEARANCE,
     WALL_THICKNESS,
     office,
@@ -213,6 +216,26 @@ def test_block_height_probe_aims_the_direct_line_through_the_block() -> None:
         assert reach >= APPROACH_M - 1e-9 and 2.3 <= past <= 3.0
     assert len({(c.start, c.goal, c.feature) for c in manifest.cases if c.seed == 1}) == 1
     _one_start_per_seed(manifest, "block_x")
+    manifest.check_drift()
+
+
+def test_small_object_probe_aims_the_direct_line_over_the_object() -> None:
+    probe = replace(SMALL_OBJECT, seeds=(1, 2))
+    manifest = freeze_probe(probe)
+    assert len(manifest.cases) == 2 * (len(probe.levels) + 1)
+    for case in manifest.cases:
+        assert case.level is not None and case.params == {"object_length": case.level.value}
+        scene = case.scene()
+        objects = [box for box in scene.boxes if box.kind == "clutter"]
+        assert len(objects) == (0 if case.level.control else 1)
+        for box in objects:
+            assert 2 * box.half[0] == pytest.approx(case.level.value)
+        offset, reach, _, past = _line(case, (scene.params["object_x"], scene.params["object_y"]))
+        assert abs(offset) <= SMALL_OBJECT_ASPECT * SMALL_OBJECT_LENGTH[0] / 2 + GO2.radius
+        assert reach >= APPROACH_M - 1e-9 and 2.3 <= past <= 3.0
+    for seed in probe.seeds:
+        assert len({(c.start, c.goal, c.feature) for c in manifest.cases if c.seed == seed}) == 1
+    _one_start_per_seed(manifest, "object_x")
     manifest.check_drift()
 
 

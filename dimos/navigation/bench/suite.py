@@ -44,6 +44,8 @@ from dimos.simulation.scenes.procedural import (
     BLOCK_SIZE,
     OVERHANG_SIZE,
     PLACEMENT_TRIES,
+    SMALL_OBJECT_ASPECT,
+    SMALL_OBJECT_LENGTH,
     START_CLEARANCE,
     TABLE_SIZE,
     TABLE_TOP_THICKNESS,
@@ -654,6 +656,25 @@ BLOCK_HEIGHT = Probe(
 )
 
 
+def over_the_small_object(gt: GroundTruth, length: float, rng: np.random.Generator) -> Placed:
+    """A goal straight past the object, so the body walking the direct line meets even the smallest."""
+    x, y = gt.scene.params["object_x"], gt.scene.params["object_y"]
+    start = _start_facing(gt.scene, x - SMALL_OBJECT_LENGTH[1] / 2, x, y, rng)
+    least = SMALL_OBJECT_ASPECT * SMALL_OBJECT_LENGTH[0] / 2
+    return _straight_past(gt.scene, start, x, y, least, rng)
+
+
+SMALL_OBJECT = Probe(
+    "small_object",
+    "small_object",
+    "object_length",
+    (0.08, 0.12, 0.16, 0.20, 0.24, 0.28, 0.34, 0.42, 0.50),
+    over_the_small_object,
+    scene_param="object_length",
+    control=0.0,
+)
+
+
 def past_the_corridor(gt: GroundTruth, width: float, rng: np.random.Generator) -> Placed:
     """A drawn start well short of the corridor, and a goal in the far room well clear of every wall."""
     params = gt.scene.params
@@ -720,6 +741,7 @@ PROBES = {
         CORRIDOR,
         CORRIDOR_TURN,
         CLUTTER,
+        SMALL_OBJECT,
     )
 }
 

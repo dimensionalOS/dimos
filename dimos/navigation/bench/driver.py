@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from collections import deque
 from collections.abc import Callable
+from dataclasses import replace
 import json
 from pathlib import Path
 from threading import Event, Thread
@@ -43,6 +44,7 @@ from dimos.navigation.bench.scorer import GOAL_ECHO_M, Commands, Poses, no_progr
 from dimos.navigation.bench.suite import Manifest
 from dimos.simulation.go2_sim.world import ODOM_FRAME_ID
 from dimos.simulation.go2_sim.world_spec import SimWorldSpec
+from dimos.simulation.scenes.procedural import Scene
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -53,6 +55,11 @@ WATCH_DT = 0.05
 FIRST_POSE_WAIT_S = 60.0
 
 
+def without_objects(scene: Scene) -> Scene:
+    """The scene with only its floor and walls."""
+    return replace(scene, boxes=[box for box in scene.boxes if box.kind != "clutter"])
+
+
 class EpisodeDriverConfig(ModuleConfig):
     manifest: Path = Path()
     case_id: str = ""
@@ -60,6 +67,7 @@ class EpisodeDriverConfig(ModuleConfig):
     settle_s: float = 2.0
     seed_settle_s: float = 4.0
     goal_resend_s: float = 1.0
+    premap_objects: bool = True
     goal_wait_s: float = 8.0
 
 
@@ -138,6 +146,12 @@ class EpisodeDriver(Module):
             logger.exception("Episode driver failed")
             self._write({"reason": "driver_error"})
 
+    def _mapped(self) -> GroundTruth:
+        """The world the premap shows: the scene, or only its floor and walls."""
+        if self.config.premap_objects:
+            return self._truth
+        return GroundTruth(without_objects(self._case.scene()))
+
     def _episode(self) -> dict[str, object]:
         case, rules = self._case, self._rules
         if not self._wait(lambda: self._pose is not None, FIRST_POSE_WAIT_S):
@@ -151,7 +165,7 @@ class EpisodeDriver(Module):
             return {**record, "reason": "no_reference_route"}
         self.reference_path.publish(_path(route.points))
         self.phase.publish(String("premap"))
-        cloud = self._truth.premap_cloud(route.points)
+        cloud = self._mapped().premap_cloud(route.points)
         self.loaded_map.publish(
             PointCloud2.from_numpy(cloud, frame_id=ODOM_FRAME_ID, timestamp=time.time())
         )

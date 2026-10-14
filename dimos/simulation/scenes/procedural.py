@@ -43,6 +43,7 @@ Family = Literal[
     "corridor",
     "corridor_turn",
     "scattered",
+    "small_object",
 ]
 
 SLAB_THICKNESS = 0.15
@@ -73,10 +74,13 @@ WINDING_SPAN = 12.0
 WINDING_WIDTH_MAX = 1.2
 SCATTER_AREA = 64.0
 SCATTER_SIDE = (0.15, 0.6)
-SCATTER_HEIGHT = (0.25, 1.2)
+SCATTER_HEIGHT = (0.05, 1.2)
 SCATTER_LANE = 0.4
 SCATTER_CELL = 0.05
 SCATTER_COUNT = 40
+SMALL_OBJECT_LENGTH = (0.08, 0.5)
+SMALL_OBJECT_ASPECT = 0.4
+SMALL_OBJECT_HEIGHT = 0.1
 
 
 @dataclass(frozen=True)
@@ -678,6 +682,26 @@ def scattered(seed: int, clutter_count: int = SCATTER_COUNT) -> Scene:
     return scene
 
 
+def small_object(seed: int, object_length: float | None = None) -> Scene:
+    """One empty room with a low shoe-shaped box lying in open floor at a drawn angle."""
+    rng = np.random.default_rng(seed)
+    width, length = _uniform(rng, 10, 12), _uniform(rng, 8, 10)
+    z0 = _uniform(rng, 0.0, 0.08)
+    x, y = _uniform(rng, 0.35, 0.45) * width, _uniform(rng, 0.35, 0.5) * length
+    yaw = _uniform(rng, -math.pi / 2, math.pi / 2)
+    long = _given(_uniform(rng, *SMALL_OBJECT_LENGTH), object_length)
+    scene = Scene(
+        f"small_object_{seed}",
+        {"width": width, "length": length, "z0": z0, "object_x": x, "object_y": y},
+    )
+    _shell(scene, width, length, z0)
+    if long > 0:
+        half = (long / 2, SMALL_OBJECT_ASPECT * long / 2, SMALL_OBJECT_HEIGHT / 2)
+        scene.boxes.append(Box((x, y, z0 + half[2]), half, "clutter", yaw))
+    scene.start = (1.0, 1.0, z0)
+    return scene
+
+
 Params = dict[str, bool | int | float]
 FAMILIES: dict[Family, Callable[..., Scene]] = {
     "office": office,
@@ -689,6 +713,7 @@ FAMILIES: dict[Family, Callable[..., Scene]] = {
     "corridor": corridor,
     "corridor_turn": corridor_turn,
     "scattered": scattered,
+    "small_object": small_object,
 }
 
 

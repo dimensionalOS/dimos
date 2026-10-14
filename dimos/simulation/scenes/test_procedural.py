@@ -35,6 +35,9 @@ from dimos.simulation.scenes.procedural import (
     SCATTER_HEIGHT,
     SCATTER_SIDE,
     SLAB_THICKNESS,
+    SMALL_OBJECT_ASPECT,
+    SMALL_OBJECT_HEIGHT,
+    SMALL_OBJECT_LENGTH,
     START_CLEARANCE,
     TABLE_HEIGHT,
     TABLE_LEG,
@@ -58,6 +61,7 @@ from dimos.simulation.scenes.procedural import (
     overhang,
     room,
     scattered,
+    small_object,
     table,
 )
 
@@ -277,6 +281,36 @@ def test_block_height_is_drawn_unless_given_and_zero_removes_it() -> None:
     assert bare.params == block(3).params
 
 
+def test_small_object_is_deterministic_and_pinned() -> None:
+    assert small_object(3).digest() == small_object(3).digest() == "7f6131007ec27606"
+    assert small_object(3).digest() != small_object(4).digest()
+
+
+def test_small_object_lies_low_in_open_floor_at_a_drawn_angle() -> None:
+    yaws = set()
+    for seed in range(1, 21):
+        scene = small_object(seed, object_length=0.28)
+        z0, x, y = (scene.params[k] for k in ("z0", "object_x", "object_y"))
+        (box,) = [b for b in scene.boxes if b.kind == "clutter"]
+        assert box.center == pytest.approx((x, y, z0 + SMALL_OBJECT_HEIGHT / 2))
+        assert box.half == pytest.approx(
+            (0.14, 0.14 * SMALL_OBJECT_ASPECT, SMALL_OBJECT_HEIGHT / 2)
+        )
+        assert -math.pi / 2 <= box.yaw <= math.pi / 2
+        assert x > 1.0 + START_CLEARANCE + 1.0 and x < scene.params["width"] - 4.0
+        assert 2.0 < y < scene.params["length"] - 2.0
+        yaws.add(round(box.yaw, 1))
+    assert len(yaws) > 10
+
+
+def test_small_object_length_is_drawn_unless_given_and_zero_removes_it() -> None:
+    (drawn,) = [b for b in small_object(3).boxes if b.kind == "clutter"]
+    assert SMALL_OBJECT_LENGTH[0] <= 2 * drawn.half[0] <= SMALL_OBJECT_LENGTH[1]
+    bare = small_object(3, object_length=0.0)
+    assert not [b for b in bare.boxes if b.kind == "clutter"]
+    assert bare.params == small_object(3).params
+
+
 def test_overhang_is_deterministic_and_pinned() -> None:
     assert overhang(3).digest() == overhang(3).digest() == "452ccec8edfe8ec0"
     assert overhang(3).digest() != overhang(4).digest()
@@ -428,7 +462,7 @@ def test_a_turned_box_measures_gaps_and_extents_in_its_own_frame() -> None:
 
 
 def test_scattered_is_deterministic_and_pinned() -> None:
-    assert scattered(3).digest() == scattered(3).digest() == "01f4d93f40f051db"
+    assert scattered(3).digest() == scattered(3).digest() == "69770d2ca9c94a86"
     assert scattered(3).digest() != scattered(4).digest()
 
 
