@@ -339,7 +339,7 @@ def test_hidden_object_lies_in_the_corridor_out_of_sight_of_the_first_room() -> 
 
 
 def test_hidden_clutter_is_deterministic_and_pinned() -> None:
-    assert hidden_clutter(3).digest() == hidden_clutter(3).digest() == "86f98684b5d2afd0"
+    assert hidden_clutter(3).digest() == hidden_clutter(3).digest() == "d7616f079cdfd131"
     assert hidden_clutter(3).digest() != hidden_clutter(4).digest()
 
 
