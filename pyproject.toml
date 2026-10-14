@@ -49,6 +49,7 @@ exclude = [
     "**/*.svg",
     "**/*.tcss",
     "**/*.pyi",
+    "robot/galaxea/r1pro/vendor_setup.sh",
 ]
 
 [tool.setuptools.exclude-package-data]

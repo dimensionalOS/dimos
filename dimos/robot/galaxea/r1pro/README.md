@@ -10,16 +10,11 @@ not on your workstation. The paths below are the robot's, and are the same on
 every R1 Pro.
 
 `galaxea-dimos` is Galaxea's own ROS 2 driver with local bug fixes applied; it
-is not part of dimos. `canfd.sh` ships with the robot and brings up the CAN FD
-interfaces the driver needs. Boot the driver with the standalone stack, which
-bypasses the stock `moca_adapter` and runs the chassis gatekeeper on-robot:
-
-```bash
-bash ~/canfd.sh
-cd ~/galaxea-dimos/install/startup_config/share/startup_config/script
-./robot_startup.sh kill
-./robot_startup.sh boot ../sessions.d/ATCStandard/R1PROBody.d/
-```
+is not part of dimos. `R1ProConnection` boots it, when it is not running, with
+[`vendor_setup.sh`](/dimos/robot/galaxea/r1pro/vendor_setup.sh): the standalone stack
+(no `moca_adapter`, chassis gatekeeper on-robot) without the vendor head camera and
+Livox drivers. HDAS brings up CAN FD itself, so `~/canfd.sh` is not needed. Pick a
+vendor profile instead with `--r1proconnection.vendor-profile ATCStandard/R1PROVRTeleop`.
 
 ## Environment
 
