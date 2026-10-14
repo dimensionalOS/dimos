@@ -230,6 +230,42 @@ def test_a_contact_is_named_by_the_part_and_what_it_collided_with() -> None:
     ]
 
 
+def _ending(x_m: float, pace_m: float = 0.0) -> Recording:
+    """A stopped walk that through the final stuck window creeps x_m and paces by pace_m at 0.5 Hz."""
+    stopped = _walk(30.0, arrive=False, hold_last=25.0)
+    assert stopped.pose is not None
+    into = np.clip(stopped.pose.t - (stopped.end - RULES.stuck_s), 0.0, None)
+    x = x_m * into / RULES.stuck_s + pace_m * np.sin(np.pi * into)
+    xyz = stopped.pose.xyz + np.outer(x, [1.0, 0.0, 0.0])
+    return replace(stopped, pose=replace(stopped.pose, xyz=xyz))
+
+
+def test_going_nowhere_is_stuck_when_still_and_dithering_when_pacing() -> None:
+    def shown(recording: Recording, verdict: str | None = None) -> tuple[str, list[str], bool]:
+        s = score(recording, RULES, GOAL, verdict=verdict)
+        return s.outcome, s.signatures, s.mismatch
+
+    assert shown(_ending(0.0)) == ("stuck", ["commanded_no_progress"], False)
+    assert shown(_ending(0.2)) == ("stuck", ["commanded_no_progress"], False)
+    assert shown(_ending(0.0, pace_m=0.03)) == ("stuck", ["commanded_no_progress"], False)
+    assert shown(_ending(0.0, pace_m=0.04)) == ("dithering", ["commanded_no_progress"], False)
+    assert shown(_ending(0.0, pace_m=0.1)) == ("dithering", ["commanded_no_progress"], False)
+    assert shown(_ending(0.5)) == ("timeout", ["out_of_time"], False)
+    assert shown(_ending(0.5, pace_m=0.1)) == ("timeout", ["out_of_time"], False)
+    assert shown(_ending(0.0, pace_m=0.1), "dithering") == (
+        "dithering",
+        ["commanded_no_progress"],
+        False,
+    )
+    assert shown(_ending(0.0, pace_m=0.1), "stuck") == (
+        "dithering",
+        ["commanded_no_progress"],
+        True,
+    )
+    silent = _walk(30.0, arrive=False, hold_last=15.0)
+    assert shown(silent, "dithering") == ("unclaimed", ["arrival_mismatch"], False)
+
+
 def _stuck_touching(seconds: float) -> Recording:
     """A stuck walk with a leg on clutter for the given part of the final stuck window."""
     start = T0 + 30.0 - RULES.stuck_s

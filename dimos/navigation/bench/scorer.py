@@ -47,6 +47,7 @@ Outcome = Literal[
     "wrong_floor",
     "fall",
     "stuck",
+    "dithering",
     "stalled",
     "no_plan",
     "timeout",
@@ -62,7 +63,10 @@ DEFINITIONS: dict[Outcome, str] = {
     "fall": "The body tilted more than {fall_rad:g} rad in roll or pitch, or its trunk lay on the "
     "floor for {fall_trunk_floor_s:g} s or more. Checked before every other outcome.",
     "stuck": "No arrival. Motion was commanded for at least {stuck_moving_fraction:.0%} of the "
-    "last {stuck_s:g} s and the body moved less than {stuck_progress_m:g} m.",
+    "last {stuck_s:g} s, and the body stayed within {stuck_progress_m:g} m of where that "
+    "stretch began and walked less than {dither_path_m:g} m.",
+    "dithering": "As stuck, but the body walked {dither_path_m:g} m or more back and forth "
+    "inside those {stuck_progress_m:g} m.",
     "stalled": "No arrival, and no motion was commanded for the last {stalled_s:g} s.",
     "no_plan": "No arrival, and the global planner published no path.",
     "timeout": "No arrival, and the time budget ran out: {timeout_base_s:g} s plus "
@@ -92,7 +96,7 @@ WANDER_RATIO = 1.3
 EARLY_FALL_S = 3.0
 CONTACT_SPEED_S = 0.2
 ARRIVED = ("success", "reached_with_collision", "wrong_place", "wrong_floor")
-GAVE_UP = ("stuck", "stalled", "timeout")
+GAVE_UP = ("stuck", "dithering", "stalled", "timeout")
 
 
 @dataclass(frozen=True)
@@ -411,7 +415,7 @@ CHECKS: tuple[tuple[Signature, Callable[[_Episode], bool]], ...] = (
     ("body_fell", lambda e: e.outcome == "fall"),
     ("arrival_mismatch", lambda e: e.outcome in ("unclaimed", "wrong_place", "wrong_floor")),
     ("planner_empty", lambda e: e.outcome == "no_plan"),
-    ("commanded_no_progress", lambda e: e.outcome == "stuck"),
+    ("commanded_no_progress", lambda e: e.outcome in ("stuck", "dithering")),
     ("out_of_time", lambda e: e.outcome == "timeout"),
     ("local_refused", _local_refused),
     ("follower_zeroed", _follower_zeroed),
@@ -662,8 +666,8 @@ def _outcome(
     if paths.any_plan is False:
         return "no_plan"
     assert recording.pose is not None
-    if stuck(recording.pose, recording.commands, rules, t1):
-        return "stuck"
+    if nowhere := no_progress(recording.pose, recording.commands, rules, t1):
+        return nowhere
     if stalled(recording.commands, rules, t0, t1):
         return "stalled"
     return None
@@ -696,20 +700,23 @@ def moving(commands: Commands, rules: Rules) -> NDArray[np.bool_]:
     return commanded
 
 
-def stuck(pose: Poses, commands: Commands | None, rules: Rules, t1: float) -> bool:
-    """Commanding motion through the final stretch while the body went nowhere."""
+def no_progress(
+    pose: Poses, commands: Commands | None, rules: Rules, t1: float
+) -> Literal["stuck", "dithering"] | None:
+    """Commanding motion through the final stretch while the body went nowhere, walking or not."""
     if commands is None:
-        return False
+        return None
     keep = (commands.t >= t1 - rules.stuck_s) & (commands.t <= t1)
     if not keep.any() or moving(commands, rules)[keep].mean() < rules.stuck_moving_fraction:
-        return False
+        return None
     span = (pose.t >= t1 - rules.stuck_s) & (pose.t <= t1)
     if not span.any():
-        return False
-    start = pose.xyz[span][0, :2]
-    return bool(
-        np.linalg.norm(pose.xyz[span][:, :2] - start, axis=1).max() < rules.stuck_progress_m
-    )
+        return None
+    xy = pose.xyz[span][:, :2]
+    if np.linalg.norm(xy - xy[0], axis=1).max() >= rules.stuck_progress_m:
+        return None
+    walked = np.linalg.norm(np.diff(xy, axis=0), axis=1).sum()
+    return "dithering" if walked >= rules.dither_path_m else "stuck"
 
 
 def stalled(commands: Commands | None, rules: Rules, t0: float, t1: float) -> bool:

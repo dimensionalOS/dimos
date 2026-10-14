@@ -39,7 +39,7 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.std_msgs.String import String
 from dimos.navigation.bench.ground_truth import GroundTruth
-from dimos.navigation.bench.scorer import GOAL_ECHO_M, Commands, Poses, stalled, stuck
+from dimos.navigation.bench.scorer import GOAL_ECHO_M, Commands, Poses, no_progress, stalled
 from dimos.navigation.bench.suite import Manifest
 from dimos.simulation.go2_sim.world import ODOM_FRAME_ID
 from dimos.simulation.go2_sim.world_spec import SimWorldSpec
@@ -201,7 +201,7 @@ class EpisodeDriver(Module):
         return "stopped"
 
     def _stuck_or_stalled(self, t0: float, now: float) -> str | None:
-        """The scorer's stuck and stalled rules over the windows the callbacks keep."""
+        """The scorer's stuck, dithering and stalled rules over the windows the callbacks keep."""
         recent, commands = list(self._recent), list(self._commands)
         poses = Poses(
             np.array([t for t, _, _ in recent]),
@@ -211,8 +211,8 @@ class EpisodeDriver(Module):
         twists = Commands(
             np.array([t for t, _ in commands]), np.array([v for _, v in commands]).reshape(-1, 3)
         )
-        if stuck(poses, twists, self._rules, now):
-            return "stuck"
+        if nowhere := no_progress(poses, twists, self._rules, now):
+            return nowhere
         if stalled(twists, self._rules, t0, now):
             return "stalled"
         return None
