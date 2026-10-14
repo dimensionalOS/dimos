@@ -31,7 +31,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 import math
+from pathlib import Path
 import queue
+import subprocess
 import threading
 from threading import Thread
 import time
@@ -147,6 +149,10 @@ class R1ProConnectionConfig(ModuleConfig):
     enable_wrist_color: bool = Field(default=True)
     # Max Hz per color camera (0 = no cap); the cameras arrive at ~28 Hz, so 30 passes every frame.
     color_publish_hz: float = Field(default=30.0)
+    # Boot the vendor stack (HDAS, mobiman), which serves every ROS topic used here, if it is not running.
+    boot_vendor_stack: bool = Field(default=True)
+    # "" boots vendor_setup.sh's own set; a vendor profile, e.g. "ATCStandard/R1PROVRTeleop", boots that.
+    vendor_profile: str = Field(default="")
 
 
 class R1ProConnection(Module):
@@ -230,6 +236,14 @@ class R1ProConnection(Module):
         self._publish_thread: Thread | None = None
 
     # Lifecycle
+
+    @rpc
+    def build(self) -> None:
+        super().build()
+        # In build, so the vendor stack is up before any module starts.
+        if self.config.boot_vendor_stack:
+            setup = Path(__file__).with_name("vendor_setup.sh")
+            subprocess.run(["bash", str(setup), self.config.vendor_profile], check=True)
 
     @rpc
     def start(self) -> None:
