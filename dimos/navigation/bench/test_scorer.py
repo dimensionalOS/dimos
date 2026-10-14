@@ -19,7 +19,7 @@ from typing import get_args
 import numpy as np
 import pytest
 
-from dimos.msgs.sim_msgs.Contacts import Contact
+from dimos.msgs.sim_msgs.Contacts import Contact, Kind
 from dimos.navigation.bench.ground_truth import GO2
 from dimos.navigation.bench.scorer import (
     Commands,
@@ -28,6 +28,7 @@ from dimos.navigation.bench.scorer import (
     PathSample,
     Poses,
     Recording,
+    contact_name,
     definitions,
     score,
 )
@@ -160,7 +161,10 @@ def test_every_failure_has_an_outcome_and_a_signature() -> None:
         1.5,
         0.0,
     )
-    assert (s.contacts, s.first_contact) == ({"leg clutter": 1}, "leg clutter")
+    assert (s.contacts, s.first_contact) == (
+        {"leg collided with object": 1},
+        "leg collided with object",
+    )
     assert s.first_contact_s == pytest.approx(3.0)
     assert s.first_contact_speed == pytest.approx(SPEED, abs=0.01)
     far_off = score(_walk(10.0), RULES, (7.0, 1.0, 0.0))
@@ -218,6 +222,14 @@ def test_margin_is_the_gap_to_the_nearest_obstacle_at_body_height() -> None:
     assert under_a_slab.final_margin_m == pytest.approx(0.5 - GO2.radius, abs=0.02)
 
 
+def test_a_contact_is_named_by_the_part_and_what_it_collided_with() -> None:
+    assert [contact_name("lidar", kind) for kind in get_args(Kind)] == [
+        "lidar collided with floor",
+        "lidar collided with wall",
+        "lidar collided with object",
+    ]
+
+
 def _stuck_touching(seconds: float) -> Recording:
     """A stuck walk with a leg on clutter for the given part of the final stuck window."""
     start = T0 + 30.0 - RULES.stuck_s
@@ -238,10 +250,13 @@ def test_a_stuck_body_held_against_an_object_is_pushing() -> None:
     s = score(_stuck_touching(held + 0.1), RULES, GOAL)
     assert s.signatures == ["commanded_no_progress", "pushing"]
     assert s.signature == "commanded_no_progress"
-    assert s.pushing_s == pytest.approx(held + 0.1) and s.pushing_on == "leg clutter"
+    assert s.pushing_s == pytest.approx(held + 0.1) and s.pushing_on == "leg collided with object"
     brief = score(_stuck_touching(held - 0.1), RULES, GOAL)
     assert brief.signatures == ["commanded_no_progress"]
-    assert brief.pushing_s == pytest.approx(held - 0.1) and brief.pushing_on == "leg clutter"
+    assert (
+        brief.pushing_s == pytest.approx(held - 0.1)
+        and brief.pushing_on == "leg collided with object"
+    )
     free = score(_walk(30.0, arrive=False, hold_last=25.0), RULES, GOAL)
     assert (free.signatures, free.pushing_s, free.pushing_on) == (
         ["commanded_no_progress"],

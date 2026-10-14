@@ -82,6 +82,7 @@ Signature = Literal[
     "early_fall",
 ]
 COLLIDING_KINDS = ("wall", "clutter")
+KIND_WORDS = {"clutter": "object"}
 TRUNK_ON_FLOOR = Contact("trunk", "floor")
 T = TypeVar("T")
 GOAL_ECHO_M = 0.05
@@ -521,8 +522,13 @@ def _colliding(contacts: list[Contact]) -> set[Contact]:
     return {c for c in contacts if c.kind in COLLIDING_KINDS}
 
 
+def contact_name(part: str, kind: str) -> str:
+    """What touched what, in the words a reader sees."""
+    return f"{part} collided with {KIND_WORDS.get(kind, kind)}"
+
+
 def _name(contact: Contact) -> str:
-    return f"{contact.part} {contact.kind}"
+    return contact_name(contact.part, contact.kind)
 
 
 def _speed(pose: Poses, t: float) -> float | None:

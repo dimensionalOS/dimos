@@ -30,7 +30,7 @@ from pydantic import TypeAdapter
 
 from dimos.navigation.bench.ground_truth import GO2
 from dimos.navigation.bench.runner import RESULTS_FILE, RUN_FILE, SUITE_FILE
-from dimos.navigation.bench.scorer import Outcome, definitions
+from dimos.navigation.bench.scorer import Outcome, contact_name, definitions
 from dimos.navigation.bench.suite import Case, Manifest, Rules
 
 REPORT_FILE = "report.html"
@@ -242,8 +242,14 @@ def _row(case: Case, record: dict[str, object], episode: Path) -> Row:
         feature_m=_float(metrics.get("feature_m")),
         near_fall=record["outcome"] != "fall" and bool(metrics.get("trunk_floor_s")),
         mismatch=bool(metrics.get("mismatch")),
-        contacts=tuple(metrics.get("contacts") or ()),
+        contacts=tuple(_contact(name) for name in metrics.get("contacts") or ()),
     )
+
+
+def _contact(name: str) -> str:
+    """A contact name in today's wording, whichever wording the score was written in."""
+    words = name.split()
+    return contact_name(*words) if len(words) == 2 else name
 
 
 def _text(value: object) -> str | None:
