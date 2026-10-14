@@ -25,8 +25,8 @@ SUITE: Suite = [
         id="dimosblocks_spell_dimos",
         inputs="Arrange the letter blocks so they spell DIMOS. " + GUIDANCE,
         environment=environment("blocks", tuple(f"block_{c}_main" for c in WORD)),
-        # Any placement on the table: 0.1 moved + 0.4 x pairs in reading order + 0.25 one row
-        # + 0.25 letters upright for one reader.
+        # Any placement on the table: 0.7 x pairs in reading order + 0.3 letters upright for one
+        # reader (O at any angle).
         grade=word_partial,
         threshold=1.0,
         timeout_s=3600.0,

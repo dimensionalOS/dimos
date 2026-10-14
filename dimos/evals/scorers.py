@@ -554,16 +554,15 @@ def cap_partial(outcome: Outcome) -> float:
 # Letter blocks (dimosblocks): spell DIMOS. The word may lie at any angle on the table; the letters'
 # common up direction defines the reader, and the word must read left to right for that reader.
 WORD = "DIMOS"
-_BLOCK_M = 0.05
 _LETTER_UP_LOCAL = 1  # the top-face letter's up direction is the block's local +y
-_HALF_TURN_SAME = frozenset("IOS")  # look the same turned 180 deg, so either way up reads
+_HALF_TURN_SAME = frozenset("IS")  # look the same turned 180 deg, so either way up reads
+_ANY_TURN_SAME = frozenset("O")  # reads the same at any angle on the table
 
 
 def word_partial(outcome: Outcome) -> float:
-    """0.1 moved a block, 0.4 x neighbouring letter pairs in reading order, 0.25 one tidy row along
-    the reading direction, 0.25 every letter upright for the same reader (I, O and S either way
-    up). Nothing counts until a
-    block was moved (the random start may already have a pair in order)."""
+    """0.7 x neighbouring letter pairs in reading order, 0.3 every letter upright for the same
+    reader (I and S either way up, O at any angle). Spacing and alignment are not graded. Nothing
+    counts until a block was moved (the random start may already have a pair in order)."""
     names = [f"block_{c}_main" for c in WORD]
     tracks = _tracks(outcome, names)
     if len(tracks) < len(names):
@@ -574,31 +573,27 @@ def word_partial(outcome: Outcome) -> float:
     pos = np.array([b.final[:2] for b in blocks])
     ups = np.array([b.rot[-1][:2, _LETTER_UP_LOCAL] for b in blocks])  # letter up, on the table
     ups /= np.maximum(np.linalg.norm(ups, axis=1, keepdims=True), 1e-9)
-    # Read the word as a person would: try each letter's up (and its reverse for I, O and S) as the
+    # Read the word as a person would: try each letter's up (and its reverse for I and S) as the
     # reader's up and keep the best-scoring reading. The reader's up is averaged over the letters
-    # within 20 deg of it (I, O and S turned to match), so one stray letter does not tilt the word.
+    # within 20 deg of it (I and S turned to match), so one stray letter does not tilt the word. O
+    # has no up of its own, so it neither sets the reader's up nor needs to match it.
     cos20 = math.cos(math.radians(20))
     flips = np.array([c in _HALF_TURN_SAME for c in WORD])
-    # Row: all resting on the table (not stacked or held).
-    on_table = all(abs(b.final[2] - b.rest[2]) < 0.01 for b in blocks)
+    free = np.array([c in _ANY_TURN_SAME for c in WORD])
     flat = all(b.rot[-1][2, 2] > cos20 for b in blocks)  # lettered top faces up
 
     def read(candidate: np.ndarray) -> float:
         dots = ups @ candidate
-        matches = np.where(flips, np.abs(dots), dots) > cos20
+        matches = (np.where(flips, np.abs(dots), dots) > cos20) & ~free
         signs = np.where(flips & (dots < 0), -1.0, 1.0)
         inliers = (ups * signs[:, None])[matches]
         up = inliers.sum(axis=0) / np.linalg.norm(inliers.sum(axis=0))
         right = np.array([up[1], -up[0]])  # the reader's left-to-right: up turned 90 deg clockwise
-        along, across = pos @ right, pos @ up
+        along = pos @ right
         pairs = sum(along[i] < along[i + 1] for i in range(len(WORD) - 1))
-        # One line along the reading direction, gaps under 3 cm.
-        lined_up = bool(np.abs(across - across.mean()).max() < 0.02)
-        tight = bool((np.diff(np.sort(along)) < _BLOCK_M + 0.03).all())
-        row = on_table and lined_up and tight
-        # Every letter upright for this reader (I, O and S either way up).
+        # Every letter upright for this reader (I and S either way up, O at any angle).
         dots = ups @ up
-        facing = flat and bool((np.where(flips, np.abs(dots), dots) > cos20).all())
-        return 0.1 + 0.4 * pairs / (len(WORD) - 1) + 0.25 * row + 0.25 * facing
+        facing = flat and bool(((np.where(flips, np.abs(dots), dots) > cos20) | free).all())
+        return 0.7 * pairs / (len(WORD) - 1) + 0.3 * facing
 
-    return float(max(read(u) for u in (*ups, *(-ups[flips]))))
+    return float(max(read(u) for u in (*ups[~free], *(-ups[flips]))))
