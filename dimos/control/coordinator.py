@@ -101,8 +101,8 @@ class ControlCoordinatorConfig(ModuleConfig):
     publish_frame_poses: bool = False
     frame_pose_hz: float = 30.0
     log_ticks: bool = False
-    hardware: list[HardwareComponent] = field(default_factory=lambda: [])
-    tasks: list[TaskConfig] = field(default_factory=lambda: [])
+    hardware: list[HardwareComponent] = field(default_factory=list)
+    tasks: list[TaskConfig] = field(default_factory=list)
 
 
 class ControlCoordinator(Module):

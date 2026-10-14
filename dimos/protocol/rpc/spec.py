@@ -108,7 +108,7 @@ class RPCServer(Protocol):
     def serve_rpc(self, f: Callable, name: str) -> Callable[[], None]: ...  # type: ignore[type-arg]
 
     def serve_module_rpc(self, module: RPCInspectable, name: str | None = None) -> None:
-        for fname in module.rpcs.keys():
+        for fname in module.rpcs:
             if not name:
                 name = module.__class__.__name__
 

@@ -54,9 +54,7 @@ storage.save(frame1, frame2, frame3)
 lidar_stream.subscribe(storage.save_one)
 
 # Or pipe through (emits frame count)
-lidar_stream.pipe(
-    ops.flat_map(storage.save_stream)
-).subscribe()
+lidar_stream.pipe(ops.flat_map(storage.save_stream)).subscribe()
 ```
 
 **Storage location:** Files are saved to the data directory under the given name. The directory must not already contain pickle files (prevents accidental overwrites).
@@ -65,10 +63,7 @@ lidar_stream.pipe(
 
 ```python skip
 # Custom serialization
-storage = TimedSensorStorage(
-    "custom_capture",
-    autocast=lambda frame: frame.to_dict()
-)
+storage = TimedSensorStorage("custom_capture", autocast=lambda frame: frame.to_dict())
 ```
 
 ## TimedSensorReplay
@@ -151,9 +146,9 @@ replay.stream(speed=1.0).subscribe(process)
 # Stream at 2x with seeking
 replay.stream(
     speed=2.0,
-    seek=10.0,      # Start 10s in
+    seek=10.0,  # Start 10s in
     duration=30.0,  # Play for 30s
-    loop=True       # Loop forever
+    loop=True,  # Loop forever
 ).subscribe(process)
 ```
 

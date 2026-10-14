@@ -43,13 +43,9 @@ logger = setup_logger()
 class VideoSourceError(Exception):
     """Raised when there's an issue with the video source."""
 
-    pass
-
 
 class VideoFrameError(Exception):
     """Raised when there's an issue with frame acquisition."""
-
-    pass
 
 
 class AbstractVideoProvider(ABC):
@@ -83,7 +79,6 @@ class AbstractVideoProvider(ABC):
             VideoSourceError: If the video source cannot be opened.
             VideoFrameError: If frames cannot be read properly.
         """
-        pass
 
     def dispose_all(self) -> None:
         """Disposes of all active subscriptions managed by this provider."""

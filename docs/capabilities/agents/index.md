@@ -54,6 +54,7 @@ Skills are methods decorated with `@skill` on any `Module`. The agent discovers 
 from dimos.agents.annotation import skill
 from dimos.core.module import Module
 
+
 class MySkillContainer(Module):
     @skill
     def wave_hello(self) -> str:

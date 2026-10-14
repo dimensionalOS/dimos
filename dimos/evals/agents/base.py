@@ -114,7 +114,7 @@ class Agent(Configurable, ABC):
 
     def preflight(self, environment: Environment) -> None:
         """Raise if this agent cannot use the environment, before it starts."""
-        return None
+        return
 
     def available_tools(self, environment_tools: tuple[str, ...]) -> tuple[str, ...]:
         """Tools available to this agent; direct model calls have none."""

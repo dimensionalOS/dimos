@@ -336,9 +336,6 @@ class ReplayConnection(CompositeResource):
         return {"status": "ok", "message": "Fake publish"}
 
 
-_Config = TypeVar("_Config", bound=ConnectionConfig, default=ConnectionConfig)
-
-
 class GO2Connection(Module, Camera, Pointcloud):
     dedicated_worker = True
 

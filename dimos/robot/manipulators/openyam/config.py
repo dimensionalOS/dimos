@@ -30,10 +30,8 @@ from dimos.robot.manipulators._modeling import (
     joint_names,
 )
 from dimos.robot.manipulators.openyam.joints import (
-    OPENYAM_ARM_JOINTS as OPENYAM_ARM_JOINTS,
-    OPENYAM_DOF as OPENYAM_DOF,
-    OPENYAM_GRIPPER_JOINT as OPENYAM_GRIPPER_JOINT,
-    OPENYAM_JOINTS as OPENYAM_JOINTS,
+    OPENYAM_DOF,
+    OPENYAM_JOINTS,
 )
 from dimos.utils.data import LfsPath
 

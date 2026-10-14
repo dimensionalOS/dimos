@@ -33,6 +33,8 @@ from __future__ import annotations
 from enum import Enum
 import re
 
+from typing_extensions import Self
+
 _SEGMENT = re.compile(r"[A-Za-z0-9_]+")
 
 SEPARATOR = "/"
@@ -136,7 +138,7 @@ class Key(str):
     _resource: str
     _interface: str
 
-    def __new__(cls, value: str) -> Key:
+    def __new__(cls, value: str) -> Self:
         parts = value.split(SEPARATOR)
         if len(parts) != 3:
             raise ValueError(f"invalid key {value!r}: expected <source>/<resource>/<interface>")

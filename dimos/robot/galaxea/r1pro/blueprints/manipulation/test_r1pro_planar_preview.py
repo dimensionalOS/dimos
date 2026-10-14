@@ -93,8 +93,10 @@ def test_planar_preview_drives_its_mock_base_from_a_base_trajectory(wait_until) 
         )
         assert accepted.status is TrajectoryExecutionStatus.ACCEPTED
         wait_until(
-            lambda: coordinator.task_invoke("base_trajectory", "get_status", {}).state
-            is TrajectoryState.COMPLETED,
+            lambda: (
+                coordinator.task_invoke("base_trajectory", "get_status", {}).state
+                is TrajectoryState.COMPLETED
+            ),
             timeout=5.0,
             message="the base trajectory never completed",
         )

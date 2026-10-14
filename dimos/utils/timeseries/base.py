@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 T = TypeVar("T", bound="Timestamped")
 
 
-class TimeSeriesStore(Generic[T], ABC):
+class TimeSeriesStore(ABC, Generic[T]):
     """Unified storage + replay for sensor data.
 
     Implement abstract methods for your backend (in-memory, pickle, sqlite, etc.).

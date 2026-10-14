@@ -174,9 +174,11 @@ def _render_box3d(el: Box3D, b: Bounds) -> str:
     b.include(x + w, y + h)
     stroke, alpha = _style(el)
     parts = [
-        f'<rect x="{x:.4f}" y="{y:.4f}" width="{w:.4f}" height="{h:.4f}" '
-        f'fill="none" stroke="{stroke}" opacity="{alpha:.3f}" '
-        f'stroke-width="{min(w, h) * 0.04:.4f}"/>'
+        (
+            f'<rect x="{x:.4f}" y="{y:.4f}" width="{w:.4f}" height="{h:.4f}" '
+            f'fill="none" stroke="{stroke}" opacity="{alpha:.3f}" '
+            f'stroke-width="{min(w, h) * 0.04:.4f}"/>'
+        )
     ]
     if el.label:
         font_size = max(h * 0.3, 0.2)
@@ -209,8 +211,10 @@ def _render_camera(el: Camera, b: Bounds) -> str:
             b.include(px, py)
 
         parts = [
-            f'<polygon points="{x:.4f},{y:.4f} {x1:.4f},{y1:.4f} {x2:.4f},{y2:.4f}" '
-            f'fill="none" stroke="{stroke}" opacity="{alpha:.3f}" stroke-width="0.03"/>'
+            (
+                f'<polygon points="{x:.4f},{y:.4f} {x1:.4f},{y1:.4f} {x2:.4f},{y2:.4f}" '
+                f'fill="none" stroke="{stroke}" opacity="{alpha:.3f}" stroke-width="0.03"/>'
+            )
         ]
     else:
         r = 0.15
@@ -335,9 +339,11 @@ def render(
 
     style = f' style="background:{background}"' if background else ""
     parts: list[str] = [
-        f'<svg xmlns="http://www.w3.org/2000/svg" '
-        f'width="{width_px:.0f}" height="{svg_h:.0f}" '
-        f'viewBox="{b.xmin:.4f} {b.ymin:.4f} {b.width:.4f} {b.height:.4f}"{style}>',
+        (
+            f'<svg xmlns="http://www.w3.org/2000/svg" '
+            f'width="{width_px:.0f}" height="{svg_h:.0f}" '
+            f'viewBox="{b.xmin:.4f} {b.ymin:.4f} {b.width:.4f} {b.height:.4f}"{style}>'
+        ),
     ]
     parts.extend(fragments)
     parts.append("</svg>")

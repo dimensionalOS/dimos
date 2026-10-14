@@ -44,9 +44,7 @@ class Object3D(Detection3DPC):
         if self.center is None:
             center_str = "None"
         else:
-            center_str = (
-                "[" + ", ".join(list(map(lambda n: f"{n:1f}", self.center.to_list()))) + "]"
-            )
+            center_str = "[" + ", ".join([f"{n:1f}" for n in self.center.to_list()]) + "]"
         return {
             "object_id": self.track_id,
             "detections": self.detections,

@@ -25,7 +25,7 @@ VISER_INSTALL_HINT = (
 VISER_URDF_INSTALL_HINT = VISER_INSTALL_HINT
 
 try:
-    from viser import ViserServer as ViserServer
+    from viser import ViserServer
 except ModuleNotFoundError as e:
     if e.name != "viser":
         raise

@@ -54,7 +54,6 @@ class DisabledModuleProxy:
                 method=name,
                 spec=spec,
             )
-            return None
 
         return _noop
 
@@ -91,7 +90,7 @@ class HostedPlacement:
     """Placement constraint attached to one Blueprint fragment."""
 
     module_names: tuple[str, ...]
-    host: str | None | _HostSelection = _ANY_HOST
+    host: str | _HostSelection | None = _ANY_HOST
     tags: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
@@ -148,19 +147,14 @@ class BlueprintAtom:
                     StreamRef(name=name, type=type_, direction=direction)  # type: ignore[arg-type]
                 )
             # linking to unknown module via Spec
-            elif is_spec(annotation):
-                module_refs.append(ModuleRef(name=name, spec=annotation))
-            # linking to specific/known module directly
-            elif is_module_type(annotation):
+            elif is_spec(annotation) or is_module_type(annotation):
                 module_refs.append(ModuleRef(name=name, spec=annotation))
             # Optional Spec or Module: SomeSpec | None
             elif origin in (Union, types_mod.UnionType):
                 args = [a for a in get_args(annotation) if a is not type(None)]
                 if len(args) == 1:
                     inner = args[0]
-                    if is_spec(inner):
-                        module_refs.append(ModuleRef(name=name, spec=inner, optional=True))
-                    elif is_module_type(inner):
+                    if is_spec(inner) or is_module_type(inner):
                         module_refs.append(ModuleRef(name=name, spec=inner, optional=True))
 
         instance_name = kwargs.get("instance_name")
@@ -268,7 +262,7 @@ class Blueprint:
     def hosted(
         self,
         *,
-        host: str | None | _HostSelection = _ANY_HOST,
+        host: str | _HostSelection | None = _ANY_HOST,
         tags: Iterable[str] = (),
     ) -> "Blueprint":
         """Schedule this Blueprint fragment as one placement unit.
@@ -365,7 +359,7 @@ class Blueprint:
             )
 
         new_atoms = []
-        new_remap: dict[tuple[str, str], str | type[ModuleBase] | type[Spec]] = {}
+        new_remap: dict[tuple[str, str], type[ModuleBase | Spec] | str] = {}
 
         for atom in self.blueprints:
             new_name = f"{prefix}/{atom.name}"

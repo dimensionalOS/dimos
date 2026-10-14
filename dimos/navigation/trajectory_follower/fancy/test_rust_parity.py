@@ -149,14 +149,14 @@ def _cases(seed: int = 20260802, n: int = CASES):  # type: ignore[no-untyped-def
             emb = replace(
                 GO2,
                 control=GO2.control.model_copy(
-                    update=dict(
-                        lookahead=float(rng.uniform(0.1, 1.2)),
-                        k_pos=float(rng.uniform(0.5, 4.0)),
-                        k_yaw=float(rng.uniform(0.5, 4.0)),
-                        fan_yaw_per_m=float(rng.uniform(1.0, 6.0)),
-                        fan_yaw_done=float(rng.uniform(0.05, 0.6)),
-                        speed_lookahead=float(rng.uniform(0.5, 4.0)),
-                    )
+                    update={
+                        "lookahead": float(rng.uniform(0.1, 1.2)),
+                        "k_pos": float(rng.uniform(0.5, 4.0)),
+                        "k_yaw": float(rng.uniform(0.5, 4.0)),
+                        "fan_yaw_per_m": float(rng.uniform(1.0, 6.0)),
+                        "fan_yaw_done": float(rng.uniform(0.05, 0.6)),
+                        "speed_lookahead": float(rng.uniform(0.5, 4.0)),
+                    }
                 ),
                 max_speed=float(rng.uniform(0.2, 1.5)),
                 min_speed=float(rng.uniform(0.05, 0.3)),

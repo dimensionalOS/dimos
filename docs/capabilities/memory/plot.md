@@ -66,11 +66,7 @@ store = SqliteStore(path=get_data("go2_bigoffice.db"))
 images = store.streams.color_image
 
 plot = Plot()
-plot.add(
-    images.transform(speed()).transform(smooth(40)),
-    label="speed (m/s)",
-    opacity=0.75
-)
+plot.add(images.transform(speed()).transform(smooth(40)), label="speed (m/s)", opacity=0.75)
 
 plot.add(
     images.transform(throttle(0.5)).map_data(lambda obs: obs.data.brightness).transform(smooth(10)),
@@ -79,10 +75,12 @@ plot.add(
 )
 
 plot.add(
-    images.transform(throttle(0.5)).scan_data(images.first().ts, lambda state, obs: [state, obs.ts - state]),
+    images.transform(throttle(0.5)).scan_data(
+        images.first().ts, lambda state, obs: [state, obs.ts - state]
+    ),
     label="time",
     axis="time",
-    opacity=0.5
+    opacity=0.5,
 )
 
 plot.to_svg("assets/plot_robot_data.svg")
@@ -100,16 +98,16 @@ from dimos.memory.vis import color
 from dimos.memory.transform import normalize, smooth_time
 
 from dimos.models.embedding.clip import CLIPModel
+
 clip = CLIPModel()
 search_vector = clip.embed_text("plant")
 
 # we will cache this into memory since it takes a second,
 # and use it to play with graphing
 plantness_query = (
-    store.streams.color_image_embedded
-        .search(search_vector)
-        # search() returns observations sorted by similarity, we re-sort by time
-        .order_by("ts")
+    store.streams.color_image_embedded.search(search_vector)
+    # search() returns observations sorted by similarity, we re-sort by time
+    .order_by("ts")
 )
 
 # we've built our query
@@ -123,13 +121,16 @@ print(plantness_query_materialized)
 print(plantness_query_materialized.summary())
 
 # let's create a numerical stream
-plantness_similarity = plantness_query_materialized.map_data(lambda obs: obs.similarity).materialize()
+plantness_similarity = plantness_query_materialized.map_data(
+    lambda obs: obs.similarity
+).materialize()
 
 plot = Plot()
 
-plot.add(plantness_similarity,
-  label="plant-ness",
-  color=color.green,
+plot.add(
+    plantness_similarity,
+    label="plant-ness",
+    color=color.green,
 )
 
 plot.to_svg("assets/plot_plantness.svg")
@@ -150,18 +151,18 @@ Embeddings are calculated according to some minimum picture brightness. Complete
 Let's investigate how our embedding stream relates to image brightness:
 
 ```python session=robotdata
-
 plot = Plot()
 
-plot.add(plantness_similarity,
-  label="plant-ness",
-  color=color.green,
+plot.add(
+    plantness_similarity,
+    label="plant-ness",
+    color=color.green,
 )
 
 plot.add(
     images.transform(throttle(0.5)).map_data(lambda obs: obs.data.brightness),
     label="brightness",
-    axis="brightness"
+    axis="brightness",
 )
 
 plot.add(HLine(y=0.15, style=Style.dashed, color=color.red))
@@ -175,21 +176,17 @@ We see that stuff isn't embedded below some minimum brightness.
 Let's now fill the gaps in our semantic graph a bit, looks super ugly above, we will tell plotter to consider unmapped values as zero and connect values that are within 7.5 seconds, smooth with 5 second time window, and normalize the data
 
 ```python session=robotdata
-
 plot = Plot()
 
 plot.add(
-    plantness_similarity \
-      .transform(smooth_time(5.0)) \
-      .transform(normalize()), \
-      label="plant-ness",
-      color=color.green,
-      gap_fill=0.0,
-      connect=7.5
+    plantness_similarity.transform(smooth_time(5.0)).transform(normalize()),
+    label="plant-ness",
+    color=color.green,
+    gap_fill=0.0,
+    connect=7.5,
 )
 
 plot.to_svg("assets/plot_plantness_gap_fill.svg")
-
 ```
 
 ![output](assets/plot_plantness_gap_fill.svg)
@@ -208,14 +205,18 @@ from dimos.memory.vis.utils import mosaic
 from dimos.memory.stream import Stream
 from itertools import chain
 
-semantic_peaks = plantness_query_materialized.transform(peaks(key=lambda obs: obs.similarity, distance=1.0))
+semantic_peaks = plantness_query_materialized.transform(
+    peaks(key=lambda obs: obs.similarity, distance=1.0)
+)
 
 # load all lidar frames captured in the readius around the semantic peaks
 # feed them into a global mapper to get a single pointcloud around our areas of interest
-global_map = semantic_peaks \
-   .map(lambda obs: store.streams.lidar.near(obs.pose_stamped, radius=0.5).first()) \
-   .transform(VoxelMapTransformer()) \
-   .last().data
+global_map = (
+    semantic_peaks.map(lambda obs: store.streams.lidar.near(obs.pose_stamped, radius=0.5).first())
+    .transform(VoxelMapTransformer())
+    .last()
+    .data
+)
 
 drawing = Space()
 drawing.add(global_map)
@@ -224,12 +225,15 @@ drawing.to_svg("assets/plot_plantness_autopeaks_map.svg")
 
 peakColor = ColorRange("turbo")
 for i, p in enumerate(semantic_peaks):
-    print(f"t={p.ts - plantness_similarity.first().ts:6.1f}s score={p.similarity:.3f} prominence={p.tags['peak_prominence']:.3f}")
+    print(
+        f"t={p.ts - plantness_similarity.first().ts:6.1f}s score={p.similarity:.3f} prominence={p.tags['peak_prominence']:.3f}"
+    )
     plot.add(VLine(p.ts, color=peakColor(i)))
 
 plot.to_svg("assets/plot_plantness_autopeaks.svg")
 
 from dimos.models.vl.moondream import MoondreamVlModel
+
 moondream = MoondreamVlModel()
 moondream.start()
 
@@ -279,7 +283,10 @@ from dimos.memory.transform import significant
 plot = Plot()
 plot.add(
     plantness_similarity.transform(smooth_time(5.0)).transform(normalize()),
-    label="plant-ness", color=color.green, gap_fill=0.0, connect=7.5,
+    label="plant-ness",
+    color=color.green,
+    gap_fill=0.0,
+    connect=7.5,
 )
 
 meaningful_peaks = semantic_peaks.transform(significant(method="mad"))
@@ -307,7 +314,6 @@ Let's focus on those two peaks. load all images in the vicinity of a detection,
 We'll also pull all lidar frames in their vicinity and reconstruct global maps for those areas.
 
 ```python skip session=robotdata
-
 from dimos.memory.vis.space.elements import Point
 from dimos.memory.transform import QualityWindow
 
@@ -319,27 +325,33 @@ drawing = Space()
 meaningful_peak = meaningful_peaks.first()
 
 # load all images captured in the readius around the semantic peak
-near_images = images.near(meaningful_peak.pose_stamped, radius=2.5) \
-    .filter(lambda obs: obs.data.brightness > 0.1) \
+near_images = (
+    images.near(meaningful_peak.pose_stamped, radius=2.5)
+    .filter(lambda obs: obs.data.brightness > 0.1)
     .transform(QualityWindow(lambda img: img.sharpness, window=0.5))
+)
 
 # load all lidar frames captured in the readius around the semantic peak
 # feed them into a global mapper to get a single pointcloud around our area of interest
-global_map = store.streams.lidar.near(meaningful_peak.pose_stamped, radius=2.5) \
-   .transform(VoxelMapTransformer()) \
-   .last().data
+global_map = (
+    store.streams.lidar.near(meaningful_peak.pose_stamped, radius=2.5)
+    .transform(VoxelMapTransformer())
+    .last()
+    .data
+)
 
 # run our global mapper only on lidar frames around the POI
 drawing.add(global_map)
 drawing.add(meaningful_peak.pose_stamped, color=color.green)
 
 # run a detector, filter small weird detections
-detections = (near_images
-    .map_data(lambda obs: moondream.query_detections(obs.data, "plant"))
+detections = (
+    near_images.map_data(lambda obs: moondream.query_detections(obs.data, "plant"))
     .map_data(lambda obs: obs.data.filter(lambda det: det.bbox_2d_volume() > 3000))
     .filter(lambda obs: len(obs.data) > 0)
-    .materialize())
-    # materialize this stream since we'll want to re-use it later
+    .materialize()
+)
+# materialize this stream since we'll want to re-use it later
 
 drawing.add(detections)
 drawing.to_svg("assets/peak_space.svg")
@@ -366,10 +378,12 @@ from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
+
 # TODO We need a nicer way to get optical transform for image streams
 # depending on the source
 def world_to_optical(base_pose):
     return -(Transform.from_pose("base_link", base_pose) + BASE_TO_OPTICAL)
+
 
 drawing = Space()
 
@@ -379,28 +393,30 @@ drawing.add(detections)
 
 camera_info = go2_camerainfo()
 
-detections3d = (detections
-    .map_data(lambda obs: ImageDetections3DPC.from_2d(
+detections3d = detections.map_data(
+    lambda obs: ImageDetections3DPC.from_2d(
         obs.data,
         global_map,
         camera_info,
         world_to_optical(obs.pose_stamped),
-    ))
-    .filter(lambda obs: len(obs.data) > 0))
+    )
+).filter(lambda obs: len(obs.data) > 0)
 
 # TODO detection3d needs to be a natural thing to render
 for obs in detections3d:
     for d3d in obs.data:
         aabb = d3d.get_bounding_box()
         c, e = aabb.get_center(), aabb.get_extent()
-        drawing.add(Box3D(
-            center=Pose(float(c[0]), float(c[1]), float(c[2])),
-            size=Vector3(float(e[0]), float(e[1]), float(e[2])),
-            color=color.green, label="plant",
-        ))
+        drawing.add(
+            Box3D(
+                center=Pose(float(c[0]), float(c[1]), float(c[2])),
+                size=Vector3(float(e[0]), float(e[1]), float(e[2])),
+                color=color.green,
+                label="plant",
+            )
+        )
 
 drawing.to_svg("assets/peak_detections.svg")
-
 ```
 
 ![output](assets/peak_detections.svg)

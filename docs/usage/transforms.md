@@ -171,12 +171,15 @@ Modules in dimOS automatically get a `frame_id` property. This is controlled by 
 ```python
 from dimos.core.module import Module, ModuleConfig
 
+
 class MyModuleConfig(ModuleConfig):
     frame_id: str = "sensor_link"
     frame_id_prefix: str | None = None
 
+
 class MySensorModule(Module):
     config: MyModuleConfig
+
 
 # With default config:
 sensor = MySensorModule()
@@ -226,6 +229,7 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 
+
 class RobotBaseModule(Module):
     """Publishes the robot's position in the world frame at 10Hz."""
 
@@ -245,9 +249,8 @@ class RobotBaseModule(Module):
             )
             self.tf.publish(TFMessage(robot_pose))
 
-        self.register_disposable(
-            rx.interval(0.1).subscribe(publish_pose)
-        )
+        self.register_disposable(rx.interval(0.1).subscribe(publish_pose))
+
 
 class CameraModule(Module):
     """Publishes camera transforms at 10Hz."""
@@ -275,9 +278,8 @@ class CameraModule(Module):
             )
             self.tf.publish(TFMessage(camera_mount, optical_frame))
 
-        self.register_disposable(
-            rx.interval(0.1).subscribe(publish_transforms)
-        )
+        self.register_disposable(rx.interval(0.1).subscribe(publish_transforms))
+
 
 class PerceptionModule(Module):
     """Receives transforms and performs lookups."""
@@ -304,12 +306,15 @@ class PerceptionModule(Module):
         print("Transform tree:")
         print(self.tfbuffer.graph())
 
+
 if __name__ == "__main__":
-    dimos = ModuleCoordinator.build(autoconnect(
-        RobotBaseModule.blueprint(),
-        CameraModule.blueprint(),
-        PerceptionModule.blueprint(),
-    ))
+    dimos = ModuleCoordinator.build(
+        autoconnect(
+            RobotBaseModule.blueprint(),
+            CameraModule.blueprint(),
+            PerceptionModule.blueprint(),
+        )
+    )
 
     # Give worker TF publishers a moment to populate the buffer before querying.
     time.sleep(2.5)
@@ -317,7 +322,6 @@ if __name__ == "__main__":
     dimos.get_instance(PerceptionModule).lookup()
 
     dimos.stop()
-
 ```
 
 ```results
