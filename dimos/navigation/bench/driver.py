@@ -67,7 +67,6 @@ class EpisodeDriverConfig(ModuleConfig):
     settle_s: float = 2.0
     seed_settle_s: float = 4.0
     goal_resend_s: float = 1.0
-    premap_objects: bool = True
     goal_wait_s: float = 8.0
 
 
@@ -148,7 +147,7 @@ class EpisodeDriver(Module):
 
     def _mapped(self) -> GroundTruth:
         """The world the premap shows: the scene, or only its floor and walls."""
-        if self.config.premap_objects:
+        if self._case.premap_objects:
             return self._truth
         return GroundTruth(without_objects(self._case.scene()))
 

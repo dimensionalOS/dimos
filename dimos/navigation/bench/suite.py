@@ -134,6 +134,7 @@ class Case(Candidate):
     scene_digest: str
     level: Level | None = None
     feature: tuple[float, float] | None = None
+    premap_objects: bool = True
 
 
 @dataclass
@@ -487,7 +488,7 @@ class Probe:
     The level is handed to the placement, and to the scene as scene_param when that is named.
     A seed's placement draws are the same at every level, so only the level differs between its cases.
     control is the level that removes the feature, run once per seed to see whether the robot's own
-    line crosses it.
+    line crosses it. premap_objects False leaves the clutter out of every case's premap.
     """
 
     name: str
@@ -498,6 +499,7 @@ class Probe:
     scene_param: str | None = None
     control: float | None = None
     seeds: tuple[int, ...] = tuple(range(1, 11))
+    premap_objects: bool = True
 
 
 def _start_before(scene: Scene, x: float, rng: np.random.Generator) -> Pose:
@@ -754,6 +756,7 @@ HIDDEN_CLUTTER = Probe(
     (0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0),
     into_the_hidden_clutter,
     scene_param="clutter_count",
+    premap_objects=False,
 )
 HIDDEN_OBJECT = Probe(
     "hidden_object",
@@ -763,6 +766,7 @@ HIDDEN_OBJECT = Probe(
     past_the_hidden_object,
     scene_param="object_length",
     control=0.0,
+    premap_objects=False,
 )
 PROBES = {
     probe.name: probe
@@ -808,6 +812,7 @@ def freeze_probe(probe: Probe, sampling_seed: int = 0, rules: Rules = Rules()) -
                     scene_digest=gt.scene.digest(),
                     level=Level(probe.variable, value, control=value == probe.control),
                     feature=placed.feature,
+                    premap_objects=probe.premap_objects,
                 )
             )
     return Manifest(suite=probe.name, rules=rules, sampling_seed=sampling_seed, cases=cases)

@@ -149,7 +149,7 @@ def test_probe_freezes_every_level_in_every_seed(tmp_path: Path) -> None:
         assert len({c.goal[0] for c in cases}) == len(cases)
     for case in manifest.cases:
         assert case.level is not None and case.tag == "goal_clearance" and case.family == "room"
-        assert case.feature is None and not case.level.control
+        assert case.feature is None and not case.level.control and case.premap_objects
         params = case.scene().params
         assert params["width"] - case.goal[0] == pytest.approx(case.level.value)
         assert SIDE_WALL_M <= case.goal[1] <= params["length"] - SIDE_WALL_M
@@ -246,6 +246,7 @@ def test_hidden_object_probe_marks_the_object_on_the_way_through_the_corridor() 
     manifest = freeze_probe(probe)
     assert len(manifest.cases) == 2 * (len(probe.levels) + 1)
     assert probe.levels == SMALL_OBJECT.levels
+    assert not any(case.premap_objects for case in manifest.cases)
     for case in manifest.cases:
         assert case.level is not None and case.params == {"object_length": case.level.value}
         scene = case.scene()
@@ -264,6 +265,7 @@ def test_hidden_clutter_probe_only_adds_boxes_in_the_far_room() -> None:
     manifest = freeze_probe(probe)
     assert len({c.id for c in manifest.cases}) == len(manifest.cases) == 2 * len(probe.levels)
     assert probe.levels[0] == 0.0 and probe.control is None
+    assert not any(case.premap_objects for case in manifest.cases)
     for seed in probe.seeds:
         cases = [c for c in manifest.cases if c.seed == seed]
         assert len({(c.start, c.goal) for c in cases}) == 1
