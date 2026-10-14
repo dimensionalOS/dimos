@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from contextlib import suppress
 from multiprocessing.connection import wait
 import os
@@ -1425,7 +1425,7 @@ def test_restart_waits_for_native_watchdog_cleanup(
                 )
                 unsubscribe()
                 assert result is None
-                with pytest.raises(TimeoutError):
+                with pytest.raises(FuturesTimeoutError):
                     restarted.result(timeout=1.0)
                 result, unsubscribe = sibling.rpc.call_sync(probe, ([], {}), rpc_timeout=2)
                 unsubscribe()
