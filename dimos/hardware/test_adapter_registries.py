@@ -72,6 +72,7 @@ EXPECTED_NAMES = {
         "openarm_damiao",
         "openyam_damiao",
         "sim_mujoco_g1",
+        "sim_mujoco_microduck",
         "transport_lcm",
         "transport_ros",
     },
