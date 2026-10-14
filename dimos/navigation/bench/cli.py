@@ -137,7 +137,13 @@ def run_command(
     with one report for all of them.
     """
     from dimos.navigation.bench.report import write
-    from dimos.navigation.bench.runner import RUNS_DIR, RunConfig, new_run_dir, run as run_suite
+    from dimos.navigation.bench.runner import (
+        RUNS_DIR,
+        LowDiskError,
+        RunConfig,
+        new_run_dir,
+        run as run_suite,
+    )
     from dimos.navigation.bench.suite import PROBES, FreezeConfig, Manifest, freeze, freeze_probe
 
     if split not in ("dev", "held_out", "all"):
@@ -183,11 +189,14 @@ def run_command(
                 run_suite(replace(config, suite=path, out_dir=run_dir), _report(bar))
             typer.echo(f"run finished -> {run_dir}")
             _finish(run_dir)
-    except KeyboardInterrupt:
-        typer.echo(f"run interrupted -> {run_dir}")
+    except (KeyboardInterrupt, LowDiskError) as stop:
+        low = isinstance(stop, LowDiskError)
+        typer.echo(f"run stopped, {stop} -> {run_dir}" if low else f"run interrupted -> {run_dir}")
         _finish(run_dir)
         if several:
             typer.echo(f"report -> {write(out)}")
+        if low:
+            raise typer.Exit(1) from stop
         raise
     if several:
         typer.echo(f"report -> {write(out)}")

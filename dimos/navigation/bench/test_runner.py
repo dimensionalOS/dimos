@@ -40,6 +40,7 @@ from dimos.navigation.bench.runner import (
     RUN_FILE,
     SCORE_FILE,
     SUITE_FILE,
+    LowDiskError,
     Progress,
     RunConfig,
     _provenance,
@@ -273,6 +274,16 @@ def test_an_interrupted_run_keeps_finished_episodes_and_drops_the_rest(tmp_path:
     assert meta["finished"] is False and meta["time"] >= meta["started"]
     time.sleep(1.0)
     assert results.read_text() == written
+
+
+def test_a_run_starts_no_episode_once_free_disk_is_under_the_floor(
+    suite: Path, tmp_path: Path
+) -> None:
+    config = RunConfig(suite=suite, out_dir=tmp_path / "run", min_free_gb=1e12)
+    with pytest.raises(LowDiskError):
+        run(config)
+    assert not [d for d in (tmp_path / "run").iterdir() if d.is_dir()]
+    assert json.loads((tmp_path / "run" / RUN_FILE).read_text())["finished"] is False
 
 
 def test_harness_failures_are_errors_that_survive_a_rescore(tmp_path: Path) -> None:

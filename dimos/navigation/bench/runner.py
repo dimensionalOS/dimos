@@ -89,6 +89,7 @@ class RunConfig:
     policy: Path | None = None
     viewer: bool = False
     keep: Keep = "all"
+    min_free_gb: float = 15.0
     command: tuple[str, ...] = ("dimos",)
 
 
@@ -122,6 +123,10 @@ class Progress:
 
 
 Report = Callable[[Progress], None]
+
+
+class LowDiskError(RuntimeError):
+    """Free disk fell below the run's floor, so no further episode starts."""
 
 
 def selects(prefix: str, case_id: str) -> bool:
@@ -185,6 +190,9 @@ def run(config: RunConfig, report: Report | None = None) -> Path:
             running.remove(episode.dir.name)
 
     def one(episode: Episode) -> Result | None:
+        free_gb = shutil.disk_usage(run_dir).free / 1e9
+        if free_gb < config.min_free_gb:
+            raise LowDiskError(f"{free_gb:.1f} GB free, under the {config.min_free_gb:g} GB floor")
         with lock:
             running.append(episode.dir.name)
             progress()
