@@ -183,7 +183,6 @@ def pytest_configure(config):
         "markers",
         "self_hosted: tests that need the self-hosted runner (LFS, ROS, CUDA, etc.)",
     )
-    config.addinivalue_line("markers", "mujoco: tests which open mujoco")
     config.addinivalue_line(
         "markers", "self_hosted_large: tests that need a high-memory self-hosted runner"
     )
@@ -201,8 +200,6 @@ def pytest_configure(config):
         "native_e2e: native module e2e (builds rust); "
         "runs in the CI rust job and the macOS self-hosted-tests job",
     )
-    config.addinivalue_line("markers", "skipif_in_ci: skip when CI env var is set")
-    config.addinivalue_line("markers", "skipif_no_openai: skip when OPENAI_API_KEY is not set")
     config.addinivalue_line("markers", "skipif_no_alibaba: skip when ALIBABA_API_KEY is not set")
     config.addinivalue_line("markers", "skipif_no_typesafe: skip when TYPESAFE_API_KEY is not set")
     config.addinivalue_line("markers", "skipif_no_ros: skip when ROS dependencies are not present")
@@ -296,8 +293,6 @@ def retry_until():
 @pytest.hookimpl(tryfirst=True)
 def pytest_collection_modifyitems(config, items):
     _skipif_markers = {
-        "skipif_in_ci": (bool(os.getenv("CI")), "Skipped in CI"),
-        "skipif_no_openai": (not os.getenv("OPENAI_API_KEY"), "OPENAI_API_KEY not set"),
         "skipif_no_alibaba": (not os.getenv("ALIBABA_API_KEY"), "ALIBABA_API_KEY not set"),
         "skipif_no_typesafe": (not os.getenv("TYPESAFE_API_KEY"), "TYPESAFE_API_KEY not set"),
         "skipif_no_ros": (not _has_ros(), "ROS dependencies are not present"),
