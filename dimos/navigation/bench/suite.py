@@ -489,6 +489,7 @@ class Probe:
     A seed's placement draws are the same at every level, so only the level differs between its cases.
     control is the level that removes the feature, run once per seed to see whether the robot's own
     line crosses it. premap_objects False leaves the clutter out of every case's premap.
+    unit is the variable's unit, empty for a count.
     """
 
     name: str
@@ -500,6 +501,7 @@ class Probe:
     control: float | None = None
     seeds: tuple[int, ...] = tuple(range(1, 11))
     premap_objects: bool = True
+    unit: str = "m"
 
 
 def _start_before(scene: Scene, x: float, rng: np.random.Generator) -> Pose:
@@ -739,6 +741,7 @@ CLUTTER = Probe(
     (0.0, 10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0),
     across_the_boxes,
     scene_param="clutter_count",
+    unit="",
 )
 
 
@@ -757,6 +760,7 @@ HIDDEN_CLUTTER = Probe(
     into_the_hidden_clutter,
     scene_param="clutter_count",
     premap_objects=False,
+    unit="",
 )
 HIDDEN_OBJECT = Probe(
     "hidden_object",

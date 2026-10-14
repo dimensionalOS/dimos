@@ -70,7 +70,7 @@ addEventListener("DOMContentLoaded", () => {
     const table = th.closest("table"), index = th.cellIndex, body = table.tBodies[0];
     const up = table.dataset.sorted !== String(index);
     table.dataset.sorted = up ? String(index) : "";
-    const key = r => r.cells[index].textContent.trim();
+    const key = r => r.cells[index].dataset.sort ?? r.cells[index].textContent.trim();
     const numeric = [...body.rows].every(r => key(r) === "" || !isNaN(parseFloat(key(r))));
     [...body.rows].sort((a, b) => {
       const [x, y] = numeric ? [parseFloat(key(a)), parseFloat(key(b))] : [key(a), key(b)];
@@ -116,10 +116,12 @@ addEventListener("click", event => {
 </tbody>
 </table>
 {% endif %}
+{% macro level_cell(case, unit) %}{% if case.level is none %}<td>{{ case.tag }}</td>{% elif case.level.control %}<td class="n" data-sort="{{ case.level.value }}">control</td>{% else %}<td class="n">{{ case.level.value | level(unit) }}</td>{% endif %}{% endmacro %}
 {% for s in sections %}
 {% set report = s.report %}{% set run = s.report.run %}{% set verdict = s.verdict %}{% set wall = s.wall %}{% set finished_at = s.finished_at %}
 {% set stressors = s.stressors %}{% set totals = s.totals %}{% set signatures = s.signatures %}{% set difficulty = s.difficulty %}
 {% set variable = s.variable %}{% set levels = s.levels %}{% set controlled = s.controlled %}{% set curve = s.curve %}
+{% set unit = s.unit %}{% set heading = ((variable | replace("_", " ")) ~ (" " ~ unit if unit else "")) if variable else "stressor" %}
 {% if sections | length > 1 %}<h2 id="{{ report.suite }}">{{ report.suite }}</h2>{% endif %}
 <p class="verdict">{{ verdict }}</p>
 <dl>
@@ -139,7 +141,7 @@ addEventListener("click", event => {
 {% set drop = curve | map(attribute="drop") | max %}
 <div class="row">
 <svg width="{{ curve_px[0] }}" height="{{ curve_px[1] + 48 + drop }}" font-size="11">
-<text x="{{ (curve[0].x + curve[-1].x) // 2 }}" y="{{ curve_px[1] + 42 + drop }}" text-anchor="middle" font-size="12">{{ variable | replace("_", " ") }} (m)</text>
+<text x="{{ (curve[0].x + curve[-1].x) // 2 }}" y="{{ curve_px[1] + 42 + drop }}" text-anchor="middle" font-size="12">{{ variable | replace("_", " ") }}{% if unit %} ({{ unit }}){% endif %}</text>
 <text x="12" y="{{ curve_px[1] // 2 }}" text-anchor="middle" font-size="12" transform="rotate(-90 12 {{ curve_px[1] // 2 }})">success</text>
 {% for label, y in curve_grid %}<line x1="{{ curve[0].x }}" x2="{{ curve[-1].x }}" y1="{{ y }}" y2="{{ y }}" class="grid"/><text x="{{ curve[0].x - 6 }}" y="{{ y + 4 }}" text-anchor="end">{{ label }}</text>
 {% endfor %}
@@ -167,10 +169,10 @@ addEventListener("click", event => {
 {% endif %}
 </div>
 <div class="scroll"><table>
-<thead><tr><th class="n">{{ variable | replace("_", " ") }} m</th><th class="n">n</th>{% for outcome in report.outcomes %}<th class="n">{{ outcome }}</th>{% endfor %}{% if controlled %}<th class="n">not encountered</th>{% endif %}<th class="n">near falls</th><th>episodes with a contact</th><th>failure signatures</th></tr></thead>
+<thead><tr><th class="n">{{ heading }}</th><th class="n">n</th>{% for outcome in report.outcomes %}<th class="n">{{ outcome }}</th>{% endfor %}{% if controlled %}<th class="n">not encountered</th>{% endif %}<th class="n">near falls</th><th>episodes with a contact</th><th>failure signatures</th></tr></thead>
 <tbody>
 {% for row in levels %}
-<tr><td class="n">{{ "%.2f" | format(row.value) }}</td><td class="n">{{ row.n }}</td>{% for outcome in report.outcomes %}<td class="n">{{ row.outcomes[outcome] or "" }}</td>{% endfor %}{% if controlled %}<td class="n">{% for outcome, n in row.left_out.most_common() %}{{ outcome }} {{ n }}{{ ", " if not loop.last }}{% endfor %}{% if row.left_out_collisions %}, {{ row.left_out_collisions }} collided{% endif %}</td>{% endif %}<td class="n">{{ row.near_falls or "" }}</td><td>{% for contact, n in row.contacts.most_common() %}{{ contact }} {{ n }}{{ ", " if not loop.last }}{% endfor %}</td><td>{% for signature, n in row.signatures.most_common() %}{{ signature }} {{ n }}{{ ", " if not loop.last }}{% endfor %}{% if row.unexplained %}{{ ", " if row.signatures }}unexplained {{ row.unexplained }}{% endif %}</td></tr>
+<tr><td class="n">{{ row.value | level(unit) }}</td><td class="n">{{ row.n }}</td>{% for outcome in report.outcomes %}<td class="n">{{ row.outcomes[outcome] or "" }}</td>{% endfor %}{% if controlled %}<td class="n">{% for outcome, n in row.left_out.most_common() %}{{ outcome }} {{ n }}{{ ", " if not loop.last }}{% endfor %}{% if row.left_out_collisions %}, {{ row.left_out_collisions }} collided{% endif %}</td>{% endif %}<td class="n">{{ row.near_falls or "" }}</td><td>{% for contact, n in row.contacts.most_common() %}{{ contact }} {{ n }}{{ ", " if not loop.last }}{% endfor %}</td><td>{% for signature, n in row.signatures.most_common() %}{{ signature }} {{ n }}{{ ", " if not loop.last }}{% endfor %}{% if row.unexplained %}{{ ", " if row.signatures }}unexplained {{ row.unexplained }}{% endif %}</td></tr>
 {% endfor %}
 </tbody>
 </table></div>
@@ -216,10 +218,10 @@ addEventListener("click", event => {
 {% endif %}
 <details><summary>Episodes ({{ report.rows | length }})</summary>
 <div class="scroll"><table>
-<thead><tr><th>case</th><th>stressor</th><th>outcome</th><th>signature</th><th class="n">SPL</th><th class="n">time s</th><th class="n">bottleneck m</th><th class="n">final error m</th><th class="n">collisions</th>{% if controlled %}<th class="n">nearest to feature m</th>{% endif %}<th>terminal</th><th>replay</th></tr></thead>
+<thead><tr><th>case</th><th{% if variable %} class="n"{% endif %}>{{ heading }}</th><th>outcome</th><th>signature</th><th class="n">SPL</th><th class="n">time s</th><th class="n">bottleneck m</th><th class="n">final error m</th><th class="n">collisions</th>{% if controlled %}<th class="n">nearest to feature m</th>{% endif %}<th>terminal</th><th>replay</th></tr></thead>
 <tbody>
 {% for row in report.rows %}
-<tr><td>{{ row.case.id }}</td><td>{{ row.case.tag }}</td><td>{{ row.outcome }}</td><td>{{ row.signatures | join(", ") }}</td>
+<tr><td>{{ row.case.id }}</td>{{ level_cell(row.case, unit) }}<td>{{ row.outcome }}</td><td>{{ row.signatures | join(", ") }}</td>
 <td class="n">{{ "%.2f" | format(row.spl) if row.spl is not none }}</td>
 <td class="n">{{ "%.0f" | format(row.arrived_s) if row.arrived_s is not none }}</td>
 <td class="n">{{ "%.2f" | format(row.case.difficulty.min_clearance) }}</td>
@@ -235,10 +237,10 @@ addEventListener("click", event => {
 {% if report.mismatches %}
 <details><summary>Driver and recording disagree ({{ report.mismatches | length }})</summary>
 <div class="scroll"><table>
-<thead><tr><th>case</th><th>stressor</th><th>outcome</th><th>driver's verdict</th><th>replay</th></tr></thead>
+<thead><tr><th>case</th><th{% if variable %} class="n"{% endif %}>{{ heading }}</th><th>outcome</th><th>driver's verdict</th><th>replay</th></tr></thead>
 <tbody>
 {% for row in report.mismatches %}
-<tr><td>{{ row.case.id }}</td><td>{{ row.case.tag }}</td><td>{{ row.outcome }}</td><td>{{ row.terminal or "" }}</td>
+<tr><td>{{ row.case.id }}</td>{{ level_cell(row.case, unit) }}<td>{{ row.outcome }}</td><td>{{ row.terminal or "" }}</td>
 <td><button class="copy" title="Copy the replay command">copy</button> <code>dimos nav-bench replay {{ row.episode | string | quote }}</code></td></tr>
 {% endfor %}
 </tbody>
@@ -248,10 +250,10 @@ addEventListener("click", event => {
 {% if report.invalid %}
 <details><summary>Invalid episodes ({{ report.invalid | length }})</summary>
 <div class="scroll"><table>
-<thead><tr><th>case</th><th>stressor</th><th>error</th><th>terminal</th><th>replay</th></tr></thead>
+<thead><tr><th>case</th><th{% if variable %} class="n"{% endif %}>{{ heading }}</th><th>error</th><th>terminal</th><th>replay</th></tr></thead>
 <tbody>
 {% for row in report.invalid %}
-<tr><td>{{ row.case.id }}</td><td>{{ row.case.tag }}</td><td>{{ row.error }}</td><td>{{ row.terminal or "" }}</td>
+<tr><td>{{ row.case.id }}</td>{{ level_cell(row.case, unit) }}<td>{{ row.error }}</td><td>{{ row.terminal or "" }}</td>
 <td><button class="copy" title="Copy the replay command">copy</button> <code>dimos nav-bench replay {{ row.episode | string | quote }}</code></td></tr>
 {% endfor %}
 </tbody>

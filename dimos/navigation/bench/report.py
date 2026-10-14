@@ -34,7 +34,7 @@ from dimos.navigation.bench.ground_truth import GO2
 from dimos.navigation.bench.runner import RESULTS_FILE, RUN_FILE, SUITE_FILE
 from dimos.navigation.bench.scorer import Outcome, contact_name, definitions
 from dimos.navigation.bench.snapshot import bounds, sample, snapshot_path
-from dimos.navigation.bench.suite import Case, Manifest, Pose, Rules
+from dimos.navigation.bench.suite import PROBES, Case, Manifest, Pose, Rules
 from dimos.simulation.scenes.procedural import Rect
 
 REPORT_FILE = "report.html"
@@ -352,7 +352,12 @@ def _curve_y(rate: float) -> int:
     return round(CURVE_PAD_PX / 2 + (1 - rate) * (CURVE_PX[1] - CURVE_PAD_PX))
 
 
-def _curve(levels: list[LevelRow]) -> list[CurvePoint]:
+def level_text(value: float, unit: str) -> str:
+    """A level as the page shows it: two decimals with a unit, a whole number for a count."""
+    return f"{value:.2f}" if unit else f"{value:.0f}"
+
+
+def _curve(levels: list[LevelRow], unit: str) -> list[CurvePoint]:
     inner = CURVE_PX[0] - 2 * CURVE_PAD_PX
     span = (levels[-1].value - levels[0].value) or 1.0
     points, last = [], [-CURVE_LABEL_PX, -CURVE_LABEL_PX]
@@ -364,7 +369,7 @@ def _curve(levels: list[LevelRow]) -> list[CurvePoint]:
             CurvePoint(
                 x=x,
                 y=_curve_y(row.rate),
-                label=f"{row.value:.2f}",
+                label=level_text(row.value, unit),
                 count=f"{row.successes}/{row.n}",
                 drop=line * CURVE_ROW_PX,
             )
@@ -451,6 +456,7 @@ class Section:
     signatures: dict[str, Counter[str]]
     difficulty: list[DifficultyRow]
     variable: str
+    unit: str
     levels: list[LevelRow]
     controlled: bool
     encountered: str
@@ -466,6 +472,8 @@ def _section(report: Report) -> Section:
     seeds = encountered(report)
     met = "" if seeds is None else f"{len(seeds)} of {len(controls(report))}"
     faced = f". Feature encountered in {met} control runs" if met else ""
+    probe = PROBES.get(report.suite)
+    unit = probe.unit if probe is not None else "m"
     return Section(
         report=report,
         verdict=f"{len(report.successes)} of {len(report.rows)} episodes succeeded{spl}{faced}",
@@ -476,10 +484,11 @@ def _section(report: Report) -> Section:
         signatures=by_signature(report),
         difficulty=by_difficulty(report),
         variable=next((r.case.level.variable for r in report.rows if r.case.level), ""),
+        unit=unit,
         levels=levels,
         controlled=seeds is not None,
         encountered=met,
-        curve=_curve(levels) if levels else [],
+        curve=_curve(levels, unit) if levels else [],
         thumbnail=thumbnail(report) if levels else None,
     )
 
@@ -489,6 +498,7 @@ def render(reports: list[Report]) -> str:
     env = Environment(loader=FileSystemLoader(Path(__file__).parent), autoescape=True)
     env.filters["quote"] = shlex.quote
     env.filters["degrees"] = math.degrees
+    env.filters["level"] = level_text
     return env.get_template(TEMPLATE_FILE).render(
         sections=[_section(report) for report in reports],
         glossary=definitions(reports[0].rules),
