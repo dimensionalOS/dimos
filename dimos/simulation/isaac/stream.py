@@ -15,7 +15,7 @@
 from pathlib import Path
 import time
 
-from ..base.stream_base import AnnotatorType, StreamBase, TransportType
+from dimos.simulation.base.stream_base import AnnotatorType, StreamBase, TransportType
 
 
 class IsaacStream(StreamBase):

@@ -15,7 +15,7 @@
 
 from isaacsim import SimulationApp  # type: ignore[import-not-found]
 
-from ..base.simulator_base import SimulatorBase
+from dimos.simulation.base.simulator_base import SimulatorBase
 
 
 class IsaacSimulator(SimulatorBase):

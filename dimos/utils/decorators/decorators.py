@@ -18,7 +18,7 @@ import threading
 import time
 from typing import Any, Generic, ParamSpec, Protocol, TypeVar, cast
 
-from .accumulators import Accumulator, LatestAccumulator
+from dimos.utils.decorators.accumulators import Accumulator, LatestAccumulator
 
 _CacheResult_co = TypeVar("_CacheResult_co", covariant=True)
 _CacheReturn = TypeVar("_CacheReturn")

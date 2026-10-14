@@ -17,7 +17,7 @@ import time
 
 import numpy as np
 
-from ..base.stream_base import AnnotatorType, StreamBase, TransportType
+from dimos.simulation.base.stream_base import AnnotatorType, StreamBase, TransportType
 
 
 class GenesisStream(StreamBase):
