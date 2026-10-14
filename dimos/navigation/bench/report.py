@@ -490,7 +490,6 @@ def render(reports: list[Report]) -> str:
     env.filters["quote"] = shlex.quote
     env.filters["degrees"] = math.degrees
     return env.get_template(TEMPLATE_FILE).render(
-        title=f"nav-bench {reports[0].suite}" if len(reports) == 1 else "nav-bench",
         sections=[_section(report) for report in reports],
         glossary=definitions(reports[0].rules),
         curve_px=CURVE_PX,

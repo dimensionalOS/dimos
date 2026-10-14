@@ -311,7 +311,7 @@ def test_one_report_covers_every_suite_run_under_the_directory(tmp_path: Path) -
     (tmp_path / "leg_width.json").write_text("{}")
     path = write(tmp_path)
     page = path.read_text()
-    assert path == tmp_path / "report.html" and "<title>nav-bench</title>" in page
+    assert path == tmp_path / "report.html" and "Navigation Sim Results" in page
     assert '<a href="#door_width">door_width</a>' in page
     assert (
         '<td class="n">2 of 2</td><td class="n">1</td><td class="n"></td><td class="n">1 of 1</td>'
