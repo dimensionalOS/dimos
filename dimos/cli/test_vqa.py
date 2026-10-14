@@ -52,6 +52,8 @@ def test_vqa_generate_cli_declares_single_image_input() -> None:
     assert "--stride" in output
     assert "--sync-tolerance" not in output
     assert "--output" in output
+    assert "--family-max-share" in output
+    assert "--family-balance" in output
     assert "absent or empty" in output
 
 
@@ -100,13 +102,80 @@ def test_vqa_generate_cli_runs_generation(monkeypatch: pytest.MonkeyPatch, tmp_p
     )
 
     assert result.exit_code == 0
-    assert seen == [
-        (
-            GenerationRequest(dataset="recording.db", image_index=3, output=tmp_path),
-            None,
-        )
-    ]
+    assert len(seen) == 1
+    assert seen[0][0] == GenerationRequest(dataset="recording.db", image_index=3, output=tmp_path)
+    assert seen[0][1] == VqaGenerationConfig()
     assert "Generated 1 VQA case" in result.stdout
+
+
+def test_vqa_generate_cli_passes_family_max_share(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    seen: list[tuple[GenerationRequest, VqaGenerationConfig | None]] = []
+
+    def fake_generate(
+        request: GenerationRequest, config: VqaGenerationConfig | None = None
+    ) -> GenerationResult:
+        seen.append((request, config))
+        return GenerationResult(output=request.output_directory(), cases=())
+
+    monkeypatch.setattr(generate_module, "generate_dataset", fake_generate)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "evals",
+            "vqa",
+            "generate",
+            "recording.db",
+            "--image-index",
+            "0",
+            "--output",
+            str(tmp_path),
+            "--family-max-share",
+            "presence=0.25",
+            "--family-max-share",
+            "object_count=0.2",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert seen[0][1] == VqaGenerationConfig(
+        family_max_share={"presence": 0.25, "object_count": 0.2}
+    )
+
+
+def test_vqa_generate_cli_passes_family_balance(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    seen: list[tuple[GenerationRequest, VqaGenerationConfig | None]] = []
+
+    def fake_generate(
+        request: GenerationRequest, config: VqaGenerationConfig | None = None
+    ) -> GenerationResult:
+        seen.append((request, config))
+        return GenerationResult(output=request.output_directory(), cases=())
+
+    monkeypatch.setattr(generate_module, "generate_dataset", fake_generate)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "evals",
+            "vqa",
+            "generate",
+            "recording.db",
+            "--image-index",
+            "0",
+            "--output",
+            str(tmp_path),
+            "--family-balance",
+            "uniform",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert seen[0][1] == VqaGenerationConfig(family_balance="uniform")
 
 
 def test_vqa_generate_cli_accepts_frame_range(
@@ -141,18 +210,15 @@ def test_vqa_generate_cli_accepts_frame_range(
     )
 
     assert result.exit_code == 0
-    assert seen == [
-        (
-            GenerationRequest(
-                dataset="recording.db",
-                start=2,
-                stop=9,
-                stride=3,
-                output=tmp_path,
-            ),
-            None,
-        )
-    ]
+    assert len(seen) == 1
+    assert seen[0][0] == GenerationRequest(
+        dataset="recording.db",
+        start=2,
+        stop=9,
+        stride=3,
+        output=tmp_path,
+    )
+    assert seen[0][1] == VqaGenerationConfig()
 
 
 def test_vqa_generate_cli_formats_expected_errors(monkeypatch: pytest.MonkeyPatch) -> None:

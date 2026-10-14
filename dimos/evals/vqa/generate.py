@@ -16,13 +16,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections import Counter
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 import json
 from pathlib import Path
 import re
 import tempfile
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -101,6 +102,20 @@ class VqaGenerationConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     synchronization_tolerance_s: float = Field(default=0.1, gt=0)
+    family_max_share: dict[str, float] | None = None
+    family_balance: Literal["none", "uniform"] = "none"
+
+    @model_validator(mode="after")
+    def valid_family_max_share(self) -> VqaGenerationConfig:
+        if self.family_max_share is None:
+            return self
+        known = {family.name for family in AVAILABLE_FAMILIES}
+        for name, share in self.family_max_share.items():
+            if name not in known:
+                raise ValueError(f"unknown family in family_max_share: {name!r}")
+            if not 0 < share <= 1:
+                raise ValueError(f"family_max_share[{name!r}] must be in (0, 1], got {share}")
+        return self
 
 
 class PublicCase(BaseModel):
@@ -236,14 +251,29 @@ def generate_frames_dataset(
         frame_count = 0
         rejected_count = 0
         used_family_names: set[str] = set()
+        accepted_by_family: Counter[str] = Counter()
         for source in frames:
-            frame = _generate_frame(source, author, detector, range_estimator, mask_estimator)
+            frame = _generate_frame(
+                source,
+                author,
+                detector,
+                range_estimator,
+                mask_estimator,
+                config=config,
+                family_counts=accepted_by_family,
+            )
             _write_frame(staging, frame)
             all_cases.extend(frame.cases)
             all_labels.extend(frame.labels)
             frame_count += 1
             used_family_names.update(family.name for family in frame.families)
             rejected_count += sum(row.get("status") == "rejected" for row in frame.audit_rows)
+            for row in frame.audit_rows:
+                if row.get("status") != "answered":
+                    continue
+                proposal = row.get("proposal")
+                if isinstance(proposal, dict) and isinstance(proposal.get("family"), str):
+                    accepted_by_family[proposal["family"]] += 1
 
         if frame_count == 0:
             raise ValueError("generation selected no frames")
@@ -269,6 +299,7 @@ def generate_frames_dataset(
                 "frame_count": frame_count,
                 "question_count": len(all_cases),
                 "rejected_question_count": rejected_count,
+                "accepted_by_family": dict(accepted_by_family),
             },
         )
         if output.exists():
@@ -283,10 +314,14 @@ def _generate_frame(
     detector: VlModel,
     range_estimator: ObjectRangeEstimator | None,
     mask_estimator: ObjectMaskEstimator | None,
+    *,
+    config: VqaGenerationConfig | None = None,
+    family_counts: Mapping[str, int] | None = None,
 ) -> _GeneratedFrame:
     image_index = source.index
     image = source.image
-    families = tuple(
+    config = config or VqaGenerationConfig()
+    capable = tuple(
         family
         for family in AVAILABLE_FAMILIES
         if not (family.requires_masks and mask_estimator is None)
@@ -294,6 +329,12 @@ def _generate_frame(
             family.requires_pointcloud
             and (source.pointcloud_frame is None or range_estimator is None)
         )
+    )
+    families = _families_within_share(
+        capable,
+        config.family_max_share,
+        family_counts,
+        balance=config.family_balance,
     )
     proposals = _deduplicate_proposals(author.propose(image, families))
     answered: list[tuple[QuestionProposal, FamilyAnswer]] = []
@@ -348,6 +389,37 @@ def _generate_frame(
         audit_rows=tuple(audit_rows),
         families=tuple(families),
     )
+
+
+def _families_within_share(
+    capable: Sequence[FamilySpec],
+    family_max_share: Mapping[str, float] | None,
+    family_counts: Mapping[str, int] | None,
+    *,
+    balance: Literal["none", "uniform"] = "none",
+) -> tuple[FamilySpec, ...]:
+    """Drop families that already meet their accepted-share cap from the author menu.
+
+    ``uniform`` caps every currently capable family at ``1 / N`` so the menu only
+    keeps under-filled families and forces coverage toward rarer ones.
+    """
+    shares = dict(family_max_share or {})
+    if balance == "uniform" and capable:
+        uniform_share = 1.0 / len(capable)
+        for family in capable:
+            shares[family.name] = min(shares.get(family.name, uniform_share), uniform_share)
+    if not shares:
+        return tuple(capable)
+    counts = family_counts or {}
+    total = sum(counts.values())
+    if total == 0:
+        return tuple(capable)
+    clipped = tuple(
+        family
+        for family in capable
+        if family.name not in shares or counts.get(family.name, 0) / total < shares[family.name]
+    )
+    return clipped if clipped else tuple(capable)
 
 
 def _deduplicate_proposals(proposals: Sequence[QuestionProposal]) -> tuple[QuestionProposal, ...]:

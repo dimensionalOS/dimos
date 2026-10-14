@@ -58,8 +58,10 @@ class OpenAIQuestionAuthor:
         ]
         prompt = (
             "Generate useful questions about objects clearly visible in this image. "
-            "Use any applicable families and object names, preferring specific families when their "
-            "requirements are clearly satisfied. "
+            "Use only the available families below. Cover as many different available families as "
+            "the image clearly supports; do not concentrate on presence or object_count when other "
+            "available families fit. Prefer specific families when their requirements are clearly "
+            "satisfied. "
             "Return only a JSON array of objects matching the available deterministic families. "
             "Populate exactly the required fields. Do not duplicate proposals, answer questions, "
             "or add fields. "

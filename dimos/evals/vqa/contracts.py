@@ -38,6 +38,9 @@ NonEmptyString = Annotated[str, StringConstraints(strip_whitespace=True, min_len
 FamilyName = Literal[
     "presence",
     "horizontal_direction",
+    "vertical_direction",
+    "presence_and",
+    "object_color",
     "object_count",
     "image_coverage",
     "largest_visible_area",

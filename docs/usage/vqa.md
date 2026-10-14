@@ -53,6 +53,9 @@ answers. Every proposal uses `object_names`; single-object families require one 
 |---|---|---|
 | `presence` | yes, no | At least one Moondream detection |
 | `horizontal_direction` | left, center, right | Exactly one detection; use its horizontal center |
+| `vertical_direction` | top, middle, bottom | Exactly one detection; use its vertical center |
+| `presence_and` | yes, no | Both object categories have at least one Moondream detection |
+| `object_color` | red, orange, yellow, green, blue, purple, brown, white, black, gray | Exactly one detection + EdgeTAM mask; dominant HSV bucket inside the mask (no color words in the object name) |
 | `object_count` | one, two, three, four or more | Count Moondream detections |
 | `image_coverage` | Adaptive percentage buckets | Divide EdgeTAM mask pixels by image pixels |
 | `largest_visible_area` | Two to five authored object references | Select a mask at least 20% larger than the runner-up |

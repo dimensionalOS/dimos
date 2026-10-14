@@ -36,15 +36,26 @@ def generate(
         None,
         help="Destination directory; must be absent or empty",
     ),
+    family_max_share: list[str] | None = typer.Option(
+        None,
+        help="Cap accepted share for a family as name=share (repeatable), e.g. presence=0.25",
+    ),
+    family_balance: str = typer.Option(
+        "none",
+        help="Family menu policy: none, or uniform (cap every capable family at 1/N)",
+    ),
 ) -> None:
     """Generate questions for one image or an indexed image range."""
     # Keep generation's optional model stack out of global CLI startup.
     from dimos.evals.vqa.generate import (
         GenerationRequest,
+        VqaGenerationConfig,
         generate_dataset,
     )
 
     try:
+        if family_balance not in {"none", "uniform"}:
+            raise ValueError("family-balance must be 'none' or 'uniform'")
         request = GenerationRequest(
             dataset=dataset,
             output=output,
@@ -53,10 +64,33 @@ def generate(
             stop=stop,
             stride=stride,
         )
-        result = generate_dataset(request)
+        config = VqaGenerationConfig(
+            family_max_share=_parse_family_max_share(family_max_share),
+            family_balance=family_balance,  # type: ignore[arg-type]
+        )
+        result = generate_dataset(request, config=config)
     except (ValueError, IndexError, OSError) as exc:
         raise typer.BadParameter(str(exc)) from exc
     typer.echo(f"Generated {len(result.cases)} VQA case(s) in {result.output}")
+
+
+def _parse_family_max_share(entries: list[str] | None) -> dict[str, float] | None:
+    if not entries:
+        return None
+    shares: dict[str, float] = {}
+    for entry in entries:
+        if "=" not in entry:
+            raise ValueError(f"family-max-share must be name=share, got {entry!r}")
+        name, raw_share = entry.split("=", 1)
+        name = name.strip()
+        if not name:
+            raise ValueError(f"family-max-share name is empty in {entry!r}")
+        try:
+            share = float(raw_share.strip())
+        except ValueError as exc:
+            raise ValueError(f"family-max-share share must be a float in {entry!r}") from exc
+        shares[name] = share
+    return shares
 
 
 @app.command("run")

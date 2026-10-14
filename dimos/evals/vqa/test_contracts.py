@@ -31,12 +31,15 @@ from dimos.evals.vqa.contracts import (
     FamilyAnswer,
     FamilySpec,
     InsufficientEvidenceError,
+    InvalidQuestionProposalError,
     QuestionProposal,
 )
 from dimos.evals.vqa.families import (
     AVAILABLE_FAMILIES,
     CLOSEST_OBJECT_FAMILY,
+    HORIZONTAL_DIRECTION_FAMILY,
     LARGEST_VISIBLE_AREA_FAMILY,
+    OBJECT_COUNT_FAMILY,
     PRESENCE_FAMILY,
     answer_question,
 )
@@ -46,6 +49,7 @@ from dimos.evals.vqa.generate import (
     PrivateLabel,
     PublicCase,
     VqaGenerationConfig,
+    _families_within_share,
     generate_frames_dataset,
 )
 from dimos.evals.vqa.primitives.edge_tam import ObjectMaskEvidence
@@ -318,6 +322,34 @@ class _MaskEstimator:
             prompt_bbox_xyxy=box,
             detection=detection,
             mask=mask,
+        )
+
+    def estimate_many(
+        self, image: Image, object_names: tuple[str, ...]
+    ) -> tuple[ObjectMaskEvidence, ...]:
+        return tuple(self.estimate(image, object_name) for object_name in object_names)
+
+
+class _SolidMaskEstimator:
+    def __init__(self, mask: np.ndarray) -> None:
+        self._mask = np.asarray(mask, dtype=bool)
+
+    def estimate(self, image: Image, object_name: str) -> ObjectMaskEvidence:
+        box = (0.0, 0.0, float(image.width), float(image.height))
+        detection = Detection2DBBox(
+            bbox=box,
+            track_id=0,
+            class_id=-1,
+            confidence=1.0,
+            name=object_name,
+            ts=image.ts,
+            image=image,
+        )
+        return ObjectMaskEvidence(
+            object_name=object_name,
+            prompt_bbox_xyxy=box,
+            detection=detection,
+            mask=self._mask,
         )
 
     def estimate_many(
@@ -635,6 +667,146 @@ def test_horizontal_direction_rejects_ambiguous_instances() -> None:
 
 
 @pytest.mark.parametrize(
+    ("box", "expected"),
+    (
+        ((0.0, 0.0, 20.0, 10.0), "top"),
+        ((0.0, 15.0, 20.0, 25.0), "middle"),
+        ((0.0, 25.0, 20.0, 35.0), "middle"),
+        ((0.0, 45.0, 20.0, 55.0), "bottom"),
+        ((0.0, 50.0, 20.0, 60.0), "bottom"),
+    ),
+)
+def test_vertical_direction_uses_detection_center(box: Bbox, expected: str) -> None:
+    image = Image.from_numpy(np.zeros((60, 90, 3), dtype=np.uint8))
+    proposal = QuestionProposal(family="vertical_direction", object_names=("robot",))
+
+    answer = answer_question(proposal, image, _BoxesDetector((box,)))
+
+    assert answer.answer == expected
+    assert answer.choices == ("top", "middle", "bottom")
+    assert answer.evidence["detection_count"] == 1
+
+
+def test_vertical_direction_rejects_ambiguous_instances() -> None:
+    image = Image.from_numpy(np.zeros((60, 90, 3), dtype=np.uint8))
+    proposal = QuestionProposal(family="vertical_direction", object_names=("chair",))
+    detector = _BoxesDetector(
+        (
+            (0.0, 0.0, 20.0, 10.0),
+            (0.0, 45.0, 20.0, 55.0),
+        )
+    )
+
+    with pytest.raises(ValueError, match="exactly one"):
+        answer_question(proposal, image, detector)
+
+
+def test_presence_and_requires_both_objects() -> None:
+    image = Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8))
+    proposal = QuestionProposal(family="presence_and", object_names=("chair", "table"))
+
+    answer = answer_question(proposal, image, _Detector(present=True))
+
+    assert answer.answer == "yes"
+    assert answer.question == "Does the image contain both chair and table?"
+
+
+def test_presence_and_rejects_partial_detections() -> None:
+    image = Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8))
+    proposal = QuestionProposal(family="presence_and", object_names=("chair", "table"))
+
+    class _SingleCategoryDetector(_TestVlModel):
+        def query_detections(
+            self, image: Image, query: str, **kwargs: object
+        ) -> ImageDetections2D[Detection2DBBox]:
+            if query == "chair":
+                return _Detector(present=True).query_detections(image, query, **kwargs)
+            return ImageDetections2D(image, [])
+
+    with pytest.raises(InsufficientEvidenceError, match="missing"):
+        answer_question(proposal, image, _SingleCategoryDetector())
+
+
+def test_object_color_maps_dominant_blue() -> None:
+    from dimos.msgs.sensor_msgs.Image import ImageFormat
+
+    image = Image.from_numpy(
+        np.full((40, 40, 3), (0, 0, 255), dtype=np.uint8),
+        format=ImageFormat.RGB,
+    )
+    proposal = QuestionProposal(family="object_color", object_names=("chair",))
+    mask = np.ones((40, 40), dtype=bool)
+
+    answer = answer_question(
+        proposal,
+        image,
+        _BoxesDetector(((0.0, 0.0, 40.0, 40.0),)),
+        mask_estimator=_SolidMaskEstimator(mask),
+    )
+
+    assert answer.answer == "blue"
+    assert answer.evidence["dominant_bucket"] == "blue"
+
+
+def test_object_color_counts_neutral_white() -> None:
+    from dimos.msgs.sensor_msgs.Image import ImageFormat
+
+    image = Image.from_numpy(
+        np.full((40, 40, 3), (250, 250, 250), dtype=np.uint8),
+        format=ImageFormat.RGB,
+    )
+    proposal = QuestionProposal(family="object_color", object_names=("chair",))
+
+    answer = answer_question(
+        proposal,
+        image,
+        _Detector(present=True),
+        mask_estimator=_SolidMaskEstimator(np.ones((40, 40), dtype=bool)),
+    )
+
+    assert answer.answer == "white"
+
+
+def test_object_color_rejects_tied_buckets() -> None:
+    from dimos.msgs.sensor_msgs.Image import ImageFormat
+
+    pixels = np.zeros((40, 40, 3), dtype=np.uint8)
+    pixels[:, :20] = (255, 0, 0)
+    pixels[:, 20:] = (0, 0, 255)
+    image = Image.from_numpy(pixels, format=ImageFormat.RGB)
+    proposal = QuestionProposal(family="object_color", object_names=("chair",))
+
+    with pytest.raises(InsufficientEvidenceError, match="unambiguous dominant"):
+        answer_question(
+            proposal,
+            image,
+            _Detector(present=True),
+            mask_estimator=_SolidMaskEstimator(np.ones((40, 40), dtype=bool)),
+        )
+
+
+def test_object_color_rejects_colorful_object_names() -> None:
+    image = Image.from_numpy(np.zeros((40, 40, 3), dtype=np.uint8))
+    proposal = QuestionProposal(family="object_color", object_names=("red bag",))
+
+    with pytest.raises(InvalidQuestionProposalError, match="color word"):
+        answer_question(
+            proposal,
+            image,
+            _Detector(present=True),
+            mask_estimator=_SolidMaskEstimator(np.ones((40, 40), dtype=bool)),
+        )
+
+
+def test_object_color_requires_mask_estimator() -> None:
+    image = Image.from_numpy(np.zeros((40, 40, 3), dtype=np.uint8))
+    proposal = QuestionProposal(family="object_color", object_names=("chair",))
+
+    with pytest.raises(InsufficientEvidenceError, match="segmentation-mask"):
+        answer_question(proposal, image, _Detector(present=True))
+
+
+@pytest.mark.parametrize(
     ("count", "expected"),
     ((1, "one"), (2, "two"), (3, "three"), (4, "four or more"), (5, "four or more")),
 )
@@ -803,6 +975,50 @@ def test_generation_config_validates_synchronization_tolerance() -> None:
     assert VqaGenerationConfig().synchronization_tolerance_s == 0.1
     with pytest.raises(ValidationError):
         VqaGenerationConfig(synchronization_tolerance_s=0.0)
+
+
+def test_generation_config_validates_family_max_share() -> None:
+    assert VqaGenerationConfig().family_max_share is None
+    config = VqaGenerationConfig(family_max_share={"presence": 0.25, "object_count": 0.2})
+    assert config.family_max_share == {"presence": 0.25, "object_count": 0.2}
+    with pytest.raises(ValidationError):
+        VqaGenerationConfig(family_max_share={"not_a_family": 0.5})
+    with pytest.raises(ValidationError):
+        VqaGenerationConfig(family_max_share={"presence": 0.0})
+    with pytest.raises(ValidationError):
+        VqaGenerationConfig(family_max_share={"presence": 1.5})
+
+
+def test_families_within_share_clips_and_keeps_fallback() -> None:
+    capable = (PRESENCE_FAMILY, OBJECT_COUNT_FAMILY, HORIZONTAL_DIRECTION_FAMILY)
+    assert _families_within_share(capable, None, {"presence": 10}) == capable
+    assert _families_within_share(capable, {"presence": 0.25}, None) == capable
+    clipped = _families_within_share(
+        capable,
+        {"presence": 0.25, "object_count": 0.2},
+        {"presence": 5, "object_count": 2, "horizontal_direction": 3},
+    )
+    assert [family.name for family in clipped] == ["horizontal_direction"]
+    # If every capped family is over share and nothing else remains, keep the full menu.
+    only_presence = (PRESENCE_FAMILY,)
+    assert (
+        _families_within_share(only_presence, {"presence": 0.25}, {"presence": 10}) == only_presence
+    )
+
+
+def test_families_within_share_uniform_keeps_only_underfilled() -> None:
+    capable = (PRESENCE_FAMILY, OBJECT_COUNT_FAMILY, HORIZONTAL_DIRECTION_FAMILY)
+    # 1/N ~= 0.333; presence=4/6 dominates and drops; others stay.
+    clipped = _families_within_share(
+        capable,
+        None,
+        {"presence": 4, "object_count": 1, "horizontal_direction": 1},
+        balance="uniform",
+    )
+    assert [family.name for family in clipped] == [
+        "object_count",
+        "horizontal_direction",
+    ]
 
 
 def test_generation_request_selects_frame_range() -> None:
@@ -1132,9 +1348,21 @@ def test_frame_without_pointcloud_does_not_expose_distance_family(tmp_path: Path
         _RangeEstimator(1.5),
     )
 
-    assert author.family_names == ("presence", "horizontal_direction", "object_count")
+    assert author.family_names == (
+        "presence",
+        "horizontal_direction",
+        "vertical_direction",
+        "presence_and",
+        "object_count",
+    )
     run = json.loads((output / "audit" / "run.json").read_text())
-    assert run["families"] == ["presence", "horizontal_direction", "object_count"]
+    assert run["families"] == [
+        "presence",
+        "horizontal_direction",
+        "vertical_direction",
+        "presence_and",
+        "object_count",
+    ]
 
 
 def test_frame_without_pointcloud_exposes_mask_families_when_masks_are_available(
@@ -1155,6 +1383,9 @@ def test_frame_without_pointcloud_exposes_mask_families_when_masks_are_available
     assert author.family_names == (
         "presence",
         "horizontal_direction",
+        "vertical_direction",
+        "presence_and",
+        "object_color",
         "object_count",
         "image_coverage",
         "largest_visible_area",
@@ -1198,7 +1429,12 @@ def test_generate_multiple_images_aggregates_frame_artifacts(tmp_path: Path) -> 
     assert run["generation"]["start"] == 1
     assert run["generation"]["stop"] == 5
     assert run["generation"]["stride"] == 2
-    assert run["configuration"] == {"synchronization_tolerance_s": 0.025}
+    assert run["configuration"] == {
+        "synchronization_tolerance_s": 0.025,
+        "family_max_share": None,
+        "family_balance": "none",
+    }
+    assert run["accepted_by_family"] == {"presence": 2}
     assert run["models"] == {
         "author": "gpt-4o-mini",
         "detector": "vikhyatk/moondream2",
@@ -1224,6 +1460,41 @@ def test_empty_frame_does_not_count_as_rejected_question(tmp_path: Path) -> None
     frame = json.loads((output / "audit" / "frame-000001" / "frame.json").read_text())
     assert run["rejected_question_count"] == 0
     assert frame["rejected_question_count"] == 0
+
+
+def test_generation_clips_overrepresented_families_from_author_menu(tmp_path: Path) -> None:
+    output = tmp_path / "vqa"
+    image = Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8))
+    request = GenerationRequest(dataset="recording.db", start=0, stop=2, output=output)
+    seen_menus: list[tuple[str, ...]] = []
+
+    class _MenuRecordingAuthor:
+        def propose(
+            self, image: Image, families: Sequence[FamilySpec]
+        ) -> Sequence[QuestionProposal]:
+            seen_menus.append(tuple(family.name for family in families))
+            # Prefer presence when offered; otherwise first offered family.
+            offered = tuple(family.name for family in families)
+            family = "presence" if "presence" in offered else offered[0]
+            return (QuestionProposal(family=family, object_names=("chair",)),)
+
+    result = generate_frames_dataset(
+        request,
+        (
+            GenerationFrame(0, image),
+            GenerationFrame(1, image),
+        ),
+        _MenuRecordingAuthor(),
+        _Detector(present=True),
+        config=VqaGenerationConfig(family_max_share={"presence": 0.5}),
+    )
+
+    assert len(result.cases) == 2
+    assert "presence" in seen_menus[0]
+    assert "presence" not in seen_menus[1]
+    run = json.loads((output / "audit" / "run.json").read_text())
+    assert run["accepted_by_family"]["presence"] == 1
+    assert run["configuration"]["family_max_share"] == {"presence": 0.5}
 
 
 def test_generation_keeps_answered_questions_and_audits_rejections(tmp_path: Path) -> None:

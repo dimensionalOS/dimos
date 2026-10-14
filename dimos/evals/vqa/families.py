@@ -25,9 +25,15 @@ from dimos.evals.vqa.contracts import (
     FamilyName,
     FamilySpec,
     InsufficientEvidenceError,
+    InvalidQuestionProposalError,
     ObjectMaskEstimator,
     ObjectRangeEstimator,
     QuestionProposal,
+)
+from dimos.evals.vqa.primitives.color import (
+    COLOR_CHOICES,
+    dominant_color_in_mask,
+    object_name_mentions_color,
 )
 
 if TYPE_CHECKING:
@@ -43,6 +49,31 @@ PRESENCE_FAMILY = FamilySpec(
 HORIZONTAL_DIRECTION_FAMILY = FamilySpec(
     name="horizontal_direction",
     description="Use only for one clearly visible object instance.",
+)
+VERTICAL_DIRECTION_FAMILY = FamilySpec(
+    name="vertical_direction",
+    description=(
+        "Use only for one clearly visible object instance when its vertical position in the image "
+        "is clearly in the top, middle, or bottom third."
+    ),
+)
+PRESENCE_AND_FAMILY = FamilySpec(
+    name="presence_and",
+    description=(
+        "Ask whether two distinct object categories are both clearly visible in the same image."
+    ),
+    min_objects=2,
+    max_objects=2,
+    distinct_objects=True,
+)
+OBJECT_COLOR_FAMILY = FamilySpec(
+    name="object_color",
+    description=(
+        "Ask for the dominant color of one clearly visible object instance. Use a plain object "
+        "name without color words (not 'red bag' or 'black couch'). Color comes from the "
+        "segmentation mask, not from the name."
+    ),
+    requires_masks=True,
 )
 OBJECT_COUNT_FAMILY = FamilySpec(
     name="object_count",
@@ -89,6 +120,9 @@ CLOSEST_OBJECT_FAMILY = FamilySpec(
 AVAILABLE_FAMILIES = (
     PRESENCE_FAMILY,
     HORIZONTAL_DIRECTION_FAMILY,
+    VERTICAL_DIRECTION_FAMILY,
+    PRESENCE_AND_FAMILY,
+    OBJECT_COLOR_FAMILY,
     OBJECT_COUNT_FAMILY,
     IMAGE_COVERAGE_FAMILY,
     LARGEST_VISIBLE_AREA_FAMILY,
@@ -117,6 +151,14 @@ def answer_question(
         return _answer_presence(proposal, image, detector)
     if proposal.family == "horizontal_direction":
         return _answer_horizontal_direction(proposal, image, detector)
+    if proposal.family == "vertical_direction":
+        return _answer_vertical_direction(proposal, image, detector)
+    if proposal.family == "presence_and":
+        return _answer_presence_and(proposal, image, detector)
+    if proposal.family == "object_color":
+        if mask_estimator is None:
+            raise InsufficientEvidenceError("object color requires segmentation-mask evidence")
+        return _answer_object_color(proposal, image, mask_estimator)
     if proposal.family == "object_count":
         return _answer_object_count(proposal, image, detector)
     if proposal.family == "image_coverage":
@@ -194,6 +236,106 @@ def _answer_horizontal_direction(
             "box": cast("JsonValue", list(map(float, box))),
             "center_x_px": center_x,
             "center_x_fraction": center_fraction,
+        },
+    )
+
+
+def _answer_vertical_direction(
+    proposal: QuestionProposal, image: Image, detector: VlModel
+) -> FamilyAnswer:
+    object_name = proposal.object_names[0]
+    detections = detector.query_detections(image, object_name)
+    if len(detections) != 1:
+        raise InsufficientEvidenceError(
+            f"vertical direction requires exactly one detected {object_name!r}, "
+            f"got {len(detections)}"
+        )
+
+    box = detections.detections[0].bbox
+    center_y = (box[1] + box[3]) / 2
+    center_fraction = center_y / image.height
+    if center_fraction < 1 / 3:
+        answer = "top"
+    elif center_fraction < 2 / 3:
+        answer = "middle"
+    else:
+        answer = "bottom"
+    return FamilyAnswer(
+        question=f"Which vertical region contains the visible {object_name}?",
+        choices=("top", "middle", "bottom"),
+        answer=answer,
+        evidence={
+            "primitive": "object_detector",
+            "object_name": object_name,
+            "detection_count": 1,
+            "box": cast("JsonValue", list(map(float, box))),
+            "center_y_px": center_y,
+            "center_y_fraction": center_fraction,
+        },
+    )
+
+
+def _answer_presence_and(
+    proposal: QuestionProposal, image: Image, detector: VlModel
+) -> FamilyAnswer:
+    first_name, second_name = proposal.object_names
+    first = detector.query_detections(image, first_name)
+    second = detector.query_detections(image, second_name)
+    if not first.detections or not second.detections:
+        missing = []
+        if not first.detections:
+            missing.append(first_name)
+        if not second.detections:
+            missing.append(second_name)
+        raise InsufficientEvidenceError(
+            f"presence_and requires detections for both objects; missing {missing!r}"
+        )
+    return FamilyAnswer(
+        question=f"Does the image contain both {first_name} and {second_name}?",
+        choices=("yes", "no"),
+        answer="yes",
+        evidence={
+            "primitive": "object_detector",
+            "objects": cast(
+                "JsonValue",
+                [
+                    {
+                        "object_name": first_name,
+                        "detection_count": len(first),
+                        "boxes": [list(map(float, d.bbox)) for d in first.detections],
+                    },
+                    {
+                        "object_name": second_name,
+                        "detection_count": len(second),
+                        "boxes": [list(map(float, d.bbox)) for d in second.detections],
+                    },
+                ],
+            ),
+        },
+    )
+
+
+def _answer_object_color(
+    proposal: QuestionProposal,
+    image: Image,
+    mask_estimator: ObjectMaskEstimator,
+) -> FamilyAnswer:
+    object_name = proposal.object_names[0]
+    if object_name_mentions_color(object_name):
+        raise InvalidQuestionProposalError(
+            f"object_color object name must not include a color word, got {object_name!r}"
+        )
+    mask_evidence = mask_estimator.estimate(image, object_name)
+    evidence = dominant_color_in_mask(image, object_name, mask_evidence.mask)
+    return FamilyAnswer(
+        question=f"What is the dominant color of the visible {object_name}?",
+        choices=COLOR_CHOICES,
+        answer=evidence.dominant_bucket,
+        evidence={
+            "primitive": "object_color_mask_histogram",
+            "prompt_bbox_xyxy": list(mask_evidence.prompt_bbox_xyxy),
+            "mask_bbox_xyxy": list(mask_evidence.mask_bbox_xyxy),
+            **evidence.model_dump(mode="json"),
         },
     )
 
