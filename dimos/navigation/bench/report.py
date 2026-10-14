@@ -16,9 +16,11 @@
 
 from __future__ import annotations
 
+import base64
 from collections import Counter
 from dataclasses import dataclass, field
 import json
+import math
 from pathlib import Path
 import shlex
 from statistics import median
@@ -31,7 +33,9 @@ from pydantic import TypeAdapter
 from dimos.navigation.bench.ground_truth import GO2
 from dimos.navigation.bench.runner import RESULTS_FILE, RUN_FILE, SUITE_FILE
 from dimos.navigation.bench.scorer import Outcome, contact_name, definitions
-from dimos.navigation.bench.suite import Case, Manifest, Rules
+from dimos.navigation.bench.snapshot import bounds, sample, snapshot_path
+from dimos.navigation.bench.suite import Case, Manifest, Pose, Rules
+from dimos.simulation.scenes.procedural import Rect
 
 REPORT_FILE = "report.html"
 TEMPLATE_FILE = "report_template.html"
@@ -44,6 +48,8 @@ CURVE_PX = (480, 180)
 CURVE_PAD_PX = 56
 CURVE_LABEL_PX = 34
 CURVE_ROW_PX = 28
+THUMBNAIL_PX = 240
+SNAPSHOT_PX = 480
 
 
 @dataclass(frozen=True)
@@ -103,6 +109,7 @@ _RUN = TypeAdapter(Run)
 
 @dataclass(frozen=True)
 class Report:
+    run_dir: Path
     suite: str
     rules: Rules
     run: Run
@@ -203,6 +210,7 @@ def load(run_dir: Path) -> Report:
         else:
             rows.append(_row(case, record, episode))
     return Report(
+        run_dir,
         manifest.suite,
         manifest.rules,
         run,
@@ -364,6 +372,66 @@ def _curve(levels: list[LevelRow]) -> list[CurvePoint]:
     return points
 
 
+@dataclass(frozen=True)
+class Shape:
+    """A box seen from above. A raised one stands clear of the floor."""
+
+    kind: str
+    rect: Rect
+    raised: bool
+
+
+@dataclass(frozen=True)
+class Thumbnail:
+    """One room of a probe seen from above, in meters."""
+
+    bounds: Rect
+    shapes: list[Shape]
+    start: Pose
+    goal: tuple[float, float]
+    feature: tuple[float, float] | None
+    image: str | None
+
+
+def thumbnail(report: Report) -> Thumbnail | None:
+    """The sample case's room, or None when its scene is not the one that ran.
+
+    The image is the run's saved rendering as base64. Without one the shapes are drawn.
+    """
+    case = sample([r.case for r in report.rows] + [r.case for r in report.invalid])
+    if case is None:
+        return None
+    try:
+        scene = case.scene()
+    except (TypeError, ValueError):
+        return None
+    if scene.digest() != case.scene_digest:
+        return None
+    saved = snapshot_path(report.run_dir, case)
+    shapes = [
+        Shape(
+            kind=box.kind,
+            rect=(
+                box.center[0] - box.half[0],
+                box.center[1] - box.half[1],
+                box.center[0] + box.half[0],
+                box.center[1] + box.half[1],
+            ),
+            raised=box.center[2] - box.half[2] > scene.start[2] + GO2.step,
+        )
+        for box in scene.boxes
+        if box.kind != "floor"
+    ]
+    return Thumbnail(
+        bounds=bounds(scene),
+        shapes=sorted(shapes, key=lambda shape: shape.raised),
+        start=case.start,
+        goal=case.goal[:2],
+        feature=case.feature,
+        image=base64.b64encode(saved.read_bytes()).decode() if saved.exists() else None,
+    )
+
+
 def _strip_x(meters: float) -> int:
     return round(min(meters / STRIP_M, 1.0) * STRIP_PX)
 
@@ -385,6 +453,7 @@ class Section:
     controlled: bool
     encountered: str
     curve: list[CurvePoint]
+    thumbnail: Thumbnail | None
 
 
 def _section(report: Report) -> Section:
@@ -409,6 +478,7 @@ def _section(report: Report) -> Section:
         controlled=seeds is not None,
         encountered=met,
         curve=_curve(levels) if levels else [],
+        thumbnail=thumbnail(report) if levels else None,
     )
 
 
@@ -416,11 +486,14 @@ def render(reports: list[Report]) -> str:
     """The whole page from the template beside this module, one section per suite."""
     env = Environment(loader=FileSystemLoader(Path(__file__).parent), autoescape=True)
     env.filters["quote"] = shlex.quote
+    env.filters["degrees"] = math.degrees
     return env.get_template(TEMPLATE_FILE).render(
         title=f"nav-bench {reports[0].suite}" if len(reports) == 1 else "nav-bench",
         sections=[_section(report) for report in reports],
         glossary=definitions(reports[0].rules),
         curve_px=CURVE_PX,
+        thumbnail_px=THUMBNAIL_PX,
+        snapshot_px=SNAPSHOT_PX,
         curve_grid=[(f"{rate:.0%}", _curve_y(rate)) for rate in (0.0, 0.5, 1.0)],
         strip_m=STRIP_M,
         strip_px=STRIP_PX,

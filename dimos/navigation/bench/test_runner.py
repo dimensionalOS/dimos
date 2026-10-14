@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import _thread
+from dataclasses import replace
 import json
 import os
 from pathlib import Path
@@ -22,6 +23,7 @@ import subprocess
 import sys
 import time
 
+import cv2
 import numpy as np
 from numpy.typing import NDArray
 import pytest
@@ -37,18 +39,21 @@ from dimos.navigation.bench.runner import (
     RESULTS_FILE,
     RUN_FILE,
     SCORE_FILE,
+    SUITE_FILE,
     Progress,
     RunConfig,
     _provenance,
     _require_whole,
+    _snapshot,
     _until_verdict,
     rescore,
     run,
 )
 from dimos.navigation.bench.scorer import Commands, Poses, Recording, score
-from dimos.navigation.bench.suite import Case, Manifest, Rules, Split
+from dimos.navigation.bench.snapshot import BACKGROUND, SNAPSHOT_PX, snapshot_path
+from dimos.navigation.bench.suite import Case, Level, Manifest, Rules, Split
 from dimos.simulation.go2_legged.policy import OnnxGo2Policy
-from dimos.simulation.scenes.procedural import Params, office
+from dimos.simulation.scenes.procedural import Params, block, office
 
 T0 = 1000.0
 
@@ -370,3 +375,42 @@ def test_the_dimos_entry_point_imports_without_mujoco(tmp_path: Path) -> None:
         [sys.executable, "-c", "import dimos.cli.dimos"], env=env, capture_output=True, text=True
     )
     assert probe.returncode == 0, probe.stderr[-2000:]
+
+
+def _block_run(tmp_path: Path) -> tuple[Path, Case]:
+    case = replace(
+        _case("block-s1-aaaaaa", "block", "dev", {}),
+        family="block",
+        params={"block_height": 0.2},
+        level=Level("block_height", 0.2),
+    )
+    Manifest("test", Rules(), 0, [case]).save(tmp_path / SUITE_FILE)
+    return tmp_path, case
+
+
+def test_no_snapshot_is_saved_and_nothing_raised_when_no_backend_renders(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    run_dir, case = _block_run(tmp_path)
+    monkeypatch.setattr("dimos.navigation.bench.runner.GL_BACKENDS", ("missing",))
+    _snapshot(run_dir, [case])
+    assert not snapshot_path(run_dir, case).exists()
+    _snapshot(run_dir, [replace(case, level=None)])
+    assert sorted(p.name for p in run_dir.iterdir()) == [SUITE_FILE]
+
+
+@pytest.mark.self_hosted
+def test_the_snapshot_shows_the_goal_and_the_feature_on_a_plain_background(tmp_path: Path) -> None:
+    run_dir, case = _block_run(tmp_path)
+    scene = block(1, block_height=0.2)
+    case = replace(case, feature=(scene.params["block_x"], scene.params["block_y"]))
+    Manifest("test", Rules(), 0, [case]).save(run_dir / SUITE_FILE)
+    _snapshot(run_dir, [case])
+    if not snapshot_path(run_dir, case).exists():
+        pytest.skip("no GL backend renders here")
+    image = cv2.imread(str(snapshot_path(run_dir, case))).astype(int)
+    assert image.shape[:2] == SNAPSHOT_PX[::-1]
+    blue, green, red = image[:, :, 0], image[:, :, 1], image[:, :, 2]
+    assert (green > 2 * np.maximum(red, blue)).sum() > 20
+    assert (red > 2 * np.maximum(green, blue)).sum() > 10
+    assert (image[0, 0] == BACKGROUND).all() and (image[-1, -1] == BACKGROUND).all()

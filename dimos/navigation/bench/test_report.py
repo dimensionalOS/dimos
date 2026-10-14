@@ -13,11 +13,16 @@
 # limitations under the License.
 from __future__ import annotations
 
+import base64
+from collections import Counter
+from dataclasses import replace
 import html
 import json
 import os
 from pathlib import Path
 import shlex
+
+import pytest
 
 from dimos.navigation.bench.ground_truth import Difficulty
 from dimos.navigation.bench.report import (
@@ -29,9 +34,12 @@ from dimos.navigation.bench.report import (
     encountered,
     load,
     render,
+    thumbnail,
     write,
 )
+from dimos.navigation.bench.snapshot import snapshot_path
 from dimos.navigation.bench.suite import Case, Level, Manifest, Rules
+from dimos.simulation.scenes.procedural import Family, generate
 
 
 def _case(
@@ -313,3 +321,75 @@ def test_one_report_covers_every_suite_run_under_the_directory(tmp_path: Path) -
     assert "<h3>Success against door width</h3>" in page
     assert "<h3>Success against leg width</h3>" in page
     assert page.count("<summary>Episodes") == 2 and page.count("<script>") == 1
+
+
+def _probe_case(family: Family, seed: int, param: str, value: float) -> Case:
+    return replace(
+        _case(f"{family}-s{seed}-{value}", family, 0.5, Level(param, value), seed),
+        family=family,
+        params={param: value},
+        start=(2.0, 3.0, 0.5),
+        goal=(6.0, 4.0, 0.0),
+        scene_digest=generate(family, seed, **{param: value}).digest(),
+    )
+
+
+def test_thumbnail_is_the_lowest_seed_room_at_the_middle_level(tmp_path: Path) -> None:
+    cases = [
+        replace(_probe_case("table", seed, "leg_width", value), feature=(4.0, 3.5))
+        for seed in (2, 1)
+        for value in (0.02, 0.06, 0.2)
+    ]
+    run = tmp_path / "run"
+    _run(run, cases, [_result(case, "success") for case in cases])
+    picture = thumbnail(load(run))
+    assert picture is not None
+    scene = generate("table", 1, leg_width=0.06)
+    assert Counter((s.kind, s.raised) for s in picture.shapes) == {
+        ("wall", False): 4,
+        ("clutter", False): 4,
+        ("clutter", True): 1,
+    }
+    assert picture.shapes[-1].raised
+    assert (picture.start, picture.goal, picture.feature) == (
+        (2.0, 3.0, 0.5),
+        (6.0, 4.0),
+        (4.0, 3.5),
+    )
+    low, high = scene.bounds()
+    assert picture.bounds == (low[0], low[1], high[0], high[1])
+    legs = [s.rect for s in picture.shapes if s.kind == "clutter" and not s.raised]
+    x, y = scene.params["table_x"], scene.params["table_y"]
+    assert min(legs)[:2] == pytest.approx((x, y)) and all(
+        abs(r[2] - r[0] - 0.06) < 1e-9 for r in legs
+    )
+    assert picture.image is None and render([load(run)])
+    saved = snapshot_path(run, cases[4])
+    saved.write_bytes(b"png")
+    snapshot_path(run, cases[0]).write_bytes(b"another room")
+    shown = thumbnail(load(run))
+    assert shown is not None and shown.image == base64.b64encode(b"png").decode()
+    assert shown.bounds == picture.bounds and render([load(run)])
+
+
+def test_a_door_lintel_is_raised_and_the_wall_beside_it_is_not(tmp_path: Path) -> None:
+    case = _probe_case("doorway", 1, "door_width", 0.6)
+    run = tmp_path / "run"
+    _run(run, [case], [_result(case, "success")])
+    picture = thumbnail(load(run))
+    assert picture is not None and picture.feature is None
+    (lintel,) = [s.rect for s in picture.shapes if s.raised]
+    (door,) = generate("doorway", 1, door_width=0.6).doors
+    assert abs(lintel[1] - door.start) < 1e-9 and abs(lintel[3] - lintel[1] - 0.6) < 1e-9
+    assert Counter(s.kind for s in picture.shapes) == {"wall": 7}
+
+
+def test_no_thumbnail_for_a_scene_that_is_not_the_one_that_ran(tmp_path: Path) -> None:
+    probe = _probe_case("block", 1, "block_height", 0.2)
+    drifted = replace(probe, scene_digest="older")
+    unknown = replace(probe, params={"removed": 1.0})
+    plain = _case("mined-s1-a", "mined", 0.8)
+    for name, case in (("drifted", drifted), ("unknown", unknown), ("plain", plain)):
+        _run(tmp_path / name, [case], [_result(case, "success")])
+        report = load(tmp_path / name)
+        assert thumbnail(report) is None and render([report])

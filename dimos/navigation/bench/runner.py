@@ -29,6 +29,7 @@ import re
 import shutil
 import signal
 import subprocess
+import sys
 import threading
 import time
 from typing import Literal, cast
@@ -38,6 +39,7 @@ import numpy as np
 from dimos.constants import DIMOS_PROJECT_ROOT, STATE_DIR
 from dimos.navigation.bench.driver import HARNESS_REASONS, TERMINAL_FILE
 from dimos.navigation.bench.scorer import Outcome, Recording, score
+from dimos.navigation.bench.snapshot import sample, snapshot_path
 from dimos.navigation.bench.suite import Case, Manifest, Split
 
 RUNS_DIR = STATE_DIR / "nav-bench"
@@ -64,6 +66,8 @@ WEBSOCKET_PORT_BASE = 3100
 STOP_GRACE_S = 20.0
 POLL_S = 0.5
 VERDICT_SLACK_S = 0.1
+GL_BACKENDS = ("egl", "osmesa")
+SNAPSHOT_CAP_S = 60.0
 RECORDING_GAP_S = 1.0
 RECORDING_LINE = re.compile(r"Recording to (\S+memory\.db)")
 
@@ -151,6 +155,7 @@ def run(config: RunConfig, report: Report | None = None) -> Path:
         index.write(f"{run_dir.resolve()}\n")
     episodes = [Episode(case, run_dir / case.id) for case in cases]
     manifest.save(run_dir / SUITE_FILE)
+    _snapshot(run_dir, cases)
     started = time.time()
     provenance = _provenance(DIMOS_PROJECT_ROOT)
     _write_run(run_dir, config, len(episodes), started, provenance, ended=None)
@@ -272,6 +277,33 @@ def rescore(run_dir: Path) -> Path:
             terminal = _terminal(episode_dir)
             out.write(json.dumps(asdict(_score(manifest, episode, terminal))) + "\n")
     return results
+
+
+def _snapshot(run_dir: Path, cases: list[Case]) -> None:
+    """Save the picture of the run's sample case, or none when no GL backend can render it."""
+    case = sample(cases)
+    if case is None:
+        return
+    command = [
+        sys.executable,
+        "-m",
+        "dimos.navigation.bench.snapshot",
+        str(run_dir / SUITE_FILE),
+        case.id,
+        str(snapshot_path(run_dir, case)),
+    ]
+    for backend in GL_BACKENDS:
+        try:
+            done = subprocess.run(
+                command,
+                env={**os.environ, "MUJOCO_GL": backend},
+                capture_output=True,
+                timeout=SNAPSHOT_CAP_S,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if done.returncode == 0:
+            return
 
 
 def _provenance(root: Path) -> dict[str, str | bool | None]:

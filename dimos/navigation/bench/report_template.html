@@ -18,6 +18,7 @@ dl { display: grid; grid-template-columns: max-content auto; gap: 0.2em 1em; }
 dt { font-weight: bold; }
 code { font-size: 12px; }
 .verdict { font-size: 18px; margin: 1em 0; }
+.row { display: flex; flex-wrap: wrap; gap: 2em; align-items: flex-start; }
 </style>
 </head>
 <body>
@@ -60,6 +61,7 @@ code { font-size: 12px; }
 {% if levels %}
 <h3>Success against {{ variable | replace("_", " ") }}</h3>
 {% set drop = curve | map(attribute="drop") | max %}
+<div class="row">
 <svg width="{{ curve_px[0] }}" height="{{ curve_px[1] + 48 + drop }}" font-size="11" fill="#555">
 <text x="{{ (curve[0].x + curve[-1].x) // 2 }}" y="{{ curve_px[1] + 42 + drop }}" text-anchor="middle" font-size="12">{{ variable | replace("_", " ") }} (m)</text>
 <text x="12" y="{{ curve_px[1] // 2 }}" text-anchor="middle" font-size="12" transform="rotate(-90 12 {{ curve_px[1] // 2 }})">success</text>
@@ -70,6 +72,24 @@ code { font-size: 12px; }
 <polyline fill="none" stroke="#0074d9" stroke-width="2" points="{% for point in curve %}{{ point.x }},{{ point.y }} {% endfor %}"/>
 {% for point in curve %}<rect x="{{ point.x - 3 }}" y="{{ point.y - 3 }}" width="6" height="6" fill="#0074d9"/>{% endfor %}
 </svg>
+{% if s.thumbnail %}
+{% set t = s.thumbnail %}{% set x0, y0, x1, y1 = t.bounds %}{% set px = (x1 - x0) / thumbnail_px %}
+{% if t.image %}
+<img width="{{ snapshot_px }}" alt="{{ variable | replace("_", " ") }} sample room" src="data:image/png;base64,{{ t.image }}">
+{% else %}
+<svg width="{{ thumbnail_px }}" height="{{ ((y1 - y0) / px) | round | int }}" viewBox="{{ x0 }} {{ -y1 }} {{ x1 - x0 }} {{ y1 - y0 }}">
+<g transform="scale(1 -1)">
+<rect x="{{ x0 }}" y="{{ y0 }}" width="{{ x1 - x0 }}" height="{{ y1 - y0 }}" fill="#f4f4f4"/>
+{% for shape in t.shapes %}{% set color = "#ff851b" if shape.kind == "clutter" else "#555" %}<rect x="{{ shape.rect[0] }}" y="{{ shape.rect[1] }}" width="{{ shape.rect[2] - shape.rect[0] }}" height="{{ shape.rect[3] - shape.rect[1] }}" fill="{{ color }}" stroke="{{ color }}" stroke-width="{{ px }}"{% if shape.raised %} fill-opacity="0.25" stroke-opacity="0.5"{% endif %}/>
+{% endfor %}
+{% if t.feature %}<circle cx="{{ t.feature[0] }}" cy="{{ t.feature[1] }}" r="{{ 6 * px }}" fill="none" stroke="#ff4136" stroke-width="{{ 1.5 * px }}"/>{% endif %}
+<circle cx="{{ t.goal[0] }}" cy="{{ t.goal[1] }}" r="{{ 3 * px }}" fill="#2ecc40"/>
+<g transform="translate({{ t.start[0] }} {{ t.start[1] }}) rotate({{ t.start[2] | degrees }}) scale({{ px }})" fill="#0074d9"><circle r="4"/><path d="M0,-1 H10 V-4 L16,0 L10,4 V1 H0 Z"/></g>
+</g>
+</svg>
+{% endif %}
+{% endif %}
+</div>
 <div class="scroll"><table>
 <thead><tr><th class="n">{{ variable | replace("_", " ") }} m</th><th class="n">n</th>{% for outcome in report.outcomes %}<th class="n">{{ outcome }}</th>{% endfor %}{% if controlled %}<th class="n">not encountered</th>{% endif %}<th class="n">near falls</th><th>episodes with a contact</th><th>failure signatures</th></tr></thead>
 <tbody>
