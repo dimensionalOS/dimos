@@ -97,7 +97,7 @@ def test_classmethods(navigation) -> None:
     assert hasattr(class_rpcs["start"], "__rpc__"), "start should have __rpc__ attribute"
 
 
-@pytest.mark.self_hosted
+@pytest.mark.self_hosted_serial
 def test_basic_deployment(dimos) -> None:
     robot = dimos.deploy(MockRobotClient)
 

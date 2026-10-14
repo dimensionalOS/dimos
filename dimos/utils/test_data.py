@@ -18,7 +18,9 @@ import hashlib
 import os
 from pathlib import Path
 import subprocess
+import tarfile
 from threading import Barrier
+import time
 from typing import Any
 from unittest.mock import call
 
@@ -205,7 +207,8 @@ def test_backup_file_keep_last_zero_removes_all(tmp_path: Path) -> None:
     assert list(tmp_path.glob("recording_go2.*.db")) == []
 
 
-@pytest.mark.self_hosted
+# Serial: deletes and re-pulls files in the shared data dir, which other tests read.
+@pytest.mark.self_hosted_serial
 def test_pull_file() -> None:
     repo_root = data.get_project_root()
     test_file_name = "cafe.jpg"
@@ -261,7 +264,7 @@ def test_pull_file() -> None:
         )
 
 
-@pytest.mark.self_hosted
+@pytest.mark.self_hosted_serial
 def test_pull_dir() -> None:
     repo_root = data.get_project_root()
     test_dir_name = "ab_lidar_frames"
@@ -580,6 +583,39 @@ def test_lfs_path_multiple_instances() -> None:
 
     # Both caches should point to the same file
     assert cache_1 == cache_2
+
+
+def test_get_data_concurrent_extraction(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Concurrent get_data callers must never observe a partially-extracted archive."""
+    src_dir = tmp_path / "src" / "bigdata"
+    src_dir.mkdir(parents=True)
+    for i in range(200):
+        (src_dir / f"f{i:03d}.txt").write_text(str(i))
+    archive = tmp_path / "src" / "bigdata.tar.gz"
+    with tarfile.open(archive, "w:gz") as tar:
+        tar.add(src_dir, arcname="bigdata")
+
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    monkeypatch.setattr(data, "get_data_dir", lambda extra_path=None: data_dir)
+
+    pulls: list[str | Path] = []
+
+    def fake_pull(filename: str | Path) -> Path:
+        pulls.append(filename)
+        time.sleep(0.05)  # widen the race window
+        return archive
+
+    monkeypatch.setattr(data, "_pull_lfs_archive", fake_pull)
+
+    def fetch(_: int) -> int:
+        return len(list(data.get_data("bigdata").iterdir()))
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        counts = list(pool.map(fetch, range(8)))
+
+    assert counts == [200] * 8
+    assert len(pulls) == 1
 
 
 def test_project_root_serializes_concurrent_clone(tmp_path, mocker):
