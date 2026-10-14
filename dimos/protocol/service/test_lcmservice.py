@@ -408,8 +408,6 @@ class TestLCMService:
             assert "_stop_event" not in state
             assert "_thread" not in state
             assert "_l_lock" not in state
-            assert "_call_thread_pool" not in state
-            assert "_call_thread_pool_lock" not in state
 
     def test_unpickling_reinitializes_runtime_attrs(self) -> None:
         with patch("dimos.protocol.service.lcmservice.lcm_mod.LCM") as mock_lcm_class:
@@ -466,38 +464,20 @@ class TestLCMService:
         # External LCM instance should not be cleaned up
         assert service.l == mock_lcm_instance
 
-    def test_get_call_thread_pool_creates_pool(self) -> None:
-        with patch("dimos.protocol.service.lcmservice.lcm_mod.LCM") as mock_lcm_class:
-            mock_lcm_instance = create_autospec(LCM, spec_set=True, instance=True)
-            mock_lcm_class.return_value = mock_lcm_instance
+    def test_get_call_thread_pool_reuses_executor(self, memory_lcm_service):
+        service, _ = memory_lcm_service
+        pool = service._get_call_thread_pool()
+        assert pool.submit(lambda: 42).result(timeout=2.0) == 42
+        assert service._get_call_thread_pool() is pool
 
-            service = LCMService()
-            assert service._call_thread_pool is None
+    def test_stop_shuts_down_thread_pool(self, memory_lcm_service):
+        service, _ = memory_lcm_service
+        service.start()
+        pool = service._get_call_thread_pool()
 
-            pool = service._get_call_thread_pool()
-            assert pool is not None
-            assert service._call_thread_pool == pool
+        service.stop()
 
-            # Should return same pool on subsequent calls
-            pool2 = service._get_call_thread_pool()
-            assert pool2 is pool
-
-            # Clean up
-            pool.shutdown(wait=False)
-
-    def test_stop_shuts_down_thread_pool(self) -> None:
-        with patch("dimos.protocol.service.lcmservice.lcm_mod.LCM") as mock_lcm_class:
-            mock_lcm_instance = create_autospec(LCM, spec_set=True, instance=True)
-            mock_lcm_class.return_value = mock_lcm_instance
-
-            service = LCMService()
-            service.start()
-
-            # Create thread pool
-            pool = service._get_call_thread_pool()
-            assert pool is not None
-
-            service.stop()
-
-            # Pool should be cleaned up
-            assert service._call_thread_pool is None
+        with pytest.raises(RuntimeError, match="cannot schedule new futures"):
+            pool.submit(lambda: 42)
+        with pytest.raises(RuntimeError, match="cannot accept calls"):
+            service._get_call_thread_pool()

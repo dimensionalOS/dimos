@@ -287,6 +287,8 @@ class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
                     batch.extend(latest.values())
                     latest.clear()
                 for msg, topic in batch:
+                    if stop.is_set():
+                        return
                     try:
                         callback(msg, topic)
                     except Exception:
@@ -297,7 +299,8 @@ class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
         def stop_drain() -> None:
             stop.set()
             wake.set()  # unblock the drain so it observes the stop flag
-            thread.join(timeout=2.0)
+            if threading.current_thread() is not thread:
+                thread.join(timeout=2.0)
 
         # Register the stop callback and launch the drain thread under the lock so
         # stop() can't run between them and miss the thread. If stop() already ran,

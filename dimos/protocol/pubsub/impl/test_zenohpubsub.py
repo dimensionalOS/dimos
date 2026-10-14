@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from contextlib import ExitStack
 import threading
 
 import pytest
@@ -35,7 +36,7 @@ from dimos.protocol.pubsub.impl.zenohpubsub import (
     _key_expr_to_topic,
     _topic_to_key_expr,
 )
-from dimos.protocol.service.zenohservice import ZenohSessionPool
+from dimos.protocol.service.zenohservice import LOOPBACK_LISTEN, ZenohSessionPool
 
 
 @pytest.fixture()
@@ -61,6 +62,60 @@ def make_pubsub():
 def pubsub(make_pubsub):
     """Create and start a ZenohPubSubBase instance on an isolated pool, clean up after."""
     return make_pubsub()
+
+
+@pytest.mark.parametrize("all_topics", [False, True], ids=["subscribe", "subscribe_all"])
+@pytest.mark.parametrize("unsubscribe_only", [False, True], ids=["stop", "unsubscribe"])
+def test_shutdown_from_callback_completes_cleanup(run_in_subprocess, all_topics, unsubscribe_only):
+    run_in_subprocess(_check_callback_shutdown, all_topics, unsubscribe_only)
+
+
+def _check_callback_shutdown(all_topics, unsubscribe_only):
+    with ExitStack() as cleanup:
+        pool = ZenohSessionPool()
+        cleanup.callback(pool.close_all)
+        pubsub = ZenohPubSubBase(
+            session_pool=pool,
+            mode="peer",
+            connect=[],
+            listen=[LOOPBACK_LISTEN],
+            scouting=False,
+            scouting_interface="",
+            multicast=False,
+            gossip=False,
+            connect_timeout=0,
+        )
+        cleanup.callback(pubsub.stop)
+        pubsub.start()
+        topic = Topic("dimos/callback_shutdown")
+        finished = threading.Event()
+        received = []
+        errors = []
+
+        def callback(message, received_topic):
+            try:
+                if unsubscribe_only:
+                    unsubscribe()
+                else:
+                    pubsub.stop()
+                received.append((message, received_topic))
+            except Exception as error:
+                errors.append(error)
+            finally:
+                finished.set()
+
+        unsubscribe = (
+            pubsub.subscribe_all(callback) if all_topics else pubsub.subscribe(topic, callback)
+        )
+        cleanup.callback(unsubscribe)
+        pubsub.publish(topic, b"stop")
+
+        assert finished.wait(timeout=2.0)
+        assert errors == []
+        assert received == [(b"stop", topic)]
+        assert pubsub._subscribers == []
+        assert pubsub._drain_stops == []
+        assert len(pubsub._publishers) == int(unsubscribe_only)
 
 
 class TestZenohPubSubBase:

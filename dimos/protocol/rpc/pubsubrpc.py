@@ -32,6 +32,7 @@ from dimos.protocol.pubsub.impl.lcmpubsub import PickleLCM, Topic
 from dimos.protocol.pubsub.spec import PubSub
 from dimos.protocol.rpc.rpc_utils import deserialize_exception, serialize_exception
 from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUT, DEFAULT_RPC_TIMEOUTS, Args, RPCSpec
+from dimos.protocol.service.call_pool import CallPool
 from dimos.protocol.service.lcmservice import LCMService
 from dimos.utils.generic import short_id
 from dimos.utils.logging_config import setup_logger
@@ -75,9 +76,7 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
         self.rpc_timeouts = dict(rpc_timeouts)
         self.default_rpc_timeout = default_rpc_timeout
         # Thread pool for RPC handler execution (prevents deadlock in nested calls)
-        self._call_thread_pool: ThreadPoolExecutor | None = None
-        self._call_thread_pool_lock = threading.RLock()
-        self._call_thread_pool_max_workers = 50
+        self._call_pool = CallPool(max_workers=50)
 
         # Shared response subscriptions: one per RPC name instead of one per call
         # Maps str(topic_res) -> (subscription, {msg_id -> callback})
@@ -96,8 +95,6 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
             state = self.__dict__.copy()
 
         # Exclude unpicklable attributes when serializing.
-        state.pop("_call_thread_pool", None)
-        state.pop("_call_thread_pool_lock", None)
         state.pop("_response_subs", None)
         state.pop("_response_subs_lock", None)
         state.pop("_msg_id_lock", None)
@@ -111,8 +108,6 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
             self.__dict__.update(state)
 
         # Restore unserializable attributes.
-        self._call_thread_pool = None
-        self._call_thread_pool_lock = threading.RLock()
         self._response_subs = {}
         self._response_subs_lock = threading.RLock()
         self._msg_id_lock = threading.Lock()
@@ -133,33 +128,14 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
         return msg  # type: ignore[return-value]
 
     def _get_call_thread_pool(self) -> ThreadPoolExecutor:
-        """Get or create the thread pool for RPC handler execution (lazy initialization)."""
-        with self._call_thread_pool_lock:
-            if self._call_thread_pool is None:
-                self._call_thread_pool = ThreadPoolExecutor(
-                    max_workers=self._call_thread_pool_max_workers
-                )
-            return self._call_thread_pool
+        return self._call_pool.get()
 
     def _shutdown_thread_pool(self) -> None:
-        """Safely shutdown the thread pool with deadlock prevention."""
-        with self._call_thread_pool_lock:
-            if self._call_thread_pool:
-                # Check if we're being called from within the thread pool
-                # to avoid "cannot join current thread" error
-                current_thread = threading.current_thread()
-                is_pool_thread = False
+        self._call_pool.shutdown()
 
-                # Check if current thread is one of the pool's threads
-                if hasattr(self._call_thread_pool, "_threads"):
-                    is_pool_thread = current_thread in self._call_thread_pool._threads
-                elif "ThreadPoolExecutor" in current_thread.name:
-                    # Fallback: check thread name pattern
-                    is_pool_thread = True
-
-                # Don't wait if we're in a pool thread to avoid deadlock
-                self._call_thread_pool.shutdown(wait=not is_pool_thread)
-                self._call_thread_pool = None
+    def start(self) -> None:
+        self._call_pool.start()
+        super().start()
 
     def stop(self) -> None:
         """Stop the RPC service and cleanup thread pool.
@@ -167,17 +143,18 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
         Subclasses that override this method should call super().stop()
         to ensure the thread pool is properly shutdown.
         """
-        self._shutdown_thread_pool()
+        with self._call_pool.stop_scope():
+            self._shutdown_thread_pool()
 
-        # Cleanup shared response subscriptions
-        with self._response_subs_lock:
-            for unsub, _ in self._response_subs.values():
-                unsub()
-            self._response_subs.clear()
+            # Cleanup shared response subscriptions
+            with self._response_subs_lock:
+                for unsub, _ in self._response_subs.values():
+                    unsub()
+                self._response_subs.clear()
 
-        # Call parent stop if it exists
-        if hasattr(super(), "stop"):
-            super().stop()  # type: ignore[misc]
+            # Call parent stop if it exists
+            if hasattr(super(), "stop"):
+                super().stop()  # type: ignore[misc]
 
     def call(self, name: str, arguments: Args, cb: Callable | None):  # type: ignore[no-untyped-def, type-arg]
         if cb is None:
@@ -313,15 +290,9 @@ class LCMRPC(PubSubRPCMixin[Topic, Any], PickleLCM):
             self, rpc_timeouts=rpc_timeouts, default_rpc_timeout=default_rpc_timeout, **kwargs
         )
 
-    def stop(self) -> None:
-        # Keep the RPC mixin's drain-before-dispatch order, but exclude restart
-        # throughout pool draining and response-subscription cleanup as well.
-        with self._stop_scope():
-            super().stop()
-
-    def _get_call_thread_pool(self) -> ThreadPoolExecutor:
-        # LCM dispatch and RPC handlers share one lifecycle and shutdown policy.
-        return LCMService._get_call_thread_pool(self)
+    def start(self) -> None:
+        # LCM must finish stopping dispatch before the pool can accept calls.
+        LCMService.start(self)
 
     def _shutdown_thread_pool(self) -> None:
         LCMService._shutdown_thread_pool(self)
