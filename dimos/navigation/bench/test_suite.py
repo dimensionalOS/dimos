@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import itertools
 from pathlib import Path
 
 import numpy as np
@@ -23,6 +24,7 @@ import pytest
 from dimos.navigation.bench.ground_truth import CELL, GO2, GroundTruth
 from dimos.navigation.bench.suite import (
     BLOCK_HEIGHT,
+    CLUTTER,
     CORRIDOR,
     CORRIDOR_TURN,
     DOORWAY,
@@ -212,4 +214,27 @@ def test_corridor_probes_set_the_width_and_put_the_goal_in_the_far_room(probe: P
         assert case.route_length >= straight and case.difficulty.doors == 0
     for seed in probe.seeds:
         assert len({(c.start, c.goal) for c in manifest.cases if c.seed == seed}) == 1
+    manifest.check_drift()
+
+
+def test_clutter_count_probe_only_adds_boxes_between_the_same_start_and_goal() -> None:
+    probe = replace(CLUTTER, seeds=(1, 2))
+    manifest = freeze_probe(probe)
+    assert len({c.id for c in manifest.cases}) == len(manifest.cases) == 2 * len(probe.levels)
+    assert probe.levels[0] == 0.0 and probe.control is None
+    for seed in probe.seeds:
+        cases = [c for c in manifest.cases if c.seed == seed]
+        assert [c.level for c in cases] == [Level("clutter_count", v) for v in probe.levels]
+        assert len({(c.start, c.goal) for c in cases}) == 1
+        boxes = [[b for b in c.scene().boxes if b.kind == "clutter"] for c in cases]
+        assert [len(b) for b in boxes] == list(probe.levels)
+        assert all(few == many[: len(few)] for few, many in itertools.pairwise(boxes))
+        gaps = [c.difficulty.min_clearance for c in cases]
+        assert gaps == sorted(gaps, reverse=True) and gaps[-1] >= GO2.radius
+    for case in manifest.cases:
+        assert case.level is not None and case.params == {"clutter_count": case.level.value}
+        params = case.scene().params
+        assert case.feature is None and not case.level.control
+        assert case.goal == (params["goal_x"], params["goal_y"], params["z0"])
+        assert case.route_length > 3.0 and case.difficulty.doors == 0
     manifest.check_drift()

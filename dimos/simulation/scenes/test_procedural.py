@@ -28,6 +28,9 @@ from dimos.simulation.scenes.procedural import (
     DOOR_WIDTH,
     OVERHANG_LEG,
     OVERHANG_SIZE,
+    SCATTER_AREA,
+    SCATTER_COUNT,
+    SCATTER_HEIGHT,
     SLAB_THICKNESS,
     START_CLEARANCE,
     TABLE_HEIGHT,
@@ -45,6 +48,7 @@ from dimos.simulation.scenes.procedural import (
     office,
     overhang,
     room,
+    scattered,
     table,
 )
 
@@ -359,3 +363,41 @@ def test_corridor_width_is_drawn_unless_given() -> None:
         assert (low + high) / 2 == pytest.approx(y)
         assert _gap(narrow, x, y, 1) == pytest.approx((y - 0.25, y + 0.25))
         assert narrow.params == drawn.params
+
+
+def test_scattered_is_deterministic_and_pinned() -> None:
+    assert scattered(3).digest() == scattered(3).digest() == "15a4a9eddbae5ef3"
+    assert scattered(3).digest() != scattered(4).digest()
+
+
+def test_scattered_stands_the_given_count_of_boxes_clear_of_the_start_and_goal() -> None:
+    for seed in range(1, 21):
+        scene = scattered(seed, clutter_count=80)
+        width, length, z0 = (scene.params[k] for k in ("width", "length", "z0"))
+        goal = (scene.params["goal_x"], scene.params["goal_y"])
+        boxes = [box for box in scene.boxes if box.kind == "clutter"]
+        assert sorted(box.kind for box in scene.boxes[:5]) == ["floor", *["wall"] * 4]
+        assert len(boxes) == 80 and boxes == scene.boxes[5:]
+        assert 8 <= width <= 10 and width * length == pytest.approx(SCATTER_AREA)
+        assert 1.5 <= width - goal[0] <= 2.5 and 1.5 <= goal[1] <= length - 1.5
+        for box in boxes:
+            assert box.half == pytest.approx((BLOCK_SIZE / 2, BLOCK_SIZE / 2, SCATTER_HEIGHT / 2))
+            assert box.center[2] - box.half[2] == pytest.approx(z0)
+            assert box.half[0] <= box.center[0] <= width - box.half[0]
+            assert box.half[1] <= box.center[1] <= length - box.half[1]
+            for x, y in (scene.start[:2], goal):
+                apart = max(abs(box.center[0] - x), abs(box.center[1] - y))
+                assert apart >= START_CLEARANCE + BLOCK_SIZE / 2 - 1e-9
+        for i, a in enumerate(boxes):
+            for b in boxes[:i]:
+                apart = max(abs(a.center[0] - b.center[0]), abs(a.center[1] - b.center[1]))
+                assert apart >= BLOCK_SIZE - 1e-9
+
+
+def test_scattered_count_only_adds_boxes_and_zero_leaves_the_room_empty() -> None:
+    full = scattered(3, clutter_count=80)
+    for count in (0, 10, 40):
+        fewer = scattered(3, clutter_count=count)
+        assert fewer.boxes == full.boxes[: 5 + count] and fewer.params == full.params
+    assert len(scattered(3).boxes) == 5 + SCATTER_COUNT
+    assert generate("scattered", 3, clutter_count=40.0).boxes == scattered(3).boxes[:45]

@@ -619,6 +619,22 @@ CORRIDOR_TURN = Probe(
     past_the_corridor,
     scene_param="corridor_width",
 )
+
+
+def across_the_boxes(gt: GroundTruth, count: float, rng: np.random.Generator) -> Placed:
+    """The scene's start at a drawn yaw, and the goal the scene keeps clear across the room."""
+    sx, sy, z = gt.scene.start
+    return Placed((sx, sy, _yaw(rng)), (gt.scene.params["goal_x"], gt.scene.params["goal_y"], z))
+
+
+CLUTTER = Probe(
+    "clutter_count",
+    "scattered",
+    "clutter_count",
+    (0.0, 10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0),
+    across_the_boxes,
+    scene_param="clutter_count",
+)
 PROBES = {
     probe.name: probe
     for probe in (
@@ -629,6 +645,7 @@ PROBES = {
         OVERHANG,
         CORRIDOR,
         CORRIDOR_TURN,
+        CLUTTER,
     )
 }
 

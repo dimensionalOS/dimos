@@ -31,7 +31,15 @@ from dimos.msgs.sim_msgs.Contacts import Kind
 Vec3 = tuple[float, float, float]
 Rect = tuple[float, float, float, float]
 Family = Literal[
-    "office", "room", "doorway", "table", "block", "overhang", "corridor", "corridor_turn"
+    "office",
+    "room",
+    "doorway",
+    "table",
+    "block",
+    "overhang",
+    "corridor",
+    "corridor_turn",
+    "scattered",
 ]
 
 SLAB_THICKNESS = 0.15
@@ -55,6 +63,9 @@ PLACEMENT_TRIES = 50
 CORRIDOR_WIDTH = (0.8, 1.2)
 CORRIDOR_LENGTH = (3.5, 4.5)
 CORRIDOR_MOUTH_INSET = 1.0
+SCATTER_AREA = 64.0
+SCATTER_HEIGHT = 1.0
+SCATTER_COUNT = 40
 
 
 @dataclass(frozen=True)
@@ -470,6 +481,35 @@ def corridor_turn(seed: int, corridor_width: float | None = None) -> Scene:
     ]
     _solid(scene, width, length, z0, top, hollow)
     scene.start = (1.0, 1.0, z0)
+    scene.start = (1.0, 1.0, z0)
+    return scene
+
+
+def scattered(seed: int, clutter_count: int = SCATTER_COUNT) -> Scene:
+    """One room with square boxes scattered over the floor, clear of the start and the goal."""
+    rng = np.random.default_rng(seed)
+    width = _uniform(rng, 8, 10)
+    length = SCATTER_AREA / width
+    z0 = _uniform(rng, 0.0, 0.08)
+    gx, gy = width - _uniform(rng, 1.5, 2.5), _uniform(rng, 1.5, length - 1.5)
+    scene = Scene(
+        f"scattered_{seed}",
+        {"width": width, "length": length, "z0": z0, "goal_x": gx, "goal_y": gy},
+    )
+    _shell(scene, width, length, z0)
+    scene.start = (1.0, 1.0, z0)
+    c, half = START_CLEARANCE, BLOCK_SIZE / 2
+    keep_clear = [(x - c, y - c, x + c, y + c) for x, y in (scene.start[:2], (gx, gy))]
+    for _ in range(int(clutter_count)):
+        for _ in range(PLACEMENT_TRIES):
+            x, y = _uniform(rng, half, width - half), _uniform(rng, half, length - half)
+            spot = (x - half, y - half, x + half, y + half)
+            if _clear(*spot, keep_clear):
+                scene.add(
+                    (spot[0], spot[1], z0), (spot[2], spot[3], z0 + SCATTER_HEIGHT), "clutter"
+                )
+                keep_clear.append(spot)
+                break
     return scene
 
 
@@ -483,6 +523,7 @@ FAMILIES: dict[Family, Callable[..., Scene]] = {
     "overhang": overhang,
     "corridor": corridor,
     "corridor_turn": corridor_turn,
+    "scattered": scattered,
 }
 
 
