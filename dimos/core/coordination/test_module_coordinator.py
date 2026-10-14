@@ -116,7 +116,7 @@ class RestartNativeModule(NativeModule):
 class RestartFailureModule(Module):
     def __init__(self, directory: Path, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self.directory = directory
+        self._directory = directory
 
     @rpc
     def get_pid(self) -> int:
@@ -128,9 +128,9 @@ class RestartFailureModule(Module):
 
     @rpc
     def stop(self) -> None:
-        with (self.directory / "stops").open("a") as log:
+        with (self._directory / "stops").open("a") as log:
             log.write(f"{os.getpid()}\n")
-        if (self.directory / "fail").exists():
+        if (self._directory / "fail").exists():
             raise RuntimeError("stop failed")
         super().stop()
 
@@ -1311,33 +1311,33 @@ def test_restart_waits_for_native_teardown(dynamic_coordinator, tmp_path, mocker
     block = tmp_path / "block"
     block.touch()
     stop_log = tmp_path / "stops"
-    dynamic_coordinator.load_blueprint(
-        autoconnect(
-            RestartNativeModule.blueprint(
-                executable=sys.executable,
-                extra_args=[str(script), str(tmp_path)],
-                extra_env={"STOP_LOG": str(stop_log)},
-                shutdown_timeout=5.0,
-            ),
-            ModuleA.blueprint(),
-        )
-    )
-    manager = dynamic_coordinator._managers["python"]
-    assert len(manager.workers) == 1
-    assert manager.workers[0].module_count == 2
-    wait_until(lambda: (tmp_path / "pid").exists(), timeout=5.0)
-    old_pid = int((tmp_path / "pid").read_text())
-    old_proxy = dynamic_coordinator.get_instance(RestartNativeModule)
-    old_stop = old_proxy.stop
-
-    def stop_and_wait() -> None:
-        old_stop()
-        wait_until(lambda: (tmp_path / "stopping").exists(), timeout=5.0)
-
-    # Force the base code's asynchronous stop to begin before undeploy can overtake it.
-    mocker.patch.object(old_proxy, "stop", side_effect=stop_and_wait)
-    close_client = mocker.spy(old_proxy, "stop_rpc_client")
     try:
+        dynamic_coordinator.load_blueprint(
+            autoconnect(
+                RestartNativeModule.blueprint(
+                    executable=sys.executable,
+                    extra_args=[str(script), str(tmp_path)],
+                    extra_env={"STOP_LOG": str(stop_log)},
+                    shutdown_timeout=5.0,
+                ),
+                ModuleA.blueprint(),
+            )
+        )
+        manager = dynamic_coordinator._managers["python"]
+        assert len(manager.workers) == 1
+        assert manager.workers[0].module_count == 2
+        wait_until(lambda: (tmp_path / "pid").exists(), timeout=5.0)
+        old_pid = int((tmp_path / "pid").read_text())
+        old_proxy = dynamic_coordinator.get_instance(RestartNativeModule)
+        old_stop = old_proxy.stop
+
+        def stop_and_wait() -> None:
+            old_stop()
+            wait_until(lambda: (tmp_path / "stopping").exists(), timeout=5.0)
+
+        # If restart sends an RPC stop, let it begin before worker undeploy.
+        mocker.patch.object(old_proxy, "stop", side_effect=stop_and_wait)
+        close_client = mocker.spy(old_proxy, "stop_rpc_client")
         with ThreadPoolExecutor(max_workers=1) as pool:
             restarted = pool.submit(
                 dynamic_coordinator.restart_module, RestartNativeModule, reload_source=False
