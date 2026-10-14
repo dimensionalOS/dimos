@@ -231,8 +231,9 @@ def validate_command(
     commands for several robots at once, so another robot's keys are skipped
     rather than treated as a mistake.
 
-    An instruction that carries nothing is valid. It is how the sender shows
-    it is still alive without changing anything.
+    An instruction that carries nothing is valid but changes nothing. It does
+    not keep a robot connection's deadman alive: that is fed only by
+    instructions carrying the connection's own keys.
 
     Args:
         desc: What this robot said it accepts.
