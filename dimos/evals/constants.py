@@ -130,6 +130,19 @@ Perception:
                                  dimos.perception.localize.types lists every field.
   app.skills.state()             whether localize is ready to answer
 
+Grasps:
+  app.skills.grasps(object_id="31e1f624")
+                                 grasp poses for an object localize reported, by its id: the
+                                 best ones IK reaches from the current joints, best first. Each
+                                 gives the TCP position and orientation for arm.move_pose, the
+                                 approach direction, a pre-grasp pose back along it, the
+                                 object's width between the jaws and a score. They point
+                                 straight down at the centre of the object's footprint, jaws
+                                 across its narrow side, and read only the surfaces the camera
+                                 saw; suited to small box-like objects. Collisions are not
+                                 checked, and the proposals do not know the task; choose the one
+                                 that suits it.
+
 help(<call>) shows any call's full docstring. Use only the calls above.
 
 Print only what you need: what a script prints is what you see.

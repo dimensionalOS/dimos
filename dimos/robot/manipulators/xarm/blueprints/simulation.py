@@ -19,6 +19,7 @@ from __future__ import annotations
 from dimos.control.coordinator import TaskConfig
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import global_config
+from dimos.manipulation.grasping.grasp_proposals import GraspProposals
 from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspModule
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.manipulation_skills import ManipulationSkills
@@ -26,6 +27,7 @@ from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
+from dimos.perception.localize.module import PerceptionLocalize
 from dimos.robot.manipulators.common.blueprints import (
     coordinator,
     eef_twist_task,
@@ -63,6 +65,34 @@ xarm_perception_sim = autoconnect(
         segmentation_backend="edgetam",
         detect_on_request=True,
     ),
+    coordinator(
+        hardware=[_xarm7_sim_hw],
+        tasks=[
+            trajectory_task(_xarm7_sim_hw),
+            TaskConfig(
+                name="arm_gripper",
+                type="gripper",
+                joint_names=["arm/gripper"],
+                priority=20,
+            ),
+        ],
+    ),
+    RerunBridgeModule.blueprint(),
+)
+
+
+# What an agent driving the arm from Python uses: the sim, control, planning, localize and
+# grasp proposals (top-down heuristic). No MCP server or skill modules, and no classical
+# perception or pick-and-place.
+xarm_agent_sim = autoconnect(
+    ManipulationModule.blueprint(
+        model=_xarm7_sim_model,
+        planning_timeout=10.0,
+        visualization={"backend": "viser"},
+    ),
+    MujocoSimModule.blueprint(**_xarm7_sim_kwargs),
+    PerceptionLocalize.blueprint(),
+    GraspProposals.blueprint(),
     coordinator(
         hardware=[_xarm7_sim_hw],
         tasks=[

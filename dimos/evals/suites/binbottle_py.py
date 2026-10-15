@@ -42,12 +42,6 @@ GUIDANCE = (
     "MuJoCo; learn about the scene only through the robot's camera and tools."
 )
 
-# Classical perception and pick-and-place in xarm-perception-sim; the agent plans its own grasps.
-DISABLED_MODULES = (
-    "object-scene-registration-module",
-    "pick-and-place-module",
-    "heuristic-grasp-module",
-)
 # One view, and robosuite's flat-shaded objects score under OWLv2's real-world defaults.
 LOCALIZE_POLICY = '{"min_views": 1, "candidate_floor": 0.2, "accept_score": 0.25}'
 # Recording-only scene camera, the bottle cap's thread release, and gravity compensation so the
@@ -65,9 +59,8 @@ def environment(scene: str, bodies: tuple[str, ...]) -> MujocoEnvironment:
     if scene in THREADS:
         env["MUJOCOSIMMODULE__THREAD_RELEASES"] = json.dumps(THREADS[scene])
     return MujocoEnvironment(
-        # No mcp-server or observe-skill: the agent reaches modules and streams over the API.
-        blueprint=["xarm-perception-sim", "perception-localize"],
-        disable=DISABLED_MODULES,
+        # The Python-API stack (no MCP): the agent reaches modules and streams over the API.
+        blueprint=["xarm-agent-sim"],
         scene=LfsPath(f"robosuite_2/{scene}/scene.xml"),
         base_height=0.912,
         tracked_bodies=(*bodies, *GRIPPER_BODIES),
