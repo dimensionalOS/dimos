@@ -179,6 +179,22 @@ class RemoteModuleSource(ModuleSource):
         self._coord.call("restart_module_by_class_name", class_name, reload_source=reload_source)
         self.invalidate(class_name)
 
+    def unload_module_by_class_name(self, class_name: str) -> None:
+        self._coord.call("unload_module_by_class_name", class_name)
+        self.invalidate(class_name)
+
+    def unload_module(self, name: str) -> None:
+        """Unload the module that ``get_module(name)`` resolves to."""
+        descriptor = self._get_descriptor(name)
+        remote_name = descriptor.rpc_name or descriptor.class_name
+        # A single instance is addressed by its class name. A named instance's
+        # RPC name is its instance name.
+        if remote_name == descriptor.class_name:
+            self._coord.call("unload_module_by_class_name", remote_name)
+        else:
+            self._coord.call("unload_module_by_name", remote_name)
+        self.invalidate(remote_name)
+
     def close(self) -> None:
         with self._lock:
             if self._closed:

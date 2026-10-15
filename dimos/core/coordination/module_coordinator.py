@@ -155,6 +155,8 @@ class ModuleCoordinator(Resource):
             "load_blueprint": self.load_blueprint,
             "restart_module_by_class_name": self.restart_module_by_class_name,
             "restart_module_by_name": self.restart_module_by_name,
+            "unload_module_by_class_name": self.unload_module_by_class_name,
+            "unload_module_by_name": self.unload_module_by_name,
             "shutdown": self.shutdown,
         }
 
@@ -550,10 +552,32 @@ class ModuleCoordinator(Resource):
         worker-side instance, and shuts down the worker process if it becomes
         empty. Stream transports and other modules' references are left
         intact — callers that expect the module to come back (e.g.
-        ``restart_module``) are responsible for rewiring.
+        ``restart_module``) are responsible for rewiring. Modules that track
+        the system (e.g. ``McpServer``) receive the remaining module list.
         """
         with self._modules_lock:
             self._unload_module(module)
+            self._send_on_system_modules()
+
+    def unload_module_by_class_name(self, class_name: str) -> None:
+        with self._modules_lock:
+            self.unload_module(
+                self._instance_key_of_class_name(class_name, "unload_module_by_name")
+            )
+
+    def unload_module_by_name(self, name: str) -> None:
+        self.unload_module(name)
+
+    def _instance_key_of_class_name(self, class_name: str, by_name: str) -> str:
+        names = [n for n, c in self._instance_classes.items() if c.__name__ == class_name]
+        if len(names) > 1:
+            raise ValueError(
+                f"Multiple instances of {class_name!r} are deployed "
+                f"({', '.join(sorted(names))}); use {by_name}."
+            )
+        if not names:
+            raise ValueError(f"No deployed module with class name {class_name!r}")
+        return names[0]
 
     def _unload_module(self, module: type[ModuleBase] | str) -> None:
         name = self._resolve_instance_key(module)
@@ -605,16 +629,10 @@ class ModuleCoordinator(Resource):
         reload_source: bool = True,
     ) -> None:
         with self._modules_lock:
-            names = [n for n, c in self._instance_classes.items() if c.__name__ == class_name]
-            if len(names) > 1:
-                raise ValueError(
-                    f"Multiple instances of {class_name!r} are deployed "
-                    f"({', '.join(sorted(names))}); use restart_module_by_name."
-                )
-            if names:
-                self._restart_module(names[0], reload_source=reload_source)
-                return
-        raise ValueError(f"No deployed module with class name {class_name!r}")
+            self._restart_module(
+                self._instance_key_of_class_name(class_name, "restart_module_by_name"),
+                reload_source=reload_source,
+            )
 
     def restart_module_by_name(
         self,
@@ -670,7 +688,7 @@ class ModuleCoordinator(Resource):
             if consumer == name
         ]
 
-        self.unload_module(name)
+        self._unload_module(name)
 
         if reload_source:
             source_mod = sys.modules.get(module_class.__module__)

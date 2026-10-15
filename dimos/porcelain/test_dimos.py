@@ -127,6 +127,11 @@ def test_restart_before_run(app):
         app.restart(StressTestModule)
 
 
+def test_unload_before_run(app):
+    with pytest.raises(RuntimeError, match="No modules are running"):
+        app.unload(StressTestModule)
+
+
 def test_stop_is_idempotent(app):
     app.run(StressTestModule)
     app.stop()
@@ -232,6 +237,21 @@ def test_restart_no_reload(running_app):
     assert result == "pong"
 
 
+@pytest.mark.parametrize("target", [TickerModule, "TickerModule"])
+def test_unload_removes_only_that_module(running_app, target):
+    running_app.run(TickerModule)
+
+    running_app.unload(target)
+
+    assert "TickerModule" not in running_app._source.list_module_names()
+    assert running_app.skills.ping() == "pong"
+
+
+def test_unload_unknown_module(running_app):
+    with pytest.raises(KeyError):
+        running_app.unload("NoSuchModule")
+
+
 def test_skills_accessible(running_app):
     skills = running_app.skills
     assert "ping" in dir(skills)
@@ -259,6 +279,17 @@ def test_connected_run_by_blueprint_object(client):
 
 def test_connected_restart_no_reload(client):
     client.restart(StressTestModule, reload_source=False)
+    assert client.skills.ping() == "pong"
+
+
+@pytest.mark.parametrize("target", [TickerModule, "TickerModule"])
+def test_connected_unload_removes_only_that_module(running_app, client, target):
+    client.run(TickerModule)
+
+    client.unload(target)
+
+    assert "TickerModule" not in client._source.list_module_names()
+    assert "TickerModule" not in running_app._source.list_module_names()
     assert client.skills.ping() == "pong"
 
 
