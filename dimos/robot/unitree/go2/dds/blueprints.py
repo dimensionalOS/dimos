@@ -61,7 +61,8 @@ go2_dds_mid360 = GO2DDS.blueprint(
         (GO2DDS, "odometry", "go2_odometry_unused"),
         (GO2DDS, "lidar", "go2_lidar_unused"),
         (GO2DDS, "lidar_raw", "l1_lidar_raw"),
-        (GO2DDS, "imu", "body_imu"),
+        (GO2DDS, "lidar_imu", "l1_lidar_imu"),
+        (GO2DDS, "imu", "go2_imu"),
     ]
 )
 
@@ -87,9 +88,7 @@ go2_dds_nav = autoconnect(
 go2_dds_nav_l1 = autoconnect(
     go2_dds_nav,
     GO2DDS.blueprint(**JETSON, lidar_raw_on=True, tf_root="mid360_link"),
-    GO2L1Lidar.blueprint().remappings(
-        [(GO2L1Lidar, "lidar_raw", "l1_lidar_raw"), (GO2L1Lidar, "imu", "body_imu")]
-    ),
+    GO2L1Lidar.blueprint(),
 ).global_config(n_workers=12)
 
 # h264 lands here off `video`; jpeg is redirected onto it, whichever the robot serves

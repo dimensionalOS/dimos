@@ -230,9 +230,9 @@ class GO2L1Lidar(Module):
 
     config: GO2L1LidarConfig
 
-    lidar_raw: In[PointCloud2]  # GO2DDS `lidar_raw`, utlidar_lidar
-    lidar_imu: In[Imu]  # GO2DDS `lidar_imu`
-    imu: In[Imu]  # the body IMU, base_link
+    l1_lidar_raw: In[PointCloud2]  # GO2DDS `lidar_raw`, utlidar_lidar
+    l1_lidar_imu: In[Imu]  # GO2DDS `lidar_imu`
+    go2_imu: In[Imu]  # GO2DDS `imu`, the body IMU in base_link
     odometry: In[Odometry]  # Point-LIO, odom -> mid360_link
     tf: In[TFMessage]
     l1_lidar: Out[PointCloud2]  # the deskewed L1 cloud, in odom
@@ -244,9 +244,9 @@ class GO2L1Lidar(Module):
         super().start()
         self._lock = threading.Lock()
         for unsubscribe in (
-            self.lidar_raw.subscribe(self._on_cloud),
-            self.lidar_imu.subscribe(self._on_l1_imu),
-            self.imu.subscribe(self._on_body_imu),
+            self.l1_lidar_raw.subscribe(self._on_cloud),
+            self.l1_lidar_imu.subscribe(self._on_l1_imu),
+            self.go2_imu.subscribe(self._on_body_imu),
             self.odometry.subscribe(self._on_odometry),
         ):
             self.register_disposable(Disposable(unsubscribe))

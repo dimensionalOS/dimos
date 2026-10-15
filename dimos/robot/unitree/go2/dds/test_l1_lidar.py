@@ -15,7 +15,7 @@
 """GO2L1Lidar's core, synthetic and over a 13 s clip: a knock, its bad scans, a stall and its late cloud.
 
 The clip (``go2_l1_knock.db``) holds what the module would receive live: GO2DDS's
-``lidar_raw``/``lidar_imu`` (header stamps) and body ``imu`` (50 Hz), and Point-LIO's
+``l1_lidar_raw``/``l1_lidar_imu`` (header stamps) and body ``go2_imu`` (50 Hz), and Point-LIO's
 ``odometry``, each observation at its receive time.
 """
 
@@ -65,17 +65,17 @@ def _replay(**mount):
     store = SqliteStore(path=str(get_data("go2_l1_knock.db")))
     store.start()
     feed = []
-    for name in ("lidar_raw", "lidar_imu", "imu", "odometry"):
+    for name in ("l1_lidar_raw", "l1_lidar_imu", "go2_imu", "odometry"):
         feed += [(obs.ts, name, obs.data) for obs in store.stream(name)]
     feed.sort(key=lambda f: f[0])
     core = L1Deskew(GO2L1LidarConfig(), *_mount(**mount))
     out = []
     for ts, name, msg in feed:
-        if name == "lidar_raw":
+        if name == "l1_lidar_raw":
             out += core.on_cloud(msg, ts)
-        elif name == "lidar_imu":
+        elif name == "l1_lidar_imu":
             core.on_l1_imu(msg)
-        elif name == "imu":
+        elif name == "go2_imu":
             core.on_body_imu(msg)
         else:
             out += core.on_odometry(msg)
