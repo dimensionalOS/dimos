@@ -306,6 +306,10 @@ describe("VideoPanel", () => {
     await act(async () => {
       frame(store, 1, now / 1000);
       await flush();
+      // The first frame published its snapshot before the decode failed
+      // (the store's first-frame flush); the failure shows at the next
+      // snapshot, which the moving age bucket forces within 500 ms.
+      now += 500;
       store.publishUi();
     });
     expect(badge().textContent).toBe("decode failing");
@@ -875,6 +879,7 @@ describe("MapPanel", () => {
       );
       await flush();
       await flush();
+      now += 500; // the failure shows at the next snapshot (see the video test)
       store.publishUi();
     });
     expect(badge().textContent).toBe("decode failing");
@@ -1323,6 +1328,27 @@ describe("Map3DPanel", () => {
     const noPose = { ...SPEC, channels: [VOX_CH] };
     act(() => root.render(<Map3DPanel spec={noPose} store={store} sinkDeps={deps} />));
     expect(follow()).toBeNull();
+  });
+
+  it("disposes the scene while its canvas is still in the document", async () => {
+    // OrbitControls.dispose() unregisters from the canvas's root node; a
+    // canvas already detached from the document leaks the listener and
+    // everything it reaches (the whole grid, per page switch).
+    let connectedAtDispose: boolean | null = null;
+    const deps = {
+      ...sinkDeps(),
+      createScene: (canvas: HTMLCanvasElement) => {
+        scene.dispose.mockImplementation(() => {
+          connectedAtDispose = canvas.isConnected;
+        });
+        return Promise.resolve(scene as unknown as VoxelScene);
+      },
+    };
+    act(() => root.render(<Map3DPanel spec={SPEC} store={store} sinkDeps={deps} />));
+    await act(flush);
+    act(() => root.render(<div />));
+    expect(scene.dispose).toHaveBeenCalledTimes(1);
+    expect(connectedAtDispose).toBe(true);
   });
 
   it("shows why the renderer could not start", async () => {

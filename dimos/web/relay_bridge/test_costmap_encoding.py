@@ -38,7 +38,7 @@ with open(find_web_dir() / "shared" / "fixtures" / "costmap_frames.json") as f:
 
 @pytest.mark.parametrize("vec", VECTORS, ids=lambda v: v["name"])
 def test_encoder_reproduces_golden_vector(vec: dict[str, Any]) -> None:
-    """Compressed-byte equality pins CPython's bundled zlib at level 6. If a
+    """Compressed-byte equality pins CPython's bundled zlib (RLE, level 1). If a
     future CPython legitimately shifts those bytes, regenerate the fixture
     (gen_costmap_fixtures) - the decoded-grid assertions on both sides are
     the actual wire contract."""

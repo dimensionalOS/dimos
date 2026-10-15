@@ -54,6 +54,15 @@ export interface RelayOptions {
   /** Test seam. */
   rtcFetch?: FetchFn;
   /**
+   * quinn's congestion controller for every session (--congestion):
+   * "throughput" is Cubic, "low-latency" is BBR. Deno's default is Cubic,
+   * which on a lossy link (1% loss at 150 ms RTT) collapses to well under
+   * 1 Mbit/s; BBR keeps the rate up at the cost of filling the bottleneck
+   * queue and crowding out Cubic flows sharing it. An A/B knob until one
+   * wins in the field.
+   */
+  congestionControl?: "throughput" | "low-latency";
+  /**
    * Explicit acknowledgment for binding a non-loopback host without cert,
    * key, and auth. Such a relay trusts every origin that can reach it
    * (wildcard CORS on the discovery endpoints, an unauthenticated
@@ -74,6 +83,19 @@ export interface RelayHandle {
 }
 
 export const CERT_KEY_PAIR_ERROR = "--cert and --key must be given together";
+
+// Liveness. Each peer takes the smaller of the two idle timeouts, so this
+// bounds how long a dead peer's session (and a dead robot's id) lingers;
+// the bridge offers 10 s. Keepalives (quinn PINGs, from the Rust side, so a
+// busy event loop does not delay them) keep idle sessions alive well inside
+// it. Browsers and the SDK add an application ping on the control stream.
+export const MAX_IDLE_TIMEOUT_MS = 15_000;
+export const KEEP_ALIVE_INTERVAL_MS = 3_000;
+
+// Identifies this relay process to clients: a bridge or operator tool
+// polling /api/info of a relay on a fixed port and certificate (where the
+// WebTransport URL never changes) sees a restart as a new value.
+const INSTANCE_ID = crypto.randomUUID();
 
 /** What the listeners serve: the ephemeral certificate or the operator's. */
 interface ServedCert {
@@ -273,8 +295,11 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
       cert: cert.certPem,
       key: cert.keyPem,
       alpnProtocols: ["h3"],
-      maxIdleTimeout: 30_000,
-      keepAliveInterval: 4_000,
+      maxIdleTimeout: MAX_IDLE_TIMEOUT_MS,
+      keepAliveInterval: KEEP_ALIVE_INTERVAL_MS,
+      ...(options.congestionControl !== undefined
+        ? { congestionControl: options.congestionControl }
+        : {}),
     });
   } catch (e) {
     hub?.dispose();
@@ -341,6 +366,7 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
       const info = {
         ...(tls ? { wtUrl: url.origin } : { wtUrl, certHash: cert.certHashB64 }),
         v: PROTOCOL_VERSION,
+        instance: INSTANCE_ID,
         ...(hub !== null ? { rtc: true } : {}),
       };
       return Response.json(info, { headers: LOCAL_CORS });

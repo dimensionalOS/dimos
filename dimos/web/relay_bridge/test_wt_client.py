@@ -38,6 +38,8 @@ from dimos.web.relay_bridge.protocol import (
     FrameHeader,
     Hello,
     Msg,
+    Ping,
+    Pong,
     ProtocolError,
     Pub,
     PubAck,
@@ -76,6 +78,9 @@ class StubSession:
         self.frames_dropped = 0
         self.control_dropped = 0
         self._next_id = 100
+        self.answer_pings = True
+        self.pong_waiters: dict[int, asyncio.Future[Pong]] = {}
+        self.failed: str | None = None
 
     def send_frame(self, header: FrameHeader, payload: bytes) -> int:
         # Real encode so a non-serializable meta raises here, exactly as the
@@ -98,6 +103,22 @@ class StubSession:
 
     def send_msg(self, msg: Msg) -> None:
         self.sent_msgs.append(msg)
+        if self.answer_pings and isinstance(msg, Ping):
+            waiter = self.pong_waiters.get(msg.n)
+            if waiter is not None:
+                waiter.set_result(Pong(n=msg.n, ts=msg.ts))
+
+    def register_pong_waiter(self, n: int) -> asyncio.Future[Pong]:
+        waiter: asyncio.Future[Pong] = asyncio.get_running_loop().create_future()
+        self.pong_waiters[n] = waiter
+        return waiter
+
+    def discard_pong_waiter(self, n: int) -> None:
+        self.pong_waiters.pop(n, None)
+
+    def fail_session(self, reason: str) -> None:
+        self.failed = reason
+        self.closed.set()
 
 
 def _client(session: StubSession) -> RelayClient:
@@ -191,6 +212,52 @@ async def test_mailbox_drops_stale_frames_under_slow_writer() -> None:
         assert writer.sent == 2
     finally:
         writer.stop()
+
+
+async def test_keepalive_fails_the_session_after_unanswered_pings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(wt_client, "KEEPALIVE_INTERVAL_S", 0.02)
+    session = StubSession()
+    client = _client(session)
+    client.start_keepalive()
+    client.start_keepalive()  # idempotent
+    await asyncio.sleep(0.15)
+    pings = [m for m in session.sent_msgs if isinstance(m, Ping)]
+    assert len(pings) >= 3 and session.failed is None  # answered: the session lives
+    assert len({p.n for p in pings}) == len(pings)
+
+    session.answer_pings = False
+    await asyncio.wait_for(session.closed.wait(), timeout=2.0)
+    assert session.failed == f"{wt_client.KEEPALIVE_MISSES} keepalive pings unanswered"
+    assert client._keepalive_task is not None
+    await asyncio.wait_for(client._keepalive_task, timeout=1.0)
+    assert session.pong_waiters == {}  # timed-out waiters are discarded
+
+
+async def test_keepalive_tolerates_a_lone_missed_pong(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(wt_client, "KEEPALIVE_INTERVAL_S", 0.02)
+    session = StubSession()
+    answered = 0
+
+    real_send = session.send_msg
+
+    def send_msg(msg: Msg) -> None:
+        nonlocal answered
+        if isinstance(msg, Ping):
+            answered += 1
+            if answered == 2:
+                session.sent_msgs.append(msg)
+                return  # one lost pong
+        real_send(msg)
+
+    session.send_msg = send_msg  # type: ignore[method-assign]
+    client = _client(session)
+    client.start_keepalive()
+    await asyncio.sleep(0.2)
+    assert session.failed is None
+    assert answered >= 4
+    client._keepalive_task.cancel()  # type: ignore[union-attr]
 
 
 async def test_frames_cancel_does_not_steal_next_frame() -> None:
@@ -608,6 +675,17 @@ async def test_fetch_relay_info_cert_hash_is_optional(info_server: str) -> None:
     # A relay with a real certificate (T12c) advertises no hash.
     _serve({"wtUrl": "https://relay.example:443", "v": PROTOCOL_VERSION})
     assert (await fetch_relay_info(info_server)).cert_hash is None
+
+
+async def test_fetch_relay_info_instance_id(info_server: str) -> None:
+    # Absent from older relays; any non-string is a shape error.
+    _serve(GOOD_INFO)
+    assert (await fetch_relay_info(info_server)).instance is None
+    _serve({**GOOD_INFO, "instance": "7f3a"})
+    assert (await fetch_relay_info(info_server)).instance == "7f3a"
+    _serve({**GOOD_INFO, "instance": 7})
+    with pytest.raises(ProtocolError, match="unexpected shape"):
+        await fetch_relay_info(info_server)
 
 
 async def test_fetch_relay_info_rtc_flag(info_server: str) -> None:

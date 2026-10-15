@@ -107,9 +107,22 @@ def decode_bool(msg: bool) -> Bool:
     return Bool(data=msg)
 
 
-# The historical costmap encoder's choice (websocket_vis/optimized_costmap.py);
-# full grids compress to ~10-30 KB at <= 5 Hz, so speed over ratio is fine.
-_COSTMAP_ZLIB_LEVEL = 6
+# Costmap cells and voxel bit masks are long runs of identical bytes, so the
+# run-length strategy at level 1 compresses them in a fraction of the time of
+# the default level 6 (a 2048^2 costmap 18 -> 4 ms, a scattered 1M-voxel map
+# 230 -> 25 ms) for a payload that is about twice the size on a costmap and
+# smaller on a scattered cloud; both stay under 100 KB at the shipped rates.
+# Still RFC 1950, so the SDK's inflate needs no change.
+_ZLIB_LEVEL = 1
+
+
+def _zlib_rle(data: bytes) -> bytes:
+    compressor = zlib.compressobj(
+        _ZLIB_LEVEL, zlib.DEFLATED, zlib.MAX_WBITS, zlib.DEF_MEM_LEVEL, zlib.Z_RLE
+    )
+    return compressor.compress(data) + compressor.flush()
+
+
 # Render budget shared with the cockpit decoder (MAX_COSTMAP_DIM in
 # costmap.ts): larger grids are block-max downsampled before compression so
 # every frame stays within what consumers accept and render. 2048^2 raw is
@@ -141,7 +154,7 @@ def encode_costmap(msg: OccupancyGrid) -> EncodedPayload | None:
         "res": res,
         "origin": [origin.position.x, origin.position.y, origin.yaw],
     }
-    return EncodedPayload(zlib.compress(cells, _COSTMAP_ZLIB_LEVEL), meta)
+    return EncodedPayload(_zlib_rle(cells.tobytes()), meta)
 
 
 # voxels.zlib.v1: a PointCloud2 as voxel occupancy bits. Points are quantized
@@ -164,7 +177,6 @@ _VOXEL_RECORD = np.dtype(
 )
 _VOXEL_MAX_VOXELS = 1_000_000
 _VOXEL_MAX_CHUNKS = 32_768
-_VOXEL_ZLIB_LEVEL = 6
 _DEFAULT_VOXEL_RES = 0.05
 
 
@@ -212,7 +224,7 @@ def encode_voxels(msg: PointCloud2, params: Mapping[str, Any]) -> EncodedPayload
     records["cx"], records["cy"], records["cz"] = chunks[:, 0], chunks[:, 1], chunks[:, 2]
     records["bits"] = masks.reshape(-1, _VOXEL_CHUNK_BITS // 8)
     meta = {"res": res, "n": len(keys), "chunks": len(chunk_keys)}
-    return EncodedPayload(zlib.compress(records.tobytes(), _VOXEL_ZLIB_LEVEL), meta)
+    return EncodedPayload(_zlib_rle(records.tobytes()), meta)
 
 
 # stats.json.v1: the resource monitor's /resource_stats dict (asdict of

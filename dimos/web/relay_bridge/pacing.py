@@ -35,10 +35,37 @@ def passes_rate_gate(
     now: float,
     min_interval: float,
 ) -> bool:
-    """Claim the current input when it is outside the channel's rate interval."""
+    """Claim the current input when it is outside the channel's rate interval:
+    a strict minimum spacing from the last accepted input (log throttling).
+    Not for sampling a stream: see passes_sampling_gate."""
     if now - last_input.get(ch, 0.0) < min_interval:
         return False
     last_input[ch] = now
+    return True
+
+
+def passes_sampling_gate(
+    next_due: dict[str, float],
+    ch: str,
+    now: float,
+    interval: float,
+) -> bool:
+    """Sample a stream at one frame per `interval` on average, tolerant of
+    arrival jitter.
+
+    The schedule is anchored on the channel's own due times, not on the
+    accepted arrivals: a frame up to half an interval early is accepted and
+    the next due time advances from the schedule, so a 30 Hz camera through a
+    30 Hz gate passes every frame (a last-arrival anchor rejects every frame
+    that lands a few ms early and re-anchors on the late ones, which thins
+    30 fps to 20). A frame arriving late advances the schedule from its own
+    arrival, so the average never exceeds the rate; the only burst is two
+    frames half an interval apart right after a late one.
+    """
+    due = next_due.get(ch, 0.0)
+    if now < due - 0.5 * interval:
+        return False
+    next_due[ch] = max(due, now) + interval
     return True
 
 

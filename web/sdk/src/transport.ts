@@ -16,6 +16,9 @@ export interface RelayInfo {
   v: number;
   /** True when the relay brokers video.webrtc.v1 track channels (v7). */
   rtc?: boolean;
+  /** Random id of the relay process (new on every start); absent from
+   * older relays. */
+  instance?: string;
 }
 
 export type TransportPhase =
@@ -67,12 +70,32 @@ export const BACKOFF_INITIAL_MS = 500;
 export const BACKOFF_MAX_MS = 8000;
 // Per-attempt deadline for /api/info + the QUIC handshake: a blackholed
 // attempt must fail into backoff instead of pinning the phase at
-// "connecting" forever.
-export const CONNECT_TIMEOUT_MS = 10_000;
+// "connecting" forever. A handshake is a round trip or two, so 5 s covers a
+// slow link while a dead one is retried sooner.
+export const CONNECT_TIMEOUT_MS = 5_000;
 
 /** Delay before retry number `failures` (1-based): 500 ms doubling to 8 s. */
 export function backoffDelayMs(failures: number): number {
   return Math.min(BACKOFF_INITIAL_MS * 2 ** (failures - 1), BACKOFF_MAX_MS);
+}
+
+/**
+ * Call `cb` when a pending retry should run now: the network came back or
+ * the tab became visible again (background timers are throttled, and after a
+ * sleep the backoff may still have seconds to run). Returns the remover.
+ * A no-op outside a browser.
+ */
+function onWake(cb: () => void): () => void {
+  const onVisible = () => {
+    if (document.visibilityState === "visible") cb();
+  };
+  const doc = typeof document === "undefined" ? null : document;
+  globalThis.addEventListener?.("online", cb);
+  doc?.addEventListener("visibilitychange", onVisible);
+  return () => {
+    globalThis.removeEventListener?.("online", cb);
+    doc?.removeEventListener("visibilitychange", onVisible);
+  };
 }
 
 /** `promise`, but rejecting as soon as `signal` aborts (timeout or stop()). */
@@ -254,12 +277,16 @@ export class ReconnectingTransport {
 
   #sleep(ms: number): Promise<void> {
     return new Promise((resolve) => {
-      this.#wake = resolve;
-      this.#timer = setTimeout(() => {
+      const wake = () => {
+        if (this.#timer !== null) clearTimeout(this.#timer);
         this.#timer = null;
         this.#wake = null;
+        unwatch();
         resolve();
-      }, ms);
+      };
+      const unwatch = onWake(wake);
+      this.#wake = wake;
+      this.#timer = setTimeout(wake, ms);
     });
   }
 }
