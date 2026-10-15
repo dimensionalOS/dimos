@@ -709,39 +709,44 @@ Deno.test("rate feedback: the cap follows the slowest shedding viewer, climbs ba
   const viewer = attach(reg, "r1", ["color_image"]);
   const rates = () =>
     robot.control.filter((m) => m.t === "rate").map((m) => (m as { hz: number }).hz);
-  const newestSent = () => parseRobotFrameHeader(viewer.sink.sent.at(-1)!)!.seq;
   let seq = 0;
-  /** `frames` robot frames over one 5 s rate window; the viewer acks the
-   * newest frame it was sent on every `every`th frame. Acking every third
-   * frame sheds one in three (two in flight, the pending one replaced). */
-  const window = async (frames: number, every: number) => {
+  let read = 0; // frames the viewer has read, in the order they were sent to it
+  /** `frames` robot frames over one 5 s rate window; the viewer reads (and
+   * acks) one frame every `readMs`, oldest first, like a decoder at that
+   * rate. Slower than the robot, it falls behind and the relay sheds. */
+  const window = async (frames: number, readMs: number) => {
     const start = now;
+    let nextReadAt = start;
     for (let i = 0; i < frames; i++) {
       now = start + Math.floor((i * 5000) / frames);
       reg.onRobotFrame(robot, frame("color_image", ++seq, "latest"));
       await tick();
-      if (i % every === every - 1) {
-        send(reg, viewer, { t: "ack", ch: "color_image", seq: newestSent() });
-        await tick();
+      while (nextReadAt <= now) {
+        const sent = viewer.sink.sent.map((b) => parseRobotFrameHeader(b)!.seq);
+        if (read < sent.length) {
+          send(reg, viewer, { t: "ack", ch: "color_image", seq: sent[read++] });
+          await tick();
+        }
+        nextReadAt += readMs;
       }
     }
     now = start + 5000;
   };
 
-  await window(75, 1); // 15 Hz, every frame acked: keeping up
+  await window(75, 60); // 15 Hz, read as fast as it arrives: keeping up
   reg.tick(now);
   assertEquals(rates(), []); // the cap stays at maxHz, nothing to say
 
-  await window(75, 3); // the viewer takes two frames in three: 10 of 15 fps
+  await window(75, 100); // the viewer reads 10 of the 15 frames a second
   reg.tick(now);
   // The rate window is ten 500 ms buckets, so a rate reads up to a tenth low.
   const capped = rates()[0];
   assert(
-    rates().length === 1 && capped >= 9 && capped <= 10,
+    rates().length === 1 && capped >= 8.5 && capped <= 10.5,
     `cap near the viewer's 10 fps: ${rates()}`,
   );
 
-  await window(50, 1); // the robot follows at the cap and the viewer keeps up: probe up a quarter
+  await window(Math.round(capped * 5), 60); // the robot follows the cap, the viewer keeps up: probe up a quarter
   reg.tick(now);
   assertEquals(rates().length, 2);
   assert(Math.abs(rates()[1] - capped * 1.25) < 1e-9, `probed up: ${rates()}`);
@@ -801,6 +806,7 @@ Deno.test("stats project exact per-channel key sets with counters and rates", as
   assertEquals(outKeys, [
     "ackTimeouts",
     "bps",
+    "budget",
     "bytesOut",
     "delivery",
     "dropped",

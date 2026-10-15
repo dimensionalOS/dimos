@@ -7,6 +7,7 @@ import {
 } from "@dimos/shared";
 import {
   ACK_BUDGET,
+  ACK_BUDGET_MAX,
   ACK_TIMEOUT_MS,
   ControlPayloadTooLargeError,
   type FrameWriter,
@@ -341,6 +342,31 @@ Deno.test("latest: a write accepted late counts as one stall; prompt ones never"
   assertEquals(ch.stalled, 1); // the prompt write is not a stall
   assertEquals(ch.sent, 2);
   assertEquals(sink.kicked, null);
+});
+
+Deno.test("latest: the ack budget follows the viewer's delivery rate, between 2 and 10 frames", async () => {
+  let now = 1_000_000;
+  const sink = new FakeSink();
+  const ch = new LatestChannel(sink, { now: () => now });
+  assertEquals(ch.budget(), ACK_BUDGET);
+  // A viewer acknowledging 25 frames a second over the rate window (the
+  // window's edge bucket drops about a tenth, so 20 fps would read as 9).
+  for (let seq = 1; seq <= 125; seq++) {
+    ch.offer(frame(seq), seq);
+    await tick();
+    ch.ack(seq);
+    now += 40;
+  }
+  ch.tick(now);
+  assertEquals(ch.budget(), ACK_BUDGET_MAX); // ~22 fps x 0.5 s = 11, the cap
+  for (let seq = 101; seq <= 112; seq++) {
+    ch.offer(frame(seq), seq);
+    await tick();
+  }
+  assertEquals([ch.unacked(), ch.queued()], [ACK_BUDGET_MAX, 1]); // ten in flight, one pending
+  now += 6000; // the acks stop: the window empties and the budget falls back
+  ch.tick(now);
+  assertEquals(ch.budget(), ACK_BUDGET);
 });
 
 Deno.test("latest: at most ACK_BUDGET frames await their ack; an ack releases the next", async () => {

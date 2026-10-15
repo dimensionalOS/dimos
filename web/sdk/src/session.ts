@@ -297,10 +297,10 @@ class SessionImpl implements Session {
   #wire = new Set<string>();
   #wireRunId = -1;
 
-  // Receipts for latest frames (v8): the relay writes at most two frames of
-  // a latest channel that this viewer has not acknowledged, so a slow link
-  // never queues a window's worth of stale video. Newest seq per channel,
-  // flushed once per task.
+  // Receipts for latest frames (v8): the relay writes at most a small budget
+  // of frames (two, more for a fast viewer) of a latest channel that this
+  // viewer has not acknowledged, so a slow link never queues a window's
+  // worth of stale video. Newest seq per channel, flushed once per task.
   #acks = new Map<string, number>();
   #ackFlushScheduled = false;
 
