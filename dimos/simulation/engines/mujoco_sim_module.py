@@ -268,6 +268,8 @@ class MujocoSimModuleConfig(ModuleConfig, DepthCameraConfig):
     enable_pointcloud: bool = False
     pointcloud_fps: float = 5.0
     camera_info_fps: float = 1.0
+    overview_camera_name: str | None = None
+    overview_fps: float = Field(default=5.0, gt=0, allow_inf_nan=False)
     # Optional MuJoCo-native lidar: cast rays from one or more named cameras
     # and publish world-frame PointCloud2 points on ``pointcloud``.
     enable_mujoco_lidar: bool = False
@@ -328,6 +330,8 @@ class MujocoSimModule(
     pointcloud: Out[PointCloud2]
     camera_info: Out[CameraInfo]
     depth_camera_info: Out[CameraInfo]
+    overview_image: Out[Image]
+    overview_camera_info: Out[CameraInfo]
     imu: Out[Imu]
     # Floating-base pose for robots whose MJCF has a free joint at the
     # root. Published every step; consumers like the viser viewer use
@@ -410,6 +414,8 @@ class MujocoSimModule(
 
     @rpc
     def start(self) -> None:
+        if self.config.overview_camera_name == self.config.camera_name:
+            raise ValueError("Overview and primary camera names must be different")
         if not self.config.address and not self.config.robot_mjcf:
             raise RuntimeError(
                 "MujocoSimModule: either config.address (legacy MJCF path) "
@@ -469,6 +475,16 @@ class MujocoSimModule(
         if primary_needed:
             add_camera(self.config.camera_name)
 
+        if self.config.overview_camera_name:
+            name = self.config.overview_camera_name
+            cameras_by_name[name] = CameraConfig(
+                name=name,
+                width=self.config.width,
+                height=self.config.height,
+                fps=self.config.overview_fps,
+                render_depth=False,
+            )
+
         if self.config.enable_pointcloud and self.config.enable_mujoco_lidar:
             for camera_name in self._mujoco_lidar_camera_names():
                 raycast_lidars.append(
@@ -506,6 +522,9 @@ class MujocoSimModule(
             engine_kwargs["spawn_z"] = self.config.spawn_z
             engine_kwargs["spawn_yaw"] = self.config.spawn_yaw
         self._engine = MujocoEngine(**engine_kwargs)
+        for camera in cameras:
+            if self._engine.get_camera_fovy(camera.name) is None:
+                raise ValueError(f"Configured camera {camera.name!r} not found in MJCF")
 
         # Detect gripper (extra joint beyond dof).
         dof = self.config.dof
@@ -879,8 +898,11 @@ class MujocoSimModule(
         if engine is None:
             return
 
-        interval = 1.0 / self.config.fps
+        interval = 1.0 / max(
+            self.config.fps, self.config.overview_fps if self.config.overview_camera_name else 0.0
+        )
         last_timestamp = 0.0
+        last_overview_timestamp = 0.0
         published_count = 0
 
         # Wait for engine to actually be connected (sim thread may take a tick).
@@ -898,6 +920,11 @@ class MujocoSimModule(
             loop_start = time.monotonic()
             try:
                 frame = engine.read_camera(self.config.camera_name)
+                if self.config.overview_camera_name:
+                    overview = engine.read_camera(self.config.overview_camera_name)
+                    if overview is not None and overview.timestamp > last_overview_timestamp:
+                        self._publish_overview(overview)
+                        last_overview_timestamp = overview.timestamp
             except RuntimeError as exc:
                 logger.error(
                     "MuJoCo render failed; stopping publish loop",
@@ -924,7 +951,7 @@ class MujocoSimModule(
                 )
                 self.color_image.publish(color_img)
 
-            if self.config.enable_depth:
+            if self.config.enable_depth and frame.depth is not None:
                 depth_img = Image(
                     data=frame.depth,
                     format=ImageFormat.DEPTH,
@@ -940,13 +967,51 @@ class MujocoSimModule(
                 logger.info(
                     "MujocoSimModule first frame published",
                     rgb_shape=frame.rgb.shape,
-                    depth_shape=frame.depth.shape,
+                    depth_shape=frame.depth.shape if frame.depth is not None else None,
                 )
 
             elapsed = time.monotonic() - loop_start
             sleep_time = interval - elapsed
             if sleep_time > 0:
                 time.sleep(sleep_time)
+
+    def _publish_overview(self, frame: CameraFrame) -> None:
+        """Publish an RGB-only view and its capture-time optical calibration/pose."""
+        frame_id = f"{self.config.overview_camera_name}_color_optical_frame"
+        height, width = frame.rgb.shape[:2]
+        self.overview_image.publish(
+            Image(
+                data=frame.rgb,
+                format=ImageFormat.RGB,
+                frame_id=frame_id,
+                ts=frame.timestamp,
+            )
+        )
+        self.overview_camera_info.publish(
+            CameraInfo.from_fov(
+                fov_deg=frame.fovy,
+                width=width,
+                height=height,
+                frame_id=frame_id,
+            ).with_ts(frame.timestamp)
+        )
+        optical_rotation = R.from_matrix(frame.cam_mat.reshape(3, 3)) * _RX180
+        self.tf.publish(
+            TFMessage(
+                _transform_from_matrix(
+                    _pose_matrix(frame.cam_pos, optical_rotation.as_matrix()),
+                    frame_id="world",
+                    child_frame_id=frame_id,
+                    ts=frame.timestamp,
+                ),
+                _transform_from_matrix(
+                    _pose_matrix(frame.cam_pos, frame.cam_mat.reshape(3, 3)),
+                    frame_id="world",
+                    child_frame_id=f"{self.config.overview_camera_name}_link",
+                    ts=frame.timestamp,
+                ),
+            )
+        )
 
     def _publish_camera_info(self) -> None:
         with self._state_lock:
@@ -1044,7 +1109,7 @@ class MujocoSimModule(
         if camera_info is None:
             return
         frame = self._engine.read_camera(self.config.camera_name)
-        if frame is None:
+        if frame is None or frame.depth is None:
             return
         try:
             color_img = Image(
