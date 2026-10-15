@@ -21,6 +21,7 @@ simulator's ground truth, which stays in the robot container.
 
     dimos evals sandbox dimos.evals.sandbox.go2_store --max-steps 2000
     dimos evals sandbox dimos.evals.sandbox.go2_store --case store_patrol_dimos
+    dimos evals sandbox dimos.evals.sandbox.go2_store --case store_patrol_dimos_framework
 """
 
 from __future__ import annotations
@@ -113,6 +114,12 @@ system."""
 PROMPT_DIMOS = (
     PROMPT
     + " Please use github.com/dimensionalos/dimos to help get a system working quickly and reliably."
+)
+
+PROMPT_DIMOS_FRAMEWORK = (
+    PROMPT
+    + " You must use the Dimensional framework (github.com/dimensionalos/dimos): build the system"
+    " out of its blueprints, modules, streams, etc."
 )
 
 DONE_SCHEMA = {
@@ -211,4 +218,5 @@ def _case(case_id: str, prompt: str) -> SandboxCase:
 SUITE = [
     _case("store_patrol", PROMPT),
     _case("store_patrol_dimos", PROMPT_DIMOS),
+    _case("store_patrol_dimos_framework", PROMPT_DIMOS_FRAMEWORK),
 ]
