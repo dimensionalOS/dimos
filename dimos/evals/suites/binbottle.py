@@ -52,7 +52,7 @@ def environment(scene: str, bodies: tuple[str, ...]) -> MujocoEnvironment:
             "xarm-perception-sim",
             "mcp-server",
             "observe-skill",
-            "live-localize-module",
+            "perception-localize",
         ],
         disable=PERCEPTION_MODULES,
         scene=LfsPath(f"robosuite_2/{scene}/scene.xml"),
@@ -61,7 +61,7 @@ def environment(scene: str, bodies: tuple[str, ...]) -> MujocoEnvironment:
         agent_artifacts=(),  # sensors and skills only; the recording holds ground-truth poses
         # Same localize policy as the robosuite suite: one view, robosuite-style flat shading.
         module_env={
-            "LIVELOCALIZEMODULE__POLICY": (
+            "PERCEPTIONLOCALIZE__POLICY": (
                 '{"min_views": 1, "candidate_floor": 0.2, "accept_score": 0.25}'
             ),
             **sim_env(scene),

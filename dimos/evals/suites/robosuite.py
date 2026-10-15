@@ -57,7 +57,7 @@ def environment(scene: str, bodies: tuple[str, ...]) -> MujocoEnvironment:
             "xarm-perception-sim",
             "mcp-server",
             "observe-skill",
-            "live-localize-module",
+            "perception-localize",
         ],
         disable=PERCEPTION_MODULES,
         scene=LfsPath(f"robosuite/{scene}/scene.xml"),
@@ -67,7 +67,7 @@ def environment(scene: str, bodies: tuple[str, ...]) -> MujocoEnvironment:
         # The wrist camera starts parked, so confirm objects from one view; robosuite's plain,
         # flat-shaded objects score about 0.3 with OWLv2, under the 0.40 real-world default.
         module_env={
-            "LIVELOCALIZEMODULE__POLICY": (
+            "PERCEPTIONLOCALIZE__POLICY": (
                 '{"min_views": 1, "candidate_floor": 0.2, "accept_score": 0.25}'
             ),
             **ROBOSUITE_PHYSICS,
