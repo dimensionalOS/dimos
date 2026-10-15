@@ -79,6 +79,7 @@
     "dimos_msgs/msg/ControlValues": "Published runtime consumer: dimos/control/contract/validate.py",
     "geometry_msgs/msg/PoseWithCovarianceStamped": "Published native runtime consumer: dimos/experimental/memory/rust/src/decoding.rs",
     "geometry_msgs/msg/TwistWithCovarianceStamped": "Published native runtime consumer: dimos/experimental/memory/rust/src/decoding.rs",
-    "geometry_msgs/msg/WrenchStamped": "Published native runtime consumer: dimos/experimental/memory/rust/src/decoding.rs"
+    "geometry_msgs/msg/WrenchStamped": "Published native runtime consumer: dimos/experimental/memory/rust/src/decoding.rs",
+    "dimos_msgs/msg/EpisodeStatus": "Built-in authoring example: examples/episode_status/README.md"
   }
 }

@@ -36,7 +36,7 @@ def test_unlisted_sources_do_not_expand_the_public_catalog(tmp_path):
     manifest = json.loads(
         (source / "dimos_generated_schemas/package/message-package.json").read_text()
     )
-    assert len(manifest["owned"]) == 83
+    assert len(manifest["owned"]) == 84
     assert "extra_msgs/msg/NotExported" not in manifest["owned"]
     assert "builtin_interfaces/msg/Time" in manifest["owned"]
 
