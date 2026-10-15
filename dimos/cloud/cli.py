@@ -173,12 +173,18 @@ def ls() -> None:
 
 
 @handle_fail
-def pull(upload_id: str | None, dest: Path | None) -> None:
+def pull(upload_id: str | None, dest: Path | None, full: bool = False) -> None:
     upload_id = None if upload_id == "latest" else upload_id
     cloud = CloudData()
     row = cloud.resolve(upload_id)
     with _bar(row["filename"]) as tick:
-        out = cloud.pull(str(row["id"]), dest, progress=tick)
+        out = cloud.pull(str(row["id"]), dest, progress=tick, full=full)
+    crop = row.get("crop")
+    if crop and not full:
+        typer.echo(
+            f"trimmed to {crop['end'] - crop['start']:.1f} s by {crop.get('by') or 'an admin'}"
+            " (--full for the whole recording)"
+        )
     typer.echo(f"pulled to {out}")
 
 

@@ -58,10 +58,11 @@ def data_ls() -> None:
 def pull(
     upload_id: str | None = typer.Argument(None, help="Id or prefix from `ls`; default: newest"),
     dest: Path | None = typer.Option(None, "--dest"),
+    full: bool = typer.Option(False, "--full", help="Ignore trim marks; keep the whole recording"),
 ) -> None:
     from dimos.cloud import cli
 
-    cli.pull(upload_id, dest)
+    cli.pull(upload_id, dest, full)
 
 
 @data_app.command("status")

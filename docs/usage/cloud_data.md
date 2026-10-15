@@ -12,6 +12,7 @@ dimos data ls
 dimos data pull                                    # newest upload -> downloads/
 dimos data pull 9a6bf9ab                           # id prefix from ls
 dimos data pull latest --dest my.db
+dimos data pull 9a6bf9ab --full                    # ignore trim marks
 dimos data quota
 ```
 
@@ -28,6 +29,8 @@ Any file type is accepted. Kind is inferred: a mem2 SQLite store (has a `_stream
 ## Pulls
 
 Pulls land in `downloads/` under the checkout (`~/.local/state/dimos/downloads/` for an installed package), named `<upload-time>-<id-prefix>-<filename>` so nothing overwrites. `--dest` takes an exact target path. The wire bytes are sha256-verified, decoded, and moved into place atomically; a failed pull never clobbers an existing destination file.
+
+A recording a platform admin trimmed in the console is cut to that window after verification: every stream keeps only the messages inside it, and single-message streams (metadata) stay whole. The stored file is unchanged; `--full` pulls all of it.
 
 View a pulled recording with [`dimos mem rerun`](/docs/usage/cli.md):
 

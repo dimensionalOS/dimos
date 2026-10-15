@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from collections.abc import Callable
+import contextlib
 import hashlib
 import json
 import os
@@ -21,11 +22,16 @@ import sqlite3
 import time
 from typing import Any
 
+import numpy as np
 import pytest
+import sqlite_vec
 
 from dimos.cloud import data as cd
 from dimos.cloud.data import CloudData, DataApi, MultipartBackend
 from dimos.core.global_config import global_config
+from dimos.memory.store.sqlite import SqliteStore
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.sensor_msgs.Image import Image
 
 
 class FakeTransport:
@@ -81,6 +87,7 @@ class FakeTransport:
                 "filename": u["filename"],
                 "sha256": u["sha256"],
                 "content_encoding": u["content_encoding"],
+                "crop": u.get("crop"),
             }
         return {
             "state": u["state"],
@@ -449,3 +456,41 @@ def test_matching_suffix_uploads_raw_and_unstamped(
     assert t.uploads[r["upload_id"]]["content_encoding"] is None
     out = cloud.pull(r["upload_id"], dest=db.parent / "artifact.back.lz4")
     assert out.read_bytes() == raw.read_bytes()
+
+
+def test_pull_cuts_a_trimmed_recording_and_full_keeps_it_all(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    t = FakeTransport()
+    monkeypatch.setattr(cd, "RECORDINGS_DIR", tmp_path)
+    cloud = CloudData(MultipartBackend(DataApi(t), "lz4", None, retries=0))
+    db = tmp_path / "rec.db"
+    with SqliteStore(path=str(db)) as store:
+        store.stream("metadata", str).append("go2", ts=999.0)
+        odom, images = store.stream("odom", PoseStamped), store.stream("color_image", Image)
+        frame = np.zeros((8, 8, 3), dtype=np.uint8)
+        for i in range(20):
+            odom.append(PoseStamped(position=[i, 0, 0], frame_id="world"), ts=1000.0 + i)
+            images.append(Image.from_numpy(frame, frame_id="cam", ts=1000.0 + i), ts=1000.0 + i)
+    with contextlib.closing(sqlite3.connect(db)) as c:
+        c.enable_load_extension(True)
+        sqlite_vec.load(c)
+        c.execute('CREATE VIRTUAL TABLE "odom_vec" USING vec0(embedding float[2])')
+        for (rid,) in c.execute("SELECT id FROM odom").fetchall():
+            c.execute('INSERT INTO "odom_vec" (rowid, embedding) VALUES (?, ?)', (rid, "[1, 0]"))
+        c.commit()
+    uid = cloud.upload(db)["upload_id"]
+    t.uploads[uid]["crop"] = {"start": 1005.0, "end": 1009.0, "by": "admin@x.io"}
+
+    cut = cloud.pull(uid, dest=tmp_path / "cut.db")
+    with contextlib.closing(sqlite3.connect(cut)) as c:
+        assert c.execute("PRAGMA integrity_check").fetchone() == ("ok",)
+        assert c.execute("SELECT count(*) FROM color_image_blob").fetchone() == (5,)
+        c.enable_load_extension(True)
+        sqlite_vec.load(c)
+        assert c.execute('SELECT count(*) FROM "odom_vec"').fetchone() == (5,)
+    with SqliteStore(path=str(cut)) as store:
+        assert [o.ts for o in store.streams["odom"]] == [1005.0 + i for i in range(5)]
+        assert len(list(store.streams["color_image"])) == 5
+        assert [o.data for o in store.streams["metadata"]] == ["go2"]
+    assert cloud.pull(uid, dest=tmp_path / "all.db", full=True).read_bytes() == db.read_bytes()

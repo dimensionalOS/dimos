@@ -73,6 +73,13 @@ def test_world_frame_recording() -> None:
     mapper = [(99.0, cloud(99.0, (50, 50, 0.5)), None)]  # listed first, not a scan
     doc = preview.build(store(global_map=mapper, lidar=lidar, color_image=frames))
     assert doc is not None and doc["duration_s"] == 9 and doc["streams"]["lidar"]["name"] == "lidar"
+    assert doc["t0"] == 100.0
+    odom = [
+        (1000.0006 + i, PoseStamped(position=[i, 0, 0.3], frame_id="world"), None) for i in range(3)
+    ]
+    assert (preview.build(store(odom=odom)) or {})[
+        "t0"
+    ] == 1000.0006  # unrounded: a trim from 0 keeps the first message
     assert doc["trajectory"][3][:2] == [3.0, 1.5] and len(doc["trajectory"]) == 10
     m = points(doc, doc["map"])
     assert np.abs(m[:, 2] - 0.5).max() < 0.02  # the 9 m "ceiling" is cut, the rest round-trips
