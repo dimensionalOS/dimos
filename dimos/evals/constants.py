@@ -14,10 +14,24 @@
 
 """Tunables for the eval harness. Literals only; nothing here imports dimos."""
 
+from typing import Literal
+
 # Model providers: API key variable and default upstream base URL, by provider name.
 PROVIDERS: dict[str, tuple[str, str]] = {
     "openai": ("OPENAI_API_KEY", "https://api.openai.com/v1"),
     "anthropic": ("ANTHROPIC_API_KEY", "https://api.anthropic.com"),
+    "google": ("GEMINI_API_KEY", "https://generativelanguage.googleapis.com/v1beta"),
+}
+
+# Pi's --thinking level as a Gemini thinkingLevel ("off" leaves the model's default).
+GOOGLE_THINKING_LEVELS: dict[str, Literal["LOW", "MEDIUM", "HIGH"] | None] = {
+    "off": None,
+    "minimal": "LOW",
+    "low": "LOW",
+    "medium": "MEDIUM",
+    "high": "HIGH",
+    "xhigh": "HIGH",
+    "max": "HIGH",
 }
 
 # Host variables a Pi process may inherit; the provider key is added by name.
