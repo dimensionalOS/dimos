@@ -3,7 +3,8 @@
 Text queries in, verified 3D object instances out, from calibrated cameras posed by tf,
 lifted through aligned depth or, for a camera without it, a lidar.
 `PerceptionLocalize` (`module.py`) runs it live on a robot's ports;
-`tools/tool_localize.py` runs it offline on a recording.
+`tools/tool_localize.py` runs it offline on a recording. Agents calling `state` and
+`localize` over MCP: [`SKILL.md`](SKILL.md).
 
 ## Pipeline
 
@@ -99,4 +100,20 @@ Every combination needs its own params, tuned on the target scene before deployi
 
 ## Tools
 
-- `tools/tool_localize.py`: the offline bench above. `--help` lists the flags.
+`tools/tool_localize.py` runs the stack offline on a recording, to tune params before
+deploying them. `--help` lists the flags.
+
+```
+OMP_NUM_THREADS=1 uv run python -m dimos.perception.localize.tools.tool_localize \
+    "label a" "label b" out.rrd --dataset <recording.db> --from <s> --duration <s> \
+    --multi --params <preset or JSON>
+uv run dimos-viewer out.rrd
+```
+
+- `--from` and `--duration` are seconds from the recording's first colour frame.
+- `--multi` gives the labels one shared detection pass, as a live call does; without
+  it each label runs alone.
+- It prints the params it runs (`params: go2 {'min_points': 30}`), one `hit` line per
+  verified object, and `no verified detection of ...` per miss. Exit code 0 when any
+  label verified.
+- `OMP_NUM_THREADS=1` makes the support-plane fit repeatable, so two runs compare.

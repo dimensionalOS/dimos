@@ -27,6 +27,9 @@ frames, only as long as the embed tail and the pairing need them. What
 the depth frame or lidar scan paired with each of them, stored lz4. Both roll
 over ``horizon_s`` seconds. A lidar call lifts through its window's scans
 merged.
+
+Agents calling ``state`` and ``localize`` over MCP: ``SKILL.md`` in this
+package covers windows, watching labels, narrowing a position and params.
 """
 
 from __future__ import annotations
@@ -254,6 +257,8 @@ class PerceptionLocalize(Module):
         ``xarm`` or ``dual_yam`` (desk) or ``go2`` (room), switches to it; a
         JSON object sets LocalizeParams fields on the module's params, or on the
         preset its "base" key names, e.g. '{"accept_score": 0.45}'.
+
+        Usage guide: dimos/perception/localize/SKILL.md.
         """
         if not self._ready.is_set():
             return f"localize cannot answer yet: {self._stage}. Poll state() until it reads ready."

@@ -129,6 +129,9 @@ the xArm.
 
 ## The two skills
 
+Agents calling them over MCP: [`../SKILL.md`](../SKILL.md) covers windows,
+watching labels on a schedule, narrowing a position and per-call params.
+
 `state()` says ready or not, and what the module is doing if not. Until it
 says ready, `localize` tells you which stage it is in instead of answering.
 
