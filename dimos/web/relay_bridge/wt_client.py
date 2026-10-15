@@ -66,6 +66,14 @@ _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 # left datagrams in v5; this guards the viewer hello and send_control.
 _DATAGRAM_MAX_BYTES = 1100
 
+# Application keepalive (start_keepalive): a datagram ping every interval,
+# and the session fails after this many unanswered in a row. Detects a dead
+# or wedged relay in ~9 s where the QUIC idle timeout (IDLE_TIMEOUT_S) is
+# the backstop, and keeps a subscriber-less session's traffic flowing in
+# both directions.
+KEEPALIVE_INTERVAL_S = 3.0
+KEEPALIVE_MISSES = 3
+
 
 class RelayRejectedError(ProtocolError):
     """The relay explicitly rejected this client's hello handshake."""
@@ -89,6 +97,10 @@ class RelayInfo:
     rtc: bool = False
     """True when the relay brokers video.webrtc.v1 track channels through
     its Cloudflare Realtime SFU (protocol v7)."""
+    instance: str | None = None
+    """Random id of the relay process, new on every start: a relay behind a
+    fixed port and certificate can be seen to have restarted by comparing
+    it. None from a relay that predates the field."""
 
 
 def resolve_info_url(base_url: str) -> str:
@@ -125,17 +137,19 @@ async def fetch_relay_info(
         raise ProtocolError(f"{url} returned an unexpected shape")
     wt_url, cert_hash, v = data.get("wtUrl"), data.get("certHash"), data.get("v")
     rtc = data.get("rtc", False)
+    instance = data.get("instance")
     if (
         not isinstance(wt_url, str)
         or not (cert_hash is None or isinstance(cert_hash, str))
         or not isinstance(v, int)
         or isinstance(v, bool)
         or not isinstance(rtc, bool)
+        or not (instance is None or isinstance(instance, str))
     ):
         raise ProtocolError(f"{url} returned an unexpected shape")
     if v != PROTOCOL_VERSION:
         raise ProtocolError(f"relay speaks protocol v{v}, this bridge speaks v{PROTOCOL_VERSION}")
-    return RelayInfo(wt_url=wt_url, cert_hash=cert_hash, v=v, rtc=rtc)
+    return RelayInfo(wt_url=wt_url, cert_hash=cert_hash, v=v, rtc=rtc, instance=instance)
 
 
 @contextlib.asynccontextmanager
@@ -149,8 +163,11 @@ async def _quic_connect(
     loop = asyncio.get_running_loop()
     family, _, _, _, addr = (await loop.getaddrinfo(host, port, type=socket.SOCK_DGRAM))[0]
     connection = QuicConnection(configuration=replace(configuration, server_name=host))
+    # Connected socket: an ICMP port-unreachable (the relay process died)
+    # then surfaces as error_received instead of being invisible until the
+    # idle timeout.
     transport, protocol = await loop.create_datagram_endpoint(
-        lambda: SessionProtocol(connection), family=family
+        lambda: SessionProtocol(connection), family=family, remote_addr=(addr[0], addr[1])
     )
     try:
         protocol.connect(addr)
@@ -178,6 +195,7 @@ class RelayClient:
         self._seq: dict[str, itertools.count[int]] = {}
         self._writers: list[LatestChannelWriter] = []
         self._close_task: asyncio.Task[None] | None = None
+        self._keepalive_task: asyncio.Task[None] | None = None
 
     @classmethod
     async def connect(
@@ -268,7 +286,32 @@ class RelayClient:
         for writer in self._writers:
             writer.stop()
         self._writers.clear()
+        if self._keepalive_task is not None:
+            self._keepalive_task.cancel()
         await self._ctx.__aexit__(None, None, None)
+
+    def start_keepalive(self) -> None:
+        """Ping the relay every KEEPALIVE_INTERVAL_S and fail the session
+        after KEEPALIVE_MISSES unanswered pings in a row. Call once hello
+        succeeded (the relay closes a viewer that sends anything else first).
+        Idempotent; stops with close()."""
+        if self._keepalive_task is None:
+            self._keepalive_task = asyncio.create_task(self._keepalive())
+
+    async def _keepalive(self) -> None:
+        loop = asyncio.get_running_loop()
+        misses = 0
+        while not self._session.closed.is_set():
+            started = loop.time()
+            try:
+                await self.ping(timeout=KEEPALIVE_INTERVAL_S)
+                misses = 0
+            except asyncio.TimeoutError:
+                misses += 1
+                if misses >= KEEPALIVE_MISSES:
+                    self._session.fail_session(f"{misses} keepalive pings unanswered")
+                    return
+            await asyncio.sleep(max(0.0, started + KEEPALIVE_INTERVAL_S - loop.time()))
 
     async def hello(
         self,

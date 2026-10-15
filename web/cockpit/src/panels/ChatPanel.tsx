@@ -8,7 +8,7 @@
 // the audio channel. Nothing typed or held here can drive the robot: the
 // teleop pad listens on its own subtree and disarms when focus leaves it.
 
-import { type FormEvent, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { type FormEvent, memo, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { PanelSpec } from "@dimos/shared";
 import type { ChannelStore, Session } from "@dimos/sdk";
 import { useStatus, useStoreChannel } from "@dimos/sdk/react";
@@ -20,7 +20,10 @@ import styles from "./ChatPanel.module.css";
 
 const KNOWN_ROLES = new Set(["human", "ai", "system"]);
 
-function LineView({ line }: { line: ChatLine }) {
+// Memoized: the transcript holds 1,000 lines and the composer re-renders
+// the panel on every keystroke and the agent on every frame; a row's props
+// never change once it is in the transcript.
+const LineView = memo(function LineView({ line }: { line: ChatLine }) {
   if (line.tool !== undefined) {
     // Condensed one-liners, humancli style: the agent's call, then results
     // and progress under the tool's name.
@@ -47,10 +50,10 @@ function LineView({ line }: { line: ChatLine }) {
     <div className={cls} data-role={line.role}>
       {!KNOWN_ROLES.has(line.role) && <span className={styles.roleTag}>[{line.role}]</span>}
       <span className={styles.text}>{line.text}</span>
-      <span className={styles.time}>{new Date(line.ts * 1000).toLocaleTimeString()}</span>
+      <span className={styles.time}>{line.time}</span>
     </div>
   );
-}
+});
 
 export function ChatPanel({ spec, store, session }: PanelProps) {
   if (spec.channels.length < 4 || session === undefined) {
@@ -123,7 +126,7 @@ function Conversation({ spec, store, session }: {
       <div className={styles.chat} data-testid={`chat-${messagesCh}`}>
         <div className={styles.lines} ref={listRef} onScroll={onScroll}>
           {lines.length === 0 && <span className={styles.hint}>no messages yet</span>}
-          {lines.map((line, i) => <LineView key={i} line={line} />)}
+          {lines.map((line) => <LineView key={line.id} line={line} />)}
         </div>
         {error !== null && (
           <div className={styles.error} role="alert">

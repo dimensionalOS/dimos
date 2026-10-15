@@ -418,7 +418,9 @@ Deno.test({
       wtUrl: relay.wtUrl,
       certHash: relay.certHash,
       v: PROTOCOL_VERSION,
+      instance: info.instance,
     });
+    assert(typeof info.instance === "string" && info.instance.length >= 16, "instance id");
     assert(relay.wtUrl.startsWith("https://127.0.0.1:"), relay.wtUrl);
     // Without a cockpit dist the relay serves no files at all: / explains how
     // to get one (traversal guards are covered by the cockpit-dist test).
@@ -1263,7 +1265,11 @@ Deno.test({
     assertEquals(relay.quicPort, relay.httpPort);
     const res = await fetch(`https://127.0.0.1:${relay.httpPort}/api/info`, { client });
     const info = await res.json();
-    assertEquals(info, { wtUrl: `https://127.0.0.1:${relay.httpPort}`, v: PROTOCOL_VERSION });
+    assertEquals(info, {
+      wtUrl: `https://127.0.0.1:${relay.httpPort}`,
+      v: PROTOCOL_VERSION,
+      instance: info.instance,
+    });
 
     // The QUIC listener serves the given certificate: pin its locally
     // computed hash (the relay never advertised one) and complete a hello.
