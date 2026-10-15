@@ -123,3 +123,25 @@ dimos evals sandbox dimos.evals.sandbox.example --robot tcp/192.168.123.18:7447
   space is off, so zenoh does not list who is connected behind it.
 - Pi's harness files (`/opt/harness`) are mounted into the agent container. The done
   result is read from Pi's event stream, not from a file, so editing them changes nothing.
+
+## The store patrol cases
+
+`dimos/evals/sandbox/go2_store.py` has two cases on the simulated legged Go2 with its Mid-360
+in the cooked supermarket scene: map the store, then loop between the entrance and the fruit
+stand every 10 minutes. `store_patrol_dimos` adds a line asking the agent to use dimOS.
+
+```bash skip
+dimos evals sandbox dimos.evals.sandbox.go2_store --max-steps 2000
+```
+
+- The robot container runs `sandbox-go2-supermarket` with `--hide-dimos`: the agent sees
+  only raw-robot-bridge's `robot/*` topics, never the simulator's ground truth.
+- The recorder keeps lidar at 1 Hz, camera at 2 Hz, and odometry and `cmd_vel` whole.
+- `GroundTruthLog` writes the true pose and every contact to the case directory, which
+  only the grader reads.
+- `evaluate` runs the agent's command for 30 minutes, then scores map coverage (the share
+  of the store its lidar saw, from the true poses, against what is visible from every
+  reachable spot), reaching the entrance and the fruit stand, entrance/fruit round trips,
+  and multiplies by a penalty for each collision. `grading.json` has the breakdown.
+- `go2-sim` loads any scene package with `--simgo2world.scene-package <name>`. The first
+  start compiles the package's MJCF (minutes) and caches the model under the dimOS cache.
