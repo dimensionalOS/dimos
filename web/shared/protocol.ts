@@ -30,7 +30,11 @@ export { RESERVED_CHANNEL_PREFIX, TRACK_ENCODING } from "./manifest.ts";
 // at most ACK_BUDGET unacknowledged frames per latest channel in flight to
 // a viewer, so a slow link carries a bounded backlog of video instead of a
 // stream window's worth. A v7 viewer never acks and would see one frame per
-// ack timeout, hence the bump.
+// ack timeout, hence the bump. The relay also tells the robot the rate its
+// slowest active viewer keeps up with (rate {ch, hz} on the carrier), and
+// the bridge samples the channel at that rate instead of encoding frames
+// the link will shed; a reliable channel's frames ride one persistent robot
+// stream per channel.
 // v7: WebRTC video signaling (rtc_ice, rtc_offer, rtc_answer) and
 // video.webrtc.v1 track channels. An older peer would drop the unknown
 // messages and show a video panel that never draws, hence the bump.
@@ -181,6 +185,16 @@ export interface UnsubMsg {
   ch: string;
 }
 
+// Relay->robot (v8), on the carrier: the rate the slowest viewer that is
+// still acknowledging keeps up with on a latest channel (the manifest's
+// maxHz when every viewer keeps up or none is active). The bridge samples
+// the channel at min(maxHz, hz).
+export interface RateMsg {
+  t: "rate";
+  ch: string;
+  hz: number;
+}
+
 // Viewer->relay (v8): the newest latest-channel frame the viewer has read
 // on `ch`, cumulative. Sent on the control stream (or a datagram by the
 // Python viewer) as frames are read, coalesced per task; the relay holds
@@ -329,7 +343,15 @@ export interface RtcStalledMsg {
 }
 
 export type ControlMsg = HelloMsg | WelcomeMsg | PingMsg | PongMsg | ErrorMsg;
-export type SessionMsg = RobotsMsg | WatchMsg | ManifestMsg | SubMsg | UnsubMsg | SubsMsg | AckMsg;
+export type SessionMsg =
+  | RobotsMsg
+  | WatchMsg
+  | ManifestMsg
+  | SubMsg
+  | UnsubMsg
+  | SubsMsg
+  | AckMsg
+  | RateMsg;
 export type TeleopMsg = TwistMsg | StopMsg | TeleopStartMsg | TeleopStartedMsg | TeleopStopMsg;
 export type PublishMsg = PubMsg | PubAckMsg | PubNackMsg;
 export type RtcMsg = RtcIceMsg | RtcOfferMsg | RtcAnswerMsg | RtcStalledMsg;
@@ -373,6 +395,7 @@ const MSG_FIELDS: Record<string, Record<string, "string" | "number">> = {
   sub: { ch: "string" },
   unsub: { ch: "string" },
   ack: { ch: "string", seq: "number" },
+  rate: { ch: "string", hz: "number" },
   subs: { n: "number" },
   twist: { vx: "number", vy: "number", wz: "number", seq: "number", ts: "number" },
   stop: { seq: "number", ts: "number" },
@@ -432,6 +455,9 @@ const MSG_VALIDATORS: Record<string, (value: Record<string, unknown>) => boolean
   manifest: (v) => v.manifest === undefined || isRecord(v.manifest),
   subs: (v) => Array.isArray(v.chs) && v.chs.every((c) => typeof c === "string"),
   ack: (v) => typeof v.ch === "string" && v.ch.length >= 1 && v.ch.length <= MAX_MANIFEST_ID_LEN,
+  rate: (v) =>
+    typeof v.ch === "string" && v.ch.length >= 1 && v.ch.length <= MAX_MANIFEST_ID_LEN &&
+    typeof v.hz === "number" && v.hz > 0 && Number.isFinite(v.hz),
   twist: (v) => absentOrNumber(v.gen),
   stop: (v) => absentOrNumber(v.gen),
   teleop_start: (v) => absentOrNumber(v.gen),

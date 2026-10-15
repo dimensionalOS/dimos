@@ -74,7 +74,10 @@ logger = setup_logger()
 # at most two unacknowledged frames per latest channel in flight to a
 # viewer, so a slow link carries a bounded backlog of video instead of a
 # stream window's worth. A v7 viewer never acks and would see one frame per
-# ack timeout, hence the bump.
+# ack timeout, hence the bump. The relay also tells the robot the rate its
+# slowest active viewer keeps up with (rate {ch, hz} on the carrier), and
+# the bridge samples the channel at that rate; a reliable channel's frames
+# ride one persistent robot stream per channel.
 # v7: WebRTC video signaling (rtc_ice, rtc_offer, rtc_answer) and
 # video.webrtc.v1 track channels. An older peer would drop the unknown
 # messages and show a video panel that never draws, hence the bump.
@@ -286,6 +289,16 @@ class Unsub(_WireModel):
     ch: str
 
 
+# Relay to robot (v8), on the carrier: the rate the slowest viewer that is
+# still acknowledging keeps up with on a latest channel (the manifest's maxHz
+# when every viewer keeps up or none is active). The bridge samples the
+# channel at min(max_hz, hz).
+class Rate(_WireModel):
+    t: Literal["rate"] = "rate"
+    ch: str = Field(min_length=1, max_length=MAX_MANIFEST_ID_LEN)
+    hz: int | float = Field(gt=0)
+
+
 # Viewer to relay (v8): the newest latest-channel frame the viewer has read
 # on `ch`, cumulative; the relay keeps at most two unacknowledged frames per
 # latest channel in flight to a viewer.
@@ -458,6 +471,7 @@ Msg = (
     | Sub
     | Unsub
     | Ack
+    | Rate
     | Subs
     | Twist
     | Stop
