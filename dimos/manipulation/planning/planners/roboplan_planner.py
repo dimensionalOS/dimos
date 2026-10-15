@@ -453,6 +453,23 @@ class RoboPlanPlanner:
         path: Any,
         config: RoboPlanCartesianPathConfig,
     ) -> Any:
+        try:
+            return self._run_cartesian_planner_once(ctx, group, path, config)
+        except RuntimeError as exc:
+            # Corner blending occasionally leaves TOPP-RA an infeasible grid point, even on a
+            # straight path; the unblended path retimes.
+            if "TOPP-RA" not in str(exc) or config.toppra_blend_deviation == 0.0:
+                raise
+            unblended = config.model_copy(update={"toppra_blend_deviation": 0.0})
+            return self._run_cartesian_planner_once(ctx, group, path, unblended)
+
+    def _run_cartesian_planner_once(
+        self,
+        ctx: RoboPlanContext,
+        group: RoboPlanGroup,
+        path: Any,
+        config: RoboPlanCartesianPathConfig,
+    ) -> Any:
         options = self._cartesian_planner_options(group.name, config)
         with self._world._lock:
             scene = self._world._require_scene()
