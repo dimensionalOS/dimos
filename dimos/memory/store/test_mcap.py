@@ -109,6 +109,34 @@ def test_wrapped_codec_decodes_with_explicit_codec(tmp_path: Path) -> None:
         assert observation.data.lcm_encode() == expected.lcm_encode()
 
 
+def test_recorder_channels_decode_from_their_metadata(tmp_path: Path) -> None:
+    path = tmp_path / "recording.mcap"
+    imu = Imu(ts=3.0, frame_id="imu_link", angular_velocity=Vector3(1.0, 2.0, 3.0))
+    lz4 = Lz4Codec(LcmCodec(Imu))
+    with path.open("wb") as output:
+        writer = mcap_writer.Writer(output)
+        writer.start(profile="dimos", library="test")
+        for topic, encoding, data in (
+            ("imu", "lcm", imu.lcm_encode()),
+            ("imu_lz4", "lz4+lcm", lz4.encode(imu)),
+            ("outside", "lcm", imu.lcm_encode()),
+        ):
+            payload = "dimos.msgs.sensor_msgs.Imu.Imu" if topic != "outside" else "dimos.core.Imu"
+            channel_id = writer.register_channel(
+                topic=topic,
+                message_encoding=encoding,
+                schema_id=0,
+                metadata={"dimos.payload_type": payload},
+            )
+            writer.add_message(channel_id=channel_id, log_time=1, publish_time=1, data=data)
+        writer.finish()
+
+    with McapStore(path=str(path)) as store:
+        assert store.stream("imu").first().data.lcm_encode() == imu.lcm_encode()
+        assert store.stream("imu_lz4").first().data.lcm_encode() == imu.lcm_encode()
+        assert store.stream("outside").first().data == imu.lcm_encode()
+
+
 def test_self_describing_jpeg_channel_decodes_without_a_codec_registry(tmp_path: Path) -> None:
     path = tmp_path / "recording.mcap"
     expected = Image(

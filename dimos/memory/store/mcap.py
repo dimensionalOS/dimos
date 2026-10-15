@@ -39,6 +39,8 @@ from dimos.memory.backend import Backend
 from dimos.memory.codecs.base import codec_for
 from dimos.memory.codecs.jpeg import JpegCodec
 from dimos.memory.codecs.json import JsonCodec
+from dimos.memory.codecs.lcm import LcmCodec
+from dimos.memory.codecs.lz4 import Lz4Codec
 from dimos.memory.notifier.subject import SubjectNotifier
 from dimos.memory.observationstore.base import ObservationStore, ObservationStoreConfig
 from dimos.memory.store.base import Store, StoreConfig
@@ -94,6 +96,17 @@ def _dimos_wire(topic: str) -> tuple[str, type] | None:
         return None
     msg_type = get_dimos_type(msg_name)
     return (port, msg_type) if msg_type is not None else None
+
+
+def _recorded_type(payload_type: str) -> type | None:
+    """The dimos message type the native recorder names in a channel's metadata, e.g.
+    ``dimos.msgs.sensor_msgs.PointCloud2.PointCloud2``. Resolved only within
+    ``dimos.msgs`` (as :func:`_dimos_wire` does): metadata never picks a module to import.
+    """
+    parts = payload_type.split(".")
+    if len(parts) != 5 or parts[:2] != ["dimos", "msgs"] or parts[3] != parts[4]:
+        return None
+    return get_dimos_type(f"{parts[2]}.{parts[3]}")
 
 
 def _slug(topic: str) -> str:
@@ -253,6 +266,13 @@ class McapStore(Store):
                         == f"{kind.__module__}.{kind.__qualname__}"
                     ):
                         self._codecs[ch.topic] = JsonCodec()
+                if ch.topic not in self._codecs and ch.message_encoding in ("lcm", "lz4+lcm"):
+                    msg_type = _recorded_type(ch.metadata.get("dimos.payload_type", ""))
+                    if msg_type is not None:
+                        lcm = LcmCodec(msg_type)
+                        self._codecs[ch.topic] = (
+                            Lz4Codec(lcm) if ch.message_encoding == "lz4+lcm" else lcm
+                        )
                 self._stream_topic[name] = ch.topic
                 self._available[name] = count
                 self._observation_uses_publish_time[name] = (

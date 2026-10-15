@@ -129,6 +129,7 @@ class MultipartBackend:
         manifest = _manifest(path)
         if bp := _blueprint(path):
             manifest = dict(manifest or {}, blueprint=bp)
+        previewable = manifest is not None or path.suffix == ".mcap"
         with self._staging(path) as tmp:
             # A file already carrying the codec's suffix uploads as-is; it must not be
             # stamped, or pull would decompress bytes we never compressed.
@@ -159,7 +160,7 @@ class MultipartBackend:
                     **create,
                     "skipped": True,
                     "preview": self._preview(create["upload_id"], path, Path(tmp))
-                    if manifest
+                    if previewable
                     else None,
                 }
             uid = create["upload_id"]
@@ -200,19 +201,21 @@ class MultipartBackend:
                 **done,
                 "upload_id": uid,
                 "skipped": False,
-                "preview": self._preview(uid, path, Path(tmp)) if manifest else None,
+                "preview": self._preview(uid, path, Path(tmp)) if previewable else None,
             }
 
     def _preview(self, upload_id: str, path: Path, tmp: Path) -> str:
         """The console's spatial preview, built here while the recording is at hand.
-        Built from a copy: the store opens read-write (WAL), and the user's recording
-        must stay byte-identical to what was uploaded. Best effort: the upload stands
-        without it."""
+        A sqlite recording is read from a copy: the store opens read-write (WAL), and the
+        user's recording must stay byte-identical to what was uploaded. An mcap is read
+        in place (read-only). Best effort: the upload stands without it."""
         try:
-            copy, clip = tmp / "preview.db", tmp / "timelapse.mp4"
-            shutil.copyfile(path, copy)
+            source, clip = path, tmp / "timelapse.mp4"
+            if path.suffix != ".mcap":
+                source = tmp / "preview.db"
+                shutil.copyfile(path, source)
             note = ""
-            with open_store(copy) as store:
+            with open_store(source) as store:
                 doc = preview.build(store)
                 try:  # the preview stands without its clip
                     video = preview.timelapse(store, clip) if doc is not None else None
