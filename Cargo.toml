@@ -1,5 +1,9 @@
 [workspace]
 resolver = "2"
+exclude = [
+    "examples/message-project/sdk/rust/dimos-module",
+    "examples/message-project/sdk/rust/dimos-module-macros",
+]
 members = [
     "dimos/experimental/memory/rust",
     "native/rust/dimos-module",

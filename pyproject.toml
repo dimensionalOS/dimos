@@ -100,6 +100,7 @@ classifiers = [
 ]
 
 dependencies = [
+    "dimos-message-project==0.1.0",
     "dimos-generated==0.1.0",
     "dimos-cdrgen==0.1.0",
     "matplotlib>=3.7.1", # Rerun initializes point-cloud colormaps for all streams.
@@ -560,6 +561,7 @@ override-dependencies = [
 ]
 
 [tool.uv.sources]
+dimos-message-project = { path = "packages/dimos-message-project", editable = true }
 dimos-generated = { path = "packages/dimos-generated", editable = true }
 # CUDA builds are not published for macOS or non-x86_64 Linux. Those platforms
 # fall back to PyPI.

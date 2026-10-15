@@ -1,0 +1,15 @@
+[package]
+name = "reading-processor"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+
+[dependencies]
+dimos-module = { path = "../sdk/rust/dimos-module" }
+story-messages-messages = { path = "../build/dimos/cargo-packages/story_messages" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+tracing = "0.1"
+
+[patch.crates-io]
+dimos-generated-messages = { path = "../build/dimos/cargo-packages/dimos_generated" }

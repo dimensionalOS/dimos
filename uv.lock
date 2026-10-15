@@ -1816,6 +1816,7 @@ dependencies = [
     { name = "dimos-cdrgen" },
     { name = "dimos-generated" },
     { name = "dimos-lcm" },
+    { name = "dimos-message-project" },
     { name = "dimos-viewer" },
     { name = "eclipse-zenoh" },
     { name = "filelock" },
@@ -2475,6 +2476,7 @@ requires-dist = [
     { name = "dimos-cdrgen", specifier = "==0.1.0" },
     { name = "dimos-generated", editable = "packages/dimos-generated" },
     { name = "dimos-lcm", specifier = ">=0.1.4" },
+    { name = "dimos-message-project", editable = "packages/dimos-message-project" },
     { name = "dimos-viewer", specifier = "==0.32.0a2" },
     { name = "dimos-viewer", marker = "extra == 'visualization'", specifier = "==0.32.0a2" },
     { name = "drake", marker = "platform_machine != 'aarch64' and sys_platform == 'darwin' and extra == 'planning'", specifier = "==1.45.0" },
@@ -2853,6 +2855,17 @@ sdist = { url = "https://files.pythonhosted.org/packages/4b/05/2c1d03a588ede64ea
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d0/d0/f93e2a2d9062ad0b3981b80db12b34494d231917243ab213265e926b5fa9/dimos_lcm-0.1.4-py3-none-any.whl", hash = "sha256:65efc67a5055b8d53a885bb46a7f49cc6bd07929cbd18403784efe65e186d3a2", size = 593548, upload-time = "2026-09-22T20:19:45.404Z" },
 ]
+
+[[package]]
+name = "dimos-message-project"
+version = "0.1.0"
+source = { editable = "packages/dimos-message-project" }
+dependencies = [
+    { name = "dimos-cdrgen" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "dimos-cdrgen", specifier = "==0.1.0" }]
 
 [[package]]
 name = "dimos-viewer"

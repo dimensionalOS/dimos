@@ -1,0 +1,10 @@
+[build-system]
+requires = ["dimos-message-project==0.1.0"]
+build-backend = "dimos_message_project.backend"
+
+[project]
+name = "story-messages"
+version = "0.1.0"
+
+[tool.dimos.messages]
+languages = ["python", "cpp", "rust"]

@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.20)
+project(reading_processor LANGUAGES CXX)
+find_package(dimos_native CONFIG REQUIRED)
+find_package(story_messages CONFIG REQUIRED)
+add_executable(processor processor.cpp)
+target_link_libraries(processor PRIVATE dimos_native::dimos_native story_messages::messages)
