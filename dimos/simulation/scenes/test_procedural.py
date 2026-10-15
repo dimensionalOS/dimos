@@ -23,6 +23,9 @@ from numpy.typing import NDArray
 import pytest
 
 from dimos.simulation.scenes.procedural import (
+    BAR_HEIGHT,
+    BAR_POST,
+    BAR_SPAN,
     BARRIER_DEPTH,
     BARRIER_SNAP,
     BLOCK_SIZE,
@@ -35,6 +38,8 @@ from dimos.simulation.scenes.procedural import (
     HIDDEN_ROOM_DEPTH,
     OVERHANG_LEG,
     OVERHANG_SIZE,
+    POLE_HEIGHT,
+    POLE_WIDTH,
     SCATTER_AREA,
     SCATTER_COUNT,
     SCATTER_HEIGHT,
@@ -57,6 +62,7 @@ from dimos.simulation.scenes.procedural import (
     Box,
     Scene,
     _winding,
+    bar,
     block,
     corridor,
     corridor_turn,
@@ -64,9 +70,11 @@ from dimos.simulation.scenes.procedural import (
     generate,
     hidden_clutter,
     hidden_object,
+    hidden_pole,
     low_barrier,
     office,
     overhang,
+    pole,
     room,
     scattered,
     small_object,
@@ -591,3 +599,71 @@ def test_low_barrier_spans_the_room_wall_to_wall_at_the_given_height() -> None:
         assert high == pytest.approx([x + BARRIER_DEPTH, length, z0 + 0.1])
         assert x / BARRIER_SNAP == pytest.approx(round(x / BARRIER_SNAP))
     assert not [b for b in low_barrier(3, barrier_height=0.0).boxes if b.kind == "clutter"]
+
+
+def test_pole_is_deterministic_and_pinned() -> None:
+    assert pole(3).digest() == pole(3).digest() == "8048af3f1b75d544"
+    assert pole(3).digest() != pole(4).digest()
+
+
+def test_pole_stands_alone_in_open_floor_at_the_given_width() -> None:
+    for seed in range(1, 21):
+        scene = pole(seed, pole_width=0.02)
+        z0, x, y = (scene.params[k] for k in ("z0", "pole_x", "pole_y"))
+        (box,) = [b for b in scene.boxes if b.kind == "clutter"]
+        assert box.center == pytest.approx((x, y, z0 + POLE_HEIGHT / 2))
+        assert box.half == pytest.approx((0.01, 0.01, POLE_HEIGHT / 2))
+        assert x > 1.0 + START_CLEARANCE + 1.0 and x < scene.params["width"] - 4.0
+        assert 2.0 < y < scene.params["length"] - 2.0
+
+
+def test_pole_width_is_drawn_unless_given_and_zero_removes_it() -> None:
+    (drawn,) = [b for b in pole(3).boxes if b.kind == "clutter"]
+    assert POLE_WIDTH[0] <= 2 * drawn.half[0] <= POLE_WIDTH[1]
+    bare = pole(3, pole_width=0.0)
+    assert not [b for b in bare.boxes if b.kind == "clutter"]
+    assert bare.params == pole(3).params
+
+
+def test_bar_is_deterministic_and_pinned() -> None:
+    assert bar(3).digest() == bar(3).digest() == "7bb825a8c49a666d"
+    assert bar(3).digest() != bar(4).digest()
+
+
+def test_bar_spans_two_posts_at_trunk_height_and_zero_leaves_the_posts() -> None:
+    for seed in range(1, 21):
+        scene = bar(seed, bar_width=0.02)
+        z0, x, y = (scene.params[k] for k in ("z0", "bar_x", "bar_y"))
+        *posts, rail = [b for b in scene.boxes if b.kind == "clutter"]
+        assert rail.center == pytest.approx((x, y, z0 + BAR_HEIGHT))
+        assert rail.half == pytest.approx((0.01, BAR_SPAN / 2, 0.01))
+        for post, side in zip(posts, (-1, 1), strict=True):
+            assert post.center[1] == pytest.approx(y + side * (BAR_SPAN + BAR_POST) / 2)
+        assert (
+            2.0 < y - BAR_SPAN / 2 - BAR_POST
+            and y + BAR_SPAN / 2 + BAR_POST < scene.params["length"] - 2.0
+        )
+        bare = bar(seed, bar_width=0.0)
+        assert [b for b in bare.boxes if b.kind == "clutter"] == posts
+
+
+def test_hidden_pole_is_deterministic_and_pinned() -> None:
+    assert hidden_pole(3).digest() == hidden_pole(3).digest() == "59f6bcd9199c58e6"
+    assert hidden_pole(3).digest() != hidden_pole(4).digest()
+    assert hidden_pole(3, pole_width=0.0).params == hidden_pole(3).params
+
+
+def test_hidden_pole_stands_in_the_corridor_out_of_sight_of_the_first_room() -> None:
+    for seed in range(1, 21):
+        scene = hidden_pole(seed, pole_width=0.02)
+        params = scene.params
+        (box,) = [b for b in scene.boxes if b.kind == "clutter"]
+        spot = np.array([params["pole_x"], params["pole_y"]])
+        assert box.center[:2] == pytest.approx(spot) and 2 * box.half[0] == pytest.approx(0.02)
+        assert 2 * box.half[2] == pytest.approx(POLE_HEIGHT)
+        walls = [b for b in scene.boxes if b.kind == "wall"]
+        assert min(wall.gap(spot) for wall in walls) >= HIDDEN_CORRIDOR_WIDTH / 2 - 1e-6
+        for x in np.arange(0.5, params["corridor_x"], 0.5):
+            for y in np.arange(0.5, params["length"], 0.5):
+                line = np.linspace((x, y), spot, 200)
+                assert min(float(wall.gap(line).min()) for wall in walls) == 0.0, (seed, x, y)

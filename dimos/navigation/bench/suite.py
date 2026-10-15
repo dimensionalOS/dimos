@@ -41,10 +41,12 @@ from dimos.navigation.bench.ground_truth import (
     boxes_near,
 )
 from dimos.simulation.scenes.procedural import (
+    BAR_SPAN,
     BARRIER_DEPTH,
     BLOCK_SIZE,
     OVERHANG_SIZE,
     PLACEMENT_TRIES,
+    POLE_WIDTH,
     SMALL_OBJECT_ASPECT,
     SMALL_OBJECT_LENGTH,
     START_CLEARANCE,
@@ -711,6 +713,12 @@ def past_the_hidden_object(gt: GroundTruth, length: float, rng: np.random.Genera
     )
 
 
+def past_the_hidden_pole(gt: GroundTruth, width: float, rng: np.random.Generator) -> Placed:
+    """Through the winding corridor to the far room, with the pole on the way as the feature."""
+    placed = past_the_winding_corridor(gt, width, rng)
+    return Placed(placed.start, placed.goal, (gt.scene.params["pole_x"], gt.scene.params["pole_y"]))
+
+
 CORRIDOR = Probe(
     "corridor_width",
     "corridor",
@@ -800,6 +808,52 @@ BARRIER_HEIGHT = Probe(
     scene_param="barrier_height",
     control=0.0,
 )
+
+
+def past_the_pole(gt: GroundTruth, width: float, rng: np.random.Generator) -> Placed:
+    """A goal straight past the pole, so the body walking the direct line meets even the thinnest."""
+    x, y = gt.scene.params["pole_x"], gt.scene.params["pole_y"]
+    start = _start_facing(gt.scene, x - POLE_WIDTH[1] / 2, x, y, rng)
+    return _straight_past(gt.scene, start, x, y, POLE_WIDTH[0] / 2, rng)
+
+
+def under_the_bar(gt: GroundTruth, width: float, rng: np.random.Generator) -> Placed:
+    """A goal straight past the bar near its middle, so the body walking the direct line clears both posts."""
+    x, y = gt.scene.params["bar_x"], gt.scene.params["bar_y"]
+    start = _start_facing(gt.scene, x - POLE_WIDTH[1] / 2, x, y, rng, UNDER_SLAB_RAD)
+    return _straight_past(gt.scene, start, x, y, BAR_SPAN / 4 - GO2.radius, rng)
+
+
+BAR = Probe(
+    "bar_width",
+    "bar",
+    "bar_width",
+    (0.01, 0.02, 0.04, 0.08),
+    under_the_bar,
+    scene_param="bar_width",
+    control=0.0,
+    premap_objects=False,
+)
+HIDDEN_POLE = Probe(
+    "hidden_pole",
+    "hidden_pole",
+    "pole_width",
+    (0.01, 0.02, 0.04, 0.08),
+    past_the_hidden_pole,
+    scene_param="pole_width",
+    control=0.0,
+    premap_objects=False,
+)
+POLE = Probe(
+    "pole_width",
+    "pole",
+    "pole_width",
+    (0.01, 0.02, 0.03, 0.04, 0.06, 0.08, 0.10),
+    past_the_pole,
+    scene_param="pole_width",
+    control=0.0,
+    premap_objects=False,
+)
 PROBES = {
     probe.name: probe
     for probe in (
@@ -815,6 +869,9 @@ PROBES = {
         HIDDEN_OBJECT,
         HIDDEN_CLUTTER,
         BARRIER_HEIGHT,
+        POLE,
+        BAR,
+        HIDDEN_POLE,
     )
 }
 

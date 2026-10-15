@@ -25,6 +25,7 @@ import pytest
 from dimos.navigation.bench.ground_truth import CELL, GO2, GroundTruth
 from dimos.navigation.bench.suite import (
     APPROACH_M,
+    BAR,
     BARRIER_HEIGHT,
     BLOCK_HEIGHT,
     CLUTTER,
@@ -34,10 +35,12 @@ from dimos.navigation.bench.suite import (
     GOAL_CLEARANCE,
     HIDDEN_CLUTTER,
     HIDDEN_OBJECT,
+    HIDDEN_POLE,
     LEG_WIDTH,
     MINED,
     NARROW_DOOR_M,
     OVERHANG,
+    POLE,
     SIDE_WALL_M,
     SMALL_OBJECT,
     UNDER_SLAB_RAD,
@@ -51,9 +54,11 @@ from dimos.navigation.bench.suite import (
     table_leg,
 )
 from dimos.simulation.scenes.procedural import (
+    BAR_SPAN,
     BARRIER_DEPTH,
     BLOCK_SIZE,
     OVERHANG_SIZE,
+    POLE_WIDTH,
     SMALL_OBJECT_ASPECT,
     SMALL_OBJECT_LENGTH,
     START_CLEARANCE,
@@ -206,6 +211,39 @@ def test_leg_width_probe_aims_the_direct_line_through_a_table_leg() -> None:
     manifest.check_drift()
 
 
+def test_pole_width_probe_aims_one_line_through_every_width_of_pole() -> None:
+    probe = replace(POLE, seeds=(1, 2))
+    manifest = freeze_probe(probe)
+    assert len({c.id for c in manifest.cases}) == len(manifest.cases) == 2 * (len(probe.levels) + 1)
+    for seed in probe.seeds:
+        cases = [c for c in manifest.cases if c.seed == seed]
+        assert len({(c.start, c.goal, c.feature) for c in cases}) == 1
+    for case in manifest.cases:
+        assert case.level is not None and case.params == {"pole_width": case.level.value}
+        assert not case.premap_objects
+        scene = case.scene()
+        poles = [box for box in scene.boxes if box.kind == "clutter"]
+        assert len(poles) == (0 if case.level.control else 1)
+        offset, _, _, past = _line(case, (scene.params["pole_x"], scene.params["pole_y"]))
+        assert abs(offset) <= POLE_WIDTH[0] / 2 + GO2.radius and 2.3 <= past <= 3.0
+    _one_start_per_seed(manifest, "pole_x")
+    manifest.check_drift()
+
+
+def test_bar_width_probe_aims_one_line_between_the_posts() -> None:
+    probe = replace(BAR, seeds=(1, 2))
+    manifest = freeze_probe(probe)
+    assert len({c.id for c in manifest.cases}) == len(manifest.cases) == 2 * (len(probe.levels) + 1)
+    for seed in probe.seeds:
+        assert len({(c.start, c.goal) for c in manifest.cases if c.seed == seed}) == 1
+    for case in manifest.cases:
+        assert case.level is not None and not case.premap_objects
+        scene = case.scene()
+        offset, _, _, past = _line(case, (scene.params["bar_x"], scene.params["bar_y"]))
+        assert abs(offset) <= BAR_SPAN / 4 and 2.3 <= past <= 3.0
+    manifest.check_drift()
+
+
 def test_block_height_probe_aims_the_direct_line_through_the_block() -> None:
     probe = replace(BLOCK_HEIGHT, seeds=(1, 2))
     manifest = freeze_probe(probe)
@@ -257,6 +295,23 @@ def test_hidden_object_probe_marks_the_object_on_the_way_through_the_corridor() 
         assert case.feature == (scene.params["object_x"], scene.params["object_y"])
         assert case.start[0] <= scene.params["corridor_x"] - APPROACH_M
         assert case.route_length >= scene.params["corridor_length"]
+    for seed in probe.seeds:
+        assert len({(c.start, c.goal, c.feature) for c in manifest.cases if c.seed == seed}) == 1
+    manifest.check_drift()
+
+
+def test_hidden_pole_probe_marks_the_pole_on_the_way_through_the_corridor() -> None:
+    probe = replace(HIDDEN_POLE, seeds=(1, 2))
+    manifest = freeze_probe(probe)
+    assert len(manifest.cases) == 2 * (len(probe.levels) + 1)
+    assert not any(case.premap_objects for case in manifest.cases)
+    for case in manifest.cases:
+        assert case.level is not None and case.params == {"pole_width": case.level.value}
+        scene = case.scene()
+        assert len([box for box in scene.boxes if box.kind == "clutter"]) == (
+            0 if case.level.control else 1
+        )
+        assert case.feature == (scene.params["pole_x"], scene.params["pole_y"])
     for seed in probe.seeds:
         assert len({(c.start, c.goal, c.feature) for c in manifest.cases if c.seed == seed}) == 1
     manifest.check_drift()

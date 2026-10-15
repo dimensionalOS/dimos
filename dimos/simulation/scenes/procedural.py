@@ -47,6 +47,9 @@ Family = Literal[
     "hidden_object",
     "hidden_clutter",
     "low_barrier",
+    "pole",
+    "bar",
+    "hidden_pole",
 ]
 
 SLAB_THICKNESS = 0.15
@@ -96,6 +99,12 @@ HIDDEN_CLUTTER_COUNT = 4
 HIDDEN_CLUTTER_ASTRIDE = 0.7
 HIDDEN_ROOM_DEPTH = (7.0, 9.0)
 HIDDEN_ROOM_SPAN = 16.0
+POLE_WIDTH = (0.01, 0.08)
+POLE_HEIGHT = 1.0
+BAR_SPAN = 1.4
+BAR_HEIGHT = 0.35
+BAR_POST = 0.05
+BAR_POST_HEIGHT = 0.6
 
 
 @dataclass(frozen=True)
@@ -713,6 +722,21 @@ def hidden_object(seed: int, object_length: float | None = None) -> Scene:
     return scene
 
 
+def hidden_pole(seed: int, pole_width: float | None = None) -> Scene:
+    """A winding corridor with a thin pole standing on its last run, out of sight of the first room."""
+    rng = np.random.default_rng(seed)
+    scene, (ax, ay), (bx, by) = _wound(
+        f"hidden_pole_{seed}", rng, HIDDEN_CORRIDOR_WIDTH, HIDDEN_ALONG[0]
+    )
+    along = _uniform(rng, *HIDDEN_ALONG)
+    side = _given(_uniform(rng, *POLE_WIDTH), pole_width)
+    x, y, z0 = ax + along * (bx - ax), ay + along * (by - ay), scene.params["z0"]
+    scene.params.update(pole_x=x, pole_y=y)
+    half = side / 2
+    scene.add((x - half, y - half, z0), (x + half, y + half, z0 + POLE_HEIGHT), "clutter")
+    return scene
+
+
 def _scatter(
     rng: np.random.Generator,
     count: int,
@@ -852,6 +876,47 @@ def low_barrier(seed: int, barrier_height: float | None = None) -> Scene:
     return scene
 
 
+def pole(seed: int, pole_width: float | None = None) -> Scene:
+    """One empty room with a thin square pole standing alone in open floor, taller than the robot."""
+    rng = np.random.default_rng(seed)
+    width, length = _uniform(rng, 10, 12), _uniform(rng, 8, 10)
+    z0 = _uniform(rng, 0.0, 0.08)
+    x, y = _uniform(rng, 0.35, 0.45) * width, _uniform(rng, 0.35, 0.5) * length
+    side = _given(_uniform(rng, *POLE_WIDTH), pole_width)
+    scene = Scene(
+        f"pole_{seed}", {"width": width, "length": length, "z0": z0, "pole_x": x, "pole_y": y}
+    )
+    _shell(scene, width, length, z0)
+    half = side / 2
+    scene.add((x - half, y - half, z0), (x + half, y + half, z0 + POLE_HEIGHT), "clutter")
+    scene.start = (1.0, 1.0, z0)
+    return scene
+
+
+def bar(seed: int, bar_width: float | None = None) -> Scene:
+    """One empty room with a thin bar at trunk height between two posts, across the y axis.
+
+    A zero width leaves only the posts.
+    """
+    rng = np.random.default_rng(seed)
+    width, length = _uniform(rng, 10, 12), _uniform(rng, 8, 10)
+    z0 = _uniform(rng, 0.0, 0.08)
+    x, y = _uniform(rng, 0.35, 0.45) * width, _uniform(rng, 0.35, 0.5) * length
+    side = _given(_uniform(rng, *POLE_WIDTH), bar_width)
+    scene = Scene(
+        f"bar_{seed}", {"width": width, "length": length, "z0": z0, "bar_x": x, "bar_y": y}
+    )
+    _shell(scene, width, length, z0)
+    post, reach = BAR_POST / 2, BAR_SPAN / 2
+    for py in (y - reach - post, y + reach + post):
+        scene.add((x - post, py - post, z0), (x + post, py + post, z0 + BAR_POST_HEIGHT), "clutter")
+    half = side / 2
+    zc = z0 + BAR_HEIGHT
+    scene.add((x - half, y - reach, zc - half), (x + half, y + reach, zc + half), "clutter")
+    scene.start = (1.0, 1.0, z0)
+    return scene
+
+
 Params = dict[str, bool | int | float]
 FAMILIES: dict[Family, Callable[..., Scene]] = {
     "office": office,
@@ -867,6 +932,9 @@ FAMILIES: dict[Family, Callable[..., Scene]] = {
     "hidden_object": hidden_object,
     "hidden_clutter": hidden_clutter,
     "low_barrier": low_barrier,
+    "pole": pole,
+    "bar": bar,
+    "hidden_pole": hidden_pole,
 }
 
 
