@@ -47,6 +47,8 @@ const MAX_PENDING_PER_VIEWER = 16;
 const MAX_PENDING_BYTES_PER_VIEWER = 256 * 1024;
 const MAX_PENDING_PER_ROBOT = 64;
 const MAX_PENDING_BYTES_PER_ROBOT = 1024 * 1024;
+// Distinct publish rejection codes kept in stats (beyond: "other").
+const MAX_REJECT_CODES = 32;
 
 const enc = new TextEncoder();
 
@@ -192,6 +194,10 @@ export class Registry {
   #pubLateAcks = 0;
   #pubRejected: Record<string, number> = {};
   #framesOnTrack = 0;
+  #framesIncomplete = 0;
+  #streamCreditStalls = 0;
+  #gcRuns = 0;
+  #gcMs = 0;
   readonly #now: () => number;
   readonly #hub: RtcBroker | null;
 
@@ -240,6 +246,26 @@ export class Registry {
    * being closed. Registry-level because the per-robot entry dies with it. */
   carrierFailed(): void {
     this.#carrierFailures++;
+  }
+
+  /** A robot data stream ended or was reset before its frame was complete
+   * (the bridge reset a stale latest frame, or its connection died). */
+  robotStreamIncomplete(): void {
+    this.#framesIncomplete++;
+  }
+
+  /** A viewer stream create waited past STREAM_CREDIT_STALL_MS for the
+   * viewer's incoming-stream credit. */
+  streamCreditStalled(): void {
+    this.#streamCreditStalls++;
+  }
+
+  /** A forced garbage collection ran (server.ts's tick, a credit stall);
+   * `pauseMs` is its stop-the-world pause, the latency cost every session
+   * pays for it. */
+  collected(pauseMs: number): void {
+    this.#gcRuns++;
+    this.#gcMs = pauseMs;
   }
 
   addViewer(viewer: ViewerPeer): void {
@@ -689,6 +715,10 @@ export class Registry {
   }
 
   #countRejected(code: string): void {
+    // Bridge nack codes are peer-chosen strings: bound the key set.
+    if (!(code in this.#pubRejected) && Object.keys(this.#pubRejected).length >= MAX_REJECT_CODES) {
+      code = "other";
+    }
     this.#pubRejected[code] = (this.#pubRejected[code] ?? 0) + 1;
   }
 
@@ -772,15 +802,11 @@ export class Registry {
     }
   }
 
-  /** Reap stale accepted latest streams on every viewer, and settle expired
-   * pending publishes with a `publish_timeout` error (outcome "unknown" at
-   * the SDK: the bridge may still have published). Offers reap
-   * opportunistically, but an idle input stops offering; server.ts drives
-   * this on an interval. Clock passed in so tests fabricate time. */
-  reapAll(nowMs: number): void {
-    for (const viewer of this.#viewers) {
-      for (const policy of viewer.policies.values()) policy.reap(nowMs);
-    }
+  /** Settle expired pending publishes with a `publish_timeout` error
+   * (outcome "unknown" at the SDK: the bridge may still have published).
+   * server.ts drives this on an interval. Clock passed in so tests
+   * fabricate time. */
+  tick(nowMs: number): void {
     for (const entry of this.#robots.values()) {
       for (const pending of entry.pubPending.values()) {
         if (nowMs < pending.deadlineMs) continue;
@@ -822,6 +848,10 @@ export class Registry {
       teleopForwarded: this.#teleopForwarded,
       teleopDropped: this.#teleopDropped,
       carrierFailures: this.#carrierFailures,
+      framesIncomplete: this.#framesIncomplete,
+      streamCreditStalls: this.#streamCreditStalls,
+      gcRuns: this.#gcRuns,
+      gcMs: this.#gcMs,
       rtc: this.#hub === null ? null : { ...this.#hub.stats(), framesOnTrack: this.#framesOnTrack },
       pub: {
         accepted: this.#pubAccepted,
@@ -862,9 +892,8 @@ export class Registry {
             sent: p.sent,
             dropped: p.dropped,
             queued: p.queued(),
-            aborted: p.aborted,
-            expired: p.expired,
-            inflight: p.inflight(),
+            stalled: p.stalled,
+            writing: p.writing(),
             bytesOut: p.bytesOut,
             ...p.rate.snapshot(now),
           }]),

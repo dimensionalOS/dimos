@@ -19,10 +19,11 @@ failure path directly.
 """
 
 import asyncio
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import threading
+import time
 from typing import Any
 
 import pytest
@@ -81,6 +82,7 @@ class StubSession:
         self.answer_pings = True
         self.pong_waiters: dict[int, asyncio.Future[Pong]] = {}
         self.failed: str | None = None
+        self.progress_waits = 0
 
     def send_frame(self, header: FrameHeader, payload: bytes) -> int:
         # Real encode so a non-serializable meta raises here, exactly as the
@@ -97,6 +99,10 @@ class StubSession:
         self.resets.append(stream_id)
         self.in_flight.discard(stream_id)
         return True
+
+    async def wait_delivery_progress(self, timeout: float) -> None:
+        self.progress_waits += 1
+        await asyncio.sleep(min(timeout, 0.002))
 
     async def wait_closed(self) -> None:
         await self.closed.wait()
@@ -188,9 +194,9 @@ async def test_mailbox_drops_stale_frames_under_slow_writer() -> None:
     session.send_frame = send_frame  # type: ignore[method-assign]
     session.stream_in_flight = stream_in_flight  # type: ignore[method-assign]
 
-    # stale_after high enough that the wedge never triggers the reset path:
-    # this test pins the mailbox semantics alone.
-    writer = _client(session).latest_writer("cam", stale_after=10.0)
+    # stale_after high enough that the wedge never triggers the reset path,
+    # one stream in flight: this test pins the mailbox semantics alone.
+    writer = _client(session).latest_writer("cam", stale_after=10.0, max_in_flight=1)
     try:
         writer.offer(b"f0")
         # Wait until the pump provably took f0 (send_frame ran): it is wedged
@@ -212,6 +218,87 @@ async def test_mailbox_drops_stale_frames_under_slow_writer() -> None:
         assert writer.sent == 2
     finally:
         writer.stop()
+
+
+async def _spin(cond: Callable[[], bool], timeout: float = 2.5) -> None:
+    deadline = time.monotonic() + timeout
+    while not cond():
+        if time.monotonic() > deadline:
+            raise AssertionError("condition not met in time")
+        await asyncio.sleep(0.005)
+
+
+async def test_latest_writer_keeps_max_in_flight_streams_on_the_wire() -> None:
+    # Without ACKs, three frames go out back to back (the budget), the
+    # fourth waits for ACK progress, and an ACK of the oldest frees a slot.
+    session = StubSession()
+    acked: set[int] = set()
+    session.stream_in_flight = lambda sid: sid not in acked  # type: ignore[method-assign]
+    writer = _client(session).latest_writer("cam", stale_after=10.0)
+    assert writer.max_in_flight == wt_client.MAX_IN_FLIGHT == 3
+    try:
+        for i in range(3):
+            writer.offer(b"f%d" % i)
+            await _spin(lambda want=i + 1: writer.sent == want)
+        writer.offer(b"f3")
+        await asyncio.sleep(0.03)
+        assert [p for _, p in session.sent_frames] == [b"f0", b"f1", b"f2"]
+        assert writer.in_flight() == 3 and writer.dropped == 0
+        assert session.progress_waits > 0  # waiting on ACKs, not polling blindly
+
+        acked.add(101)  # the first stream id the stub handed out
+        await _spin(lambda: writer.sent == 4)
+        assert [p for _, p in session.sent_frames][-1] == b"f3"
+        assert writer.in_flight() == 3 and writer.resets == 0
+    finally:
+        writer.stop()
+
+
+async def test_latest_writer_resets_the_oldest_stale_stream_when_full() -> None:
+    # A full budget with nothing ACKed: the oldest stream is reset once it
+    # is stale_after old and a newer frame waits, never earlier.
+    session = StubSession()
+    session.stream_in_flight = lambda sid: sid not in session.resets  # type: ignore[method-assign]
+    writer = _client(session).latest_writer("cam", stale_after=0.05, max_in_flight=2)
+    try:
+        writer.offer(b"f0")
+        await _spin(lambda: writer.sent == 1)
+        writer.offer(b"f1")
+        await _spin(lambda: writer.sent == 2)
+        writer.offer(b"f2")
+        await asyncio.sleep(0.02)
+        assert writer.sent == 2 and session.resets == []  # too young to reset
+        await _spin(lambda: writer.sent == 3)
+        assert session.resets == [101]  # the oldest stream, exactly once
+        assert writer.resets == 1
+        assert [p for _, p in session.sent_frames] == [b"f0", b"f1", b"f2"]
+    finally:
+        writer.stop()
+
+
+async def test_reliable_frames_are_bounded_by_unacked_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(wt_client, "RELIABLE_MAX_IN_FLIGHT", 4)
+    warnings: list[str] = []
+    monkeypatch.setattr(wt_client.logger, "warning", warnings.append)
+    session = StubSession()
+    acked: set[int] = set()
+    session.stream_in_flight = lambda sid: sid not in acked and sid not in session.resets  # type: ignore[method-assign]
+    client = _client(session)
+    ids = [client.send_frame("odom", b"%d" % i) for i in range(4)]
+    assert session.resets == []
+    client.send_frame("odom", b"4")  # the 5th unacked frame: the oldest is reset
+    assert session.resets == [ids[0]]
+    assert client.reliable_dropped == {"odom": 1}
+    assert len(warnings) == 1 and "4 frames unacknowledged" in warnings[0]
+
+    acked.update(ids)  # everything older is delivered: no more resets
+    client.send_frame("odom", b"5")
+    client.send_frame("odom", b"6")
+    assert session.resets == [ids[0]]
+    client.send_frame("cam", b"x", delivery="latest")  # latest frames are not bounded here
+    assert len(session.sent_frames) == 8
 
 
 async def test_keepalive_fails_the_session_after_unanswered_pings(

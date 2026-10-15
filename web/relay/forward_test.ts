@@ -7,92 +7,29 @@ import {
 } from "@dimos/shared";
 import {
   ControlPayloadTooLargeError,
-  type FrameSend,
   type FrameWriter,
+  LATEST_SEND_ORDER,
   LatestChannel,
   parseRobotFrameHeader,
   Rate,
-  readRobotFrame,
-  readWebTransportPreamble,
+  readRobotStream,
+  RELIABLE_SEND_ORDER,
   ReliableChannel,
   TokenBucket,
   type ViewerSink,
 } from "./forward.ts";
 
-class FakeSend implements FrameSend {
-  aborted = false;
-  settled = false;
-  readonly done: Promise<void>;
-  #resolve!: () => void;
-  #reject!: (e: Error) => void;
-
-  constructor(
-    public bytes: Uint8Array,
-    readonly sink: FakeSink,
-    /** Position in sink.sent[], captured at sendFrame time. */
-    readonly index: number,
-    /** Mirrors the real sink: false only while wedged in stream creation. */
-    public writeStarted: boolean,
-  ) {
-    this.done = new Promise<void>((resolve, reject) => {
-      this.#resolve = resolve;
-      this.#reject = reject;
-    });
-  }
-
-  accept(): void {
-    if (!this.settled) {
-      this.writeStarted = true;
-      this.settled = true;
-      this.#resolve();
-    }
-  }
-
-  /** The stream got created; the (still unaccepted) write is in progress. */
-  beginWrite(): void {
-    this.writeStarted = true;
-  }
-
-  fail(e: Error): void {
-    if (!this.settled) {
-      this.settled = true;
-      this.#reject(e);
-    }
-  }
-
-  abort(): void {
-    if (this.aborted) return;
-    this.aborted = true;
-    this.sink.sendsAborted++;
-    this.fail(new Error("frame send aborted"));
-  }
-
-  supersede(bytes: Uint8Array): boolean {
-    if (this.writeStarted || this.aborted) return false;
-    this.bytes = bytes;
-    // sent[] holds the latest binding, so deep-equals assertions read what
-    // would actually go on the wire.
-    this.sink.sent[this.index] = bytes;
-    return true;
-  }
-}
-
 class FakeSink implements ViewerSink {
-  /** Every frame handed to the sink, in order (latest path). */
+  /** Every frame written, in order (both policies). */
   sent: Uint8Array[] = [];
-  sends: FakeSend[] = [];
-  /** FrameSend aborts (latest streams reset), settled or not. */
-  sendsAborted = 0;
   kicked: string | null = null;
   kicks = 0;
   streamsOpened = 0;
-  /** Persistent-stream (reliable) aborts. */
+  /** sendOrder of every stream opened, in order. */
+  orders: number[] = [];
   streamsAborted = 0;
   auto: boolean;
   manualOpen = false;
-  /** Model sends stuck in createUnidirectionalStream (credit exhausted):
-   * their write has not started, so they stay supersedable. */
-  wedgeCreate = false;
   #waiters: { resolve: () => void; reject: (e: Error) => void }[] = [];
   #openWaiters: (() => void)[] = [];
 
@@ -100,16 +37,9 @@ class FakeSink implements ViewerSink {
     this.auto = auto;
   }
 
-  sendFrame(bytes: Uint8Array): FrameSend {
-    const send = new FakeSend(bytes, this, this.sent.length, !this.wedgeCreate);
-    this.sent.push(bytes);
-    this.sends.push(send);
-    if (this.auto) send.accept();
-    return send;
-  }
-
-  openStream(): Promise<FrameWriter> {
+  openStream(order: number): Promise<FrameWriter> {
     this.streamsOpened++;
+    this.orders.push(order);
     const writer: FrameWriter = {
       write: (bytes: Uint8Array) => this.#write(bytes),
       abort: () => {
@@ -127,19 +57,13 @@ class FakeSink implements ViewerSink {
     return new Promise<void>((resolve, reject) => this.#waiters.push({ resolve, reject }));
   }
 
-  /** Accept the oldest unsettled send (latest) or write (reliable). */
+  /** Accept the oldest unaccepted write. */
   release(n = 1): void {
-    while (n-- > 0) {
-      const pending = this.sends.find((s) => !s.settled);
-      if (pending !== undefined) pending.accept();
-      else this.#waiters.shift()?.resolve();
-    }
+    while (n-- > 0) this.#waiters.shift()?.resolve();
   }
 
   rejectWrite(): void {
-    const pending = this.sends.find((s) => !s.settled);
-    if (pending !== undefined) pending.fail(new Error("stream aborted"));
-    else this.#waiters.shift()?.reject(new Error("stream aborted"));
+    this.#waiters.shift()?.reject(new Error("stream aborted"));
   }
 
   releaseOpen(): void {
@@ -168,11 +92,12 @@ function dataFrame(ch: string, seq: number, delivery: "latest" | "reliable"): Ui
 Deno.test("latest: newest replaces pending while a write is in flight", async () => {
   const sink = new FakeSink(false);
   const ch = new LatestChannel(sink);
-  ch.offer(frame(1)); // begins writing
+  ch.offer(frame(1));
+  await tick(); // the persistent stream opened; frame 1's write is in flight
   ch.offer(frame(2)); // parked in the pending slot
   ch.offer(frame(3)); // replaces frame 2
-  await tick();
-  assertEquals(sink.sent.length, 1);
+  assertEquals(sink.sent, [frame(1)]);
+  assertEquals(ch.writing(), true);
   sink.release();
   await tick();
   assertEquals(sink.sent, [frame(1), frame(3)]);
@@ -181,20 +106,21 @@ Deno.test("latest: newest replaces pending while a write is in flight", async ()
   assertEquals(ch.sent, 2);
   assertEquals(ch.dropped, 1);
   assertEquals(ch.queued(), 0);
+  assertEquals(ch.writing(), false);
   assertEquals(sink.kicked, null);
+  assertEquals(sink.streamsOpened, 1); // one stream for the channel's life
 });
 
 Deno.test("latest: the final frame is always eventually delivered", async () => {
   const sink = new FakeSink(false);
   const ch = new LatestChannel(sink);
   for (let i = 0; i < 100; i++) ch.offer(frame(i));
-  sink.release(100);
+  await tick(); // the stream opens after the burst: only the newest is left
+  sink.release();
   await tick();
-  sink.release(100);
-  await tick();
-  assertEquals(sink.sent.length, 2); // first + newest, everything between dropped
-  assertEquals(sink.sent[1], frame(99));
-  assertEquals(ch.dropped, 98);
+  assertEquals(sink.sent, [frame(99)]);
+  assertEquals(ch.dropped, 99);
+  assertEquals(ch.sent, 1);
 });
 
 Deno.test("latest: fast sink delivers everything", async () => {
@@ -206,6 +132,16 @@ Deno.test("latest: fast sink delivers everything", async () => {
   }
   assertEquals(sink.sent.length, 5);
   assertEquals(ch.dropped, 0);
+  assertEquals(ch.stalled, 0);
+});
+
+Deno.test("streams open at their band's sendOrder: reliable above latest", async () => {
+  const sink = new FakeSink();
+  new LatestChannel(sink).offer(frame(1));
+  new ReliableChannel(sink).offer(frame(2));
+  await tick();
+  assertEquals(sink.orders, [LATEST_SEND_ORDER, RELIABLE_SEND_ORDER]);
+  assert(RELIABLE_SEND_ORDER > LATEST_SEND_ORDER);
 });
 
 Deno.test("reliable: FIFO order, zero drops", async () => {
@@ -271,25 +207,33 @@ Deno.test("reliable: a lone frame over the byte cap is sent, a backlog behind it
   assertEquals(ch.queued(), 0);
 });
 
-Deno.test("latest: dispose resets every outstanding send without kicking", async () => {
+Deno.test("latest: dispose aborts the stream and discards the pending frame", async () => {
   const sink = new FakeSink(false);
   const ch = new LatestChannel(sink);
-  ch.offer(frame(1)); // send in flight
-  sink.release();
-  await tick();
-  ch.offer(frame(2)); // second send in flight (first still outstanding)
-  ch.offer(frame(3)); // parked in the pending slot
+  ch.offer(frame(1));
+  await tick(); // write in flight
+  ch.offer(frame(2)); // parked
   ch.dispose();
   assertEquals(ch.queued(), 0);
-  assertEquals(ch.inflight(), 0);
-  // Both the accepted stream and the in-flight one are reset (an accepted
-  // stream may still hold undelivered buffered data).
-  assertEquals(sink.sendsAborted, 2);
-  assertEquals([ch.aborted, ch.expired], [0, 0]); // disposal resets are not counted
+  assertEquals(sink.streamsAborted, 1);
+  sink.rejectWrite(); // the aborted stream fails the in-flight write
   await tick();
-  ch.offer(frame(4)); // ignored after dispose
+  ch.offer(frame(3)); // ignored after dispose
   await tick();
-  assertEquals(sink.sent, [frame(1), frame(2)]);
+  assertEquals(sink.sent, [frame(1)]);
+  assertEquals(sink.kicked, null); // disposal failures are not viewer failures
+});
+
+Deno.test("latest: dispose while the stream opens still releases it", async () => {
+  const sink = new FakeSink(false);
+  sink.manualOpen = true;
+  const ch = new LatestChannel(sink);
+  ch.offer(frame(1)); // drain is awaiting openStream
+  ch.dispose();
+  sink.releaseOpen();
+  await tick();
+  assertEquals(sink.streamsAborted, 1);
+  assertEquals(sink.sent, []);
   assertEquals(sink.kicked, null);
 });
 
@@ -335,6 +279,7 @@ Deno.test("latest: a frame offered in the drain-completion window still sends", 
     const sink = new FakeSink(false);
     const ch = new LatestChannel(sink);
     ch.offer(frame(1));
+    await tick(); // stream opened; first write in flight
     sink.release();
     for (let i = 0; i < depth; i++) await Promise.resolve();
     ch.offer(frame(2));
@@ -362,9 +307,8 @@ Deno.test("reliable: a frame offered in the drain-completion window still sends"
 });
 
 // ---------------------------------------------------------------------------
-// Reaping (the T1-review issue-12 fix): accepted-but-possibly-undelivered
-// latest streams are reset once stale, with counters that tell a suspended
-// viewer (aborted) apart from routine end-of-life resets (expired).
+// The stalled-viewer signal: a write the transport accepts only after
+// LATEST_STALL_MS (the viewer's stream window is full) counts as stalled.
 
 function timedChannel(
   sink: FakeSink,
@@ -375,152 +319,41 @@ function timedChannel(
   return { ch, tick: (ms: number) => now += ms, now: () => now };
 }
 
-Deno.test("latest: a stale accepted send is reset by the next offer (expired)", async () => {
+Deno.test("latest: a write accepted late counts as one stall; prompt ones never", async () => {
   const sink = new FakeSink(false);
   const { ch, tick: advance } = timedChannel(sink);
   ch.offer(frame(1));
-  sink.release(); // accepted; its stream stays open (never FIN'd)
-  await tick();
-  assertEquals(ch.inflight(), 1);
-
-  advance(600); // past LATEST_STALE_MS
+  await tick(); // write in flight: the viewer is not reading
   ch.offer(frame(2));
-  assertEquals(sink.sendsAborted, 1); // frame 1's stream reset
-  assertEquals(sink.sends[0].aborted, true);
-  assertEquals([ch.aborted, ch.expired], [0, 1]); // no backpressure: routine expiry
-  sink.release();
+  ch.offer(frame(3)); // the pending slot sheds while the write waits
+  advance(600); // past LATEST_STALL_MS
+  assertEquals(ch.stalled, 0); // counted at acceptance, not by polling
+  sink.release(); // the viewer resumed
   await tick();
-  assertEquals(ch.sent, 2);
-  assertEquals(ch.bytesOut, 2);
-  assertEquals(ch.inflight(), 1); // only frame 2's stream remains
-  assertEquals(sink.kicked, null);
-});
-
-Deno.test("latest: reaps under backpressure count as aborted", async () => {
-  const sink = new FakeSink(false);
-  const { ch, tick: advance } = timedChannel(sink);
-  ch.offer(frame(1));
-  sink.release(); // frame 1 accepted at t0
-  await tick();
-  advance(400);
-  ch.offer(frame(2)); // frame 2 in flight, never accepted: the viewer wedged
-  await tick();
-
-  advance(200); // frame 1's stream is now 600 ms old, the carrier only 200
-  ch.offer(frame(3));
-  // The stale accepted stream is reset and counted aborted (the channel is
-  // backpressured); the still-young write-wedged carrier is left alone.
-  assertEquals([ch.aborted, ch.expired], [1, 0]);
-  assertEquals(sink.sendsAborted, 1);
-  assertEquals(sink.sends[1].aborted, false);
-});
-
-Deno.test("latest: offers supersede the create-wedged carrier; release delivers the newest", async () => {
-  // Resetting a create-wedged send would only spawn a replacement wedged on
-  // the same exhausted stream credit (resets do not replenish credit while
-  // the viewer's app is not reading), growing an unbounded zombie chain.
-  // Instead newer offers replace its payload in place.
-  const sink = new FakeSink(false);
-  sink.wedgeCreate = true;
-  const { ch, tick: advance } = timedChannel(sink);
-  ch.offer(frame(1)); // handed to the transport, wedged in stream creation
-  await tick();
-  advance(60_000);
-  ch.offer(frame(2)); // supersedes the carrier's payload
-  ch.offer(frame(3)); // supersedes again
-  assertEquals(sink.sends.length, 1); // no zombie chain even 60 s stale
-  assertEquals(sink.sendsAborted, 0);
-  assertEquals(ch.dropped, 2);
-  assertEquals(ch.queued(), 0);
-  assertEquals([ch.aborted, ch.expired], [0, 0]);
-
-  sink.release(); // the viewer resumes: the carrier is accepted
-  await tick();
-  assertEquals(sink.sent, [frame(3)]); // exactly the newest payload went out
-  assertEquals(ch.sent, 1);
-  assertEquals(ch.bytesOut, frame(3).byteLength); // 3 offers = 1 sent + 2 dropped
-});
-
-Deno.test("latest: a stale write-wedged carrier is reset and the newest resent", async () => {
-  // Once the write has begun the payload can no longer change, so a stale
-  // carrier is reset and the newest goes out on a fresh stream.
-  const sink = new FakeSink(false); // default: the write is already in progress
-  const { ch, tick: advance } = timedChannel(sink);
-  ch.offer(frame(1)); // write begins, wedged in flow control
-  await tick();
-  advance(600); // past LATEST_STALE_MS
-  ch.offer(frame(2)); // supersede refused -> the stale carrier is reset
-  assertEquals(sink.sends[0].aborted, true);
-  assertEquals(ch.aborted, 1);
-  assertEquals(ch.dropped, 1); // frame 1's payload never reached the wire
-  await tick(); // the drain swallows the abort and picks up the parked frame
-  assertEquals(ch.queued(), 0);
-  assertEquals(ch.inflight(), 1); // only the fresh carrier
-
-  sink.release();
-  await tick();
-  assertEquals(ch.sent, 1); // frame 1 was handed to the transport, never accepted
-  assertEquals(sink.sent, [frame(1), frame(2)]);
-});
-
-Deno.test("latest: supersede stops once the write begins", async () => {
-  const sink = new FakeSink(false);
-  sink.wedgeCreate = true;
-  const ch = new LatestChannel(sink);
-  ch.offer(frame(1)); // wedged in stream creation
-  ch.offer(frame(2)); // supersedes in place
+  assertEquals(ch.stalled, 1);
   assertEquals(ch.dropped, 1);
-  sink.sends[0].beginWrite(); // stream created; the write is now in progress
-  ch.offer(frame(3)); // the payload can no longer change: parks instead
-  assertEquals(ch.queued(), 1);
-  assertEquals(ch.dropped, 1); // parking in an empty slot drops nothing
-
+  assertEquals(sink.sent, [frame(1), frame(3)]); // the newest followed at once
   sink.release();
   await tick();
-  sink.release();
-  await tick();
-  assertEquals(sink.sent, [frame(2), frame(3)]);
+  assertEquals(ch.stalled, 1); // the prompt write is not a stall
   assertEquals(ch.sent, 2);
-});
-
-Deno.test("latest: a healthy viewer expires streams but never aborts", async () => {
-  const sink = new FakeSink();
-  const { ch, tick: advance, now } = timedChannel(sink);
-  for (let i = 0; i < 5; i++) {
-    ch.offer(frame(i)); // auto sink: accepted immediately
-    await tick();
-    advance(600);
-  }
-  assertEquals(ch.sent, 5);
-  assertEquals(ch.aborted, 0);
-  assertEquals(ch.expired, 4); // every reap saw an accepted newest send
-  assertEquals(ch.inflight(), 1);
   assertEquals(sink.kicked, null);
-
-  // The input idled; the relay's periodic reap (registry.reapAll) ends the
-  // last stream too, still as routine expiry.
-  ch.reap(now()); // the loop's final advance left the last acceptance 600 ms old
-  assertEquals(ch.expired, 5);
-  assertEquals(ch.inflight(), 0);
-  assertEquals(ch.aborted, 0);
 });
 
-Deno.test("latest: a real transport failure still kicks exactly once", async () => {
+Deno.test("latest: a real transport failure kicks exactly once", async () => {
   const sink = new FakeSink(false);
   const ch = new LatestChannel(sink);
   ch.offer(frame(1));
-  sink.release();
   await tick();
-  ch.offer(frame(2));
-  sink.rejectWrite(); // connection died: not an abort()
+  ch.offer(frame(2)); // parked
+  sink.rejectWrite(); // connection died
   await tick();
   assertEquals(sink.kicked, "write failed");
-  // The kick's dispose sweeps both outstanding streams (harmless on the dead
-  // frame-2 stream; the real sink swallows abort errors).
-  assertEquals(sink.sendsAborted, 2);
+  assertEquals(sink.kicks, 1);
+  assertEquals(sink.streamsAborted, 1); // the kick's dispose releases the stream
   ch.offer(frame(3)); // ignored after the dispose
   await tick();
-  assertEquals(sink.sent, [frame(1), frame(2)]);
+  assertEquals(sink.sent, [frame(1)]);
 });
 
 Deno.test("rate: bucketed trailing window with idle decay and wraparound", () => {
@@ -595,54 +428,122 @@ function byteStream(...chunks: Uint8Array[]): ReadableStream<Uint8Array> {
 // Stream type 0x41 exceeds the 1-byte varint range, so on the wire it is the
 // 2-byte varint [0x40, 0x41] (what aioquic sends).
 
-Deno.test("preamble: consumed so the data frame parses from the remainder", async () => {
+// Stream type 0x41 exceeds the 1-byte varint range, so on the wire it is the
+// 2-byte varint [0x40, 0x41] (what aioquic sends), then the session id.
+const PREAMBLE = new Uint8Array([0x40, 0x41, 0x00]);
+
+Deno.test("readRobotStream: the preamble is consumed and the frame parses", async () => {
   const frame = dataFrame("cam", 3, "latest");
-  // enqueue a copy: the byte stream detaches the chunk's buffer on read
-  const rs = byteStream(new Uint8Array([0x40, 0x41, 0x00]), frame.slice());
-  assertEquals(await readWebTransportPreamble(rs), 0);
-  const { header, bytes } = await readRobotFrame(rs);
+  // enqueue copies: the byte stream detaches the chunk's buffer on read
+  const { header, bytes, reserved } = await readRobotStream(
+    byteStream(PREAMBLE.slice(), frame.slice()),
+  );
   assertEquals(bytes, frame);
   assertEquals(header, { ch: "cam", seq: 3, ts: 3.5, delivery: "latest" });
+  assertEquals(reserved, false);
 });
 
-Deno.test("readRobotFrame: a malformed header yields null, frame bytes intact", async () => {
+Deno.test("readRobotStream: one chunk, split chunks, and byte-at-a-time all parse", async () => {
+  const frame = dataFrame("odom", 7, "reliable");
+  const whole = new Uint8Array([...PREAMBLE, ...frame]);
+  const expected = { ch: "odom", seq: 7, ts: 7.5, delivery: "reliable" };
+  assertEquals((await readRobotStream(byteStream(whole.slice()))).header, expected);
+  const bytes = Array.from(whole, (b) => new Uint8Array([b]));
+  const slow = await readRobotStream(byteStream(...bytes));
+  assertEquals(slow.header, expected);
+  assertEquals(slow.bytes, frame);
+  // The header's bytes land in a chunk of their own, the payload after.
+  const split = await readRobotStream(
+    byteStream(whole.slice(0, PREAMBLE.length + 8), whole.slice(PREAMBLE.length + 8)),
+  );
+  assertEquals(split.bytes, frame);
+});
+
+Deno.test("readRobotStream: onHeader fires once the header is in, before the payload", async () => {
+  const header: FrameHeader = { ch: "cloud", seq: 1, ts: 1.5, delivery: "latest" };
+  const frame = encodeDataFrame(header, new Uint8Array(300 * 1024).fill(5)); // past one buffer
+  const events: string[] = [];
+  let release!: () => void;
+  const payloadGate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const headerEnd = PREAMBLE.length + 8 + JSON.stringify(header).length;
+  const whole = new Uint8Array([...PREAMBLE, ...frame]);
+  const rs = new ReadableStream<Uint8Array>({
+    type: "bytes",
+    async start(controller) {
+      controller.enqueue(whole.slice(0, headerEnd));
+      await payloadGate;
+      controller.enqueue(whole.slice(headerEnd));
+      controller.close();
+    },
+  });
+  const read = readRobotStream(rs, (h, reserved) => {
+    events.push(`header ${h?.ch} reserved=${reserved}`);
+    release();
+  });
+  const { bytes } = await read;
+  events.push("frame");
+  assertEquals(events, ["header cloud reserved=false", "frame"]);
+  assertEquals(bytes, frame); // grown through the doubling path
+});
+
+Deno.test("readRobotStream: a header longer than the first read still parses", async () => {
+  const header: FrameHeader = {
+    ch: "cam",
+    seq: 1,
+    ts: 1.5,
+    delivery: "latest",
+    meta: { pad: "x".repeat(6000) },
+  };
+  const frame = encodeDataFrame(header, new Uint8Array([1, 2, 3]));
+  const { header: parsed, bytes } = await readRobotStream(
+    byteStream(new Uint8Array([...PREAMBLE, ...frame])),
+  );
+  assertEquals(parsed?.meta, header.meta);
+  assertEquals(bytes, frame);
+});
+
+Deno.test("readRobotStream: a malformed header yields null, frame bytes intact", async () => {
   const bad = encodeDataFrame(
     { ch: "cam", seq: 1, ts: 1.5, delivery: "bogus" } as unknown as FrameHeader,
     new Uint8Array([7]),
   );
-  const { header, bytes, reserved } = await readRobotFrame(byteStream(bad.slice()));
+  const { header, bytes, reserved } = await readRobotStream(
+    byteStream(PREAMBLE.slice(), bad.slice()),
+  );
   assertEquals(header, null);
   assertEquals(bytes, bad);
   assertEquals(reserved, false);
 });
 
-Deno.test("readRobotFrame: reserved classification survives an invalid header", async () => {
+Deno.test("readRobotStream: reserved classification survives an invalid header", async () => {
   // The raw ch decides reserved-ness, so a malformed @-frame still routes to
   // the control rejection path instead of passing as ordinary data.
   const bad = encodeDataFrame(
     { ch: CONTROL_CHANNEL, seq: 1, ts: 1.5, delivery: "bogus" } as unknown as FrameHeader,
     new Uint8Array([7]),
   );
-  const { header, reserved } = await readRobotFrame(byteStream(bad.slice()));
+  const { header, reserved } = await readRobotStream(byteStream(PREAMBLE.slice(), bad.slice()));
   assertEquals(header, null);
   assertEquals(reserved, true);
 });
 
-Deno.test("readRobotFrame: @-frame payload cap is exact at 64 KiB", async () => {
+Deno.test("readRobotStream: @-frame payload cap is exact at 64 KiB", async () => {
   const helloHeader: FrameHeader = { ch: CONTROL_CHANNEL, seq: 1, ts: 1.5, delivery: "reliable" };
   const atCap = encodeDataFrame(helloHeader, new Uint8Array(MAX_CONTROL_PAYLOAD_BYTES));
-  const { header, bytes } = await readRobotFrame(byteStream(atCap.slice()));
+  const { header, bytes } = await readRobotStream(byteStream(PREAMBLE.slice(), atCap.slice()));
   assertEquals(header?.ch, CONTROL_CHANNEL);
   assertEquals(bytes.byteLength, atCap.byteLength);
 
   const overCap = encodeDataFrame(helloHeader, new Uint8Array(MAX_CONTROL_PAYLOAD_BYTES + 1));
   await assertRejects(
-    () => readRobotFrame(byteStream(overCap.slice())),
+    () => readRobotStream(byteStream(PREAMBLE.slice(), overCap.slice())),
     ControlPayloadTooLargeError,
   );
 });
 
-Deno.test("readRobotFrame: the cap keys off the raw ch, not the validated header", async () => {
+Deno.test("readRobotStream: the cap keys off the raw ch, not the validated header", async () => {
   // A hostile @-frame with an otherwise-invalid header (bogus delivery) must
   // still be capped before its payload is buffered.
   const sneaky = encodeDataFrame(
@@ -650,39 +551,48 @@ Deno.test("readRobotFrame: the cap keys off the raw ch, not the validated header
     new Uint8Array(MAX_CONTROL_PAYLOAD_BYTES + 1),
   );
   await assertRejects(
-    () => readRobotFrame(byteStream(sneaky.slice())),
+    () => readRobotStream(byteStream(PREAMBLE.slice(), sneaky.slice())),
     ControlPayloadTooLargeError,
   );
 });
 
-Deno.test("readRobotFrame: ordinary channels are not control-capped", async () => {
+Deno.test("readRobotStream: ordinary channels are not control-capped", async () => {
   const big = encodeDataFrame(
     { ch: "cam", seq: 1, ts: 1.5, delivery: "latest" },
     new Uint8Array(MAX_CONTROL_PAYLOAD_BYTES + 1),
   );
-  const { header, bytes } = await readRobotFrame(byteStream(big.slice()));
+  const { header, bytes } = await readRobotStream(byteStream(PREAMBLE.slice(), big.slice()));
   assertEquals(header?.ch, "cam");
   assertEquals(bytes.byteLength, big.byteLength);
 });
 
-Deno.test("preamble: multi-byte varint session id", async () => {
+Deno.test("readRobotStream: multi-byte varint session id", async () => {
   // session id 0x14c as a 2-byte varint (0x40 | 0x01, 0x4c)
-  const rs = byteStream(new Uint8Array([0x40, 0x41, 0x41, 0x4c]));
-  assertEquals(await readWebTransportPreamble(rs), 0x14c);
+  const frame = dataFrame("cam", 1, "latest");
+  const { header } = await readRobotStream(
+    byteStream(new Uint8Array([0x40, 0x41, 0x41, 0x4c]), frame.slice()),
+  );
+  assertEquals(header?.seq, 1);
 });
 
-Deno.test("preamble: non-WebTransport stream type rejects", async () => {
+Deno.test("readRobotStream: non-WebTransport stream type rejects", async () => {
   await assertRejects(
-    () => readWebTransportPreamble(byteStream(new Uint8Array([0x17, 0x00]))),
+    () => readRobotStream(byteStream(new Uint8Array([0x17, 0x00]))),
     Error,
     "not a WebTransport data stream",
   );
 });
 
-Deno.test("preamble: stream ending mid-preamble rejects", async () => {
+Deno.test("readRobotStream: a stream ending early rejects", async () => {
   await assertRejects(
-    () => readWebTransportPreamble(byteStream(new Uint8Array([0x40, 0x41]))),
+    () => readRobotStream(byteStream(new Uint8Array([0x40, 0x41]))),
     Error,
     "stream ended mid-preamble",
+  );
+  const frame = dataFrame("cam", 1, "latest");
+  await assertRejects(
+    () => readRobotStream(byteStream(PREAMBLE.slice(), frame.slice(0, frame.byteLength - 1))),
+    Error,
+    "ended mid-frame",
   );
 });

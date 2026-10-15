@@ -70,7 +70,7 @@ What the parts do:
 
 ## Snapshots, and the two read paths
 
-Callbacks receive a `ChannelSnapshot` on the session's UI tick (every 500 ms by default). This lets you update many UI elements without an unreasonable number of re-renders.
+Callbacks receive a `ChannelSnapshot` on the session's UI tick (every 500 ms by default), and once more as soon as a channel's first frame lands. This lets you update many UI elements without an unreasonable number of re-renders.
 
 For canvas or video rendering you want every frame, so read the store directly. `session.store.subscribe(ch, cb)` fires per accepted frame and `session.store.get(ch)` returns the latest slot:
 
@@ -343,7 +343,8 @@ try {
 | `robot` | none | Robot id to watch. Without it the session watches the robot when it is the only one on the relay. |
 | `decoders` | a fresh registry with the built-ins | From `createDecoderRegistry()`. Captured for the session's lifetime. |
 | `token` | none | Viewer token for a relay started with `--auth-file`. A rejected token fails the transport for good (`auth_failed`). |
-| `uiTickMs` | 500 | Period of the UI tick that feeds `subscribe()` callbacks. |
+| `uiTickMs` | 500 | Period of the UI tick that feeds `subscribe()` callbacks. A channel's first frame publishes its snapshot at once. |
+| `pingIntervalMs` | 3000 | Period of the liveness ping on the control stream. Two unanswered pings close the connection, and the transport reconnects. |
 
 ### Session
 
@@ -358,7 +359,7 @@ try {
 
 `SessionStatus` has `transport` (the phase below), `robots` (every robot on the relay, `{ id, name, model }`), `watchedRobot`, `manifest`, `manifestUnsupported` (the robot's manifest version is newer than the SDK), `epoch` (bumps whenever the manifest changes) and `lastError` (`{ code, message, ch? }` with code `invalid_manifest`, `unknown_channel`, `rtc_failed` or `relay_error`).
 
-`transport.phase` is `connecting` (with `attempt`), `connected`, `reconnecting` (with `attempt`, `retryAtMs` and a `reason`) or `failed` (with `reason` and a `code` such as `auth_failed`). Reconnects back off from 500 ms to 8 s. A `failed` transport does not retry.
+`transport.phase` is `connecting` (with `attempt`), `connected`, `reconnecting` (with `attempt`, `retryAtMs` and a `reason`) or `failed` (with `reason` and a `code` such as `auth_failed`). An attempt gives up after 5 s. Reconnects back off from 500 ms to 8 s, and a pending retry runs at once when the browser comes back online or the tab becomes visible. A `failed` transport does not retry.
 
 ### Channel data
 

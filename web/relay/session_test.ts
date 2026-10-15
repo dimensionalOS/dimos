@@ -2,14 +2,25 @@
 // scheme (control > reliable telemetry > latest video) must hold for every
 // stream the relay creates or replies on. Wire-level scheduling itself is
 // quinn's job; here we pin the orders the relay assigns.
-import { assert, assertEquals, assertRejects } from "@std/assert";
-import { ControlFrameReader, encodeControlFrame, type Msg, PROTOCOL_VERSION } from "@dimos/shared";
+import { assert, assertEquals } from "@std/assert";
+import {
+  CONTROL_CHANNEL,
+  ControlFrameReader,
+  encodeControlFrame,
+  encodeDataFrame,
+  encodeDatagram,
+  type FrameHeader,
+  type Msg,
+  PROTOCOL_VERSION,
+} from "@dimos/shared";
 import { Auth } from "./auth.ts";
 import { Registry } from "./registry.ts";
 import {
   CONTROL_SEND_ORDER,
+  LATEST_SEND_ORDER,
+  ORDER_HOLD_MAX,
   RELIABLE_SEND_ORDER,
-  STALE_STREAM_ERROR_CODE,
+  RobotSession,
   ViewerSession,
 } from "./session.ts";
 
@@ -17,12 +28,12 @@ function tick(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-Deno.test("send-order bands: control above reliable above every latest stream", () => {
+Deno.test("send-order bands: control above reliable above latest", () => {
   assert(CONTROL_SEND_ORDER > RELIABLE_SEND_ORDER);
-  assert(RELIABLE_SEND_ORDER > 0); // latest streams are all negative
+  assert(RELIABLE_SEND_ORDER > LATEST_SEND_ORDER);
 });
 
-Deno.test("the sink assigns the documented sendOrder to each stream kind", async () => {
+Deno.test("the sink opens one stream per call at the order it is given", async () => {
   const orders: (number | undefined)[] = [];
   const wt = {
     createUnidirectionalStream(opts?: WebTransportSendStreamOptions) {
@@ -31,140 +42,33 @@ Deno.test("the sink assigns the documented sendOrder to each stream kind", async
     },
   } as unknown as WebTransport;
   const session = new ViewerSession(wt, 1, new Registry());
-  await session.sink.sendFrame(new Uint8Array([1])).done;
-  await session.sink.sendFrame(new Uint8Array([2])).done;
-  await session.sink.openStream();
-  // Latest streams count down (oldest first, all below reliable).
-  assertEquals(orders, [-1, -2, RELIABLE_SEND_ORDER]);
+  await session.sink.openStream(LATEST_SEND_ORDER);
+  await session.sink.openStream(RELIABLE_SEND_ORDER);
+  assertEquals(orders, [LATEST_SEND_ORDER, RELIABLE_SEND_ORDER]);
 });
 
-// ---------------------------------------------------------------------------
-// FrameSend contract of the real sink: latest streams are never closed (a
-// closed stream cannot be aborted) and abort() works in every phase - before
-// the stream exists, during a stalled write, and after acceptance.
-
-interface SpyStream {
-  stream: WritableStream<Uint8Array>;
-  writes: Uint8Array[];
-  aborts: unknown[];
-  closed: boolean;
-}
-
-function spyStream(opts: { stallWrite?: boolean } = {}): SpyStream {
-  const spy: SpyStream = { writes: [], aborts: [], closed: false, stream: null! };
-  spy.stream = new WritableStream<Uint8Array>({
-    write(chunk, controller) {
-      spy.writes.push(chunk);
-      if (!opts.stallWrite) return Promise.resolve();
-      // A stalled transport write must still honor an abort: the spec only
-      // invokes the underlying abort() after the pending write settles, and
-      // controller.signal is how the transport learns to give up.
-      return new Promise<void>((_, reject) => {
-        controller.signal.addEventListener("abort", () => reject(controller.signal.reason));
-      });
+Deno.test("sink: a stream create stuck on credit is counted, then kicked", async () => {
+  // The viewer's incoming-stream credit is exhausted: the create never
+  // resolves. The stall is counted (and forces a GC, which returns the
+  // credit of disposed streams), and the viewer is kicked at the deadline.
+  let closed: string | null = null;
+  const wt = {
+    createUnidirectionalStream: () => new Promise<WebTransportSendStream>(() => {}),
+    close(info?: WebTransportCloseInfo) {
+      closed = info?.reason ?? "";
     },
-    abort(reason) {
-      spy.aborts.push(reason);
-    },
-    close() {
-      spy.closed = true;
-    },
-  });
-  return spy;
-}
-
-function sinkOver(create: () => Promise<WritableStream<Uint8Array>>) {
-  const wt = { createUnidirectionalStream: create } as unknown as WebTransport;
-  return new ViewerSession(wt, 1, new Registry()).sink;
-}
-
-Deno.test("sink: acceptance never closes the stream; abort after acceptance resets it", async () => {
-  const spy = spyStream();
-  const sink = sinkOver(() => Promise.resolve(spy.stream));
-  const send = sink.sendFrame(new Uint8Array([7]));
-  await send.done;
-  assertEquals(spy.writes.length, 1);
-  assertEquals(spy.closed, false); // never FIN'd: the stream must stay abortable
-
-  send.abort();
-  send.abort(); // idempotent
-  await tick();
-  assertEquals(spy.aborts.length, 1);
-  const reason = spy.aborts[0] as WebTransportError;
-  assertEquals(reason.streamErrorCode, STALE_STREAM_ERROR_CODE);
-  assertEquals(send.aborted, true);
-});
-
-Deno.test("sink: abort during a pending create rejects done and resets on arrival", async () => {
-  const spy = spyStream();
-  let releaseCreate!: () => void;
-  const sink = sinkOver(() =>
-    new Promise((resolve) => {
-      releaseCreate = () => resolve(spy.stream);
-    })
-  );
-  const send = sink.sendFrame(new Uint8Array([7]));
-  send.abort();
-  await assertRejects(() => send.done); // rejects while the create still hangs
-
-  releaseCreate(); // credit finally granted: the zombie stream must be reset
-  await tick();
-  assertEquals(spy.aborts.length, 1);
-  assertEquals(spy.writes.length, 0); // the stale frame was never written
-});
-
-Deno.test("sink: abort during a stalled write rejects done and resets the stream", async () => {
-  const spy = spyStream({ stallWrite: true });
-  const sink = sinkOver(() => Promise.resolve(spy.stream));
-  const send = sink.sendFrame(new Uint8Array([7]));
-  await tick();
-  assertEquals(spy.writes.length, 1); // write started, wedged in flow control
-
-  send.abort();
-  await assertRejects(() => send.done);
-  await tick();
-  assertEquals(spy.aborts.length, 1);
-});
-
-Deno.test("sink: a create failure rejects done without the aborted flag", async () => {
-  const sink = sinkOver(() => Promise.reject(new Error("connection lost")));
-  const send = sink.sendFrame(new Uint8Array([7]));
-  await assertRejects(() => send.done, Error, "connection lost");
-  assertEquals(send.aborted, false); // policies must treat this as a real failure
-});
-
-Deno.test("sink: supersede before the create resolves late-binds the payload", async () => {
-  const spy = spyStream();
-  let releaseCreate!: () => void;
-  const sink = sinkOver(() =>
-    new Promise((resolve) => {
-      releaseCreate = () => resolve(spy.stream);
-    })
-  );
-  const send = sink.sendFrame(new Uint8Array([1]));
-  assertEquals(send.supersede(new Uint8Array([2])), true);
-  assertEquals(send.supersede(new Uint8Array([3])), true); // repeatable while wedged
-
-  releaseCreate(); // credit finally granted: the write picks up the latest binding
-  await send.done;
-  assertEquals(spy.writes, [new Uint8Array([3])]);
-});
-
-Deno.test("sink: supersede is refused once the write starts and after abort", async () => {
-  const stalled = spyStream({ stallWrite: true });
-  const stalledSink = sinkOver(() => Promise.resolve(stalled.stream));
-  const inWrite = stalledSink.sendFrame(new Uint8Array([1]));
-  await tick();
-  assertEquals(stalled.writes.length, 1); // write started, wedged in flow control
-  assertEquals(inWrite.supersede(new Uint8Array([2])), false);
-  inWrite.abort(); // release the stalled write
-  await assertRejects(() => inWrite.done);
-
-  const wedgedSink = sinkOver(() => new Promise(() => {})); // create never resolves
-  const wedged = wedgedSink.sendFrame(new Uint8Array([3]));
-  wedged.abort(); // the send's stream is condemned: supersede must refuse too
-  assertEquals(wedged.supersede(new Uint8Array([4])), false);
-  await assertRejects(() => wedged.done);
+  } as unknown as WebTransport;
+  const registry = new Registry();
+  const session = new ViewerSession(wt, 1, registry, null, { creditStallMs: 20, creditKickMs: 60 });
+  const open = session.sink.openStream(LATEST_SEND_ORDER);
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  const stats = () => registry.stats() as { streamCreditStalls: number };
+  assertEquals(stats().streamCreditStalls, 1);
+  assertEquals(closed, null);
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  assertEquals(closed, "stream credit exhausted");
+  assertEquals(stats().streamCreditStalls, 1); // once per create
+  void open.catch(() => {});
 });
 
 Deno.test("the viewer control stream is raised to CONTROL_SEND_ORDER", async () => {
@@ -292,4 +196,153 @@ Deno.test("viewer auth: version and role mismatches keep their own codes; auth o
   const off = await viewerHandshake({ t: "hello", v: PROTOCOL_VERSION, role: "viewer" }, null);
   assertEquals(off.replies[0], { t: "welcome", v: PROTOCOL_VERSION } as Msg);
   assertEquals(off.session.name, null);
+});
+
+// ---------------------------------------------------------------------------
+// RobotSession frame ordering over fake QUIC streams: reliable frames
+// dispatch in accept order up to a bounded hold; latest frames never wait.
+
+const PREAMBLE = new Uint8Array([0x40, 0x41, 0x00]);
+
+/** One fake robot bidi stream whose bytes the test releases in pieces. */
+class FakeRobotStream {
+  readonly readable: ReadableStream<Uint8Array>;
+  readonly writable = new WritableStream<Uint8Array>();
+  #controller!: ReadableByteStreamController;
+  constructor() {
+    this.readable = new ReadableStream({
+      type: "bytes",
+      start: (c) => {
+        this.#controller = c;
+      },
+    });
+  }
+  push(bytes: Uint8Array): void {
+    this.#controller.enqueue(bytes);
+  }
+  end(): void {
+    this.#controller.close();
+  }
+  fail(): void {
+    this.#controller.error(new Error("reset"));
+  }
+}
+
+function robotFrame(ch: string, seq: number, delivery: "latest" | "reliable"): Uint8Array {
+  const header: FrameHeader = { ch, seq, ts: seq + 0.5, delivery };
+  return encodeDataFrame(header, new Uint8Array(32).fill(seq));
+}
+
+function robotHarness() {
+  let enqueueBidi!: (s: FakeRobotStream) => void;
+  const conn = {
+    incomingBidirectionalStreams: new ReadableStream<FakeRobotStream>({
+      start(c) {
+        enqueueBidi = (s) => c.enqueue(s);
+      },
+    }),
+  } as unknown as Deno.QuicConn;
+  const wt = {
+    closed: new Promise<void>(() => {}),
+    datagrams: {
+      readable: new ReadableStream<Uint8Array>(),
+      writable: new WritableStream<Uint8Array>(),
+    },
+    createUnidirectionalStream: () => Promise.resolve(new WritableStream<Uint8Array>()),
+    close: () => {},
+  } as unknown as WebTransport;
+  const registry = new Registry();
+  const dispatched: number[] = [];
+  registry.onRobotFrame = (_peer, _bytes, header) => {
+    dispatched.push(header!.seq);
+  };
+  const session = new RobotSession(wt, conn, registry, null);
+  session.start();
+  /** Accept a stream carrying `bytes` whole, or just its first `split` bytes. */
+  const accept = (bytes: Uint8Array, split?: number): FakeRobotStream => {
+    const stream = new FakeRobotStream();
+    enqueueBidi(stream);
+    const whole = new Uint8Array([...PREAMBLE, ...bytes]);
+    if (split === undefined) {
+      stream.push(whole);
+      stream.end();
+    } else {
+      stream.push(whole.slice(0, split));
+    }
+    return stream;
+  };
+  return { session, registry, dispatched, accept };
+}
+
+async function settle(): Promise<void> {
+  for (let i = 0; i < 5; i++) await tick();
+}
+
+Deno.test("robot frames: reliable frames wait for an incomplete earlier one, latest do not", async () => {
+  const { session, dispatched, accept } = robotHarness();
+  accept(encodeDataFrame(
+    { ch: CONTROL_CHANNEL, seq: 0, ts: 0.5, delivery: "reliable" },
+    encodeDatagram({
+      t: "hello",
+      v: PROTOCOL_VERSION,
+      role: "robot",
+      robot: { id: "r1", name: "r1", model: "t" },
+    }),
+  ));
+  await settle();
+  assert(session.info !== null, "registered");
+
+  // Frame 1's payload is held back after its header; 2 and 3 complete.
+  const frame1 = robotFrame("odom", 1, "reliable");
+  const headerEnd = PREAMBLE.length + 8 +
+    JSON.stringify({ ch: "odom", seq: 1, ts: 1.5, delivery: "reliable" }).length;
+  const straggler = accept(frame1, headerEnd);
+  accept(robotFrame("odom", 2, "reliable"));
+  accept(robotFrame("cam", 3, "latest"));
+  await settle();
+  assertEquals(dispatched, [3]); // the latest frame passed; 2 waits for 1
+
+  straggler.push(new Uint8Array([...PREAMBLE, ...frame1]).slice(headerEnd));
+  straggler.end();
+  await settle();
+  assertEquals(dispatched, [3, 1, 2]);
+
+  // A stream that fails before its header leaves the queue.
+  const dead = accept(robotFrame("odom", 4, "reliable"), 2);
+  accept(robotFrame("odom", 5, "reliable"));
+  await settle();
+  assertEquals(dispatched, [3, 1, 2]);
+  dead.fail();
+  await settle();
+  assertEquals(dispatched, [3, 1, 2, 5]);
+});
+
+Deno.test("robot frames: the hold behind a straggler is bounded", async () => {
+  const { dispatched, accept } = robotHarness();
+  accept(encodeDataFrame(
+    { ch: CONTROL_CHANNEL, seq: 0, ts: 0.5, delivery: "reliable" },
+    encodeDatagram({
+      t: "hello",
+      v: PROTOCOL_VERSION,
+      role: "robot",
+      robot: { id: "r1", name: "r1", model: "t" },
+    }),
+  ));
+  await settle();
+  const frame1 = robotFrame("odom", 1, "reliable");
+  const headerEnd = PREAMBLE.length + 8 +
+    JSON.stringify({ ch: "odom", seq: 1, ts: 1.5, delivery: "reliable" }).length;
+  const straggler = accept(frame1, headerEnd);
+  for (let seq = 2; seq <= ORDER_HOLD_MAX; seq++) accept(robotFrame("odom", seq, "reliable"));
+  await settle();
+  assertEquals(dispatched, []); // ORDER_HOLD_MAX - 1 held
+  accept(robotFrame("odom", ORDER_HOLD_MAX + 1, "reliable"));
+  await settle();
+  // The hold overflowed: every completed frame went out in order, the
+  // straggler still pending.
+  assertEquals(dispatched, Array.from({ length: ORDER_HOLD_MAX }, (_, i) => i + 2));
+  straggler.push(new Uint8Array([...PREAMBLE, ...frame1]).slice(headerEnd));
+  straggler.end();
+  await settle();
+  assertEquals(dispatched.at(-1), 1); // late, as before ordering
 });

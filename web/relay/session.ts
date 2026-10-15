@@ -34,28 +34,53 @@ import { parseManifest, TRACK_ENCODING } from "@dimos/shared/manifest";
 import { type CarrierStats, RobotCarrier } from "./carrier.ts";
 import {
   type ChannelPolicy,
+  CONTROL_SEND_ORDER,
   ControlPayloadTooLargeError,
-  type FrameSend,
   type FrameWriter,
-  readRobotFrame,
-  readWebTransportPreamble,
+  readRobotStream,
   type ViewerSink,
 } from "./forward.ts";
 import type { Registry, RobotPeer, ViewerPeer } from "./registry.ts";
 
-// Relay->viewer send priorities, all in one place. WebTransport sendOrder
-// (backed by quinn stream priority here): queued bytes of a higher-order
-// stream are sent before those of a lower-order one, so control must outrank
-// reliable telemetry and reliable must outrank latest video, whose per-frame
-// streams count down from -1 to complete oldest-first (README bug 7).
-// Datagrams (the Python viewer's control leg) have no sendOrder API.
-export const CONTROL_SEND_ORDER = 2;
-export const RELIABLE_SEND_ORDER = 1;
+export { CONTROL_SEND_ORDER, LATEST_SEND_ORDER, RELIABLE_SEND_ORDER } from "./forward.ts";
 
-// Application error code carried by latest-stream resets (mirrors the Python
-// robot leg's STALE_STREAM_ERROR_CODE). Receivers do not act on it; it only
-// labels the reset for debugging.
-export const STALE_STREAM_ERROR_CODE = 0x01;
+// A viewer stream create pending this long has run out of the viewer's
+// incoming-stream credit (~100 on every client). Disposed streams (an
+// unsubscribed channel's) return their credit only when Deno finalizes
+// their wrappers, so the stall forces a collection (forceGc) and is counted
+// in /api/stats; a create still pending at the kick deadline means the
+// viewer holds every slot and is disconnected.
+export const STREAM_CREDIT_STALL_MS = 1000;
+export const STREAM_CREDIT_KICK_MS = 10_000;
+
+/**
+ * Force a V8 garbage collection and record its pause. Deno 2.6.10 ends a
+ * stream (FIN or reset) only when its wrapper is finalized, so collection is
+ * what returns a finished robot stream's slot in the relay's incoming-stream
+ * budget and a disposed viewer stream's credit on the viewer. gc() exists
+ * only under --v8-flags=--expose-gc (relay_run_cmd passes it).
+ */
+export function forceGc(registry: Registry): void {
+  const gc = (globalThis as { gc?: () => void }).gc;
+  if (gc === undefined) return;
+  const started = performance.now();
+  gc();
+  registry.collected(performance.now() - started);
+}
+
+// Reliable frames behind an incomplete earlier stream that wait for it. The
+// bridge's QUIC stack packs a burst of streams into packets round-robin, so
+// the first frame of a burst can complete last; past this many held frames
+// the completed ones go out ahead of it (the straggler follows late and the
+// viewer's seq guard drops it, as before ordering), which also keeps a
+// release from flooding the viewer's reliable queue.
+export const ORDER_HOLD_MAX = 8;
+
+/** One accepted robot stream in the per-robot dispatch order. */
+interface OrderedFrame {
+  settled: boolean;
+  dispatch: (() => void) | null;
+}
 
 function closeAfterFlush(wt: WebTransport, reason: string): void {
   // Session close discards queued stream/datagram data, so give a just-sent
@@ -86,6 +111,11 @@ export class RobotSession implements RobotPeer {
   readonly #dgWriter: WritableStreamDefaultWriter<Uint8Array>;
   readonly #carrier: RobotCarrier;
   readonly #auth: Auth | null;
+  /** Declared delivery per channel (the registry's precedence over the
+   * frame header), for ordering frames before they are routed. */
+  #deliveries = new Map<string, "latest" | "reliable">();
+  /** Accepted data streams in accept order (see #frameLoop). */
+  readonly #inOrder: OrderedFrame[] = [];
 
   constructor(
     wt: WebTransport,
@@ -284,6 +314,7 @@ export class RobotSession implements RobotPeer {
       this.info = msg.robot;
       this.channels = channels;
       this.manifest = msg.manifest ?? null;
+      this.#deliveries = new Map(channels.map((c) => [c.ch, c.delivery]));
     } else if (
       this.info.id !== msg.robot.id ||
       this.info.name !== msg.robot.name ||
@@ -308,29 +339,78 @@ export class RobotSession implements RobotPeer {
     this.sendMsg({ t: "welcome", v: PROTOCOL_VERSION });
   }
 
+  /**
+   * Robot data streams, one frame each. Reliable frames are dispatched in
+   * stream-accept order: QUIC orders bytes within a stream only, so a
+   * delayed stream would otherwise overtake its successor and the viewer's
+   * seq guard would drop the late one. Each accepted stream joins the
+   * per-robot queue; a stream whose header shows a latest or control frame
+   * leaves it at once (a slow 1 MB voxel frame must not hold back the pose
+   * behind it) and dispatches on completion, while a reliable frame waits
+   * until every earlier queued stream has completed or failed, up to
+   * ORDER_HOLD_MAX frames held. A stream that fails before its header
+   * (reset by the bridge) leaves the queue too.
+   */
   #frameLoop(): void {
     (async () => {
       for await (const bidi of this.#conn.incomingBidirectionalStreams) {
         bidi.writable.abort().catch(() => {});
+        const entry: OrderedFrame = { settled: false, dispatch: null };
+        this.#inOrder.push(entry);
         (async () => {
-          await readWebTransportPreamble(bidi.readable);
-          const { header, bytes, reserved } = await readRobotFrame(bidi.readable);
-          if (reserved) {
-            this.#onControlFrame(header, bytes);
-          } else {
-            this.#registry.onRobotFrame(this, bytes, header);
-          }
+          let ordered = true;
+          const { header, bytes, reserved } = await readRobotStream(
+            bidi.readable,
+            (header, reserved) => {
+              if (reserved || header === null || this.#deliveryOf(header) !== "reliable") {
+                ordered = false;
+                this.#settle(entry, null);
+              }
+            },
+          );
+          const dispatch = () => {
+            if (reserved) this.#onControlFrame(header, bytes);
+            else this.#registry.onRobotFrame(this, bytes, header);
+          };
+          if (ordered) this.#settle(entry, dispatch);
+          else dispatch();
         })().catch((e) => {
+          this.#settle(entry, null);
           if (e instanceof ControlPayloadTooLargeError) {
             this.#reject("control_too_large", e.message, "oversized control frame");
             return;
           }
-          // reset before/mid-frame (stale latest-wins write): drop the partial
+          // Reset before or mid-frame (the bridge reset a stale latest
+          // frame, or the connection died): the partial is dropped.
+          this.#registry.robotStreamIncomplete();
         });
       }
     })().catch((e) => {
       console.log("[relay] robot stream loop ended:", (e as Error)?.message ?? e);
     });
+  }
+
+  #deliveryOf(header: FrameHeader): "latest" | "reliable" {
+    return this.#deliveries.get(header.ch) ?? header.delivery;
+  }
+
+  /** Mark one queued stream done (dispatch null = nothing to route, or the
+   * frame routes outside the order) and release what the order allows: the
+   * run of settled streams at the head, or, past ORDER_HOLD_MAX settled
+   * frames held behind an incomplete head, every settled frame in order. */
+  #settle(entry: OrderedFrame, dispatch: (() => void) | null): void {
+    if (entry.settled) return;
+    entry.settled = true;
+    entry.dispatch = dispatch;
+    const queue = this.#inOrder;
+    while (queue.length > 0 && queue[0].settled) queue.shift()!.dispatch?.();
+    let held = 0;
+    for (const queued of queue) if (queued.settled && queued.dispatch !== null) held++;
+    if (held < ORDER_HOLD_MAX) return;
+    for (let i = 0; i < queue.length;) {
+      if (queue[i].settled) queue.splice(i, 1)[0].dispatch?.();
+      else i++;
+    }
   }
 }
 
@@ -348,82 +428,24 @@ export class ViewerSession implements ViewerPeer {
   readonly #auth: Auth | null;
   /** Push channel for robots events, chosen by whichever leg carried hello. */
   #push: ((msg: Msg) => void) | null = null;
+  readonly #creditStallMs: number;
+  readonly #creditKickMs: number;
 
-  constructor(wt: WebTransport, id: number, registry: Registry, auth: Auth | null = null) {
+  constructor(
+    wt: WebTransport,
+    id: number,
+    registry: Registry,
+    auth: Auth | null = null,
+    timing: { creditStallMs?: number; creditKickMs?: number } = {},
+  ) {
     this.#wt = wt;
     this.id = id;
     this.#registry = registry;
     this.#auth = auth;
-    let latestOrder = 1;
+    this.#creditStallMs = timing.creditStallMs ?? STREAM_CREDIT_STALL_MS;
+    this.#creditKickMs = timing.creditKickMs ?? STREAM_CREDIT_KICK_MS;
     this.sink = {
-      sendFrame(bytes: Uint8Array): FrameSend {
-        let aborted = false;
-        let writeStarted = false;
-        let writer: WritableStreamDefaultWriter<Uint8Array> | null = null;
-        let settle!: () => void;
-        let fail!: (e: unknown) => void;
-        const done = new Promise<void>((resolve, reject) => {
-          settle = resolve;
-          fail = reject;
-        });
-        const reset = () => {
-          writer?.abort(
-            new WebTransportError("stale frame superseded", {
-              source: "stream",
-              streamErrorCode: STALE_STREAM_ERROR_CODE,
-            }),
-          ).catch(() => {});
-        };
-        (async () => {
-          const stream = await wt.createUnidirectionalStream({
-            waitUntilAvailable: true,
-            sendOrder: -(latestOrder++),
-          });
-          // Keep the writer for the stream's whole life: aborts go through it
-          // (the stream itself stays locked).
-          writer = stream.getWriter();
-          if (aborted) {
-            // abort() raced the create (done already rejected); release the
-            // just-granted stream credit.
-            reset();
-            return;
-          }
-          // Latching writeStarted and starting the write in one synchronous
-          // step is what makes supersede race-free: the payload can no
-          // longer change once bytes may have reached the transport.
-          writeStarted = true;
-          await writer.write(bytes);
-          settle();
-          // No close(): a closed stream cannot be aborted, and every latest
-          // stream ends in a reset (reap, dispose, or session teardown).
-          // Receivers dispatch on byte count and treat the reset as EOF.
-        })().catch((e) => fail(e)); // no-op if done already settled
-        return {
-          done,
-          get aborted() {
-            return aborted;
-          },
-          abort() {
-            if (aborted) return;
-            aborted = true;
-            fail(new Error("frame send aborted"));
-            reset();
-          },
-          supersede(newBytes: Uint8Array): boolean {
-            if (writeStarted || aborted) return false;
-            bytes = newBytes; // the write reads `bytes` only after create resolves
-            return true;
-          },
-        };
-      },
-      async openStream(): Promise<FrameWriter> {
-        // Persistent stream for a reliable channel.
-        const stream = await wt.createUnidirectionalStream({
-          waitUntilAvailable: true,
-          sendOrder: RELIABLE_SEND_ORDER,
-        });
-        return stream.getWriter();
-      },
+      openStream: (order) => this.#openStream(order),
       kick(reason: string): void {
         console.log(`[relay] kicking viewer: ${reason}`);
         try {
@@ -433,6 +455,28 @@ export class ViewerSession implements ViewerPeer {
         }
       },
     };
+  }
+
+  /** One persistent uni stream per channel at its band's sendOrder. The
+   * create waits for stream credit (protocol.md workaround 7); a long wait
+   * is counted, forces a GC, and past the kick deadline disconnects the
+   * viewer (see STREAM_CREDIT_STALL_MS). */
+  async #openStream(order: number): Promise<FrameWriter> {
+    const create = this.#wt.createUnidirectionalStream({
+      waitUntilAvailable: true,
+      sendOrder: order,
+    });
+    const stall = setTimeout(() => {
+      this.#registry.streamCreditStalled();
+      forceGc(this.#registry);
+    }, this.#creditStallMs);
+    const kick = setTimeout(() => this.sink.kick("stream credit exhausted"), this.#creditKickMs);
+    try {
+      return (await create).getWriter();
+    } finally {
+      clearTimeout(stall);
+      clearTimeout(kick);
+    }
   }
 
   sendMsg(msg: Msg): void {

@@ -18,6 +18,7 @@ and /api/info discovery of its WebTransport endpoint."""
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 from collections.abc import AsyncIterator
 import contextlib
 from dataclasses import dataclass, replace
@@ -36,6 +37,7 @@ from aioquic.quic.connection import QuicConnection
 
 from dimos.utils.logging_config import setup_logger
 from dimos.web.relay_bridge._wt_session import SessionProtocol, make_quic_configuration
+from dimos.web.relay_bridge.pacing import passes_rate_gate
 from dimos.web.relay_bridge.protocol import (
     CONTROL_CHANNEL,
     MAX_CONTROL_PAYLOAD_BYTES,
@@ -73,6 +75,21 @@ _DATAGRAM_MAX_BYTES = 1100
 # both directions.
 KEEPALIVE_INTERVAL_S = 3.0
 KEEPALIVE_MISSES = 3
+
+# Latest streams in flight per channel before the writer waits for an ACK.
+# With one, every frame waits for the previous frame's QUIC ACK (a relay
+# round trip plus up to 25 ms of delayed ACK), so the rate caps at
+# 1 / (RTT + ~14 ms): ~70 fps on loopback, ~15 fps to a relay 50 ms away.
+# Three cover 30 fps at a 50 ms RTT. Each stream is independent and viewers
+# keep the newest frame by seq, so the relay needs nothing.
+MAX_IN_FLIGHT = 3
+# Reliable frames (one-shot streams, never shed) unACKed per channel before
+# the oldest is reset: aioquic buffers without bound, so on a stalled relay
+# the backlog would otherwise grow until the session dies. Generous: a
+# burst of a hundred frames in one event-loop turn is legitimate and none of
+# it is ACKed before the loop yields.
+RELIABLE_MAX_IN_FLIGHT = 256
+_RELIABLE_DROP_LOG_S = 5.0
 
 
 class RelayRejectedError(ProtocolError):
@@ -193,6 +210,11 @@ class RelayClient:
         self._ctx = ctx  # _quic_connect() context manager
         self._ping_n = itertools.count(1)
         self._seq: dict[str, itertools.count[int]] = {}
+        # Unacked reliable stream ids per channel (send order), and frames
+        # reset to hold the bound, per channel.
+        self._reliable_inflight: dict[str, deque[int]] = {}
+        self.reliable_dropped: dict[str, int] = {}
+        self._reliable_drop_logged: dict[str, float] = {}
         self._writers: list[LatestChannelWriter] = []
         self._close_task: asyncio.Task[None] | None = None
         self._keepalive_task: asyncio.Task[None] | None = None
@@ -456,20 +478,49 @@ class RelayClient:
 
         The frame is buffered by aioquic and delivered in the background;
         reliable senders that need pacing can `await wait_delivered(...)`.
+        A reliable channel holds at most RELIABLE_MAX_IN_FLIGHT unACKed
+        frames: beyond that the oldest is reset (the viewer sees a seq gap),
+        counted in `reliable_dropped` and logged.
         """
         seq = next(self._seq.setdefault(ch, itertools.count()))
         header = FrameHeader(
             ch=ch, seq=seq, ts=time.time() if ts is None else ts, delivery=delivery, meta=meta
         )
-        return self._session.send_frame(header, payload)
+        if delivery == "reliable":
+            self._bound_reliable(ch)
+        stream_id = self._session.send_frame(header, payload)
+        if delivery == "reliable":
+            self._reliable_inflight.setdefault(ch, deque()).append(stream_id)
+        return stream_id
+
+    def _bound_reliable(self, ch: str) -> None:
+        inflight = self._reliable_inflight.get(ch)
+        if inflight is None:
+            return
+        while inflight and not self._session.stream_in_flight(inflight[0]):
+            inflight.popleft()
+        while len(inflight) >= RELIABLE_MAX_IN_FLIGHT:
+            # Oldest first; the membership check and the reset share this
+            # event-loop turn (docs/web/protocol.md workaround 9).
+            self._session.reset_if_in_flight(inflight.popleft())
+            self.reliable_dropped[ch] = self.reliable_dropped.get(ch, 0) + 1
+            if passes_rate_gate(
+                self._reliable_drop_logged, ch, time.monotonic(), _RELIABLE_DROP_LOG_S
+            ):
+                logger.warning(
+                    f"reliable channel {ch}: {RELIABLE_MAX_IN_FLIGHT} frames unacknowledged, "
+                    f"dropping the oldest ({self.reliable_dropped[ch]} dropped so far)"
+                )
 
     async def wait_delivered(self, stream_id: int, timeout: float = 10.0) -> bool:
         """True once the frame on `stream_id` is fully ACKed."""
         return await self._session.wait_delivered(stream_id, timeout)
 
-    def latest_writer(self, ch: str, *, stale_after: float = 0.5) -> LatestChannelWriter:
+    def latest_writer(
+        self, ch: str, *, stale_after: float = 0.5, max_in_flight: int = MAX_IN_FLIGHT
+    ) -> LatestChannelWriter:
         """Delivery-paced latest-wins writer for `ch` (e.g. camera frames)."""
-        writer = LatestChannelWriter(self, ch, stale_after=stale_after)
+        writer = LatestChannelWriter(self, ch, stale_after=stale_after, max_in_flight=max_in_flight)
         self._writers.append(writer)
         return writer
 
@@ -533,25 +584,38 @@ class RelayClient:
 
 
 class LatestChannelWriter:
-    """Latest-wins channel writer: 1-slot mailbox + delivery-paced sender.
+    """Latest-wins channel writer: a 1-slot pending frame and a delivery-paced
+    sender with `max_in_flight` streams on the wire.
 
-    `offer()` never blocks; when frames arrive faster than the link delivers,
-    intermediate frames are dropped at the mailbox (counted in `dropped`) and
-    the newest one is sent as soon as the in-flight stream is ACKed. A stream
-    stalled longer than `stale_after` with a newer frame waiting is reset
-    (receivers discard the partial frame).
+    `offer()` never blocks; a frame offered while the pending slot is taken
+    replaces it (counted in `dropped`). Frames go out at once while fewer than
+    `max_in_flight` streams are unACKed; past that the pump waits for ACK
+    progress, and once the oldest in-flight stream is `stale_after` old with
+    a newer frame waiting it is reset to make room (receivers discard the
+    partial frame).
     """
 
-    def __init__(self, client: RelayClient, ch: str, *, stale_after: float) -> None:
+    def __init__(
+        self,
+        client: RelayClient,
+        ch: str,
+        *,
+        stale_after: float,
+        max_in_flight: int = MAX_IN_FLIGHT,
+    ) -> None:
+        if max_in_flight < 1:
+            raise ValueError(f"max_in_flight must be >= 1, got {max_in_flight}")
         self._client = client
         self.ch = ch
         self.stale_after = stale_after
+        self.max_in_flight = max_in_flight
         self.dropped = 0
         self.sent = 0
         self.resets = 0
-        self._mailbox: asyncio.Queue[tuple[bytes, dict[str, Any] | None, float | None]] = (
-            asyncio.Queue(maxsize=1)
-        )
+        self._pending: tuple[bytes, dict[str, Any] | None, float | None] | None = None
+        self._offered = asyncio.Event()
+        # (stream id, send time) in send order; pruned as ACKs land.
+        self._in_flight: deque[tuple[int, float]] = deque()
         self._task = asyncio.create_task(self._pump())
         self._task.add_done_callback(self._on_pump_done)
 
@@ -578,45 +642,54 @@ class LatestChannelWriter:
         """
         if self._task.done():
             raise RuntimeError(f"latest-wins writer for {self.ch} is not running")
-        if self._mailbox.full():
-            self._mailbox.get_nowait()
+        if self._pending is not None:
             self.dropped += 1
-        self._mailbox.put_nowait((payload, meta, ts))
+        self._pending = (payload, meta, ts)
+        self._offered.set()
 
     def stop(self) -> None:
         self._task.cancel()
+
+    def in_flight(self) -> int:
+        """Streams sent and not yet ACKed (or reset)."""
+        session = self._client._session
+        self._in_flight = deque(e for e in self._in_flight if session.stream_in_flight(e[0]))
+        return len(self._in_flight)
 
     async def _pump(self) -> None:
         session = self._client._session
         closed = asyncio.create_task(session.closed.wait())
         try:
             while not session.closed.is_set():
-                get = asyncio.create_task(self._mailbox.get())
-                try:
-                    await asyncio.wait({get, closed}, return_when=asyncio.FIRST_COMPLETED)
-                    if not get.done():
-                        break  # session closed with an empty mailbox
-                    payload, meta, ts = get.result()
-                finally:
-                    get.cancel()
-                if session.closed.is_set():
-                    break
-                stream_id = self._client.send_frame(
-                    self.ch, payload, delivery="latest", meta=meta, ts=ts
-                )
-                self.sent += 1
-                started = time.monotonic()
-                while session.stream_in_flight(stream_id):
-                    if session.closed.is_set():
-                        break
-                    await asyncio.sleep(0.002)
-                    if time.monotonic() - started > self.stale_after and not self._mailbox.empty():
-                        # Stalled with a newer frame waiting: abandon this one.
-                        # reset_if_in_flight rechecks membership in this same
-                        # event-loop turn (required, see docs/web/protocol.md).
-                        if session.reset_if_in_flight(stream_id):
-                            self.resets += 1
-                        break
+                if self._pending is None:
+                    offered = asyncio.create_task(self._offered.wait())
+                    try:
+                        await asyncio.wait({offered, closed}, return_when=asyncio.FIRST_COMPLETED)
+                    finally:
+                        offered.cancel()
+                    self._offered.clear()
+                    continue
+                if self.in_flight() < self.max_in_flight:
+                    payload, meta, ts = self._pending
+                    self._pending = None
+                    stream_id = self._client.send_frame(
+                        self.ch, payload, delivery="latest", meta=meta, ts=ts
+                    )
+                    self.sent += 1
+                    self._in_flight.append((stream_id, time.monotonic()))
+                    continue
+                # The budget is full and a newer frame waits: an ACK frees a
+                # slot, or the oldest stream is reset once stale. The
+                # membership recheck inside reset_if_in_flight shares this
+                # event-loop turn (required, see docs/web/protocol.md).
+                oldest_id, sent_at = self._in_flight[0]
+                remaining = sent_at + self.stale_after - time.monotonic()
+                if remaining <= 0:
+                    self._in_flight.popleft()
+                    if session.reset_if_in_flight(oldest_id):
+                        self.resets += 1
+                    continue
+                await session.wait_delivery_progress(remaining)
         finally:
             closed.cancel()
         logger.info(f"latest-wins writer for {self.ch}: session closed, stopping")

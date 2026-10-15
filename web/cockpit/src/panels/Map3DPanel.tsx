@@ -24,6 +24,8 @@ export interface VoxelSinkDeps {
   createScene?: (canvas: HTMLCanvasElement) => Promise<VoxelScene>;
   /** The renderer could not start (no WebGL): shown in the panel. */
   onError?: (message: string) => void;
+  /** Schedules one render; requestAnimationFrame by default. */
+  requestFrame?: (cb: () => void) => void;
 }
 
 export interface VoxelSinkOptions {
@@ -53,6 +55,11 @@ function readPose(v: unknown): Pose3d | null {
   return { x, y, z, yaw };
 }
 
+function samePose(a: Pose3d | null, b: Pose3d | null): boolean {
+  if (a === null || b === null) return a === b;
+  return a.x === b.x && a.y === b.y && a.z === b.z && a.yaw === b.yaw;
+}
+
 async function loadScene(canvas: HTMLCanvasElement): Promise<VoxelScene> {
   const { createVoxelScene } = await import("./voxelScene.ts");
   return createVoxelScene(canvas);
@@ -63,7 +70,10 @@ async function loadScene(canvas: HTMLCanvasElement): Promise<VoxelScene> {
  * and hand the voxels to the scene. The first frame with voxels frames the
  * camera unless it is following the robot; later frames leave the viewer's
  * orbit alone, and an empty frame (a cleared or filtered-out map) clears the
- * drawn voxels. Hidden documents pause both inflation and drawing.
+ * drawn voxels. Hidden documents pause both inflation and drawing. Renders
+ * are coalesced to one per animation frame, and a pose frame that did not
+ * move the robot draws nothing: at 20 Hz a pose channel would otherwise
+ * re-render a million-point cloud twenty times a second to move a cone.
  */
 export function startVoxelSink(
   store: ChannelStore,
@@ -80,12 +90,17 @@ export function startVoxelSink(
     return () => observer.disconnect();
   });
   const createScene = deps.createScene ?? loadScene;
+  const requestFrame = deps.requestFrame ?? ((cb) => requestAnimationFrame(cb));
   let scene: VoxelScene | null = null;
   let inflating = false;
   let drawnVersion = -1;
   let fitted = false;
   let following = false;
   let stopped = false;
+  let frameScheduled = false;
+  let drawnPose: Pose3d | null = null;
+  // The colour array is reused across same-size frames (heightColors).
+  let colors: Uint8Array | undefined;
   // A fresh mount is never instantly "stalled".
   health.lastDrawOkAtMs = Date.now();
   health.failures = 0;
@@ -97,10 +112,24 @@ export function startVoxelSink(
     scene.resize(w, h, globalThis.devicePixelRatio || 1);
   };
 
+  const currentPose = (): Pose3d | null =>
+    poseCh === undefined ? null : readPose(store.get(poseCh)?.value);
+
   const draw = (): void => {
-    if (stopped || hidden() || scene === null) return;
-    scene.setPose(poseCh === undefined ? null : readPose(store.get(poseCh)?.value));
-    scene.render();
+    if (stopped || hidden() || scene === null || frameScheduled) return;
+    frameScheduled = true;
+    requestFrame(() => {
+      frameScheduled = false;
+      if (stopped || hidden() || scene === null) return;
+      drawnPose = currentPose();
+      scene.setPose(drawnPose);
+      scene.render();
+    });
+  };
+
+  const onPose = (): void => {
+    if (samePose(currentPose(), drawnPose)) return;
+    draw();
   };
 
   const pump = (): void => {
@@ -114,7 +143,8 @@ export function startVoxelSink(
     inflate(value)
       .then((positions) => {
         if (stopped || scene === null) return;
-        scene.setVoxels(positions, heightColors(positions), value.res);
+        colors = heightColors(positions, colors);
+        scene.setVoxels(positions, colors, value.res);
         if (!fitted && value.n > 0) {
           // An empty frame has nothing to frame and must not use up the fit,
           // and a camera behind the robot is not pulled off it.
@@ -156,7 +186,7 @@ export function startVoxelSink(
   );
 
   const unsubscribeCloud = store.subscribe(cloudCh, pump);
-  const unsubscribePose = poseCh === undefined ? null : store.subscribe(poseCh, draw);
+  const unsubscribePose = poseCh === undefined ? null : store.subscribe(poseCh, onPose);
   const disposeResize = observeResize(canvas, () => {
     resize();
     draw();
