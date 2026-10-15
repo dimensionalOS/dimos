@@ -252,3 +252,21 @@ def test_launch_and_cleanup(tmp_path, mocker):
         env.stop()
     proc.stop.assert_called_once()
     store.stop.assert_called_once()
+
+
+def test_launch_without_mcp_waits_on_the_run_instead(tmp_path, mocker):
+    proc = mocker.patch("dimos.evals.environments.sim.DimosCliCall").return_value
+    proc.extra_env = {}
+    proc.global_args = []
+    adapter = mocker.patch("dimos.evals.environments.sim.McpAdapter")
+    mocker.patch("dimos.memory.store.sqlite.SqliteStore")
+    env = MujocoEnvironment(blueprint=["xarm-perception-sim"], python_guide="DIMOS.md")
+    waited = mocker.patch.object(env, "_wait_recording", return_value=tmp_path / "memory.db")
+    mocker.patch.object(env, "wait_ready")
+    try:
+        result = env.start(())
+        adapter.assert_not_called()
+        waited.assert_called_once()
+        assert result.mcp_url == "" and result.python_guide == "DIMOS.md"
+    finally:
+        env.stop()

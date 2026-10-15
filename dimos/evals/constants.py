@@ -77,6 +77,63 @@ XARM7_GRIPPER_NOTES = (
     "11-48 mm behind the TCP. The jaw gap runs from about 1.6 mm (closed) to 88.9 mm (open)."
 )
 
+DIMOS_PYTHON_README = """\
+Robot interface: a live dimOS runtime driving the arm, reached from Python. Write scripts and run
+them with bash (`python script.py`); each script connects, acts and exits.
+
+    from dimos import Dimos
+    from dimos.manipulation.sdk import Arm, MotionError
+
+    app = Dimos.connect()
+    arm = Arm.from_app(app)
+    try:
+        ...
+    finally:
+        app.stop()  # closes this client's connection; the robot keeps running
+
+Arm (help(arm.<method>) shows the full docstring):
+  arm.pose()                     measured tool centre point (TCP) in world: .position.x/.y/.z,
+                                 .orientation (x, y, z, w)
+  arm.joints()                   joint positions, radians
+  arm.move_pose([x, y, z], orientation=[qx, qy, qz, qw])
+                                 plan and move the TCP to a world pose; omit orientation to keep
+                                 the current one. Endpoint only, the path may curve.
+  arm.move_linear(dx=0, dy=0, dz=0, check_collision=False)
+                                 straight world-frame translation of the TCP, in metres
+  arm.move_joints(q)             plan and move to joint positions
+  arm.set_gripper_position(p)    0 closed .. 1 open; arm.open_gripper(), arm.close_gripper()
+Moves block until the motion ends and raise MotionError on failure; error.result says why.
+Every move accepts speed_scale and timeout.
+
+Camera (the wrist camera, moving with the gripper):
+  app.peek_stream("color_image", 2.0).save("view.jpg")
+                                 the latest RGB frame, saved for the read tool
+
+Perception:
+  app.skills.localize(objects="red cube, blue cup")
+                                 the named objects in the camera's recent frames, as text; describe
+                                 how an object looks (colour, shape). Each found object reports:
+                                 world position; footprint: length x width (m) of the smallest
+                                 rectangle around it seen from above, its centre and the long
+                                 side's yaw; the z range of the surfaces the camera saw (the top
+                                 is reliable, the bottom only as low as was in view); score,
+                                 views and an id that stays the same across calls.
+  app.skills.localize(objects="...", policy='{"accept_score": 0.2}')
+                                 per-call thresholds, a JSON object of LocalizePolicy fields:
+                                 candidate_floor (detector score to form a box), accept_score
+                                 (score to report an object), min_views (camera positions to
+                                 confirm it), max_object_extent_m, min_points. A miss reports
+                                 its best candidate's score and views; lowering accept_score or
+                                 min_views to it accepts that candidate, and lower values also
+                                 admit wrong matches. help(LocalizePolicy) from
+                                 dimos.perception.localize.types lists every field.
+  app.skills.state()             whether localize is ready to answer
+
+help(<call>) shows any call's full docstring. Use only the calls above.
+
+Print only what you need: what a script prints is what you see.
+"""
+
 RAW_ARM_README = """\
 Robot interface: a robot arm with a parallel gripper and a wrist RGB-D camera, as a Zenoh peer
 at {endpoint}. Connect to it directly in peer mode with multicast and gossip scouting off,

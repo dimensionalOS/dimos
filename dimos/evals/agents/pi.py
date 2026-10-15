@@ -252,6 +252,10 @@ class PiAdapter(EvalSubject):
             files = dict(env.artifacts)
             if env.streams:
                 files["recording"] = recording_file(env.streams, run_dir / "recording.db")
+            if env.python_guide:
+                guide = run_dir / "DIMOS.md"
+                guide.write_text(env.python_guide)
+                files["robot"] = guide
         parts = [self.config.system_prompt, self.config.instructions]
         parts.append("Files:\n" + "\n".join(f"- {name}: {path}" for name, path in files.items()))
         if self.config.no_dimos:
@@ -264,7 +268,10 @@ class PiAdapter(EvalSubject):
                 "store.streams.<name> is a stream, .last().data its latest message; iterating "
                 "a stream yields observations with .ts and .data. Inspect with dir() and help()."
             )
-        if env.mcp_url and not self.config.no_dimos:
+        if env.python_guide and not self.config.no_dimos:
+            if self.config.builtin_guidance:
+                parts.append("The robot is live. Drive it from Python as described in DIMOS.md.")
+        elif env.mcp_url and not self.config.no_dimos:
             if self.config.builtin_guidance:
                 parts.append(
                     "The robot is live. Call one of its tools from bash as\n"

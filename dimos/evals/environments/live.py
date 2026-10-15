@@ -58,6 +58,8 @@ class LiveEnvironmentConfig(EnvironmentConfig):
     raw_bridge: bool = False
     # ROBOT.md template describing this robot's raw topics; required with raw_bridge.
     raw_guide: str | None = None
+    # DIMOS.md for agents with dimOS: drive the robot from Python instead of MCP tool calls.
+    python_guide: str | None = None
     attach: bool = False
     launch_timeout_s: float = 1200.0
     at_rest_m: float = 0.05
@@ -152,25 +154,17 @@ class LiveEnvironment(Environment):
             proc.start()
             assert proc.process is not None
             pid = proc.process.pid
-            mcp_url = launched_mcp_url(proc.process, deadline)
+            # Without mcp-server (Python-API and raw agents) the run's registry entry, written
+            # once every module has started, is the readiness signal.
+            mcp = "mcp-server" in (*self.config.blueprint, *modules)
+            mcp_url = launched_mcp_url(proc.process, deadline) if mcp else ""
         else:
             mcp_url = default_mcp_url()
-        adapter = McpAdapter(mcp_url)
-        if proc is not None:
-            process = proc.process
-            assert process is not None
-            while not adapter.wait_for_ready(
-                timeout=min(1.0, max(0.0, deadline - time.monotonic()))
-            ):
-                if process.poll() is not None:
-                    raise RuntimeError(f"Eval dimos process exited with code {process.returncode}")
-                if time.monotonic() >= deadline:
-                    raise TimeoutError(f"MCP at {mcp_url} not ready before the launch deadline")
-        elif not adapter.wait_for_ready(timeout=self.config.launch_timeout_s, interval=2.0):
-            raise RuntimeError(f"MCP at {mcp_url} not ready — is dimos up?")
-        self._mcp_url = mcp_url
+        if mcp_url:
+            self._wait_mcp(mcp_url, proc, deadline)
+        self._mcp_url = mcp_url or None
         self.setup_scene()
-        path = self._wait_recording(deadline, pid)
+        path = self._wait_recording(deadline, pid, proc)
         self._recording = SqliteStore(path=str(path), must_exist=True)
         self._resources.callback(self._recording.stop)
         artifacts = {"recording": path}
@@ -181,11 +175,30 @@ class LiveEnvironment(Environment):
             artifacts=artifacts,
             raw_endpoint=self._raw_endpoint if self.config.raw_bridge else None,
             raw_guide=self.config.raw_guide,
+            python_guide=self.config.python_guide,
         )
 
-    def _wait_recording(self, deadline: float, pid: int | None) -> Path:
+    def _wait_mcp(self, mcp_url: str, proc: DimosCliCall | None, deadline: float) -> None:
+        adapter = McpAdapter(mcp_url)
+        if proc is None:
+            if not adapter.wait_for_ready(timeout=self.config.launch_timeout_s, interval=2.0):
+                raise RuntimeError(f"MCP at {mcp_url} not ready — is dimos up?")
+            return
+        process = proc.process
+        assert process is not None
+        while not adapter.wait_for_ready(timeout=min(1.0, max(0.0, deadline - time.monotonic()))):
+            if process.poll() is not None:
+                raise RuntimeError(f"Eval dimos process exited with code {process.returncode}")
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f"MCP at {mcp_url} not ready before the launch deadline")
+
+    def _wait_recording(
+        self, deadline: float, pid: int | None, proc: DimosCliCall | None = None
+    ) -> Path:
         """Find the recording of the launched process, or the attached dimos."""
         while True:
+            if proc is not None and proc.process is not None and proc.process.poll() is not None:
+                raise RuntimeError(f"Eval dimos process exited with code {proc.process.returncode}")
             runs = [run for run in list_runs(alive_only=True) if pid is None or run.pid == pid]
             if runs:
                 path = RECORDINGS_DIR / runs[-1].run_id / "memory.db"
