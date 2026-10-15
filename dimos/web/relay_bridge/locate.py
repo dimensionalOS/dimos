@@ -132,7 +132,10 @@ def relay_run_cmd(
         f"--allow-read={allow_read}",
         "--allow-net",
         *(
-            [f"--allow-run={deno}", "--allow-env=HOME,DENO_DIR,XDG_CACHE_HOME,PATH,NO_COLOR,TMPDIR"]
+            [
+                f"--allow-run={deno}",
+                "--allow-env=HOME,DENO_DIR,XDG_CACHE_HOME,PATH,NO_COLOR,TMPDIR,GLIBC_TUNABLES",
+            ]
             if sharded
             else []
         ),
