@@ -141,7 +141,10 @@ Grasps:
                                  across its narrow side, and read only the surfaces the camera
                                  saw; suited to small box-like objects. Collisions are not
                                  checked, and the proposals do not know the task; choose the one
-                                 that suits it.
+                                 that suits it. localize merges every view of an object into its
+                                 cloud; when the surfaces seen span only a few millimetres, the
+                                 camera saw just the top: look from another angle and localize
+                                 again before asking for grasps.
 
 help(<call>) shows any call's full docstring. Use only the calls above.
 
