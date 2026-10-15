@@ -30,6 +30,8 @@ ROBOT_IMAGE = "dimensional/evals-robot"
 AGENT_IMAGE = "dimensional/evals-agent"
 # Where the agent finds its robot, whichever robot it is.
 ROBOT_ENDPOINT = "tcp/robot:7447"
+# Where the robot container sees this case's output dir, e.g. to log ground truth for grading.
+CASE_MOUNT = "/case"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -48,6 +50,12 @@ class DimosRobot:
     forward: tuple[str, ...] = ()
     env: Mapping[str, str] = field(default_factory=dict)
     image: str = ROBOT_IMAGE
+    # dimOS data directories (get_data names) the robot needs, mounted read-only from this
+    # machine rather than downloaded in every container, e.g. ("scene_packages",).
+    data: tuple[str, ...] = ()
+    # False keeps dimOS's own topics off the router: the agent sees only what the
+    # blueprint serves itself (raw-robot-bridge), not simulator ground truth.
+    expose_dimos: bool = True
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -66,14 +74,35 @@ class ExternalRobot:
 Robot = DimosRobot | ExternalRobot
 
 
-@dataclass(frozen=True, kw_only=True)
 class SandboxOutcome:
-    """What evaluate gets once the agent has stopped. The robot is still running."""
+    """What evaluate gets once the agent has stopped. The robot and the recorder are still running."""
 
-    done: dict[str, Any]  # the arguments of the agent's accepted done call
-    trajectory: Trajectory
-    recording: Recording | None  # every zenoh sample of the run; None without a robot
-    exec: Callable[..., subprocess.CompletedProcess[str]]  # run a command in the agent container
+    def __init__(
+        self,
+        *,
+        done: dict[str, Any],
+        trajectory: Trajectory,
+        exec: Callable[..., subprocess.CompletedProcess[str]],
+        case_dir: Path,
+        stop_recorder: Callable[[], Recording] | None,
+    ) -> None:
+        self.done = done  # the arguments of the agent's accepted done call
+        self.trajectory = trajectory
+        self.exec = exec  # run a shell command in the agent container
+        self.case_dir = case_dir  # this case's output dir, e.g. for ground truth or a report
+        self._stop_recorder = stop_recorder
+        self._recording: Recording | None = None
+
+    @property
+    def recording(self) -> Recording | None:
+        """Every zenoh sample of the run so far; None without a robot.
+
+        The first read stops the recorder, so read it after anything evaluate itself
+        wants recorded (e.g. running the agent's system).
+        """
+        if self._recording is None and self._stop_recorder is not None:
+            self._recording = self._stop_recorder()
+        return self._recording
 
 
 @dataclass(frozen=True, kw_only=True)
