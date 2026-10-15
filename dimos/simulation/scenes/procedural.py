@@ -46,6 +46,7 @@ Family = Literal[
     "small_object",
     "hidden_object",
     "hidden_clutter",
+    "low_barrier",
 ]
 
 SLAB_THICKNESS = 0.15
@@ -83,6 +84,8 @@ SCATTER_COUNT = 40
 SMALL_OBJECT_LENGTH = (0.08, 0.5)
 SMALL_OBJECT_ASPECT = 0.4
 SMALL_OBJECT_HEIGHT = 0.1
+BARRIER_DEPTH = 0.3
+BARRIER_SNAP = 0.05
 HIDDEN_CORRIDOR_WIDTH = 1.4
 HIDDEN_ALONG = (0.4, 0.7)
 SIGHT_SAMPLES = 60
@@ -831,6 +834,24 @@ def small_object(seed: int, object_length: float | None = None) -> Scene:
     return scene
 
 
+def low_barrier(seed: int, barrier_height: float | None = None) -> Scene:
+    """Two halves of a room split wall to wall by a low strip, so the only way across is over it."""
+    rng = np.random.default_rng(seed)
+    width, length = _uniform(rng, 8, 10), _uniform(rng, 5, 7)
+    z0 = _uniform(rng, 0.0, 0.08)
+    # faces on the ground truth's 5 cm cells, whose column probe loses a step edge inside one
+    x = round(_uniform(rng, 0.45, 0.55) * width / BARRIER_SNAP) * BARRIER_SNAP
+    height = _given(_uniform(rng, 0.04, 0.16), barrier_height)
+    scene = Scene(
+        f"low_barrier_{seed}", {"width": width, "length": length, "z0": z0, "barrier_x": x}
+    )
+    _shell(scene, width, length, z0)
+    if height > 0:
+        scene.add((x, 0.0, z0), (x + BARRIER_DEPTH, length, z0 + height), "clutter")
+    scene.start = (1.0, 1.0, z0)
+    return scene
+
+
 Params = dict[str, bool | int | float]
 FAMILIES: dict[Family, Callable[..., Scene]] = {
     "office": office,
@@ -845,6 +866,7 @@ FAMILIES: dict[Family, Callable[..., Scene]] = {
     "small_object": small_object,
     "hidden_object": hidden_object,
     "hidden_clutter": hidden_clutter,
+    "low_barrier": low_barrier,
 }
 
 

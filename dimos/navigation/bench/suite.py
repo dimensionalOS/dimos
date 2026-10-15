@@ -41,6 +41,7 @@ from dimos.navigation.bench.ground_truth import (
     boxes_near,
 )
 from dimos.simulation.scenes.procedural import (
+    BARRIER_DEPTH,
     BLOCK_SIZE,
     OVERHANG_SIZE,
     PLACEMENT_TRIES,
@@ -772,6 +773,33 @@ HIDDEN_OBJECT = Probe(
     control=0.0,
     premap_objects=False,
 )
+
+
+def over_the_barrier(gt: GroundTruth, height: float, rng: np.random.Generator) -> Placed:
+    """A drawn start short of the barrier, and a goal in the far half well clear of its walls.
+
+    The feature is where the straight line between them crosses the barrier.
+    """
+    params = gt.scene.params
+    x, width, length = params["barrier_x"], params["width"], params["length"]
+    start = _start_before(gt.scene, x - APPROACH_M, rng)
+    near_x = x + BARRIER_DEPTH + START_CLEARANCE
+    gx = near_x + (width - START_CLEARANCE - near_x) * float(rng.random())
+    gy = START_CLEARANCE + (length - 2 * START_CLEARANCE) * float(rng.random())
+    mid = x + BARRIER_DEPTH / 2
+    cross = start[1] + (gy - start[1]) * (mid - start[0]) / (gx - start[0])
+    return Placed(start, (gx, gy, gt.scene.start[2]), (mid, cross))
+
+
+BARRIER_HEIGHT = Probe(
+    "barrier_height",
+    "low_barrier",
+    "barrier_height",
+    (0.04, 0.08, 0.10, 0.12, 0.14),
+    over_the_barrier,
+    scene_param="barrier_height",
+    control=0.0,
+)
 PROBES = {
     probe.name: probe
     for probe in (
@@ -786,6 +814,7 @@ PROBES = {
         SMALL_OBJECT,
         HIDDEN_OBJECT,
         HIDDEN_CLUTTER,
+        BARRIER_HEIGHT,
     )
 }
 

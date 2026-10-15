@@ -23,6 +23,8 @@ from numpy.typing import NDArray
 import pytest
 
 from dimos.simulation.scenes.procedural import (
+    BARRIER_DEPTH,
+    BARRIER_SNAP,
     BLOCK_SIZE,
     CORRIDOR_LENGTH,
     CORRIDOR_WIDTH,
@@ -62,6 +64,7 @@ from dimos.simulation.scenes.procedural import (
     generate,
     hidden_clutter,
     hidden_object,
+    low_barrier,
     office,
     overhang,
     room,
@@ -570,3 +573,21 @@ def test_scattered_count_only_adds_boxes_and_zero_leaves_the_room_empty() -> Non
         assert fewer.boxes == full.boxes[: 5 + count] and fewer.params == full.params
     assert len(scattered(3).boxes) == 5 + SCATTER_COUNT
     assert generate("scattered", 3, clutter_count=40.0).boxes == scattered(3).boxes[:45]
+
+
+def test_low_barrier_is_deterministic_and_pinned() -> None:
+    assert low_barrier(3).digest() == low_barrier(3).digest() == "45f6b386657b2d3f"
+    assert low_barrier(3).digest() != low_barrier(4).digest()
+
+
+def test_low_barrier_spans_the_room_wall_to_wall_at_the_given_height() -> None:
+    for seed in range(1, 21):
+        scene = low_barrier(seed, barrier_height=0.1)
+        z0, x, length = (scene.params[k] for k in ("z0", "barrier_x", "length"))
+        (strip,) = [b for b in scene.boxes if b.kind == "clutter"]
+        low = [c - h for c, h in zip(strip.center, strip.half, strict=True)]
+        high = [c + h for c, h in zip(strip.center, strip.half, strict=True)]
+        assert low == pytest.approx([x, 0.0, z0])
+        assert high == pytest.approx([x + BARRIER_DEPTH, length, z0 + 0.1])
+        assert x / BARRIER_SNAP == pytest.approx(round(x / BARRIER_SNAP))
+    assert not [b for b in low_barrier(3, barrier_height=0.0).boxes if b.kind == "clutter"]

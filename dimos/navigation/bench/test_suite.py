@@ -25,6 +25,7 @@ import pytest
 from dimos.navigation.bench.ground_truth import CELL, GO2, GroundTruth
 from dimos.navigation.bench.suite import (
     APPROACH_M,
+    BARRIER_HEIGHT,
     BLOCK_HEIGHT,
     CLUTTER,
     CORRIDOR,
@@ -50,6 +51,7 @@ from dimos.navigation.bench.suite import (
     table_leg,
 )
 from dimos.simulation.scenes.procedural import (
+    BARRIER_DEPTH,
     BLOCK_SIZE,
     OVERHANG_SIZE,
     SMALL_OBJECT_ASPECT,
@@ -350,4 +352,18 @@ def test_clutter_count_probe_only_adds_boxes_between_the_same_start_and_goal() -
         assert case.feature is None and not case.level.control
         assert case.goal == (params["goal_x"], params["goal_y"], params["z0"])
         assert case.route_length > 3.0 and case.difficulty.doors == 0
+    manifest.check_drift()
+
+
+def test_barrier_height_probe_crosses_the_strip_between_start_and_goal() -> None:
+    probe = replace(BARRIER_HEIGHT, seeds=(1, 2))
+    manifest = freeze_probe(probe)
+    assert len(manifest.cases) == 2 * (len(probe.levels) + 1)
+    for case in manifest.cases:
+        assert case.level is not None and case.params == {"barrier_height": case.level.value}
+        x = case.scene().params["barrier_x"]
+        assert case.start[0] < x and case.goal[0] > x + BARRIER_DEPTH
+        assert case.feature is not None
+        assert case.feature[0] == pytest.approx(x + BARRIER_DEPTH / 2)
+    assert len({(c.start, c.goal, c.feature) for c in manifest.cases if c.seed == 1}) == 1
     manifest.check_drift()
