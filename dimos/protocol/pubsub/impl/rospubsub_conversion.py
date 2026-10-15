@@ -58,6 +58,18 @@ _ROS_TO_LCM_FIELD_MAP: dict[str, str] = {
     "nanosec": "nsec",  # ROS2 Time.nanosec -> LCM Time.nsec
 }
 
+
+def _lcm_field_for(ros_field_name: str, lcm_msg: Any) -> str | None:
+    """LCM field for *ros_field_name*; falls back to upper case (ROS 2 ``k`` -> LCM ``K``)."""
+    mapped = _ROS_TO_LCM_FIELD_MAP.get(ros_field_name, ros_field_name)
+    if hasattr(lcm_msg, mapped):
+        return mapped
+    upper = mapped.upper()
+    if upper != mapped and hasattr(lcm_msg, upper):
+        return upper
+    return None
+
+
 # Reverse mapping (LCM name -> ROS name)
 _LCM_TO_ROS_FIELD_MAP: dict[str, str] = {v: k for k, v in _ROS_TO_LCM_FIELD_MAP.items()}
 
@@ -145,9 +157,8 @@ def _copy_ros_to_lcm_recursive(ros_msg: Any, lcm_msg: Any) -> None:
     field_types = ros_msg.get_fields_and_field_types()
     for ros_field_name in field_types:
         # Map ROS field name to LCM field name
-        lcm_field_name = _ROS_TO_LCM_FIELD_MAP.get(ros_field_name, ros_field_name)
-
-        if not hasattr(lcm_msg, lcm_field_name):
+        lcm_field_name = _lcm_field_for(ros_field_name, lcm_msg)
+        if lcm_field_name is None:
             continue
 
         ros_value = getattr(ros_msg, ros_field_name)
@@ -178,6 +189,9 @@ def _copy_ros_to_lcm_recursive(ros_msg: Any, lcm_msg: Any) -> None:
         # Handle bytes/data fields
         elif isinstance(ros_value, (bytes, bytearray)):
             setattr(lcm_msg, lcm_field_name, bytes(ros_value))
+        # Multi-byte arrays (CameraInfo k/r/p) are numbers; itemsize-1 image data wants tobytes().
+        elif hasattr(ros_value, "tolist") and getattr(ros_value, "itemsize", 1) > 1:
+            setattr(lcm_msg, lcm_field_name, ros_value.tolist())
         # Handle array.array (ROS uses this for data fields)
         elif hasattr(ros_value, "tobytes"):
             setattr(lcm_msg, lcm_field_name, ros_value.tobytes())
@@ -208,9 +222,8 @@ def _copy_lcm_to_ros_recursive(lcm_msg: Any, ros_msg: Any) -> None:
     field_types = ros_msg.get_fields_and_field_types()
     for ros_field_name in field_types:
         # Map ROS field name to LCM field name
-        lcm_field_name = _ROS_TO_LCM_FIELD_MAP.get(ros_field_name, ros_field_name)
-
-        if not hasattr(lcm_msg, lcm_field_name):
+        lcm_field_name = _lcm_field_for(ros_field_name, lcm_msg)
+        if lcm_field_name is None:
             continue
 
         lcm_value = getattr(lcm_msg, lcm_field_name)
