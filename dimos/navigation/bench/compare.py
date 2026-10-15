@@ -19,20 +19,35 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass
+import glob
 import json
+import os
 from pathlib import Path
+import re
+import shlex
 from statistics import median
 import time
 from typing import Literal, TypeAlias
 
+from jinja2 import Environment, FileSystemLoader
 from pydantic import TypeAdapter
 from scipy.stats import binomtest
 
-from dimos.navigation.bench.report import Run
+from dimos.navigation.bench.report import (
+    OUTCOMES,
+    TEMPLATE_FILE as REPORT_TEMPLATE,
+    Run,
+    level_text,
+)
 from dimos.navigation.bench.runner import RECORDING_FILE, RESULTS_FILE, RUN_FILE, SUITE_FILE
-from dimos.navigation.bench.suite import Case, Manifest
+from dimos.navigation.bench.scorer import definitions
+from dimos.navigation.bench.suite import PROBES, Case, Manifest, Rules
 
+EVALS_DIR = Path.home() / "Documents" / "nav_evals"
+TEMPLATE_FILE = "compare_template.html"
 SIGNIFICANCE = 0.05
+BAR_PX = 100
+FAILURE_NAMES = {"reached_with_collision": "collision"}
 MEASURES = ("first_contact_speed", "final_error_xy", "arrived_s", "spl")
 
 Verdict = Literal["better", "worse", "no clear change"]
@@ -66,6 +81,7 @@ class SuiteRun:
 
     path: Path
     suite: str
+    rules: Rules
     run: Run
 
 
@@ -221,7 +237,8 @@ def load_run(path: Path) -> tuple[SuiteRun, list[Episode]]:
         episodes.append(
             Episode(cases[case_id], record["outcome"], measures, path.resolve() / case_id)
         )
-    return SuiteRun(path.resolve(), manifest.suite, _RUN.validate_python(meta)), episodes
+    run = _RUN.validate_python(meta)
+    return SuiteRun(path.resolve(), manifest.suite, manifest.rules, run), episodes
 
 
 def load_side(label: str, paths: Iterable[Path]) -> Side:
@@ -458,3 +475,163 @@ def to_json(comparison: Comparison) -> dict[str, Json]:
             for p in comparison.changed
         ],
     }
+
+
+def run_dirs(patterns: Iterable[str]) -> list[Path]:
+    """The run directories the patterns name, each a path or a glob."""
+    dirs: list[Path] = []
+    for pattern in patterns:
+        matches = sorted(glob.glob(os.path.expanduser(pattern)))
+        if not matches:
+            raise ValueError(f"no run directory matches {pattern}")
+        dirs.extend(Path(match) for match in matches)
+    return dirs
+
+
+def label_of(dirs: list[Path]) -> str:
+    """A side's default name: its run directory's, the name its chunks share, or their parent's."""
+    names = sorted({d.resolve().name for d in dirs})
+    stems = {re.sub(r"-\d+$", "", name) for name in names}
+    parents = {d.resolve().parent.name for d in dirs}
+    if len(names) == 1:
+        return names[0]
+    if len(stems) == 1:
+        return stems.pop()
+    return parents.pop() if len(parents) == 1 else "+".join(names)
+
+
+def default_out(base: str, new: str) -> Path:
+    return EVALS_DIR / f"compare-{base}-vs-{new}.html"
+
+
+@dataclass(frozen=True)
+class Bar:
+    """A signed change drawn from the middle, as a share of the cases."""
+
+    x: int
+    width: int
+    direction: Literal["up", "down", "flat"]
+    significant: bool
+
+
+@dataclass(frozen=True)
+class Detail:
+    """One line of the run details, for each side."""
+
+    name: str
+    base: str
+    new: str
+
+
+def bar(t: Tally) -> Bar:
+    half = BAR_PX // 2
+    width = round(abs(t.change) / t.cases * half) if t.cases else 0
+    direction: Literal["up", "down", "flat"] = (
+        "up" if t.change > 0 else "down" if t.change < 0 else "flat"
+    )
+    return Bar(
+        half - width if t.change < 0 else half, width, direction, t.verdict != "no clear change"
+    )
+
+
+def failures(counts: Counter[str]) -> str:
+    return ", ".join(f"{FAILURE_NAMES.get(o, o)} {counts[o]}" for o in OUTCOMES if counts[o])
+
+
+def level_label(probe: str, value: float | None) -> str:
+    if value is None:
+        return "control"
+    spec = PROBES.get(probe)
+    unit = spec.unit if spec is not None else "m"
+    return level_text(value, unit) + (f" {unit}" if unit else "")
+
+
+def pair_level(p: Pair) -> str:
+    level = p.case.level
+    if level is None:
+        return ""
+    return level_label(p.case.tag, None if level.control else level.value)
+
+
+def direction(p: Pair) -> str:
+    return {1: "became success", -1: "became failure"}.get(p.flip, "other change")
+
+
+def signed(value: float, digits: int = 0) -> str:
+    text = f"{abs(value):.{digits}f}"
+    if float(text) == 0:
+        return text
+    return ("+" if value > 0 else "\u2212") + text
+
+
+def p_text(p: float) -> str:
+    return f"{p:.3f}" if p >= 0.001 else f"{p:.0e}"
+
+
+def details(base: Side, new: Side) -> list[Detail]:
+    """What each side ran, one line per field."""
+    sides = [_details(base), _details(new)]
+    return [Detail(name, sides[0][name], sides[1][name]) for name in sides[0]]
+
+
+def _details(side: Side) -> dict[str, str]:
+    runs = [r.run for r in side.runs]
+    commits = [(r.commit or "unknown")[:10] + (", dirty" if r.dirty else "") for r in runs]
+    return {
+        "runs": f"{len(side.runs)} suite runs, {len(side.episodes)} cases",
+        "suites": _join(sorted(r.suite for r in side.runs)),
+        "commit": _join(commits),
+        "policy": _join([r.policy or "none given" for r in runs]),
+        "overrides": _join([" ".join(r.overrides) for r in runs if r.overrides]),
+        "date": _join(_days(side)),
+        "procs": "not recorded",
+        "machine": "not recorded",
+        "run again": f"{side.replaced} cases, latest kept" if side.replaced else "none",
+    }
+
+
+def _join(values: list[str]) -> str:
+    return ", ".join(dict.fromkeys(values)) or "none"
+
+
+def render(comparison: Comparison) -> str:
+    """The comparison page, styled like the run report."""
+    here = Path(__file__).parent
+    report_page = (here / REPORT_TEMPLATE).read_text()
+    styles = re.findall(r"<style>(.*?)</style>", report_page, re.S)
+    scripts = re.findall(r"<script>(.*?)</script>", report_page, re.S)
+    assert len(styles) == 1 and len(scripts) == 1
+    env = Environment(loader=FileSystemLoader(here), autoescape=True, trim_blocks=True)
+    env.filters["quote"] = shlex.quote
+    env.filters["signed"] = signed
+    env.filters["p"] = p_text
+    changed = sorted(
+        comparison.changed, key=lambda p: (p.case.tag, -p.flip, p.case.seed, p.case.id)
+    )
+    return env.get_template(TEMPLATE_FILE).render(
+        c=comparison,
+        summary=to_json(comparison)["summary"],
+        style=styles[0],
+        script=scripts[0],
+        warnings=warnings(comparison),
+        details=details(comparison.base, comparison.new),
+        glossary=definitions(comparison.base.runs[0].rules),
+        changed=changed,
+        changed_probes=sorted({p.case.tag for p in changed}),
+        bar=bar,
+        bar_px=BAR_PX,
+        failures=failures,
+        level_label=level_label,
+        pair_level=pair_level,
+        direction=direction,
+        written=time.strftime("%Y-%m-%d %H:%M"),
+    )
+
+
+def write(comparison: Comparison, out: Path) -> Path:
+    """The page at out and its numbers beside it as out.json."""
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(render(comparison))
+    numbers = out.with_name(out.name + ".json")
+    numbers.write_text(json.dumps(to_json(comparison), indent=2) + "\n")
+    return out

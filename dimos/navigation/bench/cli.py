@@ -222,6 +222,46 @@ def report_command(
     typer.echo(write(run_dir))
 
 
+@app.command("compare")
+def compare_command(
+    base: list[str] = typer.Option(
+        ..., "--base", help="A baseline run directory, or a quoted glob of them. Repeatable."
+    ),
+    new: list[str] = typer.Option(
+        ..., "--new", help="A candidate run directory, or a quoted glob of them. Repeatable."
+    ),
+    base_label: str | None = typer.Option(None, help="Name of the baseline on the page."),
+    new_label: str | None = typer.Option(None, help="Name of the candidate on the page."),
+    base_repeat: list[str] = typer.Option(
+        [], "--base-repeat", help="A second baseline run of the same cases, for the noise."
+    ),
+    out: Path | None = typer.Option(
+        None, "--out", help="The page. Default: under ~/Documents/nav_evals, named from the labels."
+    ),
+) -> None:
+    """Compare two sets of runs case by case, into a page and its numbers as json beside it."""
+    from dimos.navigation.bench.compare import (
+        compare,
+        default_out,
+        label_of,
+        load_side,
+        run_dirs,
+        write,
+    )
+
+    try:
+        base_dirs, new_dirs, repeat_dirs = run_dirs(base), run_dirs(new), run_dirs(base_repeat)
+    except ValueError as missing:
+        raise typer.BadParameter(str(missing)) from missing
+    base_side = load_side(base_label or label_of(base_dirs), base_dirs)
+    new_side = load_side(new_label or label_of(new_dirs), new_dirs)
+    repeat = load_side(f"{base_side.label} repeat", repeat_dirs) if repeat_dirs else None
+    path = write(
+        compare(base_side, new_side, repeat), out or default_out(base_side.label, new_side.label)
+    )
+    typer.echo(f"page -> {path}\nnumbers -> {path}.json")
+
+
 @app.command("replay")
 def replay_command(
     episode: str = typer.Argument(
