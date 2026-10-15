@@ -1062,6 +1062,35 @@ class TestPlanningGroupApis:
         assert module.get_error() == ""
         assert module._state == OperationStatus.IDLE
 
+    def test_check_reachable_says_why_per_pose_and_plans_nothing(
+        self, robot_config, module_factory
+    ):
+        module = module_factory()
+        module.config.model = robot_config
+        module._world_monitor = MagicMock()
+        module._world_monitor.planning_groups = PlanningGroupRegistry(robot_config.planning_groups)
+        module._world_monitor.current_model_joint_state.return_value = JointState(
+            name=robot_config.joint_names,
+            position=[0.0, 0.0, 0.0],
+        )
+        module._kinematics = MagicMock()
+        module._kinematics.solve_pose_targets.side_effect = [
+            IKResult(status=IKStatus.SUCCESS, joint_state=JointState()),
+            IKResult(status=IKStatus.NO_SOLUTION, message="target is outside the workspace"),
+        ]
+
+        reasons = module.check_reachable(
+            [PoseStamped(frame_id="world"), PoseStamped(frame_id="world")]
+        )
+
+        assert reasons == ["", "IK failed: NO_SOLUTION: target is outside the workspace"]
+        assert all(
+            c.kwargs["check_collision"] is False
+            for c in module._kinematics.solve_pose_targets.call_args_list
+        )
+        assert module._state == ManipulationState.IDLE
+        assert module._last_plan is None
+
 
 class TestPlanningDiagnostics:
     def test_planner_failure_preserves_backend_detail(self, robot_config, module_factory):
