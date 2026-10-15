@@ -89,6 +89,9 @@ class SandboxCase:
     timeout_s: float = 600.0
     threshold: float = 1.0
     tags: frozenset[str] = frozenset()
+    # What the recorder keeps: zenoh key expression -> most samples a second (None keeps
+    # every sample); keys matching none are dropped. None records everything.
+    record: Mapping[str, float | None] | None = None
     # What the agent is told when it stops without an accepted done call (e.g. to ask the
     # user something), at most `reminders` times; None is a plain "call done" reminder.
     reminder: str | None = None

@@ -64,3 +64,26 @@ def test_recorder_sees_both_directions_through_the_router(tmp_path: Path, capsys
     assert sample.decode() == {"vx": 0.2} and sample.attachment == b"a" and sample.kind == "PUT"
     twist = recording.last("dimos/cmd_vel/*")
     assert twist is not None and twist.decode().linear.x == 0.2
+
+
+def test_recorder_keeps_only_what_it_is_told_at_the_rate_it_is_told(tmp_path: Path) -> None:
+    endpoint = f"tcp/127.0.0.1:{_free_port()}"
+    path = tmp_path / "zenoh.db"
+    stop = threading.Event()
+    keep = {"robot/lidar/**": 1.0, "robot/odom/**": None}
+    with zenoh.open(router_config([endpoint], [])):
+        recorder = threading.Thread(target=record, args=(endpoint, path, stop, keep))
+        recorder.start()
+        with _client(endpoint) as robot:
+            time.sleep(1.0)
+            for _ in range(10):  # a burst, well under the lidar's one second
+                robot.put("robot/lidar/xyz_f32", b"\0" * 12)
+                robot.put("robot/odom/json", b"{}")
+                robot.put("robot/imu/json", b"{}")
+            time.sleep(1.0)
+        stop.set()
+        recorder.join(timeout=5)
+    recording = Recording(path)
+    assert recording.keys() == ["robot/lidar/xyz_f32", "robot/odom/json"]
+    assert len(list(recording.samples("robot/lidar/**"))) == 1
+    assert len(list(recording.samples("robot/odom/json"))) == 10

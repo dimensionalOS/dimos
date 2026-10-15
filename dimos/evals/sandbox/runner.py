@@ -158,7 +158,7 @@ class SandboxRunner:
         project = re.sub(r"[^a-z0-9_-]", "-", f"{self.run_dir.name}-{case.id}".lower())
         compose_file = case_dir / "compose.json"
         self._write_harness(case, case_dir / "harness")
-        compose_file.write_text(json.dumps(self._compose(robot, case_dir), indent=2))
+        compose_file.write_text(json.dumps(self._compose(case, robot, case_dir), indent=2))
         compose = ["docker", "compose", "-p", project, "-f", str(compose_file)]
         trajectory: Trajectory | None = None
         agent_s = 0.0
@@ -224,7 +224,7 @@ class SandboxRunner:
         }
         (harness / "done.json").write_text(json.dumps(done))
 
-    def _compose(self, robot: Robot | None, case_dir: Path) -> dict[str, Any]:
+    def _compose(self, case: SandboxCase, robot: Robot | None, case_dir: Path) -> dict[str, Any]:
         upstream = os.environ.get(
             f"{self.agent.provider.upper()}_BASE_URL", PROVIDERS[self.agent.provider][1]
         )
@@ -264,7 +264,12 @@ class SandboxRunner:
                 "init": True,
                 "restart": "on-failure",  # until the router is up
                 "command": owned(
-                    "python", "-m", "dimos.evals.sandbox.recorder", ROBOT_ENDPOINT, "/case/zenoh.db"
+                    "python",
+                    "-m",
+                    "dimos.evals.sandbox.recorder",
+                    ROBOT_ENDPOINT,
+                    "/case/zenoh.db",
+                    *([json.dumps(dict(case.record))] if case.record is not None else []),
                 ),
                 "volumes": [f"{case_dir}:/case"],
             }
