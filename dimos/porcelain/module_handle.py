@@ -15,22 +15,30 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import TypeAlias
+from typing import Any, TypeAlias
 
 from dimos.core.rpc_client import ModuleProxyProtocol, RpcCall, RPCClient
+from dimos.core.stream import RemoteOut
 from dimos.protocol.rpc.spec import RPCSpec
 
 
 class RemoteModuleProxy:
     """Names-only handle for a module whose Python class is unavailable.
 
-    Only RPC names advertised by the coordinator are accessible.
+    Only RPC names and streams advertised by the coordinator are accessible.
     """
 
-    def __init__(self, rpc: RPCSpec, remote_name: str, rpc_names: set[str]) -> None:
+    def __init__(
+        self,
+        rpc: RPCSpec,
+        remote_name: str,
+        rpc_names: set[str],
+        stream_lookup: Callable[[str], RemoteOut[Any]] | None = None,
+    ) -> None:
         self._rpc = rpc
         self._remote_name = remote_name
         self._rpc_names = rpc_names
+        self._stream_lookup = stream_lookup
         self._unsub_fns: list[Callable[[], None]] = []
 
     def __getattr__(self, name: str) -> RpcCall:
@@ -39,6 +47,12 @@ class RemoteModuleProxy:
         if name not in self._rpc_names:
             raise AttributeError(f"{self._remote_name!r} has no @rpc method named {name!r}")
         return RpcCall(None, self._rpc, name, self._remote_name, self._unsub_fns, None)
+
+    def get_stream(self, name: str) -> RemoteOut[Any]:
+        """Get a subscription handle for an advertised stream."""
+        if self._stream_lookup is None:
+            raise AttributeError("Stream lookup is unavailable")
+        return self._stream_lookup(name)
 
     def __dir__(self) -> list[str]:
         return sorted(self._rpc_names)

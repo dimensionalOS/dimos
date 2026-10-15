@@ -433,10 +433,11 @@ For Habitat, select a downloaded dataset and its scene handle on the environment
 
 ```python session=evals ansi=false no-result
 from dimos.evals.environments.habitat import HabitatEnvironment
+from dimos.simulation.habitat.constants import HM3D_EXAMPLE_DATASET_CONFIG
 
 habitat_environment = HabitatEnvironment(
     blueprint=["habitat-nav", "mcp-server", "observe-skill"],
-    scene_dataset_config="target/habitat/data/versioned_data/hm3d-0.2/hm3d/example/hm3d_annotated_example_basis.scene_dataset_config.json",
+    scene_dataset_config=str(HM3D_EXAMPLE_DATASET_CONFIG),
     scene_id="00861-GLAQ4DNUx5U",
     seed=0,
 )
@@ -514,7 +515,7 @@ package for tasks, scene setup and usage; use `--tags <scene>` to select a case.
 - **Python**: `EvalRunner().run(SUITE, agent, tags=frozenset({"encoding"}))`
 - **pytest**: suites are importable lists. Use
   `@pytest.mark.parametrize("case", SUITE)` and assert on `passed`
-  (gate live-model tests with `skipif_no_openai`).
+  (skip live-model tests when `OPENAI_API_KEY` is unset).
 - **MCP**: the `EvalModule` skills `run_evals` / `list_eval_suites` /
   `list_eval_agents` return the summary + run dir, so a coding agent can run
   evals, grep trajectories, edit prompts/encodings, and run again.

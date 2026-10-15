@@ -69,6 +69,10 @@ def load_model(
 
     xml_string = get_model_xml(robot, scene_xml)
     model = mujoco.MjModel.from_xml_string(xml_string, assets=get_assets())
+    # clip planes in meters: MuJoCo scales them by the scene's extent, which differs ~200x between rooms, and a far
+    # near plane hides what is close to the lidar's depth cameras
+    model.vis.map.znear = 0.01 / model.stat.extent
+    model.vis.map.zfar = 100 / model.stat.extent
     data = mujoco.MjData(model)
 
     mujoco.mj_resetDataKeyframe(model, data, 0)
@@ -110,16 +114,6 @@ def get_model_xml(robot: str, scene_xml: str) -> str:
     root.set("model", f"{robot}_scene")
     root.insert(0, ET.Element("include", file=f"{robot}.xml"))
 
-    # Ensure visual/map element exists with znear and zfar
-    visual = root.find("visual")
-    if visual is None:
-        visual = ET.SubElement(root, "visual")
-    map_elem = visual.find("map")
-    if map_elem is None:
-        map_elem = ET.SubElement(visual, "map")
-    map_elem.set("znear", "0.01")
-    map_elem.set("zfar", "10000")
-
     _add_person_object(root)
 
     return ET.tostring(root, encoding="unicode")
@@ -157,7 +151,21 @@ def load_scene_xml(config: GlobalConfig) -> str:
         path = Path(config.mujoco_room_from_occupancy)
         return generate_mujoco_scene(OccupancyGrid.from_path(path))
 
-    mujoco_room = config.mujoco_room or "office1"
+    mujoco_room = config.mujoco_room or "office_555"
+    if mujoco_room == "office_555":
+        return _office_555_scene_xml()
     xml_file = (_get_data_dir() / f"scene_{mujoco_room}.xml").as_posix()
     with open(xml_file) as f:
         return f.read()
+
+
+def _office_555_scene_xml() -> str:
+    """The office_555 scene, its meshes and textures referenced by absolute path so they load from its data folder."""
+    office_555 = get_data("mujoco_office_555")
+    root = ET.parse(office_555 / "scene_office_555.xml").getroot()
+    for element, folder in [("mesh", "meshes"), ("texture", "textures")]:
+        for asset in root.iter(element):
+            file = asset.get("file")
+            if file:
+                asset.set("file", (office_555 / folder / file).as_posix())
+    return ET.tostring(root, encoding="unicode")

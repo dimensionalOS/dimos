@@ -30,7 +30,7 @@ engine. Python remains the default because the native recorder is experimental;
 MCAP recording currently requires the Rust engine.
 
 The Rust engine records exact `LCMTransport` and `ZenohTransport` streams. It
-rejects SHM, DDS, ROS, WebRTC, pickled, JPEG-transport, mixed LCM/Zenoh, and
+rejects DDS, ROS, WebRTC, pickled, JPEG-transport, mixed LCM/Zenoh, and
 other specialized transports before creating an artifact. Narrow
 `--record-topics` or use the Python engine when a selection contains one of
 those transports. Payloads must also be dimOS LCM message types.

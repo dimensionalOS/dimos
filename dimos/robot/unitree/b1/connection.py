@@ -34,9 +34,8 @@ from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.std_msgs.Int32 import Int32
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.robot.unitree.b1.b1_command import B1Command
 from dimos.utils.logging_config import setup_logger
-
-from .b1_command import B1Command
 
 # Setup logger with DEBUG level for troubleshooting
 logger = setup_logger(level=logging.DEBUG)

@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-import functools
+from functools import partial
 import importlib.util
 import threading
 import time
@@ -27,10 +27,9 @@ from typing import (
 
 import numpy as np
 
-from dimos.core.stream import In, Stream, Transport
+from dimos.core.stream import Stream, Transport
 from dimos.msgs.protocol import DimosMsg
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM, PickleLCM, Topic as LCMTopic
-from dimos.protocol.pubsub.impl.shmpubsub import BytesSharedMemory, PickleSharedMemory
 from dimos.protocol.pubsub.impl.webrtc.providers.broker import BrokerConfig
 from dimos.protocol.pubsub.impl.webrtc.providers.spec import AudioProvider, ProviderConfig
 from dimos.protocol.pubsub.impl.webrtc.webrtcpubsub import WebRTCPubSub
@@ -108,7 +107,10 @@ class pLCMTransport(PubSubTransport[T]):
         self.lcm = PickleLCM(**kwargs)
 
     def __reduce__(self):  # type: ignore[no-untyped-def]
-        return (pLCMTransport, (self.topic,))
+        return (
+            partial(pLCMTransport, **self.lcm.config.model_dump(exclude={"lcm"})),
+            (self.topic,),
+        )
 
     def broadcast(self, _: Stream[T] | None, msg: T) -> None:
         if not self._started:
@@ -149,7 +151,10 @@ class LCMTransport(PubSubTransport[T]):
         self._started = False
 
     def __reduce__(self):  # type: ignore[no-untyped-def]
-        return (LCMTransport, (self.topic.topic, self.topic.lcm_type))
+        return (
+            partial(LCMTransport, **self.lcm.config.model_dump(exclude={"lcm"})),
+            (self.topic.topic, self.topic.lcm_type),
+        )
 
     def broadcast(self, _, msg) -> None:  # type: ignore[no-untyped-def]
         if not self._started:
@@ -175,7 +180,10 @@ class JpegLcmTransport(LCMTransport):  # type: ignore[type-arg]
         super().__init__(topic, type)
 
     def __reduce__(self):  # type: ignore[no-untyped-def]
-        return (JpegLcmTransport, (self.topic.topic, self.topic.lcm_type))
+        return (
+            partial(JpegLcmTransport, **self.lcm.config.model_dump(exclude={"lcm"})),
+            (self.topic.topic, self.topic.lcm_type),
+        )
 
     def start(self) -> None:
         self.lcm.start()
@@ -183,107 +191,6 @@ class JpegLcmTransport(LCMTransport):  # type: ignore[type-arg]
 
     def stop(self) -> None:
         self.lcm.stop()
-        self._started = False
-
-
-class pSHMTransport(PubSubTransport[T]):
-    _started: bool = False
-
-    def __init__(self, topic: str, **kwargs) -> None:  # type: ignore[no-untyped-def]
-        super().__init__(topic)
-        self.shm = PickleSharedMemory(**kwargs)
-
-    def __reduce__(self):  # type: ignore[no-untyped-def]
-        return (
-            functools.partial(pSHMTransport, default_capacity=self.shm.config.default_capacity),
-            (self.topic,),
-        )
-
-    def broadcast(self, _, msg) -> None:  # type: ignore[no-untyped-def]
-        if not self._started:
-            self.start()
-
-        self.shm.publish(self.topic, msg)
-
-    def subscribe(self, callback: Callable[[T], None], selfstream: In[T] = None) -> None:  # type: ignore[assignment, override]
-        if not self._started:
-            self.start()
-        return self.shm.subscribe(self.topic, lambda msg, topic: callback(msg))  # type: ignore[return-value]
-
-    def start(self) -> None:
-        self.shm.start()
-        self._started = True
-
-    def stop(self) -> None:
-        self.shm.stop()
-        self._started = False
-
-
-class SHMTransport(PubSubTransport[T]):
-    _started: bool = False
-
-    def __init__(self, topic: str, **kwargs) -> None:  # type: ignore[no-untyped-def]
-        super().__init__(topic)
-        self.shm = BytesSharedMemory(**kwargs)
-
-    def __reduce__(self):  # type: ignore[no-untyped-def]
-        return (
-            functools.partial(SHMTransport, default_capacity=self.shm.config.default_capacity),
-            (self.topic,),
-        )
-
-    def broadcast(self, _, msg) -> None:  # type: ignore[no-untyped-def]
-        if not self._started:
-            self.start()
-
-        self.shm.publish(self.topic, msg)
-
-    def subscribe(self, callback: Callable[[T], None], selfstream: In[T] | None = None) -> None:  # type: ignore[override]
-        if not self._started:
-            self.start()
-        return self.shm.subscribe(self.topic, lambda msg, topic: callback(msg))  # type: ignore[arg-type, return-value]
-
-    def start(self) -> None:
-        self.shm.start()
-        self._started = True
-
-    def stop(self) -> None:
-        self.shm.stop()
-        self._started = False
-
-
-class JpegShmTransport(PubSubTransport[T]):
-    _started: bool = False
-
-    def __init__(self, topic: str, quality: int = 75, **kwargs) -> None:  # type: ignore[no-untyped-def]
-        super().__init__(topic)
-        from dimos.protocol.pubsub.impl.jpeg_shm import (
-            JpegSharedMemory,
-        )  # deferred to avoid pulling in Image/cv2/rerun
-
-        self.shm = JpegSharedMemory(quality=quality, **kwargs)
-        self.quality = quality
-
-    def __reduce__(self):  # type: ignore[no-untyped-def]
-        return (JpegShmTransport, (self.topic, self.quality))
-
-    def broadcast(self, _, msg) -> None:  # type: ignore[no-untyped-def]
-        if not self._started:
-            self.start()
-
-        self.shm.publish(self.topic, msg)
-
-    def subscribe(self, callback: Callable[[T], None], selfstream: In[T] | None = None) -> None:  # type: ignore[override]
-        if not self._started:
-            self.start()
-        return self.shm.subscribe(self.topic, lambda msg, topic: callback(msg))  # type: ignore[arg-type, return-value]
-
-    def start(self) -> None:
-        self.shm.start()
-        self._started = True
-
-    def stop(self) -> None:
-        self.shm.stop()
         self._started = False
 
 
@@ -341,6 +248,12 @@ class DDSTransport(PubSubTransport[T]):
         self.dds = DDS(**kwargs)
         self._started: bool = False
         self._start_lock = threading.RLock()
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        return (
+            partial(DDSTransport, qos=self.dds.qos, **self.dds.config.model_dump()),
+            (self.topic.name, self.topic.data_type),
+        )
 
     def start(self) -> None:
         with self._start_lock:

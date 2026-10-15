@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The localize answer types and the thresholds a caller tunes per call."""
+"""The localize answer type and the thresholds a caller tunes per call."""
 
 from __future__ import annotations
 
@@ -23,41 +23,18 @@ if TYPE_CHECKING:
     from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 
-@dataclass(frozen=True)
-class Support:
-    """Occupied volume with an error envelope. The identity key."""
-
-    center_xyz: tuple[float, float, float]
-    extent_xyz_m: tuple[float, float, float]
-    orientation_xyzw: tuple[float, float, float, float]
-    sigma_xyz_m: tuple[float, float, float]
-    coverage: float
-    axes_observed: tuple[bool, bool, bool]
-    frame_id: str
-
-
 @dataclass
 class Localization:
-    """One verified instance. Cloud is every viewpoint's union; pose is the latest."""
+    """One verified instance. Cloud is every viewpoint's union; position is the latest."""
 
     instance_id: str
     semantic_score: float
-    identity_score: float
     ambiguity_margin: float
-
-    position_world_xyz: tuple[float, float, float] | None
-    orientation_world_xyzw: tuple[float, float, float, float] | None
+    position_world_xyz: tuple[float, float, float]
     frame_id: str
-
-    support: Support | None
-    pose_timestamp: float
-    geometry_timestamp: float
     last_seen_timestamp: float
-
-    point_cloud: PointCloud2 | None
-    coverage: float
+    point_cloud: PointCloud2
     n_views: int
-    reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -66,9 +43,10 @@ class LocalizePolicy:
 
     Each was fit to one measured scene, so a different rig, object scale or
     detector vocabulary passes its own instance instead of the defaults.
+    The scores are on the models' scales, the defaults on SigLIP and OWLv2's.
     """
 
-    candidate_floor: float = 0.25  # OWLv2 score at which a box is formed
+    candidate_floor: float = 0.25  # detector score at which a box is formed
     accept_score: float = 0.40  # group's best member score to be returned
     min_views: int = 2  # distinct camera positions (1 cm) to confirm a group
     cluster_radius_m: float = 0.08  # two lifts are one object within this
@@ -85,6 +63,5 @@ class LocalizePolicy:
     min_points: int = 60  # points on a lift
     min_camera_range_m: float = 0.28
     fuse_voxel_m: float = 0.01  # union cloud voxel at merge; 0 concatenates
-    plane_cell_m: float = 2.0  # XY cell of the support-plane cache
     plane_keyframes: int = 5
-    refusal_margin: float = 0.15  # below this against a coexisting rival, flagged
+    plane_cell_m: float = 2.0  # XY cell of the support-plane cache

@@ -1,10 +1,9 @@
 from pathlib import Path
 from typing import Any
 
+from a1z.robots.arm_robot import ArmRobot
 import numpy as np
 import numpy.typing as npt
-
-from .arm_robot import ArmRobot
 
 def get_a1z_robot(
     can_channel: str = ...,

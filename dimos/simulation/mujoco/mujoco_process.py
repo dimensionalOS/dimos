@@ -141,6 +141,11 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
         # viewer would keep shadow-rendering the whole scene regardless of
         # per-render flags.
         model.vis.quality.shadowsize = 0
+        # without a shadow map MuJoCo darkens everything outside a narrow spot light's cone, so those lights go off too
+        narrow_spots = (model.light_type == mujoco.mjtLightType.mjLIGHT_SPOT) & (
+            model.light_cutoff < 90
+        )
+        model.light_active[narrow_spots] = 0
 
     lidar_left_camera_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, "lidar_left_camera")
     lidar_right_camera_id = mujoco.mj_name2id(
