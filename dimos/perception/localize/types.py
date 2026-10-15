@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -64,3 +64,8 @@ class LocalizeParams:
     fuse_voxel_m: float  # union cloud voxel at merge; 0 concatenates
     plane_keyframes: int
     plane_cell_m: float  # XY cell of the support-plane cache
+
+    def read_key(self) -> LocalizeParams:
+        """What a frame counts as read under: these params without the answer gates,
+        which act only once the answer is built, so changing them reads no frame again."""
+        return replace(self, accept_score=0.0, min_views=0)

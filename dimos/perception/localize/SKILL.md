@@ -53,8 +53,9 @@ empty answer is an answer.
 - The first answer line is the window as resolved:
   `window A s to B s of C s of feed, N frames`. With `N = 0` nothing was read
   and the answer is memory only.
-- A frame is read once per label and params. A window of frames never read for
-  a label costs detector passes; asking the same window again is nearly free.
+- A frame is read once per label and params, `accept_score` and `min_views`
+  aside. A window of frames never read for a label costs detector passes;
+  asking the same window again is nearly free.
 
 ## Reading the answer
 
@@ -68,7 +69,9 @@ empty answer is an answer.
 - `score` is the detector's best score for the object. Compare scores within one
   label only; the scale changes with the wording.
 - `views` counts the distinct camera positions, 1 cm apart, that saw the object.
-  An object needs 2, and a camera that does not move adds none.
+  An object needs 2, and a camera that does not move adds none. A camera that
+  never moves, such as a fixed top view, stays silent until `min_views` is 1:
+  pass `'{"min_views": 1}'`, which reads no frame again.
 - Objects found by earlier calls are answered again, also outside this window.
   `seen Ns ago` is the age of the newest sighting.
 - `no verified detection` means nothing passed the gates at these params. It is
@@ -88,7 +91,8 @@ Four labels on a rolling 5 s window, one call after another:
   run time plus any wait. If calls take longer than the window, widen it. The
   overlap is free, because read frames are skipped; a gap loses frames.
 - Keep the label strings and `params` the same on every call. Memory is per
-  exact label string, and frames read under other params are read again.
+  exact label string, and frames read under other params are read again,
+  unless only `accept_score` or `min_views` changed.
 - An object that left view stays in the answer at its last position, with a
   growing `seen Ns ago`. An object that moved farther than `cluster_radius_m`
   gets a new `id` at its new position, and the old `id` stays at the old one.
@@ -151,8 +155,9 @@ it is back on the module's, the ones its blueprint set.
 | `fuse_voxel_m` | objects a sighting of this call joins | resolution of the object's cloud |
 | `verify_radius_m`, `peak_prominence` | frames read by this call | how many frames retrieval hands to the detector |
 
-- `accept_score` and `min_views` cost nothing: no detector pass, and they apply
-  to everything remembered for the label. Try them first.
+- `accept_score` and `min_views` act only when the answer is built: changing
+  them reads no frame again and applies at once to everything remembered for
+  the label. Try them first.
 - The other fields shape only what happens from now on. Objects already built
   keep how they were built.
 - A misspelled field fails the call with `unexpected keyword argument`, an

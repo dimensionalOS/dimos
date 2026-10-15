@@ -300,17 +300,18 @@ def detect(
 ) -> Stream[Any, Any]:
     """Each candidate frame's boxes per query, from one detector pass per frame.
 
-    A frame every query has read under ``params`` is skipped, and so is a box
-    already folded into a query's groups. A frame left without boxes is marked
-    read here; any other goes into ``pending`` for :func:`associate` to mark.
+    A frame every query has read under ``params.read_key()`` is skipped, and so
+    is a box already folded into a query's groups. A frame left without boxes is
+    marked read here; any other goes into ``pending`` for :func:`associate` to mark.
     """
     floor = params.candidate_floor
+    read_key = params.read_key()
 
     def _frames(upstream: Iterator[Any]) -> Iterator[Any]:
         for obs in upstream:
             frame_key = (obs.tags["camera"], obs.ts)
             active = [
-                j for j, group in enumerate(state) if (frame_key, params) not in group.ingested
+                j for j, group in enumerate(state) if (frame_key, read_key) not in group.ingested
             ]
             if not active:
                 continue
@@ -336,7 +337,7 @@ def detect(
                         detections.append(det)
             if not detections:
                 for j in active:
-                    state[j].ingested.add((frame_key, params))
+                    state[j].ingested.add((frame_key, read_key))
                 continue
             pending[frame_key] = active
             yield obs.derive(data=ImageDetections2D(image=img, detections=detections))
@@ -360,6 +361,7 @@ def associate(
     traces: list[LocalizeTrace | None],
 ) -> Stream[Any, Any]:
     """Each segmented frame lifted to 3D, folded into its queries' groups, then marked read."""
+    read_key = params.read_key()
 
     def _frames(upstream: Iterator[Any]) -> Iterator[Any]:
         for obs in upstream:
@@ -379,7 +381,7 @@ def associate(
                     )
             # read only once its sightings are in, so a frame a call failed on is read again
             for j in pending.pop(frame_key):
-                state[j].ingested.add((frame_key, params))
+                state[j].ingested.add((frame_key, read_key))
             yield obs
 
     return frames.transform(_frames)
@@ -405,9 +407,10 @@ def localize(
     each carrying ``ambiguity_margin`` against its rivals. ``traces``, one per
     query, collect what a renderer needs. A ``groups`` dict makes evidence
     cumulative across calls: frames already read for a label under the same
-    params are skipped, a box is lifted in once, and an object stays answerable
-    after it leaves the window. A frame counts as read once its sightings are
-    in, so a frame a failed call left behind is read again.
+    params, the answer gates aside, are skipped, a box is lifted in once, and
+    an object stays answerable after it leaves the window. A frame counts as
+    read once its sightings are in, so a frame a failed call left behind is
+    read again.
     """
     label_traces: list[LocalizeTrace | None] = (
         list(traces) if traces is not None else [None] * len(queries)

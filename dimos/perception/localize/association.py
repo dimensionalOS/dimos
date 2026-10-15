@@ -50,7 +50,7 @@ class Groups:
     raw: list[float] = field(default_factory=list)  # raw points folded in so far
     members: list[list[float]] = field(default_factory=list)  # flat, M_WIDTH per row
     trace: list[list[Detection3DPC]] = field(default_factory=list)
-    ingested: set[tuple[FrameKey, LocalizeParams]] = field(default_factory=set)  # frames read
+    ingested: set[tuple[FrameKey, LocalizeParams]] = field(default_factory=set)  # by read_key()
     folded: set[tuple[FrameKey, tuple[int, ...]]] = field(default_factory=set)  # boxes lifted in
     ids: list[str] = field(default_factory=list)
 
