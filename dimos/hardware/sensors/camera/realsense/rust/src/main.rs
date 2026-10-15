@@ -924,9 +924,18 @@ fn pointcloud_thread(cfg: &Config, shared: &Shared, handle: &Handle, outs: &Outs
             .lock()
             .unwrap()
             .as_ref()
-            .map(|i| (i.color.clone(), i.depth_scale));
+            .map(|i| (i.depth.clone(), i.depth_scale));
         if let (Some(rgbd), Some((Some(info), depth_scale))) = (rgbd, infos) {
-            let cloud = rgbd_to_cloud(&rgbd, &info, depth_scale, stride, cfg.depth_trunc_m);
+            // Aligned, the depth image is in the color camera and carries its pinhole.
+            let colored = cfg.align_depth_to_color;
+            let cloud = rgbd_to_cloud(
+                &rgbd,
+                &info,
+                depth_scale,
+                stride,
+                cfg.depth_trunc_m,
+                colored,
+            );
             let _ = handle.block_on(outs.pointcloud.publish(&cloud));
         }
         std::thread::sleep(period.saturating_sub(tick.elapsed()));
@@ -967,18 +976,21 @@ fn rgbd_to_cloud(
     depth_scale: f32,
     stride: usize,
     depth_trunc_m: f32,
+    colored: bool,
 ) -> PointCloud2 {
     let (fx, fy) = (info.K[0] as f32, info.K[4] as f32);
     let (cx, cy) = (info.K[2] as f32, info.K[5] as f32);
     let (w, h) = (rgbd.depth.width as usize, rgbd.depth.height as usize);
-    let rgb = &rgbd.color.data;
-    if rgb.len() != w * h * 3 || rgbd.depth.data.len() != w * h * 2 {
-        // Unaligned depth, or streams at different resolutions.
+    // Only depth aligned to color puts color pixel i on depth pixel i. Unaligned,
+    // they are two cameras with their own pinholes, and the cloud is depth alone.
+    let rgb = colored.then_some(&rgbd.color.data);
+    if rgb.is_some_and(|rgb| rgb.len() != w * h * 3) || rgbd.depth.data.len() != w * h * 2 {
+        // Streams at different resolutions.
         static WARNED: AtomicBool = AtomicBool::new(false);
         if !WARNED.swap(true, Ordering::Relaxed) {
             tracing::warn!(
                 "RealSense pointcloud needs color and depth at one resolution; got color {} bytes, depth {}x{}",
-                rgb.len(),
+                rgbd.color.data.len(),
                 rgbd.depth.width,
                 rgbd.depth.height
             );
@@ -986,9 +998,9 @@ fn rgbd_to_cloud(
         return empty_cloud(&rgbd.depth.header);
     }
 
-    // Every stride-th pixel, back-projected through the color pinhole. A dense
-    // image-shaped cloud thins best in pixel space; a voxel hash costs 10x more
-    // and keeps most of the points anyway.
+    // Every stride-th pixel, back-projected through the depth image's own pinhole
+    // (the color one once aligned). A dense image-shaped cloud thins best in pixel
+    // space; a voxel hash costs 10x more and keeps most of the points anyway.
     let stride = stride.max(1);
     let mut points: Vec<[f32; 3]> = Vec::with_capacity(w * h / (stride * stride));
     let mut colors: Vec<[f32; 3]> = Vec::with_capacity(points.capacity());
@@ -1001,24 +1013,30 @@ fn rgbd_to_cloud(
                 continue;
             }
             points.push([(u as f32 - cx) * z / fx, (v as f32 - cy) * z / fy, z]);
-            let c = &rgb[i * 3..i * 3 + 3];
-            colors.push([
-                c[0] as f32 / 255.0,
-                c[1] as f32 / 255.0,
-                c[2] as f32 / 255.0,
-            ]);
+            if let Some(rgb) = rgb {
+                let c = &rgb[i * 3..i * 3 + 3];
+                colors.push([
+                    c[0] as f32 / 255.0,
+                    c[1] as f32 / 255.0,
+                    c[2] as f32 / 255.0,
+                ]);
+            }
         }
     }
 
-    // x y z rgb as four float32s; rgb packed [0, r, g, b] per the ROS convention.
-    let mut data = Vec::with_capacity(points.len() * 16);
-    for (p, c) in points.iter().zip(&colors) {
+    // x y z [rgb] as float32s; rgb packed [0, r, g, b] per the ROS convention.
+    let point_step: i32 = if colored { 16 } else { 12 };
+    let mut data = Vec::with_capacity(points.len() * point_step as usize);
+    for (k, p) in points.iter().enumerate() {
         for v in p {
             data.extend_from_slice(&v.to_le_bytes());
         }
-        let packed =
-            ((c[0] * 255.0) as u32) << 16 | ((c[1] * 255.0) as u32) << 8 | (c[2] * 255.0) as u32;
-        data.extend_from_slice(&packed.to_le_bytes());
+        if let Some(c) = colors.get(k) {
+            let packed = ((c[0] * 255.0) as u32) << 16
+                | ((c[1] * 255.0) as u32) << 8
+                | (c[2] * 255.0) as u32;
+            data.extend_from_slice(&packed.to_le_bytes());
+        }
     }
     let field = |name: &str, offset: i32| PointField {
         name: name.to_string(),
@@ -1026,20 +1044,19 @@ fn rgbd_to_cloud(
         datatype: PointField::FLOAT32 as u8,
         count: 1,
     };
+    let mut fields = vec![field("x", 0), field("y", 4), field("z", 8)];
+    if colored {
+        fields.push(field("rgb", 12));
+    }
     let n = points.len() as i32;
     PointCloud2 {
         header: rgbd.depth.header.clone(),
         height: if n == 0 { 0 } else { 1 },
         width: n,
-        fields: vec![
-            field("x", 0),
-            field("y", 4),
-            field("z", 8),
-            field("rgb", 12),
-        ],
+        fields,
         is_bigendian: false,
-        point_step: 16,
-        row_step: 16 * n,
+        point_step,
+        row_step: point_step * n,
         data,
         is_dense: true,
     }
@@ -1411,6 +1428,77 @@ mod tests {
         assert_eq!(bytes.len(), 8 + msg.header.encoded_size() + 40);
         assert_eq!(&bytes[bytes.len() - 8..], &5.0f64.to_be_bytes());
     }
+
+    // A flat wall 1 m in front of the camera, 848x480 like the default streams.
+    fn wall() -> Rgbd {
+        let (w, h) = (848usize, 480usize);
+        let image = |encoding: &str, step: usize, data: Vec<u8>| Image {
+            header: header("f", 0.0),
+            height: h as i32,
+            width: w as i32,
+            encoding: encoding.into(),
+            is_bigendian: 0,
+            step: step as i32,
+            data,
+        };
+        let depth = (0..w * h).flat_map(|_| 1000u16.to_le_bytes()).collect();
+        let color = (0..w * h).flat_map(|_| [10u8, 20, 30]).collect();
+        Rgbd {
+            color: image("rgb8", w * 3, color),
+            depth: image("16UC1", w * 2, depth),
+        }
+    }
+
+    fn pinhole(w: usize, h: usize, f: f32) -> CameraInfo {
+        camera_info(
+            &Rs2Intrinsics(realsense_sys::rs2_intrinsics {
+                width: w as i32,
+                height: h as i32,
+                ppx: w as f32 / 2.0,
+                ppy: h as f32 / 2.0,
+                fx: f,
+                fy: f,
+                model: realsense_sys::rs2_distortion_RS2_DISTORTION_NONE,
+                coeffs: [0.0; 5],
+            }),
+            "f",
+        )
+    }
+
+    fn points(cloud: &PointCloud2) -> Vec<[f32; 3]> {
+        let step = cloud.point_step as usize;
+        let f = |b: &[u8]| f32::from_le_bytes(b.try_into().unwrap());
+        cloud
+            .data
+            .chunks(step)
+            .map(|p| [f(&p[0..4]), f(&p[4..8]), f(&p[8..12])])
+            .collect()
+    }
+
+    #[test]
+    fn unaligned_cloud_is_depth_alone_through_the_depth_pinhole() {
+        // The D435 depth imager is ~87 deg across: fx ~425 px at 848 wide.
+        let cloud = rgbd_to_cloud(&wall(), &pinhole(848, 480, 425.0), 0.001, 1, 5.0, false);
+        let names: Vec<_> = cloud.fields.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(names, ["x", "y", "z"]);
+        assert_eq!(cloud.point_step, 12);
+        let pts = points(&cloud);
+        assert_eq!(pts.len(), 848 * 480);
+        assert!(pts.iter().all(|p| p[2] == 1.0));
+        let x_min = pts.iter().map(|p| p[0]).fold(f32::MAX, f32::min);
+        assert!((x_min + 424.0 / 425.0).abs() < 1e-5, "x_min {x_min}");
+    }
+
+    #[test]
+    fn aligned_cloud_keeps_color() {
+        let cloud = rgbd_to_cloud(&wall(), &pinhole(848, 480, 618.0), 0.001, 2, 5.0, true);
+        let names: Vec<_> = cloud.fields.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(names, ["x", "y", "z", "rgb"]);
+        assert_eq!(cloud.point_step, 16);
+        assert_eq!(cloud.width as usize, 424 * 240);
+        let rgb = u32::from_le_bytes(cloud.data[12..16].try_into().unwrap());
+        assert_eq!(rgb, 10 << 16 | 20 << 8 | 30);
+    }
 }
 
 #[cfg(test)]
@@ -1460,7 +1548,7 @@ mod bench {
         info.header.frame_id = "f".into();
         for stride in [1usize, 2, 3] {
             let t = std::time::Instant::now();
-            let cloud = rgbd_to_cloud(&rgbd, &info, 0.001, stride, 5.0);
+            let cloud = rgbd_to_cloud(&rgbd, &info, 0.001, stride, 5.0, true);
             let build = t.elapsed();
             let t = std::time::Instant::now();
             let bytes = cloud.encode();
