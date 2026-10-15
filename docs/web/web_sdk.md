@@ -340,7 +340,7 @@ try {
 | Option | Default | Meaning |
 |---|---|---|
 | `url` | same origin | HTTP address of the relay. The SDK fetches `<url>/api/info` to find the WebTransport endpoint, on every connect. |
-| `robot` | none | Robot id to watch. Without it the session watches the robot when it is the only one on the relay. |
+| `robot` | none | Robot id to watch. Without it the session watches the robot when it is the only one on the relay. Named at discovery too (`/api/info?robot=`), so a relay run with `--shards` answers with that robot's shard. |
 | `decoders` | a fresh registry with the built-ins | From `createDecoderRegistry()`. Captured for the session's lifetime. |
 | `token` | none | Viewer token for a relay started with `--auth-file`. A rejected token fails the transport for good (`auth_failed`). |
 | `uiTickMs` | 500 | Period of the UI tick that feeds `subscribe()` callbacks. A channel's first frame publishes its snapshot at once. |

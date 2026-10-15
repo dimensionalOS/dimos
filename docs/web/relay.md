@@ -68,6 +68,7 @@ deno task dev --cockpit-dir cockpit/dist --sdk-dir sdk/dist
 | `--auth-file` | none | Robot keys and viewer tokens (below). |
 | `--rtc-file` | none | Cloudflare Realtime configuration for WebRTC video (the [hosting guide](/docs/web/relay_hosting.md#video-through-cloudflare)). |
 | `--unsafe-non-loopback` | off | Bind a non-loopback host without TLS and auth, behind your own TLS and access control. |
+| `--shards` | 1 | Run this many relay processes. The one you start is shard 0 and spawns the others on ephemeral ports (with the same arguments); `/api/info?robot=<id>` answers with the robot's shard, so a robot and its viewers share one process. The bridge and the SDK name their robot at discovery; a client that names none stays on shard 0. `/api/stats` answers for one process and lists the others' HTTP ports in `shardHttpPorts`. The deno command needs `--allow-run` for the spawn (the launcher adds it). |
 | `--congestion` | `low-latency` (BBR) | `throughput` (Cubic) or `low-latency` (BBR) for every session. On a lossy link Cubic collapses (0.7 Mbit/s at 1% loss and 150 ms); BBR keeps the rate up but fills the bottleneck queue and crowds out other Cubic flows. On the benchmark's cellular profile video ran at 9 fps and 0.27 s of age under BBR against 2 fps and 1.9 s under Cubic. |
 
 The first line on stdout is the ready line:

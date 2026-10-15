@@ -136,6 +136,10 @@ describe("resolveInfoUrl", () => {
 
   it("resolves against an absolute base with or without a trailing slash", () => {
     expect(resolveInfoUrl("http://127.0.0.1:7780")).toBe("http://127.0.0.1:7780/api/info");
+    expect(resolveInfoUrl("http://127.0.0.1:7780", "go2 lab")).toBe(
+      "http://127.0.0.1:7780/api/info?robot=go2%20lab",
+    );
+    expect(resolveInfoUrl(undefined, "r1")).toBe("/api/info?robot=r1");
     expect(resolveInfoUrl("http://127.0.0.1:7780/")).toBe("http://127.0.0.1:7780/api/info");
   });
 

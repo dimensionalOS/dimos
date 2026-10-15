@@ -673,7 +673,7 @@ class RelayBridgeModule(Module):
         assert self._url is not None and self._robot_info is not None and self._manifest is not None
         # Discovery on every connect: a restarted relay has a new QUIC port
         # and certificate behind the same HTTP URL.
-        info = await fetch_relay_info(self._url, cafile=self._ca)
+        info = await fetch_relay_info(self._url, robot=self._robot_info.id, cafile=self._ca)
         self._relay_info = info
         manifest, rtc_channels = self._wire_manifest(info)
         client = await RelayClient.connect(
