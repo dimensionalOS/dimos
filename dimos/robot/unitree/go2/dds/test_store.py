@@ -71,6 +71,10 @@ def test_lidar(store: Go2McapStore) -> None:
     )
     assert isinstance(pc, PointCloud2)
     assert xyz.shape[1] == 3 and len(xyz) > 0
+    # The L1's per-point `time` (s after the stamp) and `ring` survive the CDR decode.
+    offsets = pc.offset_times_u32()
+    assert offsets is not None and 0 <= offsets.max() < 100_000_000
+    assert pc.lines_u8() is not None
 
 
 def test_imu(store: Go2McapStore) -> None:
