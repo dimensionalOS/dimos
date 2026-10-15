@@ -71,6 +71,11 @@ export interface ViewerSink {
   /** The one stream the viewer's small reliable channels share, opened on
    * first use at `order` and kept for the session: a policy never aborts it. */
   sharedStream(order: number): Promise<FrameWriter>;
+  /** Hand back a channel's stream with no write in flight, for the viewer's
+   * next channel at that order (frames carry `ch`, receivers route by it).
+   * Deno 2.6.10 cannot end a stream before its wrapper is finalized, so an
+   * abandoned one keeps its native state for the connection's life. */
+  releaseStream(order: number, writer: FrameWriter): void;
   kick(reason: string): void;
 }
 
@@ -323,8 +328,13 @@ export class LatestChannel implements ChannelPolicy {
     this.#disposed = true;
     this.#pending = null;
     this.#unacked.length = 0;
-    this.#writer?.abort().catch(() => {});
+    const writer = this.#writer;
     this.#writer = null;
+    if (writer === null) return;
+    // A write still in flight settles later on a stream nobody should
+    // reuse; an idle stream carries the viewer's next channel.
+    if (this.#writing) writer.abort().catch(() => {});
+    else this.sink.releaseStream(LATEST_SEND_ORDER, writer);
   }
 
   #drain(): void {
@@ -334,9 +344,9 @@ export class LatestChannel implements ChannelPolicy {
     (async () => {
       const writer = this.#writer ??= await this.sink.openStream(LATEST_SEND_ORDER);
       if (this.#disposed) {
-        // dispose() ran while the stream was opening and saw no writer to
-        // abort; release the stream here.
-        writer.abort().catch(() => {});
+        // dispose() ran while the stream was opening and saw no writer;
+        // nothing was written, so the stream serves the next channel.
+        this.sink.releaseStream(LATEST_SEND_ORDER, writer);
         this.#writer = null;
         return;
       }
@@ -452,11 +462,16 @@ export class ReliableChannel implements ChannelPolicy {
     this.#disposed = true;
     this.#fifo.length = 0;
     this.#bytes = 0;
-    // Abort, not close: a closed stream cannot be aborted, and both
-    // receivers treat the end of the stream as end-of-stream either way.
-    // The shared stream outlives the channel.
-    if (!this.#shared) this.#writer?.abort().catch(() => {});
+    const writer = this.#writer;
     this.#writer = null;
+    // The shared stream outlives the channel. A stream of the channel's own
+    // goes back to the viewer for its next channel unless a write is still
+    // in flight, which settles later on a stream nobody should reuse (abort,
+    // not close: a closed stream cannot be aborted, and both receivers treat
+    // the end of the stream as end-of-stream either way).
+    if (writer === null || this.#shared) return;
+    if (this.#writing) writer.abort().catch(() => {});
+    else this.sink.releaseStream(RELIABLE_SEND_ORDER, writer);
   }
 
   #drain(): void {
@@ -468,9 +483,10 @@ export class ReliableChannel implements ChannelPolicy {
           ? this.sink.sharedStream(RELIABLE_SEND_ORDER)
           : this.sink.openStream(RELIABLE_SEND_ORDER));
       if (this.#disposed) {
-        // dispose() ran while the stream was opening and saw no writer to
-        // abort; release the stream here.
-        if (!this.#shared) writer.abort().catch(() => {});
+        // dispose() ran while the stream was opening and saw no writer;
+        // nothing was written, so a stream of the channel's own serves the
+        // next channel.
+        if (!this.#shared) this.sink.releaseStream(RELIABLE_SEND_ORDER, writer);
         this.#writer = null;
         return;
       }

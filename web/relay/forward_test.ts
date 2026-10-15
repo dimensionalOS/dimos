@@ -48,7 +48,17 @@ class FakeSink implements ViewerSink {
     return this.#shared ??= this.openStream(order);
   }
 
+  streamsReleased = 0;
+  #idle = new Map<number, FrameWriter[]>();
+
+  releaseStream(order: number, writer: FrameWriter): void {
+    this.streamsReleased++;
+    this.#idle.set(order, [...(this.#idle.get(order) ?? []), writer]);
+  }
+
   openStream(order: number): Promise<FrameWriter> {
+    const idle = this.#idle.get(order)?.pop();
+    if (idle !== undefined) return Promise.resolve(idle);
     this.streamsOpened++;
     this.orders.push(order);
     const writer: FrameWriter = {
@@ -189,7 +199,7 @@ Deno.test("reliable: overflow kicks once and empties the FIFO", async () => {
   assertEquals(sink.kicks, 1);
   assertEquals(sink.kicked, "reliable channel overflow");
   assertEquals(ch.queued(), 0);
-  assertEquals(sink.streamsAborted, 1);
+  assertEquals([sink.streamsAborted, sink.streamsReleased], [0, 1]); // nothing written before the kick: the stream goes back to the viewer
   ch.offer(frame(200), 200); // still a no-op until transport teardown completes
   assertEquals(ch.queued(), 0);
   assertEquals(sink.kicks, 1);
@@ -236,7 +246,7 @@ Deno.test("latest: dispose while the stream opens still releases it", async () =
   ch.dispose();
   sink.releaseOpen();
   await tick();
-  assertEquals(sink.streamsAborted, 1);
+  assertEquals([sink.streamsAborted, sink.streamsReleased], [0, 1]); // nothing written: reusable
   assertEquals(sink.sent, []);
   assertEquals(sink.kicked, null);
 });
@@ -268,7 +278,7 @@ Deno.test("reliable: dispose while the persistent stream opens still releases it
   ch.dispose();
   sink.releaseOpen();
   await tick();
-  assertEquals(sink.streamsAborted, 1);
+  assertEquals([sink.streamsAborted, sink.streamsReleased], [0, 1]); // nothing written: reusable
   assertEquals(sink.sent, []);
   assertEquals(sink.kicked, null);
 });

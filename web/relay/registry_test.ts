@@ -52,7 +52,17 @@ class FakeSink implements ViewerSink {
     return this.#shared ??= this.openStream(order);
   }
 
+  streamsReleased = 0;
+  #idle = new Map<number, FrameWriter[]>();
+
+  releaseStream(order: number, writer: FrameWriter): void {
+    this.streamsReleased++;
+    this.#idle.set(order, [...(this.#idle.get(order) ?? []), writer]);
+  }
+
   openStream(order: number): Promise<FrameWriter> {
+    const idle = this.#idle.get(order)?.pop();
+    if (idle !== undefined) return Promise.resolve(idle);
     this.streamsOpened++;
     this.orders.push(order);
     return Promise.resolve({
@@ -417,8 +427,11 @@ Deno.test("rapid watch switches release every abandoned persistent stream", asyn
     reg.onRobotFrame(robots[watching], frame("color_image", i));
   }
   await tick();
+  // The switches outrun the opens: each policy's stream finished opening
+  // after its dispose and went to the pool unused, so every switch opened a
+  // fresh one and none was aborted.
   assertEquals(viewer.sink.streamsOpened, 7);
-  assertEquals(viewer.sink.streamsAborted, 6); // only the live stream remains
+  assertEquals([viewer.sink.streamsReleased, viewer.sink.streamsAborted], [6, 0]);
   assertEquals(viewer.sink.kicked, null);
 });
 
@@ -431,12 +444,12 @@ Deno.test("unsub disposes the channel's policy and releases its stream", async (
   await tick();
   send(reg, viewer, { t: "unsub", ch: "color_image" });
   assertEquals(viewer.policies.size, 0);
-  assertEquals(viewer.sink.streamsAborted, 1);
-  // Re-subscribing starts a fresh policy on a fresh stream.
+  assertEquals([viewer.sink.streamsReleased, viewer.sink.streamsAborted], [1, 0]);
+  // Re-subscribing starts a fresh policy on the released stream.
   send(reg, viewer, { t: "sub", ch: "color_image" });
   reg.onRobotFrame(robot, frame("color_image", 2));
   await tick();
-  assertEquals(viewer.sink.streamsOpened, 2);
+  assertEquals(viewer.sink.streamsOpened, 1);
   assertEquals(viewer.sink.sent.length, 2);
 });
 
@@ -466,7 +479,7 @@ Deno.test("viewer teardown disposes its policies", async () => {
   await tick();
   reg.viewerClosed(viewer);
   assertEquals(viewer.policies.size, 0);
-  assertEquals(viewer.sink.streamsAborted, 1); // the latest stream; the shared one goes with the transport
+  assertEquals([viewer.sink.streamsReleased, viewer.sink.streamsAborted], [1, 0]); // the transport close ends them
 });
 
 Deno.test("manifest delivery wins over the frame header's", () => {
@@ -588,13 +601,13 @@ Deno.test("latest and reliable channels each get one persistent stream at their 
   assertEquals(viewer.sink.streamsOpened, 2);
   assertEquals(viewer.sink.orders, [LATEST_SEND_ORDER, RELIABLE_SEND_ORDER]);
   assertEquals(viewer.sink.sent.length, 6);
-  // An unsub releases the channel's stream; a resub opens a fresh one.
+  // An unsub hands the channel's stream back; a resub reuses it.
   send(reg, viewer, { t: "unsub", ch: "color_image" });
-  assertEquals(viewer.sink.streamsAborted, 1);
+  assertEquals([viewer.sink.streamsReleased, viewer.sink.streamsAborted], [1, 0]);
   send(reg, viewer, { t: "sub", ch: "color_image" });
   reg.onRobotFrame(robot, frame("color_image", 4, "latest"));
   await tick();
-  assertEquals(viewer.sink.streamsOpened, 3);
+  assertEquals(viewer.sink.streamsOpened, 2);
 });
 
 Deno.test("small reliable channels share one stream per viewer, bulk ones get their own", async () => {
@@ -625,7 +638,7 @@ Deno.test("small reliable channels share one stream per viewer, bulk ones get th
   await tick();
   assertEquals(viewer.sink.streamsOpened, 2);
   send(reg, viewer, { t: "unsub", ch: "cloud" });
-  assertEquals(viewer.sink.streamsAborted, 1);
+  assertEquals([viewer.sink.streamsReleased, viewer.sink.streamsAborted], [1, 0]);
 });
 
 Deno.test("claimRobot: a holder that answers its probe keeps the id; a silent one is superseded", async () => {
