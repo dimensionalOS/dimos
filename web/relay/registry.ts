@@ -29,6 +29,7 @@ import { MAX_MANIFEST_ID_LEN, TRACK_ENCODING } from "@dimos/shared/manifest";
 
 import type { CarrierStats } from "./carrier.ts";
 import {
+  BULK_ENCODINGS,
   type ChannelPolicy,
   LatestChannel,
   parseRobotFrameHeader,
@@ -857,7 +858,10 @@ export class Registry {
       if (policy === undefined || policy.delivery !== delivery) {
         policy?.dispose();
         policy = delivery === "reliable"
-          ? new ReliableChannel(viewer.sink, { now: this.#now })
+          ? new ReliableChannel(viewer.sink, {
+            now: this.#now,
+            shared: !BULK_ENCODINGS.has(spec?.encoding ?? ""),
+          })
           : new LatestChannel(viewer.sink, { now: this.#now });
         viewer.policies.set(ch, policy);
       }

@@ -431,6 +431,7 @@ export class ViewerSession implements ViewerPeer {
     this.#creditKickMs = timing.creditKickMs ?? STREAM_CREDIT_KICK_MS;
     this.sink = {
       openStream: (order) => this.#openStream(order),
+      sharedStream: (order) => this.#shared ??= this.#openStream(order),
       kick(reason: string): void {
         console.log(`[relay] kicking viewer: ${reason}`);
         try {
@@ -441,6 +442,9 @@ export class ViewerSession implements ViewerPeer {
       },
     };
   }
+
+  /** The stream the viewer's small reliable channels share (sink.sharedStream). */
+  #shared: Promise<FrameWriter> | null = null;
 
   /** One persistent uni stream per channel at its band's sendOrder. The
    * create waits for stream credit (protocol.md workaround 7); a long wait
