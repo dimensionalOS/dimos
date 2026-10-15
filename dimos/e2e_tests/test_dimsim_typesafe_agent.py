@@ -22,12 +22,12 @@ import threading
 import time
 from typing import Any
 
+from dimos_generated.geometry_msgs.msg import PoseStamped
+from dimos_generated.vision_msgs.msg import Detection3DArray
 import pytest
 
 from dimos.agents.typesafe.test_world_state import det3d
 from dimos.core.transport_factory import make_transport
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 
 CHAIR = (4.0, 2.0)
 
@@ -69,7 +69,7 @@ def test_go_to_the_chair(
     wait_for_system_ready(timeout=1200.0)
     # Server physics (odom/lidar) starts only after the browser ships its snapshot.
     lcm_spy.wait_for_message_result(
-        "/odom#geometry_msgs.PoseStamped", PoseStamped, lambda _m: True, "no odom", timeout=600
+        "/odom#geometry_msgs/msg/PoseStamped", PoseStamped, lambda _m: True, "no odom", timeout=600
     )
 
     dim_sim.set_agent_position(1.0, 2.0)

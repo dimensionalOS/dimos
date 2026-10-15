@@ -43,15 +43,16 @@ from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import NameOID
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Twist, Vector3
+from dimos_generated.nav_msgs.msg import MapMetaData, OccupancyGrid
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 import pytest
 
 from dimos.core.transport import pLCMTransport
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.image import image_from_array
+from dimos.msgs.time import time_from_seconds
 from dimos.web.relay_bridge.config import RelayBridgeConfig, default_manifest
 from dimos.web.relay_bridge.e2e_support import (
     arm_teleop,
@@ -73,12 +74,25 @@ from dimos.web.relay_bridge.wt_client import RelayClient, RelayRejectedError, fe
 pytestmark = pytest.mark.self_hosted
 
 ROBOT_ID = "bridge-e2e"
-POSE = PoseStamped(ts=42.5, position=[1.5, -2.5, 0.25], orientation=[0.0, 0.0, 0.0, 1.0])
+POSE = PoseStamped(
+    header=Header(stamp=time_from_seconds(42.5), frame_id=""),
+    pose=Pose(
+        position=Point(x=1.5, y=-2.5, z=0.25), orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0)
+    ),
+)
 COSTMAP_GRID = OccupancyGrid(
-    grid=np.array([[-1, 0, 50], [100, 0, -1]], dtype=np.int8),
-    resolution=0.05,
-    origin=Pose(-1.25, 2.5, 0.0),
-    ts=42.5,
+    data=np.array([-1, 0, 50, 100, 0, -1], dtype=np.int8),
+    info=MapMetaData(
+        width=3,
+        height=2,
+        resolution=0.05,
+        origin=Pose(
+            position=Point(x=-1.25, y=2.5, z=0.0),
+            orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+        ),
+        map_load_time=Time(sec=0, nanosec=0),
+    ),
+    header=Header(stamp=time_from_seconds(42.5), frame_id=""),
 )
 COSTMAP_CELLS = bytes([255, 0, 50, 100, 0, 255])
 _LISTENER = """
@@ -104,7 +118,7 @@ class _Publisher:
         self.stop = threading.Event()
         arr = np.zeros((48, 64, 3), dtype=np.uint8)
         arr[:, :, 1] = np.linspace(0, 255, 64, dtype=np.uint8)
-        self._image = Image.from_numpy(arr)
+        self._image = image_from_array(arr, encoding="rgb8")
         self._thread = threading.Thread(target=self._run, daemon=True)
 
     def start(self) -> None:
@@ -353,10 +367,18 @@ def test_costmap_replay_reflects_publishes_while_unwatched(bridge: RelayBridgeMo
     # staleness on the wire), not the replay time.
     _wait_costmap_unsubscribed(bridge)
     grid_b = OccupancyGrid(
-        grid=np.array([[100, 100, 100], [0, 0, -1]], dtype=np.int8),
-        resolution=0.05,
-        origin=Pose(-1.25, 2.5, 0.0),
-        ts=43.0,
+        data=np.array([100, 100, 100, 0, 0, -1], dtype=np.int8),
+        info=MapMetaData(
+            width=3,
+            height=2,
+            resolution=0.05,
+            origin=Pose(
+                position=Point(x=-1.25, y=2.5, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+            map_load_time=Time(sec=0, nanosec=0),
+        ),
+        header=Header(stamp=time_from_seconds(43), frame_id=""),
     )
     t0 = time.time()
     publisher = _CostmapPublisher(grid_b)
@@ -365,14 +387,14 @@ def test_costmap_replay_reflects_publishes_while_unwatched(bridge: RelayBridgeMo
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
             cached = bridge._last_msg.get("global_costmap")
-            if cached is not None and cached[0].grid[0, 0] == 100:
+            if cached is not None and cached[0].data[0] == 100:
                 break
             time.sleep(0.05)
     finally:
         publisher.close()
     t1 = time.time()
     cached = bridge._last_msg.get("global_costmap")
-    assert cached is not None and cached[0].grid[0, 0] == 100, "cache never saw grid B"
+    assert cached is not None and cached[0].data[0] == 100, "cache never saw grid B"
 
     frame = asyncio.run(_watch_costmap(bridge, expected_cells=bytes([100, 100, 100, 0, 0, 255])))
     assert t0 <= frame.header.ts <= t1
@@ -487,7 +509,16 @@ def test_teleop_drive_and_estop(teleop_bridge: RelayBridgeModule) -> None:
 
             stop = asyncio.Event()
             driver = asyncio.create_task(_drive(viewer, 0, stop))
-            await _until(lambda: any(not t.is_zero() for t in twists), "no twist published")
+            await _until(
+                lambda: any(
+                    t
+                    != Twist(
+                        linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)
+                    )
+                    for t in twists
+                ),
+                "no twist published",
+            )
 
             # E-stop: the stop datagram publishes an unconditional zero.
             stop.set()
@@ -495,7 +526,10 @@ def test_teleop_drive_and_estop(teleop_bridge: RelayBridgeModule) -> None:
             marker = len(twists)
             viewer.send_control(WireStop(seq=seq + 1, ts=time.time()))
             await _until(
-                lambda: len(twists) > marker and twists[-1].is_zero(), "no zero after stop"
+                lambda: len(twists) > marker
+                and twists[-1]
+                == Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)),
+                "no zero after stop",
             )
 
     asyncio.run(flow())
@@ -540,14 +574,25 @@ def test_teleop_relay_kill_deadman_deadline(
 
             stop = asyncio.Event()
             driver = asyncio.create_task(_drive(viewer, 0, stop))
-            await _until(lambda: any(not t.is_zero() for t in twists), "no twist published")
+            await _until(
+                lambda: any(
+                    t
+                    != Twist(
+                        linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)
+                    )
+                    for t in twists
+                ),
+                "no twist published",
+            )
 
             marker = len(twists)
             assert relay._process is not None
             killed_at = time.monotonic()
             relay._process.kill()
             await _until(
-                lambda: len(twists) > marker and twists[-1].is_zero(),
+                lambda: len(twists) > marker
+                and twists[-1]
+                == Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)),
                 "no zero after relay kill (deadman broken?)",
                 timeout=5.0,
             )
@@ -590,13 +635,27 @@ def test_teleop_lease_exclusive_and_handover(teleop_bridge: RelayBridgeModule) -
                 # The holder drives; the bystander's twists are gated out.
                 second.send_control(WireTwist(vx=9.0, vy=0.0, wz=0.0, seq=1, ts=time.time()))
                 holder.send_control(WireTwist(vx=0.5, vy=0.0, wz=0.0, seq=1, ts=time.time()))
-                await _until(lambda: any(not t.is_zero() for t in twists), "no twist published")
+                await _until(
+                    lambda: any(
+                        t
+                        != Twist(
+                            linear=Vector3(x=0.0, y=0.0, z=0.0),
+                            angular=Vector3(x=0.0, y=0.0, z=0.0),
+                        )
+                        for t in twists
+                    ),
+                    "no twist published",
+                )
                 assert all(t.linear.x != 9.0 for t in twists)
 
             # Holder disconnected mid-drive: the relay releases the lease and
             # sends teleop_stop, so the bridge zeroes without waiting for the
             # watchdog, and the second viewer can now arm and drive.
-            await _until(lambda: twists[-1].is_zero(), "no zero after holder disconnect")
+            await _until(
+                lambda: twists[-1]
+                == Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)),
+                "no zero after holder disconnect",
+            )
             await arm_teleop(second)
             marker = len(twists)
             second.send_control(WireTwist(vx=0.25, vy=0.0, wz=0.0, seq=1, ts=time.time()))

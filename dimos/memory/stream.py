@@ -25,6 +25,9 @@ if sys.version_info >= (3, 13):
 else:
     from typing_extensions import TypeVar
 
+from dimos_generated.geometry_msgs.msg import PoseStamped, TransformStamped, Vector3
+from dimos_generated.nav_msgs.msg import Odometry
+
 from dimos.core.resource import CompositeResource
 from dimos.memory.backend import Backend
 from dimos.memory.buffer import BackpressureBuffer, KeepLast
@@ -41,7 +44,6 @@ from dimos.memory.type.filter import (
     TimeRangeFilter,
 )
 from dimos.memory.type.observation import EmbeddedObservation, Observation
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.utils.human import human_bytes
 from dimos.utils.logging_config import setup_logger
 
@@ -242,11 +244,22 @@ class Stream(CompositeResource, Generic[T, O]):
         return self.at(t0 + t, tolerance=tolerance)
 
     def near(self, pose: Any, radius: float) -> Stream[T, O]:
-        # Accept Pose/PoseStamped (any object with `.position`), Vector3,
-        # numpy arrays, or (x, y, z) tuples — Vector3() handles the rest.
+        if isinstance(pose, PoseStamped):
+            pose = pose.pose
+        elif isinstance(pose, Odometry):
+            pose = pose.pose.pose
+        elif isinstance(pose, TransformStamped):
+            pose = pose.transform.translation
         if hasattr(pose, "position"):
             pose = pose.position
-        return self._with_filter(NearFilter(Vector3(pose), radius))
+        if all(hasattr(pose, coordinate) for coordinate in ("x", "y", "z")):
+            xyz = (pose.x, pose.y, pose.z)
+        else:
+            xyz = tuple(pose)
+            if len(xyz) != 3:
+                raise ValueError("near requires exactly three position coordinates")
+        center = Vector3(x=float(xyz[0]), y=float(xyz[1]), z=float(xyz[2]))
+        return self._with_filter(NearFilter(center, radius))
 
     def tags(self, **tags: Any) -> Stream[T, O]:
         return self._with_filter(TagsFilter(tags))

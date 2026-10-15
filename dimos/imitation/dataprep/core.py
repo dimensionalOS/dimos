@@ -33,6 +33,8 @@ from itertools import pairwise
 import math
 from typing import TYPE_CHECKING, Any
 
+from dimos_generated.sensor_msgs.msg import CompressedImage, Image, JointState
+from dimos_generated.std_msgs.msg import Header, String
 import numpy as np
 from numpy.typing import NDArray
 
@@ -57,8 +59,8 @@ from dimos.imitation.dataprep.schema import (
     validate_source_kinds as validate_source_kinds,
 )
 from dimos.memory.store.mcap import McapStore
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.std_msgs.String import String
+from dimos.msgs.image import image_from_compressed, image_view
+from dimos.msgs.time import time_from_seconds
 
 if TYPE_CHECKING:
     from dimos.memory.store.base import Store
@@ -84,7 +86,8 @@ def resolve_field(msg: Any, ref: FeatureSpec) -> NDArray[Any]:
     Single source of truth for obs/action construction across train and
     live inference. Behavior:
       - `ref.field is None`: best-effort coerce the whole message
-        (Image → `.data`, ndarray pass-through, list/tuple → asarray).
+        (generated Image → pixel view, CompressedImage → decoded pixels,
+        ndarray pass-through, list/tuple → asarray).
       - `ref.field` set: `getattr(msg, ref.field)` (or `msg[ref.field]`
         for dict payloads) then coerce.
     """
@@ -102,10 +105,14 @@ def resolve_field(msg: Any, ref: FeatureSpec) -> NDArray[Any]:
     else:
         value = getattr(msg, ref.field)
 
+    if isinstance(value, Image):
+        return image_view(value)
+    if isinstance(value, CompressedImage):
+        return image_view(image_from_compressed(value))
     if isinstance(value, np.ndarray):
         return value
     if hasattr(value, "data") and isinstance(value.data, np.ndarray):
-        # e.g. Image → use its underlying ndarray
+        # Application payloads may expose an underlying ndarray.
         return value.data
     return np.asarray(value)
 
@@ -315,6 +322,16 @@ def _source_messages(
         yield observation.ts, observation.data
 
 
+def _joint_snapshot(timestamp: float, targets: dict[str, float]) -> JointState:
+    return JointState(
+        header=Header(stamp=time_from_seconds(timestamp), frame_id=""),
+        name=list(targets),
+        position=np.asarray(list(targets.values()), dtype=np.float64),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
+    )
+
+
 def _joint_position_updates(
     messages: Iterator[tuple[float, Any]], start_ts: float, stream: str
 ) -> Iterator[tuple[float, JointState]]:
@@ -325,7 +342,7 @@ def _joint_position_updates(
         if not seeded and timestamp >= start_ts:
             yield (
                 start_ts,
-                JointState(ts=start_ts, name=list(targets), position=list(targets.values())),
+                _joint_snapshot(start_ts, targets),
             )
             seeded = True
         try:
@@ -340,10 +357,10 @@ def _joint_position_updates(
         if timestamp >= start_ts:
             yield (
                 timestamp,
-                JointState(ts=timestamp, name=list(targets), position=list(targets.values())),
+                _joint_snapshot(timestamp, targets),
             )
     if not seeded:
-        yield start_ts, JointState(ts=start_ts, name=list(targets), position=list(targets.values()))
+        yield start_ts, _joint_snapshot(start_ts, targets)
 
 
 def _episode_features(

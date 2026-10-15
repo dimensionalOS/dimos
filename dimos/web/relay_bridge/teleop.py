@@ -24,8 +24,8 @@ from dataclasses import dataclass
 import math
 import time
 
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos_generated.geometry_msgs.msg import Twist, Vector3
+
 from dimos.utils.generic import finite_number
 from dimos.utils.logging_config import setup_logger
 from dimos.web.relay_bridge.protocol import (
@@ -122,7 +122,7 @@ class Teleop:
             self._zero("release")
             return
         self._driving = True
-        self._publish(Twist(linear=Vector3(vx, vy, 0.0), angular=Vector3(0.0, 0.0, wz)))
+        self._publish(Twist(linear=Vector3(x=vx, y=vy, z=0.0), angular=Vector3(x=0.0, y=0.0, z=wz)))
 
     def on_stop(self, msg: WireStop) -> None:
         """E-stop: unconditional zero, even from idle - it must also cancel
@@ -195,4 +195,6 @@ class Teleop:
             return
         self._driving = False
         logger.warning(f"relay bridge teleop: zero twist ({reason})")
-        self._publish(Twist.zero())
+        self._publish(
+            Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+        )

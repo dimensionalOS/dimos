@@ -12,19 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dimos_generated.std_msgs.msg import String
 import pytest
 
 from dimos.memory.codecs.base import codec_from_id
 from dimos.memory.codecs.json import JsonCodec
-from dimos.msgs.std_msgs.String import String
 
 
 @pytest.mark.parametrize(
     "text", ['{"label":"拿起积木 🦾","counter":9007199254740993}', "[1,2,null]", '"label"']
 )
 def test_json_storage_preserves_text_without_a_transport_envelope(text):
-    codec = codec_from_id("json", "dimos.msgs.std_msgs.String.String")
-    encoded = codec.encode(String(text))
+    codec = codec_from_id("json", f"{String.__module__}.{String.__qualname__}")
+    encoded = codec.encode(String(data=text))
     assert encoded == text.encode("utf-8")
     assert codec.decode(encoded).data == text
 

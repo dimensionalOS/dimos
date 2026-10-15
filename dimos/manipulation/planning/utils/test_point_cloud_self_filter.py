@@ -16,13 +16,15 @@
 
 from collections.abc import Iterator
 
+from dimos_generated.sensor_msgs.msg import JointState, PointCloud2, PointField
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 from numpy.typing import NDArray
-from open3d.core import Tensor
 import pytest
 
 from dimos.manipulation.planning.utils.point_cloud_self_filter import PointCloudSelfFilter
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.pointcloud import pointcloud_from_xyz, pointcloud_view, pointcloud_xyz
+from dimos.msgs.time import time_from_seconds, to_seconds
 
 
 class _PositiveXFilter(PointCloudSelfFilter):
@@ -40,23 +42,54 @@ def point_filter() -> Iterator[_PositiveXFilter]:
 
 
 def test_backend_mask_preserves_fields_and_capture_metadata(point_filter: _PositiveXFilter) -> None:
-    cloud = PointCloud2.from_numpy(
+    cloud = pointcloud_from_xyz(
         np.asarray([[-1, 0, 0], [1, 2, 3]], dtype=np.float32),
-        frame_id="camera",
-        timestamp=2.0,
+        header=Header(frame_id="camera", stamp=time_from_seconds(2.0)),
     )
-    cloud.seq = 7
-    cloud.pointcloud_tensor.point["intensity"] = Tensor(np.asarray([[10], [20]], dtype=np.float32))
+    records = np.array(
+        [(-1, 0, 0, 10), (1, 2, 3, 20)],
+        dtype=[("x", "<f4"), ("y", "<f4"), ("z", "<f4"), ("intensity", "<f4")],
+    )
+    cloud.fields.append(
+        PointField(name="intensity", offset=12, datatype=PointField.FLOAT32, count=1)
+    )
+    cloud.point_step = 16
+    cloud.row_step = 32
+    cloud.data = records.view(np.uint8)
 
     result = point_filter.filter_cloud(cloud)
 
     assert result is not None
-    assert (result.frame_id, result.ts, result.seq) == ("camera", 2.0, 7)
-    np.testing.assert_array_equal(result.points_f32(), [[1, 2, 3]])
-    np.testing.assert_array_equal(result.pointcloud_tensor.point["intensity"].numpy(), [[20]])
+    assert (result.header.frame_id, to_seconds(result.header.stamp)) == ("camera", 2.0)
+    np.testing.assert_array_equal(pointcloud_xyz(result), [[1, 2, 3]])
+    np.testing.assert_array_equal(pointcloud_view(result)["intensity"].reshape(-1), [20])
     assert (
         point_filter.filter_cloud(
-            PointCloud2.from_numpy(np.asarray([[1, 0, 0]], dtype=np.float32), timestamp=1.0)
+            pointcloud_from_xyz(
+                np.asarray([[1, 0, 0]], dtype=np.float32),
+                header=Header(frame_id="camera", stamp=time_from_seconds(1.0)),
+            )
         )
         is None
     )
+
+
+def test_joint_state_buffer_copies_values_and_replaces_duplicate_capture(
+    point_filter: _PositiveXFilter,
+) -> None:
+    state = JointState(
+        header=Header(frame_id="base", stamp=time_from_seconds(2.0)),
+        name=["joint"],
+        position=np.array([0.5]),
+        velocity=np.array([]),
+        effort=np.array([]),
+    )
+    point_filter.add_joint_state(state)
+    state.position[0] = 99
+    sample = point_filter._states.find_closest(2.0, 0.001)
+    assert sample is not None
+    np.testing.assert_array_equal(sample.value.position, [0.5])
+    point_filter.add_joint_state(state)
+    sample = point_filter._states.find_closest(2.0, 0.001)
+    assert sample is not None
+    np.testing.assert_array_equal(sample.value.position, [99])

@@ -23,11 +23,11 @@ deployments declare a port per arm and bind each task with
 
 from __future__ import annotations
 
+from dimos_generated.geometry_msgs.msg import PoseStamped, TwistStamped
+from dimos_generated.tf2_msgs.msg import TFMessage
+
 from dimos.control.coordinator import ControlCoordinator
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 
 
 class ArmPoseCoordinator(ControlCoordinator):

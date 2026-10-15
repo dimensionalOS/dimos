@@ -18,13 +18,18 @@ import threading
 import time
 from typing import Annotated, Any, Literal
 
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.sensor_msgs.msg import CameraInfo, Image, RegionOfInterest
+from dimos_generated.std_msgs.msg import Header
+import numpy as np
 from pydantic import BeforeValidator, Field
 from reactivex import create
 from reactivex.observable import Observable
 
 from dimos.hardware.sensors.camera.spec import CameraConfig, CameraHardware
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.camera_info import camera_info_from_fov
+from dimos.msgs.image import image_from_array
+from dimos.msgs.time import header_now
 from dimos.utils.reactive import backpressure
 
 
@@ -45,7 +50,21 @@ class WebcamConfig(CameraConfig):
     width: int = 640
     height: int = 480
     fps: float = 15.0
-    camera_info: CameraInfo = Field(default_factory=CameraInfo)
+    camera_info: CameraInfo = Field(
+        default_factory=lambda: CameraInfo(
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            height=0,
+            width=0,
+            distortion_model="",
+            d=np.array([], dtype=np.float64),
+            k=np.zeros(9, dtype=np.float64),
+            r=np.zeros(9, dtype=np.float64),
+            p=np.zeros(12, dtype=np.float64),
+            binning_x=0,
+            binning_y=0,
+            roi=RegionOfInterest(x_offset=0, y_offset=0, height=0, width=0, do_rectify=False),
+        )
+    )
     frame_id_prefix: str | None = None
     stereo_slice: Literal["left", "right"] | None = None  # For stereo cameras
 
@@ -142,22 +161,13 @@ class Webcam(CameraHardware):
         # Convert BGR to RGB (OpenCV uses BGR by default)
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-        # Create Image message
-        # Using Image.from_numpy() since it's designed for numpy arrays
-        # Setting format to RGB since we converted from BGR->RGB above
-        image = Image.from_numpy(
-            frame_rgb,
-            format=ImageFormat.RGB,  # We converted to RGB above
-            frame_id=self._frame("camera_optical"),  # Standard frame ID for camera images
-            ts=time.time(),  # Current timestamp
-        )
-
         if self.config.stereo_slice in ("left", "right"):
-            half_width = image.width // 2
-            if self.config.stereo_slice == "left":
-                image = image.crop(0, 0, half_width, image.height)
-            else:
-                image = image.crop(half_width, 0, half_width, image.height)
+            half_width = frame_rgb.shape[1] // 2
+            start = 0 if self.config.stereo_slice == "left" else half_width
+            frame_rgb = frame_rgb[:, start : start + half_width]
+        image = image_from_array(
+            frame_rgb, encoding="rgb8", header=header_now(self._frame("camera_optical"))
+        )
 
         self._emitted_size = (image.width, image.height)
         return image
@@ -190,7 +200,7 @@ class Webcam(CameraHardware):
     @property
     def camera_info(self) -> CameraInfo:
         info = self.config.camera_info
-        if info.width and info.height and info.K[0] > 0 and info.K[4] > 0:
+        if info.width and info.height and info.k[0] > 0 and info.k[4] > 0:
             return info
         # No intrinsics configured: a nominal pinhole so the image still renders.
         # Sized from the frames actually emitted (the stereo slice halves them).
@@ -199,8 +209,12 @@ class Webcam(CameraHardware):
         else:
             width = self.config.width // 2 if self.config.stereo_slice else self.config.width
             height = self.config.height
-        return CameraInfo.from_fov(
-            60.0, width, height, axis="horizontal", frame_id=self._frame("camera_optical")
+        return camera_info_from_fov(
+            60.0,
+            width,
+            height,
+            axis="horizontal",
+            header=Header(frame_id=self._frame("camera_optical"), stamp=Time(sec=0, nanosec=0)),
         )
 
     def emit(self, image: Image) -> None: ...

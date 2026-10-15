@@ -15,21 +15,24 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Generator, Iterator
+from pathlib import Path
 import subprocess
 import sys
 import threading
 import time
 from typing import TYPE_CHECKING, Any
 
+from dimos_cdrgen.registry import decode as cdr_decode
+from dimos_generated.geometry_msgs.msg import PoseStamped
 import pytest
 
 from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
 from dimos.core.global_config import global_config
 from dimos.core.transport_factory import make_transport
+from dimos.e2e_tests.cdr_replay_fixture import write_go2_cdr_replay
 from dimos.e2e_tests.dim_sim_client import DimSimClient
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall
 from dimos.e2e_tests.lcm_spy import LcmSpy
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.simulation.mujoco.direct_cmd_vel_explorer import DirectCmdVelExplorer
 
 if TYPE_CHECKING:
@@ -212,7 +215,7 @@ def dim_sim():
 @pytest.fixture
 def spawn_wall_on_pose(lcm_spy: LcmSpy, dim_sim: DimSimClient):
     """Spawn a dim_sim wall when the robot's /odom comes within `threshold` metres of `point`."""
-    odom_topic = "/odom#geometry_msgs.PoseStamped"
+    odom_topic = "/odom#geometry_msgs/msg/PoseStamped"
     stop_event = threading.Event()
     workers: list[threading.Thread] = []
     errors: list[BaseException] = []
@@ -225,9 +228,9 @@ def spawn_wall_on_pose(lcm_spy: LcmSpy, dim_sim: DimSimClient):
         def on_odom(data):
             if triggered.is_set():
                 return
-            pose = PoseStamped.lcm_decode(data)
-            dx = pose.x - px
-            dy = pose.y - py
+            pose = cdr_decode(data, PoseStamped)
+            dx = pose.pose.position.x - px
+            dy = pose.pose.position.y - py
             if dx * dx + dy * dy < threshold_sq:
                 triggered.set()
 
@@ -289,3 +292,11 @@ def explore_house(
         direct_cmd_vel_explorer.follow_points(points)
 
     return explore
+
+
+@pytest.fixture(scope="session")
+def cdr_go2_replay_db(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Current generated-message replay, independent of retired LFS codecs."""
+    path = tmp_path_factory.mktemp("go2-cdr") / "replay.db"
+    write_go2_cdr_replay(path)
+    return path

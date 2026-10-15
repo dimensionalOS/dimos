@@ -19,6 +19,10 @@ import threading
 import time
 from typing import Any
 
+from dimos_generated.geometry_msgs.msg import Twist, Vector3
+from dimos_generated.sensor_msgs.msg import Joy
+from dimos_generated.std_msgs.msg import Float32, Int8
+import numpy as np
 import pygame
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
@@ -31,11 +35,7 @@ from dimos.control.benchmarking.gate import GATE_ADVANCE, GATE_QUIT, GATE_SKIP
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import Out
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.Joy import Joy
-from dimos.msgs.std_msgs.Float32 import Float32
-from dimos.msgs.std_msgs.Int8 import Int8
+from dimos.msgs.time import header_now
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -160,9 +160,11 @@ class KeyboardTeleop(Module):
 
     @rpc
     def stop(self) -> None:
-        stop_twist = Twist()
-        stop_twist.linear = Vector3(0, 0, 0)
-        stop_twist.angular = Vector3(0, 0, 0)
+        stop_twist = Twist(
+            linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)
+        )
+        stop_twist.linear = Vector3(x=0.0, y=0.0, z=0.0)
+        stop_twist.angular = Vector3(x=0.0, y=0.0, z=0.0)
         self.cmd_vel.publish(stop_twist)
 
         self._stop_event.set()
@@ -191,14 +193,23 @@ class KeyboardTeleop(Module):
                     self._keys_held.add(event.key)
                     self._keys_down.add(event.key)
                     if event.key in _JOY_KEY_SET:
-                        self.joystick.publish(Joy(buttons=joy_buttons(self._keys_down)))
+                        self.joystick.publish(
+                            Joy(
+                                header=header_now(),
+                                axes=np.array([], dtype=np.float32),
+                                buttons=np.asarray(joy_buttons(self._keys_down), dtype=np.int32),
+                            )
+                        )
 
                     if event.key == pygame.K_SPACE:
                         # Emergency stop - clear all keys and send zero twist
                         self._keys_held.clear()
-                        stop_twist = Twist()
-                        stop_twist.linear = Vector3(0, 0, 0)
-                        stop_twist.angular = Vector3(0, 0, 0)
+                        stop_twist = Twist(
+                            linear=Vector3(x=0.0, y=0.0, z=0.0),
+                            angular=Vector3(x=0.0, y=0.0, z=0.0),
+                        )
+                        stop_twist.linear = Vector3(x=0.0, y=0.0, z=0.0)
+                        stop_twist.angular = Vector3(x=0.0, y=0.0, z=0.0)
                         self.cmd_vel.publish(stop_twist)
                         self._estop_at = time.monotonic()
                         logger.warning("EMERGENCY STOP!")
@@ -206,11 +217,11 @@ class KeyboardTeleop(Module):
                         # ESC quits
                         self._stop_event.set()
                     elif event.key == pygame.K_RETURN:
-                        self.operator_command.publish(Int8(GATE_ADVANCE))
+                        self.operator_command.publish(Int8(data=GATE_ADVANCE))
                     elif event.key == pygame.K_k:
-                        self.operator_command.publish(Int8(GATE_SKIP))
+                        self.operator_command.publish(Int8(data=GATE_SKIP))
                     elif event.key == pygame.K_BACKSPACE:
-                        self.operator_command.publish(Int8(GATE_QUIT))
+                        self.operator_command.publish(Int8(data=GATE_QUIT))
                     elif pygame.K_0 <= event.key <= pygame.K_9:
                         # 0 → 0.0 m, 1 → 0.1 m, …, 9 → 0.9 m corridor half-width.
                         self.e_max.publish(Float32(data=(event.key - pygame.K_0) * 0.1))
@@ -219,12 +230,18 @@ class KeyboardTeleop(Module):
                     self._keys_held.discard(event.key)
                     self._keys_down.discard(event.key)
                     if event.key in _JOY_KEY_SET:
-                        self.joystick.publish(Joy(buttons=joy_buttons(self._keys_down)))
+                        self.joystick.publish(
+                            Joy(
+                                header=header_now(),
+                                axes=np.array([], dtype=np.float32),
+                                buttons=np.asarray(joy_buttons(self._keys_down), dtype=np.int32),
+                            )
+                        )
 
             # Generate Twist message from held keys
-            twist = Twist()
-            twist.linear = Vector3(0, 0, 0)
-            twist.angular = Vector3(0, 0, 0)
+            twist = Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+            twist.linear = Vector3(x=0.0, y=0.0, z=0.0)
+            twist.angular = Vector3(x=0.0, y=0.0, z=0.0)
 
             # Movement keys (WASD/QE) — guarded by disable_movement so the
             # window can run as a pure e_max slider (0-9 keys stay live in
@@ -272,7 +289,13 @@ class KeyboardTeleop(Module):
 
             buttons = joy_buttons(self._keys_down)
             if any(buttons):
-                self.joystick.publish(Joy(buttons=buttons))
+                self.joystick.publish(
+                    Joy(
+                        header=header_now(),
+                        axes=np.array([], dtype=np.float32),
+                        buttons=np.asarray(buttons, dtype=np.int32),
+                    )
+                )
             self._update_display(twist)
 
             # Maintain control loop rate

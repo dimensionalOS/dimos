@@ -21,12 +21,18 @@ make_humanoid_joints("g1") (left leg -> right leg -> waist -> left arm -> right 
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 import threading
 from threading import Thread
 import time
 from typing import TYPE_CHECKING, Any
 
+from dimos_generated.dimos_msgs.msg import MotorCommandArray
+from dimos_generated.geometry_msgs.msg import Quaternion, Vector3
+from dimos_generated.sensor_msgs.msg import Imu, JointState
+from dimos_generated.std_msgs.msg import Header
+import numpy as np
 from pydantic import Field
 from reactivex.disposable import Disposable
 
@@ -41,11 +47,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.hardware.whole_body.spec import POS_STOP, VEL_STOP
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.Imu import Imu
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
+from dimos.msgs.time import header_now
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -69,16 +71,17 @@ def _imu_from_unitree_wxyz(
     gyroscope: tuple[float, float, float],
     accelerometer: tuple[float, float, float],
     *,
-    frame_id: str,
-    ts: float,
+    header: Header,
 ) -> Imu:
     _w, x, y, z = quaternion
     return Imu(
-        orientation=Quaternion(x, y, z, _w),
-        angular_velocity=Vector3(*gyroscope),
-        linear_acceleration=Vector3(*accelerometer),
-        frame_id=frame_id,
-        ts=ts,
+        orientation=Quaternion(x=x, y=y, z=z, w=_w),
+        angular_velocity=Vector3(x=gyroscope[0], y=gyroscope[1], z=gyroscope[2]),
+        linear_acceleration=Vector3(x=accelerometer[0], y=accelerometer[1], z=accelerometer[2]),
+        header=deepcopy(header),
+        orientation_covariance=np.zeros(9, dtype=np.float64),
+        angular_velocity_covariance=np.zeros(9, dtype=np.float64),
+        linear_acceleration_covariance=np.zeros(9, dtype=np.float64),
     )
 
 
@@ -336,17 +339,14 @@ class G1WholeBodyConnection(Module):
                 ),
             )
 
-    def _publish_motor_state_and_imu(
-        self, now: float, frame_id: str, sample: G1LowStateSnapshot
-    ) -> None:
+    def _publish_motor_state_and_imu(self, header: Header, sample: G1LowStateSnapshot) -> None:
         self.motor_states.publish(
             JointState(
-                ts=now,
-                frame_id=frame_id,
-                name=G1_JOINT_NAMES,
-                position=sample.positions,
-                velocity=sample.velocities,
-                effort=sample.efforts,
+                header=deepcopy(header),
+                name=list(G1_JOINT_NAMES),
+                position=np.asarray(sample.positions, dtype=np.float64),
+                velocity=np.asarray(sample.velocities, dtype=np.float64),
+                effort=np.asarray(sample.efforts, dtype=np.float64),
             )
         )
         # Unitree reports quaternions as (w,x,y,z); Imu/Quaternion stores (x,y,z,w).
@@ -355,8 +355,7 @@ class G1WholeBodyConnection(Module):
                 sample.quaternion,
                 sample.gyroscope,
                 sample.accelerometer,
-                frame_id=frame_id,
-                ts=now,
+                header=header,
             )
         )
 
@@ -369,12 +368,12 @@ class G1WholeBodyConnection(Module):
             self._drain_low_state()
             sample = self._snapshot_motor_imu()
             if sample is not None:
-                self._publish_motor_state_and_imu(now=time.time(), frame_id=frame_id, sample=sample)
+                self._publish_motor_state_and_imu(header=header_now(frame_id), sample=sample)
 
             next_tick += period
             sleep_for = next_tick - time.perf_counter()
             if sleep_for > 0:
-                time.sleep(sleep_for)
+                self._stop_event.wait(sleep_for)
             else:
                 next_tick = time.perf_counter()
 
@@ -396,8 +395,8 @@ class G1WholeBodyConnection(Module):
         return scale
 
     def _on_motor_command(self, msg: MotorCommandArray) -> None:
-        if msg.num_joints != _NUM_MOTORS:
-            logger.warning(f"Expected {_NUM_MOTORS} motor commands, got {msg.num_joints}; ignoring")
+        if any(len(values) != _NUM_MOTORS for values in (msg.q, msg.dq, msg.kp, msg.kd, msg.tau)):
+            logger.warning(f"Expected {_NUM_MOTORS} values in each motor-command array; ignoring")
             return
 
         with self._lock:

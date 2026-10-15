@@ -19,17 +19,15 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from dimos_generated.geometry_msgs.msg import Twist
+from dimos_generated.nav_msgs.msg import Odometry
+from dimos_generated.sensor_msgs.msg import CameraInfo, Image, PointCloud2
+from dimos_generated.tf2_msgs.msg import TFMessage
+from dimos_generated.vision_msgs.msg import Detection3DArray
 from pydantic import Field
 
 from dimos.core.native_module import LogFormat, NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.simulation.habitat.constants import HABITAT_ROOT, HM3D_EXAMPLE_DATASET_CONFIG
 from dimos.simulation.habitat.server import HabitatProp
 

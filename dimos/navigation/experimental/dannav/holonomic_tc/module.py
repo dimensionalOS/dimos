@@ -24,7 +24,9 @@ from __future__ import annotations
 from threading import Event, RLock, Thread
 from typing import Any
 
-from dimos_lcm.std_msgs import Bool
+from dimos_generated.geometry_msgs.msg import PoseStamped, Twist, Vector3
+from dimos_generated.nav_msgs.msg import Path
+from dimos_generated.std_msgs.msg import Bool
 from pydantic import Field
 from reactivex.disposable import Disposable
 
@@ -32,9 +34,6 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.nav_msgs.Path import Path
 from dimos.navigation.base import NavigationState
 from dimos.navigation.experimental.dannav.holonomic_tc.holonomic_path_controller import (
     HolonomicPathController,
@@ -107,7 +106,9 @@ class DanHolonomicTC(Module):
         self._stop_event.set()
         if self._thread is not None:
             self._thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
-        self.nav_cmd_vel.publish(Twist())
+        self.nav_cmd_vel.publish(
+            Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+        )
         super().stop()
 
     def _on_odom(self, msg: PoseStamped) -> None:
@@ -125,7 +126,9 @@ class DanHolonomicTC(Module):
         with self._lock:
             self._controller.set_path(path)
             if not self._controller.active:
-                self.nav_cmd_vel.publish(Twist())
+                self.nav_cmd_vel.publish(
+                    Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+                )
 
     def _control_loop(self) -> None:
         period = 1.0 / self.config.control_frequency
@@ -142,7 +145,7 @@ class DanHolonomicTC(Module):
                 if cmd is not None:
                     self.nav_cmd_vel.publish(cmd)
                 if not self._controller.active:
-                    self.goal_reached.publish(Bool(True))
+                    self.goal_reached.publish(Bool(data=True))
                     logger.info("Goal reached")
 
     @rpc

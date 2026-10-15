@@ -14,12 +14,12 @@
 
 from __future__ import annotations
 
+from dimos_generated.dimos_msgs.msg import Contact
 import mujoco
 import numpy as np
 from numpy.typing import NDArray
 import pytest
 
-from dimos.msgs.sim_msgs.Contacts import Contact
 from dimos.simulation.go2_legged.policy import OnnxGo2Policy
 from dimos.simulation.go2_legged.robot import CONTROL_DT
 from dimos.simulation.go2_sim.world import (
@@ -91,21 +91,21 @@ def test_standing_robot_touches_the_floor_only_with_its_feet(sim: Go2Sim) -> Non
     for _ in range(25):
         sim.tick(STILL)
     contacts = sim.contacts()
-    assert Contact("foot", "floor") in contacts
+    assert Contact(part="foot", kind="floor") in contacts
     assert {c.kind for c in contacts} == {"floor"}
     assert "trunk" not in {c.part for c in contacts}
 
 
 def test_contacts_name_the_scene_kind_and_the_robot_part(sim: Go2Sim) -> None:
     sim.reset(-0.05, 3.0, sim.scene.start[2], 0.0)
-    assert Contact("trunk", "wall") in sim.contacts()
+    assert Contact(part="trunk", kind="wall") in sim.contacts()
     clutter = max(
         (b for b in sim.scene.boxes if b.kind == "clutter"), key=lambda b: min(b.half[:2])
     )
     sim.reset(clutter.center[0], clutter.center[1], clutter.center[2] + clutter.half[2], 0.0)
     for _ in range(25):
         sim.tick(STILL)
-    assert Contact("foot", "clutter") in sim.contacts()
+    assert Contact(part="foot", kind="clutter") in sim.contacts()
 
 
 def test_sensor_velocity_matches_the_motion(sim: Go2Sim) -> None:

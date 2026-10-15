@@ -16,6 +16,11 @@
 
 from unittest.mock import MagicMock
 
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.std_msgs.msg import Header
+from dimos_generated.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+import numpy as np
 import pytest
 
 from dimos.manipulation.planning.groups.models import (
@@ -29,9 +34,7 @@ from dimos.manipulation.planning.trajectory_generator.parametrizer import (
     BaseTrajectoryParametrizer,
     TrajectoryParametrizationError,
 )
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
+from dimos.msgs.time import duration_from_seconds, header_now, to_seconds
 
 
 class _FixedParametrizer(BaseTrajectoryParametrizer):
@@ -65,25 +68,48 @@ def _selection() -> PlanningGroupSelection:
 def _path() -> list[JointState]:
     names = ["arm/a", "arm/b"]
     return [
-        JointState(name=names, position=[0.0, 0.0]),
-        JointState(name=names, position=[0.2, 0.1]),
-        JointState(name=names, position=[0.4, 0.0]),
+        JointState(
+            name=names,
+            position=np.array([0.0, 0.0], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        ),
+        JointState(
+            name=names,
+            position=np.array([0.2, 0.1], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        ),
+        JointState(
+            name=names,
+            position=np.array([0.4, 0.0], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        ),
     ]
 
 
 def _output() -> JointTrajectory:
     return JointTrajectory(
+        header=header_now(),
         joint_names=["arm/a", "arm/b"],
         points=[
-            TrajectoryPoint(
-                time_from_start=0.0,
-                positions=[0.0, 0.0],
-                velocities=[0.0, 0.0],
+            JointTrajectoryPoint(
+                time_from_start=duration_from_seconds(0.0),
+                positions=np.array([0.0, 0.0], dtype=np.float64),
+                velocities=np.array([0.0, 0.0], dtype=np.float64),
+                accelerations=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
             ),
-            TrajectoryPoint(
-                time_from_start=0.5,
-                positions=[0.4, 0.0],
-                velocities=[0.0, 0.0],
+            JointTrajectoryPoint(
+                time_from_start=duration_from_seconds(0.5),
+                positions=np.array([0.4, 0.0], dtype=np.float64),
+                velocities=np.array([0.0, 0.0], dtype=np.float64),
+                accelerations=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
             ),
         ],
     )
@@ -105,11 +131,14 @@ def test_materializes_trajectory_and_preserves_source_path() -> None:
         speed_scale=0.4,
     )
 
-    assert [state.position for state in plan.path] == [
-        [0.0, 0.0],
-        [0.2, 0.1],
-        [0.4, 0.0],
-    ]
+    np.testing.assert_array_equal(
+        [state.position for state in plan.path],
+        [
+            [0.0, 0.0],
+            [0.2, 0.1],
+            [0.4, 0.0],
+        ],
+    )
     assert plan.path is not source_path
     assert plan.trajectory is parametrizer.output
     assert plan.planning_time == 0.2
@@ -122,13 +151,17 @@ def test_timed_planner_result_bypasses_backend_path_conversion() -> None:
     path = [
         JointState(
             name=["arm/a", "arm/b"],
-            position=[0.0, 0.0],
-            velocity=[0.0, 0.0],
+            position=np.array([0.0, 0.0], dtype=np.float64),
+            velocity=np.array([0.0, 0.0], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            effort=np.array([], dtype=np.float64),
         ),
         JointState(
             name=["arm/a", "arm/b"],
-            position=[0.4, 0.0],
-            velocity=[0.3, 0.0],
+            position=np.array([0.4, 0.0], dtype=np.float64),
+            velocity=np.array([0.3, 0.0], dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            effort=np.array([], dtype=np.float64),
         ),
     ]
 
@@ -143,11 +176,11 @@ def test_timed_planner_result_bypasses_backend_path_conversion() -> None:
     )
 
     assert parametrizer.calls == []
-    assert [point.time_from_start for point in plan.trajectory.points] == [
+    assert [to_seconds(point.time_from_start) for point in plan.trajectory.points] == [
         0.0,
         0.75,
     ]
-    assert plan.trajectory.points[-1].velocities == [0.3, 0.0]
+    np.testing.assert_array_equal(plan.trajectory.points[-1].velocities, [0.3, 0.0])
 
 
 def test_timed_planner_result_requires_velocity_for_each_joint() -> None:
@@ -168,7 +201,9 @@ def test_timed_planner_result_requires_velocity_for_each_joint() -> None:
 
 def test_rejects_backend_trajectory_with_nonincreasing_time() -> None:
     output = _output()
-    output.points[-1].time_from_start = 0.0
+    point = output.points[-1]
+    point.time_from_start = duration_from_seconds(0.0)
+    output.points[-1] = point
     parametrizer = _FixedParametrizer(output)
 
     with pytest.raises(TrajectoryParametrizationError, match="strictly increasing"):
@@ -181,7 +216,9 @@ def test_rejects_backend_trajectory_with_nonincreasing_time() -> None:
 
 def test_rejects_backend_trajectory_that_changes_path_goal() -> None:
     output = _output()
-    output.points[-1].positions = [0.3, 0.0]
+    point = output.points[-1]
+    point.positions = [0.3, 0.0]
+    output.points[-1] = point
     parametrizer = _FixedParametrizer(output)
 
     with pytest.raises(TrajectoryParametrizationError, match="path goal"):
@@ -197,22 +234,58 @@ def test_rejects_backend_trajectory_that_changes_path_goal() -> None:
     [
         (
             [
-                JointState(name=["arm/a", "arm/b"], position=[0.0, 0.0]),
-                JointState(name=["wrong/a", "wrong/b"], position=[0.4, 0.0]),
+                JointState(
+                    name=["arm/a", "arm/b"],
+                    position=np.array([0.0, 0.0], dtype=np.float64),
+                    header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                    velocity=np.array([], dtype=np.float64),
+                    effort=np.array([], dtype=np.float64),
+                ),
+                JointState(
+                    name=["wrong/a", "wrong/b"],
+                    position=np.array([0.4, 0.0], dtype=np.float64),
+                    header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                    velocity=np.array([], dtype=np.float64),
+                    effort=np.array([], dtype=np.float64),
+                ),
             ],
             "joint names",
         ),
         (
             [
-                JointState(name=["arm/a", "arm/b"], position=[0.0, 0.0]),
-                JointState(name=["arm/a", "arm/b"], position=[0.4]),
+                JointState(
+                    name=["arm/a", "arm/b"],
+                    position=np.array([0.0, 0.0], dtype=np.float64),
+                    header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                    velocity=np.array([], dtype=np.float64),
+                    effort=np.array([], dtype=np.float64),
+                ),
+                JointState(
+                    name=["arm/a", "arm/b"],
+                    position=np.array([0.4], dtype=np.float64),
+                    header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                    velocity=np.array([], dtype=np.float64),
+                    effort=np.array([], dtype=np.float64),
+                ),
             ],
             "dimension",
         ),
         (
             [
-                JointState(name=["arm/a", "arm/b"], position=[0.0, 0.0]),
-                JointState(name=["arm/a", "arm/b"], position=[float("nan"), 0.0]),
+                JointState(
+                    name=["arm/a", "arm/b"],
+                    position=np.array([0.0, 0.0], dtype=np.float64),
+                    header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                    velocity=np.array([], dtype=np.float64),
+                    effort=np.array([], dtype=np.float64),
+                ),
+                JointState(
+                    name=["arm/a", "arm/b"],
+                    position=np.array([float("nan"), 0.0], dtype=np.float64),
+                    header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                    velocity=np.array([], dtype=np.float64),
+                    effort=np.array([], dtype=np.float64),
+                ),
             ],
             "non-finite",
         ),

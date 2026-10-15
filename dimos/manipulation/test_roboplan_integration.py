@@ -18,6 +18,18 @@ import importlib
 from pathlib import Path
 from typing import Any
 
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseStamped,
+    Quaternion,
+    Transform,
+    TransformStamped,
+    Vector3,
+)
+from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 import pytest
 
@@ -40,16 +52,12 @@ from dimos.manipulation.planning.trajectory_generator.config import (
     RoboPlanTOPPRAParametrizationConfig,
 )
 from dimos.manipulation.planning.utils.kinematics_utils import compute_pose_error
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.geometry import pose_matrix
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.manipulators.xarm.config import (
     make_dual_xarm6_model_config,
     make_xarm6_model_config,
 )
-from dimos.utils.transform_utils import pose_to_matrix
 
 pytestmark = pytest.mark.self_hosted
 
@@ -67,7 +75,13 @@ def _sync_zero_state(
     joint_names: list[str],
 ) -> None:
     world.sync_from_joint_state(
-        JointState(name=joint_names, position=[0.0] * len(joint_names)),
+        JointState(
+            name=joint_names,
+            position=np.asarray([0.0] * len(joint_names), dtype=np.float64),
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        ),
     )
 
 
@@ -88,7 +102,11 @@ def test_real_roboplan_plans_fixed_orientation_cartesian_path(
     group_id = "manipulator"
     selection = world._planning_groups.select((group_id,))
     start = JointState(
-        name=list(selection.joint_names), position=[0.0] * len(selection.joint_names)
+        name=list(selection.joint_names),
+        position=np.asarray([0.0] * len(selection.joint_names), dtype=np.float64),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
     )
     with world.scratch_context() as ctx:
         planner._apply_selected_state(ctx, start)
@@ -100,8 +118,22 @@ def test_real_roboplan_plans_fixed_orientation_cartesian_path(
         start,
         {
             group_id: (
-                Transform.identity(),
-                Transform(translation=Vector3(0.005, 0.0, 0.0)),
+                TransformStamped(
+                    header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+                    child_frame_id="",
+                    transform=Transform(
+                        translation=Vector3(x=0.0, y=0.0, z=0.0),
+                        rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                    ),
+                ),
+                TransformStamped(
+                    header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+                    transform=Transform(
+                        translation=Vector3(x=0.005, y=0.0, z=0.0),
+                        rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                    ),
+                    child_frame_id="",
+                ),
             )
         },
         RoboPlanCartesianPathConfig(
@@ -117,9 +149,9 @@ def test_real_roboplan_plans_fixed_orientation_cartesian_path(
     with world.scratch_context() as ctx:
         planner._apply_selected_state(ctx, result.path[-1])
         final_pose = world.get_group_ee_pose(ctx, group_id)
-    expected = pose_to_matrix(start_pose)
+    expected = pose_matrix(start_pose.pose)
     expected[0, 3] += 0.005
-    position_error, orientation_error = compute_pose_error(pose_to_matrix(final_pose), expected)
+    position_error, orientation_error = compute_pose_error(pose_matrix(final_pose.pose), expected)
     assert position_error <= 0.005
     assert orientation_error <= 0.01
 
@@ -142,7 +174,11 @@ def test_real_roboplan_synchronizes_different_length_dual_arm_targets(
     right_group_id = "right_arm"
     selection = world._planning_groups.select((left_group_id, right_group_id))
     start = JointState(
-        name=list(selection.joint_names), position=[0.0] * len(selection.joint_names)
+        name=list(selection.joint_names),
+        position=np.asarray([0.0] * len(selection.joint_names), dtype=np.float64),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
     )
 
     result = planner.plan_cartesian_path(
@@ -151,13 +187,48 @@ def test_real_roboplan_synchronizes_different_length_dual_arm_targets(
         start,
         {
             left_group_id: (
-                Transform.identity(),
-                Transform(translation=Vector3(0.0015, 0.001, 0.0)),
-                Transform(translation=Vector3(0.003, 0.0, 0.0)),
+                TransformStamped(
+                    header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+                    child_frame_id="",
+                    transform=Transform(
+                        translation=Vector3(x=0.0, y=0.0, z=0.0),
+                        rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                    ),
+                ),
+                TransformStamped(
+                    header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+                    transform=Transform(
+                        translation=Vector3(x=0.0015, y=0.001, z=0.0),
+                        rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                    ),
+                    child_frame_id="",
+                ),
+                TransformStamped(
+                    header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+                    transform=Transform(
+                        translation=Vector3(x=0.003, y=0.0, z=0.0),
+                        rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                    ),
+                    child_frame_id="",
+                ),
             ),
             right_group_id: (
-                Transform.identity(),
-                Transform(translation=Vector3(0.005, 0.0, 0.0)),
+                TransformStamped(
+                    header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+                    child_frame_id="",
+                    transform=Transform(
+                        translation=Vector3(x=0.0, y=0.0, z=0.0),
+                        rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                    ),
+                ),
+                TransformStamped(
+                    header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+                    transform=Transform(
+                        translation=Vector3(x=0.005, y=0.0, z=0.0),
+                        rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                    ),
+                    child_frame_id="",
+                ),
             ),
         },
         RoboPlanCartesianPathConfig(),
@@ -186,7 +257,13 @@ def scalar_world(tmp_path, roboplan_types):
         model=RobotModel.from_file(model_path),
         joint_names=["slide"],
         base_link="base",
-        base_pose=PoseStamped(frame_id="world", position=[1, 0, 0]),
+        base_pose=PoseStamped(
+            header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+            pose=Pose(
+                position=Point(x=1, y=0.0, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+        ),
         planning_groups=[
             PlanningGroupDefinition(
                 name="arm", joint_names=("slide",), base_link="base", tip_link="arm"
@@ -196,15 +273,41 @@ def scalar_world(tmp_path, roboplan_types):
     world = roboplan_types[0]()
     world.load_model(prepare_robot_model(config))
     world.finalize()
-    world.sync_from_joint_state(JointState(name=["slide"], position=[0.0]))
+    world.sync_from_joint_state(
+        JointState(
+            name=["slide"],
+            position=np.asarray([0.0], dtype=np.float64),
+            header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        )
+    )
     return world
 
 
 def test_real_contexts_keep_independent_state_and_refresh_geometry(scalar_world):
     world = scalar_world
     with world.scratch_context() as first, world.scratch_context() as second:
-        world.set_joint_state(first, JointState(name=["slide"], position=[0.0]))
-        world.set_joint_state(second, JointState(name=["slide"], position=[0.4]))
+        world.set_joint_state(
+            first,
+            JointState(
+                name=["slide"],
+                position=np.asarray([0.0], dtype=np.float64),
+                header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            ),
+        )
+        world.set_joint_state(
+            second,
+            JointState(
+                name=["slide"],
+                position=np.asarray([0.4], dtype=np.float64),
+                header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            ),
+        )
         np.testing.assert_allclose(world.get_link_pose(first, "arm")[:3, 3], [1, 0, 0])
         np.testing.assert_allclose(world.get_link_pose(second, "arm")[:3, 3], [1.4, 0, 0])
         with world.parametrization_model() as model:
@@ -214,13 +317,26 @@ def test_real_contexts_keep_independent_state_and_refresh_geometry(scalar_world)
                 name="block",
                 obstacle_type=ObstacleType.BOX,
                 dimensions=(0.1, 0.1, 0.1),
-                pose=PoseStamped(frame_id="world", position=[1.4, 0, 0]),
+                pose=PoseStamped(
+                    header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+                    pose=Pose(
+                        position=Point(x=1.4, y=0.0, z=0.0),
+                        orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                    ),
+                ),
             )
         )
         assert not world.is_collision_free(second)
         assert world.is_collision_free(first)
         assert world.update_obstacle_pose(
-            "block", PoseStamped(frame_id="world", position=[1.8, 0, 0])
+            "block",
+            PoseStamped(
+                header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+                pose=Pose(
+                    position=Point(x=1.8, y=0.0, z=0.0),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+            ),
         )
         assert world.is_collision_free(second)
         assert world.remove_obstacle("block")
@@ -238,8 +354,20 @@ def test_real_rrt_and_toppra_use_finite_prepared_limits(scalar_world, roboplan_t
     assert world.get_prepared_model().joint_space.acceleration_limits == (0.4,)
 
     planner = roboplan_types[1](world, RoboPlanPlannerConfig())
-    start = JointState(name=["slide"], position=[0.0])
-    goal = JointState(name=["slide"], position=[0.5])
+    start = JointState(
+        name=["slide"],
+        position=np.asarray([0.0], dtype=np.float64),
+        header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
+    )
+    goal = JointState(
+        name=["slide"],
+        position=np.asarray([0.5], dtype=np.float64),
+        header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
+    )
     result = planner.plan_joint_path(world, start, goal, timeout=1.0)
     assert result.status == PlanningStatus.SUCCESS, result.message
     selection = world._planning_groups.select(("arm",))

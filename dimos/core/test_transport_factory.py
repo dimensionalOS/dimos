@@ -14,6 +14,8 @@
 
 from __future__ import annotations
 
+from dimos_generated.geometry_msgs.msg import PoseStamped, Twist
+from dimos_generated.sensor_msgs.msg import Image, PointCloud2
 import pytest
 
 from dimos.core.global_config import GlobalConfig
@@ -31,10 +33,6 @@ from dimos.core.transport_factory import (
     session_config,
     transport_topic,
 )
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.protocol.pubsub.impl.zenohpubsub import QOS_LATEST_WINS, QOS_NEVER_DROP
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
 from dimos.protocol.rpc.zenohrpc import ZenohRPC

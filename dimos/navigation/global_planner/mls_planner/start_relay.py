@@ -17,13 +17,13 @@ from __future__ import annotations
 import time
 from typing import Any
 
+from dimos_generated.geometry_msgs.msg import PoseStamped
+from dimos_generated.tf2_msgs.msg import TFMessage
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 
 
 class StartRelayConfig(ModuleConfig):

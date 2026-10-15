@@ -12,6 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use dimos_generated_messages::builtin_interfaces::msg::time::Time;
+use dimos_generated_messages::dimos_msgs::msg::{
+    region_bounds::RegionBounds, region_point_cloud2::RegionPointCloud2,
+};
+use dimos_generated_messages::geometry_msgs::msg::point::Point;
+use dimos_generated_messages::sensor_msgs::msg::{
+    point_cloud2::PointCloud2, point_field::PointField,
+};
+use dimos_generated_messages::std_msgs::msg::header::Header;
+use dimos_module::cdr;
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
@@ -24,9 +34,6 @@ use dimos_module::pointcloud::extract_xyz;
 use dimos_module::{
     debug_throttled, error_throttled, warn_throttled, Input, Module, Output, Tf, Transform,
 };
-use lcm_msgs::geometry_msgs::{Point, Pose as PoseMsg, PoseStamped, Quaternion};
-use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
-use lcm_msgs::std_msgs::{Header, Time};
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TryRecvError;
 use tokio::task::JoinHandle;
@@ -51,42 +58,42 @@ const SEED_PASS_BUDGET: Duration = Duration::from_millis(20);
 #[derive(Module)]
 #[module(name = "ray_tracing", setup = spawn_worker, teardown = stop_worker)]
 pub struct RayTracingVoxelMap {
-    #[input(decode = PointCloud2::decode, handler = on_lidar)]
+    #[input(decode = cdr::decode, handler = on_lidar)]
     lidar: Input<PointCloud2>,
 
     // An externally loaded map cloud. Only the first one seeds the map.
-    #[input(decode = PointCloud2::decode, handler = on_loaded_map)]
+    #[input(decode = cdr::decode, handler = on_loaded_map)]
     loaded_map: Input<PointCloud2>,
 
     #[tf]
     tf: Tf,
 
-    #[output(encode = PointCloud2::encode)]
+    #[output(encode = cdr::encode)]
     global_map: Output<PointCloud2>,
 
-    #[output(encode = PointCloud2::encode)]
+    #[output(encode = cdr::encode)]
     local_map: Output<PointCloud2>,
 
-    #[output(encode = PointCloud2::encode)]
+    #[output(encode = cdr::encode)]
     local_map_fine: Output<PointCloud2>,
 
     // Cylinder bounds of the local map. Position is the center, orientation holds
     // radius, z_min, z_max. Stamped like local_map so consumers pair them.
-    #[output(encode = PoseStamped::encode)]
-    region_bounds: Output<PoseStamped>,
+    #[output(encode = cdr::encode)]
+    region_bounds: Output<RegionBounds>,
 
     // The map for viewers, one region cell per message with the cell packed in
-    // the header seq.
-    #[output(encode = PointCloud2::encode)]
-    map_regions: Output<PointCloud2>,
+    // the region ID.
+    #[output(encode = cdr::encode)]
+    map_regions: Output<RegionPointCloud2>,
 
     // One region of a seeded map as it lands, gated like local_map. seed_bounds
     // carries its cylinder like region_bounds.
-    #[output(encode = PointCloud2::encode)]
-    seed_map: Output<PointCloud2>,
+    #[output(encode = cdr::encode)]
+    seed_map: Output<RegionPointCloud2>,
 
-    #[output(encode = PoseStamped::encode)]
-    seed_bounds: Output<PoseStamped>,
+    #[output(encode = cdr::encode)]
+    seed_bounds: Output<RegionBounds>,
 
     #[config]
     config: Config,
@@ -265,17 +272,17 @@ struct Worker {
     global_map: Output<PointCloud2>,
     local_map: Output<PointCloud2>,
     local_map_fine: Output<PointCloud2>,
-    region_bounds: Output<PoseStamped>,
-    map_regions: Output<PointCloud2>,
-    seed_map: Output<PointCloud2>,
-    seed_bounds: Output<PoseStamped>,
+    region_bounds: Output<RegionBounds>,
+    map_regions: Output<RegionPointCloud2>,
+    seed_map: Output<RegionPointCloud2>,
+    seed_bounds: Output<RegionBounds>,
 }
 
 impl Worker {
     async fn run(mut self) {
         let mut state = State {
             mapper: Mapper::new(self.config.clone()),
-            last_frame_stamp: Time::default(),
+            last_frame_stamp: Time { sec: 0, nanosec: 0 },
             seed: SeedState::Idle,
             viz: RegionSweep::default(),
         };
@@ -400,7 +407,7 @@ impl Worker {
 
         // Bounds pair with local_map by stamp, so publish them on its cadence.
         if let Some(c) = region {
-            let bounds_msg = bounds_to_pose(&c, out_frame_id, stamp.clone());
+            let bounds_msg = bounds_message(&c, out_frame_id, stamp.clone());
             publish_bounds(&self.region_bounds, &bounds_msg).await;
         }
 
@@ -429,7 +436,7 @@ impl Worker {
     }
 
     /// Publish the map region cells due this viz tick, the cell in each
-    /// header seq.
+    /// region ID.
     async fn publish_map_regions(&self, state: &mut State, stamp: &Time) {
         let due = tokio::task::block_in_place(|| {
             map_regions_due(
@@ -441,8 +448,10 @@ impl Worker {
             )
         });
         for (cell, points) in due {
-            let mut cloud = points_to_cloud(&points, &self.config.world_frame, stamp.clone());
-            cloud.header.seq = pack_cell(cell);
+            let cloud = RegionPointCloud2 {
+                region_id: pack_cell(cell),
+                cloud: points_to_cloud(&points, &self.config.world_frame, stamp.clone()),
+            };
             publish_cloud(&self.map_regions, &cloud).await;
         }
     }
@@ -508,7 +517,7 @@ impl Worker {
                 "Premap load in progress."
             );
             if let Some(cylinder) = completed {
-                let seq = load.next_region as i32;
+                let seq = i32::try_from(load.next_region).expect("seed region ID exceeds int32");
                 self.publish_seed_region(&state.mapper, &cylinder, seq, &state.last_frame_stamp)
                     .await;
             }
@@ -536,7 +545,7 @@ impl Worker {
     }
 
     /// Publish one seeded region as the map now holds it. Cloud and bounds
-    /// carry the region number in their header seq, which consumers pair on.
+    /// carry the region number in their region ID, which consumers pair on.
     async fn publish_seed_region(
         &self,
         mapper: &Mapper,
@@ -553,18 +562,20 @@ impl Worker {
 }
 
 /// One seeded region as its bounds and cloud messages, both stamped alike
-/// with the region number in their header seq.
+/// with the region number in their region ID.
 fn seed_region_messages(
     cylinder: &Cylinder,
     points: &[f32],
     seq: i32,
     frame_id: &str,
     stamp: &Time,
-) -> (PoseStamped, PointCloud2) {
-    let mut bounds = bounds_to_pose(cylinder, frame_id, stamp.clone());
-    bounds.header.seq = seq;
-    let mut cloud = points_to_cloud(points, frame_id, stamp.clone());
-    cloud.header.seq = seq;
+) -> (RegionBounds, RegionPointCloud2) {
+    let mut bounds = bounds_message(cylinder, frame_id, stamp.clone());
+    bounds.region_id = seq;
+    let cloud = RegionPointCloud2 {
+        region_id: seq,
+        cloud: points_to_cloud(points, frame_id, stamp.clone()),
+    };
     (bounds, cloud)
 }
 
@@ -628,35 +639,29 @@ fn prepare_seed(
 const LOADED_MAP_TF_WAIT_TIMEOUT: Duration = Duration::from_secs(2);
 
 fn time_secs(t: &Time) -> f64 {
-    t.sec as f64 + t.nsec as f64 * 1e-9
+    t.sec as f64 + t.nanosec as f64 * 1e-9
 }
 
-/// A cylinder as the bounds message: position is the center, orientation
-/// holds radius, z_min, z_max.
-fn bounds_to_pose(c: &Cylinder, frame_id: &str, stamp: Time) -> PoseStamped {
-    PoseStamped {
+/// Explicit cylinder bounds in the source frame; vertical limits are absolute.
+fn bounds_message(c: &Cylinder, frame_id: &str, stamp: Time) -> RegionBounds {
+    RegionBounds {
         header: Header {
-            seq: 0,
             stamp,
-            frame_id: frame_id.to_string(),
+            frame_id: frame_id.into(),
         },
-        pose: PoseMsg {
-            position: Point {
-                x: c.cx as f64,
-                y: c.cy as f64,
-                z: 0.0,
-            },
-            orientation: Quaternion {
-                x: c.radius as f64,
-                y: c.z_min as f64,
-                z: c.z_max as f64,
-                w: 0.0,
-            },
+        region_id: 0,
+        center: Point {
+            x: c.cx as f64,
+            y: c.cy as f64,
+            z: 0.0,
         },
+        radius: c.radius as f64,
+        z_min: c.z_min as f64,
+        z_max: c.z_max as f64,
     }
 }
 
-async fn publish_bounds(out: &Output<PoseStamped>, msg: &PoseStamped) {
+async fn publish_bounds(out: &Output<RegionBounds>, msg: &RegionBounds) {
     if let Err(e) = out.publish(msg).await {
         error_throttled!(
             Duration::from_secs(1),
@@ -693,18 +698,17 @@ fn write_point(data: &mut Vec<u8>, n: &mut i32, x: f32, y: f32, z: f32) {
 fn make_cloud(data: Vec<u8>, n: i32, frame_id: &str, stamp: Time) -> PointCloud2 {
     let make_field = |name: &str, off: i32| PointField {
         name: name.into(),
-        offset: off,
-        datatype: PointField::FLOAT32 as u8,
+        offset: off as u32,
+        datatype: PointField::FLOAT32,
         count: 1,
     };
     PointCloud2 {
         header: Header {
-            seq: 0,
             stamp,
             frame_id: frame_id.into(),
         },
         height: 1,
-        width: n,
+        width: n as u32,
         fields: vec![
             make_field("x", 0),
             make_field("y", 4),
@@ -713,7 +717,7 @@ fn make_cloud(data: Vec<u8>, n: i32, frame_id: &str, stamp: Time) -> PointCloud2
         ],
         is_bigendian: false,
         point_step: 16,
-        row_step: 16 * n,
+        row_step: 16 * n as u32,
         data,
         is_dense: true,
     }
@@ -729,7 +733,7 @@ fn points_to_cloud(points: &[f32], frame_id: &str, stamp: Time) -> PointCloud2 {
     make_cloud(data, n, frame_id, stamp)
 }
 
-async fn publish_cloud(out: &Output<PointCloud2>, cloud: &PointCloud2) {
+async fn publish_cloud<T>(out: &Output<T>, cloud: &T) {
     if let Err(e) = out.publish(cloud).await {
         error_throttled!(
             Duration::from_secs(1),
@@ -818,7 +822,7 @@ mod tests {
             UnitQuaternion::from_axis_angle(&Vector3::z_axis(), std::f64::consts::FRAC_PI_2),
         );
         let t = Transform::new("odom", "map", 0.0, iso);
-        let cloud = points_to_cloud(&[3.5, 0.0, 0.5], "map", Time::default());
+        let cloud = points_to_cloud(&[3.5, 0.0, 0.5], "map", Time { sec: 0, nanosec: 0 });
 
         let part = prepare_seed(&cloud, tf_to_pose(&t), 1.0, (0.0, 0.0, 0.0), 4.0)
             .expect("loaded map must decode");
@@ -829,7 +833,7 @@ mod tests {
         assert_eq!(created, 1);
 
         let region = mapper.local_points(&part.regions[0].cylinder.bounds());
-        let seeded = points_to_cloud(&region, "odom", Time::default());
+        let seeded = points_to_cloud(&region, "odom", Time { sec: 0, nanosec: 0 });
         assert!(cloud_points(&seeded).contains(&voxel_center(10, 3, 0)));
     }
 
@@ -898,18 +902,18 @@ mod tests {
     }
 
     #[test]
-    fn seed_region_messages_pair_on_seq_and_stamp() {
+    fn seed_region_messages_pair_on_region_id_and_stamp() {
         let part = two_region_seed();
-        let stamp = Time { sec: 7, nsec: 9 };
+        let stamp = Time { sec: 7, nanosec: 9 };
         for (index, region) in part.regions.iter().enumerate() {
             let seq = index as i32 + 1;
             let (bounds, cloud) =
                 seed_region_messages(&region.cylinder, &[1.5, 1.5, 0.5], seq, "odom", &stamp);
-            assert_eq!((bounds.header.seq, cloud.header.seq), (seq, seq));
+            assert_eq!((bounds.region_id, cloud.region_id), (seq, seq));
             assert_eq!(bounds.header.stamp, stamp);
-            assert_eq!(cloud.header.stamp, stamp);
-            assert_eq!(bounds.pose.position.x, region.cylinder.cx as f64);
-            assert_eq!(cloud.width, 1);
+            assert_eq!(cloud.cloud.header.stamp, stamp);
+            assert_eq!(bounds.center.x, region.cylinder.cx as f64);
+            assert_eq!(cloud.cloud.width, 1);
         }
     }
 
@@ -969,8 +973,9 @@ mod tests {
         let occupied: Vec<VoxelKey> = map.voxels.keys().collect();
         assert_eq!(occupied, vec![(3, -2, 1)]);
 
-        // Encode and decode the occupied voxel center exactly as the port would.
-        let cloud = points_to_cloud(&[3.5, -1.5, 1.5], "world", Time::default());
+        // A mask cloud naming that voxel's center, encoded and decoded exactly
+        // as the port would.
+        let cloud = points_to_cloud(&[3.5, -1.5, 1.5], "world", Time { sec: 0, nanosec: 0 });
         let Ok(points) = extract_xyz(&cloud) else {
             panic!("occupied cloud must decode");
         };
@@ -997,12 +1002,12 @@ mod tests {
         let global = points_to_cloud(
             &emit_points(&map, 1.0, None, &live),
             "world",
-            Time::default(),
+            Time { sec: 0, nanosec: 0 },
         );
         let local = points_to_cloud(
             &emit_points(&map, 1.0, Some(&cylinder), &live),
             "world",
-            Time::default(),
+            Time { sec: 0, nanosec: 0 },
         );
         assert!(cloud_points(&global).contains(&voxel_center(0, 0, 0)));
         assert!(cloud_points(&local).contains(&voxel_center(0, 0, 0)));
@@ -1022,12 +1027,12 @@ mod tests {
         let global = points_to_cloud(
             &emit_points(&map, 1.0, None, &live),
             "world",
-            Time::default(),
+            Time { sec: 0, nanosec: 0 },
         );
         let local = points_to_cloud(
             &emit_points(&map, 1.0, Some(&cylinder), &live),
             "world",
-            Time::default(),
+            Time { sec: 0, nanosec: 0 },
         );
         assert!(cloud_points(&global).contains(&voxel_center(5, 0, 0)));
         assert!(!cloud_points(&local).contains(&voxel_center(5, 0, 0)));
@@ -1048,12 +1053,12 @@ mod tests {
         let global = points_to_cloud(
             &emit_points(&map, 1.0, None, &live),
             "world",
-            Time::default(),
+            Time { sec: 0, nanosec: 0 },
         );
         let local = points_to_cloud(
             &emit_points(&map, 1.0, Some(&cylinder), &live),
             "world",
-            Time::default(),
+            Time { sec: 0, nanosec: 0 },
         );
         assert!(cloud_points(&global).contains(&voxel_center(0, 0, 5)));
         assert!(!cloud_points(&local).contains(&voxel_center(0, 0, 5)));
@@ -1076,12 +1081,12 @@ mod tests {
         let global = points_to_cloud(
             &emit_points(&map, 1.0, None, &live),
             "world",
-            Time::default(),
+            Time { sec: 0, nanosec: 0 },
         );
         let local = points_to_cloud(
             &emit_points(&map, 1.0, Some(&cylinder), &live),
             "world",
-            Time::default(),
+            Time { sec: 0, nanosec: 0 },
         );
         assert!(cloud_points(&global).contains(&voxel_center(1, 0, 0)));
         assert!(cloud_points(&global).contains(&voxel_center(10, 10, 10)));
@@ -1114,7 +1119,7 @@ mod tests {
         let local = points_to_cloud(
             &emit_points(&map, 1.0, Some(&cylinder), &live),
             "world",
-            Time::default(),
+            Time { sec: 0, nanosec: 0 },
         );
         let pts = cloud_points(&local);
         assert!(pts.contains(&voxel_center(1, 1, 0)), "dense patch kept");

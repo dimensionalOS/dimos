@@ -26,6 +26,11 @@ from threading import Event, RLock, Thread
 import time
 from typing import Any
 
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos_generated.nav_msgs.msg import Path
+from dimos_generated.sensor_msgs.msg import PointCloud2
+from dimos_generated.std_msgs.msg import Header
+from dimos_generated.tf2_msgs.msg import TFMessage
 import numpy as np
 from numpy.typing import NDArray
 from pydantic import Field, ImportString
@@ -35,13 +40,9 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import IO, In, Out
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.nav_msgs.Path import Path
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.msgs.geometry import quaternion_from_euler, yaw
+from dimos.msgs.pointcloud import pointcloud_xyz
+from dimos.msgs.time import time_from_seconds
 from dimos.navigation import spec
 from dimos.navigation.embodiment.base import Embodiment
 from dimos.navigation.embodiment.go2 import GO2
@@ -70,7 +71,7 @@ def annotate(
 ) -> Path:
     """The planner's route as the follower's path: stamped, grounded, precision profile in the timestamps."""
     nav = stamped(ref, ts=ts, frame_id=frame_id, ground_z=ground_z)
-    xy = np.array([[p.position.x, p.position.y] for p in ref.poses]).reshape(-1, 2)
+    xy = np.array([[p.pose.position.x, p.pose.position.y] for p in ref.poses]).reshape(-1, 2)
     clearance = path_clearance(xy, obstacles, emb.width / 2.0)
     return encode_precision(nav, clearance, emb, t0=ts)
 
@@ -79,16 +80,20 @@ def stamped(ref: Path, ts: float = 0.0, frame_id: str = "odom", ground_z: float 
     """The route stamped with time, frame and ground: the search's z = 0 is not the floor, `ground_z` is."""
     poses = [
         PoseStamped(
-            ts=ts,
-            frame_id=frame_id,
-            position=Vector3(p.position.x, p.position.y, ground_z),
-            orientation=Quaternion(
-                p.orientation.x, p.orientation.y, p.orientation.z, p.orientation.w
+            header=Header(stamp=time_from_seconds(ts), frame_id=frame_id),
+            pose=Pose(
+                position=Point(x=p.pose.position.x, y=p.pose.position.y, z=ground_z),
+                orientation=Quaternion(
+                    p.pose.orientation.x,
+                    p.pose.orientation.y,
+                    p.pose.orientation.z,
+                    p.pose.orientation.w,
+                ),
             ),
         )
         for p in ref.poses
     ]
-    return Path(ts=ts, frame_id=frame_id, poses=poses)
+    return Path(header=Header(stamp=time_from_seconds(ts), frame_id=frame_id), poses=poses)
 
 
 def carrot_along(
@@ -221,7 +226,7 @@ class LocalPlanner(Module, spec.MapLocalPlanner):
 
     def _on_planner_path(self, msg: Path) -> None:
         # an empty path is MLS finding no route: no carrot, hold the last local plan
-        xy = np.array([[p.position.x, p.position.y] for p in msg.poses]).reshape(-1, 2)
+        xy = np.array([[p.pose.position.x, p.pose.position.y] for p in msg.poses]).reshape(-1, 2)
         with self._lock:
             self._global_xy = xy if len(xy) else None
 
@@ -252,14 +257,18 @@ class LocalPlanner(Module, spec.MapLocalPlanner):
                 self._stale = False
                 logger.info("local_map is live again, resuming planning")
             # the gate reads the carrot, not the array (replan_due)
-            goal = carrot_along(global_xy, (pose.x, pose.y), self.config.goal_lookahead_m)
+            goal = carrot_along(
+                global_xy,
+                (pose.pose.position.x, pose.pose.position.y),
+                self.config.goal_lookahead_m,
+            )
             if self.due(cloud_seq, goal):
                 if self.retask(goal):
                     # a new task: warm start, hysteresis and the incumbent are about the old one
                     self._episode.reset()
                     self._incumbent = None
                 # the base rides emb.base_height above the surface
-                ground_z = pose.position.z - self._emb.base_height
+                ground_z = pose.pose.position.z - self._emb.base_height
                 if self.plan_once(cloud, pose, goal, ground_z):
                     self._planned = (cloud_seq, goal)
 
@@ -282,7 +291,14 @@ class LocalPlanner(Module, spec.MapLocalPlanner):
         self._incumbent = None
         self._episode.reset()
         logger.info("planner_path is empty, clearing the local plan")
-        self.path.publish(Path(ts=time.time(), frame_id=self.config.world_frame, poses=[]))
+        self.path.publish(
+            Path(
+                header=Header(
+                    stamp=time_from_seconds(time.time()), frame_id=self.config.world_frame
+                ),
+                poses=[],
+            )
+        )
 
     def hold(self, pose: PoseStamped, age: float) -> None:
         """Refuse the way the planner does: a single-pose stub reads as "stop"."""
@@ -295,13 +311,19 @@ class LocalPlanner(Module, spec.MapLocalPlanner):
                 max_map_age_s=self.config.max_map_age_s,
             )
         ts = time.time()
+        header = Header(stamp=time_from_seconds(ts), frame_id=self.config.world_frame)
         stub = PoseStamped(
-            ts=ts,
-            frame_id=self.config.world_frame,
-            position=Vector3(pose.x, pose.y, pose.position.z - self._emb.base_height),
-            orientation=Quaternion.from_euler(Vector3(0.0, 0.0, pose.yaw)),
+            header=header,
+            pose=Pose(
+                position=Point(
+                    x=pose.pose.position.x,
+                    y=pose.pose.position.y,
+                    z=pose.pose.position.z - self._emb.base_height,
+                ),
+                orientation=quaternion_from_euler(0.0, 0.0, yaw(pose.pose.orientation)),
+            ),
         )
-        held = Path(ts=ts, frame_id=self.config.world_frame, poses=[stub])
+        held = Path(header=header, poses=[stub])
         self._published = True
         self.path.publish(held)
 
@@ -314,13 +336,16 @@ class LocalPlanner(Module, spec.MapLocalPlanner):
     ) -> bool:
         """Plan and publish. False when the search raised and nothing went out."""
         # the model decides the obstacles here; the follower's room hint is measured off the same points
-        raw = cloud.points_f32()
+        raw = pointcloud_xyz(cloud).astype(np.float32)
         pts = hard_points(self._model, raw, ground_z)
         try:
             ref = self._episode.plan(
                 pts[:, :2],
-                pose,
-                Pose(goal[0], goal[1], 0.0),
+                pose.pose,
+                Pose(
+                    position=Point(x=goal[0], y=goal[1], z=0.0),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
                 self._incumbent,
                 ground=ground_points(raw, ground_z),
                 unseen_cost=self.config.unseen_cost,

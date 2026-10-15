@@ -22,6 +22,7 @@ import time
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, cast
 
 from dimos.memory.utils.formatting import FilterRepr
+from dimos.msgs.geometry import point_distance, quaternion_angle
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Sequence
@@ -183,7 +184,7 @@ def speed() -> FnIterTransformer[Any, float]:
             pp = prev.pose if prev is not None else None
             if prev is not None and p is not None and pp is not None:
                 dt = obs.ts - prev.ts
-                v = (p.position - pp.position).length() / dt if dt > 0 else 0.0
+                v = point_distance(p.position, pp.position) / dt if dt > 0 else 0.0
                 yield obs.derive(data=v)
             prev = obs
 
@@ -231,10 +232,10 @@ class SpeedLimit(Transformer[T, T]):
             if prev is not None and pp is not None:
                 dt = obs.ts - prev.ts
                 if dt > 0:
-                    v = (p.position - pp.position).length() / dt
+                    v = point_distance(p.position, pp.position) / dt
                     ok = v <= max_mps
                     if ok and max_rps is not None:
-                        ok = (p.orientation.angle_to(pp.orientation) / dt) <= max_rps
+                        ok = (quaternion_angle(p.orientation, pp.orientation) / dt) <= max_rps
                     if ok:
                         yield obs
             prev = obs

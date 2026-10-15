@@ -24,6 +24,10 @@ from __future__ import annotations
 from collections.abc import Iterator
 from unittest.mock import MagicMock
 
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.std_msgs.msg import Header
+from dimos_generated.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+import numpy as np
 import pytest
 
 from dimos.control.components import (
@@ -55,9 +59,8 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
 from dimos.control.tick_loop import TickLoop
 from dimos.hardware.drive_trains.spec import TwistBaseAdapter
 from dimos.hardware.manipulators.spec import ManipulatorAdapter
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
-from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState
+from dimos.msgs.time import duration_from_seconds
+from dimos.msgs.trajectory import TrajectoryState
 
 ARM_JOINTS = make_joints("arm", 3)
 ARM_POSITIONS = [0.1, 0.2, 0.3]
@@ -95,10 +98,23 @@ class TeleopStub(BaseControlTask):
 def _trajectory() -> JointTrajectory:
     """One second from the arm's current pose to +0.5 rad on every joint."""
     return JointTrajectory(
+        header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
         joint_names=list(ARM_JOINTS),
         points=[
-            TrajectoryPoint(positions=list(ARM_POSITIONS), time_from_start=0.0),
-            TrajectoryPoint(positions=[p + 0.5 for p in ARM_POSITIONS], time_from_start=1.0),
+            JointTrajectoryPoint(
+                positions=np.asarray(ARM_POSITIONS, dtype=np.float64),
+                velocities=np.array([], dtype=np.float64),
+                accelerations=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+                time_from_start=duration_from_seconds(0.0),
+            ),
+            JointTrajectoryPoint(
+                positions=np.asarray([p + 0.5 for p in ARM_POSITIONS], dtype=np.float64),
+                velocities=np.array([], dtype=np.float64),
+                accelerations=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+                time_from_start=duration_from_seconds(1.0),
+            ),
         ],
     )
 

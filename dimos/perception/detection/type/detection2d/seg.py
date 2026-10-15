@@ -19,13 +19,13 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from dimos.msgs.time import to_seconds
 from dimos.perception.detection.type.detection2d.bbox import Bbox, Detection2DBBox
 
 if TYPE_CHECKING:
+    from dimos_generated.sensor_msgs.msg import Image
     import torch
     from ultralytics.engine.results import Results
-
-    from dimos.msgs.sensor_msgs.Image import Image
 
 
 @dataclass
@@ -90,7 +90,7 @@ class Detection2DSeg(Detection2DBBox):
             class_id=class_id,
             confidence=confidence,
             name=name,
-            ts=image.ts,
+            ts=to_seconds(image.header.stamp),
             image=image,
             mask=mask.astype(np.uint8),
         )
@@ -164,7 +164,7 @@ class Detection2DSeg(Detection2DBBox):
             class_id=class_id,
             confidence=confidence,
             name=name,
-            ts=image.ts,
+            ts=to_seconds(image.header.stamp),
             image=image,
             mask=mask,
         )

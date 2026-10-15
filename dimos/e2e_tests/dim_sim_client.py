@@ -12,10 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos_generated.std_msgs.msg import Header
+
 from dimos.core.global_config import global_config
 from dimos.core.transport import PubSubTransport
 from dimos.core.transport_factory import make_transport
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.simulation.dimsim.scene_client import SceneClient
 
 
@@ -56,8 +59,10 @@ class DimSimClient:
     def publish_goal(self, x: float, y: float) -> None:
         self._goal_request.publish(
             PoseStamped(
-                position=(x, y, 0),
-                orientation=(0, 0, 0, 1),
-                frame_id="world",
+                header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+                pose=Pose(
+                    position=Point(x=x, y=y, z=0.0),
+                    orientation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0),
+                ),
             )
         )

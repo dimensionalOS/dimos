@@ -16,11 +16,11 @@
 
 import json
 
+from dimos_generated.sensor_msgs.msg import JointState
 from pydantic import ValidationError
 import pytest
 
 from dimos.imitation.dataprep.schema import FeatureSpec
-from dimos.msgs.sensor_msgs.JointState import JointState
 
 
 def test_live_feature_round_trips_as_a_portable_offline_declaration():

@@ -15,7 +15,7 @@ from dimos_cdrgen.source_package import setup_arguments
 ```
 
 There is no DimOS compatibility distribution. Existing consumers of
-`dimos_message_build` or generic `dimos.message_codegen` APIs must change their
+`dimos_message_project` or generic `dimos.message_codegen` APIs must change their
 imports and dependency declarations to `dimos_cdrgen` and `dimos-cdrgen`.
 
 DimOS retains two adapters:

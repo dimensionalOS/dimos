@@ -1,14 +1,14 @@
 # Experimental Native Memory Recorder
 
 The Rust recorder is an experimental high-throughput alternative to the Python
-Memory2 recorder. It remains compatible with the existing Python readers while
-its API and operational behavior are evaluated. Experimental imports may change
-without compatibility aliases.
+Memory recorder. Python supplies each stream's generated type name and complete
+ROS message definition. The native process records custom messages without a
+message-specific decoder or rebuild.
 
 ## Build and runtime packaging
 
-The recorder is built as a locked Nix package. Nix supplies Rust, CMake, NASM,
-SQLite, and the native libraries used by TurboJPEG, so none of those tools or
+The recorder is built as a locked Nix package. Nix supplies Rust, Python for build-time message generation,
+CMake, and SQLite, so none of those tools or
 development packages need to be installed on the host.
 
 The Python module resolves the package through Nix before each launch, so its
@@ -40,8 +40,7 @@ from dimos.experimental.memory.rust_recorder import (
     RustRecorder,
     RustSqliteStoreConfig,
 )
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos_generated.sensor_msgs.msg import Image, PointCloud2
 
 
 class SensorRecorder(RustRecorder):
@@ -52,19 +51,19 @@ class SensorRecorder(RustRecorder):
 sensor_recorder = SensorRecorder.blueprint(
     store=RustSqliteStoreConfig(path="session.db"),
     encoding_threads=4,
-    stream_codecs={"lidar": "lz4+lcm"},
+    stream_codecs={"lidar": "lz4+cdr"},
 )
 ```
 
-SQLite supports LCM-backed messages and the `lcm`, `jpeg`, `lz4+lcm`, and `json`
-storage codecs. Images default to JPEG quality 50. Configure depth or other
-lossless streams explicitly with `lz4+lcm`. The resulting artifact opens and
-replays through the stable Python `SqliteStore` API.
+SQLite stores generated CDR bytes by default. `lz4+cdr` adds lossless blob
+compression. Raw images retain their encoding and pixels, including depth data.
+For lossy compression, publish an explicit generated CompressedImage value.
+The resulting artifact opens and replays through Python's SqliteStore.
 
 ## MCAP
 
-Select MCAP to write the same Memory2 storage encodings into an indexed,
-portable container:
+Select MCAP for ROS2-profile recordings with CDR channels and embedded, complete
+`ros2msg` schemas:
 
 ```python
 from dimos.experimental.memory.rust_recorder import RustMcapStoreConfig
@@ -72,36 +71,30 @@ from dimos.experimental.memory.rust_recorder import RustMcapStoreConfig
 mcap_recorder = SensorRecorder.blueprint(
     store=RustMcapStoreConfig(path="session.mcap"),
     encoding_threads=4,
-    stream_codecs={"lidar": "lz4+lcm"},
 )
 ```
 
-MCAP stores each stream's selected `lcm`, `jpeg`, `lz4+lcm`, or `json` representation
-in indexed Zstd chunks. Source time is the MCAP publish time and recorder
-reception time is the log time. JPEG channels decode automatically. Supply
-trusted codecs explicitly for LCM channels instead of trusting artifact
-metadata:
+The Python reader now expects standard ROS2-profile CDR channels with embedded
+`ros2msg` schemas. Installed generated message packages supply the decoders:
 
 ```python
-from dimos.memory.codecs.lcm import LcmCodec
-from dimos.memory.codecs.lz4 import Lz4Codec
 from dimos.memory.store.mcap import McapStore
-from dimos.msgs.sensor_msgs.Imu import Imu
 
-store = McapStore(
-    path="session.mcap",
-    codecs={"imu": Lz4Codec(LcmCodec(Imu))},
-)
+store = McapStore(path="session.mcap")
 ```
+
+MCAP applies Zstd chunk compression. It rejects per-payload wrappers such as
+`lz4+cdr`. Standard compressed-image messages use their own declared schema.
+See `examples/message-codegen/demo_native_recording.py` for a hardware-free
+external-message recording demo on both LCM and Zenoh.
 
 Append mode remains unsupported for MCAP.
 
-MCAP times must be finite, nonnegative seconds that fit an unsigned 64-bit
-nanosecond timestamp. Recording fails on an unrepresentable source or reception
-time instead of clamping it. Zero is valid. SQLite can retain negative source
-times, such as event-relative timestamps.
-
-Both backends preserve source timestamps for common stamped messages. Arbitrary
+Both backends preserve source timestamps for supported stamped messages. MCAP
+keeps source and reception time as integer nanoseconds; SQLite exposes floating
+seconds for its existing query API while message payload stamps remain exact.
+Unknown timestamp layouts use reception time. Negative source times work in
+SQLite; MCAP rejects them because its time fields are unsigned. Arbitrary
 pickle payloads, Python `pose_setter_for` hooks, and spatial pose attachment
 remain Python-recorder features; unsupported combinations fail during startup.
 
@@ -109,18 +102,13 @@ remain Python-recorder features; unsupported combinations fail during startup.
 ## JSON documents
 
 The `json` codec accepts the existing `std_msgs.String` transport and stores its
-JSON text as UTF-8 without an LCM envelope. Ordinary String streams retain their
-selected LCM codec and reception timestamp. Configure an event source timestamp
+JSON text as UTF-8 without a CDR envelope. Ordinary String streams retain their
+selected CDR codec and reception timestamp. Configure an event source timestamp
 explicitly with `stream_timestamp_fields={"events": "ts"}` and select the codec
 with `stream_codecs={"events": "json"}`. Missing, nonnumeric or nonfinite selected
 timestamps fail recording. Without a selected field, JSON uses reception time.
 
-Unconfigured JSON options are omitted from the native launch configuration, so
-existing non-JSON streams remain compatible with older recorder binaries. JSON
-streams require a binary built with JSON codec support.
-
-`stream_json_schemas={"events": schema}` embeds a JSON Schema in MCAP, whose
-channel uses `message_encoding="json"`. SQLite retains the same UTF-8 document
-in its existing blob table, the event time in `ts`, and reception time in tags.
-Native JSON/String MCAP channels decode and replay as String through the existing
-memory APIs without importing an application-specific payload class.
+JSON storage is supported by SQLite. The ROS2-profile MCAP backend accepts only
+CDR channels with complete message schemas; record a typed custom event message
+there instead of selecting the JSON storage codec. JSON source times are converted
+to signed nanoseconds with checked range and retained in SQLite.

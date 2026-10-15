@@ -17,13 +17,14 @@
 from dataclasses import replace
 import math
 
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped
+from dimos_generated.nav_msgs.msg import Path
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.nav_msgs.Path import Path
+from dimos.msgs.geometry import quaternion_from_euler
+from dimos.msgs.time import time_from_seconds
 from dimos.navigation.embodiment.go2 import GO2
 from dimos.navigation.local_planner.profile import encode_precision
 from dimos.navigation.local_planner.viz import (
@@ -36,14 +37,16 @@ from dimos.navigation.local_planner.viz import (
 
 def _pose(x: float, y: float, yaw: float = 0.0) -> PoseStamped:
     return PoseStamped(
-        frame_id="odom",
-        position=Vector3(x, y, 0.0),
-        orientation=Quaternion.from_euler(Vector3(0, 0, yaw)),
+        header=Header(stamp=time_from_seconds(0.0), frame_id="odom"),
+        pose=Pose(position=Point(x, y, 0.0), orientation=quaternion_from_euler(0, 0, yaw)),
     )
 
 
 def _plan(n: int = 40, yaw: float = 0.0) -> Path:
-    return Path(frame_id="odom", poses=[_pose(k * 0.1, 0.0, yaw) for k in range(n)])
+    return Path(
+        header=Header(stamp=time_from_seconds(0.0), frame_id="odom"),
+        poses=[_pose(k * 0.1, 0.0, yaw) for k in range(n)],
+    )
 
 
 def _rgba(boxes) -> NDArray[np.float64]:
@@ -84,25 +87,31 @@ def test_colour_tracks_the_precision_the_planner_stamped() -> None:
 def test_an_unstamped_plan_draws_one_flat_colour() -> None:
     """No pinch is claimed where no precision was stamped.
 
-    Freshly built poses carry wall-clock stamps microseconds apart, so the
-    decoder clips the absurd speed to cruise rather than returning None. It
-    must not manufacture a varying profile out of noise: every box comes out
-    the same colour.
+    Canonical fixtures carry equal stamps until precision is encoded.
+    The renderer must not infer clearance from that unstamped path.
     """
     plan = _plan()  # never passed through encode_precision
     room = plan_clearance(plan, GO2)
-    assert room is not None and len(np.unique(np.round(room, 6))) == 1
+    assert room is None
     colors = _rgba(render_body(plan))
     assert len({tuple(c[:3]) for c in colors}) == 1
 
 
 def test_the_veto_stub_is_drawn_rather_than_blanked() -> None:
     """An empty viewport reads as a dead module; a refusal must look refused."""
-    veto = render_body(Path(frame_id="odom", poses=[_pose(1.0, 2.0, 0.5)]))
+    veto = render_body(
+        Path(
+            header=Header(stamp=time_from_seconds(0.0), frame_id="odom"),
+            poses=[_pose(1.0, 2.0, 0.5)],
+        )
+    )
     assert veto is not None
     assert len(veto.centers.pa_array) == 1
     # an EMPTY path is different: hold the last good picture
-    assert render_body(Path(frame_id="odom", poses=[])) is None
+    assert (
+        render_body(Path(header=Header(stamp=time_from_seconds(0.0), frame_id="odom"), poses=[]))
+        is None
+    )
 
 
 def test_the_box_sits_on_the_body_not_on_the_pose_point() -> None:
@@ -123,8 +132,13 @@ def test_the_plan_pins_its_frame_and_draws_its_body_off_the_one_path_topic() -> 
     assert by_entity == {"world/path": rr.Transform3D, "world/path/body": rr.Boxes3D}
     assert drawn[0] == ("world/path", rr.Transform3D(parent_frame="tf#/odom"))
     # a refusal stub is drawn too, so it is not mistaken for a dead module
-    veto = render_plan(Path(frame_id="odom", poses=[_pose(1.0, 2.0)]))
+    veto = render_plan(
+        Path(header=Header(stamp=time_from_seconds(0.0), frame_id="odom"), poses=[_pose(1.0, 2.0)])
+    )
     assert veto is not None and veto[-1][0] == "world/path/body"
     # an empty path is "no route": hold the last picture rather than blank it
-    assert render_plan(Path(frame_id="odom", poses=[])) is None
+    assert (
+        render_plan(Path(header=Header(stamp=time_from_seconds(0.0), frame_id="odom"), poses=[]))
+        is None
+    )
     assert set(motion_visual_override(body_dilate_m=-0.03)) == {"world/path"}

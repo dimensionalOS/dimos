@@ -16,6 +16,18 @@ import json
 from pathlib import Path
 import time
 
+from dimos_generated.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseStamped,
+    Quaternion,
+    Transform,
+    TransformStamped,
+    Vector3,
+)
+from dimos_generated.sensor_msgs.msg import Image, JointState
+from dimos_generated.std_msgs.msg import Header
+from dimos_generated.tf2_msgs.msg import TFMessage
 import numpy as np
 import pytest
 
@@ -24,12 +36,8 @@ from dimos.evals.constants import RAW_ARM_README, RAW_README
 from dimos.evals.environments.mujoco_sim import MujocoEnvironment
 from dimos.manipulation.manipulation_module import ManipulationModuleConfig
 from dimos.memory.store.memory import MemoryStore
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.msgs.image import image_from_array
+from dimos.msgs.time import time_from_seconds, to_seconds
 
 
 def environment(**kwargs):
@@ -38,7 +46,16 @@ def environment(**kwargs):
 
 def _tf(ts: float, child: str, z: float) -> TFMessage:
     return TFMessage(
-        Transform(translation=Vector3(0.4, 0.08, z), frame_id="world", child_frame_id=child, ts=ts)
+        transforms=[
+            TransformStamped(
+                header=Header(stamp=time_from_seconds(ts), frame_id="world"),
+                child_frame_id=child,
+                transform=Transform(
+                    translation=Vector3(x=0.4, y=0.08, z=z),
+                    rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+            )
+        ]
     )
 
 
@@ -103,12 +120,12 @@ def test_module_env_reaches_blueprint_parser(monkeypatch):
     assert sim["tracked_bodies"] == ["apple", "cup"]
 
     mounted = ManipulationModuleConfig(**parsed.module_kwargs("manipulationmodule"))
-    assert mounted.model.base_pose.position.z == pytest.approx(0.912)
+    assert mounted.model.base_pose.pose.position.z == pytest.approx(0.912)
     defaults = BlueprintConfigParser(xarm_perception_sim).parse(environ={})
     default = ManipulationModuleConfig(**defaults.module_kwargs("manipulationmodule"))
-    assert default.model.base_pose.position.z == pytest.approx(0.12)
+    assert default.model.base_pose.pose.position.z == pytest.approx(0.12)
     assert mounted.model.joint_names == default.model.joint_names
-    assert mounted.model.base_pose.orientation == default.model.base_pose.orientation
+    assert mounted.model.base_pose.pose.orientation == default.model.base_pose.pose.orientation
 
 
 def test_latest_pose_needs_odom():
@@ -116,8 +133,16 @@ def test_latest_pose_needs_odom():
     with MemoryStore() as store:
         with pytest.raises(LookupError):
             env.latest_pose(store)
-        store.stream("odom", PoseStamped).append(PoseStamped(ts=5, frame_id="world"))
-        assert env.latest_pose(store).ts == 5
+        store.stream("odom", PoseStamped).append(
+            PoseStamped(
+                header=Header(stamp=time_from_seconds(5), frame_id="world"),
+                pose=Pose(
+                    position=Point(x=0.0, y=0.0, z=0.0),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+            )
+        )
+        assert to_seconds(env.latest_pose(store).header.stamp) == 5
 
 
 def test_raw_arm_blueprint_configures_its_bridge():
@@ -180,10 +205,20 @@ def test_ready_needs_fresh_streams_and_tracked_body_poses():
             env.wait_ready(store, deadline=time.monotonic() + 0.3)
         now = time.time()
         store.stream("color_image", Image).append(
-            Image(data=np.zeros((1, 1, 3), dtype=np.uint8), format=ImageFormat.RGB, ts=now)
+            image_from_array(
+                np.zeros((1, 1, 3), dtype=np.uint8),
+                encoding="rgb8",
+                header=Header(stamp=time_from_seconds(now), frame_id=""),
+            )
         )
         store.stream("coordinator_joint_state", JointState).append(
-            JointState(ts=now, name=["j1"], position=[0.0], velocity=[0.0])
+            JointState(
+                header=Header(stamp=time_from_seconds(now), frame_id=""),
+                name=["j1"],
+                position=np.array([0.0]),
+                velocity=np.array([0.0]),
+                effort=np.array([], dtype=np.float64),
+            )
         )
         store.stream("tf", TFMessage).append(_tf(now, "apple", 0.17))
         env.wait_ready(store, deadline=time.monotonic() + 2.0)
@@ -199,13 +234,29 @@ def test_settle_waits_for_joints_to_stop():
         joints = store.stream("coordinator_joint_state", JointState)
         env.settle(1.0)
         assert time.monotonic() - started < 0.5
-        joints.append(JointState(ts=1.0, name=["j1"], position=[0.0], velocity=[0.5]))
+        joints.append(
+            JointState(
+                header=Header(stamp=time_from_seconds(1.0), frame_id=""),
+                name=["j1"],
+                position=np.array([0.0]),
+                velocity=np.array([0.5]),
+                effort=np.array([], dtype=np.float64),
+            )
+        )
         env._recording = store
         started = time.monotonic()
         env.settle(0.2)
         assert time.monotonic() - started >= 0.2
 
-        joints.append(JointState(ts=2.0, name=["j1"], position=[0.0], velocity=[0.0]))
+        joints.append(
+            JointState(
+                header=Header(stamp=time_from_seconds(2.0), frame_id=""),
+                name=["j1"],
+                position=np.array([0.0]),
+                velocity=np.array([0.0]),
+                effort=np.array([], dtype=np.float64),
+            )
+        )
         started = time.monotonic()
         env.settle(5.0)
         assert time.monotonic() - started < 1.0

@@ -15,7 +15,7 @@
 try:
     from geometry_msgs.msg import Vector3 as Vector3
 except ImportError:
-    from dimos.msgs.geometry_msgs.Vector3 import Vector3 as Vector3
+    from dimos_generated.geometry_msgs.msg import Vector3 as Vector3
 
 try:
     from geometry_msgs.msg import (
@@ -27,11 +27,11 @@ try:
     from nav_msgs.msg import OccupancyGrid as OccupancyGrid, Odometry as Odometry
     from std_msgs.msg import Header as Header
 except ImportError:
-    from dimos_lcm.geometry_msgs import (
+    from dimos_generated.geometry_msgs.msg import (
         Point as Point,
         Pose as Pose,
         Quaternion as Quaternion,
         Twist as Twist,
     )
-    from dimos_lcm.nav_msgs import OccupancyGrid as OccupancyGrid, Odometry as Odometry
-    from dimos_lcm.std_msgs import Header as Header
+    from dimos_generated.nav_msgs.msg import OccupancyGrid as OccupancyGrid, Odometry as Odometry
+    from dimos_generated.std_msgs.msg import Header as Header

@@ -18,15 +18,26 @@ from __future__ import annotations
 
 from functools import cache
 
+from dimos_generated.geometry_msgs.msg import (
+    PoseStamped,
+    Transform,
+    TransformStamped,
+    Vector3,
+)
+from dimos_generated.nav_msgs.msg import Odometry
+from dimos_generated.std_msgs.msg import Header
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.nav_msgs.Odometry import Odometry
+from dimos.msgs.geometry import (
+    compose_transforms,
+    inverse_transform,
+    pose_from_transform,
+    quaternion_from_euler,
+    transform_from_odometry,
+)
+from dimos.msgs.time import time_from_seconds
 from dimos.protocol.tf.static_tf_publisher import StaticTfPublisher, StaticTfPublisherConfig
 from dimos.robot.assets.model import LoadedRobotModel
 from dimos.robot.galaxea.r1pro.config import R1PRO_MODEL
@@ -46,41 +57,34 @@ def lio_model(lidar_frame: str, chassis_lidar_frame: str) -> LoadedRobotModel:
     return R1PRO_MODEL.with_fixed_frame(lidar_frame, chassis_lidar_frame).load()
 
 
-def joint_transform(model: LoadedRobotModel, child_link: str) -> Transform:
+def joint_transform(model: LoadedRobotModel, child_link: str) -> TransformStamped:
     """The fixed joint that places ``child_link`` under its parent."""
     joint = next(j for j in model.joints if j.child_link == child_link)
-    return Transform(
-        translation=Vector3(*joint.origin_xyz),
-        rotation=Quaternion.from_euler(Vector3(*joint.origin_rpy)),
-        frame_id=joint.parent_link,
+    return TransformStamped(
+        header=Header(stamp=time_from_seconds(0.0), frame_id=joint.parent_link),
         child_frame_id=joint.child_link,
+        transform=Transform(
+            translation=Vector3(*joint.origin_xyz),
+            rotation=quaternion_from_euler(*joint.origin_rpy),
+        ),
     )
 
 
-def mount_transforms(config: R1ProLioConfig) -> list[Transform]:
+def mount_transforms(config: R1ProLioConfig) -> list[TransformStamped]:
     """Rooted at Point-LIO's frame, plus the URDF's chassis-lidar edge."""
     model = lio_model(config.lidar_frame, config.chassis_lidar_frame)
     base_to_chassis_lidar = joint_transform(model, config.chassis_lidar_frame)
-    assert base_to_chassis_lidar.frame_id == config.base_frame
-    base_to_lidar = base_to_chassis_lidar + joint_transform(model, config.lidar_frame)
-    return [-base_to_lidar, base_to_chassis_lidar]
+    assert base_to_chassis_lidar.header.frame_id == config.base_frame
+    base_to_lidar = compose_transforms(
+        base_to_chassis_lidar, joint_transform(model, config.lidar_frame)
+    )
+    return [inverse_transform(base_to_lidar), base_to_chassis_lidar]
 
 
-def base_pose(odometry: Odometry, lidar_to_base: Transform) -> PoseStamped:
+def base_pose(odometry: Odometry, lidar_to_base: TransformStamped) -> PoseStamped:
     """Point-LIO's lidar pose carried through the mount to base_link."""
-    odom_to_lidar = Transform(
-        translation=odometry.pose.position,
-        rotation=odometry.pose.orientation,
-        frame_id=odometry.frame_id,
-        ts=odometry.ts,
-    )
-    odom_to_base = odom_to_lidar + lidar_to_base
-    return PoseStamped(
-        ts=odometry.ts,
-        frame_id=odometry.frame_id,
-        position=odom_to_base.translation,
-        orientation=odom_to_base.rotation,
-    )
+    odom_to_lidar = transform_from_odometry(odometry)
+    return pose_from_transform(compose_transforms(odom_to_lidar, lidar_to_base))
 
 
 class R1ProLio(StaticTfPublisher):
@@ -91,7 +95,7 @@ class R1ProLio(StaticTfPublisher):
     odometry: In[Odometry]
     pose: Out[PoseStamped]
 
-    def transforms(self) -> list[Transform]:
+    def transforms(self) -> list[TransformStamped]:
         return mount_transforms(self.config)
 
     @rpc

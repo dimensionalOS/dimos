@@ -27,9 +27,6 @@ from enum import Enum
 from typing import Protocol, runtime_checkable
 
 from dimos.hardware.spec import JointLimits as _JointLimits
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 
 class DriverStatus(Enum):
@@ -63,14 +60,6 @@ class ManipulatorInfo:
     dof: int
     firmware_version: str | None = None
     serial_number: str | None = None
-
-
-def default_base_transform() -> Transform:
-    """Default identity transform for arm mounting."""
-    return Transform(
-        translation=Vector3(0.0, 0.0, 0.0),
-        rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-    )
 
 
 @runtime_checkable

@@ -12,13 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 import time
 from typing import TYPE_CHECKING
 
+from dimos_generated.sensor_msgs.msg import Image
 import pytest
 
 from dimos.models.vl.moondream import MoondreamVlModel
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.utils.testing.replay import TimedSensorReplay
 
 if TYPE_CHECKING:
     from dimos.models.vl.base import VlModel
@@ -32,11 +34,14 @@ if TYPE_CHECKING:
 )
 def test_vlm_query_batch(model_class: "type[VlModel]", model_name: str) -> None:
     """Test query_batch optimization - multiple images, same query."""
-    from dimos.utils.testing.legacy_pickle import LegacyPickleStore
-
-    # Load 5 frames at 1-second intervals using LegacyPickleStore
-    replay = LegacyPickleStore[Image]("unitree_go2_office_walk2/video")
-    images = [replay.find_closest_seek(i).to_rgb() for i in range(0, 10, 2)]
+    # Explicit CDR recording input: <path>.db/<image_stream>.
+    recording = os.environ["DIMOS_VLM_RECORDING"]
+    replay = TimedSensorReplay[Image](recording)
+    images = []
+    for offset in range(0, 10, 2):
+        image = replay.find_closest_seek(offset)
+        assert isinstance(image, Image), f"No generated image at offset {offset}"
+        images.append(image)
 
     print(f"\nTesting {model_name} query_batch with {len(images)} images")
 

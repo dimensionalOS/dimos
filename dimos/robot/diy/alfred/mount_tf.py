@@ -25,14 +25,16 @@ from __future__ import annotations
 
 from xml.etree import ElementTree
 
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Transform, TransformStamped, Vector3
+from dimos_generated.std_msgs.msg import Header
+
+from dimos.msgs.geometry import quaternion_from_euler
 from dimos.protocol.tf.static_tf_publisher import StaticTfPublisher
 from dimos.robot.diy.alfred.config import ALFRED_URDF
 
 
-def mount_transforms() -> list[Transform]:
+def mount_transforms() -> list[TransformStamped]:
     """One transform per fixed joint of the urdf, minus the imager frames.
 
     The drivers publish their own imager offsets from the factory extrinsics read
@@ -52,11 +54,13 @@ def mount_transforms() -> list[Transform]:
         translation = [float(value) for value in origin.attrib["xyz"].split()]
         rpy = [float(value) for value in origin.attrib["rpy"].split()]
         transforms.append(
-            Transform(
-                translation=Vector3(*translation),
-                rotation=Quaternion.from_euler(Vector3(*rpy)),
-                frame_id=parent.attrib["link"],
+            TransformStamped(
+                header=Header(frame_id=parent.attrib["link"], stamp=Time(sec=0, nanosec=0)),
                 child_frame_id=child_link,
+                transform=Transform(
+                    translation=Vector3(x=translation[0], y=translation[1], z=translation[2]),
+                    rotation=quaternion_from_euler(*rpy),
+                ),
             )
         )
     return transforms
@@ -65,5 +69,5 @@ def mount_transforms() -> list[Transform]:
 class AlfredMountTf(StaticTfPublisher):
     """Publishes Alfred's urdf mount tree onto tf on a fixed interval."""
 
-    def transforms(self) -> list[Transform]:
+    def transforms(self) -> list[TransformStamped]:
         return mount_transforms()

@@ -21,11 +21,15 @@ import math
 from pathlib import Path
 from types import SimpleNamespace
 
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 import pytest
 from pytest_mock import MockerFixture
 
 pytest.importorskip("roboplan.toppra")
+
+from dimos_generated.sensor_msgs.msg import JointState
 
 from dimos.manipulation.planning.groups.models import (
     PlanningGroup,
@@ -53,7 +57,6 @@ from dimos.manipulation.planning.trajectory_generator.roboplan_toppra_parametriz
 )
 from dimos.manipulation.planning.world.roboplan_model import RoboPlanGroup, RoboPlanModel
 from dimos.manipulation.planning.world.roboplan_world import RoboPlanWorld
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import PlanarBaseDefinition, RobotModel
 
 pytestmark = pytest.mark.self_hosted
@@ -151,11 +154,21 @@ def _selection_and_result(
         path=[
             JointState(
                 name=list(names),
-                position=[positions_by_name[name][0] for name in names],
+                position=np.asarray(
+                    [positions_by_name[name][0] for name in names], dtype=np.float64
+                ),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
             ),
             JointState(
                 name=list(names),
-                position=[positions_by_name[name][1] for name in names],
+                position=np.asarray(
+                    [positions_by_name[name][1] for name in names], dtype=np.float64
+                ),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
             ),
         ],
     )
@@ -310,8 +323,20 @@ def test_roboplan_toppra_parametrizes_unbounded_planar_base(tmp_path: Path) -> N
     result = PlanningResult(
         status=PlanningStatus.SUCCESS,
         path=[
-            JointState(name=list(selection.joint_names), position=start),
-            JointState(name=list(selection.joint_names), position=goal),
+            JointState(
+                name=list(selection.joint_names),
+                position=np.asarray(start, dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            ),
+            JointState(
+                name=list(selection.joint_names),
+                position=np.asarray(goal, dtype=np.float64),
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            ),
         ],
     )
 
@@ -319,7 +344,7 @@ def test_roboplan_toppra_parametrizes_unbounded_planar_base(tmp_path: Path) -> N
         world, selection, result
     )
 
-    positions = [point.positions for point in plan.trajectory.points]
+    positions = [list(point.positions) for point in plan.trajectory.points]
     assert positions[0] == pytest.approx(start)
     assert positions[-1] == pytest.approx(goal)
     assert max(abs(current[2] - previous[2]) for previous, current in pairwise(positions)) < math.pi

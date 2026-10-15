@@ -22,11 +22,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from dimos_generated.nav_msgs.msg import Path
+from dimos_generated.sensor_msgs.msg import PointCloud2
+from dimos_generated.tf2_msgs.msg import TFMessage
+
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import IO, In, Out
-from dimos.msgs.nav_msgs.Path import Path
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation import spec
 from dimos.navigation.embodiment.base import Embodiment
 from dimos.navigation.local_planner.module import LocalPlannerConfig

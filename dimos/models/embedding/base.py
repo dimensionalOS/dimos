@@ -26,7 +26,7 @@ from dimos.models.base import HuggingFaceModelConfig, LocalModelConfig
 from dimos.types.timestamped import Timestamped
 
 if TYPE_CHECKING:
-    from dimos.msgs.sensor_msgs.Image import Image
+    from dimos_generated.sensor_msgs.msg import Image
 
 
 class EmbeddingModelConfig(LocalModelConfig):
@@ -52,7 +52,7 @@ class Embedding(Timestamped):
 
     def __init__(self, vector: torch.Tensor | np.ndarray, timestamp: float | None = None) -> None:
         self.vector = vector
-        if timestamp:
+        if timestamp is not None:
             self.timestamp = timestamp
         else:
             self.timestamp = time.time()

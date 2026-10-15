@@ -30,6 +30,8 @@
         };
         cudaPackages = if system == "aarch64-linux" then pkgs.cudaPackages_12_6 else pkgs.cudaPackages_12_8;
 
+        messageSource = import ../../../../native/message-source.nix { inherit pkgs; };
+
         src = pkgs.runCommand "depth2depth-cloud-src" {} ''
           mkdir -p $out/dimos/perception/depth2depth_cloud/rust
           cp -r ${./src} $out/dimos/perception/depth2depth_cloud/rust/src
@@ -39,6 +41,9 @@
           mkdir -p $out/native/rust
           cp -r ${../../../../native/rust/dimos-module} $out/native/rust/dimos-module
           cp -r ${../../../../native/rust/dimos-module-macros} $out/native/rust/dimos-module-macros
+          cp -r ${../../../../native/rust/dimos-lcm-transport} $out/native/rust/dimos-lcm-transport
+          mkdir -p $out/packages/dimos-generated/build/message-source
+          cp -r ${messageSource.source}/rust $out/packages/dimos-generated/build/message-source/rust
         '';
 
         generatedCargoNix = crate2nix.tools.${system}.generatedCargoNix {

@@ -22,6 +22,7 @@ import re
 from typing import TYPE_CHECKING, Any
 import uuid
 
+from dimos_generated.geometry_msgs.msg import Vector3
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 
@@ -36,16 +37,16 @@ from dimos.experimental.world_belief.identity_features import (
     normalize_embedding,
 )
 from dimos.models.embedding.base import Embedding
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.geometry import pose_from_transform, pose_matrix
+from dimos.msgs.pointcloud import pointcloud_xyz
 from dimos.protocol.service.spec import BaseConfig
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
+    from dimos_generated.geometry_msgs.msg import Pose, TransformStamped
+    from dimos_generated.sensor_msgs.msg import CameraInfo
     from numpy.typing import NDArray
 
-    from dimos.msgs.geometry_msgs.Pose import Pose
-    from dimos.msgs.geometry_msgs.Transform import Transform
-    from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
     from dimos.perception.experimental.object import Object
 
 logger = setup_logger()
@@ -89,7 +90,10 @@ class WorldBeliefConfig(BaseConfig):
 
 def camera_viewpoint(pose: Pose) -> Viewpoint:
     """Return camera position and forward axis for viewpoint diversity."""
-    return pose.position, pose.orientation.rotate_vector(Vector3.unit_z())
+    forward = pose_matrix(pose)[:3, 2]
+    return Vector3(x=pose.position.x, y=pose.position.y, z=pose.position.z), Vector3(
+        x=forward[0], y=forward[1], z=forward[2]
+    )
 
 
 def is_novel_viewpoint(
@@ -103,8 +107,10 @@ def is_novel_viewpoint(
     pos, fwd = viewpoint
     cos_thresh = math.cos(math.radians(angle_deg))
     for prev_pos, prev_fwd in existing:
-        near_in_space = pos.distance(prev_pos) < min_baseline_m
-        near_in_angle = fwd.dot(prev_fwd) > cos_thresh
+        near_in_space = (
+            math.dist((pos.x, pos.y, pos.z), (prev_pos.x, prev_pos.y, prev_pos.z)) < min_baseline_m
+        )
+        near_in_angle = (fwd.x * prev_fwd.x + fwd.y * prev_fwd.y + fwd.z * prev_fwd.z) > cos_thresh
         if near_in_space and near_in_angle:
             return False
     return True
@@ -287,7 +293,7 @@ class WorldBelief:
         objects: list[Object],
         *,
         frame_ts: float,
-        camera_transform: Transform | None,
+        camera_transform: TransformStamped | None,
         camera_info: CameraInfo,
         depth_m: NDArray[np.float32],
     ) -> None:
@@ -298,7 +304,9 @@ class WorldBelief:
         previous_ts = self._now
         # Without a camera pose, fold identity but not viewpoint or absence evidence.
         viewpoint = (
-            camera_viewpoint(camera_transform.to_pose()) if camera_transform is not None else None
+            camera_viewpoint(pose_from_transform(camera_transform).pose)
+            if camera_transform is not None
+            else None
         )
         for obj in objects:
             # Normalize the center before association and publication.
@@ -509,8 +517,7 @@ class WorldBelief:
             track.obj.pointcloud = obj.pointcloud
             track.obj.ts = obj.ts
             track.obj.frame_id = obj.frame_id
-            track.obj.pose.ts = obj.pose.ts
-            track.obj.pose.frame_id = obj.pose.frame_id
+            track.obj.pose.header = obj.pose.header
             track.obj.image = obj.image
             track.obj.mask = obj.mask
             track.obj.bbox = obj.bbox
@@ -557,12 +564,13 @@ class WorldBelief:
     def _observation_center(obj: Object) -> Vector3:
         """Return the median world-space surface point, falling back to ``obj.center``."""
         try:
-            pts = np.asarray(obj.pointcloud.pointcloud.points)
+            pts = pointcloud_xyz(obj.pointcloud)
         except Exception:
             return obj.center
         if pts.ndim != 2 or len(pts) < 8:
             return obj.center
-        return Vector3(np.median(pts, axis=0))
+        center = np.median(pts, axis=0)
+        return Vector3(x=center[0], y=center[1], z=center[2])
 
     def _geometry_suspect(self, track: _Track, obj: Object) -> bool:
         """Reject partial or >2x median-size geometry without folding it into the reference."""
@@ -581,7 +589,7 @@ class WorldBelief:
         self,
         matched_tracks: set[int],
         camera_info: CameraInfo,
-        world_from_camera: Transform,
+        world_from_camera: TransformStamped,
         depth_m: NDArray[np.float32],
     ) -> None:
         for track in self._tracks.values():

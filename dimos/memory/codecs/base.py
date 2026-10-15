@@ -17,6 +17,12 @@ from __future__ import annotations
 import importlib
 from typing import Any, Protocol, TypeVar, runtime_checkable
 
+from dimos_cdrgen.registry import message_types
+
+from dimos.memory.codecs.cdr import CdrCodec
+from dimos.memory.codecs.lz4 import Lz4Codec
+from dimos.memory.codecs.pickle import PickleCodec
+
 T = TypeVar("T")
 
 
@@ -29,39 +35,14 @@ class Codec(Protocol[T]):
 
 
 def codec_for(payload_type: type[Any] | None = None, sample: Any = None) -> Codec[Any]:
-    """Auto-select codec based on payload type.
-
-    ``sample`` is a first payload, when one is at hand. ``Image`` covers depth as
-    well as colour, and JPEG would destroy depth values, so a depth or 16-bit
-    sample selects lossless ``lz4+lcm`` instead.
-    """
-    from dimos.memory.codecs.pickle import PickleCodec
-
-    if payload_type is not None:
-        from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
-
-        if issubclass(payload_type, Image):
-            if isinstance(sample, Image) and sample.format in (
-                ImageFormat.DEPTH,
-                ImageFormat.DEPTH16,
-                ImageFormat.GRAY16,
-            ):
-                from dimos.memory.codecs.lcm import LcmCodec
-                from dimos.memory.codecs.lz4 import Lz4Codec
-
-                return Lz4Codec(LcmCodec(payload_type))
-            from dimos.memory.codecs.jpeg import JpegCodec
-
-            return JpegCodec()
-        if hasattr(payload_type, "lcm_encode") and hasattr(payload_type, "lcm_decode"):
-            from dimos.memory.codecs.lcm import LcmCodec
-
-            return LcmCodec(payload_type)
+    """Auto-select codec based on payload type."""
+    if payload_type is not None and all(hasattr(payload_type, name) for name in ("__msgtype__",)):
+        return CdrCodec(payload_type)
     return PickleCodec()
 
 
 def codec_id(codec: Codec[Any]) -> str:
-    """Derive a string ID from a codec instance, e.g. ``'lz4+lcm'``.
+    """Derive a string ID from a codec instance, e.g. ``'lz4+cdr'``.
 
     Walks the ``_inner`` chain for wrapper codecs, joining with ``+``.
     Uses the naming convention ``FooCodec`` → ``'foo'``.
@@ -76,7 +57,7 @@ def codec_id(codec: Codec[Any]) -> str:
 
 
 def codec_from_id(codec_id_str: str, payload_module: str) -> Codec[Any]:
-    """Reconstruct a codec chain from its string ID (e.g. ``'lz4+lcm'``).
+    """Reconstruct a codec chain from its string ID (e.g. ``'lz4+cdr'``).
 
     Builds inside-out: the rightmost segment is the innermost (base) codec.
     """
@@ -96,6 +77,11 @@ def _class_to_id(codec: Any) -> str:
 
 
 def resolve_payload_type(payload_module: str) -> type[Any]:
+    if payload_module.startswith("rosbags.usertypes."):
+        for cls in message_types().values():
+            if payload_module == f"{cls.__module__}.{cls.__qualname__}":
+                return cls
+        raise ValueError(f"Unknown native message payload type: {payload_module}")
     parts = payload_module.rsplit(".", 1)
     if len(parts) != 2:
         raise ValueError(f"Cannot resolve payload type from {payload_module!r}")
@@ -106,19 +92,11 @@ def resolve_payload_type(payload_module: str) -> type[Any]:
 def _make_one(name: str, payload_module: str, inner: Codec[Any] | None = None) -> Codec[Any]:
     """Instantiate a single codec by its short name."""
     if name == "lz4":
-        from dimos.memory.codecs.lz4 import Lz4Codec
-
         if inner is None:
             raise ValueError("lz4 is a wrapper codec — must have an inner codec")
         return Lz4Codec(inner)
-    if name == "jpeg":
-        from dimos.memory.codecs.jpeg import JpegCodec
-
-        return JpegCodec()
-    if name == "lcm":
-        from dimos.memory.codecs.lcm import LcmCodec
-
-        return LcmCodec(resolve_payload_type(payload_module))
+    if name == "cdr":
+        return CdrCodec(resolve_payload_type(payload_module))
     if name == "json":
         from dimos.memory.codecs.json import JsonCodec
 
@@ -127,7 +105,13 @@ def _make_one(name: str, payload_module: str, inner: Codec[Any] | None = None) -
             raise TypeError("JSON codec requires std_msgs.String")
         return JsonCodec()
     if name == "pickle":
-        from dimos.memory.codecs.pickle import PickleCodec
-
         return PickleCodec()
+    if name in {"lcm", "jpeg"}:
+        raise ValueError(
+            f"Legacy recording codec {name!r} is unsupported after the CDR cutover. "
+            "Create a new CDR recording with the installed generated message package; "
+            "historical recordings must be exported with their original compatible checkout. "
+            "No legacy payload fallback or in-place conversion is provided. "
+            "See docs/development/messages.md."
+        )
     raise ValueError(f"Unknown codec: {name!r}")

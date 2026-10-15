@@ -26,7 +26,7 @@ import time
 import numpy as np
 import pytest
 
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.image import image_from_array
 from dimos.web.relay_bridge.protocol import RtcTrack
 from dimos.web.relay_bridge.relay_bridge_module import RTC_AVAILABLE
 
@@ -56,7 +56,7 @@ async def test_feed_reports_a_media_gap_past_the_track_lifetime() -> None:
     from dimos.web.relay_bridge.rtc_publisher import TRACK_GC_S, RtcPublisher
 
     publisher = RtcPublisher(["color_image"])
-    image = Image(data=np.zeros((48, 64, 3), np.uint8), format=ImageFormat.RGB)
+    image = image_from_array(np.zeros((48, 64, 3), np.uint8), encoding="rgb8")
     try:
         await publisher.start([])
         assert publisher.feed("color_image", image) is False  # nothing before it
@@ -79,7 +79,7 @@ async def test_frames_fed_from_a_thread_reach_the_peer() -> None:
     received: asyncio.Queue[object] = asyncio.Queue()
     peer.on("track", received.put_nowait)
     stop = threading.Event()
-    image = Image(data=np.full((48, 64, 3), 200, np.uint8), format=ImageFormat.RGB)
+    image = image_from_array(np.full((48, 64, 3), 200, np.uint8), encoding="rgb8")
 
     def producer() -> None:
         # The transport thread's cadence: a frame every 50 ms.

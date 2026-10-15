@@ -36,12 +36,12 @@ from dimos.perception.localize.types import LocalizePolicy
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from dimos_generated.sensor_msgs.msg import Image
     import numpy as np
     from reactivex.abc import DisposableBase
 
     from dimos.memory.stream import Stream
     from dimos.models.embedding.base import EmbeddingModel
-    from dimos.msgs.sensor_msgs.Image import Image
     from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
     from dimos.perception.localize.association import Groups
     from dimos.perception.localize.localize import LocalizeTrace

@@ -17,6 +17,11 @@
 from pathlib import Path
 from typing import cast
 
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.std_msgs.msg import Header, UInt32
+import numpy as np
 import pytest
 from pytest_mock import MockerFixture
 
@@ -31,10 +36,6 @@ from dimos.control.tasks.teleop_ik_task.teleop_ik_task import (
     create_task,
 )
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import RobotModel
 from dimos.teleop.webxr.controller_types import Buttons
 
@@ -69,16 +70,26 @@ def _solver(mocker: MockerFixture) -> PinkPoseTargetSolver:
     solver = mocker.Mock(spec=PinkPoseTargetSolver)
     solver.frame_poses.return_value = {
         "left_tool": PoseStamped(
-            position=Vector3(1.0, 0.0, 0.0),
-            orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
+            header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
+            pose=Pose(
+                position=Point(x=1.0, y=0.0, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
         ),
         "right_tool": PoseStamped(
-            position=Vector3(-1.0, 0.0, 0.0),
-            orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
+            header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
+            pose=Pose(
+                position=Point(x=-1.0, y=0.0, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
         ),
     }
     solver.step.return_value = JointState(
-        name=["robot/left", "robot/right"], position=[0.01, -0.01]
+        name=["robot/left", "robot/right"],
+        position=np.array([0.01, -0.01], dtype=np.float64),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
     )
     return solver
 
@@ -95,11 +106,11 @@ def _buttons(
     *,
     left: bool = False,
     right: bool = False,
-) -> Buttons:
+) -> UInt32:
     buttons = Buttons()
     buttons.left_grip = left
     buttons.right_grip = right
-    return buttons
+    return buttons.to_message()
 
 
 def test_face_buttons_do_not_engage_arm_teleop(mocker: MockerFixture) -> None:
@@ -111,7 +122,7 @@ def test_face_buttons_do_not_engage_arm_teleop(mocker: MockerFixture) -> None:
     buttons = Buttons()
     buttons.right_primary = True
 
-    task.on_teleop_buttons(buttons, 1.0)
+    task.on_teleop_buttons(buttons.to_message(), 1.0)
     task.on_right_cartesian_command(_pose(0.5), 1.0)
 
     assert task.compute(_state()) is None
@@ -119,8 +130,10 @@ def test_face_buttons_do_not_engage_arm_teleop(mocker: MockerFixture) -> None:
 
 def _pose(x: float) -> PoseStamped:
     return PoseStamped(
-        position=Vector3(x, 0.0, 0.0),
-        orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
+        header=Header(frame_id="", stamp=Time(sec=0, nanosec=0)),
+        pose=Pose(
+            position=Point(x=x, y=0.0, z=0.0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+        ),
     )
 
 
@@ -179,7 +192,7 @@ def test_single_binding_tracks_relative_controller_motion(mocker: MockerFixture)
 
     assert output is not None
     target = solver.step.call_args.args[0]["right_tool"]
-    assert target.position.x == pytest.approx(-0.8)
+    assert target.pose.position.x == pytest.approx(-0.8)
 
 
 def test_bimanual_task_requires_both_hands_and_releases_atomically(
@@ -223,14 +236,24 @@ def test_deadman_reengagement_reseeds_command_from_feedback(
     )
     task.on_teleop_buttons(_buttons(left=True), 1.0)
     task.on_left_cartesian_command(_pose(0.1), 1.0)
-    solver.step.return_value = JointState(name=["robot/left", "robot/right"], position=[0.1, -0.1])
+    solver.step.return_value = JointState(
+        name=["robot/left", "robot/right"],
+        position=np.array([0.1, -0.1], dtype=np.float64),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
+    )
     assert task.compute(_state()) is not None
 
     task.on_teleop_buttons(_buttons(), 1.1)
     task.on_teleop_buttons(_buttons(left=True), 1.2)
     task.on_left_cartesian_command(_pose(0.2), 1.2)
     solver.step.return_value = JointState(
-        name=["robot/left", "robot/right"], position=[0.01, -0.01]
+        name=["robot/left", "robot/right"],
+        position=np.array([0.01, -0.01], dtype=np.float64),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        velocity=np.array([], dtype=np.float64),
+        effort=np.array([], dtype=np.float64),
     )
     assert task.compute(_state(1.2)) is not None
 
@@ -306,7 +329,7 @@ def test_bimanual_timeout_clears_both_sides_and_reengagement_recaptures(
 def test_stale_deadman_stops_fresh_pose_streams(
     mocker: MockerFixture,
     bindings: tuple[TeleopHandBinding, ...],
-    buttons: Buttons,
+    buttons: UInt32,
 ) -> None:
     solver = _solver(mocker)
     task = TeleopIKTask("teleop", _config(bindings, timeout=0.2), solver=solver)

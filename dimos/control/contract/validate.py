@@ -38,10 +38,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 import math
 
+from dimos_generated.dimos_msgs.msg import ControlValues
+
 from dimos.control.contract.description import ControlDescription, ResourceKind
 from dimos.control.contract.keys import SEPARATOR, is_valid_segment
 from dimos.control.contract.sequence import is_newer
-from dimos.msgs.control_msgs.ControlValues import ControlValues
 
 
 class DescriptionError(Exception):
@@ -194,6 +195,11 @@ def validate_state(desc: ControlDescription, frame: ControlValues) -> dict[str, 
             "shape",
             f"{len(frame.interface_names)} names against {len(frame.values)} values",
         )
+    for name, value in zip(frame.interface_names, frame.values, strict=True):
+        if not math.isfinite(value):
+            raise FrameRejectedError(
+                "non_finite", f"non-finite value for interface {name!r}: {value!r}"
+            )
     if frame.source != desc.source:
         raise FrameRejectedError(
             "source", f"frame is from {frame.source!r}, expected {desc.source!r}"
@@ -243,13 +249,14 @@ def validate_command(
     Returns:
         The values to send, or the reason they were refused.
     """
-    # ControlValues enforces equal lengths on construction, so this only fires
-    # for a frame built by hand or mutated after the fact. It is still checked
-    # here because this path is specified never to raise.
+    # Generated wire values are validated here before any command is applied.
     if len(frame.interface_names) != len(frame.values):
         return Rejected(
             "shape", f"{len(frame.interface_names)} names against {len(frame.values)} values"
         )
+    for name, value in zip(frame.interface_names, frame.values, strict=True):
+        if not math.isfinite(value):
+            return Rejected("non_finite", f"non-finite value for interface {name!r}: {value!r}")
     if not is_newer(frame.sequence, last_sequence):
         return Rejected(
             "sequence", f"frame sequence {frame.sequence} not newer than {last_sequence}"

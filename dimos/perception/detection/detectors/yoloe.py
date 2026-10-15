@@ -16,11 +16,12 @@ from enum import Enum
 import threading
 from typing import Any
 
+from dimos_generated.sensor_msgs.msg import Image
 import numpy as np
 from numpy.typing import NDArray
 import torch
 
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.image import image_to_bgr
 from dimos.perception.detection.detectors.base import Detector
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.utils.data import get_data
@@ -144,7 +145,7 @@ class Yoloe2DDetector(Detector):
     def _run(self, image: Image, *, track: bool) -> "ImageDetections2D[Any]":
         """Run tracking or prediction and apply common filtering."""
         kwargs = {
-            "source": image.to_opencv(),
+            "source": image_to_bgr(image),
             "device": self.device,
             "conf": self.conf,
             "iou": 0.6,

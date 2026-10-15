@@ -43,12 +43,14 @@ except ImportError:
 if TYPE_CHECKING:
     from pygame.key import _ScancodeWrapper
 
+from dimos_generated.geometry_msgs.msg import Twist, TwistStamped, Vector3
+from dimos_generated.std_msgs.msg import Float32
+
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
-from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
-from dimos.msgs.std_msgs.Float32 import Float32
+from dimos.msgs.time import header_now
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -235,7 +237,15 @@ class KeyboardTeleopModule(Module):
         linear: TwistVector = (0.0, 0.0, 0.0),
         angular: TwistVector = (0.0, 0.0, 0.0),
     ) -> None:
-        self.ee_twist_command.publish(TwistStamped(linear=list(linear), angular=list(angular)))
+        self.ee_twist_command.publish(
+            TwistStamped(
+                header=header_now(),
+                twist=Twist(
+                    linear=Vector3(x=linear[0], y=linear[1], z=linear[2]),
+                    angular=Vector3(x=angular[0], y=angular[1], z=angular[2]),
+                ),
+            )
+        )
 
     def _publish_gripper_command(self, *, opening: float) -> None:
         """Publish a changed normalized gripper opening."""

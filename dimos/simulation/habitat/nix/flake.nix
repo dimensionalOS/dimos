@@ -12,8 +12,8 @@
       # Provides the installer, not the simulator: habitat-sim is conda-only and
       # headless rendering needs the host's EGL driver, so this cannot be a derivation.
       devShells = forAll (pkgs: {
-        default = pkgs.mkShellNoCC {
-          packages = [ pkgs.micromamba pkgs.curl pkgs.cacert ];
+        default = pkgs.mkShell {
+          packages = [ pkgs.micromamba pkgs.curl pkgs.cacert pkgs.cmake ];
         };
       });
     };

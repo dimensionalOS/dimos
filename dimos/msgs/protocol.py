@@ -12,20 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Protocol, runtime_checkable
+from typing import ClassVar, Protocol, runtime_checkable
 
 
 @runtime_checkable
 class DimosMsg(Protocol):
-    """Protocol for dimos message types (LCM-based messages from dimos.msgs)."""
+    """Native rosbags value identity; serialization belongs to the typestore."""
 
-    msg_name: str
-
-    @classmethod
-    def lcm_decode(cls, data: bytes) -> "DimosMsg":
-        """Decode bytes into a message instance."""
-        ...
-
-    def lcm_encode(self) -> bytes:
-        """Encode this message instance into bytes."""
-        ...
+    __msgtype__: ClassVar[str]

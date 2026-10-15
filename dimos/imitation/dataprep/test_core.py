@@ -28,6 +28,8 @@ import subprocess
 import sys
 from typing import Any
 
+from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.std_msgs.msg import String
 import numpy as np
 import pytest
 
@@ -54,8 +56,7 @@ from dimos.imitation.dataprep.schema import (
     SyncConfig,
 )
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.std_msgs.String import String
+from dimos.msgs.time import header_now
 
 
 @pytest.mark.parametrize(
@@ -170,7 +171,13 @@ def test_resolve_field_attribute() -> None:
 
 def test_resolve_field_orders_joint_state_by_feature_names() -> None:
     arr = resolve_field(
-        JointState(name=["joint_b", "joint_a"], position=[2.0, 1.0]),
+        JointState(
+            header=header_now(),
+            velocity=[],
+            effort=[],
+            name=["joint_b", "joint_a"],
+            position=[2.0, 1.0],
+        ),
         FeatureSpec(
             stream="state",
             field="position",
@@ -189,6 +196,8 @@ def test_resolve_field_orders_joint_state_by_feature_names() -> None:
 )
 def test_resolve_field_orders_all_joint_state_vectors(field: str, expected: list[float]) -> None:
     state = JointState(
+        header=header_now(),
+        position=[],
         name=["joint_b", "joint_a"],
         velocity=[2.0, 1.0],
         effort=[4.0, 3.0],
@@ -207,7 +216,13 @@ def test_resolve_field_orders_all_joint_state_vectors(field: str, expected: list
 def test_resolve_field_rejects_duplicate_joint_names() -> None:
     with pytest.raises(ValueError, match="duplicate joint names"):
         resolve_field(
-            JointState(name=["joint_a", "joint_a"], position=[1.0, 2.0]),
+            JointState(
+                header=header_now(),
+                velocity=[],
+                effort=[],
+                name=["joint_a", "joint_a"],
+                position=[1.0, 2.0],
+            ),
             FeatureSpec(
                 stream="state",
                 field="position",
@@ -221,7 +236,9 @@ def test_resolve_field_rejects_duplicate_joint_names() -> None:
 def test_resolve_field_rejects_missing_configured_joint() -> None:
     with pytest.raises(ValueError, match="missing configured joints.*joint_b"):
         resolve_field(
-            JointState(name=["joint_a"], position=[1.0]),
+            JointState(
+                header=header_now(), velocity=[], effort=[], name=["joint_a"], position=[1.0]
+            ),
             FeatureSpec(
                 stream="state",
                 field="position",
@@ -543,8 +560,22 @@ def test_snapshots_can_align_forward_but_targets_remain_causal():
             "anchor": _scalar_stream([(10, 0), (11, 0)]),
             "measured": _scalar_stream([(10.01, 3), (10.99, 4)]),
             "commands": [
-                _Obs(1, JointState(name=["left", "right", "gripper"], position=[1, 2, 0])),
-                _Obs(10.001, JointState(name=["left"], position=[5])),
+                _Obs(
+                    1,
+                    JointState(
+                        header=header_now(),
+                        velocity=[],
+                        effort=[],
+                        name=["left", "right", "gripper"],
+                        position=[1, 2, 0],
+                    ),
+                ),
+                _Obs(
+                    10.001,
+                    JointState(
+                        header=header_now(), velocity=[], effort=[], name=["left"], position=[5]
+                    ),
+                ),
             ],
         }
     )
@@ -584,9 +615,36 @@ def test_joint_state_message_class_does_not_determine_source_semantics(source_ki
         {
             "anchor": _scalar_stream([(0.0, 0), (0.1, 0)]),
             "joints": [
-                _Obs(-0.1, JointState(name=["left", "right"], position=[1, 2])),
-                _Obs(0.01, JointState(name=["left", "right"], position=[3, 4])),
-                _Obs(0.1, JointState(name=["left", "right"], position=[5, 6])),
+                _Obs(
+                    -0.1,
+                    JointState(
+                        header=header_now(),
+                        velocity=[],
+                        effort=[],
+                        name=["left", "right"],
+                        position=[1, 2],
+                    ),
+                ),
+                _Obs(
+                    0.01,
+                    JointState(
+                        header=header_now(),
+                        velocity=[],
+                        effort=[],
+                        name=["left", "right"],
+                        position=[3, 4],
+                    ),
+                ),
+                _Obs(
+                    0.1,
+                    JointState(
+                        header=header_now(),
+                        velocity=[],
+                        effort=[],
+                        name=["left", "right"],
+                        position=[5, 6],
+                    ),
+                ),
             ],
         }
     )
@@ -620,7 +678,16 @@ def test_shared_update_source_is_read_once_for_multiple_projections(mocker):
         {
             "anchor": _scalar_stream([(10, 0)]),
             "commands": [
-                _Obs(1, JointState(name=["left", "right", "gripper"], position=[1, 2, 0]))
+                _Obs(
+                    1,
+                    JointState(
+                        header=header_now(),
+                        velocity=[],
+                        effort=[],
+                        name=["left", "right", "gripper"],
+                        position=[1, 2, 0],
+                    ),
+                )
             ],
         }
     )
@@ -651,11 +718,52 @@ def test_held_action_uses_causal_recording_history_across_episodes():
         {
             "anchor": _scalar_stream([(10.0, 0.0), (11.0, 0.0), (12.0, 0.0), (20.0, 0.0)]),
             "commands": [
-                _Obs(1.0, JointState(name=["right", "left"], position=[2.0, 1.0])),
-                _Obs(2.0, JointState(name=["gripper"], position=[0.0])),
-                _Obs(10.0, JointState(name=["gripper"], position=[1.0])),
-                _Obs(10.01, JointState(name=["left"], position=[3.0])),
-                _Obs(12.0, JointState(name=["gripper", "right", "left"], position=[0.0, 5.0, 4.0])),
+                _Obs(
+                    1.0,
+                    JointState(
+                        header=header_now(),
+                        velocity=[],
+                        effort=[],
+                        name=["right", "left"],
+                        position=[2.0, 1.0],
+                    ),
+                ),
+                _Obs(
+                    2.0,
+                    JointState(
+                        header=header_now(),
+                        velocity=[],
+                        effort=[],
+                        name=["gripper"],
+                        position=[0.0],
+                    ),
+                ),
+                _Obs(
+                    10.0,
+                    JointState(
+                        header=header_now(),
+                        velocity=[],
+                        effort=[],
+                        name=["gripper"],
+                        position=[1.0],
+                    ),
+                ),
+                _Obs(
+                    10.01,
+                    JointState(
+                        header=header_now(), velocity=[], effort=[], name=["left"], position=[3.0]
+                    ),
+                ),
+                _Obs(
+                    12.0,
+                    JointState(
+                        header=header_now(),
+                        velocity=[],
+                        effort=[],
+                        name=["gripper", "right", "left"],
+                        position=[0.0, 5.0, 4.0],
+                    ),
+                ),
             ],
         }
     )
@@ -689,8 +797,26 @@ def test_held_action_does_not_initialize_from_future_commands():
         {
             "anchor": _scalar_stream([(10.0, 0.0), (11.0, 0.0)]),
             "commands": [
-                _Obs(1.0, JointState(name=["left", "right"], position=[1.0, 2.0])),
-                _Obs(10.001, JointState(name=["gripper"], position=[1.0])),
+                _Obs(
+                    1.0,
+                    JointState(
+                        header=header_now(),
+                        velocity=[],
+                        effort=[],
+                        name=["left", "right"],
+                        position=[1.0, 2.0],
+                    ),
+                ),
+                _Obs(
+                    10.001,
+                    JointState(
+                        header=header_now(),
+                        velocity=[],
+                        effort=[],
+                        name=["gripper"],
+                        position=[1.0],
+                    ),
+                ),
             ],
         }
     )
@@ -709,9 +835,22 @@ def test_held_action_does_not_initialize_from_future_commands():
 @pytest.mark.parametrize(
     "message, reason",
     [
-        (JointState(name=["left", "left"], position=[1, 2]), "duplicate"),
-        (JointState(name=["left"], position=[]), "names but"),
-        (JointState(name=["left"], position=[float("nan")]), "non-finite"),
+        (
+            JointState(
+                header=header_now(), velocity=[], effort=[], name=["left", "left"], position=[1, 2]
+            ),
+            "duplicate",
+        ),
+        (
+            JointState(header=header_now(), velocity=[], effort=[], name=["left"], position=[]),
+            "names but",
+        ),
+        (
+            JointState(
+                header=header_now(), velocity=[], effort=[], name=["left"], position=[float("nan")]
+            ),
+            "non-finite",
+        ),
         ({"position": [1]}, "JointState"),
     ],
 )
@@ -721,7 +860,16 @@ def test_held_action_rejects_malformed_updates_even_between_samples(message, rea
             "anchor": _scalar_stream([(10.0, 0.0)]),
             "commands": [
                 _Obs(1, message),
-                _Obs(2, JointState(name=["left", "right", "gripper"], position=[1, 2, 0])),
+                _Obs(
+                    2,
+                    JointState(
+                        header=header_now(),
+                        velocity=[],
+                        effort=[],
+                        name=["left", "right", "gripper"],
+                        position=[1, 2, 0],
+                    ),
+                ),
             ],
         }
     )
@@ -740,9 +888,22 @@ def test_nearest_validates_selected_samples_not_unused_partial_messages():
         {
             "anchor": _scalar_stream([(10.0, 0.0), (11.0, 0.0)]),
             "commands": [
-                _Obs(10, JointState(name=["joint"], position=[1])),
-                _Obs(10.5, JointState(name=[], position=[])),
-                _Obs(11, JointState(name=["joint"], position=[2])),
+                _Obs(
+                    10,
+                    JointState(
+                        header=header_now(), velocity=[], effort=[], name=["joint"], position=[1]
+                    ),
+                ),
+                _Obs(
+                    10.5,
+                    JointState(header=header_now(), velocity=[], effort=[], name=[], position=[]),
+                ),
+                _Obs(
+                    11,
+                    JointState(
+                        header=header_now(), velocity=[], effort=[], name=["joint"], position=[2]
+                    ),
+                ),
             ],
         }
     )
@@ -779,6 +940,9 @@ def test_held_actions_do_not_relax_camera_rate_or_gap_checks():
                 _Obs(
                     1,
                     JointState(
+                        header=header_now(),
+                        velocity=[],
+                        effort=[],
                         name=["left", "right", "gripper"],
                         position=[1, 2, 0],
                     ),

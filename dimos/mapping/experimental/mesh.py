@@ -21,6 +21,9 @@ import threading
 import time
 from typing import TYPE_CHECKING, Any
 
+from dimos_generated.dimos_msgs.msg import RegionPointCloud2, TriangleMesh
+from dimos_generated.sensor_msgs.msg import PointCloud2
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 from reactivex.disposable import Disposable
 
@@ -28,8 +31,9 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.memory.transform import Transformer
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.shape_msgs.TriangleMesh import TriangleMesh
+from dimos.msgs.mesh import triangle_mesh_from_arrays, triangle_mesh_to_rerun
+from dimos.msgs.pointcloud import pointcloud_xyz
+from dimos.msgs.time import time_from_seconds
 from dimos.visualization.rerun.bridge import RerunEntry
 
 if TYPE_CHECKING:
@@ -225,8 +229,18 @@ class Mesh(Transformer[PointCloud2, TriangleMesh]):
         if self._mesher is None:
             self._mesher = OccupancyMesher(self.voxel_size, self.iso, self.device, self.simplify)
         for obs in upstream:
-            for key, v, n, f in self._mesher.mesh(obs.data.points_f32()):
-                yield obs.derive(data=TriangleMesh(v, f, n, key, obs.ts))
+            for key, v, n, f in self._mesher.mesh(pointcloud_xyz(obs.data)):
+                yield obs.derive(
+                    data=triangle_mesh_from_arrays(
+                        v,
+                        f,
+                        n,
+                        key,
+                        header=Header(
+                            stamp=time_from_seconds(obs.ts), frame_id=obs.data.header.frame_id
+                        ),
+                    )
+                )
 
 
 class MeshModuleConfig(ModuleConfig):
@@ -311,7 +325,7 @@ class MeshModule(Module):
 
     config: MeshModuleConfig
 
-    map_regions: In[PointCloud2]
+    map_regions: In[RegionPointCloud2]
     mesh: Out[TriangleMesh]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -342,9 +356,9 @@ class MeshModule(Module):
             self._worker.join(timeout=5.0)
         super().stop()
 
-    def _on_region(self, msg: PointCloud2) -> None:
+    def _on_region(self, msg: RegionPointCloud2) -> None:
         with self._lock:
-            if self._queue.update(msg.seq, msg.points_f32(), time.time()):
+            if self._queue.update(msg.region_id, pointcloud_xyz(msg.cloud), time.time()):
                 self._dirty.set()
 
     def _run(self) -> None:
@@ -368,7 +382,11 @@ class MeshModule(Module):
             for key, v, n, f in self._mesher.mesh_chunks(points, np.array(chunks, np.int64)):
                 if self._stopping:
                     return
-                self.mesh.publish(TriangleMesh(v, f, n, key, ts))
+                self.mesh.publish(
+                    triangle_mesh_from_arrays(
+                        v, f, n, key, header=Header(stamp=time_from_seconds(ts), frame_id="world")
+                    )
+                )
 
 
 MESH_ENTITY = "world/mesh"
@@ -381,7 +399,7 @@ class MeshColours:
     ``z_range`` pins it. Works as a keyed rerun bridge renderer and in replays.
     """
 
-    keyed_by_seq = True
+    keyed_by_region = True
 
     def __init__(
         self,
@@ -398,15 +416,21 @@ class MeshColours:
         self._range: tuple[float, float] | None = None
 
     def __call__(self, msg: TriangleMesh) -> list[RerunEntry]:
-        out = [RerunEntry(_chunk_path(msg.key), msg.to_rerun(), self.static)]
+        out = [
+            RerunEntry(
+                _chunk_path(tuple(int(x) for x in msg.key)),
+                triangle_mesh_to_rerun(msg),
+                self.static,
+            )
+        ]
         if len(msg.faces) == 0:
-            self._heights.pop(msg.key, None)
+            self._heights.pop(tuple(int(x) for x in msg.key), None)
             return out
-        self._heights[msg.key] = msg.vertices[:, 2].copy()
+        self._heights[tuple(int(x) for x in msg.key)] = msg.vertices.reshape(-1, 3)[:, 2].copy()
         lo, hi = self.z_range or np.percentile(
             np.concatenate(list(self._heights.values())), [2, 98]
         )
-        keys = [msg.key]
+        keys = [tuple(int(x) for x in msg.key)]
         if (
             self._range is None
             or max(abs(lo - self._range[0]), abs(hi - self._range[1])) > self.recolour_m

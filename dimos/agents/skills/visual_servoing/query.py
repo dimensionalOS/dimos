@@ -12,9 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dimos_generated.sensor_msgs.msg import Image
+
 from dimos.models.qwen.bbox import BBox
 from dimos.models.vl.base import VlModel
-from dimos.msgs.sensor_msgs.Image import Image
 from dimos.utils.generic import extract_json_from_llm_response
 
 

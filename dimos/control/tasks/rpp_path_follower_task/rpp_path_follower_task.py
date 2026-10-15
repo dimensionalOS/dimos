@@ -38,6 +38,9 @@ import math
 from pathlib import Path as _Path
 from typing import TYPE_CHECKING, Any
 
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped
+from dimos_generated.nav_msgs.msg import Path
+
 from dimos.control.benchmarking.tuning import TuningConfig
 from dimos.control.benchmarking.velocity_profile import PathSpeedCap, VelocityProfileConfig
 from dimos.control.tasks.feedforward_gain_compensator import (
@@ -49,10 +52,7 @@ from dimos.control.tasks.path_follower_task.path_follower_task import (
     PathFollowerTaskConfig,
 )
 from dimos.core.global_config import global_config as _gc
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.nav_msgs.Path import Path
+from dimos.msgs.geometry import quaternion_euler, quaternion_from_euler
 from dimos.protocol.service.spec import BaseConfig
 from dimos.utils.logging_config import setup_logger
 
@@ -87,7 +87,7 @@ def _with_tangent_headings(path: Path) -> Path:
     if poses is None or len(poses) < 2:
         return path
 
-    yaws = [p.orientation.euler[2] for p in poses]
+    yaws = [quaternion_euler(p.pose.orientation)[2] for p in poses]
     if max(yaws) - min(yaws) > _HEADING_DEGENERATE_EPS:
         return path  # planner provided real per-pose headings; leave them.
 
@@ -95,27 +95,28 @@ def _with_tangent_headings(path: Path) -> Path:
     n = len(poses)
     for i, p in enumerate(poses):
         if i < n - 1:
-            dx = poses[i + 1].position.x - p.position.x
-            dy = poses[i + 1].position.y - p.position.y
+            dx = poses[i + 1].pose.position.x - p.pose.position.x
+            dy = poses[i + 1].pose.position.y - p.pose.position.y
             yaw = (
                 math.atan2(dy, dx)
                 if (dx * dx + dy * dy) > 1e-12
                 # Coincident waypoints: keep the previous heading rather than
                 # snapping to 0.
-                else (new_poses[-1].orientation.euler[2] if new_poses else 0.0)
+                else (quaternion_euler(new_poses[-1].pose.orientation)[2] if new_poses else 0.0)
             )
         else:
             # Last pose has no next segment — settle to the approach heading.
-            yaw = new_poses[-1].orientation.euler[2] if new_poses else 0.0
+            yaw = quaternion_euler(new_poses[-1].pose.orientation)[2] if new_poses else 0.0
         new_poses.append(
             PoseStamped(
-                ts=p.ts,
-                frame_id=p.frame_id,
-                position=Vector3(p.position.x, p.position.y, p.position.z),
-                orientation=Quaternion.from_euler(Vector3(0.0, 0.0, yaw)),
+                header=p.header,
+                pose=Pose(
+                    position=Point(x=p.pose.position.x, y=p.pose.position.y, z=p.pose.position.z),
+                    orientation=quaternion_from_euler(0.0, 0.0, yaw),
+                ),
             )
         )
-    return Path(ts=path.ts, frame_id=path.frame_id, poses=new_poses)
+    return Path(header=path.header, poses=new_poses)
 
 
 class RPPPathFollowerTask(PathFollowerTask):

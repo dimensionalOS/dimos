@@ -16,6 +16,9 @@ from __future__ import annotations
 
 from typing import Any, cast
 
+from dimos_generated.geometry_msgs.msg import PoseStamped
+from dimos_generated.sensor_msgs.msg import Image
+
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.memory.embed import EmbedImages
@@ -24,8 +27,7 @@ from dimos.memory.stream import Stream
 from dimos.memory.transform import QualityWindow, peaks
 from dimos.memory.type.observation import EmbeddedObservation, Observation
 from dimos.models.embedding.base import EmbeddingModel
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.image import image_brightness, image_sharpness
 
 
 class SemanticSearchConfig(MemoryModuleConfig):
@@ -55,8 +57,8 @@ class SemanticSearch(MemoryModule):
         # fmt: off
         self.store.streams.color_image \
            .live() \
-           .filter(lambda obs: obs.data.brightness > 0.1) \
-           .transform(QualityWindow(lambda img: img.sharpness, window=0.5)) \
+           .filter(lambda obs: image_brightness(obs.data) > 0.1) \
+           .transform(QualityWindow(image_sharpness, window=0.5)) \
            .transform(EmbedImages(self.model, batch_size=2)) \
            .save(self.embeddings) \
            .drain_thread()

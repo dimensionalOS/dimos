@@ -20,11 +20,12 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::laws::hinted::update as hinted_update;
+use dimos_generated_messages::geometry_msgs::msg::twist::Twist;
+use dimos_generated_messages::nav_msgs::msg::path::Path;
+use dimos_generated_messages::std_msgs::msg::bool::Bool;
 use dimos_local_planner::planner::Emb;
+use dimos_module::cdr;
 use dimos_module::{native_config, Input, Module, Output, Tf};
-use lcm_msgs::geometry_msgs::Twist;
-use lcm_msgs::nav_msgs::Path;
-use lcm_msgs::std_msgs::Bool;
 // serde derives come in through #[native_config]
 use tracing::info;
 
@@ -118,13 +119,13 @@ struct Shared {
 #[derive(Module)]
 #[module(name = "trajectory_follower", setup = spawn_worker, teardown = stop_worker)]
 pub struct TrajectoryFollower {
-    #[input(decode = Path::decode, handler = on_path)]
+    #[input(decode = cdr::decode, handler = on_path)]
     path: Input<Path>,
 
-    #[output(encode = Twist::encode)]
+    #[output(encode = cdr::encode)]
     nav_cmd_vel: Output<Twist>,
 
-    #[output(encode = Bool::encode)]
+    #[output(encode = cdr::encode)]
     goal_reached: Output<Bool>,
 
     #[config]

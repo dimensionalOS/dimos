@@ -35,6 +35,7 @@ freshly-built cockpit dist. Locally:
 """
 
 from collections.abc import Callable, Iterator
+from pathlib import Path
 
 import pytest
 
@@ -57,7 +58,7 @@ STABILITY_WINDOW_S = 12
 
 
 @pytest.fixture
-def start_go2_replay() -> Iterator[Callable[[], DimosCliCall]]:
+def start_go2_replay(cdr_go2_replay_db: Path) -> Iterator[Callable[[], DimosCliCall]]:
     calls: list[DimosCliCall] = []
 
     def start() -> DimosCliCall:
@@ -65,7 +66,14 @@ def start_go2_replay() -> Iterator[Callable[[], DimosCliCall]]:
         call.simulator = None
         # --viewer none: no rerun viewer spawn (headless CI); the replay
         # connection means no MuJoCo and no hardware.
-        call.global_args = ["--robot-ip", "fake", "--viewer", "none"]
+        call.global_args = [
+            "--robot-ip",
+            "fake",
+            "--viewer",
+            "none",
+            "--replay-db",
+            str(cdr_go2_replay_db),
+        ]
         call.extra_env = {"RELAYBRIDGEMODULE__OPEN_BROWSER": "false"}
         call.demo_args = ["run", "unitree-go2-basic", "--local-relay"]
         call.start()

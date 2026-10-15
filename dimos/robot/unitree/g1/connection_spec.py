@@ -14,7 +14,8 @@
 
 from typing import Any, Protocol
 
-from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos_generated.geometry_msgs.msg import Twist
+
 from dimos.spec.utils import Spec
 
 

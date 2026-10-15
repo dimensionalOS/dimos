@@ -14,12 +14,14 @@
 
 import re
 
+from dimos_generated.geometry_msgs.msg import PoseStamped
+from dimos_generated.sensor_msgs.msg import PointCloud2
 import pytest
 from reactivex import operators as ops
 
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.time import to_seconds
 from dimos.robot.unitree.type.lidar import pointcloud2_from_webrtc_lidar
-from dimos.robot.unitree.type.odometry import Odometry
+from dimos.robot.unitree.type.odometry import pose_from_webrtc_odometry
 from dimos.utils.data import get_data
 from dimos.utils.testing.legacy_pickle import LegacyPickleStore
 
@@ -54,7 +56,7 @@ def test_timed_sensor_replay() -> None:
 
 def test_iterate_ts_no_seek() -> None:
     """Test iterate_ts without seek (start_timestamp=None)"""
-    odom_store = LegacyPickleStore("unitree_office_walk/odom", autocast=Odometry.from_msg)
+    odom_store = LegacyPickleStore("unitree_office_walk/odom", autocast=pose_from_webrtc_odometry)
 
     # Test without seek
     ts_msgs = []
@@ -67,7 +69,7 @@ def test_iterate_ts_no_seek() -> None:
     # Check that we get tuples of (timestamp, data)
     for ts, msg in ts_msgs:
         assert isinstance(ts, float)
-        assert isinstance(msg, Odometry)
+        assert isinstance(msg, PoseStamped)
 
 
 def test_iterate_ts_with_from_timestamp() -> None:
@@ -207,10 +209,12 @@ def test_first_methods() -> None:
     print("DONE")
     assert type(first_msg) is type(first_from_iterate)
     # Since pointcloud2_from_webrtc_lidar uses time.time(), timestamps will be slightly different
-    assert abs(first_msg.ts - first_from_iterate.ts) < 1.0  # Within 1 second tolerance
+    assert (
+        abs(to_seconds(first_msg.header.stamp) - to_seconds(first_from_iterate.header.stamp)) < 1.0
+    )  # Within 1 second tolerance
 
     # Test TimedSensorReplay.first_timestamp()
-    odom_store = LegacyPickleStore("unitree_office_walk/odom", autocast=Odometry.from_msg)
+    odom_store = LegacyPickleStore("unitree_office_walk/odom", autocast=pose_from_webrtc_odometry)
     first_ts = odom_store.first_timestamp()
     assert first_ts is not None
     assert isinstance(first_ts, float)
@@ -222,12 +226,12 @@ def test_first_methods() -> None:
     # Test that first() returns just the data
     first_data = odom_store.first()
     assert first_data is not None
-    assert isinstance(first_data, Odometry)
+    assert isinstance(first_data, PoseStamped)
 
 
 def test_find_closest() -> None:
     """Test find_closest method in TimedSensorReplay"""
-    odom_store = LegacyPickleStore("unitree_office_walk/odom", autocast=Odometry.from_msg)
+    odom_store = LegacyPickleStore("unitree_office_walk/odom", autocast=pose_from_webrtc_odometry)
 
     # Get some reference timestamps
     timestamps = []
@@ -240,7 +244,7 @@ def test_find_closest() -> None:
     target_ts = timestamps[5]
     result = odom_store.find_closest(target_ts)
     assert result is not None
-    assert isinstance(result, Odometry)
+    assert isinstance(result, PoseStamped)
 
     # Test between timestamps
     mid_ts = (timestamps[3] + timestamps[4]) / 2
@@ -258,7 +262,7 @@ def test_find_closest() -> None:
     # Test find_closest_seek
     result = odom_store.find_closest_seek(0.5)  # 0.5 seconds from start
     assert result is not None
-    assert isinstance(result, Odometry)
+    assert isinstance(result, PoseStamped)
 
     # Test with negative seek (before start)
     result = odom_store.find_closest_seek(-1.0)

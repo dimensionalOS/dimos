@@ -18,12 +18,14 @@ from __future__ import annotations
 
 from functools import cached_property
 
+from dimos_generated.sensor_msgs.msg import Image
 import numpy as np
 from PIL import Image as PILImage
 import torch
 
 from dimos.models.base import HuggingFaceModel, HuggingFaceModelConfig
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.image import image_to_rgb
+from dimos.msgs.time import to_seconds
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 
@@ -83,7 +85,7 @@ class GroundingDinoDetector(HuggingFaceModel):
                 class_id=label,
                 confidence=float(row[label]),
                 name=queries[label],
-                ts=image.ts,
+                ts=to_seconds(image.header.stamp),
                 image=image,
             )
             if det.is_valid():
@@ -107,7 +109,7 @@ class GroundingDinoDetector(HuggingFaceModel):
         from torchvision.ops.boxes import batched_nms  # type: ignore[import-untyped]
         from transformers.image_transforms import center_to_corners_format
 
-        pil = PILImage.fromarray(image.to_rgb().data)
+        pil = PILImage.fromarray(image_to_rgb(image))
         phrases = [" ".join(query.replace(".", " ").lower().split()) for query in queries]
         caption = " ".join(f"{phrase}." for phrase in phrases)
         with torch.inference_mode():

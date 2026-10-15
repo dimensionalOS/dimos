@@ -19,10 +19,11 @@ Single sim/real blueprints — pass `--simulation` to run inside MuJoCo, omit fo
 hardware. The underlying coordinator blueprints branch on `global_config.simulation`.
 """
 
+from dimos_generated.geometry_msgs.msg import PoseStamped
+from dimos_generated.sensor_msgs.msg import Image
+
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.Image import Image
 from dimos.robot.manipulators.a1z.blueprints.teleop import coordinator_teleop_a1z
 from dimos.robot.manipulators.common.mixed import coordinator_teleop_dual
 from dimos.robot.manipulators.piper.blueprints.teleop import coordinator_teleop_piper

@@ -17,8 +17,11 @@
 from __future__ import annotations
 
 import asyncio
+from copy import deepcopy
 from threading import RLock
 
+from dimos_generated.sensor_msgs.msg import JointState, PointCloud2
+from dimos_generated.tf2_msgs.msg import TFMessage
 import numpy as np
 from numpy.typing import NDArray
 from pydantic import Field
@@ -26,10 +29,9 @@ from pydantic import Field
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.types.timestamped import TimestampedBufferCollection
+from dimos.msgs.pointcloud import pointcloud_xyz, select_points
+from dimos.msgs.time import to_seconds
+from dimos.types.timestamped import TimestampedBufferCollection, TimestampedData
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -55,7 +57,9 @@ class PointCloudSelfFilter(Module):
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
         self._filter_lock = RLock()
-        self._states = TimestampedBufferCollection[JointState](self.config.state_history_s)
+        self._states = TimestampedBufferCollection[TimestampedData[JointState]](
+            self.config.state_history_s
+        )
         self._last_capture: float | None = None
 
     @rpc
@@ -73,9 +77,10 @@ class PointCloudSelfFilter(Module):
     def add_joint_state(self, state: JointState) -> None:
         """Buffer full model state; out-of-order arrivals remain timestamped."""
         with self._filter_lock:
-            if np.isfinite(state.ts):
-                self._states.remove_by_timestamp(state.ts)
-                self._states.add(JointState(state))
+            stamp = to_seconds(state.header.stamp)
+            if np.isfinite(stamp):
+                self._states.remove_by_timestamp(stamp)
+                self._states.add(TimestampedData(deepcopy(state), stamp))
                 latest = self._states.last()
                 if latest is not None:
                     self._states.prune_old(latest.ts - self.config.state_history_s)
@@ -83,21 +88,20 @@ class PointCloudSelfFilter(Module):
     def filter_cloud(self, cloud: PointCloud2) -> PointCloud2 | None:
         """Filter one aligned capture without changing its frame or point fields."""
         with self._filter_lock:
-            if not np.isfinite(cloud.ts) or (
-                self._last_capture is not None and cloud.ts < self._last_capture
+            stamp = to_seconds(cloud.header.stamp)
+            if not np.isfinite(stamp) or (
+                self._last_capture is not None and stamp < self._last_capture
             ):
                 logger.warning("Dropping cloud: invalid or out-of-order capture timestamp")
                 return None
-            points = cloud.points_f32()
+            points = pointcloud_xyz(cloud).astype(np.float32)
             if not np.isfinite(points).all():
                 return None
             keep = self._compute_keep_mask(cloud, points)
             if keep is None:
                 return None
-            filtered = PointCloud2(frame_id=cloud.frame_id, ts=cloud.ts, seq=cloud.seq)
-            for name, values in cloud.pointcloud_tensor.point.items():
-                filtered.pointcloud_tensor.point[name] = values[keep]
-            self._last_capture = cloud.ts
+            filtered = select_points(cloud, keep)
+            self._last_capture = stamp
             return filtered
 
     def _on_pointcloud(self, cloud: PointCloud2) -> None:
@@ -112,6 +116,6 @@ class PointCloudSelfFilter(Module):
         """Return one keep flag per point, or None when the capture cannot be filtered.
 
         Called under the filter lock. Implementations must align any required
-        state and transforms to cloud.ts and preserve the input point order.
+        state and transforms to the cloud header stamp and preserve the input point order.
         """
         raise NotImplementedError("Choose a concrete point cloud self filter")

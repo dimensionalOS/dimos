@@ -648,9 +648,6 @@ mod build {
     }
 
     pub fn main() {
-        for (key, value) in env::vars() {
-            println!("{}: {}", key, value);
-        }
         let mut headerloc = find_cyclonedds().unwrap();
 
         if let Some(iceoryx_headers) = find_iceoryx("v2.0.2") {

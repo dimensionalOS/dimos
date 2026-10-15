@@ -26,6 +26,9 @@ from pathlib import Path as FsPath
 from time import perf_counter
 from typing import TYPE_CHECKING, Any, NamedTuple
 
+from dimos_generated.geometry_msgs.msg import TransformStamped
+from dimos_generated.sensor_msgs.msg import PointCloud2
+from dimos_generated.tf2_msgs.msg import TFMessage
 import numpy as np
 from numpy.typing import NDArray
 import typer
@@ -40,12 +43,10 @@ from dimos.mapping.ray_tracing.utils.loaded_map import (
 from dimos.mapping.ray_tracing.viz import log_loaded_map, voxel_map_points
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tf import StreamTF, tf_stream
+from dimos.memory.transform import FnTransformer
 from dimos.memory.type.observation import Observation
 from dimos.memory.vis.utils import DEFAULT_RENDER_VOXEL, default_render_voxel
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2, register_colormap_annotation
-from dimos.msgs.tf2_msgs.TFMessage import TfFrameTree, TFMessage
-from dimos.navigation.global_planner.mls_planner.mls_planner import MLSPlanner
+from dimos.msgs.pointcloud import pointcloud_xyz
 from dimos.navigation.global_planner.mls_planner.viz import graph_edges, graph_nodes, surface_points
 from dimos.navigation.global_planner.viz import (
     PATH_COLOR,
@@ -61,9 +62,18 @@ from dimos.robot.unitree.go2.constants import (
     ROBOT_WIDTH,
 )
 from dimos.utils.data import resolve_named_path
+from dimos.visualization.rerun.message_helpers import register_colormap_annotation, tf_archetypes
 
 if TYPE_CHECKING:
     import rerun.blueprint as rrb
+
+    from dimos.navigation.global_planner.mls_planner.mls_planner import MLSPlanner
+
+# Logging recorded TF/odometry does not require the optional planner extension.
+try:
+    import dimos_mls_planner as _planner_module
+except ImportError:
+    _planner_module = None
 
     from dimos.memory.stream import Stream
 
@@ -138,6 +148,45 @@ def _parse_configs(
     return out
 
 
+def _pose_from_tf(tf: StreamTF, world_frame: str) -> FnTransformer[PointCloud2, PointCloud2]:
+    """Attach the tf pose at the cloud stamp. A failed lookup clears any
+    recorded pose so the cloud is dropped downstream."""
+
+    def attach(obs: Observation[PointCloud2]) -> Observation[PointCloud2]:
+        t = tf.get(
+            world_frame,
+            obs.data.header.frame_id,
+            time_point=obs.ts,
+            time_tolerance=TF_MATCH_TOLERANCE_S,
+        )
+        return obs.with_pose(t)
+
+    return FnTransformer(attach)
+
+
+def _log_edges(edges: NDArray[np.float32], entity: str) -> None:
+    import rerun as rr
+
+    if edges.size == 0:
+        rr.log(entity, rr.LineStrips3D([]))
+        return
+    segments = [
+        [(float(r[0]), float(r[1]), float(r[2])), (float(r[3]), float(r[4]), float(r[5]))]
+        for r in edges
+    ]
+    rr.log(entity, rr.LineStrips3D(segments, colors=[[255, 255, 255]], radii=0.02))
+
+
+def _log_path_wp(waypoints: NDArray[np.float32] | None, entity: str, color: list[int]) -> None:
+    import rerun as rr
+
+    if waypoints is None or len(waypoints) == 0:
+        rr.log(entity, rr.LineStrips3D([]))
+        return
+    points = [(float(p[0]), float(p[1]), float(p[2])) for p in waypoints]
+    rr.log(entity, rr.LineStrips3D([points], colors=[color], radii=0.05))
+
+
 def _tf_over(store: SqliteStore, window: Stream[Any]) -> Stream[TFMessage] | None:
     """The recorded tf stream clipped to another stream's span.
 
@@ -160,14 +209,13 @@ class _TfSync:
     def __init__(self, tf: Stream[TFMessage] | None) -> None:
         self._pending = iter(tf) if tf is not None else iter(())
         self._next = next(self._pending, None)
-        self._tree = TfFrameTree()
 
     def up_to(self, ts: float) -> None:
         import rerun as rr
 
         while self._next is not None and self._next.ts <= ts:
             rr.set_time(TIMELINE, timestamp=self._next.ts)
-            for path, archetype in self._next.data.to_rerun(self._tree):
+            for path, archetype in tf_archetypes(self._next.data):
                 rr.log(path, archetype)
             self._next = next(self._pending, None)
 
@@ -176,7 +224,7 @@ def _log_odometry(
     pose: tuple[float, ...],
     ts: float,
     trail: list[tuple[float, float, float]],
-    base: Transform | None,
+    base: TransformStamped | None,
 ) -> None:
     """Trace the sensor moving throughout the scene."""
     import rerun as rr
@@ -193,9 +241,18 @@ def _log_odometry(
     rr.log(
         "world/robot_body",
         rr.Transform3D(
-            translation=[base.translation.x, base.translation.y, base.translation.z],
+            translation=[
+                base.transform.translation.x,
+                base.transform.translation.y,
+                base.transform.translation.z,
+            ],
             quaternion=rr.Quaternion(
-                xyzw=[base.rotation.x, base.rotation.y, base.rotation.z, base.rotation.w]
+                xyzw=[
+                    base.transform.rotation.x,
+                    base.transform.rotation.y,
+                    base.transform.rotation.z,
+                    base.transform.rotation.w,
+                ]
             ),
         ),
     )
@@ -404,9 +461,14 @@ def _build_planners(
     step_height: float,
     step_penalty_weight: float,
 ) -> list[tuple[str, tuple[int, int, int], MLSPlanner]]:
+    if _planner_module is None:
+        raise ImportError(
+            "dimos_mls_planner is not built. Run: uv run maturin develop --release --uv "
+            "-m dimos/navigation/global_planner/mls_planner/rust/py/Cargo.toml"
+        )
     planners: list[tuple[str, tuple[int, int, int], MLSPlanner]] = []
     for i, (clr, buf, wgt) in enumerate(configs):
-        planner = MLSPlanner(
+        planner = _planner_module.MLSPlanner(
             voxel_size=voxel_size,
             robot_height=robot_height,
             max_overhead_m=max_overhead,
@@ -441,11 +503,13 @@ def _process_frame(
 
     bounds = ray_obs.tags["region_bounds"]
     ox, oy, radius, z_min, z_max = bounds
-    pts = ray_obs.data.points_f32()
+    pts = pointcloud_xyz(ray_obs.data).astype(np.float32)
     rr.set_time(TIMELINE, timestamp=ray_obs.ts)
 
     ref_timing: dict[str, float] = {}
-    surface = nodes = edges = np.empty((0,), dtype=np.float32)
+    surface: NDArray[np.float32] = np.empty((0,), dtype=np.float32)
+    nodes: NDArray[np.float32] = np.empty((0,), dtype=np.float32)
+    edges: NDArray[np.float32] = np.empty((0,), dtype=np.float32)
     for j, (label, color, planner) in enumerate(planners):
         t0 = perf_counter()
         planner.update_region(pts, (ox, oy), radius, z_min, z_max, sensor_z)
@@ -701,11 +765,11 @@ def main(
                 if base is None:
                     continue
                 start = (
-                    float(base.translation.x),
-                    float(base.translation.y),
-                    float(base.translation.z) - start_z_offset,
+                    float(base.transform.translation.x),
+                    float(base.transform.translation.y),
+                    float(base.transform.translation.z) - start_z_offset,
                 )
-                sensor_z = float(base.translation.z)
+                sensor_z = float(base.transform.translation.z)
                 ref_timing = _process_frame(
                     ray_obs,
                     planners,

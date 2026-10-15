@@ -31,6 +31,8 @@ endif()
 # module.hpp runs the dispatch loop and publish workers on std::thread.
 find_package(Threads REQUIRED)
 
+find_package(dimos_generated CONFIG REQUIRED)
+
 # Header-only SDK. Consumers link this INTERFACE target and inherit the include
 # path, the C++ standard, and the SDK's own dependencies. A consumer still sets
 # CMAKE_CXX_STANDARD for the targets it builds that do not link this one.
@@ -41,6 +43,7 @@ target_link_libraries(dimos_native INTERFACE
   pfr
   nlohmann_json::nlohmann_json
   Threads::Threads
+  dimos_generated::messages
 )
 
 # Zenoh transport. zenoh-cpp is header-only over zenoh-c, which is a compiled
@@ -98,3 +101,19 @@ if(DIMOS_NATIVE_BUILD_TESTS)
   enable_testing()
   add_subdirectory(tests)
 endif()
+
+# Installed consumers need no checkout or FetchContent invocation. The two pinned
+# header-only dependencies travel with the SDK, together with upstream licenses.
+include(GNUInstallDirs)
+include(CMakePackageConfigHelpers)
+install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(DIRECTORY ${pfr_SOURCE_DIR}/include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(FILES ${pfr_SOURCE_DIR}/LICENSE_1_0.txt DESTINATION ${CMAKE_INSTALL_DATADIR}/dimos_native/licenses/pfr)
+if(nlohmann_json_SOURCE_DIR)
+  install(DIRECTORY ${nlohmann_json_SOURCE_DIR}/include/nlohmann DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+  install(FILES ${nlohmann_json_SOURCE_DIR}/LICENSE.MIT DESTINATION ${CMAKE_INSTALL_DATADIR}/dimos_native/licenses/nlohmann_json)
+endif()
+configure_package_config_file(cmake/dimos_nativeConfig.cmake.in
+  ${CMAKE_CURRENT_BINARY_DIR}/dimos_nativeConfig.cmake
+  INSTALL_DESTINATION lib/cmake/dimos_native)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/dimos_nativeConfig.cmake DESTINATION lib/cmake/dimos_native)

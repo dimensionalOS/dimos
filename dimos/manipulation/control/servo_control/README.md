@@ -117,7 +117,7 @@ print("Target reached!")
 ### Using Quaternions
 
 ```python
-from dimos.msgs.geometry_msgs import Quaternion
+from dimos_generated.geometry_msgs.msg import Quaternion
 
 # Create quaternion (identity rotation)
 quat = Quaternion(x=0, y=0, z=0, w=1)
@@ -131,19 +131,20 @@ controller.set_target_pose(
 ### Using PoseStamped Messages
 
 ```python
-from dimos.msgs.geometry_msgs import PoseStamped
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped
+from dimos.msgs.geometry import vector_array, quaternion_array
+from dimos.msgs.time import header_now
 
 # Create target pose
 target = PoseStamped(
-    frame_id="world",
-    position=[0.3, 0.2, 0.5],
-    orientation=[0, 0, 0, 1]  # quaternion
+    header=header_now(frame_id="world"),
+    pose=Pose(position=Point(x=0.3,y=0.2,z=0.5)),
 )
 
 # Option 1: Via RPC
 controller.set_target_pose(
-    position=list(target.position),
-    orientation=list(target.orientation)
+    position=vector_array(target.pose.position).tolist(),
+    orientation=quaternion_array(target.pose.orientation).tolist()
 )
 
 # Option 2: Via topic (if connected)

@@ -29,7 +29,8 @@ from dimos.mapping.occupancy.gradient import gradient
 from dimos.mapping.occupancy.path_resampling import smooth_resample_path
 from dimos.mapping.pointclouds.occupancy import height_cost_occupancy
 from dimos.mapping.pointclouds.util import read_pointcloud
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.pointcloud import pointcloud_from_xyz
+from dimos.msgs.time import header_now
 from dimos.navigation.experimental.patrolling.create_patrol_router import create_patrol_router
 from dimos.navigation.experimental.patrolling.routers.coverage_patrol_router import (
     CoveragePatrolRouter,
@@ -143,7 +144,7 @@ def main() -> None:
     args = parser.parse_args()
 
     data = read_pointcloud(get_data("big_office.ply"))
-    cloud = PointCloud2.from_numpy(np.asarray(data.points), frame_id="")
+    cloud = pointcloud_from_xyz(np.asarray(data.points), header=header_now())
     occupancy_grid = height_cost_occupancy(cloud)
     costmap = gradient(occupancy_grid, max_distance=1.5)
 

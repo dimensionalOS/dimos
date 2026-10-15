@@ -14,54 +14,85 @@
 import math
 import time
 
-from dimos_lcm.vision_msgs import (
+from dimos_generated.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseStamped,
+    PoseWithCovariance,
+    Quaternion,
+    Vector3,
+)
+from dimos_generated.std_msgs.msg import Header
+from dimos_generated.vision_msgs.msg import (
     BoundingBox2D,
     BoundingBox3D,
     Detection2D,
+    Detection2DArray,
     Detection3D,
+    Detection3DArray,
     ObjectHypothesis,
     ObjectHypothesisWithPose,
+    Point2D,
     Pose2D,
 )
 import numpy as np
 
-from dimos.agents.typesafe.world_state import bearing_word, build_world_state, distance_word
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.std_msgs.Header import Header
-from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
-from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
+from dimos.agents.typesafe.world_state import (
+    bearing_word,
+    build_world_state,
+    distance_word,
+    pose_json,
+)
+from dimos.msgs.geometry import quaternion_from_euler
+from dimos.msgs.pointcloud import pointcloud_from_xyz
+from dimos.msgs.time import time_from_seconds
 
 
 def pose(x: float, y: float, yaw_deg: float) -> PoseStamped:
-    p = PoseStamped(position=(x, y, 0.4), frame_id="world")
-    p.orientation = Quaternion.from_euler(Vector3(0, 0, math.radians(yaw_deg)))
+    p = PoseStamped(
+        header=Header(stamp=time_from_seconds(time.time()), frame_id="world"),
+        pose=Pose(
+            position=Point(x=x, y=y, z=0.4),
+            orientation=quaternion_from_euler(0, 0, math.radians(yaw_deg)),
+        ),
+    )
     return p
 
 
 def det3d(label: str, x: float, y: float, ts: float | None = None) -> Detection3DArray:
     ts = time.time() if ts is None else ts
-    d = Detection3D()
-    d.header = Header(ts, "world")
-    d.results = [ObjectHypothesisWithPose(hypothesis=ObjectHypothesis(class_id=label, score=0.9))]
-    d.results_length = 1
-    d.bbox = BoundingBox3D(center=Pose(position=(x, y, 0.3)), size=Vector3(0.5, 0.5, 0.6))
-    return Detection3DArray(detections_length=1, header=Header(ts, "world"), detections=[d])
+    header = Header(stamp=time_from_seconds(ts), frame_id="world")
+    center = Pose(
+        position=Point(x=x, y=y, z=0.3), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+    )
+    result = ObjectHypothesisWithPose(
+        hypothesis=ObjectHypothesis(class_id=label, score=0.9),
+        pose=PoseWithCovariance(pose=center, covariance=np.zeros(36)),
+    )
+    d = Detection3D(
+        header=header,
+        results=[result],
+        bbox=BoundingBox3D(center=center, size=Vector3(x=0.5, y=0.5, z=0.6)),
+        id="",
+    )
+    return Detection3DArray(header=header, detections=[d])
 
 
 def det2d(label: str, cx: float, w: float, h: float, ts: float | None = None) -> Detection2DArray:
     ts = time.time() if ts is None else ts
-    d = Detection2D()
-    d.header = Header(ts, "camera")
-    d.results = [ObjectHypothesisWithPose(hypothesis=ObjectHypothesis(class_id=label, score=0.8))]
-    d.results_length = 1
-    center = Pose2D()
-    center.position.x, center.position.y = cx, 360.0
-    d.bbox = BoundingBox2D(center=center, size_x=w, size_y=h)
-    return Detection2DArray(detections_length=1, header=Header(ts, "camera"), detections=[d])
+    header = Header(stamp=time_from_seconds(ts), frame_id="camera")
+    center = Pose2D(position=Point2D(x=cx, y=360.0), theta=0.0)
+    result = ObjectHypothesisWithPose(
+        hypothesis=ObjectHypothesis(class_id=label, score=0.8),
+        pose=PoseWithCovariance(pose=pose(0, 0, 0).pose, covariance=np.zeros(36)),
+    )
+    d = Detection2D(
+        header=header,
+        results=[result],
+        bbox=BoundingBox2D(center=center, size_x=w, size_y=h),
+        id="",
+    )
+    return Detection2DArray(header=header, detections=[d])
 
 
 def _state(**kw):  # type: ignore[no-untyped-def]
@@ -78,12 +109,12 @@ def _state(**kw):  # type: ignore[no-untyped-def]
 
 
 def test_pose_to_json() -> None:
-    assert pose(1, 2, 90).to_json() == {
+    assert pose_json(pose(1, 2, 90)) == {
         "position": {"x": 1.0, "y": 2.0, "z": 0.4},
         "yaw_deg": 90.0,
         "heading": "north",
     }
-    assert pose(0, 0, -45).to_json()["heading"] == "south_east"
+    assert pose_json(pose(0, 0, -45))["heading"] == "south_east"
 
 
 def test_words() -> None:
@@ -118,7 +149,12 @@ def test_room_sectors_in_robot_frame() -> None:
     pts = np.array(
         [[1.0, 1.3, 0.5], [3.0, 1.0, 0.5], [1.0, -2.0, 0.5], [1.0, 1.0, 5.0]]
     )  # ahead 0.3, right 2, behind 3, above
-    room = _state(pose=p, lidar=PointCloud2.from_numpy(pts, frame_id="world"))["room"]
+    room = _state(
+        pose=p,
+        lidar=pointcloud_from_xyz(
+            pts, header=Header(stamp=time_from_seconds(0.0), frame_id="world")
+        ),
+    )["room"]
     assert room["ahead"] == {"clear_m": 0.3, "state": "blocked"}
     assert room["right"] == {"clear_m": 2.0, "state": "clear"}
     assert (room["behind"]["clear_m"], room["left"]["clear_m"]) == (3.0, 5.0)
@@ -136,3 +172,11 @@ def test_goal_point_relative_to_pose() -> None:
         "distance_m": 2.0,
     }
     assert "goal_point" not in _state()
+
+
+def test_objects_3d_preserve_marker_identity() -> None:
+    detections = det3d(" chair ", 3.0, 0.0)
+    detections.detections[0].id = " 42 "
+    assert _state(detections_3d=detections)["objects"][0]["label"] == "chair id=42"
+    detections.detections[0].results = []
+    assert _state(detections_3d=detections)["objects"][0]["label"] == "id=42"

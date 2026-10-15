@@ -26,6 +26,22 @@ from pathlib import Path
 from threading import Event, Thread
 import time
 
+from dimos_generated.dimos_msgs.msg import Contact, Contacts, LineSegment3D, LineSegments3D
+from dimos_generated.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseStamped,
+    PoseWithCovariance,
+    Transform,
+    TransformStamped,
+    Twist,
+    TwistWithCovariance,
+    Vector3,
+)
+from dimos_generated.nav_msgs.msg import Odometry
+from dimos_generated.sensor_msgs.msg import PointCloud2
+from dimos_generated.std_msgs.msg import Header
+from dimos_generated.tf2_msgs.msg import TFMessage
 import mujoco
 import mujoco.viewer
 import numpy as np
@@ -38,17 +54,10 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.nav_msgs.LineSegments3D import LineSegments3D
-from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.sim_msgs.Contacts import Contact, Contacts, Part
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.msgs.contacts import Part
+from dimos.msgs.geometry import quaternion_from_array, transform_matrix, vector_from_array
+from dimos.msgs.pointcloud import pointcloud_from_xyz
+from dimos.msgs.time import header_now, time_from_seconds
 from dimos.protocol.tf.static_tf_publisher import frames_to_edge_transforms
 from dimos.robot.unitree.go2.constants import CMD_VEL_TIMEOUT
 from dimos.robot.unitree.go2.go2_mid360_static_transforms import FRAMES
@@ -108,7 +117,9 @@ BOX_EDGES = np.array(
 def _mount() -> tuple[NDArray[np.float64], NDArray[np.float64]]:
     """base_link -> mid360_link as a translation and rotation matrix, from the rig's frame tree."""
     edges = {t.child_frame_id: t for t in frames_to_edge_transforms(FRAMES)}
-    matrix = edges["front_camera"].to_matrix() @ edges["mid360_link"].to_matrix()
+    matrix = transform_matrix(edges["front_camera"].transform) @ transform_matrix(
+        edges["mid360_link"].transform
+    )
     return matrix[:3, 3].copy(), matrix[:3, :3].copy()
 
 
@@ -255,14 +266,14 @@ class Go2Sim:
     def contacts(self) -> list[Contact]:
         """Every (robot part, scene kind) pair in contact right now, sorted."""
         m, d = self.model, self.data
-        found: set[Contact] = set()
+        found: set[tuple[Part, str]] = set()
         for i in range(d.ncon):
             c = d.contact[i]
             for scene_geom, robot_geom in ((c.geom1, c.geom2), (c.geom2, c.geom1)):
                 kind = self._kind.get(scene_geom)
                 if kind is not None and m.geom_bodyid[robot_geom] != 0:
-                    found.add(Contact(self._part(robot_geom), kind))
-        return sorted(found)
+                    found.add((self._part(robot_geom), kind))
+        return [Contact(part=part, kind=kind) for part, kind in sorted(found)]
 
     def _part(self, geom: int) -> Part:
         if geom == self._lidar_geom:
@@ -384,7 +395,7 @@ class SimGo2World(Module):
 
     def _run(self) -> None:
         # open3d loads on the first cloud, about a second
-        PointCloud2.from_numpy(np.zeros((0, 3), np.float32), frame_id=SENSOR_FRAME_ID)
+        pointcloud_from_xyz(np.zeros((0, 3), np.float32), header=header_now(SENSOR_FRAME_ID))
         viewer = self._open_viewer(self._sim)
         try:
             self._simulate(self._sim, viewer)
@@ -406,16 +417,32 @@ class SimGo2World(Module):
             self._publish_poses(sim, stamp)
             contacts = sim.contacts()
             if contacts != last_contacts:
-                self.contacts.publish(Contacts(contacts, ts=stamp))
+                self.contacts.publish(
+                    Contacts(
+                        header=Header(stamp=time_from_seconds(stamp), frame_id=""),
+                        contacts=contacts,
+                    )
+                )
                 last_contacts = contacts
             if frame is not None:
                 self.lidar.publish(
-                    PointCloud2.from_numpy(frame.points, frame_id=SENSOR_FRAME_ID, timestamp=stamp)
+                    pointcloud_from_xyz(
+                        frame.points,
+                        header=Header(stamp=time_from_seconds(stamp), frame_id=SENSOR_FRAME_ID),
+                    )
                 )
             if sim.t >= next_scene_publish:
                 self.scene.publish(
                     LineSegments3D(
-                        ts=stamp, frame_id=ODOM_FRAME_ID, segments=scene_edges(sim.scene)
+                        header=Header(stamp=time_from_seconds(stamp), frame_id=ODOM_FRAME_ID),
+                        segments=[
+                            LineSegment3D(
+                                start=Point(x=float(a[0]), y=float(a[1]), z=float(a[2])),
+                                end=Point(x=float(c[0]), y=float(c[1]), z=float(c[2])),
+                                weight=1.0,
+                            )
+                            for a, c in scene_edges(sim.scene)
+                        ],
                     )
                 )
                 next_scene_publish = sim.t + SCENE_PUBLISH_DT
@@ -430,34 +457,52 @@ class SimGo2World(Module):
         position, rotation = sim.sensor_pose()
         linear, angular = sim.sensor_velocity()
         q = Rotation.from_matrix(rotation).as_quat()
-        sensor = Pose(*map(float, position), *map(float, q))
+        sensor = Pose(
+            position=Point(x=float(position[0]), y=float(position[1]), z=float(position[2])),
+            orientation=quaternion_from_array(q),
+        )
+        header = Header(stamp=time_from_seconds(stamp), frame_id=ODOM_FRAME_ID)
         self.odometry.publish(
             Odometry(
-                ts=stamp,
-                frame_id=ODOM_FRAME_ID,
+                header=header,
                 child_frame_id=SENSOR_FRAME_ID,
-                pose=sensor,
-                twist=Twist(Vector3(linear.tolist()), Vector3(angular.tolist())),
+                pose=PoseWithCovariance(pose=sensor, covariance=np.zeros(36, dtype=np.float64)),
+                twist=TwistWithCovariance(
+                    twist=Twist(
+                        linear=vector_from_array(linear), angular=vector_from_array(angular)
+                    ),
+                    covariance=np.zeros(36, dtype=np.float64),
+                ),
             )
         )
         self.tf.publish(
             TFMessage(
-                Transform(
-                    translation=Vector3(sensor.position),
-                    rotation=Quaternion(sensor.orientation),
-                    frame_id=ODOM_FRAME_ID,
-                    child_frame_id=SENSOR_FRAME_ID,
-                    ts=stamp,
-                )
+                transforms=[
+                    TransformStamped(
+                        header=header,
+                        child_frame_id=SENSOR_FRAME_ID,
+                        transform=Transform(
+                            translation=Vector3(
+                                x=sensor.position.x, y=sensor.position.y, z=sensor.position.z
+                            ),
+                            rotation=sensor.orientation,
+                        ),
+                    )
+                ]
             )
         )
         base_position, base_rotation = sim.base_pose()
         base_q = Rotation.from_matrix(base_rotation).as_quat()
         self.ground_truth.publish(
             PoseStamped(
-                *map(float, base_position),
-                *map(float, base_q),
-                ts=stamp,
-                frame_id=ODOM_FRAME_ID,
+                header=header,
+                pose=Pose(
+                    position=Point(
+                        x=float(base_position[0]),
+                        y=float(base_position[1]),
+                        z=float(base_position[2]),
+                    ),
+                    orientation=quaternion_from_array(base_q),
+                ),
             )
         )

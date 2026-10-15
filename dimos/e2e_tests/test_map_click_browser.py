@@ -18,13 +18,15 @@ from collections.abc import Iterator
 import threading
 from typing import NamedTuple
 
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Point, PointStamped, Pose, PoseStamped, Quaternion
+from dimos_generated.nav_msgs.msg import Path
+from dimos_generated.std_msgs.msg import Header
 import pytest
 from reactivex.disposable import Disposable
 
 from dimos.core.transport import pLCMTransport
-from dimos.msgs.geometry_msgs.PointStamped import PointStamped
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.nav_msgs.Path import Path
+from dimos.msgs.time import time_from_seconds
 from dimos.web.cockpit import Map2D, cockpit
 from dimos.web.relay_bridge.e2e_support import stop_module
 from dimos.web.relay_bridge.gen_costmap_fixtures import grid_msg
@@ -50,9 +52,15 @@ class MapBridge(NamedTuple):
 
 def _path(*xy: tuple[float, float]) -> Path:
     poses = [
-        PoseStamped(ts=1.0, position=[x, y, 0.0], orientation=[0.0, 0.0, 0.0, 1.0]) for x, y in xy
+        PoseStamped(
+            header=Header(stamp=time_from_seconds(1.0), frame_id=""),
+            pose=Pose(
+                position=Point(x=x, y=y, z=0.0), orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0)
+            ),
+        )
+        for x, y in xy
     ]
-    return Path(ts=1.0, frame_id="world", poses=poses)
+    return Path(header=Header(stamp=time_from_seconds(1.0), frame_id="world"), poses=poses)
 
 
 @pytest.fixture(scope="module")
@@ -125,9 +133,9 @@ def test_click_to_goal_and_cancel(map_bridge: MapBridge, chromium_page: Page) ->
     )
     chromium_page.click(CANVAS)
     assert wait_until(lambda: len(clicks) == 1, timeout=15.0)
-    assert clicks[0].x == pytest.approx(0.75, abs=0.01)
-    assert clicks[0].y == pytest.approx(0.0, abs=0.01)
-    assert clicks[0].frame_id == "world"
+    assert clicks[0].point.x == pytest.approx(0.75, abs=0.01)
+    assert clicks[0].point.y == pytest.approx(0.0, abs=0.01)
+    assert clicks[0].header.frame_id == "world"
 
     cancel = chromium_page.get_by_test_id("map2d-global_costmap-cancel")
     expect(cancel).to_have_count(0)
@@ -136,5 +144,7 @@ def test_click_to_goal_and_cancel(map_bridge: MapBridge, chromium_page: Page) ->
     cancel.click()
     assert wait_until(lambda: stops == [True], timeout=15.0)
 
-    map_bridge.path.publish(Path())
+    map_bridge.path.publish(
+        Path(header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""), poses=[])
+    )
     expect(cancel).to_have_count(0, timeout=30_000)

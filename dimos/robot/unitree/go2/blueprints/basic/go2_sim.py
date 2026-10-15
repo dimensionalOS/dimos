@@ -29,10 +29,9 @@ from dimos.simulation.go2_sim.world import SimGo2World
 from dimos.visualization.vis_module import vis_module
 
 if TYPE_CHECKING:
+    from dimos_generated.dimos_msgs.msg import LineSegments3D
     from rerun._baseclasses import Archetype
     from rerun.blueprint import Blueprint
-
-    from dimos.msgs.nav_msgs.LineSegments3D import LineSegments3D
 
 
 def _scene_lines(scene: LineSegments3D) -> Archetype:

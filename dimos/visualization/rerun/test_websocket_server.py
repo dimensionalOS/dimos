@@ -19,9 +19,10 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
-import time
 from typing import Any
 
+from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
+from dimos_generated.geometry_msgs.msg import PointStamped, Twist, Vector3
 import pytest
 import websockets.asyncio.client as ws_client
 
@@ -89,9 +90,6 @@ class MockViewerPublisher:
     def send_stop(self) -> None:
         self._send({"type": "stop"})
 
-    def flush(self, delay: float = 0.1) -> None:
-        time.sleep(delay)
-
     def _send(self, msg: dict[str, Any]) -> None:
         assert self._loop is not None and self._ws is not None
         self._loop.run_until_complete(self._ws.send(json.dumps(msg)))
@@ -106,8 +104,10 @@ def server(wait_for_server: Any) -> RerunWebSocketServer:
         module = RerunWebSocketServer()
         module.start()
         wait_for_server(module.bound_port)
-        yield module  # type: ignore[misc]
-        module.stop()
+        try:
+            yield module  # type: ignore[misc]
+        finally:
+            module.stop()
     finally:
         global_config.update(rerun_websocket_server_port=original_port)
 
@@ -127,18 +127,17 @@ def test_click_publishes_point_stamped(
 
     unsub = server.clicked_point.subscribe(lambda point: (received.append(point), done.set()))
 
-    publisher.send_click(1.5, 2.5, 0.0, "/robot/base", timestamp_ms=5000)
-    publisher.flush()
-    done.wait(timeout=2.0)
+    publisher.send_click(1.5, 2.5, 0.0, "/robot/base", timestamp_ms=1700000000123)
+    assert done.wait(timeout=2.0)
     unsub()
 
     assert len(received) == 1
-    point = received[0]
-    assert point.x == pytest.approx(1.5)
-    assert point.y == pytest.approx(2.5)
-    assert point.z == pytest.approx(0.0)
-    assert point.frame_id == "/robot/base"
-    assert point.ts == pytest.approx(5.0)
+    point = cdr_decode(cdr_encode(received[0]), PointStamped)
+    assert point.point.x == pytest.approx(1.5)
+    assert point.point.y == pytest.approx(2.5)
+    assert point.point.z == pytest.approx(0.0)
+    assert point.header.frame_id == "/robot/base"
+    assert (point.header.stamp.sec, point.header.stamp.nanosec) == (1700000000, 123000000)
 
 
 def test_twist_publishes_on_tele_cmd_vel(
@@ -151,8 +150,7 @@ def test_twist_publishes_on_tele_cmd_vel(
     unsub = server.tele_cmd_vel.subscribe(lambda twist: (received.append(twist), done.set()))
 
     publisher.send_twist(0.5, 0.0, 0.0, 0.0, 0.0, 0.8)
-    publisher.flush()
-    done.wait(timeout=2.0)
+    assert done.wait(timeout=2.0)
     unsub()
 
     assert len(received) == 1
@@ -170,25 +168,35 @@ def test_stop_publishes_zero_twist(
     unsub = server.tele_cmd_vel.subscribe(lambda twist: (received.append(twist), done.set()))
 
     publisher.send_stop()
-    publisher.flush()
-    done.wait(timeout=2.0)
+    assert done.wait(timeout=2.0)
     unsub()
 
     assert len(received) == 1
-    assert received[0].is_zero()
+    assert cdr_decode(cdr_encode(received[0]), Twist) == Twist(
+        linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)
+    )
 
 
 def test_invalid_json_does_not_crash(server: RerunWebSocketServer) -> None:
     """Malformed JSON is silently dropped; server stays alive for the next message."""
 
+    received = []
+    done = threading.Event()
+    unsubscribe = server.tele_cmd_vel.subscribe(lambda msg: (received.append(msg), done.set()))
+
     async def _send_bad() -> None:
         async with ws_client.connect(f"ws://127.0.0.1:{server.bound_port}/ws") as ws:
             await ws.send("this is not json {{")
-            await asyncio.sleep(0.1)
-            await ws.send(json.dumps({"type": "heartbeat", "timestamp_ms": 0}))
-            await asyncio.sleep(0.1)
+            await ws.send(json.dumps({"type": "stop"}))
 
-    asyncio.run(_send_bad())
+    try:
+        asyncio.run(_send_bad())
+        assert done.wait(timeout=2.0)
+        assert received == [
+            Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
+        ]
+    finally:
+        unsubscribe()
 
 
 def test_restart_is_rejected_and_state_is_cleared() -> None:
@@ -219,11 +227,10 @@ def test_mixed_message_sequence(
     publisher.send_click(7.0, 8.0, 9.0, "/map", timestamp_ms=1100)
     publisher.send_twist(0.3, 0.0, 0.0, 0.0, 0.0, 0.2)
     publisher.send_stop()
-    publisher.flush()
-    done.wait(timeout=2.0)
+    assert done.wait(timeout=2.0)
     unsub()
 
     assert len(received) == 1
-    assert received[0].x == pytest.approx(7.0)
-    assert received[0].y == pytest.approx(8.0)
-    assert received[0].z == pytest.approx(9.0)
+    assert received[0].point.x == pytest.approx(7.0)
+    assert received[0].point.y == pytest.approx(8.0)
+    assert received[0].point.z == pytest.approx(9.0)

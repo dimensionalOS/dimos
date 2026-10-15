@@ -12,11 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 import pytest
 
 from dimos.mapping.voxels.grid import VoxelGrid
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.pointcloud import pointcloud_from_xyz, pointcloud_stamps, pointcloud_xyz
+from dimos.msgs.time import time_from_seconds
 
 VOXEL = 0.05
 
@@ -25,11 +27,11 @@ def _wall(x, ts):
     """A 1 m x 1 m wall of voxel centers in the plane at `x`."""
     ys, zs = np.meshgrid(np.arange(0.025, 1, VOXEL), np.arange(0.025, 1, VOXEL))
     pts = np.stack([np.full(ys.size, x), ys.ravel(), zs.ravel()], axis=1)
-    return PointCloud2.from_numpy(pts, timestamp=ts)
+    return pointcloud_from_xyz(pts, header=Header(stamp=time_from_seconds(ts), frame_id=""))
 
 
 def _voxels(grid):
-    return {tuple(v) for v in np.floor(grid.get_global_pointcloud2().points_f32() / VOXEL)}
+    return {tuple(v) for v in np.floor(pointcloud_xyz(grid.get_global_pointcloud2()) / VOXEL)}
 
 
 def _drifted_walls():
@@ -41,8 +43,10 @@ def _drifted_walls():
 
 
 def _undrift(cloud):
-    shift = np.where(cloud.stamps_f64()[:, None] == 1.0, [0.5, 0.0, 0.0], 0.0)
-    return PointCloud2.from_numpy(cloud.points_f32() + shift)
+    shift = np.where(pointcloud_stamps(cloud)[:, None] == 1.0, [0.5, 0.0, 0.0], 0.0)
+    return pointcloud_from_xyz(
+        pointcloud_xyz(cloud) + shift, header=Header(stamp=time_from_seconds(0.0), frame_id="")
+    )
 
 
 def test_stamped_holds_the_same_voxels():

@@ -12,9 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos_generated.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
+from dimos_generated.std_msgs.msg import Header
+
+from dimos.msgs.time import time_from_seconds, to_seconds
 from dimos.navigation.tf_pose import TfPose
 from dimos.protocol.tf.tf import MultiTBuffer
 
@@ -34,7 +35,7 @@ class CountingTF(MultiTBuffer):
         time_tolerance: float | None = None,
         *,
         forward_tolerance: float = 0.0,
-    ) -> Transform | None:
+    ) -> TransformStamped | None:
         self.gets += 1
         return super().get(
             parent_frame,
@@ -53,13 +54,11 @@ class _Clock:
         return self.t
 
 
-def _body_at(x: float, ts: float) -> Transform:
-    return Transform(
-        translation=Vector3(x, 0.0, 0.3),
-        rotation=IDENTITY,
-        frame_id="odom",
+def _body_at(x: float, ts: float) -> TransformStamped:
+    return TransformStamped(
+        header=Header(stamp=time_from_seconds(ts), frame_id="odom"),
         child_frame_id="base_link",
-        ts=ts,
+        transform=Transform(translation=Vector3(x, 0.0, 0.3), rotation=IDENTITY),
     )
 
 
@@ -68,7 +67,12 @@ def test_tf_pose_is_the_world_to_base_edge():
     tf.receive_transform(_body_at(1.0, ts=5.0))
     pose = TfPose(tf, "base_link", max_age_s=2.5, clock=clock).get("odom")
     assert pose is not None
-    assert (pose.position.x, pose.position.z, pose.ts, pose.frame_id) == (1.0, 0.3, 5.0, "odom")
+    assert (
+        pose.pose.position.x,
+        pose.pose.position.z,
+        to_seconds(pose.header.stamp),
+        pose.header.frame_id,
+    ) == (1.0, 0.3, 5.0, "odom")
 
 
 def test_tf_pose_goes_stale_when_the_stamp_stops_advancing():

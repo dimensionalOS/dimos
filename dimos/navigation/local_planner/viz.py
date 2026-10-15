@@ -23,11 +23,12 @@ from __future__ import annotations
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
+from dimos_generated.geometry_msgs.msg import PoseStamped
+from dimos_generated.nav_msgs.msg import Path
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.nav_msgs.Path import Path
+from dimos.msgs.geometry import yaw
 from dimos.navigation.embodiment.base import Embodiment
 from dimos.navigation.embodiment.go2 import GO2
 from dimos.navigation.local_planner.profile import (
@@ -46,10 +47,10 @@ _Z_LIFT = 0.02
 
 def _body_centre(pose: PoseStamped, center_off: float) -> tuple[float, float]:
     """The body centre for a pose point, offset along the pose's own heading."""
-    yaw = pose.yaw
+    heading = yaw(pose.pose.orientation)
     return (
-        pose.position.x + center_off * np.cos(yaw),
-        pose.position.y + center_off * np.sin(yaw),
+        pose.pose.position.x + center_off * np.cos(heading),
+        pose.pose.position.y + center_off * np.sin(heading),
     )
 
 
@@ -82,16 +83,18 @@ def render_body(
         p = msg.poses[0]
         cx, cy = _body_centre(p, center_off)
         return rr.Boxes3D(
-            centers=[[cx, cy, p.position.z + height / 2.0 + _Z_LIFT]],
+            centers=[[cx, cy, p.pose.position.z + height / 2.0 + _Z_LIFT]],
             half_sizes=[[length / 2.0, width / 2.0, height / 2.0]],
-            rotation_axis_angles=[rr.RotationAxisAngle([0.0, 0.0, 1.0], rr.Angle(rad=p.yaw))],
+            rotation_axis_angles=[
+                rr.RotationAxisAngle([0.0, 0.0, 1.0], rr.Angle(rad=yaw(p.pose.orientation)))
+            ],
             colors=[[255, 60, 60, 200]],
             radii=[line_radius],
             fill_mode="majorwireframe",
             labels=["VETO: no safe route"],
         )
 
-    xy = np.array([[p.position.x, p.position.y] for p in msg.poses]).reshape(-1, 2)
+    xy = np.array([[p.pose.position.x, p.pose.position.y] for p in msg.poses]).reshape(-1, 2)
     seg = np.linalg.norm(np.diff(xy, axis=0), axis=1)
     arcs = np.concatenate([[0.0], np.cumsum(seg)])
     # one box per stride_m of arc, plus the last pose so the goal end is drawn
@@ -103,8 +106,8 @@ def render_body(
     for i in picks:
         p = msg.poses[int(i)]
         cx, cy = _body_centre(p, center_off)
-        centers.append([cx, cy, p.position.z + height / 2.0 + _Z_LIFT])
-        angles.append(rr.RotationAxisAngle([0.0, 0.0, 1.0], rr.Angle(rad=p.yaw)))
+        centers.append([cx, cy, p.pose.position.z + height / 2.0 + _Z_LIFT])
+        angles.append(rr.RotationAxisAngle([0.0, 0.0, 1.0], rr.Angle(rad=yaw(p.pose.orientation))))
         if clear is None:
             colors.append([100, 160, 255, 160])  # unstamped: the plan line's own blue
         else:
@@ -139,7 +142,7 @@ def render_plan(
         return None
     out: RerunMulti = [
         # the bridge only pins single-archetype entities to their tf frame; the boxes are the plan
-        (entity, rr.Transform3D(parent_frame=f"tf#/{msg.frame_id}")),
+        (entity, rr.Transform3D(parent_frame=f"tf#/{msg.header.frame_id}")),
     ]
     boxes = render_body(msg, emb, stride_m, line_radius)
     if boxes is not None:

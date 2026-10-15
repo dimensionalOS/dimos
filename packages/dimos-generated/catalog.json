@@ -74,6 +74,11 @@
     "dimos_msgs/msg/Contacts": "DimOS runtime message contract",
     "dimos_msgs/msg/RegionBounds": "DimOS runtime message contract",
     "dimos_msgs/msg/RegionLineSegments3D": "DimOS runtime message contract",
-    "dimos_msgs/msg/RegionPointCloud2": "DimOS runtime message contract"
+    "dimos_msgs/msg/RegionPointCloud2": "DimOS runtime message contract",
+    "dimos_msgs/msg/TriangleMesh": "Published runtime consumer: dimos/mapping/experimental/mesh.py",
+    "dimos_msgs/msg/ControlValues": "Published runtime consumer: dimos/control/contract/validate.py",
+    "geometry_msgs/msg/PoseWithCovarianceStamped": "Published native runtime consumer: dimos/experimental/memory/rust/src/decoding.rs",
+    "geometry_msgs/msg/TwistWithCovarianceStamped": "Published native runtime consumer: dimos/experimental/memory/rust/src/decoding.rs",
+    "geometry_msgs/msg/WrenchStamped": "Published native runtime consumer: dimos/experimental/memory/rust/src/decoding.rs"
   }
 }

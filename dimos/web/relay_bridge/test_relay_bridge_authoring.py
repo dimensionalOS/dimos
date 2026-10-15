@@ -27,6 +27,19 @@ import pickle
 import struct
 from typing import Any
 
+from dimos_cdrgen.registry import encode as cdr_encode
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import (
+    Point,
+    PointStamped,
+    Pose,
+    PoseStamped,
+    Quaternion,
+    Twist,
+)
+from dimos_generated.nav_msgs.msg import OccupancyGrid, Path as NavPath
+from dimos_generated.sensor_msgs.msg import Image
+from dimos_generated.std_msgs.msg import Header
 from langchain_core.messages import AIMessage
 import numpy as np
 import pytest
@@ -36,13 +49,8 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.resource_monitor.stats import ProcessStats, WorkerStats
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.PointStamped import PointStamped
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
-from dimos.msgs.nav_msgs.Path import Path as NavPath
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.image import image_from_array
+from dimos.msgs.time import time_from_seconds
 from dimos.web.cockpit import Channel, Chat, Map2D, Stats, Video, cockpit
 from dimos.web.codecs import EncodedPayload, PublishContext, web_decoder, web_encoder
 from dimos.web.relay_bridge import builtin_codecs, pacing, relay_bridge_module
@@ -147,7 +155,7 @@ def test_composition_preserves_existing_relay() -> None:
 
 @web_encoder("path.rbm.v1")
 def _encode_path_points(msg: NavPath) -> EncodedPayload:
-    payload = b"".join(struct.pack("<ff", p.position.x, p.position.y) for p in msg.poses)
+    payload = b"".join(struct.pack("<ff", p.pose.position.x, p.pose.position.y) for p in msg.poses)
     return EncodedPayload(payload, {"n": len(msg.poses)})
 
 
@@ -157,9 +165,16 @@ def _encode_boom(msg: NavPath) -> bytes:
 
 
 _NAV_PATH = NavPath(
-    ts=1.0,
-    frame_id="world",
-    poses=[PoseStamped(ts=1.0, position=[1.5, -2.5, 0.0], orientation=[0.0, 0.0, 0.0, 1.0])],
+    header=Header(stamp=time_from_seconds(1), frame_id="world"),
+    poses=[
+        PoseStamped(
+            header=Header(stamp=time_from_seconds(1), frame_id=""),
+            pose=Pose(
+                position=Point(x=1.5, y=-2.5, z=0.0),
+                orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0),
+            ),
+        )
+    ],
 )
 _NAV_PATH_PAYLOAD = struct.pack("<ff", 1.5, -2.5)
 
@@ -230,17 +245,17 @@ def test_two_jpeg_channels_use_independent_quality(monkeypatch) -> None:
     module, clients = start_authored(monkeypatch, blueprint, wire=("color_image", "rear_cam"))
     try:
         qualities: list[int] = []
-        real = Image.to_jpeg_bytes
+        real = builtin_codecs.image_to_jpeg
 
         def spy(self: Image, quality: int = 75) -> bytes:
             qualities.append(quality)
             return real(self, quality=quality)
 
-        monkeypatch.setattr(Image, "to_jpeg_bytes", spy)
+        monkeypatch.setattr(builtin_codecs, "image_to_jpeg", spy)
         push(module, clients[0], Subs(chs=["color_image", "rear_cam"], n=1))
         front, rear = transport_of(module, "color_image"), transport_of(module, "rear_cam")
         assert wait_until(lambda: front.subscribers and rear.subscribers)
-        image = Image.from_numpy(np.zeros((8, 12, 3), dtype=np.uint8))
+        image = image_from_array(np.zeros((8, 12, 3), dtype=np.uint8), encoding="rgb8")
         front.publish(image)
         rear.publish(image)
         assert wait_until(lambda: sorted(qualities) == [33, 90])
@@ -275,7 +290,7 @@ def test_resend_flag_replays_cache_on_generated_port(monkeypatch) -> None:
         stop_module(module)
 
 
-def test_lcm_channel_ships_lcm_encode_bytes(monkeypatch) -> None:
+def test_cdr_channel_ships_generated_encode_bytes(monkeypatch) -> None:
     blueprint = cockpit(channels=[Channel("pose", PoseStamped, max_hz=1000.0)])
     module, clients = start_authored(monkeypatch, blueprint, wire=("pose",))
     try:
@@ -289,13 +304,20 @@ def test_lcm_channel_ships_lcm_encode_bytes(monkeypatch) -> None:
         pose = transport_of(module, "pose")
         assert wait_until(lambda: pose.subscribers)
         module._min_interval = {"pose": 0.0}
-        msg = PoseStamped(ts=2.0, position=[1.0, 2.0, 0.0], orientation=[0, 0, 0, 1])
+        msg = PoseStamped(
+            header=Header(stamp=time_from_seconds(2), frame_id=""),
+            pose=Pose(
+                position=Point(x=1, y=2, z=0.0), orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0)
+            ),
+        )
         pose.publish(msg)
         assert wait_until(lambda: clients[0].frames)
-        assert clients[0].frames[0] == ("pose", msg.lcm_encode(), "reliable", None)
-        # A sample of another type carries another fingerprint: dropped and
+        assert clients[0].frames[0] == ("pose", cdr_encode(msg), "reliable", None)
+        # A sample of another type has a different declared message name: dropped and
         # logged, never sent to a browser that compiled the PoseStamped schema.
-        pose.publish(Pose(1.0, 2.0, 0.0, 0.0, 0.0, 0.0, 1.0))
+        pose.publish(
+            Pose(position=Point(x=1, y=2, z=0.0), orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0))
+        )
         assert wait_until(lambda: bool(exceptions))
         assert "pose" in exceptions[0]
         flush_loop(module)
@@ -326,7 +348,15 @@ def test_encoder_failure_is_isolated_and_rate_limited(monkeypatch) -> None:
         module._min_interval = {"bad_path": 0.0, "target_pose": 0.0}
         for _ in range(3):
             bad.publish(_NAV_PATH)
-        pose.publish(PoseStamped(ts=2.0, position=[1.0, 2.0, 0.0], orientation=[0, 0, 0, 1]))
+        pose.publish(
+            PoseStamped(
+                header=Header(stamp=time_from_seconds(2), frame_id=""),
+                pose=Pose(
+                    position=Point(x=1, y=2, z=0.0),
+                    orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0),
+                ),
+            )
+        )
         assert wait_until(lambda: clients[0].frames)
         # The healthy channel flows; the broken one drops every sample.
         assert all(frame[0] == "target_pose" for frame in clients[0].frames)
@@ -410,7 +440,7 @@ def test_spec_manifest_mismatch_fails(monkeypatch) -> None:
     start_with(replace(good, dir="tx"), "does not match its compiled runtime spec")
     start_with(
         replace(good, message_type=Twist),
-        "message type Twist does not match the RelayBridgeModule port type PoseStamped",
+        f"message type {Twist.__qualname__} does not match the RelayBridgeModule port type {PoseStamped.__qualname__}",
     )
 
 
@@ -763,9 +793,15 @@ def test_publish_frame_with_unusable_meta_is_dropped(monkeypatch) -> None:
 
 def _nav_path(*xy: tuple[float, float]) -> NavPath:
     poses = [
-        PoseStamped(ts=1.0, position=[x, y, 0.0], orientation=[0.0, 0.0, 0.0, 1.0]) for x, y in xy
+        PoseStamped(
+            header=Header(stamp=time_from_seconds(1), frame_id=""),
+            pose=Pose(
+                position=Point(x=x, y=y, z=0.0), orientation=Quaternion(w=1, x=0.0, y=0.0, z=0.0)
+            ),
+        )
+        for x, y in xy
     ]
-    return NavPath(ts=1.0, frame_id="world", poses=poses)
+    return NavPath(header=Header(stamp=time_from_seconds(1), frame_id="world"), poses=poses)
 
 
 @pytest.fixture
@@ -814,7 +850,7 @@ def test_map2d_path_replays_and_paces(map_bridge) -> None:
     assert json.loads(offers[0][0]) == [[1.5, -2.5]]
 
     # A planner burst must not leave the viewer stuck on the empty path.
-    path.publish(NavPath())
+    path.publish(NavPath(header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""), poses=[]))
     path.publish(_nav_path((0.25, 0.5), (1.0, 1.0), (1.75, 0.5)))
     assert wait_until(lambda: len(offers) == 3)
     assert [json.loads(payload) for payload, _ in offers[1:]] == [
@@ -837,7 +873,12 @@ def test_map2d_click_and_stop_publish(map_bridge) -> None:
     assert wait_until(lambda: clients[0].control_frames)
     assert isinstance(clients[0].control_frames[0], PubAck)
     (point,) = points
-    assert (point.x, point.y, point.z, point.frame_id) == (1.5, -2.25, 0.0, "world")
+    assert (point.point.x, point.point.y, point.point.z, point.header.frame_id) == (
+        1.5,
+        -2.25,
+        0.0,
+        "world",
+    )
 
     push(module, clients[0], _pub_frame(b"true", ch="stop_movement", seq=2))
     assert wait_until(lambda: stops == [True])

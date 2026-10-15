@@ -20,11 +20,19 @@ from __future__ import annotations
 from functools import partial
 from typing import TYPE_CHECKING
 
+from dimos_generated.dimos_msgs.msg import (
+    LineSegment3D,
+    LineSegments3D,
+    RegionLineSegments3D,
+    RegionPointCloud2,
+)
+from dimos_generated.geometry_msgs.msg import Point
+from dimos_generated.sensor_msgs.msg import PointCloud2
 import numpy as np
 
-from dimos.msgs.nav_msgs.LineSegments3D import LineSegments3D
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.visualization.rerun.bridge import RerunEntry, keyed_by_seq, region_entity
+from dimos.msgs.pointcloud import pointcloud_view, pointcloud_xyz
+from dimos.msgs.time import header_now
+from dimos.visualization.rerun.bridge import RerunEntry, keyed_by_region, region_entity
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -72,9 +80,9 @@ def surface_points(
     )
 
 
-@keyed_by_seq
+@keyed_by_region
 def render_surface_region(
-    msg: PointCloud2,
+    msg: RegionPointCloud2,
     voxel_size: float,
     wall_clearance_m: float,
     clearance_clamp_m: float,
@@ -85,19 +93,21 @@ def render_surface_region(
     Clearance rides the intensity channel, flat blue without it. Points outside z_band
     (world frame) are dropped, to show one storey of a multi-storey map.
     """
-    seq = msg.seq
-    pts = msg.points_f32()
-    clearance = msg.intensities_f32()
+    pts = pointcloud_xyz(msg.cloud).astype(np.float32)
+    records = pointcloud_view(msg.cloud)
+    clearance = records["intensity"].ravel() if "intensity" in (records.dtype.names or ()) else None
+    if z_band is not None:
+        keep = (pts[:, 2] >= z_band[0]) & (pts[:, 2] <= z_band[1])
+        pts = pts[keep]
+        if clearance is not None:
+            clearance = clearance[keep]
     if clearance is None or len(clearance) != len(pts):
-        if z_band is not None:
-            msg = msg.filter_by_height(min_height=z_band[0], max_height=z_band[1])
-        cell = msg.to_rerun(voxel_size=voxel_size, colors=[40, 75, 130])
+        import rerun as rr
+
+        cell: Archetype = rr.Points3D(pts, radii=voxel_size * 0.5, colors=[40, 75, 130])
     else:
-        if z_band is not None:
-            keep = (pts[:, 2] >= z_band[0]) & (pts[:, 2] <= z_band[1])
-            pts, clearance = pts[keep], clearance[keep]
         cell = surface_points(pts, clearance, voxel_size, wall_clearance_m, clearance_clamp_m)
-    return [RerunEntry(region_entity(SURFACE_MAP_ENTITY, seq), cell, static=True)]
+    return [RerunEntry(region_entity(SURFACE_MAP_ENTITY, msg.region_id), cell, static=True)]
 
 
 def graph_nodes(pts: NDArray[np.float32]) -> Archetype:
@@ -111,28 +121,73 @@ def graph_nodes(pts: NDArray[np.float32]) -> Archetype:
 
 
 def render_nodes(msg: PointCloud2) -> Archetype:
-    return graph_nodes(msg.points_f32())
+    return graph_nodes(pointcloud_xyz(msg).astype(np.float32))
 
 
 def graph_edges(edges: NDArray[np.float32]) -> Archetype:
     """Edges as ``[x0, y0, z0, x1, y1, z1, cost]`` rows, colored green to red by cost."""
     segments = LineSegments3D(
-        segments=edges[:, :6].reshape(-1, 2, 3) if len(edges) else None,
-        weights=edges[:, 6] if len(edges) else None,
+        header=header_now(),
+        segments=[
+            LineSegment3D(
+                start=Point(x=float(row[0]), y=float(row[1]), z=float(row[2])),
+                end=Point(x=float(row[3]), y=float(row[4]), z=float(row[5])),
+                weight=float(row[6]),
+            )
+            for row in edges
+        ],
     )
     return render_node_edges(segments)
 
 
 def render_node_edges(msg: LineSegments3D) -> Archetype:
-    return msg.to_rerun(z_offset=GRAPH_Z_LIFT, radii=0.01)
+    import rerun as rr
+
+    if not msg.segments:
+        return rr.LineStrips3D([])
+    strips = np.array(
+        [
+            [
+                [segment.start.x, segment.start.y, segment.start.z],
+                [segment.end.x, segment.end.y, segment.end.z],
+            ]
+            for segment in msg.segments
+        ],
+        dtype=np.float32,
+    )
+    strips[:, :, 2] += GRAPH_Z_LIFT
+    weights = np.array([segment.weight for segment in msg.segments], dtype=np.float64)
+    log_weights = np.log10(np.maximum(weights, 1e-6))
+    low, high = float(log_weights.min()), float(log_weights.max())
+    norm = (log_weights - low) / (high - low) if high > low else np.zeros_like(log_weights)
+    red = (255 * norm).astype(np.uint8)
+    green = (255 * (1 - norm)).astype(np.uint8)
+    colors = np.column_stack([red, green, np.full_like(red, 60), np.full_like(red, 220)])
+    return rr.LineStrips3D(strips, colors=colors, radii=0.01)
 
 
-@keyed_by_seq
-def render_edge_region(msg: LineSegments3D) -> RerunMulti:
-    """One cell of the edge corridors on its own static entity."""
+@keyed_by_region
+def render_edge_region(msg: RegionLineSegments3D) -> RerunMulti:
     return [
-        RerunEntry(region_entity(NODE_EDGES_ENTITY, msg.seq), render_node_edges(msg), static=True)
+        RerunEntry(
+            region_entity(NODE_EDGES_ENTITY, msg.region_id),
+            render_node_edges(msg.lines),
+            static=True,
+        )
     ]
+
+
+def render_surface_map(
+    msg: PointCloud2,
+    voxel_size: float = 0.1,
+    wall_clearance_m: float = 0.0,
+    clearance_clamp_m: float = 1.0,
+) -> Archetype:
+    entry = render_surface_region(
+        RegionPointCloud2(region_id=0, cloud=msg), voxel_size, wall_clearance_m, clearance_clamp_m
+    )[0]
+    assert isinstance(entry, RerunEntry)
+    return entry.archetype
 
 
 def planner_visual_override(

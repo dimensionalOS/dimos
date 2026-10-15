@@ -140,6 +140,12 @@ repos:
           bash -c '
             set -euo pipefail
             git ls-files "*Cargo.toml" | while read -r m; do
+              # This consumer intentionally references generated packages absent in a clean checkout.
+              # Format its checked-in source directly; native CI builds and runs the full project.
+              if [ "$m" = examples/message-project/rust/Cargo.toml ]; then
+                rustfmt --edition 2024 examples/message-project/rust/src/main.rs
+                continue
+              fi
               cargo locate-project --manifest-path "$m" --workspace --message-format plain
             done | sort -u | while read -r root; do
               cargo fmt --manifest-path "$root" --all

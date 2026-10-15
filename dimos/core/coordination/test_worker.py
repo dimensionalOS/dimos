@@ -16,6 +16,7 @@ import threading
 import time
 from typing import TYPE_CHECKING
 
+from dimos_generated.geometry_msgs.msg import Vector3
 import pytest
 
 from dimos.agents.annotation import skill
@@ -24,7 +25,6 @@ from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 if TYPE_CHECKING:
     from dimos.core.resource_monitor.stats import WorkerStats

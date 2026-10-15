@@ -23,14 +23,14 @@ from __future__ import annotations
 
 from typing import Any
 
+from dimos_generated.geometry_msgs.msg import Pose, PoseStamped
+
 from dimos.control.task import (
     BaseControlTask,
     CoordinatorState,
     JointCommandOutput,
     ResourceClaim,
 )
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 
 class RecordingTask(BaseControlTask):

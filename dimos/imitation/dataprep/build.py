@@ -81,7 +81,14 @@ def _recording_codecs(path: Path) -> dict[str, StreamCodec]:
         return codecs
     for channel in summary.channels.values():
         payload_type = channel.metadata.get("dimos.payload_type")
-        if payload_type and channel.message_encoding in {"jpeg", "lcm", "lz4+lcm"}:
+        if payload_type and channel.message_encoding in {
+            "cdr",
+            "lz4+cdr",
+            "json",
+            "jpeg",
+            "lcm",
+            "lz4+lcm",
+        }:
             try:
                 codecs[channel.topic] = cast(
                     "StreamCodec", codec_from_id(channel.message_encoding, payload_type)

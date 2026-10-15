@@ -26,6 +26,7 @@ import threading
 import time
 from typing import Any, Literal, Protocol, TypeAlias
 
+from dimos_generated.std_msgs.msg import String, UInt32
 from pydantic import Field, field_validator
 from reactivex.abc import DisposableBase
 from reactivex.disposable import Disposable
@@ -38,7 +39,6 @@ from dimos.imitation.collection.episode import (
     EpisodeStatus,
     RecordingState,
 )
-from dimos.msgs.std_msgs.String import String
 from dimos.spec.utils import Spec
 from dimos.teleop.webxr.controller_types import BUTTON_ALIASES, Buttons
 from dimos.utils.logging_config import setup_logger
@@ -92,7 +92,7 @@ class EpisodeMonitorModuleConfig(ModuleConfig):
 class EpisodeMonitorModule(Module):
     config: EpisodeMonitorModuleConfig
 
-    teleop_buttons: In[Buttons]
+    teleop_buttons: In[UInt32]
     status: Out[String]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -134,7 +134,7 @@ class EpisodeMonitorModule(Module):
 
     # ── port handlers ────────────────────────────────────────────────────────
 
-    def _on_buttons(self, msg: Buttons) -> None:
+    def _on_buttons(self, msg: UInt32) -> None:
         """Detect raw rising edges, preserving short taps without held repeats."""
         ts = time.time()
         fired: list[EpisodeCommand] = []

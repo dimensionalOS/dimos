@@ -36,9 +36,12 @@ from __future__ import annotations
 from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
 
+from dimos_generated.foxglove_msgs.msg import CompressedVideo
+from dimos_generated.sensor_msgs.msg import Image
+from dimos_generated.std_msgs.msg import Header
+
 from dimos.memory.transform import Transformer
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
-from dimos.robot.unitree.go2.dds.msgs.CompressedVideo import CompressedVideo
+from dimos.msgs.image import image_from_array
 
 if TYPE_CHECKING:
     from dimos.memory.type.observation import Observation
@@ -60,7 +63,7 @@ class H264Decoder(Transformer[CompressedVideo, Image]):
                 continue
             last = obs
             try:
-                frames = decoder.decode(av.packet.Packet(packet.data.tobytes()))
+                frames = decoder.decode(av.packet.Packet(bytes(packet.data)))
             except av.error.FFmpegError:
                 continue  # P-frame with no reference yet (e.g. seeked past a keyframe)
             for frame in frames:
@@ -75,4 +78,10 @@ class H264Decoder(Transformer[CompressedVideo, Image]):
     @staticmethod
     def _emit(frame: Any, obs: Observation[CompressedVideo]) -> Observation[Image]:
         bgr = frame.to_ndarray(format="bgr24")
-        return obs.derive(data=Image.from_numpy(bgr, ImageFormat.BGR, obs.data.frame_id, obs.ts))
+        return obs.derive(
+            data=image_from_array(
+                bgr,
+                encoding="bgr8",
+                header=Header(stamp=obs.data.timestamp, frame_id=obs.data.frame_id),
+            )
+        )

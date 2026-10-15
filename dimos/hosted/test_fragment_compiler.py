@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dimos_generated.std_msgs.msg import Bool, String
 import pytest
 
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
@@ -27,8 +28,6 @@ from dimos.hosted.fragment import (
     run_stream_key,
 )
 from dimos.hosted.fragment_compiler import compile_fragments, resolve_hosted_assignments
-from dimos.msgs.std_msgs.Bool import Bool
-from dimos.msgs.std_msgs.String import String
 
 
 class SourceModule(Module):
@@ -99,7 +98,8 @@ def test_compiler_splits_modules_and_pins_boundary_stream_to_existing_topic_rule
 
     source_payload = fragments["host-a"].load_payload()
     sink_payload = fragments["host-b"].load_payload()
-    expected_key = run_stream_key("run-1", "messages", String)
+    expected_key = "dimos/runs/run-1/streams/messages/std_msgs/msg/String"
+    assert run_stream_key("run-1", "messages", String) == expected_key
 
     assert {atom.name for atom in source_payload.blueprint.active_blueprints} == {"sourcemodule"}
     assert {atom.name for atom in sink_payload.blueprint.active_blueprints} == {"sinkmodule"}

@@ -21,13 +21,13 @@ from __future__ import annotations
 
 import importlib.util
 
+from dimos_generated.nav_msgs.msg import Odometry
+from dimos_generated.sensor_msgs.msg import CompressedImage, Imu, PointCloud2
 import numpy as np
 import pytest
 
-from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.Imu import Imu
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.image import image_from_compressed, image_view
+from dimos.msgs.pointcloud import pointcloud_xyz
 from dimos.robot.unitree.go2.dds.msgs.ControlEvent import ControlEvent
 from dimos.robot.unitree.go2.dds.msgs.LowState import LowState
 from dimos.robot.unitree.go2.dds.msgs.SportModeState import SportModeState
@@ -63,9 +63,9 @@ def test_lists_streams(store: Go2McapStore) -> None:
 
 def test_lidar(store: Go2McapStore) -> None:
     pc = store.streams.lidar.first().data
-    xyz = pc.points_f32()
+    xyz = pointcloud_xyz(pc)
     print(
-        f"\nPointCloud2: {xyz.shape[0]} pts  frame={pc.frame_id!r}  "
+        f"\nPointCloud2: {xyz.shape[0]} pts  frame={pc.header.frame_id!r}  "
         f"range=[{np.linalg.norm(xyz[:, :3], axis=1).min():.2f}, "
         f"{np.linalg.norm(xyz[:, :3], axis=1).max():.2f}] m"
     )
@@ -79,7 +79,7 @@ def test_imu(store: Go2McapStore) -> None:
     print(
         f"\nImu: |q|={np.linalg.norm([q.x, q.y, q.z, q.w]):.4f}  "
         f"acc=({imu.linear_acceleration.x:.2f}, {imu.linear_acceleration.y:.2f}, "
-        f"{imu.linear_acceleration.z:.2f})  frame={imu.frame_id!r}"
+        f"{imu.linear_acceleration.z:.2f})  frame={imu.header.frame_id!r}"
     )
     assert isinstance(imu, Imu)
     assert abs(imu.linear_acceleration.z) == pytest.approx(9.8, abs=0.5)  # gravity
@@ -90,7 +90,7 @@ def test_odom(store: Go2McapStore) -> None:
     p = odom.pose.pose.position
     print(
         f"\nOdometry: pos=({p.x:.2f}, {p.y:.2f}, {p.z:.2f})  "
-        f"{odom.frame_id!r} -> {odom.child_frame_id!r}"
+        f"{odom.header.frame_id!r} -> {odom.child_frame_id!r}"
     )
     assert isinstance(odom, Odometry)
     assert odom.child_frame_id == "base_link"
@@ -98,9 +98,9 @@ def test_odom(store: Go2McapStore) -> None:
 
 def test_color_image(store: Go2McapStore) -> None:
     img = store.streams.color_image.first().data
-    arr = img.as_numpy()
-    print(f"\nImage: {arr.shape}  frame={img.frame_id!r}")
-    assert isinstance(img, Image)
+    arr = image_view(image_from_compressed(img))
+    print(f"\nImage: {arr.shape}  frame={img.header.frame_id!r}")
+    assert isinstance(img, CompressedImage)
     assert arr.ndim == 3
 
 

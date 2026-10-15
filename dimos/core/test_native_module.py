@@ -23,11 +23,16 @@ import importlib
 from io import BytesIO
 import json
 from pathlib import Path
+import shlex
+import sys
 import time
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import Mock, patch
 
+from dimos_generated.geometry_msgs.msg import Twist
+from dimos_generated.sensor_msgs.msg import Imu, PointCloud2
+from dimos_generated.tf2_msgs.msg import TFMessage
 from pydantic import ValidationError
 import pytest
 
@@ -42,10 +47,6 @@ from dimos.core.stream import IO, In, Out
 from dimos.core.transport import LCMTransport, ZenohTransport
 from dimos.core.transport_factory import make_transport, rpc_backend, transport_topic
 from dimos.experimental.memory.rust_recorder import RustRecorderConfig
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.sensor_msgs.Imu import Imu
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.pubsub.impl.zenohpubsub import QOS_NEVER_DROP, Topic as ZenohTopic
 from dimos.protocol.service import zenohservice
 from dimos.protocol.service.zenohservice import ZenohConfig
@@ -174,8 +175,8 @@ def test_manual(dimos_cluster: ModuleCoordinator, args_file: str) -> None:
     native_module.stop()
 
     assert read_json_file(args_file) == {
-        "cmd_vel": "/cmd_vel#geometry_msgs.Twist",
-        "pointcloud": "/my/custom/lidar#sensor_msgs.PointCloud2",
+        "cmd_vel": "/cmd_vel#geometry_msgs/msg/Twist",
+        "pointcloud": "/my/custom/lidar#sensor_msgs/msg/PointCloud2",
         "output_file": args_file,
         "some_param": "2.5",
     }
@@ -190,8 +191,8 @@ def test_io_port_topic_reaches_the_native_process() -> None:
         module.set_transport("tf", transports[1])
 
         assert module._collect_topics() == {
-            "cmd_vel": "/cmd_vel#geometry_msgs.Twist",
-            "tf": "/tf#tf2_msgs.TFMessage",
+            "cmd_vel": "/cmd_vel#geometry_msgs/msg/Twist",
+            "tf": "/tf#tf2_msgs/msg/TFMessage",
         }
     finally:
         module.stop()
@@ -207,7 +208,7 @@ def test_tf_topic_comes_from_the_declared_port_only() -> None:
     try:
         module.set_transport("cmd_vel", transport)
 
-        assert module._collect_topics() == {"cmd_vel": "/cmd_vel#geometry_msgs.Twist"}
+        assert module._collect_topics() == {"cmd_vel": "/cmd_vel#geometry_msgs/msg/Twist"}
     finally:
         module.stop()
         with contextlib.suppress(Exception):
@@ -518,6 +519,45 @@ def test_json_mode_malformed_falls_back_to_plain_text() -> None:
     )
     assert calls[0][0] == "info"
     assert calls[0][1] == "not json at all"
+
+
+def test_cmake_preparation_uses_writable_cache_and_existing_build_hook(tmp_path, monkeypatch):
+    source = tmp_path / "sources"
+    source.mkdir()
+    (source / "build_it.py").write_text(
+        "import os\nfrom pathlib import Path\n"
+        "Path('build').mkdir(exist_ok=True)\n"
+        "Path('build/app').write_text(os.environ['CMAKE_PREFIX_PATH'])\n"
+    )
+    source.chmod(0o555)
+    prefix = tmp_path / "prepared"
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    prepare = Mock(return_value=prefix)
+    monkeypatch.setattr(native_module_mod, "prepare_cpp", prepare)
+    monkeypatch.setattr(native_module_mod, "installed_prefixes", lambda root: [str(root)])
+    backend = rpc_backend()
+    monkeypatch.setattr(backend, "start", Mock())
+    monkeypatch.setattr(backend, "serve_module_rpc", Mock())
+    monkeypatch.setattr(backend, "stop", Mock())
+    monkeypatch.setattr(native_module_mod, "get_project_root", lambda: tmp_path)
+    module = StubBuildModule(
+        source_dir="sources",
+        executable="build/app",
+        build_command=shlex.join([sys.executable, "build_it.py"]),
+        cmake_message_packages=["dimos_generated"],
+    )
+    try:
+        module._prepare_native()
+        executable = Path(module._executable)
+        assert executable.is_relative_to(tmp_path / "cache")
+        assert str(prefix) in executable.read_text()
+        assert not (source / "build").exists()
+        assert prepare.call_count == 1
+        module._prepare_native()
+        assert prepare.call_count == 1
+    finally:
+        module.stop()
+        source.chmod(0o755)
 
 
 @pytest.mark.parametrize(

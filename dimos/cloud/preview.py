@@ -31,6 +31,16 @@ try:  # PyAV comes with dimos[unitree] / dimos[webrtc] (aiortc), not the bare ba
 except ImportError:  # pragma: no cover
     HAS_AV = False
 
+import cv2
+from dimos_generated.geometry_msgs.msg import (
+    PoseStamped,
+    Transform,
+    TransformStamped,
+    Vector3,
+)
+from dimos_generated.sensor_msgs.msg import Image, Joy, PointCloud2
+from dimos_generated.std_msgs.msg import Header
+
 from dimos.cloud.constants import (
     PREVIEW_BAND,
     PREVIEW_FORMAT,
@@ -48,11 +58,16 @@ from dimos.cloud.constants import (
     TIMELAPSE_MAX_S,
     WORLD_FRAMES,
 )
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.Joy import Joy
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.geometry import yaw
+from dimos.msgs.image import image_brightness, image_resize_to_fit, image_to_bgr, image_to_jpeg
+from dimos.msgs.pointcloud import (
+    concatenate_clouds,
+    pointcloud_xyz,
+    select_points,
+    transform_cloud,
+    voxel_downsample_cloud,
+)
+from dimos.msgs.time import time_from_seconds
 
 if TYPE_CHECKING:
     from dimos.memory.store.base import Store
@@ -76,22 +91,26 @@ def _evenly(n: int, k: int) -> set[int]:
 
 def _fit(pc: PointCloud2, points: int) -> PointCloud2:
     """Coarser voxels until it fits: keeps the shape better than random sampling."""
-    n = len(pc.points_f32())
+    n = len(pointcloud_xyz(pc))
     return (
-        pc if n <= points else pc.voxel_downsample(PREVIEW_MAP_VOXEL * float(np.sqrt(n / points)))
+        pc
+        if n <= points
+        else voxel_downsample_cloud(pc, PREVIEW_MAP_VOXEL * float(np.sqrt(n / points)))
     )
 
 
 def _pack(pc: PointCloud2, origin: np.ndarray) -> str:
     """The browser's point format: little-endian int16 triplets of PREVIEW_SCALE around origin."""
-    q = np.clip(np.round((pc.points_f32() - origin) / PREVIEW_SCALE), -32767, 32767).astype("<i2")
+    q = np.clip(np.round((pointcloud_xyz(pc) - origin) / PREVIEW_SCALE), -32767, 32767).astype(
+        "<i2"
+    )
     return base64.b64encode(q.tobytes()).decode()
 
 
 def build(store: Store) -> dict[str, Any] | None:
     """`dimos-spatial-preview-v2`, or None for a recording without LiDAR, camera or poses."""
     lidar, camera = _stream(store, PointCloud2, "lidar"), _stream(store, Image, "color")
-    odom = _stream(store, Pose, "odom")
+    odom = _stream(store, PoseStamped, "odom")
     joy = _stream(store, Joy, "joy")
     poses, scans, world, ends = [], [], None, []
     if lidar is not None:
@@ -104,19 +123,35 @@ def build(store: Store) -> dict[str, Any] | None:
             if i not in merged:
                 continue
             pc = obs.data
-            if pc.frame_id not in WORLD_FRAMES:  # sensor frame: place it with its own pose
+            if pc.header.frame_id not in WORLD_FRAMES:  # sensor frame: place it with its own pose
                 if obs.pose is None:
                     continue
-                pc = pc.transform(Transform.from_pose(WORLD_FRAMES[0], obs.pose))
-            pc = pc.voxel_downsample(PREVIEW_MAP_VOXEL)
+                pc = transform_cloud(
+                    pc,
+                    TransformStamped(
+                        header=Header(stamp=time_from_seconds(obs.ts), frame_id=WORLD_FRAMES[0]),
+                        child_frame_id=pc.header.frame_id,
+                        transform=Transform(
+                            translation=Vector3(
+                                x=obs.pose.position.x, y=obs.pose.position.y, z=obs.pose.position.z
+                            ),
+                            rotation=obs.pose.orientation,
+                        ),
+                    ),
+                )
+            pc = voxel_downsample_cloud(pc, PREVIEW_MAP_VOXEL)
             if i in shown:
                 scans.append((obs.ts, pc))
-            world = pc if world is None else (world + pc).voxel_downsample(PREVIEW_MAP_VOXEL)
+            world = (
+                pc
+                if world is None
+                else voxel_downsample_cloud(concatenate_clouds(world, pc), PREVIEW_MAP_VOXEL)
+            )
         ends = ends[:1] + ends[-1:]
     if odom is not None and odom.count() > len(
         poses
     ):  # denser than the LiDAR poses, or the only path
-        poses = [(o.ts, o.data) for o in odom]
+        poses = [(o.ts, o.data.pose) for o in odom]
     sticks = []
     if joy is not None:
         picked = _evenly(joy.count(), PREVIEW_JOY_SAMPLES)
@@ -132,13 +167,31 @@ def build(store: Store) -> dict[str, Any] | None:
     z = float(np.median([p.position.z for _, p in poses])) if poses else 0.0
     lo, hi = z + PREVIEW_BAND[0], z + PREVIEW_BAND[1]
     if world is not None:
-        world = _fit(world.filter_by_height(lo, hi), PREVIEW_MAP_POINTS)
-    scans = [(t, _fit(pc.filter_by_height(lo, hi), PREVIEW_SCAN_POINTS)) for t, pc in scans]
+        world = _fit(
+            select_points(
+                world, (pointcloud_xyz(world)[:, 2] > lo) & (pointcloud_xyz(world)[:, 2] < hi)
+            ),
+            PREVIEW_MAP_POINTS,
+        )
+    scans = [
+        (
+            t,
+            _fit(
+                select_points(
+                    pc, (pointcloud_xyz(pc)[:, 2] > lo) & (pointcloud_xyz(pc)[:, 2] < hi)
+                ),
+                PREVIEW_SCAN_POINTS,
+            ),
+        )
+        for t, pc in scans
+    ]
 
     t0, t1 = min(ends), max(ends)
-    traj = [[t - t0, p.position.x, p.position.y, p.position.z, p.yaw] for t, p in poses]
+    traj = [
+        [t - t0, p.position.x, p.position.y, p.position.z, yaw(p.orientation)] for t, p in poses
+    ]
     traj = [traj[i] for i in sorted(_evenly(len(traj), 3000))]
-    pts = world.points_f32().astype(np.float64) if world is not None else np.zeros((0, 3))
+    pts = pointcloud_xyz(world).astype(np.float64) if world is not None else np.zeros((0, 3))
     if not len(pts):  # no map: frame the path
         pts = np.array([r[1:4] for r in traj] or [[0.0, 0.0, z]])
     origin = np.round(pts.mean(axis=0), 2)
@@ -163,13 +216,15 @@ def build(store: Store) -> dict[str, Any] | None:
         "camera": [
             {
                 "t": round(o.ts - t0, 3),
-                "jpeg": o.data.to_base64(
-                    70, max_width=PREVIEW_THUMB_PX, max_height=PREVIEW_THUMB_PX
-                ),
+                "jpeg": base64.b64encode(
+                    image_to_jpeg(
+                        image_resize_to_fit(o.data, PREVIEW_THUMB_PX, PREVIEW_THUMB_PX)[0], 70
+                    )
+                ).decode(),
             }
             for o in shots
         ],
-        "thumb": int(np.argmax([o.data.brightness for o in shots])) if shots else None,
+        "thumb": int(np.argmax([image_brightness(o.data) for o in shots])) if shots else None,
         "joy": [
             [round(o.ts - t0, 3), [round(a, 2) for a in o.data.axes], list(o.data.buttons)]
             for o in sticks
@@ -203,7 +258,7 @@ def timelapse(store: Store, out: Path) -> dict[str, Any] | None:
             video.options = {"crf": str(TIMELAPSE_CRF), "preset": "veryfast"}
         frame = av.VideoFrame.from_ndarray(
             np.ascontiguousarray(
-                img.resize(video.width, video.height).to_bgr().as_numpy()[:, :, :3]
+                cv2.resize(image_to_bgr(img), (video.width, video.height)), dtype=np.uint8
             ),
             format="bgr24",
         )

@@ -42,11 +42,11 @@ app.stop()
 Modules can define `@rpc` methods which you can call. Here's an example:
 
 ```python skip
-from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos_generated.geometry_msgs.msg import Twist, Vector3
 # Rotate right.
-app.GO2Connection.move(Twist(linear=(0, 0, 0), angular=(0, 0, -1)), duration=0.05)
+app.GO2Connection.move(Twist(angular=Vector3(z=-1)), duration=0.05)
 # Move forward.
-app.GO2Connection.move(Twist(linear=(1, 0, 0), angular=(0, 0, 0)), duration=0.05)
+app.GO2Connection.move(Twist(linear=Vector3(x=1)), duration=0.05)
 ```
 
 ## Manipulation SDK

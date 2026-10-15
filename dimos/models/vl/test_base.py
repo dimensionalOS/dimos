@@ -17,7 +17,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from dimos.models.vl.qwen import QwenVlModel
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.image import image_from_file
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.utils.data import get_data
 
@@ -44,7 +44,7 @@ MOCK_QWEN_RESPONSE = """
 def test_query_detections_mocked() -> None:
     """Test query_detections with mocked API response (no API key required)."""
     # Load test image
-    image = Image.from_file(get_data("cafe.jpg"))
+    image = image_from_file(get_data("cafe.jpg"))
 
     # Create model and mock the query method
     model = QwenVlModel()

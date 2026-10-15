@@ -24,6 +24,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from dimos.memory.cli.dataset import open_dataset
+from dimos.msgs.geometry import point_distance
 
 Row = dict[str, object]
 
@@ -38,7 +39,7 @@ def displacement_rows(dataset: str, windows: Sequence[tuple[float, float]]) -> l
             obs = store.streams.odom.range_time(t1, t2).to_list()
             if len(obs) < 2:
                 continue
-            d = (obs[-1].data.position - obs[0].data.position).length()
+            d = point_distance(obs[-1].data.pose.position, obs[0].data.pose.position)
             rows.append(
                 {
                     "id": f"{dataset}_disp_{t1:g}_{t2:g}",
@@ -65,9 +66,9 @@ def path_length_rows(dataset: str, windows: Sequence[tuple[float, float]]) -> li
         for t1, t2 in windows:
             path, prev = 0.0, None
             for obs in store.streams.odom.range_time(t1, t2):
-                p = obs.data.position
+                p = obs.data.pose.position
                 if prev is not None:
-                    path += (p - prev).length()
+                    path += point_distance(p, prev)
                 prev = p
             if prev is None:
                 continue

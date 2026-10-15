@@ -36,6 +36,16 @@ import threading
 import time
 from typing import TYPE_CHECKING, Any
 
+from dimos_generated.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseWithCovariance,
+    Twist,
+    TwistWithCovariance,
+    Vector3,
+)
+from dimos_generated.nav_msgs.msg import Odometry
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 from pydantic import Field, FiniteFloat
 
@@ -44,11 +54,8 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.nav_msgs.Odometry import Odometry
+from dimos.msgs.geometry import quaternion_from_euler
+from dimos.msgs.time import time_from_seconds
 from dimos.robot.diy.alfred.config import DEFAULT_ADDRESS
 from dimos.utils.logging_config import setup_logger
 
@@ -171,7 +178,7 @@ class AlfredHighLevel(Module):
         self, x: float, y: float = 0.0, yaw: float = 0.0, duration: float = 0.0
     ) -> str:
         """Move the Alfred at the given velocity for ``duration`` seconds."""
-        twist = Twist(linear=Vector3(x, y, 0), angular=Vector3(0, 0, yaw))
+        twist = Twist(linear=Vector3(x=x, y=y, z=0.0), angular=Vector3(z=yaw, x=0.0, y=0.0))
         await self.move(twist, duration=duration)
         return f"Started moving with velocity=({x}, {y}, {yaw}) for {duration} seconds"
 
@@ -206,7 +213,9 @@ class AlfredHighLevel(Module):
                 # Odometry comes back in the inverted-Y frame move() sends into.
                 y, yaw = -y, -yaw
                 # The controller reports no velocity, so difference consecutive poses.
-                twist = Twist()
+                twist = Twist(
+                    linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)
+                )
                 if previous is not None:
                     last_ts, last_x, last_y, last_yaw = previous
                     dt = ts - last_ts
@@ -218,21 +227,27 @@ class AlfredHighLevel(Module):
                         forward = math.cos(heading) * dx + math.sin(heading) * dy
                         left = -math.sin(heading) * dx + math.cos(heading) * dy
                         twist = Twist(
-                            linear=Vector3(forward / dt, left / dt, 0.0),
-                            angular=Vector3(0.0, 0.0, turn / dt),
+                            linear=Vector3(x=forward / dt, y=left / dt, z=0.0),
+                            angular=Vector3(z=turn / dt, x=0.0, y=0.0),
                         )
                 previous = (ts, x, y, yaw)
 
                 self.wheel_odometry.publish(
                     Odometry(
-                        ts=ts,
-                        frame_id=self.config.wheel_odom_frame_id,
-                        child_frame_id=self.config.base_frame_id,
-                        pose=Pose(
-                            position=Vector3(x, y, 0.0),
-                            orientation=Quaternion.from_euler(Vector3(0.0, 0.0, yaw)),
+                        header=Header(
+                            stamp=time_from_seconds(ts), frame_id=self.config.wheel_odom_frame_id
                         ),
-                        twist=twist,
+                        child_frame_id=self.config.base_frame_id,
+                        pose=PoseWithCovariance(
+                            pose=Pose(
+                                position=Point(x=x, y=y, z=0.0),
+                                orientation=quaternion_from_euler(0.0, 0.0, yaw),
+                            ),
+                            covariance=np.zeros(36, dtype=np.float64),
+                        ),
+                        twist=TwistWithCovariance(
+                            twist=twist, covariance=np.zeros(36, dtype=np.float64)
+                        ),
                     )
                 )
             except asyncio.CancelledError:

@@ -12,10 +12,195 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Reading a `PointCloud2` off the wire. Every wire count is signed and untrusted, so each
-//! is range-checked before it indexes; a malformed cloud is an `ExtractError`, never a panic.
+//! Geometry extraction kept separate from generated message values and codecs.
+use std::io;
 
-use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
+use dimos_generated_messages::sensor_msgs::msg::{
+    point_cloud2::PointCloud2, point_field::PointField,
+};
+
+fn invalid(reason: &str) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, reason)
+}
+
+/// Read finite XYZ points in row order, respecting field offsets, row padding,
+/// float32/float64 coordinates and byte order. Other fields are left untouched.
+pub fn xyz_points(message: &PointCloud2) -> io::Result<Vec<(f32, f32, f32)>> {
+    let mut coordinates = Vec::with_capacity(3);
+    let step = message.point_step as usize;
+    for name in ["x", "y", "z"] {
+        let mut matching = message.fields.iter().filter(|field| field.name == name);
+        let field = matching
+            .next()
+            .ok_or_else(|| invalid("missing XYZ field"))?;
+        if matching.next().is_some() || field.count != 1 {
+            return Err(invalid("XYZ fields must be unique and scalar"));
+        }
+        let size = match field.datatype {
+            PointField::FLOAT32 => 4,
+            PointField::FLOAT64 => 8,
+            _ => return Err(invalid("XYZ fields must be float32 or float64")),
+        };
+        let offset = field.offset as usize;
+        if offset.checked_add(size).is_none_or(|end| end > step) {
+            return Err(invalid("XYZ field exceeds point_step"));
+        }
+        coordinates.push((offset, size));
+    }
+    let width = message.width as usize;
+    let height = message.height as usize;
+    let row_step = message.row_step as usize;
+    let row_bytes = width
+        .checked_mul(step)
+        .ok_or_else(|| invalid("row size overflow"))?;
+    let total = height
+        .checked_mul(row_step)
+        .ok_or_else(|| invalid("data size overflow"))?;
+    if step == 0 || row_step < row_bytes || total != message.data.len() {
+        return Err(invalid("point cloud dimensions/strides do not match data"));
+    }
+    let count = width
+        .checked_mul(height)
+        .ok_or_else(|| invalid("point count overflow"))?;
+    let read = |base: usize, (offset, size): (usize, usize)| -> f32 {
+        let bytes = &message.data[base + offset..base + offset + size];
+        match (size, message.is_bigendian) {
+            (4, false) => f32::from_le_bytes(bytes.try_into().unwrap()),
+            (4, true) => f32::from_be_bytes(bytes.try_into().unwrap()),
+            (8, false) => f64::from_le_bytes(bytes.try_into().unwrap()) as f32,
+            (8, true) => f64::from_be_bytes(bytes.try_into().unwrap()) as f32,
+            _ => unreachable!("field size checked above"),
+        }
+    };
+    let mut points = Vec::with_capacity(count);
+    for row in 0..height {
+        for column in 0..width {
+            let base = row * row_step + column * step;
+            let (x, y, z) = (
+                read(base, coordinates[0]),
+                read(base, coordinates[1]),
+                read(base, coordinates[2]),
+            );
+            if x.is_finite() && y.is_finite() && z.is_finite() {
+                points.push((x, y, z));
+            }
+        }
+    }
+    Ok(points)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cloud(big: bool) -> PointCloud2 {
+        let mut data = vec![0; 64];
+        for row in 0..2 {
+            let x = row as f32 + 1.0;
+            let z = row as f64 + 3.0;
+            data[row * 32..row * 32 + 4].copy_from_slice(&if big {
+                x.to_be_bytes()
+            } else {
+                x.to_le_bytes()
+            });
+            data[row * 32 + 8..row * 32 + 16].copy_from_slice(&if big {
+                z.to_be_bytes()
+            } else {
+                z.to_le_bytes()
+            });
+            data[row * 32 + 16..row * 32 + 20].copy_from_slice(&if big {
+                2f32.to_be_bytes()
+            } else {
+                2f32.to_le_bytes()
+            });
+        }
+        PointCloud2 {
+            width: 1,
+            height: 2,
+            point_step: 24,
+            row_step: 32,
+            data,
+            is_bigendian: big,
+            fields: vec![
+                PointField {
+                    name: "z".into(),
+                    offset: 8,
+                    datatype: PointField::FLOAT64,
+                    count: 1,
+                },
+                PointField {
+                    name: "x".into(),
+                    offset: 0,
+                    datatype: PointField::FLOAT32,
+                    count: 1,
+                },
+                PointField {
+                    name: "y".into(),
+                    offset: 16,
+                    datatype: PointField::FLOAT32,
+                    count: 1,
+                },
+            ],
+            header: dimos_generated_messages::std_msgs::msg::header::Header {
+                stamp: dimos_generated_messages::builtin_interfaces::msg::time::Time {
+                    sec: 0,
+                    nanosec: 0,
+                },
+                frame_id: String::new(),
+            },
+            is_dense: false,
+        }
+    }
+
+    #[test]
+    fn organized_padded_mixed_precision_both_byte_orders() {
+        for big in [false, true] {
+            assert_eq!(
+                xyz_points(&cloud(big)).unwrap(),
+                vec![(1., 2., 3.), (2., 2., 4.)]
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_layouts_fail_before_reading() {
+        let mut bad = Vec::new();
+        let mut message = cloud(false);
+        message.row_step = 23;
+        bad.push(message);
+        let mut message = cloud(false);
+        message.data.pop();
+        bad.push(message);
+        let mut message = cloud(false);
+        message.fields[0].offset = 20;
+        bad.push(message);
+        let mut message = cloud(false);
+        message.fields[0].count = 2;
+        bad.push(message);
+        let mut message = cloud(false);
+        message.fields[0].datatype = PointField::UINT32;
+        bad.push(message);
+        let mut message = cloud(false);
+        message.fields.push(message.fields[0].clone());
+        bad.push(message);
+        let mut message = cloud(false);
+        message.fields.remove(0);
+        bad.push(message);
+        for message in bad {
+            assert_eq!(
+                xyz_points(&message).unwrap_err().kind(),
+                io::ErrorKind::InvalidData
+            );
+        }
+    }
+
+    #[test]
+    fn nonfinite_coordinates_are_skipped() {
+        let mut message = cloud(false);
+        message.data[..4].copy_from_slice(&f32::NAN.to_le_bytes());
+        assert_eq!(xyz_points(&message).unwrap(), vec![(2., 2., 4.)]);
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ExtractError(pub &'static str);
@@ -28,79 +213,32 @@ impl std::fmt::Display for ExtractError {
 
 impl std::error::Error for ExtractError {}
 
-fn count(v: i32, what: &'static str) -> Result<usize, ExtractError> {
-    usize::try_from(v).map_err(|_| ExtractError(what))
-}
-
-/// The finite xyz points of a little-endian float32 cloud, in order.
-pub fn extract_xyz(msg: &PointCloud2) -> Result<Vec<[f32; 3]>, ExtractError> {
-    let mut offsets: [Option<usize>; 3] = [None; 3];
-    for f in &msg.fields {
-        if f.datatype != PointField::FLOAT32 as u8 {
-            continue;
-        }
-        let slot = match f.name.as_str() {
-            "x" => 0,
-            "y" => 1,
-            "z" => 2,
-            _ => continue,
-        };
-        offsets[slot] = Some(count(f.offset, "negative field offset")?);
-    }
-    let [Some(xo), Some(yo), Some(zo)] = offsets else {
-        return Err(ExtractError("missing a float32 x/y/z field"));
-    };
-    if msg.is_bigendian {
+/// Read the little-endian float32 XYZ layout expected by native mapping modules.
+/// Preserve their array-valued API while sharing the checked row/stride reader.
+pub fn extract_xyz(message: &PointCloud2) -> Result<Vec<[f32; 3]>, ExtractError> {
+    if message.is_bigendian {
         return Err(ExtractError("big-endian point data not supported"));
     }
-
-    let step = count(msg.point_step, "negative point_step")?;
-    if step == 0 {
-        return Err(ExtractError("point_step is 0"));
-    }
-    let n = count(msg.width, "negative width")?
-        .checked_mul(count(msg.height, "negative height")?)
-        .ok_or(ExtractError("width*height overflows"))?;
-    let needed = n
-        .checked_mul(step)
-        .ok_or(ExtractError("width*height*point_step overflows"))?;
-    if msg.data.len() < needed {
-        return Err(ExtractError(
-            "data buffer shorter than width*height*point_step",
-        ));
-    }
-    for off in [xo, yo, zo] {
-        if off.checked_add(4).is_none_or(|end| end > step) {
-            return Err(ExtractError(
-                "xyz field offsets do not fit within point_step",
-            ));
+    for name in ["x", "y", "z"] {
+        if !message
+            .fields
+            .iter()
+            .any(|field| field.name == name && field.datatype == PointField::FLOAT32)
+        {
+            return Err(ExtractError("missing a float32 x/y/z field"));
         }
     }
-
-    let mut out = Vec::with_capacity(n);
-    for base in (0..needed).step_by(step) {
-        let x = read_f32_le(&msg.data, base + xo);
-        let y = read_f32_le(&msg.data, base + yo);
-        let z = read_f32_le(&msg.data, base + zo);
-        if x.is_finite() && y.is_finite() && z.is_finite() {
-            out.push([x, y, z]);
-        }
-    }
-    Ok(out)
-}
-
-#[inline]
-fn read_f32_le(buf: &[u8], off: usize) -> f32 {
-    let bytes: [u8; 4] = buf[off..off + 4]
-        .try_into()
-        .expect("bounds checked by caller");
-    f32::from_le_bytes(bytes)
+    xyz_points(message)
+        .map(|points| points.into_iter().map(|(x, y, z)| [x, y, z]).collect())
+        .map_err(|_| ExtractError("invalid point cloud fields, dimensions or strides"))
 }
 
 #[cfg(test)]
-mod tests {
+mod extraction_tests {
     use super::*;
-    use lcm_msgs::std_msgs::Header;
+    use dimos_generated_messages::{
+        builtin_interfaces::msg::time::Time, std_msgs::msg::header::Header,
+    };
 
     /// An xyz float32 cloud, the shape the raytracer publishes.
     fn cloud_of(points: &[[f32; 3]]) -> PointCloud2 {
@@ -110,20 +248,23 @@ mod tests {
                 data.extend_from_slice(&v.to_le_bytes());
             }
         }
-        let field = |name: &str, off: i32| PointField {
+        let field = |name: &str, off: u32| PointField {
             name: name.into(),
             offset: off,
-            datatype: PointField::FLOAT32 as u8,
+            datatype: PointField::FLOAT32,
             count: 1,
         };
         PointCloud2 {
-            header: Header::default(),
+            header: Header {
+                stamp: Time { sec: 0, nanosec: 0 },
+                frame_id: String::new(),
+            },
             height: 1,
-            width: points.len() as i32,
+            width: points.len() as u32,
             fields: vec![field("x", 0), field("y", 4), field("z", 8)],
             is_bigendian: false,
             point_step: 12,
-            row_step: 12 * points.len() as i32,
+            row_step: 12 * points.len() as u32,
             data,
             is_dense: true,
         }
@@ -155,24 +296,24 @@ mod tests {
 
     #[test]
     fn malformed_metadata_is_an_error_not_a_panic() {
-        // every wire count is signed; none of these may reach an index
+        // ROS counts are unsigned; oversized metadata must not reach an index.
         for (what, tweak) in [
             (
-                "negative width",
-                (|c: &mut PointCloud2| c.width = -1) as fn(&mut PointCloud2),
+                "oversized width",
+                (|c: &mut PointCloud2| c.width = u32::MAX) as fn(&mut PointCloud2),
             ),
-            ("negative height", |c| c.height = -1),
-            ("negative step", |c| c.point_step = -12),
-            ("negative offset", |c| c.fields[0].offset = -4),
-            ("offset past step", |c| c.fields[2].offset = i32::MAX),
+            ("oversized height", |c| c.height = u32::MAX),
+            ("oversized step", |c| c.point_step = u32::MAX),
+            ("oversized offset", |c| c.fields[0].offset = u32::MAX),
+            ("offset past step", |c| c.fields[2].offset = u32::MAX),
             ("width*height overflows", |c| {
-                c.width = i32::MAX;
-                c.height = i32::MAX;
+                c.width = u32::MAX;
+                c.height = u32::MAX;
             }),
             ("width*height*step overflows", |c| {
-                c.width = i32::MAX;
-                c.height = i32::MAX;
-                c.point_step = i32::MAX;
+                c.width = u32::MAX;
+                c.height = u32::MAX;
+                c.point_step = u32::MAX;
             }),
         ] {
             let mut cloud = cloud_of(&[[0.0; 3]]);

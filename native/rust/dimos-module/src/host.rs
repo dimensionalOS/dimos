@@ -891,7 +891,7 @@ mod tests {
         fn build(builder: &mut Builder, config: ProbeConfig) -> Self {
             Self {
                 key: config.key,
-                ping: builder.output("ping", |b: &Vec<u8>| b.clone()),
+                ping: builder.output("ping", |b: &Vec<u8>| Ok(b.clone())),
             }
         }
 

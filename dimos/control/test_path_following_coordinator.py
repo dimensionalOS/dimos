@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from dimos_generated.std_msgs.msg import Float32
 import pytest
 
 from dimos.control.benchmarking.paths import straight_rotate
@@ -27,7 +28,6 @@ from dimos.control.coordinator import TaskConfig
 from dimos.control.path_following_coordinator import PathFollowingCoordinator
 from dimos.control.tasks.registry import control_task_registry
 from dimos.control.tick_loop import TickLoop
-from dimos.msgs.std_msgs.Float32 import Float32
 
 JOINTS = make_twist_base_joints("go2")
 

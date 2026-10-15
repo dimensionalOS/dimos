@@ -14,7 +14,7 @@
 
 import pytest
 
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.image import image_from_file
 from dimos.perception.detection.detectors.person.yolo import YoloPersonDetector
 from dimos.perception.detection.detectors.yolo import Yolo2DDetector
 from dimos.perception.detection.detectors.yoloe import Yoloe2DDetector, YoloePromptMode
@@ -24,7 +24,7 @@ from dimos.utils.data import get_data
 @pytest.fixture(scope="session")
 def test_image():
     """Load the test image used for detector tests."""
-    return Image.from_file(get_data("cafe.jpg"))
+    return image_from_file(get_data("cafe.jpg"))
 
 
 @pytest.fixture(scope="session")

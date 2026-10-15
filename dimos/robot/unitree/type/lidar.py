@@ -16,20 +16,20 @@
 
 from collections.abc import Callable
 import time
-from typing import TypedDict, TypeVar
+from typing import Protocol, TypedDict, TypeVar
 
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.sensor_msgs.msg import PointCloud2
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 from reactivex import operators as ops
 from reactivex.observable import Observable
 
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.types.timestamped import Timestamped
+from dimos.msgs.pointcloud import pointcloud_from_xyz
+from dimos.msgs.time import time_from_seconds, to_seconds
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
-
-# Backwards compatibility alias for pickled data
-LidarMessage = PointCloud2
 
 
 class RawLidarPoints(TypedDict):
@@ -56,34 +56,28 @@ class RawLidarMsg(TypedDict):
     data: RawLidarData
 
 
-def pointcloud2_from_webrtc_lidar(raw_message: RawLidarMsg, ts: float | None = None) -> PointCloud2:
-    """Convert a raw Unitree WebRTC lidar message to PointCloud2.
+def pointcloud2_from_webrtc_lidar(
+    raw_message: RawLidarMsg, *, stamp: Time | None = None
+) -> PointCloud2:
+    """Copy decoded WebRTC XYZ points into a generated cloud in the world frame.
 
-    Args:
-        raw_message: Raw lidar message from Unitree WebRTC API
-        ts: Optional timestamp override. If None, uses the sensor stamp from
-            ``raw_message["data"]["stamp"]``.
-
-    The sensor stamp is authoritative when valid but Unitree's publisher
-    occasionally re-emits a stale value on fresh scans — see
-    :func:`repair_stale_ts` for the downstream repair.
+    The raw sensor's floating-second stamp is used unless the connection supplies
+    an explicit arrival stamp. No Open3D object or legacy message is constructed.
     """
-    import open3d as o3d  # type: ignore[import-untyped]
-
     data = raw_message["data"]
-    points = data["data"]["points"]
-
-    pointcloud = o3d.geometry.PointCloud()
-    pointcloud.points = o3d.utility.Vector3dVector(points)
-
-    return PointCloud2(
-        pointcloud=pointcloud,
-        ts=ts if ts is not None else data["stamp"],
-        frame_id="world",
+    return pointcloud_from_xyz(
+        data["data"]["points"],
+        header=Header(
+            frame_id="world", stamp=stamp if stamp is not None else time_from_seconds(data["stamp"])
+        ),
     )
 
 
-T = TypeVar("T", bound=Timestamped)
+class StampedMessage(Protocol):
+    header: Header
+
+
+T = TypeVar("T", bound=StampedMessage)
 
 
 def repair_stale_ts(
@@ -109,20 +103,20 @@ def repair_stale_ts(
         nonlocal prev_good, prev_raw, n_seen, calibrated, use_system_time
 
         if use_system_time:
-            item.ts = now()
+            item.header.stamp = time_from_seconds(now())
             return item
 
         if not calibrated:
-            if prev_raw is not None and item.ts != prev_raw:
+            if prev_raw is not None and to_seconds(item.header.stamp) != prev_raw:
                 calibrated = True
                 # lidar stamps advancing — using lidar time",
-            prev_raw = item.ts
+            prev_raw = to_seconds(item.header.stamp)
             n_seen += 1
 
-        if prev_good is not None and item.ts <= prev_good:
-            item.ts = prev_good + default_period
+        if prev_good is not None and to_seconds(item.header.stamp) <= prev_good:
+            item.header.stamp = time_from_seconds(prev_good + default_period)
 
-        prev_good = item.ts
+        prev_good = to_seconds(item.header.stamp)
 
         if not calibrated and n_seen >= calibration_frames:
             calibrated = True

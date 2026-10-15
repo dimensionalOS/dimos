@@ -22,12 +22,11 @@ import subprocess
 import sys
 import threading
 
+from dimos_generated.geometry_msgs.msg import PoseStamped
+from dimos_generated.sensor_msgs.msg import Image, PointCloud2
 import pytest
 
 from dimos.core.transport_factory import make_transport
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 REPLAY_DB = os.environ.get("DIMOS_BENCH_REPLAY_DB", "go2_short")
 RUN_TIMEOUT = 420.0  # spawn -> exit deadline, inside the test timeout

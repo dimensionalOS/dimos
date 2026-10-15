@@ -19,6 +19,8 @@ from threading import Event, Thread
 import time
 from typing import Any, Protocol
 
+from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.std_msgs.msg import Header
 from dimos_lerobot import runtime as policy_runtime
 from dimos_lerobot.runtime import LeRobotPolicyRuntime
 from lerobot.configs.policies import PreTrainedConfig
@@ -35,8 +37,8 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionResult,
     TrajectoryExecutionStatus,
 )
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.image import image_from_array
+from dimos.msgs.time import time_from_seconds, to_seconds
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
 from dimos.teleop.webxr.controller_types import Buttons
 from dimos.utils.testing.waiting import wait_until
@@ -229,8 +231,12 @@ def _provide_observation(
     rgb[..., 2] = 30
     values = positions or [float(i) / 10 for i in range(len(JOINTS))]
     timestamp = time.time() if ts is None else ts
-    module._on_color_image(Image(data=rgb, format=ImageFormat.RGB, ts=timestamp))
-    module._on_joint_state(JointState(ts=timestamp, name=JOINTS, position=values))
+    module._on_color_image(
+        image_from_array(rgb, encoding="rgb8", header=Header(stamp=time_from_seconds(timestamp)))
+    )
+    module._on_joint_state(
+        JointState(header=Header(stamp=time_from_seconds(timestamp)), name=JOINTS, position=values)
+    )
     return rgb, values, timestamp
 
 
@@ -256,7 +262,7 @@ def test_policy_predicts_and_executes_one_native_joint_chunk(make_runtime: Runti
     trajectory = call.args[0]
     assert call.kwargs == {}
     assert trajectory.joint_names == JOINTS
-    assert [point.time_from_start for point in trajectory.points] == [0.0, 0.02, 0.04]
+    assert [to_seconds(point.time_from_start) for point in trajectory.points] == [0.0, 0.02, 0.04]
     np.testing.assert_allclose(trajectory.points[0].positions, positions)
     np.testing.assert_allclose(trajectory.points[1].positions, actions[0])
     np.testing.assert_allclose(trajectory.points[2].positions, actions[1])
@@ -366,10 +372,10 @@ def test_a_press_stops_worker_before_cancelling_its_trajectory(
     pressed.right_primary = True
 
     def stop_from_button() -> None:
-        module._on_button_pressed(pressed)
+        module._on_button_pressed(pressed.to_message())
         stop_finished.set()
 
-    module._on_button_pressed(pressed)
+    module._on_button_pressed(pressed.to_message())
     assert execute_started.wait(timeout=1.0)
     stop_thread = Thread(target=stop_from_button)
     stop_thread.start()
@@ -582,9 +588,17 @@ def test_preflight_rejects_invalid_live_joints(
     module, control = make_runtime(policy)
     timestamp = time.time()
     module._on_color_image(
-        Image(data=np.zeros((4, 5, 3), dtype=np.uint8), format=ImageFormat.RGB, ts=timestamp)
+        image_from_array(
+            np.zeros((4, 5, 3), dtype=np.uint8),
+            encoding="rgb8",
+            header=Header(stamp=time_from_seconds(timestamp)),
+        )
     )
-    module._on_joint_state(JointState(ts=timestamp, name=names, position=positions))
+    module._on_joint_state(
+        JointState(
+            header=Header(stamp=time_from_seconds(timestamp)), name=names, position=positions
+        )
+    )
 
     status = module.preflight_rollout()
 
@@ -596,20 +610,30 @@ def test_preflight_rejects_invalid_live_joints(
 @pytest.mark.parametrize(
     ("image", "image_format"),
     [
-        (np.zeros((8, 8, 3), dtype=np.uint8), ImageFormat.RGB),
-        (np.zeros((4, 5, 3), dtype=np.uint8), ImageFormat.BGR),
+        (np.zeros((8, 8, 3), dtype=np.uint8), "rgb8"),
+        (np.zeros((4, 5, 3), dtype=np.uint8), "bgr8"),
     ],
 )
 def test_preflight_requires_exact_live_rgb_contract(
     make_runtime: RuntimeFactory,
     image: NDArray[np.uint8],
-    image_format: ImageFormat,
+    image_format: str,
 ) -> None:
     policy = FakePolicy(_action_chunk())
     module, control = make_runtime(policy)
     timestamp = time.time()
-    module._on_color_image(Image(data=image, format=image_format, ts=timestamp))
-    module._on_joint_state(JointState(ts=timestamp, name=JOINTS, position=[0.0] * len(JOINTS)))
+    module._on_color_image(
+        image_from_array(
+            image, encoding=image_format, header=Header(stamp=time_from_seconds(timestamp))
+        )
+    )
+    module._on_joint_state(
+        JointState(
+            header=Header(stamp=time_from_seconds(timestamp)),
+            name=JOINTS,
+            position=[0.0] * len(JOINTS),
+        )
+    )
 
     status = module.preflight_rollout()
 
@@ -671,12 +695,12 @@ def test_grip_takeover_stops_rollout_until_explicit_restart(
     held = Buttons()
     setattr(held, grip, True)
 
-    module._on_teleop_buttons(held)
+    module._on_teleop_buttons(held.to_message())
     wait_until(lambda: not module.rollout_status()["active"], timeout=1)
     assert module.start_rollout()["active"] is False
     assert "release" in (module.rollout_status()["last_error"] or "")
     submissions = control.execute_trajectory.call_count
-    module._on_teleop_buttons(Buttons())
+    module._on_teleop_buttons(Buttons().to_message())
     assert module.rollout_status()["active"] is False
     assert control.execute_trajectory.call_count == submissions
     _provide_observation(module)
@@ -704,8 +728,8 @@ def test_grip_during_inference_discards_result_without_blocking_input(
         assert predicting.wait(timeout=1)
         held = Buttons()
         held.right_grip = True
-        module._on_teleop_buttons(held)
-        module._on_teleop_buttons(Buttons())
+        module._on_teleop_buttons(held.to_message())
+        module._on_teleop_buttons(Buttons().to_message())
         assert module._stop_event.is_set()
         control.execute_trajectory.assert_not_called()
     finally:
@@ -722,5 +746,5 @@ def test_stopping_inactive_policy_leaves_planner_trajectory_alone(
     module.stop_rollout()
     held = Buttons()
     held.right_grip = True
-    module._on_teleop_buttons(held)
+    module._on_teleop_buttons(held.to_message())
     control.cancel_trajectory.assert_not_called()

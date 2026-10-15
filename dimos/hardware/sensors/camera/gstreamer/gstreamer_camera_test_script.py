@@ -18,10 +18,12 @@ import argparse
 import logging
 import time
 
+from dimos_generated.sensor_msgs.msg import Image
+
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera.gstreamer.gstreamer_camera import GstreamerCameraModule
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.time import to_seconds
 from dimos.protocol.service.lcmservice import autoconf
 from dimos.utils.logging_config import setup_logger
 
@@ -81,25 +83,27 @@ def main() -> None:
     # Counter for received frames
     frame_count = [0]
     last_log_time = [time.time()]
-    first_timestamp = [None]
+    first_timestamp: list[float | None] = [None]
 
-    def on_frame(msg) -> None:  # type: ignore[no-untyped-def]
+    def on_frame(msg: Image) -> None:
         frame_count[0] += 1
         current_time = time.time()
 
         # Capture first timestamp to show absolute timestamps are preserved
         if first_timestamp[0] is None:
-            first_timestamp[0] = msg.ts
-            logger.info(f"First frame absolute timestamp: {msg.ts:.6f}")
+            first_timestamp[0] = to_seconds(msg.header.stamp)
+            logger.info(f"First frame absolute timestamp: {to_seconds(msg.header.stamp):.6f}")
 
         # Log stats every 2 seconds
         if current_time - last_log_time[0] >= 2.0:
             fps = frame_count[0] / (current_time - last_log_time[0])
-            timestamp_delta = msg.ts - first_timestamp[0]
+            initial_stamp = first_timestamp[0]
+            assert initial_stamp is not None
+            timestamp_delta = to_seconds(msg.header.stamp) - initial_stamp
             logger.info(
                 f"Received {frame_count[0]} frames - FPS: {fps:.1f} - "
                 f"Resolution: {msg.width}x{msg.height} - "
-                f"Timestamp: {msg.ts:.3f} (delta: {timestamp_delta:.3f}s)"
+                f"Timestamp: {to_seconds(msg.header.stamp):.3f} (delta: {timestamp_delta:.3f}s)"
             )
             frame_count[0] = 0
             last_log_time[0] = current_time

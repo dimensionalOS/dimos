@@ -37,9 +37,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, NamedTuple
 
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import TransformStamped
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 
-from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry import inverse_transform, transform_from_matrix
 from dimos.protocol.service.spec import BaseConfig
 from dimos.utils.logging_config import setup_logger
 
@@ -65,7 +68,7 @@ class _Prepared(NamedTuple):
 class RelocAttempt(NamedTuple):
     """One decided attempt: the ``world -> map`` fix if accepted, and what it was scored on."""
 
-    fix: Transform | None
+    fix: TransformStamped | None
     result: RegistrationResult
 
 
@@ -259,7 +262,7 @@ class LidarRelocalizer:
 
     def relocalize(
         self, local_map: PointCloud, world_frame: str, map_frame: str
-    ) -> Transform | None:
+    ) -> TransformStamped | None:
         """The ``world_frame -> map_frame`` transform, or ``None`` when nothing was good enough."""
         return self.attempt(local_map, world_frame, map_frame).fix
 
@@ -269,7 +272,9 @@ class LidarRelocalizer:
         logger.info(f"align: fitness={result.fitness:.3f} rmse={result.inlier_rmse:.3f}")
         if result.fitness < self.config.fitness_threshold:
             return RelocAttempt(None, result)
-        placement = Transform.from_matrix(
-            np.asarray(result.transformation), frame_id=map_frame, child_frame_id=world_frame
+        placement = TransformStamped(
+            header=Header(frame_id=map_frame, stamp=Time(sec=0, nanosec=0)),
+            child_frame_id=world_frame,
+            transform=transform_from_matrix(np.asarray(result.transformation)),
         )
-        return RelocAttempt(placement.inverse(), result)
+        return RelocAttempt(inverse_transform(placement), result)

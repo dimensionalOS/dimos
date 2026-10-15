@@ -16,22 +16,24 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
+from dimos_generated.sensor_msgs.msg import Image
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 from ultralytics.models.yolo.yoloe import YOLOEVPSegPredictor
 
 from dimos.models.segmentation.yoloe import YoloeBoxSegmenter
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.image import image_from_array, image_to_bgr
+from dimos.msgs.time import time_from_seconds, to_seconds
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.detection.type.detection2d.seg import Detection2DSeg
 
 
 def _image() -> Image:
-    return Image(
-        data=np.zeros((32, 48, 3), dtype=np.uint8),
-        format=ImageFormat.BGR,
-        frame_id="camera",
-        ts=12.5,
+    return image_from_array(
+        np.zeros((32, 48, 3), dtype=np.uint8),
+        encoding="bgr8",
+        header=Header(frame_id="camera", stamp=time_from_seconds(12.5)),
     )
 
 
@@ -42,7 +44,7 @@ def _box(image: Image, *, bbox: tuple[float, float, float, float]) -> Detection2
         class_id=7,
         confidence=0.73,
         name="white mug",
-        ts=image.ts,
+        ts=to_seconds(image.header.stamp),
         image=image,
     )
 
@@ -60,7 +62,7 @@ def _mask(
         class_id=prompt_id,
         confidence=0.11,
         name=f"prompt-{prompt_id}",
-        ts=image.ts,
+        ts=to_seconds(image.header.stamp),
         image=image,
         mask=np.full((32, 48), value, dtype=np.uint8),
     )
@@ -137,7 +139,7 @@ def test_visual_box_prompts_use_segmentation_predictor(mocker: Any) -> None:
     get_data.assert_called_once_with("models_yoloe")
     model_factory.assert_called_once_with(Path("/models/yoloe-11s-seg.pt"))
     kwargs = dict(model.predict.call_args.kwargs)
-    np.testing.assert_array_equal(kwargs.pop("source"), image.to_opencv())
+    np.testing.assert_array_equal(kwargs.pop("source"), image_to_bgr(image))
     visual_prompts = kwargs.pop("visual_prompts")
     np.testing.assert_array_equal(
         visual_prompts["bboxes"], np.asarray([detection.bbox], dtype=np.float64)

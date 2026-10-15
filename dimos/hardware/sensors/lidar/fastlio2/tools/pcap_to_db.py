@@ -148,12 +148,13 @@ def _write_rrd(db_path: Path, odom_stream: str, lidar_stream: str, voxel: float)
     FastLio2 publishes its cloud in the sensor/body frame, so each frame is
     transformed to world by its pose here, then voxel-deduped. Best-effort: any
     failure is non-fatal to the recording. Returns the .rrd path, or None."""
+    from dimos_generated.nav_msgs.msg import Odometry
+    from dimos_generated.sensor_msgs.msg import PointCloud2
     import numpy as np
     import rerun as rr
 
     from dimos.memory.store.sqlite import SqliteStore
-    from dimos.msgs.nav_msgs.Odometry import Odometry
-    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+    from dimos.msgs.pointcloud import pointcloud_xyz
     from dimos.visualization.rerun.init import rerun_init
 
     store = SqliteStore(path=str(db_path), must_exist=True)
@@ -188,7 +189,7 @@ def _write_rrd(db_path: Path, odom_stream: str, lidar_stream: str, voxel: float)
             j = int(np.argmin(np.abs(ots - lid.ts)))
             if abs(ots[j] - lid.ts) > _POSE_MATCH_TOL:
                 continue
-            pts = np.asarray(lid.data.as_numpy()[0])[:, :3].astype(np.float64)
+            pts = pointcloud_xyz(lid.data).astype(np.float64)
             if pts.shape[0] == 0:
                 continue
             world = pts @ _quat_to_rot(*oquat[j]).T + opos[j]

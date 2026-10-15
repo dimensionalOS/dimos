@@ -28,7 +28,7 @@ import time
 import numpy as np
 import pytest
 
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.image import image_from_array
 from dimos.web.cockpit import Video, cockpit
 from dimos.web.relay_bridge.relay_bridge_module import RTC_AVAILABLE
 
@@ -49,8 +49,8 @@ TOPIC = "/rtc_video_e2e/color_image"
 # A static picture still yields a steady stream: aiortc encodes every fed frame.
 _ROWS = np.linspace(0, 255, 240, dtype=np.uint8)[:, None]
 _COLS = np.linspace(0, 255, 320, dtype=np.uint8)[None, :]
-IMAGE = Image(
-    data=np.stack(
+IMAGE = image_from_array(
+    np.stack(
         [
             np.broadcast_to(_ROWS, (240, 320)),
             np.broadcast_to(_COLS, (240, 320)),
@@ -58,7 +58,7 @@ IMAGE = Image(
         ],
         axis=-1,
     ).copy(),
-    format=ImageFormat.RGB,
+    encoding="rgb8",
 )
 
 

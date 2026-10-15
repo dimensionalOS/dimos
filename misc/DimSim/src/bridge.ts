@@ -8,20 +8,15 @@
  *   wsRgb      → /color_image
  *   wsDepth    → /depth_image
  *
- * Sensor messages are LCM-encoded binary packets using @dimos/msgs, sent over
+ * Sensor messages are CDR payloads in LCM channel envelopes, sent over
  * WebSocket to the bridge server which relays them to dimos via LCM/UDP.
  */
 
-// @ts-ignore — CDN import (runs in browser, no Deno/Node type resolution)
-import {
-  encodePacket,
-  sensor_msgs,
-  std_msgs,
-} from "https://esm.sh/jsr/@dimos/msgs@0.1.4";
+import { headerNow, sensorPacket } from "../cli/bridge/cdr.ts";
 
 // -- Channels ----------------------------------------------------------------
-const CH_IMAGE = "/color_image#sensor_msgs.Image";
-const CH_DEPTH = "/depth_image#sensor_msgs.Image";
+const CH_IMAGE = "/color_image#sensor_msgs/msg/Image";
+const CH_DEPTH = "/depth_image#sensor_msgs/msg/Image";
 
 // -- Default publish rates (ms) ----------------------------------------------
 const DEFAULT_RATES: PublishRates = { images: 200 }; // 5 Hz images
@@ -214,11 +209,7 @@ export class DimosBridge {
   }
 
   _makeHeader(frameId: string): any {
-    const now = Date.now();
-    return new std_msgs.Header({
-      stamp: new std_msgs.Time({ sec: Math.floor(now / 1000), nsec: (now % 1000) * 1_000_000 }),
-      frame_id: frameId,
-    });
+    return headerNow(frameId);
   }
 
   _publishImages(): void {
@@ -236,7 +227,7 @@ export class DimosBridge {
   /** Send on a sensor WebSocket (images — large data). */
   _sendSensor(ws: WebSocket | null, channel: string, msg: any): void {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    ws.send(encodePacket(channel, msg));
+    ws.send(sensorPacket(channel, msg));
   }
 
   // -- RGB --------------------------------------------------------------------
@@ -247,16 +238,15 @@ export class DimosBridge {
       const frame = this.sensors.captureRgb();
       if (!frame) return;
 
-      this._sendSensor(this.wsRgb, CH_IMAGE, new sensor_msgs.Image({
+      this._sendSensor(this.wsRgb, CH_IMAGE, {
         header,
         height: frame.height,
         width: frame.width,
-        encoding: "jpeg",
+        encoding: "rgba8",
         is_bigendian: 0,
-        step: 0,  // not applicable for compressed format
-        data_length: frame.data.length,
+        step: frame.width * 4,
         data: frame.data,
-      }));
+      });
     } catch (e) {
       console.warn("[DimosBridge] RGB publish error:", e);
     }
@@ -285,16 +275,15 @@ export class DimosBridge {
       }
       const depthBytes = new Uint8Array(u16.buffer, u16.byteOffset, u16.byteLength);
 
-      this._sendSensor(this.wsDepth, CH_DEPTH, new sensor_msgs.Image({
+      this._sendSensor(this.wsDepth, CH_DEPTH, {
         header,
         height: frame.height,
         width: frame.width,
         encoding: "16UC1",
         is_bigendian: 0,
         step: frame.width * 2,
-        data_length: depthBytes.length,
         data: depthBytes,
-      }));
+      });
     } catch (e) {
       console.warn("[DimosBridge] depth publish error:", e);
     }

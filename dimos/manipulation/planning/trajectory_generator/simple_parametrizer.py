@@ -16,6 +16,9 @@
 
 import math
 
+from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.trajectory_msgs.msg import JointTrajectory
+
 from dimos.manipulation.planning.groups.models import PlanningGroupSelection
 from dimos.manipulation.planning.spec.protocols import WorldSpec
 from dimos.manipulation.planning.trajectory_generator.config import (
@@ -28,8 +31,6 @@ from dimos.manipulation.planning.trajectory_generator.parametrizer import (
     BaseTrajectoryParametrizer,
     TrajectoryParametrizationError,
 )
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 
 
 class SimpleTrapezoidParametrizer(BaseTrajectoryParametrizer):
@@ -71,7 +72,7 @@ class SimpleTrapezoidParametrizer(BaseTrajectoryParametrizer):
         return JointTrajectory(
             joint_names=list(selection.joint_names),
             points=generated.points,
-            timestamp=generated.timestamp,
+            header=generated.header,
         )
 
     @staticmethod

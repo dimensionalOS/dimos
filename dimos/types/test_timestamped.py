@@ -18,10 +18,9 @@ import platform
 import time
 
 import pytest
-from reactivex import operators as ops
+from reactivex import interval, operators as ops
 from reactivex.scheduler import ThreadPoolScheduler
 
-from dimos.msgs.sensor_msgs.Image import Image
 from dimos.types.timestamped import (
     Timestamped,
     TimestampedBufferCollection,
@@ -29,9 +28,7 @@ from dimos.types.timestamped import (
     to_datetime,
     to_ros_stamp,
 )
-from dimos.utils.data import get_data
 from dimos.utils.reactive import backpressure
-from dimos.utils.testing.legacy_pickle import LegacyPickleStore
 from dimos.utils.timeseries.inmemory import InMemoryStore
 
 
@@ -291,9 +288,6 @@ def test_time_window_collection() -> None:
 def test_timestamp_alignment(test_scheduler) -> None:
     speed = 5.0
 
-    # ensure that lfs package is downloaded
-    get_data("unitree_office_walk")
-
     raw_frames = []
 
     def spy(image):
@@ -301,13 +295,10 @@ def test_timestamp_alignment(test_scheduler) -> None:
         print(image.ts)
         return image
 
-    # sensor reply of raw video frames
-    video_raw = (
-        LegacyPickleStore(
-            "unitree_office_walk/video", autocast=lambda x: Image.from_numpy(x).to_rgb()
-        )
-        .stream(speed)
-        .pipe(ops.take(30))
+    # Synthetic capture events keep backpressure/alignment behavior independent
+    # of replay assets and obsolete pickle image wrappers.
+    video_raw = interval(0.02).pipe(
+        ops.map(lambda index: SimpleTimestamped(index * 0.02, str(index))), ops.take(30)
     )
 
     processed_frames = []

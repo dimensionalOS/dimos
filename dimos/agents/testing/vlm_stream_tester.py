@@ -16,6 +16,7 @@ import threading
 import time
 from typing import Any
 
+from dimos_generated.sensor_msgs.msg import Image
 from langchain_core.messages import AIMessage, HumanMessage
 from reactivex.disposable import Disposable
 
@@ -24,7 +25,6 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
-from dimos.msgs.sensor_msgs.Image import Image
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()

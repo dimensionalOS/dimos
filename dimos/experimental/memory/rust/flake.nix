@@ -17,37 +17,45 @@
       "aarch64-darwin"
     ] (system: let
       pkgs = nixpkgs.legacyPackages.${system};
-      nativeDeps = [pkgs.cmake pkgs.nasm pkgs.pkg-config];
+      nativeDeps = [pkgs.cmake pkgs.nasm pkgs.pkg-config pkgs.python3];
       systemDeps =
         [pkgs.sqlite pkgs.sqlite.dev]
         ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isDarwin [pkgs.libiconv];
+      messageSource = import ../../../../native/message-source.nix { inherit pkgs; };
+      workspaceSource = pkgs.lib.fileset.toSource {
+        root = ../../../..;
+        fileset = pkgs.lib.fileset.unions [
+          ../../../../Cargo.lock
+          ../../../../Cargo.toml
+          ../../../../dimos/experimental/memory/rust
+          ../../../../native/rust/dimos-module
+          ../../../../native/rust/dimos-lcm-transport
+          ../../../../native/rust/dimos-module-macros
+          ../../../../dimos/mapping/ray_tracing/rust
+          ../../../../dimos/mapping/ray_tracing/rust/py
+          ../../../../dimos/navigation/global_planner/mls_planner/rust
+          ../../../../dimos/navigation/global_planner/mls_planner/rust/py
+          ../../../../dimos/hardware/sensors/lidar/livox/rust
+          ../../../../dimos/hardware/sensors/lidar/pointlio/rust
+          ../../../../dimos/hardware/sensors/lidar/virtual_mid360
+          ../../../../dimos/hardware/sensors/camera/v4l2/rust
+          ../../../../examples/native-modules/rust
+        ];
+      };
       dimos-memory-recorder = pkgs.rustPlatform.buildRustPackage {
         pname = "dimos-memory-recorder";
         version = "0.1.0";
-        src = pkgs.lib.fileset.toSource {
-          root = ../../../..;
-          fileset = pkgs.lib.fileset.unions [
-            ../../../../Cargo.lock
-            ../../../../Cargo.toml
-            ../../../../dimos/experimental/memory/rust
-            ../../../../native/rust/dimos-module
-            ../../../../native/rust/dimos-module-macros
-            ../../../../dimos/mapping/ray_tracing/rust
-            ../../../../dimos/mapping/ray_tracing/rust/py
-            ../../../../dimos/navigation/global_planner/mls_planner/rust
-            ../../../../dimos/navigation/global_planner/mls_planner/rust/py
-            ../../../../dimos/hardware/sensors/lidar/livox/rust
-            ../../../../dimos/hardware/sensors/lidar/pointlio/rust
-            ../../../../dimos/hardware/sensors/lidar/virtual_mid360
-            ../../../../dimos/hardware/sensors/camera/v4l2/rust
-            ../../../../examples/native-modules/rust
-          ];
-        };
+        src = pkgs.runCommand "dimos-memory-recorder-source" {} ''
+          mkdir -p $out
+          cp -r ${workspaceSource}/. $out/
+          chmod -R u+w $out
+          mkdir -p $out/packages/dimos-generated/build/message-source
+          cp -r ${messageSource.source}/rust $out/packages/dimos-generated/build/message-source/rust
+        '';
 
         cargoLock = {
           lockFile = ../../../../Cargo.lock;
           outputHashes = {
-            "dimos-lcm-0.1.0" = "sha256-GGkx4Mn6NYP6KZecmoRLKGWIih/+y8OgNn12DeXX6n8=";
             "pointlio-core-0.1.0" = "sha256-FjUcsZVI8nTcmKw8WhdxBuHelBjOCeJmyEsyqRxDvX0=";
           };
         };

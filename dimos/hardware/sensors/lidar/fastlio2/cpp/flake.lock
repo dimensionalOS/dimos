@@ -1,22 +1,5 @@
 {
   "nodes": {
-    "dimos-lcm": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1769774949,
-        "narHash": "sha256-icRK7jerqNlwK1WZBrnIP04I2WozzFqTD7qsmnPxQuo=",
-        "owner": "dimensionalOS",
-        "repo": "dimos-lcm",
-        "rev": "0aa72b7b1bd3a65f50f5c03485ee9b728df56afe",
-        "type": "github"
-      },
-      "original": {
-        "owner": "dimensionalOS",
-        "ref": "main",
-        "repo": "dimos-lcm",
-        "type": "github"
-      }
-    },
     "fast-lio": {
       "flake": false,
       "locked": {
@@ -163,7 +146,6 @@
     },
     "root": {
       "inputs": {
-        "dimos-lcm": "dimos-lcm",
         "fast-lio": "fast-lio",
         "flake-utils": "flake-utils",
         "lcm-extended": "lcm-extended",

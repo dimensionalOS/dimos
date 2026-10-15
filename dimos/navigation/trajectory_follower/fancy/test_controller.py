@@ -15,14 +15,15 @@
 from dataclasses import replace
 import math
 
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped
+from dimos_generated.nav_msgs.msg import Path
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 from pydantic import ValidationError
 import pytest
 
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.nav_msgs.Path import Path
+from dimos.msgs.geometry import quaternion_from_euler
+from dimos.msgs.time import time_from_seconds
 from dimos.navigation.embodiment.go2 import GO2
 from dimos.navigation.trajectory_follower.fancy.controller import ControllerConfig
 from dimos.navigation.trajectory_follower.fancy.laws.seed import PursuitController
@@ -30,21 +31,23 @@ from dimos.navigation.trajectory_follower.fancy.laws.seed import PursuitControll
 
 def _pose(x: float, y: float, yaw: float = 0.0) -> PoseStamped:
     return PoseStamped(
-        frame_id="world",
-        position=Vector3(x, y, 0.0),
-        orientation=Quaternion.from_euler(Vector3(0, 0, yaw)),
+        header=Header(stamp=time_from_seconds(0.0), frame_id="world"),
+        pose=Pose(position=Point(x, y, 0.0), orientation=quaternion_from_euler(0, 0, yaw)),
     )
 
 
 def _straight_path(n: int = 40, step: float = 0.1) -> Path:
-    return Path(frame_id="world", poses=[_pose(i * step, 0.0) for i in range(n)])
+    return Path(
+        header=Header(stamp=time_from_seconds(0.0), frame_id="world"),
+        poses=[_pose(i * step, 0.0) for i in range(n)],
+    )
 
 
 def _fan_path() -> Path:
     """Rotate in place at the origin: yaw steps with zero displacement."""
     yaws = [0.0, 0.3, 0.6, 0.9, 1.2, 1.5]
     poses = [_pose(0.0, 0.0, y) for y in yaws] + [_pose(0.1, 0.0, 1.5), _pose(1.0, 0.1, 1.5)]
-    return Path(frame_id="world", poses=poses)
+    return Path(header=Header(stamp=time_from_seconds(0.0), frame_id="world"), poses=poses)
 
 
 def test_on_path_drives_forward() -> None:
@@ -84,7 +87,11 @@ def test_fan_done_resumes_translation() -> None:
 
 
 def test_empty_path_stops() -> None:
-    tw = PursuitController().update(_pose(0.0, 0.0), Path(frame_id="world", poses=[]), 0.0)
+    tw = PursuitController().update(
+        _pose(0.0, 0.0),
+        Path(header=Header(stamp=time_from_seconds(0.0), frame_id="world"), poses=[]),
+        0.0,
+    )
     assert tw.linear.x == 0.0 and tw.angular.z == 0.0
 
 
@@ -105,7 +112,7 @@ def test_config_rejects_unknown_fields() -> None:
 
 def test_governor_creeps_in_tight_room() -> None:
     path = _straight_path()
-    tight = np.full(len(path), 0.06)  # barely above the precision floor
+    tight = np.full(len(path.poses), 0.06)  # barely above the precision floor
     tw = PursuitController().update(_pose(0.0, 0.0), path, 0.0, clearance=tight)
     # within the bottom twentieth of the governor's band, whatever the ceiling is
     creep = GO2.min_speed + 0.05 * (GO2.max_speed - GO2.min_speed)
@@ -114,7 +121,7 @@ def test_governor_creeps_in_tight_room() -> None:
 
 def test_governor_full_speed_in_open_room() -> None:
     path = _straight_path()
-    wide = np.full(len(path), 1.0)
+    wide = np.full(len(path.poses), 1.0)
     tw_open = PursuitController().update(_pose(-1.0, 0.0), path, 0.0, clearance=wide)
     tw_bare = PursuitController().update(_pose(-1.0, 0.0), path, 0.0)
     assert math.hypot(tw_open.linear.x, tw_open.linear.y) == pytest.approx(
@@ -124,7 +131,7 @@ def test_governor_full_speed_in_open_room() -> None:
 
 def test_governor_reads_room_ahead_not_behind() -> None:
     path = _straight_path()  # 4 m of path
-    clear = np.full(len(path), 1.0)
+    clear = np.full(len(path.poses), 1.0)
     clear[:5] = 0.06  # tight patch already behind the lookahead window
     tw = PursuitController().update(_pose(1.5, 0.0), path, 0.0, clearance=clear)
     assert math.hypot(tw.linear.x, tw.linear.y) > GO2.min_speed + 0.1

@@ -27,6 +27,18 @@ coordinator, pick-and-place, scene registration -- is the same stack either way.
 
 from __future__ import annotations
 
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseStamped,
+    Quaternion,
+    Transform,
+    TransformStamped,
+    Vector3,
+)
+from dimos_generated.std_msgs.msg import Header
+
 from dimos.control.coordinator import TaskConfig
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import global_config
@@ -40,10 +52,6 @@ from dimos.manipulation.planning.utils.roboplan_point_cloud_self_filter import (
     RoboPlanPointCloudSelfFilter,
 )
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
 from dimos.robot.manipulators.common.blueprints import coordinator, trajectory_task
 from dimos.robot.manipulators.xarm.config import (
@@ -106,11 +114,13 @@ XARM_GRASP_FRAME_TO_TCP = (
 # resolves into world, and every cloud the camera produces is silently unusable.
 # link7 is a frame the model already publishes, so ManipulationModule emits the
 # whole chain from one loop at one rate.
-XARM_WRIST_CAMERA_TRANSFORM = Transform(
-    translation=Vector3(x=0.06693724, y=-0.0309563, z=0.00691482),
-    rotation=Quaternion(0.70513398, 0.00535696, 0.70897578, -0.01052180),  # xyzw
-    frame_id="link7",
+XARM_WRIST_CAMERA_TRANSFORM = TransformStamped(
+    header=Header(frame_id="link7", stamp=Time(sec=0, nanosec=0)),
     child_frame_id="camera_link",
+    transform=Transform(
+        translation=Vector3(x=0.06693724, y=-0.0309563, z=0.00691482),
+        rotation=Quaternion(x=0.70513398, y=0.00535696, z=0.70897578, w=-0.01052180),
+    ),
 )
 
 
@@ -119,7 +129,13 @@ if SIMULATED:
     # of the 12 cm pedestal data/xarm7 uses. Inheriting that offset would put the
     # planning model 12 cm above the arm MuJoCo simulates.
     _model = make_xarm7_sim_robot_config(
-        base_pose=PoseStamped(frame_id="world"),
+        base_pose=PoseStamped(
+            header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+            pose=Pose(
+                position=Point(x=0.0, y=0.0, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+        ),
         tf_extra_links=[],
     )
     _hardware = make_xarm7_sim_hardware(XARM_GRASP_SCENE_PATH, home_joints=XARM_GRASP_SCAN_JOINTS)
@@ -127,7 +143,13 @@ else:
     _model = make_xarm7_model_config(
         add_gripper=True,
         gripper_hardware_id="arm",
-        base_pose=PoseStamped(frame_id="world"),
+        base_pose=PoseStamped(
+            header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+            pose=Pose(
+                position=Point(x=0.0, y=0.0, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+        ),
         tf_extra_links=["link7"],
     )
     _hardware = xarm7_hardware("arm", gripper=True)

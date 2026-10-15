@@ -11,7 +11,9 @@
   },
   "dependencies": {
     "@dimforge/rapier3d-compat": "^0.14.0",
-    "three": "^0.168.0"
+    "three": "^0.168.0",
+    "@foxglove/rosmsg": "5.0.5",
+    "@foxglove/rosmsg2-serialization": "3.1.2"
   },
   "devDependencies": {
     "vite": "^5.4.10"

@@ -12,7 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.msgs.sensor_msgs.Joy import Joy
+from dimos_generated.sensor_msgs.msg import Joy
+import numpy as np
+
+from dimos.msgs.time import header_now
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_joystick_record import (
     record_rerun_config,
 )
@@ -20,8 +23,22 @@ from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_joystick_record import
 
 def test_keys_text_logs_each_change_once() -> None:
     keys = record_rerun_config["visual_override"]["world/joystick"]
-    w_shift = Joy(buttons=[1, 0, 0, 0, 0, 0, 1, 0, 0])
-    lines = [keys(w_shift), keys(w_shift), keys(Joy(buttons=[0] * 9))]
+    w_shift = Joy(
+        header=header_now(),
+        axes=np.array([], dtype=np.float32),
+        buttons=np.array([1, 0, 0, 0, 0, 0, 1, 0, 0], dtype=np.int32),
+    )
+    lines = [
+        keys(w_shift),
+        keys(w_shift),
+        keys(
+            Joy(
+                header=header_now(),
+                axes=np.array([], dtype=np.float32),
+                buttons=np.zeros(9, dtype=np.int32),
+            )
+        ),
+    ]
     assert [
         [entry.text.as_arrow_array().to_pylist()[0] for _, entry in line] for line in lines
     ] == [

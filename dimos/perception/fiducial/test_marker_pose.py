@@ -13,10 +13,12 @@
 # limitations under the License.
 
 import cv2
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.sensor_msgs.msg import CameraInfo, RegionOfInterest
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.image import image_from_array
 from dimos.perception.fiducial.marker_pose import (
     camera_optical_frame_id,
     estimate_marker_pose,
@@ -26,25 +28,44 @@ from dimos.perception.fiducial.marker_pose import (
 
 
 def test_camera_optical_frame_id_resolution() -> None:
-    ts = 1.0
-    fx, fy, cx, cy = 600.0, 600.0, 320.0, 240.0
-    info_named = CameraInfo.from_intrinsics(fx, fy, cx, cy, 640, 480, frame_id="cam_info_optical")
-    info_named.ts = ts
-    info_empty = CameraInfo.from_intrinsics(fx, fy, cx, cy, 640, 480)
-    info_empty.ts = ts
-    img_custom = Image(
-        data=np.zeros((480, 640, 3), dtype=np.uint8),
-        format=ImageFormat.BGR,
-        ts=ts,
-        frame_id="custom_optical",
+    info_named = CameraInfo(
+        header=Header(frame_id="cam_info_optical", stamp=Time(sec=0, nanosec=0)),
+        height=0,
+        width=0,
+        distortion_model="",
+        d=np.array([], dtype=np.float64),
+        k=np.zeros(9, dtype=np.float64),
+        r=np.zeros(9, dtype=np.float64),
+        p=np.zeros(12, dtype=np.float64),
+        binning_x=0,
+        binning_y=0,
+        roi=RegionOfInterest(x_offset=0, y_offset=0, height=0, width=0, do_rectify=False),
     )
-    img_whitespace = Image(
-        data=np.zeros((480, 640, 3), dtype=np.uint8),
-        format=ImageFormat.BGR,
-        ts=ts,
-        frame_id="  custom_optical  ",
+    info_empty = CameraInfo(
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        height=0,
+        width=0,
+        distortion_model="",
+        d=np.array([], dtype=np.float64),
+        k=np.zeros(9, dtype=np.float64),
+        r=np.zeros(9, dtype=np.float64),
+        p=np.zeros(12, dtype=np.float64),
+        binning_x=0,
+        binning_y=0,
+        roi=RegionOfInterest(x_offset=0, y_offset=0, height=0, width=0, do_rectify=False),
     )
-    img_empty = Image(data=np.zeros((480, 640, 3), dtype=np.uint8), format=ImageFormat.BGR, ts=ts)
+    pixels = np.zeros((480, 640, 3), dtype=np.uint8)
+    img_custom = image_from_array(
+        pixels,
+        encoding="bgr8",
+        header=Header(frame_id="custom_optical", stamp=Time(sec=0, nanosec=0)),
+    )
+    img_whitespace = image_from_array(
+        pixels,
+        encoding="bgr8",
+        header=Header(frame_id="  custom_optical  ", stamp=Time(sec=0, nanosec=0)),
+    )
+    img_empty = image_from_array(pixels, encoding="bgr8")
 
     assert camera_optical_frame_id(img_custom, info_named) == "custom_optical"
     assert camera_optical_frame_id(img_whitespace, info_named) == "custom_optical"

@@ -86,12 +86,14 @@ fn edge_of(t: Transform) -> (f64, Isometry3<f64>) {
 
 pub fn state_of(iso: &Isometry3<f64>) -> State {
     let q = iso.rotation.quaternion();
-    let yaw = yaw_of(&lcm_msgs::geometry_msgs::Quaternion {
-        x: q.i,
-        y: q.j,
-        z: q.k,
-        w: q.w,
-    });
+    let yaw = yaw_of(
+        &dimos_generated_messages::geometry_msgs::msg::quaternion::Quaternion {
+            x: q.i,
+            y: q.j,
+            z: q.k,
+            w: q.w,
+        },
+    );
     [iso.translation.x, iso.translation.y, yaw]
 }
 

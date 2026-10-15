@@ -17,11 +17,17 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, TypeVar
 
+from dimos_cdrgen.registry import schema as cdr_schema
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos_generated.sensor_msgs.msg import Image
+from dimos_generated.std_msgs.msg import Header, String
 import pytest
 
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module
 from dimos.core.stream import In
+from dimos.core.transport_factory import rpc_backend
 from dimos.experimental.memory.rust_recorder import (
     RustMcapStoreConfig,
     RustRecorder,
@@ -29,10 +35,8 @@ from dimos.experimental.memory.rust_recorder import (
     RustSqliteStoreConfig,
     RustStreamSpec,
 )
+from dimos.memory.recording_policy import OnExisting
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.memory.type.recording import OnExisting
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.Image import Image
 
 
 class SampleRustRecorder(RustRecorder):
@@ -60,7 +64,9 @@ TRecorder = TypeVar("TRecorder", bound=RustRecorder)
 
 
 @pytest.fixture
-def make_recorder() -> Any:
+def make_recorder(mocker) -> Any:
+    for method in ("start", "serve_module_rpc", "stop"):
+        mocker.patch.object(rpc_backend(), method)
     recorders: list[RustRecorder] = []
 
     def make(recorder_type: type[TRecorder], **kwargs: Any) -> TRecorder:
@@ -87,7 +93,7 @@ def test_specs_use_native_defaults_remapping_and_configured_workers(
         record_tf=False,
         encoding_threads=7,
         stream_remapping={"odometry": "pose"},
-        stream_codecs={"color_image": "lz4+lcm"},
+        stream_codecs={"color_image": "lz4+cdr"},
     )
     connect(recorder, color_image="/camera", odometry="/odom")
 
@@ -104,14 +110,18 @@ def test_specs_use_native_defaults_remapping_and_configured_workers(
         {
             "port": "color_image",
             "name": "color_image",
-            "payload_type": "dimos.msgs.sensor_msgs.Image.Image",
-            "codec": "lz4+lcm",
+            "payload_type": f"{Image.__module__}.{Image.__qualname__}",
+            "schema_name": Image.__msgtype__,
+            "schema_definition": cdr_schema(Image.__msgtype__),
+            "codec": "lz4+cdr",
         },
         {
             "port": "odometry",
             "name": "pose",
-            "payload_type": "dimos.msgs.geometry_msgs.PoseStamped.PoseStamped",
-            "codec": "lcm",
+            "payload_type": f"{PoseStamped.__module__}.{PoseStamped.__qualname__}",
+            "schema_name": PoseStamped.__msgtype__,
+            "schema_definition": cdr_schema(PoseStamped.__msgtype__),
+            "codec": "cdr",
         },
     ]
     assert set(config) == {"encoding_threads", "store", "streams"}
@@ -124,7 +134,9 @@ def test_json_options_cross_the_native_boundary_only_when_configured() -> None:
             RustStreamSpec(
                 port="events",
                 name="events",
-                payload_type="dimos.msgs.std_msgs.String.String",
+                payload_type=f"{String.__module__}.{String.__qualname__}",
+                schema_name=String.__msgtype__,
+                schema_definition=cdr_schema(String.__msgtype__),
                 codec="json",
                 timestamp_field="sent",
                 json_schema=schema,
@@ -136,7 +148,9 @@ def test_json_options_cross_the_native_boundary_only_when_configured() -> None:
         {
             "port": "events",
             "name": "events",
-            "payload_type": "dimos.msgs.std_msgs.String.String",
+            "payload_type": f"{String.__module__}.{String.__qualname__}",
+            "schema_name": String.__msgtype__,
+            "schema_definition": cdr_schema(String.__msgtype__),
             "codec": "json",
             "timestamp_field": "sent",
             "json_schema": schema,
@@ -144,16 +158,25 @@ def test_json_options_cross_the_native_boundary_only_when_configured() -> None:
     ]
 
 
-@pytest.mark.parametrize("codec", ["lcm", "jpeg", "lz4+lcm", "json"])
+@pytest.mark.parametrize("codec", ["cdr", "lz4+cdr", "json"])
 def test_unconfigured_json_options_are_omitted_from_native_streams(codec: str) -> None:
     config = RustRecorderConfig(
         streams=[
-            RustStreamSpec(port="samples", name="samples", payload_type="test.Raw", codec=codec)
+            RustStreamSpec.from_type(
+                port="samples", name="samples", payload_type=String, codec=codec
+            )
         ]
     )
 
     assert config.to_config_dict()["streams"] == [
-        {"port": "samples", "name": "samples", "payload_type": "test.Raw", "codec": codec}
+        {
+            "port": "samples",
+            "name": "samples",
+            "payload_type": f"{String.__module__}.{String.__qualname__}",
+            "schema_name": String.__msgtype__,
+            "schema_definition": cdr_schema(String.__msgtype__),
+            "codec": codec,
+        }
     ]
 
 
@@ -169,7 +192,7 @@ def test_store_preparation_creates_a_python_readable_registry(
     connect(recorder, color_image="/camera", odometry="/odom")
     specs = recorder._stream_specs()
 
-    assert [spec.codec for spec in specs] == ["jpeg", "lcm"]
+    assert [spec.codec for spec in specs] == ["cdr", "cdr"]
 
     recorder._prepare_store(specs)
 
@@ -182,8 +205,26 @@ def test_store_preparation_creates_a_python_readable_registry(
 def test_append_replaces_only_the_recorded_streams(tmp_path: Path, make_recorder: Any) -> None:
     path = tmp_path / "recording.db"
     with SqliteStore(path=str(path)) as store:
-        store.stream("keep", PoseStamped).append(PoseStamped(), ts=1.0)
-        store.stream("odometry", PoseStamped).append(PoseStamped(), ts=2.0)
+        store.stream("keep", PoseStamped).append(
+            PoseStamped(
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                pose=Pose(
+                    position=Point(x=0.0, y=0.0, z=0.0),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+            ),
+            ts=1.0,
+        )
+        store.stream("odometry", PoseStamped).append(
+            PoseStamped(
+                header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                pose=Pose(
+                    position=Point(x=0.0, y=0.0, z=0.0),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+            ),
+            ts=2.0,
+        )
 
     recorder = make_recorder(
         SampleRustRecorder,
@@ -209,7 +250,7 @@ def test_unsupported_python_payload_fails_before_native_process_starts(
     )
     connect(recorder, values="/values")
 
-    with pytest.raises(TypeError, match="only supports LCM-backed messages"):
+    with pytest.raises(TypeError, match="requires a generated CDR message"):
         recorder._stream_specs()
 
 
@@ -239,7 +280,7 @@ def test_invalid_codec_fails_during_preflight(tmp_path: Path, make_recorder: Any
         recorder._stream_specs()
 
 
-def test_jpeg_requires_an_image_stream(tmp_path: Path, make_recorder: Any) -> None:
+def test_obsolete_jpeg_codec_is_rejected(tmp_path: Path, make_recorder: Any) -> None:
     recorder = make_recorder(
         SampleRustRecorder,
         store=RustSqliteStoreConfig(path=str(tmp_path / "recording.db")),
@@ -248,7 +289,7 @@ def test_jpeg_requires_an_image_stream(tmp_path: Path, make_recorder: Any) -> No
     )
     connect(recorder, odometry="/odom")
 
-    with pytest.raises(TypeError, match="JPEG codec requires Image"):
+    with pytest.raises(ValueError, match="Unsupported native codec"):
         recorder._stream_specs()
 
 
@@ -278,7 +319,7 @@ def test_mcap_store_uses_python_codec_defaults_and_does_not_precreate_the_artifa
     specs = recorder._stream_specs()
     recorder._prepare_store(specs)
 
-    assert [spec.codec for spec in specs] == ["jpeg", "lcm"]
+    assert [spec.codec for spec in specs] == ["cdr", "cdr"]
     assert not path.exists()
     recorder.config.streams = specs
     assert recorder.config.to_config_dict()["store"] == {
@@ -293,11 +334,13 @@ def test_mcap_accepts_storage_codecs_and_rejects_append(tmp_path: Path, make_rec
         SampleRustRecorder,
         store=RustMcapStoreConfig(path=str(path)),
         record_tf=False,
-        stream_codecs={"color_image": "jpeg"},
+        stream_codecs={"color_image": "lz4+cdr"},
     )
     connect(recorder, color_image="/camera")
 
-    assert [spec.codec for spec in recorder._stream_specs()] == ["jpeg"]
+    with pytest.raises(ValueError, match="MCAP requires cdr"):
+        recorder._prepare_store(recorder._stream_specs())
+    assert not path.exists()
 
     append_recorder = make_recorder(
         SampleRustRecorder,
@@ -339,6 +382,21 @@ def test_duplicate_remapped_stream_names_fail_before_launch(
 
     with pytest.raises(ValueError, match="Duplicate recorded stream names"):
         recorder._stream_specs()
+
+
+@pytest.mark.parametrize("record_tf", [False, True])
+def test_launch_topics_match_selected_streams_with_connected_tf(tmp_path, make_recorder, record_tf):
+    recorder = make_recorder(
+        SampleRustRecorder,
+        store=RustMcapStoreConfig(path=str(tmp_path / "recording.mcap")),
+        record_tf=record_tf,
+    )
+    connect(recorder, odometry="/odom", tf="/tf")
+    recorder.config.streams = recorder._stream_specs()
+    topics = recorder._collect_topics()
+    expected = {"odometry": "/odom", "tf": "/tf"} if record_tf else {"odometry": "/odom"}
+    assert topics == expected
+    assert set(topics) == {spec.port for spec in recorder.config.streams}
 
 
 def test_replay_never_prepares_native_sources_or_process(tmp_path, make_recorder, mocker):

@@ -19,9 +19,13 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from dimos.msgs.geometry_msgs.PointStamped import PointStamped
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.nav_msgs.Path import Path
+from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Point, PointStamped, Pose, PoseStamped, Quaternion
+from dimos_generated.nav_msgs.msg import Path
+from dimos_generated.std_msgs.msg import Header
+
+from dimos.msgs.time import time_from_seconds
 from dimos.navigation.experimental.dannav.local_planner.module import (
     DanLocalPlannerConfig,
     _ReplanGate,
@@ -29,26 +33,28 @@ from dimos.navigation.experimental.dannav.local_planner.module import (
 
 
 def _path_from_points(points: list[tuple[float, float]]) -> Path:
-    poses = [
-        PoseStamped(
-            ts=1.0, frame_id="world", position=[x, y, 0.0], orientation=[0.0, 0.0, 0.0, 1.0]
-        )
-        for x, y in points
-    ]
-    return Path(frame_id="world", poses=poses)
+    value = Path(
+        header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)),
+        poses=[_odom(x, y) for x, y in points],
+    )
+    return cdr_decode(cdr_encode(value), Path)
 
 
 def _odom(x: float, y: float, *, ts: float = 1.0) -> PoseStamped:
-    return PoseStamped(
-        ts=ts,
-        frame_id="world",
-        position=[x, y, 0.0],
-        orientation=[0.0, 0.0, 0.0, 1.0],
+    value = PoseStamped(
+        header=Header(stamp=time_from_seconds(ts), frame_id="world"),
+        pose=Pose(
+            position=Point(x=x, y=y, z=0.0), orientation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0)
+        ),
     )
+    return cdr_decode(cdr_encode(value), PoseStamped)
 
 
 def _point(x: float, y: float) -> PointStamped:
-    return PointStamped(x=x, y=y, z=0.0, frame_id="world")
+    value = PointStamped(
+        point=Point(x=x, y=y, z=0.0), header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0))
+    )
+    return cdr_decode(cdr_encode(value), PointStamped)
 
 
 def _gate(**config: Any) -> _ReplanGate:
@@ -110,7 +116,7 @@ def test_empty_path_published_and_resets_gate() -> None:
 
     # An empty path (nothing safe ahead) forwards immediately as a stop and
     # drops the committed path.
-    empty = Path(frame_id="world", poses=[])
+    empty = Path(header=Header(frame_id="world", stamp=Time(sec=0, nanosec=0)), poses=[])
     assert gate.on_planner_path(empty) is empty
     assert gate._committed is None
 
@@ -145,3 +151,21 @@ def test_lock_replan_zero_commits_every_non_empty_path() -> None:
         _path_from_points([(0.0, 0.0), (1.0, 1.0)]),
     ):
         assert gate.on_planner_path(path) is not None
+
+
+def test_smoothing_preserves_cdr_header_and_endpoints() -> None:
+    gate = _gate(resample_spacing_m=0.1, smoothing_window=3)
+    path = _path_from_points([(0.0, 0.0), (0.5, 0.5), (1.0, 0.0)])
+    path.header.stamp.sec = 1700000000
+    path.header.stamp.nanosec = 123456789
+    output = gate.on_planner_path(path)
+    assert output is not None
+    decoded = cdr_decode(cdr_encode(output), Path)
+    assert decoded.header.frame_id == "world"
+    assert decoded.header.stamp.sec == 1700000000
+    assert decoded.header.stamp.nanosec == 123456789
+    assert len(decoded.poses) > len(path.poses)
+    assert decoded.poses[0].pose.position.x == 0.0
+    assert decoded.poses[-1].pose.position.x == 1.0
+    assert decoded.poses[-1].pose.position.y == 0.0
+    assert path.poses[1].pose.position.y == 0.5

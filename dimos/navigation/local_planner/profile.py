@@ -28,10 +28,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from dimos_generated.nav_msgs.msg import Path
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.msgs.nav_msgs.Path import Path
+from dimos.msgs.geometry import yaw
+from dimos.msgs.time import time_from_seconds, to_seconds
 from dimos.navigation.embodiment.base import Embodiment
 
 # The governor curve is the embodiment's (max_speed, min_speed, speed_clearance,
@@ -49,8 +51,8 @@ def governor_speed(clearance: NDArray[np.floating[Any]], emb: Embodiment) -> NDA
 
 
 def _segments(path: Path) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-    xy = np.array([[p.position.x, p.position.y] for p in path.poses]).reshape(-1, 2)
-    yaws = np.array([p.yaw for p in path.poses])
+    xy = np.array([[p.pose.position.x, p.pose.position.y] for p in path.poses]).reshape(-1, 2)
+    yaws = np.array([yaw(p.pose.orientation) for p in path.poses])
     return xy, yaws
 
 
@@ -68,7 +70,7 @@ def encode_precision(
     xy, yaws = _segments(path)
     v = governor_speed(clearance, emb) if len(clearance) == n else np.full(n, emb.max_speed)
     t = t0
-    path.poses[0].ts = t
+    path.poses[0].header.stamp = time_from_seconds(t)
     for i in range(1, n):
         ds = float(np.linalg.norm(xy[i] - xy[i - 1]))
         if ds < _FAN_EPS:
@@ -76,8 +78,8 @@ def encode_precision(
             t += dyaw / emb.max_yaw_rate
         else:
             t += ds / float(min(v[i - 1], v[i]))
-        path.poses[i].ts = t
-    path.ts = t0
+        path.poses[i].header.stamp = time_from_seconds(t)
+    path.header.stamp = time_from_seconds(t0)
     return path
 
 
@@ -90,7 +92,7 @@ def decode_ceilings(path: Path, lo: float, hi: float) -> NDArray[np.float64] | N
     n = len(path.poses)
     if n < 2:
         return None
-    ts = np.array([p.ts for p in path.poses])
+    ts = np.array([to_seconds(p.header.stamp) for p in path.poses])
     dt = np.diff(ts)
     if np.any(dt < 0) or not np.any(dt > 0):
         return None

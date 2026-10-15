@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 exclude = [
+    "packages/dimos-generated/build/message-source/rust",
     "examples/message-project/sdk/rust/dimos-module",
     "examples/message-project/sdk/rust/dimos-module-macros",
 ]
