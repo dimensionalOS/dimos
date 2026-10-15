@@ -197,7 +197,7 @@ unknown stream 'front_cam'; this robot bridge supports: color_image, global_cost
 
 `Video(stream="color_image", *, max_hz=30.0, quality=75, title="")`
 
-One `Image` stream as JPEG frames. `max_hz` caps the frame rate and `quality` is the JPEG quality (0 to 100). Behind a relay with Cloudflare video ([Relay hosting](/docs/web/relay_hosting.md#video-through-cloudflare)) the panel plays the channel's WebRTC track in a `<video>` element instead.
+One `Image` stream as JPEG frames. `max_hz` caps the frame rate and `quality` is the JPEG quality (0 to 100) of frames the bridge encodes; a stream that already arrives as JPEG (a `JpegLcmTransport` camera) is forwarded as it came, at the producer's quality. Behind a relay with Cloudflare video ([Relay hosting](/docs/web/relay_hosting.md#video-through-cloudflare)) the panel plays the channel's WebRTC track in a `<video>` element instead.
 
 ### Map2D
 
@@ -217,7 +217,7 @@ The Go2 blueprints use `path="path"`, `click="clicked_point"` and `stop="stop_mo
 
 The world in 3D: a `PointCloud2` stream drawn as one point per voxel, coloured by height, with the robot's pose (`PoseStamped`) as a red cone. `pose=None` drops the cone and the follow toggle. Drag to orbit, wheel to zoom, right-drag to pan. The `follow` toggle keeps the camera a few metres behind and above the robot as it drives. Orbit, zoom and pan then hold relative to the robot.
 
-`cloud` is any point cloud, the mapper's whole-world map by default. The bridge quantizes it to `res` metres (the mapper's own voxel size by default) and sends occupancy bits, not points: the Go2's office-sized map costs about 100 KB per frame instead of the 6 MB of its LCM encoding. A map over a million voxels is sent coarser. An empty cloud clears the panel. `max_hz` caps the frame rate. The renderer (three.js) is downloaded only by pages that show this panel.
+`cloud` is any point cloud, the mapper's whole-world map by default. The bridge quantizes it to `res` metres (the mapper's own voxel size by default) and sends occupancy bits, not points: the Go2's office-sized map costs about 100 KB per frame instead of the 6 MB of its LCM encoding. A map over a million voxels is sent coarser. An empty cloud clears the panel. `max_hz` caps the frame rate. The encode runs on a worker thread (a large map takes hundreds of milliseconds), newest cloud first, so it never holds up the other channels. The renderer (three.js) is downloaded only by pages that show this panel.
 
 ### Teleop
 

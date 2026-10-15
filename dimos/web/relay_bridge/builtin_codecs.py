@@ -30,7 +30,7 @@ import zlib
 from dimos_lcm.std_msgs import Bool
 import numpy as np
 
-from dimos.mapping.voxels.keys import KEY_OFFSET, pack_indices, unpack_keys
+from dimos.mapping.voxels.keys import FIELD_BITS, KEY_OFFSET
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid, block_max_reduce
@@ -56,10 +56,15 @@ def _check_jpeg_params(params: Mapping[str, Any]) -> None:
 
 @web_encoder("jpeg.v1", check_params=_check_jpeg_params)
 def encode_jpeg(msg: Image, params: Mapping[str, Any]) -> EncodedPayload:
+    meta = {"w": msg.width, "h": msg.height}
+    # An image that arrived as JPEG (a JpegLcmTransport stream) is forwarded
+    # as it came, at the producer's quality: the channel's `quality` applies
+    # to images the bridge encodes itself.
+    if msg.jpeg is not None:
+        return EncodedPayload(msg.jpeg, meta)
     # TurboJPEG via the message's own encoder (handles BGR/RGB/gray inputs).
     return EncodedPayload(
-        msg.to_jpeg_bytes(quality=params.get("quality", _DEFAULT_JPEG_QUALITY)),
-        {"w": msg.width, "h": msg.height},
+        msg.to_jpeg_bytes(quality=params.get("quality", _DEFAULT_JPEG_QUALITY)), meta
     )
 
 
@@ -166,6 +171,9 @@ def encode_costmap(msg: OccupancyGrid) -> EncodedPayload | None:
 # big_office cloud) against 16 bytes per point for the LCM encoding. The
 # cockpit decoder (voxels.ts) mirrors the caps; a cloud over budget is
 # coarsened (res doubled) until it fits, the costmap's block-max idea in 3D.
+# The packing sorts once (a scattered 1M-voxel cloud 570 -> 400 ms with the
+# zlib, a 500k floor 80 -> 65); still ~10% of a core per hertz at 1M, so keep
+# such maps at 1-2 Hz or coarser.
 # An empty cloud is data, not a warm-up gap: it encodes to zero records so a
 # filtered-out or cleared map clears the panel (the costmap's None is for a
 # grid that does not exist yet).
@@ -186,10 +194,49 @@ def _check_voxel_params(params: Mapping[str, Any]) -> None:
         raise ValueError(f"res must be positive, got {res!r}")
 
 
-def _voxel_keys(idx: np.ndarray) -> np.ndarray:
-    """Sorted unique int64 keys of (N, 3) voxel indices (the mapping voxel
-    key layout, which wants biased indices)."""
-    return np.unique(pack_indices(idx + KEY_OFFSET))
+# One sortable int64 per voxel: its chunk's (x, y, z) in three 17-bit fields
+# (the mapping key layout's 21 bits less the 4 the chunk absorbs, so a map
+# spans the same +-52 km), then the voxel's bit position in the chunk. One
+# np.unique over them orders and deduplicates the voxels by chunk and bit at
+# once, and every boundary after that is an np.diff: the chunk ids, the mask
+# bytes. Chunks come out in the key layout's (x, y, z) order.
+_CHUNK_FIELD_BITS = FIELD_BITS - _VOXEL_CHUNK_SHIFT
+_CHUNK_BIAS = KEY_OFFSET >> _VOXEL_CHUNK_SHIFT
+_CHUNK_MASK = (1 << _CHUNK_FIELD_BITS) - 1
+_BIT_BITS = 3 * _VOXEL_CHUNK_SHIFT
+
+
+def _voxel_order_keys(idx: np.ndarray) -> np.ndarray:
+    """Sorted unique keys of (N, 3) voxel indices (|idx| < KEY_OFFSET)."""
+    c = (idx >> _VOXEL_CHUNK_SHIFT) + _CHUNK_BIAS
+    local = idx & (_VOXEL_CHUNK - 1)
+    bit = (local[:, 2] * _VOXEL_CHUNK + local[:, 1]) * _VOXEL_CHUNK + local[:, 0]
+    chunk = (c[:, 0] << (2 * _CHUNK_FIELD_BITS)) | (c[:, 1] << _CHUNK_FIELD_BITS) | c[:, 2]
+    return np.unique((chunk << _BIT_BITS) | bit)
+
+
+def _voxel_index(keys: np.ndarray) -> np.ndarray:
+    """(N, 3) voxel indices, the inverse of _voxel_order_keys."""
+    chunk = keys >> _BIT_BITS
+    bit = keys & ((1 << _BIT_BITS) - 1)
+    cx = (chunk >> (2 * _CHUNK_FIELD_BITS)) - _CHUNK_BIAS
+    cy = ((chunk >> _CHUNK_FIELD_BITS) & _CHUNK_MASK) - _CHUNK_BIAS
+    cz = (chunk & _CHUNK_MASK) - _CHUNK_BIAS
+    return np.stack(
+        [
+            (cx << _VOXEL_CHUNK_SHIFT) + (bit & (_VOXEL_CHUNK - 1)),
+            (cy << _VOXEL_CHUNK_SHIFT) + ((bit >> _VOXEL_CHUNK_SHIFT) & (_VOXEL_CHUNK - 1)),
+            (cz << _VOXEL_CHUNK_SHIFT) + (bit >> (2 * _VOXEL_CHUNK_SHIFT)),
+        ],
+        axis=1,
+    )
+
+
+def _boundaries(values: np.ndarray) -> np.ndarray:
+    """Indices where a run of equal values starts (values sorted)."""
+    if len(values) == 0:
+        return np.zeros(0, dtype=np.int64)
+    return np.flatnonzero(np.r_[True, values[1:] != values[:-1]])
 
 
 @web_encoder("voxels.zlib.v1", check_params=_check_voxel_params)
@@ -201,29 +248,31 @@ def encode_voxels(msg: PointCloud2, params: Mapping[str, Any]) -> EncodedPayload
     # Indices live in the key's 21-bit fields (+-52 km at 5 cm); beyond that
     # a point is dropped.
     idx = idx[(np.abs(idx) < KEY_OFFSET).all(axis=1)]
-    keys = _voxel_keys(idx)
+    keys = _voxel_order_keys(idx)
     while True:
-        idx = unpack_keys(keys)
-        chunk_keys, chunk_of = np.unique(
-            pack_indices((idx >> _VOXEL_CHUNK_SHIFT) + KEY_OFFSET), return_inverse=True
-        )
-        if len(keys) <= _VOXEL_MAX_VOXELS and len(chunk_keys) <= _VOXEL_MAX_CHUNKS:
+        chunk = keys >> _BIT_BITS
+        starts = _boundaries(chunk)
+        if len(keys) <= _VOXEL_MAX_VOXELS and len(starts) <= _VOXEL_MAX_CHUNKS:
             break
-        keys = _voxel_keys(idx >> 1)
+        keys = _voxel_order_keys(_voxel_index(keys) >> 1)
         res *= 2
-    local = idx & (_VOXEL_CHUNK - 1)
-    bit = (local[:, 2] * _VOXEL_CHUNK + local[:, 1]) * _VOXEL_CHUNK + local[:, 0]
-    # Bytes of the bit masks: sort the (chunk, bit) positions, then OR each
-    # byte's bits in one reduceat instead of a dense (chunks, 4096) array.
-    pos = np.sort(chunk_of.astype(np.int64) * _VOXEL_CHUNK_BITS + bit)
-    byte_index, first = np.unique(pos >> 3, return_index=True)
-    masks = np.zeros(len(chunk_keys) * (_VOXEL_CHUNK_BITS // 8), dtype=np.uint8)
-    masks[byte_index] = np.bitwise_or.reduceat((1 << (pos & 7)).astype(np.uint8), first)
-    chunks = unpack_keys(chunk_keys)
-    records = np.empty(len(chunk_keys), dtype=_VOXEL_RECORD)
-    records["cx"], records["cy"], records["cz"] = chunks[:, 0], chunks[:, 1], chunks[:, 2]
+    n_chunks = len(starts)
+    # Bytes of the bit masks: the keys are ordered by (chunk, bit), so each
+    # mask byte's voxels are one run, OR'd in one reduceat.
+    chunk_of = np.repeat(np.arange(n_chunks, dtype=np.int64), np.diff(np.r_[starts, len(keys)]))
+    bit = keys & ((1 << _BIT_BITS) - 1)
+    byte = chunk_of * (_VOXEL_CHUNK_BITS // 8) + (bit >> 3)
+    first = _boundaries(byte)
+    masks = np.zeros(n_chunks * (_VOXEL_CHUNK_BITS // 8), dtype=np.uint8)
+    if len(keys):
+        masks[byte[first]] = np.bitwise_or.reduceat((1 << (bit & 7)).astype(np.uint8), first)
+    chunk_id = chunk[starts]
+    records = np.empty(n_chunks, dtype=_VOXEL_RECORD)
+    records["cx"] = (chunk_id >> (2 * _CHUNK_FIELD_BITS)) - _CHUNK_BIAS
+    records["cy"] = ((chunk_id >> _CHUNK_FIELD_BITS) & _CHUNK_MASK) - _CHUNK_BIAS
+    records["cz"] = (chunk_id & _CHUNK_MASK) - _CHUNK_BIAS
     records["bits"] = masks.reshape(-1, _VOXEL_CHUNK_BITS // 8)
-    meta = {"res": res, "n": len(keys), "chunks": len(chunk_keys)}
+    meta = {"res": res, "n": len(keys), "chunks": n_chunks}
     return EncodedPayload(_zlib_rle(records.tobytes()), meta)
 
 
