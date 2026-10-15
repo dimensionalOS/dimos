@@ -102,6 +102,8 @@ class Run:
     started: float | None = None
     commit: str | None = None
     dirty: bool | None = None
+    procs: int | None = None
+    machine: str | None = None
 
 
 _RUN = TypeAdapter(Run)

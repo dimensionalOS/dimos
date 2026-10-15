@@ -355,6 +355,16 @@ def warnings(comparison: Comparison) -> list[str]:
             found.append(f"A {name} run has no policy, so it ran the default body policy.")
     if policies["base"] != policies["new"]:
         found.append("The sides ran different body policies.")
+    for field, ran in (
+        ("machine", "on different machines"),
+        ("procs", "a different number of episodes at once"),
+    ):
+        values = {name: _recorded(side, field) for name, side in _sides(comparison)}
+        if values["base"] and values["new"] and values["base"] != values["new"]:
+            found.append(
+                f"The sides ran {ran}, base {', '.join(values['base'])}"
+                f" and new {', '.join(values['new'])}."
+            )
     if comparison.scene_differs:
         found.append(
             f"{len(comparison.scene_differs)} cases have a different scene on each side"
@@ -365,6 +375,12 @@ def warnings(comparison: Comparison) -> list[str]:
 
 def _sides(comparison: Comparison) -> list[tuple[str, Side]]:
     return [("base", comparison.base), ("new", comparison.new)]
+
+
+def _recorded(side: Side, field: str) -> list[str]:
+    """The values the side's runs recorded for the field. Older runs recorded none."""
+    values = (getattr(r.run, field) for r in side.runs)
+    return sorted({str(v) for v in values if v is not None})
 
 
 def _days(side: Side) -> list[str]:
@@ -584,14 +600,14 @@ def _details(side: Side) -> dict[str, str]:
         "policy": _join([r.policy or "none given" for r in runs]),
         "overrides": _join([" ".join(r.overrides) for r in runs if r.overrides]),
         "date": _join(_days(side)),
-        "procs": "not recorded",
-        "machine": "not recorded",
+        "procs": _join(_recorded(side, "procs"), "not recorded"),
+        "machine": _join(_recorded(side, "machine"), "not recorded"),
         "run again": f"{side.replaced} cases, latest kept" if side.replaced else "none",
     }
 
 
-def _join(values: list[str]) -> str:
-    return ", ".join(dict.fromkeys(values)) or "none"
+def _join(values: list[str], empty: str = "none") -> str:
+    return ", ".join(dict.fromkeys(values)) or empty
 
 
 def render(comparison: Comparison) -> str:

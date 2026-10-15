@@ -28,6 +28,7 @@ from pathlib import Path
 import re
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import threading
@@ -346,6 +347,8 @@ def _write_run(
         "cases": list(config.cases),
         "overrides": list(config.overrides),
         "policy": str(config.policy) if config.policy else None,
+        "procs": config.procs,
+        "machine": socket.gethostname(),
         "episodes": episodes,
         "finished": finished,
         "started": started,

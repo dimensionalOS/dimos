@@ -19,6 +19,7 @@ import json
 import os
 from pathlib import Path
 import signal
+import socket
 import subprocess
 import sys
 import threading
@@ -204,6 +205,7 @@ def test_run_scores_every_episode_and_rescores_the_same(
     meta = json.loads((run_dir / RUN_FILE).read_text())
     assert meta["finished"] is True
     assert (meta["commit"], meta["dirty"]) == (_git(checkout, "rev-parse", "HEAD"), False)
+    assert (meta["procs"], meta["machine"]) == (3, socket.gethostname())
     assert (tmp_path / "runs").read_text().strip() == str(run_dir.resolve())
     suite.unlink()
     assert set(rescore(run_dir).read_text().splitlines()) == set(results.splitlines())
