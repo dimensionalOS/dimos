@@ -41,6 +41,9 @@ class RealSenseCameraConfig(NativeModuleConfig, DepthCameraConfig):
     stdin_config: bool = True
     # The frame stem and its namespace cross to rust like any other field.
     base_fields: frozenset[str] = frozenset({"frame_id", "frame_id_prefix"})
+    # Over librealsense's RSUSB backend, stopping the pipeline alone takes 1.4-2.3 s,
+    # past the 2 s default, and the camera would be SIGKILLed mid-stop.
+    shutdown_timeout: float = 5.0
 
     width: int = 848
     height: int = 480
