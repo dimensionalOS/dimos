@@ -18,6 +18,7 @@ import {
 } from "@dimos/shared";
 import type { CarrierStats } from "./carrier.ts";
 import {
+  ACK_TIMEOUT_MS,
   type ChannelPolicy,
   type FrameWriter,
   LATEST_SEND_ORDER,
@@ -691,8 +692,8 @@ Deno.test("a viewer's acks release its latest channel; the tick times out missin
     await tick();
   }
   assertEquals(viewer.sink.sent.length, 4); // 4 and 5 unacked, 6 waits
-  now += 3000;
-  reg.tick(now); // nothing acked for 3 s: the timeout releases the slots
+  now += ACK_TIMEOUT_MS + 1000;
+  reg.tick(now); // nothing acked past the timeout: it releases the slots
   await tick();
   assertEquals(viewer.sink.sent.length, 5);
   const out = (reg.stats() as { perViewer: { channels: Record<string, Record<string, number>> }[] })
@@ -820,15 +821,20 @@ Deno.test("stats project exact per-channel key sets with counters and rates", as
   assert((out.odom.bytesOut as number) > 0);
   assertEquals(viewer.sink.kicked, null);
   const top = reg.stats() as {
-    framesIncomplete: number;
+    swallowedIngress: number;
     streamCreditStalls: number;
     gcRuns: number;
-    gcMs: number;
+    gcPauseMs: number;
   };
-  assertEquals([top.framesIncomplete, top.streamCreditStalls, top.gcRuns, top.gcMs], [0, 0, 0, 0]);
+  assertEquals([top.swallowedIngress, top.streamCreditStalls, top.gcRuns, top.gcPauseMs], [
+    0,
+    0,
+    0,
+    0,
+  ]);
   reg.collected(1.5);
-  const after = reg.stats() as { gcRuns: number; gcMs: number };
-  assertEquals([after.gcRuns, after.gcMs], [1, 1.5]);
+  const after = reg.stats() as { gcRuns: number; gcPauseMs: number };
+  assertEquals([after.gcRuns, after.gcPauseMs], [1, 1.5]);
 });
 
 Deno.test("undeclared channel frames aggregate into one per-robot bucket", async () => {

@@ -226,7 +226,9 @@ export class Registry {
   #robotsSuperseded = 0;
   #streamCreditStalls = 0;
   #gcRuns = 0;
-  #gcMs = 0;
+  #gcPauseMs = 0;
+  #loopLagLastMs = 0;
+  #loopLagMaxMs = 0;
   readonly #now: () => number;
   readonly #hub: RtcBroker | null;
 
@@ -294,7 +296,13 @@ export class Registry {
    * pays for it. */
   collected(pauseMs: number): void {
     this.#gcRuns++;
-    this.#gcMs = pauseMs;
+    this.#gcPauseMs = pauseMs;
+  }
+
+  /** The housekeeping tick ran `lagMs` late: the event loop's lag. */
+  loopLagged(lagMs: number): void {
+    this.#loopLagLastMs = lagMs;
+    this.#loopLagMaxMs = Math.max(this.#loopLagMaxMs, lagMs);
   }
 
   addViewer(viewer: ViewerPeer): void {
@@ -962,11 +970,12 @@ export class Registry {
       teleopForwarded: this.#teleopForwarded,
       teleopDropped: this.#teleopDropped,
       carrierFailures: this.#carrierFailures,
-      framesIncomplete: this.#framesIncomplete,
+      swallowedIngress: this.#framesIncomplete,
       robotsSuperseded: this.#robotsSuperseded,
       streamCreditStalls: this.#streamCreditStalls,
       gcRuns: this.#gcRuns,
-      gcMs: this.#gcMs,
+      gcPauseMs: this.#gcPauseMs,
+      loopLagMs: { last: this.#loopLagLastMs, max: this.#loopLagMaxMs },
       rtc: this.#hub === null ? null : { ...this.#hub.stats(), framesOnTrack: this.#framesOnTrack },
       pub: {
         accepted: this.#pubAccepted,

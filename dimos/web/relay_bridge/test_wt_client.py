@@ -201,18 +201,18 @@ async def test_mailbox_drops_stale_frames_under_slow_writer() -> None:
     payloads: list[bytes] = []
     polls = 0
 
-    real_send = session.send_frame
+    real_send = session.send_frame_on
 
-    def send_frame(header: FrameHeader, payload: bytes) -> int:
+    def send_frame_on(ch: str, header: FrameHeader, payload: bytes) -> int:
         payloads.append(payload)
-        return real_send(header, payload)
+        return real_send(ch, header, payload)
 
     def stream_in_flight(stream_id: int) -> bool:
         nonlocal polls
         polls += 1
         return polls < 20  # first send stays in flight for ~20 pump polls
 
-    session.send_frame = send_frame  # type: ignore[method-assign]
+    session.send_frame_on = send_frame_on  # type: ignore[method-assign]
     session.stream_in_flight = stream_in_flight  # type: ignore[method-assign]
 
     # stale_after high enough that the wedge never triggers the reset path,
@@ -250,11 +250,12 @@ async def _spin(cond: Callable[[], bool], timeout: float = 2.5) -> None:
 
 
 async def test_latest_writer_keeps_max_in_flight_streams_on_the_wire() -> None:
-    # Without ACKs, three frames go out back to back (the budget), the
-    # fourth waits for ACK progress, and an ACK of the oldest frees a slot.
+    # Without ACKs, three frames go out back to back (the pool), the fourth
+    # waits for ACK progress, and an ACK of the oldest frees its slot, whose
+    # persistent stream the fourth frame reuses.
     session = StubSession()
-    acked: set[int] = set()
-    session.stream_in_flight = lambda sid: sid not in acked  # type: ignore[method-assign]
+    # A persistent stream is in flight while it holds unacknowledged bytes.
+    session.stream_in_flight = lambda sid: session.unacked_bytes.get(sid, 0) > 0  # type: ignore[method-assign]
     writer = _client(session).latest_writer("cam", stale_after=10.0)
     assert writer.max_in_flight == wt_client.MAX_IN_FLIGHT == 3
     try:
@@ -266,18 +267,27 @@ async def test_latest_writer_keeps_max_in_flight_streams_on_the_wire() -> None:
         assert [p for _, p in session.sent_frames] == [b"f0", b"f1", b"f2"]
         assert writer.in_flight() == 3 and writer.dropped == 0
         assert session.progress_waits > 0  # waiting on ACKs, not polling blindly
+        assert session.channel_streams == {"cam#0": 101, "cam#1": 102, "cam#2": 103}
 
-        acked.add(101)  # the first stream id the stub handed out
+        session.unacked_bytes[101] = 0  # the first slot's frame acknowledged
         await _spin(lambda: writer.sent == 4)
         assert [p for _, p in session.sent_frames][-1] == b"f3"
         assert writer.in_flight() == 3 and writer.resets == 0
+        assert session.channel_streams == {
+            "cam#0": 101,
+            "cam#1": 102,
+            "cam#2": 103,
+        }  # f3 reused slot 0's stream
+        assert writer.delivery_s is not None and writer.delivery_s < 1.0
     finally:
         writer.stop()
 
 
 async def test_latest_writer_resets_the_oldest_stale_stream_when_full() -> None:
-    # A full budget with nothing ACKed: the oldest stream is reset once it
-    # is stale_after old and a newer frame waits, never earlier.
+    # A full pool with nothing ever ACKed: the link's delivery time is
+    # unknown, so the oldest frame's stream is reset once it is 8 x
+    # stale_after old and a newer frame waits, never earlier; the slot then
+    # opens a fresh stream.
     session = StubSession()
     session.stream_in_flight = lambda sid: sid not in session.resets  # type: ignore[method-assign]
     writer = _client(session).latest_writer("cam", stale_after=0.05, max_in_flight=2)
@@ -287,12 +297,44 @@ async def test_latest_writer_resets_the_oldest_stale_stream_when_full() -> None:
         writer.offer(b"f1")
         await _spin(lambda: writer.sent == 2)
         writer.offer(b"f2")
-        await asyncio.sleep(0.02)
-        assert writer.sent == 2 and session.resets == []  # too young to reset
+        await asyncio.sleep(0.1)
+        assert (
+            writer.sent == 2 and session.resets == []
+        )  # too young: 0.4 s before the first completion
         await _spin(lambda: writer.sent == 3)
         assert session.resets == [101]  # the oldest stream, exactly once
         assert writer.resets == 1
         assert [p for _, p in session.sent_frames] == [b"f0", b"f1", b"f2"]
+        assert session.channel_streams["cam#0"] == 103  # the reset slot opened a fresh stream
+    finally:
+        writer.stop()
+
+
+async def test_latest_writer_stale_threshold_follows_the_delivery_time() -> None:
+    # A link that completes every frame in ~0.1 s with stale_after 0.05:
+    # resetting at 0.05 s would deliver nothing, so the threshold follows
+    # the measured delivery time (3 x 0.1 s) and no frame is reset.
+    session = StubSession()
+    real_send = session.send_frame_on
+
+    def slow_link(ch: str, header: FrameHeader, payload: bytes) -> int:
+        sid = real_send(ch, header, payload)
+        asyncio.get_running_loop().call_later(0.1, session.unacked_bytes.__setitem__, sid, 0)
+        return sid
+
+    session.send_frame_on = slow_link  # type: ignore[method-assign]
+    session.stream_in_flight = lambda sid: session.unacked_bytes.get(sid, 0) > 0  # type: ignore[method-assign]
+    writer = _client(session).latest_writer("cam", stale_after=0.05, max_in_flight=1)
+    try:
+        for i in range(4):
+            writer.offer(f"f{i}".encode())
+            await _spin(lambda want=i + 1: writer.sent == want)
+            await asyncio.sleep(0.03)
+            writer.offer(b"newer")  # waits behind the in-flight frame
+            await _spin(lambda want=i + 2: writer.sent == want)
+        assert session.resets == [] and writer.resets == 0
+        assert writer.delivery_s is not None and 0.08 < writer.delivery_s < 0.25
+        assert 0.25 < writer.stale_threshold() < 0.75
     finally:
         writer.stop()
 

@@ -407,8 +407,8 @@ async def test_stats_reflect_traffic(
     # A healthy reliable channel never resets anything.
     assert (odom["stalled"], odom["writing"]) == (0, False)
     # The module's shared relay has seen other tests' deliberate resets.
-    assert isinstance(stats["framesIncomplete"], int)
-    assert stats["process"]["rss"] > 0
+    assert isinstance(stats["swallowedIngress"], int)
+    assert stats["memoryUsage"]["rss"] > 0
 
 
 async def test_silent_robot_is_superseded_by_a_new_session(relay: RelayReadyInfo) -> None:

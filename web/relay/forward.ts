@@ -40,10 +40,15 @@ export const LATEST_STALL_MS = 500;
 // next one: the backlog a slow link can carry is this many frames, not the
 // stream window's worth (20 s of video at 3 fps). Two keeps the link busy
 // while the ack of the previous frame travels back. An ack that never comes
-// (a lost datagram from the Python viewer, a viewer bug) releases its frame
-// after ACK_TIMEOUT_MS, counted as `ackTimeouts`.
+// (both acks of a pair lost, which only the Python viewer's datagram acks
+// can suffer, or a viewer bug) releases its frame after ACK_TIMEOUT_MS,
+// counted as `ackTimeouts`. That is a safety net, not pacing: a frame
+// released while its predecessors are still in the stream's send buffer
+// rebuilds the backlog the budget exists to bound (a 2 s timeout put 22 s
+// of video in flight on a 2 Mbit/s link with 3% loss), and a healthy viewer
+// on any link acknowledges well inside 10 s.
 export const ACK_BUDGET = 2;
-export const ACK_TIMEOUT_MS = 2000;
+export const ACK_TIMEOUT_MS = 10_000;
 
 // One decoder for every robot frame header (fatal so corrupt UTF-8 drops the
 // frame rather than routing a mangled channel name).

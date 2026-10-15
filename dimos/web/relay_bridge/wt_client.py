@@ -89,6 +89,23 @@ MAX_IN_FLIGHT = 3
 # buffers without bound, so on a stalled relay the backlog would otherwise
 # grow until the session dies. The relay's own per-viewer reliable queue cap.
 RELIABLE_MAX_UNACKED_BYTES = 16 * 1024 * 1024
+
+# The stale reset scales with the link: the oldest in-flight frame is reset
+# once it is `stale_after` old or STALE_DELIVERY_FACTOR times the channel's
+# recent delivery time, whichever is longer. A fixed 500 ms on a link that
+# completes a frame in 600 ms would reset every frame and deliver nothing
+# (a 5 Mbit/s lossy uplink did exactly that). Before any frame has completed
+# the link's time is unknown, so the reset waits STALE_UNMEASURED_FACTOR
+# times `stale_after`.
+STALE_DELIVERY_FACTOR = 3.0
+STALE_UNMEASURED_FACTOR = 8.0
+
+
+def latest_slot_key(ch: str, slot: int) -> str:
+    """The session's stream key of a latest channel's pool slot."""
+    return f"{ch}#{slot}"
+
+
 _RELIABLE_RESET_LOG_S = 5.0
 
 
@@ -472,14 +489,18 @@ class RelayClient:
         delivery: Delivery = "reliable",
         meta: dict[str, Any] | None = None,
         ts: float | None = None,
+        slot: int | None = None,
     ) -> int:
         """Send one data frame. Returns the stream id.
 
         A reliable data channel's frames ride its persistent bidi stream,
-        back to back and in order; latest and @control frames each get a
-        one-shot stream. The frame is buffered by aioquic and delivered in
-        the background; senders that need pacing can `await
-        wait_delivered(...)`. A reliable channel's stream holding more than
+        back to back and in order. A latest frame rides the persistent
+        stream of its channel's pool slot `slot` (LatestChannelWriter keeps
+        one frame in flight per slot, so a stream never queues frames), or a
+        one-shot stream without one; @control frames each get a one-shot
+        stream. The frame is buffered by aioquic and delivered in the
+        background; senders that need pacing can `await wait_delivered(...)`.
+        A reliable channel's stream holding more than
         RELIABLE_MAX_UNACKED_BYTES is reset (the viewer sees a seq gap),
         counted in `reliable_resets` and logged, and the frame opens a fresh
         one.
@@ -488,6 +509,8 @@ class RelayClient:
         header = FrameHeader(
             ch=ch, seq=seq, ts=time.time() if ts is None else ts, delivery=delivery, meta=meta
         )
+        if delivery == "latest" and slot is not None and ch != CONTROL_CHANNEL:
+            return self._session.send_frame_on(latest_slot_key(ch, slot), header, payload)
         if delivery != "reliable" or ch == CONTROL_CHANNEL:
             return self._session.send_frame(header, payload)
         stream_id = self._session.channel_stream(ch)
@@ -508,6 +531,11 @@ class RelayClient:
                     f"resetting its stream ({self.reliable_resets[ch]} resets so far)"
                 )
         return self._session.send_frame_on(ch, header, payload)
+
+    def drop_latest_slot(self, ch: str, slot: int) -> None:
+        """Forget a latest pool slot's stream after its reset; the slot's next
+        frame opens a fresh one."""
+        self._session.drop_channel_stream(latest_slot_key(ch, slot))
 
     async def wait_delivered(self, stream_id: int, timeout: float = 10.0) -> bool:
         """True once the frame on `stream_id` is fully ACKed."""
@@ -582,14 +610,19 @@ class RelayClient:
 
 class LatestChannelWriter:
     """Latest-wins channel writer: a 1-slot pending frame and a delivery-paced
-    sender with `max_in_flight` streams on the wire.
+    sender with a pool of `max_in_flight` persistent streams, one frame in
+    flight per stream.
 
     `offer()` never blocks; a frame offered while the pending slot is taken
-    replaces it (counted in `dropped`). Frames go out at once while fewer than
-    `max_in_flight` streams are unACKed; past that the pump waits for ACK
-    progress, and once the oldest in-flight stream is `stale_after` old with
-    a newer frame waiting it is reset to make room (receivers discard the
-    partial frame).
+    replaces it (counted in `dropped`). Frames go out at once while a pool
+    slot is idle (its last frame ACKed); past that the pump waits for ACK
+    progress, and once the oldest in-flight frame is stale (`stale_after`,
+    or longer on a link whose frames take longer, see STALE_DELIVERY_FACTOR)
+    with a newer frame waiting its stream is reset to make room (receivers
+    discard the partial frame) and the slot opens a fresh one. One frame per
+    stream means a loss on one never holds another, and no stream is created
+    per frame: on Deno 2.6.10 each stream's wrapper leaks for the
+    connection's life.
     """
 
     def __init__(
@@ -611,8 +644,11 @@ class LatestChannelWriter:
         self.resets = 0
         self._pending: tuple[bytes, dict[str, Any] | None, float | None] | None = None
         self._offered = asyncio.Event()
-        # (stream id, send time) in send order; pruned as ACKs land.
-        self._in_flight: deque[tuple[int, float]] = deque()
+        # (stream id, send time, pool slot) in send order; pruned as ACKs land.
+        self._in_flight: deque[tuple[int, float, int]] = deque()
+        # The channel's recent delivery time (send to ACK), smoothed; None
+        # until a frame completes.
+        self.delivery_s: float | None = None
         self._task = asyncio.create_task(self._pump())
         self._task.add_done_callback(self._on_pump_done)
 
@@ -648,10 +684,28 @@ class LatestChannelWriter:
         self._task.cancel()
 
     def in_flight(self) -> int:
-        """Streams sent and not yet ACKed (or reset)."""
+        """Frames sent and not yet ACKed (or reset)."""
         session = self._client._session
-        self._in_flight = deque(e for e in self._in_flight if session.stream_in_flight(e[0]))
-        return len(self._in_flight)
+        now = time.monotonic()
+        live: deque[tuple[int, float, int]] = deque()
+        for stream_id, sent_at, slot in self._in_flight:
+            if session.stream_in_flight(stream_id):
+                live.append((stream_id, sent_at, slot))
+            else:
+                # Delivered (a reset leaves the deque before it is issued).
+                took = now - sent_at
+                self.delivery_s = (
+                    took if self.delivery_s is None else 0.7 * self.delivery_s + 0.3 * took
+                )
+        self._in_flight = live
+        return len(live)
+
+    def stale_threshold(self) -> float:
+        """How old the oldest in-flight frame may be, with a newer one waiting,
+        before its stream is reset."""
+        if self.delivery_s is None:
+            return self.stale_after * STALE_UNMEASURED_FACTOR
+        return max(self.stale_after, STALE_DELIVERY_FACTOR * self.delivery_s)
 
     async def _pump(self) -> None:
         session = self._client._session
@@ -669,22 +723,25 @@ class LatestChannelWriter:
                 if self.in_flight() < self.max_in_flight:
                     payload, meta, ts = self._pending
                     self._pending = None
+                    busy = {slot for _, _, slot in self._in_flight}
+                    slot = next(s for s in range(self.max_in_flight) if s not in busy)
                     stream_id = self._client.send_frame(
-                        self.ch, payload, delivery="latest", meta=meta, ts=ts
+                        self.ch, payload, delivery="latest", meta=meta, ts=ts, slot=slot
                     )
                     self.sent += 1
-                    self._in_flight.append((stream_id, time.monotonic()))
+                    self._in_flight.append((stream_id, time.monotonic(), slot))
                     continue
-                # The budget is full and a newer frame waits: an ACK frees a
-                # slot, or the oldest stream is reset once stale. The
+                # The pool is busy and a newer frame waits: an ACK frees a
+                # slot, or the oldest frame's stream is reset once stale. The
                 # membership recheck inside reset_if_in_flight shares this
                 # event-loop turn (required, see docs/web/protocol.md).
-                oldest_id, sent_at = self._in_flight[0]
-                remaining = sent_at + self.stale_after - time.monotonic()
+                oldest_id, sent_at, slot = self._in_flight[0]
+                remaining = sent_at + self.stale_threshold() - time.monotonic()
                 if remaining <= 0:
                     self._in_flight.popleft()
                     if session.reset_if_in_flight(oldest_id):
                         self.resets += 1
+                    self._client.drop_latest_slot(self.ch, slot)
                     continue
                 await session.wait_delivery_progress(remaining)
         finally:

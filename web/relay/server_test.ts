@@ -696,9 +696,10 @@ Deno.test({
     assertEquals(typeof viewerStats.channels.odom.fps, "number");
     assert(stats.perRobot[ROBOT.id].channels.odom.bytesIn > 0);
     assertEquals(typeof stats.perRobot[ROBOT.id].channels.odom.bps, "number");
-    assertEquals(stats.framesIncomplete, 0);
+    assertEquals(stats.swallowedIngress, 0);
     assertEquals(stats.streamCreditStalls, 0);
-    assert(stats.process.rss > 0 && stats.process.heapUsed > 0 && stats.process.uptimeMs >= 0);
+    assert(stats.memoryUsage.rss > 0 && stats.memoryUsage.heapUsed > 0 && stats.uptimeMs >= 0);
+    assert(stats.loopLagMs.last >= 0 && stats.loopLagMs.max >= stats.loopLagMs.last);
   });
 
   /** Expect one robot hello attempt to be rejected with `code` + close. */
