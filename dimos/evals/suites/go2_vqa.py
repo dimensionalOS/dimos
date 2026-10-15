@@ -15,9 +15,9 @@
 """Generated VQA suite over the go2 replays.
 
 Rows (``go2_vqa.json``) are pure data emitted by
-:mod:`dimos.evals.suites.lib.generate` — ground truth computed analytically
-from odom, quizzing the encoded odom summary. Typing and scoring live here;
-the JSON stays behavior-free.
+:mod:`dimos.evals.vqa.odom_rows` (``displacement`` / ``path_length``) — ground
+truth computed analytically from odom, quizzing the encoded odom summary.
+Typing and scoring live here; the JSON stays behavior-free.
 """
 
 from __future__ import annotations
