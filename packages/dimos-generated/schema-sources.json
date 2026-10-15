@@ -1,0 +1,343 @@
+{
+  "format": 1,
+  "sources": [
+    {
+      "repository": "ros2/common_interfaces",
+      "revision": "a941f14bb318d8d904505ed935ccbb97f24a70a4",
+      "url": "https://codeload.github.com/ros2/common_interfaces/tar.gz/a941f14bb318d8d904505ed935ccbb97f24a70a4",
+      "sha256": "4140cc780aec296bcd88c3049ba541783d40fbb7dd0e5919e621a85e314416ba",
+      "prefix": "common_interfaces-a941f14bb318d8d904505ed935ccbb97f24a70a4/",
+      "files": {
+        "licenses/ros2_common_interfaces_geometry_msgs_LICENSE": {
+          "path": "geometry_msgs/LICENSE",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        },
+        "geometry_msgs/msg/Point.msg": {
+          "path": "geometry_msgs/msg/Point.msg",
+          "sha256": "eb4c07e591cf0269ccb17245dcd4f998162feb09cc8add85fa082c8a30bfc91d"
+        },
+        "geometry_msgs/msg/Point32.msg": {
+          "path": "geometry_msgs/msg/Point32.msg",
+          "sha256": "acade2dacb4f1f7988f34e8221079eb1c757f51e8ef48adb5651f7dc478fed59"
+        },
+        "geometry_msgs/msg/PointStamped.msg": {
+          "path": "geometry_msgs/msg/PointStamped.msg",
+          "sha256": "c58b03c27604f45e9b0fd2f1b327dcbada7d6a389beb8c060d448abc25e76bfc"
+        },
+        "geometry_msgs/msg/Polygon.msg": {
+          "path": "geometry_msgs/msg/Polygon.msg",
+          "sha256": "43679118501e3b294349c9ad73af9f03b476ef77c7096cd79b4ce46646823056"
+        },
+        "geometry_msgs/msg/Pose.msg": {
+          "path": "geometry_msgs/msg/Pose.msg",
+          "sha256": "3eceb77c63ebbb544c11d7f991e475e9819e0cf534deb1a879392c1b3dc997de"
+        },
+        "geometry_msgs/msg/PoseArray.msg": {
+          "path": "geometry_msgs/msg/PoseArray.msg",
+          "sha256": "3f58a91730c78dbc5ec5092131945ccdfeeb775aa0f02df7ff09f6c979b1d398"
+        },
+        "geometry_msgs/msg/PoseStamped.msg": {
+          "path": "geometry_msgs/msg/PoseStamped.msg",
+          "sha256": "31898ab0eb64a6c44c27ab4959819a32ec3bc3ee847c8fe1b01c897d48e311e5"
+        },
+        "geometry_msgs/msg/PoseWithCovariance.msg": {
+          "path": "geometry_msgs/msg/PoseWithCovariance.msg",
+          "sha256": "a22f234e91b9fcd4ba0c5b533496b43c62d7f6ade39082212ac9835679d29f94"
+        },
+        "geometry_msgs/msg/Quaternion.msg": {
+          "path": "geometry_msgs/msg/Quaternion.msg",
+          "sha256": "298495eb67a139642ffd37cc9029eae085e6c39a8789828b7517868a487939ed"
+        },
+        "geometry_msgs/msg/Transform.msg": {
+          "path": "geometry_msgs/msg/Transform.msg",
+          "sha256": "c8916279f0a429dd9561158bd2133bc4e2d780277c3c594116b240a27e7a2993"
+        },
+        "geometry_msgs/msg/TransformStamped.msg": {
+          "path": "geometry_msgs/msg/TransformStamped.msg",
+          "sha256": "f6e137c205e9187ac1dafdfbace7435de58bb3779a55e9c6b52c2cb513785c42"
+        },
+        "geometry_msgs/msg/Twist.msg": {
+          "path": "geometry_msgs/msg/Twist.msg",
+          "sha256": "ed471ef861f65af991b1f64d66ef941dd41dd4c0702f6222512b1a16c62d58b0"
+        },
+        "geometry_msgs/msg/TwistStamped.msg": {
+          "path": "geometry_msgs/msg/TwistStamped.msg",
+          "sha256": "ffc9d5925412410b28d601c55cf386a0b3e4d5dba00920fbafb98d7201f582ca"
+        },
+        "geometry_msgs/msg/TwistWithCovariance.msg": {
+          "path": "geometry_msgs/msg/TwistWithCovariance.msg",
+          "sha256": "5690a1f109d4962c73b5ca7f3673c48052d02f37b6a38fe2fb37c899cf555c45"
+        },
+        "geometry_msgs/msg/Vector3.msg": {
+          "path": "geometry_msgs/msg/Vector3.msg",
+          "sha256": "d8b9ea9aad1f424faf4d2b94dae1e1368af1e5d59de11aeed019399cff7f9e1d"
+        },
+        "geometry_msgs/msg/Wrench.msg": {
+          "path": "geometry_msgs/msg/Wrench.msg",
+          "sha256": "d9667abd3d2a67d5624113fa07a647b0d4806bf89d21c8a5cf914905a036bf25"
+        },
+        "licenses/ros2_common_interfaces_nav_msgs_LICENSE": {
+          "path": "nav_msgs/LICENSE",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        },
+        "nav_msgs/msg/MapMetaData.msg": {
+          "path": "nav_msgs/msg/MapMetaData.msg",
+          "sha256": "6868a7d604c6cc033dd0adfac8a0adb0a6dedae1b7b140dbb47c83f3bcc6f140"
+        },
+        "nav_msgs/msg/OccupancyGrid.msg": {
+          "path": "nav_msgs/msg/OccupancyGrid.msg",
+          "sha256": "3e54ec7e662bdd6d5528efab99c6e34ce3eed27ce628721fcdb4e5e1bbf8188b"
+        },
+        "nav_msgs/msg/Odometry.msg": {
+          "path": "nav_msgs/msg/Odometry.msg",
+          "sha256": "bb00547ddf498cdbae46fd991d9d85a59f507e12e7cf01fb18a86f1111524f4f"
+        },
+        "nav_msgs/msg/Path.msg": {
+          "path": "nav_msgs/msg/Path.msg",
+          "sha256": "fc1e2eff6c2bd63fb92b6cf29bad29873b026d7abe00d3a68965b40668bfdd5b"
+        },
+        "licenses/ros2_common_interfaces_sensor_msgs_LICENSE": {
+          "path": "sensor_msgs/LICENSE",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        },
+        "sensor_msgs/msg/BatteryState.msg": {
+          "path": "sensor_msgs/msg/BatteryState.msg",
+          "sha256": "ce13430f3c107274fb7123a6d1e79a9f83974d78cb0be1721695129e49240b25"
+        },
+        "sensor_msgs/msg/CameraInfo.msg": {
+          "path": "sensor_msgs/msg/CameraInfo.msg",
+          "sha256": "1fced83678f5f2708aff8540987594692452de9f0b43905ce3bfba689226f3aa"
+        },
+        "sensor_msgs/msg/CompressedImage.msg": {
+          "path": "sensor_msgs/msg/CompressedImage.msg",
+          "sha256": "75ca1003981c407148ff94a3470760985dd69233b8287a5d52848d45a312f144"
+        },
+        "sensor_msgs/msg/Image.msg": {
+          "path": "sensor_msgs/msg/Image.msg",
+          "sha256": "575cd3434771916c2b551db8ac484522ecef1d6105196e043a305887d2730704"
+        },
+        "sensor_msgs/msg/Imu.msg": {
+          "path": "sensor_msgs/msg/Imu.msg",
+          "sha256": "5800b7c2e6d3afed966ae229b1559f6e762c792ad34a88e55ad4288d8bbbd34b"
+        },
+        "sensor_msgs/msg/JointState.msg": {
+          "path": "sensor_msgs/msg/JointState.msg",
+          "sha256": "711d1771a002c7190e5bbe746a163a67477c1e2a45482a64f1fe339815ca6f5d"
+        },
+        "sensor_msgs/msg/Joy.msg": {
+          "path": "sensor_msgs/msg/Joy.msg",
+          "sha256": "5a7d133e7dc82f531e03bd4ff92c9240a828bb6ceb6f19d5cd767d5372adb757"
+        },
+        "sensor_msgs/msg/PointCloud2.msg": {
+          "path": "sensor_msgs/msg/PointCloud2.msg",
+          "sha256": "22699bfd6c68be148363a2e889408833a5a37d3464ea20032d1c757336b80f2a"
+        },
+        "sensor_msgs/msg/PointField.msg": {
+          "path": "sensor_msgs/msg/PointField.msg",
+          "sha256": "6e6d5d51d2e464d3074b44b112f219e67fcdc0b280260d93f8cefd9710ec972e"
+        },
+        "sensor_msgs/msg/RegionOfInterest.msg": {
+          "path": "sensor_msgs/msg/RegionOfInterest.msg",
+          "sha256": "9c07010ab5ffddd1202876a778b44c99cafa780bc0503041c3fd935870a14c6a"
+        },
+        "licenses/ros2_common_interfaces_shape_msgs_LICENSE": {
+          "path": "shape_msgs/LICENSE",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        },
+        "shape_msgs/msg/SolidPrimitive.msg": {
+          "path": "shape_msgs/msg/SolidPrimitive.msg",
+          "sha256": "b3ec61569b2b4e2c37428e0625d4a360c00c95fc9ad4c94f9c8399225b98b2d8"
+        },
+        "licenses/ros2_common_interfaces_std_msgs_LICENSE": {
+          "path": "std_msgs/LICENSE",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        },
+        "std_msgs/msg/Bool.msg": {
+          "path": "std_msgs/msg/Bool.msg",
+          "sha256": "d989b95f2ba14d15eff5b274b5d1f379b938aaea2157d8bd707f942457ae18bf"
+        },
+        "std_msgs/msg/Empty.msg": {
+          "path": "std_msgs/msg/Empty.msg",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "std_msgs/msg/Float32.msg": {
+          "path": "std_msgs/msg/Float32.msg",
+          "sha256": "fb905efdb5c7902255cad5a6e4953158384238d4652d9e7ed68d134da052f3af"
+        },
+        "std_msgs/msg/Header.msg": {
+          "path": "std_msgs/msg/Header.msg",
+          "sha256": "d2cea14630e39ed0fa5b432ba9160a7c38855b9427d3344f99e83e83facb53c2"
+        },
+        "std_msgs/msg/Int32.msg": {
+          "path": "std_msgs/msg/Int32.msg",
+          "sha256": "4614a6d0154436fb9ff12b0b7637816f42a550e4f5e0c4705bedf11293b4f7a7"
+        },
+        "std_msgs/msg/Int64.msg": {
+          "path": "std_msgs/msg/Int64.msg",
+          "sha256": "117752e7d1f0e4709749c04a9251dcece8545c0dac7bbb6fb8f31262d6ace238"
+        },
+        "std_msgs/msg/Int8.msg": {
+          "path": "std_msgs/msg/Int8.msg",
+          "sha256": "2ad86a195e6c5d3415b5b48f4c248c45bfe05d636735f88d821c44ab660c7f6f"
+        },
+        "std_msgs/msg/MultiArrayDimension.msg": {
+          "path": "std_msgs/msg/MultiArrayDimension.msg",
+          "sha256": "94927d0ee40f1a1d9bf7bdddbca803e8b6e6d315d70c7295a9b0d2d6c380abed"
+        },
+        "std_msgs/msg/MultiArrayLayout.msg": {
+          "path": "std_msgs/msg/MultiArrayLayout.msg",
+          "sha256": "8f059b66610c5fe0532e3f12ff1022a10671caebf773f00816fd4c9303626914"
+        },
+        "std_msgs/msg/String.msg": {
+          "path": "std_msgs/msg/String.msg",
+          "sha256": "2022b3f1c32b578ff8d54a9948a51a10778761e0ad4ba60e50ae51292ca16884"
+        },
+        "std_msgs/msg/UInt32.msg": {
+          "path": "std_msgs/msg/UInt32.msg",
+          "sha256": "4db7deaede98bebcc6ddfa951cf4d55aaad57909f38a8c346a12ae25df2e58ae"
+        },
+        "std_msgs/msg/UInt32MultiArray.msg": {
+          "path": "std_msgs/msg/UInt32MultiArray.msg",
+          "sha256": "3a25d8463602c0f3eff61a14c3c17c10ef819aadf7ef19179e95cfdaea07b3ce"
+        },
+        "licenses/ros2_common_interfaces_trajectory_msgs_LICENSE": {
+          "path": "trajectory_msgs/LICENSE",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        },
+        "trajectory_msgs/msg/JointTrajectory.msg": {
+          "path": "trajectory_msgs/msg/JointTrajectory.msg",
+          "sha256": "d63cda4a5ec81824ed4acd737e6b5903449fb1a7e2f5cdcdcc4c49285f01117c"
+        },
+        "trajectory_msgs/msg/JointTrajectoryPoint.msg": {
+          "path": "trajectory_msgs/msg/JointTrajectoryPoint.msg",
+          "sha256": "2358055d26d27c0c302e921f90d5aa59cb5feb3e22937f8ac98314b0c52ba8f4"
+        },
+        "licenses/ros2_common_interfaces_visualization_msgs_LICENSE": {
+          "path": "visualization_msgs/LICENSE",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        }
+      }
+    },
+    {
+      "repository": "ros2/rcl_interfaces",
+      "revision": "7aa3caf43377ea6ad615bc1040832e2c7566bfbe",
+      "url": "https://codeload.github.com/ros2/rcl_interfaces/tar.gz/7aa3caf43377ea6ad615bc1040832e2c7566bfbe",
+      "sha256": "d984942035cd4df4f60c92d6038cecbfc3f5a01a1977c1b3199cee45cd67281c",
+      "prefix": "rcl_interfaces-7aa3caf43377ea6ad615bc1040832e2c7566bfbe/",
+      "files": {
+        "builtin_interfaces/msg/Duration.msg": {
+          "path": "builtin_interfaces/msg/Duration.msg",
+          "sha256": "57da13a4201e7d258a2931323145b953e47e46967494e62ba66c2faca4fbade2"
+        },
+        "builtin_interfaces/msg/Time.msg": {
+          "path": "builtin_interfaces/msg/Time.msg",
+          "sha256": "dc5a01ddde3aecffee21eb24974fe77cc969f873218a2b1811aa0ac8a456b8bd"
+        },
+        "licenses/ros2_rcl_interfaces_licenses_ros2_rcl_interfaces_LICENSE": {
+          "path": "LICENSE",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        }
+      }
+    },
+    {
+      "repository": "ros2/geometry2",
+      "revision": "f702874b1c8535d6a038230ab2cda0ba5d521ebd",
+      "url": "https://codeload.github.com/ros2/geometry2/tar.gz/f702874b1c8535d6a038230ab2cda0ba5d521ebd",
+      "sha256": "d24c3fb17cc0087b2fc7f0afac28ad74eee20c988aca4247c201f76a7031f621",
+      "prefix": "geometry2-f702874b1c8535d6a038230ab2cda0ba5d521ebd/",
+      "files": {
+        "licenses/ros2_geometry2_licenses_ros2_geometry2_LICENSE": {
+          "path": "LICENSE",
+          "sha256": "1b1e5ebcad699924203feced7205a4bbdf4f153d34065a19a8a4e107cf1e154b"
+        },
+        "tf2_msgs/msg/TFMessage.msg": {
+          "path": "tf2_msgs/msg/TFMessage.msg",
+          "sha256": "f3fca610a59b31ee4c7b740522ecdd0fd8c76002170088111409e4df513f1dfc"
+        }
+      }
+    },
+    {
+      "repository": "ros-perception/vision_msgs",
+      "revision": "adbf56af9f77e3c8ab2552e25dc99e4a8a77fb27",
+      "url": "https://codeload.github.com/ros-perception/vision_msgs/tar.gz/adbf56af9f77e3c8ab2552e25dc99e4a8a77fb27",
+      "sha256": "a2bd8a8a5b09eb2ed1c94f3bd163aafabced23df107a414414dfcb1f57358971",
+      "prefix": "vision_msgs-adbf56af9f77e3c8ab2552e25dc99e4a8a77fb27/",
+      "files": {
+        "licenses/ros-perception_vision_msgs_licenses_ros-perception_vision_msgs_LICENSE": {
+          "path": "LICENSE",
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+        },
+        "vision_msgs/msg/BoundingBox2D.msg": {
+          "path": "vision_msgs/msg/BoundingBox2D.msg",
+          "sha256": "74ed6347e3c8f74b884a81c5a36925c0e320836c1a5ea55df2b8d03574cc25b1"
+        },
+        "vision_msgs/msg/BoundingBox3D.msg": {
+          "path": "vision_msgs/msg/BoundingBox3D.msg",
+          "sha256": "30502a6e247a84d87b4c2c0262fd07ce6ba3fa8d6d24e6e39c1522d7e469c450"
+        },
+        "vision_msgs/msg/Detection2D.msg": {
+          "path": "vision_msgs/msg/Detection2D.msg",
+          "sha256": "868ffec733235c01bb5bfba3f3c528f193ea0fb3069650aaf95383a7fa9a8200"
+        },
+        "vision_msgs/msg/Detection2DArray.msg": {
+          "path": "vision_msgs/msg/Detection2DArray.msg",
+          "sha256": "bb2eeef88b466103b89a7ae9f927164d2064e9d94e8455bb98ad2b69130331ae"
+        },
+        "vision_msgs/msg/Detection3D.msg": {
+          "path": "vision_msgs/msg/Detection3D.msg",
+          "sha256": "68885eeededfc57231f171f2b3eb97f0d0a18580ca08307bc60b9b87216df985"
+        },
+        "vision_msgs/msg/Detection3DArray.msg": {
+          "path": "vision_msgs/msg/Detection3DArray.msg",
+          "sha256": "077f34a634e6de6654265af5b26508eea1105bef72395cffae50fde61b713c41"
+        },
+        "vision_msgs/msg/ObjectHypothesis.msg": {
+          "path": "vision_msgs/msg/ObjectHypothesis.msg",
+          "sha256": "6224cb18c032fe062d18859089444f4e1f311ab478e45d937fdfac18a980695b"
+        },
+        "vision_msgs/msg/ObjectHypothesisWithPose.msg": {
+          "path": "vision_msgs/msg/ObjectHypothesisWithPose.msg",
+          "sha256": "162639c82b24a8fc4f3e93a4dc91704928d5cff9d39d169515bb748eccf4d573"
+        },
+        "vision_msgs/msg/Point2D.msg": {
+          "path": "vision_msgs/msg/Point2D.msg",
+          "sha256": "6b99220dccc3193a603fb40d6a2880b4de67fb2175121c5683d0bde9f71e3733"
+        },
+        "vision_msgs/msg/Pose2D.msg": {
+          "path": "vision_msgs/msg/Pose2D.msg",
+          "sha256": "0cdb3bc9872a5c3379a5122c14d03ec13d59b92752d3b444cc41592492258ab2"
+        }
+      }
+    },
+    {
+      "repository": "ros2/rosidl",
+      "revision": "85fa592b698b0f665e3120f48fac0d35e2f7d8a4",
+      "url": "https://codeload.github.com/ros2/rosidl/tar.gz/85fa592b698b0f665e3120f48fac0d35e2f7d8a4",
+      "sha256": "ba5369bca27297f606bf3396a9e066140d07ce754d8659159148102b089e9510",
+      "prefix": "rosidl-85fa592b698b0f665e3120f48fac0d35e2f7d8a4/",
+      "files": {
+        "licenses/ros2_rosidl_licenses_ros2_rosidl_LICENSE": {
+          "path": "LICENSE",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        }
+      }
+    },
+    {
+      "repository": "foxglove/schemas",
+      "revision": "e86a94e9d4d259cdde71872f18336a7a055bf9ba",
+      "url": "https://codeload.github.com/foxglove/schemas/tar.gz/e86a94e9d4d259cdde71872f18336a7a055bf9ba",
+      "sha256": "dcfa8049d34214bd26d7a13f6a7da214e08228a65a0135bac52077c1ca12cf47",
+      "prefix": "foxglove-sdk-e86a94e9d4d259cdde71872f18336a7a055bf9ba/",
+      "files": {
+        "foxglove_msgs/msg/CompressedVideo.msg": {
+          "path": "schemas/ros2/CompressedVideo.msg",
+          "sha256": "83d044efaefc90291cdd56cd36b2ef6b190748c1df860d1eca7df77328174324"
+        },
+        "licenses/foxglove_schemas_licenses_foxglove_schemas_LICENSE": {
+          "path": "LICENSE",
+          "sha256": "da11235665c17d4c1634072dae92b8ba1b38d6fdde2ccf19a6bbede33253f58d"
+        }
+      }
+    }
+  ]
+}

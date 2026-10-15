@@ -100,6 +100,8 @@ classifiers = [
 ]
 
 dependencies = [
+    "dimos-generated==0.1.0",
+    "dimos-cdrgen==0.1.0",
     "matplotlib>=3.7.1", # Rerun initializes point-cloud colormaps for all streams.
     # Transport Protocols
     "dimos-lcm>=0.1.4",
@@ -380,6 +382,9 @@ all = [
 ]
 
 [dependency-groups]
+# Lightweight, locked environment for deterministic built-in source alignment.
+message-codegen = ["dimos-cdrgen[prepare]==0.1.0", "ruff==0.14.3", "pytest==8.3.5", "rosbags==0.11.0", "tomli>=2; python_version < '3.11'"]
+
 # For autofix.yml
 autofix = ["ruff==0.14.3"]
 
@@ -555,6 +560,7 @@ override-dependencies = [
 ]
 
 [tool.uv.sources]
+dimos-generated = { path = "packages/dimos-generated", editable = true }
 # CUDA builds are not published for macOS or non-x86_64 Linux. Those platforms
 # fall back to PyPI.
 torch = [

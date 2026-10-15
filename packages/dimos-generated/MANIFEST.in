@@ -1,0 +1,3 @@
+include pyproject.toml setup.py catalog.json schema-sources.json
+prune build
+global-exclude __pycache__ *.pyc

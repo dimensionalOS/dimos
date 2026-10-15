@@ -122,6 +122,7 @@ jobs:
       CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_34  # open3d>=0.19 requires glibc 2.31+
       CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_34  # open3d>=0.19 requires glibc 2.31+
       # Asserts the packaged relay + Cockpit and serves them from the installed wheel.
+      CIBW_BEFORE_TEST: "pip install {project}/wheelhouse/dimos_generated-*.whl"
       CIBW_TEST_COMMAND: "python {project}/.github/scripts/wheel_smoke.py"
       MACOSX_DEPLOYMENT_TARGET: "11.0"
     steps:
@@ -129,6 +130,11 @@ jobs:
         uses: actions/checkout@v7
       - name: Build cockpit dist  # setup.py copies it into the wheel's _relay_dist
         uses: ./.github/actions/build-cockpit
+      - name: Prepare the curated message wheel
+        run: |
+          python -m pip install uv
+          uv run --no-project --with "dimos-cdrgen[prepare]==0.1.0" python -m scripts.prepare_builtin_sources
+          uv build --wheel --out-dir wheelhouse packages/dimos-generated
       - name: Build wheels
         uses: pypa/cibuildwheel@v4.2.1
       - name: Attestation
