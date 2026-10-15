@@ -427,6 +427,7 @@ html[data-mode="sim"] .side-panel {
   font-size: 10px;
   padding: 1px 5px;
 }
+#sim-object-annotations { pointer-events: auto; }
 /* Dimos-only: hide the sim side panel + command bar + top-left status
    pill (the small "Click to look around" + B/G chip is the human-player
    prompt; the agent is driven externally).  Bottom-left WASD shortcuts
