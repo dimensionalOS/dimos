@@ -15,6 +15,7 @@
 """Use an application-local generated message in a Python module and file relay."""
 
 import argparse
+import os
 from pathlib import Path
 import subprocess
 
@@ -80,7 +81,10 @@ def main() -> None:
         )
         subprocess.run(
             [
-                str(args.build / "rust/target/debug/story-consumer"),
+                str(
+                    Path(os.environ.get("CARGO_TARGET_DIR", args.build / "rust/target"))
+                    / "debug/story-consumer"
+                ),
                 str(evidence / "cpp.cdr"),
                 str(evidence / "rust.cdr"),
             ],

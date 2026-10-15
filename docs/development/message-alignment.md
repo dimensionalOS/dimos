@@ -1,12 +1,11 @@
 # Verify prepared built-in inputs and artifacts
 
-PR1 owns the generic source-package hooks, dependency ownership and pinned source
-preparation. PR2 owns `packages/dimos-generated/custom`, `catalog.json`,
+The published `dimos-cdrgen` package owns generic source-package hooks, dependency
+ownership and source preparation. DimOS owns `packages/dimos-generated/custom`, `catalog.json`,
 `schema-sources.json`, package metadata and thin preparation/release entrypoints.
 There is no committed generated snapshot or bulk upstream catalog.
 
 ```sh skip
-python scripts/prepare_message_parser.py
 python -m scripts.prepare_builtin_sources
 python -m scripts.generate_builtin_messages
 python -m scripts.generate_builtin_messages --check
