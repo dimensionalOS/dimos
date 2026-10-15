@@ -25,6 +25,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator, Sequence
 import importlib
 import json
+import os
 from pathlib import Path
 import subprocess
 from typing import Annotated, Any, Literal
@@ -47,6 +48,13 @@ KILL_AGENT_PROCESSES = (
 )
 # Where the robot container sees this case's output dir, e.g. to log ground truth for grading.
 CASE_MOUNT = "/case"
+# Where a robot running on the host (--robot-on-host) finds its case directory instead.
+CASE_DIR_ENV = "DIMOS_SANDBOX_CASE_DIR"
+
+
+def robot_case_dir() -> str:
+    """The case directory as the robot sees it: mounted in its container, or on the host."""
+    return os.environ.get(CASE_DIR_ENV, CASE_MOUNT)
 
 
 class FunctionRef(BaseModel):

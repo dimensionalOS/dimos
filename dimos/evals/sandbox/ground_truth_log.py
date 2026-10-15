@@ -27,17 +27,18 @@ import threading
 from typing import IO
 
 from dim_go2_sim import Contacts
+from pydantic import Field
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
-from dimos.evals.sandbox.case import CASE_MOUNT
+from dimos.evals.sandbox.case import robot_case_dir
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 
 class GroundTruthLogConfig(ModuleConfig):
-    path: str = f"{CASE_MOUNT}/ground_truth.jsonl"
+    path: str = Field(default_factory=lambda: f"{robot_case_dir()}/ground_truth.jsonl")
     pose_hz: float = 10.0
 
 

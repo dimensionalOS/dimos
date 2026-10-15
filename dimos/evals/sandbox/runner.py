@@ -39,7 +39,9 @@ import os
 from pathlib import Path
 import re
 import shutil
+import signal
 import subprocess
+import sys
 import tempfile
 import time
 from typing import Any
@@ -55,6 +57,7 @@ from dimos.evals.constants import MAX_TOOL_SECONDS, PROVIDERS
 from dimos.evals.runner import _git_record, _write_trajectory, summarize
 from dimos.evals.sandbox.case import (
     AGENT_IMAGE,
+    CASE_DIR_ENV,
     CASE_MOUNT,
     KILL_AGENT_PROCESSES,
     ROBOT_ENDPOINT,
@@ -76,6 +79,8 @@ logger = setup_logger()
 PROXY_PORT = 8080
 # The robot container's cache, kept on this machine between cases.
 ROBOT_CACHE = CACHE_DIR / "evals" / "sandbox_robot"
+# Where a robot run on the host (robot_on_host) serves its router; zenoh's own port.
+HOST_ROBOT_PORT = 7447
 # Inside the agent container: the harness files, and where Pi works.
 HARNESS = "/opt/harness"
 # What the done tool answers when its arguments validate; the runner looks for it.
@@ -108,11 +113,15 @@ class SandboxRunner:
         agent: SandboxAgent,
         *,
         robot: ExternalRobot | None = None,
+        robot_on_host: bool = False,
         resume_from: Path | None = None,
         resume_message: str = "",
         out_dir: Path = STATE_DIR / "evals",
     ) -> None:
         """*robot* replaces every case's robot, e.g. a real robot in place of a blueprint.
+
+        *robot_on_host* runs each case's blueprint on this machine instead of in the robot
+        container, e.g. for its GPU (Docker on a Mac has none); the agent stays contained.
 
         *resume_from*, an earlier run's directory, continues each case's Pi session there with
         *resume_message* as the next user turn, on a fresh robot, in a copy of its /root/work.
@@ -121,6 +130,7 @@ class SandboxRunner:
             raise ValueError("resuming needs a message for the agent")
         self.agent = agent
         self.robot_override = robot
+        self.robot_on_host = robot_on_host
         self.resume_from = resume_from
         self.resume_message = resume_message
         self.out_dir = out_dir
@@ -171,6 +181,11 @@ class SandboxRunner:
             self.robot_override if case.robot is not None and self.robot_override else case.robot
         )
         project = re.sub(r"[^a-z0-9_-]", "-", f"{self.run_dir.name}-{case.id}".lower())
+        if self.robot_on_host and isinstance(robot, DimosRobot):
+            host_robot = _start_host_robot(robot, case_dir)
+            robot = ExternalRobot(connect=(f"tcp/host.docker.internal:{HOST_ROBOT_PORT}",))
+        else:
+            host_robot = None
         compose_file = case_dir / "compose.json"
         self._write_harness(case, case_dir / "harness")
         previous = self.resume_from / case.id if self.resume_from else None
@@ -222,6 +237,8 @@ class SandboxRunner:
             subprocess.run(
                 [*compose, "down", "-v", "--remove-orphans", "-t", "5"], capture_output=True
             )
+            if host_robot is not None:
+                _stop_host_robot(host_robot)
 
     def _write_harness(self, case: SandboxCase, harness: Path) -> None:
         """Pi's extensions, mounted into the agent container at HARNESS."""
@@ -492,6 +509,41 @@ def _robot_service(robot: Robot, case_dir: Path) -> dict[str, Any]:
         # A robot on this machine's own ports, e.g. tcp/host.docker.internal:7447.
         "extra_hosts": ["host.docker.internal:host-gateway"],
     }
+
+
+def _start_host_robot(robot: DimosRobot, case_dir: Path) -> subprocess.Popen[bytes]:
+    """`dimos evals robot` for *robot* on this machine, its case directory there."""
+    forward = [a for endpoint in robot.forward for a in ("--forward", endpoint)]
+    hide = [] if robot.expose_dimos else ["--hide-dimos"]
+    log = (case_dir / "host_robot.log").open("wb")
+    return subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "dimos.cli.dimos",
+            "evals",
+            "robot",
+            "--listen",
+            f"tcp/0.0.0.0:{HOST_ROBOT_PORT}",
+            *forward,
+            *hide,
+            "--",
+            *robot.args,
+        ],
+        env={**os.environ, **robot.env, CASE_DIR_ENV: str(case_dir)},
+        stdout=log,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+    )
+
+
+def _stop_host_robot(process: subprocess.Popen[bytes]) -> None:
+    process.terminate()  # `dimos evals robot` stops dimos and its router on SIGTERM
+    try:
+        process.wait(timeout=60)
+    except subprocess.TimeoutExpired:
+        os.killpg(process.pid, signal.SIGKILL)
+        process.wait()
 
 
 def accepted_done(steps: Sequence[Step], tool: str) -> dict[str, Any] | None:

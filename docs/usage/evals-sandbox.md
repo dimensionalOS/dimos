@@ -143,6 +143,15 @@ dimos evals sandbox dimos.evals.sandbox.example --robot tcp/192.168.123.18:7447
 `go2-dds` is itself a router there). A robot on the eval machine itself is
 `tcp/host.docker.internal:<port>`.
 
+`--robot-on-host` does that per case: each case's blueprint runs on this machine, behind its
+own router on 7447, started and stopped with the case, writing ground truth to the case
+directory. Use it when the robot needs the GPU, which Docker on a Mac doesn't have; the agent
+stays in its container.
+
+```bash skip
+dimos evals sandbox dimos.evals.sandbox.go2_store --robot-on-host --max-steps 2000
+```
+
 ## What the agent can and cannot see
 
 - It has a shell as root in its own container, internet access, and the provider key its
