@@ -12,6 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Callable
+"""LIBERO-PRO smoke: ``data/libero_pro/manifest.json`` → EvalCases.
 
-StartPersonTrack = Callable[[list[tuple[float, float]]], None]
+python -m dimos.evals.environments.lib.export_benchmark_scenes --libero-pro PATH
+dimos evals run dimos.evals.suites.libero_pro_smoke --agent dimos.evals.agents.pi
+"""
+
+from __future__ import annotations
+
+from dimos.evals.environments.lib.benchmark_scenes import cases_from_manifest, load_manifest
+from dimos.evals.types import Suite
+
+SUITE: Suite = cases_from_manifest(load_manifest("libero_pro"), extra_tags=("smoke",))

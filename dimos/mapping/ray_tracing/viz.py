@@ -64,15 +64,15 @@ def render_map_region(
     msg: PointCloud2,
     voxel_size: float,
     height_range: tuple[float, float],
-    max_z: float | None = None,
+    z_band: tuple[float, float] | None = None,
 ) -> RerunMulti:
     """One region of the voxel map on its own static entity, empty when the region emptied.
 
-    Points above max_z (world frame) are dropped, to see in under a ceiling.
+    Points outside z_band (world frame) are dropped, to show one storey.
     """
     pts = msg.points_f32()
-    if max_z is not None:
-        pts = pts[pts[:, 2] < max_z]
+    if z_band is not None:
+        pts = pts[(pts[:, 2] >= z_band[0]) & (pts[:, 2] < z_band[1])]
     cell = voxel_map_points(pts, voxel_size, height_range)
     return [RerunEntry(region_entity(MAP_REGIONS_ENTITY, msg.seq), cell, static=True)]
 

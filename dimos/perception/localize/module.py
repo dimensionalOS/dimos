@@ -12,18 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Live object memory over a robot's ports.
+"""Perception localize: live object memory over a camera rig's ports.
 
-The module consumes colour, depth, ``camera_info`` and ``tf`` ports, keeps a
-bounded in-memory memory, embeds the colour feed as it arrives, and answers
-``localize`` from what it has embedded. It opens no file; recording is the
-Recorder's job. It does not know whether the ports carry a robot or a replay.
+The module consumes ``color_image``, ``camera_info``, ``tf`` and the geometry
+its ``geometry`` config names: ``depth_image`` aligned to the colour camera,
+or ``lidar``, a point cloud in the world frame or a frame tf reaches. It keeps
+bounded memory, embeds the colour feed, and answers ``localize`` from what it
+has embedded. It opens no file and does not know whether the ports carry a
+robot or a replay.
 
-Memory layout: the raw colour and depth feeds are kept for a few hundred
-frames, only as long as the embed tail and the depth pairing need them. The
-memory that ``localize`` reads is at index rate: the embedded frames, stored
-as JPEG, and the depth frame paired with each of them, stored lz4. Both roll
-over ``horizon_s`` seconds. The tf buffer holds the same horizon.
+Memory layout: the raw colour and geometry feeds are kept for ``feed_frames``
+frames, only as long as the embed tail and the pairing need them. What
+``localize`` reads is at index rate: the embedded frames, stored as JPEG, and
+the depth frame or lidar scan paired with each of them, stored lz4. Both roll
+over ``horizon_s`` seconds. A lidar call lifts through its window's scans
+merged.
 """
 
 from __future__ import annotations
@@ -33,11 +36,11 @@ from dataclasses import replace
 import json
 import threading
 import time
-from typing import Any
+from typing import Any, Literal
 
 from dimos_lcm.geometry_msgs import Pose
 from dimos_lcm.vision_msgs import BoundingBox3D, ObjectHypothesis, ObjectHypothesisWithPose
-import numpy as np
+from pydantic import Field
 
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
@@ -55,46 +58,54 @@ from dimos.msgs.std_msgs.Header import Header
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.vision_msgs.Detection3D import Detection3D
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
-from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC
+from dimos.perception.localize.association import Groups
 from dimos.perception.localize.dandetect import DanDetector
-from dimos.perception.localize.localize import Groups, LocalizeTrace
-from dimos.perception.localize.rig import DEPTH_TOLERANCE, EMBED_HZ, WALK_EMBED_HZ, Rig
+from dimos.perception.localize.rig import DEPTH_TOLERANCE, EMBED_HZ, Rig, RigCamera
+from dimos.perception.localize.types import Localization
 from dimos.protocol.tf.tf import TF
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
 INDEX_STREAM = "color_image_embedded"
-DEPTH_STREAM = "depth_memory"
+GEOMETRY_STREAM = "geometry_memory"
 COLOR_CODEC = "jpeg"
-DEPTH_CODEC = "lz4+lcm"
+GEOMETRY_CODEC = "lz4+lcm"
+LIDAR_TOLERANCE = 0.2  # s - an embedded frame to its lidar scan
 
 
-class LiveLocalizeModuleConfig(ModuleConfig):
+class PerceptionLocalizeConfig(ModuleConfig):
     world_frame: str = "world"
-    mobile: bool = False
+    # what lifts a detection: the aligned depth_image, or the lidar
+    geometry: Literal["depth", "lidar"] = "depth"
     horizon_s: float = 600.0
-    # raw frames kept for the embed tail and the depth pairing
+    # raw frames kept for the embed tail and the pairing
     feed_frames: int = 300
+    # each a dandetect registry name or a module:attr path
+    embedder: str = "siglip"
+    detector: str = "owlv2"
+    segmenter: str = "edgetam"
+    # LocalizePolicy overrides on the models' shifts, tuned offline with tools/tool_localize
+    policy: dict[str, Any] = Field(default_factory=dict)
 
 
-class LiveLocalizeModule(Module):
-    """Embed the colour feed, pair depth to it, answer ``localize`` from memory.
+class PerceptionLocalize(Module):
+    """Embed the colour feed and answer ``localize`` from the paired depth or lidar.
 
     ``camera_info`` must be stamped in the colour frame, and ``tf`` must reach
     that frame from ``world_frame`` at every colour timestamp; frames without a
-    pose are never embedded.
+    pose are never embedded. Depth must be aligned to colour.
     """
 
-    config: LiveLocalizeModuleConfig
+    config: PerceptionLocalizeConfig
 
     color_image: In[Image]
     depth_image: In[Image]
+    lidar: In[PointCloud2]
     camera_info: In[CameraInfo]
     tf: In[TFMessage]
 
     detections: Out[Detection3DArray]
-    hit_points: Out[PointCloud2]
 
     @rpc
     def start(self) -> None:
@@ -106,19 +117,19 @@ class LiveLocalizeModule(Module):
         self._stage = "waiting for camera_info"
         self._groups: dict[str, Groups] = {}
 
-        embed_hz = WALK_EMBED_HZ if self.config.mobile else EMBED_HZ
-        memory_frames = int(self.config.horizon_s * embed_hz)
+        memory_frames = int(self.config.horizon_s * EMBED_HZ)
         feed_frames = self.config.feed_frames
+        geometry_type = Image if self.config.geometry == "depth" else PointCloud2
         self._memory = self.register_disposable(MemoryStore())
         self._color_feed = self._memory.stream(
             "color_feed",
             Image,
             observation_store=ListObservationStore(name="color_feed", max_size=feed_frames),
         )
-        self._depth_feed = self._memory.stream(
-            "depth_feed",
-            Image,
-            observation_store=ListObservationStore(name="depth_feed", max_size=feed_frames),
+        self._geometry_feed = self._memory.stream(
+            "geometry_feed",
+            geometry_type,
+            observation_store=ListObservationStore(name="geometry_feed", max_size=feed_frames),
         )
         self.index = self._memory.stream(
             INDEX_STREAM,
@@ -127,12 +138,12 @@ class LiveLocalizeModule(Module):
             blob_store=MemoryBlobStore(max_items=memory_frames),
             observation_store=ListObservationStore(name=INDEX_STREAM, max_size=memory_frames),
         )
-        self._depth_memory = self._memory.stream(
-            DEPTH_STREAM,
-            Image,
-            codec=DEPTH_CODEC,
+        self._geometry_memory = self._memory.stream(
+            GEOMETRY_STREAM,
+            geometry_type,
+            codec=GEOMETRY_CODEC,
             blob_store=MemoryBlobStore(max_items=memory_frames),
-            observation_store=ListObservationStore(name=DEPTH_STREAM, max_size=memory_frames),
+            observation_store=ListObservationStore(name=GEOMETRY_STREAM, max_size=memory_frames),
         )
         self._tf_buffer = TF(self.tf, buffer_size=self.config.horizon_s)
 
@@ -141,9 +152,13 @@ class LiveLocalizeModule(Module):
                 self._camera = info
                 self._camera_seen.set()
 
+        def on_geometry(msg: Image | PointCloud2) -> None:
+            self._geometry_feed.append(msg, ts=msg.ts)
+
+        geometry = self.depth_image if self.config.geometry == "depth" else self.lidar
         self._unsubs = [
             self.color_image.subscribe(lambda img: self._color_feed.append(img, ts=img.ts)),
-            self.depth_image.subscribe(lambda img: self._depth_feed.append(img, ts=img.ts)),
+            geometry.subscribe(on_geometry),
             self.camera_info.subscribe(on_camera_info),
         ]
         self._thread = threading.Thread(target=self._warm, name="localize-warmup", daemon=True)
@@ -159,21 +174,23 @@ class LiveLocalizeModule(Module):
         self._tf_buffer.dispose()
         super().stop()
 
-    def _pair_depth(self, upstream: Iterator[Any]) -> Iterator[Any]:
-        """Move the depth frame of each embedded frame from the feed into memory."""
+    def _pair_geometry(self, upstream: Iterator[Any]) -> Iterator[Any]:
+        """Move the depth frame or lidar scan of each embedded frame from the feed into memory."""
+        tolerance = DEPTH_TOLERANCE if self.config.geometry == "depth" else LIDAR_TOLERANCE
         for obs in upstream:
             try:
-                depth = self._depth_feed.at(obs.ts, DEPTH_TOLERANCE).first()
+                paired = self._geometry_feed.at(obs.ts, tolerance).first()
             except LookupError:
                 yield obs
                 continue
-            self._depth_memory.append(depth.data, ts=depth.ts)
+            self._geometry_memory.append(paired.data, ts=paired.ts)
             yield obs
 
     def _warm(self) -> None:
-        self._stage = "loading SigLIP, OWLv2 and EdgeTAM weights"
+        stages = (self.config.embedder, self.config.detector, self.config.segmenter)
+        self._stage = f"loading {', '.join(stages)} weights"
         logger.info(f"localize: {self._stage}")
-        self.detector = self.register_disposable(DanDetector())
+        self.detector = self.register_disposable(DanDetector(*stages))
         self.detector.start()
 
         self._stage = "waiting for camera_info"
@@ -183,17 +200,15 @@ class LiveLocalizeModule(Module):
                 return
         camera = self._camera
         assert camera is not None
+        depth = self._geometry_memory if self.config.geometry == "depth" else None
         self.rig = Rig(
-            cameras={camera.frame_id: camera},
-            color=self.index,
-            world_frame=self.config.world_frame,
+            cameras={camera.frame_id: RigCamera(info=camera, color=self.index, depth=depth)},
             tf=self._tf_buffer,
-            depth=self._depth_memory,
-            embed_hz=WALK_EMBED_HZ if self.config.mobile else EMBED_HZ,
-            mobile=self.config.mobile,
+            world_frame=self.config.world_frame,
+            lidar=None if depth is not None else self._geometry_memory,
         )
-        self.detector.embed_live(self._memory, rig=self.rig, source=self._color_feed)
-        self.register_disposable(self.index.live().transform(self._pair_depth).drain_thread())
+        self.detector.embed_live(self.rig, self._color_feed, self.index)
+        self.register_disposable(self.index.live().transform(self._pair_geometry).drain_thread())
 
         self._stage = "waiting for the first posed frame of the feed"
         logger.info(f"localize: {self._stage}")
@@ -236,22 +251,14 @@ class LiveLocalizeModule(Module):
         first, head = self.index.get_time_range()
         lo = max(first, head + start if start < 0 else first + start)
         index = self.index.time_range(lo, lo + duration)
-        tuning = self.rig.default_localize_policy()
-        if policy:
-            tuning = replace(tuning, **json.loads(policy))
-        traces = [LocalizeTrace() for _ in queries]
-        results: Any = self.detector.localize(
-            self._memory,
-            queries,
-            index=index,
-            rig=self.rig,
-            policy=tuning,
-            groups=self._groups,
-            trace=traces,
+        rig = self.rig
+        if rig.lidar is not None:
+            rig = replace(rig, lidar=rig.lidar.time_range(lo, lo + duration))
+        tuning = self.detector.policy({**self.config.policy, **json.loads(policy or "{}")})
+        results = self.detector.localize(
+            queries, index=index, rig=rig, policy=tuning, groups=self._groups
         )
-        self.detections.publish(as_detection_array(queries, results, self.rig.world_frame))
-        camera = self.rig.cameras[self.rig.optical_frame]
-        self.hit_points.publish(as_textured_cloud(traces, camera, self.rig.world_frame))
+        self.detections.publish(as_detection_array(queries, results, rig.world_frame))
 
         lines: list[str] = [
             f"window {lo - first:.1f}s to {lo + duration - first:.1f}s of "
@@ -264,54 +271,20 @@ class LiveLocalizeModule(Module):
                 x, y, z = hit.position_world_xyz
                 lines.append(
                     f"{query!r} at ({x:.2f}, {y:.2f}, {z:.2f}) in {hit.frame_id} "
-                    f"score={hit.semantic_score:.2f} views={hit.n_views}"
+                    f"score={hit.semantic_score:.2f} views={hit.n_views} id={hit.instance_id} "
+                    f"seen {max(0.0, head - hit.last_seen_timestamp):.0f}s ago"
                 )
         return "\n".join(lines)
 
 
-def _image_colors(det: Detection3DPC, camera: CameraInfo) -> np.ndarray:
-    """Each cloud point's colour sampled from the sighting's own image at its reprojection."""
-    points = det.pointcloud.points_f32()
-    matrix = det.transform.to_matrix()
-    in_camera = points @ matrix[:3, :3].T + matrix[:3, 3]
-    pixels = Detection3DPC.project_pixels(in_camera, camera)
-    cols = np.round(pixels[:, 0]).astype(int)
-    rows = np.round(pixels[:, 1]).astype(int)
-    rgb = det.image.to_rgb().data
-    height, width = rgb.shape[:2]
-    sampled: np.ndarray = rgb[np.clip(rows, 0, height - 1), np.clip(cols, 0, width - 1)]
-    return sampled.astype(np.float32) / 255.0
-
-
-def as_textured_cloud(
-    traces: list[LocalizeTrace], camera: CameraInfo, frame_id: str
-) -> PointCloud2:
-    """Every verified instance's sightings as one cloud, each point wearing its own image's pixel."""
-    import open3d as o3d
-    import open3d.core as o3c
-
-    members = [det for trace in traces for answer in trace.answers for det in answer]
-    pcd = o3d.t.geometry.PointCloud()
-    if members:
-        positions = np.vstack([det.pointcloud.points_f32() for det in members])
-        colors = np.vstack([_image_colors(det, camera) for det in members])
-        pcd.point["positions"] = o3c.Tensor(positions, dtype=o3c.float32)
-        pcd.point["colors"] = o3c.Tensor(colors, dtype=o3c.float32)
-        latest = max(det.ts for det in members)
-    else:
-        pcd.point["positions"] = o3c.Tensor(np.zeros((0, 3), dtype=np.float32), dtype=o3c.float32)
-        latest = 0.0
-    return PointCloud2(pointcloud=pcd, frame_id=frame_id, ts=latest)
-
-
-def as_detection_array(queries: list[str], results: list[Any], frame_id: str) -> Detection3DArray:
+def as_detection_array(
+    queries: list[str], results: list[list[Localization]], frame_id: str
+) -> Detection3DArray:
     """One labelled box per verified instance, for the rerun bridge."""
     boxes = []
     latest = 0.0
     for query, hits in zip(queries, results, strict=True):
         for hit in hits:
-            if hit.point_cloud is None:
-                continue
             points = hit.point_cloud.as_numpy()[0]
             low, high = points.min(axis=0), points.max(axis=0)
             middle, extent = (low + high) / 2, high - low

@@ -25,9 +25,19 @@ from numpy.typing import NDArray
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.navigation.embodiment.base import Embodiment
-
-from .base import RESOLUTION, densify_states, pose_stamped, states_of
-from .se2 import COMMIT_MARGIN, PERIOD, SdfGrid, anchor, se2_search
+from dimos.navigation.local_planner.search.base import (
+    RESOLUTION,
+    densify_states,
+    pose_stamped,
+    states_of,
+)
+from dimos.navigation.local_planner.search.se2 import (
+    COMMIT_MARGIN,
+    PERIOD,
+    SdfGrid,
+    anchor,
+    se2_search,
+)
 
 PAD = 1.5
 # Free space around the working area, in whole lattice periods.

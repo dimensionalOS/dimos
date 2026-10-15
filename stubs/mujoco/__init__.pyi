@@ -126,6 +126,7 @@ class mjtTextureRole:
 
 class mjtLightType:
     mjLIGHT_DIRECTIONAL: int
+    mjLIGHT_SPOT: int
 
 class mjtJoint:
     mjJNT_HINGE: int

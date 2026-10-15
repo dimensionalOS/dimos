@@ -706,7 +706,7 @@ jobs:
       - name: Install dependencies
         run: uv sync --group tests --frozen
       - name: Run tests
-        run: uv run pytest --numprocesses=logical --cov=dimos/ --junitxml=junit.xml -m 'not (self_hosted or mujoco or self_hosted_large or web_browser or bake_e2e or native_e2e)'
+        run: uv run pytest --numprocesses=logical --cov=dimos/ --junitxml=junit.xml -m 'not (self_hosted or self_hosted_large or web_browser or bake_e2e or native_e2e)'
       # Serial and after the parallel run: it binds the livox SDK's fixed ports.
       - name: Native module e2e tests
         if: steps.native-marker.outputs.cache-hit == 'true'
@@ -716,7 +716,7 @@ jobs:
         env:
           COLOR: yes
         run: >-  # `exit 1` makes sure that the job remains red with flaky runs
-          uv run pytest --no-cov -vvvvv --lf  -m 'not (self_hosted or mujoco or self_hosted_large or web_browser or bake_e2e or native_e2e)' && exit 1
+          uv run pytest --no-cov -vvvvv --lf  -m 'not (self_hosted or self_hosted_large or web_browser or bake_e2e or native_e2e)' && exit 1
         shell: bash
       - name: Print crash diagnostics
         if: failure()
@@ -907,6 +907,18 @@ jobs:
           fi
           echo "$bin" >> "$GITHUB_PATH"
           echo "NIX_CONFIG=experimental-features = nix-command flakes" >> "$GITHUB_ENV"
+      - name: Configure LCM networking (macOS)
+        # LCM sends datagrams up to 64 KB; macOS caps UDP at 9216 bytes by default, so point clouds never leave the sender.
+        if: matrix.os == 'macOS'
+        run: |
+          raise() {
+            if [ "$(sysctl -n "$1")" -lt "$2" ]; then
+              sudo -n sysctl -w "$1=$2" || { echo "::error::$1 is below $2 on $RUNNER_NAME and sudo needs a password; set it in /etc/sysctl.conf on the host"; exit 1; }
+            fi
+          }
+          raise kern.ipc.maxsockbuf 6291456
+          raise net.inet.udp.recvspace 2097152
+          raise net.inet.udp.maxdgram 65535
       - name: Restore publish marker
         id: native-marker
         uses: actions/cache/restore@v6
@@ -937,13 +949,13 @@ jobs:
               done
           fi
       - name: Run tests
-        run: uv run pytest --cov=dimos/ --junitxml=junit.xml -m '(${{ matrix.markers }}) and not mujoco'
+        run: uv run pytest --cov=dimos/ --junitxml=junit.xml -m '${{ matrix.markers }}'
       - name: Re-run the failing tests with maximum verbosity
         if: failure()
         env:
           COLOR: yes
         run: >-  # `exit 1` makes sure that the job remains red with flaky runs
-          uv run pytest --no-cov -vvvvv --lf  -m '(${{ matrix.markers }}) and not mujoco' && exit 1
+          uv run pytest --no-cov -vvvvv --lf  -m '${{ matrix.markers }}' && exit 1
         shell: bash
       - name: Print crash diagnostics
         if: failure()

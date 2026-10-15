@@ -19,6 +19,8 @@ from typing import (
     TYPE_CHECKING,
     Any,
     Generic,
+    Literal,
+    TypeAlias,
     TypeVar,
 )
 
@@ -42,6 +44,10 @@ T = TypeVar("T")
 
 
 logger = setup_logger()
+
+
+# How a module declares a stream: In, Out or IO.
+StreamDirection: TypeAlias = Literal["in", "out", "inout"]
 
 
 class ObservableMixin(Generic[T]):

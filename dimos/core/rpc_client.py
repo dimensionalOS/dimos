@@ -21,12 +21,13 @@ import inspect
 from typing import TYPE_CHECKING, Any, Protocol
 
 from dimos.core.coordination.python_worker import Actor, MethodCallProxy
-from dimos.core.stream import RemoteStream
+from dimos.core.stream import RemoteOut, RemoteStream
 from dimos.core.transport_factory import rpc_backend
 from dimos.protocol.rpc.spec import RPCSpec
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
+    from dimos.core.introspection.module.info import StreamDescriptor
     from dimos.core.module import ModuleBase, SkillInfo
 
 logger = setup_logger()
@@ -116,6 +117,8 @@ class ModuleProxyProtocol(Protocol):
     def start(self) -> None: ...
     def stop(self) -> None: ...
     def get_skills(self) -> list[SkillInfo]: ...
+    def get_stream_descriptors(self) -> list[StreamDescriptor]: ...
+    def get_stream(self, name: str) -> RemoteOut[Any]: ...
     def set_transport(self, stream_name: str, transport: Any) -> bool: ...
 
 
@@ -128,6 +131,7 @@ class RPCClient:
         rpcs: Iterable[str] | None = None,
         *,
         rpc: RPCSpec | None = None,
+        stream_lookup: Callable[[str], RemoteOut[Any]] | None = None,
     ) -> None:
         if rpc is None:
             self.rpc = rpc_backend()()
@@ -147,6 +151,8 @@ class RPCClient:
         self.actor_instance = actor_instance
         self.rpcs = frozenset(rpcs)
         self._unsub_fns: list = []  # type: ignore[type-arg]
+        # Resolves streams in remote mode, where there is no Actor to ask.
+        self._stream_lookup = stream_lookup
 
     @classmethod
     def remote(
@@ -183,6 +189,12 @@ class RPCClient:
 
     def __dir__(self) -> list[str]:
         return sorted(set(super().__dir__()) | set(self.rpcs))
+
+    def get_stream(self, name: str) -> RemoteOut[Any]:
+        """Get a subscription handle for a stream in a connected remote system."""
+        if self._stream_lookup is None:
+            raise AttributeError("Stream lookup is unavailable")
+        return self._stream_lookup(name)
 
     # passthrough
     def __getattr__(self, name: str):  # type: ignore[no-untyped-def]
