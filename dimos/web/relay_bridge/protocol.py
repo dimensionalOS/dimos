@@ -70,6 +70,11 @@ from dimos.web.relay_bridge.manifest import (
 
 logger = setup_logger()
 
+# v8: viewers acknowledge latest frames (ack {ch, seq}) and the relay keeps
+# at most two unacknowledged frames per latest channel in flight to a
+# viewer, so a slow link carries a bounded backlog of video instead of a
+# stream window's worth. A v7 viewer never acks and would see one frame per
+# ack timeout, hence the bump.
 # v7: WebRTC video signaling (rtc_ice, rtc_offer, rtc_answer) and
 # video.webrtc.v1 track channels. An older peer would drop the unknown
 # messages and show a video panel that never draws, hence the bump.
@@ -95,7 +100,7 @@ logger = setup_logger()
 # misread in both directions). v2: a reliable channel packs all its frames
 # onto one persistent stream. Bump on any change an old peer would silently
 # misparse.
-PROTOCOL_VERSION = 7
+PROTOCOL_VERSION = 8
 
 # The reserved data-frame channel carrying robot-leg control messages (v5+:
 # the robot's hello; the relay never forwards @-prefixed frames to viewers).
@@ -281,6 +286,15 @@ class Unsub(_WireModel):
     ch: str
 
 
+# Viewer to relay (v8): the newest latest-channel frame the viewer has read
+# on `ch`, cumulative; the relay keeps at most two unacknowledged frames per
+# latest channel in flight to a viewer.
+class Ack(_WireModel):
+    t: Literal["ack"] = "ack"
+    ch: str = Field(min_length=1, max_length=MAX_MANIFEST_ID_LEN)
+    seq: int | float
+
+
 class Subs(_WireModel):
     """Relay->robot: the full set of channels with >= 1 subscribed viewer.
 
@@ -443,6 +457,7 @@ Msg = (
     | Manifest
     | Sub
     | Unsub
+    | Ack
     | Subs
     | Twist
     | Stop

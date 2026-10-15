@@ -58,6 +58,7 @@ A viewer opens one bidirectional control stream and sends length-prefixed JSON o
 | `hello {v, role: "viewer", token?}` | `welcome {v}`, then `robots {robots}` whenever the robot list changes |
 | `watch {robotId}` | `manifest {robotId, manifest}` |
 | `sub {ch}`, `unsub {ch}` | channel data on one relay-opened unidirectional stream per channel, frames back to back |
+| `ack {ch, seq}` (v8) | nothing. The newest `latest` frame the viewer has read on the channel; the relay sends at most two frames a viewer has not acknowledged |
 | `ping` | `pong {n, ts}`. The SDK pings every 3 s and reconnects after two unanswered pings |
 | `teleop_start` | `teleop_started`, or `error teleop_held` |
 | `teleop_stop` | nothing (idempotent) |
@@ -71,7 +72,7 @@ Error codes: `hello_required`, `version_mismatch`, `role_mismatch`, `missing_rob
 
 On the robot leg every frame has its own one-shot stream. A `latest` channel keeps up to three frames in flight before the bridge waits for an acknowledgement, so frames can arrive at the relay out of order, and a frame still unacknowledged after 500 ms with a newer one waiting is reset (a reset in the middle of a frame drops the partial by design). Consumers keep the newest frame by `seq`. A `reliable` channel never sheds, except that past 256 unacknowledged frames the bridge resets the oldest and logs it.
 
-On the viewer leg every channel has one persistent stream per viewer with frames packed back to back (workaround 12). The relay keeps at most one pending frame per `latest` channel and viewer: a frame that arrives while the previous one is still being written replaces it, so a slow viewer sees only the newest and nothing queues behind a stalled write but that one frame. A `reliable` channel queues up to 64 frames or 16 MiB per viewer and channel (a lone frame over the byte cap still queues) and the relay disconnects a viewer that overflows it.
+On the viewer leg every channel has one persistent stream per viewer with frames packed back to back (workaround 12). The relay writes a `latest` frame only while fewer than two frames of that channel await the viewer's `ack` (v8), and keeps at most one pending frame beyond that: a frame that arrives while the budget is spent replaces the pending one, so a slow viewer sees only the newest, a slow link carries at most two frames of backlog, and a viewer whose acks stop (a suspended tab) holds two frames. An ack that never comes releases its frame after 2 s (`ackTimeouts` in `/api/stats`). A `reliable` channel queues up to 64 frames or 16 MiB per viewer and channel (a lone frame over the byte cap still queues) and the relay disconnects a viewer that overflows it.
 
 ## Manifest
 

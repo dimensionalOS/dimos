@@ -297,6 +297,13 @@ class SessionImpl implements Session {
   #wire = new Set<string>();
   #wireRunId = -1;
 
+  // Receipts for latest frames (v8): the relay writes at most two frames of
+  // a latest channel that this viewer has not acknowledged, so a slow link
+  // never queues a window's worth of stale video. Newest seq per channel,
+  // flushed once per task.
+  #acks = new Map<string, number>();
+  #ackFlushScheduled = false;
+
   // Per-connection control sender, swapped in #runSession. Fire-and-forget:
   // a send racing a reconnect lands on the dead connection and is dropped
   // (desired subscriptions are replayed after the next adoption).
@@ -978,6 +985,20 @@ class SessionImpl implements Session {
       }
     }
     this.store.ingest(frame.header.ch, frame.header, value, decodeOk, preview);
+    if ((spec?.delivery ?? frame.header.delivery) === "latest") {
+      this.#ackFrame(frame.header.ch, frame.header.seq);
+    }
+  }
+
+  #ackFrame(ch: string, seq: number): void {
+    if ((this.#acks.get(ch) ?? -1) < seq) this.#acks.set(ch, seq);
+    if (this.#ackFlushScheduled) return;
+    this.#ackFlushScheduled = true;
+    queueMicrotask(() => {
+      this.#ackFlushScheduled = false;
+      for (const [ch, seq] of this.#acks) this.#send?.({ t: "ack", ch, seq });
+      this.#acks.clear();
+    });
   }
 }
 

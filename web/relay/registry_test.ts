@@ -558,6 +558,7 @@ Deno.test("latest and reliable channels each get one persistent stream at their 
     reg.onRobotFrame(robot, frame("color_image", seq, "latest"));
     reg.onRobotFrame(robot, frame("odom", seq, "reliable"));
     await tick();
+    send(reg, viewer, { t: "ack", ch: "color_image", seq }); // the viewer read it
   }
   assertEquals(viewer.sink.streamsOpened, 2);
   assertEquals(viewer.sink.orders, [LATEST_SEND_ORDER, RELIABLE_SEND_ORDER]);
@@ -569,6 +570,35 @@ Deno.test("latest and reliable channels each get one persistent stream at their 
   reg.onRobotFrame(robot, frame("color_image", 4, "latest"));
   await tick();
   assertEquals(viewer.sink.streamsOpened, 3);
+});
+
+Deno.test("a viewer's acks release its latest channel; the tick times out missing ones", async () => {
+  let now = 1_000_000;
+  const reg = new Registry(() => now);
+  const robot = new FakeRobot("r1", SPECS);
+  reg.registerRobot(robot);
+  const viewer = attach(reg, "r1", ["color_image"]);
+  for (let seq = 1; seq <= 4; seq++) {
+    reg.onRobotFrame(robot, frame("color_image", seq, "latest"));
+    await tick();
+  }
+  assertEquals(viewer.sink.sent.length, 2); // the budget; 4 waits, 3 was shed
+  send(reg, viewer, { t: "ack", ch: "color_image", seq: 2 });
+  await tick();
+  assertEquals(viewer.sink.sent.length, 3);
+  send(reg, viewer, { t: "ack", ch: "nope", seq: 1 }); // no such policy: ignored
+  for (let seq = 5; seq <= 6; seq++) {
+    reg.onRobotFrame(robot, frame("color_image", seq, "latest"));
+    await tick();
+  }
+  assertEquals(viewer.sink.sent.length, 4); // 4 and 5 unacked, 6 waits
+  now += 3000;
+  reg.tick(now); // nothing acked for 3 s: the timeout releases the slots
+  await tick();
+  assertEquals(viewer.sink.sent.length, 5);
+  const out = (reg.stats() as { perViewer: { channels: Record<string, Record<string, number>> }[] })
+    .perViewer[0].channels.color_image;
+  assertEquals([out.ackTimeouts, out.unacked], [2, 1]);
 });
 
 Deno.test("stats project exact per-channel key sets with counters and rates", async () => {
@@ -608,6 +638,7 @@ Deno.test("stats project exact per-channel key sets with counters and rates", as
   const out = stats.perViewer[0].channels;
   const outKeys = Object.keys(out.color_image).sort();
   assertEquals(outKeys, [
+    "ackTimeouts",
     "bps",
     "bytesOut",
     "delivery",
@@ -616,11 +647,14 @@ Deno.test("stats project exact per-channel key sets with counters and rates", as
     "queued",
     "sent",
     "stalled",
+    "unacked",
     "writing",
   ]);
   assertEquals(out.color_image.delivery, "latest");
   assertEquals(out.color_image.sent, 1);
   assertEquals([out.color_image.stalled, out.color_image.writing], [0, false]);
+  assertEquals([out.color_image.unacked, out.color_image.ackTimeouts], [1, 0]);
+  assertEquals([out.odom.unacked, out.odom.ackTimeouts], [0, 0]);
   assertEquals(out.odom.delivery, "reliable");
   assertEquals([out.odom.stalled, out.odom.writing], [0, false]);
   assert((out.odom.bytesOut as number) > 0);

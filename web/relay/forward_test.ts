@@ -6,6 +6,8 @@ import {
   MAX_CONTROL_PAYLOAD_BYTES,
 } from "@dimos/shared";
 import {
+  ACK_BUDGET,
+  ACK_TIMEOUT_MS,
   ControlPayloadTooLargeError,
   type FrameWriter,
   LATEST_SEND_ORDER,
@@ -92,10 +94,10 @@ function dataFrame(ch: string, seq: number, delivery: "latest" | "reliable"): Ui
 Deno.test("latest: newest replaces pending while a write is in flight", async () => {
   const sink = new FakeSink(false);
   const ch = new LatestChannel(sink);
-  ch.offer(frame(1));
+  ch.offer(frame(1), 1);
   await tick(); // the persistent stream opened; frame 1's write is in flight
-  ch.offer(frame(2)); // parked in the pending slot
-  ch.offer(frame(3)); // replaces frame 2
+  ch.offer(frame(2), 2); // parked in the pending slot
+  ch.offer(frame(3), 3); // replaces frame 2
   assertEquals(sink.sent, [frame(1)]);
   assertEquals(ch.writing(), true);
   sink.release();
@@ -114,7 +116,7 @@ Deno.test("latest: newest replaces pending while a write is in flight", async ()
 Deno.test("latest: the final frame is always eventually delivered", async () => {
   const sink = new FakeSink(false);
   const ch = new LatestChannel(sink);
-  for (let i = 0; i < 100; i++) ch.offer(frame(i));
+  for (let i = 0; i < 100; i++) ch.offer(frame(i), i);
   await tick(); // the stream opens after the burst: only the newest is left
   sink.release();
   await tick();
@@ -123,31 +125,24 @@ Deno.test("latest: the final frame is always eventually delivered", async () => 
   assertEquals(ch.sent, 1);
 });
 
-Deno.test("latest: fast sink delivers everything", async () => {
+Deno.test("latest: fast sink with prompt acks delivers everything", async () => {
   const sink = new FakeSink();
   const ch = new LatestChannel(sink);
   for (let i = 0; i < 5; i++) {
-    ch.offer(frame(i));
+    ch.offer(frame(i), i);
     await tick();
+    ch.ack(i); // the viewer read it
   }
   assertEquals(sink.sent.length, 5);
   assertEquals(ch.dropped, 0);
   assertEquals(ch.stalled, 0);
-});
-
-Deno.test("streams open at their band's sendOrder: reliable above latest", async () => {
-  const sink = new FakeSink();
-  new LatestChannel(sink).offer(frame(1));
-  new ReliableChannel(sink).offer(frame(2));
-  await tick();
-  assertEquals(sink.orders, [LATEST_SEND_ORDER, RELIABLE_SEND_ORDER]);
-  assert(RELIABLE_SEND_ORDER > LATEST_SEND_ORDER);
+  assertEquals(ch.unacked(), 0);
 });
 
 Deno.test("reliable: FIFO order, zero drops", async () => {
   const sink = new FakeSink(false);
   const ch = new ReliableChannel(sink);
-  for (let i = 0; i < 10; i++) ch.offer(frame(i));
+  for (let i = 0; i < 10; i++) ch.offer(frame(i), i);
   await tick(); // the persistent stream opens before the first write
   for (let i = 0; i < 10; i++) {
     sink.release();
@@ -165,10 +160,10 @@ Deno.test("reliable: FIFO order, zero drops", async () => {
 Deno.test("reliable: drain pauses reuse the same persistent stream", async () => {
   const sink = new FakeSink();
   const ch = new ReliableChannel(sink);
-  ch.offer(frame(1));
+  ch.offer(frame(1), 1);
   await tick();
   assertEquals(sink.sent, [frame(1)]); // FIFO idle: the writing loop ended
-  ch.offer(frame(2));
+  ch.offer(frame(2), 2);
   await tick();
   assertEquals(sink.sent, [frame(1), frame(2)]);
   assertEquals(sink.streamsOpened, 1);
@@ -180,13 +175,13 @@ Deno.test("reliable: overflow kicks once and empties the FIFO", async () => {
   // Nothing drains (the persistent stream is still opening), so the 65th
   // queued frame overflows; the channel kicks once, self-disposes, and
   // ignores the rest of the burst instead of re-queueing + re-kicking.
-  for (let i = 0; i < 200; i++) ch.offer(frame(i));
+  for (let i = 0; i < 200; i++) ch.offer(frame(i), i);
   await tick();
   assertEquals(sink.kicks, 1);
   assertEquals(sink.kicked, "reliable channel overflow");
   assertEquals(ch.queued(), 0);
   assertEquals(sink.streamsAborted, 1);
-  ch.offer(frame(200)); // still a no-op until transport teardown completes
+  ch.offer(frame(200), 200); // still a no-op until transport teardown completes
   assertEquals(ch.queued(), 0);
   assertEquals(sink.kicks, 1);
 });
@@ -194,15 +189,15 @@ Deno.test("reliable: overflow kicks once and empties the FIFO", async () => {
 Deno.test("reliable: a lone frame over the byte cap is sent, a backlog behind it kicks", async () => {
   const big = new Uint8Array(17 * 1024 * 1024);
   const alone = new FakeSink();
-  new ReliableChannel(alone).offer(big);
+  new ReliableChannel(alone).offer(big, 1);
   await tick();
   assertEquals(alone.kicked, null);
   assertEquals(alone.sent.length, 1);
   assertStrictEquals(alone.sent[0], big);
   const backlog = new FakeSink(false);
   const ch = new ReliableChannel(backlog);
-  ch.offer(big);
-  ch.offer(frame(1)); // queued behind the unsent big frame: together over the cap
+  ch.offer(big, 1);
+  ch.offer(frame(1), 1); // queued behind the unsent big frame: together over the cap
   assertEquals(backlog.kicked, "reliable channel overflow");
   assertEquals(ch.queued(), 0);
 });
@@ -210,15 +205,15 @@ Deno.test("reliable: a lone frame over the byte cap is sent, a backlog behind it
 Deno.test("latest: dispose aborts the stream and discards the pending frame", async () => {
   const sink = new FakeSink(false);
   const ch = new LatestChannel(sink);
-  ch.offer(frame(1));
+  ch.offer(frame(1), 1);
   await tick(); // write in flight
-  ch.offer(frame(2)); // parked
+  ch.offer(frame(2), 2); // parked
   ch.dispose();
   assertEquals(ch.queued(), 0);
   assertEquals(sink.streamsAborted, 1);
   sink.rejectWrite(); // the aborted stream fails the in-flight write
   await tick();
-  ch.offer(frame(3)); // ignored after dispose
+  ch.offer(frame(3), 3); // ignored after dispose
   await tick();
   assertEquals(sink.sent, [frame(1)]);
   assertEquals(sink.kicked, null); // disposal failures are not viewer failures
@@ -228,7 +223,7 @@ Deno.test("latest: dispose while the stream opens still releases it", async () =
   const sink = new FakeSink(false);
   sink.manualOpen = true;
   const ch = new LatestChannel(sink);
-  ch.offer(frame(1)); // drain is awaiting openStream
+  ch.offer(frame(1), 1); // drain is awaiting openStream
   ch.dispose();
   sink.releaseOpen();
   await tick();
@@ -240,16 +235,16 @@ Deno.test("latest: dispose while the stream opens still releases it", async () =
 Deno.test("reliable: dispose aborts the persistent stream and discards the queue", async () => {
   const sink = new FakeSink(false);
   const ch = new ReliableChannel(sink);
-  ch.offer(frame(1));
+  ch.offer(frame(1), 1);
   await tick(); // stream opened; first write in flight
-  ch.offer(frame(2));
-  ch.offer(frame(3));
+  ch.offer(frame(2), 2);
+  ch.offer(frame(3), 3);
   ch.dispose();
   assertEquals(ch.queued(), 0);
   assertEquals(sink.streamsAborted, 1);
   sink.rejectWrite(); // the aborted stream fails the in-flight write
   await tick();
-  ch.offer(frame(4)); // ignored after dispose
+  ch.offer(frame(4), 4); // ignored after dispose
   await tick();
   assertEquals(sink.sent, [frame(1)]);
   assertEquals(sink.streamsOpened, 1);
@@ -260,7 +255,7 @@ Deno.test("reliable: dispose while the persistent stream opens still releases it
   const sink = new FakeSink(false);
   sink.manualOpen = true;
   const ch = new ReliableChannel(sink);
-  ch.offer(frame(1)); // drain is awaiting openStream
+  ch.offer(frame(1), 1); // drain is awaiting openStream
   ch.dispose();
   sink.releaseOpen();
   await tick();
@@ -278,11 +273,11 @@ Deno.test("latest: a frame offered in the drain-completion window still sends", 
   for (let depth = 0; depth < 5; depth++) {
     const sink = new FakeSink(false);
     const ch = new LatestChannel(sink);
-    ch.offer(frame(1));
+    ch.offer(frame(1), 1);
     await tick(); // stream opened; first write in flight
     sink.release();
     for (let i = 0; i < depth; i++) await Promise.resolve();
-    ch.offer(frame(2));
+    ch.offer(frame(2), 2);
     await tick();
     sink.release();
     await tick();
@@ -294,11 +289,11 @@ Deno.test("reliable: a frame offered in the drain-completion window still sends"
   for (let depth = 0; depth < 5; depth++) {
     const sink = new FakeSink(false);
     const ch = new ReliableChannel(sink);
-    ch.offer(frame(1));
+    ch.offer(frame(1), 1);
     await tick(); // persistent stream opened; first write in flight
     sink.release();
     for (let i = 0; i < depth; i++) await Promise.resolve();
-    ch.offer(frame(2));
+    ch.offer(frame(2), 2);
     await tick();
     sink.release();
     await tick();
@@ -322,10 +317,10 @@ function timedChannel(
 Deno.test("latest: a write accepted late counts as one stall; prompt ones never", async () => {
   const sink = new FakeSink(false);
   const { ch, tick: advance } = timedChannel(sink);
-  ch.offer(frame(1));
+  ch.offer(frame(1), 1);
   await tick(); // write in flight: the viewer is not reading
-  ch.offer(frame(2));
-  ch.offer(frame(3)); // the pending slot sheds while the write waits
+  ch.offer(frame(2), 2);
+  ch.offer(frame(3), 3); // the pending slot sheds while the write waits
   advance(600); // past LATEST_STALL_MS
   assertEquals(ch.stalled, 0); // counted at acceptance, not by polling
   sink.release(); // the viewer resumed
@@ -340,18 +335,68 @@ Deno.test("latest: a write accepted late counts as one stall; prompt ones never"
   assertEquals(sink.kicked, null);
 });
 
+Deno.test("latest: at most ACK_BUDGET frames await their ack; an ack releases the next", async () => {
+  const sink = new FakeSink();
+  const ch = new LatestChannel(sink);
+  for (let i = 1; i <= 5; i++) {
+    ch.offer(frame(i), i);
+    await tick();
+  }
+  // Frames 1 and 2 went out; 3 and 4 were shed by 5, which waits.
+  assertEquals(sink.sent, [frame(1), frame(2)]);
+  assertEquals([ch.unacked(), ch.queued(), ch.dropped], [ACK_BUDGET, 1, 2]);
+
+  ch.ack(1); // cumulative: frees frame 1's slot
+  await tick();
+  assertEquals(sink.sent, [frame(1), frame(2), frame(5)]);
+  assertEquals(ch.unacked(), 2);
+  ch.ack(5); // frees everything at or below 5
+  assertEquals(ch.unacked(), 0);
+  ch.ack(99); // a stray ack releases nothing and breaks nothing
+  assertEquals([ch.sent, ch.ackTimeouts], [3, 0]);
+});
+
+Deno.test("latest: the ack timeout releases a frame nobody acknowledged", async () => {
+  const sink = new FakeSink();
+  const { ch, tick: advance, now } = timedChannel(sink);
+  ch.offer(frame(1), 1);
+  await tick();
+  ch.offer(frame(2), 2);
+  await tick();
+  ch.offer(frame(3), 3);
+  await tick();
+  assertEquals(sink.sent, [frame(1), frame(2)]);
+  advance(ACK_TIMEOUT_MS - 1);
+  ch.tick(now());
+  assertEquals(sink.sent.length, 2); // not yet
+  advance(1);
+  ch.tick(now()); // frames 1 and 2 time out together
+  await tick();
+  assertEquals(sink.sent, [frame(1), frame(2), frame(3)]);
+  assertEquals([ch.ackTimeouts, ch.unacked()], [2, 1]);
+});
+
+Deno.test("streams open at their band's sendOrder: reliable above latest", async () => {
+  const sink = new FakeSink();
+  new LatestChannel(sink).offer(frame(1), 1);
+  new ReliableChannel(sink).offer(frame(2), 2);
+  await tick();
+  assertEquals(sink.orders, [LATEST_SEND_ORDER, RELIABLE_SEND_ORDER]);
+  assert(RELIABLE_SEND_ORDER > LATEST_SEND_ORDER);
+});
+
 Deno.test("latest: a real transport failure kicks exactly once", async () => {
   const sink = new FakeSink(false);
   const ch = new LatestChannel(sink);
-  ch.offer(frame(1));
+  ch.offer(frame(1), 1);
   await tick();
-  ch.offer(frame(2)); // parked
+  ch.offer(frame(2), 2); // parked
   sink.rejectWrite(); // connection died
   await tick();
   assertEquals(sink.kicked, "write failed");
   assertEquals(sink.kicks, 1);
   assertEquals(sink.streamsAborted, 1); // the kick's dispose releases the stream
-  ch.offer(frame(3)); // ignored after the dispose
+  ch.offer(frame(3), 3); // ignored after the dispose
   await tick();
   assertEquals(sink.sent, [frame(1)]);
 });

@@ -424,6 +424,11 @@ export class Registry {
         });
         break;
       }
+      case "ack": {
+        // A stray ack (no policy yet, a channel just unsubscribed) is nothing.
+        viewer.policies.get(msg.ch)?.ack(msg.seq);
+        break;
+      }
       case "sub":
       case "unsub": {
         if (viewer.watched === null) {
@@ -794,19 +799,23 @@ export class Registry {
       if (policy === undefined || policy.delivery !== delivery) {
         policy?.dispose();
         policy = delivery === "reliable"
-          ? new ReliableChannel(viewer.sink)
-          : new LatestChannel(viewer.sink);
+          ? new ReliableChannel(viewer.sink, { now: this.#now })
+          : new LatestChannel(viewer.sink, { now: this.#now });
         viewer.policies.set(ch, policy);
       }
-      policy.offer(bytes);
+      policy.offer(bytes, header.seq);
     }
   }
 
-  /** Settle expired pending publishes with a `publish_timeout` error
-   * (outcome "unknown" at the SDK: the bridge may still have published).
-   * server.ts drives this on an interval. Clock passed in so tests
-   * fabricate time. */
+  /** Periodic housekeeping, driven by server.ts on an interval with the
+   * clock passed in so tests fabricate time: the latest channels' ack
+   * timeout, and expired pending publishes, settled with a
+   * `publish_timeout` error (outcome "unknown" at the SDK: the bridge may
+   * still have published). */
   tick(nowMs: number): void {
+    for (const viewer of this.#viewers) {
+      for (const policy of viewer.policies.values()) policy.tick(nowMs);
+    }
     for (const entry of this.#robots.values()) {
       for (const pending of entry.pubPending.values()) {
         if (nowMs < pending.deadlineMs) continue;
@@ -894,6 +903,8 @@ export class Registry {
             queued: p.queued(),
             stalled: p.stalled,
             writing: p.writing(),
+            unacked: p.unacked(),
+            ackTimeouts: p.ackTimeouts,
             bytesOut: p.bytesOut,
             ...p.rate.snapshot(now),
           }]),
