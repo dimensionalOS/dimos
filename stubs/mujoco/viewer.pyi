@@ -1,7 +1,7 @@
 from contextlib import AbstractContextManager
 from typing import Any
 
-from . import MjData, MjModel, MjvOption
+from mujoco import MjData, MjModel, MjvOption
 
 class _Camera:
     type: int

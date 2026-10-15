@@ -53,15 +53,10 @@ class Owlv2Detector(HuggingFaceModel):
         super().__init__(**kwargs)
         # image-tower forwards run so far; instrumentation reads deltas
         self.forwards = 0
-        # (frame ts, label, floor) to that label's floor-filtered
-        # (boxes_kx4, scores_k); filled and read by localize
-        self.score_cache: OrderedDict[tuple[float, str, float], tuple[np.ndarray, np.ndarray]] = (
-            OrderedDict()
-        )
-        # frame ts to text-independent tower outputs; any query set scores
+        # (frame id, ts) to text-independent tower outputs; any query set scores
         # against a cached frame without rerunning the tower
         self._features: OrderedDict[
-            float, tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
+            tuple[str, float], tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
         ] = OrderedDict()
         self._text_embeds: dict[str, torch.Tensor] = {}
 
@@ -159,45 +154,25 @@ class Owlv2Detector(HuggingFaceModel):
     ) -> tuple[np.ndarray, np.ndarray]:
         """Score every query against every kept box; no argmax, no label.
 
-        Same forward pass and same per-box threshold as
-        ``query_detections()``, which reports one label per box because
+        ``query_detections()`` reports one label per box because
         post-processing maxes over the query axis. Here the whole
         ``(n_boxes, n_queries)`` block survives, so a caller can rank
-        queries and refuse. Returns pixel ``(x1, y1, x2, y2)`` boxes and
-        their score rows.
+        queries and refuse. Runs ``query_score_rows_batch`` on the one
+        image, so a seen frame re-scores from the feature cache. Returns
+        pixel ``(x1, y1, x2, y2)`` boxes and their score rows.
         """
-        self.forwards += 1
-        pil = PILImage.fromarray(image.to_rgb().data)
-        with torch.inference_mode(), self._autocast():
-            inputs = self._processor(text=[queries], images=pil, return_tensors="pt").to(
-                self.config.device
-            )
-            outputs = self._model(**inputs)
-            results = self._processor.post_process_grounded_object_detection(
-                outputs=outputs,
-                target_sizes=torch.tensor([(pil.height, pil.width)]),
-                threshold=threshold,
-            )[0]
-            # sigmoid is monotonic, so this mask is the one post-processing
-            # applied to its max-over-queries scores: the same boxes, in order.
-            scores = torch.sigmoid(outputs.logits[0])
-            kept = scores[scores.max(dim=-1).values > threshold].float().cpu().numpy()
-
-        boxes = results["boxes"].float().cpu().numpy()
-        boxes[:, 0::2] = boxes[:, 0::2].clip(0.0, float(pil.width))
-        boxes[:, 1::2] = boxes[:, 1::2].clip(0.0, float(pil.height))
-        return boxes, kept
+        return self.query_score_rows_batch([image], queries, threshold)[0]
 
     def _frame_features(
         self, image: Image
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Text-independent tower outputs for one frame, cached by frame ts.
+        """Text-independent tower outputs for one frame, cached by (frame id, ts).
 
         Returns unit-normalized per-box class embeddings, the class head's
         logit shift and scale, and clipped pixel ``(x1, y1, x2, y2)`` boxes.
         A miss runs the image tower once; a hit runs nothing.
         """
-        key = image.ts
+        key = (image.frame_id, image.ts)
         if key in self._features:
             self._features.move_to_end(key)
             return self._features[key]
@@ -277,7 +252,6 @@ class Owlv2Detector(HuggingFaceModel):
         return out
 
     def stop(self) -> None:
-        self.score_cache.clear()
         self._features.clear()
         self._text_embeds.clear()
         if "_processor" in self.__dict__:

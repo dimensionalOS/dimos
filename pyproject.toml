@@ -49,6 +49,7 @@ exclude = [
     "**/*.svg",
     "**/*.tcss",
     "**/*.pyi",
+    "robot/galaxea/r1pro/vendor_setup.sh",
 ]
 
 [tool.setuptools.exclude-package-data]
@@ -591,7 +592,7 @@ exclude = [
 line-ending = "lf"
 
 [tool.ruff.lint]
-extend-select = ["E", "W", "F", "B", "UP", "N", "I", "C90", "A", "RUF", "TCH"]
+extend-select = ["E", "W", "F", "B", "UP", "N", "I", "C90", "A", "RUF", "TCH", "TID252"]
 ignore = [
     # TODO: All of these should be fixed, but it's easier commit autofixes first
     "A001", "A002", "B008", "B017", "B019", "B024", "B026", "B904", "C901", "E402", "E501", "E721", "E722", "E741", "F811", "F821", "F821", "F821", "N801", "N802", "N803", "N806", "N817", "N999", "RUF003", "RUF009", "RUF012", "RUF034", "RUF043", "RUF059", "UP007",
@@ -614,6 +615,9 @@ ignore = [
 known-first-party = ["dimos"]
 combine-as-imports = true
 force-sort-within-sections = true
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
 
 [tool.ruff.lint.flake8-type-checking]
 runtime-evaluated-base-classes = ["dimos.core.module.Module"]
