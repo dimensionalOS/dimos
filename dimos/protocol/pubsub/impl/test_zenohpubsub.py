@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
+from functools import partial
 import threading
 
 import pytest
@@ -65,13 +66,19 @@ def pubsub(make_pubsub):
     return make_pubsub()
 
 
-@pytest.mark.parametrize("all_topics", [False, True], ids=["subscribe", "subscribe_all"])
+@pytest.mark.parametrize(
+    ("all_topics", "subscription_count"),
+    [(False, 1), (True, 1), (True, 3)],
+    ids=["subscribe", "subscribe_all", "multiple_subscribe_all"],
+)
 @pytest.mark.parametrize("unsubscribe_only", [False, True], ids=["stop", "unsubscribe"])
-def test_shutdown_from_callback_completes_cleanup(run_in_subprocess, all_topics, unsubscribe_only):
-    run_in_subprocess(_check_callback_shutdown, all_topics, unsubscribe_only)
+def test_shutdown_from_callback_completes_cleanup(
+    run_in_subprocess, all_topics, subscription_count, unsubscribe_only
+):
+    run_in_subprocess(_check_callback_shutdown, all_topics, subscription_count, unsubscribe_only)
 
 
-def _check_callback_shutdown(all_topics, unsubscribe_only):
+def _check_callback_shutdown(all_topics, subscription_count, unsubscribe_only):
     with ExitStack() as cleanup:
         pool = ZenohSessionPool()
         cleanup.callback(pool.close_all)
@@ -89,31 +96,47 @@ def _check_callback_shutdown(all_topics, unsubscribe_only):
         cleanup.callback(pubsub.stop)
         pubsub.start()
         topic = Topic("dimos/callback_shutdown")
-        finished = threading.Event()
-        received = []
+        finished = [threading.Event() for _ in range(subscription_count)]
+        received = [[] for _ in range(subscription_count)]
         errors = []
+        unsubscribes = []
+        drain_threads = []
+        callbacks_ready = threading.Barrier(subscription_count)
 
-        def callback(message, received_topic):
+        def callback(index, message, received_topic):
             try:
+                if all_topics:
+                    drain_threads.append(threading.current_thread())
+                # Keep every callback active before any of them starts cleanup.
+                callbacks_ready.wait(timeout=2.0)
                 if unsubscribe_only:
-                    unsubscribe()
+                    unsubscribes[index]()
                 else:
                     pubsub.stop()
-                received.append((message, received_topic))
+                received[index].append((message, received_topic))
             except Exception as error:
                 errors.append(error)
             finally:
-                finished.set()
+                finished[index].set()
 
-        unsubscribe = (
-            pubsub.subscribe_all(callback) if all_topics else pubsub.subscribe(topic, callback)
-        )
-        cleanup.callback(unsubscribe)
+        for index in range(subscription_count):
+            on_message = partial(callback, index)
+            unsubscribe = (
+                pubsub.subscribe_all(on_message)
+                if all_topics
+                else pubsub.subscribe(topic, on_message)
+            )
+            unsubscribes.append(unsubscribe)
+            cleanup.callback(unsubscribe)
         pubsub.publish(topic, b"stop")
 
-        assert finished.wait(timeout=2.0)
+        for event in finished:
+            assert event.wait(timeout=2.0)
+        for thread in drain_threads:
+            thread.join(timeout=2.0)
         assert errors == [], errors
-        assert received == [(b"stop", topic)]
+        assert received == [[(b"stop", topic)]] * subscription_count
+        assert not any(thread.is_alive() for thread in drain_threads)
         assert pubsub._subscribers == []
         assert pubsub._drain_stops == []
         assert len(pubsub._publishers) == int(unsubscribe_only)
