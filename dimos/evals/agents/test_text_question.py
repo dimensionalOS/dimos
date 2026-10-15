@@ -12,12 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Iterator
 from dataclasses import dataclass, field
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from functools import partial
 import json
 from pathlib import Path
-import threading
 from typing import Any
 
 import httpx
@@ -26,6 +24,7 @@ from langchain_ollama import ChatOllama
 import pytest
 from pytest_mock import MockerFixture
 
+from dimos.agents.llm_trace import tracing_http_client
 from dimos.agents.mcp.mcp_client import init_model
 from dimos.evals.agents.lib import single_call
 from dimos.evals.agents.pi import PiAdapter
@@ -37,92 +36,67 @@ from dimos.evals.types import EvalCase, Outcome, RunningEnvironment
 
 @dataclass
 class ProviderState:
-    requests: list[dict[str, Any]] = field(default_factory=list)
-    lock: threading.Lock = field(default_factory=threading.Lock)
-    release: threading.Event = field(default_factory=threading.Event)
+    requests: list[httpx.Request] = field(default_factory=list)
     status: int = 200
+    timeout: bool = False
 
 
 @pytest.fixture
-def provider(monkeypatch: pytest.MonkeyPatch) -> Iterator[ProviderState]:
+def provider(monkeypatch: pytest.MonkeyPatch) -> ProviderState:
     state = ProviderState()
-    state.release.set()
 
-    class Handler(BaseHTTPRequestHandler):
-        def log_message(self, format: str, *args: Any) -> None:
-            return None
+    def handler(request: httpx.Request) -> httpx.Response:
+        state.requests.append(request)
+        if state.timeout:
+            raise httpx.ReadTimeout("test provider timed out", request=request)
+        response: dict[str, Any]
+        if state.status != 200:
+            response = {"error": {"message": "test provider unavailable", "type": "server_error"}}
+        elif request.url.path == "/v1/responses":
+            response = {
+                "id": "resp_test",
+                "object": "response",
+                "created_at": 1700000000,
+                "status": "completed",
+                "error": None,
+                "service_tier": "default",
+                "model": "gpt-5-test-resolved",
+                "output": [
+                    {
+                        "id": "msg_test",
+                        "type": "message",
+                        "status": "completed",
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": "2", "annotations": []}],
+                    }
+                ],
+                "usage": {"input_tokens": 11, "output_tokens": 1, "total_tokens": 12},
+            }
+        else:
+            response = {
+                "id": "chatcmpl_test",
+                "object": "chat.completion",
+                "created": 1700000000,
+                "model": "gpt-4o-test-resolved",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": "2"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"prompt_tokens": 11, "completion_tokens": 1, "total_tokens": 12},
+            }
+        return httpx.Response(state.status, json=response)
 
-        def do_POST(self) -> None:
-            request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-            with state.lock:
-                state.requests.append(request)
-                status = state.status
-            state.release.wait(timeout=5)
-            response: dict[str, Any]
-            if status != 200:
-                response = {
-                    "error": {"message": "test provider unavailable", "type": "server_error"}
-                }
-            elif self.path == "/v1/responses":
-                response = {
-                    "id": "resp_test",
-                    "object": "response",
-                    "created_at": 1700000000,
-                    "status": "completed",
-                    "error": None,
-                    "service_tier": "default",
-                    "model": "gpt-5-test-resolved",
-                    "output": [
-                        {
-                            "id": "msg_test",
-                            "type": "message",
-                            "status": "completed",
-                            "role": "assistant",
-                            "content": [{"type": "output_text", "text": "2", "annotations": []}],
-                        }
-                    ],
-                    "usage": {"input_tokens": 11, "output_tokens": 1, "total_tokens": 12},
-                }
-            else:
-                response = {
-                    "id": "chatcmpl_test",
-                    "object": "chat.completion",
-                    "created": 1700000000,
-                    "model": "gpt-4o-test-resolved",
-                    "choices": [
-                        {
-                            "index": 0,
-                            "message": {"role": "assistant", "content": "2"},
-                            "finish_reason": "stop",
-                        }
-                    ],
-                    "usage": {"prompt_tokens": 11, "completion_tokens": 1, "total_tokens": 12},
-                }
-            payload = json.dumps(response).encode()
-            try:
-                self.send_response(status)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(payload)))
-                self.end_headers()
-                self.wfile.write(payload)
-            except (BrokenPipeError, ConnectionResetError):
-                # A timed-out SDK request closes its socket before the response is sent.
-                return None
-
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    worker = threading.Thread(target=server.serve_forever)
-    worker.start()
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
-    monkeypatch.setenv("OPENAI_BASE_URL", f"http://127.0.0.1:{server.server_port}/v1")
-    monkeypatch.setenv("NO_PROXY", "127.0.0.1")
-    try:
-        yield state
-    finally:
-        state.release.set()
-        server.shutdown()
-        server.server_close()
-        worker.join(timeout=5)
-        assert not worker.is_alive()
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://api.test/v1")
+    monkeypatch.setattr(
+        single_call,
+        "tracing_http_client",
+        partial(tracing_http_client, transport=httpx.MockTransport(handler)),
+    )
+    return state
 
 
 def completed_answer(outcome: Outcome) -> float:
@@ -155,9 +129,8 @@ def test_text_question_uses_original_prompt_and_provider_limits(
     result = runner.run([case], TextQuestion(model=model, max_output_tokens=37))[0]
 
     assert result.score == 1.0 and not result.error
-    with provider.lock:
-        assert len(provider.requests) == 1
-        payload = provider.requests[0]
+    assert len(provider.requests) == 1
+    payload = json.loads(provider.requests[0].content)
     (message,) = payload[payload_key]
     assert message["role"] == "user"
     assert message["content"] == [{"type": content_type, "text": prompt}]
@@ -173,17 +146,23 @@ def test_text_question_uses_original_prompt_and_provider_limits(
     assert "authorization" not in request["headers"]
 
 
+@pytest.mark.parametrize(("request_timeout_s", "expected_timeout"), [(0.25, 0.25), (60.0, 1.0)])
 def test_provider_timeout_retains_trajectory_and_closes_owned_client(
-    provider: ProviderState, tmp_path: Path, mocker: MockerFixture
+    provider: ProviderState,
+    tmp_path: Path,
+    mocker: MockerFixture,
+    request_timeout_s: float,
+    expected_timeout: float,
 ) -> None:
-    provider.release.clear()
+    provider.timeout = True
     client = mocker.spy(single_call, "tracing_http_client")
     runner = EvalRunner(out_dir=tmp_path)
     case = EvalCase(
         id="timeout", inputs="answer", environment=Prompt(), grade=completed_answer, timeout_s=1.0
     )
-    result = runner.run([case], TextQuestion(model="openai:gpt-4o"))[0]
-    provider.release.set()
+    result = runner.run(
+        [case], TextQuestion(model="openai:gpt-4o", request_timeout_s=request_timeout_s)
+    )[0]
 
     assert result.ended_by == "timeout" and "no completed model answer" in result.error
     assert result.final_answer == "" and not result.passed
@@ -191,8 +170,13 @@ def test_provider_timeout_retains_trajectory_and_closes_owned_client(
     assert saved["extra"]["ended_by"] == "timeout"
     assert saved["extra"]["error"]
     assert [step["source"] for step in saved["steps"]] == ["user"]
-    with provider.lock:
-        assert len(provider.requests) == 1
+    assert len(provider.requests) == 1
+    assert provider.requests[0].extensions["timeout"] == {
+        "connect": expected_timeout,
+        "read": expected_timeout,
+        "write": expected_timeout,
+        "pool": expected_timeout,
+    }
     assert result.request_attempts == 1
     assert client.spy_return.is_closed
 
@@ -200,8 +184,7 @@ def test_provider_timeout_retains_trajectory_and_closes_owned_client(
 def test_provider_failure_does_not_retry_or_discard_trajectory(
     provider: ProviderState, tmp_path: Path
 ) -> None:
-    with provider.lock:
-        provider.status = 503
+    provider.status = 503
     runner = EvalRunner(out_dir=tmp_path)
     case = EvalCase(id="failure", inputs="answer", environment=Prompt(), grade=completed_answer)
     result = runner.run([case], TextQuestion(model="openai:gpt-4o"))[0]
@@ -209,8 +192,7 @@ def test_provider_failure_does_not_retry_or_discard_trajectory(
     assert result.ended_by == "error" and "test provider unavailable" in result.error
     assert not result.passed and result.final_answer == ""
     assert Path(result.trajectory).is_file()
-    with provider.lock:
-        assert len(provider.requests) == 1
+    assert len(provider.requests) == 1
     response = json.loads((runner.run_dir / "failure/raw/000-response.json").read_text())
     assert response["status"] == 503
 
