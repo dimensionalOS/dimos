@@ -192,35 +192,19 @@ def embed_index(rig: Rig, embedder: EmbeddingModel, t0: float, t1: float) -> Str
     return embedded
 
 
-def localize(
+def retrieve(
     queries: list[str],
     *,
     index: Stream[Any, Any],
     rig: Rig,
     embedder: EmbeddingModel,
-    detector: Detector,
-    segmenter: Segmenter,
     params: LocalizeParams,
-    traces: list[LocalizeTrace] | None = None,
-    groups: dict[str, Groups] | None = None,
-) -> list[list[Localization]]:
-    """Every verified 3D instance of each query, latest-seen first, one list per query.
+) -> Stream[Any, Any]:
+    """The index frames worth a detector pass for ``queries``, in time order.
 
-    The queries share one detection pass. An empty list is a first-class
-    answer: nothing reached the accept score or no support was confirmed from
-    a second viewpoint. Coexisting instances of one label are all returned,
-    each carrying ``ambiguity_margin`` against its rivals. ``traces``, one per
-    query, collect what a renderer needs. A ``groups`` dict makes evidence
-    cumulative across calls: frames already read for a label under the same
-    params are skipped, a box is lifted in once, and an object stays answerable
-    after it leaves the window. A frame counts as read once its sightings are
-    in, so a frame a failed call left behind is read again.
+    Per query and camera: the embedder's similarity peaks and the tail's best
+    frame, each joined by the sharpest frames posed within ``verify_radius_m``.
     """
-    label_traces: list[LocalizeTrace | None] = (
-        list(traces) if traces is not None else [None] * len(queries)
-    )
-    state = [(groups if groups is not None else {}).setdefault(q, Groups()) for q in queries]
-
     index_count = index.count()
     settled = _settled(index, params.settled_window_fraction / rig.embed_hz)
     source = index.filter(lambda obs: obs.id in settled)
@@ -269,13 +253,23 @@ def localize(
         )
 
     candidates = index.filter(lambda obs: obs.id in candidate_ids).order_by("ts")
-    by_camera: dict[str, list[Any]] = {frame: [] for frame in feeds}
+    per_camera = dict.fromkeys(feeds, 0)
     for obs in candidates:
-        by_camera[obs.tags["camera"]].append(obs)
+        per_camera[obs.tags["camera"]] += 1
     logger.info(
         f"detection: {len(candidate_ids)} candidate frames for {len(queries)} labels "
-        f"({_per_camera({f: len(o) for f, o in by_camera.items()})})"
+        f"({_per_camera(per_camera)})"
     )
+    return candidates
+
+
+def support_planes(
+    rig: Rig, candidates: Stream[Any, Any], params: LocalizeParams
+) -> dict[str, SupportPlane | None]:
+    """Each camera's support plane, from the call's candidates; it must exist before any lift."""
+    by_camera: dict[str, list[Any]] = {frame: [] for frame in rig.cameras}
+    for obs in candidates:
+        by_camera[obs.tags["camera"]].append(obs)
 
     planes: dict[str, SupportPlane | None] = {}
     for frame, keyframes in by_camera.items():
@@ -291,11 +285,28 @@ def localize(
             if plane is not None:
                 rig.plane_cache[key] = plane
         planes[frame] = rig.plane_cache.get(key)
+    return planes
 
+
+def detect(
+    candidates: Stream[Any, Any],
+    queries: list[str],
+    *,
+    rig: Rig,
+    detector: Detector,
+    state: list[Groups],
+    params: LocalizeParams,
+    pending: dict[FrameKey, list[int]],
+) -> Stream[Any, Any]:
+    """Each candidate frame's boxes per query, from one detector pass per frame.
+
+    A frame every query has read under ``params`` is skipped, and so is a box
+    already folded into a query's groups. A frame left without boxes is marked
+    read here; any other goes into ``pending`` for :func:`associate` to mark.
+    """
     floor = params.candidate_floor
-    pending: dict[FrameKey, list[int]] = {}
 
-    def _detect(upstream: Iterator[Any]) -> Iterator[Any]:
+    def _frames(upstream: Iterator[Any]) -> Iterator[Any]:
         for obs in upstream:
             frame_key = (obs.tags["camera"], obs.ts)
             active = [
@@ -330,7 +341,27 @@ def localize(
             pending[frame_key] = active
             yield obs.derive(data=ImageDetections2D(image=img, detections=detections))
 
-    def _ingest(upstream: Iterator[Any]) -> Iterator[Any]:
+    return candidates.transform(_frames)
+
+
+def segment(detections: Stream[Any, Any], segmenter: Segmenter) -> Stream[Any, Any]:
+    """Each frame's boxes as masks, carried with the detector's boxes they came from."""
+    return detections.map(lambda obs: obs.derive(data=(obs.data, segmenter.segment(obs.data))))
+
+
+def associate(
+    frames: Stream[Any, Any],
+    *,
+    rig: Rig,
+    params: LocalizeParams,
+    planes: dict[str, SupportPlane | None],
+    state: list[Groups],
+    pending: dict[FrameKey, list[int]],
+    traces: list[LocalizeTrace | None],
+) -> Stream[Any, Any]:
+    """Each segmented frame lifted to 3D, folded into its queries' groups, then marked read."""
+
+    def _frames(upstream: Iterator[Any]) -> Iterator[Any]:
         for obs in upstream:
             boxes, frame = obs.data
             frame_key = (obs.tags["camera"], obs.ts)
@@ -338,9 +369,9 @@ def localize(
                 j = det3d.class_id
                 slot = state[j].add(det3d, params.cluster_radius_m, params.fuse_voxel_m)
                 state[j].folded.add((frame_key, _box_key(boxes.detections[det3d.track_id].bbox)))
-                if label_traces[j] is not None:
+                if traces[j] is not None:
                     state[j].trace[slot].append(det3d)
-            for j, label_trace in enumerate(label_traces):
+            for j, label_trace in enumerate(traces):
                 label_dets = [det for det in frame if det.class_id == j]
                 if label_trace is not None and label_dets:
                     label_trace.detection_frames.append(
@@ -351,9 +382,54 @@ def localize(
                 state[j].ingested.add((frame_key, params))
             yield obs
 
-    candidates.transform(_detect).map(
-        lambda obs: obs.derive(data=(obs.data, segmenter.segment(obs.data)))
-    ).transform(_ingest).drain()
+    return frames.transform(_frames)
+
+
+def localize(
+    queries: list[str],
+    *,
+    index: Stream[Any, Any],
+    rig: Rig,
+    embedder: EmbeddingModel,
+    detector: Detector,
+    segmenter: Segmenter,
+    params: LocalizeParams,
+    traces: list[LocalizeTrace] | None = None,
+    groups: dict[str, Groups] | None = None,
+) -> list[list[Localization]]:
+    """Every verified 3D instance of each query, latest-seen first, one list per query.
+
+    The queries share one detection pass. An empty list is a first-class
+    answer: nothing reached the accept score or no support was confirmed from
+    a second viewpoint. Coexisting instances of one label are all returned,
+    each carrying ``ambiguity_margin`` against its rivals. ``traces``, one per
+    query, collect what a renderer needs. A ``groups`` dict makes evidence
+    cumulative across calls: frames already read for a label under the same
+    params are skipped, a box is lifted in once, and an object stays answerable
+    after it leaves the window. A frame counts as read once its sightings are
+    in, so a frame a failed call left behind is read again.
+    """
+    label_traces: list[LocalizeTrace | None] = (
+        list(traces) if traces is not None else [None] * len(queries)
+    )
+    state = [(groups if groups is not None else {}).setdefault(q, Groups()) for q in queries]
+
+    candidates = retrieve(queries, index=index, rig=rig, embedder=embedder, params=params)
+    planes = support_planes(rig, candidates, params)
+    # detect hands each frame with boxes to associate, which marks it read
+    pending: dict[FrameKey, list[int]] = {}
+    detections = detect(
+        candidates, queries, rig=rig, detector=detector, state=state, params=params, pending=pending
+    )
+    associate(
+        segment(detections, segmenter),
+        rig=rig,
+        params=params,
+        planes=planes,
+        state=state,
+        pending=pending,
+        traces=label_traces,
+    ).drain()
 
     return [_finalize(q, state[j], rig, params, label_traces[j]) for j, q in enumerate(queries)]
 

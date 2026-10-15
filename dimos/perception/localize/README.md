@@ -11,12 +11,16 @@ lifted through aligned depth or, for a camera without it, a lidar.
 | stage | where | model |
 |---|---|---|
 | index | `localize.embed_index` | embedder: sharpest posed frames, 1 Hz or 3 Hz on a mobile rig, to embeddings |
-| retrieve | `localize.localize` | embedder: query to similarity peaks to candidate frames |
-| detect | `localize.localize` | detector: candidate frame and queries to boxes x query scores |
-| segment | `localize.localize` | segmenter: boxes to masks |
+| retrieve | `localize.retrieve` | embedder: query to similarity peaks to candidate frames |
+| support plane | `localize.support_planes` | one plane per camera and 2 m cell, fit from the call's candidates, for the surface-patch gate |
+| detect | `localize.detect` | detector: candidate frame and queries to boxes x query scores |
+| segment | `localize.segment` | segmenter: boxes to masks |
 | lift | `rig.lift` | aligned depth, or the window's lidar scans merged, + tf to one cloud per sighting, gated in `localize._lift` |
-| associate | `association.Groups` | sightings to objects by centroid distance, clouds fused |
+| associate | `localize.associate` | sightings to objects by centroid distance in `association.Groups`, clouds fused |
 | verify | `localize._finalize` | score, distinct views, rivals to `Localization` |
+
+`localize.localize` runs retrieve and support plane once per call, then detect, segment and
+associate frame by frame, so one frame's masks are in memory at a time, then verify.
 
 ## Swapping a model
 
