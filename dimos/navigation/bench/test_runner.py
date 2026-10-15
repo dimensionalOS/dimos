@@ -14,13 +14,14 @@
 
 from __future__ import annotations
 
-import _thread
 from dataclasses import replace
 import json
 import os
 from pathlib import Path
+import signal
 import subprocess
 import sys
+import threading
 import time
 
 import cv2
@@ -253,7 +254,7 @@ def test_an_interrupted_run_keeps_finished_episodes_and_drops_the_rest(tmp_path:
     def interrupt_once_both_hang(progress: Progress) -> None:
         if len(progress.running) == 2 and not interrupted:
             interrupted.append(True)
-            _thread.interrupt_main()
+            signal.pthread_kill(threading.main_thread().ident or 0, signal.SIGINT)
 
     config = RunConfig(
         suite=tmp_path / "suite.json",
