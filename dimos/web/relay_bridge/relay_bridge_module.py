@@ -722,7 +722,9 @@ class RelayBridgeModule(Module):
             else:
                 sender = functools.partial(self._send_reliable, client, spec.ch)
             if spec.paced:
-                sender = PacedSender(asyncio.get_running_loop(), 1.0 / spec.max_hz, sender)
+                sender = PacedSender(
+                    asyncio.get_running_loop(), 1.0 / spec.max_hz, sender, name=spec.ch
+                )
             senders[spec.ch] = sender
         return senders
 
