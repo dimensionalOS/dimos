@@ -19,6 +19,10 @@
 <!-- If you leave this empty, your PR will very likely be closed. -->
 <!-- DO NOT post pytest commands. -->
 
+## System report
+
+<!-- Optional. Tells reviewers which platform this PR was made on. Preferred: run `bin/system-report` and paste its one-line output (OS, version and CPU architecture only). Otherwise, apply the `made-on-macOS` or `made-on-Linux` general label. -->
+
 ## Which issue(s) does this PR close?
 
 <!-- Usage: "Fixes DIM-XXX / #XXX / URL" -->
