@@ -69,8 +69,8 @@ COLLISION_PENALTY = 0.25
 WEIGHTS = {"map": 0.25, "entrance": 0.15, "fruit": 0.15, "loops": 0.45}
 
 TOPICS = f"""\
-The manual says it talks Zenoh: there's a Zenoh router for it on this network at {ROBOT_ENDPOINT} \
-(any Zenoh client works, e.g. `pip install eclipse-zenoh`), with these topics:
+The manual says it talks Zenoh: there's a Zenoh router for it on this network at {ROBOT_ENDPOINT}, \
+with these topics:
 
   robot/lidar/xyz_f32   float32 little-endian (N,3) x y z in metres, in the lidar's own frame, about
                         10 per second; attachment is JSON {{"t": unix_seconds}}. The lidar is a Livox
