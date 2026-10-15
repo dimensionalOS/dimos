@@ -31,7 +31,6 @@ from dimos.evals import cli
 from dimos.evals.agents.text_question import TextQuestion
 from dimos.evals.runner import EvalRunner
 from dimos.evals.suites import space_map_sketching
-from dimos.evals.suites.lib.space import commands
 from dimos.evals.suites.lib.space.data import SpacePaths, load_examples, setup
 from dimos.evals.suites.lib.space.process import run_process
 from dimos.evals.suites.lib.space.suite import SpaceSuite
@@ -137,7 +136,6 @@ def test_native_standard_cli_preserves_prompt_and_official_score(
     native_space_paths: SpacePaths,
     tmp_path: Path,
     mocker: MockerFixture,
-    capsys: pytest.CaptureFixture[str],
 ) -> None:
     examples = load_examples(native_space_paths)[:2]
     assert examples[0].qa["answer"] != examples[1].qa["answer"]
@@ -165,8 +163,9 @@ def test_native_standard_cli_preserves_prompt_and_official_score(
         ],
     )
     assert result.exit_code == 0, result.output
-    assert commands.main(["score", str(runner.run_dir)]) == 0
-    report = json.loads(capsys.readouterr().out)
+    scored = CliRunner().invoke(cli.app, ["score", "space", str(runner.run_dir)])
+    assert scored.exit_code == 0, scored.output
+    report = json.loads(scored.output)
     assert report["complete"]
     assert report["scored_denominator"] == 2
     assert not report["fixed_subset_complete"]

@@ -23,6 +23,8 @@ import subprocess
 import sys
 import time
 
+import pytest
+
 # CI runners are slower — give generous headroom but still catch gross regressions.
 HELP_TIMEOUT_SECONDS = 8
 
@@ -62,11 +64,12 @@ def test_cli_import_does_not_pull_ipython() -> None:
     assert result.returncode == 0, f"IPython leaked into CLI import:\n{result.stderr}"
 
 
-def test_help_startup_time() -> None:
-    """`dimos --help` must finish in under {HELP_TIMEOUT_SECONDS}s."""
+@pytest.mark.parametrize("args", [[], ["evals", "setup", "space"], ["evals", "score", "space"]])
+def test_help_startup_time(args: list[str]) -> None:
+    """CLI help must finish within the startup budget."""
     start = time.monotonic()
     result = subprocess.run(
-        [sys.executable, "-m", "dimos.cli.dimos", "--help"],
+        [sys.executable, "-m", "dimos.cli.dimos", *args, "--help"],
         capture_output=True,
         text=True,
         timeout=HELP_TIMEOUT_SECONDS + 5,  # hard kill safety margin
@@ -91,6 +94,9 @@ CLI_MUST_NOT_IMPORT = (
     "rerun",
     "rclpy",
     "cyclonedds",
+    "space",
+    "dimos.evals.suites.lib.space.data",
+    "dimos.evals.suites.lib.space.report",
 )
 # aiortc and sounddevice are pulled in by unitree_webrtc_connect through
 # dimos/robot/unitree/connection.py; deferring that import is a separate decision.

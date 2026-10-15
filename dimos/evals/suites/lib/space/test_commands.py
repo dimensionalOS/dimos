@@ -24,33 +24,57 @@ from typing import BinaryIO
 
 import pytest
 from pytest_mock import MockerFixture
+from typer.testing import CliRunner
 
-from dimos.evals.suites.lib.space import commands
+from dimos.cli.dimos import main as app
+from dimos.evals.suites.lib.space import data, report
 from dimos.evals.suites.lib.space.data import SpacePaths
 
 
 @pytest.mark.parametrize("complete", [True, False])
-def test_score_command_exit_status(
-    tmp_path: Path, mocker: MockerFixture, capsys: pytest.CaptureFixture[str], complete: bool
-) -> None:
-    report = {"complete": complete, "official_percent": 0.0}
-    score = mocker.patch.object(commands, "score_run", return_value=report)
-    assert commands.main(["score", str(tmp_path)]) == (0 if complete else 1)
+def test_score_command_exit_status(tmp_path: Path, mocker: MockerFixture, complete: bool) -> None:
+    expected = {"complete": complete, "official_percent": 0.0}
+    score = mocker.patch.object(report, "score_run", return_value=expected)
+    result = CliRunner().invoke(app, ["evals", "score", "space", str(tmp_path)])
+    assert result.exit_code == (0 if complete else 1), result.output
     score.assert_called_once_with(SpacePaths(), tmp_path)
-    assert json.loads(capsys.readouterr().out) == report
+    assert json.loads(result.output) == expected
 
 
-def test_setup_command(mocker: MockerFixture, capsys: pytest.CaptureFixture[str]) -> None:
+def test_setup_command(mocker: MockerFixture) -> None:
     previous = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGHUP)}
-    setup = mocker.patch.object(commands, "setup", return_value={"selected_cases": []})
-    assert commands.main(["setup"]) == 0
+    setup = mocker.patch.object(data, "setup", return_value={"selected_cases": []})
+    result = CliRunner().invoke(app, ["evals", "setup", "space"])
+    assert result.exit_code == 0, result.output
     assert {sig: signal.getsignal(sig) for sig in previous} == previous
     setup.assert_called_once_with(SpacePaths())
-    assert json.loads(capsys.readouterr().out) == {"selected_cases": []}
+    assert json.loads(result.output) == {"selected_cases": []}
 
 
-@pytest.fixture
-def command_process(tmp_path: Path) -> Iterator[tuple[subprocess.Popen[bytes], BinaryIO]]:
+def test_setup_failure_restores_handlers(mocker: MockerFixture) -> None:
+    previous = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGHUP)}
+    failure = RuntimeError("Source fetch failed")
+    mocker.patch.object(data, "setup", side_effect=failure)
+    result = CliRunner().invoke(app, ["evals", "setup", "space"])
+    assert result.exit_code == 1
+    assert result.exception is failure
+    assert {sig: signal.getsignal(sig) for sig in previous} == previous
+
+
+@pytest.mark.parametrize("args", [["setup", "unknown"], ["score", "unknown"], ["score", "space"]])
+def test_invalid_command_does_not_run_backend(args: list[str], mocker: MockerFixture) -> None:
+    setup = mocker.patch.object(data, "setup")
+    score = mocker.patch.object(report, "score_run")
+    result = CliRunner().invoke(app, ["evals", *args])
+    assert result.exit_code == 2
+    setup.assert_not_called()
+    score.assert_not_called()
+
+
+@pytest.fixture(params=["setup", "score"])
+def command_process(
+    tmp_path: Path, request: pytest.FixtureRequest
+) -> Iterator[tuple[subprocess.Popen[bytes], BinaryIO]]:
     with socket.socket() as server:
         server.bind(("127.0.0.1", 0))
         server.listen(1)
@@ -61,18 +85,22 @@ def command_process(tmp_path: Path) -> Iterator[tuple[subprocess.Popen[bytes], B
             "connection.sendall(f'{os.getpid()}\\n'.encode())\n"
             "connection.recv(1)\n"
         )
+        args = ["evals", request.param, "space"]
+        if request.param == "score":
+            args.append(str(tmp_path))
         script = (
             "from pathlib import Path\n"
             "import signal, sys\n"
-            "from dimos.evals.suites.lib.space import commands\n"
+            "from dimos.cli.dimos import main as app\n"
+            "from dimos.evals.suites.lib.space import data, report\n"
             "from dimos.evals.suites.lib.space.process import run_process\n"
-            "def setup(paths):\n"
+            "def operation(paths, *args):\n"
             f"    run_process([sys.executable, '-c', {child!r}], Path({str(tmp_path / 'worker.log')!r}), 30)\n"
             "    return {}\n"
-            "commands.setup = setup\n"
+            "data.setup = report.score_run = operation\n"
             "previous = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGHUP)}\n"
             "try:\n"
-            "    raise SystemExit(commands.main(['setup']))\n"
+            f"    app({args!r})\n"
             "finally:\n"
             "    assert {sig: signal.getsignal(sig) for sig in previous} == previous\n"
         )

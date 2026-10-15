@@ -149,7 +149,7 @@ def test_failed_download_does_not_publish(
 
 def test_missing_or_corrupt_data_fails_before_selection(tmp_path: Path) -> None:
     paths = data.SpacePaths(tmp_path)
-    with pytest.raises(FileNotFoundError, match="commands setup"):
+    with pytest.raises(FileNotFoundError, match="dimos evals setup space"):
         data.load_examples(paths)
     paths.questions.parent.mkdir(parents=True)
     paths.questions.write_text("[]")

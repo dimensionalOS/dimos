@@ -16,7 +16,7 @@ Use Linux or macOS, Python 3.12, and the repository's `uv` setup:
 
 ```bash skip
 uv sync --locked --no-default-groups --extra space
-uv run --no-sync python -m dimos.evals.suites.lib.space.commands setup
+uv run --no-sync dimos evals setup space
 ```
 
 Setup downloads pinned source and one unchanged `qas.json` into
@@ -47,7 +47,7 @@ explicit output budget:
 uv run --no-sync dimos evals run dimos.evals.suites.space_map_sketching \
   --agent dimos.evals.agents.text_question \
   --set model=gpt-5.6-luna --set max_output_tokens=16384
-uv run --no-sync python -m dimos.evals.suites.lib.space.commands score /path/to/run-directory
+uv run --no-sync dimos evals score space /path/to/run-directory
 ```
 
 Use the directory printed by the run command. Each attempt saves a manifest,
