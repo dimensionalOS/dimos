@@ -189,8 +189,12 @@ def _joints(
     joints: Sequence[str] | None,
     state: Sequence[Interface],
     command: Sequence[Interface],
+    overrides: Mapping[str, Limits],
 ) -> tuple[list[Resource], dict[str, Limits]]:
     """Build each joint from the robot model, and the model's limits on what it is told.
+
+    A limit the caller overrides is not read from the model, so a model that
+    lacks it is fine.
 
     Args:
         source: The robot's name, the first part of each key.
@@ -230,9 +234,12 @@ def _joints(
                 )
             units[interface] = kind_units[interface]
         for interface in command:
+            key = Key.of(source, joint.name, interface)
+            if key in overrides:
+                continue
             limit = _model_limit(joint, interface)
             if limit is not None:
-                limits[Key.of(source, joint.name, interface)] = limit
+                limits[key] = limit
         resources.append(
             Resource(
                 name=joint.name,
@@ -281,6 +288,7 @@ def manipulator_description(
         sensors: Sensors to report alongside the joints, e.g.
             ``[imu_resource()]``.
         limit_overrides: Limits by full name, such as "arm/joint1/velocity",
+            used instead of the model's, and in place of one the model lacks.
             each replacing the model's limit for that name only, e.g. to drive
             slower than the hardware allows.
         state_rate_hz: How many times a second the arm reports.
@@ -300,7 +308,8 @@ def manipulator_description(
     if not command:
         raise ValueError(f"manipulator {source!r} declares nothing to command")
 
-    resources, limits = _joints(source, model, joints, state, command)
+    overrides = dict(limit_overrides or {})
+    resources, limits = _joints(source, model, joints, state, command, overrides)
     if gripper is not None:
         resources.append(
             Resource(
@@ -316,7 +325,7 @@ def manipulator_description(
     description = ControlDescription(
         source=source,
         resources=(*resources, *sensors),
-        limits=limits | dict(limit_overrides or {}),
+        limits=limits | overrides,
         state_rate_hz=state_rate_hz,
         deadman_timeout_s=deadman_timeout_s,
     )
@@ -352,6 +361,7 @@ def pd_joint_description(
         sensors: Sensors to report alongside the joints, e.g.
             ``[imu_resource()]``.
         limit_overrides: Limits by full name, such as "g1/left_knee/position",
+            used instead of the model's, and in place of one the model lacks.
             each replacing the model's limit for that name only.
         state_rate_hz: How many times a second the body reports.
         deadman_timeout_s: How long it goes without a command, in seconds,
@@ -366,11 +376,12 @@ def pd_joint_description(
         DescriptionError: If the finished description breaks a rule, such as
             an override for a name the body is not told.
     """
-    resources, limits = _joints(source, model, joints, _PD_STATE, _PD_COMMAND)
+    overrides = dict(limit_overrides or {})
+    resources, limits = _joints(source, model, joints, _PD_STATE, _PD_COMMAND, overrides)
     description = ControlDescription(
         source=source,
         resources=(*resources, *sensors),
-        limits=limits | dict(limit_overrides or {}),
+        limits=limits | overrides,
         state_rate_hz=state_rate_hz,
         deadman_timeout_s=deadman_timeout_s,
     )

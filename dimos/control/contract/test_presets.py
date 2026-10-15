@@ -376,6 +376,35 @@ def test_limit_overrides_replace_only_their_own_names(tmp_path: Path) -> None:
     assert arm.limits["arm/spinner/velocity"] == Limits(-10.0, 10.0)
 
 
+NO_VELOCITY_URDF = """<?xml version="1.0"?>
+<robot name="half">
+  <link name="base"/>
+  <link name="l1"/>
+  <joint name="elbow" type="revolute">
+    <parent link="base"/>
+    <child link="l1"/>
+    <limit lower="-1.0" upper="1.0" effort="10.0"/>
+  </joint>
+</robot>
+"""
+
+
+def test_a_limit_the_model_lacks_is_an_error_unless_overridden(tmp_path: Path) -> None:
+    model = model_from(tmp_path, NO_VELOCITY_URDF)
+    with pytest.raises(ValueError, match="no velocity limit"):
+        manipulator_description(model, source="arm")
+    with pytest.raises(ValueError, match="no velocity limit"):
+        pd_joint_description(model, source="arm")
+
+    given = {"arm/elbow/velocity": Limits(-2.0, 2.0)}
+    arm = manipulator_description(model, source="arm", limit_overrides=given)
+    assert arm.limits["arm/elbow/velocity"] == Limits(-2.0, 2.0)
+    assert arm.limits["arm/elbow/position"] == Limits(-1.0, 1.0)
+    body = pd_joint_description(model, source="arm", limit_overrides=given)
+    assert body.limits["arm/elbow/velocity"] == Limits(-2.0, 2.0)
+    assert body.limits["arm/elbow/effort"] == Limits(-10.0, 10.0)
+
+
 def test_a_joint_missing_from_the_model_raises(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="not in the robot model"):
         manipulator_description(model_from(tmp_path, TOY_URDF), source="arm", joints=["elbow"])
