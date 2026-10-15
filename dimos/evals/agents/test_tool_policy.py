@@ -33,7 +33,7 @@ def test_allowed_tools_execute_and_excluded_tools_do_not(
     provider.call("write", path=harness.path("forbidden.txt"), content="must not execute")
     provider.call("bash", command=f"printf selected-observation > {harness.path('facts.txt')}")
     provider.call("grep", pattern="selected-observation", path=harness.path("facts.txt"), context=1)
-    result = harness.run(harness.agent(provider, ("bash", "grep")))
+    result = harness.run(harness.agent(provider, ("bash", "grep"), max_output_tokens=1024))
     assert result.extra.ended_by == "answer", result.extra
     assert result.final_answer == "OK"
     assert len(provider.requests) == 4
@@ -62,6 +62,26 @@ def test_allowed_tools_execute_and_excluded_tools_do_not(
     assert result.final_metrics.total_prompt_tokens == 40
     assert result.final_metrics.total_completion_tokens == 20
     assert result.final_metrics.total_cost_usd is not None
+
+
+@pytest.mark.parametrize("harness", ["pi"], indirect=True)
+@pytest.mark.parametrize("provider", ["anthropic"], indirect=True)
+def test_pi_anthropic_hides_deferred_placeholder_with_default_output_cap(
+    harness: NativeHarness, provider: ScriptedProvider
+) -> None:
+    provider.call("bash", command="printf selected-observation")
+    result = harness.run(harness.agent(provider, ("bash",)))
+
+    assert result.extra.ended_by == "answer", result.extra
+    assert provider.requests
+    for request in provider.requests:
+        tools = request["tools"]
+        assert isinstance(tools, list)
+        names = set()
+        for tool in tools:
+            assert isinstance(tool, dict)
+            names.add(str(tool["name"]))
+        assert names == {"bash"}
 
 
 def test_no_tools_blocks_even_a_provider_requested_call(
