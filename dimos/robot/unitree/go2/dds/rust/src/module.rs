@@ -27,6 +27,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use cyclonedds_rs::{DdsWriter, SampleBuffer};
 use dimos_module::nalgebra::{Isometry3, Quaternion as NQuaternion, Translation3, UnitQuaternion};
+use dimos_module::time::HostClock;
 use dimos_module::{native_config, Input, Module, Output, Tf, Transform};
 use lcm_msgs::builtin_interfaces::Time as VideoTime;
 use lcm_msgs::foxglove_msgs::CompressedVideo;
@@ -53,6 +54,8 @@ const CAMERA_FRAME: &str = "camera_optical";
 const BODY_FRAME: &str = "base_link";
 const MOUNT_FRAME: &str = "front_camera";
 const MID360_FRAME: &str = "mid360_link";
+/// The head L1, the frame its raw cloud is stamped in.
+const L1_FRAME: &str = "utlidar_lidar";
 /// The optical axes off the camera mount: x right, y down, z forward.
 const OPTICAL_RPY: [f64; 3] = [-FRAC_PI_2, 0.0, -FRAC_PI_2];
 /// The first 12 of LowState's 20 motors, in Unitree order.
@@ -92,6 +95,9 @@ pub struct Config {
     pub mid360_xyz: [f64; 3],
     /// front_camera -> mid360_link, fixed-axis rpy in degrees.
     pub mid360_mount: [f64; 3],
+    /// base_link -> utlidar_lidar (the head L1): metres, and fixed-axis rpy in degrees.
+    pub l1_xyz: [f64; 3],
+    pub l1_mount: [f64; 3],
     /// The front camera's calibration, published at `camera_info_hz`.
     #[serde(with = "camera_info_dict")]
     pub camera_info: CameraInfo,
@@ -442,6 +448,11 @@ fn now_secs() -> f64 {
     now_ns() as f64 * 1e-9
 }
 
+/// A DDS header stamp in nanoseconds, on the robot's clock.
+fn stamp_ns(h: &types::Header) -> u64 {
+    h.stamp.sec.max(0) as u64 * 1_000_000_000 + h.stamp.nanosec as u64
+}
+
 fn time_of_secs(ts: f64) -> Time {
     let sec = ts.trunc();
     Time {
@@ -697,7 +708,8 @@ fn inverse(t: Transform) -> Transform {
     Transform::new(t.child, t.parent, t.ts, iso)
 }
 
-/// base_link -> front_camera -> {mid360_link, camera_optical}, re-rooted at `tf_root`.
+/// base_link -> {front_camera -> {mid360_link, camera_optical}, utlidar_lidar},
+/// re-rooted at `tf_root`.
 pub fn mount_tree(c: &Config, ts: f64) -> Vec<Transform> {
     let camera = edge(BODY_FRAME, MOUNT_FRAME, c.camera_xyz, [0.0; 3], ts);
     let mid360 = edge(
@@ -708,10 +720,17 @@ pub fn mount_tree(c: &Config, ts: f64) -> Vec<Transform> {
         ts,
     );
     let optical = edge(MOUNT_FRAME, CAMERA_FRAME, [0.0; 3], OPTICAL_RPY, ts);
+    let l1 = edge(
+        BODY_FRAME,
+        L1_FRAME,
+        c.l1_xyz,
+        c.l1_mount.map(f64::to_radians),
+        ts,
+    );
     if c.tf_root == MID360_FRAME {
-        vec![inverse(mid360), inverse(camera), optical]
+        vec![inverse(mid360), inverse(camera), optical, l1]
     } else {
-        vec![camera, mid360, optical]
+        vec![camera, mid360, optical, l1]
     }
 }
 
@@ -810,6 +829,8 @@ impl DdsLoop {
         let mut imu_buf = SampleBuffer::<types::Imu>::new(64);
         let mut low_buf = SampleBuffer::<types::LowState>::new(64);
         let mut joy_buf = SampleBuffer::<types::WirelessController>::new(16);
+        // The L1 stamps on the robot's clock; its IMU's low latency pins that onto ours.
+        let mut l1_clock = HostClock::default();
         let mut jpeg_poll = Cadence::new(c.video_fps, Instant::now());
         let mut low_tick = Cadence::new(c.lowstate_hz, Instant::now());
         let mut battery_tick = Cadence::new(1.0, Instant::now());
@@ -871,17 +892,23 @@ impl DdsLoop {
                 }
             }
             if let Some((cloud, imu_r)) = &raw_readers {
-                let n = cloud.take_now(&mut raw_buf).unwrap_or(0);
-                for s in raw_buf.iter().take(n) {
-                    let _ = self
-                        .handle
-                        .block_on(self.lidar_raw.publish(&pointcloud(s, now_secs())));
-                }
                 let n = imu_r.take_now(&mut imu_buf).unwrap_or(0);
                 for s in imu_buf.iter().take(n) {
+                    let robot = stamp_ns(&s.header);
+                    l1_clock.observe(robot, now_secs());
+                    let ts = l1_clock.host_ns(robot) as f64 * 1e-9;
                     let _ = self
                         .handle
-                        .block_on(self.lidar_imu.publish(&lidar_imu(s, now_secs())));
+                        .block_on(self.lidar_imu.publish(&lidar_imu(s, ts)));
+                }
+                // Header stamps, not arrival: a cloud can land seconds late after a stall.
+                // None before the clock is pinned, an unmapped stamp is on the wrong clock.
+                let n = cloud.take_now(&mut raw_buf).unwrap_or(0);
+                for s in raw_buf.iter().take(n).filter(|_| l1_clock.is_synced()) {
+                    let ts = l1_clock.host_ns(stamp_ns(&s.header)) as f64 * 1e-9;
+                    let _ = self
+                        .handle
+                        .block_on(self.lidar_raw.publish(&pointcloud(s, ts)));
                 }
             }
             if let Some(reader) = &low_reader {
@@ -1176,9 +1203,15 @@ mod tests {
             [
                 (MID360_FRAME, MOUNT_FRAME),
                 (MOUNT_FRAME, BODY_FRAME),
-                (MOUNT_FRAME, CAMERA_FRAME)
+                (MOUNT_FRAME, CAMERA_FRAME),
+                (BODY_FRAME, L1_FRAME)
             ]
         );
+        // The L1 hangs off base_link either way, at the configured mount.
+        assert_eq!(lidar[3].translation(), body[3].translation());
+        let (r, p, y) = body[3].rotation().euler_angles();
+        let rpy = c.l1_mount.map(f64::to_radians);
+        assert!((r - rpy[0]).abs() + (p - rpy[1]).abs() + (y - rpy[2]).abs() < 1e-9);
         // Inverting the lidar edge and composing back lands on the identity.
         let round = body[1].translation() + body[1].rotation() * lidar[0].translation();
         assert!(round.norm() < 1e-9);
