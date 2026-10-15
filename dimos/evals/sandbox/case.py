@@ -23,7 +23,6 @@ than held as Python objects.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator, Sequence
-from dataclasses import dataclass
 import importlib
 import json
 from pathlib import Path
@@ -46,6 +45,8 @@ KILL_AGENT_PROCESSES = (
     'for pid in $(pgrep -v -f "^(/sbin/docker-init|sleep infinity)"); do '
     '[ "$pid" != "$$" ] && kill -9 "$pid"; done; true'
 )
+# Where the robot container sees this case's output dir, e.g. to log ground truth for grading.
+CASE_MOUNT = "/case"
 
 
 class FunctionRef(BaseModel):
@@ -80,6 +81,12 @@ class DimosRobot(BaseModel):
     forward: tuple[str, ...] = ()
     env: dict[str, str] = {}
     image: str = ROBOT_IMAGE
+    # dimOS data directories (get_data names) the robot needs, mounted read-only from this
+    # machine rather than downloaded in every container, e.g. ("scene_packages",).
+    data: tuple[str, ...] = ()
+    # False keeps dimOS's own topics off the router: the agent sees only what the
+    # blueprint serves itself (raw-robot-bridge), not simulator ground truth.
+    expose_dimos: bool = True
 
 
 class ExternalRobot(BaseModel):
@@ -126,14 +133,35 @@ class Conversation:
 Human = Callable[..., Iterator[str]]
 
 
-@dataclass(frozen=True, kw_only=True)
 class SandboxOutcome:
-    """What evaluate gets once the conversation is over. The robot is still running."""
+    """What evaluate gets once the conversation is over. The robot and the recorder are still running."""
 
-    done: dict[str, Any]  # the arguments of the agent's last accepted done call
-    trajectory: Trajectory
-    recording: Recording | None  # every zenoh sample of the run; None without a robot
-    exec: Callable[..., subprocess.CompletedProcess[str]]  # run a command in the agent container
+    def __init__(
+        self,
+        *,
+        done: dict[str, Any],
+        trajectory: Trajectory,
+        exec: Callable[..., subprocess.CompletedProcess[str]],
+        case_dir: Path,
+        stop_recorder: Callable[[], Recording] | None,
+    ) -> None:
+        self.done = done  # the arguments of the agent's last accepted done call
+        self.trajectory = trajectory
+        self.exec = exec  # run a shell command in the agent container
+        self.case_dir = case_dir  # this case's output dir, e.g. for ground truth or a report
+        self._stop_recorder = stop_recorder
+        self._recording: Recording | None = None
+
+    @property
+    def recording(self) -> Recording | None:
+        """Every zenoh sample of the run so far; None without a robot.
+
+        The first read stops the recorder, so read it after anything evaluate itself
+        wants recorded (e.g. running the agent's system).
+        """
+        if self._recording is None and self._stop_recorder is not None:
+            self._recording = self._stop_recorder()
+        return self._recording
 
 
 class SandboxCase(BaseModel):

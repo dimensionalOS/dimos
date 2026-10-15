@@ -290,6 +290,9 @@ def robot(
     forward: list[str] = typer.Option(
         [], "--forward", help="Zenoh endpoint the router dials too, e.g. a real robot's router"
     ),
+    hide_dimos: bool = typer.Option(
+        False, "--hide-dimos", help="Keep dimOS's own topics off the router; serve only --forward"
+    ),
 ) -> None:
     """A sandbox robot: a zenoh router, and `dimos <args after -->` behind it on zenoh.
 
@@ -298,7 +301,7 @@ def robot(
     """
     from dimos.evals.sandbox.robot import serve
 
-    raise typer.Exit(serve(listen, forward, ctx.args))
+    raise typer.Exit(serve(listen, forward, ctx.args, expose_dimos=not hide_dimos))
 
 
 @app.command("list")
