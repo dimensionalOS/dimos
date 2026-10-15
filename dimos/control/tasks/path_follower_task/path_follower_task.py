@@ -30,6 +30,7 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
+from pydantic import Field
 
 from dimos.control.benchmarking.velocity_profile import (
     PathSpeedCap,
@@ -141,7 +142,6 @@ class PathFollowerTask(BaseControlTask):
                 f"PathFollowerTask '{name}' needs 3 joints (vx, vy, wz), "
                 f"got {len(config.joint_names)}"
             )
-
         self._name = name
         self._config = config
         self._joint_names_list = list(config.joint_names)
@@ -626,6 +626,8 @@ class PathFollowerTask(BaseControlTask):
 
 
 class PathFollowerTaskParams(BaseConfig):
+    # Exactly 3 joints: vx, vy, wz.
+    joint_names: list[str] = Field(min_length=3, max_length=3)
     speed: float = 0.55
     control_frequency: float = 10.0
     goal_tolerance: float = 0.2
@@ -640,11 +642,18 @@ class PathFollowerTaskParams(BaseConfig):
 
 
 def create_task(cfg: Any, hardware: Any) -> PathFollowerTask:
-    params = PathFollowerTaskParams.model_validate(cfg.params)
+    raw = dict(cfg.params)
+    # joint_names lives on TaskConfig; smuggling it via params used to fail
+    # (extra=forbid) before this field was added to Params.
+    if "joint_names" in raw:
+        raise ValueError("joint_names must be set on TaskConfig, not in params")
+    params = PathFollowerTaskParams.model_validate(
+        {**raw, "joint_names": list(cfg.joint_names)}
+    )
     return PathFollowerTask(
         cfg.name,
         PathFollowerTaskConfig(
-            joint_names=cfg.joint_names,
+            joint_names=params.joint_names,
             priority=cfg.priority,
             speed=params.speed,
             control_frequency=params.control_frequency,

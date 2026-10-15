@@ -38,6 +38,8 @@ import math
 from pathlib import Path as _Path
 from typing import TYPE_CHECKING, Any
 
+from pydantic import Field
+
 from dimos.control.benchmarking.tuning import TuningConfig
 from dimos.control.benchmarking.velocity_profile import PathSpeedCap, VelocityProfileConfig
 from dimos.control.tasks.feedforward_gain_compensator import (
@@ -196,6 +198,8 @@ class RPPPathFollowerTask(PathFollowerTask):
 
 
 class RPPPathFollowerTaskParams(BaseConfig):
+    # Exactly 3 joints: vx, vy, wz.
+    joint_names: list[str] = Field(min_length=3, max_length=3)
     artifact_path: str = DEFAULT_ARTIFACT_PATH
     speed: float = 0.7
     control_frequency: float = 10.0
@@ -214,11 +218,16 @@ class RPPPathFollowerTaskParams(BaseConfig):
 
 
 def create_task(cfg: Any, hardware: Any) -> RPPPathFollowerTask:
-    params = RPPPathFollowerTaskParams.model_validate(cfg.params)
+    raw = dict(cfg.params)
+    if "joint_names" in raw:
+        raise ValueError("joint_names must be set on TaskConfig, not in params")
+    params = RPPPathFollowerTaskParams.model_validate(
+        {**raw, "joint_names": list(cfg.joint_names)}
+    )
     return RPPPathFollowerTask(
         cfg.name,
         PathFollowerTaskConfig(
-            joint_names=cfg.joint_names,
+            joint_names=params.joint_names,
             priority=cfg.priority,
             speed=params.speed,
             control_frequency=params.control_frequency,
