@@ -10,13 +10,15 @@ import {
   ACK_TIMEOUT_MS,
   ControlPayloadTooLargeError,
   type FrameWriter,
+  IncompleteFrameError,
   LATEST_SEND_ORDER,
   LatestChannel,
   parseRobotFrameHeader,
   Rate,
-  readRobotStream,
+  readRobotFrames,
   RELIABLE_SEND_ORDER,
   ReliableChannel,
+  type RobotFrame,
   TokenBucket,
   type ViewerSink,
 } from "./forward.ts";
@@ -471,69 +473,79 @@ function byteStream(...chunks: Uint8Array[]): ReadableStream<Uint8Array> {
 }
 
 // Stream type 0x41 exceeds the 1-byte varint range, so on the wire it is the
-// 2-byte varint [0x40, 0x41] (what aioquic sends).
-
-// Stream type 0x41 exceeds the 1-byte varint range, so on the wire it is the
 // 2-byte varint [0x40, 0x41] (what aioquic sends), then the session id.
 const PREAMBLE = new Uint8Array([0x40, 0x41, 0x00]);
 
-Deno.test("readRobotStream: the preamble is consumed and the frame parses", async () => {
+/** Every frame of a stream, and whether the stream ended cleanly. */
+async function readAll(rs: ReadableStream<Uint8Array>): Promise<RobotFrame[]> {
+  const frames: RobotFrame[] = [];
+  await readRobotFrames(rs, (f) => frames.push(f));
+  return frames;
+}
+
+Deno.test("readRobotFrames: the preamble is consumed and the frame parses", async () => {
   const frame = dataFrame("cam", 3, "latest");
   // enqueue copies: the byte stream detaches the chunk's buffer on read
-  const { header, bytes, reserved } = await readRobotStream(
-    byteStream(PREAMBLE.slice(), frame.slice()),
-  );
-  assertEquals(bytes, frame);
-  assertEquals(header, { ch: "cam", seq: 3, ts: 3.5, delivery: "latest" });
-  assertEquals(reserved, false);
+  const [got] = await readAll(byteStream(PREAMBLE.slice(), frame.slice()));
+  assertEquals(got.bytes, frame);
+  assertEquals(got.header, { ch: "cam", seq: 3, ts: 3.5, delivery: "latest" });
+  assertEquals(got.reserved, false);
 });
 
-Deno.test("readRobotStream: one chunk, split chunks, and byte-at-a-time all parse", async () => {
-  const frame = dataFrame("odom", 7, "reliable");
-  const whole = new Uint8Array([...PREAMBLE, ...frame]);
-  const expected = { ch: "odom", seq: 7, ts: 7.5, delivery: "reliable" };
-  assertEquals((await readRobotStream(byteStream(whole.slice()))).header, expected);
+Deno.test("readRobotFrames: back-to-back frames on one stream, split anywhere", async () => {
+  const frames = [1, 2, 3].map((seq) => dataFrame("odom", seq, "reliable"));
+  const whole = new Uint8Array([...PREAMBLE, ...frames.flatMap((f) => [...f])]);
+  const expected: FrameHeader[] = frames.map((_, i) => ({
+    ch: "odom",
+    seq: i + 1,
+    ts: i + 1.5,
+    delivery: "reliable",
+  }));
+  const one = await readAll(byteStream(whole.slice()));
+  assertEquals(one.map((f) => f.header), expected);
+  assertEquals(one.map((f) => f.bytes), frames);
   const bytes = Array.from(whole, (b) => new Uint8Array([b]));
-  const slow = await readRobotStream(byteStream(...bytes));
-  assertEquals(slow.header, expected);
-  assertEquals(slow.bytes, frame);
-  // The header's bytes land in a chunk of their own, the payload after.
-  const split = await readRobotStream(
-    byteStream(whole.slice(0, PREAMBLE.length + 8), whole.slice(PREAMBLE.length + 8)),
-  );
-  assertEquals(split.bytes, frame);
+  const slow = await readAll(byteStream(...bytes));
+  assertEquals(slow.map((f) => f.bytes), frames);
+  // A boundary in the middle of a frame's prefix and header.
+  const cut = PREAMBLE.length + frames[0].byteLength + 5;
+  const split = await readAll(byteStream(whole.slice(0, cut), whole.slice(cut)));
+  assertEquals(split.map((f) => f.bytes), frames);
 });
 
-Deno.test("readRobotStream: onHeader fires once the header is in, before the payload", async () => {
-  const header: FrameHeader = { ch: "cloud", seq: 1, ts: 1.5, delivery: "latest" };
-  const frame = encodeDataFrame(header, new Uint8Array(300 * 1024).fill(5)); // past one buffer
-  const events: string[] = [];
-  let release!: () => void;
-  const payloadGate = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  const headerEnd = PREAMBLE.length + 8 + JSON.stringify(header).length;
+Deno.test("readRobotFrames: a frame is handed over before the stream ends", async () => {
+  const frame = dataFrame("odom", 1, "reliable");
   const whole = new Uint8Array([...PREAMBLE, ...frame]);
-  const rs = new ReadableStream<Uint8Array>({
+  let controller!: ReadableByteStreamController;
+  const rs = new ReadableStream({
     type: "bytes",
-    async start(controller) {
-      controller.enqueue(whole.slice(0, headerEnd));
-      await payloadGate;
-      controller.enqueue(whole.slice(headerEnd));
-      controller.close();
+    start(c) {
+      controller = c;
     },
   });
-  const read = readRobotStream(rs, (h, reserved) => {
-    events.push(`header ${h?.ch} reserved=${reserved}`);
-    release();
-  });
-  const { bytes } = await read;
-  events.push("frame");
-  assertEquals(events, ["header cloud reserved=false", "frame"]);
-  assertEquals(bytes, frame); // grown through the doubling path
+  const seen: number[] = [];
+  const done = readRobotFrames(rs, (f) => seen.push(f.header!.seq));
+  controller.enqueue(whole.slice());
+  for (let i = 0; i < 5 && seen.length === 0; i++) await tick();
+  assertEquals(seen, [1]); // a persistent stream never ends; the frame is out
+  controller.enqueue(dataFrame("odom", 2, "reliable"));
+  for (let i = 0; i < 5 && seen.length === 1; i++) await tick();
+  assertEquals(seen, [1, 2]);
+  controller.close();
+  await done; // a clean end between frames
 });
 
-Deno.test("readRobotStream: a header longer than the first read still parses", async () => {
+Deno.test("readRobotFrames: a payload past one buffer grows the frame", async () => {
+  const header: FrameHeader = { ch: "cloud", seq: 1, ts: 1.5, delivery: "latest" };
+  const frame = encodeDataFrame(header, new Uint8Array(300 * 1024).fill(5));
+  const whole = new Uint8Array([...PREAMBLE, ...frame]);
+  const chunks: Uint8Array[] = [];
+  for (let at = 0; at < whole.byteLength; at += 1200) chunks.push(whole.slice(at, at + 1200));
+  const [got] = await readAll(byteStream(...chunks));
+  assertEquals(got.bytes, frame);
+});
+
+Deno.test("readRobotFrames: a header longer than the first read still parses", async () => {
   const header: FrameHeader = {
     ch: "cam",
     seq: 1,
@@ -542,53 +554,49 @@ Deno.test("readRobotStream: a header longer than the first read still parses", a
     meta: { pad: "x".repeat(6000) },
   };
   const frame = encodeDataFrame(header, new Uint8Array([1, 2, 3]));
-  const { header: parsed, bytes } = await readRobotStream(
-    byteStream(new Uint8Array([...PREAMBLE, ...frame])),
-  );
-  assertEquals(parsed?.meta, header.meta);
-  assertEquals(bytes, frame);
+  const [got] = await readAll(byteStream(new Uint8Array([...PREAMBLE, ...frame])));
+  assertEquals(got.header?.meta, header.meta);
+  assertEquals(got.bytes, frame);
 });
 
-Deno.test("readRobotStream: a malformed header yields null, frame bytes intact", async () => {
+Deno.test("readRobotFrames: a malformed header yields null, frame bytes intact", async () => {
   const bad = encodeDataFrame(
     { ch: "cam", seq: 1, ts: 1.5, delivery: "bogus" } as unknown as FrameHeader,
     new Uint8Array([7]),
   );
-  const { header, bytes, reserved } = await readRobotStream(
-    byteStream(PREAMBLE.slice(), bad.slice()),
-  );
-  assertEquals(header, null);
-  assertEquals(bytes, bad);
-  assertEquals(reserved, false);
+  const [got] = await readAll(byteStream(PREAMBLE.slice(), bad.slice()));
+  assertEquals(got.header, null);
+  assertEquals(got.bytes, bad);
+  assertEquals(got.reserved, false);
 });
 
-Deno.test("readRobotStream: reserved classification survives an invalid header", async () => {
+Deno.test("readRobotFrames: reserved classification survives an invalid header", async () => {
   // The raw ch decides reserved-ness, so a malformed @-frame still routes to
   // the control rejection path instead of passing as ordinary data.
   const bad = encodeDataFrame(
     { ch: CONTROL_CHANNEL, seq: 1, ts: 1.5, delivery: "bogus" } as unknown as FrameHeader,
     new Uint8Array([7]),
   );
-  const { header, reserved } = await readRobotStream(byteStream(PREAMBLE.slice(), bad.slice()));
-  assertEquals(header, null);
-  assertEquals(reserved, true);
+  const [got] = await readAll(byteStream(PREAMBLE.slice(), bad.slice()));
+  assertEquals(got.header, null);
+  assertEquals(got.reserved, true);
 });
 
-Deno.test("readRobotStream: @-frame payload cap is exact at 64 KiB", async () => {
+Deno.test("readRobotFrames: @-frame payload cap is exact at 64 KiB", async () => {
   const helloHeader: FrameHeader = { ch: CONTROL_CHANNEL, seq: 1, ts: 1.5, delivery: "reliable" };
   const atCap = encodeDataFrame(helloHeader, new Uint8Array(MAX_CONTROL_PAYLOAD_BYTES));
-  const { header, bytes } = await readRobotStream(byteStream(PREAMBLE.slice(), atCap.slice()));
-  assertEquals(header?.ch, CONTROL_CHANNEL);
-  assertEquals(bytes.byteLength, atCap.byteLength);
+  const [got] = await readAll(byteStream(PREAMBLE.slice(), atCap.slice()));
+  assertEquals(got.header?.ch, CONTROL_CHANNEL);
+  assertEquals(got.bytes.byteLength, atCap.byteLength);
 
   const overCap = encodeDataFrame(helloHeader, new Uint8Array(MAX_CONTROL_PAYLOAD_BYTES + 1));
   await assertRejects(
-    () => readRobotStream(byteStream(PREAMBLE.slice(), overCap.slice())),
+    () => readAll(byteStream(PREAMBLE.slice(), overCap.slice())),
     ControlPayloadTooLargeError,
   );
 });
 
-Deno.test("readRobotStream: the cap keys off the raw ch, not the validated header", async () => {
+Deno.test("readRobotFrames: the cap keys off the raw ch, not the validated header", async () => {
   // A hostile @-frame with an otherwise-invalid header (bogus delivery) must
   // still be capped before its payload is buffered.
   const sneaky = encodeDataFrame(
@@ -596,48 +604,65 @@ Deno.test("readRobotStream: the cap keys off the raw ch, not the validated heade
     new Uint8Array(MAX_CONTROL_PAYLOAD_BYTES + 1),
   );
   await assertRejects(
-    () => readRobotStream(byteStream(PREAMBLE.slice(), sneaky.slice())),
+    () => readAll(byteStream(PREAMBLE.slice(), sneaky.slice())),
     ControlPayloadTooLargeError,
   );
 });
 
-Deno.test("readRobotStream: ordinary channels are not control-capped", async () => {
+Deno.test("readRobotFrames: ordinary channels are not control-capped", async () => {
   const big = encodeDataFrame(
     { ch: "cam", seq: 1, ts: 1.5, delivery: "latest" },
     new Uint8Array(MAX_CONTROL_PAYLOAD_BYTES + 1),
   );
-  const { header, bytes } = await readRobotStream(byteStream(PREAMBLE.slice(), big.slice()));
-  assertEquals(header?.ch, "cam");
-  assertEquals(bytes.byteLength, big.byteLength);
+  const [got] = await readAll(byteStream(PREAMBLE.slice(), big.slice()));
+  assertEquals(got.header?.ch, "cam");
+  assertEquals(got.bytes.byteLength, big.byteLength);
 });
 
-Deno.test("readRobotStream: multi-byte varint session id", async () => {
+Deno.test("readRobotFrames: multi-byte varint session id", async () => {
   // session id 0x14c as a 2-byte varint (0x40 | 0x01, 0x4c)
   const frame = dataFrame("cam", 1, "latest");
-  const { header } = await readRobotStream(
+  const [got] = await readAll(
     byteStream(new Uint8Array([0x40, 0x41, 0x41, 0x4c]), frame.slice()),
   );
-  assertEquals(header?.seq, 1);
+  assertEquals(got.header?.seq, 1);
 });
 
-Deno.test("readRobotStream: non-WebTransport stream type rejects", async () => {
+Deno.test("readRobotFrames: non-WebTransport stream type rejects", async () => {
   await assertRejects(
-    () => readRobotStream(byteStream(new Uint8Array([0x17, 0x00]))),
+    () => readAll(byteStream(new Uint8Array([0x17, 0x00]))),
     Error,
     "not a WebTransport data stream",
   );
 });
 
-Deno.test("readRobotStream: a stream ending early rejects", async () => {
+Deno.test("readRobotFrames: ending mid-frame is incomplete, between frames is clean", async () => {
   await assertRejects(
-    () => readRobotStream(byteStream(new Uint8Array([0x40, 0x41]))),
+    () => readAll(byteStream(new Uint8Array([0x40, 0x41]))),
     Error,
     "stream ended mid-preamble",
   );
   const frame = dataFrame("cam", 1, "latest");
   await assertRejects(
-    () => readRobotStream(byteStream(PREAMBLE.slice(), frame.slice(0, frame.byteLength - 1))),
-    Error,
-    "ended mid-frame",
+    () => readAll(byteStream(PREAMBLE.slice(), frame.slice(0, frame.byteLength - 1))),
+    IncompleteFrameError,
   );
+  assertEquals(await readAll(byteStream(PREAMBLE.slice())), []); // nothing sent: clean
+  // A reset of an idle persistent stream is routine; mid-frame it is a loss.
+  const idleReset = new ReadableStream({
+    type: "bytes",
+    start(c) {
+      c.enqueue(new Uint8Array([...PREAMBLE, ...frame]));
+      c.error(new Error("reset"));
+    },
+  });
+  assertEquals((await readAll(idleReset)).length, 1);
+  const midReset = new ReadableStream({
+    type: "bytes",
+    start(c) {
+      c.enqueue(new Uint8Array([...PREAMBLE, ...frame.slice(0, 10)]));
+      c.error(new Error("reset"));
+    },
+  });
+  await assertRejects(() => readAll(midReset), IncompleteFrameError);
 });

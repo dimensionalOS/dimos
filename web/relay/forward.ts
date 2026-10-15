@@ -439,9 +439,8 @@ export function parseRobotFrameHeader(bytes: Uint8Array): FrameHeader | null {
 const WT_BIDI_STREAM_TYPE = 0x41;
 // Read buffer: a QUIC packet's worth of stream data is ~1.2 KB, so a 4 KiB
 // buffer takes the preamble, the 8-byte length prefix and the header in one
-// read. The payload buffer starts at the second size and doubles.
+// read; the frame buffer doubles past it as a payload arrives.
 const READ_BYTES = 4096;
-const FIRST_PAYLOAD_BYTES = 256 * 1024;
 
 function varintAt(buf: Uint8Array, at: number): { value: number; end: number } | null {
   if (at >= buf.length) return null;
@@ -489,118 +488,152 @@ export interface RobotFrame {
   reserved: boolean;
 }
 
+/** A robot stream ended or failed in the middle of a frame (the bridge reset
+ * a stale latest frame, or its connection died): the partial is lost. */
+export class IncompleteFrameError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "IncompleteFrameError";
+  }
+}
+
 /**
- * Read one robot data stream, accepted at the QUIC level (protocol.md
- * workaround 10): the WebTransport preamble, then one length-prefixed data
- * frame, stopping at the frame's byte count, never at EOF (Deno's own client
- * FINs late, and the stream's slot returns only at finalization either way,
- * so there is nothing to gain from reading on). BYOB reads throughout (default readers never deliver
- * on Deno 2.6.10 incoming WT streams), each into a whole zero-offset buffer
- * (a read into a view at an offset never resolves there, workaround 8): the
- * preamble and header come out of one small read, and the payload is copied
- * chunk by chunk into its final buffer, which grows as bytes arrive.
+ * Read a robot stream, accepted at the QUIC level (protocol.md workaround
+ * 10): the WebTransport preamble, then data frames back to back, each handed
+ * to `onFrame` as soon as its bytes are in. A latest or @control stream
+ * carries one frame and ends; a reliable channel's persistent stream carries
+ * them for the session's life. Resolves when the stream ends between frames
+ * (its FIN, or a reset of an idle persistent stream) and rejects with
+ * IncompleteFrameError when it ends mid-frame.
  *
- * `onHeader` fires once the header bytes are in, before the payload is read,
- * so a session can order frames without waiting for a big one. Reserved
+ * BYOB reads throughout (default readers never deliver on Deno 2.6.10
+ * incoming WT streams), each into a whole zero-offset buffer (a read into a
+ * view at an offset never resolves there, workaround 8), appended to the
+ * frame in progress; what follows a frame boundary carries over. Reserved
  * (@-channel) frames are capped at MAX_CONTROL_PAYLOAD_BYTES before their
  * payload is buffered: pre-authentication control must not allocate
  * unbounded state.
  */
-export async function readRobotStream(
+export async function readRobotFrames(
   rs: ReadableStream<Uint8Array>,
-  onHeader?: (header: FrameHeader | null, reserved: boolean) => void,
-): Promise<RobotFrame> {
+  onFrame: (frame: RobotFrame) => void,
+): Promise<void> {
   const reader = rs.getReader({ mode: "byob" });
+  // The read buffer: transferred to the stream and handed back whole.
+  let scratch = new Uint8Array(READ_BYTES);
+  // The frame in progress (and whatever follows it), `size` bytes of it.
+  let buf = new Uint8Array(READ_BYTES);
+  let size = 0;
+  let ended = false;
+  // One read appended to buf; false once the stream has ended. A transport
+  // failure surfaces as a rejection of the read.
+  const fill = async (): Promise<boolean> => {
+    if (ended) return false;
+    const { value, done } = await reader.read(scratch);
+    if (value !== undefined) {
+      scratch = new Uint8Array(value.buffer);
+      if (buf.byteLength < size + value.byteLength) {
+        const grown = new Uint8Array(Math.max(buf.byteLength * 2, size + value.byteLength));
+        grown.set(buf.subarray(0, size));
+        buf = grown;
+      }
+      buf.set(value, size);
+      size += value.byteLength;
+    }
+    if (done) ended = true;
+    return !done || (value !== undefined && value.byteLength > 0);
+  };
+  const consumed = (n: number): void => {
+    // Hand the first n bytes off and keep the rest for the next frame.
+    const rest = buf.subarray(n, size);
+    const next = new Uint8Array(Math.max(READ_BYTES, rest.byteLength * 2));
+    next.set(rest);
+    buf = next;
+    size = rest.byteLength;
+  };
   try {
-    // The read buffer: transferred to the stream and handed back with each
-    // read, always whole.
-    let scratch = new Uint8Array(READ_BYTES);
-    // Preamble, length prefix and header (and whatever payload came along).
-    let head = new Uint8Array(READ_BYTES);
-    let size = 0;
     let preambleLen: number | null = null;
-    let lens: { headerLen: number; payloadLen: number; total: number } | null = null;
+    while (preambleLen === null) {
+      preambleLen = parseWebTransportPreamble(buf.subarray(0, size));
+      if (preambleLen !== null) break;
+      let more: boolean;
+      try {
+        more = await fill();
+      } catch (e) {
+        throw new IncompleteFrameError(
+          `robot stream failed before its first frame: ${(e as Error)?.message ?? e}`,
+        );
+      }
+      if (!more) {
+        if (size === 0) return; // opened and ended empty: nothing lost
+        throw new IncompleteFrameError("stream ended mid-preamble");
+      }
+    }
+    consumed(preambleLen);
     while (true) {
-      const { value, done } = await reader.read(scratch);
-      if (value !== undefined) {
-        scratch = new Uint8Array(value.buffer);
-        if (head.byteLength < size + value.byteLength) {
-          const grown = new Uint8Array(Math.max(head.byteLength * 2, size + value.byteLength));
-          grown.set(head.subarray(0, size));
-          head = grown;
-        }
-        head.set(value, size);
-        size += value.byteLength;
-      }
-      if (preambleLen === null) {
-        preambleLen = parseWebTransportPreamble(head.subarray(0, size));
-        if (preambleLen === null) {
-          if (done) throw new Error("stream ended mid-preamble");
-          continue;
-        }
-      }
-      if (lens === null && size >= preambleLen + 8) {
-        // Throws on an oversize total (MAX_DATA_FRAME_BYTES) or header; null
-        // only under 8 bytes, which the guard above excludes.
-        lens = peekDataFrameLengths(head.subarray(preambleLen, preambleLen + 8))!;
-      }
-      if (lens !== null && size >= preambleLen + 8 + lens.headerLen) break;
-      if (done) throw new Error(`robot stream ended mid-frame (${size - preambleLen} bytes)`);
-    }
-    const frameStart = preambleLen;
-    let raw: unknown = null;
-    try {
-      raw = JSON.parse(
-        headerDecoder.decode(head.subarray(frameStart + 8, frameStart + 8 + lens.headerLen)),
-      );
-    } catch {
-      // bad UTF-8 or bad JSON: header stays null, dropped downstream
-    }
-    const ch = typeof raw === "object" && raw !== null && !Array.isArray(raw)
-      ? (raw as Record<string, unknown>).ch
-      : undefined;
-    const reserved = typeof ch === "string" && ch.startsWith(RESERVED_CHANNEL_PREFIX);
-    if (reserved && lens.payloadLen > MAX_CONTROL_PAYLOAD_BYTES) {
-      throw new ControlPayloadTooLargeError(
-        `control frame claims a ${lens.payloadLen} B payload (cap ${MAX_CONTROL_PAYLOAD_BYTES})`,
-      );
-    }
-    const header = frameHeaderFromUnknown(raw);
-    onHeader?.(header, reserved);
-
-    // The payload, copied into the frame buffer as it arrives. The buffer
-    // starts small and doubles, so a peer claiming a huge payload and
-    // sending nothing holds little.
-    let filled = Math.min(size - frameStart, lens.total);
-    let frame = new Uint8Array(Math.max(Math.min(lens.total, FIRST_PAYLOAD_BYTES), filled));
-    frame.set(head.subarray(frameStart, frameStart + filled));
-    while (filled < lens.total) {
-      const remaining = lens.total - filled;
-      // The last read's buffer is exactly the remainder, so a stream that
-      // (against the protocol) carries more never over-reads into it.
-      if (scratch.byteLength > remaining) scratch = new Uint8Array(remaining);
-      const { value, done } = await reader.read(scratch);
-      if (value !== undefined) {
-        scratch = new Uint8Array(value.buffer);
-        if (frame.byteLength < filled + value.byteLength) {
-          const grown = new Uint8Array(
-            Math.min(lens.total, Math.max(frame.byteLength * 2, filled + value.byteLength)),
+      // Between frames: a stream that ends here ended cleanly.
+      while (size < 8) {
+        let more: boolean;
+        try {
+          more = await fill();
+        } catch (e) {
+          if (size === 0) return; // a reset of an idle stream: routine
+          throw new IncompleteFrameError(
+            `robot stream failed mid-frame: ${(e as Error)?.message ?? e}`,
           );
-          grown.set(frame.subarray(0, filled));
-          frame = grown;
         }
-        frame.set(value, filled);
-        filled += value.byteLength;
+        if (!more) {
+          if (size === 0) return;
+          throw new IncompleteFrameError(`robot stream ended mid-frame (${size} bytes)`);
+        }
       }
-      if (done && filled < lens.total) {
-        throw new Error(`robot stream ended mid-frame (${filled} bytes)`);
+      // Throws on an oversize total (MAX_DATA_FRAME_BYTES) or header; null
+      // only under 8 bytes, which the loop above excludes.
+      const lens = peekDataFrameLengths(buf.subarray(0, 8))!;
+      try {
+        while (size < 8 + lens.headerLen) {
+          if (!(await fill())) {
+            throw new IncompleteFrameError(`robot stream ended mid-frame (${size} bytes)`);
+          }
+        }
+      } catch (e) {
+        if (e instanceof IncompleteFrameError) throw e;
+        throw new IncompleteFrameError(
+          `robot stream failed mid-frame: ${(e as Error)?.message ?? e}`,
+        );
       }
+      let raw: unknown = null;
+      try {
+        raw = JSON.parse(headerDecoder.decode(buf.subarray(8, 8 + lens.headerLen)));
+      } catch {
+        // bad UTF-8 or bad JSON: header stays null, dropped downstream
+      }
+      const ch = typeof raw === "object" && raw !== null && !Array.isArray(raw)
+        ? (raw as Record<string, unknown>).ch
+        : undefined;
+      const reserved = typeof ch === "string" && ch.startsWith(RESERVED_CHANNEL_PREFIX);
+      if (reserved && lens.payloadLen > MAX_CONTROL_PAYLOAD_BYTES) {
+        throw new ControlPayloadTooLargeError(
+          `control frame claims a ${lens.payloadLen} B payload (cap ${MAX_CONTROL_PAYLOAD_BYTES})`,
+        );
+      }
+      const header = frameHeaderFromUnknown(raw);
+      try {
+        while (size < lens.total) {
+          if (!(await fill())) {
+            throw new IncompleteFrameError(`robot stream ended mid-frame (${size} bytes)`);
+          }
+        }
+      } catch (e) {
+        if (e instanceof IncompleteFrameError) throw e;
+        throw new IncompleteFrameError(
+          `robot stream failed mid-frame: ${(e as Error)?.message ?? e}`,
+        );
+      }
+      const bytes = buf.subarray(0, lens.total);
+      consumed(lens.total);
+      onFrame({ header, bytes, reserved });
     }
-    return {
-      header,
-      bytes: frame.byteLength === lens.total ? frame : frame.subarray(0, lens.total),
-      reserved,
-    };
   } finally {
     reader.releaseLock();
   }

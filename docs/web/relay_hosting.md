@@ -169,7 +169,7 @@ Without Docker, the command from [Without Docker](#without-docker) works with th
 - **UDP 443 blocked.** HTTPS works, the page loads and stays "reconnecting", the robot's startup attempts time out (`relay startup connection attempt N failed`) and it gives up. Check both firewalls for UDP. `sudo ss -ulnp | grep 443` on the VM shows the published UDP port.
 - **Robot behind NAT.** Fine: it dials out, and the QUIC session sends keepalives every 3 s.
 - **Relay behind NAT** (a home server). Forward TCP 443 and UDP 443 to it. `/api/info` advertises the name the client dialed, so nothing else changes.
-- **Restarts.** `docker compose restart relay` is always safe: robots re-register within seconds, pages reconnect on their own. A robot killed without a clean close holds its id for up to 10 s (the QUIC idle timeout), and its restart waits that out.
+- **Restarts.** `docker compose restart relay` is always safe: robots re-register within seconds, pages reconnect on their own. A robot killed without a clean close holds its id for up to 10 s (the QUIC idle timeout), and its restart takes the id over after a one-second probe.
 
 ## Checklist
 
