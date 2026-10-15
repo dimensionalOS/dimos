@@ -179,12 +179,13 @@ class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
         The publisher is declared with the first publish's QoS; the cache is
         keyed by key expression, so a different QoS on a later publish to the
         same key is ignored.
+
+        The caller must hold _publisher_lock through the subsequent put().
         """
-        with self._publisher_lock:
-            if key_expr not in self._publishers:
-                kwargs = qos.publisher_kwargs() if qos is not None else {}
-                self._publishers[key_expr] = self.session.declare_publisher(key_expr, **kwargs)
-            return self._publishers[key_expr]
+        if key_expr not in self._publishers:
+            kwargs = qos.publisher_kwargs() if qos is not None else {}
+            self._publishers[key_expr] = self.session.declare_publisher(key_expr, **kwargs)
+        return self._publishers[key_expr]
 
     def publish(self, topic: Topic, message: bytes) -> None:
         """Publish bytes to a Zenoh key expression.
@@ -196,8 +197,11 @@ class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
         key_expr = _topic_to_key_expr(topic)
         qos = topic.qos if isinstance(topic, Topic) else None
         try:
-            publisher = self._get_publisher(key_expr, qos)
-            publisher.put(message)
+            # put() releases the GIL while borrowing the native publisher. Keep
+            # stop() from undeclaring it until that borrow has been released.
+            with self._publisher_lock:
+                publisher = self._get_publisher(key_expr, qos)
+                publisher.put(message)
         except Exception:
             logger.error(f"Error publishing to {key_expr}", exc_info=True)
 

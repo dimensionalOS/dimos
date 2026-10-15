@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
 import threading
 
@@ -111,7 +112,7 @@ def _check_callback_shutdown(all_topics, unsubscribe_only):
         pubsub.publish(topic, b"stop")
 
         assert finished.wait(timeout=2.0)
-        assert errors == []
+        assert errors == [], errors
         assert received == [(b"stop", topic)]
         assert pubsub._subscribers == []
         assert pubsub._drain_stops == []
@@ -244,6 +245,47 @@ class TestZenohPubSubBase:
         pubsub.stop()
         assert len(pubsub._publishers) == 0
         assert len(pubsub._subscribers) == 0
+
+    def test_stop_waits_for_in_flight_publish(self, pubsub) -> None:
+        topic = Topic("dimos/test/stop_during_publish")
+        publishing = threading.Event()
+        release_publish = threading.Event()
+        stopping = threading.Event()
+        stopped = threading.Event()
+        received = []
+
+        def hold_publish(sample):
+            publishing.set()
+            assert release_publish.wait(timeout=10.0)
+            received.append(sample.payload.to_bytes())
+
+        def stop():
+            stopping.set()
+            try:
+                pubsub.stop()
+            finally:
+                stopped.set()
+
+        # A direct callback holds the native Publisher.put() borrow until released.
+        with (
+            pubsub.session.declare_subscriber(
+                topic.key_expr, zenoh.handlers.Callback(hold_publish, indirect=False)
+            ),
+            ThreadPoolExecutor(max_workers=2) as executor,
+        ):
+            publish_result = executor.submit(pubsub.publish, topic, b"in flight")
+            try:
+                assert publishing.wait(timeout=2.0)
+                stop_result = executor.submit(stop)
+                assert stopping.wait(timeout=2.0)
+                assert not stopped.wait(timeout=0.1), "stop completed while put was still active"
+            finally:
+                release_publish.set()
+            publish_result.result(timeout=2.0)
+            stop_result.result(timeout=2.0)
+
+        assert received == [b"in flight"]
+        assert pubsub._publishers == {}
 
     def test_subscribe_all(self, pubsub, retry_until) -> None:
         received: list[bytes] = []
