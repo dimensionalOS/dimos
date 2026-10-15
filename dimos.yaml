@@ -1,5 +1,105 @@
 # What dimOS Desktop reads to install and run this version of dimos (fetched over HTTP per tag, no git needed).
 name: dimos
 version: "0.0.14"
+requires:
+  dimos-desktop: ">=0.2 <0.3"
+  dimcode: ">=0.1 <0.2"
+# env: REF (this tag/branch), COMMIT (its commit), DIMOS_DIR (checkout to create), NON_INTERACTIVE=1 when no one can answer prompts
 install: |
-  set -o pipefail; curl -fsSL "https://raw.githubusercontent.com/dimensionalOS/dimos/$REF/scripts/install.sh" | bash -s -- --mode dev --branch "$REF" --project-dir "$DIMOS_DIR" --skip-tests ${NON_INTERACTIVE:+--non-interactive}
+  set -euo pipefail
+  script="$(mktemp)"
+  # at an exact commit the raw file is never stale; a branch's raw file stays cached for minutes after a push, so
+  # without a commit ask GitHub's API (rate-limited without a token), then fall back to raw
+  raw="https://raw.githubusercontent.com/dimensionalOS/dimos/${COMMIT:-$REF}/scripts/install.sh"
+  if [ -n "${COMMIT:-}" ] && [ "$COMMIT" != "$REF" ]; then
+    curl -fsSL "$raw" -o "$script"
+  else
+    curl -fsSL -H "Accept: application/vnd.github.raw" ${GITHUB_TOKEN:+-H "Authorization: Bearer $GITHUB_TOKEN"} \
+      "https://api.github.com/repos/dimensionalOS/dimos/contents/scripts/install.sh?ref=$REF" -o "$script" \
+      || curl -fsSL "$raw" -o "$script"
+  fi
+  DIMOS_COMMIT="${COMMIT:-}" bash "$script" --mode dev --branch "$REF" --project-dir "$DIMOS_DIR" --skip-tests ${NON_INTERACTIVE:+--non-interactive}
+  "$DIMOS_DIR/.venv/bin/python" -c "import dimos" && echo "dimos is installed in $DIMOS_DIR"
+# Desktop's gateway contract; its implementation and metadata stay experimental.
+api:
+  version: "4.0.0"
+# What this gateway serves (Desktop prefixes /dimos-gateway/); an app's `uses: "@dimos-gateway"` is checked against it.
+# A test keeps it equal to the gateway's routes (experimental/gateway/tests/test_config.py).
+provides:
+  description: >-
+    The dimos gateway: run and stop blueprints, and read their config, modules, logs and skills.
+    Desktop serves it at /dimos-gateway/; GET openapi.json has every request and answer.
+  endpoints:
+    - method: GET
+      path: info
+      description: Whether dimos is found and installed, its version, the gateway API version, the checkout's commit and desktop-gateway tag, its python, its checkout, runs, log and recordings directories, and this process
+    - method: POST
+      path: server/stop
+      description: Stop this gateway (a running blueprint keeps running)
+    - method: GET
+      path: blueprints
+      description: Every blueprint (builtin or external) with what the last scan found (importable, import_error, missing_module, suggested_extras, modules) and how stale that is; ?fields= keeps only those fields (name always), ?fresh= relists
+    - method: GET
+      path: blueprints/{name}
+      description: 'A blueprint''s modules with their streams, RPCs and skills, its file and line, and its configurable args per module with Desktop''s saved values (slow: imports python)'
+    - method: POST
+      path: blueprints/{name}/args
+      description: Read CLI args ({args}) as `dimos run <name> <args>` would, without launching; what each group sets and why dimos would refuse it (slow)
+    - method: PUT
+      path: blueprints/{name}/config
+      description: Save a blueprint's module arg overrides
+    - method: POST
+      path: catalog/scan
+      description: '202 {job}: scan every blueprint and module again (or join the running scan); the catalog changes when it finishes; follow it at jobs/{job}'
+    - method: GET
+      path: catalog
+      description: 'Every blueprint, module and skill from the last scan (cached on disk), with how stale it is (scan: finished_at, age_seconds, stale); ?module= (name or class) or ?blueprint= narrows it'
+    - method: GET
+      path: robots
+      description: Robot types, their blueprints and recommended configs
+    - method: GET
+      path: global-config
+      description: 'dimos''s GlobalConfig: schema, defaults, saved overrides and which keys are secret'
+    - method: PUT
+      path: global-config
+      description: Save global config overrides
+    - method: GET
+      path: runs
+      description: The live runs (dimos's run registry) and this gateway's launch (phase, output, runId, logDir)
+    - method: POST
+      path: runs
+      description: Launch a blueprint with the saved config plus one-off overrides and args
+    - method: POST
+      path: runs/stop
+      description: 'Stop the run {runId}'
+    - method: POST
+      path: runs/restart
+      description: 'Stop the run {runId} and launch it again: the gateway''s launch with the config saved now, another run with its own command line, directory and env'
+    - method: GET
+      path: runs/{runId}/log
+      description: A run's structured log (after, level, q, limit; runId may be latest)
+    - method: GET
+      path: skills
+      description: The running blueprint's skills
+    - method: POST
+      path: skills/call
+      description: Call one of the running blueprint's skills (skill, args, module, runId)
+    - method: POST
+      path: mcp
+      description: An MCP server (JSON-RPC) with list_skills and call_skill for the running blueprint
+    - method: GET
+      path: extras
+      description: 'dimos''s optional extras: installed, applicable, missing, download size'
+    - method: POST
+      path: extras/install
+      description: '202 {job, command}: install extras with uv; follow it at jobs/{job}'
+    - method: GET
+      path: jobs/{job}
+      description: 'A job (an extras install, a blueprint scan): done, ok, progress, error, and its output lines after ?after='
+    - method: GET
+      path: docs/search
+      description: 'Redirects to the docs site with its search open on ?q= (for a new tab or an iframe)'
+start: |
+  "$DIMOS_DIR/.venv/bin/python" -m experimental.gateway --detach --dimos-dir "$DIMOS_DIR" --socket "$DIMOS_SERVER_SOCKET"
+socket: |
+  echo "$DIMOS_SERVER_SOCKET"

@@ -101,6 +101,11 @@ def run(
         "--relay-ca",
         help="PEM CA bundle that signed the relay's certificate (mkcert, a private CA)",
     ),
+    run_id: str | None = typer.Option(
+        None,
+        "--run-id",
+        help="Use this run id instead of a new one (for a launcher that needs it up front)",
+    ),
     show_help: bool = typer.Option(False, "--help"),
 ) -> None:
     """Start a robot blueprint"""
@@ -220,7 +225,7 @@ def run(
         logger.info(f"Cleaned {stale} stale run entries")
 
     blueprint_name = "-".join(blueprint_names)
-    run_id = generate_run_id(blueprint_name)
+    run_id = run_id or generate_run_id(blueprint_name)
     log_dir = LOG_DIR / run_id
 
     # Tag every descendant with the run id so the watchdog and stale-run

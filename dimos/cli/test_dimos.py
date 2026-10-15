@@ -320,6 +320,13 @@ def test_run_parses_spaced_and_equals_config_flags(stubbed_run: dict[str, Any]) 
     assert stubbed_run["entry"]["cli_args"] == ["alpha", "beta"]
 
 
+def test_run_takes_its_run_id_from_the_launcher(stubbed_run: dict[str, Any]) -> None:
+    result = CliRunner().invoke(main, ["run", "--run-id", "from-desktop", "alpha"])
+
+    assert result.exit_code == 0, result.output
+    assert stubbed_run["entry"]["run_id"] == "from-desktop"
+
+
 @pytest.mark.parametrize(
     "argv",
     [
