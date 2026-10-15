@@ -318,7 +318,7 @@ sim = [
     # Simulation
     "mujoco>=3.3.4",
     # the sandbox evals' simulated Go2
-    "dim-go2-sim>=0.1.1",
+    "dim-go2-sim>=0.1.2",
     "playground>=0.0.5",
     "pygame>=2.6.1",
 ]

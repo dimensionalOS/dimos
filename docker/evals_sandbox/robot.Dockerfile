@@ -10,7 +10,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl git build-essential pkg-config \
-        libgl1 libglib2.0-0 libgfortran5 libgomp1 libturbojpeg portaudio19-dev iproute2 \
+        libgl1 libglib2.0-0 libvulkan1 mesa-vulkan-drivers libgfortran5 libgomp1 libturbojpeg portaudio19-dev iproute2 \
     && rm -rf /var/lib/apt/lists/*
 
 ENV XDG_CACHE_HOME=/cache \
@@ -26,11 +26,11 @@ WORKDIR /app
 COPY pyproject.toml uv.lock README.md setup.py ./
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv python install "${PYTHON_VERSION}" \
-    && uv sync --frozen --no-install-project --python "${PYTHON_VERSION}"
+    && uv sync --frozen --extra sim --no-install-project --python "${PYTHON_VERSION}"
 
 COPY . /app
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --python "${PYTHON_VERSION}"
+    uv sync --frozen --extra sim --python "${PYTHON_VERSION}"
 
 ENV PATH="/app/.venv/bin:${PATH}" \
     VIEWER=none \
