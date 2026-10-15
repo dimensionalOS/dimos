@@ -14,4 +14,5 @@
 
 ADAPTER_FACTORIES = {
     "sim_mujoco": "dimos.hardware.manipulators.sim.adapter:ShmMujocoAdapter",
+    "sim_transport": "dimos.hardware.manipulators.sim.transport_adapter:TransportSimAdapter",
 }
