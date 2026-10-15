@@ -233,21 +233,22 @@ def configured_mcp_client(mcp_client: McpClient, monkeypatch: pytest.MonkeyPatch
     return mcp_client
 
 
+@pytest.mark.parametrize("model_name", ["gpt-5.6-luna", "gpt-6.1-sol"])
 def test_on_system_modules_uses_responses_api_model(
-    configured_mcp_client: McpClient, monkeypatch: pytest.MonkeyPatch
+    configured_mcp_client: McpClient, monkeypatch: pytest.MonkeyPatch, model_name: str
 ) -> None:
     """Production agents use the Responses API required for Luna tool calls."""
     from langchain_openai import ChatOpenAI
 
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
-    configured_mcp_client.config.model = "gpt-5.6-luna"
+    configured_mcp_client.config.model = model_name
 
     with patch("langchain.agents.create_agent") as create_agent:
         configured_mcp_client.on_system_modules([])
 
     model = create_agent.call_args.kwargs["model"]
     assert isinstance(model, ChatOpenAI)
-    assert model.model_name == "gpt-5.6-luna"
+    assert model.model_name == model_name
     assert model.use_responses_api is True
     assert model.reasoning == {"effort": "medium", "summary": "auto"}
 

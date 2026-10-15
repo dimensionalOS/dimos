@@ -49,7 +49,7 @@ from dimos.utils.sequential_ids import SequentialIds
 
 logger = setup_logger()
 
-_RESPONSES_REASONING_MODEL_PREFIXES = ("gpt-5", "o1", "o3", "o4")
+_RESPONSES_REASONING_MODEL_PREFIXES = ("gpt-5", "gpt-6", "o1", "o3", "o4")
 
 
 def _preload_agent_deps() -> None:
