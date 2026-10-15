@@ -71,6 +71,7 @@ class GlobalConfig(BaseSettings):
     record_engine: Literal["python", "rust"] = Field(default="python", validate_default=True)
     record_topics: str = "*"  # comma-separated globs on the topic slug (/a/b -> a_b)
     record_encoding_threads: int | None = Field(default=None, ge=1)
+    record_dir: str = ""  # parent of the per-run recording folders; empty = RECORDINGS_DIR
     new_memory: bool = False
     # How every zenoh session this process opens joins the network.
     zenoh_mode: ZenohProcessMode = "peer"

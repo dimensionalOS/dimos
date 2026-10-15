@@ -50,6 +50,14 @@ the error is logged and the rest of `dimos run` continues. Normal shutdown sends
 SIGTERM and lets the existing native module runtime flush the artifact. There is
 no automatic fallback to Python.
 
+## Output folder
+
+Each run writes to `recordings/<run-id>/` (`~/.local/state/dimos/recordings/` for pip installs). `--record-dir` moves the parent folder, e.g. to an external drive:
+
+```bash
+dimos --record --record-dir /media/$USER/ssd/recordings run unitree-go2
+```
+
 ## Choosing streams
 
 `--record-topics` takes comma-separated globs on the stream name (the blueprint name, e.g. `lidar`, not `/lidar`). Default `*`.

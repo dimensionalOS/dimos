@@ -19,7 +19,6 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import field
 import functools
-import os
 import shutil
 import signal
 import socket
@@ -45,11 +44,10 @@ import numpy as np
 from reactivex.disposable import Disposable
 from toolz import pipe  # type: ignore[import-untyped]
 
-from dimos.constants import RECORDINGS_DIR
-from dimos.core.coordination.process_lifecycle import DIMOS_RUN_ID_ENV
 from dimos.core.core import rpc
 from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
+from dimos.memory.tap import recording_dir
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.tf2_msgs.TFMessage import TfFrameTree, TFMessage
@@ -767,7 +765,7 @@ class RerunBridgeModule(Module):
 def _start_save_client(server_uri: str) -> subprocess.Popen[bytes] | None:
     """A headless ``rerun --save`` client of our gRPC server.
 
-    It streams every incoming log event to ``recordings/<run-id>/rerun.rrd``, the
+    It streams every incoming log event to ``<record_dir>/<run-id>/rerun.rrd``, the
     folder ``--record`` writes ``memory.db`` to, so a run's sensor recording and
     its visualization sit together. Running it as a client keeps the server, and
     any live viewer on it, exactly as they are.
@@ -776,8 +774,7 @@ def _start_save_client(server_uri: str) -> subprocess.Popen[bytes] | None:
     if cli is None:
         logger.warning("rerun_save: no `rerun` CLI on PATH, the stream is not saved")
         return None
-    run_id = os.environ.get(DIMOS_RUN_ID_ENV) or time.strftime("%Y%m%d-%H%M%S")
-    path = RECORDINGS_DIR / run_id / "rerun.rrd"
+    path = recording_dir() / "rerun.rrd"
     path.parent.mkdir(parents=True, exist_ok=True)
     logger.info("Saving the Rerun stream", path=str(path))
     # It also serves gRPC itself; on a taken default port it exits with an empty .rrd.
