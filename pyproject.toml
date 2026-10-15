@@ -413,6 +413,8 @@ project-deps = [
 ]
 
 tests = [
+    "dimos-cdrgen==0.1.0",
+    "build>=1.2.2",
     # Test runner
     "pytest==8.3.5",
     "pytest-asyncio==1.4.0",
@@ -467,6 +469,7 @@ browser-tests = [
 
 # Lint / format / type-check tooling for the dedicated `lint` CI job.
 lint = [
+    "dimos-cdrgen==0.1.0",
     # Lint / format / type-check
     "ruff==0.14.3",
     "mypy==1.19.0",
@@ -520,7 +523,7 @@ dev = [
 required-version = ">=0.9.25"
 default-groups = ["tests"]
 exclude-newer = "7 days"
-exclude-newer-package = { dimos-viewer = false, dimos-lcm = false, lcm-dimos-fork = false, roboplan = false, md-babel-py = false, can-motor-control = false, edgetam-dimos = false, dim-odom = false, eclipse-zenoh = false }
+exclude-newer-package = { dimos-cdrgen = false, dimos-viewer = false, dimos-lcm = false, lcm-dimos-fork = false, roboplan = false, md-babel-py = false, can-motor-control = false, edgetam-dimos = false, dim-odom = false, eclipse-zenoh = false }
 constraint-dependencies = [
     # TODO(PY311): drop this fork. onnxruntime(-gpu) 1.24 dropped cp310
     # wheels, so 3.10 environments resolve 1.23.x (matching what a 3.10
@@ -725,6 +728,7 @@ follow_imports = "skip"
 
 [tool.pytest.ini_options]
 testpaths = ["dimos"]
+markers = ["native_e2e: compiled native consumer acceptance in the dedicated workflow"]
 env = [
   "GOOGLE_MAPS_API_KEY=AIzafake_google_key",
   "PYTHONWARNINGS=ignore:cupyx.jit.rawkernel is experimental:FutureWarning",
