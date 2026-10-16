@@ -12,12 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""R1 Pro 3D navigation on Point-LIO: lidar + lidar-anchored head depth into one ray-traced map: ``dimos run r1pro-nav``."""
+"""R1 Pro 3D navigation on Point-LIO (lidar + lidar-anchored head depth into one ray-traced map) with arm planning: ``dimos run r1pro-nav``."""
 
 from __future__ import annotations
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
+from dimos.manipulation.manipulation_module import ManipulationModule
+from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.navigation.experimental.dannav.holonomic_tc.module import DanHolonomicTC
 from dimos.navigation.experimental.dannav.local_planner.module import DanLocalPlanner
@@ -34,6 +36,7 @@ from dimos.robot.galaxea.r1pro.config import (
     R1PRO_OVERHEAD_CLEARANCE_M,
     R1PRO_ROTATION_DIAMETER_M,
     R1PRO_URDF_MANAGER_CONFIG,
+    make_r1pro_model_config,
 )
 from dimos.robot.galaxea.r1pro.head_depth import r1pro_head_depth
 from dimos.robot.galaxea.r1pro.lio import R1ProPointLio
@@ -111,9 +114,16 @@ r1pro_nav = autoconnect(
         [(DanHolonomicTC, "odom", "chassis_odom")]
     ),
     MovementManager.blueprint(),
+    # Arm planning (viser, or a controller's arm mode) on r1pro_control's whole-body trajectory task. Its tip frames
+    # would give links UrdfManager already publishes a second parent on tf, so they go to a topic of their own.
+    ManipulationModule.blueprint(
+        model=make_r1pro_model_config(),
+        planning_timeout=10.0,
+        visualization=ViserVisualizationConfig(host=global_config.listen_host),
+    ).remappings([(ManipulationModule, "tf", "manipulation_tf")]),
 ).global_config(
     # One per module, so no two share a Python process (and its GIL).
-    n_workers=15,
+    n_workers=16,
     robot_width=R1PRO_CHASSIS_WIDTH_M,
     robot_rotation_diameter=R1PRO_ROTATION_DIAMETER_M,
 )
