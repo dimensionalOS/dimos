@@ -20,6 +20,7 @@ from collections import deque
 from collections.abc import Callable
 from dataclasses import replace
 import json
+import os
 from pathlib import Path
 from threading import Event, Thread
 import time
@@ -241,7 +242,9 @@ class EpisodeDriver(Module):
     def _write(self, record: dict[str, object]) -> None:
         self.config.out_dir.mkdir(parents=True, exist_ok=True)
         path = self.config.out_dir / TERMINAL_FILE
-        path.write_text(json.dumps(record, indent=2) + "\n")
+        partial = path.with_name(path.name + ".partial")
+        partial.write_text(json.dumps(record, indent=2) + "\n")
+        os.replace(partial, path)
         logger.info("Episode terminal", **{k: v for k, v in record.items() if k != "t0"})
 
 

@@ -76,6 +76,9 @@ case = next(c for c in manifest["cases"] if c["id"] == case_id)
 arrive = case["tag"] != "stay_put"
 if case["tag"] == "hangs":
     signal.pause()
+if case["tag"] == "empty_terminal":
+    (out / "terminal.json").write_text("")
+    signal.pause()
 if case["tag"] == "no_terminal":
     child = subprocess.Popen(["sleep", "300"])
     (out / "child.pid").write_text(str(child.pid))
@@ -294,6 +297,7 @@ def test_harness_failures_are_errors_that_survive_a_rescore(tmp_path: Path) -> N
         _case("mined-s1-aaaaaa", "mined", "dev", {}),
         _case("driver_error-s1-bbbbbb", "driver_error", "dev", {}),
         _case("no_terminal-s1-cccccc", "no_terminal", "dev", {}),
+        _case("empty_terminal-s1-dddddd", "empty_terminal", "dev", {}),
     ]
     Manifest("test", Rules(), 0, cases).save(tmp_path / "suite.json")
     (tmp_path / "fake.py").write_text(FAKE_BLUEPRINT)
@@ -314,6 +318,8 @@ def test_harness_failures_are_errors_that_survive_a_rescore(tmp_path: Path) -> N
     assert (failed["outcome"], failed["error"]) == (None, "driver_error")
     lost = rows["no_terminal-s1-cccccc"]
     assert (lost["outcome"], lost["error"]) == (None, "no terminal record")
+    cut = rows["empty_terminal-s1-dddddd"]
+    assert (cut["outcome"], cut["error"]) == (None, "no terminal record")
     orphan = int((run_dir / "no_terminal-s1-cccccc" / "child.pid").read_text())
     deadline = time.monotonic() + 5.0
     while _alive(orphan) and time.monotonic() < deadline:

@@ -472,10 +472,10 @@ def _prune(episode_dir: Path) -> None:
 
 
 def _terminal(episode_dir: Path) -> dict[str, object] | None:
-    path = episode_dir / TERMINAL_FILE
-    if not path.exists():
+    try:
+        record: dict[str, object] = json.loads((episode_dir / TERMINAL_FILE).read_text())
+    except (OSError, ValueError):
         return None
-    record: dict[str, object] = json.loads(path.read_text())
     return record
 
 
