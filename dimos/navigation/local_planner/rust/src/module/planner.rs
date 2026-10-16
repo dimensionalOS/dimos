@@ -356,7 +356,7 @@ impl Worker {
                 &self.config.base_frame,
                 now,
             );
-            // the ground is `Emb::base_height` under the body, not read off the scene
+            // `Emb::base_height` under the body until the map shows the floor
             let ground_z = pose.map(|p| p.z - self.config.embodiment.base_height);
             let pose = pose.map(|p| (p.state[0], p.state[1], p.state[2]));
             match decide(
@@ -428,6 +428,10 @@ impl Worker {
                     // workers, hence the module's 2 threads.
                     let produced = tokio::task::block_in_place(|| {
                         let pts = self.points(&cloud, snap.cloud_seq, &mut points)?;
+                        let body = ground_z.unwrap_or(0.0);
+                        let under = body + 0.5 * self.config.embodiment.base_height;
+                        let ground =
+                            obstacles::ground_from_map(&pts, pose.0, pose.1, under).unwrap_or(body);
                         Some(plan_once(
                             &self.config,
                             &self.emb,
@@ -435,7 +439,7 @@ impl Worker {
                             &pts,
                             pose,
                             goal,
-                            ground_z.unwrap_or(0.0),
+                            ground,
                             incumbent.as_deref(),
                         ))
                     });
