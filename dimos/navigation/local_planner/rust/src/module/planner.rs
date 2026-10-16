@@ -44,6 +44,9 @@ pub struct Config {
     pub body_dilate_m: f64,
     /// Price multiplier per metre over lattice cells with no floor return; <= 1 turns it off.
     pub unseen_cost: f64,
+    /// Extra price per meter where the body steps on a low object, at `steppable` height.
+    #[validate(range(min = 0.0))]
+    pub step_cost: f64,
     /// Plan discretisation (m); the python reads `planners/base.py RESOLUTION`.
     #[validate(range(exclusive_min = 0.0))]
     pub resolution: f64,
@@ -117,7 +120,7 @@ pub struct LocalPlanner {
 impl LocalPlanner {
     async fn spawn_worker(&mut self) {
         let emb = emb::dilated(self.config.embodiment.clone(), self.config.body_dilate_m);
-        let model = obstacles::load(&self.config.obstacle_model, &emb)
+        let model = obstacles::load(&self.config.obstacle_model, &emb, self.config.step_cost)
             .expect("validated obstacle model name");
         let worker = Worker {
             shared: Arc::clone(&self.shared),
@@ -275,15 +278,15 @@ pub fn plan_once(
     let started = Instant::now();
     let t0 = msg::now_secs();
     // The model decides which returns are obstacles; the search only sees xy.
-    let hard = obstacles::hard_points(model, points, ground_z);
-    let ground = obstacles::ground_points(points, ground_z);
+    let (hard, soft) = obstacles::field_points(model, points, ground_z);
+    let ground = obstacles::ground_points(points, ground_z, emb.steppable);
     let points: &[[f32; 3]] = &hard;
     let cloud: Vec<[f64; 2]> = points.iter().map(|p| [p[0] as f64, p[1] as f64]).collect();
     let states = match plan_explored(
         &cloud,
         &ground,
         config.unseen_cost,
-        &[],
+        &soft,
         pose,
         goal,
         emb,
@@ -626,6 +629,7 @@ mod tests {
             embodiment: Emb::fixture(),
             body_dilate_m: 0.0,
             unseen_cost: 1.0,
+            step_cost: 5.0,
             resolution: 0.1,
             replan_hz: 5.0,
             goal_lookahead_m: 5.0,
@@ -644,7 +648,7 @@ mod tests {
     }
 
     fn model(cfg: &Config) -> Box<dyn ObstacleModel> {
-        obstacles::load(&cfg.obstacle_model, &cfg.embodiment).expect("known model")
+        obstacles::load(&cfg.obstacle_model, &cfg.embodiment, cfg.step_cost).expect("known model")
     }
 
     #[test]
@@ -682,7 +686,7 @@ mod tests {
         let cfg = config();
         let gap = |half: f32| {
             let mut pts = Vec::new();
-            let z = obstacles::LOW as f32 + 0.05;
+            let z = 0.3f32;
             let mut t = -2.0f32;
             while t <= 2.0 {
                 pts.push([1.5, half + t.max(0.0), z]);
@@ -729,7 +733,7 @@ mod tests {
     fn a_refused_search_publishes_a_stub_at_the_current_pose() {
         // sealed box, the pure crate's own refusal fixture
         let mut walls = Vec::new();
-        let z = obstacles::LOW as f32 + 0.05;
+        let z = 0.3f32;
         let mut t = -1.0f32;
         while t <= 1.0 {
             walls.push([-1.0, t, z]);
@@ -862,8 +866,10 @@ mod tests {
             height: 0.45,
             ..Emb::fixture()
         };
-        let trunk_model = obstacles::load("body_band", &trunk).expect("known model");
-        assert!(obstacles::hard_points(trunk_model.as_ref(), &wall, 0.0).is_empty());
+        let trunk_model = obstacles::load("body_band", &trunk, cfg.step_cost).expect("known model");
+        assert!(obstacles::field_points(trunk_model.as_ref(), &wall, 0.0)
+            .0
+            .is_empty());
         assert!(detour(trunk_model.as_ref()) < 0.2);
     }
 
@@ -897,6 +903,43 @@ mod tests {
             None,
         );
         assert!(produced.poses.len() > 1, "the ground read as a wall");
+    }
+
+    /// A low object: one voxel layer over the floor layer, as the local map shows a 10 cm box.
+    fn low_object(x: (f32, f32), y: (f32, f32)) -> Vec<[f32; 3]> {
+        let mut pts = Vec::new();
+        let mut u = x.0;
+        while u <= x.1 {
+            let mut v = y.0;
+            while v <= y.1 {
+                pts.push([u, v, 0.12]);
+                v += 0.08;
+            }
+            u += 0.08;
+        }
+        pts
+    }
+
+    #[test]
+    fn a_low_object_is_walked_around_when_there_is_room() {
+        let cfg = config();
+        let produced = plan_once(
+            &cfg,
+            &fixture(),
+            model(&cfg).as_ref(),
+            &low_object((1.4, 1.64), (-0.12, 0.12)),
+            (0.0, 0.0, 0.0),
+            (3.0, 0.0),
+            0.0,
+            None,
+        );
+        assert!(produced.poses.len() > 1, "refused");
+        let widest = produced
+            .poses
+            .iter()
+            .map(|q| q.pose.position.y.abs())
+            .fold(0.0f64, f64::max);
+        assert!(widest > 0.4, "stepped on it, widest {widest}");
     }
 
     const CARROT_M: f64 = 0.2;

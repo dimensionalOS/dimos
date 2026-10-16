@@ -49,6 +49,8 @@ class LocalPlannerNativeConfig(NativeModuleConfig):
     embodiment: Embodiment = _default("embodiment")
     body_dilate_m: float = _default("body_dilate_m")
     unseen_cost: float = _default("unseen_cost")
+    # Extra price per meter where the body steps on a low object, at steppable height; scales with height.
+    step_cost: float = 5.0
     resolution: float = RESOLUTION
     replan_hz: float = _default("replan_hz")
     goal_lookahead_m: float = _default("goal_lookahead_m")
