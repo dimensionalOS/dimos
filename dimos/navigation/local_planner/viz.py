@@ -129,7 +129,7 @@ def render_body(
 
 
 def render_ground_support(msg: PointCloud2) -> Archetype | None:
-    """The floor voxels the planner's ground was read from, as voxel squares at that ground."""
+    """The floor voxels the planner's ground plane was fit to, as voxel squares on that plane."""
     import rerun as rr  # only the viewer process pays for the import
 
     pts = msg.points_f32()

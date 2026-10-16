@@ -28,6 +28,7 @@ use tracing::{debug, info, warn};
 use validator::ValidationError;
 
 use crate::module::emb;
+use crate::module::ground::{self, Plane};
 use crate::module::msg;
 use crate::module::obstacles::{self, ObstacleModel};
 use crate::module::tf_pose::PoseWatch;
@@ -109,7 +110,7 @@ pub struct LocalPlanner {
     #[output(encode = Path::encode)]
     path: Output<Path>,
 
-    /// The floor voxels the ground was read from, at the ground's height; empty when it fell back.
+    /// The floor voxels the ground plane was fit to, moved onto it. Empty while the body height stands in.
     #[output(encode = PointCloud2::encode)]
     ground_support: Output<PointCloud2>,
 
@@ -277,19 +278,19 @@ pub fn plan_once(
     points: &[[f32; 3]],
     pose: (f64, f64, f64),
     goal: (f64, f64),
-    ground_z: f64,
+    ground: &Plane,
     incumbent: Option<&[[f64; 3]]>,
 ) -> Path {
     let started = Instant::now();
     let t0 = msg::now_secs();
     // The model decides which returns are obstacles; the search only sees xy.
-    let (hard, soft) = obstacles::field_points(model, points, ground_z);
-    let ground = obstacles::ground_points(points, ground_z, emb.steppable);
+    let (hard, soft) = obstacles::field_points(model, points, ground);
+    let seen = obstacles::ground_points(points, ground, emb.steppable);
     let points: &[[f32; 3]] = &hard;
     let cloud: Vec<[f64; 2]> = points.iter().map(|p| [p[0] as f64, p[1] as f64]).collect();
     let states = match plan_explored(
         &cloud,
-        &ground,
+        &seen,
         config.unseen_cost,
         &soft,
         pose,
@@ -305,7 +306,7 @@ pub fn plan_once(
                 plan_ms = ms_since(started),
                 "planner refused; publishing a hold stub"
             );
-            return hold_stub(pose, &config.world_frame, t0, ground_z);
+            return hold_stub(pose, &config.world_frame, t0, ground.z);
         }
     };
     // Room is measured off the same points the search saw, or the stamps price a different world.
@@ -332,7 +333,7 @@ pub fn plan_once(
         plan_ms = ms_since(started),
         "path planned"
     );
-    msg::build_path(&states, &ts, t0, &config.world_frame, ground_z)
+    msg::build_path(&states, &ts, t0, &config.world_frame, ground.z)
 }
 
 /// Owns the replan cadence and the publishing, off the dispatch loop.
@@ -380,8 +381,8 @@ impl Worker {
                 &self.config.base_frame,
                 now,
             );
-            // `Emb::base_height` under the body until the map shows the floor
-            let ground_z = pose.map(|p| p.z - self.config.embodiment.base_height);
+            // The floor a base height under the body, until the map shows one.
+            let body_z = pose.map(|p| p.z - self.config.embodiment.base_height);
             let pose = pose.map(|p| (p.state[0], p.state[1], p.state[2]));
             match decide(
                 pose.is_some(),
@@ -407,7 +408,7 @@ impl Worker {
                         pose,
                         &self.config.world_frame,
                         msg::now_secs(),
-                        ground_z.unwrap_or(0.0),
+                        body_z.unwrap_or(0.0),
                     );
                     published = true;
                     msg::publish(&self.path, &held).await;
@@ -452,16 +453,8 @@ impl Worker {
                     // workers, hence the module's 2 threads.
                     let produced = tokio::task::block_in_place(|| {
                         let pts = self.points(&cloud, snap.cloud_seq, &mut points)?;
-                        let body = ground_z.unwrap_or(0.0);
-                        let under = body + 0.5 * self.config.embodiment.base_height;
-                        let read = obstacles::ground_from_map(&pts, pose.0, pose.1, under);
-                        let ground = read.as_ref().map_or(body, |g| g.z);
-                        let support: Vec<[f32; 3]> = read
-                            .map(|g| g.support)
-                            .unwrap_or_default()
-                            .iter()
-                            .map(|p| [p[0], p[1], ground as f32])
-                            .collect();
+                        let body = body_z.unwrap_or(0.0);
+                        let ground = ground::read(&pts, pose.0, pose.1, body, &self.emb);
                         let path = plan_once(
                             &self.config,
                             &self.emb,
@@ -469,10 +462,10 @@ impl Worker {
                             &pts,
                             pose,
                             goal,
-                            ground,
+                            &ground.plane,
                             incumbent.as_deref(),
                         );
-                        Some((path, support))
+                        Some((path, ground.support))
                     });
                     if let Some((produced, support)) = produced {
                         let floor =
@@ -692,7 +685,7 @@ mod tests {
             &[],
             (0.0, 0.0, 0.0),
             (3.0, 0.0),
-            0.0,
+            &Plane::flat(0.0),
             None,
         );
         assert!(produced.poses.len() > 1, "expected a real plan, got a stub");
@@ -738,7 +731,7 @@ mod tests {
             &gap(1.4),
             (0.0, 0.0, 0.0),
             (3.0, 0.0),
-            0.0,
+            &Plane::flat(0.0),
             None,
         );
         let tight = plan_once(
@@ -748,7 +741,7 @@ mod tests {
             &gap(0.45),
             (0.0, 0.0, 0.0),
             (3.0, 0.0),
-            0.0,
+            &Plane::flat(0.0),
             None,
         );
         assert!(roomy.poses.len() > 1 && tight.poses.len() > 1);
@@ -781,7 +774,7 @@ mod tests {
             &walls,
             (0.0, 0.0, 0.0),
             (4.0, 0.0),
-            0.0,
+            &Plane::flat(0.0),
             None,
         );
         assert_eq!(produced.poses.len(), 1, "a refusal is a one-pose stub");
@@ -809,7 +802,7 @@ mod tests {
             &lifted,
             (0.0, 0.0, 0.0),
             (4.0, 0.0),
-            0.0,
+            &Plane::flat(0.0),
             None,
         );
         assert!(produced.poses.len() > 1, "an overhead wall is not a wall");
@@ -853,7 +846,7 @@ mod tests {
             &room,
             (0.0, 0.0, 0.0),
             (4.0, 0.0),
-            -0.28,
+            &Plane::flat(-0.28),
             None,
         );
         assert_eq!(seen.poses.len(), 1, "the walls are still invisible");
@@ -876,7 +869,7 @@ mod tests {
                 &wall,
                 (0.0, 0.0, 0.0),
                 (3.0, 0.0),
-                0.0,
+                &Plane::flat(0.0),
                 None,
             );
             if out.poses.len() < 2 {
@@ -898,9 +891,11 @@ mod tests {
             ..Emb::fixture()
         };
         let trunk_model = obstacles::load("body_band", &trunk, cfg.step_cost).expect("known model");
-        assert!(obstacles::field_points(trunk_model.as_ref(), &wall, 0.0)
-            .0
-            .is_empty());
+        assert!(
+            obstacles::field_points(trunk_model.as_ref(), &wall, &Plane::flat(0.0))
+                .0
+                .is_empty()
+        );
         assert!(detour(trunk_model.as_ref()) < 0.2);
     }
 
@@ -930,7 +925,7 @@ mod tests {
             &slab,
             (0.0, 0.0, 0.0),
             (4.0, 0.0),
-            -0.28,
+            &Plane::flat(-0.28),
             None,
         );
         assert!(produced.poses.len() > 1, "the ground read as a wall");
@@ -961,7 +956,7 @@ mod tests {
             &low_object((1.4, 1.64), (-0.12, 0.12)),
             (0.0, 0.0, 0.0),
             (3.0, 0.0),
-            0.0,
+            &Plane::flat(0.0),
             None,
         );
         assert!(produced.poses.len() > 1, "refused");
@@ -994,7 +989,7 @@ mod tests {
             &world,
             (0.0, 0.0, 0.0),
             (3.0, 0.0),
-            0.0,
+            &Plane::flat(0.0),
             None,
         );
         assert!(produced.poses.len() > 1, "refused to step on it");
@@ -1018,6 +1013,46 @@ mod tests {
             .map(|(_, &c)| c)
             .fold(0.0f64, f64::max);
         assert!(away > 0.3 + 1e-3, "slowed off the object too: {away}");
+    }
+
+    #[test]
+    fn a_tilted_floor_is_walked_at_full_speed() {
+        // a 3 percent grade along the way, so the floor crosses voxel layers ahead of the robot
+        let cfg = Config {
+            step_speed: 0.3,
+            ..config()
+        };
+        let v = obstacles::VOXEL;
+        let mut cloud = Vec::new();
+        for i in -25..=62 {
+            for j in -18..=18 {
+                let (x, y) = ((i as f64 + 0.5) * v, (j as f64 + 0.5) * v);
+                let k = ((-0.25 + 0.03 * x) / v).floor();
+                cloud.push([x as f32, y as f32, (k * v + v * 0.5) as f32]);
+            }
+        }
+        let ground = ground::read(&cloud, 0.0, 0.0, -0.25, &fixture());
+        assert!(!ground.support.is_empty(), "the floor was not read");
+        let produced = plan_once(
+            &cfg,
+            &fixture(),
+            model(&cfg).as_ref(),
+            &cloud,
+            (0.0, 0.0, 0.0),
+            (3.0, 0.0),
+            &ground.plane,
+            None,
+        );
+        assert!(produced.poses.len() > 1, "refused");
+        let states = msg::path_states(&produced);
+        let e = Emb::fixture();
+        let params = emb::base_params(&e, [e.min_speed, e.max_speed]);
+        let ceilings = stamps::decode_ceilings(&msg::path_stamps(&produced), &states, &params)
+            .expect("stamped");
+        assert!(
+            ceilings.iter().all(|&c| c > cfg.step_speed + 1e-3),
+            "slowed on bare floor: {ceilings:?}"
+        );
     }
 
     const CARROT_M: f64 = 0.2;

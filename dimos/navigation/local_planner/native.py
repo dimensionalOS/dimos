@@ -75,7 +75,7 @@ class LocalPlannerNative(NativeModule, spec.MapLocalPlanner):
     tf: IO[TFMessage]
 
     path: Out[Path]
-    # the floor voxels the ground was read from, at the ground's height; empty when it fell back
+    # The floor voxels the ground plane was fit to, moved onto it. Empty while the body height stands in.
     ground_support: Out[PointCloud2]
 
 
