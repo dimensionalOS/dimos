@@ -67,7 +67,7 @@ find_package(PCL 1.8 REQUIRED COMPONENTS common filters)
 # Livox SDK2 (from nix or /usr/local fallback)
 find_library(LIVOX_SDK livox_lidar_sdk_shared)
 if(NOT LIVOX_SDK)
-  message(FATAL_ERROR "Livox SDK2 not found. Available via nix flake in lidar/livox/")
+  message(FATAL_ERROR "Livox SDK2 not found: build with nix, whose flake builds it from livox_sdk2.nix")
 endif()
 get_filename_component(LIVOX_SDK_LIB_DIR ${LIVOX_SDK} DIRECTORY)
 get_filename_component(LIVOX_SDK_PREFIX ${LIVOX_SDK_LIB_DIR} DIRECTORY)
@@ -79,10 +79,6 @@ add_executable(fastlio2_native
   ${FASTLIO_DIR}/include/ikd-Tree/ikd_Tree.cpp
 )
 
-# Shared Livox common headers (livox_sdk_config.hpp etc.)
-if(NOT LIVOX_COMMON_DIR)
-  set(LIVOX_COMMON_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../common)
-endif()
 
 target_include_directories(fastlio2_native PRIVATE
   ${FASTLIO_DIR}/include
@@ -92,7 +88,7 @@ target_include_directories(fastlio2_native PRIVATE
   ${EIGEN3_INCLUDE_DIR}
   ${PCL_INCLUDE_DIRS}
   ${CMAKE_CURRENT_SOURCE_DIR}
-  ${LIVOX_COMMON_DIR}
+  ${CMAKE_CURRENT_SOURCE_DIR}/livox_common
   ${LIVOX_SDK_INCLUDE_DIR}
 )
 

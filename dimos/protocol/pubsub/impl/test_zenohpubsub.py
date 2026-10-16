@@ -16,6 +16,9 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack
+from functools import partial
 import threading
 
 import pytest
@@ -35,7 +38,7 @@ from dimos.protocol.pubsub.impl.zenohpubsub import (
     _key_expr_to_topic,
     _topic_to_key_expr,
 )
-from dimos.protocol.service.zenohservice import ZenohSessionPool
+from dimos.protocol.service.zenohservice import LOOPBACK_LISTEN, ZenohSessionPool
 
 
 @pytest.fixture()
@@ -61,6 +64,82 @@ def make_pubsub():
 def pubsub(make_pubsub):
     """Create and start a ZenohPubSubBase instance on an isolated pool, clean up after."""
     return make_pubsub()
+
+
+@pytest.mark.parametrize(
+    ("all_topics", "subscription_count"),
+    [(False, 1), (True, 1), (True, 3)],
+    ids=["subscribe", "subscribe_all", "multiple_subscribe_all"],
+)
+@pytest.mark.parametrize("unsubscribe_only", [False, True], ids=["stop", "unsubscribe"])
+def test_shutdown_from_callback_completes_cleanup(
+    run_in_subprocess, all_topics, subscription_count, unsubscribe_only
+):
+    run_in_subprocess(_check_callback_shutdown, all_topics, subscription_count, unsubscribe_only)
+
+
+def _check_callback_shutdown(all_topics, subscription_count, unsubscribe_only):
+    with ExitStack() as cleanup:
+        pool = ZenohSessionPool()
+        cleanup.callback(pool.close_all)
+        pubsub = ZenohPubSubBase(
+            session_pool=pool,
+            mode="peer",
+            connect=[],
+            listen=[LOOPBACK_LISTEN],
+            scouting=False,
+            scouting_interface="",
+            multicast=False,
+            gossip=False,
+            connect_timeout=0,
+        )
+        cleanup.callback(pubsub.stop)
+        pubsub.start()
+        topic = Topic("dimos/callback_shutdown")
+        finished = [threading.Event() for _ in range(subscription_count)]
+        received = [[] for _ in range(subscription_count)]
+        errors = []
+        unsubscribes = []
+        drain_threads = []
+        callbacks_ready = threading.Barrier(subscription_count)
+
+        def callback(index, message, received_topic):
+            try:
+                if all_topics:
+                    drain_threads.append(threading.current_thread())
+                # Keep every callback active before any of them starts cleanup.
+                callbacks_ready.wait(timeout=2.0)
+                if unsubscribe_only:
+                    unsubscribes[index]()
+                else:
+                    pubsub.stop()
+                received[index].append((message, received_topic))
+            except Exception as error:
+                errors.append(error)
+            finally:
+                finished[index].set()
+
+        for index in range(subscription_count):
+            on_message = partial(callback, index)
+            unsubscribe = (
+                pubsub.subscribe_all(on_message)
+                if all_topics
+                else pubsub.subscribe(topic, on_message)
+            )
+            unsubscribes.append(unsubscribe)
+            cleanup.callback(unsubscribe)
+        pubsub.publish(topic, b"stop")
+
+        for event in finished:
+            assert event.wait(timeout=2.0)
+        for thread in drain_threads:
+            thread.join(timeout=2.0)
+        assert errors == [], errors
+        assert received == [[(b"stop", topic)]] * subscription_count
+        assert not any(thread.is_alive() for thread in drain_threads)
+        assert pubsub._subscribers == []
+        assert pubsub._drain_stops == []
+        assert len(pubsub._publishers) == int(unsubscribe_only)
 
 
 class TestZenohPubSubBase:
@@ -189,6 +268,47 @@ class TestZenohPubSubBase:
         pubsub.stop()
         assert len(pubsub._publishers) == 0
         assert len(pubsub._subscribers) == 0
+
+    def test_stop_waits_for_in_flight_publish(self, pubsub) -> None:
+        topic = Topic("dimos/test/stop_during_publish")
+        publishing = threading.Event()
+        release_publish = threading.Event()
+        stopping = threading.Event()
+        stopped = threading.Event()
+        received = []
+
+        def hold_publish(sample):
+            publishing.set()
+            assert release_publish.wait(timeout=10.0)
+            received.append(sample.payload.to_bytes())
+
+        def stop():
+            stopping.set()
+            try:
+                pubsub.stop()
+            finally:
+                stopped.set()
+
+        # A direct callback holds the native Publisher.put() borrow until released.
+        with (
+            pubsub.session.declare_subscriber(
+                topic.key_expr, zenoh.handlers.Callback(hold_publish, indirect=False)
+            ),
+            ThreadPoolExecutor(max_workers=2) as executor,
+        ):
+            publish_result = executor.submit(pubsub.publish, topic, b"in flight")
+            try:
+                assert publishing.wait(timeout=2.0)
+                stop_result = executor.submit(stop)
+                assert stopping.wait(timeout=2.0)
+                assert not stopped.wait(timeout=0.1), "stop completed while put was still active"
+            finally:
+                release_publish.set()
+            publish_result.result(timeout=2.0)
+            stop_result.result(timeout=2.0)
+
+        assert received == [b"in flight"]
+        assert pubsub._publishers == {}
 
     def test_subscribe_all(self, pubsub, retry_until) -> None:
         received: list[bytes] = []

@@ -512,7 +512,7 @@ package for tasks, scene setup and usage; use `--tags <scene>` to select a case.
 - **Python**: `EvalRunner().run(SUITE, agent, tags=frozenset({"encoding"}))`
 - **pytest**: suites are importable lists. Use
   `@pytest.mark.parametrize("case", SUITE)` and assert on `passed`
-  (gate live-model tests with `skipif_no_openai`).
+  (skip live-model tests when `OPENAI_API_KEY` is unset).
 - **MCP**: the `EvalModule` skills `run_evals` / `list_eval_suites` /
   `list_eval_agents` return the summary + run dir, so a coding agent can run
   evals, grep trajectories, edit prompts/encodings, and run again.
