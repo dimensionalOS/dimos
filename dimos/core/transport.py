@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from functools import partial
 import importlib.util
 import threading
 import time
@@ -106,7 +107,10 @@ class pLCMTransport(PubSubTransport[T]):
         self.lcm = PickleLCM(**kwargs)
 
     def __reduce__(self):  # type: ignore[no-untyped-def]
-        return (pLCMTransport, (self.topic,))
+        return (
+            partial(pLCMTransport, **self.lcm.config.model_dump(exclude={"lcm"})),
+            (self.topic,),
+        )
 
     def broadcast(self, _: Stream[T] | None, msg: T) -> None:
         if not self._started:
@@ -147,7 +151,10 @@ class LCMTransport(PubSubTransport[T]):
         self._started = False
 
     def __reduce__(self):  # type: ignore[no-untyped-def]
-        return (LCMTransport, (self.topic.topic, self.topic.lcm_type))
+        return (
+            partial(LCMTransport, **self.lcm.config.model_dump(exclude={"lcm"})),
+            (self.topic.topic, self.topic.lcm_type),
+        )
 
     def broadcast(self, _, msg) -> None:  # type: ignore[no-untyped-def]
         if not self._started:
@@ -173,7 +180,10 @@ class JpegLcmTransport(LCMTransport):  # type: ignore[type-arg]
         super().__init__(topic, type)
 
     def __reduce__(self):  # type: ignore[no-untyped-def]
-        return (JpegLcmTransport, (self.topic.topic, self.topic.lcm_type))
+        return (
+            partial(JpegLcmTransport, **self.lcm.config.model_dump(exclude={"lcm"})),
+            (self.topic.topic, self.topic.lcm_type),
+        )
 
     def start(self) -> None:
         self.lcm.start()
@@ -238,6 +248,12 @@ class DDSTransport(PubSubTransport[T]):
         self.dds = DDS(**kwargs)
         self._started: bool = False
         self._start_lock = threading.RLock()
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        return (
+            partial(DDSTransport, qos=self.dds.qos, **self.dds.config.model_dump()),
+            (self.topic.name, self.topic.data_type),
+        )
 
     def start(self) -> None:
         with self._start_lock:

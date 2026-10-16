@@ -95,7 +95,7 @@ class TorchReIDModel(EmbeddingModel, LocalModel):
         """
         raise NotImplementedError(
             "TorchReID models are vision-only and do not support text embeddings. "
-            "Use CLIP or MobileCLIP for text-image similarity."
+            "Use CLIP for text-image similarity."
         )
 
     def start(self) -> None:

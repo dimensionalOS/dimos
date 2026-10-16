@@ -1,7 +1,7 @@
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-from .config import Settings as Settings
+from chromadb.config import Settings as Settings
 
 class Collection:
     name: str
