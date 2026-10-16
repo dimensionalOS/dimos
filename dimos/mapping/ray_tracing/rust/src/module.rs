@@ -18,7 +18,8 @@ use std::time::{Duration, Instant};
 use crate::mapper::{register, Mapper, Pose};
 use crate::region_viz::{pack_cell, RegionSweep};
 use crate::voxel_ray_tracer::{
-    partition_seed, region_of, Cell, ChunkKey, Config, Cylinder, SeedPartition, SeedRegion,
+    partition_seed, region_at, region_of, Cell, ChunkKey, Config, Cylinder, SeedPartition,
+    SeedRegion,
 };
 use dimos_module::pointcloud::extract_xyz;
 use dimos_module::{
@@ -595,7 +596,8 @@ fn seed_region_messages(
 }
 
 /// The regions due this viz tick with their points: those whose chunks
-/// changed, those that emptied, and `sweep` more from the sweep cursor.
+/// changed nearest the sensor first, those that emptied, and `sweep` more from
+/// the sweep cursor.
 fn map_regions_due(
     mapper: &mut Mapper,
     viz: &mut RegionSweep,
@@ -615,8 +617,9 @@ fn map_regions_due(
             .or_default()
             .push(chunk);
     }
+    let near = region_at(mapper.last_origin(), voxel_size, region_m);
     let mapper = &*mapper;
-    viz.tick(changed, &present, sweep)
+    viz.tick(changed, &present, sweep, near)
         .into_iter()
         .map(|cell| {
             let points = present

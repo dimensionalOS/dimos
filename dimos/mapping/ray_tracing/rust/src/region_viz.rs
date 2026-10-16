@@ -39,13 +39,14 @@ pub struct RegionSweep {
 
 impl RegionSweep {
     /// The cells due this tick, in send order: `sweep` cells from the cursor,
-    /// then the vanished cells, then the changed ones. The sweep goes first
-    /// since congestion drops the tail of a burst.
+    /// then the vanished cells, then the changed ones nearest `near` first.
+    /// The sweep goes first since congestion drops the tail of a burst.
     pub fn tick<T>(
         &mut self,
         changed: impl IntoIterator<Item = Cell>,
         present: &BTreeMap<Cell, T>,
         sweep: usize,
+        near: Cell,
     ) -> Vec<Cell> {
         let changed: BTreeSet<Cell> = changed
             .into_iter()
@@ -86,9 +87,18 @@ impl RegionSweep {
             }
         }
         due.extend(vanished);
-        due.extend(changed);
+        due.extend(nearest_first(changed, near));
         due
     }
+}
+
+fn nearest_first(cells: impl IntoIterator<Item = Cell>, near: Cell) -> Vec<Cell> {
+    let mut cells: Vec<Cell> = cells.into_iter().collect();
+    cells.sort_unstable_by_key(|&(i, j)| {
+        let (di, dj) = (i64::from(i - near.0), i64::from(j - near.1));
+        (di * di + dj * dj, (i, j))
+    });
+    cells
 }
 
 #[cfg(test)]
@@ -111,34 +121,45 @@ mod tests {
     fn changed_cells_are_due_and_a_vanished_cell_is_due_now_and_once_from_the_sweep() {
         let mut sweep = RegionSweep::default();
         let map = present(&[(0, 0), (1, 0), (0, 1)]);
-        assert_eq!(sweep.tick([(1, 0), (9, 9)], &map, 0), vec![(1, 0)]);
+        assert_eq!(sweep.tick([(1, 0), (9, 9)], &map, 0, (0, 0)), vec![(1, 0)]);
 
         let smaller = present(&[(0, 0), (0, 1)]);
-        assert_eq!(sweep.tick([], &smaller, 0), vec![(1, 0)]);
-        assert!(sweep.tick([], &smaller, 0).is_empty());
+        assert_eq!(sweep.tick([], &smaller, 0, (0, 0)), vec![(1, 0)]);
+        assert!(sweep.tick([], &smaller, 0, (0, 0)).is_empty());
         // The sweep walks (0,0), (0,1), then the vanished (1,0) once more.
-        assert_eq!(sweep.tick([], &smaller, 1), vec![(0, 0)]);
-        assert_eq!(sweep.tick([], &smaller, 1), vec![(0, 1)]);
-        assert_eq!(sweep.tick([], &smaller, 1), vec![(1, 0)]);
-        assert_eq!(sweep.tick([], &smaller, 1), vec![(0, 0)]);
-        assert_eq!(sweep.tick([], &smaller, 1), vec![(0, 1)]);
+        assert_eq!(sweep.tick([], &smaller, 1, (0, 0)), vec![(0, 0)]);
+        assert_eq!(sweep.tick([], &smaller, 1, (0, 0)), vec![(0, 1)]);
+        assert_eq!(sweep.tick([], &smaller, 1, (0, 0)), vec![(1, 0)]);
+        assert_eq!(sweep.tick([], &smaller, 1, (0, 0)), vec![(0, 0)]);
+        assert_eq!(sweep.tick([], &smaller, 1, (0, 0)), vec![(0, 1)]);
     }
 
     #[test]
     fn the_sweep_slice_goes_first_then_the_vanished_then_the_changed() {
         let mut sweep = RegionSweep::default();
         let map = present(&[(0, 0), (0, 1), (1, 0), (1, 1), (2, 0)]);
-        sweep.tick([], &map, 0);
+        sweep.tick([], &map, 0, (0, 0));
         let smaller = present(&[(0, 0), (0, 1), (1, 0), (1, 1)]);
         // Two swept cells skipping the busy ones, the vanished one, then the changed.
         assert_eq!(
-            sweep.tick([(1, 1), (0, 1)], &smaller, 2),
+            sweep.tick([(1, 1), (0, 1)], &smaller, 2, (0, 0)),
             vec![(0, 0), (1, 0), (2, 0), (0, 1), (1, 1)]
         );
         // Three changes still leave a full slice of two, which retires the vanished cell.
         assert_eq!(
-            sweep.tick([(0, 0), (0, 1), (1, 0)], &smaller, 2),
+            sweep.tick([(0, 0), (0, 1), (1, 0)], &smaller, 2, (0, 0)),
             vec![(1, 1), (2, 0), (0, 0), (0, 1), (1, 0)]
+        );
+    }
+
+    #[test]
+    fn changed_cells_go_out_nearest_first() {
+        let mut sweep = RegionSweep::default();
+        let cells = [(-3, 0), (0, 0), (1, 1), (4, 4), (2, 2), (0, 5)];
+        let map = present(&cells);
+        assert_eq!(
+            sweep.tick(cells, &map, 0, (2, 2)),
+            vec![(2, 2), (1, 1), (0, 0), (4, 4), (0, 5), (-3, 0)]
         );
     }
 
@@ -146,10 +167,10 @@ mod tests {
     fn the_sweep_walks_every_cell_and_wraps() {
         let mut sweep = RegionSweep::default();
         let map = present(&[(0, 0), (0, 1), (1, 0), (1, 1), (2, 0)]);
-        sweep.tick([], &map, 0);
+        sweep.tick([], &map, 0, (0, 0));
         let mut seen = Vec::new();
         for _ in 0..3 {
-            seen.extend(sweep.tick([], &map, 2));
+            seen.extend(sweep.tick([], &map, 2, (0, 0)));
         }
         assert_eq!(seen.len(), 6);
         seen.sort();

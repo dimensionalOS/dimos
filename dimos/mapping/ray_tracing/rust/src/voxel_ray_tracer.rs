@@ -49,6 +49,12 @@ pub fn region_of(chunk: ChunkKey, voxel_size: f32, region_m: f32) -> Cell {
     )
 }
 
+/// The region grid cell a world point falls in.
+pub fn region_at((x, y, _): (f32, f32, f32), voxel_size: f32, region_m: f32) -> Cell {
+    let cell_m = region_m.max(CHUNK_EDGE as f32 * voxel_size);
+    ((x / cell_m).floor() as i32, (y / cell_m).floor() as i32)
+}
+
 #[inline]
 fn voxel_center(key: VoxelKey, voxel_size: f32) -> (f32, f32, f32) {
     let half = voxel_size * 0.5;

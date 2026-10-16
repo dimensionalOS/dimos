@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 
 use crate::mls_planner::{ms_since, Config, Planner, RegionBounds, DEBUG_LOG_PERIOD};
 use crate::region_viz::{pack_cell, Cell, RegionContent, RegionViz};
-use crate::voxel::{surface_point_xyz, VoxelKey};
+use crate::voxel::{surface_point_xyz, voxelize, VoxelKey};
 use dimos_module::time::now;
 use dimos_module::{debug_throttled, error_throttled, warn_throttled, Input, Module, Output, Tf};
 use lcm_msgs::geometry_msgs::{Point, PointStamped, Pose, PoseStamped, Quaternion};
@@ -575,10 +575,15 @@ impl Worker {
             );
             return;
         };
+        let near = voxelize(
+            self.base_position().unwrap_or_default(),
+            self.config.voxel_size,
+        );
         let (regions, node_points) = tokio::task::block_in_place(|| {
             let regions = viz.tick(
                 planner.surface_clearance_iter(),
                 planner.edge_segment_iter(),
+                near,
             );
             let node_points: Vec<Xyz> = planner.graph().nodes.iter().map(|n| n.pos).collect();
             (regions, node_points)

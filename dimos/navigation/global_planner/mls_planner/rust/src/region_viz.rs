@@ -160,12 +160,14 @@ impl RegionViz {
     }
 
     /// The cells due this tick with their content, in send order: the sweep
-    /// slice, then the changed cells, then the ones that just emptied. The
-    /// sweep goes first since congestion drops the tail of a burst.
+    /// slice, then the changed cells nearest `near` first, then the ones that
+    /// just emptied. The sweep goes first since congestion drops the tail of a
+    /// burst.
     pub fn tick(
         &mut self,
         surface: impl Iterator<Item = (VoxelKey, f32)>,
         segments: impl Iterator<Item = Segment>,
+        near: VoxelKey,
     ) -> Vec<(Cell, RegionContent)> {
         let dirty = std::mem::replace(&mut self.dirty, Dirty::Cells(AHashSet::new()));
         let candidates = self.sweep_candidates(&dirty);
@@ -177,18 +179,21 @@ impl RegionViz {
             }
         };
         let cells = bucket(surface, segments, self.pitch, wanted.as_ref());
-        let (mut due, unchanged) = self.classify(cells, wanted.as_ref());
+        let near = cell_of(near, self.pitch);
+        let (mut due, unchanged) = self.classify(cells, wanted.as_ref(), near);
         let swept = self.sweep_into(&mut due, candidates, unchanged);
         due.rotate_right(swept);
         due
     }
 
-    /// Record what the checked cells now hold. The changed cells then the
-    /// ones that just emptied, in cell order, and the content of the rest.
+    /// Record what the checked cells now hold. The changed cells nearest
+    /// `near` first, then the ones that just emptied, and the content of the
+    /// rest.
     fn classify(
         &mut self,
         cells: AHashMap<Cell, RegionContent>,
         wanted: Option<&AHashSet<Cell>>,
+        near: Cell,
     ) -> (Vec<(Cell, RegionContent)>, AHashMap<Cell, RegionContent>) {
         let mut vanished: Vec<(Cell, RegionContent)> = Vec::new();
         for (cell, slot) in &mut self.published {
@@ -199,7 +204,10 @@ impl RegionViz {
             }
         }
         let mut cells: Vec<(Cell, RegionContent)> = cells.into_iter().collect();
-        cells.sort_unstable_by_key(|(cell, _)| *cell);
+        cells.sort_unstable_by_key(|&((i, j), _)| {
+            let (di, dj) = (i64::from(i - near.0), i64::from(j - near.1));
+            (di * di + dj * dj, (i, j))
+        });
         let mut due: Vec<(Cell, RegionContent)> = Vec::new();
         let mut unchanged: AHashMap<Cell, RegionContent> = AHashMap::new();
         for (cell, content) in cells {
@@ -290,7 +298,11 @@ mod tests {
         columns: &[(i32, i32)],
         segments: &[Segment],
     ) -> Vec<(Cell, RegionContent)> {
-        viz.tick(surface(columns).into_iter(), segments.iter().copied())
+        viz.tick(
+            surface(columns).into_iter(),
+            segments.iter().copied(),
+            (0, 0, 0),
+        )
     }
 
     #[test]
@@ -299,6 +311,18 @@ mod tests {
         assert_eq!(cell_of((49, 50, 0), 50), (0, 1));
         assert_eq!(cell_of((-1, -50, 0), 50), (-1, -1));
         assert_eq!(cell_of((-51, 0, 0), 50), (-2, 0));
+    }
+
+    #[test]
+    fn changed_cells_go_out_nearest_the_robot_first() {
+        let mut viz = RegionViz::new(10, 0, 0);
+        viz.mark_all();
+        let map = [(0, 0), (25, 0), (40, 40), (-30, 0), (25, 25)];
+        let due = viz.tick(surface(&map).into_iter(), std::iter::empty(), (28, 15, 0));
+        assert_eq!(
+            due_cells(&due),
+            vec![(2, 0), (2, 2), (0, 0), (4, 4), (-3, 0)]
+        );
     }
 
     #[test]
@@ -316,7 +340,7 @@ mod tests {
         viz.mark_all();
         let first = tick(&mut viz, &map, &[]);
         // Nothing was published before, so there is nothing to sweep yet.
-        assert_eq!(due_cells(&first), vec![(0, 0), (0, 2), (1, 0)]);
+        assert_eq!(due_cells(&first), vec![(0, 0), (1, 0), (0, 2)]);
         assert_eq!(first[0].1.surface.len(), 2);
 
         assert_eq!(due_cells(&tick(&mut viz, &map, &[])), vec![(0, 0)]);
@@ -340,11 +364,11 @@ mod tests {
         changed[2].1 = 0.5;
         viz.mark_window((0, 0, 0, 0));
         assert!(viz
-            .tick(changed.clone().into_iter(), std::iter::empty())
+            .tick(changed.clone().into_iter(), std::iter::empty(), (0, 0, 0))
             .is_empty());
         viz.mark_window((15, 15, 0, 0));
         assert_eq!(
-            due_cells(&viz.tick(changed.into_iter(), std::iter::empty())),
+            due_cells(&viz.tick(changed.into_iter(), std::iter::empty(), (0, 0, 0))),
             vec![(1, 0)]
         );
 
@@ -366,12 +390,12 @@ mod tests {
         changed[1].1 = 0.5;
         changed[2].1 = 0.5;
         viz.mark_window((3, 3, 0, 0));
-        let due = viz.tick(changed.clone().into_iter(), std::iter::empty());
+        let due = viz.tick(changed.clone().into_iter(), std::iter::empty(), (0, 0, 0));
         assert_eq!(due_cells(&due), vec![(0, 0)]);
         // Column 12's change waits for a window that reaches its cell.
         viz.mark_window((7, 7, 0, 0));
         assert_eq!(
-            due_cells(&viz.tick(changed.into_iter(), std::iter::empty())),
+            due_cells(&viz.tick(changed.into_iter(), std::iter::empty(), (0, 0, 0))),
             vec![(1, 0)]
         );
     }
@@ -410,7 +434,7 @@ mod tests {
         }
         viz.mark_all();
         assert_eq!(
-            due_cells(&viz.tick(changed.into_iter(), std::iter::empty())),
+            due_cells(&viz.tick(changed.into_iter(), std::iter::empty(), (0, 0, 0))),
             vec![(1, 1), (2, 0), (0, 0), (0, 1), (1, 0)]
         );
     }
@@ -429,7 +453,7 @@ mod tests {
         }
         viz.mark_window((0, 0, 0, 15));
         viz.mark_window((15, 15, 0, 0));
-        let due = viz.tick(changed.into_iter(), std::iter::empty());
+        let due = viz.tick(changed.into_iter(), std::iter::empty(), (0, 0, 0));
         assert_eq!(
             due_cells(&due),
             vec![(1, 1), (2, 0), (0, 0), (0, 1), (1, 0)]

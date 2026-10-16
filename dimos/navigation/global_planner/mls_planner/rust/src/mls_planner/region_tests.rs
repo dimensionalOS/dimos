@@ -110,7 +110,7 @@ fn a_clearance_change_at_the_edge_of_the_reach_is_due_and_one_beyond_is_not() {
     let pitch = 10;
     let mut viz = RegionViz::new(pitch, cfg.viz_reach_cells(), 0);
     viz.mark_all();
-    viz.tick(p.surface_clearance_iter(), p.edge_segment_iter());
+    viz.tick(p.surface_clearance_iter(), p.edge_segment_iter(), (0, 0, 0));
 
     // A junk column lands at x = 2 m, which rewrites a window around it.
     let bounds = RegionBounds {
@@ -145,7 +145,7 @@ fn a_clearance_change_at_the_edge_of_the_reach_is_due_and_one_beyond_is_not() {
         })
         .collect();
     let due: Vec<_> = viz
-        .tick(fed.into_iter(), p.edge_segment_iter())
+        .tick(fed.into_iter(), p.edge_segment_iter(), (0, 0, 0))
         .into_iter()
         .map(|(cell, _)| cell)
         .collect();
