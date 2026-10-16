@@ -2120,6 +2120,7 @@ planning = [
 ]
 px4 = [
     { name = "av" },
+    { name = "pymavlink" },
 ]
 scene = [
     { name = "coacd" },
@@ -2531,6 +2532,7 @@ requires-dist = [
     { name = "pygame", marker = "extra == 'control'", specifier = ">=2.6.1" },
     { name = "pygame", marker = "extra == 'sim'", specifier = ">=2.6.1" },
     { name = "pymavlink", marker = "extra == 'drone'" },
+    { name = "pymavlink", marker = "extra == 'px4'" },
     { name = "python-can", marker = "extra == 'control'", specifier = ">=4" },
     { name = "python-dotenv" },
     { name = "python-multipart", marker = "extra == 'web'", specifier = ">=0.0.27" },

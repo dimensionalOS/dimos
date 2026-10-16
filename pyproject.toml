@@ -342,8 +342,9 @@ drone = [
     "pymavlink"
 ]
 
-# PX4 companion stack: RTSP demux for the SIYI A8.
+# PX4 companion stack (dimos/robot/px4): MAVLink, RTSP demux for the SIYI A8.
 px4 = [
+    "pymavlink",
     "av",
 ]
 
