@@ -13,11 +13,14 @@
 # limitations under the License.
 from __future__ import annotations
 
+from collections import deque
 import json
+import math
 from pathlib import Path
 import threading
 import time
 
+import numpy as np
 import pytest
 
 from dimos.core.transport import LCMTransport
@@ -27,10 +30,10 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Path import Path as PathMsg
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.Bool import Bool
-from dimos.navigation.bench.driver import TERMINAL_FILE, EpisodeDriver
-from dimos.navigation.bench.ground_truth import Difficulty
+from dimos.navigation.bench.driver import TERMINAL_FILE, EpisodeDriver, without_objects
+from dimos.navigation.bench.ground_truth import Difficulty, GroundTruth
 from dimos.navigation.bench.suite import Case, Manifest, Rules
-from dimos.simulation.scenes.procedural import office
+from dimos.simulation.scenes.procedural import BLOCK_SIZE, Scene, block, office
 
 
 class FakeWorld:
@@ -57,6 +60,43 @@ def _until(done: object, timeout_s: float) -> None:
     while not done() and time.time() < deadline:  # type: ignore[operator]
         time.sleep(0.05)
     assert done()  # type: ignore[operator]
+
+
+def _verdict(pace_m: float) -> str:
+    """What the watch loop ends on after a stuck window of commanded motion, pacing by pace_m."""
+    driver = EpisodeDriver.__new__(EpisodeDriver)
+    driver._rules = Rules()
+    driver._recent, driver._commands = deque(), deque()
+    driver._arrival = None
+    driver._stop_event = threading.Event()
+    now = time.time()
+    for into in np.arange(0.0, driver._rules.stuck_s, 0.05):
+        x = pace_m * math.sin(math.pi * into)
+        ts = now - driver._rules.stuck_s + into
+        driver._on_pose(PoseStamped(x, 0.0, 0.3, ts=ts, frame_id="odom"))
+        driver._on_cmd(Twist([0.5, 0.0, 0.0], [0.0, 0.0, 0.0]))
+    return driver._watch(now - 2 * driver._rules.stuck_s, None)
+
+
+def test_a_pacing_robot_ends_the_episode_as_dithering_and_a_still_one_as_stuck() -> None:
+    assert _verdict(0.1) == "dithering"
+    assert _verdict(0.0) == "stuck"
+
+
+def test_a_premap_without_objects_shows_the_floor_where_the_block_stands() -> None:
+    scene = block(1, block_height=0.4)
+    bare = without_objects(scene)
+    assert [box for box in scene.boxes if box.kind != "clutter"] == bare.boxes
+    assert len(scene.boxes) == len(bare.boxes) + 1
+    x, y, z0 = (scene.params[k] for k in ("block_x", "block_y", "z0"))
+    walk = np.array([[x - 2.0, y, z0], [x - 1.0, y, z0]])
+
+    def on_the_block(seen: Scene) -> int:
+        cloud = GroundTruth(seen).premap_cloud(walk)
+        over = np.abs(cloud[:, :2] - (x, y)).max(axis=1) < BLOCK_SIZE / 2
+        return int((over & (cloud[:, 2] > z0 + 0.1)).sum())
+
+    assert on_the_block(scene) > 20 and on_the_block(bare) == 0
 
 
 @pytest.mark.self_hosted

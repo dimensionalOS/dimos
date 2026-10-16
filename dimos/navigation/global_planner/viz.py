@@ -131,16 +131,21 @@ def nav_visual_override(
     voxel_size: float,
     wall_clearance_m: float,
     clearance_clamp_m: float = 1.0,
+    static_regions: bool = True,
 ) -> dict[str, VisualOverride]:
     """Bridge overrides for the maps, path, goal and the planner's debug entities.
 
     Pass the same values given to ``MLSPlannerNative.blueprint(...)``.
+    static_regions False logs the map cells on the timeline, so a replay can scrub them.
     """
     voxels = partial(render_voxel_map, voxel_size=voxel_size, height_range=HEIGHT_RANGE)
     return {
         "world/global_map": voxels,
         MAP_REGIONS_ENTITY: partial(
-            render_map_region, voxel_size=voxel_size, height_range=HEIGHT_RANGE
+            render_map_region,
+            voxel_size=voxel_size,
+            height_range=HEIGHT_RANGE,
+            static=static_regions,
         ),
         # the seeded regions feed the planner, the map viz already shows them
         "world/seed_map": None,
@@ -148,5 +153,7 @@ def nav_visual_override(
         "world/local_map": voxels,
         "world/path": render_path,
         "world/goal": render_goal,
-        **planner_visual_override(viz_publish_hz, voxel_size, wall_clearance_m, clearance_clamp_m),
+        **planner_visual_override(
+            viz_publish_hz, voxel_size, wall_clearance_m, clearance_clamp_m, static_regions
+        ),
     }

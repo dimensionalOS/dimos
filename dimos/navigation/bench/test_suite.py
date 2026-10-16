@@ -14,15 +14,57 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import itertools
+import math
 from pathlib import Path
 
 import numpy as np
 from numpy.typing import NDArray
 import pytest
 
-from dimos.navigation.bench.ground_truth import GO2, GroundTruth
-from dimos.navigation.bench.suite import MINED, NARROW_DOOR_M, FreezeConfig, Manifest, freeze
-from dimos.simulation.scenes.procedural import office
+from dimos.navigation.bench.ground_truth import CELL, GO2, GroundTruth
+from dimos.navigation.bench.suite import (
+    APPROACH_M,
+    BAR,
+    BARRIER_HEIGHT,
+    BLOCK_HEIGHT,
+    CLUTTER,
+    CORRIDOR,
+    CORRIDOR_TURN,
+    DOORWAY,
+    GOAL_CLEARANCE,
+    HIDDEN_CLUTTER,
+    HIDDEN_OBJECT,
+    HIDDEN_POLE,
+    LEG_WIDTH,
+    MINED,
+    NARROW_DOOR_M,
+    OVERHANG,
+    POLE,
+    SIDE_WALL_M,
+    SMALL_OBJECT,
+    UNDER_SLAB_RAD,
+    Case,
+    FreezeConfig,
+    Level,
+    Manifest,
+    Probe,
+    freeze,
+    freeze_probe,
+    table_leg,
+)
+from dimos.simulation.scenes.procedural import (
+    BAR_SPAN,
+    BARRIER_DEPTH,
+    BLOCK_SIZE,
+    OVERHANG_SIZE,
+    POLE_WIDTH,
+    SMALL_OBJECT_ASPECT,
+    SMALL_OBJECT_LENGTH,
+    START_CLEARANCE,
+    WALL_THICKNESS,
+    office,
+)
 
 SMALL = FreezeConfig(seeds=(1, 3), stressor_samples=60, samples_per_scene=25, cases_per_bin=1)
 
@@ -76,3 +118,307 @@ def test_freeze_bins_routable_cases_that_round_trip(tmp_path: Path) -> None:
     stale = replace(loaded.cases[0], scene_digest="stale")
     with pytest.raises(RuntimeError, match=stale.id):
         replace(loaded, cases=[stale]).check_drift()
+
+
+def _one_start_per_seed(manifest: Manifest, before: str | None = None) -> None:
+    """Each seed has its own start at every level, clear of the walls and of an object at the named x."""
+    starts = {c.seed: c.start for c in manifest.cases}
+    assert len(set(starts.values())) == len(starts) > 1
+    for case in manifest.cases:
+        params = case.scene().params
+        assert case.start == starts[case.seed] and -np.pi <= case.start[2] <= np.pi
+        assert START_CLEARANCE <= case.start[0] <= params["width"] - START_CLEARANCE
+        assert START_CLEARANCE <= case.start[1] <= params["length"] - START_CLEARANCE
+        assert before is None or case.start[0] <= params[before] - START_CLEARANCE
+
+
+def _line(case: Case, at: tuple[float, float]) -> tuple[float, float, float, float]:
+    """The point's offset from the direct line, its distance and bearing from the start, and the goal's distance past the feature."""
+    assert case.feature is not None
+    start, goal, feature = (np.array(p[:2]) for p in (case.start, case.goal, case.feature))
+    along = (goal - start) / np.linalg.norm(goal - start)
+    assert abs(float(along[0] * (feature - start)[1] - along[1] * (feature - start)[0])) < 1e-9
+    assert float(np.dot(along, feature - at)) == pytest.approx(0.0, abs=1e-9)
+    offset = float(along[0] * (at - start)[1] - along[1] * (at - start)[0])
+    bearing = float(np.arctan2(at[1] - start[1], at[0] - start[0]))
+    return offset, float(np.hypot(*(at - start))), bearing, float(np.dot(along, goal - feature))
+
+
+def test_probe_freezes_every_level_in_every_seed(tmp_path: Path) -> None:
+    probe = replace(GOAL_CLEARANCE, seeds=(1, 2))
+    manifest = freeze_probe(probe)
+    assert manifest.suite == "goal_clearance"
+    assert len({c.id for c in manifest.cases}) == len(manifest.cases) == 2 * len(probe.levels)
+    for seed in probe.seeds:
+        cases = [c for c in manifest.cases if c.seed == seed]
+        assert [c.level for c in cases] == [Level("goal_clearance", v) for v in probe.levels]
+        assert len({c.start for c in cases}) == len({c.goal[1] for c in cases}) == 1
+        assert len({c.goal[0] for c in cases}) == len(cases)
+    for case in manifest.cases:
+        assert case.level is not None and case.tag == "goal_clearance" and case.family == "room"
+        assert case.feature is None and not case.level.control and case.premap_objects
+        params = case.scene().params
+        assert params["width"] - case.goal[0] == pytest.approx(case.level.value)
+        assert SIDE_WALL_M <= case.goal[1] <= params["length"] - SIDE_WALL_M
+        assert case.start[0] <= params["width"] - APPROACH_M
+        assert case.route_length > START_CLEARANCE and case.difficulty.doors == 0
+    _one_start_per_seed(manifest)
+    assert freeze_probe(probe) == manifest
+    manifest.save(tmp_path / "probe.json")
+    loaded = Manifest.load(tmp_path / "probe.json")
+    assert loaded == manifest
+    loaded.check_drift()
+
+
+def test_door_width_probe_sets_the_door_and_puts_the_goal_past_it() -> None:
+    probe = replace(DOORWAY, seeds=(1, 2))
+    manifest = freeze_probe(probe)
+    assert len({c.id for c in manifest.cases}) == len(manifest.cases) == 2 * len(probe.levels)
+    for case in manifest.cases:
+        assert case.level is not None and case.params == {"door_width": case.level.value}
+        scene = case.scene()
+        (door,) = scene.doors
+        assert door.width == case.level.value and case.difficulty.doors == 1
+        assert case.goal[0] >= door.at + SIDE_WALL_M
+        assert case.goal[0] <= scene.params["width"] - SIDE_WALL_M
+        assert case.start[0] <= door.at - APPROACH_M
+    _one_start_per_seed(manifest)
+    manifest.check_drift()
+
+
+def test_leg_width_probe_aims_the_direct_line_through_a_table_leg() -> None:
+    probe = replace(LEG_WIDTH, seeds=(1, 2))
+    manifest = freeze_probe(probe)
+    assert len({c.id for c in manifest.cases}) == len(manifest.cases) == 2 * (len(probe.levels) + 1)
+    bare = [c for c in manifest.cases if c.level is not None and c.level.control]
+    assert [(c.seed, c.params) for c in bare] == [(1, {"leg_width": 0.0}), (2, {"leg_width": 0.0})]
+    assert all(len([b for b in c.scene().boxes if b.kind == "clutter"]) == 1 for c in bare)
+    aim: dict[int, set[float]] = {1: set(), 2: set()}
+    for case in manifest.cases:
+        assert case.level is not None and case.params == {"leg_width": case.level.value}
+        scene = case.scene()
+        legs = [table_leg(scene, case.level.value, corner) for corner in range(4)]
+        leg = min(legs, key=lambda leg: float(np.hypot(*np.subtract(leg, case.feature))))
+        offset, reach, _, past = _line(case, leg)
+        bound = case.level.value / 2 + GO2.radius
+        assert abs(offset) <= bound and 2.3 <= past <= 3.0
+        assert reach >= APPROACH_M - case.level.value
+        aim[case.seed].add(round(offset / bound, 9))
+        if not case.level.control:
+            assert len([box for box in scene.boxes if box.kind == "clutter"]) == 5
+    assert len(aim[1]) == len(aim[2]) == 1 and aim[1] != aim[2]
+    _one_start_per_seed(manifest, "table_x")
+    manifest.check_drift()
+
+
+def test_pole_width_probe_aims_one_line_through_every_width_of_pole() -> None:
+    probe = replace(POLE, seeds=(1, 2))
+    manifest = freeze_probe(probe)
+    assert len({c.id for c in manifest.cases}) == len(manifest.cases) == 2 * (len(probe.levels) + 1)
+    for seed in probe.seeds:
+        cases = [c for c in manifest.cases if c.seed == seed]
+        assert len({(c.start, c.goal, c.feature) for c in cases}) == 1
+    for case in manifest.cases:
+        assert case.level is not None and case.params == {"pole_width": case.level.value}
+        assert not case.premap_objects
+        scene = case.scene()
+        poles = [box for box in scene.boxes if box.kind == "clutter"]
+        assert len(poles) == (0 if case.level.control else 1)
+        offset, _, _, past = _line(case, (scene.params["pole_x"], scene.params["pole_y"]))
+        assert abs(offset) <= POLE_WIDTH[0] / 2 + GO2.radius and 2.3 <= past <= 3.0
+    _one_start_per_seed(manifest, "pole_x")
+    manifest.check_drift()
+
+
+def test_bar_width_probe_aims_one_line_between_the_posts() -> None:
+    probe = replace(BAR, seeds=(1, 2))
+    manifest = freeze_probe(probe)
+    assert len({c.id for c in manifest.cases}) == len(manifest.cases) == 2 * (len(probe.levels) + 1)
+    for seed in probe.seeds:
+        assert len({(c.start, c.goal) for c in manifest.cases if c.seed == seed}) == 1
+    for case in manifest.cases:
+        assert case.level is not None and not case.premap_objects
+        scene = case.scene()
+        offset, _, _, past = _line(case, (scene.params["bar_x"], scene.params["bar_y"]))
+        assert abs(offset) <= BAR_SPAN / 4 and 2.3 <= past <= 3.0
+    manifest.check_drift()
+
+
+def test_block_height_probe_aims_the_direct_line_through_the_block() -> None:
+    probe = replace(BLOCK_HEIGHT, seeds=(1, 2))
+    manifest = freeze_probe(probe)
+    assert len(manifest.cases) == 2 * (len(probe.levels) + 1)
+    for case in manifest.cases:
+        assert case.level is not None and case.params == {"block_height": case.level.value}
+        scene = case.scene()
+        blocks = [box for box in scene.boxes if box.kind == "clutter"]
+        assert len(blocks) == (0 if case.level.control else 1)
+        offset, reach, _, past = _line(case, (scene.params["block_x"], scene.params["block_y"]))
+        assert abs(offset) <= BLOCK_SIZE / 2 + GO2.radius
+        assert reach >= APPROACH_M - 1e-9 and 2.3 <= past <= 3.0
+    assert len({(c.start, c.goal, c.feature) for c in manifest.cases if c.seed == 1}) == 1
+    _one_start_per_seed(manifest, "block_x")
+    manifest.check_drift()
+
+
+def test_small_object_probe_aims_the_direct_line_over_the_object() -> None:
+    probe = replace(SMALL_OBJECT, seeds=(1, 2))
+    manifest = freeze_probe(probe)
+    assert len(manifest.cases) == 2 * (len(probe.levels) + 1)
+    for case in manifest.cases:
+        assert case.level is not None and case.params == {"object_length": case.level.value}
+        scene = case.scene()
+        objects = [box for box in scene.boxes if box.kind == "clutter"]
+        assert len(objects) == (0 if case.level.control else 1)
+        for box in objects:
+            assert 2 * box.half[0] == pytest.approx(case.level.value)
+        offset, reach, _, past = _line(case, (scene.params["object_x"], scene.params["object_y"]))
+        assert abs(offset) <= SMALL_OBJECT_ASPECT * SMALL_OBJECT_LENGTH[0] / 2 + GO2.radius
+        assert reach >= APPROACH_M - 1e-9 and 2.3 <= past <= 3.0
+    for seed in probe.seeds:
+        assert len({(c.start, c.goal, c.feature) for c in manifest.cases if c.seed == seed}) == 1
+    _one_start_per_seed(manifest, "object_x")
+    manifest.check_drift()
+
+
+def test_hidden_object_probe_marks_the_object_on_the_way_through_the_corridor() -> None:
+    probe = replace(HIDDEN_OBJECT, seeds=(1, 2))
+    manifest = freeze_probe(probe)
+    assert len(manifest.cases) == 2 * (len(probe.levels) + 1)
+    assert probe.levels == SMALL_OBJECT.levels
+    assert not any(case.premap_objects for case in manifest.cases)
+    for case in manifest.cases:
+        assert case.level is not None and case.params == {"object_length": case.level.value}
+        scene = case.scene()
+        objects = [box for box in scene.boxes if box.kind == "clutter"]
+        assert len(objects) == (0 if case.level.control else 1)
+        assert case.feature == (scene.params["object_x"], scene.params["object_y"])
+        assert case.start[0] <= scene.params["corridor_x"] - APPROACH_M
+        assert case.route_length >= scene.params["corridor_length"]
+    for seed in probe.seeds:
+        assert len({(c.start, c.goal, c.feature) for c in manifest.cases if c.seed == seed}) == 1
+    manifest.check_drift()
+
+
+def test_hidden_pole_probe_marks_the_pole_on_the_way_through_the_corridor() -> None:
+    probe = replace(HIDDEN_POLE, seeds=(1, 2))
+    manifest = freeze_probe(probe)
+    assert len(manifest.cases) == 2 * (len(probe.levels) + 1)
+    assert not any(case.premap_objects for case in manifest.cases)
+    for case in manifest.cases:
+        assert case.level is not None and case.params == {"pole_width": case.level.value}
+        scene = case.scene()
+        assert len([box for box in scene.boxes if box.kind == "clutter"]) == (
+            0 if case.level.control else 1
+        )
+        assert case.feature == (scene.params["pole_x"], scene.params["pole_y"])
+    for seed in probe.seeds:
+        assert len({(c.start, c.goal, c.feature) for c in manifest.cases if c.seed == seed}) == 1
+    manifest.check_drift()
+
+
+def test_hidden_clutter_probe_only_adds_boxes_in_the_far_room() -> None:
+    probe = replace(HIDDEN_CLUTTER, seeds=(1, 2))
+    manifest = freeze_probe(probe)
+    assert len({c.id for c in manifest.cases}) == len(manifest.cases) == 2 * len(probe.levels)
+    assert probe.levels[0] == 0.0 and probe.control is None
+    assert not any(case.premap_objects for case in manifest.cases)
+    for seed in probe.seeds:
+        cases = [c for c in manifest.cases if c.seed == seed]
+        assert len({(c.start, c.goal) for c in cases}) == 1
+        boxes = [[b for b in c.scene().boxes if b.kind == "clutter"] for c in cases]
+        assert [len(b) for b in boxes] == list(probe.levels)
+        assert all(few == many[: len(few)] for few, many in itertools.pairwise(boxes))
+    for case in manifest.cases:
+        params = case.scene().params
+        assert case.goal == (params["goal_x"], params["goal_y"], params["z0"])
+        assert case.start[0] <= params["corridor_x"] - APPROACH_M
+        assert case.route_length >= params["corridor_length"] and case.feature is None
+    manifest.check_drift()
+
+
+def test_overhang_probe_aims_the_direct_line_under_the_slab() -> None:
+    probe = replace(OVERHANG, seeds=(1, 2))
+    manifest = freeze_probe(probe)
+    assert len(manifest.cases) == 2 * (len(probe.levels) + 1)
+    for case in manifest.cases:
+        assert case.level is not None and case.params == {"clearance": case.level.value}
+        scene = case.scene()
+        assert len([b for b in scene.boxes if b.kind == "clutter"]) == (
+            0 if case.level.control else 5
+        )
+        at = (scene.params["slab_x"], scene.params["slab_y"])
+        offset, reach, bearing, past = _line(case, at)
+        assert abs(offset) <= min(OVERHANG_SIZE) / 2 and abs(bearing) <= UNDER_SLAB_RAD + 1e-9
+        assert reach >= APPROACH_M - 1e-9 and 2.3 <= past <= 3.0
+    assert len({(c.start, c.goal, c.feature) for c in manifest.cases if c.seed == 1}) == 1
+    _one_start_per_seed(manifest, "slab_x")
+    manifest.check_drift()
+
+
+@pytest.mark.parametrize("probe", [CORRIDOR, CORRIDOR_TURN])
+def test_corridor_probes_set_the_width_and_put_the_goal_in_the_far_room(probe: Probe) -> None:
+    probe = replace(probe, seeds=(1, 2))
+    manifest = freeze_probe(probe)
+    assert len({c.id for c in manifest.cases}) == len(manifest.cases) == 2 * len(probe.levels)
+    assert probe.levels == CORRIDOR.levels and probe.control is None
+    for case in manifest.cases:
+        assert case.level is not None and case.params == {"corridor_width": case.level.value}
+        assert case.family == probe.family and case.feature is None
+        params = case.scene().params
+        if probe.name == "corridor_turn":
+            c, s = math.cos(params["room_yaw"]), math.sin(params["room_yaw"])
+            dx, dy = case.goal[0] - params["room_x"], case.goal[1] - params["room_y"]
+            ahead, across = dx * c + dy * s - WALL_THICKNESS, dy * c - dx * s
+            assert SIDE_WALL_M - 1e-9 <= ahead <= params["room_depth"] - SIDE_WALL_M + 1e-9
+            assert SIDE_WALL_M - params["room_right"] - 1e-9 <= across
+            assert across <= params["room_left"] - SIDE_WALL_M + 1e-9
+            assert case.route_length >= params["corridor_length"]
+        else:
+            assert params["room_x"] + SIDE_WALL_M <= case.goal[0] <= params["width"] - SIDE_WALL_M
+            assert params["room_y"] + SIDE_WALL_M <= case.goal[1] <= params["length"] - SIDE_WALL_M
+        assert GO2.radius <= case.difficulty.min_clearance <= case.level.value / 2 + CELL
+        straight = float(np.hypot(case.goal[0] - case.start[0], case.goal[1] - case.start[1]))
+        assert case.route_length >= straight and case.difficulty.doors == 0
+        assert case.start[0] <= params["corridor_x"] - APPROACH_M
+    for seed in probe.seeds:
+        assert len({(c.start, c.goal) for c in manifest.cases if c.seed == seed}) == 1
+    _one_start_per_seed(manifest)
+    manifest.check_drift()
+
+
+def test_clutter_count_probe_only_adds_boxes_between_the_same_start_and_goal() -> None:
+    probe = replace(CLUTTER, seeds=(1, 2))
+    manifest = freeze_probe(probe)
+    assert len({c.id for c in manifest.cases}) == len(manifest.cases) == 2 * len(probe.levels)
+    assert probe.levels[0] == 0.0 and probe.control is None
+    for seed in probe.seeds:
+        cases = [c for c in manifest.cases if c.seed == seed]
+        assert [c.level for c in cases] == [Level("clutter_count", v) for v in probe.levels]
+        assert len({(c.start, c.goal) for c in cases}) == 1
+        boxes = [[b for b in c.scene().boxes if b.kind == "clutter"] for c in cases]
+        assert [len(b) for b in boxes] == list(probe.levels)
+        assert all(few == many[: len(few)] for few, many in itertools.pairwise(boxes))
+        gaps = [c.difficulty.min_clearance for c in cases]
+        assert gaps == sorted(gaps, reverse=True) and gaps[-1] >= GO2.radius
+    for case in manifest.cases:
+        assert case.level is not None and case.params == {"clutter_count": case.level.value}
+        params = case.scene().params
+        assert case.feature is None and not case.level.control
+        assert case.goal == (params["goal_x"], params["goal_y"], params["z0"])
+        assert case.route_length > 3.0 and case.difficulty.doors == 0
+    manifest.check_drift()
+
+
+def test_barrier_height_probe_crosses_the_strip_between_start_and_goal() -> None:
+    probe = replace(BARRIER_HEIGHT, seeds=(1, 2))
+    manifest = freeze_probe(probe)
+    assert len(manifest.cases) == 2 * (len(probe.levels) + 1)
+    for case in manifest.cases:
+        assert case.level is not None and case.params == {"barrier_height": case.level.value}
+        x = case.scene().params["barrier_x"]
+        assert case.start[0] < x and case.goal[0] > x + BARRIER_DEPTH
+        assert case.feature is not None
+        assert case.feature[0] == pytest.approx(x + BARRIER_DEPTH / 2)
+    assert len({(c.start, c.goal, c.feature) for c in manifest.cases if c.seed == 1}) == 1
+    manifest.check_drift()

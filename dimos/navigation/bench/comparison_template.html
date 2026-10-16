@@ -1,0 +1,134 @@
+<style>
+:root { --up: #0ca30c; --down: #d03b3b; }
+body { max-width: 90em; }
+.wrap th { white-space: normal; vertical-align: bottom; }
+.wrap td { vertical-align: top; }
+td.text { white-space: normal; min-width: 6em; }
+.sub { color: var(--muted); margin-top: -0.5em; }
+.tiles { display: flex; flex-wrap: wrap; gap: 1em; margin: 1.5em 0; }
+.tile { background: var(--panel); border-radius: 6px; padding: 0.75em 1.25em; min-width: 10em; }
+.tile .label { color: var(--muted); font-size: 12px; }
+.tile .value { font-size: 26px; font-variant-numeric: tabular-nums; }
+.tile .note { color: var(--muted); font-size: 12px; }
+.warn { border-left: 3px solid var(--clutter); padding: 0.25em 0.75em; margin: 0.5em 0; background: var(--panel); }
+.chip { display: inline-block; padding: 0 0.6em; border-radius: 1em; border: 1px solid var(--line); font-size: 12px; }
+.chip.better { border-color: var(--up); color: var(--up); }
+.chip.worse { border-color: var(--down); color: var(--down); }
+.chip.flat { color: var(--muted); }
+.bar { vertical-align: middle; margin-left: 0.5em; }
+.bar .mid { stroke: var(--line); }
+.bar .up { fill: var(--up); }
+.bar .down { fill: var(--down); }
+.bar .muted { fill: var(--tick); }
+.nosort th { cursor: default; }
+tr.level td { color: var(--muted); }
+tr.level td:first-child { padding-left: 2.25em; }
+tr.level[hidden] { display: none; }
+.toggle { font: inherit; width: 1.6em; padding: 0; margin-right: 0.4em; color: var(--text); background: none; border: 1px solid var(--line); border-radius: 3px; cursor: pointer; }
+.filters { display: flex; flex-wrap: wrap; gap: 1em; align-items: center; margin: 1em 0 0; }
+.filters select { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 3px; }
+.none { color: var(--muted); font-size: 12px; }
+td.up { color: var(--up); }
+td.down { color: var(--down); }
+</style>
+<script>
+addEventListener("DOMContentLoaded", () => {
+  for (const th of document.querySelectorAll(".nosort th")) th.onclick = null;
+  for (const button of document.querySelectorAll("button.toggle")) button.onclick = () => {
+    const open = button.getAttribute("aria-expanded") !== "true";
+    button.setAttribute("aria-expanded", String(open));
+    button.textContent = open ? "▾" : "▸";
+    for (const row of document.querySelectorAll(`tr.level[data-probe="${button.dataset.probe}"]`)) row.hidden = !open;
+  };
+  for (const button of document.querySelectorAll("button.copy[data-cmd]")) button.addEventListener("click", event => {
+    event.stopPropagation();
+    const done = () => { button.textContent = "✓"; setTimeout(() => { button.textContent = "cp"; }, 1500); };
+    navigator.clipboard.writeText(button.dataset.cmd).then(done);
+  });
+  const filters = [...document.querySelectorAll(".filters select")];
+  const apply = () => {
+    let shown = 0;
+    for (const row of document.querySelectorAll("#changed tbody tr")) {
+      row.hidden = !filters.every(f => !f.value || row.dataset[f.name] === f.value);
+      shown += !row.hidden;
+    }
+    document.getElementById("shown").textContent = shown;
+  };
+  for (const f of filters) f.onchange = apply;
+});
+</script>
+<h2>Against {{ c.base.label }}</h2>
+<p class="sub">{{ c.base.label }} (base) against {{ c.new.label }} (new), {{ summary.cases }} paired cases, written {{ written }}</p>
+
+<div class="tiles">
+<div class="tile"><div class="label">successes</div><div class="value">{{ summary.base_successes }} &rarr; {{ summary.new_successes }}</div><div class="note">{{ (summary.new_successes - summary.base_successes) | signed }} of {{ summary.cases }} cases</div></div>
+<div class="tile"><div class="label">probes better</div><div class="value">{{ summary.probes_better }}</div><div class="note">McNemar p &lt; 0.05</div></div>
+<div class="tile"><div class="label">probes worse</div><div class="value">{{ summary.probes_worse }}</div><div class="note">McNemar p &lt; 0.05</div></div>
+<div class="tile"><div class="label">no clear change</div><div class="value">{{ summary.probes_no_clear_change }}</div><div class="note">probes</div></div>
+<div class="tile"><div class="label">outcome changed</div><div class="value">{{ summary.outcomes_changed }}</div><div class="note">cases</div></div>
+</div>
+
+<h3>Runs</h3>
+{% for w in warnings %}<p class="warn">{{ w }}</p>
+{% endfor %}
+<div class="scroll"><table class="nosort wrap">
+<thead><tr><th></th><th>base: {{ c.base.label }}</th><th>new: {{ c.new.label }}</th></tr></thead>
+<tbody>
+{% for d in details %}<tr><td>{{ d.name }}</td><td class="text">{{ d.base }}</td><td class="text">{{ d.new }}</td></tr>
+{% endfor %}
+<tr><td>left out</td>{% for side in ("base", "new") %}<td>{% for reason, n in c.left_out[side].items() %}{{ n }} {{ reason }}{{ ", " if not loop.last }}{% else %}none{% endfor %}</td>{% endfor %}</tr>
+</tbody>
+</table></div>
+<details><summary>Run directories</summary>
+<div class="row">
+{% for side in (c.base, c.new) %}<div><p><b>{{ side.label }}</b></p><ul>{% for r in side.runs %}<li><code>{{ r.run_dir.resolve() }}</code></li>{% endfor %}</ul></div>
+{% endfor %}
+</div>
+</details>
+
+<h3>Probes</h3>
+<div class="scroll"><table class="nosort wrap">
+<thead><tr><th>probe</th><th class="n">cases</th><th class="n">base</th><th class="n">new</th><th class="n">change</th><th class="n">became success</th><th class="n">became failure</th><th class="n">unchanged</th><th class="n">p</th><th>verdict</th><th>failures base</th><th>failures new</th></tr></thead>
+<tbody>
+{% macro cells(t) %}<td class="n">{{ t.cases }}</td><td class="n">{{ t.base_successes }}</td><td class="n">{{ t.new_successes }}</td>
+{% set b = bar(t) %}<td class="n {{ b.direction if b.significant }}">{{ t.change | signed }} <svg class="bar" width="{{ bar_px }}" height="14"><title>{{ t.change | signed }} of {{ t.cases }} cases</title><rect x="{{ b.x }}" y="3" width="{{ b.width }}" height="8" rx="2" class="{{ b.direction if b.significant else "muted" }}"/><line x1="{{ bar_px // 2 }}" x2="{{ bar_px // 2 }}" y1="0" y2="14" class="mid"/></svg></td>
+<td class="n">{{ t.became_success }}</td><td class="n">{{ t.became_failure }}</td><td class="n">{{ t.unchanged }}</td><td class="n">{{ t.p | p }}</td>
+<td><span class="chip {{ t.verdict if t.verdict != "no clear change" else "flat" }}">{{ t.verdict }}</span></td>{% endmacro %}
+{% for row in c.probes %}
+<tr><td>{% if row.levels %}<button class="toggle" data-probe="{{ row.probe }}" aria-expanded="false" title="Show the levels">&#9656;</button>{% endif %}{{ row.probe }}</td>{{ cells(row.tally) }}
+<td class="text">{{ failures(row.tally.base_failures) }}</td><td class="text">{{ failures(row.tally.new_failures) }}</td></tr>
+{% for level in row.levels %}
+<tr class="level" data-probe="{{ row.probe }}" hidden><td>{{ level_label(row.probe, level.value) }}</td>{{ cells(level.tally) }}
+<td class="text">{{ failures(level.tally.base_failures) }}</td><td class="text">{{ failures(level.tally.new_failures) }}</td></tr>
+{% endfor %}
+{% endfor %}
+</tbody>
+</table></div>
+
+<details><summary>Measures</summary>
+<p class="sub">Medians over the cases with a value on both sides.</p>
+<div class="scroll"><table>
+<thead><tr><th>probe</th><th>measure</th><th class="n">cases</th><th class="n">base</th><th class="n">new</th><th class="n">change</th></tr></thead>
+<tbody>
+{% for row in c.probes %}{% for m in row.measures %}<tr><td>{{ row.probe }}</td><td>{{ m.name | replace("_", " ") }}</td><td class="n">{{ m.n }}</td><td class="n">{{ "%.2f" | format(m.base) }}</td><td class="n">{{ "%.2f" | format(m.new) }}</td><td class="n">{{ m.change | signed(2) }}</td></tr>
+{% endfor %}{% endfor %}
+</tbody>
+</table></div>
+</details>
+
+<details><summary>Changed cases ({{ changed | length }})</summary>
+<div class="filters">
+<label>probe <select name="probe"><option value="">all</option>{% for probe in changed_probes %}<option>{{ probe }}</option>{% endfor %}</select></label>
+<label>direction <select name="direction"><option value="">all</option><option>became success</option><option>became failure</option><option>other change</option></select></label>
+<span class="none"><span id="shown">{{ changed | length }}</span> of {{ changed | length }} shown</span>
+</div>
+<div class="scroll"><table id="changed">
+<thead><tr><th>probe</th><th class="n">level</th><th class="n">room</th><th>case</th><th>base</th><th>new</th><th>direction</th><th>replay base</th><th>replay new</th></tr></thead>
+<tbody>
+{% macro replay(episode) %}<td>{% if recorded(episode) %}<button class="copy" data-cmd="dimos nav-bench replay {{ episode.episode | string | quote }}" title="Copy the replay command">cp</button>{% else %}<span class="none">no recording</span>{% endif %}</td>{% endmacro %}
+{% for p in changed %}
+<tr data-probe="{{ p.case.tag }}" data-direction="{{ direction(p) }}"><td>{{ p.case.tag }}</td><td class="n" data-sort="{{ -1 if p.case.level is none or p.case.level.control else p.case.level.value }}">{{ pair_level(p) }}</td><td class="n">{{ p.case.seed }}</td><td>{{ p.case.id }}</td><td>{{ p.base }}</td><td>{{ p.new }}</td><td>{{ direction(p) }}</td>{{ replay(c.base_rows[p.case.id]) }}{{ replay(c.new_rows[p.case.id]) }}</tr>
+{% endfor %}
+</tbody>
+</table></div>
+</details>
