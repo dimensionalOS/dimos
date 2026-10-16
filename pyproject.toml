@@ -184,7 +184,6 @@ Changelog = "https://github.com/dimensionalOS/dimos/releases"
 misc = [
     "ipykernel",
     # Embedding models and their undeclared runtime imports.
-    "open_clip_torch==3.2.0",
     "torchreid==0.2.5",
     "gdown>=5.2.2",
     "tensorboard==2.20.0",
@@ -398,7 +397,6 @@ project-deps = [
     "sentencepiece>=0.2.0",  # SigLIP tokenizer dep (see perception extra)
     "ultralytics>=8.3.70",
     "hydra-core>=1.3.0",
-    "open_clip_torch==3.2.0",
     "openai",
     "moondream",
     "torchreid==0.2.5",
@@ -659,7 +657,6 @@ module = [
     "mujoco",
     "mujoco_playground.*",
     "nav_msgs.*",
-    "open_clip",
     "openevals.*",
     "pinocchio",
     "pink",
@@ -732,7 +729,7 @@ env = [
   "GOOGLE_MAPS_API_KEY=AIzafake_google_key",
   "PYTHONWARNINGS=ignore:cupyx.jit.rawkernel is experimental:FutureWarning",
 ]
-addopts = "--dist=loadfile --durations=10 --timeout=600 --timeout-method=thread -v -ra --showlocals --cov-report=xml -p no:launch_testing -p no:launch_ros --import-mode=importlib --color=yes -m 'not (self_hosted or mujoco or self_hosted_large or web_browser or bake_e2e or native_e2e)'"
+addopts = "--dist=loadfile --durations=10 --timeout=600 --timeout-method=thread -v -ra --showlocals --cov-report=xml -p no:launch_testing -p no:launch_ros --import-mode=importlib --color=yes -m 'not (self_hosted or self_hosted_large or web_browser or bake_e2e or native_e2e)'"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 

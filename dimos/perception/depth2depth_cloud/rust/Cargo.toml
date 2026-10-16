@@ -13,8 +13,6 @@ path = "src/lib.rs"
 name = "depth2depth_cloud"
 path = "src/bin/depth2depth_cloud.rs"
 
-# Not a root-workspace member: its candle/TensorRT dependency tree would otherwise land in the root
-# Cargo.lock and every flake that builds from it.
 [workspace]
 
 # Bake registry entry, cross-checked at compile time by the module macro.
@@ -32,7 +30,7 @@ tf = "tf2_msgs.TFMessage"
 depth_cloud = "sensor_msgs.PointCloud2"
 
 [dependencies]
-dimos-module = { path = "../../../../native/rust/dimos-module" }
+dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "6663bcb6e5e18f43a6cb9cf77ccbec613e310443" }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
 serde = { version = "1", features = ["derive"] }
@@ -55,3 +53,6 @@ tensorrt = ["depth2depth/tensorrt"]
 [profile.release]
 lto = "thin"
 codegen-units = 1
+
+[profile.dev]
+debug = 0

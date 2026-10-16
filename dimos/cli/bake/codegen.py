@@ -44,7 +44,11 @@ path = "src/main.rs"
 [dependencies]
 {dependencies}
 
-# Must match the workspace root's profiles or the shared target dir refingerprints.
+# Modules pin dimos-module by git rev; one copy, the checkout's, or the trait bounds split.
+[patch."https://github.com/dimensionalOS/dimos"]
+{dimos_module}
+
+# Must match every module workspace's profiles or the shared target dir refingerprints.
 [profile.release]
 lto = "thin"
 codegen-units = 1
@@ -83,13 +87,17 @@ fn main() {{
 """
 
 
+def _dimos_module_dep(root: Path) -> str:
+    return f'dimos-module = {{ path = "{root / "native/rust/dimos-module"}" }}'
+
+
 def crate_dir(host: str, root: Path | None = None) -> Path:
     """Where the generated crate for `host` lives."""
     return (root or DIMOS_PROJECT_ROOT) / "build" / "dimos-bake" / host
 
 
 def _dependencies(modules: Sequence[RegisteredModule], root: Path) -> str:
-    lines = [f'dimos-module = {{ path = "{root / "native" / "rust" / "dimos-module"}" }}']
+    lines = [_dimos_module_dep(root)]
     # Keyed by crate: one crate can register several module ids, and a repeated
     # crate name is a duplicate key cargo refuses to parse.
     for crate_name, crate_path in dict.fromkeys((m.crate_name, m.crate_dir) for m in modules):
@@ -110,8 +118,9 @@ def _entries(modules: Sequence[RegisteredModule]) -> str:
 def render_cargo_toml(
     host: str, modules: Sequence[RegisteredModule], root: Path | None = None
 ) -> str:
+    root = root or DIMOS_PROJECT_ROOT
     return _CARGO_TEMPLATE.format(
-        host=host, dependencies=_dependencies(modules, root or DIMOS_PROJECT_ROOT)
+        host=host, dependencies=_dependencies(modules, root), dimos_module=_dimos_module_dep(root)
     )
 
 
@@ -149,10 +158,6 @@ def generate_crate(
     src.mkdir(parents=True, exist_ok=True)
 
     (directory / "Cargo.toml").write_text(render_cargo_toml(host, modules, root))
-    # Check for workspace lock so we resolve to same dependencies
-    root_lock = root / "Cargo.lock"
-    if root_lock.exists():
-        (directory / "Cargo.lock").write_text(root_lock.read_text())
     (src / "main.rs").write_text(render_main_rs(host, modules, graph))
     (src / "default_topics.json").write_text(json.dumps(graph.topics(), indent=2) + "\n")
     (src / "default_qos.json").write_text(json.dumps(graph.qos(), indent=2) + "\n")
