@@ -163,10 +163,11 @@ dimos evals sandbox dimos.evals.sandbox.go2_store --robot-on-host --max-steps 20
 
 ## The store patrol cases
 
-`dimos/evals/sandbox/go2_store.py` has two cases on
+`dimos/evals/sandbox/go2_store.py` has three cases on
 [dim-go2-sim](https://pypi.org/project/dim-go2-sim/)'s Go2 (a rolling Mid-360 and a front
 camera) in the cooked supermarket scene: map the store, then loop between the entrance and the
-fruit stand every 10 minutes. `store_patrol_dimos` adds a line asking the agent to use dimOS.
+fruit stand every 10 minutes. `store_patrol_dimos` adds a line asking the agent to use dimOS;
+`store_patrol_dimos_framework` requires building on its blueprints and modules.
 
 ```bash skip
 dimos evals sandbox dimos.evals.sandbox.go2_store --max-steps 2000
@@ -177,7 +178,12 @@ dimos evals sandbox dimos.evals.sandbox.go2_store --max-steps 2000
 - The recorder keeps lidar at 1 Hz, camera at 2 Hz, and odometry and `cmd_vel` whole.
 - `GroundTruthLog` writes the true pose and every contact to the case directory, which
   only the grader reads.
-- `evaluate` runs the agent's command for 30 minutes, then scores map coverage (the share
+- The human is the store owner (`store_owner`). Until the agent calls done they say "I don't
+  understand and I don't care..."; after each done they run its command for 20 minutes
+  and, unless the dog reached both places and looped once without bumping anything, tell it
+  what they saw ("The dog barely moved...", "It never went to the fruit stand.") and ask for
+  a fix, at most 3 times. Its output is `/root/work/run-output.log`.
+- `evaluate` then runs the agent's command for 30 minutes, then scores map coverage (the share
   of the store its lidar saw, from the true poses, against what is visible from every
   reachable spot), reaching the entrance and the fruit stand, entrance/fruit round trips,
   and multiplies by a penalty for each collision. `grading.json` has the breakdown.

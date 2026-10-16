@@ -26,14 +26,25 @@ simulator's ground truth, which stays in the robot container.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterator
 import json
 import shlex
+import subprocess
 import time
 
 from dim_go2_sim import Go2Sim
+import numpy as np
 
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.evals.sandbox.case import ROBOT_ENDPOINT, DimosRobot, SandboxCase, SandboxOutcome
+from dimos.evals.sandbox.case import (
+    KILL_AGENT_PROCESSES,
+    ROBOT_ENDPOINT,
+    Conversation,
+    DimosRobot,
+    FunctionRef,
+    SandboxCase,
+    SandboxOutcome,
+)
 from dimos.evals.sandbox.ground_truth_log import GroundTruthLog
 from dimos.evals.sandbox.scene_grading import (
     GroundTruth,
@@ -60,6 +71,8 @@ ENTRANCE = Zone("entrance", center=(17.3, 4.0), radius=2.5)
 FRUIT = Zone("fruit", box=(19.0, 12.3, 26.7, 26.4))
 # How long the agent's system runs during grading, and the loops expected in that time.
 GRADE_RUN_S = 30 * 60
+# How long the store owner tries the system each time the agent says it is done.
+TRIAL_RUN_S = 20 * 60
 LOOP_PERIOD_S = 10 * 60
 EXPECTED_LOOPS = 2
 # A complete map: this share of what the lidar sees from everywhere reachable.
@@ -135,6 +148,68 @@ DONE_SCHEMA = {
 }
 
 
+def run_system(
+    exec: Callable[..., subprocess.CompletedProcess[str]], command: str, seconds: float, log: str
+) -> None:
+    """The agent's command, from /root/work, for *seconds*; then everything it started is killed."""
+    exec(
+        f"cd /root/work && timeout -k 10 {seconds:.0f} bash -lc {shlex.quote(command)} "
+        f"> /root/work/{log} 2>&1; {KILL_AGENT_PROCESSES}",
+        timeout=seconds + 60,
+    )
+
+
+def store_owner(
+    conversation: Conversation, *, nag: str, trial_s: float = TRIAL_RUN_S, trials: int = 3
+) -> Iterator[str]:
+    """The store owner. Until the agent calls done, *nag*. Then they run its command for
+    *trial_s* and, if the dog did not patrol, say what went wrong, at most *trials* times."""
+    tried = 0
+    while True:
+        if not conversation.called_done:
+            yield nag
+            continue
+        if tried == trials:
+            return
+        tried += 1
+        assert conversation.done is not None
+        command = conversation.done["command"]
+        started = time.time()
+        run_system(conversation.exec, command, trial_s, "run-output.log")
+        truth = GroundTruth.load(conversation.case_dir / "ground_truth.jsonl")
+        problems = what_went_wrong(truth, started)
+        if not problems:
+            return
+        yield (
+            f"I ran `{command}` for {trial_s / 60:.0f} minutes. {' '.join(problems)} What it "
+            "printed is in /root/work/run-output.log. Please fix it, and call done again when "
+            "it's working."
+        )
+
+
+def what_went_wrong(truth: GroundTruth, since: float) -> list[str]:
+    """What the store owner would notice about the dog since *since*, in their words."""
+    poses = truth.between(since)
+    problems = []
+    moved = float(np.linalg.norm(poses[:, :2] - poses[0, :2], axis=1).max()) if len(poses) else 0
+    reached = visits(poses, [ENTRANCE, FRUIT])
+    if moved < 1.0:
+        problems.append(
+            f"The dog barely moved: it never got more than {moved:.1f} m from where it started."
+        )
+    else:
+        if "entrance" not in reached:
+            problems.append("It never went to the main entrance.")
+        if "fruit" not in reached:
+            problems.append("It never went to the fruit stand.")
+        if not problems and round_trips(reached, "entrance", "fruit") == 0:
+            problems.append("It never did a whole loop between the entrance and the fruit stand.")
+    bumps = len(truth.collisions(since))
+    if bumps:
+        problems.append(f"It bumped into things {bumps} time{'s' * (bumps > 1)}.")
+    return problems
+
+
 def evaluate(o: SandboxOutcome) -> float:
     """Run the agent's command for GRADE_RUN_S, then grade the whole run from ground truth.
 
@@ -145,10 +220,7 @@ def evaluate(o: SandboxOutcome) -> float:
     """
     command = o.done["command"]
     started = time.time()
-    o.exec(
-        f"cd /root/work && nohup bash -lc {shlex.quote(command)} > /root/work/grading-run.log 2>&1 &"
-    )
-    time.sleep(GRADE_RUN_S)
+    run_system(o.exec, command, GRADE_RUN_S, "grading-run.log")
     log_tail = o.exec("tail -c 4000 /root/work/grading-run.log").stdout
     _ = o.recording  # stop the recorder: the run is over
 
@@ -202,16 +274,18 @@ def _case(case_id: str, prompt: str) -> SandboxCase:
             "robot/odom/**": None,
             "robot/cmd_vel/**": None,  # what the agent told the dog to do
         },
-        # What the "user" says whenever the agent stops without done, e.g. to ask something.
-        reminder=(
-            "I don't understand and I don't care. Please find a way to make it work, and only "
-            "call the done tool when it's working."
+        human=FunctionRef(
+            function=f"{__name__}:store_owner",
+            params={
+                # What they say whenever the agent stops without done, e.g. to ask something.
+                "nag": "I don't understand and I don't care. Please find a way to make it "
+                "work, and only call the done tool when it's working.",
+            },
         ),
-        reminders=10,
         done_schema=DONE_SCHEMA,
-        evaluate=evaluate,
-        timeout_s=4 * 3600.0,
-        tags=frozenset({"go2", "supermarket", "navigation"}),
+        evaluate=FunctionRef(function=f"{__name__}:evaluate"),
+        timeout_s=6 * 3600.0,
+        tags=("go2", "supermarket", "navigation"),
     )
 
 
