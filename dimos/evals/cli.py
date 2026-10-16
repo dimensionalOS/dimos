@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""``dimos evals`` — run and list eval suites. Heavy imports stay inside
+"""``dimos evals`` — prepare, run, and score eval suites. Heavy imports stay inside
 command bodies (test_cli_startup budget)."""
 
 from __future__ import annotations
@@ -30,10 +30,14 @@ from typing import TYPE_CHECKING, Any
 
 import typer
 
+from dimos.evals.suites.lib.space.commands import score_app, setup_app
+
 if TYPE_CHECKING:
     from dimos.evals.agents.base import Agent
 
 app = typer.Typer(help="Run agent evals on recordings, sim, or a live robot.")
+app.add_typer(setup_app, name="setup")
+app.add_typer(score_app, name="score")
 
 
 def agent_class(module: str) -> type[Agent]:
