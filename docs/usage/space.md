@@ -103,8 +103,7 @@ uv sync --locked --group tests --extra space
 uv run --no-sync pytest -m self_hosted dimos/evals/suites/lib/space/test_official.py
 ```
 
-These four tests use the repository's `self_hosted` marker. They
-check the fixed subset, official parser and metric, spawned aggregation, and dimOS
-CLI with a canned model. They reuse verified cached inputs or download pinned
+These tests check the fixed subset, official parser and metric, spawned aggregation,
+and dimOS CLI with a canned model. They reuse verified cached inputs or download pinned
 task data without provider calls. They verify integration, not model
 performance.
