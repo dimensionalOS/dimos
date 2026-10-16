@@ -19,7 +19,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use crate::planner::{plan_explored, step_reach, Emb, COMMIT_MARGIN};
+use crate::planner::{plan_explored, step_reach, Emb, Terrain, COMMIT_MARGIN};
 use crate::{clearance, stamps};
 use dimos_module::{debug_throttled, native_config, warn_throttled, Input, Module, Output, Tf};
 use lcm_msgs::nav_msgs::Path;
@@ -30,7 +30,7 @@ use validator::ValidationError;
 use crate::module::emb;
 use crate::module::ground::{self, Plane};
 use crate::module::msg;
-use crate::module::obstacles::{self, ObstacleModel};
+use crate::module::obstacles::{self, FieldPoints, ObstacleModel};
 use crate::module::tf_pose::PoseWatch;
 
 /// Mirrors `LocalPlannerNativeConfig` (native.py), which owns every default.
@@ -284,15 +284,18 @@ pub fn plan_once(
     let started = Instant::now();
     let t0 = msg::now_secs();
     // The model decides which returns are obstacles; the search only sees xy.
-    let (hard, soft) = obstacles::field_points(model, points, ground);
+    let FieldPoints { hard, soft } = obstacles::field_points(model, points, ground);
     let seen = obstacles::ground_points(points, ground, emb.steppable);
     let points: &[[f32; 3]] = &hard;
     let cloud: Vec<[f64; 2]> = points.iter().map(|p| [p[0] as f64, p[1] as f64]).collect();
+    let terrain = Terrain {
+        ground: &seen,
+        unseen_cost: config.unseen_cost,
+        soft: &soft,
+    };
     let states = match plan_explored(
         &cloud,
-        &seen,
-        config.unseen_cost,
-        &soft,
+        &terrain,
         pose,
         goal,
         emb,
@@ -315,7 +318,7 @@ pub fn plan_once(
     // Over a low object the room is clamped to what the governor grants the step speed.
     let stepped: Vec<[f32; 3]> = soft
         .iter()
-        .map(|(p, _)| [p[0] as f32, p[1] as f32, 0.0])
+        .map(|s| [s.xy[0] as f32, s.xy[1] as f32, 0.0])
         .collect();
     let step_room = stamps::governor_clearance(config.step_speed, &emb::governor(emb));
     for (r, over) in room
@@ -893,7 +896,7 @@ mod tests {
         let trunk_model = obstacles::load("body_band", &trunk, cfg.step_cost).expect("known model");
         assert!(
             obstacles::field_points(trunk_model.as_ref(), &wall, &Plane::flat(0.0))
-                .0
+                .hard
                 .is_empty()
         );
         assert!(detour(trunk_model.as_ref()) < 0.2);

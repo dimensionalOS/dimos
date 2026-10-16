@@ -38,7 +38,7 @@ pub const MODELS: [&str; 1] = ["body_band"];
 pub struct Field {
     /// Never traversable.
     pub hard: Vec<u32>,
-    /// Traversable at a price: `(index, cost)`, the extra price per metre over it.
+    /// Traversable at a price: `(index, cost)`, the extra price per meter over it.
     pub soft: Vec<(u32, f32)>,
 }
 
@@ -120,14 +120,17 @@ pub fn ground_points(points: &[[f32; 3]], ground: &Plane, steppable: f64) -> Vec
         .collect()
 }
 
-/// What this model sees, referenced to the ground: the hard points the search plans
-/// around, and the soft points as `(xy, cost)`. A soft voxel under a hard one is the
-/// foot of a wall, not something to step on, so it is dropped.
-pub fn field_points(
-    model: &dyn ObstacleModel,
-    points: &[[f32; 3]],
-    ground: &Plane,
-) -> (Vec<[f32; 3]>, Vec<Soft>) {
+/// What a model sees in a cloud, referenced to the ground.
+#[derive(Debug)]
+pub struct FieldPoints {
+    /// What the search plans around.
+    pub hard: Vec<[f32; 3]>,
+    pub soft: Vec<Soft>,
+}
+
+/// The model's field over `points`. A soft voxel under a hard one is the foot of a wall,
+/// not something to step on, so it is dropped.
+pub fn field_points(model: &dyn ObstacleModel, points: &[[f32; 3]], ground: &Plane) -> FieldPoints {
     let pts = referenced(points, ground);
     let field = model.field(&pts);
     let hard: Vec<[f32; 3]> = field.hard.iter().map(|&i| pts[i as usize]).collect();
@@ -147,10 +150,13 @@ pub fn field_points(
         })
         .map(|&(i, c)| {
             let p = pts[i as usize];
-            ([p[0] as f64, p[1] as f64], c as f64)
+            Soft {
+                xy: [p[0] as f64, p[1] as f64],
+                cost: c as f64,
+            }
         })
         .collect();
-    (hard, soft)
+    FieldPoints { hard, soft }
 }
 
 #[cfg(test)]
@@ -183,16 +189,16 @@ mod tests {
     #[test]
     fn the_floor_layer_is_free_and_a_low_object_is_soft() {
         let cloud = column(1.0, &[0, 1], -0.3);
-        let (hard, soft) = field_points(model().as_ref(), &cloud, &Plane::flat(-0.3));
+        let FieldPoints { hard, soft } = field_points(model().as_ref(), &cloud, &Plane::flat(-0.3));
         assert!(hard.is_empty(), "{hard:?}");
         assert_eq!(soft.len(), 1);
         // the voxel is centered 0.12 m up, 0.6 of the way to steppable
-        assert!((soft[0].1 - 5.0 * 0.12 / 0.2).abs() < 1e-5, "{soft:?}");
+        assert!((soft[0].cost - 5.0 * 0.12 / 0.2).abs() < 1e-5, "{soft:?}");
     }
 
     #[test]
     fn a_voxel_centered_past_steppable_is_hard() {
-        let (hard, soft) = field_points(
+        let FieldPoints { hard, soft } = field_points(
             model().as_ref(),
             &column(1.0, &[0, 3], 0.0),
             &Plane::flat(0.0),
@@ -201,13 +207,13 @@ mod tests {
         assert!((hard[0][2] - 0.28).abs() < 1e-6, "{hard:?}");
         assert!(soft.is_empty());
         // the layer under it is the last soft one, at the full price
-        let (hard, soft) = field_points(
+        let FieldPoints { hard, soft } = field_points(
             model().as_ref(),
             &column(1.0, &[0, 2], 0.0),
             &Plane::flat(0.0),
         );
         assert!(hard.is_empty());
-        assert!((soft[0].1 - 5.0).abs() < 1e-5, "{soft:?}");
+        assert!((soft[0].cost - 5.0).abs() < 1e-5, "{soft:?}");
     }
 
     #[test]
@@ -216,11 +222,11 @@ mod tests {
         for top in -40..=40 {
             let cloud = [[1.0, 0.0, center(top)], [1.0, 0.0, center(top + 2)]];
             let ground = Plane::flat(top as f64 * VOXEL);
-            let (hard, soft) = field_points(model().as_ref(), &cloud, &ground);
+            let FieldPoints { hard, soft } = field_points(model().as_ref(), &cloud, &ground);
             assert!(hard.is_empty(), "floor layer {top}: {hard:?}");
             assert_eq!(soft.len(), 1, "floor layer {top}");
             assert!(
-                (soft[0].1 - 5.0).abs() < 1e-3,
+                (soft[0].cost - 5.0).abs() < 1e-3,
                 "floor layer {top}: {soft:?}"
             );
             assert_eq!(ground_points(&cloud, &ground, fixture().steppable).len(), 2);
@@ -233,7 +239,7 @@ mod tests {
         for top in -40..=40 {
             let ground = Plane::flat(center(top) as f64);
             let cloud = [[1.0, 0.0, center(top + 7)], [1.0, 0.0, center(top + 8)]];
-            let (hard, _) = field_points(model().as_ref(), &cloud, &ground);
+            let FieldPoints { hard, .. } = field_points(model().as_ref(), &cloud, &ground);
             assert_eq!(hard.len(), 1, "floor layer {top}: {hard:?}");
             assert!(
                 (hard[0][2] - 0.56).abs() < 1e-4,
@@ -253,9 +259,9 @@ mod tests {
         };
         // 3 m out the floor is 0.15 m up: a voxel there at 0.19 is floor, at 0.27 a step
         let cloud = [[3.0, 0.0, 0.19], [3.0, 1.0, 0.27], [3.0, 2.0, 0.55]];
-        let (hard, soft) = field_points(model().as_ref(), &cloud, &tilted);
+        let FieldPoints { hard, soft } = field_points(model().as_ref(), &cloud, &tilted);
         assert_eq!(soft.len(), 1, "{soft:?}");
-        assert_eq!(soft[0].0[1], 1.0);
+        assert_eq!(soft[0].xy[1], 1.0);
         assert_eq!(hard.len(), 1, "{hard:?}");
         assert_eq!(hard[0][1], 2.0);
         assert_eq!(ground_points(&cloud, &tilted, fixture().steppable).len(), 2);
@@ -265,10 +271,10 @@ mod tests {
     fn the_foot_of_a_wall_is_wall_not_step() {
         let mut cloud = column(1.0, &[0, 1, 2, 3, 4], 0.0);
         cloud.extend(column(2.0, &[0, 1], 0.0));
-        let (hard, soft) = field_points(model().as_ref(), &cloud, &Plane::flat(0.0));
+        let FieldPoints { hard, soft } = field_points(model().as_ref(), &cloud, &Plane::flat(0.0));
         assert_eq!(hard.len(), 2);
         assert_eq!(soft.len(), 1);
-        assert_eq!(soft[0].0[0], 2.0);
+        assert_eq!(soft[0].xy[0], 2.0);
     }
 
     #[test]
@@ -277,7 +283,8 @@ mod tests {
         let v = VOXEL as f32;
         let under = [1.0, 0.0, height as f32 - 0.01 + v / 2.0];
         let over = [1.0, 0.0, height as f32 + 0.01 + v / 2.0];
-        let (hard, _) = field_points(model().as_ref(), &[under, over], &Plane::flat(0.0));
+        let FieldPoints { hard, .. } =
+            field_points(model().as_ref(), &[under, over], &Plane::flat(0.0));
         assert_eq!(hard, vec![under]);
     }
 

@@ -42,7 +42,7 @@ class LocalPlannerNativeConfig(NativeModuleConfig):
     body_dilate_m: float = 0.0
     # Price multiplier per meter over lattice cells the cloud saw no floor under; <= 1 turns it off.
     unseen_cost: float = 5.0
-    # Extra price per meter where the body steps on a low object, at steppable height; scales with height.
+    # Extra price per meter where the body steps on a low object, at steppable height. Scales with height.
     step_cost: float = 5.0
     # Speed ceiling (m/s) over waypoints that step on a low object.
     step_speed: float = 0.5

@@ -171,7 +171,6 @@ def motion_visual_override(
     line_radius: float = 0.012,
     body_dilate_m: float = 0.0,
     entity: str = "world/path",
-    ground_entity: str = "world/ground_support",
 ) -> dict[str, Any]:
     """rerun override drawing the local plan's body boxes off ``path`` and the floor it read.
 
@@ -181,5 +180,5 @@ def motion_visual_override(
     emb = embodiment.dilated(by=body_dilate_m)
     return {
         entity: partial(render_plan, entity=entity, emb=emb, line_radius=line_radius),
-        ground_entity: render_ground_support,
+        "world/ground_support": render_ground_support,
     }

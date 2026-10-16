@@ -523,7 +523,7 @@ struct World {
     pub kx: i64,
     pub ky: i64,
     /// Lattice dims and price multiplier per cell: `unseen_cost` away from a ground
-    /// return, times the step price within reach of a soft point; empty = all 1.
+    /// return, times the step price within reach of a soft point. Empty means all 1.
     nlx: usize,
     nly: usize,
     price: Vec<f64>,
@@ -598,18 +598,13 @@ impl World {
 
 #[cfg(test)]
 fn build_world(points: &[[f64; 2]], pose: (f64, f64, f64), goal: (f64, f64), cap: f64) -> World {
-    build_world_explored(points, &[], 1.0, &[], 0.0, pose, goal, cap)
+    build_world_explored(points, &Terrain::default(), 0.0, pose, goal, cap)
 }
 
-/// `build_world` pricing lattice cells with no `ground` return under them or
-/// their 8 neighbours at `unseen_cost` (`<= 1.0` turns that off), and cells
-/// within `reach` of a soft point at `1 + cost`, the highest such cost.
-#[allow(clippy::too_many_arguments)]
+/// `build_world` with `terrain` priced, a soft point reaching the cells within `reach` of it.
 fn build_world_explored(
     points: &[[f64; 2]],
-    ground: &[[f64; 2]],
-    unseen_cost: f64,
-    soft: &[Soft],
+    terrain: &Terrain,
     reach: f64,
     pose: (f64, f64, f64),
     goal: (f64, f64),
@@ -647,13 +642,13 @@ fn build_world_explored(
     let (kx, ky) = (px * 2, py * 2);
     let nlx = arange_len(x0, x1 + CELL, CELL);
     let nly = arange_len(y0, y1 + CELL, CELL);
-    let mut price = if unseen_cost <= 1.0 {
+    let mut price = if terrain.unseen_cost <= 1.0 {
         Vec::new()
     } else {
-        let mut u = vec![unseen_cost; nlx * nly];
+        let mut u = vec![terrain.unseen_cost; nlx * nly];
         // ponytail: one-cell dilation so a voxel-sparse floor does not flicker
         // holes into the explored set; a proper coverage estimate if it does.
-        for g in ground {
+        for g in terrain.ground {
             let i = (g[0] / CELL).round_even_i64() - kx;
             let j = (g[1] / CELL).round_even_i64() - ky;
             for di in -1..=1 {
@@ -667,10 +662,11 @@ fn build_world_explored(
         }
         u
     };
-    if !soft.is_empty() {
+    if !terrain.soft.is_empty() {
         let mut step = vec![1.0f64; nlx * nly];
         let span = (reach / CELL).ceil() as i64;
-        for &(p, cost) in soft {
+        let r2 = reach * reach;
+        for &Soft { xy: p, cost } in terrain.soft {
             let i = (p[0] / CELL).round_even_i64() - kx;
             let j = (p[1] / CELL).round_even_i64() - ky;
             for a in (i - span).max(0)..=(i + span).min(nlx as i64 - 1) {
@@ -678,7 +674,7 @@ fn build_world_explored(
                     let dx = (a + kx) as f64 * CELL - p[0];
                     let dy = (b + ky) as f64 * CELL - p[1];
                     let k = a as usize * nly + b as usize;
-                    if dx.hypot(dy) <= reach && step[k] < 1.0 + cost {
+                    if dx * dx + dy * dy <= r2 && step[k] < 1.0 + cost {
                         step[k] = 1.0 + cost;
                     }
                 }
@@ -994,8 +990,8 @@ fn pose_clear(w: &mut World, offs: &[(f64, f64)], x: f64, y: f64, th: f64) -> f6
     m
 }
 
-/// Metres of `a -> b` over priced cells; zero when the layer is off.
-fn dark_len(w: &World, a: &[f64; 3], b: &[f64; 3]) -> f64 {
+/// Meters of `a -> b` over priced cells. Zero when the layer is off.
+fn priced_len(w: &World, a: &[f64; 3], b: &[f64; 3]) -> f64 {
     if w.price.is_empty() {
         return 0.0;
     }
@@ -1466,14 +1462,14 @@ fn se2_search_in(
     // straight past a corner. Arc, not vertices: rotations carry no distance.
     const RETREAT_NUM: f64 = 0.2;
     let mut arc = vec![0.0f64; raw.len()];
-    // A chord may not add dark metres beyond the raw span it replaces.
-    let mut dark = vec![0.0f64; raw.len()];
+    // A chord may not add priced meters beyond the raw span it replaces.
+    let mut priced = vec![0.0f64; raw.len()];
     for m in 1..raw.len() {
         arc[m] = arc[m - 1] + (raw[m][0] - raw[m - 1][0]).hypot(raw[m][1] - raw[m - 1][1]);
-        dark[m] = dark[m - 1] + dark_len(w, &raw[m - 1], &raw[m]);
+        priced[m] = priced[m - 1] + priced_len(w, &raw[m - 1], &raw[m]);
     }
-    let chord_dark = |w: &World, j: usize, k: usize| -> bool {
-        dark_len(w, &raw[j], &raw[k]) <= dark[k] - dark[j] + CELL
+    let chord_priced = |w: &World, j: usize, k: usize| -> bool {
+        priced_len(w, &raw[j], &raw[k]) <= priced[k] - priced[j] + CELL
     };
     let mut keep = vec![raw.len() - 1];
     while *keep.last().unwrap() > 0 {
@@ -1481,7 +1477,7 @@ fn se2_search_in(
         let mut j = 0usize;
         while j + 1 < k {
             let floor = chord_floor(&raw_clear, j, k);
-            if chord_dark(w, j, k) && seg_free(w, fps, emb, &raw[j], &raw[k], floor) {
+            if chord_priced(w, j, k) && seg_free(w, fps, emb, &raw[j], &raw[k], floor) {
                 break;
             }
             j += 1;
@@ -1495,7 +1491,7 @@ fn se2_search_in(
         }
         while r > j {
             let floor = chord_floor(&raw_clear, r, k);
-            if chord_dark(w, r, k) && seg_free(w, fps, emb, &raw[r], &raw[k], floor) {
+            if chord_priced(w, r, k) && seg_free(w, fps, emb, &raw[r], &raw[k], floor) {
                 break;
             }
             r -= 1;
@@ -1510,7 +1506,7 @@ fn se2_search_in(
         let mut f = hi;
         while f > lo {
             let floor = chord_floor(&raw_clear, 0, f);
-            if chord_dark(w, 0, f) && seg_free(w, fps, emb, &raw[0], &raw[f], floor) {
+            if chord_priced(w, 0, f) && seg_free(w, fps, emb, &raw[0], &raw[f], floor) {
                 break;
             }
             f -= 1;
@@ -1778,9 +1774,7 @@ pub fn plan(
 ) -> Option<Vec<[f64; 3]>> {
     plan_explored(
         points,
-        &[],
-        1.0,
-        &[],
+        &Terrain::default(),
         pose,
         goal,
         emb,
@@ -1790,8 +1784,24 @@ pub fn plan(
     )
 }
 
-/// A soft point as the search takes it: xy and the extra price per metre over it.
-pub type Soft = ([f64; 2], f64);
+/// A soft point as the search takes it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Soft {
+    pub xy: [f64; 2],
+    /// Extra price per meter over it.
+    pub cost: f64,
+}
+
+/// What the search prices besides obstacles. `Default` prices nothing.
+#[derive(Default)]
+pub struct Terrain<'a> {
+    /// Ground returns. Lattice cells with none under them or their 8 neighbors cost `unseen_cost`.
+    pub ground: &'a [[f64; 2]],
+    /// Price multiplier off the seen ground. At or under 1 it is off.
+    pub unseen_cost: f64,
+    /// Cells where the body would step on a soft point cost `1 + cost`, the highest such cost.
+    pub soft: &'a [Soft],
+}
 
 /// How far from a soft point the body's center stands on it: the half-width, half a
 /// voxel since the point is a voxel's center, and the precision floor hard obstacles get.
@@ -1799,15 +1809,11 @@ pub fn step_reach(emb: &Emb) -> f64 {
     emb.width / 2.0 + FINE + emb.precision
 }
 
-/// `plan`, pricing lattice cells with no `ground` return at `unseen_cost`, and
-/// cells where the body would step on a `soft` point at `1 + cost`; the
-/// heuristic never sees either, so the search stays exact.
+/// `plan` with `terrain` priced. The heuristic never sees the price, so the search stays exact.
 #[allow(clippy::too_many_arguments)]
 pub fn plan_explored(
     points: &[[f64; 2]],
-    ground: &[[f64; 2]],
-    unseen_cost: f64,
-    soft: &[Soft],
+    terrain: &Terrain,
     pose: (f64, f64, f64),
     goal: (f64, f64),
     emb: &Emb,
@@ -1820,16 +1826,7 @@ pub fn plan_explored(
     let reach = reach_of(&offs);
     // Covers the certificate (`speed_clearance`) and the smoothing floor (`comfort`).
     let cap = emb.comfort.max(emb.speed_clearance) + reach + SNAP;
-    let mut w = build_world_explored(
-        points,
-        ground,
-        unseen_cost,
-        soft,
-        step_reach(emb),
-        pose,
-        goal,
-        cap,
-    );
+    let mut w = build_world_explored(points, terrain, step_reach(emb), pose, goal, cap);
     let margin = emb.precision;
     // World from {pose, goal, cloud}, never the incumbent; one clearance table for both.
     let (fresh, held) = {
@@ -1892,11 +1889,14 @@ mod tests {
             ground.push(c);
         }
         let run = |cost: f64| {
+            let terrain = Terrain {
+                ground: &ground,
+                unseen_cost: cost,
+                soft: &[],
+            };
             let p = plan_explored(
                 &[],
-                &ground,
-                cost,
-                &[],
+                &terrain,
                 (0.0, 0.0, 0.0),
                 (4.0, 0.0),
                 &emb,
@@ -1910,11 +1910,14 @@ mod tests {
         assert!(run(1.0) < 0.2, "straight without the layer");
         assert!(run(5.0) > 0.8, "bends into the seen corridor");
         // Forbidding is not the contract: a goal in the dark is still reached.
+        let dark = Terrain {
+            ground: &[[0.0, 0.0]],
+            unseen_cost: 5.0,
+            soft: &[],
+        };
         assert!(plan_explored(
             &[],
-            &[[0.0, 0.0]],
-            5.0,
-            &[],
+            &dark,
             (0.0, 0.0, 0.0),
             (4.0, 0.0),
             &emb,
@@ -1932,7 +1935,7 @@ mod tests {
         while x <= 2.2 {
             let mut y = y0;
             while y <= y1 {
-                soft.push(([x, y], cost));
+                soft.push(Soft { xy: [x, y], cost });
                 y += 0.08;
             }
             x += 0.08;
@@ -1940,16 +1943,17 @@ mod tests {
         soft
     }
 
-    /// Soft points are priced, not forbidden.
     #[test]
     fn a_soft_patch_is_walked_around_and_crossed_when_it_spans_the_way() {
         let emb = Emb::fixture();
         let run = |points: &[[f64; 2]], soft: &[Soft]| {
+            let terrain = Terrain {
+                soft,
+                ..Terrain::default()
+            };
             plan_explored(
                 points,
-                &[],
-                1.0,
-                soft,
+                &terrain,
                 (0.0, 0.0, 0.0),
                 (4.0, 0.0),
                 &emb,

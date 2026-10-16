@@ -41,7 +41,7 @@ GO2 = Embodiment(
     strafe=1.3,  # planner cost of a metre sideways, forward = 1
     reverse=1.8,  # ...and backwards
     yaw_w=0.15,  # planner cost per rad of rotation
-    steppable=0.20,  # legs negotiate obstacles below this (m); not priced yet
+    steppable=0.20,  # legs negotiate obstacles below this (m)
     height=0.60,  # top of the robot with the Mid-360 at walking height, 0.56 measured, plus margin (m)
     base_height=0.29,  # base origin above support; frame plumbing, not semantics (m)
     # Fitted-sim envelope sweep over the governed slow band; the sweep lives with the sim.

@@ -203,7 +203,7 @@ fn least_squares(samples: impl Iterator<Item = [f64; 3]>) -> [f64; 3] {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::module::obstacles::{field_points, load};
+    use crate::module::obstacles::{field_points, load, FieldPoints};
 
     fn fixture() -> Emb {
         Emb::fixture()
@@ -269,7 +269,7 @@ mod tests {
         let both = patch(1.2, |_, _| vec![0, 1]);
         let g = fit_at_origin(&both, 0.0);
         assert!((g.plane.z - VOXEL).abs() < 1e-6, "{:?}", g.plane);
-        // `share` columns in ten one layer up
+        // share columns in ten one layer up
         let split = |share: i64| {
             patch(2.0, move |i, j| {
                 vec![((i * 7 + j * 3).rem_euclid(10) < share) as i64]
@@ -278,7 +278,7 @@ mod tests {
         for cloud in [both, split(3), split(5)] {
             let g = fit_at_origin(&cloud, 0.0);
             assert!(grade(&g.plane) < 0.005, "{:?}", g.plane);
-            let (hard, soft) = field_points(model.as_ref(), &cloud, &g.plane);
+            let FieldPoints { hard, soft } = field_points(model.as_ref(), &cloud, &g.plane);
             assert!(hard.is_empty(), "{} hard", hard.len());
             assert!(soft.is_empty(), "{} soft", soft.len());
         }
@@ -298,7 +298,7 @@ mod tests {
                 g.plane
             );
             assert!((g.plane.z - 0.37).abs() < VOXEL / 4.0, "{:?}", g.plane);
-            let (hard, soft) = field_points(model.as_ref(), &cloud, &g.plane);
+            let FieldPoints { hard, soft } = field_points(model.as_ref(), &cloud, &g.plane);
             assert!(hard.is_empty(), "grade {g_in}: {} hard", hard.len());
             assert!(soft.is_empty(), "grade {g_in}: {} soft", soft.len());
         }
