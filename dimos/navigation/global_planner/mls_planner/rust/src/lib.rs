@@ -15,6 +15,7 @@
 mod adjacency;
 mod dijkstra;
 pub mod edges;
+mod goal_status;
 pub mod mls_planner;
 pub mod module;
 mod nodes;

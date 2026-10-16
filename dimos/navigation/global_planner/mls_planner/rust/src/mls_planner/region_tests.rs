@@ -15,6 +15,7 @@
 use super::*;
 use crate::region_viz::{cell_of, RegionViz};
 use std::collections::{BTreeMap, BTreeSet};
+use validator::Validate;
 
 type SeedRegions = Vec<(RegionBounds, Vec<(f32, f32, f32)>)>;
 
@@ -63,27 +64,47 @@ fn load_by_regions(p: &mut Planner, points: &[(f32, f32, f32)], center: (f32, f3
 const PATH_LEN_RATIO: f32 = 1.6;
 const PATH_LEN_SLACK_M: f32 = 0.5;
 
-fn test_config() -> Config {
-    Config {
-        world_frame: String::new(),
-        base_frame: String::new(),
-        voxel_size: 0.1,
-        robot_height: 0.5,
-        start_z_offset_m: 0.0,
-        max_overhead_m: 2.0,
-        surface_closing_radius: 0.3,
-        node_spacing_m: 1.0,
-        wall_clearance_m: 0.0,
-        wall_buffer_m: 0.3,
-        wall_buffer_weight: 1.0,
-        step_threshold_m: 0.25,
-        step_penalty_weight: 0.0,
-        goal_tolerance: 0.3,
-        viz_publish_hz: 2.0,
-        viz_region_m: 4.0,
-        viz_sweep_regions: 0,
-        worker_threads: 4,
-    }
+#[test]
+fn a_cached_path_is_followed_up_to_a_new_gap_and_no_further() {
+    let cfg = test_config();
+    let vs = cfg.voxel_size;
+    let half = vs * 0.5;
+    // A 6 m by 2 m floor, then the same floor with a 1 m gap across it.
+    let floor = |gap: bool| -> Vec<(f32, f32, f32)> {
+        (0..60)
+            .filter(|ix| !gap || !(30..40).contains(ix))
+            .flat_map(|ix| {
+                (0..20).map(move |iy| (ix as f32 * vs + half, iy as f32 * vs + half, half))
+            })
+            .collect()
+    };
+    let (start, goal) = ((0.5, 1.0, vs), (5.5, 1.0, vs));
+    let mut p = Planner::new(cfg.worker_threads);
+    p.update_global_map(&floor(false), &cfg);
+    assert!(matches!(
+        p.plan_or_truncate(start, goal, &cfg),
+        Plan::Full(_)
+    ));
+
+    p.update_global_map(&floor(true), &cfg);
+    let Plan::Truncated(waypoints) = p.plan_or_truncate(start, goal, &cfg) else {
+        panic!("the cached path is safe up to the gap");
+    };
+    assert!(waypoints.iter().all(|w| w.0 < 3.0), "{waypoints:?}");
+
+    // A goal with no cached path has nothing to fall back on.
+    let other = (5.5, 1.5, vs);
+    assert_eq!(p.plan_or_truncate(start, other, &cfg), Plan::Blocked);
+}
+
+#[test]
+fn a_negative_blocked_timeout_is_rejected() {
+    let config = Config {
+        blocked_timeout_s: -1.0,
+        ..test_config()
+    };
+    assert!(config.validate().is_err());
+    assert!(test_config().validate().is_ok());
 }
 
 #[test]

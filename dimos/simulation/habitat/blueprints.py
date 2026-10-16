@@ -17,6 +17,7 @@
 - ``habitat-teleop``: sim, streams, teleop.
 - ``habitat-raycaster``: + :class:`RayTracingVoxelMap` on a sensor-frame scan.
 - ``habitat-nav``: + MLS planner and follower; click the surface to set a goal.
+- ``habitat-nav-agentic``: + MCP server and agent, driving the planner's ``go_to``.
 - ``habitat-voxel``: :class:`VoxelGridMapper` on a world-frame scan. An alternative,
   not a layer: the two mappers want the scan in different frames.
 - ``habitat-typesafe``: teleop + :class:`TypeSafeNavigationAgent` steering to a named visible object.
@@ -24,6 +25,8 @@
 
 from typing import Any
 
+from dimos.agents.mcp.mcp_client import McpClient
+from dimos.agents.mcp.mcp_server import McpServer
 from dimos.agents.typesafe.agent import typesafe_api_key
 from dimos.agents.typesafe.navigation import TypeSafeNavigationAgent
 from dimos.core.coordination.blueprints import autoconnect
@@ -192,6 +195,13 @@ habitat_nav = autoconnect(
             (RerunWebSocketServer, "clicked_point", GOAL_TOPIC),
         ]
     ),
+).global_config(transport="zenoh")
+
+
+habitat_nav_agentic = autoconnect(
+    habitat_nav,
+    McpServer.blueprint(),
+    McpClient.blueprint(),
 ).global_config(transport="zenoh")
 
 
