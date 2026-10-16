@@ -20,17 +20,21 @@ import mujoco
 import numpy as np
 from numpy.typing import NDArray
 
-INCLUDE_STATIC = 1
 NO_BODY_EXCLUDED = -1
 
 
 class MujocoRaycaster:
     def __init__(
-        self, model: mujoco.MjModel, data: mujoco.MjData, geom_groups: NDArray[np.uint8]
+        self,
+        model: mujoco.MjModel,
+        data: mujoco.MjData,
+        geom_groups: NDArray[np.uint8],
+        include_static: bool = True,
     ) -> None:
         self.model = model
         self.data = data
         self.geom_groups = geom_groups
+        self.include_static = include_static
 
     def cast(
         self, origin: NDArray[np.float64], directions: NDArray[np.float64], max_range: float
@@ -45,7 +49,7 @@ class MujocoRaycaster:
             np.asarray(origin, dtype=np.float64),
             np.ascontiguousarray(directions, dtype=np.float64).ravel(),
             self.geom_groups,
-            INCLUDE_STATIC,
+            int(self.include_static),
             NO_BODY_EXCLUDED,
             geom,
             dist,
