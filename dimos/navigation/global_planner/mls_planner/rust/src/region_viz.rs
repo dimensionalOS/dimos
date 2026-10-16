@@ -30,23 +30,49 @@ pub type Segment = (VoxelKey, VoxelKey, f32);
 
 /// One cell's surface voxels with their clearance, and its corridor segments.
 #[derive(Default)]
-pub struct RegionContent {
-    pub surface: Vec<(VoxelKey, f32)>,
-    pub segments: Vec<Segment>,
+struct RegionContent {
+    surface: Vec<(VoxelKey, f32)>,
+    segments: Vec<Segment>,
 }
 
 impl RegionContent {
-    fn fingerprint(&self) -> u64 {
-        // Order free: the graph rebuilds reorder cells whose content did not change.
-        let mut acc = (self.surface.len() as u64) << 32 | self.segments.len() as u64;
-        for (key, clearance) in &self.surface {
-            acc = acc.wrapping_add(hash_item((key, clearance.to_bits())));
-        }
-        for (a, b, cost) in &self.segments {
-            acc = acc.wrapping_add(hash_item((a, b, cost.to_bits())));
-        }
-        acc
+    /// Fingerprints of the surface and of the segments, each order free since
+    /// the graph rebuilds reorder cells whose content did not change.
+    fn fingerprints(&self) -> (u64, u64) {
+        let surface = self
+            .surface
+            .iter()
+            .map(|(key, clearance)| hash_item((key, clearance.to_bits())));
+        let segments = self
+            .segments
+            .iter()
+            .map(|(a, b, cost)| hash_item((a, b, cost.to_bits())));
+        (
+            order_free(self.surface.len(), surface),
+            order_free(self.segments.len(), segments),
+        )
     }
+}
+
+/// The parts of a due cell to publish. None leaves that part as the viewer
+/// last got it.
+#[derive(Default)]
+pub struct RegionUpdate {
+    pub surface: Option<Vec<(VoxelKey, f32)>>,
+    pub segments: Option<Vec<Segment>>,
+}
+
+impl RegionUpdate {
+    fn whole(content: RegionContent) -> Self {
+        Self {
+            surface: Some(content.surface),
+            segments: Some(content.segments),
+        }
+    }
+}
+
+fn order_free(len: usize, hashes: impl Iterator<Item = u64>) -> u64 {
+    hashes.fold(len as u64, u64::wrapping_add)
 }
 
 fn hash_item<T: Hash>(item: T) -> u64 {
@@ -116,9 +142,9 @@ pub struct RegionViz {
     reach: i32,
     sweep: usize,
     dirty: Dirty,
-    /// Fingerprint of what each cell last published. None once the cell
-    /// emptied, until the sweep has sent it empty once more.
-    published: BTreeMap<Cell, Option<u64>>,
+    /// Fingerprints of the surface and segments each cell last published.
+    /// None once the cell emptied, until the sweep has sent it empty once more.
+    published: BTreeMap<Cell, Option<(u64, u64)>>,
     cursor: Option<Cell>,
 }
 
@@ -159,16 +185,16 @@ impl RegionViz {
         }
     }
 
-    /// The cells due this tick with their content, in send order: the sweep
-    /// slice, then the changed cells nearest `near` first, then the ones that
-    /// just emptied. The sweep goes first since congestion drops the tail of a
-    /// burst.
+    /// The cells due this tick with the parts to publish, in send order: the
+    /// sweep slice, then the changed cells nearest `near` first with only
+    /// their changed parts, then the ones that just emptied. The sweep goes
+    /// first since congestion drops the tail of a burst.
     pub fn tick(
         &mut self,
         surface: impl Iterator<Item = (VoxelKey, f32)>,
         segments: impl Iterator<Item = Segment>,
         near: VoxelKey,
-    ) -> Vec<(Cell, RegionContent)> {
+    ) -> Vec<(Cell, RegionUpdate)> {
         let dirty = std::mem::replace(&mut self.dirty, Dirty::Cells(AHashSet::new()));
         let candidates = self.sweep_candidates(&dirty);
         let wanted = match dirty {
@@ -194,13 +220,13 @@ impl RegionViz {
         cells: AHashMap<Cell, RegionContent>,
         wanted: Option<&AHashSet<Cell>>,
         near: Cell,
-    ) -> (Vec<(Cell, RegionContent)>, AHashMap<Cell, RegionContent>) {
-        let mut vanished: Vec<(Cell, RegionContent)> = Vec::new();
+    ) -> (Vec<(Cell, RegionUpdate)>, AHashMap<Cell, RegionContent>) {
+        let mut vanished: Vec<(Cell, RegionUpdate)> = Vec::new();
         for (cell, slot) in &mut self.published {
             let checked = wanted.is_none_or(|w| w.contains(cell));
             if checked && slot.is_some() && !cells.contains_key(cell) {
                 *slot = None;
-                vanished.push((*cell, RegionContent::default()));
+                vanished.push((*cell, RegionUpdate::whole(RegionContent::default())));
             }
         }
         let mut cells: Vec<(Cell, RegionContent)> = cells.into_iter().collect();
@@ -208,14 +234,25 @@ impl RegionViz {
             let (di, dj) = (i64::from(i - near.0), i64::from(j - near.1));
             (di * di + dj * dj, (i, j))
         });
-        let mut due: Vec<(Cell, RegionContent)> = Vec::new();
+        let mut due: Vec<(Cell, RegionUpdate)> = Vec::new();
         let mut unchanged: AHashMap<Cell, RegionContent> = AHashMap::new();
         for (cell, content) in cells {
-            let fp = content.fingerprint();
-            if self.published.insert(cell, Some(fp)) != Some(Some(fp)) {
-                due.push((cell, content));
-            } else {
-                unchanged.insert(cell, content);
+            let fp = content.fingerprints();
+            match self.published.insert(cell, Some(fp)) {
+                Some(Some(last)) if last == fp => {
+                    unchanged.insert(cell, content);
+                }
+                Some(Some(last)) => {
+                    let RegionContent { surface, segments } = content;
+                    due.push((
+                        cell,
+                        RegionUpdate {
+                            surface: (last.0 != fp.0).then_some(surface),
+                            segments: (last.1 != fp.1).then_some(segments),
+                        },
+                    ));
+                }
+                _ => due.push((cell, RegionUpdate::whole(content))),
             }
         }
         due.extend(vanished);
@@ -226,7 +263,7 @@ impl RegionViz {
     /// the number of cells appended.
     fn sweep_into(
         &mut self,
-        due: &mut Vec<(Cell, RegionContent)>,
+        due: &mut Vec<(Cell, RegionUpdate)>,
         candidates: Vec<Cell>,
         mut unchanged: AHashMap<Cell, RegionContent>,
     ) -> usize {
@@ -242,10 +279,11 @@ impl RegionViz {
             match self.published.get(&cell) {
                 Some(None) => {
                     self.published.remove(&cell);
-                    due.push((cell, RegionContent::default()));
+                    due.push((cell, RegionUpdate::whole(RegionContent::default())));
                 }
                 Some(Some(_)) => {
-                    due.push((cell, unchanged.remove(&cell).unwrap_or_default()));
+                    let content = unchanged.remove(&cell).unwrap_or_default();
+                    due.push((cell, RegionUpdate::whole(content)));
                 }
                 None => continue,
             }
@@ -289,7 +327,7 @@ mod tests {
         cells.iter().map(|&(x, y)| ((x, y, 0), 1.0)).collect()
     }
 
-    fn due_cells(due: &[(Cell, RegionContent)]) -> Vec<Cell> {
+    fn due_cells(due: &[(Cell, RegionUpdate)]) -> Vec<Cell> {
         due.iter().map(|(c, _)| *c).collect()
     }
 
@@ -297,7 +335,7 @@ mod tests {
         viz: &mut RegionViz,
         columns: &[(i32, i32)],
         segments: &[Segment],
-    ) -> Vec<(Cell, RegionContent)> {
+    ) -> Vec<(Cell, RegionUpdate)> {
         viz.tick(
             surface(columns).into_iter(),
             segments.iter().copied(),
@@ -341,7 +379,7 @@ mod tests {
         let first = tick(&mut viz, &map, &[]);
         // Nothing was published before, so there is nothing to sweep yet.
         assert_eq!(due_cells(&first), vec![(0, 0), (1, 0), (0, 2)]);
-        assert_eq!(first[0].1.surface.len(), 2);
+        assert_eq!(first[0].1.surface.as_ref().map(Vec::len), Some(2));
 
         assert_eq!(due_cells(&tick(&mut viz, &map, &[])), vec![(0, 0)]);
         assert_eq!(due_cells(&tick(&mut viz, &map, &[])), vec![(0, 2)]);
@@ -381,6 +419,27 @@ mod tests {
     }
 
     #[test]
+    fn a_change_sends_only_the_part_that_changed() {
+        let mut viz = RegionViz::new(10, 0, 0);
+        let edge = [((0, 0, 0), (1, 0, 0), 2.0)];
+        viz.mark_all();
+        tick(&mut viz, &[(0, 0)], &edge);
+
+        let mut changed = surface(&[(0, 0)]);
+        changed[0].1 = 0.5;
+        viz.mark_all();
+        let due = viz.tick(changed.clone().into_iter(), edge.iter().copied(), (0, 0, 0));
+        assert_eq!(due_cells(&due), vec![(0, 0)]);
+        assert!(due[0].1.surface.is_some() && due[0].1.segments.is_none());
+
+        viz.mark_all();
+        let costlier = [((0, 0, 0), (1, 0, 0), 3.0)];
+        let due = viz.tick(changed.into_iter(), costlier.iter().copied(), (0, 0, 0));
+        assert_eq!(due_cells(&due), vec![(0, 0)]);
+        assert!(due[0].1.surface.is_none() && due[0].1.segments.is_some());
+    }
+
+    #[test]
     fn a_change_at_the_far_edge_of_the_reach_is_picked_up() {
         let mut viz = RegionViz::new(10, 5, 0);
         viz.mark_all();
@@ -410,12 +469,13 @@ mod tests {
         let due = tick(&mut viz, &[(0, 0)], &[]);
         // The sweep slice starting at the first key, then the emptied cell, empty.
         assert_eq!(due_cells(&due), vec![(0, 0), (1, 0)]);
-        assert!(due[1].1.surface.is_empty() && due[1].1.segments.is_empty());
+        assert!(due[1].1.surface.as_ref().is_some_and(Vec::is_empty));
+        assert!(due[1].1.segments.as_ref().is_some_and(Vec::is_empty));
 
         // The sweep reaches the emptied cell, sends it empty once more, forgets it.
         let due = tick(&mut viz, &[(0, 0)], &[]);
         assert_eq!(due_cells(&due), vec![(1, 0)]);
-        assert!(due[0].1.surface.is_empty());
+        assert!(due[0].1.surface.as_ref().is_some_and(Vec::is_empty));
         assert_eq!(due_cells(&tick(&mut viz, &[(0, 0)], &[])), vec![(0, 0)]);
         assert_eq!(due_cells(&tick(&mut viz, &[(0, 0)], &[])), vec![(0, 0)]);
     }
@@ -458,7 +518,9 @@ mod tests {
             due_cells(&due),
             vec![(1, 1), (2, 0), (0, 0), (0, 1), (1, 0)]
         );
-        assert!(due.iter().all(|(_, content)| content.surface.len() == 1));
+        assert!(due
+            .iter()
+            .all(|(_, update)| update.surface.as_ref().map(Vec::len) == Some(1)));
     }
 
     #[test]

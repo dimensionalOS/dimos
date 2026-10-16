@@ -18,7 +18,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::mls_planner::{ms_since, Config, Planner, RegionBounds, DEBUG_LOG_PERIOD};
-use crate::region_viz::{pack_cell, Cell, RegionContent, RegionViz};
+use crate::region_viz::{pack_cell, Cell, RegionUpdate, RegionViz, Segment};
 use crate::voxel::{surface_point_xyz, voxelize, VoxelKey};
 use dimos_module::time::now;
 use dimos_module::{debug_throttled, error_throttled, warn_throttled, Input, Module, Output, Tf};
@@ -66,7 +66,7 @@ struct QueuedSeed {
 
 /// One viz tick's content, read by the worker and published off it.
 struct VizBatch {
-    regions: Vec<(Cell, RegionContent)>,
+    regions: Vec<(Cell, RegionUpdate)>,
     node_points: Vec<Xyz>,
 }
 
@@ -443,12 +443,19 @@ impl VizPublisher {
     async fn run(mut self) {
         while let Some(batch) = self.batches.recv().await {
             let stamp = now();
-            for (cell, content) in batch.regions {
-                let (surface, edges) = tokio::task::block_in_place(|| {
-                    region_messages(cell, content, self.voxel_size, &self.frame, stamp.clone())
-                });
-                publish_cloud(&self.surface_map, &surface).await;
-                publish_path(&self.node_edges, &edges).await;
+            for (cell, update) in batch.regions {
+                if let Some(points) = update.surface {
+                    let surface = tokio::task::block_in_place(|| {
+                        surface_message(cell, points, self.voxel_size, &self.frame, stamp.clone())
+                    });
+                    publish_cloud(&self.surface_map, &surface).await;
+                }
+                if let Some(segments) = update.segments {
+                    let edges = tokio::task::block_in_place(|| {
+                        edges_message(cell, segments, self.voxel_size, &self.frame, stamp.clone())
+                    });
+                    publish_path(&self.node_edges, &edges).await;
+                }
             }
             let node_cloud = build_pc2_xyz(&batch.node_points, &self.frame, stamp);
             publish_cloud(&self.nodes, &node_cloud).await;
@@ -718,27 +725,37 @@ fn region_bounds(msg: &PoseStamped) -> RegionBounds {
     }
 }
 
-/// One cell's surface and edge messages, its cell in the header seq.
-fn region_messages(
+/// One cell's surface as a message, the cell in its header seq.
+fn surface_message(
     cell: Cell,
-    content: RegionContent,
+    surface: Vec<(VoxelKey, f32)>,
     voxel_size: f32,
     frame: &str,
     stamp: Time,
-) -> (PointCloud2, Path) {
-    let surface_points: Vec<Xyzi> = content
-        .surface
+) -> PointCloud2 {
+    let points: Vec<Xyzi> = surface
         .into_iter()
         .map(|((ix, iy, iz), clearance)| {
             let (x, y, z) = surface_point_xyz(ix, iy, iz, voxel_size);
             (x, y, z, clearance)
         })
         .collect();
-    let mut surface = build_pc2_xyzi(&surface_points, frame, stamp.clone());
-    surface.header.seq = pack_cell(cell);
-    let mut edges = build_segments_path(content.segments, voxel_size, frame, stamp);
-    edges.header.seq = pack_cell(cell);
-    (surface, edges)
+    let mut msg = build_pc2_xyzi(&points, frame, stamp);
+    msg.header.seq = pack_cell(cell);
+    msg
+}
+
+/// One cell's edge corridors as a message, the cell in its header seq.
+fn edges_message(
+    cell: Cell,
+    segments: Vec<Segment>,
+    voxel_size: f32,
+    frame: &str,
+    stamp: Time,
+) -> Path {
+    let mut msg = build_segments_path(segments, voxel_size, frame, stamp);
+    msg.header.seq = pack_cell(cell);
+    msg
 }
 
 /// True if within tolerance of the goal on the ground plane.
@@ -1093,19 +1110,17 @@ mod tests {
     }
 
     #[test]
-    fn region_messages_carry_the_cell_in_both_headers_even_when_empty() {
+    fn region_messages_carry_the_cell_in_their_headers_even_when_empty() {
         let cell = (1, -2);
-        let content = RegionContent {
-            surface: vec![((1, 2, 0), 0.5)],
-            segments: vec![((1, 2, 0), (2, 2, 0), 1.5)],
-        };
-        let (surface, edges) = region_messages(cell, content, 0.1, "odom", Time::default());
+        let surface = surface_message(cell, vec![((1, 2, 0), 0.5)], 0.1, "odom", Time::default());
+        let segments = vec![((1, 2, 0), (2, 2, 0), 1.5)];
+        let edges = edges_message(cell, segments, 0.1, "odom", Time::default());
         assert_eq!(surface.header.seq, pack_cell(cell));
         assert_eq!(edges.header.seq, pack_cell(cell));
         assert_eq!((surface.width, edges.poses.len()), (1, 2));
 
-        let (surface, edges) =
-            region_messages(cell, RegionContent::default(), 0.1, "odom", Time::default());
+        let surface = surface_message(cell, Vec::new(), 0.1, "odom", Time::default());
+        let edges = edges_message(cell, Vec::new(), 0.1, "odom", Time::default());
         assert_eq!(surface.header.seq, pack_cell(cell));
         assert_eq!(edges.header.seq, pack_cell(cell));
         assert_eq!((surface.width, edges.poses.len()), (0, 0));

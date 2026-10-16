@@ -54,7 +54,7 @@ class MLSPlannerNativeConfig(NativeModuleConfig):
     viz_publish_hz: float = 2.0
     # The surface and edge viz publish by square cells of this edge, only the
     # changed ones each tick, plus this many unchanged ones round robin.
-    viz_cell_m: float = 1.0
+    viz_cell_m: float = 4.0
     viz_sweep_cells: int = 32
     # Worker threads for parallel planner work.
     worker_threads: int = 4

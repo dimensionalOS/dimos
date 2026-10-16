@@ -37,7 +37,7 @@ from dimos.robot.unitree.go2.blueprints.navigation.go2_nav import (
     go2_nav_static,
 )
 from dimos.robot.unitree.go2.dds.module import GO2DDS
-from dimos.robot.unitree.go2.nav_3d_config import relocalization, voxel_size
+from dimos.robot.unitree.go2.nav_3d_config import NAV_VIEWER_TOPICS, relocalization, voxel_size
 from dimos.visualization.vis_module import vis_module
 
 # GO2DDS doubles as a zenoh router
@@ -189,24 +189,7 @@ def nav_viewer(
                 },
                 hidden,
             ),
-            "topics": [
-                "tf",
-                "odometry",
-                "path",
-                "planner_path",
-                "nodes",
-                "node_edges",
-                "surface_map",
-                "map_regions",
-                "goal",
-                "way_point",
-                "goal_reached",
-                # h264 or jpeg, whichever GO2DDS's video_encoding serves
-                "video",
-                "image",
-                "camera_info",
-                *extra_topics,
-            ],
+            "topics": [*NAV_VIEWER_TOPICS, *extra_topics],
         },
     )
 
