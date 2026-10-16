@@ -50,8 +50,8 @@ def test_body_band_drops_the_ground_slab_and_keeps_the_obstacle():
     assert np.allclose(np.sort(out[:, 2]), POST_HEIGHTS, atol=1e-6)
 
 
-def test_body_band_looks_under_the_belly_not_over_it():
-    # a table top above the body is not something the body can hit
+def test_body_band_reaches_the_top_of_the_robot_and_no_further():
+    # a table top above the robot is not something it can hit
     cloud = np.array([[1.0, 0.0, 0.3], [1.0, 0.0, GO2.height + 0.01]], dtype=np.float32)
     out = hard_points(BodyBand(GO2), cloud, 0.0)
     assert len(out) == 1 and out[0][2] == pytest.approx(0.3)
@@ -62,14 +62,11 @@ def test_the_ground_exclusion_is_two_voxel_layers():
     assert len(hard_points(BodyBand(GO2), cloud, 0.0)) == 1
 
 
-def test_a_tall_body_keeps_what_the_absolute_band_would_have_cut_off():
-    # The latent bug the 2D search contract closes: a body taller than the old
-    # 0.05..0.45 slice had its correctly-kept obstacles truncated by a SECOND
-    # cut downstream. There is only one cut now, and it is this one.
-    tall = replace(GO2, height=0.60)
-    cloud = np.array([[1.0, 0.0, 0.55], [1.0, 0.5, 0.61]], dtype=np.float32)
-    out = hard_points(BodyBand(tall), cloud, 0.0)
-    assert len(out) == 1 and out[0][2] == pytest.approx(0.55)
+def test_without_the_lidar_a_wall_over_the_trunk_is_not_a_wall():
+    trunk = replace(GO2, height=0.45)
+    cloud = np.array([[1.0, 0.0, 0.55]], dtype=np.float32)
+    assert len(hard_points(BodyBand(GO2), cloud, 0.0)) == 1
+    assert not len(hard_points(BodyBand(trunk), cloud, 0.0))
 
 
 def test_a_non_finite_return_is_dropped_not_planned_on():

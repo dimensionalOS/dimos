@@ -819,10 +819,9 @@ mod tests {
         assert_eq!(seen.poses.len(), 1, "the walls are still invisible");
     }
 
-    /// Twin of `adapter/test_planner.py::test_a_tall_body_plans_around_what_the_old_band_cut_off`:
-    /// a 0.55 m wall is inside a 0.60 m body's band and outside the absolute 0.05..0.45 one.
+    /// A 0.55 m wall is under the top of a robot carrying its lidar to 0.60 m, and over a 0.45 m trunk.
     #[test]
-    fn a_tall_body_plans_around_what_the_old_band_cut_off() {
+    fn the_lidar_plans_around_a_wall_over_the_trunk() {
         let mut wall: Vec<[f32; 3]> = Vec::new();
         let mut y = -1.0f32;
         while y <= 1.0 {
@@ -848,20 +847,19 @@ mod tests {
                 .map(|q| q.pose.position.y.abs())
                 .fold(0.0f64, f64::max)
         };
-        let tall = Emb {
-            height: 0.60,
+        let cfg = config();
+        assert!(
+            detour(model(&cfg).as_ref()) > 0.8,
+            "the lidar drove through its own obstacle"
+        );
+        // control: without the lidar the same wall is over the trunk, so it is not a wall
+        let trunk = Emb {
+            height: 0.45,
             ..Emb::fixture()
         };
-        let tall_model = obstacles::load("body_band", &tall).expect("known model");
-        assert!(
-            detour(tall_model.as_ref()) > 0.8,
-            "the tall body drove through its own obstacle"
-        );
-        // control: the same wall is over a go2's belly, so it is not a wall
-        let cfg = config();
-        let fixture_model = model(&cfg);
-        assert!(obstacles::hard_points(fixture_model.as_ref(), &wall, 0.0).is_empty());
-        assert!(detour(fixture_model.as_ref()) < 0.2);
+        let trunk_model = obstacles::load("body_band", &trunk).expect("known model");
+        assert!(obstacles::hard_points(trunk_model.as_ref(), &wall, 0.0).is_empty());
+        assert!(detour(trunk_model.as_ref()) < 0.2);
     }
 
     #[test]

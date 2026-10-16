@@ -144,7 +144,7 @@ impl Emb {
             walk_slip: 0.132,
             walk_slip_ramp: 0.08,
             steppable: 0.2,
-            height: 0.45,
+            height: 0.6,
             base_height: 0.29,
             control: Tuning {
                 lookahead: 0.35,

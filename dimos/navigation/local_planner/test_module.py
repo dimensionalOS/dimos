@@ -255,15 +255,14 @@ def _detour(emb: Embodiment, cloud: NDArray[np.float64], ground_z: float) -> flo
     return max(abs(p.position.y) for p in path.poses)
 
 
-def test_a_tall_body_plans_around_what_the_old_band_cut_off():
-    """A 0.55 m wall is inside a 0.60 m body's band but outside the absolute
-    0.05..0.45 one; the search must not re-slice the band and drop it."""
+def test_the_lidar_plans_around_a_wall_over_the_trunk():
+    """A 0.55 m wall is under the Mid-360 and over the trunk; the search must not re-slice the band."""
     wall = _wall_over(0.0, 0.55)
-    tall = replace(GO2, height=0.60)
-    assert _detour(tall, wall, 0.0) > 0.8, "the tall body drove through its own obstacle"
-    # control: the same wall is over a go2's belly, so it is not a wall
-    assert not len(hard_points(load_model("body_band", GO2), wall, 0.0))
-    assert _detour(GO2, wall, 0.0) < 0.2
+    assert _detour(GO2, wall, 0.0) > 0.8, "the lidar drove through its own obstacle"
+    # control: without the lidar the same wall is over the trunk, so it is not a wall
+    trunk = replace(GO2, height=0.45)
+    assert not len(hard_points(load_model("body_band", trunk), wall, 0.0))
+    assert _detour(trunk, wall, 0.0) < 0.2
 
 
 def test_native_twin_shares_the_python_defaults():

@@ -37,7 +37,7 @@ pub trait ObstacleModel: Send + Sync {
     fn field(&self, cloud: &[[f32; 3]]) -> Field;
 }
 
-/// Obstacles by the body's own geometry: clear of the ground, under the belly.
+/// Obstacles by the body's own geometry: clear of the ground, under the top of the robot.
 pub struct BodyBand {
     low: f32,
     high: f32,
@@ -139,9 +139,9 @@ mod tests {
     }
 
     #[test]
-    fn the_body_band_looks_under_the_belly_not_over_it() {
+    fn the_body_band_reaches_the_top_of_the_robot_and_no_further() {
         let model = load("body_band", &fixture()).expect("known model");
-        let cloud = [[1.0, 0.0, 0.3], [1.0, 0.0, 0.46]];
+        let cloud = [[1.0, 0.0, 0.3], [1.0, 0.0, 0.61]];
         let got = hard_points(model.as_ref(), &cloud, 0.0);
         assert_eq!(got, vec![[1.0, 0.0, 0.3]]);
     }

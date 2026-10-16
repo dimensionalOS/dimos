@@ -18,7 +18,7 @@ The planner's world is a z-slice of the cloud, and where that slice belongs is
 something the robot already knows: the base rides `base_height` above the
 surface its feet stand on. Re-reference the cloud to that surface and the
 geometry reads itself: below `steppable` the legs negotiate it, above
-`height` the body passes underneath, in between it is a wall. Nothing is
+`height` the robot passes underneath, in between it is a wall. Nothing is
 estimated off the scene, so nothing can be estimated wrong.
 
 A model is z-only and says nothing about xy. The frame is the caller's: the
@@ -71,7 +71,7 @@ class ObstacleModel(Protocol):
 
 
 class BodyBand:
-    """Obstacles by the body's own geometry: clear of the ground, under the belly."""
+    """Obstacles by the body's own geometry: clear of the ground, under the top of the robot."""
 
     def __init__(self, emb: Embodiment) -> None:
         self.low = LOW
