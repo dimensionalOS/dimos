@@ -141,6 +141,10 @@ main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options
 main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})(top)
 main.add_typer(topic_app, name="topic")
 main.add_typer(map_app, name="map")
+
+from dimos.navigation.bench.cli import app as nav_bench_app
+
+main.add_typer(nav_bench_app, name="nav-bench")
 main.add_typer(dataprep_app, name="dataprep")
 
 from dimos.memory.cli.app import mem_app

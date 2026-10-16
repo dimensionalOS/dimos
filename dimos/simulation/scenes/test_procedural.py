@@ -21,9 +21,11 @@ import numpy as np
 import pytest
 
 from dimos.simulation.scenes.procedural import (
-    CEILING_HEIGHT,
+    DOOR_HEIGHT,
+    DOOR_WIDTH,
     SLAB_THICKNESS,
     START_CLEARANCE,
+    WALL_HEIGHT,
     Scene,
     generate,
     office,
@@ -31,17 +33,17 @@ from dimos.simulation.scenes.procedural import (
 
 
 def test_office_is_deterministic_and_pinned() -> None:
-    assert office(3).digest() == office(3).digest() == "ab569178c96c7815"
+    assert office(3).digest() == office(3).digest() == "02d2bcbade80b2a6"
     assert office(3).digest() != office(4).digest()
 
 
 def test_office_geometry_is_enclosed_and_on_one_floor() -> None:
     scene = generate("office", 1)
     z0 = scene.params["z0"]
-    assert {box.kind for box in scene.boxes} == {"floor", "wall", "ceiling", "clutter"}
+    assert {box.kind for box in scene.boxes} == {"floor", "wall", "clutter"}
     lo, hi = scene.bounds()
     assert lo[2] == pytest.approx(z0 - SLAB_THICKNESS)
-    assert hi[2] > z0 + CEILING_HEIGHT
+    assert hi[2] == pytest.approx(z0 + WALL_HEIGHT)
     assert scene.start[2] == z0
 
 
@@ -65,7 +67,7 @@ def _reachable_fraction(scene: Scene, cell: float = 0.1, inflate: float = 0.17) 
     blocked = np.zeros((nx, ny), dtype=bool)
     for box in scene.boxes:
         low, high = box.center[2] - box.half[2], box.center[2] + box.half[2]
-        if box.kind in ("floor", "ceiling") or high < z0 + 0.02 or low > z0 + 0.45:
+        if box.kind == "floor" or high < z0 + 0.02 or low > z0 + 0.45:
             continue
         ix = np.abs(xs - box.center[0]) < box.half[0] + inflate
         iy = np.abs(ys - box.center[1]) < box.half[1] + inflate
@@ -92,6 +94,32 @@ def test_office_records_its_parameters() -> None:
     params = office(2).params
     assert {"width", "length", "z0", "rooms", "clutter", "tables"} <= params.keys()
     assert params["rooms"] in (4, 6)
+
+
+def _door_widths(scene: Scene) -> list[float]:
+    """The width of every doorway, read off its lintel."""
+    lintel = scene.params["z0"] + DOOR_HEIGHT
+    return [
+        2 * max(box.half[0], box.half[1])
+        for box in scene.boxes
+        if box.kind == "wall" and abs(box.center[2] - box.half[2] - lintel) < 1e-9
+    ]
+
+
+def test_office_door_width_is_drawn_unless_given() -> None:
+    drawn = _door_widths(office(3))
+    assert len(set(drawn)) > 1
+    assert all(DOOR_WIDTH[0] <= w <= DOOR_WIDTH[1] for w in drawn)
+    narrow = office(3, door_width=0.6)
+    assert _door_widths(narrow) == pytest.approx([0.6] * len(drawn))
+    assert narrow.params["width"] == office(3).params["width"]
+
+
+def test_door_clutter_adds_one_box_past_every_doorway() -> None:
+    plain, cluttered = office(3), office(3, door_clutter=True)
+    assert len(cluttered.boxes) == len(plain.boxes) + len(plain.doors)
+    assert cluttered.boxes[: len(plain.boxes)] == plain.boxes
+    assert len(plain.doors) == 4
 
 
 def test_degenerate_boxes_are_dropped() -> None:
