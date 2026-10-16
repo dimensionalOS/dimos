@@ -58,6 +58,21 @@ class TrajectoryBuilder:
             Step(step_id=1, timestamp=_iso(time.time()), source="user", message=inputs)
         ]
 
+    @property
+    def steps(self) -> tuple[Step, ...]:
+        return tuple(self._steps)
+
+    def user(self, message: str) -> None:
+        """A later user message, e.g. a reply after the agent stopped."""
+        self._steps.append(
+            Step(
+                step_id=len(self._steps) + 1,
+                timestamp=_iso(time.time()),
+                source="user",
+                message=message,
+            )
+        )
+
     def step(
         self,
         *,

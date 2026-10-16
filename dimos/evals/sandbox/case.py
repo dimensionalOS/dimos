@@ -1,0 +1,183 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""What a sandbox case is made of, what its human and evaluate functions are handed.
+
+A case is plain data (pydantic, JSON round-trips), so suites can live in JSON files and a UI
+can list and edit them. The two behaviors a case needs, the pretend human and the grader,
+are named by :class:`FunctionRef` ("module:function" plus JSON keyword arguments) rather
+than held as Python objects.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Iterator, Sequence
+from dataclasses import dataclass
+import importlib
+import json
+from pathlib import Path
+import subprocess
+from typing import Annotated, Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from dimos.evals.sandbox.recorder import Recording
+from dimos.evals.types import Trajectory
+
+# The image the robot, recorder and model trace proxy run from (docker/evals_sandbox).
+ROBOT_IMAGE = "dimensional/evals-robot"
+AGENT_IMAGE = "dimensional/evals-agent"
+# Where the agent finds its robot, whichever robot it is.
+ROBOT_ENDPOINT = "tcp/robot:7447"
+# Kills whatever the agent left running in its container, e.g. a script still driving the
+# robot. Not the container's init and its sleep, which keep the container up.
+KILL_AGENT_PROCESSES = (
+    'for pid in $(pgrep -v -f "^(/sbin/docker-init|sleep infinity)"); do '
+    '[ "$pid" != "$$" ] && kill -9 "$pid"; done; true'
+)
+
+
+class FunctionRef(BaseModel):
+    """A function by name, ``"dimos.evals.sandbox.example:evaluate"``, and the keyword
+    arguments it is called with after the runner's own."""
+
+    model_config = ConfigDict(frozen=True)
+
+    function: str
+    params: dict[str, Any] = {}
+
+    def __call__(self, *args: Any) -> Any:
+        module, _, name = self.function.partition(":")
+        return getattr(importlib.import_module(module), name)(*args, **self.params)
+
+
+class DimosRobot(BaseModel):
+    """Any blueprint, run in the robot container behind the router.
+
+    ``args`` are what follows ``dimos`` on the command line, e.g.
+    ``("--simulation", "mujoco", "run", "xarm-perception-sim")``. dimOS runs on zenoh
+    with every session dialing the router, so the blueprint's own topics
+    (``dimos/<stream>/<type>``) are what the agent sees.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    kind: Literal["dimos"] = "dimos"
+    args: tuple[str, ...]
+    # Zenoh endpoints inside the container the router also dials, for peers that only
+    # listen, e.g. raw-robot-bridge's tcp/127.0.0.1:7448.
+    forward: tuple[str, ...] = ()
+    env: dict[str, str] = {}
+    image: str = ROBOT_IMAGE
+
+
+class ExternalRobot(BaseModel):
+    """A robot already running elsewhere: real hardware, or a blueprint on another machine.
+
+    On that machine, ``dimos evals robot -- run <blueprint>`` serves the same router the
+    robot container does, so the agent sees the same keys. The sandbox's robot
+    container is then only a router that dials ``connect``.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    kind: Literal["external"] = "external"
+    connect: tuple[str, ...]
+    image: str = ROBOT_IMAGE
+
+
+Robot = Annotated[DimosRobot | ExternalRobot, Field(discriminator="kind")]
+
+
+class Conversation:
+    """What the pretend human sees each time the agent stops. The robot is still running.
+
+    A human is a generator function, ``human(conversation, **params)``: after every agent
+    turn the runner asks it for the next message. Each string it yields goes to the agent as
+    the user's next message, in the same session; returning ends the conversation, and
+    evaluate runs. So the human, not the done tool, decides when the agent is finished.
+    """
+
+    def __init__(
+        self, *, exec: Callable[..., subprocess.CompletedProcess[str]], case_dir: Path
+    ) -> None:
+        self.exec = exec  # run a shell command in the agent container, e.g. the agent's system
+        self.case_dir = case_dir  # this case's output dir
+        self.turns = 0  # agent turns so far
+        self.done: dict[str, Any] | None = None  # the done arguments of the latest turn
+
+    @property
+    def called_done(self) -> bool:
+        """Whether the agent's latest turn ended with an accepted done call."""
+        return self.done is not None
+
+
+Human = Callable[..., Iterator[str]]
+
+
+@dataclass(frozen=True, kw_only=True)
+class SandboxOutcome:
+    """What evaluate gets once the conversation is over. The robot is still running."""
+
+    done: dict[str, Any]  # the arguments of the agent's last accepted done call
+    trajectory: Trajectory
+    recording: Recording | None  # every zenoh sample of the run; None without a robot
+    exec: Callable[..., subprocess.CompletedProcess[str]]  # run a command in the agent container
+
+
+class SandboxCase(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    id: str
+    prompt: str  # the user's first message; tell the agent about the robot at ROBOT_ENDPOINT
+    done_schema: dict[str, Any]  # JSON schema the done tool's arguments must satisfy
+    # evaluate(outcome, **params) -> 0..1, after the human ends the conversation; only
+    # called if the agent made an accepted done call.
+    evaluate: FunctionRef
+    # human(conversation, **params) yields the user's next message after each agent turn.
+    human: FunctionRef = FunctionRef(function="dimos.evals.sandbox.human:until_done")
+    robot: Robot | None = None
+    # A zenoh key expression that must have published before the agent starts.
+    ready_key: str | None = None
+    ready_timeout_s: float = 300.0
+    timeout_s: float = 600.0  # the whole conversation, every agent turn
+    threshold: float = 1.0
+    tags: tuple[str, ...] = ()
+    done_tool: str = "done"
+    done_description: str = (
+        "Call this once the task is complete, with the requested result. It ends your turn."
+    )
+
+
+SandboxSuite = Sequence[SandboxCase]
+
+
+def load_suite(source: str) -> list[SandboxCase]:
+    """A suite from a JSON file (a list of cases) or a dotted module exporting SUITE."""
+    if source.endswith(".json"):
+        return [SandboxCase.model_validate(c) for c in json.loads(Path(source).read_text())]
+    return list(importlib.import_module(source).SUITE)
+
+
+def exec_in(project: str, compose_file: Path) -> Callable[..., subprocess.CompletedProcess[str]]:
+    """``exec("ls /root/work")``: a shell command in the agent container, as the agent runs them."""
+
+    def run(command: str, *, timeout: float = 60.0) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["docker", "compose", "-p", project, "-f", str(compose_file), "exec", "-T", "agent",
+             "bash", "-lc", command],
+            capture_output=True, text=True, timeout=timeout,
+        )  # fmt: skip
+
+    return run

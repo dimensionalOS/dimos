@@ -31,8 +31,19 @@ from dimos.agents.llm_trace import tracing_http_client
 from dimos.evals.constants import RETRIES, RETRY_BACKOFF_S, RETRY_STATUSES
 
 
-def _serve(raw_dir: Path, upstream: str, max_requests: int | None, limit_reached: Path) -> None:
-    """Own forwarding threads and sockets in a process that can be stopped."""
+def _serve(
+    raw_dir: Path,
+    upstream: str,
+    max_requests: int | None,
+    limit_reached: Path,
+    host: str = "127.0.0.1",
+    port: int = 0,
+) -> None:
+    """Own forwarding threads and sockets in a process that can be stopped.
+
+    The defaults serve this machine on a port the kernel picks; a container serving
+    its network passes 0.0.0.0 and a fixed port.
+    """
     requests = 0
     budget_lock = threading.Lock()
     with tracing_http_client(raw_dir, timeout=600.0) as client:
@@ -75,8 +86,8 @@ def _serve(raw_dir: Path, upstream: str, max_requests: int | None, limit_reached
             def log_message(self, format: str, *args: Any) -> None:
                 return None
 
-        with ThreadingHTTPServer(("127.0.0.1", 0), Forward) as server:
-            print(f"http://127.0.0.1:{server.server_port}", flush=True)
+        with ThreadingHTTPServer((host, port), Forward) as server:
+            print(f"http://{host}:{server.server_port}", flush=True)
             server.serve_forever()
 
 
@@ -126,4 +137,6 @@ def model_trace_proxy(
 
 
 if __name__ == "__main__":
-    _serve(Path(sys.argv[1]), sys.argv[2], json.loads(sys.argv[3]), Path(sys.argv[4]))
+    raw_dir, upstream, max_requests, limit_reached, *bind = sys.argv[1:]
+    host, port = (bind[0], int(bind[1])) if bind else ("127.0.0.1", 0)
+    _serve(Path(raw_dir), upstream, json.loads(max_requests), Path(limit_reached), host, port)

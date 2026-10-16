@@ -22,6 +22,7 @@ import importlib
 import inspect
 import json
 import os
+from pathlib import Path
 import re
 import secrets
 import subprocess
@@ -213,6 +214,91 @@ def _run_in_docker(
     typer.echo(
         f"  results:  {runs}/dimos/evals/   recordings + rerun.rrd: {runs}/dimos/recordings/"
     )
+
+
+@app.command("sandbox")
+def sandbox(
+    suite: str = typer.Argument(
+        help="Dotted module exporting SUITE, a list of SandboxCase, e.g. "
+        "dimos.evals.sandbox.example, or a JSON file of cases"
+    ),
+    provider: str = typer.Option("openai", help="openai or anthropic"),
+    model: str = typer.Option("gpt-5.6-luna", help="Model the agent runs on"),
+    thinking: str = typer.Option("medium", help="Pi thinking level"),
+    max_steps: int = typer.Option(200, min=1, help="Model requests the agent may make"),
+    robot: list[str] = typer.Option(
+        [],
+        "--robot",
+        help="Zenoh endpoint of a robot already running `dimos evals robot`, in place of each "
+        "case's blueprint, e.g. --robot tcp/192.168.123.18:7447",
+    ),
+    case: list[str] = typer.Option([], "--case", help="Run only these case IDs"),
+    resume: Path | None = typer.Option(
+        None,
+        "--resume",
+        help="An earlier sandbox run directory: continue each case's agent session from there",
+    ),
+    message: str = typer.Option("", "--message", help="With --resume: the agent's next message"),
+    print_json: bool = typer.Option(
+        False, "--json", help="Print the (selected) cases as JSON instead of running them"
+    ),
+) -> None:
+    """Pi in an agent container, the robot behind a zenoh router in another; see evals-sandbox.md."""
+    from pydantic import TypeAdapter
+
+    from dimos.evals.runner import summarize
+    from dimos.evals.sandbox.case import ExternalRobot, SandboxCase, load_suite
+    from dimos.evals.sandbox.runner import SandboxAgent, SandboxRunner
+
+    cases = load_suite(suite)
+    if case:
+        unknown = set(case) - {c.id for c in cases}
+        if unknown:
+            raise typer.BadParameter(f"no such cases: {sorted(unknown)}", param_hint="--case")
+        cases = [c for c in cases if c.id in case]
+    if print_json:
+        typer.echo(TypeAdapter(list[SandboxCase]).dump_json(cases, indent=2).decode())
+        return
+    agent = SandboxAgent(
+        provider=provider,  # type: ignore[arg-type]
+        model=model,
+        thinking=thinking,  # type: ignore[arg-type]
+        max_steps=max_steps,
+    )
+    runner = SandboxRunner(
+        agent,
+        robot=ExternalRobot(connect=tuple(robot)) if robot else None,
+        resume_from=resume,
+        resume_message=message,
+    )
+    results = runner.run(cases, source=suite)
+    for r in results:
+        status = "ERROR" if r.error else ("PASS" if r.passed else "fail")
+        detail = r.error or f"score={r.score:.2f} steps={r.steps} done={r.final_answer[:60]}"
+        typer.echo(f"{status:5} {r.case_id:30} {detail} ({r.duration_s:.1f}s)")
+    s = summarize(results)
+    typer.echo(
+        f"\n{s.n} cases | mean {s.mean_score:.2f} | pass {s.pass_rate:.0%} "
+        f"| errors {s.errors} | {s.duration_s:.0f}s | {runner.run_dir}"
+    )
+
+
+@app.command("robot", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+def robot(
+    ctx: typer.Context,
+    listen: str = typer.Option("tcp/0.0.0.0:7447", help="Where agents dial the robot"),
+    forward: list[str] = typer.Option(
+        [], "--forward", help="Zenoh endpoint the router dials too, e.g. a real robot's router"
+    ),
+) -> None:
+    """A sandbox robot: a zenoh router, and `dimos <args after -->` behind it on zenoh.
+
+    `dimos evals robot -- run unitree-go2` on a robot serves the same keys the sandbox's
+    robot container does, so `dimos evals sandbox --robot tcp/<ip>:7447` can use it.
+    """
+    from dimos.evals.sandbox.robot import serve
+
+    raise typer.Exit(serve(listen, forward, ctx.args))
 
 
 @app.command("list")

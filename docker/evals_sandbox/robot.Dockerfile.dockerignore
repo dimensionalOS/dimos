@@ -1,0 +1,14 @@
+# Replaces the repo-root .dockerignore for robot.Dockerfile (BuildKit prefers
+# <Dockerfile>.dockerignore). Allowlist what the image uses.
+*
+!dimos
+!pyproject.toml
+!uv.lock
+!setup.py
+!README.md
+!default.env
+!assets/agent/prompt.txt
+**/__pycache__
+**/.venv
+**/*.pyc
+dimos/**/*.so
