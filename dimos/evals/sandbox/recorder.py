@@ -19,7 +19,11 @@ the robot publishes and what the agent sends it. Payloads are stored as raw byte
 :class:`Recording` reads them back and decodes dimOS messages from the type their
 key carries (``dimos/odom/geometry_msgs.PoseStamped``).
 
-    python -m dimos.evals.sandbox.recorder tcp/robot:7447 /out/zenoh.db
+    python -m dimos.evals.sandbox.recorder tcp/robot:7447 /out/zenoh.db ['{"robot/lidar/**": 1.0}']
+
+The optional JSON picks what to keep: only keys matching one of its key expressions, each at
+most that many samples a second (null keeps every sample); the first match wins. Without it
+everything is kept. Heavy streams over a long run need it (a Mid-360 is gigabytes an hour).
 """
 
 from __future__ import annotations
@@ -37,6 +41,7 @@ import time
 from types import FrameType
 from typing import Any
 
+import numpy as np
 import zenoh
 
 SCHEMA = """CREATE TABLE IF NOT EXISTS samples (
@@ -54,16 +59,34 @@ RECORDING = "recording"
 NEW_KEY = "new key: "
 
 
-def record(connect: str, path: Path, stop: threading.Event) -> None:
-    """Record until *stop* is set. Prints each key the first time it is seen."""
+def record(
+    connect: str,
+    path: Path,
+    stop: threading.Event,
+    keep: dict[str, float | None] | None = None,
+) -> None:
+    """Record until *stop* is set. Prints each key the first time it is seen, kept or not."""
     samples: queue.Queue[tuple[Any, ...]] = queue.Queue()
+    seen: set[str] = set()
+    rules = [(zenoh.KeyExpr(k), 1.0 / hz if hz else 0.0) for k, hz in (keep or {}).items()]
+    last_kept: dict[str, float] = {}
 
     def on_sample(sample: zenoh.Sample) -> None:
+        key = str(sample.key_expr)
+        now = time.time()
+        if key not in seen:
+            seen.add(key)
+            print(NEW_KEY + key, flush=True)
+        if keep is not None:
+            period = next((p for expr, p in rules if expr.intersects(sample.key_expr)), None)
+            if period is None or now - last_kept.get(key, -np.inf) < period:
+                return
+            last_kept[key] = now
         attachment = sample.attachment.to_bytes() if sample.attachment is not None else None
         samples.put(
             (
-                time.time(),
-                str(sample.key_expr),
+                now,
+                key,
                 "PUT" if sample.kind == zenoh.SampleKind.PUT else "DELETE",
                 str(sample.encoding),
                 sample.payload.to_bytes(),
@@ -76,7 +99,6 @@ def record(connect: str, path: Path, stop: threading.Event) -> None:
     config.insert_json5("connect/endpoints", json.dumps([connect]))
     db = sqlite3.connect(path)
     db.execute(SCHEMA)
-    seen: set[str] = set()
     with zenoh.open(config) as session:
         subscriber = session.declare_subscriber("**", on_sample)  # undeclared once dropped
         print(RECORDING, flush=True)
@@ -85,9 +107,6 @@ def record(connect: str, path: Path, stop: threading.Event) -> None:
             rows = []
             while not samples.empty():
                 rows.append(samples.get_nowait())
-            for key in {row[1] for row in rows} - seen:
-                seen.add(key)
-                print(NEW_KEY + key, flush=True)
             db.executemany("INSERT INTO samples VALUES (?, ?, ?, ?, ?, ?)", rows)
             db.commit()
             if stopping:
@@ -157,4 +176,4 @@ if __name__ == "__main__":
 
     signal.signal(signal.SIGTERM, on_signal)
     signal.signal(signal.SIGINT, on_signal)
-    record(sys.argv[1], Path(sys.argv[2]), stop)
+    record(sys.argv[1], Path(sys.argv[2]), stop, json.loads(sys.argv[3]) if sys.argv[3:] else None)
