@@ -40,8 +40,10 @@ def a8_payload(
     """RtspCamera on the A8's stream and SiyiA8Gimbal, with their streams.
 
     ``camera`` and ``gimbal`` override ``RtspCameraConfig`` and ``SiyiA8GimbalConfig`` fields.
-    The gimbal module owns the gimbal tf chain. ``color_image`` keeps the default transport
-    (zenoh, latest-wins): 2.8 MB a frame, not for subscribers off the aircraft.
+    The gimbal module owns the gimbal tf chain. The A8 is aimed only with ``aim_enabled`` on
+    the gimbal and ``gimbal_commands_enabled`` on the connection. ``color_image`` keeps the
+    default transport (zenoh, latest-wins): 2.8 MB a frame, not for subscribers off the
+    aircraft.
     """
     camera = {
         "url": A8_RTSP_URL,

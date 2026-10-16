@@ -60,8 +60,34 @@ class GotoConfig:
 
 
 @dataclass(frozen=True)
+class YawTrackConfig:
+    """Gains of the YAW_TRACK law."""
+
+    deadband_deg: float = 15.0
+    k_yaw: float = 0.6
+    max_yaw_rate_dps: float = 30.0
+
+
+@dataclass(frozen=True)
+class FollowConfig:
+    """Gains and limits of the FOLLOW law."""
+
+    standoff_m: float = 12.0
+    altitude_m: float = 10.0
+    k_range: float = 0.4
+    k_alt: float = 0.6
+    v_max_mps: float = 2.0
+    vz_max_mps: float = 0.7
+    ff_gain: float = 0.8
+    range_deadband_m: float = 1.5
+    loss_hover_s: float = 5.0
+
+
+@dataclass(frozen=True)
 class GuidanceConfig:
     goto: GotoConfig = field(default_factory=GotoConfig)
+    yaw_track: YawTrackConfig = field(default_factory=YawTrackConfig)
+    follow: FollowConfig = field(default_factory=FollowConfig)
 
 
 @dataclass(frozen=True)
@@ -88,6 +114,7 @@ class SupervisorLimits:
     enable_threshold_us: int = 1500
     rc_stale_s: float = 1.0
     px4_stale_s: float = 1.0
+    target_stale_s: float = 1.0
     setpoint_hz: float = 20.0
     prestream_s: float = 1.5
     hover_tolerance_m: float = 0.5

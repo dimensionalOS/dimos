@@ -15,7 +15,7 @@
 """Px4DroneConnection shell: the port contract, the RPC surface, start refusal, stop order.
 
 No aircraft: the module is constructed but never started against a socket (nothing
-opens in ``__init__``).
+opens in ``__init__``), and the gimbal path is exercised through a fake MavlinkIO.
 """
 
 from __future__ import annotations
@@ -31,8 +31,16 @@ from unittest.mock import MagicMock, patch
 from dimos_lcm.sensor_msgs.BatteryState import BatteryState as LCMBatteryState
 from dimos_lcm.sensor_msgs.NavSatFix import NavSatFix as LCMNavSatFix
 from dimos_lcm.sensor_msgs.NavSatStatus import NavSatStatus
+from dimos_lcm.std_msgs import Bool
 import pytest
 
+from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.Odometry import Odometry
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.px4.config import SITL_MAV_URL
 from dimos.robot.px4.connection import Px4DroneConnection
 from dimos.robot.px4.mavlink import (
@@ -58,8 +66,15 @@ _CONTRACT_OUT = {
     "vehicle_status",
     "statustext",
     "supervisor_state",
+    "global_pose",
 }
-_CONTRACT_IN = {"cmd_vel"}
+_CONTRACT_IN = {
+    "cmd_vel",
+    "gimbal_target",
+    "target_state",
+    "target_valid",
+    "target_los",
+}
 
 # Anything that could move the aircraft must not be reachable over RPC.
 _FORBIDDEN_RPCS = {
@@ -68,6 +83,8 @@ _FORBIDDEN_RPCS = {
     "set_mode",
     "send_position_setpoint",
     "send_velocity_setpoint",
+    "send_gimbal_pitchyaw",
+    "claim_gimbal_control",
 }
 _REQUIRED_RPCS = {
     "takeoff",
@@ -381,3 +398,180 @@ def test_commands_before_start_or_after_stop_are_refused(module: Px4DroneConnect
     assert module.takeoff(2.0) == refused
     assert module.estop() == refused
     assert module.status() == {"state": None}
+
+
+def _target(pitch_deg: float, yaw_deg: float) -> JointState:
+    return JointState(
+        name=["gimbal_pitch", "gimbal_yaw"],
+        position=[math.radians(pitch_deg), math.radians(yaw_deg)],
+    )
+
+
+def test_gimbal_target_is_dropped_unless_commands_are_enabled() -> None:
+    m = Px4DroneConnection(writer_lock_port=0)
+    io = MagicMock()
+    io.stats.return_value = {}
+    m._io = io
+    try:
+        m._on_gimbal_target(_target(-10.0, 30.0))
+        io.send_gimbal_pitchyaw.assert_not_called()
+        assert m.sensor_stats()["gimbal_target"] == {"sent": 0, "dropped": 1}
+    finally:
+        m._io = None
+        m.stop()
+
+
+def test_gimbal_target_is_clamped_and_sent_when_enabled() -> None:
+    m = Px4DroneConnection(writer_lock_port=0, gimbal_commands_enabled=True)
+    io = MagicMock()
+    m._io = io
+    try:
+        m._on_gimbal_target(_target(math.nan, 0.0))
+        io.send_gimbal_pitchyaw.assert_not_called()
+        m._on_gimbal_target(_target(-120.0, 170.0))  # beyond the A8 limits
+        io.send_gimbal_pitchyaw.assert_called_once()
+        pitch, yaw, device = io.send_gimbal_pitchyaw.call_args.args
+        assert (pitch, yaw, device) == (-90.0, 120.0, 154)
+        # Rate limit: a second command inside the 10 Hz window is not sent.
+        m._on_gimbal_target(_target(0.0, 0.0))
+        assert io.send_gimbal_pitchyaw.call_count == 1
+    finally:
+        m._io = None
+        m.stop()
+
+
+def _los(gimbal_yaw_deg: float) -> PoseStamped:
+    """target_los as the bridge sends it: the gimbal's clockwise body yaw as an FLU yaw."""
+    q = Quaternion.from_euler(Vector3(0.0, 0.0, -math.radians(gimbal_yaw_deg)))
+    return PoseStamped(ts=time.time(), frame_id="base_link", orientation=q)
+
+
+def _target_odometry(x: float, y: float, vx: float = 0.0) -> Odometry:
+    return Odometry(
+        ts=time.time(),
+        frame_id="odom",
+        child_frame_id="target",
+        pose=Pose(Vector3(x, y, 0.0), Quaternion()),
+        twist=Twist(Vector3(vx, 0.0, 0.0), Vector3()),
+    )
+
+
+def test_target_streams_reach_the_supervisor_with_their_own_ages(
+    commanded: Px4DroneConnection,
+) -> None:
+    core = commanded._core
+    assert core is not None
+    # A ray too shallow for a ground position: target_los arrives, target_state never does.
+    commanded._on_target_valid(Bool(data=False))
+    commanded._on_target_los(_los(40.0))
+    assert core.los_yaw_deg == pytest.approx(40.0) and core.target is None
+    assert not core.target_fresh(time.time())
+
+    commanded._on_target_valid(Bool(data=True))
+    commanded._on_target_state(_target_odometry(30.0, -5.0, vx=1.0))
+    assert core.target == (30.0, 5.0, 1.0, 0.0)
+    assert core.target_fresh(time.time())
+
+    # A later line of sight does not refresh the position: FOLLOW loses it target_stale_s
+    # after the last target_state.
+    stale_s = commanded.config.limits.target_stale_s
+    core.target_t -= 0.9 * stale_s
+    commanded._on_target_los(_los(40.0))
+    assert core.target_fresh(time.time())
+    assert not core.target_fresh(time.time() + 0.2 * stale_s)
+
+
+def test_a_lost_target_stops_follow_at_once(commanded: Px4DroneConnection) -> None:
+    core = commanded._core
+    assert core is not None
+    commanded._on_target_valid(Bool(data=True))
+    commanded._on_target_state(_target_odometry(30.0, -5.0))
+    assert core.target_fresh(time.time())
+    commanded._on_target_valid(Bool(data=False))
+    # On the next tick, not target_stale_s after the last position; a valid flag that comes
+    # back waits for the position it vouches for.
+    assert not core.target_fresh(time.time())
+    commanded._on_target_valid(Bool(data=True))
+    assert core.target is None and not core.target_fresh(time.time())
+
+
+def test_a_non_finite_target_never_reaches_the_supervisor(commanded: Px4DroneConnection) -> None:
+    core = commanded._core
+    assert core is not None
+    commanded._on_target_valid(Bool(data=True))
+    commanded._on_target_state(_target_odometry(math.nan, 0.0))
+    for x in (math.nan, math.inf):  # to_euler raises on the first, gives a NaN yaw on the second
+        q = Quaternion(x, 0.0, 0.0, 1.0)
+        commanded._on_target_los(PoseStamped(ts=time.time(), frame_id="base_link", orientation=q))
+    assert core.target is None and core.los_yaw_deg is None
+
+
+# Vehicle clock, gimbal stamp, global_pose.
+
+
+def _primed(module: Px4DroneConnection, offset_s: float) -> None:
+    for i in range(module.config.timebase_samples):
+        module._timebase.add_system_time(offset_s + i, float(i), receive_wall_s=offset_s + i)
+    assert module._timebase.quality == "system_time"
+
+
+def test_vehicle_stamps_go_through_the_timebase_only_when_it_is_the_source() -> None:
+    m = Px4DroneConnection(writer_lock_port=0)
+    rx = Px4DroneConnection(writer_lock_port=0, timebase_source="receive_time")
+    try:
+        assert m._stamp(40.0, 99.0) == 99.0  # no SYSTEM_TIME yet
+        for module in (m, rx):
+            _primed(module, 1.8e9)
+        assert m._stamp(40.0, 99.0) == 1.8e9 + 40.0
+        assert m._stamp(None, 99.0) == 99.0
+        assert rx._stamp(40.0, 99.0) == 99.0
+    finally:
+        m.stop()
+        rx.stop()
+
+
+def test_timebase_samples_sizes_the_timebase() -> None:
+    m = Px4DroneConnection(writer_lock_port=0, timebase_samples=10)
+    try:
+        _primed(m, 1.8e9)  # ten samples are enough: no "below target quality" at every start
+    finally:
+        m.stop()
+    with pytest.raises(ValueError):  # an empty window has no median to guard a jump against
+        Px4DroneConnection(writer_lock_port=0, timebase_samples=0)
+
+
+def test_the_gimbal_is_stamped_at_receipt_not_through_px4s_clock(
+    module: Px4DroneConnection,
+) -> None:
+    out = _tap(module, "gimbal_attitude", "odometry", "odom", "tf")
+    _primed(module, 1.8e9)  # PX4 booted at 1.8e9; the A8 booted 120 s later, on its own clock
+    now = time.time()
+    state = VehicleState()
+    q = [1.0, 0.0, 0.0, 0.0]
+    state.handle(
+        Msg("GIMBAL_DEVICE_ATTITUDE_STATUS", src=(1, 154), q=q, flags=16, failure_flags=0,
+            time_boot_ms=380_000),
+        now=now,
+    )  # fmt: skip
+    state.handle(Msg("ATTITUDE", time_boot_ms=500_000, roll=0.0, pitch=0.0, yaw=0.0), now=now)
+    state.handle(
+        Msg("LOCAL_POSITION_NED", time_boot_ms=500_000, x=0, y=0, z=0, vx=0, vy=0, vz=0), now=now
+    )
+    module._publish_gimbal(state)
+    module._publish_odometry(state)
+    (gimbal,) = out["gimbal_attitude"]
+    assert gimbal.ts == now  # 1.8e9 + 380 would age it out of every consumer, or alias it
+    assert out["odometry"][0].ts == 1.8e9 + 500.0  # PX4's own messages do use its clock
+
+
+def test_global_pose_is_the_altitude_above_home_and_needs_no_gps(
+    module: Px4DroneConnection,
+) -> None:
+    out = _tap(module, "global_pose", "gps")
+    state = _vehicle(
+        Msg("GLOBAL_POSITION_INT", lat=377749000, lon=-1224194000, alt=52000, relative_alt=12000)
+    )
+    module._publish_gps(state)  # no GPS_RAW_INT
+    (pose,) = out["global_pose"]
+    assert (pose.x, pose.y, pose.z) == (0.0, 0.0, 12.0) and pose.frame_id == "home"
+    assert out["gps"] == []

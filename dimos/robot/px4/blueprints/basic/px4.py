@@ -26,6 +26,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from dimos_lcm.std_msgs import Bool
+
 from dimos.core.coordination.blueprints import Blueprint, TransportSpec, autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.transport import ZenohTransport
@@ -129,6 +131,11 @@ def px4_control(**connection: Any) -> Blueprint:
             {
                 # The public Twist bus any teleop module drives.
                 ("cmd_vel", Twist): zenoh_transport("cmd_vel", Twist),
+                # Gimbal aim and the followed target.
+                ("gimbal_target", JointState): zenoh_transport("gimbal_target", JointState),
+                ("target_state", Odometry): zenoh_transport("target_state", Odometry),
+                ("target_valid", Bool): zenoh_transport("target_valid", Bool),
+                ("target_los", PoseStamped): zenoh_transport("target_los", PoseStamped),
                 # The vehicle. A stale odometry sample is worse than a dropped one.
                 ("odometry", Odometry): zenoh_transport("odometry", Odometry, latest_wins=True),
                 ("odom", PoseStamped): zenoh_transport("odom", PoseStamped, latest_wins=True),
@@ -139,6 +146,7 @@ def px4_control(**connection: Any) -> Blueprint:
                 ("gimbal_attitude", JointState): zenoh_transport(
                     "gimbal_attitude", JointState, latest_wins=True
                 ),
+                ("global_pose", PoseStamped): zenoh_transport("global_pose", PoseStamped),
                 ("vehicle_status", VehicleStatus): zenoh_transport("vehicle_status", VehicleStatus),
                 ("statustext", String): zenoh_transport("statustext", String),
                 # The supervisor.
