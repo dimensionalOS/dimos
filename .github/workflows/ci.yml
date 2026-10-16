@@ -850,6 +850,17 @@ jobs:
           brew install ffmpeg
           uv sync --group tests-self-hosted --group browser-tests --frozen
           uv run playwright install chromium firefox
+      - name: Install Node 24 for the Pi and dimcode CLIs
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Install the Pi and dimcode CLIs
+        # The agent eval tests (dimos/evals/agents) drive both. Installed outside
+        # the workspace: the no_dimos evals drop PATH entries with a "dimos" path
+        # component, and the CLIs must survive that.
+        run: |
+          bin/install-test-clis "$RUNNER_TEMP/test-clis"
+          echo "$RUNNER_TEMP/test-clis/node_modules/.bin" >> "$GITHUB_PATH"
       - name: Build C++ extensions in-place
         run: uv run python setup.py build_ext --inplace
       - name: Source ROS environment
