@@ -644,7 +644,6 @@ module = [
     "lz4",
     "lz4.*",
     "dimos_mls_planner",
-    "dimos_local_planner",
     "dimos_trajectory_follower",
     "dimos_voxel_ray_tracing",
     "etils",

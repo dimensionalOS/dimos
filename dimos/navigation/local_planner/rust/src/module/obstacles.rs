@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Which returns are obstacles: the rust twin of `motion/obstacles.py`, which is the specification.
+//! Which returns are obstacles: a property of the body, not of the scene.
 //! A model is z-only over a cloud referenced to the surface the feet stand on; [`field_points`] joins it to the caller's frame.
 
 use std::collections::{HashMap, HashSet};
@@ -164,7 +164,7 @@ fn voxel_key(p: &[f32; 3]) -> [i64; 3] {
     ]
 }
 
-/// z off the support surface; f32 throughout, as the python does.
+/// z off the support surface, in f32.
 pub fn referenced(points: &[[f32; 3]], ground_z: f64) -> Vec<[f32; 3]> {
     let ground = ground_z as f32;
     points.iter().map(|p| [p[0], p[1], p[2] - ground]).collect()

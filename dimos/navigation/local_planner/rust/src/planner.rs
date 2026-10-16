@@ -12,8 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Port of the motion2 target planner spec (planners/target.py + se2_search):
-//! obstacle xy -> 2D distance field -> SE(2) lattice search -> shortcut
+//! The target planner: obstacle xy -> 2D distance field -> SE(2) lattice search -> shortcut
 //! smoothing -> densified (x, y, yaw) path. Deterministic by construction.
 //! The intake is planar; which returns are obstacles is `module/obstacles.rs`'s call.
 
@@ -38,10 +37,10 @@ const SNAP: f64 = FINE * std::f64::consts::SQRT_2;
 /// Side of the point-index bucket, in metres.
 const BUCKET: f64 = 0.2;
 
-/// Pitch at which a route is priced along its own arc. `se2.py::COST_STEP`.
+/// Pitch at which a route is priced along its own arc.
 const COST_STEP: f64 = FINE;
 
-/// `se2.py::COMMIT_MARGIN`; tests only, python owns the number.
+/// Cost advantage (m) a fresh route needs before it replaces the incumbent.
 pub const COMMIT_MARGIN: f64 = 3.0;
 
 /// The governor curve, read off the embodiment (`Emb::governor`).
@@ -212,7 +211,7 @@ impl Emb {
         }
         let rel = rem_2pi(drift);
         let deg = rel.abs().to_degrees();
-        // `min_by` keeps the FIRST of equal minima, as python's `min(key=)` does.
+        // `min_by` keeps the FIRST of equal minima.
         let row = self
             .envelope
             .iter()
@@ -290,7 +289,7 @@ struct Fps {
     stand: usize,
 }
 
-/// Box identity, rounded exactly as the python reference rounds it.
+/// Box identity, rounded to 1e-9 with ties to even.
 fn fp_key(b: &[f64; 4]) -> [i64; 4] {
     let q = |v: f64| (v * 1e9).round_even_i64();
     [q(b[0]), q(b[1]), q(b[2]), q(b[3])]
@@ -1525,7 +1524,7 @@ fn se2_search_in(
     Some(keep.iter().map(|&k| raw[k]).collect())
 }
 
-/// Largest yaw change one published waypoint may command. `planners/base.py::YAW_STEP`.
+/// Largest yaw change one published waypoint may command.
 const YAW_STEP: f64 = 0.045;
 
 /// Largest yaw window a station may carry, under the 0.5 rad cylinder threshold.
@@ -1618,7 +1617,7 @@ fn densify(
 }
 
 /// Route cost on the follower's clock, in open-space metres, sampled by arc so
-/// densifying changes nothing. `se2.py::path_cost`.
+/// densifying changes nothing.
 fn path_cost(w: &mut World, offs: &[(f64, f64)], emb: &Emb, states: &[[f64; 3]]) -> f64 {
     if states.len() < 2 {
         return 0.0;
@@ -1680,7 +1679,7 @@ fn path_cost(w: &mut World, offs: &[(f64, f64)], emb: &Emb, states: &[[f64; 3]])
 }
 
 /// Head-trim a published route to its nearest waypoint; the true pose does not
-/// replace the head. `se2.py::trim_to_pose`.
+/// replace the head.
 fn trim_to_pose(states: &[[f64; 3]], pose: (f64, f64, f64)) -> Vec<[f64; 3]> {
     if states.is_empty() {
         return vec![[pose.0, pose.1, pose.2]];

@@ -14,7 +14,7 @@
 
 //! Per-waypoint room from the obstacle model's hard set; the planner stamps
 //! it into the path (`stamps::encode_precision`). A hint, not a safety
-//! contract. Spec: `obstacles.py::path_clearance`.
+//! contract.
 
 use std::collections::HashMap;
 

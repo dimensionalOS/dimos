@@ -14,8 +14,8 @@
 
 """The plan drawn as the body poses it expects to occupy, over the live stack.
 
-Colour is the precision profile decoded from the path's own per-waypoint stamps
-(``control/profile.py``): green = room, amber = on the governor's ramp, red = at the floor.
+Color is the precision profile decoded from the path's own per-waypoint stamps
+(``profile.py``): green = room, amber = on the governor's ramp, red = at the floor.
 """
 
 from __future__ import annotations
@@ -175,7 +175,7 @@ def motion_visual_override(
 ) -> dict[str, Any]:
     """rerun override drawing the local plan's body boxes off ``path`` and the floor it read.
 
-    Pass the same ``embodiment`` and ``body_dilate_m`` as ``LocalPlanner.blueprint(...)``.
+    Pass the same ``embodiment`` and ``body_dilate_m`` as ``LocalPlannerNative.blueprint(...)``.
     The box is the straight-drift row, not the all-gait union, which would make every corridor look impassable.
     """
     emb = embodiment.dilated(by=body_dilate_m)
