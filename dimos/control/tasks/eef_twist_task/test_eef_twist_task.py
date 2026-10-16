@@ -112,28 +112,40 @@ def test_twist_integrates_target_and_uses_shared_persistent_command(
     assert second_target.position.x == pytest.approx(0.002)
 
 
-def test_zero_twist_holds_the_integrated_target(mocker: MockerFixture) -> None:
+def test_zero_twist_reanchors_target_at_measured_pose(mocker: MockerFixture) -> None:
     task, solver = _task(mocker)
     task.on_ee_twist_command(_twist(), t_now=1.0)
     task.compute(_state(1.01))
     task.on_ee_twist_command(_twist(0.0), t_now=1.02)
 
     task.compute(_state(1.03))
+    task.compute(_state(1.04))
 
     target = solver.step.call_args.args[0]["tool"]
-    assert target.position.x == pytest.approx(0.001)
+    assert target.position.x == pytest.approx(0.0)
+    assert solver.frame_poses.call_count == 2
 
 
-def test_stale_twist_stops_motion_without_dropping_hold(mocker: MockerFixture) -> None:
+def test_stale_twist_stops_motion_and_reanchors(mocker: MockerFixture) -> None:
     task, solver = _task(mocker)
     task.on_ee_twist_command(_twist(), t_now=1.0)
     task.compute(_state(1.01))
 
-    output = task.compute(_state(1.31))
+    assert task.compute(_state(1.31)) is not None
 
-    assert output is not None
     target = solver.step.call_args.args[0]["tool"]
-    assert target.position.x == pytest.approx(0.001)
+    assert target.position.x == pytest.approx(0.0)
+    assert solver.frame_poses.call_count == 2
+
+
+def test_idle_zero_twist_keeps_the_held_target(mocker: MockerFixture) -> None:
+    task, solver = _task(mocker)
+    task.compute(_state(1.0))
+
+    task.on_ee_twist_command(_twist(0.0), t_now=1.01)
+    task.compute(_state(1.02))
+
+    assert solver.frame_poses.call_count == 1
 
 
 def test_estop_rejects_input_and_reanchors_after_clear(mocker: MockerFixture) -> None:

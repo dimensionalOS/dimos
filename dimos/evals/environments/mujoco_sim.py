@@ -43,7 +43,10 @@ class MujocoEnvironmentConfig(SimConfig):
         "camera_info",
         "coordinator_joint_state",
         "tf",
+        "body_poses",
         "odom",
+        "overview_image",
+        "overview_camera_info",
     )
     scene: Path | None = None
     base_height: float | None = Field(default=None, ge=0, allow_inf_nan=False)

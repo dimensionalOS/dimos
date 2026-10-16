@@ -13,7 +13,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # The self-hosted CI job's apt list plus Chromium's runtime libs.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl wget git unzip build-essential pkg-config \
-    libgl1 libturbojpeg portaudio19-dev \
+    libgl1 libegl1 libopengl0 libturbojpeg portaudio19-dev \
     libatk1.0-0 libatk-bridge2.0-0 libcairo2 libcups2 libgbm1 \
     libpango-1.0-0 libxcomposite1 libxdamage1 libxkbcommon0 libxrandr2 \
     libxkbcommon-x11-0 libnss3 libnspr4 libasound2t64 libatspi2.0-0 \
@@ -40,11 +40,12 @@ RUN deno run --allow-all "npm:playwright@${PLAYWRIGHT_VERSION}" install chromium
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="/root/.local/bin:${PATH}"
 
-# The Pi eval agent (dimos/evals/agents/pi.py) shells out to the `pi` coding-agent CLI.
+# The Pi eval agent (dimos/evals/agents/pi.py) shells out to the `pi` coding-agent CLI;
+# the dimcode agent (dimos/evals/agents/dimcode.py) runs `dimcode gateway`.
 ARG NODE_MAJOR=22
 RUN curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash - \
     && apt-get install -y --no-install-recommends nodejs \
-    && npm install -g @earendil-works/pi-coding-agent \
+    && npm install -g @earendil-works/pi-coding-agent @spomichter/dimcode@next \
     && rm -rf /var/lib/apt/lists/* /root/.npm
 
 WORKDIR /app

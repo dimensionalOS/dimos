@@ -3,8 +3,10 @@
 # which the DimSim frontend build needs. Allowlist what the image uses.
 *
 !dimos
+!native/python/graspgenx
 !misc/DimSim
 !docker/evals
+docker/evals/eval-runs
 !pyproject.toml
 !uv.lock
 !setup.py
