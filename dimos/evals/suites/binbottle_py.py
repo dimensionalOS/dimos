@@ -37,7 +37,6 @@ GUIDANCE = (
     "One camera is connected: the wrist camera, mounted on the gripper and moving with it. "
     "Look and move through the robot's Python interface, described in DIMOS.md. "
     f"{XARM7_GRIPPER_NOTES} "
-    "Keep the final result steady for at least two seconds before finishing. "
     "Do not read the simulator's scene, asset or recording files or the source of robosuite or "
     "MuJoCo; learn about the scene only through the robot's camera and tools."
 )
@@ -54,10 +53,16 @@ SIM_ENV = {
 THREADS = {"bottle": {"cap_thread": "cap_hold"}}
 
 
-def environment(scene: str, bodies: tuple[str, ...]) -> MujocoEnvironment:
-    env = {"PERCEPTIONLOCALIZE__POLICY": LOCALIZE_POLICY, **SIM_ENV}
+def sim_env(scene: str) -> dict[str, str]:
+    """The simulator settings for ``scene``, shared with the raw suites."""
+    env = dict(SIM_ENV)
     if scene in THREADS:
         env["MUJOCOSIMMODULE__THREAD_RELEASES"] = json.dumps(THREADS[scene])
+    return env
+
+
+def environment(scene: str, bodies: tuple[str, ...]) -> MujocoEnvironment:
+    env = {"PERCEPTIONLOCALIZE__POLICY": LOCALIZE_POLICY, **sim_env(scene)}
     return MujocoEnvironment(
         # The Python-API stack (no MCP): the agent reaches modules and streams over the API.
         blueprint=["xarm-agent-sim"],
@@ -83,9 +88,12 @@ SUITE: Suite = [
     ),
     EvalCase(
         id="binbottle_py_open_bottle",
-        inputs="Unscrew the cap of the water bottle and lift it off the bottle. " + GUIDANCE,
+        inputs=(
+            "Open the water bottle: unscrew the cap and take it off the bottle, then finish. "
+            + GUIDANCE
+        ),
         environment=environment("bottle", ("cap_main", "cap_carrier", "bottle_main")),
-        # 0.1 touched the cap + 0.5 x unscrewed + 0.3 taken off the bottle + 0.1 held 5 cm up.
+        # 0.1 touched the cap + 0.5 x unscrewed + 0.4 taken off the bottle.
         grade=cap_partial,
         threshold=1.0,
         timeout_s=3600.0,

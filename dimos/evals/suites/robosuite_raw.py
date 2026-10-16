@@ -44,13 +44,13 @@ def _raw(case: EvalCase) -> EvalCase:
         case,
         id=case.id.replace("robosuite_", "robosuite_raw_", 1),
         inputs=(
-            f"{task} Keep the final result steady for at least two seconds before finishing. "
+            f"{task} "
             "Use the robot interface described in ROBOT.md. Do not read the simulator's scene, "
             "asset or recording files or the source of robosuite or MuJoCo, and do not install "
             "them; learn about the scene only through the robot interface."
         ),
         environment=MujocoEnvironment(
-            blueprint=["xarm-sim-robosuite", "mcp-server"],
+            blueprint=["xarm-raw-sim", "mcp-server"],
             raw_bridge=True,
             raw_guide=RAW_ARM_README + XARM7_ROBOSUITE_NOTES,
             ready_streams=("color_image", "coordinator_joint_state"),

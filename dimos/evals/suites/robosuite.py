@@ -38,7 +38,6 @@ GUIDANCE = (
     "their world positions. Use the robot's manipulation skills to move: move_to_pose places, "
     "and get_robot_state reports, the gripper's tool centre point (TCP). "
     f"{XARM7_GRIPPER_NOTES} "
-    "Keep the final result steady for at least two seconds before finishing. "
     "Do not read the simulator's scene, asset or recording files or the source of robosuite or "
     "MuJoCo; learn about the scene only through the robot's camera and tools."
 )

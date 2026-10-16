@@ -84,7 +84,7 @@ SUITE: Suite = [
         id="binbottle_open_bottle",
         inputs="Unscrew the cap of the water bottle and lift it off the bottle. " + GUIDANCE,
         environment=environment("bottle", ("cap_main", "cap_carrier", "bottle_main")),
-        # 0.1 touched the cap + 0.5 x unscrewed + 0.3 taken off the bottle + 0.1 held 5 cm up.
+        # 0.1 touched the cap + 0.5 x unscrewed + 0.4 taken off the bottle.
         grade=cap_partial,
         threshold=1.0,
         timeout_s=3600.0,

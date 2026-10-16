@@ -534,8 +534,8 @@ CAP_TURN_RAD = math.radians(200)
 
 
 def cap_partial(outcome: Outcome) -> float:
-    """0.1 touched the cap, 0.5 x how far it was unscrewed, 0.3 taken 2 cm off the neck,
-    0.1 ending held 5 cm above where it sat."""
+    """0.1 touched the cap, 0.5 x how far it was unscrewed, 0.4 taken 2 cm off the neck.
+    Where the cap ends up after that is not graded."""
     tracks = _tracks(outcome, ("cap_main", "cap_carrier", *GRIPPER_BODIES))
     cap, carrier = tracks.get("cap_main"), tracks.get("cap_carrier")
     if cap is None or carrier is None:
@@ -545,10 +545,9 @@ def cap_partial(outcome: Outcome) -> float:
     turned = float((yaw - yaw[0]).max())
     touched = turned > 0.05 or cap.moved() > 0.002 or _came_within(tracks, "cap_main", 0.04)
     off = cap.moved() >= 0.02
-    held_up = cap.final[2] - cap.rest[2] >= 0.05
     turn = min(max(turned / CAP_TURN_RAD, 0.0), 1.0)
-    score = 0.1 * touched + 0.5 * turn + 0.3 * off + 0.1 * held_up
-    return round(float(score), 6)  # 0.1 + 0.5 + 0.3 + 0.1 sums to 0.9999999999999999
+    score = 0.1 * touched + 0.5 * turn + 0.4 * off
+    return round(float(score), 6)
 
 
 # Letter blocks (dimosblocks): spell DIMOS. The word may lie at any angle on the table; the letters'

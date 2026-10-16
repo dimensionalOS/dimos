@@ -19,7 +19,7 @@ dimos evals run dimos.evals.suites.dimosblocks_raw --agent dimos.evals.agents.pi
 """
 
 from dimos.evals.suites.binbottle_raw import raw
-from dimos.evals.suites.dimosblocks import SUITE as SKILL_SUITE
+from dimos.evals.suites.dimosblocks_py import SUITE as DIMOS_SUITE
 from dimos.evals.types import Suite
 
-SUITE: Suite = [raw(case) for case in SKILL_SUITE]
+SUITE: Suite = [raw(case) for case in DIMOS_SUITE]

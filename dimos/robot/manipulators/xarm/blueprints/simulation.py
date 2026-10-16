@@ -159,7 +159,6 @@ def _xarm_sim(base_pose: PoseStamped | None = None) -> Blueprint:
 
 
 xarm_sim = autoconnect(_xarm_sim())
-# The robosuite exports keep their full-height tables and mount link_base 0.912 m up.
-xarm_sim_robosuite = autoconnect(
-    _xarm_sim(PoseStamped(frame_id="world", position=Vector3(z=0.912)))
-)
+# The raw-robot stack for agents without dimOS, on the robosuite scenes (robosuite, BinBottle,
+# DimosBlocks): their exports keep full-height tables and mount link_base 0.912 m up.
+xarm_raw_sim = autoconnect(_xarm_sim(PoseStamped(frame_id="world", position=Vector3(z=0.912))))

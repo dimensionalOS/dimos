@@ -205,6 +205,7 @@ all_blueprints = {
     "xarm-localize-live": "dimos.perception.localize.demo_blueprints.xarm_localize_live:xarm_localize_live",
     "xarm-perception-sim": "dimos.robot.manipulators.xarm.blueprints.simulation:xarm_perception_sim",
     "xarm-perception-sim-agent": "dimos.robot.manipulators.xarm.blueprints.agentic:xarm_perception_sim_agent",
+    "xarm-raw-sim": "dimos.robot.manipulators.xarm.blueprints.simulation:xarm_raw_sim",
     "xarm-sim": "dimos.robot.manipulators.xarm.blueprints.simulation:xarm_sim",
     "xarm-sim-robosuite": "dimos.robot.manipulators.xarm.blueprints.simulation:xarm_sim_robosuite",
     "xarm6-keyboard-teleop": "dimos.robot.manipulators.xarm.blueprints.teleop:xarm6_keyboard_teleop",
