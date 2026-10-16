@@ -15,7 +15,8 @@
 """Pinned upstream identities for the bounded SPACE text evaluation."""
 
 SPACE_REVISION = "eec58a24516bfcd4554807b0a2b9d08b04eafd1c"
-SPACE_REPOSITORY = "https://github.com/apple/ml-space-benchmark.git"
+SPACE_PACKAGE = "ml-space-benchmark-ky135"
+SPACE_PACKAGE_VERSION = "0.1.0"
 DATA_URL = "https://ml-site.cdn-apple.com/datasets/space/space.tar.gz"
 DATA_MEMBER = "SPACE_data_release/MapSketchingBEVText/qas.json"
 DATA_SHA256 = "664e4e30b92017903de39997a6a2bda2f26763419d8b28ca653b63b94f1c9dc2"

@@ -53,7 +53,7 @@ def test_setup_command(mocker: MockerFixture) -> None:
 
 def test_setup_failure_restores_handlers(mocker: MockerFixture) -> None:
     previous = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGHUP)}
-    failure = RuntimeError("Source fetch failed")
+    failure = RuntimeError("Data download failed")
     mocker.patch.object(data, "setup", side_effect=failure)
     result = CliRunner().invoke(app, ["evals", "setup", "space"])
     assert result.exit_code == 1

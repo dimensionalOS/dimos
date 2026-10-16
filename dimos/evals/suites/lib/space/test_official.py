@@ -59,7 +59,7 @@ def test_native_subset_covers_layouts_and_answer_positions(native_space_paths: S
 
 @pytest.mark.self_hosted
 def test_native_upstream_parser_and_metric(native_space_paths: SpacePaths) -> None:
-    scorer = OfficialSpace(native_space_paths.source)
+    scorer = OfficialSpace()
     scorer.prepare()
     examples: list[tuple[str, Any, float, Any]] = [
         ('{"answer":"2"}', 2, 100.0, 2),
@@ -105,8 +105,6 @@ def test_native_worker_uses_official_aggregate_with_spawn(
             "multiprocessing.set_start_method('spawn'); "
             "runpy.run_module('dimos.evals.suites.lib.space.worker', "
             "run_name='__main__', alter_sys=True)",
-            "--source",
-            str(native_space_paths.source),
             "--questions",
             str(questions),
             "--replies",

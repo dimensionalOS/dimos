@@ -19,49 +19,37 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 import importlib
+from importlib.metadata import PackageNotFoundError, distribution
 from pathlib import Path
-import subprocess
 import sys
 from types import ModuleType
 from typing import Any
 
-from dimos.evals.suites.lib.space.constants import SOURCE_SHA256, SPACE_REVISION
+from dimos.evals.suites.lib.space.constants import (
+    SOURCE_SHA256,
+    SPACE_PACKAGE,
+    SPACE_PACKAGE_VERSION,
+)
 
 
-def verify_source(source: Path) -> None:
-    """Reject a different revision or changes to the external executable source."""
-    source = source.resolve(strict=True)
-    root = subprocess.run(
-        ["git", "-C", str(source), "rev-parse", "--show-toplevel"],
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=10,
-    ).stdout.strip()
-    if not Path(root).samefile(source):
-        raise ValueError(f"SPACE source must be the checkout root: {source}")
-    revision = subprocess.run(
-        ["git", "-C", str(source), "rev-parse", "HEAD"],
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=10,
-    ).stdout.strip()
-    if revision != SPACE_REVISION:
-        raise ValueError(f"SPACE revision {revision} does not match {SPACE_REVISION}")
-    changes = subprocess.run(
-        ["git", "-C", str(source), "status", "--porcelain", "--untracked-files=all", "--", "space"],
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=10,
-    ).stdout.strip()
-    if changes:
-        raise ValueError(f"SPACE executable source has local changes: {changes}")
+def verify_package() -> Path:
+    """Require the pinned distribution and unchanged official scorer files."""
+    try:
+        installed = distribution(SPACE_PACKAGE)
+    except PackageNotFoundError as exc:
+        raise RuntimeError(
+            f"{SPACE_PACKAGE} is not installed. Install dimos[space] before setup or scoring"
+        ) from exc
+    if installed.version != SPACE_PACKAGE_VERSION:
+        raise ValueError(
+            f"SPACE package version {installed.version} does not match {SPACE_PACKAGE_VERSION}"
+        )
+    root = Path(str(installed.locate_file(""))).resolve(strict=True)
     for relative, expected in SOURCE_SHA256.items():
-        actual = hashlib.sha256((source / relative).read_bytes()).hexdigest()
+        actual = hashlib.sha256((root / relative).read_bytes()).hexdigest()
         if actual != expected:
             raise ValueError(f"SPACE source hash mismatch: {relative}")
+    return root
 
 
 def question_digest(question: str) -> str:
@@ -85,7 +73,7 @@ class RawReplyAgent:
         if not isinstance(question_content, str):
             raise TypeError("SPACE text QA replay requires a string question")
         raw = self._responses[question_digest(question_content)]
-        # SPACE is an optional external checkout, loaded explicitly by prepare().
+        # SPACE is an optional dependency, loaded explicitly by prepare().
         parser = importlib.import_module("space.agents.qa_agent")
         # Constructing QA_Agent opens a provider client; its parser uses no instance state.
         return parser.QA_Agent.parse_answer_from_response(None, raw)
@@ -111,33 +99,23 @@ def _check_origins(source: Path) -> None:
         filename = vars(module).get("__file__")
         paths = [filename] if filename else list(vars(module).get("__path__", ()))
         if not paths or any(not Path(path).resolve().is_relative_to(expected) for path in paths):
-            raise RuntimeError(f"SPACE module {name} was loaded outside the pinned checkout")
+            raise RuntimeError(f"SPACE module {name} was loaded outside the installed package")
 
 
 class OfficialSpace:
     """An explicitly prepared scorer; construction performs no imports or downloads."""
 
-    def __init__(self, source: Path) -> None:
-        self._source = source
+    def __init__(self) -> None:
         self._evaluator: ModuleType | None = None
 
     def prepare(self) -> None:
-        """Validate and load the pinned evaluator before model execution.
-
-        Call serially: preparation modifies sys.path and SPACE's registry.
-        """
-        source = self._source.resolve(strict=True)
-        verify_source(source)
+        """Load the installed evaluator before execution; call serially to register the adapter."""
+        source = verify_package()
         _check_origins(source)
         if self._evaluator is not None:
             return
-        path = str(source)
-        sys.path.insert(0, path)
-        try:
-            evaluator = importlib.import_module("space.evaluate_qas")
-            registry = importlib.import_module("space.registry")
-        finally:
-            sys.path.remove(path)
+        evaluator = importlib.import_module("space.evaluate_qas")
+        registry = importlib.import_module("space.registry")
         _check_origins(source)
         existing = registry.AGENTS_REGISTRY.get(RawReplyAgent.__name__)
         if existing is not None and existing is not RawReplyAgent:

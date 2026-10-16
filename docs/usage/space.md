@@ -19,22 +19,23 @@ uv sync --locked --no-default-groups --extra space
 uv run --no-sync dimos evals setup space
 ```
 
-Setup downloads pinned source and one unchanged `qas.json` into
-`CACHE_DIR/evals/space`. It streams only as far as that archive member, verifies
+The `space` extra installs the pinned `ml-space-benchmark-ky135` package.
+Setup downloads one unchanged
+`qas.json` into `CACHE_DIR/evals/space`. It streams only as far as that archive member, verifies
 its size and SHA-256, and rejects mismatched cached inputs. Pins and limits are in
 [`evals/suites/lib/space/constants.py`](/dimos/evals/suites/lib/space/constants.py).
 Suite imports do not download anything.
 
-Source revision `eec58a24516bfcd4554807b0a2b9d08b04eafd1c` comes from
-[Apple's SPACE repository](https://github.com/apple/ml-space-benchmark) under the
-[Apple Sample Code License](https://github.com/apple/ml-space-benchmark/blob/eec58a24516bfcd4554807b0a2b9d08b04eafd1c/LICENSE).
-Data uses [CC BY-NC-ND 4.0](https://github.com/apple/ml-space-benchmark/blob/eec58a24516bfcd4554807b0a2b9d08b04eafd1c/LICENSE_DATA)
+The package preserves source revision `eec58a24516bfcd4554807b0a2b9d08b04eafd1c` from
+[Apple's SPACE repository](https://github.com/apple-aiml-research/ml-space-benchmark) under the
+[Apple Sample Code License](https://github.com/apple-aiml-research/ml-space-benchmark/blob/eec58a24516bfcd4554807b0a2b9d08b04eafd1c/LICENSE).
+Data uses [CC BY-NC-ND 4.0](https://github.com/apple-aiml-research/ml-space-benchmark/blob/eec58a24516bfcd4554807b0a2b9d08b04eafd1c/LICENSE_DATA)
 and is not vendored. Keep data, prompts, replies, and replay inputs local;
 publish IDs, hashes, configuration, and derived metrics. Check the terms before
 commercial use or redistribution.
 
 The `tests-self-hosted` group includes the `space` extra; `all` and default tests
-do not select it. The extra includes PyTorch because an upstream helper imports
+do not select it. The SPACE package includes PyTorch because an upstream helper imports
 it eagerly.
 No Habitat simulator or vLLM model is launched.
 
@@ -105,5 +106,5 @@ uv run --no-sync pytest -m self_hosted dimos/evals/suites/lib/space/test_officia
 These four tests use the repository's `self_hosted` marker. They
 check the fixed subset, official parser and metric, spawned aggregation, and dimOS
 CLI with a canned model. They reuse verified cached inputs or download pinned
-source/data without provider calls. They verify integration, not model
+task data without provider calls. They verify integration, not model
 performance.

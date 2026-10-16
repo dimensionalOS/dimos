@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from pathlib import Path
-
 import pytest
 from pytest_mock import MockerFixture
 
@@ -49,8 +47,8 @@ def test_space_rejects_prompt_augmentation_before_execution() -> None:
     environment.preflight(TextQuestion())
 
 
-def test_timeout_is_never_scored_as_a_wrong_answer(tmp_path: Path) -> None:
-    grade = Grade(OfficialSpace(tmp_path / "unprepared"), Example(0, {"question": "q"}))
+def test_timeout_is_never_scored_as_a_wrong_answer() -> None:
+    grade = Grade(OfficialSpace(), Example(0, {"question": "q"}))
     trajectory = TrajectoryBuilder("q", name="TextQuestion", model="test").build("timeout")
     with pytest.raises(RuntimeError, match="did not complete: timeout"):
         grade(Outcome(trajectory=trajectory, artifacts={}))

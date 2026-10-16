@@ -47,7 +47,7 @@ def _termination_handlers() -> Iterator[None]:
 
 @setup_app.command("space")
 def setup_space() -> None:
-    """Acquire pinned SPACE source and task data."""
+    """Acquire pinned SPACE task data for the installed scorer."""
     # Keep the optional benchmark dependencies out of CLI startup.
     from dimos.evals.suites.lib.space.data import SpacePaths, setup
 

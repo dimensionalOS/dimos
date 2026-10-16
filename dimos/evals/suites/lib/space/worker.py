@@ -77,12 +77,11 @@ def run_aggregate(questions: Path, replies: Path, output: Path) -> None:
 
 def main(argv: Sequence[str] | None = None, *, worker_only: bool = False) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--questions", type=Path, required=True)
     parser.add_argument("--replies", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
-    scorer = OfficialSpace(args.source)
+    scorer = OfficialSpace()
     scorer.prepare()
     if not worker_only:
         run_aggregate(args.questions, args.replies, args.output)

@@ -22,7 +22,6 @@ import hashlib
 import io
 import json
 from pathlib import Path
-import subprocess
 import tarfile
 import tempfile
 import time
@@ -40,21 +39,15 @@ from dimos.evals.suites.lib.space.constants import (
     DOWNLOAD_TIMEOUT_S,
     MAX_DOWNLOAD_BYTES,
     SELECTED_INDICES,
-    SPACE_REPOSITORY,
     SPACE_REVISION,
     TASK,
 )
-from dimos.evals.suites.lib.space.process import run_process
-from dimos.evals.suites.lib.space.upstream import question_digest, verify_source
+from dimos.evals.suites.lib.space.upstream import question_digest, verify_package
 
 
 @dataclass(frozen=True)
 class SpacePaths:
     root: Path = CACHE_DIR / "evals" / "space"
-
-    @property
-    def source(self) -> Path:
-        return self.root / "source"
 
     @property
     def questions(self) -> Path:
@@ -162,40 +155,10 @@ def acquire_data(destination: Path) -> int:
 
 
 def setup(paths: SpacePaths) -> dict[str, Any]:
-    """Acquire source and one unchanged data file outside the DimOS checkout."""
+    """Validate the installed scorer and acquire one unchanged data file."""
+    verify_package()
     paths.root.mkdir(parents=True, exist_ok=True)
     with FileLock(paths.root / "setup.lock"):
-        if not paths.source.exists():
-            with tempfile.TemporaryDirectory(prefix=".space-source-", dir=paths.root) as directory:
-                source = Path(directory) / "source"
-                subprocess.run(["git", "init", "--quiet", str(source)], check=True, timeout=30)
-                fetch_log = paths.root / "fetch.log"
-                returncode = run_process(
-                    [
-                        "git",
-                        "-C",
-                        str(source),
-                        "fetch",
-                        "--quiet",
-                        "--depth=1",
-                        SPACE_REPOSITORY,
-                        SPACE_REVISION,
-                    ],
-                    fetch_log,
-                    180,
-                )
-                if returncode:
-                    raise RuntimeError(
-                        f"SPACE source fetch failed with exit code {returncode}; see {fetch_log}"
-                    )
-                subprocess.run(
-                    ["git", "-C", str(source), "checkout", "--quiet", "--detach", "FETCH_HEAD"],
-                    check=True,
-                    timeout=30,
-                )
-                verify_source(source)
-                source.rename(paths.source)
-        verify_source(paths.source)
         downloaded = acquire_data(paths.questions)
         examples = load_examples(paths)
         return {

@@ -20,7 +20,6 @@ import hashlib
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import io
 from pathlib import Path
-import subprocess
 import tarfile
 import threading
 from typing import Any
@@ -163,90 +162,68 @@ def setup_workers() -> Iterator[ThreadPoolExecutor]:
         yield workers
 
 
-def test_concurrent_setup_publishes_one_source_checkout(
-    tmp_path: Path, mocker: MockerFixture, setup_workers: ThreadPoolExecutor
+def test_concurrent_setup_downloads_data_once(
+    payload: bytes, tmp_path: Path, mocker: MockerFixture, setup_workers: ThreadPoolExecutor
 ) -> None:
     paths = data.SpacePaths(tmp_path / "cache")
-    cloning = threading.Event()
+    downloading = threading.Event()
     second_caller = threading.Event()
-    published = threading.Event()
-    guard = threading.Lock()
-    counts = {"locks": 0, "clones": 0}
+    lock_count = 0
 
     def setup_lock(*args: Any, **kwargs: Any) -> FileLock:
-        with guard:
-            counts["locks"] += 1
-            if counts["locks"] == 2:
-                second_caller.set()
+        nonlocal lock_count
+        lock_count += 1
+        if lock_count == 2:
+            second_caller.set()
         return FileLock(*args, **kwargs)
 
-    def git(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
-        if args[:2] == ["git", "init"]:
-            with guard:
-                counts["clones"] += 1
-                clone_number = counts["clones"]
-            if clone_number == 1:
-                cloning.set()
-                assert second_caller.wait(5), "second setup never reached the cache"
-            else:
-                second_caller.set()
-                assert published.wait(5), "first setup never published its checkout"
-            source = Path(args[-1])
-            source.mkdir()
-            (source / "pinned-source.py").write_text("# synthetic checkout\n")
-        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+    def download(*args: Any, **kwargs: Any) -> Any:
+        downloading.set()
+        assert second_caller.wait(5), "second setup never reached the cache"
+        response = mocker.MagicMock()
+        response.__enter__.return_value = response
+        response.raw = io.BytesIO(archive_bytes(payload))
+        return response
 
-    # Signal the second caller before it blocks on the lock. If both calls clone,
-    # delay the second until the first publishes to expose the overwrite race.
-    mocker.patch.object(data, "FileLock", side_effect=setup_lock, create=True)
-    mocker.patch.object(subprocess, "run", side_effect=git)
-    mocker.patch.object(data, "run_process", return_value=0)
-    mocker.patch.object(data, "verify_source")
-    mocker.patch.object(data, "acquire_data", return_value=0)
+    mocker.patch.object(data, "FileLock", side_effect=setup_lock)
+    mocker.patch.object(data, "verify_package")
     mocker.patch.object(data, "load_examples", return_value=())
-
-    def first_setup() -> dict[str, Any]:
-        try:
-            return data.setup(paths)
-        finally:
-            published.set()
-
-    first = setup_workers.submit(first_setup)
-    assert cloning.wait(5), "first setup never started cloning"
+    get = mocker.patch.object(requests, "get", side_effect=download)
+    first = setup_workers.submit(data.setup, paths)
+    assert downloading.wait(5), "first setup never started downloading"
     second = setup_workers.submit(data.setup, paths)
-    assert first.result(timeout=10) == second.result(timeout=10)
-    assert counts["clones"] == 1
-    assert (paths.source / "pinned-source.py").read_text() == "# synthetic checkout\n"
+    results = [first.result(timeout=10), second.result(timeout=10)]
+    assert [result["downloaded_compressed_bytes"] for result in results] == [
+        len(archive_bytes(payload)),
+        0,
+    ]
+    assert get.call_count == 1
+    assert paths.questions.read_bytes() == payload
 
 
-@pytest.mark.parametrize("failure", ["exit", "timeout", "interrupt"])
-def test_failed_fetch_cleans_staging_without_publishing(
-    tmp_path: Path, mocker: MockerFixture, failure: str
+def test_setup_checks_package_before_creating_cache(tmp_path: Path, mocker: MockerFixture) -> None:
+    paths = data.SpacePaths(tmp_path / "cache")
+    mocker.patch.object(data, "verify_package", side_effect=RuntimeError("Missing package"))
+    acquire = mocker.patch.object(data, "acquire_data")
+    with pytest.raises(RuntimeError, match="Missing package"):
+        data.setup(paths)
+    assert not paths.root.exists()
+    acquire.assert_not_called()
+
+
+def test_failed_download_releases_setup_lock(
+    payload: bytes, tmp_path: Path, mocker: MockerFixture, setup_workers: ThreadPoolExecutor
 ) -> None:
     paths = data.SpacePaths(tmp_path / "cache")
-    error: BaseException | None = None
-    if failure == "timeout":
-        error = subprocess.TimeoutExpired("git", 180)
-    elif failure == "interrupt":
-        error = KeyboardInterrupt()
-
-    def fail_fetch(args: list[str], log_path: Path, timeout_s: float) -> int:
-        log_path.write_text("fatal: synthetic fetch failure\n")
-        if error:
-            raise error
-        return 128
-
-    fetch = mocker.patch.object(data, "run_process", side_effect=fail_fetch)
-    verify = mocker.patch.object(data, "verify_source")
-    acquire = mocker.patch.object(data, "acquire_data")
-
-    with pytest.raises(type(error) if error else RuntimeError):
+    response = mocker.MagicMock()
+    response.__enter__.return_value = response
+    response.raw = io.BytesIO(archive_bytes(payload))
+    mocker.patch.object(data, "verify_package")
+    mocker.patch.object(data, "load_examples", return_value=())
+    mocker.patch.object(requests, "get", side_effect=[requests.ConnectionError("failed"), response])
+    with pytest.raises(requests.ConnectionError, match="failed"):
         data.setup(paths)
-
-    assert fetch.call_args.args[0][3] == "fetch"
-    assert fetch.call_args.args[1:] == (paths.root / "fetch.log", 180)
-    assert (paths.root / "fetch.log").read_text() == "fatal: synthetic fetch failure\n"
-    assert not paths.source.exists()
-    assert not list(paths.root.glob(".space-source-*"))
-    verify.assert_not_called()
-    acquire.assert_not_called()
+    assert not paths.questions.exists()
+    result = setup_workers.submit(data.setup, paths).result(timeout=10)
+    assert result["downloaded_compressed_bytes"] > 0
+    assert paths.questions.read_bytes() == payload

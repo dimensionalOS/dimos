@@ -15,8 +15,8 @@
 from __future__ import annotations
 
 import hashlib
+from importlib.metadata import PackageNotFoundError, PathDistribution
 from pathlib import Path
-import subprocess
 import sys
 from types import ModuleType, SimpleNamespace
 from typing import Any
@@ -25,96 +25,79 @@ import pytest
 from pytest_mock import MockerFixture
 
 from dimos.evals.suites.lib.space import upstream
-from dimos.evals.suites.lib.space.constants import SOURCE_SHA256
+from dimos.evals.suites.lib.space.constants import (
+    SOURCE_SHA256,
+    SPACE_PACKAGE,
+    SPACE_PACKAGE_VERSION,
+)
 from dimos.evals.suites.lib.space.upstream import OfficialSpace, RawReplyAgent, question_digest
 
 
-def run_git(source: Path, *args: str) -> str:
-    return subprocess.run(
-        ["git", "-C", str(source), *args],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.strip()
-
-
 @pytest.fixture
-def source(tmp_path: Path, mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch) -> Path:
-    # Native tests may already have loaded SPACE. Isolate this synthetic checkout,
-    # then restore the real modules when the fixture is torn down.
+def package(tmp_path: Path, mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch) -> Path:
+    # Restore any real SPACE modules after isolating this synthetic distribution.
     for name in tuple(sys.modules):
         if name == "space" or name.startswith("space."):
             monkeypatch.delitem(sys.modules, name)
-    checkout = tmp_path / "source"
-    checkout.mkdir()
-    run_git(checkout, "init")
+    root = tmp_path / "site-packages"
+    metadata = root / f"{SPACE_PACKAGE.replace('-', '_')}-{SPACE_PACKAGE_VERSION}.dist-info"
+    metadata.mkdir(parents=True)
+    (metadata / "METADATA").write_text(
+        f"Metadata-Version: 2.1\nName: {SPACE_PACKAGE}\nVersion: {SPACE_PACKAGE_VERSION}\n"
+    )
     hashes: dict[str, str] = {}
     for relative in SOURCE_SHA256:
-        path = checkout / relative
+        path = root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("# Synthetic source-integrity fixture.\n")
         hashes[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
-    run_git(checkout, "add", "space")
-    run_git(
-        checkout,
-        "-c",
-        "user.name=SPACE test",
-        "-c",
-        "user.email=space-test@example.invalid",
-        "commit",
-        "-m",
-        "synthetic fixture",
-    )
-    mocker.patch.object(upstream, "SPACE_REVISION", run_git(checkout, "rev-parse", "HEAD"))
+    mocker.patch.object(upstream, "distribution", return_value=PathDistribution(metadata))
     mocker.patch.object(upstream, "SOURCE_SHA256", hashes)
-    return checkout
+    return root
 
 
-def test_verify_source_accepts_the_pinned_tree_and_its_alias(source: Path, tmp_path: Path) -> None:
-    upstream.verify_source(source)
-    alias = tmp_path / "source-alias"
-    alias.symlink_to(source, target_is_directory=True)
-    upstream.verify_source(alias)
-    assert run_git(source, "status", "--porcelain") == ""
+def test_verify_package_accepts_the_installed_distribution(package: Path) -> None:
+    assert upstream.verify_package() == package
 
 
-def test_verify_source_rejects_a_subdirectory_of_the_checkout(source: Path) -> None:
-    with pytest.raises(ValueError, match="checkout root"):
-        upstream.verify_source(source / "space")
+def test_verify_package_reports_a_missing_dependency(mocker: MockerFixture) -> None:
+    mocker.patch.object(upstream, "distribution", side_effect=PackageNotFoundError(SPACE_PACKAGE))
+    with pytest.raises(RuntimeError, match=SPACE_PACKAGE) as error:
+        upstream.verify_package()
+    assert "install" in str(error.value).lower()
 
 
-def test_verify_source_rejects_another_revision(source: Path, mocker: MockerFixture) -> None:
-    mocker.patch.object(upstream, "SPACE_REVISION", "0" * 40)
-    with pytest.raises(ValueError, match="revision"):
-        upstream.verify_source(source)
+def test_verify_package_rejects_another_version(package: Path) -> None:
+    metadata = next(package.glob("*.dist-info/METADATA"))
+    metadata.write_text(f"Metadata-Version: 2.1\nName: {SPACE_PACKAGE}\nVersion: 9.9.9\n")
+    with pytest.raises(ValueError, match="version"):
+        upstream.verify_package()
 
 
-@pytest.mark.parametrize("tracked", [True, False])
-def test_verify_source_rejects_changed_executable_source(source: Path, tracked: bool) -> None:
-    relative = "space/evaluate_qas.py" if tracked else "space/injected.py"
-    (source / relative).write_text("# unexpected change\n")
-    with pytest.raises(ValueError, match="local changes"):
-        upstream.verify_source(source)
+@pytest.mark.parametrize("missing", [False, True])
+def test_verify_package_rejects_changed_or_missing_scorer(package: Path, missing: bool) -> None:
+    evaluator = package / "space/evaluate_qas.py"
+    if missing:
+        evaluator.unlink()
+    else:
+        evaluator.write_text("# unexpected change\n")
+    with pytest.raises(FileNotFoundError if missing else ValueError):
+        upstream.verify_package()
 
 
-def test_verify_source_checks_the_recorded_digest(source: Path, mocker: MockerFixture) -> None:
-    mocker.patch.object(upstream, "SOURCE_SHA256", {"space/evaluate_qas.py": "0" * 64})
-    with pytest.raises(ValueError, match="hash mismatch"):
-        upstream.verify_source(source)
-
-
+@pytest.mark.parametrize("name", ["space", "space.evaluate_qas"])
 def test_prepare_rejects_an_existing_foreign_space_package(
-    source: Path, tmp_path: Path, mocker: MockerFixture
+    package: Path, tmp_path: Path, mocker: MockerFixture, name: str
 ) -> None:
-    foreign = ModuleType("space")
+    foreign = ModuleType(name)
     foreign.__file__ = str(tmp_path / "elsewhere" / "__init__.py")
-    mocker.patch.dict(sys.modules, {"space": foreign})
-    with pytest.raises(RuntimeError, match="outside the pinned checkout"):
-        OfficialSpace(source).prepare()
+    mocker.patch.dict(sys.modules, {name: foreign})
+    with pytest.raises(RuntimeError, match="outside the installed package"):
+        OfficialSpace().prepare()
 
 
-def test_prepare_restores_import_path_when_dependencies_are_missing(
-    source: Path, mocker: MockerFixture
+def test_prepare_does_not_change_import_path_when_dependencies_are_missing(
+    package: Path, mocker: MockerFixture
 ) -> None:
     before = list(sys.path)
     mocker.patch(
@@ -122,12 +105,12 @@ def test_prepare_restores_import_path_when_dependencies_are_missing(
         side_effect=ImportError("missing torch"),
     )
     with pytest.raises(ImportError, match="missing torch"):
-        OfficialSpace(source).prepare()
+        OfficialSpace().prepare()
     assert sys.path == before
 
 
 def test_score_uses_the_official_metric_and_exact_question(
-    source: Path, mocker: MockerFixture
+    package: Path, mocker: MockerFixture
 ) -> None:
     evaluator = SimpleNamespace()
     registry = SimpleNamespace()
@@ -136,9 +119,15 @@ def test_score_uses_the_official_metric_and_exact_question(
     registry.AGENTS_REGISTRY = {}
     registry.register_agent = mocker.Mock()
     modules = {"space.evaluate_qas": evaluator, "space.registry": registry}
+    before = list(sys.path)
+
+    def import_space(name: str) -> SimpleNamespace:
+        assert sys.path == before
+        return modules[name]
+
     mocker.patch(
         "dimos.evals.suites.lib.space.upstream.importlib.import_module",
-        side_effect=modules.__getitem__,
+        side_effect=import_space,
     )
     qa: dict[str, Any] = {
         "question": "Unchanged\nquestion",
@@ -146,8 +135,9 @@ def test_score_uses_the_official_metric_and_exact_question(
         "metadata": {"untouched": True},
     }
     raw = '  {"answer":2}\n'
-    scorer = OfficialSpace(source)
+    scorer = OfficialSpace()
     scorer.prepare()
+    assert sys.path == before
     result = scorer.score(qa, raw)
     assert result.accuracy == 37.5
     assert result.prediction == 2
@@ -178,6 +168,6 @@ def test_replay_rejects_enabling_a_model_backend() -> None:
         RawReplyAgent({}, use_vllm=True)
 
 
-def test_unprepared_scoring_fails_before_using_a_response(tmp_path: Path) -> None:
+def test_unprepared_scoring_fails_before_using_a_response() -> None:
     with pytest.raises(RuntimeError, match="Prepare"):
-        OfficialSpace(tmp_path).score({"question": "q", "answer": 1}, '{"answer":1}')
+        OfficialSpace().score({"question": "q", "answer": 1}, '{"answer":1}')

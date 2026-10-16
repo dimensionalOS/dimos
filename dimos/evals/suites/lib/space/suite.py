@@ -54,7 +54,7 @@ class Grade:
 
 def load_cases(paths: SpacePaths) -> tuple[EvalCase, ...]:
     examples = load_examples(paths)
-    scorer = OfficialSpace(paths.source)
+    scorer = OfficialSpace()
     scorer.prepare()
     return tuple(
         EvalCase(

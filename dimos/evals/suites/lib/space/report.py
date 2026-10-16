@@ -135,14 +135,12 @@ def _trace(run_dir: Path, example: Example, result: dict[str, Any] | None) -> di
     return diagnostic
 
 
-def _worker(paths: SpacePaths, replay: Path) -> Path:
+def _worker(replay: Path) -> Path:
     output = replay / "upstream"
     args = [
         sys.executable,
         "-m",
         "dimos.evals.suites.lib.space.worker",
-        "--source",
-        str(paths.source.resolve()),
         "--questions",
         str((replay / "questions.json").resolve()),
         "--replies",
@@ -222,7 +220,7 @@ def score_run(paths: SpacePaths, run_dir: Path) -> dict[str, Any]:
             json.dumps({e.question_sha256: results[e.case_id]["final_answer"] for e in eligible})
         )
         try:
-            official_path = _worker(paths, replay)
+            official_path = _worker(replay)
             metrics, predictions, official_percent = _official(official_path, len(eligible))
             for case, metric, prediction in zip(
                 (case for case in cases if case["status"] == "pending_score"),

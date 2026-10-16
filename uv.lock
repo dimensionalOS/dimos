@@ -41,6 +41,7 @@ dimos-lcm = false
 eclipse-zenoh = false
 edgetam-dimos = false
 can-motor-control = false
+ml-space-benchmark-ky135 = false
 lcm-dimos-fork = false
 md-babel-py = false
 dim-odom = false
@@ -2146,28 +2147,18 @@ sim = [
     { name = "pygame" },
 ]
 space = [
-    { name = "anthropic" },
     { name = "faster-whisper" },
-    { name = "fire" },
-    { name = "func-timeout" },
-    { name = "imageio" },
     { name = "langchain" },
     { name = "langchain-core" },
     { name = "langchain-huggingface" },
     { name = "langchain-ollama" },
     { name = "langchain-openai" },
-    { name = "mdutils" },
-    { name = "networkx", version = "3.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "networkx", version = "3.6.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "ml-space-benchmark-ky135" },
     { name = "ollama" },
     { name = "openai" },
     { name = "openevals" },
-    { name = "pillow" },
     { name = "requests" },
     { name = "sounddevice" },
-    { name = "torch", version = "2.6.0", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')" },
-    { name = "torch", version = "2.7.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'" },
-    { name = "tqdm" },
 ]
 spot = [
     { name = "bosdyn-api" },
@@ -2483,7 +2474,6 @@ requires-dist = [
     { name = "aioquic", marker = "extra == 'web'", specifier = ">=1.2.0" },
     { name = "aiortc", marker = "extra == 'webrtc'", specifier = ">=1.14.0" },
     { name = "annotation-protocol", specifier = ">=1.4.0" },
-    { name = "anthropic", marker = "extra == 'space'" },
     { name = "bleak", specifier = ">=3.0.2" },
     { name = "bosdyn-api", marker = "extra == 'spot'", specifier = ">=4.0.0" },
     { name = "bosdyn-client", marker = "extra == 'spot'", specifier = ">=4.0.0" },
@@ -2515,8 +2505,6 @@ requires-dist = [
     { name = "faster-whisper", marker = "extra == 'agents'", specifier = ">=1.0.0" },
     { name = "ffmpeg-python", marker = "extra == 'web'" },
     { name = "filelock", specifier = ">=3.20,<4" },
-    { name = "fire", marker = "extra == 'space'" },
-    { name = "func-timeout", marker = "extra == 'space'" },
     { name = "gdown", marker = "extra == 'misc'", specifier = ">=5.2.2" },
     { name = "gitpython", specifier = ">=3.1.45" },
     { name = "googlemaps", marker = "extra == 'misc'", specifier = ">=4.10.0" },
@@ -2524,7 +2512,6 @@ requires-dist = [
     { name = "h5py", marker = "extra == 'learning'" },
     { name = "hydra-core", marker = "extra == 'perception'", specifier = ">=1.3.0" },
     { name = "imagecodecs", specifier = ">=2024.6.1" },
-    { name = "imageio", marker = "extra == 'space'" },
     { name = "ipykernel", marker = "extra == 'misc'" },
     { name = "ipython" },
     { name = "jinja2", marker = "extra == 'web'", specifier = ">=3.1.6" },
@@ -2543,10 +2530,9 @@ requires-dist = [
     { name = "matplotlib", specifier = ">=3.7.1" },
     { name = "mcap", marker = "extra == 'learning'", specifier = ">=1.2" },
     { name = "mcap", marker = "extra == 'unitree-dds'", specifier = ">=1.2.0" },
-    { name = "mdutils", marker = "extra == 'space'" },
+    { name = "ml-space-benchmark-ky135", marker = "extra == 'space'", specifier = "==0.1.0" },
     { name = "moondream", marker = "extra == 'perception'" },
     { name = "mujoco", marker = "extra == 'sim'", specifier = ">=3.3.4" },
-    { name = "networkx", marker = "extra == 'space'" },
     { name = "numba", specifier = ">=0.60.0" },
     { name = "numpy", specifier = ">=1.26.4" },
     { name = "ollama", marker = "extra == 'agents'", specifier = ">=0.6.0" },
@@ -2561,7 +2547,6 @@ requires-dist = [
     { name = "packaging", specifier = ">=24.0" },
     { name = "pandas", marker = "extra == 'learning'" },
     { name = "pillow", marker = "extra == 'perception'" },
-    { name = "pillow", marker = "extra == 'space'", specifier = ">=12.2" },
     { name = "pin", specifier = ">=3.3.0" },
     { name = "pin-pink", specifier = ">=4.3.0" },
     { name = "piper-sdk", marker = "extra == 'control'" },
@@ -2606,10 +2591,7 @@ requires-dist = [
     { name = "timm", marker = "extra == 'perception'", specifier = ">=1.0.15" },
     { name = "tokenizers", marker = "extra == 'perception'", specifier = ">=0.21" },
     { name = "toolz", specifier = ">=1.1.0" },
-    { name = "torch", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'space') or (sys_platform == 'win32' and extra == 'space')", specifier = ">=2.1,<2.8", index = "https://download.pytorch.org/whl/cu128" },
-    { name = "torch", marker = "(platform_machine != 'x86_64' and sys_platform == 'linux' and extra == 'space') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'space')", specifier = ">=2.1,<2.8" },
     { name = "torchreid", marker = "extra == 'misc'", specifier = "==0.2.5" },
-    { name = "tqdm", marker = "extra == 'space'" },
     { name = "transformers", extras = ["torch"], marker = "extra == 'perception'", specifier = ">=4.53.0,<4.54" },
     { name = "trimesh", marker = "extra == 'apriltag'", specifier = ">=4.0.0" },
     { name = "trimesh", marker = "extra == 'planning'" },
@@ -5752,6 +5734,32 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/3a/cb/28ce52eb94390dda42599c98ea0204d74799e4d8047a0eb559b6fd648056/ml_dtypes-0.5.4-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:9ad459e99793fa6e13bd5b7e6792c8f9190b4e5a1b45c63aba14a4d0a7f1d5ff", size = 5009002, upload-time = "2025-11-17T22:31:52.001Z" },
     { url = "https://files.pythonhosted.org/packages/f5/f0/0cfadd537c5470378b1b32bd859cf2824972174b51b873c9d95cfd7475a5/ml_dtypes-0.5.4-cp312-cp312-win_amd64.whl", hash = "sha256:c1a953995cccb9e25a4ae19e34316671e4e2edaebe4cf538229b1fc7109087b7", size = 212222, upload-time = "2025-11-17T22:31:53.742Z" },
     { url = "https://files.pythonhosted.org/packages/16/2e/9acc86985bfad8f2c2d30291b27cd2bb4c74cea08695bd540906ed744249/ml_dtypes-0.5.4-cp312-cp312-win_arm64.whl", hash = "sha256:9bad06436568442575beb2d03389aa7456c690a5b05892c471215bfd8cf39460", size = 160793, upload-time = "2025-11-17T22:31:55.358Z" },
+]
+
+[[package]]
+name = "ml-space-benchmark-ky135"
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anthropic" },
+    { name = "fire" },
+    { name = "func-timeout" },
+    { name = "imageio" },
+    { name = "mdutils" },
+    { name = "networkx", version = "3.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "networkx", version = "3.6.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "openai" },
+    { name = "opencv-contrib-python" },
+    { name = "pillow" },
+    { name = "torch", version = "2.6.0", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "torch", version = "2.7.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'" },
+    { name = "tqdm" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d6/21/48a4e1ba8c1ac97dc5dfedd84f321eac077a3400eee151bc8bd00d6c7c65/ml_space_benchmark_ky135-0.1.0.tar.gz", hash = "sha256:079d6316bf6dcfb1eaa2f1899c666f6472d1de061fcc7157eeb152fc04df068b", size = 968100, upload-time = "2026-10-16T19:37:27.054Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2b/93/a3bf21bdde86c27dd062e8b41b42049a1c2a528c620c04b0cfa827a9a156/ml_space_benchmark_ky135-0.1.0-py3-none-any.whl", hash = "sha256:f234a189862a85fa719efd3fa32ea1ddf03a10e1d91006ee910799a2efabd294", size = 68510, upload-time = "2026-10-16T19:37:25.457Z" },
 ]
 
 [[package]]
