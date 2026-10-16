@@ -42,28 +42,10 @@ def memory_context() -> Generator[Memory, None, None]:
         pass
 
 
-# Use Any for context manager type to accommodate both Memory and Redis
+# Use Any for context manager type to accommodate every backend
 testdata: list[tuple[Callable[[], Any], Any, list[Any]]] = [
     (memory_context, "topic", ["value1", "value2", "value3"]),
 ]
-
-try:
-    from dimos.protocol.pubsub.impl.redispubsub import Redis
-
-    @contextmanager
-    def redis_context() -> Generator[Redis, None, None]:
-        redis_pubsub = Redis()
-        redis_pubsub.start()
-        yield redis_pubsub
-        redis_pubsub.stop()
-
-    testdata.append(
-        (redis_context, "redis_topic", ["redis_value1", "redis_value2", "redis_value3"])
-    )
-
-except (ConnectionError, ImportError):
-    # either redis is not installed or the server is not running
-    print("Redis not available")
 
 try:
     from geometry_msgs.msg import Vector3 as ROSVector3
@@ -380,7 +362,7 @@ async def test_async_iterator(
 
         # Wait for the consumer to finish or timeout
         try:
-            await asyncio.wait_for(consumer_task, timeout=1.0)  # Longer timeout for Redis
+            await asyncio.wait_for(consumer_task, timeout=1.0)
         except asyncio.TimeoutError:
             consumer_task.cancel()
             try:

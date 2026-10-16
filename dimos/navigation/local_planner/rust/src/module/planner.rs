@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The SE(2) local planner as a robot-side module; `adapter/planner.py` is the spec. Cloud from
+//! The SE(2) local planner as a robot-side module. Cloud from
 //! `local_map`, pose from tf (`world_frame -> base_frame`), goal a carrot `goal_lookahead_m`
 //! along `planner_path`. A refusal or a stale map publishes a one-pose hold stub.
 
@@ -32,19 +32,18 @@ use crate::module::msg;
 use crate::module::obstacles::{self, ObstacleModel};
 use crate::module::tf_pose::PoseWatch;
 
-/// Mirrors `LocalPlannerConfig` (adapter/planner.py); the python `planner` registry
-/// field does not cross, this module is the rust target planner.
+/// Mirrors `LocalPlannerNativeConfig` (native.py), which owns every default.
 #[native_config]
 #[derive(Clone)]
 #[validate(schema(function = "validate_obstacle_model"))]
 pub struct Config {
-    /// The python module's own value (`embodiment/base.py`), so both halves plan the same robot.
+    /// The body record from `embodiment/base.py`.
     pub embodiment: Emb,
     /// Growth of every planning box per side (m); negative shrinks.
     pub body_dilate_m: f64,
     /// Price multiplier per metre over lattice cells with no floor return; <= 1 turns it off.
     pub unseen_cost: f64,
-    /// Plan discretisation (m); the python reads `planners/base.py RESOLUTION`.
+    /// Waypoint spacing of the published route (m).
     #[validate(range(exclusive_min = 0.0))]
     pub resolution: f64,
     #[validate(range(exclusive_min = 0.0))]
@@ -158,7 +157,7 @@ impl LocalPlanner {
 }
 
 /// `lookahead` metres of arc from the waypoint closest to the robot, clamped to
-/// the route's end; port of `planner.carrot_along`.
+/// the route's end.
 pub fn carrot_along(route: &[[f64; 2]], robot: (f64, f64), lookahead: f64) -> Option<(f64, f64)> {
     let last = route.last()?;
     // np.argmin keeps the first minimum on a tie
@@ -204,8 +203,7 @@ pub fn replan_due(
     }
 }
 
-/// One tick's branch of the replan loop, the python `_plan_loop`'s three-way,
-/// lifted out so it tests without a transport.
+/// One tick's branch of the replan loop, lifted out so it tests without a transport.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Tick {
     /// The map has gone quiet: refuse.
@@ -259,8 +257,7 @@ impl StaleGate {
     }
 }
 
-/// One search plus the precision annotation: `planner.py::_plan_once` then
-/// `planner.py::annotate`. Free so it runs with no transport.
+/// One search plus the precision annotation. Free so it runs with no transport.
 #[allow(clippy::too_many_arguments)]
 pub fn plan_once(
     config: &Config,
@@ -503,7 +500,7 @@ mod tests {
         points.iter().map(|&(x, y)| [x, y]).collect()
     }
 
-    // carrot_along: the cases in adapter/test_planner.py
+    // carrot_along
 
     #[test]
     fn carrot_walks_arc_from_the_closest_waypoint() {
@@ -819,8 +816,7 @@ mod tests {
         assert_eq!(seen.poses.len(), 1, "the walls are still invisible");
     }
 
-    /// Twin of `adapter/test_planner.py::test_a_tall_body_plans_around_what_the_old_band_cut_off`:
-    /// a 0.55 m wall is inside a 0.60 m body's band and outside the absolute 0.05..0.45 one.
+    /// A 0.55 m wall is inside a 0.60 m body's band and outside the absolute 0.05..0.45 one.
     #[test]
     fn a_tall_body_plans_around_what_the_old_band_cut_off() {
         let mut wall: Vec<[f32; 3]> = Vec::new();

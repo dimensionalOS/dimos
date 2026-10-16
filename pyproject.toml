@@ -589,15 +589,6 @@ explicit = true
 ignore = ["DEP002", "DEP004", "DEP005"]
 ignore_notebooks = true
 known_first_party = ["dimos"]
-# Keep default build/venv/gitignore exclusions. These four existing leaf
-# modules have undeclared optional dependencies; keep this debt file-scoped
-# rather than exempting datasets, redis, etc. everywhere in the project.
-extend_exclude = [
-    "^dimos/types/sample\\.py$",  # datasets, gymnasium, jsonref, mbodied
-    "^dimos/protocol/pubsub/impl/redispubsub\\.py$",  # redis
-    "^dimos/stream/audio/tts/node_pytts\\.py$",  # pyttsx3
-    "^dimos/simulation/genesis/simulator\\.py$",  # genesis-world
-]
 
 [tool.deptry.per_rule_ignores]
 # ROS, system bindings, vendor SDKs and in-tree native builds are installed
@@ -761,7 +752,6 @@ module = [
     "lz4",
     "lz4.*",
     "dimos_mls_planner",
-    "dimos_local_planner",
     "dimos_trajectory_follower",
     "dimos_voxel_ray_tracing",
     "etils",
