@@ -46,7 +46,7 @@ from typing import Any
 
 import zenoh
 
-from dimos.constants import STATE_DIR
+from dimos.constants import CACHE_DIR, STATE_DIR
 from dimos.evals.agents.lib.pi_config import Provider, RuntimeConfig, Thinking
 from dimos.evals.agents.lib.pi_to_atif import PiToAtif
 from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
@@ -55,6 +55,7 @@ from dimos.evals.constants import MAX_TOOL_SECONDS, PROVIDERS
 from dimos.evals.runner import _git_record, _write_trajectory, summarize
 from dimos.evals.sandbox.case import (
     AGENT_IMAGE,
+    CASE_MOUNT,
     KILL_AGENT_PROCESSES,
     ROBOT_ENDPOINT,
     ROBOT_IMAGE,
@@ -73,6 +74,8 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 PROXY_PORT = 8080
+# The robot container's cache, kept on this machine between cases.
+ROBOT_CACHE = CACHE_DIR / "evals" / "sandbox_robot"
 # Inside the agent container: the harness files, and where Pi works.
 HARNESS = "/opt/harness"
 # What the done tool answers when its arguments validate; the runner looks for it.
@@ -188,17 +191,21 @@ class SandboxRunner:
             trajectory = self._converse(compose, case, case_dir, exec_in(project, compose_file))
             agent_s = time.monotonic() - agent_t0
             _write_trajectory(case_dir, trajectory, [*self.agent.tools, case.done_tool])
-            if robot is not None:
-                subprocess.run([*compose, "stop", "recorder"], check=True, capture_output=True)
             done = accepted_done(trajectory.steps, case.done_tool)
             if done is None:
                 error = trajectory.extra.error or "the agent never made an accepted done call"
                 return self._result(case, t0, trajectory, agent_s, error=error)
+
+            def stop_recorder() -> Recording:
+                subprocess.run([*compose, "stop", "recorder"], check=True, capture_output=True)
+                return Recording(case_dir / "zenoh.db")
+
             outcome = SandboxOutcome(
                 done=done,
                 trajectory=trajectory,
-                recording=Recording(case_dir / "zenoh.db") if robot is not None else None,
                 exec=exec_in(project, compose_file),
+                case_dir=case_dir,
+                stop_recorder=stop_recorder if robot is not None else None,
             )
             return self._result(case, t0, trajectory, agent_s, score=case.evaluate(outcome))
         except Exception as e:
@@ -272,7 +279,11 @@ class SandboxRunner:
             },
         }
         if robot is not None:
-            services["robot"] = {"image": robot.image, "init": True, **_robot_service(robot)}
+            services["robot"] = {
+                "image": robot.image,
+                "init": True,
+                **_robot_service(robot, case_dir),
+            }
             services["recorder"] = {
                 "image": robot.image,
                 "init": True,
@@ -457,12 +468,23 @@ def _restore_work(compose: list[str], work: Path, staged: Path) -> None:
         shutil.rmtree(staged)
 
 
-def _robot_service(robot: Robot) -> dict[str, Any]:
+def _robot_service(robot: Robot, case_dir: Path) -> dict[str, Any]:
     if isinstance(robot, DimosRobot):
+        from dimos.utils.data import get_data
+
         forward = [a for endpoint in robot.forward for a in ("--forward", endpoint)]
+        hide = [] if robot.expose_dimos else ["--hide-dimos"]
+        ROBOT_CACHE.mkdir(parents=True, exist_ok=True)
         return {
-            "command": ["dimos", "evals", "robot", *forward, "--", *robot.args],
+            "command": ["dimos", "evals", "robot", *forward, *hide, "--", *robot.args],
             "environment": dict(robot.env),
+            "volumes": [
+                # Ground truth the blueprint logs for grading; the agent cannot reach it.
+                f"{case_dir}:{CASE_MOUNT}",
+                # Compiled models and the like survive from one case to the next.
+                f"{ROBOT_CACHE}:/cache",
+                *(f"{get_data(name)}:/app/data/{name}:ro" for name in robot.data),
+            ],
         }
     forward = [a for endpoint in robot.connect for a in ("--forward", endpoint)]
     return {
