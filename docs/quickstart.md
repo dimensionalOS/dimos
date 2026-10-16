@@ -22,7 +22,7 @@ curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/in
 
 If you prefer to read the script before running it, it lives at [scripts/install.sh](https://github.com/dimensionalOS/dimos/blob/main/scripts/install.sh) in the repository.
 
-When the installer finishes, follow its activation command and continue to [Run your first replay](#run-your-first-replay). Python 3.12 is installed automatically if needed.
+When the installer finishes, follow its activation command and continue to [Run your first replay](#run-your-first-replay). Python is installed automatically if needed.
 
 See [installation](/docs/installation/index.md) for library/developer modes, platform support, and extras.
 

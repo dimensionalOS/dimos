@@ -62,7 +62,7 @@ class ZenohRPC(RPCSpec, ZenohService):
         these survive the trip; the far side rebuilds them on first use.
         """
         state = super().__getstate__()  # type: ignore[no-untyped-call]
-        for key in ("_queryables", "_pending"):
+        for key in ("_queryables", "_pending", "_call_counter"):
             state.pop(key, None)
         return state
 
@@ -70,6 +70,7 @@ class ZenohRPC(RPCSpec, ZenohService):
         super().__setstate__(state)
         self._queryables = []
         self._pending = {}
+        self._call_counter = count(1)
 
     def _get_call_thread_pool(self) -> ThreadPoolExecutor:
         return self._call_pool.get()

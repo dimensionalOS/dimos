@@ -372,10 +372,11 @@ jobs:
         with:
           enable-cache: true
           prune-cache: true
-      - name: Install dependency for pyaudio
+      - name: Install dependencies for pyaudio and open3d
         run: |
           sudo apt-get update
-          sudo apt-get install -y portaudio19-dev
+          # open3d>=0.20 links libEGL at import.
+          sudo apt-get install -y portaudio19-dev libegl1
       - name: Install dependencies
         run: uv sync --group tests --frozen
       # Needs Python and Rust: `dimos bake` is Python that writes a Rust program and compiles it, and the tests jobs have no Rust.
@@ -423,11 +424,12 @@ jobs:
           restore-keys: pyo3-${{ runner.os }}-${{ runner.arch }}-
       - name: Install uv
         uses: astral-sh/setup-uv@v10.2.0
-      - name: Install dependency for pyaudio (Ubuntu)
+      - name: Install dependencies for pyaudio and open3d (Ubuntu)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y portaudio19-dev
+          # open3d>=0.20 links libEGL at import.
+          sudo apt-get install -y portaudio19-dev libegl1
       - name: Install dependency for pyaudio (macOS)
         if: runner.os == 'macOS'
         run: brew install portaudio
@@ -453,7 +455,8 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libturbojpeg portaudio19-dev
+          # open3d>=0.20 links libEGL at import.
+          sudo apt-get install -y libturbojpeg portaudio19-dev libegl1
       - name: Install uv
         uses: astral-sh/setup-uv@v10.2.0
         with:
@@ -576,14 +579,11 @@ jobs:
         with:
           enable-cache: true
           prune-cache: true
-      - name: Setup Python
-        uses: actions/setup-python@v7.0.0
-        with:
-          python-version: '3.12'
       - name: Install native dependencies (pyaudio build, JPEG encoding, audio decode)
         run: |
           sudo apt-get update
-          sudo apt-get install -y portaudio19-dev libturbojpeg ffmpeg
+          # open3d>=0.20 links libEGL at import.
+          sudo apt-get install -y portaudio19-dev libturbojpeg ffmpeg libegl1
       - name: Fetch the go2_short replay dataset
         run: git lfs pull --include="data/.lfs/go2_short.db.tar.gz" --exclude=""
       - name: Install dependencies
@@ -615,13 +615,19 @@ jobs:
     timeout-minutes: 20
     strategy:
       matrix:
-        pyver: ['3.10', '3.11', '3.12']
+        pyver: ['3.10', '3.11', '3.12', '3.13', '3.14']
         os: ["macos-latest", "ubuntu-latest"]
         experimental: [false]
         include:
           - os: "ubuntu-24.04-arm"
-            pyver: "3.12"
+            pyver: "3.14"
             experimental: false
+          - os: "ubuntu-latest"
+            pyver: "3.15"
+            experimental: true
+          - os: "macos-latest"
+            pyver: "3.15"
+            experimental: true
       fail-fast: true
     runs-on: ${{ matrix.os }}
     continue-on-error: ${{ matrix.experimental }}
@@ -661,7 +667,8 @@ jobs:
         if: startsWith(matrix.os, 'ubuntu')
         run: |
           sudo apt-get update
-          sudo apt-get install -y portaudio19-dev libturbojpeg ffmpeg
+          # open3d>=0.20 links libEGL at import.
+          sudo apt-get install -y portaudio19-dev libturbojpeg ffmpeg libegl1
       - name: Install dependency for pyaudio (macOS)
         if: startsWith(matrix.os, 'macos')
         run: brew install portaudio ffmpeg
@@ -791,12 +798,21 @@ jobs:
                 # provision step roots the live closure so GC keeps it.
                 - /var/cache/dimos-nix:/nix
             markers: "self_hosted or skipif_no_ros"
+            # Follows .python-version: the ros-dev image's ROS debs are built
+            # for its Ubuntu's Python and reach the venv through PYTHONPATH, so
+            # the two must match (see docker/ros/Dockerfile). On a mismatch the
+            # skipif_no_ros tests fail at import instead of skipping (conftest).
+            pyver: ""
             experimental: false
           - os: macOS
             container: null  # run on host — `container:` is Linux-only
             # web_browser: the cockpit browser e2e that Linux runs in the `web` job.
             # native_e2e: livox live loopback; hosted macOS has no nix-built binaries, Linux runs it in tests.
             markers: "self_hosted or web_browser or native_e2e"
+            # Behind .python-version: on 3.14 the planning extra needs
+            # drake>=1.47, whose macOS arm64 wheels require macOS 15. Unpin
+            # once the runner is confirmed on macOS 15 or newer.
+            pyver: "3.12"
             experimental: false
     runs-on:
       - self-hosted
@@ -834,6 +850,8 @@ jobs:
         with:
           # We persist on disk above, cache would clean some of this up.
           enable-cache: false
+          # Empty follows .python-version; the matrix explains each leg.
+          python-version: ${{ matrix.pyver }}
       - name: Install codecov CLI
         # Self-hosted runners have no `pip` on PATH, so codecov-action's
         # use_pypi can't work here; pre-install the pinned CLI with uv and
@@ -844,6 +862,25 @@ jobs:
           uv pip install --python .codecov-venv/bin/python codecov-cli==11.2.8
       - name: Install dependencies
         run: uv sync --group tests-self-hosted --frozen
+      - name: Start a PulseAudio server for PortAudio
+        # Ubuntu 26.04's PortAudio is built with the PulseAudio host API and
+        # Pa_Initialize fails outright when no server answers, which breaks
+        # `import sounddevice` (unitree_webrtc_connect imports it eagerly).
+        # A daemon with the null sink is enough; root needs --daemonize.
+        # HOME is /github/home, a bind mount owned by the runner's host user,
+        # and PulseAudio refuses a home directory it does not own ("Home
+        # directory not accessible"), daemon and client alike: keep its
+        # runtime and state directories under RUNNER_TEMP instead, and hand
+        # the runtime path to every later step so clients find the socket.
+        if: matrix.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pulseaudio
+          echo "PULSE_RUNTIME_PATH=$RUNNER_TEMP/pulse" >> "$GITHUB_ENV"
+          export PULSE_RUNTIME_PATH="$RUNNER_TEMP/pulse" PULSE_STATE_PATH="$RUNNER_TEMP/pulse-state"
+          pulseaudio --daemonize=yes --exit-idle-time=-1 --log-target="file:$RUNNER_TEMP/pulseaudio.log" ||
+            { cat "$RUNNER_TEMP/pulseaudio.log"; exit 1; }
+          uv run python -c "import sounddevice"
       - name: Install web_browser e2e dependencies (macOS)
         if: matrix.os == 'macOS'
         run: |
@@ -1093,6 +1130,19 @@ jobs:
             libxkbcommon-x11-0
       - name: Install dependencies
         run: uv sync --group tests-self-hosted --frozen
+      - name: Start a PulseAudio server if PortAudio needs one
+        # Ubuntu 26.04's PortAudio is built with the PulseAudio host API and
+        # Pa_Initialize fails outright when no server answers, which breaks
+        # `import sounddevice` (unitree_webrtc_connect imports it eagerly).
+        # Older hosts link ALSA only and skip this. The daemon outlives the
+        # job, so later runs find it and skip too. --no-remove: never trade
+        # the host's own audio stack (pipewire-pulse) for the daemon.
+        run: |
+          if ! uv run python -c "import sounddevice" 2>/dev/null; then
+            sudo apt-get install -y --no-remove pulseaudio
+            pulseaudio --daemonize=yes --exit-idle-time=-1
+            uv run python -c "import sounddevice"
+          fi
       - name: Build C++ extensions in-place
         run: uv run python setup.py build_ext --inplace
       - name: Build DimSim and install its headless Chromium
@@ -1184,7 +1234,8 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y portaudio19-dev libturbojpeg
+          # open3d>=0.20 links libEGL at import.
+          sudo apt-get install -y portaudio19-dev libturbojpeg libegl1
       # LCM lidar/image UDP fragments drop with small kernel buffers; the
       # in-process configurator (64MB) skips under pytest, so do it here.
       - name: Raise UDP receive buffers for LCM

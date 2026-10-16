@@ -6,14 +6,14 @@ FROM ubuntu:24.04
 # dimos/simulation/dimsim/deno_utils.py (playwright version).
 ARG DENO_VERSION=v2.6.10
 ARG PLAYWRIGHT_VERSION=1.58.2
-ARG PYTHON_VERSION=3.12
+ARG PYTHON_VERSION=3.14
 
 ENV DEBIAN_FRONTEND=noninteractive
 
 # The self-hosted CI job's apt list plus Chromium's runtime libs.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl wget git unzip build-essential pkg-config \
-    libgl1 libturbojpeg portaudio19-dev \
+    libgl1 libegl1 libturbojpeg portaudio19-dev \
     libatk1.0-0 libatk-bridge2.0-0 libcairo2 libcups2 libgbm1 \
     libpango-1.0-0 libxcomposite1 libxdamage1 libxkbcommon0 libxrandr2 \
     libxkbcommon-x11-0 libnss3 libnspr4 libasound2t64 libatspi2.0-0 \

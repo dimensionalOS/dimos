@@ -15,7 +15,10 @@
 import pytest
 import reactivex as rx
 
-from dimos.stream.audio.node_output import SounddeviceAudioOutput
+from dimos.stream.audio.node_output import SounddeviceAudioOutput, sd
+
+if sd is None:
+    pytest.skip("sounddevice could not initialize PortAudio", allow_module_level=True)
 
 
 @pytest.fixture

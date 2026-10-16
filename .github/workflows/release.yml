@@ -123,6 +123,10 @@ jobs:
       CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_34  # open3d>=0.19 requires glibc 2.31+
       # Asserts the packaged relay + Cockpit and serves them from the installed wheel.
       CIBW_TEST_COMMAND: "python {project}/.github/scripts/wheel_smoke.py"
+      # open3d>=0.20, the only release with cp313/cp314 wheels, is tagged
+      # manylinux_2_35: pip rejects it inside the glibc 2.34 build container,
+      # so those wheels cannot be smoke-tested in place.
+      CIBW_TEST_SKIP: "cp313-manylinux_* cp314-manylinux_*"
       MACOSX_DEPLOYMENT_TARGET: "11.0"
     steps:
       - name: Checkout

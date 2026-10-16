@@ -149,7 +149,7 @@ class OmDetDetector(HuggingFaceModel):
             scale = torch.tensor([pil.width, pil.height, pil.width, pil.height], device=rows.device)
             boxes = center_to_corners_format(outputs.decoder_coord_logits[0]) * scale
             survivors = batched_nms(boxes[pairs // n_queries], scores, pairs % n_queries, 0.5)
-            proposals = (pairs[survivors] // n_queries).unique()
+            proposals = torch.unique(pairs[survivors] // n_queries)
             kept_boxes = boxes[proposals].float().cpu().numpy()
             kept_rows = rows[proposals].float().cpu().numpy()
 

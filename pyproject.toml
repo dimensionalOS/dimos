@@ -77,7 +77,7 @@ authors = [
 ]
 version = "0.0.14"
 description = "Powering agentive generalist robotics"
-requires-python = ">=3.10,<3.13"
+requires-python = ">=3.10,<3.16"
 readme = {file = "README.md", content-type = "text/markdown"}
 license = {text = "Apache-2.0"}
 keywords = ["robotics", "ros", "agents", "dimos", "dimensional", "openclaw", "roboclaw", "humanoid", "unitree"]
@@ -91,6 +91,8 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Software Development :: Libraries :: Application Frameworks",
     "Topic :: Scientific/Engineering :: Image Processing",
@@ -102,7 +104,9 @@ classifiers = [
 dependencies = [
     "matplotlib>=3.7.1", # Rerun initializes point-cloud colormaps for all streams.
     # Transport Protocols
-    "dimos-lcm>=0.1.4",
+    "dimos-lcm>=0.1.5", # First release on upstream lcm instead of lcm-dimos-fork.
+    # 1.5.3 is the first upstream release with the lcm-proj/lcm#621 unsubscribe fix.
+    "lcm>=1.5.3",
     "eclipse-zenoh>=1.10.1,<2.0",
     "PyTurboJPEG==1.8.2",
     "imagecodecs>=2024.6.1", # JPEG-XL for CompressedImage
@@ -132,8 +136,9 @@ dependencies = [
     # trackers (perception/drone) are contrib-only. <5 defers the OpenCV 5
     # major bump. See also the opencv-python entry in override-dependencies.
     "opencv-contrib-python>=4.8,<5",
-    "open3d-unofficial-arm>=0.19.0.post9; platform_system == 'Linux' and platform_machine == 'aarch64'",
-    "open3d>=0.18.0; platform_system != 'Linux' or platform_machine != 'aarch64'",
+    # 0.20.0 is the first release with cp313/cp314 wheels and official
+    # linux-aarch64 wheels (manylinux_2_35, so glibc 2.35+ there).
+    "open3d>=0.18.0",
     # CLI
     "pydantic-settings>=2.11.0,<3",
     "textual==3.7.1",
@@ -149,7 +154,7 @@ dependencies = [
     # TODO: rerun shouldn't be required but rn its in core (there is NO WAY to use dimos without rerun rn)
     # remove this once rerun is optional in core
     "rerun-sdk==0.32.0",
-    "dimos-viewer==0.32.0a2",
+    "dimos-viewer==0.32.0a3",
     "toolz>=1.1.0",
     "protobuf>=6.33.5,<7",
     "psutil>=7.0.0",
@@ -199,7 +204,7 @@ spot = [
 
 visualization = [
     "rerun-sdk==0.32.0",
-    "dimos-viewer==0.32.0a2",
+    "dimos-viewer==0.32.0a3",
     # Rerun URDF robot visualization. yourdfpy depends on trimesh[easy],
     # which pulls embreex; embreex has no Linux aarch64 wheel.
     "yourdfpy>=0.0.60; sys_platform != 'linux' or platform_machine != 'aarch64'",
@@ -278,14 +283,18 @@ control = [
     "xarm-python-sdk>=1.17.0",
     "can-motor-control>=0.0.8",
     "python-can>=4",
-    "pygame>=2.6.1",
+    # The maintained fork; pygame itself stopped at cp313 wheels. Same `pygame` import.
+    "pygame-ce>=2.5.5",
     "xacro",
 ]
 
 # Motion planning and its interactive visualization, without perception or agents.
 planning = [
     "dimos[control]",
-    "drake==1.45.0; sys_platform == 'darwin' and platform_machine != 'aarch64'",
+    # macOS: 1.45.0 is the last release with macOS 14 wheels (cp312/cp313);
+    # from 1.47 the wheels are cp313/cp314 and need macOS 15.
+    "drake==1.45.0; sys_platform == 'darwin' and platform_machine != 'aarch64' and python_version < '3.14'",
+    "drake>=1.47.0; sys_platform == 'darwin' and platform_machine != 'aarch64' and python_version >= '3.14'",
     "drake>=1.40.0; sys_platform != 'darwin' and platform_machine != 'aarch64'",
     "roboplan>=0.7.0,<0.8.0",
     # Mesh conversion (STL/DAE → OBJ for Drake collision geometry)
@@ -307,7 +316,8 @@ cpu = [
 ]
 
 cuda = [
-    "cupy-cuda12x==13.6.0; platform_machine == 'x86_64'",
+    # 14 is the first line with cp314 wheels.
+    "cupy-cuda12x>=14; platform_machine == 'x86_64'",
     "onnxruntime-gpu>=1.21; platform_machine == 'x86_64'",  # >=1.21 for onnxruntime.preload_dlls()
     # MeshModule's marching cubes
     "warp-lang>=1.13",
@@ -317,7 +327,7 @@ sim = [
     # Simulation
     "mujoco>=3.3.4",
     "playground>=0.0.5",
-    "pygame>=2.6.1",
+    "pygame-ce>=2.5.5",
 ]
 
 mapping = [
@@ -386,9 +396,10 @@ autofix = ["ruff==0.14.3"]
 # Project deps shared by `tests` and `lint`.
 project-deps = [
     "dimos[web,visualization,webrtc]",
-    # Blackwell (sm_120) needs torch 2.7 from pytorch-cu128. Cap below 2.8.
-    "torch>=2.1,<2.8",
-    "torchvision>=0.16,<0.23",
+    # Blackwell (sm_120) needs the pytorch-cu128 index. 2.9 is the first line
+    # with cp314 wheels and 2.11 the last one published for cu128.
+    "torch>=2.9,<2.12",
+    "torchvision>=0.24,<0.27",
     "langchain==1.2.3",
     "langchain-core==1.3.3",
     "googlemaps>=4.10.0",
@@ -450,7 +461,7 @@ tests = [
     # Tests-only installs need core for native point-cloud Narrowphase queries.
     "roboplan-core>=0.7.0,<0.8.0",
     "mujoco>=3.3.4",
-    "pygame>=2.6.1",
+    "pygame-ce>=2.5.5",
     "python-can>=4",
     "unitree-webrtc-connect>=2.1.2",
     "viser[urdf]>=1.0.29; sys_platform != 'linux' or platform_machine != 'aarch64'",
@@ -504,6 +515,11 @@ tests-self-hosted = [
     # Needed to compile the in-tree extensions.
     "pybind11>=2.12",
     "dim-odom>=0.4.1",
+    # ROS Lyrical's generated message modules import rosidl_pycommon and
+    # rosidl_parser, which import empy and lark at module level. The ROS debs
+    # take them from the system Python; the sealed venv has to bring its own.
+    "empy>=4",
+    "lark>=1.1.1",
 ]
 docs = [
     "mkdocs-awesome-nav>=3.3.0",
@@ -520,7 +536,7 @@ dev = [
 required-version = ">=0.9.25"
 default-groups = ["tests"]
 exclude-newer = "7 days"
-exclude-newer-package = { dimos-viewer = false, dimos-lcm = false, lcm-dimos-fork = false, roboplan = false, md-babel-py = false, can-motor-control = false, edgetam-dimos = false, dim-odom = false, eclipse-zenoh = false }
+exclude-newer-package = { dimos-viewer = false, dimos-lcm = false, roboplan = false, md-babel-py = false, can-motor-control = false, edgetam-dimos = false, dim-odom = false, eclipse-zenoh = false }
 constraint-dependencies = [
     # TODO(PY311): drop this fork. onnxruntime(-gpu) 1.24 dropped cp310
     # wheels, so 3.10 environments resolve 1.23.x (matching what a 3.10
@@ -546,9 +562,9 @@ override-dependencies = [
     # uv picks importlib-metadata>=9 and cascades the otel stack down to 1.11.1,
     # whose stale _pb2.py files crash with protobuf>=6.
     "importlib-metadata<8.8.0",
-    # Force the torch 2.7 line even if a transitive dep asks for newer.
-    "torch>=2.1,<2.8",
-    "torchvision>=0.16,<0.23",
+    # Force the torch 2.9–2.11 lines even if a transitive dep asks for newer.
+    "torch>=2.9,<2.12",
+    "torchvision>=0.24,<0.27",
 ]
 
 [tool.uv.sources]
@@ -713,6 +729,13 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = ["pydrake", "pydrake.*"]
 follow_imports = "skip"
+
+# open3d>=0.20 ships stubs that reject valid calls (Tensor without a device,
+# str paths to the io functions), so keep treating it as untyped.
+[[tool.mypy.overrides]]
+module = ["open3d", "open3d.*"]
+follow_imports = "skip"
+follow_imports_for_stubs = true
 
 [[tool.mypy.overrides]]
 module = ["transformers", "transformers.*"]

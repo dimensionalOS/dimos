@@ -40,6 +40,8 @@ jobs:
       - name: Build one wheel
         uses: pypa/cibuildwheel@v4.2.1
         with:
+          # The newest Linux build whose smoke test can run inside the
+          # container; see CIBW_TEST_SKIP in release.yml.
           only: cp312-manylinux_x86_64
 
   build-sdist:

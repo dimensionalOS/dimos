@@ -49,7 +49,7 @@
           { vals.pkg=pkgs.unixtools.netstat;  flags={}; }
 
           # when pip packages call cc with -I/usr/include, that causes problems on some machines, this swaps that out for the nix cc headers
-          # this is only necessary for pip packages from venv, pip packages from nixpkgs.python312Packages.* already have "-I/usr/include" patched with the nix equivalent
+          # this is only necessary for pip packages from venv, pip packages from nixpkgs.python314Packages.* already have "-I/usr/include" patched with the nix equivalent
           {
             vals.pkg=(pkgs.writeShellScriptBin
               "cc-no-usr-include"
@@ -78,10 +78,10 @@
           }
 
           ### Python + static analysis
-          { vals.pkg=pkgs.python312;                    flags={}; vals.pythonMinorVersion="12";}
-          { vals.pkg=pkgs.python312Packages.pip;        flags={}; }
-          { vals.pkg=pkgs.python312Packages.setuptools; flags={}; }
-          { vals.pkg=pkgs.python312Packages.virtualenv; flags={}; }
+          { vals.pkg=pkgs.python314;                    flags={}; vals.pythonMinorVersion="14";}
+          { vals.pkg=pkgs.python314Packages.pip;        flags={}; }
+          { vals.pkg=pkgs.python314Packages.setuptools; flags={}; }
+          { vals.pkg=pkgs.python314Packages.virtualenv; flags={}; }
           { vals.pkg=pkgs.uv;                             flags={}; }
           { vals.pkg=pkgs.pre-commit;                   flags={}; }
 
@@ -128,7 +128,7 @@
           { vals.pkg=pkgs.gst_all_1.gst-plugins-good;   flags={}; onlyIf=pkgs.stdenv.isLinux; }
           { vals.pkg=pkgs.gst_all_1.gst-plugins-bad;    flags={}; onlyIf=pkgs.stdenv.isLinux; }
           { vals.pkg=pkgs.gst_all_1.gst-plugins-ugly;   flags={}; onlyIf=pkgs.stdenv.isLinux; }
-          { vals.pkg=pkgs.python312Packages.gst-python; flags={}; onlyIf=pkgs.stdenv.isLinux; }
+          { vals.pkg=pkgs.python314Packages.gst-python; flags={}; onlyIf=pkgs.stdenv.isLinux; }
 
           ### Open3D & build-time
           { vals.pkg=pkgs.eigen;         flags={}; }
@@ -201,7 +201,7 @@
           export PKG_CONFIG_PATH=${lib.escapeShellArg packageConfPackagesString}
           export PYTHONPATH="$PYTHONPATH:"${lib.escapeShellArg manualPythonPackages}
           # Strip 3.13 site-packages leaked by setup hooks of py-built tools
-          # (pre-commit etc). They shadow the uv-managed 3.12's _sysconfigdata,
+          # (pre-commit etc). They shadow the uv-managed 3.14's _sysconfigdata,
           # making sysconfig report SOABI=cpython-313, which trips setuptools
           # wheel-tag validation.
           export PYTHONPATH="$(printf '%s' "$PYTHONPATH" | tr ':' '\n' | grep -v '/python3\.13/' | paste -sd:)"

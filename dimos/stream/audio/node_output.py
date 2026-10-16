@@ -18,12 +18,22 @@ from typing import Any
 
 import numpy as np
 from reactivex import Observable
-import sounddevice as sd  # type: ignore[import-untyped]
 
 from dimos.stream.audio.base import (
     AbstractAudioTransform,
 )
 from dimos.utils.logging_config import setup_logger
+
+# sounddevice initializes PortAudio on import. PortAudio 19.7 (Ubuntu 26.04)
+# aborts that when its PulseAudio host API finds no server, so headless hosts
+# cannot import sounddevice at all; keep this module importable and report the
+# failure when a stream is opened.
+_sounddevice_error: Exception | None = None
+try:
+    import sounddevice as sd  # type: ignore[import-untyped]
+except Exception as exc:
+    sd = None
+    _sounddevice_error = exc
 
 logger = setup_logger()
 
@@ -83,6 +93,8 @@ class SounddeviceAudioOutput(AbstractAudioTransform):
         # available (e.g. in CI / headless), log and continue — audio events
         # will still be drained from the observable and silently dropped.
         try:
+            if sd is None:
+                raise RuntimeError(f"sounddevice is unavailable: {_sounddevice_error}")
             self._stream = sd.OutputStream(
                 device=self.device_index,
                 samplerate=self.sample_rate,
@@ -169,6 +181,8 @@ class SounddeviceAudioOutput(AbstractAudioTransform):
 
     def get_available_devices(self) -> list[dict[str, Any]]:
         """Get a list of available audio output devices."""
+        if sd is None:
+            raise RuntimeError(f"sounddevice is unavailable: {_sounddevice_error}")
         return sd.query_devices()  # type: ignore[no-any-return]
 
 

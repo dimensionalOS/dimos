@@ -6,9 +6,9 @@ Use the official installer on macOS 14 or newer:
 curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/install.sh | bash
 ```
 
-macOS 14 is the supported minimum for the current installer. The default developer environment includes ONNX Runtime 1.24.1 and Drake 1.45.0, whose Apple Silicon wheels require macOS 14. Some older library combinations may work on earlier macOS releases, but this installer does not support or validate those combinations.
+Developer mode installs Python 3.14 and needs macOS 15, because Drake 1.47 and newer only ship Apple Silicon wheels for macOS 15. On macOS 14, follow the manual developer steps below with Python 3.13 in place of 3.14; that keeps Drake 1.45.0, the last release with macOS 14 wheels. Library mode installs the published release on Python 3.12 and runs on macOS 14. Some older library combinations may work on earlier macOS releases, but this installer does not support or validate those combinations.
 
-The installer sets up Homebrew dependencies, uv, Python 3.12, and dimOS. Choose **library** for the published package or **dev** for a source checkout. Follow the printed activation command when it finishes.
+The installer sets up Homebrew dependencies, uv, Python, and dimOS. Choose **library** for the published package or **dev** for a source checkout. Follow the printed activation command when it finishes.
 
 Apple Silicon is the target macOS configuration. macOS CI is paused because runner capacity is exhausted; the current installer needs local validation. Package and hardware support can differ from Linux.
 
@@ -37,6 +37,7 @@ export PATH="$HOME/.local/bin:$PATH"
 
 ```sh skip
 mkdir dimos-app && cd dimos-app
+# The published release supports Python 3.10 to 3.12 until the next release.
 uv venv --python 3.12
 source .venv/bin/activate
 uv pip install --torch-backend cpu 'dimos[base,unitree,sim]'
@@ -48,7 +49,7 @@ uv run dimos --help
 ```sh skip
 GIT_LFS_SKIP_SMUDGE=1 git clone https://github.com/dimensionalOS/dimos.git
 cd dimos
-uv sync --locked --python 3.12 --extra manipulation --extra unitree --extra cpu --group tests --group lint
+uv sync --locked --python 3.14 --extra manipulation --extra unitree --extra cpu --group tests --group lint
 source .venv/bin/activate
 uv run --no-sync dimos --help
 ```
