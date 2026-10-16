@@ -33,6 +33,7 @@ from dimos.evals.suites.lib.space import data
 from dimos.evals.suites.lib.space.constants import (
     DATA_MEMBER,
     DOWNLOAD_TIMEOUT_S,
+    SPACE_REVISION,
 )
 
 
@@ -186,7 +187,7 @@ def test_concurrent_setup_downloads_data_once(
         return response
 
     mocker.patch.object(data, "FileLock", side_effect=setup_lock)
-    mocker.patch.object(data, "verify_package")
+    mocker.patch.object(data, "verify_package").return_value.version = "9.9.9"
     mocker.patch.object(data, "load_examples", return_value=())
     get = mocker.patch.object(requests, "get", side_effect=download)
     first = setup_workers.submit(data.setup, paths)
@@ -197,6 +198,8 @@ def test_concurrent_setup_downloads_data_once(
         len(archive_bytes(payload)),
         0,
     ]
+    assert all(result["space_package_version"] == "9.9.9" for result in results)
+    assert all(result["space_revision"] == SPACE_REVISION for result in results)
     assert get.call_count == 1
     assert paths.questions.read_bytes() == payload
 
@@ -218,7 +221,7 @@ def test_failed_download_releases_setup_lock(
     response = mocker.MagicMock()
     response.__enter__.return_value = response
     response.raw = io.BytesIO(archive_bytes(payload))
-    mocker.patch.object(data, "verify_package")
+    mocker.patch.object(data, "verify_package").return_value.version = "9.9.9"
     mocker.patch.object(data, "load_examples", return_value=())
     mocker.patch.object(requests, "get", side_effect=[requests.ConnectionError("failed"), response])
     with pytest.raises(requests.ConnectionError, match="failed"):

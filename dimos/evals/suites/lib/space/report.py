@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from importlib.metadata import PackageNotFoundError, version
 import json
 import math
 from pathlib import Path
@@ -28,6 +29,7 @@ from typing import Any
 from dimos.evals.suites.lib.space.constants import (
     DATA_SHA256,
     SELECTED_INDICES,
+    SPACE_PACKAGE,
     SPACE_REVISION,
     TASK,
 )
@@ -250,10 +252,15 @@ def score_run(paths: SpacePaths, run_dir: Path) -> dict[str, Any]:
     counts = Counter(case["status"] for case in cases)
     scored = sum(case["official_accuracy"] is not None for case in cases)
     complete = scored == len(examples)
+    try:
+        package_version: str | None = version(SPACE_PACKAGE)
+    except PackageNotFoundError:
+        package_version = None
     report: dict[str, Any] = {
         "schema_version": 1,
         "task": TASK,
         "space_revision": SPACE_REVISION,
+        "space_package_version": package_version,
         "data_sha256": DATA_SHA256,
         "run_dir": str(run_dir),
         "complete": complete,

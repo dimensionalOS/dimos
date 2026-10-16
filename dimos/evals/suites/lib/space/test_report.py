@@ -17,6 +17,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 import hashlib
+from importlib.metadata import PackageNotFoundError
 import json
 from pathlib import Path
 import subprocess
@@ -26,7 +27,7 @@ import pytest
 from pytest_mock import MockerFixture
 
 from dimos.evals.suites.lib.space import data, report
-from dimos.evals.suites.lib.space.constants import SELECTED_INDICES
+from dimos.evals.suites.lib.space.constants import SELECTED_INDICES, SPACE_PACKAGE, SPACE_REVISION
 from dimos.evals.suites.lib.space.data import Example, SpacePaths
 
 
@@ -139,8 +140,12 @@ def worker(mocker: MockerFixture) -> dict[str, Any]:
 
 @pytest.mark.parametrize("final_newline", ["\n", ""], ids=["newline", "no-newline"])
 def test_uses_only_official_metrics_and_preserves_every_raw_reply(
-    make_run: Callable[..., SavedRun], worker: dict[str, Any], final_newline: str
+    make_run: Callable[..., SavedRun],
+    worker: dict[str, Any],
+    final_newline: str,
+    mocker: MockerFixture,
 ) -> None:
+    mocker.patch.object(report, "version", return_value="9.9.9")
     saved = make_run(SELECTED_INDICES[3::-1])
     path = saved.directory / "results.jsonl"
     path.write_text(path.read_text().removesuffix("\n") + final_newline)
@@ -158,6 +163,8 @@ def test_uses_only_official_metrics_and_preserves_every_raw_reply(
     assert result["complete"]
     assert not result["fixed_subset_complete"]
     assert result["official_percent"] == 25.0
+    assert result["space_package_version"] == "9.9.9"
+    assert result["space_revision"] == SPACE_REVISION
     assert result["scored_denominator"] == 4
     assert [c["case_id"] for c in result["cases"]] == [e.case_id for e in saved.examples]
     assert [c["status"] for c in result["cases"]] == [
@@ -184,13 +191,16 @@ def test_exact_fixed_subset_is_complete(
 
 
 def test_missing_outer_results_keeps_traces_diagnostic_without_scoring(
-    make_run: Callable[..., SavedRun], worker: dict[str, Any]
+    make_run: Callable[..., SavedRun], worker: dict[str, Any], mocker: MockerFixture
 ) -> None:
+    mocker.patch.object(report, "version", side_effect=PackageNotFoundError(SPACE_PACKAGE))
     saved = make_run()
     (saved.directory / "results.jsonl").unlink()
     result = report.score_run(saved.paths, saved.directory)
     assert not result["complete"]
     assert result["counts"]["unreported"] == 4
+    assert result["space_package_version"] is None
+    assert json.loads(Path(result["report_path"]).read_text()) == result
     assert result["scored_denominator"] == 0
     assert result["official_percent"] is None
     assert all(c["trace"]["valid"] for c in result["cases"])
@@ -329,6 +339,20 @@ def test_failed_or_malformed_official_replay_remains_incomplete(
     assert result["counts"]["infrastructure_error"] == 1
     assert result["scored_denominator"] == 0
     assert result["official_percent"] is None
+
+
+def test_missing_package_metadata_preserves_worker_failure_report(
+    make_run: Callable[..., SavedRun], worker: dict[str, Any], mocker: MockerFixture
+) -> None:
+    mocker.patch.object(report, "version", side_effect=PackageNotFoundError(SPACE_PACKAGE))
+    saved = make_run(SELECTED_INDICES[:1])
+    worker["returncode"] = 9
+    result = report.score_run(saved.paths, saved.directory)
+    assert result["space_package_version"] is None
+    assert not result["complete"]
+    assert "exit code 9" in result["scoring_error"]
+    assert result["counts"]["infrastructure_error"] == 1
+    assert json.loads(Path(result["report_path"]).read_text()) == result
 
 
 def test_worker_timeout_is_an_infrastructure_failure(

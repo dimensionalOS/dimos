@@ -156,13 +156,14 @@ def acquire_data(destination: Path) -> int:
 
 def setup(paths: SpacePaths) -> dict[str, Any]:
     """Validate the installed scorer and acquire one unchanged data file."""
-    verify_package()
+    installed = verify_package()
     paths.root.mkdir(parents=True, exist_ok=True)
     with FileLock(paths.root / "setup.lock"):
         downloaded = acquire_data(paths.questions)
         examples = load_examples(paths)
         return {
             "space_revision": SPACE_REVISION,
+            "space_package_version": installed.version,
             "data_sha256": DATA_SHA256,
             "downloaded_compressed_bytes": downloaded,
             "selected_cases": [example.identity() for example in examples],

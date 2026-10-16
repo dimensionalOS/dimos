@@ -20,9 +20,9 @@ uv run --no-sync dimos evals setup space
 ```
 
 The `space` extra installs the pinned `ml-space-benchmark-ky135` package.
-Setup downloads one unchanged
-`qas.json` into `CACHE_DIR/evals/space`. It streams only as far as that archive member, verifies
-its size and SHA-256, and rejects mismatched cached inputs. Pins and limits are in
+Setup downloads the task's `qas.json` into `CACHE_DIR/evals/space`. It streams only
+as far as that archive member, verifies its size and SHA-256, and rejects
+mismatched cached inputs. Pins and limits are in
 [`evals/suites/lib/space/constants.py`](/dimos/evals/suites/lib/space/constants.py).
 Suite imports do not download anything.
 
@@ -35,9 +35,8 @@ publish IDs, hashes, configuration, and derived metrics. Check the terms before
 commercial use or redistribution.
 
 The `tests-self-hosted` group includes the `space` extra; `all` and default tests
-do not select it. The SPACE package includes PyTorch because an upstream helper imports
-it eagerly.
-No Habitat simulator or vLLM model is launched.
+do not select it. The SPACE package depends on PyTorch because an upstream helper
+imports it eagerly. No Habitat simulator or vLLM model is launched.
 
 ## Run and score
 
@@ -75,11 +74,12 @@ The authoritative aggregate uses unmodified `space.evaluate_qas.main`.
 Empty and malformed replies remain in the official denominator. Inspect provider
 responses to distinguish token-exhausted replies from completed answers.
 
-`report.json` records IDs, question hashes, case scores, the aggregate, and counts
-for correct, wrong, invalid, out-of-range, timeout, infrastructure-error, and
-unreported cases. `complete` means every selected case was scored without
-results-file corruption; `fixed_subset_complete` also requires the full frozen
-subset. Neither guarantees correct answers or normal provider completion.
+`report.json` records the upstream revision, installed package version, IDs,
+question hashes, case scores, the aggregate, and counts for correct, wrong,
+invalid, out-of-range, timeout, infrastructure-error, and unreported cases.
+`complete` means every selected case was scored without results-file corruption;
+`fixed_subset_complete` also requires the full frozen subset. Neither guarantees
+correct answers or normal provider completion.
 Missing, failed, and timed-out cases remain visible but unscored.
 
 Without `results.jsonl`, a run stays unreported even if trajectories exist.

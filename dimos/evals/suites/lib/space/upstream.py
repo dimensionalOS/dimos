@@ -19,37 +19,29 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 import importlib
-from importlib.metadata import PackageNotFoundError, distribution
+from importlib.metadata import Distribution, PackageNotFoundError, distribution
 from pathlib import Path
 import sys
 from types import ModuleType
 from typing import Any
 
-from dimos.evals.suites.lib.space.constants import (
-    SOURCE_SHA256,
-    SPACE_PACKAGE,
-    SPACE_PACKAGE_VERSION,
-)
+from dimos.evals.suites.lib.space.constants import SOURCE_SHA256, SPACE_PACKAGE
 
 
-def verify_package() -> Path:
-    """Require the pinned distribution and unchanged official scorer files."""
+def verify_package() -> Distribution:
+    """Return the installed distribution after verifying the official scorer files."""
     try:
         installed = distribution(SPACE_PACKAGE)
     except PackageNotFoundError as exc:
         raise RuntimeError(
             f"{SPACE_PACKAGE} is not installed. Install dimos[space] before setup or scoring"
         ) from exc
-    if installed.version != SPACE_PACKAGE_VERSION:
-        raise ValueError(
-            f"SPACE package version {installed.version} does not match {SPACE_PACKAGE_VERSION}"
-        )
     root = Path(str(installed.locate_file(""))).resolve(strict=True)
     for relative, expected in SOURCE_SHA256.items():
         actual = hashlib.sha256((root / relative).read_bytes()).hexdigest()
         if actual != expected:
             raise ValueError(f"SPACE source hash mismatch: {relative}")
-    return root
+    return installed
 
 
 def question_digest(question: str) -> str:
@@ -110,7 +102,8 @@ class OfficialSpace:
 
     def prepare(self) -> None:
         """Load the installed evaluator before execution; call serially to register the adapter."""
-        source = verify_package()
+        installed = verify_package()
+        source = Path(str(installed.locate_file(""))).resolve(strict=True)
         _check_origins(source)
         if self._evaluator is not None:
             return

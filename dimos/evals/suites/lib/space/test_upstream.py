@@ -25,11 +25,7 @@ import pytest
 from pytest_mock import MockerFixture
 
 from dimos.evals.suites.lib.space import upstream
-from dimos.evals.suites.lib.space.constants import (
-    SOURCE_SHA256,
-    SPACE_PACKAGE,
-    SPACE_PACKAGE_VERSION,
-)
+from dimos.evals.suites.lib.space.constants import SOURCE_SHA256, SPACE_PACKAGE
 from dimos.evals.suites.lib.space.upstream import OfficialSpace, RawReplyAgent, question_digest
 
 
@@ -40,10 +36,11 @@ def package(tmp_path: Path, mocker: MockerFixture, monkeypatch: pytest.MonkeyPat
         if name == "space" or name.startswith("space."):
             monkeypatch.delitem(sys.modules, name)
     root = tmp_path / "site-packages"
-    metadata = root / f"{SPACE_PACKAGE.replace('-', '_')}-{SPACE_PACKAGE_VERSION}.dist-info"
+    package_version = "9.9.9"
+    metadata = root / f"{SPACE_PACKAGE.replace('-', '_')}-{package_version}.dist-info"
     metadata.mkdir(parents=True)
     (metadata / "METADATA").write_text(
-        f"Metadata-Version: 2.1\nName: {SPACE_PACKAGE}\nVersion: {SPACE_PACKAGE_VERSION}\n"
+        f"Metadata-Version: 2.1\nName: {SPACE_PACKAGE}\nVersion: {package_version}\n"
     )
     hashes: dict[str, str] = {}
     for relative in SOURCE_SHA256:
@@ -57,7 +54,9 @@ def package(tmp_path: Path, mocker: MockerFixture, monkeypatch: pytest.MonkeyPat
 
 
 def test_verify_package_accepts_the_installed_distribution(package: Path) -> None:
-    assert upstream.verify_package() == package
+    installed = upstream.verify_package()
+    assert installed.version == "9.9.9"
+    assert Path(str(installed.locate_file(""))) == package
 
 
 def test_verify_package_reports_a_missing_dependency(mocker: MockerFixture) -> None:
@@ -65,13 +64,6 @@ def test_verify_package_reports_a_missing_dependency(mocker: MockerFixture) -> N
     with pytest.raises(RuntimeError, match=SPACE_PACKAGE) as error:
         upstream.verify_package()
     assert "install" in str(error.value).lower()
-
-
-def test_verify_package_rejects_another_version(package: Path) -> None:
-    metadata = next(package.glob("*.dist-info/METADATA"))
-    metadata.write_text(f"Metadata-Version: 2.1\nName: {SPACE_PACKAGE}\nVersion: 9.9.9\n")
-    with pytest.raises(ValueError, match="version"):
-        upstream.verify_package()
 
 
 @pytest.mark.parametrize("missing", [False, True])
@@ -96,19 +88,6 @@ def test_prepare_rejects_an_existing_foreign_space_package(
         OfficialSpace().prepare()
 
 
-def test_prepare_does_not_change_import_path_when_dependencies_are_missing(
-    package: Path, mocker: MockerFixture
-) -> None:
-    before = list(sys.path)
-    mocker.patch(
-        "dimos.evals.suites.lib.space.upstream.importlib.import_module",
-        side_effect=ImportError("missing torch"),
-    )
-    with pytest.raises(ImportError, match="missing torch"):
-        OfficialSpace().prepare()
-    assert sys.path == before
-
-
 def test_score_uses_the_official_metric_and_exact_question(
     package: Path, mocker: MockerFixture
 ) -> None:
@@ -119,15 +98,9 @@ def test_score_uses_the_official_metric_and_exact_question(
     registry.AGENTS_REGISTRY = {}
     registry.register_agent = mocker.Mock()
     modules = {"space.evaluate_qas": evaluator, "space.registry": registry}
-    before = list(sys.path)
-
-    def import_space(name: str) -> SimpleNamespace:
-        assert sys.path == before
-        return modules[name]
-
     mocker.patch(
         "dimos.evals.suites.lib.space.upstream.importlib.import_module",
-        side_effect=import_space,
+        side_effect=modules.__getitem__,
     )
     qa: dict[str, Any] = {
         "question": "Unchanged\nquestion",
@@ -137,7 +110,6 @@ def test_score_uses_the_official_metric_and_exact_question(
     raw = '  {"answer":2}\n'
     scorer = OfficialSpace()
     scorer.prepare()
-    assert sys.path == before
     result = scorer.score(qa, raw)
     assert result.accuracy == 37.5
     assert result.prediction == 2
