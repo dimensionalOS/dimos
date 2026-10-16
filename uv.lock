@@ -32,7 +32,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-09-26T04:39:24.134005379Z"
+exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for backwards compatibility when using relative exclude-newer values.
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
@@ -1912,7 +1912,6 @@ all = [
     { name = "onnxruntime", version = "1.24.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "onnxruntime-gpu", version = "1.23.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11' and platform_machine == 'x86_64'" },
     { name = "onnxruntime-gpu", version = "1.24.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' and platform_machine == 'x86_64'" },
-    { name = "open-clip-torch" },
     { name = "openai" },
     { name = "openevals" },
     { name = "pillow" },
@@ -2083,7 +2082,6 @@ misc = [
     { name = "gdown" },
     { name = "googlemaps" },
     { name = "ipykernel" },
-    { name = "open-clip-torch" },
     { name = "portal" },
     { name = "tensorboard" },
     { name = "torchreid" },
@@ -2271,7 +2269,6 @@ lint = [
     { name = "moondream" },
     { name = "mypy" },
     { name = "ollama" },
-    { name = "open-clip-torch" },
     { name = "openai" },
     { name = "openai-whisper" },
     { name = "pandas-stubs" },
@@ -2313,7 +2310,6 @@ project-deps = [
     { name = "lap" },
     { name = "moondream" },
     { name = "ollama" },
-    { name = "open-clip-torch" },
     { name = "openai" },
     { name = "sentencepiece" },
     { name = "tensorboard" },
@@ -2346,7 +2342,6 @@ tests = [
     { name = "moondream" },
     { name = "mujoco" },
     { name = "ollama" },
-    { name = "open-clip-torch" },
     { name = "openai" },
     { name = "pre-commit" },
     { name = "py-spy" },
@@ -2402,7 +2397,6 @@ tests-self-hosted = [
     { name = "moondream" },
     { name = "mujoco" },
     { name = "ollama" },
-    { name = "open-clip-torch" },
     { name = "openai" },
     { name = "pre-commit" },
     { name = "py-spy" },
@@ -2508,7 +2502,6 @@ requires-dist = [
     { name = "omegaconf", marker = "extra == 'perception'", specifier = ">=2.3.0" },
     { name = "onnxruntime", marker = "extra == 'cpu'", specifier = ">=1.21" },
     { name = "onnxruntime-gpu", marker = "platform_machine == 'x86_64' and extra == 'cuda'", specifier = ">=1.21" },
-    { name = "open-clip-torch", marker = "extra == 'misc'", specifier = "==3.2.0" },
     { name = "open3d", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'", specifier = ">=0.18.0" },
     { name = "open3d-unofficial-arm", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'", specifier = ">=0.19.0.post9" },
     { name = "openai", marker = "extra == 'agents'" },
@@ -2610,7 +2603,6 @@ lint = [
     { name = "moondream" },
     { name = "mypy", specifier = "==1.19.0" },
     { name = "ollama", specifier = ">=0.6.0" },
-    { name = "open-clip-torch", specifier = "==3.2.0" },
     { name = "openai" },
     { name = "openai-whisper" },
     { name = "pandas-stubs", specifier = ">=2.3.2.250926,<3" },
@@ -2652,7 +2644,6 @@ project-deps = [
     { name = "lap", specifier = ">=0.5.12" },
     { name = "moondream" },
     { name = "ollama", specifier = ">=0.6.0" },
-    { name = "open-clip-torch", specifier = "==3.2.0" },
     { name = "openai" },
     { name = "sentencepiece", specifier = ">=0.2.0" },
     { name = "tensorboard", specifier = "==2.20.0" },
@@ -2686,7 +2677,6 @@ tests = [
     { name = "moondream" },
     { name = "mujoco", specifier = ">=3.3.4" },
     { name = "ollama", specifier = ">=0.6.0" },
-    { name = "open-clip-torch", specifier = "==3.2.0" },
     { name = "openai" },
     { name = "pre-commit", specifier = "==4.2.0" },
     { name = "py-spy" },
@@ -2744,7 +2734,6 @@ tests-self-hosted = [
     { name = "moondream" },
     { name = "mujoco", specifier = ">=3.3.4" },
     { name = "ollama", specifier = ">=0.6.0" },
-    { name = "open-clip-torch", specifier = "==3.2.0" },
     { name = "openai" },
     { name = "pre-commit", specifier = "==4.2.0" },
     { name = "py-spy" },
@@ -3458,18 +3447,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/51/7c/f60c259dcbf4f0c47cc4ddb8f7720d2dcdc8888c8e5ad84c73ea4531cc5b/fsspec-2026.2.0.tar.gz", hash = "sha256:6544e34b16869f5aacd5b90bdf1a71acb37792ea3ddf6125ee69a22a53fb8bff", size = 313441, upload-time = "2026-02-05T21:50:53.743Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e6/ab/fb21f4c939bb440104cc2b396d3be1d9b7a9fd3c6c2a53d98c45b3d7c954/fsspec-2026.2.0-py3-none-any.whl", hash = "sha256:98de475b5cb3bd66bedd5c4679e87b4fdfe1a3bf4d707b151b3c07e58c9a2437", size = 202505, upload-time = "2026-02-05T21:50:51.819Z" },
-]
-
-[[package]]
-name = "ftfy"
-version = "6.3.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "wcwidth" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/a5/d3/8650919bc3c7c6e90ee3fa7fd618bf373cbbe55dff043bd67353dbb20cd8/ftfy-6.3.1.tar.gz", hash = "sha256:9b3c3d90f84fb267fe64d375a07b7f8912d817cf86009ae134aa03e1819506ec", size = 308927, upload-time = "2024-10-26T00:50:35.149Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/ab/6e/81d47999aebc1b155f81eca4477a616a70f238a2549848c38983f3c22a82/ftfy-6.3.1-py3-none-any.whl", hash = "sha256:7c70eb532015cd2f9adb53f101fb6c7945988d023a085d127d1573dc49dd0083", size = 44821, upload-time = "2024-10-26T00:50:33.425Z" },
 ]
 
 [[package]]
@@ -6603,27 +6580,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/8c/9a/47c2a873bf5fc307cda696e8a8cb54b7c709f5a4b3f9e2b4a636066a63c2/onnxruntime_gpu-1.24.1-cp311-cp311-win_amd64.whl", hash = "sha256:ccd800875cb6c04ce623154c7fa312da21631ef89a9543c9a21593817cfa3473", size = 207089749, upload-time = "2026-02-05T17:23:59.5Z" },
     { url = "https://files.pythonhosted.org/packages/db/a8/fb1a36a052321a839cc9973f6cfd630709412a24afff2d7315feb3efc4b8/onnxruntime_gpu-1.24.1-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:710bf83751e6761584ad071102af3cbffd4b42bb77b2e3caacfb54ffbaa0666b", size = 252628733, upload-time = "2026-02-05T17:24:12.926Z" },
     { url = "https://files.pythonhosted.org/packages/52/65/48f694b81a963f3ee575041d5f2879b15268f5e7e14d90c3e671836c9646/onnxruntime_gpu-1.24.1-cp312-cp312-win_amd64.whl", hash = "sha256:b128a42b3fa098647765ba60c2af9d4bf839181307cfac27da649364feb37f7b", size = 207089008, upload-time = "2026-02-05T17:24:07.126Z" },
-]
-
-[[package]]
-name = "open-clip-torch"
-version = "3.2.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "ftfy" },
-    { name = "huggingface-hub" },
-    { name = "regex" },
-    { name = "safetensors" },
-    { name = "timm" },
-    { name = "torch", version = "2.6.0", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')" },
-    { name = "torch", version = "2.7.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'" },
-    { name = "torchvision", version = "0.21.0", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')" },
-    { name = "torchvision", version = "0.22.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'" },
-    { name = "tqdm" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/30/46/fb8be250fa7fcfc56fbeb41583645e18d868268f67fbbbeb8ed62a8ff18a/open_clip_torch-3.2.0.tar.gz", hash = "sha256:62b7743012ccc40fb7c64819fa762fba0a13dd74585ac733babe58c2974c2506", size = 1502853, upload-time = "2025-09-21T17:32:08.289Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/94/91/397327cc1597fa317942cc15bef414175eee4b3c2263b34407c57f3521f9/open_clip_torch-3.2.0-py3-none-any.whl", hash = "sha256:e1f5b3ecbadb6d8ea64b1f887db23efee9739e7c0d0075a8a2a3cabae8fed8d1", size = 1546677, upload-time = "2025-09-21T17:32:06.269Z" },
 ]
 
 [[package]]
