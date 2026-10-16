@@ -16,12 +16,16 @@
 
 from __future__ import annotations
 
+import contextlib
 from functools import cache
+import os
 
+import psutil
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
+from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -102,3 +106,37 @@ class R1ProLio(StaticTfPublisher):
 
     def _on_odometry(self, msg: Odometry) -> None:
         self.pose.publish(base_pose(msg, self._lidar_to_base))
+
+
+# Sharing the Orin's cores at load ~23, Point-LIO waited for a core ~60% of the time, ran 0.4-2 s behind and dropped scans: the robot stuttered in the viewer.
+POINTLIO_RESERVED_CORES = 2
+
+
+def set_affinity(pid: int, cores: set[int]) -> None:
+    """Every thread of ``pid``: an affinity is per thread, and threads made later inherit their creator's."""
+    with contextlib.suppress(FileNotFoundError):
+        for tid in os.listdir(f"/proc/{pid}/task"):
+            with contextlib.suppress(OSError):
+                os.sched_setaffinity(int(tid), cores)
+
+
+def run_pids() -> list[int]:
+    """This dimos run: the coordinator (this worker's forkserver's parent) and everything under it."""
+    coordinator = psutil.Process(psutil.Process().parent().ppid())
+    return [coordinator.pid, *(p.pid for p in coordinator.children(recursive=True))]
+
+
+class R1ProPointLio(PointLio):
+    """Point-LIO on the last cores, with the rest of the run moved off them."""
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+        if not hasattr(os, "sched_setaffinity") or self._process is None:
+            return
+        cpus = set(range(os.cpu_count() or 1))
+        reserved = set(sorted(cpus)[-POINTLIO_RESERVED_CORES:])
+        if reserved == cpus:
+            return
+        for pid in run_pids():
+            set_affinity(pid, reserved if pid == self._process.pid else cpus - reserved)

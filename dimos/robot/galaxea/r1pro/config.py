@@ -17,6 +17,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.robot.assets.model import PlanarBaseDefinition, RobotModel
@@ -33,6 +35,12 @@ from dimos.robot.galaxea.r1pro.joints import (
 # Chassis Mid-360 and host NIC addresses from the vendor's livox_ros_driver2 config.
 R1PRO_CHASSIS_LIDAR_IP = "192.168.2.100"
 R1PRO_CHASSIS_LIDAR_HOST_IP = "192.168.2.150"
+
+# First-pass chassis clearances for navigation; tune on the robot.
+R1PRO_CHASSIS_WIDTH_M = 0.65
+R1PRO_ROTATION_DIAMETER_M = 0.9
+R1PRO_OVERHEAD_CLEARANCE_M = 1.9
+R1PRO_MAX_STEP_HEIGHT_M = 0.03
 
 
 R1PRO_DESCRIPTION_SOURCE = RobotDescriptionSource(
@@ -94,6 +102,14 @@ R1PRO_MODEL = (
     .with_renamed_joints({joint: coordinator_name(joint) for joint in UPPER_BODY_JOINTS})
 )
 R1PRO_PLANAR_MODEL = R1PRO_MODEL.with_planar_base(R1PRO_PLANAR_BASE)
+
+# UrdfManager on the R1, for any blueprint: ``UrdfManager.blueprint(**R1PRO_URDF_MANAGER_CONFIG)``.
+R1PRO_URDF_MANAGER_CONFIG: dict[str, Any] = {
+    "model": R1PRO_MODEL,
+    # Replaying a 10-14 recording, self-hits per scan rose from 13 at 1 cm to 20 at 5 cm and stayed 20 at 10 cm.
+    "padding_m": 0.05,
+    "state_tolerance_s": 0.1,
+}
 R1PRO_UPPER_BODY_PLANNING_JOINTS = tuple(coordinator_name(joint) for joint in UPPER_BODY_JOINTS)
 R1PRO_PLANNING_JOINTS = (
     *R1PRO_PLANAR_BASE.joint_names,
