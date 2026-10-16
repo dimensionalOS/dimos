@@ -73,6 +73,7 @@ fn plan<'py>(
             &pts,
             &gnd,
             unseen_cost,
+            &[],
             pose,
             goal,
             &emb,

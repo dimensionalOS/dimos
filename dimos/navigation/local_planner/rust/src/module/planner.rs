@@ -283,6 +283,7 @@ pub fn plan_once(
         &cloud,
         &ground,
         config.unseen_cost,
+        &[],
         pose,
         goal,
         emb,

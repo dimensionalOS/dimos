@@ -523,32 +523,32 @@ struct World {
     /// Absolute LATTICE index of the working area's low corner, the same way.
     pub kx: i64,
     pub ky: i64,
-    /// Lattice dims and price multiplier per cell: 1.0 near a ground return,
-    /// `unseen_cost` elsewhere; empty = all explored.
+    /// Lattice dims and price multiplier per cell: `unseen_cost` away from a ground
+    /// return, times the step price within reach of a soft point; empty = all 1.
     nlx: usize,
     nly: usize,
-    unseen: Vec<f64>,
+    price: Vec<f64>,
 }
 
 impl World {
-    /// The unexplored-terrain multiplier at lattice cell (i, j).
+    /// The price multiplier at lattice cell (i, j).
     #[inline]
     fn mult(&self, i: usize, j: usize) -> f64 {
-        if self.unseen.is_empty() {
+        if self.price.is_empty() {
             1.0
         } else {
-            self.unseen[i * self.nly + j]
+            self.price[i * self.nly + j]
         }
     }
 
     /// `mult` at a world position, snapped the way the lattice is.
     fn mult_at(&self, x: f64, y: f64) -> f64 {
-        if self.unseen.is_empty() {
+        if self.price.is_empty() {
             return 1.0;
         }
         let i = ((x / CELL).round_even_i64() - self.kx).clamp(0, self.nlx as i64 - 1) as usize;
         let j = ((y / CELL).round_even_i64() - self.ky).clamp(0, self.nly as i64 - 1) as usize;
-        self.unseen[i * self.nly + j]
+        self.price[i * self.nly + j]
     }
 
     /// `at` for a caller that holds only the flat index (the miss path).
@@ -599,15 +599,19 @@ impl World {
 
 #[cfg(test)]
 fn build_world(points: &[[f64; 2]], pose: (f64, f64, f64), goal: (f64, f64), cap: f64) -> World {
-    build_world_explored(points, &[], 1.0, pose, goal, cap)
+    build_world_explored(points, &[], 1.0, &[], 0.0, pose, goal, cap)
 }
 
 /// `build_world` pricing lattice cells with no `ground` return under them or
-/// their 8 neighbours at `unseen_cost`; `<= 1.0` turns the layer off.
+/// their 8 neighbours at `unseen_cost` (`<= 1.0` turns that off), and cells
+/// within `reach` of a soft point at `1 + cost`, the highest such cost.
+#[allow(clippy::too_many_arguments)]
 fn build_world_explored(
     points: &[[f64; 2]],
     ground: &[[f64; 2]],
     unseen_cost: f64,
+    soft: &[Soft],
+    reach: f64,
     pose: (f64, f64, f64),
     goal: (f64, f64),
     cap: f64,
@@ -644,7 +648,7 @@ fn build_world_explored(
     let (kx, ky) = (px * 2, py * 2);
     let nlx = arange_len(x0, x1 + CELL, CELL);
     let nly = arange_len(y0, y1 + CELL, CELL);
-    let unseen = if unseen_cost <= 1.0 {
+    let mut price = if unseen_cost <= 1.0 {
         Vec::new()
     } else {
         let mut u = vec![unseen_cost; nlx * nly];
@@ -664,6 +668,31 @@ fn build_world_explored(
         }
         u
     };
+    if !soft.is_empty() {
+        let mut step = vec![1.0f64; nlx * nly];
+        let span = (reach / CELL).ceil() as i64;
+        for &(p, cost) in soft {
+            let i = (p[0] / CELL).round_even_i64() - kx;
+            let j = (p[1] / CELL).round_even_i64() - ky;
+            for a in (i - span).max(0)..=(i + span).min(nlx as i64 - 1) {
+                for b in (j - span).max(0)..=(j + span).min(nly as i64 - 1) {
+                    let dx = (a + kx) as f64 * CELL - p[0];
+                    let dy = (b + ky) as f64 * CELL - p[1];
+                    let k = a as usize * nly + b as usize;
+                    if dx.hypot(dy) <= reach && step[k] < 1.0 + cost {
+                        step[k] = 1.0 + cost;
+                    }
+                }
+            }
+        }
+        if price.is_empty() {
+            price = step;
+        } else {
+            for (u, s) in price.iter_mut().zip(step) {
+                *u *= s;
+            }
+        }
+    }
     World {
         fkx,
         fky,
@@ -677,7 +706,7 @@ fn build_world_explored(
         ky,
         nlx,
         nly,
-        unseen,
+        price,
     }
 }
 
@@ -966,9 +995,9 @@ fn pose_clear(w: &mut World, offs: &[(f64, f64)], x: f64, y: f64, th: f64) -> f6
     m
 }
 
-/// Metres of `a -> b` over unexplored cells; zero when the layer is off.
+/// Metres of `a -> b` over priced cells; zero when the layer is off.
 fn dark_len(w: &World, a: &[f64; 3], b: &[f64; 3]) -> f64 {
-    if w.unseen.is_empty() {
+    if w.price.is_empty() {
         return 0.0;
     }
     let len = (b[0] - a[0]).hypot(b[1] - a[1]);
@@ -1752,6 +1781,7 @@ pub fn plan(
         points,
         &[],
         1.0,
+        &[],
         pose,
         goal,
         emb,
@@ -1761,13 +1791,24 @@ pub fn plan(
     )
 }
 
-/// `plan`, pricing lattice cells with no `ground` return at `unseen_cost`; the
-/// heuristic never sees it, so the search stays exact.
+/// A soft point as the search takes it: xy and the extra price per metre over it.
+pub type Soft = ([f64; 2], f64);
+
+/// How far from a soft point the body's center stands on it: the half-width, half a
+/// voxel since the point is a voxel's center, and the precision floor hard obstacles get.
+fn step_reach(emb: &Emb) -> f64 {
+    emb.width / 2.0 + FINE + emb.precision
+}
+
+/// `plan`, pricing lattice cells with no `ground` return at `unseen_cost`, and
+/// cells where the body would step on a `soft` point at `1 + cost`; the
+/// heuristic never sees either, so the search stays exact.
 #[allow(clippy::too_many_arguments)]
 pub fn plan_explored(
     points: &[[f64; 2]],
     ground: &[[f64; 2]],
     unseen_cost: f64,
+    soft: &[Soft],
     pose: (f64, f64, f64),
     goal: (f64, f64),
     emb: &Emb,
@@ -1780,7 +1821,16 @@ pub fn plan_explored(
     let reach = reach_of(&offs);
     // Covers the certificate (`speed_clearance`) and the smoothing floor (`comfort`).
     let cap = emb.comfort.max(emb.speed_clearance) + reach + SNAP;
-    let mut w = build_world_explored(points, ground, unseen_cost, pose, goal, cap);
+    let mut w = build_world_explored(
+        points,
+        ground,
+        unseen_cost,
+        soft,
+        step_reach(emb),
+        pose,
+        goal,
+        cap,
+    );
     let margin = emb.precision;
     // World from {pose, goal, cloud}, never the incumbent; one clearance table for both.
     let (fresh, held) = {
@@ -1847,6 +1897,7 @@ mod tests {
                 &[],
                 &ground,
                 cost,
+                &[],
                 (0.0, 0.0, 0.0),
                 (4.0, 0.0),
                 &emb,
@@ -1864,6 +1915,7 @@ mod tests {
             &[],
             &[[0.0, 0.0]],
             5.0,
+            &[],
             (0.0, 0.0, 0.0),
             (4.0, 0.0),
             &emb,
@@ -1872,6 +1924,62 @@ mod tests {
             COMMIT_MARGIN
         )
         .is_some());
+    }
+
+    /// A soft patch 0.4 m deep across the route, `y0..y1` wide, at `cost`.
+    fn patch(y0: f64, y1: f64, cost: f64) -> Vec<Soft> {
+        let mut soft = Vec::new();
+        let mut x = 1.8;
+        while x <= 2.2 {
+            let mut y = y0;
+            while y <= y1 {
+                soft.push(([x, y], cost));
+                y += 0.08;
+            }
+            x += 0.08;
+        }
+        soft
+    }
+
+    /// Soft points are priced, not forbidden.
+    #[test]
+    fn a_soft_patch_is_walked_around_and_crossed_when_it_spans_the_way() {
+        let emb = Emb::fixture();
+        let run = |points: &[[f64; 2]], soft: &[Soft]| {
+            plan_explored(
+                points,
+                &[],
+                1.0,
+                soft,
+                (0.0, 0.0, 0.0),
+                (4.0, 0.0),
+                &emb,
+                0.1,
+                None,
+                COMMIT_MARGIN,
+            )
+            .expect("routes")
+        };
+        let widest = |p: Vec<[f64; 3]>| p.iter().map(|s| s[1].abs()).fold(0.0f64, f64::max);
+        assert!(
+            widest(run(&[], &patch(-0.3, 0.3, 0.0))) < 0.2,
+            "free at no price"
+        );
+        assert!(
+            widest(run(&[], &patch(-0.3, 0.3, 5.0))) > 0.6,
+            "stepped on it"
+        );
+        // wall to wall, the only way is across
+        let mut walls = Vec::new();
+        let mut x = -1.0;
+        while x <= 5.0 {
+            walls.push([x, -0.95]);
+            walls.push([x, 0.95]);
+            x += 0.04;
+        }
+        let crossed = run(&walls, &patch(-0.9, 0.9, 5.0));
+        let end = crossed.last().expect("non-empty");
+        assert!((end[0] - 4.0).hypot(end[1]) < 0.3, "refused: {end:?}");
     }
 
     /// Ring of obstacle points (square outline), spacing `step`, half-size `h`.
