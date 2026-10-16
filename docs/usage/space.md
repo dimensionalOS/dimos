@@ -50,7 +50,7 @@ uv run --no-sync dimos evals run dimos.evals.suites.space_map_sketching \
 uv run --no-sync dimos evals score space /path/to/run-directory
 ```
 
-Use the directory printed by the run command. Each attempt saves a manifest,
+Use the directory printed by the run command. Each run saves a manifest,
 case results, ATIF trajectories, and requests/responses under `STATE_DIR/evals`.
 Scoring replays saved replies without provider calls. Each invocation writes a
 new `space-score-*` directory inside the run directory, preserving the original
@@ -58,9 +58,8 @@ results and trajectories.
 
 `SELECTED_INDICES` freezes 20 of 120 rows before execution: two distinct variants
 per layout across ten layouts, with five correct answers per answer position.
-This avoids repeated answer-position variants in a file-order prefix. The
-related variants are not independent environments. `--limit` can restrict a run
-to fewer cases.
+This avoids repeated answer-position variants in a file-order prefix. `--limit`
+can restrict a run to fewer cases.
 
 The suite uses `TextQuestion` and the existing model factory to send only the
 original question, without a system prompt, observations, tools, labels, or
@@ -78,8 +77,7 @@ responses to distinguish token-exhausted replies from completed answers.
 question hashes, case scores, the aggregate, and counts for correct, wrong,
 invalid, out-of-range, timeout, infrastructure-error, and unreported cases.
 `complete` means every selected case was scored without results-file corruption;
-`fixed_subset_complete` also requires the full frozen subset. Neither guarantees
-correct answers or normal provider completion.
+`fixed_subset_complete` also requires the full frozen subset.
 Missing, failed, and timed-out cases remain visible but unscored.
 
 Without `results.jsonl`, a run stays unreported even if trajectories exist.
@@ -103,7 +101,6 @@ uv sync --locked --group tests --extra space
 uv run --no-sync pytest -m self_hosted dimos/evals/suites/lib/space/test_official.py
 ```
 
-These tests check the fixed subset, official parser and metric, spawned aggregation,
-and dimOS CLI with a canned model. They reuse verified cached inputs or download pinned
-task data without provider calls. They verify integration, not model
-performance.
+These tests check the fixed subset, official parser and metric, spawned
+aggregation, and dimOS CLI with a canned model. They reuse verified cached inputs
+or download pinned task data without provider calls.

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Execute the pinned SPACE implementation against replies already produced by DimOS."""
+"""Execute the pinned SPACE implementation against replies already produced by dimOS."""
 
 from __future__ import annotations
 
@@ -45,12 +45,12 @@ def verify_package() -> Distribution:
 
 
 def question_digest(question: str) -> str:
-    """The replay lookup key; it never incorporates the ground-truth answer."""
+    """Key saved replies by question text only."""
     return hashlib.sha256(question.encode("utf-8")).hexdigest()
 
 
 class RawReplyAgent:
-    """The upstream agent interface, backed only by saved DimOS responses."""
+    """The upstream agent interface, backed only by saved dimOS responses."""
 
     def __init__(self, responses: dict[str, str], use_vllm: bool = False) -> None:
         if use_vllm:
@@ -71,13 +71,13 @@ class RawReplyAgent:
         return parser.QA_Agent.parse_answer_from_response(None, raw)
 
     def get_eval_cost(self) -> dict[str, float]:
-        # Replay incurs no provider calls; original usage remains in DimOS artifacts.
+        # Replay incurs no provider calls; original usage remains in dimOS artifacts.
         return {}
 
 
 @dataclass(frozen=True, kw_only=True)
 class CaseScore:
-    accuracy: float  # The official percentage, before DimOS's 0..1 normalization.
+    accuracy: float  # The official percentage, before dimOS's 0..1 normalization.
     prediction: Any
 
 

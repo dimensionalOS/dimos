@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""One frozen SPACE task adapted to DimOS cases, with no acquisition on import."""
+"""One frozen SPACE task adapted to dimOS cases, with no acquisition on import."""
 
 from __future__ import annotations
 

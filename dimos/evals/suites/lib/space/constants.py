@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Pinned upstream identities for the bounded SPACE text evaluation."""
+"""Pinned SPACE source, data, and question subset."""
 
 SPACE_REVISION = "eec58a24516bfcd4554807b0a2b9d08b04eafd1c"
 SPACE_PACKAGE = "ml-space-benchmark-ky135"

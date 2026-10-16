@@ -132,7 +132,10 @@ def verify_data(payload: bytes) -> None:
 
 
 def acquire_data(destination: Path) -> int:
-    """Download explicitly; publish only a complete, verified upstream file."""
+    """Reuse verified data or atomically save a verified download.
+
+    Return compressed bytes read, or zero for cached data.
+    """
     if destination.exists():
         verify_data(destination.read_bytes())
         return 0

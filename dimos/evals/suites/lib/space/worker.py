@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Isolated replay into SPACE's unmodified aggregate evaluator, including spawn."""
+"""Replay saved replies with SPACE's aggregate evaluator in a subprocess."""
 
 from __future__ import annotations
 
