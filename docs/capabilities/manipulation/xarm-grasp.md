@@ -168,7 +168,11 @@ app.PickAndPlaceModule.place_at(0.45, -0.25, 0.25)
 It opens the gripper, plans to the pregrasp, servos in, closes, verifies, and
 retreats; with a learned provider it walks the ranked candidates until one is
 reachable, and the result metadata carries the winning rank, its score and the
-candidate count. To inspect grasps without moving the arm, call `propose_grasps`
+candidate count. After the retreat it re-reads the jaws and runs one detection
+for the object's label: `grasped` in the metadata is false when the jaws closed
+on nothing or the object did not rise with the gripper, and the gripper is then
+open again. `place_at` re-detects the object after release and reports `placed`
+and `offset_m` against `place_tolerance` (7 cm). To inspect grasps without moving the arm, call `propose_grasps`
 on the provider directly:
 
 ```python skip
