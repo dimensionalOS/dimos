@@ -110,6 +110,10 @@ pub struct LocalPlanner {
     #[output(encode = Path::encode)]
     path: Output<Path>,
 
+    /// The floor voxels the ground was read from, at the ground's height; empty when it fell back.
+    #[output(encode = PointCloud2::encode)]
+    ground_support: Output<PointCloud2>,
+
     #[config]
     config: Config,
 
@@ -131,6 +135,7 @@ impl LocalPlanner {
             emb,
             model,
             path: self.path.clone(),
+            ground_support: self.ground_support.clone(),
             tf: self.tf.clone(),
         };
         self.worker = Some(tokio::spawn(worker.run()));
@@ -340,6 +345,7 @@ struct Worker {
     emb: Emb,
     model: Box<dyn ObstacleModel>,
     path: Output<Path>,
+    ground_support: Output<PointCloud2>,
     tf: Tf,
 }
 
@@ -451,9 +457,15 @@ impl Worker {
                         let pts = self.points(&cloud, snap.cloud_seq, &mut points)?;
                         let body = ground_z.unwrap_or(0.0);
                         let under = body + 0.5 * self.config.embodiment.base_height;
-                        let ground =
-                            obstacles::ground_from_map(&pts, pose.0, pose.1, under).unwrap_or(body);
-                        Some(plan_once(
+                        let read = obstacles::ground_from_map(&pts, pose.0, pose.1, under);
+                        let ground = read.as_ref().map_or(body, |g| g.z);
+                        let support: Vec<[f32; 3]> = read
+                            .map(|g| g.support)
+                            .unwrap_or_default()
+                            .iter()
+                            .map(|p| [p[0], p[1], ground as f32])
+                            .collect();
+                        let path = plan_once(
                             &self.config,
                             &self.emb,
                             self.model.as_ref(),
@@ -462,9 +474,13 @@ impl Worker {
                             goal,
                             ground,
                             incumbent.as_deref(),
-                        ))
+                        );
+                        Some((path, support))
                     });
-                    if let Some(produced) = produced {
+                    if let Some((produced, support)) = produced {
+                        let floor =
+                            msg::build_cloud(&support, &self.config.world_frame, msg::now_secs());
+                        msg::publish(&self.ground_support, &floor).await;
                         planned = Some((snap.cloud_seq, goal));
                         incumbent = Some(msg::path_states(&produced));
                         published = true;

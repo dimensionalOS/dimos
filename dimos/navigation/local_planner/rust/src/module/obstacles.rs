@@ -95,8 +95,14 @@ pub fn load(name: &str, emb: &Emb, step_cost: f64) -> Option<Box<dyn ObstacleMod
     }
 }
 
+/// The floor the planner read off the map: its height and the voxels it was read from.
+pub struct Ground {
+    pub z: f64,
+    pub support: Vec<[f32; 3]>,
+}
+
 /// The floor near the robot: the fullest voxel layer below `under_z` over wall-free columns.
-pub fn ground_from_map(points: &[[f32; 3]], x: f64, y: f64, under_z: f64) -> Option<f64> {
+pub fn ground_from_map(points: &[[f32; 3]], x: f64, y: f64, under_z: f64) -> Option<Ground> {
     let r2 = GROUND_RADIUS * GROUND_RADIUS;
     let window = under_z + 2.0 * VOXEL;
     let near: Vec<([i64; 3], [f32; 3])> = points
@@ -134,7 +140,19 @@ pub fn ground_from_map(points: &[[f32; 3]], x: f64, y: f64, under_z: f64) -> Opt
         .count();
     let straddle = both as f64 >= STRADDLE * under.len() as f64;
     let top = if straddle { floor + 1 } else { floor };
-    Some(top as f64 * VOXEL)
+    let support = near
+        .iter()
+        .filter(|(k, p)| {
+            (k[2] == floor || k[2] == top)
+                && height[&(k[0], k[1])] <= FLOOR_COLUMN
+                && (p[2] as f64) < under_z
+        })
+        .map(|(_, p)| *p)
+        .collect();
+    Some(Ground {
+        z: top as f64 * VOXEL,
+        support,
+    })
 }
 
 fn voxel_key(p: &[f32; 3]) -> [i64; 3] {
@@ -202,6 +220,10 @@ mod tests {
 
     fn fixture() -> Emb {
         Emb::fixture()
+    }
+
+    fn ground_z(points: &[[f32; 3]], x: f64, y: f64, under_z: f64) -> Option<f64> {
+        ground_from_map(points, x, y, under_z).map(|g| g.z)
     }
 
     fn model() -> Box<dyn ObstacleModel> {
@@ -295,16 +317,16 @@ mod tests {
                 );
             }
         }
-        assert_eq!(ground_from_map(&cloud, 0.0, 0.0, 0.2), Some(0.0));
+        assert_eq!(ground_z(&cloud, 0.0, 0.0, 0.2), Some(0.0));
         // the floor layer is the one under the body, wherever the robot stands
         let lifted: Vec<[f32; 3]> = cloud.iter().map(|p| [p[0], p[1], p[2] + 0.4]).collect();
-        let got = ground_from_map(&lifted, 0.0, 0.0, 0.6).expect("floor");
+        let got = ground_z(&lifted, 0.0, 0.0, 0.6).expect("floor");
         assert!((got - 0.4).abs() < 1e-6, "{got}");
     }
 
     #[test]
     fn a_floor_across_a_voxel_boundary_is_ground_at_the_boundary() {
-        let got = ground_from_map(&floor(&[0, 1]), 0.0, 0.0, 0.2).expect("floor");
+        let got = ground_z(&floor(&[0, 1]), 0.0, 0.0, 0.2).expect("floor");
         assert!((got - VOXEL).abs() < 1e-9, "{got}");
         let (hard, soft) = field_points(model().as_ref(), &floor(&[0, 1]), got);
         assert!(hard.is_empty() && soft.is_empty());
@@ -324,7 +346,33 @@ mod tests {
                 }
             })
             .collect();
-        assert_eq!(ground_from_map(&cloud, 0.0, 0.0, 0.2), Some(0.0));
+        assert_eq!(ground_z(&cloud, 0.0, 0.0, 0.2), Some(0.0));
+    }
+
+    #[test]
+    fn the_support_is_the_floor_voxels_and_not_the_wall_or_the_block() {
+        let mut cloud = floor(&[0]);
+        let floor_n = cloud.len();
+        for i in -15..=15 {
+            cloud.extend(
+                column((i as f32 + 0.5) * 0.08, &[0, 1, 2, 3, 4], 0.0)
+                    .iter()
+                    .map(|p| [p[0], 1.32, p[2]]),
+            );
+        }
+        cloud.push([0.52, 0.52, 0.12]);
+        let g = ground_from_map(&cloud, 0.0, 0.0, 0.2).expect("floor");
+        assert!(g.support.iter().all(|p| (p[2] - 0.04).abs() < 1e-6));
+        assert!(g.support.iter().all(|p| p[1] < 1.3));
+        assert!(g.support.len() <= floor_n && g.support.len() > floor_n / 2);
+        // across a voxel boundary both floor layers are support, out to the read radius
+        let both = floor(&[0, 1]);
+        let g = ground_from_map(&both, 0.0, 0.0, 0.2).expect("floor");
+        let inside = both
+            .iter()
+            .filter(|p| (p[0] as f64).hypot(p[1] as f64) <= GROUND_RADIUS)
+            .count();
+        assert_eq!(g.support.len(), inside);
     }
 
     #[test]
@@ -337,15 +385,15 @@ mod tests {
                     .map(|p| [p[0], 0.6, p[2]]),
             );
         }
-        assert_eq!(ground_from_map(&cloud, 0.0, 0.0, 0.2), Some(0.0));
+        assert_eq!(ground_z(&cloud, 0.0, 0.0, 0.2), Some(0.0));
     }
 
     #[test]
     fn too_little_floor_leaves_the_ground_to_the_caller() {
         let cloud = column(0.5, &[0], 0.0);
-        assert_eq!(ground_from_map(&cloud, 0.0, 0.0, 0.2), None);
+        assert_eq!(ground_z(&cloud, 0.0, 0.0, 0.2), None);
         let far: Vec<[f32; 3]> = (0..40).map(|i| [3.0, 0.03 * i as f32, 0.04]).collect();
-        assert_eq!(ground_from_map(&far, 0.0, 0.0, 0.2), None);
+        assert_eq!(ground_z(&far, 0.0, 0.0, 0.2), None);
     }
 
     #[test]

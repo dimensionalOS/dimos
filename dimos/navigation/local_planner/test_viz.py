@@ -127,4 +127,7 @@ def test_the_plan_pins_its_frame_and_draws_its_body_off_the_one_path_topic() -> 
     assert veto is not None and veto[-1][0] == "world/path/body"
     # an empty path is "no route": hold the last picture rather than blank it
     assert render_plan(Path(frame_id="odom", poses=[])) is None
-    assert set(motion_visual_override(body_dilate_m=-0.03)) == {"world/path"}
+    assert set(motion_visual_override(body_dilate_m=-0.03)) == {
+        "world/path",
+        "world/ground_support",
+    }

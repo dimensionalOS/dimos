@@ -28,6 +28,7 @@ from numpy.typing import NDArray
 
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.Path import Path
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.navigation.embodiment.base import Embodiment
 from dimos.navigation.embodiment.go2 import GO2
 from dimos.navigation.local_planner.profile import (
@@ -42,6 +43,8 @@ if TYPE_CHECKING:
 
 # Lift the box off the floor so it does not z-fight the surface points.
 _Z_LIFT = 0.02
+# Edge of the local map's voxels (m), the squares the ground support is drawn as.
+_VOXEL = 0.08
 
 
 def _body_centre(pose: PoseStamped, center_off: float) -> tuple[float, float]:
@@ -125,6 +128,22 @@ def render_body(
     )
 
 
+def render_ground_support(msg: PointCloud2) -> Archetype | None:
+    """The floor voxels the planner's ground was read from, as voxel squares at that ground."""
+    import rerun as rr  # only the viewer process pays for the import
+
+    pts = msg.points_f32()
+    if not len(pts):
+        return rr.Clear(recursive=False)
+    half = _VOXEL / 2
+    return rr.Boxes3D(
+        centers=pts,
+        half_sizes=[[half, half, 0.002]],
+        colors=[[80, 170, 255, 110]],
+        fill_mode="solid",
+    )
+
+
 def render_plan(
     msg: Path,
     entity: str = "world/path",
@@ -152,11 +171,15 @@ def motion_visual_override(
     line_radius: float = 0.012,
     body_dilate_m: float = 0.0,
     entity: str = "world/path",
+    ground_entity: str = "world/ground_support",
 ) -> dict[str, Any]:
-    """rerun override drawing the local plan's body boxes off ``path``.
+    """rerun override drawing the local plan's body boxes off ``path`` and the floor it read.
 
     Pass the same ``embodiment`` and ``body_dilate_m`` as ``LocalPlanner.blueprint(...)``.
     The box is the straight-drift row, not the all-gait union, which would make every corridor look impassable.
     """
     emb = embodiment.dilated(by=body_dilate_m)
-    return {entity: partial(render_plan, entity=entity, emb=emb, line_radius=line_radius)}
+    return {
+        entity: partial(render_plan, entity=entity, emb=emb, line_radius=line_radius),
+        ground_entity: render_ground_support,
+    }
