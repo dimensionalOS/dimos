@@ -167,3 +167,7 @@ def make_r1pro_planar_model_config() -> RobotModelConfig:
         collision_exclusion_pairs=list(R1PRO_COLLISION_EXCLUSIONS),
         home_joints=[0.0] * len(R1PRO_PLANNING_JOINTS),
     )
+
+
+# The connection's wheel odometry's world frame where dimSLAM owns odom, which tells it apart from Point-LIO's.
+R1PRO_WHEEL_ODOM_FRAME = "wheel_odom"

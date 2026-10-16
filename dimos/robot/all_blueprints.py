@@ -324,6 +324,7 @@ all_modules = {
     "point-lio": "dimos.hardware.sensors.lidar.pointlio.module.PointLio",
     "point-nav-skill-container": "dimos.agents.skills.point_nav.PointNavSkillContainer",
     "pointlio-recorder": "dimos.hardware.sensors.lidar.pointlio.recorder.PointlioRecorder",
+    "pose-from-odometry": "dimos.robot.galaxea.r1pro.lio.PoseFromOdometry",
     "r1-pro-connection": "dimos.robot.galaxea.r1pro.connection.R1ProConnection",
     "r1-pro-lio": "dimos.robot.galaxea.r1pro.lio.R1ProLio",
     "r1-pro-point-lio": "dimos.robot.galaxea.r1pro.lio.R1ProPointLio",

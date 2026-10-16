@@ -109,9 +109,8 @@ class SourceConfig(BaseModel):
     being fused, so a fixed value is usually the right answer."""
 
     # The transform this source's estimates carry: each message's header.frame_id and
-    # child_frame_id. Both halves are needed because two sources can share a parent. A
-    # source whose parent is odom_frame_id is fused absolutely; anything else is fused as
-    # filter-anchored deltas, since its own pose has drifted.
+    # child_frame_id. Both halves are needed because two sources can share a parent. Every
+    # source is fused as filter-anchored deltas, so the parent only tells sources apart.
     parent_frame_id: str = ""
     child_frame_id: str = ""
     pose_variances: Covariance = Field(default_factory=Covariance)
@@ -172,8 +171,9 @@ class DimSlamConfig(NativeModuleConfig):
     # Caps the filter's own state rather than an incoming reading. 0 disables it.
     max_position_m: float = 10000.0
 
-    # Empty disables inertial propagation: the filter is seeded level from the first source
-    # message and holds its pose between them.
+    # Empty disables inertial propagation: the filter is seeded level at the origin, and
+    # each source's deltas are blended by inverse variance among the sources heard from in
+    # the last 0.5 s.
     imus: list[ImuConfig] = Field(default_factory=list)
     # m/s^2. Why is gravity a config?
     # 1) different IMUs have different bias

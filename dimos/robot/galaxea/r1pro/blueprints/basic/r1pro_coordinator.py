@@ -35,6 +35,7 @@ from dimos.core.coordination.blueprints import Blueprint, TransportSpec, autocon
 from dimos.core.global_config import global_config
 from dimos.core.transport import ZenohTransport
 from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
+from dimos.mapping.dim_slam.dim_slam import Covariance, DimSlam, SourceConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Odometry import Odometry
@@ -48,6 +49,7 @@ from dimos.protocol.pubsub.impl.zenohpubsub import QOS_LATEST_WINS, Topic as Zen
 from dimos.robot.galaxea.r1pro.config import (
     R1PRO_CHASSIS_LIDAR_HOST_IP,
     R1PRO_CHASSIS_LIDAR_IP,
+    R1PRO_WHEEL_ODOM_FRAME,
 )
 from dimos.robot.galaxea.r1pro.connection import R1PRO_UPPER_BODY_JOINTS, R1ProConnection
 from dimos.robot.galaxea.r1pro.head_cameras import (
@@ -55,7 +57,7 @@ from dimos.robot.galaxea.r1pro.head_cameras import (
     HeadLeftCamera,
     HeadRightCamera,
 )
-from dimos.robot.galaxea.r1pro.lio import R1ProLio, R1ProLioConfig, R1ProPointLio
+from dimos.robot.galaxea.r1pro.lio import PoseFromOdometry, R1ProLio, R1ProLioConfig, R1ProPointLio
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 
@@ -287,7 +289,7 @@ def r1pro_control(
     )
 
 
-def r1pro_lidar_odometry() -> Blueprint:
+def r1pro_lidar_odometry(mount_under_base: bool = False) -> Blueprint:
     """Our Mid-360 driver (per-point times, its own IMU) into Point-LIO, plus the mount tf."""
     lidar_frame = R1ProLioConfig.model_fields["lidar_frame"].default
     return autoconnect(
@@ -301,12 +303,62 @@ def r1pro_lidar_odometry() -> Blueprint:
             # Standing still at 0.01 the pose stepped ~7 mm a scan (the robot jittered in the viewer); 1.0 took it to 2.5 mm.
             lidar_meas_cov=1.0,
         ).remappings([(R1ProPointLio, "odometry", "pointlio_odometry")]),
-        R1ProLio.blueprint(),
+        R1ProLio.blueprint(mount_under_base=mount_under_base),
     ).remappings(
         [
             (R1ProLio, "odometry", "pointlio_odometry"),
+            # The name the planners already read, unless something else owns base_link's pose.
+            (R1ProLio, "pose", "pointlio_base_pose" if mount_under_base else "chassis_odom"),
+        ]
+    )
+
+
+# Without an IMU dimSLAM blends the sources' deltas by inverse variance: Point-LIO gets ~99% of x, y and yaw, and z,
+# roll and pitch outright. The wheels mostly carry the pose while Point-LIO is silent (dimSLAM's 0.5 s timeout). Replaying
+# a 30 m R1 drive, the fused pose stayed within 2.5 cm (mean) of Point-LIO's.
+POINTLIO_SOURCE = SourceConfig(
+    parent_frame_id="odom",
+    child_frame_id="base_link",
+    pose_variances=Covariance(x=1e-5, y=1e-5, z=1e-5, roll=1e-5, pitch=1e-5, yaw=1e-5),
+)
+WHEEL_SOURCE = SourceConfig(
+    parent_frame_id=R1PRO_WHEEL_ODOM_FRAME,
+    child_frame_id="base_link",
+    pose_variances=Covariance(x=1e-3, y=1e-3, yaw=1e-3),
+)
+
+
+def r1pro_fused_odometry() -> Blueprint:
+    """Point-LIO (carried to base_link) and wheel odometry into dimSLAM, which owns odom -> base_link.
+
+    Needs ``r1pro_control(odom_frame_id=R1PRO_WHEEL_ODOM_FRAME)`` with its ``odometry`` remapped to ``slam_sources``.
+    No cameras or IMUs: cuVSLAM on the head stereo would compete with Point-LIO for the Orin's cores. To add them, set
+    ``cameras`` and remap ``dimslam_image``/``dimslam_camera_info`` onto the head stereo streams.
+    """
+    return autoconnect(
+        r1pro_lidar_odometry(mount_under_base=True),
+        DimSlam.blueprint(
+            # Required, but nothing feeds the camera inputs, so the tracker never starts.
+            camera_mode="stereo",
+            odom_sources=[POINTLIO_SOURCE, WHEEL_SOURCE],
+        ),
+        PoseFromOdometry.blueprint(),
+    ).remappings(
+        [
+            # Point-LIO's own odom -> lidar edge would give base_link's subtree a second root.
+            (R1ProPointLio, "tf", "pointlio_tf"),
+            (R1ProLio, "base_odometry", "slam_sources"),
+            (DimSlam, "odom_sources", "slam_sources"),
+            (DimSlam, "odometry", "slam_odometry"),
+            (DimSlam, "image", "dimslam_image"),
+            (DimSlam, "camera_info", "dimslam_camera_info"),
+            (DimSlam, "depth_image", "dimslam_depth_image"),
+            (DimSlam, "depth_camera_info", "dimslam_depth_camera_info"),
+            (DimSlam, "depth_cloud", "dimslam_depth_cloud"),
+            (DimSlam, "imu", "dimslam_imu"),
+            (PoseFromOdometry, "odometry", "slam_odometry"),
             # The name the planners already read.
-            (R1ProLio, "pose", "chassis_odom"),
+            (PoseFromOdometry, "pose", "chassis_odom"),
         ]
     )
 

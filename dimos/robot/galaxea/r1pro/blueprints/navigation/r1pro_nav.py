@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""R1 Pro 3D navigation on Point-LIO (lidar + lidar-anchored head depth into one ray-traced map) with arm planning: ``dimos run r1pro-nav``."""
+"""R1 Pro 3D navigation on dimSLAM fusing Point-LIO and wheel odometry (lidar + lidar-anchored head depth into one ray-traced map) with arm planning: ``dimos run r1pro-nav``."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.perception.depth2depth_cloud.module import Depth2DepthCloud
 from dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_coordinator import (
     r1pro_control,
-    r1pro_lidar_odometry,
+    r1pro_fused_odometry,
 )
 from dimos.robot.galaxea.r1pro.config import (
     R1PRO_CHASSIS_WIDTH_M,
@@ -36,8 +36,10 @@ from dimos.robot.galaxea.r1pro.config import (
     R1PRO_OVERHEAD_CLEARANCE_M,
     R1PRO_ROTATION_DIAMETER_M,
     R1PRO_URDF_MANAGER_CONFIG,
+    R1PRO_WHEEL_ODOM_FRAME,
     make_r1pro_model_config,
 )
+from dimos.robot.galaxea.r1pro.connection import R1ProConnection
 from dimos.robot.galaxea.r1pro.head_depth import r1pro_head_depth
 from dimos.robot.galaxea.r1pro.lio import R1ProPointLio
 from dimos.robot.galaxea.r1pro.rerun import r1pro_nav_rerun_config
@@ -59,9 +61,14 @@ r1pro_nav = autoconnect(
         viewer_backend=global_config.viewer,
         rerun_config=r1pro_nav_rerun_config(VOXEL_SIZE_M, WALL_CLEARANCE_M, PLANNER_VIZ_HZ),
     ),
-    # Point-LIO owns odom -> base_link, so the connection's wheel odometry stays off tf.
-    r1pro_control(publish_odom_tf=False, enable_wrist_color=False, enable_imu=False),
-    r1pro_lidar_odometry().remappings([(R1ProPointLio, "lidar", "lidar_with_robot")]),
+    # dimSLAM owns odom -> base_link, so the connection's wheel odometry stays off tf and goes to it in a frame of its own.
+    r1pro_control(
+        publish_odom_tf=False,
+        odom_frame_id=R1PRO_WHEEL_ODOM_FRAME,
+        enable_wrist_color=False,
+        enable_imu=False,
+    ).remappings([(R1ProConnection, "odometry", "slam_sources")]),
+    r1pro_fused_odometry().remappings([(R1ProPointLio, "lidar", "lidar_with_robot")]),
     # Every joint on tf (the head cameras ride the torso), and the robot's own body cut out of the Mid-360's scans.
     UrdfManager.blueprint(
         **R1PRO_URDF_MANAGER_CONFIG,
