@@ -232,6 +232,11 @@ def sandbox(
         help="Zenoh endpoint of a robot already running `dimos evals robot`, in place of each "
         "case's blueprint, e.g. --robot tcp/192.168.123.18:7447",
     ),
+    robot_on_host: bool = typer.Option(
+        False,
+        "--robot-on-host",
+        help="Run each case's robot blueprint on this machine, e.g. for its GPU, not in a container",
+    ),
     case: list[str] = typer.Option([], "--case", help="Run only these case IDs"),
     resume: Path | None = typer.Option(
         None,
@@ -268,6 +273,7 @@ def sandbox(
     runner = SandboxRunner(
         agent,
         robot=ExternalRobot(connect=tuple(robot)) if robot else None,
+        robot_on_host=robot_on_host,
         resume_from=resume,
         resume_message=message,
     )

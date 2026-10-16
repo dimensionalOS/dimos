@@ -143,6 +143,15 @@ dimos evals sandbox dimos.evals.sandbox.example --robot tcp/192.168.123.18:7447
 `go2-dds` is itself a router there). A robot on the eval machine itself is
 `tcp/host.docker.internal:<port>`.
 
+`--robot-on-host` does that per case: each case's blueprint runs on this machine, behind its
+own router on 7447, started and stopped with the case, writing ground truth to the case
+directory. Use it when the robot needs the GPU, which Docker on a Mac doesn't have; the agent
+stays in its container.
+
+```bash skip
+dimos evals sandbox dimos.evals.sandbox.go2_store --robot-on-host --max-steps 2000
+```
+
 ## What the agent can and cannot see
 
 - It has a shell as root in its own container, internet access, and the provider key its
@@ -151,3 +160,33 @@ dimos evals sandbox dimos.evals.sandbox.example --robot tcp/192.168.123.18:7447
   space is off, so zenoh does not list who is connected behind it.
 - Pi's harness files (`/opt/harness`) are mounted into the agent container. The done
   result is read from Pi's event stream, not from a file, so editing them changes nothing.
+
+## The store patrol cases
+
+`dimos/evals/sandbox/go2_store.py` has three cases on
+[dim-go2-sim](https://pypi.org/project/dim-go2-sim/)'s Go2 (a rolling Mid-360 and a front
+camera) in the cooked supermarket scene: map the store, then loop between the entrance and the
+fruit stand every 10 minutes. `store_patrol_dimos` adds a line asking the agent to use dimOS;
+`store_patrol_dimos_framework` requires building on its blueprints and modules.
+
+```bash skip
+dimos evals sandbox dimos.evals.sandbox.go2_store --max-steps 2000
+```
+
+- The robot container runs `sandbox-go2-supermarket` with `--hide-dimos`: the agent sees
+  only raw-robot-bridge's `robot/*` topics, never the simulator's ground truth.
+- The recorder keeps lidar at 1 Hz, camera at 2 Hz, and odometry and `cmd_vel` whole.
+- `GroundTruthLog` writes the true pose and every contact to the case directory, which
+  only the grader reads.
+- The human is the store owner (`store_owner`). Until the agent calls done they say "I don't
+  understand and I don't care..."; after each done they run its command for 20 minutes
+  and, unless the dog reached both places and looped once without bumping anything, tell it
+  what they saw ("The dog barely moved...", "It never went to the fruit stand.") and ask for
+  a fix, at most 3 times. Its output is `/root/work/run-output.log`.
+- `evaluate` then runs the agent's command for 30 minutes, then scores map coverage (the share
+  of the store its lidar saw, from the true poses, against what is visible from every
+  reachable spot), reaching the entrance and the fruit stand, entrance/fruit round trips,
+  and multiplies by a penalty for each collision. `grading.json` has the breakdown.
+- `dim-go2-sim`'s `Go2Sim` module is the whole robot: `cmd_vel` in, lidar, camera, odometry and
+  contacts out. The first start compiles the store (about 2 minutes) and caches it in the robot
+  cache. In Docker the camera renders with Mesa's software Vulkan.
