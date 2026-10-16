@@ -45,6 +45,7 @@ class MujocoEnvironmentConfig(SimConfig):
         "tf",
         "odom",
     )
+    # Full xArm MJCF for the MujocoSimModule; the coordinator's sim adapter attaches to it.
     scene: Path | None = None
     base_height: float | None = Field(default=None, ge=0, allow_inf_nan=False)
 
@@ -58,7 +59,7 @@ class MujocoEnvironment(Sim):
         proc.simulator = "mujoco"
         proc.global_args = ["--record-topics", ",".join(self.config.recorded_topics)]
         if self.config.scene is not None:
-            proc.global_args += ["--mujoco-scene", str(self.config.scene.resolve())]
+            proc.extra_env["MUJOCOSIMMODULE__ADDRESS"] = str(self.config.scene.resolve())
         proc.extra_env.update(self.config.module_env)
         if self.config.base_height is not None:
             proc.extra_env["MANIPULATIONMODULE__MODEL__BASE_POSE"] = json.dumps(

@@ -80,13 +80,13 @@ class StreamingModule(Module):
 
 
 @pytest.fixture
-def mcp_server():
+def mcp_server(mcp_port: int, mcp_url: str):
     """Start a blueprint with StreamingModule + McpServer, wait for readiness."""
     global_config.update(viewer="none")
-    blueprint = autoconnect(StreamingModule.blueprint(), McpServer.blueprint())
+    blueprint = autoconnect(StreamingModule.blueprint(), McpServer.blueprint(port=mcp_port))
     coordinator = ModuleCoordinator.build(blueprint)
 
-    adapter = McpAdapter()
+    adapter = McpAdapter(url=mcp_url)
     if not adapter.wait_for_ready(timeout=15):
         coordinator.stop()
         pytest.fail("MCP server did not become ready")

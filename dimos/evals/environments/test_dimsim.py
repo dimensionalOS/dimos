@@ -23,15 +23,18 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 
 def test_dimsim_launch_setup_and_pose(mocker):
-    client = mocker.patch("dimos.evals.environments.dimsim.DimSimClient").return_value
+    client_cls = mocker.patch("dimos.evals.environments.dimsim.DimSimClient")
+    client = client_cls.return_value
     setup = Mock()
-    env = DimSimEnvironment(blueprint=["unitree-go2"], scene="empty", setup=setup)
+    env = DimSimEnvironment(blueprint=["unitree-go2"], scene="empty", port=18090, setup=setup)
     proc = DimosCliCall()
     env.configure_launch(proc)
     assert proc.simulator == "dimsim"
-    assert proc.global_args == ["--dimsim-scene", "empty"]
+    assert proc.extra_env["GO2CONNECTION__DIMSIM__SCENE"] == "empty"
+    assert proc.dimsim_port == 18090
     try:
         env.setup_scene()
+        client_cls.assert_called_once_with(18090)
         client.start.assert_called_once()
         setup.assert_called_once_with(client)
         with MemoryStore() as store:

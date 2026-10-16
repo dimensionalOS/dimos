@@ -277,6 +277,21 @@ def safe_field_default(model: type[BaseModel], path: tuple[str, ...]) -> Any:
     return PydanticUndefined
 
 
+def field_descriptions(model: type[BaseModel], path: tuple[str, ...]) -> tuple[str, ...]:
+    """Return distinct descriptions for a field, including nested union members."""
+    if not path or (info := model.model_fields.get(path[0])) is None:
+        return ()
+    if len(path) == 1:
+        return (info.description,) if info.description else ()
+    return tuple(
+        dict.fromkeys(
+            description
+            for nested_model in _base_model_types(info.annotation)
+            for description in field_descriptions(nested_model, path[1:])
+        )
+    )
+
+
 def field_is_required(model: type[BaseModel], path: tuple[str, ...]) -> bool:
     current_models: tuple[type[BaseModel], ...] = (model,)
     for index, part in enumerate(path):
