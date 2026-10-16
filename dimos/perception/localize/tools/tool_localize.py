@@ -52,6 +52,7 @@ from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC
 from dimos.perception.localize.dandetect import DanDetector
 from dimos.perception.localize.localize import LocalizeTrace, embed_index
 from dimos.perception.localize.localize_params import PRESETS, XARM_PARAMS, parse_params
+from dimos.perception.localize.memento import Memento
 from dimos.perception.localize.rig import TF_TOLERANCE, Rig, window_tf
 from dimos.perception.localize.types import Localization
 from dimos.utils.data import get_data
@@ -69,7 +70,7 @@ WALK_DEPTH_TRUNC = 4.0  # m, the depth each of those frames keeps
 BASE_FRAME = "base_link"  # a mobile robot's body frame
 ROBOT_HALF_SIZES = (0.35, 0.155, 0.2)  # m, the Go2 body box the go2 blueprints draw
 ROBOT_COLOR = (0, 255, 127)
-MAP_SATURATION = 0.5  # of the height colours kept, so the textured answers stand out
+MAP_SATURATION = 0.25  # of the height colours kept, so the textured answers stand out
 MASK_ALPHA = 0.45  # mask tint over the camera image
 LABEL_COLORS = (  # RGB per query, in query order
     (31, 119, 180),
@@ -101,7 +102,10 @@ def render(
     answer's cells and desaturated. Each
     ``detections/<query>/answer/<k>`` is one verified instance, its sightings
     split per camera under ``<k>/<camera>`` and textured with each sighting's
-    own image, wrapped in a labeled wireframe box; answers are static. Every
+    own image, wrapped in a labeled wireframe box, on the timeline from its
+    first sighting to one index period past its last, so scrubbing shows each
+    object where it was at that time; on a mobile rig it stays from its first
+    sighting on. Every
     camera has its live feed and frustum under ``cameras/<camera>``; each
     detection frame shows in that feed once with every query's masks, and as a
     frozen frustum per query under ``detections/<query>/frames``. A robot, a
@@ -295,23 +299,27 @@ def render(
 
         # the answers: per verified instance, every sighting's cloud colored
         # by its own image and grouped by camera, wrapped in a labeled
-        # wireframe box, all static
-        for i, members in enumerate(trace.answers):
+        # wireframe box, shown from its first sighting to one index period
+        # past its last, or on to the end on a mobile rig
+        for i, (members, (first, last)) in enumerate(zip(trace.answers, trace.spans, strict=True)):
+            if not members:
+                continue
+            entity = f"{root}/answer/{i}"
+            at(first)
             for camera, sightings in by_camera(rig, members).items():
                 rr.log(
-                    f"{root}/answer/{i}/{names[camera]}",
+                    f"{entity}/{names[camera]}",
                     rr.Points3D(
                         positions=np.vstack([det.pointcloud.points_f32() for det in sightings]),
                         colors=np.vstack([image_colors(det) for det in sightings]),
                         radii=size[camera] / 2,
                     ),
-                    static=True,
                 )
             positions = np.vstack([det.pointcloud.points_f32() for det in members])
             aabb_min, aabb_max = positions.min(axis=0), positions.max(axis=0)
             score = max(det.confidence for det in members)
             rr.log(
-                f"{root}/answer/{i}/box",
+                f"{entity}/box",
                 rr.Boxes3D(
                     centers=[(aabb_min + aabb_max) / 2],
                     half_sizes=[(aabb_max - aabb_min) / 2],
@@ -319,8 +327,10 @@ def render(
                     labels=[f"{query} {score:.2f}"],
                     fill_mode=rr.components.FillMode.MajorWireframe,
                 ),
-                static=True,
             )
+            if not rig.mobile:
+                at(last + 1.0 / rig.embed_hz)
+                rr.log(entity, rr.Clear(recursive=True))
             box_index += 1
 
 
@@ -410,6 +420,7 @@ def report(query: str, hits: list[Localization], trace: LocalizeTrace, rig: Rig,
         print(
             f"hit {query!r} [{hit.instance_id}]: position=({x:.3f}, {y:.3f}, {z:.3f}) "
             f"frame={hit.frame_id} ts_offset={hit.last_seen_timestamp - lo:.1f}s "
+            f"first_offset={hit.first_seen_timestamp - lo:.1f}s "
             f"points={len(hit.point_cloud)} views={hit.n_views} "
             f"score={hit.semantic_score:.2f} margin={hit.ambiguity_margin:.2f}"
         )
@@ -474,11 +485,21 @@ def main() -> int:
 
     traces: list[tuple[str, LocalizeTrace]] = []
     backdrop_ts: float | None = None
+    memento = Memento()
     with detector as dan:
         index = embed_index(rig, dan.embedder, after, before)
         for batch in [queries] if args.multi else [[query] for query in queries]:
             batch_traces = [LocalizeTrace() for _ in batch]
-            results = dan.localize(batch, index=index, rig=rig, params=params, traces=batch_traces)
+            results = dan.localize(
+                batch,
+                index=index,
+                window=(after, before),
+                head=hi,
+                rig=rig,
+                params=params,
+                memento=memento,
+                traces=batch_traces,
+            )
             for query, trace, hits in zip(batch, batch_traces, results, strict=True):
                 if report(query, hits, trace, rig, lo) and backdrop_ts is None:
                     backdrop_ts = hits[0].last_seen_timestamp
