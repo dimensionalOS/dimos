@@ -27,7 +27,7 @@ api:
 # A test keeps it equal to the gateway's routes (experimental/gateway/tests/test_config.py).
 provides:
   description: >-
-    The dimos gateway: run and stop blueprints, and read their config, modules, logs and skills.
+    The dimos gateway: run and stop blueprints, read their config, modules, logs and skills, and upload recordings to the Dimensional cloud.
     Desktop serves it at /dimos-gateway/; GET openapi.json has every request and answer.
   endpoints:
     - method: GET
@@ -78,6 +78,24 @@ provides:
     - method: GET
       path: runs/{runId}/log
       description: A run's structured log (after, level, q, limit; runId may be latest)
+    - method: GET
+      path: cloud/account
+      description: 'The Dimensional cloud account (loggedIn, email, source) and the device login in progress; ?fresh= rechecks'
+    - method: POST
+      path: cloud/login
+      description: 'Start a device login: open the answer''s url and enter its code'
+    - method: DELETE
+      path: cloud/login
+      description: Cancel the device login in progress; with none in progress, log out
+    - method: GET
+      path: cloud/uploads
+      description: 'The cloud upload queue: each upload''s state, progress, speed, time left and error, waitingForLogin, and every file already in the cloud, by path, with a console link'
+    - method: POST
+      path: cloud/uploads
+      description: 'Queue a recording ({path}, robotId, kind) for upload to the Dimensional cloud, or a finished upload again ({retry: id})'
+    - method: DELETE
+      path: cloud/uploads
+      description: 'Cancel a queued or running upload, or remove a finished one (?id=); with no id, clear the finished uploads'
     - method: GET
       path: skills
       description: The running blueprint's skills

@@ -24,7 +24,7 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from experimental.gateway import events
-from experimental.gateway.routes import blueprints, jobs, runs, server, skills
+from experimental.gateway.routes import blueprints, cloud, jobs, runs, server, skills
 from experimental.gateway.state import API_VERSION, ApiError, State, site_dirs
 
 
@@ -37,9 +37,11 @@ def create_app(state: State, background: bool = True) -> FastAPI:
             )
             state.background += [
                 asyncio.create_task(events.watch_launch(state.bus)),
+                asyncio.create_task(state.uploads.work()),
                 asyncio.create_task(watch),
             ]
         yield
+        state.uploads.shutdown()
         for task in state.background:
             task.cancel()
 
@@ -72,6 +74,6 @@ def create_app(state: State, background: bool = True) -> FastAPI:
     async def failed(_: Request, error: Exception) -> JSONResponse:
         return JSONResponse({"error": str(error) or type(error).__name__}, status_code=500)
 
-    for module in (server, blueprints, runs, skills, jobs):
+    for module in (server, blueprints, runs, cloud, skills, jobs):
         app.include_router(module.router)
     return app

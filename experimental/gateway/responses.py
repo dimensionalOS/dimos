@@ -407,6 +407,77 @@ class RunLog(Body):
     loggers: list[str]
 
 
+class Login(Body):
+    """The device login: the URL and code to open, until it's done, expired or cancelled."""
+
+    state: str
+    url: str | None
+    urlComplete: str | None
+    code: str | None
+    expiresAt: int | None
+    email: str | None
+    error: str | None
+
+
+class Account(Body):
+    """Whether this machine is logged in to Dimensional cloud, and as whom."""
+
+    loggedIn: bool
+    email: str | None
+    scopes: str | list[str] | None
+    source: Literal["env", "stored"] | None
+    cloudUrl: str
+    error: str | None
+    login: NotRequired[Login]
+
+
+class Upload(Body):
+    """One upload in the queue: its progress, and its link once done."""
+
+    id: str
+    path: str
+    name: str
+    size: int
+    robotId: str | None
+    kind: str | None
+    state: str
+    phase: str | None
+    bytesDone: int
+    bytesTotal: int
+    rateBps: float | None
+    etaSeconds: float | None
+    uploadId: str | None
+    skipped: bool
+    notice: str | None
+    error: str | None
+    errorCode: str | None
+    log: str | None
+    createdAt: int
+    startedAt: int | None
+    finishedAt: int | None
+    link: str | None
+
+
+class Uploaded(Body):
+    """A file uploaded before, and whether it changed since."""
+
+    path: str
+    uploadId: str
+    size: int
+    mtimeMs: int
+    uploadedAt: int
+    link: str | None
+    changed: bool
+
+
+class Uploads(Body):
+    """The upload queue, whether it waits for a login, and every file uploaded before, by path."""
+
+    uploads: list[Upload]
+    waitingForLogin: bool
+    byPath: dict[str, Uploaded]
+
+
 class SkillRun(Body):
     runId: str | None
     blueprint: str | None
