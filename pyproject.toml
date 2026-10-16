@@ -230,7 +230,7 @@ agents = [
 
 space = [
     "dimos[agents]",
-    "ml-space-benchmark-ky135==0.1.0",
+    "ml-space-benchmark-ky135==0.1.1",
     "requests",
 ]
 

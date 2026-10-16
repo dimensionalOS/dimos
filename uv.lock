@@ -2530,7 +2530,7 @@ requires-dist = [
     { name = "matplotlib", specifier = ">=3.7.1" },
     { name = "mcap", marker = "extra == 'learning'", specifier = ">=1.2" },
     { name = "mcap", marker = "extra == 'unitree-dds'", specifier = ">=1.2.0" },
-    { name = "ml-space-benchmark-ky135", marker = "extra == 'space'", specifier = "==0.1.0" },
+    { name = "ml-space-benchmark-ky135", marker = "extra == 'space'", specifier = "==0.1.1" },
     { name = "moondream", marker = "extra == 'perception'" },
     { name = "mujoco", marker = "extra == 'sim'", specifier = ">=3.3.4" },
     { name = "numba", specifier = ">=0.60.0" },
@@ -5738,7 +5738,7 @@ wheels = [
 
 [[package]]
 name = "ml-space-benchmark-ky135"
-version = "0.1.0"
+version = "0.1.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anthropic" },
@@ -5757,9 +5757,9 @@ dependencies = [
     { name = "torch", version = "2.7.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'" },
     { name = "tqdm" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/d6/21/48a4e1ba8c1ac97dc5dfedd84f321eac077a3400eee151bc8bd00d6c7c65/ml_space_benchmark_ky135-0.1.0.tar.gz", hash = "sha256:079d6316bf6dcfb1eaa2f1899c666f6472d1de061fcc7157eeb152fc04df068b", size = 968100, upload-time = "2026-10-16T19:37:27.054Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/aa/64/acfa6ea862f48c4ee3e99c79df81feb974d4af946a9dbf4622a5e7041b6b/ml_space_benchmark_ky135-0.1.1.tar.gz", hash = "sha256:631bf75a11be57bc1a9d538c6d3dd00b3da1e0bdeff8b156f72c2ea2ef2b397e", size = 968294, upload-time = "2026-10-16T22:29:16.76Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/2b/93/a3bf21bdde86c27dd062e8b41b42049a1c2a528c620c04b0cfa827a9a156/ml_space_benchmark_ky135-0.1.0-py3-none-any.whl", hash = "sha256:f234a189862a85fa719efd3fa32ea1ddf03a10e1d91006ee910799a2efabd294", size = 68510, upload-time = "2026-10-16T19:37:25.457Z" },
+    { url = "https://files.pythonhosted.org/packages/42/b1/9fe4a53bc120ddded65b9a41f5deca34ec95f80f280adfd92cb0e8878dbf/ml_space_benchmark_ky135-0.1.1-py3-none-any.whl", hash = "sha256:6e02d692c3a7861dc3e9f06e4b06810cc5d7428847ab3e9c1b2bb38b4ac50026", size = 68593, upload-time = "2026-10-16T22:29:15.359Z" },
 ]
 
 [[package]]
