@@ -23,6 +23,7 @@ import math
 
 import numpy as np
 import pytest
+from scipy.spatial import cKDTree
 
 pytest.importorskip("dimos_trajectory_follower")
 
@@ -31,8 +32,6 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.navigation.embodiment.go2 import GO2
-from dimos.navigation.local_planner.obstacles import path_clearance as follower_clearance
-from dimos.navigation.local_planner.profile import encode_precision
 from dimos.navigation.trajectory_follower.fancy.controller import (
     ControllerConfig,
     load_extension,
@@ -139,7 +138,11 @@ def _cases(seed: int = 20260802, n: int = CASES):  # type: ignore[no-untyped-def
         # a share of the paths stamped with the precision profile; k % 8 == 3 leaves nonsense
         if k % 3 and len(states) > 1:
             enc = np.clip(srng.uniform(0.0, 0.8, len(states)), 0.0, None)
-            encode_precision(path, enc, GO2, t0=float(srng.uniform(0.0, 1e9)))
+            ts = load_extension().encode_precision(
+                path_xy_yaw(path), enc, float(srng.uniform(0.0, 1e9)), GOVERNOR
+            )
+            for q, t in zip(path.poses, ts, strict=True):
+                q.ts = t
             if k % 8 == 3:
                 for q in path.poses:
                     q.ts = 5.0  # flat: not the dialect, both must ignore it
@@ -235,26 +238,8 @@ def test_rust_factories_build() -> None:
         assert isinstance(make_rs().config, ControllerConfig)
 
 
-def test_encode_precision_matches_python() -> None:
-    """The producer side of the dialect; a wrong-length annotation must be ignored identically."""
-    rs = load_extension()
-    worst = 0.0
-    for case in _cases():
-        path, clearance = case[2], case[3]
-        clr = np.asarray([] if clearance is None else clearance, dtype=np.float64)
-        # a t0 well off zero: an offset that cancels in the diff would hide a base-stamp divergence
-        t0 = 1754212345.75
-        want = [p.ts for p in encode_precision(path, clr, GO2, t0=t0).poses]
-        got = rs.encode_precision(path_xy_yaw(path), clr if len(clr) else None, t0, GOVERNOR)
-        assert len(got) == len(want)
-        for k, (x, y) in enumerate(zip(want, got, strict=True)):
-            assert abs(x - y) <= TOL, f"waypoint {k}: python {x!r} vs rust {y!r}"
-            worst = max(worst, abs(x - y))
-    assert worst == 0.0, f"unexpected non-zero divergence {worst:.3e}"
-
-
 def test_path_clearance_matches_scipy() -> None:
-    """The room hint against the python cKDTree; only the distance crosses, so it is exact."""
+    """The room hint against scipy's cKDTree; only the distance crosses, so it is exact."""
     rs = load_extension()
     rng = np.random.default_rng(20260803)
     for case in range(60):
@@ -265,11 +250,11 @@ def test_path_clearance_matches_scipy() -> None:
         pts[:, 2] = rng.uniform(-0.2, 0.7, size=len(pts)).astype(np.float32)
         xy = rng.uniform(-spread, spread, size=(12, 2))
 
-        want = follower_clearance(xy, pts, 0.25)
+        want = cKDTree(pts[:, :2]).query(xy)[0] - 0.25
         got = np.asarray(rs.path_clearance(np.ascontiguousarray(xy), pts, 0.25))
         assert got.shape == want.shape
         for k, (a, b) in enumerate(zip(want, got, strict=True)):
             # == first, not a difference: inf - inf is nan; a few ulps for the CPU's last-bit rounding.
             assert a == b or math.isclose(a, b, rel_tol=LAST_BIT), (
-                f"case {case} waypoint {k}: python {a!r} vs rust {b!r}"
+                f"case {case} waypoint {k}: scipy {a!r} vs rust {b!r}"
             )
