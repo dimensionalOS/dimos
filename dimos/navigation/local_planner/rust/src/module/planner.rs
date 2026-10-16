@@ -19,7 +19,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use crate::planner::{plan_explored, Emb, COMMIT_MARGIN};
+use crate::planner::{plan_explored, step_reach, Emb, COMMIT_MARGIN};
 use crate::{clearance, stamps};
 use dimos_module::{debug_throttled, native_config, warn_throttled, Input, Module, Output, Tf};
 use lcm_msgs::nav_msgs::Path;
@@ -47,6 +47,9 @@ pub struct Config {
     /// Extra price per meter where the body steps on a low object, at `steppable` height.
     #[validate(range(min = 0.0))]
     pub step_cost: f64,
+    /// Speed ceiling (m/s) over waypoints that step on a low object.
+    #[validate(range(exclusive_min = 0.0))]
+    pub step_speed: f64,
     /// Plan discretisation (m); the python reads `planners/base.py RESOLUTION`.
     #[validate(range(exclusive_min = 0.0))]
     pub resolution: f64,
@@ -305,7 +308,21 @@ pub fn plan_once(
     };
     // Room is measured off the same points the search saw, or the stamps price a different world.
     let xy: Vec<[f64; 2]> = states.iter().map(|s| [s[0], s[1]]).collect();
-    let room = clearance::path_clearance(&xy, points, emb::half_width(emb));
+    let mut room = clearance::path_clearance(&xy, points, emb::half_width(emb));
+    // Over a low object the room is clamped to what the governor grants the step speed.
+    let stepped: Vec<[f32; 3]> = soft
+        .iter()
+        .map(|(p, _)| [p[0] as f32, p[1] as f32, 0.0])
+        .collect();
+    let step_room = stamps::governor_clearance(config.step_speed, &emb::governor(emb));
+    for (r, over) in room
+        .iter_mut()
+        .zip(clearance::path_clearance(&xy, &stepped, step_reach(emb)))
+    {
+        if over <= 0.0 {
+            *r = r.min(step_room);
+        }
+    }
     let ts = stamps::encode_precision(&states, &room, t0, &emb::governor(emb));
     debug_throttled!(
         Duration::from_secs(5),
@@ -630,6 +647,7 @@ mod tests {
             body_dilate_m: 0.0,
             unseen_cost: 1.0,
             step_cost: 5.0,
+            step_speed: 0.5,
             resolution: 0.1,
             replan_hz: 5.0,
             goal_lookahead_m: 5.0,
@@ -940,6 +958,53 @@ mod tests {
             .map(|q| q.pose.position.y.abs())
             .fold(0.0f64, f64::max);
         assert!(widest > 0.4, "stepped on it, widest {widest}");
+    }
+
+    #[test]
+    fn a_low_object_wall_to_wall_is_crossed_slowly() {
+        let cfg = Config {
+            step_speed: 0.3,
+            ..config()
+        };
+        let mut world = low_object((1.4, 1.64), (-0.9, 0.9));
+        let mut x = -1.0f32;
+        while x <= 4.0 {
+            for y in [-0.95f32, 0.95] {
+                world.push([x, y, 0.3]);
+            }
+            x += 0.04;
+        }
+        let produced = plan_once(
+            &cfg,
+            &fixture(),
+            model(&cfg).as_ref(),
+            &world,
+            (0.0, 0.0, 0.0),
+            (3.0, 0.0),
+            0.0,
+            None,
+        );
+        assert!(produced.poses.len() > 1, "refused to step on it");
+        let states = msg::path_states(&produced);
+        let e = Emb::fixture();
+        let params = emb::base_params(&e, [e.min_speed, e.max_speed]);
+        let ceilings = stamps::decode_ceilings(&msg::path_stamps(&produced), &states, &params)
+            .expect("stamped");
+        let over: Vec<f64> = states
+            .iter()
+            .zip(&ceilings)
+            .filter(|(s, _)| (1.1..=1.9).contains(&s[0]))
+            .map(|(_, &c)| c)
+            .collect();
+        assert!(!over.is_empty());
+        assert!(over.iter().all(|&c| c <= 0.3 + 1e-6), "{over:?}");
+        let away = states
+            .iter()
+            .zip(&ceilings)
+            .filter(|(s, _)| s[0] < 0.5)
+            .map(|(_, &c)| c)
+            .fold(0.0f64, f64::max);
+        assert!(away > 0.3 + 1e-3, "slowed off the object too: {away}");
     }
 
     const CARROT_M: f64 = 0.2;

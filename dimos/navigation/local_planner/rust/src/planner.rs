@@ -1796,7 +1796,7 @@ pub type Soft = ([f64; 2], f64);
 
 /// How far from a soft point the body's center stands on it: the half-width, half a
 /// voxel since the point is a voxel's center, and the precision floor hard obstacles get.
-fn step_reach(emb: &Emb) -> f64 {
+pub fn step_reach(emb: &Emb) -> f64 {
     emb.width / 2.0 + FINE + emb.precision
 }
 
