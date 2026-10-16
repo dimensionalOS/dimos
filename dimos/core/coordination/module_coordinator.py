@@ -15,8 +15,8 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Callable, Mapping
-from contextlib import suppress
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager, suppress
 import dataclasses
 import importlib
 import inspect
@@ -87,6 +87,7 @@ class ModuleCoordinator(Resource):
         self._deployed_atoms: dict[str, BlueprintAtom] = {}
         self._resolved_module_refs: dict[tuple[str, str], str] = {}
         self._transport_registry: dict[tuple[str, type], Transport[Any]] = {}
+        self._transport_observers: list[Callable[[str, type, Transport[Any]], None]] = []
         self._class_aliases: dict[type[ModuleBase], type[ModuleBase]] = {}
         self._module_transports: dict[str, dict[str, Transport[Any]]] = {}
         self._remote_module_ref_clients: list[RPCClient] = []
@@ -343,6 +344,25 @@ class ModuleCoordinator(Resource):
         """Every wired stream ``(name, type)`` and the transport carrying it."""
         return MappingProxyType(self._transport_registry)
 
+    @contextmanager
+    def observe_transports(
+        self, callback: Callable[[str, type, Transport[Any]], None]
+    ) -> Iterator[None]:
+        """Visit existing transports and new ones before their modules build/start.
+
+        Registration and removal are serialized with runtime blueprint loads.
+        Reused transports are reported only once per observer.
+        """
+        with self._modules_lock:
+            for (name, stream_type), transport in self._transport_registry.items():
+                callback(name, stream_type, transport)
+            self._transport_observers.append(callback)
+        try:
+            yield
+        finally:
+            with self._modules_lock:
+                self._transport_observers.remove(callback)
+
     def _send_on_system_modules(self) -> None:
         modules = list(self._deployed_modules.values())
         for module in modules:
@@ -368,7 +388,9 @@ class ModuleCoordinator(Resource):
                 transport = transports.get(key) or _get_transport_for(
                     blueprint, remapped_name, stream_type
                 )
-            self._transport_registry[key] = transport
+                self._transport_registry[key] = transport
+                for callback in self._transport_observers:
+                    callback(remapped_name, stream_type, transport)
             for instance_key, original_name in streams[key]:
                 instance = self.get_instance(instance_key)  # type: ignore[assignment]
                 instance.set_transport(original_name, transport)  # type: ignore[union-attr]

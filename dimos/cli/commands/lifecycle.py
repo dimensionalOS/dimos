@@ -309,7 +309,7 @@ def run(
         # The launcher's exit released the pre-fork cache-usage marker (shared
         # flock); hold a fresh one for the daemon's lifetime.
         try:
-            with cache_usage_guard(), recording(coordinator.transports):
+            with cache_usage_guard(), recording(coordinator):
                 coordinator.loop()
         except Exception:
             coordinator.stop()
@@ -333,7 +333,7 @@ def run(
         # runs with a visible traceback.
         install_signal_handlers(entry, coordinator, sigint=False)
         try:
-            with recording(coordinator.transports):
+            with recording(coordinator):
                 coordinator.loop()
         except Exception:
             coordinator.stop()
