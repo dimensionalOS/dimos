@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 from collections import Counter
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from enum import Enum
 import math
 import threading
@@ -114,6 +115,22 @@ ObstacleShape: TypeAlias = Literal["box", "sphere", "cylinder", "mesh"]
 # One stable id for the mapped workspace: every map message is complete, so it
 # replaces this obstacle rather than adding another.
 VOXEL_MAP_OBSTACLE_ID = "mapping/voxel-map"
+
+
+@dataclass(frozen=True)
+class VoxelMapExclusion:
+    """A box of mapped cells the planner does not treat as obstacles.
+
+    The box is axis-aligned in the planning frame. With no planning group it
+    stays where it was put; with one, its centre rides along with that group's
+    tool tip (``center`` is then in the tip frame, metres), so an object held in
+    the gripper, which the camera keeps mapping, stops blocking every plan.
+    """
+
+    center: Vector3
+    size: Vector3
+    planning_group: PlanningGroupID | None = None
+
 
 _SHAPE_TO_OBSTACLE_TYPE: dict[str, ObstacleType] = {
     "box": ObstacleType.BOX,
@@ -239,6 +256,12 @@ class ManipulationModule(Module):
 
         # Canonical generated plan for the plan/preview/execute workflow.
         self._last_plan: GeneratedPlan | None = None
+
+        # The newest map accepted on the voxel_map port, kept so a change to the
+        # exclusions can be applied at once instead of on the next message.
+        self._last_voxel_map: PointCloud2 | None = None
+        self._voxel_map_exclusions: dict[str, VoxelMapExclusion] = {}
+        self._voxel_map_lock = threading.Lock()
 
         # Coordinator integration (initialized in start())
         self._execution_manager: PlanExecutionManager
@@ -652,13 +675,19 @@ class ManipulationModule(Module):
     ) -> GeneratedPlan | None:
         """Plan over explicit planning groups and store the resulting plan."""
         assert self._world_monitor and self._planner
-        result = self._planner.plan_selected_joint_path(
-            world=self._world_monitor.world,
-            selection=self._world_monitor.planning_groups.select(group_ids),
-            start=start,
-            goal=goal,
-            timeout=self.config.planning_timeout,
-        )
+        try:
+            result = self._planner.plan_selected_joint_path(
+                world=self._world_monitor.world,
+                selection=self._world_monitor.planning_groups.select(group_ids),
+                start=start,
+                goal=goal,
+                timeout=self.config.planning_timeout,
+            )
+        except (RuntimeError, ValueError) as exc:
+            # A backend that refuses the request (a start pose inside an
+            # obstacle, say) must leave the module ready for the next one.
+            self._fail_planning_epoch(planning_epoch, f"Planning failed: {exc}")
+            return None
         if not result.is_success():
             detail = f": {result.message}" if result.message else ""
             self._fail_planning_epoch(
@@ -899,15 +928,19 @@ class ManipulationModule(Module):
                 "acceleration_scale": config.acceleration_scale * resolved_speed_scale,
             }
         )
-        result = self._planner.plan_cartesian_path(
-            world=self._world_monitor.world,
-            selection=selection,
-            start=start,
-            targets=targets,
-            config=scaled_config,
-            auxiliary_groups=auxiliary_ids,
-            check_collision=check_collision,
-        )
+        try:
+            result = self._planner.plan_cartesian_path(
+                world=self._world_monitor.world,
+                selection=selection,
+                start=start,
+                targets=targets,
+                config=scaled_config,
+                auxiliary_groups=auxiliary_ids,
+                check_collision=check_collision,
+            )
+        except (RuntimeError, ValueError) as exc:
+            self._fail_planning_epoch(planning_epoch, f"Cartesian planning failed: {exc}")
+            return None
         if not result.is_success():
             detail = f": {result.message}" if result.message else ""
             self._fail_planning_epoch(
@@ -1292,7 +1325,83 @@ class ManipulationModule(Module):
         the newest map, which is what we want: each message is a complete map,
         and a stale one has nothing to contribute.
         """
+        self._last_voxel_map = cloud
         await asyncio.to_thread(self._apply_voxel_map, cloud)
+
+    @rpc
+    def set_voxel_map_exclusion(
+        self,
+        name: str,
+        center: Vector3,
+        size: Vector3,
+        planning_group: PlanningGroupID | None = None,
+    ) -> bool:
+        """Stop treating the mapped cells inside a box as obstacles.
+
+        Setting a name again replaces that box. The current map is re-applied
+        before returning, so the next plan already sees the change.
+
+        Args:
+            name: Caller's label for the box; clear it with the same name.
+            center: Box centre in metres: in the planning frame, or in the
+                group's tool-tip frame when planning_group is given.
+            size: Full edge lengths of the box in metres.
+            planning_group: Group whose tool tip carries the box, or None to
+                leave it fixed in the planning frame.
+        """
+        if not name:
+            raise ValueError("Exclusion name must not be empty")
+        if any(edge <= 0.0 or not math.isfinite(edge) for edge in size.to_tuple()):
+            raise ValueError("Exclusion size must have three positive, finite edges")
+        if planning_group is not None and self._world_monitor is not None:
+            self._world_monitor.planning_groups.get(planning_group)
+        with self._voxel_map_lock:
+            self._voxel_map_exclusions[name] = VoxelMapExclusion(center, size, planning_group)
+        self._reapply_voxel_map()
+        return True
+
+    @rpc
+    def clear_voxel_map_exclusion(self, name: str) -> bool:
+        """Make the cells inside a named box obstacles again. False if no such box."""
+        with self._voxel_map_lock:
+            removed = self._voxel_map_exclusions.pop(name, None) is not None
+        if removed:
+            self._reapply_voxel_map()
+        return removed
+
+    def _reapply_voxel_map(self) -> None:
+        cloud = self._last_voxel_map
+        if cloud is not None:
+            self._apply_voxel_map(cloud)
+
+    def _excluded(self, points: np.ndarray) -> np.ndarray:
+        """Which points fall inside an exclusion box, as a boolean mask."""
+        excluded = np.zeros(len(points), dtype=bool)
+        with self._voxel_map_lock:
+            exclusions = list(self._voxel_map_exclusions.values())
+        for exclusion in exclusions:
+            center = self._exclusion_center(exclusion)
+            if center is None:
+                continue
+            half = np.asarray(exclusion.size.to_tuple(), dtype=np.float64) / 2.0
+            low = np.asarray(center.to_tuple(), dtype=np.float64) - half
+            high = low + 2.0 * half
+            excluded |= np.all((points >= low) & (points <= high), axis=1)
+        return excluded
+
+    def _exclusion_center(self, exclusion: VoxelMapExclusion) -> Vector3 | None:
+        """Where the box is right now, in the planning frame; None if unknown."""
+        if exclusion.planning_group is None:
+            return exclusion.center
+        if self._world_monitor is None:
+            return None
+        try:
+            tip = self._world_monitor.get_group_ee_pose(exclusion.planning_group)
+        except ValueError as exc:
+            # No tip pose yet: the cells stay obstacles until there is one.
+            logger.debug("Voxel map exclusion not applied: %s", exc)
+            return None
+        return tip.position + tip.orientation.rotate_vector(exclusion.center)
 
     def _apply_voxel_map(self, cloud: PointCloud2) -> None:
         if self._world_monitor is None:
@@ -1309,12 +1418,14 @@ class ManipulationModule(Module):
             return
 
         points = cloud.points_f32()
+        if len(points) and not np.isfinite(points).all():
+            logger.warning("Voxel map contains non-finite points; dropped a map.")
+            return
+        if len(points):
+            points = points[~self._excluded(points)]
         if not len(points):
             # An empty map is how a mapper says the space it owns is now clear.
             self._world_monitor.remove_obstacle(VOXEL_MAP_OBSTACLE_ID)
-            return
-        if not np.isfinite(points).all():
-            logger.warning("Voxel map contains non-finite points; dropped a map.")
             return
 
         obstacle = Obstacle(

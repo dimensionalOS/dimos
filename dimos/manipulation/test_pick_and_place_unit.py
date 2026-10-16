@@ -17,6 +17,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
+import numpy as np
 import pytest
 
 from dimos.manipulation.grasp_verification import GripperSettle
@@ -30,13 +31,14 @@ from dimos.manipulation.manipulation_spec import (
     PlanResult,
     PlanStatus,
 )
-from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
+from dimos.manipulation.pick_and_place_module import VOXEL_MAP_EXCLUSION_ID, PickAndPlaceModule
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.manipulation_msgs.GraspCandidate import GraspCandidate
 from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.Header import Header
 
 PLANNED = PlanResult(PlanStatus.SUCCEEDED)
@@ -73,7 +75,12 @@ def module() -> Iterator[PickAndPlaceModule]:
     instance._manipulation.move_linear.return_value = _linear_move()
     instance._manipulation.set_gripper_position.return_value = ACCEPTED
     instance._objects = {"cup-1": {"object_id": "cup-1", "name": "cup"}}
-    instance._scene.get_object_pointcloud_by_object_id.return_value = MagicMock()
+    # The cup's points: a 4 cm cube centred on the grasp at (0.1, 0.0, 0.2).
+    instance._scene.get_object_pointcloud_by_object_id.return_value = PointCloud2.from_numpy(
+        np.asarray([[0.08, -0.02, 0.18], [0.12, 0.02, 0.22]], dtype=np.float32),
+        frame_id="world",
+        timestamp=1.0,
+    )
     instance._grasp_generator.propose_grasps.return_value = GraspCandidateArray(
         Header(1.0, "world"), [_candidate(0.1)]
     )
@@ -445,3 +452,164 @@ def test_motion_skills_declare_movement_capability() -> None:
     ]
 
     assert all(skill.__skill_uses__ == ["movement"] for skill in skills)
+
+
+def _exclusions(manipulation: Any) -> list[tuple[Any, ...]]:
+    """Every set_voxel_map_exclusion call as (center, size, planning_group)."""
+    return [
+        (c.args[1], c.args[2], c.kwargs.get("planning_group"))
+        for c in manipulation.set_voxel_map_exclusion.call_args_list
+    ]
+
+
+def _close_on_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    def settle(read: Any, target: float, config: Any, **_: Any) -> GripperSettle:
+        position = 0.0 if target == config.closed_position else target
+        return GripperSettle(True, position, True, 0.1)
+
+    monkeypatch.setattr("dimos.manipulation.pick_and_place_module.await_gripper_settle", settle)
+
+
+def test_pick_hides_the_target_from_the_planner_then_carries_it(
+    module: PickAndPlaceModule,
+) -> None:
+    """The target is mapped geometry; the approach goes into it and the lift takes it along."""
+    manipulation: Any = module._manipulation
+    grasp_generator: Any = module._grasp_generator
+    # Off the cup's centre and tilted, so a box rotated the wrong way lands elsewhere.
+    grasp = Pose(Vector3(0.1, 0.02, 0.21), Quaternion.from_euler(Vector3(-2.6, 0.0, 0.6)))
+    grasp_generator.propose_grasps.return_value = GraspCandidateArray(
+        Header(1.0, "world"), [GraspCandidate(grasp, 1.0)]
+    )
+
+    assert module.pick_object("cup-1").message == "Pick complete"
+
+    fixed, carried = _exclusions(manipulation)
+    # The cup's bounds plus the 3 cm clearance each way, fixed where it stood.
+    assert fixed[0].to_tuple() == pytest.approx((0.1, 0.0, 0.2))
+    assert fixed[1].to_tuple() == pytest.approx((0.1, 0.1, 0.1))
+    assert fixed[2] is None
+    # Then the same box rides with the gripper: from the tip at the grasp pose,
+    # its offset in the tip's frame leads back to the cup's centre.
+    at = grasp.position + grasp.orientation.rotate_vector(carried[0])
+    assert at.to_tuple() == pytest.approx((0.1, 0.0, 0.2), abs=1e-6)
+    assert carried[1].to_tuple() == pytest.approx((0.1, 0.1, 0.1))
+    assert carried[2] == "arm/tool"
+    manipulation.clear_voxel_map_exclusion.assert_not_called()
+
+
+def test_a_failed_pick_makes_the_target_an_obstacle_again(module: PickAndPlaceModule) -> None:
+    manipulation: Any = module._manipulation
+    manipulation.plan_to_poses.return_value = NO_PATH
+
+    result = module.pick_object("cup-1")
+
+    assert result.message.startswith("The planner found no path")
+    assert len(_exclusions(manipulation)) == 1
+    manipulation.clear_voxel_map_exclusion.assert_called_once_with(VOXEL_MAP_EXCLUSION_ID)
+
+
+def test_a_pick_that_raises_makes_the_target_an_obstacle_again(
+    module: PickAndPlaceModule,
+) -> None:
+    manipulation: Any = module._manipulation
+    manipulation.set_gripper_position.return_value = CommandResult(
+        CommandStatus.FAILED, "controller unavailable"
+    )
+
+    with pytest.raises(RuntimeError, match="controller unavailable"):
+        module.pick_object("cup-1")
+
+    manipulation.clear_voxel_map_exclusion.assert_called_once_with(VOXEL_MAP_EXCLUSION_ID)
+
+
+def test_release_makes_the_placed_object_an_obstacle_again(module: PickAndPlaceModule) -> None:
+    manipulation: Any = module._manipulation
+    module._selected_grasp = PoseStamped(frame_id="world")
+    module._holding_object = True
+    order: list[str] = []
+
+    def servo(*args: Any, **kwargs: Any) -> MoveResult:
+        order.append("servo")
+        return _linear_move()
+
+    manipulation.move_linear.side_effect = servo
+    manipulation.clear_voxel_map_exclusion.side_effect = lambda name: order.append("clear")
+
+    assert module.place_at(0.4, 0.0, 0.2).message == "Place complete"
+
+    # Down, release, back up out of the object, and only then the box goes.
+    assert order == ["servo", "servo", "clear"]
+
+
+def test_a_release_whose_retract_stops_keeps_the_box(module: PickAndPlaceModule) -> None:
+    manipulation: Any = module._manipulation
+    module._selected_grasp = PoseStamped(frame_id="world")
+    module._holding_object = True
+    manipulation.move_linear.side_effect = [
+        _linear_move(),
+        _linear_move(ExecutionResult(ExecutionStatus.FAULT, "retract failed")),
+    ]
+
+    result = module.place_at(0.4, 0.0, 0.2)
+
+    assert result.message.startswith("Retract from (0.40, 0.00, 0.20) after releasing")
+    manipulation.clear_voxel_map_exclusion.assert_not_called()
+
+
+def test_an_empty_target_cloud_asks_for_no_exclusion(module: PickAndPlaceModule) -> None:
+    manipulation: Any = module._manipulation
+    scene: Any = module._scene
+    scene.get_object_pointcloud_by_object_id.return_value = PointCloud2.from_numpy(
+        np.zeros((0, 3), dtype=np.float32), frame_id="world", timestamp=1.0
+    )
+
+    assert module.pick_object("cup-1").message == "Pick complete"
+
+    manipulation.set_voxel_map_exclusion.assert_not_called()
+
+
+def test_an_empty_close_backs_out_before_the_target_is_an_obstacle_again(
+    module: PickAndPlaceModule, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manipulation: Any = module._manipulation
+    _close_on_nothing(monkeypatch)
+    order: list[str] = []
+
+    def servo(*args: Any, **kwargs: Any) -> MoveResult:
+        order.append("servo")
+        return _linear_move()
+
+    manipulation.move_linear.side_effect = servo
+    manipulation.clear_voxel_map_exclusion.side_effect = lambda name: order.append("clear")
+
+    result = module.pick_object("cup-1")
+
+    assert result.message == (
+        "Closed the gripper on object cup-1. Final gripper position 0.00. Reopened the gripper."
+    )
+    # Down to the grasp, back up to the pregrasp, and only then the box goes.
+    assert order == ["servo", "servo", "clear"]
+    dz = [c.args[2] for c in manipulation.move_linear.call_args_list]
+    assert dz[0] == pytest.approx(-dz[1])
+
+
+def test_an_empty_close_reports_a_back_out_that_did_not_complete(
+    module: PickAndPlaceModule, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manipulation: Any = module._manipulation
+    _close_on_nothing(monkeypatch)
+    manipulation.move_linear.side_effect = [
+        _linear_move(),
+        _linear_move(ExecutionResult(ExecutionStatus.FAULT, "retract failed")),
+    ]
+
+    result = module.pick_object("cup-1")
+
+    assert result.message == (
+        "Closed the gripper on object cup-1. Final gripper position 0.00. Reopened the gripper. "
+        "Retract to the pre-grasp pose did not complete; execution returned FAULT: retract failed"
+    )
+    assert not module._holding_object
+    # The gripper is still inside the cup's cells; the next plan starts from there.
+    manipulation.clear_voxel_map_exclusion.assert_not_called()

@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 import pickle
 from unittest.mock import ANY, DEFAULT, MagicMock, call
@@ -318,6 +319,100 @@ class TestVoxelMap:
         module._apply_voxel_map(self._cloud([[0.0, 0.0, 0.0]]))
 
         assert module._world_monitor.add_obstacle.call_count == 0
+
+
+class TestVoxelMapExclusions:
+    """Boxes of mapped cells the planner is told to ignore."""
+
+    @staticmethod
+    def _cloud(points: list[list[float]]) -> PointCloud2:
+        return PointCloud2.from_numpy(
+            np.asarray(points, dtype=np.float32).reshape((-1, 3)), frame_id="world", timestamp=1.0
+        )
+
+    @staticmethod
+    def _installed_points(module: ManipulationModule) -> list[tuple[float, ...]]:
+        obstacle = module._world_monitor.update_obstacle.call_args.args[0]
+        return [tuple(round(v, 3) for v in p) for p in obstacle.points]
+
+    def test_cells_inside_a_fixed_box_are_left_out_of_the_obstacle(self, module_factory) -> None:
+        module = module_factory()
+        module._world_monitor = MagicMock(spec=WorldMonitor)
+        module._world_monitor.update_obstacle.return_value = True
+        module.set_voxel_map_exclusion("target", Vector3(0.5, 0.0, 0.8), Vector3(0.1, 0.1, 0.1))
+
+        module._apply_voxel_map(
+            self._cloud([[0.5, 0.0, 0.8], [0.54, 0.04, 0.84], [0.56, 0.0, 0.8], [0.5, 0.0, 0.86]])
+        )
+
+        assert self._installed_points(module) == [(0.56, 0.0, 0.8), (0.5, 0.0, 0.86)]
+
+    def test_a_carried_box_follows_the_tool_tip(self, module_factory) -> None:
+        module = module_factory()
+        module._world_monitor = MagicMock(spec=WorldMonitor)
+        module._world_monitor.update_obstacle.return_value = True
+        module._world_monitor.get_group_ee_pose.return_value = PoseStamped(
+            frame_id="world",
+            position=Vector3(0.3, 0.2, 1.0),
+            orientation=Quaternion.from_euler(Vector3(0.0, 0.0, np.pi / 2)),
+        )
+        # Turned a quarter turn about z, the tip's +x is the world's +y: the box
+        # sits 5 cm along world +y from the tip. The other two points are where a
+        # box rotated the wrong way, or not rotated at all, would sit.
+        module.set_voxel_map_exclusion(
+            "held", Vector3(0.05, 0.0, 0.0), Vector3(0.06, 0.06, 0.06), planning_group="arm"
+        )
+
+        module._apply_voxel_map(self._cloud([[0.3, 0.25, 1.0], [0.3, 0.15, 1.0], [0.35, 0.2, 1.0]]))
+
+        module._world_monitor.planning_groups.get.assert_called_with("arm")
+        assert self._installed_points(module) == [(0.3, 0.15, 1.0), (0.35, 0.2, 1.0)]
+
+    def test_a_carried_box_waits_for_a_tip_pose(self, module_factory) -> None:
+        module = module_factory()
+        module._world_monitor = MagicMock(spec=WorldMonitor)
+        module._world_monitor.update_obstacle.return_value = True
+        module._world_monitor.get_group_ee_pose.side_effect = ValueError("stale")
+        module.set_voxel_map_exclusion(
+            "held", Vector3(0.0, 0.0, 0.0), Vector3(1.0, 1.0, 1.0), planning_group="arm"
+        )
+
+        module._apply_voxel_map(self._cloud([[0.3, 0.2, 0.95]]))
+
+        assert self._installed_points(module) == [(0.3, 0.2, 0.95)]
+
+    def test_changing_the_boxes_reapplies_the_newest_map_at_once(self, module_factory) -> None:
+        # A pick plans right after asking, well before the mapper's next message.
+        module = module_factory()
+        module._world_monitor = MagicMock(spec=WorldMonitor)
+        module._world_monitor.update_obstacle.return_value = True
+        cloud = self._cloud([[0.5, 0.0, 0.8], [0.9, 0.0, 0.8]])
+        asyncio.run(module.handle_voxel_map(cloud))
+        assert len(self._installed_points(module)) == 2
+
+        module.set_voxel_map_exclusion("target", Vector3(0.5, 0.0, 0.8), Vector3(0.1, 0.1, 0.1))
+        assert self._installed_points(module) == [(0.9, 0.0, 0.8)]
+
+        assert module.clear_voxel_map_exclusion("target")
+        assert len(self._installed_points(module)) == 2
+        assert not module.clear_voxel_map_exclusion("target")
+
+    def test_a_map_that_is_all_excluded_removes_the_obstacle(self, module_factory) -> None:
+        module = module_factory()
+        module._world_monitor = MagicMock(spec=WorldMonitor)
+        module.set_voxel_map_exclusion("target", Vector3(0.0, 0.0, 0.0), Vector3(2.0, 2.0, 2.0))
+
+        module._apply_voxel_map(self._cloud([[0.5, 0.0, 0.8]]))
+
+        module._world_monitor.remove_obstacle.assert_called_once_with(VOXEL_MAP_OBSTACLE_ID)
+        assert module._world_monitor.update_obstacle.call_count == 0
+
+    def test_a_box_needs_a_name_and_positive_edges(self, module_factory) -> None:
+        module = module_factory()
+        with pytest.raises(ValueError):
+            module.set_voxel_map_exclusion("", Vector3(), Vector3(0.1, 0.1, 0.1))
+        with pytest.raises(ValueError):
+            module.set_voxel_map_exclusion("target", Vector3(), Vector3(0.1, 0.0, 0.1))
 
 
 class TestObstacleUpdates:
@@ -1124,6 +1219,31 @@ class TestPlanningGroupApis:
 
 
 class TestPlanningDiagnostics:
+    def test_a_planner_exception_fails_the_plan_and_frees_the_module(
+        self, robot_config, module_factory
+    ):
+        # RoboPlan raises when the arm already stands inside an obstacle. Left
+        # in PLANNING, the module would refuse every request after it.
+        module = module_factory()
+        module.config.model = robot_config
+        module._world_monitor = MagicMock()
+        module._world_monitor.planning_groups = PlanningGroupRegistry(robot_config.planning_groups)
+        module._world_monitor.current_model_joint_state.return_value = JointState(
+            name=robot_config.joint_names, position=[0.0, 0.0, 0.0]
+        )
+        module._planner = MagicMock()
+        module._planner.plan_selected_joint_path.side_effect = RuntimeError(
+            "Start configuration is in collision, cannot plan!"
+        )
+
+        result = module.plan_to_joints(
+            {"manipulator": JointState(name=robot_config.joint_names, position=[1.0, 1.0, 1.0])}
+        )
+
+        assert result.status is PlanStatus.FAILED
+        assert "Start configuration is in collision" in result.message
+        assert module._state == ManipulationState.IDLE
+
     def test_planner_failure_preserves_backend_detail(self, robot_config, module_factory):
         """Planning diagnostics include the backend message."""
         module = module_factory()

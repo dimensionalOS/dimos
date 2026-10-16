@@ -24,6 +24,7 @@ from typing import Protocol
 from dimos.control.tasks.trajectory_task.trajectory_task import TrajectoryExecutionResult
 from dimos.manipulation.planning.spec.models import GeneratedPlan, PlanningGroupID
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryStatus
@@ -265,6 +266,16 @@ class ManipulationSpec(Spec, Protocol):
     ) -> MoveResult: ...
 
     def show_grasp_proposals(self, candidates: GraspCandidateArray) -> None: ...
+
+    def set_voxel_map_exclusion(
+        self,
+        name: str,
+        center: Vector3,
+        size: Vector3,
+        planning_group: PlanningGroupID | None = None,
+    ) -> bool: ...
+
+    def clear_voxel_map_exclusion(self, name: str) -> bool: ...
 
     def reset(self) -> CommandResult: ...
 

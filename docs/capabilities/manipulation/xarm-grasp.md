@@ -73,6 +73,16 @@ into it can only ever be rejected. The pregrasp-to-grasp leg and the retreat are
 therefore straight-line `move_linear` servos with collision checking off; only
 the approach to the pregrasp pose is a checked plan.
 
+For that checked approach, and for every plan made while the object is held,
+`PickAndPlaceModule` asks `ManipulationModule.set_voxel_map_exclusion` to leave
+out the cells in a box around the target's point cloud, padded by
+`target_clearance` (3 cm, which also covers the table cells under it). Once the
+jaws have closed on the object the same box rides with the tool tip, because the
+wrist camera keeps mapping whatever the gripper holds. The box is cleared when
+the object is released or the pick fails. Neighbouring objects stay obstacles:
+a pregrasp that would sweep the gripper into the object next to the target is
+still refused, with `IK failed: COLLISION` as the reason.
+
 ## Seeing the proposals
 
 The viser scene draws the ranked proposals as pose glyphs: an approach axis with

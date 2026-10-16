@@ -16,8 +16,10 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Literal
 
+import numpy as np
 from pydantic import Field
 
 from dimos.agents.annotation import skill
@@ -39,12 +41,22 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.perception.experimental.object_scene_registration_spec import ObjectSceneRegistrationSpec
+
+# The one box of mapped cells a pick asks the planner to ignore.
+VOXEL_MAP_EXCLUSION_ID = "pick-and-place/target"
 
 
 class PickAndPlaceModuleConfig(ModuleConfig):
     planning_frame: str = "base_link"
     pregrasp_offset: float = Field(default=0.10, gt=0.0)
+    # Margin (metres) added around the target's bounding box. Mapped cells in
+    # that box are not obstacles during the pick, and the same box rides with
+    # the gripper while the object is held. Too small, and a cell on the
+    # object's edge or the table under it stops the plan; too large, and a
+    # neighbour's cells are ignored too.
+    target_clearance: float = Field(default=0.03, gt=0.0)
     # A learned provider returns a ranked spread whose best-scoring pose is not
     # always kinematically reachable; a single-candidate provider is unaffected.
     max_grasp_attempts: int = Field(default=5, gt=0)
@@ -68,6 +80,23 @@ def _gripper_reading(settle: GripperSettle) -> str:
     return f"Final gripper position {settle.position:.2f}."
 
 
+@dataclass(frozen=True)
+class TargetBox:
+    """Axis-aligned bounds of a target's point cloud, planning frame, metres."""
+
+    center: Vector3
+    size: Vector3
+
+
+def _target_box(pointcloud: PointCloud2) -> TargetBox | None:
+    """The axis-aligned bounds of an object's points, or None for an empty cloud."""
+    points = np.asarray(pointcloud.points_f32(), dtype=np.float64).reshape((-1, 3))
+    if not len(points) or not np.isfinite(points).all():
+        return None
+    low, high = points.min(axis=0), points.max(axis=0)
+    return TargetBox(Vector3(*((low + high) / 2.0)), Vector3(*(high - low)))
+
+
 class PickAndPlaceModule(Module):
     """Coordinate scene registration, grasp generation, and manipulation execution."""
 
@@ -83,6 +112,9 @@ class PickAndPlaceModule(Module):
         self._selected_object_id: str | None = None
         self._selected_grasp: PoseStamped | None = None
         self._holding_object = False
+        # True while a pick has left the gripper inside the target's ignored box;
+        # the box then stays so the next plan can start from there.
+        self._arm_in_target = False
 
     @skill
     def scan_objects(self, prompts: list[str]) -> SkillResult:
@@ -154,6 +186,32 @@ class PickAndPlaceModule(Module):
         if not candidates.candidates:
             return SkillResult(f"Generated 0 grasp candidates for object {object_id}.")
         group = self._gripper_group(planning_group)
+        # The target is mapped geometry: with its cells as obstacles the planner
+        # refuses the approach into it, and the held object blocks every move after.
+        box = _target_box(pointcloud)
+        self._exclude_target(box)
+        self._arm_in_target = False
+        try:
+            return self._pick_from(candidates, object_id, box, group)
+        finally:
+            if not self._holding_object and not self._arm_in_target:
+                self._manipulation.clear_voxel_map_exclusion(VOXEL_MAP_EXCLUSION_ID)
+
+    def _pick_from(
+        self,
+        candidates: GraspCandidateArray,
+        object_id: str,
+        box: TargetBox | None,
+        group: PlanningGroupID,
+    ) -> SkillResult:
+        """Open the gripper and try the ranked grasps in order until one holds the object.
+
+        Args:
+            candidates: Ranked grasps in the planning frame, best first.
+            object_id: ID of the object being picked, for the report.
+            box: Bounds of the object's point cloud, or None when it has none.
+            group: Gripper-capable planning group doing the pick.
+        """
         if not_open := self._open_gripper(group, "before grasping"):
             return not_open
 
@@ -181,11 +239,18 @@ class PickAndPlaceModule(Module):
                     f"Move to grasp candidate {rank} for object {object_id}", blocked
                 )
             if not_held := self._close_and_verify(group, object_id):
+                # Back out while the target's cells are still ignored: left at
+                # the grasp pose, the arm would start the next plan inside them.
+                if blocked := self._servo(grasp, pregrasp, group):
+                    self._arm_in_target = True
+                    stopped = self._stopped("Retract to the pre-grasp pose", blocked)
+                    return SkillResult(f"{not_held.message} {stopped.message}")
                 return not_held
 
             self._selected_object_id = object_id
             self._selected_grasp = grasp
             self._holding_object = True
+            self._carry_target(box, grasp, group)
             if blocked := self._servo(grasp, pregrasp, group):
                 return self._stopped(f"Retract after grasping object {object_id}", blocked)
             return SkillResult(
@@ -244,7 +309,9 @@ class PickAndPlaceModule(Module):
         self._holding_object = False
         self._clear_selection()
         if blocked := self._servo(place, preplace, group):
+            # The gripper is still around the object; its box stays ignored.
             return self._stopped(f"Retract from {target} after releasing", blocked)
+        self._manipulation.clear_voxel_map_exclusion(VOXEL_MAP_EXCLUSION_ID)
         return SkillResult("Place complete")
 
     def _clear_selection(self) -> None:
@@ -252,6 +319,31 @@ class PickAndPlaceModule(Module):
         self._manipulation.show_grasp_proposals(GraspCandidateArray())
         self._selected_object_id = None
         self._selected_grasp = None
+
+    def _exclude_target(self, box: TargetBox | None) -> None:
+        """Keep the target's own cells, and the table right under it, out of the planner."""
+        if box is None:
+            return
+        self._manipulation.set_voxel_map_exclusion(
+            VOXEL_MAP_EXCLUSION_ID, box.center, self._padded(box.size)
+        )
+
+    def _carry_target(
+        self, box: TargetBox | None, grasp: PoseStamped, group: PlanningGroupID
+    ) -> None:
+        """Move the ignored box from the table to the gripper, where the object now is."""
+        if box is None:
+            return
+        # The box centre relative to the tool tip, in the tip's own frame.
+        offset = grasp.orientation.inverse().rotate_vector(box.center - grasp.position)
+        self._manipulation.set_voxel_map_exclusion(
+            VOXEL_MAP_EXCLUSION_ID, offset, self._padded(box.size), planning_group=group
+        )
+
+    def _padded(self, size: Vector3) -> Vector3:
+        """Box edge lengths (metres) grown by target_clearance on every side."""
+        margin = 2.0 * self.config.target_clearance
+        return Vector3(size.x + margin, size.y + margin, size.z + margin)
 
     def _gripper_group(self, planning_group: PlanningGroupID | None) -> PlanningGroupID:
         """Pick the planning group that has both a gripper and a tool frame.
