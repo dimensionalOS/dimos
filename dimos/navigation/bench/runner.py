@@ -121,6 +121,11 @@ def selects(prefix: str, case_id: str) -> bool:
     return case_id == prefix or case_id.startswith(prefix + "-")
 
 
+def new_run_dir(suite: str) -> Path:
+    """A run directory named for now and the suite."""
+    return RUNS_DIR / time.strftime(f"%Y%m%d-%H%M%S-{suite}")
+
+
 def run(config: RunConfig, report: Report | None = None) -> Path:
     """Run every selected case once and return the run directory."""
     manifest = Manifest.load(config.suite)
@@ -135,14 +140,15 @@ def run(config: RunConfig, report: Report | None = None) -> Path:
         raise ValueError(
             f"no cases match split {config.split!r} and {config.cases} in {config.suite}"
         )
-    run_dir = config.out_dir or RUNS_DIR / time.strftime(f"%Y%m%d-%H%M%S-{manifest.suite}")
+    run_dir = config.out_dir or new_run_dir(manifest.suite)
     run_dir.mkdir(parents=True, exist_ok=False)
     RUNS_INDEX.parent.mkdir(parents=True, exist_ok=True)
     with RUNS_INDEX.open("a") as index:
         index.write(f"{run_dir.resolve()}\n")
     episodes = [Episode(case, run_dir / case.id) for case in cases]
     manifest.save(run_dir / SUITE_FILE)
-    _write_run(run_dir, config, finished=False)
+    started = time.time()
+    _write_run(run_dir, config, len(episodes), started, ended=None)
     results = run_dir / RESULTS_FILE
     lock = threading.Lock()
     running: list[str] = []
@@ -160,12 +166,31 @@ def run(config: RunConfig, report: Report | None = None) -> Path:
                 )
             )
 
-    def one(episode: Episode) -> Result:
+    stopping = threading.Event()
+
+    def drop(episode: Episode) -> None:
+        """Forget an episode the run was stopped in the middle of, so nothing counts it."""
+        shutil.rmtree(episode.dir, ignore_errors=True)
+        with lock:
+            running.remove(episode.dir.name)
+
+    def one(episode: Episode) -> Result | None:
         with lock:
             running.append(episode.dir.name)
             progress()
-        with _slot() as slot:
-            result = _episode(config, manifest, episode, slot)
+        try:
+            with _slot() as slot:
+                result = _episode(config, manifest, episode, slot)
+        except KeyboardInterrupt:
+            drop(episode)
+            raise
+        except BaseException:
+            with lock:
+                running.remove(episode.dir.name)
+            raise
+        if stopping.is_set() and result.terminal is None:
+            drop(episode)
+            return None
         with lock, results.open("a") as out:
             out.write(json.dumps(asdict(result)) + "\n")
             running.remove(episode.dir.name)
@@ -177,18 +202,24 @@ def run(config: RunConfig, report: Report | None = None) -> Path:
     pool = ThreadPoolExecutor(max_workers=config.procs)
     try:
         first = one(episodes[0])
-        if first.terminal is None:
+        if first is not None and first.terminal is None:
             raise RuntimeError(
                 f"the first episode produced no terminal record, see {episodes[0].dir}"
             )
         for future in [pool.submit(one, episode) for episode in episodes[1:]]:
             future.result()
     except BaseException:
+        stopping.set()
         pool.shutdown(wait=False, cancel_futures=True)
-        stop_all()
+        # An episode can start between the cancel and the stop, so stop until none is left.
+        while running:
+            stop_all()
+            time.sleep(POLL_S)
+        pool.shutdown()
+        _write_run(run_dir, config, len(episodes), started, ended=time.time())
         raise
     pool.shutdown()
-    _write_run(run_dir, config, finished=True)
+    _write_run(run_dir, config, len(episodes), started, ended=time.time(), finished=True)
     return run_dir
 
 
@@ -233,14 +264,25 @@ def rescore(run_dir: Path) -> Path:
     return results
 
 
-def _write_run(run_dir: Path, config: RunConfig, finished: bool) -> None:
+def _write_run(
+    run_dir: Path,
+    config: RunConfig,
+    episodes: int,
+    started: float,
+    ended: float | None,
+    finished: bool = False,
+) -> None:
+    """Write run.json. No end time means the run is going or died without recording one."""
     record = {
         "blueprint": config.blueprint,
         "split": config.split,
         "cases": list(config.cases),
         "overrides": list(config.overrides),
         "policy": str(config.policy) if config.policy else None,
+        "episodes": episodes,
         "finished": finished,
+        "started": started,
+        "time": ended,
     }
     (run_dir / RUN_FILE).write_text(json.dumps(record, indent=2) + "\n")
 
