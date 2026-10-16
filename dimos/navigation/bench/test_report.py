@@ -252,13 +252,13 @@ def test_every_signature_of_an_episode_is_counted(tmp_path: Path) -> None:
 def test_labels_of_levels_too_close_to_read_go_on_a_second_line(tmp_path: Path) -> None:
     cases = [
         _case(f"leg-s1-{value}", "leg", 0.5, Level("leg_width", value))
-        for value in (0.01, 0.02, 0.03, 0.2)
+        for value in (0.01, 0.02, 0.03, 0.6)
     ]
     run = tmp_path / "run"
     _run(run, cases, [_result(case, "success") for case in cases])
     page = render([load(run)])
     first, second = CURVE_PX[1] + 10, CURVE_PX[1] + 10 + CURVE_ROW_PX
-    for label, y in (("0.01", first), ("0.02", second), ("0.03", first), ("0.20", first)):
+    for label, y in (("0.01", first), ("0.02", second), ("0.03", first), ("0.60", first)):
         assert f'y="{y}" text-anchor="middle">{label}</text>' in page
     assert f'<svg width="{CURVE_PX[0]}" height="{CURVE_PX[1] + 48 + CURVE_ROW_PX}"' in page
 

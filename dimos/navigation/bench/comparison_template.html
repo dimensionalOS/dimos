@@ -105,7 +105,7 @@ addEventListener("DOMContentLoaded", () => {
 </tbody>
 </table></div>
 
-<h3>Measures</h3>
+<details><summary>Measures</summary>
 <p class="sub">Medians over the cases with a value on both sides.</p>
 <div class="scroll"><table>
 <thead><tr><th>probe</th><th>measure</th><th class="n">cases</th><th class="n">base</th><th class="n">new</th><th class="n">change</th></tr></thead>
@@ -114,8 +114,9 @@ addEventListener("DOMContentLoaded", () => {
 {% endfor %}{% endfor %}
 </tbody>
 </table></div>
+</details>
 
-<h3>Changed cases</h3>
+<details><summary>Changed cases ({{ changed | length }})</summary>
 <div class="filters">
 <label>probe <select name="probe"><option value="">all</option>{% for probe in changed_probes %}<option>{{ probe }}</option>{% endfor %}</select></label>
 <label>direction <select name="direction"><option value="">all</option><option>became success</option><option>became failure</option><option>other change</option></select></label>
@@ -130,3 +131,4 @@ addEventListener("DOMContentLoaded", () => {
 {% endfor %}
 </tbody>
 </table></div>
+</details>

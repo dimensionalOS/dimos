@@ -492,7 +492,7 @@ class Probe:
     A seed's placement draws are the same at every level, so only the level differs between its cases.
     control is the level that removes the feature, run once per seed to see whether the robot's own
     line crosses it. premap_objects False leaves the clutter out of every case's premap.
-    unit is the variable's unit, empty for a count.
+    unit is the variable's unit, empty for a count. description says in one sentence what it tests.
     """
 
     name: str
@@ -500,6 +500,7 @@ class Probe:
     variable: str
     levels: tuple[float, ...]
     place: Placement
+    description: str
     scene_param: str | None = None
     control: float | None = None
     seeds: tuple[int, ...] = tuple(range(1, 11))
@@ -529,6 +530,7 @@ GOAL_CLEARANCE = Probe(
     "goal_clearance",
     (0.20, 0.23, 0.26, 0.29, 0.32, 0.35, 0.40, 0.50, 0.60),
     goal_by_wall,
+    description="A goal near a wall, set closer to it at each level.",
 )
 
 
@@ -548,6 +550,7 @@ DOORWAY = Probe(
     "door_width",
     (0.45, 0.48, 0.51, 0.54, 0.57, 0.60, 0.65, 0.75, 0.90),
     past_the_door,
+    description="A doorway between two rooms, with the door getting narrower.",
     scene_param="door_width",
 )
 
@@ -630,6 +633,7 @@ LEG_WIDTH = Probe(
     "leg_width",
     (0.01, 0.02, 0.03, 0.04, 0.06, 0.08, 0.10, 0.15, 0.20),
     through_a_leg,
+    description="A table leg in the path, with the leg getting thinner.",
     scene_param="leg_width",
     control=0.0,
 )
@@ -649,6 +653,7 @@ OVERHANG = Probe(
     "overhang_clearance",
     (0.30, 0.36, 0.40, 0.44, 0.48, 0.52, 0.56, 0.64, 0.80),
     under_the_slab,
+    description="A slab on posts in the path, with the gap under it shrinking.",
     scene_param="clearance",
     control=0.0,
 )
@@ -658,6 +663,7 @@ BLOCK_HEIGHT = Probe(
     "block_height",
     (0.04, 0.08, 0.12, 0.16, 0.20, 0.24, 0.28, 0.32, 0.40),
     through_the_block,
+    description="A block in the path, with its height going from a low step to a tall box.",
     scene_param="block_height",
     control=0.0,
 )
@@ -677,6 +683,7 @@ SMALL_OBJECT = Probe(
     "object_length",
     (0.08, 0.12, 0.16, 0.20, 0.24, 0.28, 0.34, 0.42, 0.50),
     over_the_small_object,
+    description="A small object on the floor in the path, with the object getting smaller.",
     scene_param="object_length",
     control=0.0,
 )
@@ -725,6 +732,7 @@ CORRIDOR = Probe(
     "corridor_width",
     (0.45, 0.48, 0.51, 0.54, 0.57, 0.60, 0.65, 0.75, 0.90, 1.00, 1.20),
     past_the_corridor,
+    description="A straight corridor to the far room, with the corridor getting narrower.",
     scene_param="corridor_width",
 )
 CORRIDOR_TURN = Probe(
@@ -733,6 +741,7 @@ CORRIDOR_TURN = Probe(
     "corridor_width",
     CORRIDOR.levels,
     past_the_winding_corridor,
+    description="A corridor with a turn to the far room, with the corridor getting narrower.",
     scene_param="corridor_width",
 )
 
@@ -749,6 +758,7 @@ CLUTTER = Probe(
     "clutter_count",
     (0.0, 10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0),
     across_the_boxes,
+    description="Boxes scattered across a room, with more boxes at each level.",
     scene_param="clutter_count",
     unit="",
 )
@@ -767,6 +777,7 @@ HIDDEN_CLUTTER = Probe(
     "clutter_count",
     (0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0),
     into_the_hidden_clutter,
+    description="Boxes on the way to the far room that the premap does not show, with more boxes at each level.",
     scene_param="clutter_count",
     premap_objects=False,
     unit="",
@@ -777,6 +788,7 @@ HIDDEN_OBJECT = Probe(
     "object_length",
     SMALL_OBJECT.levels,
     past_the_hidden_object,
+    description="A small object in a winding corridor that the premap does not show, with the object getting smaller.",
     scene_param="object_length",
     control=0.0,
     premap_objects=False,
@@ -805,6 +817,7 @@ BARRIER_HEIGHT = Probe(
     "barrier_height",
     (0.04, 0.08, 0.10, 0.12, 0.14),
     over_the_barrier,
+    description="A low strip splitting the room wall to wall, with the strip getting taller.",
     scene_param="barrier_height",
     control=0.0,
 )
@@ -830,6 +843,7 @@ BAR = Probe(
     "bar_width",
     (0.01, 0.02, 0.04, 0.08),
     under_the_bar,
+    description="A bar at trunk height in the path that the premap does not show, with the bar getting thinner.",
     scene_param="bar_width",
     control=0.0,
     premap_objects=False,
@@ -840,6 +854,7 @@ HIDDEN_POLE = Probe(
     "pole_width",
     (0.01, 0.02, 0.04, 0.08),
     past_the_hidden_pole,
+    description="A pole in a winding corridor that the premap does not show, with the pole getting thinner.",
     scene_param="pole_width",
     control=0.0,
     premap_objects=False,
@@ -850,6 +865,7 @@ POLE = Probe(
     "pole_width",
     (0.01, 0.02, 0.03, 0.04, 0.06, 0.08, 0.10),
     past_the_pole,
+    description="A pole in the path that the premap does not show, with the pole getting thinner.",
     scene_param="pole_width",
     control=0.0,
     premap_objects=False,

@@ -51,6 +51,10 @@ th.cp, td.cp { padding-left: 0; padding-right: 0; }
 .copy { font: inherit; min-width: 2.2em; padding: 0 0.2em; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 3px; cursor: pointer; }
 .verdict { font-size: 18px; margin: 1em 0; }
 .row { display: flex; flex-wrap: wrap; gap: 2em; align-items: flex-start; }
+.head { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2em; align-items: start; }
+.head img, .head svg { max-width: 100%; height: auto; }
+.chart { max-width: 100%; height: auto; }
+@media (max-width: 800px) { .head { grid-template-columns: minmax(0, 1fr); } }
 </style>
 </head>
 <body>
@@ -124,6 +128,9 @@ addEventListener("click", event => {
 {% set variable = s.variable %}{% set levels = s.levels %}{% set controlled = s.controlled %}{% set curve = s.curve %}
 {% set unit = s.unit %}{% set heading = ((variable | replace("_", " ")) ~ (" " ~ unit if unit else "")) if variable else "stressor" %}
 {% if sections | length > 1 %}<h2 id="{{ report.suite }}">{{ report.suite }}</h2>{% endif %}
+<div class="head">
+<div>
+{% if s.description %}<p>{{ s.description }}</p>{% endif %}
 <p class="verdict">{{ verdict }}</p>
 <dl>
 <dt>suite</dt><dd>{{ report.suite }}</dd>
@@ -136,21 +143,7 @@ addEventListener("click", event => {
 <dt>wall time</dt><dd>{{ wall }}</dd>
 <dt>finished at</dt><dd>{{ finished_at }}</dd>
 </dl>
-
-{% if levels %}
-<h3>Success against {{ variable | replace("_", " ") }}</h3>
-{% set drop = curve | map(attribute="drop") | max %}
-<div class="row">
-<svg width="{{ curve_px[0] }}" height="{{ curve_px[1] + 48 + drop }}" font-size="11">
-<text x="{{ (curve[0].x + curve[-1].x) // 2 }}" y="{{ curve_px[1] + 42 + drop }}" text-anchor="middle" font-size="12">{{ variable | replace("_", " ") }}{% if unit %} ({{ unit }}){% endif %}</text>
-<text x="12" y="{{ curve_px[1] // 2 }}" text-anchor="middle" font-size="12" transform="rotate(-90 12 {{ curve_px[1] // 2 }})">success</text>
-{% for label, y in curve_grid %}<line x1="{{ curve[0].x }}" x2="{{ curve[-1].x }}" y1="{{ y }}" y2="{{ y }}" class="grid"/><text x="{{ curve[0].x - 6 }}" y="{{ y + 4 }}" text-anchor="end">{{ label }}</text>
-{% endfor %}
-{% for point in curve %}<text x="{{ point.x }}" y="{{ curve_px[1] + 10 + point.drop }}" text-anchor="middle">{{ point.label }}</text><text x="{{ point.x }}" y="{{ curve_px[1] + 24 + point.drop }}" text-anchor="middle">{{ point.count }}</text>
-{% endfor %}
-<polyline class="curve" stroke-width="2" points="{% for point in curve %}{{ point.x }},{{ point.y }} {% endfor %}"/>
-{% for point in curve %}<rect x="{{ point.x - 3 }}" y="{{ point.y - 3 }}" width="6" height="6" class="series"/>{% endfor %}
-</svg>
+</div>
 {% if s.thumbnail %}
 {% set t = s.thumbnail %}{% set x0, y0, x1, y1 = t.bounds %}{% set px = (x1 - x0) / thumbnail_px %}
 {% if t.image %}
@@ -169,6 +162,20 @@ addEventListener("click", event => {
 {% endif %}
 {% endif %}
 </div>
+
+{% if levels %}
+<h3>Success against {{ variable | replace("_", " ") }}</h3>
+{% set drop = curve | map(attribute="drop") | max %}
+<svg width="{{ curve_px[0] }}" height="{{ curve_px[1] + 48 + drop }}" viewBox="0 0 {{ curve_px[0] }} {{ curve_px[1] + 48 + drop }}" class="chart" font-size="11">
+<text x="{{ (curve[0].x + curve[-1].x) // 2 }}" y="{{ curve_px[1] + 42 + drop }}" text-anchor="middle" font-size="12">{{ variable | replace("_", " ") }}{% if unit %} ({{ unit }}){% endif %}</text>
+<text x="12" y="{{ curve_px[1] // 2 }}" text-anchor="middle" font-size="12" transform="rotate(-90 12 {{ curve_px[1] // 2 }})">success</text>
+{% for label, y in curve_grid %}<line x1="{{ curve[0].x }}" x2="{{ curve[-1].x }}" y1="{{ y }}" y2="{{ y }}" class="grid"/><text x="{{ curve[0].x - 6 }}" y="{{ y + 4 }}" text-anchor="end">{{ label }}</text>
+{% endfor %}
+{% for point in curve %}<text x="{{ point.x }}" y="{{ curve_px[1] + 10 + point.drop }}" text-anchor="middle">{{ point.label }}</text><text x="{{ point.x }}" y="{{ curve_px[1] + 24 + point.drop }}" text-anchor="middle">{{ point.count }}</text>
+{% endfor %}
+<polyline class="curve" stroke-width="2" points="{% for point in curve %}{{ point.x }},{{ point.y }} {% endfor %}"/>
+{% for point in curve %}<rect x="{{ point.x - 3 }}" y="{{ point.y - 3 }}" width="6" height="6" class="series"/>{% endfor %}
+</svg>
 <div class="scroll"><table>
 <thead><tr><th class="n">{{ heading }}</th><th class="n">n</th>{% for outcome in report.outcomes %}<th class="n">{{ outcome }}</th>{% endfor %}{% if controlled %}<th class="n">not encountered</th>{% endif %}<th class="n">near falls</th><th>episodes with a contact</th><th>failure signatures</th></tr></thead>
 <tbody>

@@ -55,7 +55,7 @@ ARRIVED = ("success", "reached_with_collision")
 STRIP_M = 1.0
 STRIP_TICK_M = 0.25
 STRIP_PX = 240
-CURVE_PX = (480, 180)
+CURVE_PX = (1120, 180)
 CURVE_PAD_PX = 56
 CURVE_LABEL_PX = 34
 CURVE_ROW_PX = 28
@@ -534,6 +534,7 @@ class Section:
     encountered: str
     curve: list[CurvePoint]
     thumbnail: Thumbnail | None
+    description: str
 
 
 def _section(report: Report) -> Section:
@@ -562,6 +563,7 @@ def _section(report: Report) -> Section:
         encountered=met,
         curve=_curve(levels, unit) if levels else [],
         thumbnail=thumbnail(report) if levels else None,
+        description=probe.description if probe is not None else "",
     )
 
 
